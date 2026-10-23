@@ -13,10 +13,20 @@
  * it goes on only when the tab's document is the one it bound and either its safety is fresh and clean now, or
  * the person's consent names exactly that tab, document and action. A fresh `unsaved` refuses at once, asking
  * nothing; a record not fresh (`unknown`, `stale`, or a canvas without the bridge) asks one native sheet first.
+ *
+ * A3 (app 0.2, A3.8 #24, #39-#44) adds two field groups and a guard action, frozen before its streams split:
+ * - `geo`, the tab's geometry, written only by layout.ts's `commitLayout` (the one-ground stream), from the events
+ *   this file and views.ts hand it; `compose()` stays the one writer of native bounds;
+ * - `{ kind: 'unload', reason }`, the same serialized operation as every other action with a silent refusal of its
+ *   own: any other action on that tab waits for the unload's `done`, and `guardAll` sweeps no unload in (`sweeping`)
+ *   and waits for those under way. The unload's admission (`unloadRefusal`), its op and `onUnloaded` are the
+ *   unloading stream's to fill, in the section at the end; until then nothing is ever admitted.
  */
 import type { DisplayState, TabPageProbe, TabView } from '../shared/channels.ts'
-import type { AppState, Busy, MenuItem, Theme, Why } from '../../../src/shared/app-api.ts'
+import type { AppState, Busy, Hello, Inset, MenuItem, Theme, Why } from '../../../src/shared/app-api.ts'
 import { UNSAVED_WHY, WHY_WORDS } from '../../../src/shared/app-api.ts'
+import type { AppBody, AppKind, TabIdent, UnloadReason } from '../../../src/shared/app-perf.ts'
+import { commitLayout } from './layout.ts'
 import type { FailWhy } from './nav.ts'
 import type { RegistryEntry, RegistryEvent } from './registry.ts'
 import { tilde } from '../shared/command.ts'
@@ -39,8 +49,8 @@ export interface TabReg {
   version?: string
 }
 
-/** The view (writer: views.ts / tabs.ts). `unloaded` is A3's. */
-export type TabViewState = 'none' | 'live' | 'crashed'
+/** The view (writer: views.ts / tabs.ts). `unloaded`: A3's, an unload's close ended at `destroyed` (A3.8 #43). */
+export type TabViewState = 'none' | 'live' | 'crashed' | 'unloaded'
 
 /** The committed document and its trust (writer: tabs.ts, from the adapter's events, nav.ts). */
 export interface TabDoc {
@@ -61,8 +71,8 @@ export interface TabDoc {
 /** The current document's safety (v1.12 r1 #2, v1.13 r2 #1): unknown until its first report; stale once main can no longer hear it. */
 export type Safety = 'unknown' | 'fresh' | 'stale'
 
-/** The current document's last reports (writer: tabs.ts `onReport`, from the bridge). */
-export interface TabReports { safety: Safety; busy?: Busy; theme?: Theme; menu?: MenuItem[] }
+/** The current document's last reports (writer: tabs.ts `onReport`, from the bridge). `hello`: its accepted `mv:hello` (A3: its inset, its page). */
+export interface TabReports { safety: Safety; busy?: Busy; theme?: Theme; menu?: MenuItem[]; hello?: Hello }
 
 /**
  * The crash record (writer: tabpage.ts `recover`). `count`, `lastAuto` and `latched` are the frozen part; the
@@ -90,6 +100,45 @@ export interface TabCrash {
 
 /** The last load's failure, from the adapter (the tab page's state; cleared at an attributed commit or a rebind). */
 export interface TabFail { why: FailWhy; at: number; code?: number }
+
+/** Where a tab's view sits (A2.2, A3.8 #24): the full height under the transparent strip, or below it. */
+export type Layout = 'full' | 'below'
+
+/**
+ * The tab's geometry (writer: layout.ts `commitLayout`, alone; A3.8 #24). `compose()` places every view from
+ * `placed(tab)`: HTML fullscreen first, then `layout`. A shown or retained document's geometry changes only at its
+ * commit; a view holding no shown document takes `pending.layout` at its navigation's start (pre-sized).
+ */
+export interface Geometry {
+  /** the committed document's; 'below' for a view with no document */
+  layout: Layout
+  /** the next document's, from the main frame's navigation start (its generation and the instance it was meant for) */
+  pending?: { gen: number; instance: string; layout: Layout }
+  /** what the admitted document's hello said; undefined until it speaks */
+  inset?: Inset
+  /** enter-html-full-screen .. leave-html-full-screen */
+  htmlFullscreen: boolean
+}
+
+/**
+ * An unload of this tab (writer: tabs.ts's unload section and views.ts's act; A3.8 #39-#45). `closing` from the act
+ * until `destroyed` or the page's refusal; `unsure` once `unloadActMs` passed with neither (main then ends the close
+ * itself); `unloaded` from `destroyed`; `reopening` from the load that shows it again until that document lifts.
+ */
+export interface TabUnload {
+  phase: 'closing' | 'unsure' | 'unloaded' | 'reopening'
+  reason: UnloadReason
+  /** the act's start */
+  at: number
+  /** the document it closed (`doc.commits`) */
+  commit: number
+  /** the bound origin then: a reopen on another origin has no saved camera (camera storage is per origin) */
+  origin: string
+  /** `destroyed`: unloadedForMs runs from here to the activation (A3.8 #45) */
+  unloadedAt?: number
+  /** the activation that reopens it - one queued during the close keeps its own time (A3.8 r2 #4) */
+  activatedAt?: number
+}
 
 export interface Tab {
   /** main's opaque id, `t` and a counter, stable for the tab's life (A2.14 #10); `home` and `settings` for those */
@@ -136,6 +185,18 @@ export interface Tab {
   unattributed?: number
   /** documentless, with a view that holds nothing worth keeping (a rebind): loads when next shown (v1.13 r2 #5) */
   needsLoad?: boolean
+
+  // ---- A3 (app 0.2; A3.8 #24, #39-#44) ----
+  /** the tab's geometry (layout.ts alone) */
+  geo: Geometry
+  /** an unload under way or done (the unloading stream) */
+  unload?: TabUnload
+  /** the commit whose page refused an unload: that document is never asked again (A3.8 #42) */
+  unloadRefused?: number
+  /** `audio-state-changed`, `devtools-opened` / `-closed`, a main-frame navigation under way (views.ts): an unload's refusals (A3.8 #40) */
+  audible?: boolean
+  devtools?: boolean
+  loading?: boolean
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -143,7 +204,9 @@ export interface Tab {
 
 /**
  * Every way the app replaces a canvas's live document (v1.12 r1 #3), as a value the caller builds once and the
- * operation copies at its start (v1.14 r3 #2): nothing read later changes what it does. A3 adds `{ kind: 'unload' }`.
+ * operation copies at its start (v1.14 r3 #2): nothing read later changes what it does. A3 adds `{ kind: 'unload' }`
+ * (A3.8 #39): the same one-at-a-time operation, its own admission and a silent refusal - no sheet, no pill, no tab
+ * brought forward, no window shown.
  */
 export type GuardAction =
   /** ⌘W, the strip's close, Close Tab: `close({ waitForBeforeUnload: true })` */
@@ -160,6 +223,8 @@ export type GuardAction =
   | { kind: 'tryAgain' }
   /** ⌘L or a same-origin `window.open`: `loadURL(url)`, the link already rebuilt on the bound origin and checked (A2.7) */
   | { kind: 'load'; url: string }
+  /** A3: memory.ts under pressure (A3.8 #39, #41): `close({ waitForBeforeUnload: true })`, the tab kept, unloaded at `destroyed` */
+  | { kind: 'unload'; reason: UnloadReason }
 
 /** The two actions `guardAll` takes. */
 export type GuardAllAction = Extract<GuardAction, { kind: 'quit' | 'update' }>
@@ -170,8 +235,11 @@ export type GuardAllAction = Extract<GuardAction, { kind: 'quit' | 'update' }>
  */
 export interface GuardConsent { tab: string; commit: number; doc?: string; action: GuardAction }
 
-/** One replacement in flight: what it bound at its start (v1.13 r2 #2, v1.14 r3 #1, #2). */
-export interface GuardOperation { commit: number; doc?: string; action: GuardAction; consent?: GuardConsent }
+/**
+ * One replacement in flight: what it bound at its start (v1.13 r2 #2, v1.14 r3 #1, #2). `done` settles when the
+ * operation ends, after `Tab.replacing` is cleared (A3.8 #39): what waits on an unload is judged on what it left.
+ */
+export interface GuardOperation { commit: number; doc?: string; action: GuardAction; consent?: GuardConsent; done: Promise<void> }
 
 /** Why a sheet names a tab (A2.14 #15, v1.12 r1 #2, v1.13 r2 #1). */
 export type SheetWhy =
@@ -222,6 +290,8 @@ export interface TabsPorts {
   savedPath?(ws: string, origin: string | null): string | undefined
   /** a journal line (test builds) */
   log?(topic: string, data: unknown): void
+  /** A3: a record for the recorder (`recorder.event`; app.jsonl only with the recorder on) - the unload's and the reopen's (A3.8 #45) */
+  record?<K extends AppKind>(kind: K, who: Tab | TabIdent, body: Omit<AppBody<K>, keyof TabIdent>): void
 }
 
 let ports: TabsPorts | null = null
@@ -242,7 +312,7 @@ const closed = new Set<string>()
 const closeKey = (ws: string, instance: string) => `${ws}|${instance}`
 
 export function blankTab(id: string, kind: TabKind, name: string, extra: Partial<Tab> = {}): Tab {
-  return { id, kind, name, view: 'none', reports: { safety: 'unknown' }, crash: { count: 0, latched: false }, retained: false, open: true, path: '/', ...extra }
+  return { id, kind, name, view: 'none', reports: { safety: 'unknown' }, crash: { count: 0, latched: false }, retained: false, open: true, path: '/', geo: { layout: 'below', htmlFullscreen: false }, ...extra }
 }
 
 /** Test seam: an empty model with Home. */
@@ -279,7 +349,7 @@ export const liveDoc = (t: Tab): boolean => t.kind === 'local' && t.view === 'li
  * reload), holding no live document, and with no view yet or a view a rebind left documentless.
  */
 export const wantsLoad = (t: Tab): boolean => t.kind === 'local' && t.reg?.state === 'ready' && !!t.reg.origin && !t.crash.latched
-  && t.view !== 'crashed' && !liveDoc(t) && !t.crash.inFlight && (t.view === 'none' || !!t.needsLoad)
+  && t.view !== 'crashed' && !liveDoc(t) && !t.crash.inFlight && (t.view === 'none' || t.view === 'unloaded' || !!t.needsLoad)
 
 /** The current document's record is fresh: trusted now, and heard since its commit. */
 export const fresh = (t: Tab): boolean => t.reports.safety === 'fresh' && !!t.doc?.trusted
@@ -302,6 +372,7 @@ export function displayState(t: Tab, active: boolean): DisplayState {
   if (t.reg!.state === 'starting') return 'starting'
   if (t.view === 'crashed' || (t.crash.latched && !t.doc?.lifted)) return 'crashed'
   if (t.fail) return t.fail.why === 'unreachable' ? 'unreachable' : 'gone'
+  if (t.view === 'unloaded') return 'unloaded'
   if (t.view === 'none') return 'none'
   return active ? 'live' : 'hidden'
 }
@@ -551,6 +622,7 @@ export function onRegistry(ev: RegistryEvent): void {
     t.reg!.state = 'gone'
     t.goneAt = now; t.regAt = now
     revoke(t)
+    commitLayout(t, { kind: 'gone' })
     p.log?.('registry', { tab: t.id, gone: ev.why })
     p.changed(); p.save()
     return
@@ -601,6 +673,7 @@ function rebind(t: Tab, e: RegistryEntry): void {
   revoke(t)
   if (t.doc) t.doc.trusted = false
   t.reg = factsOf(e)
+  commitLayout(t, { kind: 'rebind' })
   t.name = e.name || t.name
   t.root = e.root
   t.regAt = p.now()
@@ -656,7 +729,7 @@ function ensureDoc(t: Tab): TabDoc {
  * document's URL as Chromium committed it, hash included - the tab's path follows it, so a tab restored on
  * `/#/b/board` keeps its board in tabs.json until the page itself moves.
  */
-export function onCommit(t: Tab, c: { gen: number; url: string; href?: string; attributed: boolean; admitted: string | null }): void {
+export function onCommit(t: Tab, c: { gen: number; url: string; href?: string; attributed: boolean; admitted: string | null; instance?: string }): void {
   const p = P()
   const d = ensureDoc(t)
   d.commits += 1
@@ -685,11 +758,12 @@ export function onCommit(t: Tab, c: { gen: number; url: string; href?: string; a
     t.retained = false
     t.unattributed = (t.unattributed ?? 0) + 1
   }
+  commitLayout(t, { kind: 'commit', gen: c.gen, attributed: c.attributed, ...(c.instance ? { instance: c.instance } : {}) })
   p.log?.('commit', { tab: t.id, gen: c.gen, trusted: d.trusted, commits: d.commits })
 }
 
 /** A failure of the current attempt (A2.14 #8): whatever is committed loses trust; the view goes beneath its tab page. */
-export function onFail(t: Tab, f: { why: FailWhy; code: number; errorPage: boolean }): void {
+export function onFail(t: Tab, f: { why: FailWhy; code: number; errorPage: boolean; gen?: number }): void {
   const p = P()
   const d = ensureDoc(t)
   d.commits += 1
@@ -701,6 +775,7 @@ export function onFail(t: Tab, f: { why: FailWhy; code: number; errorPage: boole
   // the reload after a crash failed: the view has a renderer again, holding no document - the failure is what
   // the tab shows now, not "Reloading after a crash" (its crash record stays: a latch still outranks it)
   if (t.view === 'crashed' && t.crash.inFlight) t.view = 'live'
+  commitLayout(t, { kind: 'fail', gen: f.gen ?? d.gen, errorPage: f.errorPage })
   p.log?.('fail', { tab: t.id, why: f.why, code: f.code, errorPage: f.errorPage, retained: t.retained })
 }
 
@@ -716,6 +791,7 @@ export function onDocumentGone(t: Tab, view: TabViewState): void {
   t.retained = false
   t.hung = false
   t.reports = { safety: 'unknown' }
+  commitLayout(t, { kind: view === 'crashed' ? 'renderer-gone' : 'view-gone' })
 }
 
 /** A hash or pushState navigation inside the trusted document: the path follows the page (a board change). */
@@ -736,7 +812,7 @@ function pathOf(url: string): string | null {
 }
 
 /** A report from the admitted document (the bridge checked its `doc`, its trust and every field). */
-export function onReport(tabId: string, doc: string, r: { safety?: Safety; busy?: Busy; theme?: Theme; menu?: MenuItem[] }): void {
+export function onReport(tabId: string, doc: string, r: { safety?: Safety; busy?: Busy; theme?: Theme; menu?: MenuItem[]; hello?: Hello }): void {
   const t = tabs.get(tabId)
   if (!t?.doc || !doc || t.doc.doc !== doc) return
   const p = P()
@@ -749,6 +825,12 @@ export function onReport(tabId: string, doc: string, r: { safety?: Safety; busy?
     p.changed()
   }
   if (!t.doc.trusted) return
+  if (r.hello && !t.reports.hello) {
+    // this document's hello, accepted once (A3): its inset is the layout's (A3.8 #24), its page the recorder's identity
+    t.reports.hello = { ...r.hello }
+    commitLayout(t, { kind: 'hello', inset: r.hello.inset === 44 ? 44 : 0 })
+    onDocHello(t)
+  }
   if (r.busy) {
     // busy is any reason, unsaved any of the first five: a message where they disagree is refused (A2.14 #18)
     if (r.busy.unsaved !== r.busy.why.some((w) => (UNSAVED_WHY as readonly string[]).includes(w)) || r.busy.busy !== r.busy.why.length > 0) return
@@ -842,8 +924,25 @@ export function reopenTab(id: string): void {
 // ---------------------------------------------------------------------------------------------------------------
 // The guard
 
-const sameAction = (a: GuardAction, b: GuardAction): boolean => a.kind === b.kind && (a.kind !== 'load' || (b.kind === 'load' && a.url === b.url))
-const copyAction = (a: GuardAction): GuardAction => a.kind === 'load' ? { kind: 'load', url: a.url } : { kind: a.kind }
+const sameAction = (a: GuardAction, b: GuardAction): boolean => a.kind === b.kind
+  && (a.kind !== 'load' || (b.kind === 'load' && a.url === b.url)) && (a.kind !== 'unload' || (b.kind === 'unload' && a.reason === b.reason))
+const copyAction = (a: GuardAction): GuardAction => a.kind === 'load' ? { kind: 'load', url: a.url } : a.kind === 'unload' ? { kind: 'unload', reason: a.reason } : { kind: a.kind }
+
+/** `done`'s resolvers, apart from the frozen record */
+const ends = new WeakMap<GuardOperation, () => void>()
+/** One operation, bound now: its document and action, and a `done` settled by `endOperation` (A3.8 #39). */
+function newOperation(t: Tab, action: GuardAction): GuardOperation {
+  let end!: () => void
+  const op: GuardOperation = { commit: t.doc?.commits ?? 0, doc: t.doc?.doc, action, done: new Promise<void>((r) => { end = r }) }
+  ends.set(op, end)
+  return op
+}
+/** The operation ended: `Tab.replacing` cleared, then `done` settled - a waiter judges what is left. */
+function endOperation(t: Tab, op: GuardOperation): void {
+  if (t.replacing === op) t.replacing = undefined
+  ends.get(op)?.()
+  ends.delete(op)
+}
 
 /** Whether the guard runs at all: a live document that was shown or admitted (v1.12 r1 #3's "not guarded" list). */
 export const guarded = (t: Tab): boolean => liveDoc(t)
@@ -889,11 +988,15 @@ function refuse(t: Tab, a: GuardAction, unsaved: boolean): GuardAnswer {
 /** One serialized operation per tab: the guard and its act (v1.13 r2 #2, v1.14 r3 #1). */
 export async function guard(tab: Tab, action: GuardAction): Promise<GuardAnswer> {
   const p = P()
+  // an unload under way is a close already asked of Chromium, which cannot be cancelled: any other action waits for
+  // its end (destroyed, or the page's refusal), then is judged on what is left (A3.8 #42, r1 #2)
+  while (action.kind !== 'unload' && tab.replacing?.action.kind === 'unload') await tab.replacing.done
   if (tab.replacing) { p.log?.('guard', { tab: tab.id, action: action.kind, answer: 'refused', busy: true }); return 'refused' }
   const a = copyAction(action)
-  const op: GuardOperation = { commit: tab.doc?.commits ?? 0, doc: tab.doc?.doc, action: a }
+  const op = newOperation(tab, a)
   tab.replacing = op
   try {
+    if (a.kind === 'unload') return await unloadOp(tab, op, a)
     if (!guarded(tab)) {
       p.log?.('guard', { tab: tab.id, action: a.kind, unguarded: true })
       return await p.act(tab, a)
@@ -911,20 +1014,38 @@ export async function guard(tab: Tab, action: GuardAction): Promise<GuardAnswer>
     if (r === 'refused') return refuse(tab, a, true)
     return r
   } finally {
-    if (tab.replacing === op) tab.replacing = undefined
+    endOperation(tab, op)
     p.changed()
   }
 }
 
-/** Every canvas tab, for a quit or an update: one operation each, one shared step 1 and sheet; one refusal stops the whole. */
+/**
+ * Every canvas tab, for a quit or an update: one operation each, one shared step 1 and sheet; one refusal stops the
+ * whole. From its start no unload is admitted (`sweeping`, cleared when it is refused); unloads already under way
+ * are closes the quit wanted - waited for (each ends within `unloadActMs` and a task), never a reason to refuse
+ * (A3.8 #42).
+ */
 export async function guardAll(action: GuardAllAction): Promise<GuardAnswer> {
+  sweeping = true
+  let r: GuardAnswer = 'refused'
+  try {
+    const unloading = allTabs().flatMap((t) => (t.replacing?.action.kind === 'unload' ? [t.replacing.done] : []))
+    if (unloading.length) await Promise.all(unloading)
+    r = await sweep(action)
+    return r
+  } finally {
+    if (r !== 'done') { sweeping = false; sweepRefused() }
+  }
+}
+
+async function sweep(action: GuardAllAction): Promise<GuardAnswer> {
   const p = P()
   const a = copyAction(action) as GuardAllAction
   const list = ordered(allTabs()).filter((t) => t.kind === 'local' && guarded(t))
   const busy = allTabs().find((t) => t.replacing)
   if (busy) { p.log?.('guard', { all: a.kind, answer: 'refused', busy: busy.id }); if (!isActive(busy)) activate(busy.id); p.forward?.(); return 'refused' }
   const ops = new Map<Tab, GuardOperation>()
-  for (const t of list) { const op: GuardOperation = { commit: t.doc?.commits ?? 0, doc: t.doc?.doc, action: a }; ops.set(t, op); t.replacing = op }
+  for (const t of list) { const op = newOperation(t, a); ops.set(t, op); t.replacing = op }
   try {
     const holder = list.find(freshUnsaved)
     if (holder) return refuse(holder, a, true)
@@ -954,7 +1075,7 @@ export async function guardAll(action: GuardAllAction): Promise<GuardAnswer> {
     p.log?.('guard', { all: a.kind, answer: 'done', tabs: list.map((t) => t.id) })
     return 'done'
   } finally {
-    for (const [t, op] of ops) if (t.replacing === op) t.replacing = undefined
+    for (const [t, op] of ops) endOperation(t, op)
     p.changed()
   }
 }
@@ -967,7 +1088,7 @@ export async function closeView(tab: Tab): Promise<'closed' | 'refused'> {
 // ---------------------------------------------------------------------------------------------------------------
 // The sheet's words (main's words only: the page's text never reaches a native sheet, A2.14 #18)
 
-const VERB: Record<GuardAction['kind'], string> = { close: 'Close', quit: 'Quit', update: 'Restart', reload: 'Reload', forceReload: 'Reload', tryAgain: 'Reload', load: 'Open' }
+const VERB: Record<GuardAction['kind'], string> = { close: 'Close', quit: 'Quit', update: 'Restart', reload: 'Reload', forceReload: 'Reload', tryAgain: 'Reload', load: 'Open', unload: 'Unload' }   // an unload never asks: its word is never shown
 
 function words(why: readonly Why[]): string {
   const w = why.map((x) => WHY_WORDS[x]).filter((x): x is string => !!x)
@@ -1011,3 +1132,54 @@ export const sheetConfirmed = (response: number): boolean => response === 1
 
 /** The theme a tab and its page wear right now. */
 export const tabDark = (t: Tab | undefined): boolean => darkOf(t, P().appDark())
+
+// ---------------------------------------------------------------------------------------------------------------
+// Unloading (A2.6, A3.8 #39-#45): the unloading stream's section. FROZEN signatures; the bodies below admit
+// nothing, so app 0.2's base keeps every hidden tab loaded, as app 0.1 does.
+
+/**
+ * Why a tab is not a candidate (A3.8 #40), the first that holds, in this order: `not-canvas` (Home, Settings, a
+ * remote tab), `active` (also with the window hidden or minimised), `no-document` (no live document that lifted, or
+ * an unload already), `replacing` (an operation in flight that is not `own`), `sweeping` (a quit or an update),
+ * `no-bridge` (0.27.0: never reports, never unloaded), `unknown` (not heard since its commit), `stale` (safety
+ * stale, untrusted, or its instance not `ready`), `unsaved`, `busy` (the last mv:busy is not exactly
+ * `{ busy: false, unsaved: false }`), `crash` (latched, a reload in flight or one waiting to be shown), `hung`,
+ * `audible`, `devtools`, `loading` (a navigation under way), `refused-before` (this commit refused once), `recent`
+ * (hidden less than `unloadMinHiddenMs`).
+ */
+export type UnloadRefusal = 'not-canvas' | 'active' | 'no-document' | 'replacing' | 'sweeping' | 'no-bridge' | 'unknown'
+  | 'stale' | 'unsaved' | 'busy' | 'crash' | 'hung' | 'audible' | 'devtools' | 'loading' | 'refused-before' | 'recent'
+
+/** A quit or an update has begun: no unload is admitted (cleared when it is refused). */
+let sweeping = false
+export const isSweeping = (): boolean => sweeping
+
+/**
+ * The unload's admission (A3.8 #40, r1 #1): null when `t` is a candidate now. `own` is the unload's own operation:
+ * the act's recheck passes it (the guard has already installed it as `Tab.replacing`), and also requires
+ * `sameDoc(t, own)`; the memory tick passes none, so a tab with any operation is never a candidate.
+ */
+export function unloadRefusal(t: Tab, now: number, own?: GuardOperation): UnloadRefusal | null {
+  void now; void own
+  if (t.kind !== 'local') return 'not-canvas'
+  return 'unknown'   // A3 unloading stream: #40's rules, in the order above
+}
+
+/** The unload's operation (A3.8 #39): admission read again in the act's turn, then `act(tab, { kind: 'unload' })`; a refusal is silent. */
+async function unloadOp(tab: Tab, op: GuardOperation, a: Extract<GuardAction, { kind: 'unload' }>): Promise<GuardAnswer> {
+  const why = unloadRefusal(tab, P().now(), op) ?? (sameDoc(tab, op) ? null : 'no-document')
+  P().log?.('unload', { tab: tab.id, reason: a.reason, refused: why ?? 'not built' })
+  return 'refused'   // A3 unloading stream: the act, `unloadRefused` on the page's refusal (A3.8 #39, #42)
+}
+
+/** views.ts at `destroyed` of an unload's close (forgetCanvas): the tab unloaded, its view gone; the reopen is decided last, in a task (A3.8 #42). */
+export function onUnloaded(t: Tab): void {
+  onDocumentGone(t, 'unloaded')
+  P().changed()   // A3 unloading stream: phase, unloadedAt, the reopen's task
+}
+
+/** The first accepted hello of a document: a reopened one writes its `reopen` record now (A3.8 #45). */
+function onDocHello(t: Tab): void { void t }   // A3 unloading stream
+
+/** A quit or an update was refused: the active unloaded tab reopens now (A3.8 #42). */
+function sweepRefused(): void {}   // A3 unloading stream

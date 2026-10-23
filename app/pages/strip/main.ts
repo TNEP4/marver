@@ -46,6 +46,7 @@ const LAUNCH_PILL_MS = 1000
 
 const WORDS: Partial<Record<TabView['state'], string>> = {
   gone: 'stopped', unverified: 'not a Marver canvas', starting: 'starting', unreachable: 'can\'t be reached', crashed: 'crashed',
+  unloaded: 'unloaded',
 }
 /** What the eye reads on a tab: an unverified one by its address (A2.13), never a name it has not proved. */
 const shownName = (t: TabView) => (t.state === 'unverified' ? hostOf(t.link) ?? t.name : t.name)

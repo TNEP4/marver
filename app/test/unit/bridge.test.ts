@@ -9,8 +9,8 @@ import { appWebPreferences, canvasWebPreferences, peopleLink, refuseDownload } f
 import { SENDERS } from '../../src/shared/channels.ts'
 
 describe('canvas reports', () => {
-  it('hello: version, board, page within bounds; unknown fields stripped', () => {
-    expect(checkHello({ version: '0.27.1', board: 'main', page: 'PAGE_0123456789', inset: 44 })).toEqual({ version: '0.27.1', board: 'main', page: 'PAGE_0123456789' })
+  it('hello: version, board, page within bounds (and A3\'s inset, a3-contracts.test.ts); unknown fields stripped', () => {
+    expect(checkHello({ version: '0.27.1', board: 'main', page: 'PAGE_0123456789', top: 44 })).toEqual({ version: '0.27.1', board: 'main', page: 'PAGE_0123456789' })
     expect(checkHello({ version: '0.27.1', board: null, page: 'abcdefgh' })).toEqual({ version: '0.27.1', board: null, page: 'abcdefgh' })
     expect(checkHello({ version: '0.27.1 beta', board: null, page: 'abcdefgh' })).toBe(null)
     expect(checkHello({ version: 'x'.repeat(33), board: null, page: 'abcdefgh' })).toBe(null)

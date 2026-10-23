@@ -381,6 +381,8 @@ export interface DetailsInput {
   app: string; electron: string; chrome: string; marver?: string
   macos: string; model?: string; memGB: number
   pressure?: number
+  /** A3: the board's frames and how many sleep, from the shell's last `board` (recorder.ts `boardOf`, A3.8 #9) */
+  board?: { frames: number; asleep: number }
 }
 
 const hhmmss = (ms: number) => { const d = new Date(ms); return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':') }
@@ -395,5 +397,6 @@ export function copyDetails(t: Tab, i: DetailsInput): string {
     `crashes ${c.count}${c.times?.length ? ` at ${c.times.map(hhmmss).join(', ')}` : ''}`,
   ]
   if (i.pressure !== undefined && Number.isInteger(i.pressure)) lines.push(`memory pressure ${i.pressure}`)
+  if (i.board && Number.isInteger(i.board.frames) && Number.isInteger(i.board.asleep)) lines.push(`frames ${i.board.frames} · ${i.board.asleep} asleep`)
   return lines.join('\n') + '\n'
 }

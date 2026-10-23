@@ -54,12 +54,23 @@ turns nothing on. Tests and the smoke always set it, with `MARVER_HOME` and `MAR
 The guard (first import) - test spies - Marver Dev's name and userData - `MARVER_APP_USER_DATA` - the lock -
 `ensureHome()` - crash dumps under `~/.marver/perf/crashpad` and `crashReporter.start` - the `marver-app` scheme -
 the files' first read - at ready: the theme and the files' watch, `persist:app`, the navigation hook (before any
-view), the registry, the bridge, then `views.ts` - the window with the opaque strip and its pages, the tabs restored
+view), the registry, the bridge (`mv:doc` answering each document's inset from layout.ts), the recorder (A3: its
+writer, the machine profile, the one sampler), then `views.ts` - the window with the opaque strip and its pages, the tabs restored
 from `tabs.json` (only the active one loads; each canvas view on its workspace's partition, its proof dispatcher
-attached before its first load), the menu, the quit through `guardAll` - then Home's and Settings' channels, and last
+attached before its first load), the menu, the quit through `guardAll` - then Home's and Settings' channels, the
+unloading policy (`memory.ts`) and the white-out detector (`whiteout.ts`), and last
 the error policy (`errors.ts`): from there an uncaught exception or rejection in main is a line in
 `~/.marver/perf/app.jsonl` and the app goes on, never Electron's modal box over pages that may hold unsaved work
 (before it, a startup that fails keeps Electron's box: no page holds anything yet). Each module after the guard is its stream's; its header says what is still to build.
+
+A3's contracts (spec 28 A3.8 #53) are frozen on `a3-base` before its five streams split: `src/shared/app-api.ts`
+(`mv:doc`'s inset, `mv:present` / `mv:presented`, `mv:perf` / `mv:perf-ask`), `src/shared/app-perf.ts` (app.jsonl's
+envelope and kinds, the one sampler's `Sample`, `ProcSample`, `Sampler`), `tabs.ts` (`Tab.geo`, the `unload` guard
+action, `GuardOperation.done`, `unloadRefusal`), `channels.ts` (`unloaded`, the tab page's `reopening`), the
+recorder's ports (`recorder.ts`), the journal topics (`testing/index.ts` `JournalTopics`) and `timings.ts`. The new
+modules - `procs`, `recorder`, `pressure`, `machine`, `perflog`, `flashes`, `whiteout`, `memory`, `layout`,
+`present`, `cover` - start as their exported signatures with inert bodies: nothing is sampled, written, unloaded or
+uncovered until a stream fills its own, so app 0.2's base behaves as app 0.1.
 
 ## Tests (A2.10, A2.14 #27)
 

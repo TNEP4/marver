@@ -11,8 +11,12 @@
 /** The kind `bridge.ts` records for each webContents it created. */
 export type PageKind = 'strip' | 'home' | 'settings' | 'tabpage' | 'canvas'
 
-/** A2.4's display state (`unloaded` and `reopening` are A3's). `displayState(tab)` in tabs.ts computes it. */
-export type DisplayState = 'none' | 'live' | 'hidden' | 'gone' | 'starting' | 'unverified' | 'unreachable' | 'crashed'
+/**
+ * A2.4's display state. `displayState(tab)` in tabs.ts computes it. `unloaded` is A3's (A3.8 #43, #46): a hidden
+ * tab whose document main unloaded under memory pressure - the strip and Home dim its logo and add "unloaded" to its
+ * name; shown again it reopens under its `reopening` tab page.
+ */
+export type DisplayState = 'none' | 'live' | 'hidden' | 'gone' | 'starting' | 'unverified' | 'unreachable' | 'crashed' | 'unloaded'
 
 export interface TabView {
   id: string
@@ -107,6 +111,13 @@ export type TabPageView =
   | TabPageBase & TabPageFailure & { page: 'unverified'; origin: string; host?: string }
   | TabPageBase & TabPageFailure & { page: 'unreachable'; origin: string; reason?: string }
   | TabPageBase & { page: 'crashed'; latched: boolean; reason?: string; crashes?: number }
+  /**
+   * A3 (A3.8 #42, #43): an unloaded tab opening again on its saved path, or an activation queued while its unload's
+   * close is outstanding. `unloadedAt`: the act's start, then the time it unloaded ("Unloaded at 14:02");
+   * `cameraKept`: false when the tab was rebound to another origin while unloaded (camera storage is per origin) -
+   * the page then promises the board alone.
+   */
+  | TabPageBase & { page: 'reopening'; unloadedAt: number; cameraKept: boolean }
 export type TabPageAction = 'retry' | 'reload' | 'copy-start' | 'copy-details' | 'reveal' | 'open-browser' | 'close'
 
 /**

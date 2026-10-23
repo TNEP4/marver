@@ -53,6 +53,22 @@ export interface FakeOptions {
   log?: string
   /** take a request first; return true when it was answered */
   onRequest?: (req: IncomingMessage, res: ServerResponse) => boolean
+
+  // ---- A3 (spec 28 A3.8 #34, #47-#50): FROZEN names, served once the native stream builds them ----
+  /**
+   * ground mode (the capture matrix, A3.8 #34): the top 44 px painted the shell's ground with two tags - a document
+   * tag (a saturated colour unique to the load, chosen through its URL) and a size tag at `innerWidth - 260` - and
+   * the content the document tag at half luminance; the page also speaks the 0.27.2 contract (inset, present)
+   */
+  ground?: boolean
+  /** the page holds this much memory (MB) once loaded: the unloading and budget cases */
+  ballastMB?: number
+  /** the page draws this many GPU canvases (WebGL), held: GPU-side ballast */
+  gpuBallast?: number
+  /** the page burns CPU while hidden: the hidden-tab CPU case's canvas renderer (reported, never gated) */
+  cpuBallast?: boolean
+  /** the body painted this colour (hex), unlike its view's ground: the painted-launch budget's sentinel (A3.8 #50) */
+  sentinel?: string
 }
 
 export interface LoggedRequest { t: number; method: string; path: string; headers: Record<string, string | string[] | undefined> }

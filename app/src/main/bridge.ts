@@ -23,6 +23,18 @@
  *   main also sends it `mv:app-state untrusted` (A2.14 #13), so the shell stops every microphone track;
  * - main's messages to a canvas carry the admitted `doc`, so a late one never reaches a later document.
  *
+ * **A3** (app 0.2; A3.8 #10, #26, #27), frozen before its streams split and wired here:
+ * - `mv:doc` also answers `inset` (`insetFor(tabId)`, layout.ts's `docInset`), and its sender check is "a top-level
+ *   frame of a registered canvas webContents": at document start after a frame swap main may not yet have handled
+ *   the commit, so `wc.mainFrame` can still be the old frame. A wrong 0 is safe;
+ * - `mv:hello`'s `inset` is 0 or 44 when present, else the message is refused;
+ * - `mv:perf` is accepted like the reports (a canvas main frame, the admitted `doc`, trusted, on the canvas origin),
+ *   checked against `PERF_BOUNDS` (unknown fields stripped, a value past its bound refused) and rate limited per
+ *   webContents (30 a second, a burst of 64; drops counted), then handed to `onPerf` - never stored: it is about
+ *   now. `perfAsk` sends main's asks to the admitted, trusted document;
+ * - `mv:presented` is accepted the same way and handed to `onPresented`; `present` sends `mv:present` only to the
+ *   document named, admitted and trusted. Which epoch counts is present.ts's.
+ *
  * **App pages** (A2.5, A2.14 #19): a channel is accepted only from the kinds `SENDERS` lists (src/shared/
  * channels.ts), from that webContents' main frame, while its frame shows the page's own pinned document
  * (`marver-app://<kind>/`), with every field checked here; `send` reaches a page only once it said `app:ready`,
@@ -33,7 +45,11 @@
  */
 import { randomBytes } from 'node:crypto'
 import { ipcMain, webFrameMain, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents, type WebFrameMain } from 'electron'
-import { APP_MENU_IDS, BOUNDS, CANVAS_CHANNELS, UNSAVED_WHY, WHY, type AppState, type Busy, type DocAnswer, type Hello, type MenuItem, type Theme, type Why } from '../../../src/shared/app-api.ts'
+import {
+  APP_MENU_IDS, BOUNDS, CANVAS_CHANNELS, PERF_BOUNDS, UNSAVED_WHY, WHY,
+  type AppState, type Busy, type DocAnswer, type Hello, type Inset, type MenuItem, type PerfAsk, type PerfCam, type PerfMsg, type PerfSize,
+  type Present, type Presented, type Theme, type Why,
+} from '../../../src/shared/app-api.ts'
 import { CH, INVOKES as INVOKE_LIST, SENDERS, type PageKind } from '../shared/channels.ts'
 import { mainFrameOf, safely } from './frames.ts'
 import { adapterFor, attachNav, type NavEvent } from './nav.ts'
@@ -80,6 +96,24 @@ export interface Bridge {
   onReady(fn: (ctx: PageCtx) => void): () => void
   /** a snapshot to every ready page of a kind, or to one webContents; false when nothing was sent */
   send(target: PageKind | WebContents, channel: string, payload: unknown): boolean
+
+  // ---- A3 (A3.8 #10, #27) ----
+  /** an accepted `mv:perf` from a tab's admitted, trusted document: checked, stripped, within its rate - never stored */
+  onPerf(fn: (tabId: string, doc: string, msg: PerfMsg) => void): () => void
+  /** `mv:perf-ask` to a tab's admitted, trusted document, stamped with its `doc`; false when there is none */
+  perfAsk(tabId: string, ask: PerfAsk): boolean
+  /** an accepted `mv:presented` from a tab's admitted, trusted document */
+  onPresented(fn: (tabId: string, doc: string, r: Presented) => void): () => void
+  /** `mv:present` to the tab's document `doc`, only while it is the admitted, trusted one; false otherwise (the next compose retries) */
+  present(tabId: string, doc: string, r: Present): boolean
+  /** `mv:perf` so far: accepted, refused by a check, dropped by the rate limit */
+  perfCounts(): { accepted: number; refused: number; dropped: number }
+}
+
+/** What the bridge asks of the rest of main (main.ts passes them at install). */
+export interface BridgeOptions {
+  /** `mv:doc`'s inset for the tab's document now committing (layout.ts `docInset`); 0 without it */
+  insetFor?(tabId: string): Inset
 }
 
 // ---- payload checks (pure) -----------------------------------------------------------------------------------
@@ -95,7 +129,9 @@ export function checkHello(p: unknown): Hello | null {
   if (!text(p.version, BOUNDS.version, 1) || !BOUNDS.versionChars.test(p.version)) return null
   if (p.board !== null && !text(p.board, BOUNDS.board)) return null
   if (typeof p.page !== 'string' || !BOUNDS.page.test(p.page)) return null
-  return { version: p.version, board: p.board as string | null, page: p.page }
+  // the inset the shell applied (A3.8 #26): 0 or 44 when present, absent reads 0
+  if (p.inset !== undefined && p.inset !== 0 && p.inset !== 44) return null
+  return { version: p.version, board: p.board as string | null, page: p.page, ...(p.inset !== undefined ? { inset: p.inset as Inset } : {}) }
 }
 export function checkTheme(p: unknown): Theme | null {
   return obj(p) && typeof p.dark === 'boolean' ? { dark: p.dark } : null
@@ -123,6 +159,81 @@ export function checkMenu(p: unknown): MenuItem[] | null {
   return out
 }
 const CANVAS_CHECKS = { hello: checkHello, theme: checkTheme, busy: checkBusy, menu: checkMenu } as const
+
+// ---- A3's canvas messages (pure; A3.8 #10, #27) -------------------------------------------------------------
+
+const whole = (v: unknown, max: number): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= max
+const within = (v: unknown, max: number): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= max
+/** a camera: world offsets finite (they may be negative), a positive scale */
+const checkCam = (v: unknown): PerfCam | null | undefined => {
+  if (v === null) return null
+  if (!obj(v) || typeof v.x !== 'number' || typeof v.y !== 'number' || typeof v.s !== 'number') return undefined
+  if (!Number.isFinite(v.x) || !Number.isFinite(v.y) || Math.abs(v.x) > 1e9 || Math.abs(v.y) > 1e9 || !(v.s > 0 && v.s <= 1e4)) return undefined
+  return { x: v.x, y: v.y, s: v.s }
+}
+const checkSize = (v: unknown): PerfSize | null => (obj(v) && within(v.w, PERF_BOUNDS.coord) && within(v.h, PERF_BOUNDS.coord) ? { w: v.w, h: v.h } : null)
+
+/** An `mv:perf` payload, checked and stripped (A3.8 #10); null refuses it. */
+export function checkPerf(p: unknown): PerfMsg | null {
+  if (!obj(p)) return null
+  const C = PERF_BOUNDS.counter
+  switch (p.kind) {
+    case 'gesture':
+      if (typeof p.on !== 'boolean' || !whole(p.seq, C)) return null
+      if (p.type !== undefined && p.type !== 'pan' && p.type !== 'zoom' && p.type !== 'layout') return null
+      return { kind: 'gesture', on: p.on, seq: p.seq, ...(p.type !== undefined ? { type: p.type } : {}) }
+    case 'probes': {
+      if (!whole(p.tick, C)) return null
+      const cam = checkCam(p.cam)
+      const view = checkSize(p.view)
+      if (cam === undefined || !view) return null
+      if (p.at === 'before') {
+        if (!Array.isArray(p.points) || p.points.length > PERF_BOUNDS.points) return null
+        const points: [number, number][] = []
+        for (const q of p.points) {
+          if (!Array.isArray(q) || q.length !== 2 || !within(q[0], PERF_BOUNDS.coord) || !within(q[1], PERF_BOUNDS.coord)) return null
+          points.push([q[0], q[1]])
+        }
+        return { kind: 'probes', tick: p.tick, at: 'before', points, cam, view }
+      }
+      if (p.at === 'after') {
+        if (!Array.isArray(p.valid) || p.valid.length > PERF_BOUNDS.points || !p.valid.every((b) => typeof b === 'boolean')) return null
+        return { kind: 'probes', tick: p.tick, at: 'after', valid: [...p.valid] as boolean[], cam, view }
+      }
+      return null
+    }
+    case 'mem':
+      if (!whole(p.tick, C) || !within(p.privateKB, PERF_BOUNDS.kb) || !within(p.heapUsedKB, PERF_BOUNDS.kb) || !within(p.heapTotalKB, PERF_BOUNDS.kb)) return null
+      return { kind: 'mem', tick: p.tick, privateKB: p.privateKB, heapUsedKB: p.heapUsedKB, heapTotalKB: p.heapTotalKB }
+    case 'shown':
+      return whole(p.tick, C) ? { kind: 'shown', tick: p.tick } : null
+    case 'board':
+      return whole(p.frames, PERF_BOUNDS.frames) && whole(p.asleep, PERF_BOUNDS.frames) ? { kind: 'board', frames: p.frames, asleep: p.asleep } : null
+    default:
+      return null
+  }
+}
+
+/** An `mv:presented` payload (A3.8 #27); null refuses it. */
+export function checkPresented(p: unknown): Presented | null {
+  if (!obj(p) || !whole(p.epoch, BOUNDS.epoch) || !within(p.w, BOUNDS.viewport) || !within(p.h, BOUNDS.viewport)) return null
+  return { epoch: p.epoch, w: p.w, h: p.h }
+}
+
+/** A token bucket of `PERF_BOUNDS.burst`, refilled at `perSecond` (pure but for the clock it is given). */
+export function perfBucket(now: number): { take(at: number): boolean } {
+  let tokens: number = PERF_BOUNDS.burst
+  let last = now
+  return {
+    take(at) {
+      tokens = Math.min(PERF_BOUNDS.burst, tokens + Math.max(0, at - last) * PERF_BOUNDS.perSecond / 1000)
+      last = at
+      if (tokens < 1) return false
+      tokens -= 1
+      return true
+    },
+  }
+}
 type Report = keyof typeof CANVAS_CHECKS
 
 const TAB_ID = /^[A-Za-z0-9_-]{1,32}$/
@@ -232,9 +343,13 @@ const trace = (event: string, data: Record<string, unknown>) => { if (__MV_TEST_
 let installed: Bridge | null = null
 
 /** Installs the IPC handlers, at ready, before any view. A second call gives the same bridge. */
-export function installBridge(): Bridge {
+export function installBridge(o: BridgeOptions = {}): Bridge {
   if (installed) return installed
   const reportFns = new Set<(tabId: string, doc: string, r: CanvasReports) => void>()
+  const perfFns = new Set<(tabId: string, doc: string, msg: PerfMsg) => void>()
+  const presentedFns = new Set<(tabId: string, doc: string, r: Presented) => void>()
+  const buckets = new Map<number, ReturnType<typeof perfBucket>>()
+  const perfCount = { accepted: 0, refused: 0, dropped: 0 }
   const readyFns = new Set<(ctx: PageCtx) => void>()
   const handlers = new Map<string, (ctx: PageCtx, payload: unknown) => unknown>()
   const listening = new Set<string>()
@@ -327,14 +442,23 @@ export function installBridge(): Bridge {
   // location.origin at document start, before main may have processed the commit): only a document on the tab's
   // canvas origin takes the flag - an error page of a reload that failed (opaque, 'null') leaves it for the next
   // load, which is still the reload after the crash
+  // A3: it also answers the document's inset (layout's, not trust's: it grants nothing), and the sender is "a top-level
+  // frame of a registered canvas webContents" - at document start after a frame swap, `wc.mainFrame` may still be
+  // the old frame when main has not yet handled the commit (A3.8 #26)
   ipcMain.on(CANVAS_CHANNELS.doc, (e: IpcMainEvent, msg: unknown) => {
     let answer: DocAnswer = { reopen: false }
     try {
       const r = regs.get(e.sender.id)
       const origin = obj(msg) && typeof msg.origin === 'string' ? msg.origin : null
+      const top = !!safely(() => { const f = e.senderFrame; return !!f && !f.isDestroyed() && f.parent === null })
+      const canvas = r?.kind === 'canvas' && !!r.tabId && top
       const own = r?.tabId && reopen.has(r.tabId) ? targetOf(e.sender.id)?.entry.origin : undefined
-      if (r?.kind === 'canvas' && r.tabId && own && origin === own && sameFrame(e.senderFrame, mainFrameOf(e.sender)) && reopen.delete(r.tabId)) answer = { reopen: true }
+      const reopenNow = canvas && !!own && origin === own && reopen.delete(r!.tabId!)
+      let inset: Inset = 0
+      if (canvas) { try { inset = o.insetFor?.(r!.tabId!) === 44 ? 44 : 0 } catch { inset = 0 } }
+      answer = canvas ? { reopen: reopenNow, inset } : { reopen: false }
       if (r?.tabId && reopen.has(r.tabId)) trace('reopen-kept', { wc: e.sender.id, origin })
+      if (canvas) trace('doc', { wc: e.sender.id, tab: r!.tabId, reopen: reopenNow, inset })
     } finally { e.returnValue = answer }
   })
 
@@ -361,6 +485,44 @@ export function installBridge(): Bridge {
       tell(id)
     })
   }
+
+  // A3: the recorder's messages and the presentation answers - the reports' checks, then their own; never stored
+  /** The sender is the tab's admitted, trusted document on its canvas origin: its tab and doc, else why not. */
+  const admittedSender = (e: IpcMainEvent, m: Record<string, unknown> | null): { tabId: string; doc: string } | string => {
+    const id = e.sender.id
+    const r = regs.get(id)
+    if (!r || r.kind !== 'canvas' || !r.tabId) return 'not a canvas'
+    if (!sameFrame(e.senderFrame, mainFrameOf(e.sender))) return 'not the main frame'
+    const rec = docs.get(id)
+    if (!m || typeof m.doc !== 'string' || !rec?.doc || m.doc !== rec.doc) return 'not the admitted document'
+    if (!isTrusted(id)) return 'untrusted'
+    const origin = targetOf(id)?.entry.origin
+    if (!origin || e.senderFrame?.origin !== origin) return 'not the canvas origin'
+    return { tabId: r.tabId, doc: rec.doc }
+  }
+  ipcMain.on(CANVAS_CHANNELS.perf, (e: IpcMainEvent, msg: unknown) => {
+    const id = e.sender.id
+    let b = buckets.get(id)
+    if (!b) { b = perfBucket(Date.now()); buckets.set(id, b) }
+    if (!b.take(Date.now())) { perfCount.dropped += 1; return }
+    const m = obj(msg) ? msg : null
+    const who = admittedSender(e, m)
+    if (typeof who === 'string') { perfCount.refused += 1; trace('refused', { wc: id, ch: 'perf', why: who }); return }
+    const v = checkPerf(m!.p)
+    if (!v) { perfCount.refused += 1; trace('refused', { wc: id, ch: 'perf', why: 'payload' }); return }
+    perfCount.accepted += 1
+    for (const fn of [...perfFns]) { try { fn(who.tabId, who.doc, v) } catch (err) { process.stderr.write(`marver-app: a perf listener threw: ${(err as Error).message}\n`) } }
+  })
+  ipcMain.on(CANVAS_CHANNELS.presented, (e: IpcMainEvent, msg: unknown) => {
+    const id = e.sender.id
+    const m = obj(msg) ? msg : null
+    const who = admittedSender(e, m)
+    if (typeof who === 'string') { trace('refused', { wc: id, ch: 'presented', why: who }); return }
+    const v = checkPresented(m!.p)
+    if (!v) { trace('refused', { wc: id, ch: 'presented', why: 'payload' }); return }
+    trace('accepted', { wc: id, ch: 'presented', epoch: v.epoch })
+    for (const fn of [...presentedFns]) { try { fn(who.tabId, who.doc, v) } catch (err) { process.stderr.write(`marver-app: a presented listener threw: ${(err as Error).message}\n`) } }
+  })
 
   // app pages
   const pageCtx = (e: IpcMainEvent | IpcMainInvokeEvent, channel: string): PageCtx | null => {
@@ -424,6 +586,7 @@ export function installBridge(): Bridge {
         const r = regs.get(id)
         regs.delete(id)
         docs.delete(id)
+        buckets.delete(id)
         if (r?.tabId && tabWc.get(r.tabId) === id) tabWc.delete(r.tabId)
       })
       if (kind !== 'canvas') {
@@ -497,6 +660,23 @@ export function installBridge(): Bridge {
       }
       return sent
     },
+    onPerf(fn) { perfFns.add(fn); return () => { perfFns.delete(fn) } },
+    perfAsk(tabId, ask) {
+      const id = tabWc.get(tabId)
+      const rec = id === undefined ? undefined : docs.get(id)
+      if (id === undefined || !rec?.doc || !isTrusted(id)) return false
+      return sendCanvas(id, CANVAS_CHANNELS.perfAsk, { doc: rec.doc, ...ask })
+    },
+    onPresented(fn) { presentedFns.add(fn); return () => { presentedFns.delete(fn) } },
+    present(tabId, doc, r) {
+      const id = tabWc.get(tabId)
+      const rec = id === undefined ? undefined : docs.get(id)
+      if (id === undefined || !rec?.doc || rec.doc !== doc || !isTrusted(id)) return false
+      const sent = sendCanvas(id, CANVAS_CHANNELS.present, { doc, epoch: r.epoch, w: r.w, h: r.h, frames: r.frames })
+      trace('present', { wc: id, tab: tabId, epoch: r.epoch, sent })
+      return sent
+    },
+    perfCounts: () => ({ ...perfCount }),
   }
   return installed
 }

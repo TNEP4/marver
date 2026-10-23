@@ -14,6 +14,7 @@
  */
 import { app } from 'electron'
 import { serveControl } from './control.ts'
+import type { Geometry, Layout } from '../tabs.ts'
 
 export const SENTINEL = 'mv-test-hook'
 export type Hook = (args: unknown) => unknown
@@ -32,6 +33,22 @@ export function testMode(): boolean {
 export function provide(name: string, fn: Hook): void {
   if (__MV_TEST__ && testMode()) hooks.set(name, fn)
 }
+
+/**
+ * The one ground's journal topics (spec 28 A3.8 #35-#37, #53), FROZEN: the capture harness aligns them with
+ * ScreenCaptureKit's display times (each line's `t` is `process.hrtime.bigint()`, mach_absolute_time on Darwin, as
+ * SCK's `displayTime` is; a control case checks the two line up). `compose` is window.ts's as built, plus the
+ * cover's state and each view's layout; `layout` every `commitLayout` that changed something; `present` every ask,
+ * answer and refusal of a presentation epoch; `resize` a live resize's start and end.
+ */
+export interface JournalTopics {
+  compose: { turn: number; active: string; w: number; h: number; cover: { visible: boolean; color: string }; changes: unknown[]; resizing?: boolean; layouts?: Record<string, Layout> }
+  layout: { tab: string; event: string; from: Geometry; to: Geometry }
+  present: { tab: string; op: 'ask' | 'answer' | 'stale' | 'mismatch' | 'refused' | 'lost' | 'uncover'; epoch: number; doc?: string; w?: number; h?: number; gen?: number }
+  resize: { live: boolean; via: 'will-resize' | 'resized' | 'quiet' }
+}
+/** A journal line of a frozen topic, its shape checked. */
+export function noteTopic<K extends keyof JournalTopics>(topic: K, data: JournalTopics[K]): void { note(topic, data) }
 
 /** A journal line. `turn` advances once per macrotask: lines written in one turn share it. */
 export function note(topic: string, data: unknown): void {

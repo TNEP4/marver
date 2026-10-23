@@ -41,7 +41,7 @@ let answer: { why: Exclude<LinkOpenAnswer, { ok: true }>['why']; sent: string; p
 
 const STATE_WORDS: Record<TabView['state'], string> = {
   none: 'Running', live: 'Running', hidden: 'Running', starting: 'Starting', gone: 'Stopped',
-  unverified: 'Not a Marver canvas', unreachable: 'Can\'t reach', crashed: 'Crashed',
+  unverified: 'Not a Marver canvas', unreachable: 'Can\'t reach', crashed: 'Crashed', unloaded: 'Unloaded',
 }
 const canvases = (): TabView[] => (snap?.tabs ?? []).filter((t) => t.kind === 'local')
 /** What a tab is called here: an unverified one by its address (A2.13), never a name it has not proved. */

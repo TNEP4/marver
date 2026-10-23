@@ -1,5 +1,5 @@
 /**
- * Every duration the app keeps, in one table (spec 28 A2.14 #27). No literal durations elsewhere.
+ * Every duration the app keeps, in one table (spec 28 A2.14 #27, A3.8 #53). No literal durations elsewhere.
  *
  * Tests shorten one only where the rule, not the duration, is under test: in a dev build run with
  * `MARVER_APP_TEST=1`, `MARVER_APP_TIMINGS` (a JSON object of these keys) overrides them at launch. The
@@ -44,6 +44,57 @@ export const T = {
    * (A2.14 v1.13 r2 #4); the view is still removed whenever it is destroyed
    */
   guardActMs: 60_000,
+
+  // ---- A3 (app 0.2): frozen names, starting values (A3.8 #53); retuned only from the recorder's numbers ----
+
+  /** the one sampler's tick (A3.1, A3.8 #4) and its minute aggregate on disk (A3.8 #7) */
+  sampleMs: 5000,
+  sampleDiskMs: 60_000,
+  /** the JSONL writer's flush (A3.8 #12) */
+  writeBatchMs: 2000,
+  /** retention at launch, then daily (A3.6) */
+  retentionMs: 86_400_000,
+  /** ioreg's AGX read while recording with the window visible (A3.1) */
+  agxMs: 30_000,
+  /** every probe spawn's timeout: ioreg, sysctl for the profile (A3.2) */
+  spawnTimeoutMs: 2000,
+  /** sysctl's pressure read (A3.8 #6) */
+  pressureReadMs: 1000,
+  /** a canvas preload's `mem` answer counts within this, and serves this long (A3.8 #5) */
+  memAnswerMs: 1000,
+  memServesMs: 10_000,
+  /** a `shown` answer later than this is dropped (A3.8 #9) */
+  shownAnswerMs: 5000,
+  /** the profile waits this long for getGPUInfo('complete'); lines at launch wait this long for the first hash (A3.8 #11) */
+  profileGpuWaitMs: 2000,
+  profileHoldMs: 3000,
+  /** display, power and GPU changes debounced before a new profile (A3.8 #11) */
+  profileDebounceMs: 1000,
+  /** a new GPU process with no child-gone within this writes gpu-restart (A3.8 #9) */
+  gpuRestartMs: 2000,
+  /** Mark a Flash (A3.8 #13): the debounce, the picture's bound, the GPU-event window after the mark */
+  flashDebounceMs: 2000,
+  flashPictureMs: 2000,
+  flashGpuWindowMs: 1000,
+  /** the white-out detector (A3.8 #15, #16): its tick (250 ms; 500 ms at 2 Hz), the tail after a gesture, the
+   *  longest gesture, a capture abandoned past this, a probe answer later than this inconclusive */
+  whiteoutTickMs: 250,
+  whiteoutTailMs: 500,
+  whiteoutMaxMs: 30_000,
+  whiteoutCaptureMs: 500,
+  probeAnswerMs: 150,
+  /** the one ground (A3.8 #27, #28): animation frames the shell waits (1-8; a count, main's tunable), the lift's
+   *  extra wait, the live resize's quiet timer */
+  presentFrames: 2,
+  uncoverDelayMs: 0,
+  liveResizeQuietMs: 500,
+  /** unloading (A2.6, A3.8 #39-#45): hidden this long at least, the soft unloads' cooldown, the act's own wait for
+   *  destroyed or the page's refusal, the effect's "after", a reopened document's hello wait */
+  unloadMinHiddenMs: 10_000,
+  unloadCooldownMs: 30_000,
+  unloadActMs: 10_000,
+  unloadEffectMs: 5000,
+  reopenHelloMs: 30_000,
 } satisfies Record<string, number | readonly number[]>
 
 export type Timings = typeof T

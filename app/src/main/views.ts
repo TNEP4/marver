@@ -16,6 +16,14 @@
  *   deadline; silent, the pill's Reload opens the sheet, which is checked again before it ends anything.
  * - The app's keys on every view, the commands they and the menu run, the app pages' messages (`pageHandlers`,
  *   which the bridge calls once it has checked the sender and every field), tabs.json.
+ *
+ * A3 (app 0.2, A3.8 #53) is wired here, each stream filling its own modules: the recorder's ports (recorder.ts:
+ * `watchCanvas` first in wireCanvas, `processGone` before recover(), `shown` with `mv:app-state shown`,
+ * `tabsChanged` after each compose, `markFlash` from runCommand); the layout's events (layout.ts: a main-frame
+ * navigation's start and abort, HTML fullscreen); the presentation (present.ts: its answers from the bridge, its
+ * requests through window.ts, the GPU process lost); the unload's act (`act(t, { kind: 'unload' })`, its renderer
+ * gone and its `destroyed` in forgetCanvas, the reopen's load) and the fields its admission reads (audible, DevTools
+ * open, a navigation under way).
  */
 import { execFile } from 'node:child_process'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
@@ -27,7 +35,7 @@ import * as sessions from './sessions.ts'
 import { CH, type PageKind, type TabPageAction } from '../shared/channels.ts'
 import { startCommand } from '../shared/command.ts'
 import { effects, provideEffectHooks } from './effects.ts'
-import type { AppState, MenuItem } from '../../../src/shared/app-api.ts'
+import type { AppState, MenuItem, Present, Presented } from '../../../src/shared/app-api.ts'
 import { docProof } from '../../../src/server/proof.ts'
 import type { Files, Home } from './config.ts'
 import type { CanvasReports } from './bridge.ts'
@@ -40,7 +48,7 @@ import { buildNow, HELP_URL, invalidateMenu, startMenu, type MenuModel, type Men
 import { crashReloaded, currentPill, onPillAction, setCondition, setPillPorts } from './pill.ts'
 import {
   activate, activeTab, allTabs, applyRestore, canvasOrder, closeTab, cycleFrom, displayState, forDigit, getTab, guard,
-  guardAll, hasBridge, hashOnly, isActive, keyOf, liveDoc, onCommit, onDocumentGone, onFail, onInPage, onRegistry, onReport, openSettingsTab,
+  guardAll, hasBridge, hashOnly, isActive, keyOf, liveDoc, onCommit, onDocumentGone, onFail, onInPage, onRegistry, onReport, onUnloaded, openSettingsTab,
   ordered, parseTabsFile, reopenTab, restorePlan, safePath, savedPathIn, setTabsPorts, sheetBox, sheetConfirmed, sheetText, snapshotFile, tabName,
   type GuardAction, type GuardAnswer, type Sheet, type Tab, type TabsFile,
 } from './tabs.ts'
@@ -54,6 +62,10 @@ import {
 } from './window.ts'
 import { note, provide, testMode } from './testing/index.ts'
 import { T } from './timings.ts'
+import { commitLayout } from './layout.ts'
+import { answer as presentAnswer, forget as presentForget, gpuGone, noteGpu } from './present.ts'
+import { gpuIdentity, recorder, sampler } from './recorder.ts'
+import { lastPressure } from './pressure.ts'
 
 export const PRELOAD_CANVAS = join(__dirname, 'preload-canvas.cjs')
 
@@ -92,6 +104,10 @@ export interface TrustPort {
     handle(channel: string, fn: (wc: WebContents, payload: unknown) => unknown): void
     send(wc: WebContents, channel: string, payload: unknown): boolean
   }
+  /** A3: `mv:present` to the tab's document `doc` while admitted and trusted (bridge.ts `present`; A3.8 #27) */
+  present?(tabId: string, doc: string, r: Present): boolean
+  /** A3: accepted `mv:presented` answers (bridge.ts `onPresented`) */
+  onPresented?(fn: (tabId: string, doc: string, r: Presented) => void): () => void
 }
 
 /**
@@ -189,23 +205,31 @@ const NO_DRAG = 'html, html * { app-region: no-drag !important; -webkit-app-regi
 
 function wireCanvas(t: Tab, view: WebContentsView): void {
   const wc = view.webContents
+  recorder.watchCanvas(t, wc)
   trust.register(wc, 'canvas', t.id)
   const nav = trust.attach(wc, t)
   const off = nav.on((e) => onNav(t, wc, e))
   canvases.set(t.id, { view, nav, off })
   wc.on('did-navigate-in-page', (_e, url, isMain) => { if (isMain) onInPage(t, url) })
   wc.on('render-process-gone', (_e, d) => {
+    // an unload's own end, or a crash while it closes: ours, counting nothing, the tab ends unloaded (A3.8 #39, #44)
+    if (unloadGone(t, wc, d)) return
     const app = !!t.appEnding
     j('gone', { tab: t.id, reason: d.reason, app })
+    recorder.processGone(t, d, app)
     clearHang(t)
     recover(t, app ? { kind: 'app' } : { kind: 'crash', reason: d.reason, exitCode: d.exitCode })
     compose()
   })
   wc.on('unresponsive', () => onUnresponsive(t, wc))
   wc.on('responsive', () => { t.hung = false; clearHang(t); j('hang', { tab: t.id, responsive: true }); compose() })
-  // HTML fullscreen stays in its view (disableHtmlFullscreenWindowResize): already below the strip in 0.1, nothing moves
-  wc.on('enter-html-full-screen', () => { j('fullscreen', { tab: t.id, html: true }); compose() })
-  wc.on('leave-html-full-screen', () => { j('fullscreen', { tab: t.id, html: false }); compose() })
+  // HTML fullscreen stays in its view (disableHtmlFullscreenWindowResize); from A3 layout.ts places it below the strip
+  wc.on('enter-html-full-screen', () => { j('fullscreen', { tab: t.id, html: true }); commitLayout(t, { kind: 'html-fullscreen', on: true }); compose() })
+  wc.on('leave-html-full-screen', () => { j('fullscreen', { tab: t.id, html: false }); commitLayout(t, { kind: 'html-fullscreen', on: false }); compose() })
+  // what an unload's admission reads (A3.8 #40): a page playing sound, DevTools open
+  wc.on('audio-state-changed', (e) => { t.audible = e.audible })
+  wc.on('devtools-opened', () => { t.devtools = true })
+  wc.on('devtools-closed', () => { t.devtools = false })
   wc.on('destroyed', () => forgetCanvas(t, view))
   keys(wc)
   track(wc, { part: 'content', tab: t.id })
@@ -221,7 +245,15 @@ function forgetCanvas(t: Tab, view: WebContentsView): void {
   detachContent(t.id)
   clearHang(t)
   abortLogo(t)
-  if (getTab(t.id)) { onDocumentGone(t, 'none'); onViewClosed(t) }
+  presentForget(t.id)
+  t.audible = false
+  t.devtools = false
+  t.loading = false
+  if (getTab(t.id)) {
+    // an unload's close ended at destroyed: the tab is unloaded, never crashed nor documentless (A3.8 #39)
+    if (t.unload && (t.unload.phase === 'closing' || t.unload.phase === 'unsure')) onUnloaded(t)
+    else { onDocumentGone(t, 'none'); onViewClosed(t) }
+  }
   j('view', { tab: t.id, forgot: true })
   compose()
 }
@@ -229,6 +261,7 @@ function forgetCanvas(t: Tab, view: WebContentsView): void {
 /** Load a documentless tab: its path on its bound origin (never guarded: there is nothing to lose). */
 function load(t: Tab): void {
   if (!t.reg?.origin || t.reg.state !== 'ready') return
+  beginReopen(t)
   t.needsLoad = false
   t.loadAt = Date.now()
   clearUnattributed(t)   // this load replaces the reload an unattributed commit had waiting
@@ -245,13 +278,21 @@ function load(t: Tab): void {
 function onNav(t: Tab, wc: WebContents, e: NavEvent): void {
   if (!getTab(t.id)) return
   switch (e.kind) {
+    case 'start': {
+      // a main-frame, cross-document navigation: under way until it commits, fails or aborts (A3.8 #40); its
+      // layout pending, a documentless view pre-sized (A3.8 #24)
+      t.loading = true
+      if (commitLayout(t, { kind: 'start', gen: e.gen })) compose()
+      return
+    }
     case 'commit': {
+      t.loading = false
       const admitted = e.attributed && t.reg?.state === 'ready' ? trust.admit(t.id) : null
       // the tab navigated: a logo fetch in flight is aborted (A2.4); one the lift starts again for the new document
       const logoWas = abortLogo(t)
       // the committed URL with its hash (the adapter's has none): the tab's path keeps the board a restore opened
       const href = safely(() => wc.isDestroyed() ? undefined : wc.getURL())
-      onCommit(t, { gen: e.gen, url: e.url, ...(href ? { href } : {}), attributed: e.attributed, admitted })
+      onCommit(t, { gen: e.gen, url: e.url, ...(href ? { href } : {}), attributed: e.attributed, admitted, ...(e.instance ? { instance: e.instance } : {}) })
       void wc.insertCSS(NO_DRAG, { cssOrigin: 'user' }).catch(() => {})
       if (t.doc?.lifted) {
         clearUnattributed(t)
@@ -267,16 +308,22 @@ function onNav(t: Tab, wc: WebContents, e: NavEvent): void {
       return
     }
     case 'fail': {
+      t.loading = false
       let errorPage = false
       try { errorPage = wc.mainFrame?.origin === 'null' } catch { /* the frame went */ }
       abortLogo(t)
-      onFail(t, { why: e.why, code: e.code, errorPage })
+      onFail(t, { why: e.why, code: e.code, errorPage, gen: e.gen })
       onAttemptFailed(t)
       scheduleRetry(t)
       compose()
       return
     }
-    case 'abort': j('abort', { tab: t.id, gen: e.gen }); return
+    case 'abort': {
+      t.loading = false
+      j('abort', { tab: t.id, gen: e.gen })
+      if (commitLayout(t, { kind: 'abort', gen: e.gen })) compose()
+      return
+    }
     default: return
   }
 }
@@ -337,10 +384,11 @@ function act(t: Tab, a: GuardAction): Promise<GuardAnswer> {
   const c = canvases.get(t.id)
   const wc = c?.view.webContents
   if (!c || !wc || wc.isDestroyed()) {
-    // no view: nothing to replace; a load makes one
-    if (!closeLike(a) && t.reg?.origin) load(t)
+    // no view: nothing to replace; a load makes one (an unload has nothing to close)
+    if (!closeLike(a) && a.kind !== 'unload' && t.reg?.origin) load(t)
     return Promise.resolve('done')
   }
+  if (a.kind === 'unload') return actUnload(t, wc, a)
   j('act', { tab: t.id, action: a.kind })
   return new Promise<GuardAnswer>((resolve) => {
     let settled = false
@@ -381,6 +429,29 @@ function act(t: Tab, a: GuardAction): Promise<GuardAnswer> {
     }
   })
 }
+
+// ---- the unload's act (A2.6, A3.8 #39, #42, #43): the unloading stream's to fill -----------------------------------
+
+/**
+ * `act(t, { kind: 'unload' })`: `close({ waitForBeforeUnload: true })`, owning the tab until `destroyed` (the tab
+ * unloaded, forgetCanvas -> onUnloaded) or the page's refusal (`will-prevent-unload`, never prevented: kept). Past
+ * `unloadActMs` with neither, `unsure`: main ends the close with a plain `close()`, and then only `destroyed` ends it.
+ * Never `forcefullyCrashRenderer()`: a renderer shared with another tab lives on.
+ */
+function actUnload(t: Tab, wc: WebContents, a: Extract<GuardAction, { kind: 'unload' }>): Promise<GuardAnswer> {
+  void wc
+  j('act', { tab: t.id, action: a.kind, answer: 'refused', why: 'not built' })
+  return Promise.resolve('refused')   // A3 unloading stream
+}
+
+/** A render-process-gone while an unload closes the tab: ours, counted nothing, the close finished (A3.8 #39, #44); true when it was. */
+function unloadGone(t: Tab, wc: WebContents, d: Electron.RenderProcessGoneDetails): boolean {
+  void t; void wc; void d
+  return false   // A3 unloading stream
+}
+
+/** load() of an unloaded tab: the reopen - `mv:doc` answers `reopen: true`, the tab page says `reopening` (A3.8 #43). */
+function beginReopen(t: Tab): void { void t }   // A3 unloading stream
 
 /** Sheets for test builds: answered by a hook (no automation presses a native sheet; A2.14 #22's `ask()` seam). */
 type SheetMode = 'confirm' | 'cancel' | 'hold' | 'throw'
@@ -596,6 +667,7 @@ export function runCommand(c: AppCommand, via: 'key' | 'menu'): void {
       return
     }
     case 'focus-strip': case 'focus-strip-back': f6(); return
+    case 'mark-flash': recorder.markFlash(via); return
   }
 }
 
@@ -694,7 +766,7 @@ function refreshLogo(t: Tab): void {
 // The app pages' messages: the bridge calls these once it has checked the sender (kind, main frame, own URL) and
 // every field (channels.ts SENDERS). Each acts on main's own records alone.
 
-const STATE_WORD: Record<string, string | undefined> = { starting: 'starting', gone: 'stopped', unverified: 'not a Marver canvas', unreachable: "can't reach", crashed: 'crashed' }
+const STATE_WORD: Record<string, string | undefined> = { starting: 'starting', gone: 'stopped', unverified: 'not a Marver canvas', unreachable: "can't reach", crashed: 'crashed', unloaded: 'unloaded' }
 
 function tokenOf(t: Tab): MenuToken { return { tab: t.id, commit: t.doc?.commits ?? 0, trusted: !!t.doc?.trusted } }
 function holds(k: MenuToken): boolean {
@@ -835,9 +907,13 @@ function mountPages(pages: NonNullable<TrustPort['pages']>): void {
 }
 
 function details(t: Tab): string {
+  const level = lastPressure()?.level
+  const board = recorder.boardOf(t.id)
   return copyDetails(t, {
     app: app.getVersion(), electron: process.versions.electron, chrome: process.versions.chrome, marver: t.reg?.version,
     macos: process.getSystemVersion(), model: macModel, memGB: totalmem() / 2 ** 30,
+    // A3: the last pressure reading and the board's frame count (A3.8 #9, #46)
+    ...(level != null ? { pressure: level } : {}), ...(board ? { board } : {}),
   })
 }
 
@@ -970,7 +1046,11 @@ export function startViews(i: StartInput): void {
   notes = i.notes
   store = i.tabsStore ?? ownStore(i.home)
   const home = homedir()
-  const sendState = (t: Tab, s: AppState) => { if (canvases.has(t.id)) trust.appState(t.id, s) }
+  const sendState = (t: Tab, s: AppState) => {
+    if (!canvases.has(t.id)) return
+    trust.appState(t.id, s)
+    if (s === 'shown') recorder.shown(t)
+  }
   setTabsPorts({
     now: () => Date.now(), home, appDark: () => nativeTheme.shouldUseDarkColors,
     changed: (o) => { ensureAppViews(); compose(o) }, load, appState: sendState, act, ask, forget, save: saveSoon,
@@ -980,6 +1060,7 @@ export function startViews(i: StartInput): void {
     // whole since (snapshotFile keeps the entries of canvases not running), read only with restoreTabs on
     savedPath: (ws, origin) => i.files.config.restoreTabs ? savedPathIn(tabsFile, ws, origin) : undefined,
     log: j,
+    record: (kind, t, body) => recorder.event(kind, t, body),
   })
   setTabpagePorts({
     now: () => Date.now(), isActive, changed: () => compose(), log: j, load,
@@ -1004,7 +1085,15 @@ export function startViews(i: StartInput): void {
     wire: (wc) => keys(wc),
     quitting: () => quitting,
     ...(trust.pages ? { send: trust.pages.send } : {}),
+    present: (tabId, doc, r) => trust.present?.(tabId, doc, r) ?? false,
+    afterCompose: () => recorder.tabsChanged(),
   })
+  // the presentation (A3.8 #27): an accepted answer, judged with the GPU identity read in its turn; the GPU
+  // process gone or replaced covers every view until each presents again
+  trust.onPresented?.((tabId, doc, r) => { if (presentAnswer(tabId, doc, r, Date.now(), gpuIdentity()) === 'ok') compose() })
+  app.on('child-process-gone', (_e, d) => { if (d.type === 'GPU') { gpuGone(); compose() } })
+  app.on('gpu-info-update', () => { if (noteGpu(gpuIdentity())) compose() })
+  sampler.onSample((x) => { if (noteGpu(x.gpu ? { pid: x.gpu.pid, born: x.gpu.born } : null)) compose() })
   if (trust.pages) mountPages(trust.pages)
 
   // restore (v1.12 r1 #5): only the active tab loads; the others when first shown. The file is read whatever

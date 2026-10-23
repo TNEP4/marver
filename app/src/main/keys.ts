@@ -10,7 +10,8 @@
  *   equivalent does not fire either - each key fires once, whatever the page does with keys. A menu click runs the
  *   same command.
  * - The Edit keys (⌘C, ⌘V, ⌘X, ⌘Z, ⇧⌘Z, ⌘A) are not the app's: they reach the page, with the menu's roles behind.
- * - ⌃⌥F (Mark a Flash) is A3's: not caught in A2, so the page keeps it until then.
+ * - ⌃⌥F (Mark a Flash) is A3's: its command is in the union below (views.ts runs it); the flash stream catches the
+ *   key here and adds Help's item (A3.8 #13).
  *
  * Pure: no Electron import (unit-tested without it). The names match the home stream's `commands.ts` draft.
  */
@@ -20,6 +21,8 @@ export type AppCommand =
   | 'home' | 'open-link' | 'close-tab' | 'close-window' | 'reload' | 'force-reload' | 'settings' | 'quit'
   | 'hide' | 'hide-others' | 'minimize' | 'prev-tab' | 'next-tab' | 'devtools' | 'fullscreen'
   | 'focus-strip' | 'focus-strip-back'
+  /** A3: Mark a Flash (A3.3) */
+  | 'mark-flash'
   | 'tab-1' | 'tab-2' | 'tab-3' | 'tab-4' | 'tab-5' | 'tab-6' | 'tab-7' | 'tab-8' | 'tab-last'
 
 /** Each command's accelerator as the menu shows it (a real key equivalent on macOS; before-input-event wins). */

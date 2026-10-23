@@ -12,9 +12,18 @@
  * - one `ipcRenderer.on` per main-to-page channel, fanning out to the page's listeners, for this document's `doc`
  *   alone: a message main meant for an earlier document never reaches this one.
  * What the page passes is copied as JSON before it is held: no getter, function or live object crosses.
+ *
+ * A3 (app 0.2; A3.8 #5, #9, #10, #26, #27): `topInset` is `mv:doc`'s answer; `onPresent` hears main's presentation
+ * requests for this document and `presented` answers at once (never held: an answer, not a state); `perf` sends the
+ * shell's recorder messages at once with the current `doc` (never held or replayed: they are about now). Main's
+ * `mv:perf-ask` is answered here for `mem` (getProcessMemoryInfo and getHeapStatistics, KB) and `shown` (the second
+ * animation-frame callback), kept for `display` (`perfInfo().hz`), and handed to the shell for `probes`.
  */
 import { contextBridge, ipcRenderer } from 'electron'
-import { APP_API_VERSION, BOUNDS, CANVAS_CHANNELS, type AppState, type DocAnswer, type MarverAppV1, type MenuClick } from '../../../src/shared/app-api.ts'
+import {
+  APP_API_VERSION, BOUNDS, CANVAS_CHANNELS, PERF_BOUNDS,
+  type AppState, type DocAnswer, type MarverAppV1, type MenuClick, type PerfMsg, type PerfProbeAsk, type Present, type Presented,
+} from '../../../src/shared/app-api.ts'
 
 type Report = 'hello' | 'theme' | 'busy' | 'menu'
 const ORDER: readonly Report[] = ['hello', 'theme', 'busy', 'menu']
@@ -26,13 +35,17 @@ try {
   let origin = ''
   try { origin = String(location.origin) } catch { /* none */ }
   const a = ipcRenderer.sendSync(CANVAS_CHANNELS.doc, { origin }) as Partial<DocAnswer> | null
-  if (a && typeof a.reopen === 'boolean') answer = { reopen: a.reopen }
+  if (a && typeof a.reopen === 'boolean') answer = { reopen: a.reopen, inset: a.inset === 44 ? 44 : 0 }
 } catch { /* answered no */ }
 
 let doc: string | null = null
 const held = new Map<Report, unknown>()
 const stateFns = new Set<(s: AppState) => void>()
 const clickFns = new Set<(p: MenuClick) => void>()
+const presentFns = new Set<(r: Present) => void>()
+const probeFns = new Set<(a: PerfProbeAsk) => void>()
+/** the display's rate main last said (`display` ask) */
+let hz: number | null = null
 
 const copy = (p: unknown): unknown => {
   try {
@@ -64,6 +77,54 @@ ipcRenderer.on(CANVAS_CHANNELS.menuClick, (_e, m: { doc?: unknown; id?: unknown 
   for (const fn of [...clickFns]) { try { fn(p) } catch { /* the page's own */ } }
 })
 
+const whole = (v: unknown, max: number): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= max
+const within = (v: unknown, max: number): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= max
+
+// A3: the presentation requests, for this document alone
+ipcRenderer.on(CANVAS_CHANNELS.present, (_e, m: Record<string, unknown> | null) => {
+  if (!m || !doc || m.doc !== doc || !whole(m.epoch, BOUNDS.epoch) || !within(m.w, BOUNDS.viewport) || !within(m.h, BOUNDS.viewport)
+    || !whole(m.frames, BOUNDS.frames) || m.frames < 1) return
+  const r: Present = { epoch: m.epoch, w: m.w, h: m.h, frames: m.frames }
+  for (const fn of [...presentFns]) { try { fn(r) } catch { /* the page's own */ } }
+})
+
+/** an answer or a recorder message: sent now with the current doc, never held */
+const now = (ch: 'perf' | 'presented', p: unknown) => { if (doc) ipcRenderer.send(CANVAS_CHANNELS[ch], { doc, p }) }
+
+// A3: main's perf asks - mem and shown answered here (so a 0.27.0 or 0.27.1 page answers too), probes the shell's
+ipcRenderer.on(CANVAS_CHANNELS.perfAsk, (_e, m: Record<string, unknown> | null) => {
+  if (!m || !doc || m.doc !== doc) return
+  const asked = doc
+  switch (m.kind) {
+    case 'mem': {
+      if (!whole(m.tick, PERF_BOUNDS.counter)) return
+      const tick = m.tick
+      process.getProcessMemoryInfo().then((pm) => {
+        if (doc !== asked) return
+        const h = process.getHeapStatistics()
+        now('perf', { kind: 'mem', tick, privateKB: pm.private, heapUsedKB: h.usedHeapSize, heapTotalKB: h.totalHeapSize } satisfies PerfMsg)
+      }, () => { /* no answer: the sample keeps RSS */ })
+      return
+    }
+    case 'shown': {
+      if (!whole(m.tick, PERF_BOUNDS.counter)) return
+      const tick = m.tick
+      // a frame produced, not proved presented (A3.8 #9)
+      try { requestAnimationFrame(() => requestAnimationFrame(() => { if (doc === asked) now('perf', { kind: 'shown', tick } satisfies PerfMsg) })) } catch { /* no frames */ }
+      return
+    }
+    case 'display':
+      if (typeof m.hz === 'number' && Number.isFinite(m.hz) && m.hz >= PERF_BOUNDS.hz.min && m.hz <= PERF_BOUNDS.hz.max) hz = m.hz
+      return
+    case 'probes': {
+      if (!whole(m.tick, PERF_BOUNDS.counter) || (m.at !== 'before' && m.at !== 'after')) return
+      const a: PerfProbeAsk = { kind: 'probes', tick: m.tick, at: m.at }
+      for (const fn of [...probeFns]) { try { fn(a) } catch { /* the page's own */ } }
+      return
+    }
+  }
+})
+
 const listen = <T>(set: Set<(x: T) => void>) => (fn: (x: T) => void): (() => void) => {
   if (typeof fn !== 'function') return () => {}
   set.add(fn)
@@ -72,7 +133,7 @@ const listen = <T>(set: Set<(x: T) => void>) => (fn: (x: T) => void): (() => voi
 
 const api: MarverAppV1 = {
   v: APP_API_VERSION as 1,
-  topInset: 0,
+  topInset: answer.inset === 44 ? 44 : 0,
   reopen: answer.reopen,
   hello: say('hello'),
   theme: say('theme'),
@@ -80,5 +141,10 @@ const api: MarverAppV1 = {
   menu: say('menu'),
   onAppState: listen(stateFns),
   onMenuClick: listen(clickFns),
+  onPresent: listen(presentFns),
+  presented: (p: Presented) => { const c = copy(p); if (c !== undefined) now('presented', c) },
+  perf: (p: PerfMsg) => { const c = copy(p); if (c !== undefined) now('perf', c) },
+  onPerfAsk: listen(probeFns),
+  perfInfo: () => ({ hz }),
 }
 contextBridge.exposeInMainWorld('marverApp', api)

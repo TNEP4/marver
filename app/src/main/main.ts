@@ -18,6 +18,10 @@
  *      last the error policy (errors.ts): from here an uncaught error is recorded and the app goes on, never
  *      Electron's modal box over pages that may hold unsaved work.
  *
+ * A3 (app 0.2, A3.8 #53): the bridge answers `mv:doc`'s inset from layout.ts; the recorder starts after the bridge
+ * and before the views (its writer, the machine profile, the one sampler); memory.ts (unloading) and the white-out
+ * detector start once the views and the tabs exist; the recorder's queue is written at will-quit.
+ *
  * Who calls what across the streams is app/src/main/ports.ts's table; this file keeps the order and makes the calls.
  */
 import './guard.ts'
@@ -28,15 +32,22 @@ import { installSpies } from './testing/spies.ts'
 import { note, provide, startTesting, testMode } from './testing/index.ts'
 import { provideTrustHooks } from './testing/trust.ts'
 import { overrideTimings } from './timings.ts'
-import { applyTheme, ensureHome, readFiles, readTabsFile, startFiles, tabsWriter } from './config.ts'
+import { totalmem } from 'node:os'
+import { applyTheme, ensureHome, readFiles, readTabsFile, startFiles, tabsWriter, values } from './config.ts'
 import { flushRecent, isFirstLaunch, mountPages, noteGone, noteHomeShown, noteVerified, startHome } from './home.ts'
 import { installNavigationPolicy, localSession, onSameCanvasOpen, setupAppSession } from './sessions.ts'
 import { installBridge } from './bridge.ts'
 import { createRegistry, type RegistryEntry } from './registry.ts'
 import { fetchLogo, installDispatcher, probeProof } from './proof.ts'
 import { attachNav } from './nav.ts'
-import { focusWindow } from './window.ts'
-import { startTabs, type Tab } from './tabs.ts'
+import { contentView, focusWindow, windowVisible } from './window.ts'
+import { activeTab, getTab, startTabs, type Tab } from './tabs.ts'
+import { docInset } from './layout.ts'
+import { identity, recorder, sampler } from './recorder.ts'
+import { provideRecorderHooks } from './testing/recorder.ts'
+import { startMemory } from './memory.ts'
+import { startWhiteout } from './whiteout.ts'
+import { readAgx } from './machine.ts'
 import { openSameCanvas, startViews, windowPorts, type TrustPort } from './views.ts'
 import { fakeTrust } from './testing/fake-trust.ts'
 import { installErrorPolicy, setErrorHome } from './errors.ts'
@@ -111,10 +122,15 @@ function start(): void {
     // the registry: ~/.marver/running/ read, then watched and reconciled every 5 s
     const registry = createRegistry()
     await registry.start()
-    // the bridge: the capability map, the canvas admission, the app pages' channels - before any view
-    const bridge = installBridge()
+    // the bridge: the capability map, the canvas admission, the app pages' channels - before any view. `mv:doc`
+    // answers each document's inset from its tab's layout (A3.8 #26)
+    const bridge = installBridge({ insetFor: (id) => { const t = getTab(id); return t ? docInset(t) : 0 } })
     if (__MV_TEST__ && testMode()) provideTrustHooks()
     startTabs()
+    // the recorder: after the bridge, before the views (A3.8 #53)
+    recorder.start({ bridge, home, flavour: __MARVER_RELEASE__ ? 'release' : 'dev', config: () => values().config })
+    if (__MV_TEST__ && testMode()) provideRecorderHooks()
+    app.on('will-quit', () => recorder.flushSync())
 
     // what the window stream needs of the trust stream (views.ts TrustPort), from their interfaces as built
     const entryOf = (t: Pick<Tab, 'reg'>): RegistryEntry | undefined => t.reg ? registry.entries().find((e) => e.instance === t.reg!.instance) : undefined
@@ -145,6 +161,8 @@ function start(): void {
       appState: (tabId, s) => s === 'untrusted' ? false : bridge.appState(tabId, s),   // untrusted: the bridge sends it itself
       menuClick: (tabId, id) => bridge.menuClick(tabId, id),
       reopenNext: (tabId) => bridge.reopenNext(tabId),
+      present: (tabId, doc, r) => bridge.present(tabId, doc, r),
+      onPresented: (fn) => bridge.onPresented(fn),
       probe: async (t) => { const e = entryOf(t); return e ? probeProof(e) : 'silent' },
       fetchLogo: async (t, signal) => { const e = entryOf(t); return e ? ((await fetchLogo(e, signal))?.dataUrl ?? null) : null },
       pages: {
@@ -167,6 +185,25 @@ function start(): void {
     })
     // Home's and Settings' channels and pushes, ⌘L's links into their tabs, the files pill (home.ts, ports.ts)
     mountPages(bridge, windowPorts())
+    // unloading under pressure, on the one sampler's samples (A3.8 #41), and the white-out detector (A3.8 #15)
+    startMemory({
+      config: () => values().config, sampler, totalMB: () => totalmem() / 2 ** 20,
+      event: (kind, who, body) => recorder.event(kind, who, body), now: () => Date.now(),
+    })
+    startWhiteout({
+      recorderOn: () => values().config.recorder,
+      target: () => {
+        const t = activeTab()
+        const wc = t?.kind === 'local' ? contentView(t.id)?.webContents : undefined
+        return t && wc && !wc.isDestroyed() && windowVisible() ? { tabId: t.id, wc, ident: identity(t) } : null
+      },
+      onPerf: (fn) => bridge.onPerf(fn),
+      ask: (tabId, a) => bridge.perfAsk(tabId, a),
+      gpuEvents: (from, to) => recorder.gpuEvents(from, to),
+      readAgx: (ms) => readAgx(ms),
+      record: (ident, body) => recorder.event('whiteout-candidate', ident, body),
+      now: () => Date.now(),
+    })
     // the pages exist: an uncaught error is recorded (perf/app.jsonl) and the app goes on (errors.ts)
     setErrorHome(home)
     installErrorPolicy()

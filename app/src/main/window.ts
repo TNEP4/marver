@@ -19,6 +19,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { app, BaseWindow, nativeImage, nativeTheme, screen, View, WebContentsView, type WebContents, type WebPreferences } from 'electron'
 import * as sessions from './sessions.ts'
+import type { Present } from '../../../src/shared/app-api.ts'
 import { CH, type PageKind, type PageFocus, type TabsSnapshot, type TabView, type WindowView } from '../shared/channels.ts'
 import { STRIP_HEIGHT, below, ground, plan, type Plan, type PlanTab } from './plan.ts'
 import { activeTab, allTabs, darkOf, getTab, ordered, viewOf, type Tab } from './tabs.ts'
@@ -45,6 +46,10 @@ export interface WindowDeps {
   quitting(): boolean
   /** the bridge's send (it checks the page is ready and on its pinned document); else main sends itself */
   send?(wc: WebContents, channel: string, payload: unknown): boolean
+  /** A3: `mv:present` to a tab's admitted document (bridge.ts `present`): compose's request after the turn's view changes (A3.8 #27) */
+  present?(tabId: string, doc: string, r: Present): boolean
+  /** A3: after each compose, once its changes are applied - the recorder's `tab` lines (A3.8 #9) */
+  afterCompose?(): void
 }
 
 let win: BaseWindow | null = null
@@ -372,6 +377,7 @@ function composeOnce(o: { focus?: 'shown' }): void {
   feedWindow()
   recomputePill()
   invalidateMenu()
+  deps?.afterCompose?.()
 }
 
 /** Every view's bounds and visibility as Electron reports them now (test builds read it). */
@@ -384,13 +390,26 @@ export function viewsNow(): { key: string; bounds: { x: number; y: number; width
   return out
 }
 
+/** A reconstructed app-content picture (A3.8 #14): each visible view as main stacks them, the cover as cover.ts draws it - never the screen. */
+export interface AppPicture { png: Buffer; width: number; height: number; scale: number; layers: string[] }
+
+/**
+ * A3: Mark a Flash's picture (A3.3, A3.8 #14) - `captureWindow()` built into the release and scaled to `width` px
+ * (480 for a flash). It refuses with 'window hidden' when the window is not visible. FROZEN signature (A3.8 #53):
+ * the flash stream fills it, the one-ground stream draws its cover through cover.ts's `bitmap()`.
+ */
+export async function captureApp(o: { width?: number } = {}): Promise<AppPicture> {
+  void o
+  throw new Error('window.ts: captureApp is not built yet (spec 28 A3.8 #14)')
+}
+
 /**
  * Test builds: a picture of the window's content area as the person sees it - every shown view, bottom to top, each
  * from its own `capturePage()` (the cover a plain fill of its ground), composited at the display's scale. The
  * traffic lights are AppKit's, outside any view, so they are not in it. Main's view stack is the one source: what
  * the picture holds is exactly what compose() left shown.
  */
-export async function captureWindow(): Promise<{ png: Buffer; width: number; height: number; scale: number; layers: string[] }> {
+export async function captureWindow(): Promise<AppPicture> {
   if (!win || win.isDestroyed()) throw new Error('window.ts: no window')
   const { width: W, height: H } = win.getContentBounds()
   const sf = screen.getDisplayMatching(win.getBounds()).scaleFactor || 1

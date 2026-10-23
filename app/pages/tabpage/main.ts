@@ -85,6 +85,13 @@ function parts(v: TabPageView, now: number): Parts | null {
         actions: [button(v.retained ? 'Try Again' : 'Try Now', 'retry'), button('Close Tab', 'close')],
         meta: v.retained ? undefined : 'Trying again every few seconds',
       }
+    case 'reopening':
+      // A3 (A3.8 #43): the unloading stream owns this page's look (the dimmed logo, its pulse under Reduce Motion)
+      if (age < QUIET_MS) return null
+      return {
+        mark: mark('dim'), spin: true, title: `Reopening ${v.name}`,
+        body: [`Unloaded at ${clock(v.unloadedAt)} to free memory. ${v.cameraKept ? 'Its board and camera come back as you left them.' : 'Its board comes back as you left it.'}`],
+      }
     case 'crashed': {
       if (!v.latched) return age < QUIET_MS ? null : { mark: mark('dim'), spin: true, title: 'Reloading after a crash' }
       const reason = reasonWords(v.reason)
