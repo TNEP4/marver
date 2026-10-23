@@ -14,6 +14,7 @@
 import { createServer, type Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { launchWindow, sleep, type WindowRun } from '../harness/window.ts'
+import { startFakeCanvas, type FakeCanvas, type FakeOptions } from '../harness/fake-canvas.ts'
 
 let w: WindowRun
 beforeAll(async () => {
@@ -120,6 +121,37 @@ describe('a page that stops responding (A2.11)', () => {
     await w.run.call('sheet', { mode: 'cancel' })
     await w.report(id, { unsaved: false })
   })
+})
+
+/**
+ * The cross-process iframe case launches on its own: with the trust stream's modules built in it runs on them (its
+ * navigation policy lets a subframe go only for a canvas the bridge knows, which the fake trust's are not), else on
+ * the fake trust.
+ */
+describe('a hang in a frame of another process (A2.14 #22)', () => {
+  let v: WindowRun
+  let real = false
+  const fakes: FakeCanvas[] = []
+  beforeAll(async () => {
+    v = await launchWindow('prod')
+    real = (await v.run.call<string[]>('hooks')).includes('trust:admit-delay')
+    if (real) { await v.close(); v = await launchWindow('prod', { extraEnv: { MARVER_APP_FAKE_TRUST: '0' } }) }
+    await v.run.call('onTop', { on: true })
+  })
+  afterAll(async () => {
+    await v?.close()
+    for (const f of fakes) await f.close().catch(() => {})
+  })
+  // the page's own first report, through the bridge when it is the real one
+  const CLEAN = "if (window.marverApp) { marverApp.hello({ version: '0.27.1', board: null, page: 'pageid-0002' }); marverApp.busy({ busy: false, unsaved: false, why: [] }) }"
+  async function canvas(o: Partial<FakeOptions>): Promise<{ fake: FakeCanvas; id: string }> {
+    if (!real) return v.canvas(o)
+    const fake = await startFakeCanvas({ home: v.env.home, slotBase: v.slotBase, ...o })
+    fakes.push(fake)
+    await fake.ready
+    const s = await v.until((x) => x.tabs.some((t) => t.reg?.instance === fake.instance && t.reg.state === 'ready'), 10_000, 'the canvas from the registry')
+    return { fake, id: s.tabs.find((t) => t.reg?.instance === fake.instance)!.id }
+  }
 
   it('a cross-process iframe in a busy loop, the canvas\'s own main frame answering: no sheet ends anything; the pill\'s Reload is the guarded reload (A2.14 #22)', async () => {
     // the frame on another site (127.0.0.1 inside a page on [::1]): its own renderer under site isolation. It loops
@@ -132,45 +164,46 @@ describe('a page that stops responding (A2.11)', () => {
         ? '<!doctype html><body style="margin:0;height:100vh;background:#ccd"><script>setTimeout(function () { var e = Date.now() + 60000; while (Date.now() < e) {} }, 300)</script>'
         : '<!doctype html><body style="margin:0">plain')
     })
-    const port = w.slotBase + 150
+    const port = v.slotBase + 150
     await new Promise<void>((ok) => iframe.listen(port, '127.0.0.1', () => ok()))
     try {
       const frame = `var f = document.createElement('iframe'); f.src = 'http://127.0.0.1:${port}/'; f.style.cssText = 'position:fixed;left:0;top:0;width:100%;height:100%;border:0'; document.body.appendChild(f);`
-      const { id } = await w.canvas({ slot: 3, name: 'Embeds', script: frame })
-      await w.run.call('activate', { id })
-      await w.until((x) => !!x.tabs.find((t) => t.id === id)?.doc?.lifted, 10_000, 'lifted')
-      await w.report(id, { unsaved: false })
+      const { id } = await canvas({ slot: 3, name: 'Embeds', script: frame + CLEAN })
+      await v.run.call('activate', { id })
+      await v.until((x) => !!x.tabs.find((t) => t.id === id)?.doc?.lifted, 10_000, 'lifted')
+      if (!real) await v.report(id, { unsaved: false })
+      await v.until((x) => x.tabs.find((t) => t.id === id)!.reports.safety === 'fresh', 5000, 'its first report')
       for (let i = 0; i < 50 && served < 1; i++) await sleep(100)
       await sleep(800)
-      const before = await w.tab(id)
-      const frames = await w.run.call<{ url: string; pid: number; main: boolean }[]>('frames', { target: id })
+      const before = await v.tab(id)
+      const frames = await v.run.call<{ url: string; pid: number; main: boolean }[]>('frames', { target: id })
       const main = frames.find((f) => f.main)!
       const sub = frames.find((f) => f.url.startsWith(`http://127.0.0.1:${port}`))!
       expect(sub.pid, 'the frame runs in a renderer of its own').not.toBe(main.pid)
-      const since = (await w.log()).length
+      const since = (await v.log()).length
       // Chromium first: input into the frame, routed as a real click is (sendInputEvent would stop at the main
       // frame). Electron 45 reports no hang for it - no 'unresponsive' in 25 s, where the main frame's own hang
       // is reported in about 15 (the case above): no pill, no sheet, nothing ended
-      const poke = setInterval(() => { void w.run.call('cdpClick', { target: id, x: 200, y: 200 }).catch(() => {}) }, 1000)
+      const poke = setInterval(() => { void v.run.call('cdpClick', { target: id, x: 200, y: 200 }).catch(() => {}) }, 1000)
       try { await sleep(25_000) } finally { clearInterval(poke) }
-      expect((await w.tab(id)).hung).toBe(false)
-      expect(await w.run.call<boolean | null>('silent', { target: id, ms: 300 })).toBe(false)   // its main frame answers
+      expect((await v.tab(id)).hung).toBe(false)
+      expect(await v.run.call<boolean | null>('silent', { target: id, ms: 300 })).toBe(false)   // its main frame answers
       // the app's own half, should Chromium report it: the hang reported by hand while the frame is still busy
-      await w.run.call('hang:report', { target: id })
-      const s = await w.until((x) => x.tabs.find((t) => t.id === id)!.hung && x.pill?.kind === 'not-responding', 5000, 'the pill')
-      for (let i = 0; i < 50 && !(await w.log('hang', since)).some((l) => l.data.tab === id && l.data.answered); i++) await sleep(100)
-      expect((await w.log('hang', since)).some((l) => l.data.tab === id && l.data.answered)).toBe(true)   // main asked its main frame
-      await w.run.call('sheet', { mode: 'hold' })
-      const n = (await w.run.call<{ shown: unknown[] }>('sheets')).shown.length
-      expect(await w.run.call('pill:action', { rev: s.pill!.rev, act: 'button' })).toBe(true)
-      await w.until((x) => { const t = x.tabs.find((q) => q.id === id)!; return (t.doc?.commits ?? 0) > before.doc!.commits }, 15_000, 'the guarded reload')
-      const log = await w.log(undefined, since)
-      expect((await w.run.call<{ shown: unknown[] }>('sheets')).shown.length).toBe(n)   // no sheet
+      await v.run.call('hang:report', { target: id })
+      const s = await v.until((x) => x.tabs.find((t) => t.id === id)!.hung && x.pill?.kind === 'not-responding', 5000, 'the pill')
+      for (let i = 0; i < 50 && !(await v.log('hang', since)).some((l) => l.data.tab === id && l.data.answered); i++) await sleep(100)
+      expect((await v.log('hang', since)).some((l) => l.data.tab === id && l.data.answered)).toBe(true)   // main asked its main frame
+      await v.run.call('sheet', { mode: 'hold' })
+      const n = (await v.run.call<{ shown: unknown[] }>('sheets')).shown.length
+      expect(await v.run.call('pill:action', { rev: s.pill!.rev, act: 'button' })).toBe(true)
+      await v.until((x) => { const t = x.tabs.find((q) => q.id === id)!; return (t.doc?.commits ?? 0) > before.doc!.commits }, 15_000, 'the guarded reload')
+      const log = await v.log(undefined, since)
+      expect((await v.run.call<{ shown: unknown[] }>('sheets')).shown.length).toBe(n)   // no sheet
       expect(log.some((l) => l.topic === 'hang' && l.data.tab === id && l.data.answeredBeforeSheet)).toBe(true)
       expect(log.filter((l) => l.topic === 'hang' && l.data.ended)).toEqual([])
       expect(log.some((l) => l.topic === 'guard' && l.data.tab === id && l.data.action === 'reload')).toBe(true)
-      expect((await w.tab(id)).crash.count).toBe(0)
-      await w.run.call('sheet', { mode: 'confirm' })
+      expect((await v.tab(id)).crash.count).toBe(0)
+      await v.run.call('sheet', { mode: 'confirm' })
     } finally {
       iframe.closeAllConnections()
       await new Promise<void>((r) => iframe.close(() => r()))
