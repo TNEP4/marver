@@ -28,6 +28,12 @@ The canvas's side of the Mac app (app 0.1), and what it brings to every browser.
 - **Reduce Transparency and Increase Contrast make the glass opaque.** With either set in macOS, the sidebar, the
   toolbar and every glass surface take a solid fill and a plain border; with Increase Contrast the dimmer text takes the
   full ink. Chrome reads the same settings.
+- **`npx marver perf --loads` names each board as the sidebar does, and its two clocks apart.** A load is headed by
+  its board's title ("v1 lo-fi - Mac and iPhone", not "Journey"; `--json` keeps the board's name). A settled load
+  says `still from` its last move - or the mount, when nothing moved - where it said `quiet 0.0 s · last move 1.3 s`,
+  which read as a contradiction (`quietMs` stays in `--json`). `slowest` is now `slowest to settle`: a frame's time
+  to its last height, which can come after `all ready`, each frame's first render. [Performance](docs/performance.md)
+  says what settled means: every frame done, and the board still for one second after its last change.
 - **`marver ls` and the registry name a canvas as the canvas does.** A canvas's line in `~/.marver/running/` carries
   `share.name` when you set one ("TMS broker", not "tms-broker"), else the folder name.
 

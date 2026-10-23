@@ -4,9 +4,11 @@
  * with what came just before; the slowest frames to settle; one line per board load. Reads
  * design/.local/perf/reloads.jsonl, and page.jsonl for the loads (`--loads`: each load in full, spec 28 A1.8).
  */
+import { join } from 'node:path'
+import { boardFields, checkBoardsDir, listBoardFiles } from '../server/boards.ts'
 import { readPage, readReloads } from '../server/perf.ts'
 import { readJam } from '../server/perf-jam.ts'
-import { humanize } from '../shared/board-tree.ts'
+import { isBoardName, labelOf } from '../shared/board-tree.ts'
 
 export function perfCommand(root: string, opts: { minutes?: number; json?: boolean; jam?: boolean; loads?: boolean }): void {
   if (opts.jam) return jamPerf(root, opts)
@@ -50,14 +52,15 @@ export function perfCommand(root: string, opts: { minutes?: number; json?: boole
   }
   if (loads.length) {
     console.log(`\nboard loads: ${loads.length}  (--loads: each in full)`)
-    const w = Math.max(...loads.map((l) => (l.board ?? '?').length))
+    const name = namer(root)
+    const w = Math.max(...loads.map((l) => name(l.board).length))
     for (const l of loads) {
       const bits = [
         endOf(l),
         ...(l.moves.count || l.moves.late.count ? [`${l.moves.count} move${l.moves.count === 1 ? '' : 's'}${l.moves.late.count ? ` (${l.moves.late.count} late)` : ''}`] : []),
         ...(l.errors.length ? [`${l.errors.length} error${l.errors.length === 1 ? '' : 's'}${lateErrors(l) ? ` (${lateErrors(l)} late)` : ''}`] : []),
       ]
-      console.log(`  ${t(l.at)}  ${(l.board ?? '?').padEnd(w)}  ${(l.cause ?? '').padEnd(11)} ${bits.join(' · ')}`)
+      console.log(`  ${t(l.at)}  ${name(l.board).padEnd(w)}  ${(l.cause ?? '').padEnd(11)} ${bits.join(' · ')}`)
     }
   }
 }
@@ -207,7 +210,16 @@ const ERRORS_SHOWN = 10
 const secs = (ms?: number) => (typeof ms === 'number' ? `${(ms / 1000).toFixed(1)} s` : '-')
 /** a wait or a frame's own time, often under a second: to the hundredth */
 const secs2 = (ms: number) => (ms >= 10_000 ? secs(ms) : `${(Math.max(0, ms) / 1000).toFixed(2)} s`)
-const boardName = (b?: string) => (b === '~unplaced' ? 'Not on a board' : b ? humanize(b) : 'a board (its request is older)')
+/** Each board by the name the sidebar shows it under - its title, else its name Title-Cased (board-tree's labelOf) - read
+ *  from design/boards/ now; `--json` keeps the board's id. */
+function namer(root: string): (board?: string) => string {
+  const titles = new Map<string, string>()
+  try {
+    const dir = join(root, 'design', 'boards')
+    if (!checkBoardsDir(root, dir)) for (const b of listBoardFiles(dir).boards) { const t = boardFields(b.json, isBoardName).title; if (t) titles.set(b.name, t) }
+  } catch { /* unreadable: the names alone */ }
+  return (b) => (b === '~unplaced' ? 'Not on a board' : b ? labelOf(b, titles.get(b)) : 'a board (its request is older)')
+}
 /** How a load ended, in a few words. */
 function endOf(l: LoadSummary): string {
   if (l.state === 'settled') return `settled ${secs(l.settledMs)}`
@@ -229,6 +241,7 @@ function loadsPerf(root: string, opts: { minutes?: number; json?: boolean }) {
   const t = (ts: number) => new Date(ts).toLocaleTimeString()
   const list = (r: Ranked) => r.map(([k, n]) => `${k} ${n}`).join(', ')
   const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
+  const boardName = namer(root)
   for (const l of loads) {
     const head = `${boardName(l.board)}${l.cause ? ` (${l.cause})` : ''}`
     console.log(`\n  ${t(l.at)}  ${head.padEnd(40)} ${endOf(l)}`)
@@ -240,17 +253,19 @@ function loadsPerf(root: string, opts: { minutes?: number; json?: boolean }) {
       ...(l.readyByCut !== undefined ? [`${l.readyByCut} of ${l.framesAtCut} ready`] : []),
       ...(l.visibleReadyMs !== undefined ? [`visible ready ${secs(l.visibleReadyMs)}${l.visible !== undefined ? ` (${plural(l.visible, 'frame')}${l.visibleAssumed ? ', no fit' : ''})` : ''}`] : []),
       ...(l.allReadyMs !== undefined ? [`all ready ${secs(l.allReadyMs)}`] : []),
-      ...(l.quietMs !== undefined ? [`quiet ${secs(l.quietMs)}`] : []),
-      ...(l.lastMoveMs !== undefined ? [`last move ${secs(l.lastMoveMs)}`] : []),
+      // settled: still from its last move (the commit, when nothing moved), and settled a second after that at the
+      // soonest; `quiet` - the first still second, which a later move can follow - is --json's alone
+      ...(l.state === 'settled' ? [`still from ${secs(l.lastMoveMs ?? l.commitMs)}`] : l.lastMoveMs !== undefined ? [`last move ${secs(l.lastMoveMs)}`] : []),
       ...(l.settledMs !== undefined ? [`settled ${secs(l.settledMs)}`] : []),
     ]
     if (times.length) console.log(`    ${times.join(' · ')}`)
     const m = l.moves
     console.log(`    ${plural(m.count, 'move')}${m.count ? `, ${m.distance} px: ${list(m.causes)}` : ''}${m.late.count ? ` · late, after it ${l.state === 'settled' ? 'settled' : l.state === 'cut' ? 'was cut' : 'ended'}: ${m.late.count} (${list(m.late.causes)})` : ''}`)
-    // the slowest of the frames that finished - how long each waited for its turn to start, then took once started;
-    // those a cut left on their way, counted apart
+    // the slowest of the frames that finished, by when each settled - its last height, or ready for a frame that does not
+    // measure: a later clock than "all ready", which is each frame's first render - how long each waited for its turn
+    // to start, then took once started; those a cut left on their way, counted apart
     const took = (f: LoadSummary['slowest'][number]) => `${f.frame ?? f.node} ${secs(f.ms)}${f.admittedMs !== undefined ? ` (waited ${secs2(f.admittedMs)}, then ${secs2(f.ms - f.admittedMs)})` : ''}`
-    const slow = [...(l.slowest.length ? [`slowest: ${l.slowest.map(took).join(', ')}`] : []), ...(l.unfinished ? [`${l.unfinished} never finished`] : [])]
+    const slow = [...(l.slowest.length ? [`slowest to settle: ${l.slowest.map(took).join(', ')}`] : []), ...(l.unfinished ? [`${l.unfinished} never finished`] : [])]
     if (slow.length) console.log(`    ${slow.join(' · ')}`)
     const gone = [...(l.neverReady.length ? [`never ready: ${l.neverReady.join(', ')}`] : []), ...(l.missing.length ? [`missing: ${l.missing.join(', ')}`] : [])]
     if (gone.length) console.log(`    ${gone.join(' · ')}`)

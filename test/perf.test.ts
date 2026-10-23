@@ -150,6 +150,9 @@ describe('marver perf, printed', () => {
     root = mkdtempSync(join(tmpdir(), 'mv-perf-cli-'))
     mkdirSync(perfDir(root), { recursive: true })
     writeFileSync(pageLog(root), fixture().map((r) => JSON.stringify(r)).join('\n') + '\n')
+    // a board with a title: the printed reports name it as the sidebar does; the others go by their names, Title-Cased
+    mkdirSync(join(root, 'design', 'boards'), { recursive: true })
+    writeFileSync(join(root, 'design', 'boards', 'start-here.json'), JSON.stringify({ version: 1, name: 'start-here', title: 'Start here - the brief', nodes: [] }))
     out = []
     vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => { out.push(a.join(' ')) })
   })
@@ -159,8 +162,10 @@ describe('marver perf, printed', () => {
     perfCommand(root, { loads: true, json: true })
     const j = JSON.parse(out.join('\n'))
     expect(j.minutes).toBe(60)
+    // the board's id, never its title; the first still second (quiet) is here, never in the printed report
     expect(j.loads.map((l: any) => l.board)).toEqual(['start-here', 'docs', 'notes', '~unplaced'])
     expect(j.loads.map((l: any) => l.lastMoveMs)).toEqual([1300, 700, undefined, undefined])
+    expect(j.loads[0].quietMs).toBe(1300)
     expect(j.loads.map((l: any) => [l.readyByCut, l.unfinished])).toEqual([[undefined, 0], [1, 1], [undefined, 0], [undefined, 0]])
     expect(j.loads.map((l: any) => l.firstStartedMs)).toEqual([350, undefined, undefined, undefined])
     expect(j.loads[0].slowest[1]).toEqual({ node: 'k-1', frame: 'docs/a', ms: 1600, outcome: 'settled', admittedMs: 350, readyMs: 700 })
@@ -174,14 +179,21 @@ describe('marver perf, printed', () => {
   it('--loads: one block per load, in words', () => {
     perfCommand(root, { loads: true })
     const text = out.join('\n')
-    expect(text).toMatch(/Start Here \(boot\)\s+settled 3\.2 s/)
+    // the board by its title, as the sidebar shows it
+    expect(text).toMatch(/Start here - the brief \(boot\)\s+settled 3\.2 s/)
     expect(text).toContain('committed 0.4 s · 7 frames (3 hi-fi, 3 content, 1 html) · 3 measure, 2 opened at a known height')
-    expect(text).toContain('first frame started 0.35 s · visible ready 0.9 s (4 frames) · all ready 1.9 s · quiet 1.3 s · last move 1.3 s · settled 3.2 s')
-    expect(text).toMatch(/Docs \(switch\)\s+cut \(switch\) at 1\.4 s\n.*\n {4}1 of 2 ready · last move 0\.7 s\n.*\n {4}slowest: docs\/y 0\.9 s · 1 never finished\n/)
+    // still from its last move, settled a second after at the soonest - no "quiet" beside a later last move
+    expect(text).toContain('first frame started 0.35 s · visible ready 0.9 s (4 frames) · all ready 1.9 s · still from 1.3 s · settled 3.2 s')
+    expect(text).not.toMatch(/quiet/)
+    // nothing moved: still from the commit
+    expect(text).toMatch(/Not on a board \(boot\)\s+settled 1\.5 s\n.*\n {4}visible ready 0\.6 s · all ready 0\.6 s · still from 0\.2 s · settled 1\.5 s\n/)
+    // a cut load has no still: when it last moved
+    expect(text).toMatch(/Docs \(switch\)\s+cut \(switch\) at 1\.4 s\n.*\n {4}1 of 2 ready · last move 0\.7 s\n.*\n {4}slowest to settle: docs\/y 0\.9 s · 1 never finished\n/)
     expect(text).not.toContain('docs/x')
     expect(text).toContain('3 moves, 1000 px: reflow:measured 2, measure-height 1 · late, after it settled: 2 (drag 1, measure-height 1)')
     // how long each waited for its turn to start, then took once started: a long wait is the queue, not the frame
-    expect(text).toContain('slowest: kit/f2 1.9 s (waited 1.50 s, then 0.40 s), docs/a 1.6 s (waited 0.35 s, then 1.25 s), docs/b 1.2 s, docs/c 1.1 s, kit/f1 0.5 s (waited 0.36 s, then 0.14 s)')
+    // slowest to settle - its last height (ready, for a frame that does not measure): docs/a settled at 1.6 s, after "all ready"
+    expect(text).toContain('slowest to settle: kit/f2 1.9 s (waited 1.50 s, then 0.40 s), docs/a 1.6 s (waited 0.35 s, then 1.25 s), docs/b 1.2 s, docs/c 1.1 s, kit/f1 0.5 s (waited 0.36 s, then 0.14 s)')
     expect(text).toContain('never ready: kit/f3 · missing: kit/old')
     expect(text).toContain('error (frame kit/f4): Cannot read properties of undefined')
     expect(text).toContain('late error (shell): ResizeObserver loop completed with undelivered notifications')
@@ -196,8 +208,8 @@ describe('marver perf, printed', () => {
     perfCommand(root, {})
     const text = out.join('\n')
     expect(text).toContain('board loads: 4')
-    expect(text).toMatch(/start-here\s+boot\s+settled 3\.2 s · 3 moves \(2 late\) · 2 errors \(1 late\)/)
-    expect(text).toMatch(/docs\s+switch\s+cut \(switch\) at 1\.4 s · 1 move/)
+    expect(text).toMatch(/Start here - the brief\s+boot\s+settled 3\.2 s · 3 moves \(2 late\) · 2 errors \(1 late\)/)
+    expect(text).toMatch(/Docs\s+switch\s+cut \(switch\) at 1\.4 s · 1 move/)
     out = []
     perfCommand(root, { json: true })
     const j = JSON.parse(out.join('\n'))
@@ -228,7 +240,7 @@ describe('marver perf, printed', () => {
     expect(text).toContain('10 more errors not shown (--json lists every one)')
     out = []
     perfCommand(root, {})
-    expect(out.join('\n')).toMatch(/errors\s+boot\s+settled 0\.9 s · 20 errors/)
+    expect(out.join('\n')).toMatch(/Errors\s+boot\s+settled 0\.9 s · 20 errors/)
     out = []
     perfCommand(root, { json: true })
     expect(JSON.parse(out.join('\n')).loads[0]).toMatchObject({ errors: 20 })
@@ -303,7 +315,7 @@ describe('marver perf, printed', () => {
     expect(text).not.toContain('not committed')
     out = []
     perfCommand(root, {})
-    expect(out.join('\n')).toMatch(/archive\s+switch\s+cut \(hidden\) at 0\.4 s before it mounted · mounted 3\.2 s · 0 moves \(1 late\)/)
+    expect(out.join('\n')).toMatch(/Archive\s+switch\s+cut \(hidden\) at 0\.4 s before it mounted · mounted 3\.2 s · 0 moves \(1 late\)/)
   })
 
   it('nothing in the window says so', () => {

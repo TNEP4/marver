@@ -35,11 +35,13 @@ read again because its file changed on disk (`disk-reload`) - the page follows i
 5. **Quiet.** The first second after it mounts with nothing moving, written as that second ends: it says
    when the move before it came (the mount itself, when nothing had moved yet). It is not when the board
    stopped moving - a frame that reports its height later moves it again. That is the **last move**, on
-   the record that ends the load, settled or cut.
+   the record that ends the load, settled or cut. `perf --loads` prints only the last move (`still from`);
+   `quiet` is in `--json`.
 6. **Settled.** Every frame at its outcome, no re-flow pending or held, no frame booting or waiting its
-   turn to, the camera still, and a second with no move - so a load never settles in under a second. It says
-   how many moves and why, when the last one came, when the visible frames and all the frames were ready,
-   and how heavy the board is: elements, frames awake and asleep, the heap (in Chrome).
+   turn to, the camera still, and the board still for one second after its last change - its last move, or
+   the mount when nothing moved - so a load never settles in under a second. It says how many moves and why,
+   when the last one came, when the visible frames and all the frames were ready, and how heavy the board
+   is: elements, frames awake and asleep, the heap (in Chrome).
 
 Or **cut**: another board (`switch`), the same board loaded again (`reload`), the page hidden (`hidden`),
 or 120 s without settling (`timeout`). A request that never mounted is cut too: a newer load
@@ -50,44 +52,56 @@ cut (`late`), the cut stays, and what the board does from then is late.
 
 ## Reading `perf --loads`
 
-A board of three content frames, opened twice. The first time no height was known; the second time the
-heights the first load settled at were in `design/boards/_sizes.json`:
+A board of three content frames, `checkout`, titled "Checkout flow", opened twice. The first time no height
+was known; the second time the heights the first load settled at were in `design/boards/_sizes.json`:
 
 ```
 $ npx marver perf --loads
 board loads, last 60 min - design/.local/perf/page.jsonl
 
-  3:41:36 PM  Checkout (boot)                          settled 2.1 s
+  3:41:36 PM  Checkout flow (boot)                     settled 2.1 s
     committed 0.0 s · 3 frames (3 content) · 3 measure, 0 opened at a known height
-    first frame started 0.36 s · visible ready 0.5 s (3 frames) · all ready 0.5 s · quiet 1.1 s · last move 1.1 s · settled 2.1 s
+    first frame started 0.36 s · visible ready 0.5 s (3 frames) · all ready 0.5 s · still from 1.1 s · settled 2.1 s
     5 moves, 1650 px: measure-height 3, reflow:measured 2
-    slowest: checkout/risks 0.7 s (waited 0.42 s, then 0.28 s), checkout/flows 0.6 s (waited 0.42 s, then 0.18 s), checkout/brief 0.6 s (waited 0.36 s, then 0.24 s)
+    slowest to settle: checkout/risks 0.7 s (waited 0.42 s, then 0.28 s), checkout/flows 0.6 s (waited 0.42 s, then 0.18 s), checkout/brief 0.6 s (waited 0.36 s, then 0.24 s)
 
-  3:42:03 PM  Checkout (boot)                          settled 1.0 s
+  3:42:03 PM  Checkout flow (boot)                     settled 1.0 s
     committed 0.0 s · 3 frames (3 content) · 3 measure, 3 opened at a known height
-    first frame started 0.36 s · visible ready 0.5 s (3 frames) · all ready 0.5 s · quiet 0.0 s · settled 1.0 s
+    first frame started 0.36 s · visible ready 0.5 s (3 frames) · all ready 0.5 s · still from 0.0 s · settled 1.0 s
     0 moves
-    slowest: checkout/risks 0.6 s (waited 0.42 s, then 0.18 s), checkout/flows 0.6 s (waited 0.42 s, then 0.18 s), checkout/brief 0.5 s (waited 0.36 s, then 0.14 s)
+    slowest to settle: checkout/risks 0.6 s (waited 0.42 s, then 0.18 s), checkout/flows 0.6 s (waited 0.42 s, then 0.18 s), checkout/brief 0.5 s (waited 0.36 s, then 0.14 s)
 ```
 
-The first load opened each frame at a guess: each reported its height (`measure-height`) and the frames
-below moved with the re-flow (`reflow:measured`) - five moves, the last at 1.1 s, settled at 2.1 s. The
-second opened at the known heights: nothing moved (so no last move), and it settled at 1.0 s, the
-one-second floor.
+Each load names its board as the sidebar does - its title, else its name - and `--json` by its name
+(`board`). The first load opened each frame at a guess: each reported its height (`measure-height`) and
+the frames below moved with the re-flow (`reflow:measured`) - five moves, the last at 1.1 s: still from
+1.1 s, settled at 2.1 s. The second opened at the known heights: nothing moved, so it was still from the
+mount, and it settled at 1.0 s, the one-second floor.
 
-Each slowest frame says how long it waited for its turn to start, then how long it took once started. The canvas
-starts a board's frames a few at a time: the first alone, once the first camera fit has settled - about 0.35 s after
-the board mounts, `first frame started` - then up to four at once, those in view first. Here every frame took a
-quarter of a second or less of its own; most of the time before them was the wait.
+**Ready and settled are two clocks.** A frame is *ready* at its first render: `visible ready` and `all
+ready` say when the last of the frames in view, and of all the frames, was. A content frame that measures
+its own height has *settled* at its last height, later; `slowest to settle` lists the frames that took
+longest to reach that (ready, for a frame that does not measure), so its times can come after `all ready`.
+The board has *settled* once every frame has, and it has been still for one second after its last change:
+`still from` says when that stillness began - its last move, or the mount when nothing moved - and
+`settled` comes a second after it at the soonest, later when a frame was still on its way.
 
-`quiet` and `last move` agree here. On a heavy board they part: one that held still for its first second
-and then moved again as late frames reported their heights says `quiet 1.8 s · last move 15.0 s`. `quiet`
-is the first still second; `last move` is when it stopped moving.
+Each frame in `slowest to settle` says how long it waited for its turn to start, then how long it took once
+started. The canvas starts a board's frames a few at a time: the first alone, once the first camera fit has
+settled - about 0.35 s after the board mounts, `first frame started` - then up to four at once, those in view
+first. Here every frame took a quarter of a second or less of its own; most of the time before them was the
+wait.
+
+`--json` also has `quietMs`: when the first still second after the mount began. On a heavy board they part:
+one that held still for a second after a move at 1.8 s, then moved again as late frames reported their
+heights, has `quietMs` 1800 and says `still from 15.0 s`. The printed report leaves `quiet` out: the settle
+waits on the last move, not the first still second.
 
 A load that was cut has no ready times to give; it says how many of its frames were ready by the cut
 instead - `69 of 121 ready`, of the frames on the board then (those placed while it loaded included, those
-removed not) - and, after its slowest, how many never finished (`52 never finished`):
-`slowest` lists only frames that finished. A load can also say `never ready: ...`, `missing: ...`, its
+removed not) - when it last moved (`last move`: it never settled, so nothing was still from then), and,
+after its slowest, how many never finished (`52 never finished`): `slowest to settle` lists only frames
+that finished. A load can also say `never ready: ...`, `missing: ...`, its
 errors (`late error` for one after it ended, settled or cut), how many errors past the first 50 went
 unrecorded, and its gestures (how many, the worst p95, the frames over 33 ms). The last line says how many
 records never reached the log, when any did.
@@ -102,7 +116,7 @@ Read the load, name the lever, change it, compare the next load - you, or your a
   ([Sizes](boards-and-folders.md#sizes)), and the next load opens at those heights (`savedHeights`
   counts them) and the moves go, as above. Commit it with the rest of `design/`, and every clone and the
   published canvas open at them too.
-- **`slowest`** names the frames that held the load longest, of those that finished. Look at those first:
+- **`slowest to settle`** names the frames that held the load longest, of those that finished. Look at those first:
   what they load, how much they render - the time after `then` is the frame's own. A load cut before its frames
   finished counts the rest apart; cut at 120 s (`timeout`), the board is too heavy to finish - split it, or
   lighten what its frames load.
@@ -203,16 +217,17 @@ counts every change to the board; `perf --loads` counts move records, where a dr
 
 ## `--json`
 
-`npx marver perf --loads --json` prints `{ minutes, loads, unowned, dropped }`. Each load has `board`,
-`cause` and `state` - `settled`, `cut`, or `open` (still going, or its end past the window) - and, as it
+`npx marver perf --loads --json` prints `{ minutes, loads, unowned, dropped }`. Each load has `board` (the
+board's name; the printed report shows its title), `cause` and `state` - `settled`, `cut`, or `open` (still going, or its end past the window) - and, as it
 got there:
 
 - `cut`: `reason`, `ms`, and `request: true` when the cut came before it mounted;
 - the commit: `commitMs`, `frames`, `byKind`, `measuring`, `savedHeights` - and `mountedAfterCut: true` for a
   request cut first whose board arrived after all (`perf --loads` says `cut (hidden) at 0.4 s before it
   mounted · mounted 3.2 s`, and counts its moves as late);
-- `visible` (with `visibleAssumed`), `visibleReadyMs`, `allReadyMs`, `quietMs`, `lastMoveMs` (settled or cut),
-  `settledMs`;
+- `visible` (with `visibleAssumed`), `visibleReadyMs`, `allReadyMs` (each frame's first render), `quietMs` (when
+  the first still second began), `lastMoveMs` (settled or cut; `still from` in the printed report, which says the
+  mount when it is absent), `settledMs`;
 - `moves`: `count`, `distance`, the top five `causes` as `[cause, count]` pairs, and `late` (count and
   causes of the moves after the load ended, settled or cut);
 - `slowest`: the five slowest frames that finished (`node`, `frame`, `ms` - when it settled, or was ready -
