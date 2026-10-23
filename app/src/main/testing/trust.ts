@@ -9,6 +9,7 @@
  */
 import { BaseWindow, ipcMain, session, WebContentsView, webContents, type WebContents } from 'electron'
 import { installBridge, kindOf, type CanvasReports } from '../bridge.ts'
+import type { PageKind } from '../../shared/channels.ts'
 import { attachNav, type NavAdapter, type NavEvent } from '../nav.ts'
 import { fetchLogo, installDispatcher, isTrusted, probeProof } from '../proof.ts'
 import { appRegistry, publicEntry, type RegistryEntry } from '../registry.ts'
@@ -185,6 +186,11 @@ export function provideBridgeHooks(): void {
     return true
   })
   provide('trust:handled', () => [...handled])
+  const readied: string[] = []
+  provide('trust:on-ready', () => { bridge.onReady((ctx) => { readied.push(ctx.kind) }); return true })
+  provide('trust:readied', () => [...readied])
+  provide('trust:send', (a) => bridge.send(arg<PageKind>(a, 'kind'), arg<string>(a, 'channel'), arg<unknown>(a, 'payload')))
+  provide('trust:app-reload', (a) => { const v = apps.get(arg<string>(a, 'id')); if (v && !v.webContents.isDestroyed()) v.webContents.reload(); return true })
   provide('trust:ipc', (a) => {
     const id = arg<string>(a, 'id')
     const wc = tabs.get(id)?.wc ?? apps.get(id)?.webContents
