@@ -82,6 +82,10 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 
 ### Fixed
 
+- **Pictures with Chrome 156.0.8078.47 and later.** That update made a headless page whose window another one
+  covers read as hidden - and since 0.26.1 each picture has a window of its own - so a picture could wait on a paint
+  that never came. Marver's Chrome now runs every page as if seen (the flags Puppeteer launches with). This covers
+  `marver shot`, your agent's pictures, copy as image, video posters and Jam's pictures.
 - **A tab left open can no longer write into another project.** A tab whose canvas had stopped kept talking to
   whatever started next on its port, and could save its board into another project whose board file matched. Every
   request the canvas page makes to Marver now names its project, and so do its frame, play-stage and Jam-picture

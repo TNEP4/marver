@@ -45,7 +45,12 @@ export const PROFILE_PREFIXES = ['mv-shot-', 'mv-browser-']
 export function containerFlags(platform: string, uid: number | undefined): string[] {
   return platform === 'linux' && uid === 0 ? ['--no-sandbox', '--disable-dev-shm-usage'] : []
 }
-const FLAGS = [...(process.env.MV_CHROME_HEADED ? [] : ['--headless=new']), '--hide-scrollbars', '--no-first-run', '--no-default-browser-check', '--disable-extensions', ...containerFlags(process.platform, process.getuid?.()), ...(process.env.MV_CHROME_FLAGS?.split(' ').filter(Boolean) ?? [])]
+// Never backgrounded: since Chrome 156.0.8078.47 (23 Oct 2026) a headless page whose window another of
+// ours covers - each picture has a window of its own - reads as hidden: its frames' rAF and timers
+// stop, a frame's Vite client stops polling, a shot can wait on a paint that never comes. The three
+// flags Puppeteer has always launched with keep every page running as if seen.
+const FOREGROUND = ['--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling']
+const FLAGS = [...(process.env.MV_CHROME_HEADED ? [] : ['--headless=new']), '--hide-scrollbars', '--no-first-run', '--no-default-browser-check', '--disable-extensions', ...FOREGROUND, ...containerFlags(process.platform, process.getuid?.()), ...(process.env.MV_CHROME_FLAGS?.split(' ').filter(Boolean) ?? [])]
 const HANDSHAKE_MS = 15_000
 const MAX_MESSAGE = 1 << 30   // a screenshot answer is hundreds of MB of base64 at most; past this it is a runaway
 
