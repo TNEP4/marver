@@ -101,6 +101,11 @@ describe('the one ground: the inset, the cover, the epochs (A3.8 #24-#27)', () =
     const lift = (await coverChanges(since)).find((x) => x.changes.some((ch) => ch.key === 'cover' && ch.visible === false))!
     expect(lift.turn).toBe(ok.turn)
     expect(ps.find((p) => p.op === 'uncover')!.epoch).toBe(ask.epoch)
+    // its cover record (the recorder's line, A3.8 #27): made by the hello, uncovered, named by the document that said it
+    const rec = (await lines('cover-record', since)).map((l) => l.data).find((d) => d.tab === a && d.epoch === ask.epoch)
+    expect(rec).toMatchObject({ tab: a, ws: fa.ws, cause: 'hello', outcome: 'uncovered', frames: 2, uncoverDelayMs: 0 })
+    expect(rec!.page).toMatch(/^PAGE_/)
+    expect(rec!.uncoveredMs as number).toBeGreaterThanOrEqual(rec!.answeredMs as number)
     // the lift of its tab page showed the view with the cover up (until then the tab page painted its own ground)
     const shown = (await composes(since)).find((x) => x.changes.some((ch) => ch.key === `${a}:view` && ch.op === 'visible' && ch.visible === true))!
     expect(shown.cover).toBe(true)
@@ -356,6 +361,17 @@ describe('stalled renderers: covering never waits on one, uncovering waits for t
     const s2 = await mark()
     await w.run.call('crash', { target: 'strip' })
     await waitFor('the strip back', async () => (await w.log('page', s2)).some((l) => l.data.ready === 'strip'))
+  })
+
+  it('the capture matrix\'s heartbeat: a 1 px compositor animation in the strip\'s corner, on and off by its hook', async () => {
+    const anim = () => exec<string>('strip', `getComputedStyle(document.documentElement, '::after').animationName`)
+    expect(await anim()).toBe('none')
+    expect(await w.run.call('ground:heartbeat', { on: true })).toBe(true)
+    expect(await anim()).toBe('mv-beat')
+    expect(await exec<string>('strip', `(() => { const s = getComputedStyle(document.documentElement, '::after'); return [s.width, s.height, s.position, s.animationTimingFunction].join(' ') })()`)).toBe('1px 1px fixed linear')
+    await w.run.call('ground:heartbeat', { on: false })
+    // the sheet goes on the renderer's own time (removeInsertedCSS answers before it is applied)
+    await waitFor('the heartbeat gone', async () => (await anim()) === 'none', 3000)
   })
 
   it('the canvas stalled: a resize covers at once, and no answer lifts it until the page runs again; shown while stalled, the same', async () => {

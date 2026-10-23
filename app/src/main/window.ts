@@ -45,7 +45,9 @@ import { invalidateMenu } from './menu.ts'
 import { note, noteTopic, provide, testMode } from './testing/index.ts'
 import { T } from './timings.ts'
 import { groundOn, onLayoutChange, placed, rectFor, seeThrough, setGround } from './layout.ts'
-import { bumpAll, bumpGen, epochOf, flush as presentFlush, genOf, gpuGone, liftAt, noteGpu, observe, onPresentLog } from './present.ts'
+import { bumpAll, bumpGen, epochOf, flush as presentFlush, genOf, gpuGone, liftAt, noteGpu, observe, onCoverRecord, onPresentLog, uncovered } from './present.ts'
+import { identity, recorder } from './recorder.ts'
+import type { TabIdent } from '../../../src/shared/app-perf.ts'
 import { makeCover, type Cover } from './cover.ts'
 
 export { STRIP_HEIGHT }
@@ -348,6 +350,8 @@ function planTab(t: Tab, appDark: boolean, presented: boolean): PlanTab {
 let resizing = false
 let quietTimer: ReturnType<typeof setTimeout> | undefined
 let liftTimer: ReturnType<typeof setTimeout> | undefined
+/** each tab's current epoch and the tab's identity when it began: its `cover` record names that document (A3.8 #8) */
+const epochIdent = new Map<string, { epoch: number; who: TabIdent }>()
 
 function armQuiet(): void {
   clearTimeout(quietTimer)
@@ -393,6 +397,8 @@ function composeOnce(o: { focus?: 'shown' }): void {
     if (doc) {
       const r = rectFor(a, w, h)
       presented = observe(a.id, { doc, w: r.width, h: r.height, fs: a.geo.htmlFullscreen, gen: genOf(a.id) }, now)
+      const e = epochOf(a.id)
+      if (e !== null && epochIdent.get(a.id)?.epoch !== e) epochIdent.set(a.id, { epoch: e, who: identity(a) })
       eligible = seeThrough(a)
       // a lift waiting on uncoverDelayMs: compose again then
       const at = liftAt(a.id)
@@ -426,7 +432,10 @@ function composeOnce(o: { focus?: 'shown' }): void {
   if (p.cover.visible !== coverWas.visible) {
     cover!.setVisible(p.cover.visible)
     changes.push({ key: 'cover', op: 'visible', visible: p.cover.visible })
-    if (__MV_TEST__ && !p.cover.visible && a && eligible) noteTopic('present', { tab: a.id, op: 'uncover', epoch: epochOf(a.id) ?? 0, gen: genOf(a.id) })
+    if (!p.cover.visible && a && eligible) {
+      uncovered(a.id, now)
+      if (__MV_TEST__) noteTopic('present', { tab: a.id, op: 'uncover', epoch: epochOf(a.id) ?? 0, gen: genOf(a.id) })
+    }
   }
   coverWas = { visible: p.cover.visible, color: p.cover.color }
   // 4. focus, before the hides: what the active tab shows now holds it (A2.13)
@@ -585,6 +594,14 @@ export function openWindow(d?: WindowDeps): BaseWindow {
     onLayoutChange((d) => noteTopic('layout', d))
     onPresentLog((d) => noteTopic('present', d))
   }
+  // each sent epoch's outcome, for tuning presentFrames and uncoverDelayMs (A3.8 #27): the recorder's `cover` line
+  onCoverRecord((tab, epoch, body) => {
+    const kept = epochIdent.get(tab)
+    const t = getTab(tab)
+    const who = kept?.epoch === epoch ? kept.who : t ? identity(t) : { tab }
+    if (__MV_TEST__) note('cover-record', { ...who, ...body })
+    try { recorder.event('cover', who, body) } catch { /* the recorder's to keep; the window goes on */ }
+  })
   strip = new WebContentsView({ webPreferences: appPrefs() })
   strip.setBackgroundColor('#00000000')   // transparent: it paints controls only, over the cover or the views beneath (A3.8 #29)
   registerApp(strip.webContents, 'strip')
@@ -667,15 +684,16 @@ function groundHooks(): void {
     ground: groundOn(), resizing, cover: { ...coverWas },
     tabs: allTabs().map((t) => ({ id: t.id, geo: { ...t.geo }, placed: placed(t), seeThrough: seeThrough(t), epoch: epochOf(t.id), gen: genOf(t.id) })),
   }))
-  // the capture matrix's heartbeat (A3.8 #29): a 1 px compositor animation in the strip's corner, so a stalled strip
-  // main thread keeps the display at its rate - test builds only; the release never carries it
+  // the capture matrix's heartbeat (A3.8 #29): a 1 px opacity animation in the strip's corner, run by the compositor
+  // and changing every frame - so the strip makes a frame each refresh (a ProMotion display stays at its full rate)
+  // and a stalled strip main thread keeps it - test builds only; the release never carries it
   let beat: string | null = null
   provide('ground:heartbeat', async (a) => {
     const s = stripContents()
     if (!s) return false
     const on = !!arg<{ on?: boolean }>(a).on
     if (beat) { await s.removeInsertedCSS(beat).catch(() => {}); beat = null }
-    if (on) beat = await s.insertCSS('html::after { content: ""; position: fixed; right: 0; bottom: 0; width: 1px; height: 1px; background: #808080; will-change: opacity; animation: mv-beat 1s steps(2) infinite; pointer-events: none } @keyframes mv-beat { to { opacity: .5 } }', { cssOrigin: 'user' })
+    if (on) beat = await s.insertCSS('html::after { content: ""; position: fixed; right: 0; bottom: 0; width: 1px; height: 1px; background: #808080; will-change: opacity; animation: mv-beat 1s linear infinite alternate; pointer-events: none } @keyframes mv-beat { from { opacity: 1 } to { opacity: .4 } }')   // the author origin: removeInsertedCSS takes only that one back
     return true
   })
 }

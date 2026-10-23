@@ -7,7 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { commitLayout, docInset, onLayoutChange, placed, rectFor, seeThrough, setGround, type LayoutEvent } from '../../src/main/layout.ts'
 import {
-  answer, bumpAll, bumpGen, epochOf, flush, forget, genOf, gpuGone, liftAt, noteGpu, observe, resetPresent, type PresentKey,
+  answer, bumpAll, bumpGen, epochOf, flush, forget, genOf, gpuGone, liftAt, noteGpu, observe, onCoverRecord, resetPresent, uncovered, type PresentKey,
 } from '../../src/main/present.ts'
 import { GROUND, plan, type PlanTab } from '../../src/main/plan.ts'
 import { allTabs, blankTab, onCommit, onDocumentGone, onFail, onRegistry, onReport, type Tab } from '../../src/main/tabs.ts'
@@ -354,6 +354,54 @@ describe('present.ts: epochs (A3.8 #27, #28, r2 #2, r3 #1)', () => {
     expect(observe('t1', K(), 1)).toBe(false)              // and its key's gen moved: a fresh epoch is due
     expect(observe('t1', K({ gen: genOf('t1') }), 1)).toBe(false)
     expect(epochOf('t1')).toBe(e + 1)
+  })
+})
+
+describe('present.ts: the cover record, one per sent epoch (A3.8 #27; app-perf.ts `cover`)', () => {
+  const K = (o: Partial<PresentKey> = {}): PresentKey => ({ doc: 'd1', w: 1280, h: 820, fs: false, gen: 0, ...o })
+  const GPU = { pid: 10, born: 100 }
+  const recs: { tab: string; epoch: number; r: Record<string, unknown> }[] = []
+  const send = () => true
+  beforeEach(() => { resetPresent(); recs.length = 0; onCoverRecord((tab, epoch, r) => recs.push({ tab, epoch, r: r as unknown as Record<string, unknown> })) })
+  afterEach(() => onCoverRecord(null))
+
+  it('uncovered: its cause, the frames it asked for, and its times from its start - sent, answered, uncovered', () => {
+    observe('t1', K(), 1000)
+    flush('t1', send, 2, 1010)
+    answer('t1', 'd1', { epoch: epochOf('t1')!, w: 1280, h: 820 }, 1050, GPU)
+    uncovered('t1', 1052)
+    uncovered('t1', 1060)                                   // once only
+    expect(recs).toEqual([{ tab: 't1', epoch: 1, r: { epoch: 1, cause: 'doc', outcome: 'uncovered', sentMs: 10, answeredMs: 50, uncoveredMs: 52, frames: 2, uncoverDelayMs: 0 } }])
+  })
+
+  it('superseded inside a second; never past a second unanswered; a mismatch once; an epoch never sent records nothing', () => {
+    observe('t1', K(), 0)                                   // never sent: no record when superseded
+    observe('t1', K({ w: 1000 }), 10)
+    flush('t1', send, 2, 20)
+    observe('t1', K({ w: 900 }), 500)                       // superseded at 480 ms after its send
+    flush('t1', send, 2, 510)
+    observe('t1', K({ w: 800 }), 1600)                      // unanswered 1090 ms after its send: never
+    flush('t1', send, 2, 1600)
+    answer('t1', 'd1', { epoch: epochOf('t1')!, w: 700, h: 820 }, 1700, GPU)
+    answer('t1', 'd1', { epoch: epochOf('t1')!, w: 700, h: 820 }, 1710, GPU)
+    expect(recs.map((x) => [x.r.cause, x.r.outcome])).toEqual([['size', 'superseded'], ['size', 'never'], ['size', 'mismatch']])
+    expect(recs[2]!.r).toMatchObject({ answeredMs: 100 })
+    forget('t1', 9000)                                      // already recorded: nothing more
+    expect(recs).toHaveLength(3)
+  })
+
+  it('each gen event names itself: shown, hello, a live resize\'s end, the GPU process; HTML fullscreen and a new document too', () => {
+    const next = (k: PresentKey, at: number) => { observe('t1', k, at); flush('t1', send, 2, at) }
+    next(K(), 0)
+    bumpGen('t1', 'hello'); next(K({ gen: genOf('t1') }), 10)
+    bumpGen('t1'); next(K({ gen: genOf('t1') }), 20)
+    bumpAll(); next(K({ gen: genOf('t1') }), 30)
+    gpuGone(); next(K({ gen: genOf('t1') }), 40)
+    next(K({ gen: genOf('t1'), fs: true }), 50)
+    next(K({ gen: genOf('t1'), fs: true, doc: 'd2' }), 60)
+    forget('t1', 70)
+    expect(recs.map((x) => x.r.cause)).toEqual(['doc', 'hello', 'show', 'resize', 'gpu', 'fullscreen', 'doc'])
+    expect(recs.every((x) => x.r.outcome === 'superseded')).toBe(true)
   })
 })
 

@@ -831,7 +831,7 @@ export function onReport(tabId: string, doc: string, r: { safety?: Safety; busy?
     t.reports.hello = { ...r.hello }
     commitLayout(t, { kind: 'hello', inset: r.hello.inset === 44 ? 44 : 0 })
     // what was presented before this document spoke no longer counts (A3.8 #27: the accepted hello advances its view's gen)
-    bumpGen(t.id)
+    bumpGen(t.id, 'hello')
     onDocHello(t)
   }
   if (r.busy) {
