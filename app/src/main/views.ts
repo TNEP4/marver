@@ -89,17 +89,35 @@ export interface TrustPort {
 }
 
 /**
- * What the window stream tells Home's main side (the home-and-files stream's home.ts): Home has first shown (the
- * first-launch marker), a canvas was verified - its first trusted commit on an instance (Recently here) - and a
- * canvas went. main.ts wires these to `noteHomeShown`, `noteVerified` and `noteGone` once both streams meet.
+ * What the window stream tells Home's main side (the home-and-files stream's home.ts, its `HomePorts` in ports.ts):
+ * Home's first load while it is the active tab (the first-launch marker), a canvas verified - its first trusted
+ * commit on an instance, for Recently here (ports.ts lists it as the trust stream's; calling it twice is harmless) -
+ * a canvas gone, and the quit once it is sure. main.ts wires these to noteHomeShown, noteVerified, noteGone and
+ * flushRecent once the streams meet.
  */
 export interface HomeNotes {
   homeShown(): void
   verified(c: { ws: string; root: string; name: string; origin: string; slot: number | null; port: number }): void
   gone(ws: string): void
+  /** the quit, once guardAll answered 'done', before app.quit(): every canvas still running seen now */
+  quitting?(running: string[]): void
 }
 
-export interface StartInput { trust: TrustPort; home: Home; files: Files; firstLaunch?: boolean; notes?: HomeNotes }
+/**
+ * tabs.json's one reader and one writer. ports.ts makes it config.ts's (`readTabsFile`, `tabsWriter`): tabs.ts decides
+ * what goes in it and writes nothing itself. Until the streams meet, views.ts's own store stands in (a whole write,
+ * debounced 1 s, a bad file set aside as tabs.json.bad).
+ */
+export interface TabsStore {
+  /** undefined when absent; a bad one is set aside */
+  read(): TabsFile | undefined
+  /** the latest state, written debounced */
+  set(file: TabsFile): void
+  /** what waits, written now (the quit) */
+  flushSync(): void
+}
+
+export interface StartInput { trust: TrustPort; home: Home; files: Files; firstLaunch?: boolean; notes?: HomeNotes; tabsStore?: TabsStore }
 
 const j = (topic: string, data: unknown) => { if (__MV_TEST__) note(topic, data) }
 
@@ -258,6 +276,7 @@ function makeAppView(t: Tab, page: 'home' | 'settings'): WebContentsView {
   const view = new WebContentsView({ webPreferences: appPrefs() })
   attachContent(t.id, view, page)   // registered with the bridge and wired (keys) by window.ts, as every app page
   track(view.webContents, { part: 'content', tab: t.id })
+  if (page === 'home') view.webContents.once('did-finish-load', () => { homeLoaded = true; noteHome() })
   t.view = 'live'
   void view.webContents.loadURL(`${APP_ORIGIN}${page}/`).catch(() => { /* served by sessions.ts */ })
   return view
@@ -749,48 +768,98 @@ function menuModel(): MenuModel {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// tabs.json (v1.12 r1 #5): read once, written whole on change, debounced 1 s
+// tabs.json (v1.12 r1 #5): the model's snapshot handed to the store on every change; the store writes it whole
 
 let tabsFile: TabsFile | null = null
-let saveTimer: ReturnType<typeof setTimeout> | undefined
+let store: TabsStore
 
-function tabsPath(): string { return join(homeDir.state, 'tabs.json') }
-
-function readTabsFile(): TabsFile | null {
-  if (!homeDir.writable && !existsSync(tabsPath())) return null
-  let raw: string
-  try { raw = readFileSync(tabsPath(), 'utf8') } catch { return null }
-  let parsed: TabsFile | null = null
-  try { parsed = parseTabsFile(JSON.parse(raw)) } catch { parsed = null }
-  if (!parsed) {
-    // the last bad one kept aside; the app goes on as if it were empty (A2.12)
-    try { renameSync(tabsPath(), `${tabsPath()}.bad`) } catch { /* unwritable: nothing to keep */ }
-    j('tabs.json', { bad: true })
+/** views.ts's own store, until config.ts's (ports.ts `readTabsFile` / `tabsWriter`) is passed in. */
+function ownStore(h: Home): TabsStore {
+  const path = () => join(h.state, 'tabs.json')
+  let waiting: TabsFile | undefined
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const write = () => {
+    if (timer) { clearTimeout(timer); timer = undefined }
+    const file = waiting
+    waiting = undefined
+    if (!file || !h.writable) return
+    try {
+      mkdirSync(h.state, { recursive: true, mode: 0o700 })
+      const tmp = `${path()}.${randomBytes(6).toString('hex')}.tmp`
+      const fd = openSync(tmp, 'w', 0o600)
+      try { writeSync(fd, JSON.stringify(file, null, 2) + '\n'); fsyncSync(fd) } finally { closeSync(fd) }
+      renameSync(tmp, path())
+    } catch (err) {
+      j('tabs.json', { writeFailed: (err as NodeJS.ErrnoException).code })
+      setCondition('files', { lead: 'Files not saved', text: '', short: 'Files not saved', tooltip: 'The app could not write ~/.marver/state' })
+    }
   }
-  return parsed
+  return {
+    read() {
+      let raw: string
+      try { raw = readFileSync(path(), 'utf8') } catch { return undefined }
+      let parsed: TabsFile | null = null
+      try { parsed = parseTabsFile(JSON.parse(raw)) } catch { parsed = null }
+      if (!parsed) {
+        // the last bad one kept aside; the app goes on as if it were empty (A2.12)
+        try { renameSync(path(), `${path()}.bad`) } catch { /* unwritable: nothing to keep */ }
+        j('tabs.json', { bad: true })
+        return undefined
+      }
+      return parsed
+    },
+    set(file) {
+      waiting = file
+      if (!timer) { timer = setTimeout(write, T.stateDebounceMs); (timer as { unref?: () => void }).unref?.() }
+    },
+    flushSync: write,
+  }
 }
 
-export function writeTabsNow(): void {
-  if (saveTimer) { clearTimeout(saveTimer); saveTimer = undefined }
-  if (!homeDir?.writable) return
-  const file = snapshotFile(tabsFile, Date.now())
-  tabsFile = file
-  try {
-    mkdirSync(homeDir.state, { recursive: true, mode: 0o700 })
-    const tmp = `${tabsPath()}.${randomBytes(6).toString('hex')}.tmp`
-    const fd = openSync(tmp, 'w', 0o600)
-    try { writeSync(fd, JSON.stringify(file, null, 2) + '\n'); fsyncSync(fd) } finally { closeSync(fd) }
-    renameSync(tmp, tabsPath())
-  } catch (err) {
-    j('tabs.json', { writeFailed: (err as NodeJS.ErrnoException).code })
-    setCondition('files', { lead: 'Files not saved', text: '', short: 'Files not saved', tooltip: 'The app could not write ~/.marver/state' })
-  }
-}
-
+/** The model's snapshot to the store (written debounced 1 s). */
 function saveSoon(): void {
-  if (saveTimer || quitting) return
-  saveTimer = setTimeout(() => { saveTimer = undefined; writeTabsNow() }, T.stateDebounceMs)
-  ;(saveTimer as { unref?: () => void }).unref?.()
+  if (quitting || !store) return
+  tabsFile = snapshotFile(tabsFile, Date.now())
+  store.set(tabsFile)
+}
+
+/** The quit's snapshot (v1.10 r5): handed over and written now. */
+export function writeTabsNow(): void {
+  if (!store) return
+  tabsFile = snapshotFile(tabsFile, Date.now())
+  store.set(tabsFile)
+  store.flushSync()
+}
+
+/** The workspaces of the canvases running now (the registry's starting and ready entries). */
+const runningWorkspaces = (): string[] => [...new Set(trust.entries().filter((e) => e.state === 'ready' || e.state === 'starting').map((e) => e.ws))]
+
+/**
+ * What home.ts's `mountPages(bridge, w)` needs of the window stream (ports.ts `WindowPorts`): the canvases running,
+ * told when that set changes; ⌘L's link opened in its tab (`LinkPorts`: the registry's live entry on a port, and
+ * openInTab); the files pill (tier 3).
+ */
+export function windowPorts() {
+  const fns = new Set<() => void>()
+  let last = ''
+  trust.onRegistry(() => {
+    const now = runningWorkspaces().sort().join(',')
+    if (now !== last) { last = now; for (const fn of [...fns]) fn() }
+  })
+  return {
+    running: runningWorkspaces,
+    onRunningChange(fn: () => void) { fns.add(fn); return () => { fns.delete(fn) } },
+    linkPorts: {
+      byPort(port: number): LinkTarget | undefined {
+        const e = trust.entries().find((x) => x.port === port && (x.state === 'ready' || x.state === 'starting'))
+        return e ? { state: e.state, origin: e.origin ?? null, port: e.port, ws: e.ws, name: e.name } : undefined
+      },
+      open: openInTab,
+    },
+    setFilesPill(p: { lead?: string; text: string; short: string; tooltip?: string } | null) {
+      setCondition('files', p ? { text: p.text, short: p.short, ...(p.lead ? { lead: p.lead } : {}), ...(p.tooltip ? { tooltip: p.tooltip } : {}) } : null)
+    },
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -800,6 +869,7 @@ export function startViews(i: StartInput): void {
   trust = i.trust
   homeDir = i.home
   notes = i.notes
+  store = i.tabsStore ?? ownStore(i.home)
   const home = homedir()
   const sendState = (t: Tab, s: AppState) => { if (canvases.has(t.id)) trust.appState(t.id, s) }
   setTabsPorts({
@@ -834,7 +904,8 @@ export function startViews(i: StartInput): void {
   if (trust.pages) mountPages(trust.pages)
 
   // restore (v1.12 r1 #5): only the active tab loads; the others when first shown
-  tabsFile = i.files.config.restoreTabs ? readTabsFile() : null
+  // read only with restoreTabs on: off, it is still written, so turning it back on restores (A2.14 #23)
+  tabsFile = i.files.config.restoreTabs ? (store.read() ?? null) : null
   const plan = restorePlan(tabsFile, trust.entries(), { restore: i.files.config.restoreTabs, firstLaunch: !!i.firstLaunch })
   applyRestore(plan)
   ensureAppViews()
@@ -893,8 +964,9 @@ export function startViews(i: StartInput): void {
       quitInFlight = false
       j('quit', { answer: r })
       if (r !== 'done') return   // the quit is cancelled; a refused quit is never retried by itself
-      quitting = true
       writeTabsNow()
+      notes?.quitting?.(runningWorkspaces())
+      quitting = true
       app.quit()
     })
   })
@@ -902,13 +974,16 @@ export function startViews(i: StartInput): void {
   if (__MV_TEST__) testHooks()
 }
 
-/** Home's view always, Settings' while its tab is open (⌘, makes the tab; this its view). */
+/** Home's first load while it is the active tab, the window shown: Home has shown (ports.ts `noteHomeShown`). */
 let homeNoted = false
+let homeLoaded = false
 function noteHome(): void {
-  if (homeNoted || activeTab()?.kind !== 'home' || !windowVisible()) return
+  if (homeNoted || !homeLoaded || activeTab()?.kind !== 'home' || !windowVisible()) return
   homeNoted = true
   notes?.homeShown()
 }
+
+/** Home's view always, Settings' while its tab is open (⌘, makes the tab; this its view). */
 
 function ensureAppViews(): void {
   noteHome()
@@ -1026,5 +1101,6 @@ function testHooks(): void {
     return true
   })
   provide('writeTabs', () => { writeTabsNow(); return tabsFile })
+  provide('notes', () => ({ homeNoted }))
   provide('settings:open', () => { openSettingsTab(); return true })
 }

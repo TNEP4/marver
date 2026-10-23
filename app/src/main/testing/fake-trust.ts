@@ -65,19 +65,27 @@ export function fakeTrust(): TrustPort {
     wc.on('did-navigate', onNavigate)
     wc.on('did-fail-load', onFail)
     wc.on('did-fail-provisional-load', onAbort)
+    let seen = 0
+    wc.on('did-navigate', () => { seen += 1 })
+    wc.on('did-fail-load', (_e, code, _d, _u, isMain) => { if (isMain && code !== -3) seen += 1 })
+    wc.on('render-process-gone', () => { seen += 1 })
+    // the trust stream's adapter also answers committed(), frame() and commits() (a2-trust): the fake does too
     return {
       gen: () => gen,
       attempt: () => undefined,
       stamp: () => gen || null,
       response: () => {},
-      on(fn) { fns.add(fn); return () => fns.delete(fn) },
+      committed: () => undefined,
+      frame: () => undefined,
+      commits: () => seen,
+      on(fn: (e: NavEvent) => void) { fns.add(fn); return () => { fns.delete(fn) } },
       dispose() {
         fns.clear()
         if (wc.isDestroyed()) return
         wc.off('did-start-navigation', onStart); wc.off('did-navigate', onNavigate)
         wc.off('did-fail-load', onFail); wc.off('did-fail-provisional-load', onAbort)
       },
-    }
+    } as NavAdapter
   }
 
   provide('fake:entry', (a) => {

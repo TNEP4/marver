@@ -150,7 +150,7 @@ function start(): void {
       reopenNext: (tabId) => b.reopenNext?.(tabId),
       ...(p2.probeProof ? { probe: async (t: Parameters<NonNullable<TrustPort['probe']>>[0]) => { const e = entryOf(t); return e ? p2.probeProof!(e) : 'silent' } } : {}),
       ...(p2.fetchLogo ? { fetchLogo: async (t: Parameters<NonNullable<TrustPort['fetchLogo']>>[0]) => { const e = entryOf(t); return e ? ((await p2.fetchLogo!(e))?.dataUrl ?? null) : null } } : {}),
-      ...(b.onReady && b.handle && b.send ? {
+      ...(['onReady', 'handle', 'send'].every((k) => typeof (b as unknown as Record<string, unknown>)[k] === 'function') ? {
         pages: {
           onReady: (fn: (wc: WebContents) => void) => { b.onReady!((ctx) => fn(ctx.wc)) },
           handle: (ch: string, fn: (wc: WebContents, payload: unknown) => unknown) => b.handle!(ch, (ctx, p) => fn(ctx.wc, p)),
