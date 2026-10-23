@@ -486,6 +486,24 @@ export function pruneBakes(root: string, keep: number): void {
   } catch { /* best-effort */ }
 }
 
+/**
+ * Who a compile is for (spec 28 A3.8 #19, r1 #3): a headless run's id, or `normal` for every ordinary caller. The
+ * in-flight key and the failure cache's key both become `flightKey(root, gen, ask, owner)`, so a run never joins a
+ * normal compile nor a normal one a run's, and a failure one cached (a timeout under the run's 4x throttling) is
+ * never answered to the other. FROZEN (A3.8 #53); the headless stream moves bakeBatch onto it.
+ */
+export type BakeOwner = string
+export const NORMAL_OWNER: BakeOwner = 'normal'
+export const flightKey = (root: string, gen: number, ask: BakeAsk, owner: BakeOwner = NORMAL_OWNER): string => `${root}|${gen}|${bakeKey(ask)}|${owner}`
+/**
+ * An owner's compiles now (A3.8 #18): `queued` waiting for the pool, `running` in `bakeIn`, each bounded by its 45 s
+ * deadline. The run's driver reads it directly: a run is bake-idle when the page's four counts and these two are zero.
+ */
+export function jobsOf(owner: BakeOwner): { queued: number; running: number } {
+  void owner
+  return { queued: 0, running: 0 }   // A3 headless stream: counted per owner once bakeBatch keys by it
+}
+
 /** Compiles in flight, by generation and key: identical asks - inside one request or across
  *  concurrent ones - share one compile. */
 const inflight = new Map<string, Promise<BakeAnswer>>()

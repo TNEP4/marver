@@ -23,6 +23,8 @@ const AGED = ['reloads.jsonl', 'page.jsonl', 'runs.jsonl', 'jam.jsonl']
 export const perfDir = (root: string) => join(root, 'design', '.local', 'perf')
 export const reloadLog = (root: string) => join(perfDir(root), 'reloads.jsonl')
 export const pageLog = (root: string) => join(perfDir(root), 'page.jsonl')
+/** runs.jsonl, the headless runs' lines (spec 28 A3.4, A3.8 #22): 2 MB, 14 days, in tidyPerfDir like the others. */
+export const runsLog = (root: string) => join(perfDir(root), 'runs.jsonl')
 
 /** design/, design/.local and its perf/ must be real directories inside the project: a log is never written through a link. */
 const unsafe = (root: string) => checkRealDirs(root, [[join(root, 'design'), 'design'], [join(root, 'design', '.local'), 'design/.local'], [perfDir(root), 'design/.local/perf']])
@@ -81,6 +83,8 @@ const id = (v: unknown) => (typeof v === 'string' && ID.test(v) ? v : undefined)
 const count = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v < 1e7 ? v : undefined)
 const ms = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v < 1e9 ? Math.round(v) : undefined)
 const tenth = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v < 1e7 ? Math.round(v * 10) / 10 : undefined)
+/** the display's refresh rate the Mac app told the shell (spec 28 A3.8 #9): 1-1000 Hz */
+const hz = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 1 && v <= 1000 ? Math.round(v) : undefined)
 const delta = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && Math.abs(v) < 1e7 ? Math.round(v) : undefined)
 const flag = (v: unknown) => (v === true ? true : undefined)
 const oneOf = <T extends string>(v: unknown, set: readonly T[]) => (typeof v === 'string' && (set as readonly string[]).includes(v) ? (v as T) : undefined)
@@ -121,7 +125,7 @@ const BODY: Record<typeof PAGE_KINDS[number], (r: Record<string, unknown>) => Re
   cut: (r) => { const reason = oneOf(r.reason, CUT_REASONS); return reason ? { reason, request: id(r.request), ms: ms(r.ms), lastMove: ms(r.lastMove), frames: count(r.frames), ready: count(r.ready) } : null },
   gesture: (r) => {
     const type = oneOf(r.type, GESTURES)
-    return type ? { type, ms: ms(r.ms), frames: count(r.frames), p50: tenth(r.p50), p95: tenth(r.p95), max: tenth(r.max), over17ms: count(r.over17ms), over33ms: count(r.over33ms), longFrames: count(r.longFrames) } : null
+    return type ? { type, ms: ms(r.ms), frames: count(r.frames), p50: tenth(r.p50), p95: tenth(r.p95), max: tenth(r.max), over17ms: count(r.over17ms), over33ms: count(r.over33ms), longFrames: count(r.longFrames), hz: hz(r.hz) } : null
   },
   error: (r) => {
     const source = oneOf(r.source, SOURCES), message = str(r.message)
@@ -147,14 +151,27 @@ export function cleanPageRecord(raw: unknown, now = Date.now()): Record<string, 
   return { v: 1, ws, page, load, seq, ts, kind, ...prune(body) }
 }
 
-/** The page's records into design/.local/perf/page.jsonl - best effort; how many were kept. */
-export function logPage(root: string, raws: unknown[]): number {
+/**
+ * The page's records into design/.local/perf/page.jsonl - best effort; how many were kept. A headless run's records
+ * are stamped with its `run` here, by the server and after the cleaner (spec 28 A3.8 #17): a page never names its
+ * run - the cleaner rebuilds every record from its kind's allowlist, so a `run` a page sent is gone. `kept` (when
+ * given) receives the cleaned records, for the run's collector.
+ */
+export function logPage(root: string, raws: unknown[], o: { run?: string; kept?: (records: Record<string, unknown>[]) => void } = {}): number {
   const now = Date.now()
-  const lines = raws.slice(0, 5_000).flatMap((x) => { const c = cleanPageRecord(x, now); return c ? [JSON.stringify(c)] : [] })
-  if (!lines.length) return 0
-  try { appendLog(root, pageLog(root), lines.join('\n') + '\n') } catch { return 0 }
-  return lines.length
+  const recs = raws.slice(0, 5_000).flatMap((x) => { const c = cleanPageRecord(x, now); return c ? [o.run ? { ...c, run: o.run } : c] : [] })
+  if (!recs.length) return 0
+  try { appendLog(root, pageLog(root), recs.map((c) => JSON.stringify(c)).join('\n') + '\n') } catch { return 0 }
+  o.kept?.(recs)
+  return recs.length
 }
+
+/** One run line into runs.jsonl (spec 28 A3.8 #22) - best effort. A cancelled run writes its line too. */
+export function appendRun(root: string, line: Record<string, unknown>): boolean {
+  try { appendLog(root, runsLog(root), JSON.stringify(line) + '\n'); return true } catch { return false }
+}
+/** The run lines from `since` (epoch ms): malformed lines skipped. */
+export const readRuns = (root: string, since = 0): Record<string, any>[] => readLines(runsLog(root), since)
 
 /** At start (spec 28 A1.7): design/.local/perf/ is the owner's alone - the directory 700 and every file in it 600,
  *  those earlier versions created without modes included - and the logs whose lines age out lose the ones older than

@@ -29,6 +29,7 @@ import { ROUTE } from '../../const.ts'
 import { BAKES, PUBLISHED } from '../store.ts'
 import { api } from '../api.ts'
 import { readOwn, sleepRule } from '../../../shared/sleep-rule.ts'
+import type { BakeWork } from '../../../shared/perf-run.ts'
 
 /** `doc`: the revision the document shows (spec 26) - the compiler refuses a document behind its frame */
 export interface SleepKey { frame: string; theme: string; w: number; h: number; doc?: string }
@@ -51,6 +52,15 @@ const keyOf = (k: SleepKey) => `${k.frame}|${k.theme}|${Math.round(k.w)}|${Math.
 const asleep = new Map<string, { key: string; doc: Document }>()
 /** How many frames are asleep now (the recorder's weight of a settled load, spec 28 A1.7). */
 export const sleepingCount = (): number => asleep.size
+/**
+ * The page's own bake work (spec 28 A3.8 #18): four counts of their own - `pending` below is the current request
+ * per node and survives a successful sleep, so it says nothing about idleness. FROZEN signature (A3.8 #53); the
+ * headless stream counts `scheduled` (one `scheduleSleep()` for FrameNode's timer and both retries), `running` (a
+ * sleep from entry to `finally`) and `inflight` (the bake POST). Until then only the batch queue is counted.
+ */
+export const bakeWork = (): BakeWork => ({ scheduled: 0, running: 0, queued: queue.length, inflight: 0 })
+/** All four at zero. Not the run's bake-idle: the driver adds the server's `jobsOf(run)`. */
+export const bakeIdle = (): boolean => { const w = bakeWork(); return !w.scheduled && !w.running && !w.queued && !w.inflight }
 /** The node's current request, so a stale answer (a newer sleep, a wake in between) is dropped. */
 const pending = new Map<string, number>()
 let seq = 0
