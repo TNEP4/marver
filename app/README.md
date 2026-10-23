@@ -53,8 +53,10 @@ turns nothing on. Tests and the smoke always set it, with `MARVER_HOME` and `MAR
 
 The guard (first import) - test spies - Marver Dev's name and userData - `MARVER_APP_USER_DATA` - the lock -
 `ensureHome()` - crash dumps under `~/.marver/perf/crashpad` and `crashReporter.start` - the `marver-app` scheme -
-the files' first read - at ready: the theme, `persist:app`, the navigation hook, the bridge, the registry, the
-window, the tabs, the menu. Each module after the guard is its stream's; its header says what is still to build.
+the files' first read - at ready: the theme and the files' watch, `persist:app`, the navigation hook (before any
+view), the registry, the bridge, then `views.ts` - the window with the opaque strip and its pages, the tabs restored
+from `tabs.json` (only the active one loads; each canvas view on its workspace's partition, its proof dispatcher
+attached before its first load), the menu, the quit through `guardAll` - and last Home's and Settings' channels. Each module after the guard is its stream's; its header says what is still to build.
 
 ## Tests (A2.10, A2.14 #27)
 
