@@ -36,8 +36,10 @@ export function provide(name: string, fn: Hook): void {
 
 /**
  * The one ground's journal topics (spec 28 A3.8 #35-#37, #53), FROZEN: the capture harness aligns them with
- * ScreenCaptureKit's display times (each line's `t` is `process.hrtime.bigint()`, mach_absolute_time on Darwin, as
- * SCK's `displayTime` is; a control case checks the two line up). `compose` is window.ts's as built, plus the
+ * ScreenCaptureKit's display times (each line's `t` is `process.hrtime.bigint()`, which libuv reads from
+ * mach_continuous_time on Darwin - it counts sleep - while SCK's `displayTime` is mach_absolute_time, which does not:
+ * capture.swift converts every display time to the continuous clock, and a control case checks the two line up; S15
+ * found them 88 hours apart before it did). `compose` is window.ts's as built, plus the
  * cover's state and each view's layout; `layout` every `commitLayout` that changed something; `present` every ask,
  * answer and refusal of a presentation epoch; `resize` a live resize's start and end.
  */

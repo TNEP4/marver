@@ -1,7 +1,7 @@
 /**
  * The capture harness (spec 28 A3.8 #34-#38, #50): what WindowServer composited for the app's window at each
  * refresh, read by `test/native/capture.swift` (ScreenCaptureKit, a window or a display stream) and judged here
- * against main's journal (testing/index.ts `JournalTopics`: both clocks are mach_absolute_time; a control case
+ * against main's journal (testing/index.ts `JournalTopics`: both on mach_continuous_time, the helper converting SCK's; a control case
  * checks that they line up). Owner: the flash and native acceptance stream; the one-ground stream reads its matrix.
  *
  * **Screen Recording is the runner's** (A3.8 #37): the helper checks `CGPreflightScreenCaptureAccess()` and exits 77

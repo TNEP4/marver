@@ -9,7 +9,7 @@
  *   3 a WebContentsView whose page draws only the dots, its ground its native background (setBackgroundColor);
  *   4 no extra view: the strip's own background, the ground to cover, transparent to uncover.
  * Driven by run.ts over stdin, one JSON command a line; every reply a JSON line on stdout, stamped with
- * process.hrtime.bigint() (mach_absolute_time in ns, the capture helper's clock) right after main made the change.
+ * process.hrtime.bigint() (mach_continuous_time in ns, the clock the capture helper writes) right after main made the change.
  * No port is bound, no file is written but the temporary profile the driver names.
  *
  * Run by the app's pinned Electron:  <electron> app/test/bench/s15/bench.cjs   (env S15_USER_DATA, a temp folder)

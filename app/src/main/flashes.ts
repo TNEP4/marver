@@ -108,7 +108,8 @@ export async function markFlash(via: 'key' | 'menu', p: FlashPorts): Promise<voi
   const pressure = safe(() => p.pressure(), null)
   const featureStatus = safe(() => p.featureStatus(), {} as Record<string, string>)
   let agx: AgxReading | null = null
-  const agxRead = p.readAgx(T.spawnTimeoutMs).then((a) => { agx = a }, () => { agx = AGX_UNKNOWN })
+  let agxRead: Promise<void>
+  try { agxRead = p.readAgx(T.spawnTimeoutMs).then((a) => { agx = a }, () => { agx = AGX_UNKNOWN }) } catch { agx = AGX_UNKNOWN; agxRead = Promise.resolve() }
   let picture: string | null = null
   let pictureWhy: PictureWhy | undefined
   let pictureSettled = false
@@ -135,7 +136,7 @@ export async function markFlash(via: 'key' | 'menu', p: FlashPorts): Promise<voi
 
   // 3. the picture, 2 s at most, then its file - before anything of the confirmation exists
   const shot = await Promise.race([
-    p.capture({ width: FLASH_WIDTH }).then((pic) => ({ pic }), (e: unknown) => ({ why: whyOf(e) })),
+    Promise.resolve().then(() => p.capture({ width: FLASH_WIDTH })).then((pic) => ({ pic }), (e: unknown) => ({ why: whyOf(e) })),
     wait(T.flashPictureMs).then(() => ({ why: 'timeout' as const })),
     quitting,
   ])
@@ -143,7 +144,7 @@ export async function markFlash(via: 'key' | 'menu', p: FlashPorts): Promise<voi
   if ('why' in shot) pictureWhy = shot.why
   else if (!shot.pic.png?.length) pictureWhy = 'empty'
   else {
-    const wrote = await Promise.race([p.writePicture(`${id}.png`, shot.pic.png), quitting])
+    const wrote = await Promise.race([Promise.resolve().then(() => p.writePicture(`${id}.png`, shot.pic.png)).catch((): { why: PictureWhy } => ({ why: 'write failed' })), quitting])
     // a quit while the file was written: the record names no picture (a file that landed is pruned later)
     if (wrote === 'quit' || m.done) { m.write({ quit: true }); return }
     if ('path' in wrote) picture = wrote.path

@@ -133,6 +133,39 @@ uncovered until a stream fills its own, so app 0.2's base behaves as app 0.1.
   footprint that cannot be read is a FAIL (inconclusive). A gate that fails says its numbers; its limit is not
   loosened - the numbers go to Nic. Each memory line's numbers are in the JSON report too.
 
+## A3: flashes, white-outs, the capture harness, the budgets (app 0.2)
+
+- **Mark a Flash** (`⌃⌥F` on every view, Help > Mark a Flash; `src/main/flashes.ts`, spec 28 A3.8 #13, #14): one
+  transaction in a fixed order - the 2 s debounce from the last mark, the moment's state in the mark's turn, the
+  picture, the pill, the record. The picture is a **reconstructed app-content picture**: window.ts's `captureApp`
+  stacks each visible view as main does, scaled to 480 px - it is not the screen, holds no traffic lights, and may
+  miss a flash that happens in the compositor. It is written under `~/.marver/perf/flashes/` (the newest 50 kept)
+  before the strip's pill says "Flash marked", whose Show selects it in Finder. `flash-ports.ts` joins the flash's
+  ports to the recorder's.
+- **The white-out detector** (`src/main/whiteout.ts`, the shell's `whiteout-probes.ts`; A3.8 #15, #16): during a
+  gesture and 500 ms after, with the recorder on, a capture every 250 ms of the visible view and geometric probes
+  of empty background bracketing it; two white samples at consecutive ticks are a `whiteout-candidate` - a candidate,
+  never proof, until a real flash is filmed (spike B-S3.1).
+- **The native helpers** (`test/native/`, compiled once into a temp folder keyed by their source,
+  `test/harness/capture.ts` `nativeTool`): `capture.swift` (ScreenCaptureKit, a window or a display stream, regions
+  sampled per frame, a sentinel block found, a 2 px heartbeat for display streams; its times on
+  `mach_continuous_time`, as `process.hrtime.bigint()` is - SCK's own are `mach_absolute_time`, which stops while the
+  Mac sleeps), `procusage.swift` (each process's own CPU and its reaped children's, from outside), `clickpost.swift`
+  and `keypost.swift` (CGEvents to the app's pid alone). **The permissions are the runner's**: Screen Recording for
+  the capture (without it the helper exits 77 and the case is *blind*, not run), Accessibility for posted keys and
+  clicks (without it those cases say INCONCLUSIVE and skip). The app itself never asks for either.
+- **Spike S15** (`test/bench/s15/`): the four covers over a full-height web view, on the screen. On Nic's Mac only
+  a `WebContentsView` whose ground is its native background covers (variant 3); a plain `View` and an `ImageView`
+  are drawn beneath the web views.
+- **The capture matrix** (`node app/test/capture/matrix.ts`): the transitions judged at every refresh against main's
+  journal (`test/harness/capture.ts` `judgeTransition`, `judgeCase`). With app 0.1's opaque strip every case is exact;
+  with the one ground, A2.2's threshold.
+- **A3's budgets** (`test/budgets/`, every launch on a temporary world with the production switches; `--app
+  <Marver.app>` for the signed build): `memory.mjs` (two footprint gates, A3.8 #48), `hidden-cpu.mjs` (the window
+  hidden, the app's own CPU counted from outside with canvases taken out, A3.8 #49), `launch-painted.mjs` (spawn to
+  the first painted sentinel frame, A3.8 #50), `scroll-edge.mjs` (the band's cost, A3.8 #51; it needs the one
+  ground's `MARVER_APP_INSET0=1` switch).
+
 ## The icon
 
 `build/Marver.icns` comes from `build/a-mark.svg` (`node scripts/icon.mjs`). `build/Marver.icon`, the icon macOS 26
