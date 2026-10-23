@@ -349,6 +349,7 @@ export function viewOf(t: Tab, active: boolean, home: string, list: Tab[] = allT
   if (t.reg?.slot != null) v.slot = t.reg.slot
   if (t.root) v.folder = tilde(t.root, home)
   if (t.reg?.version) v.version = t.reg.version
+  if (t.reg) v.bridge = hasBridge(t)
   if (t.reg) v.link = `http://localhost:${t.reg.port}${t.path}`
   if (t.logo && t.fail?.why !== 'unverified') v.logo = t.logo
   if (t.look !== undefined) v.dark = t.look

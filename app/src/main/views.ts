@@ -996,6 +996,9 @@ export function startViews(i: StartInput): void {
     if (e.kind === 'entry' && e.entry.state === 'ready') { const x = allTabs().find((y) => y.reg?.instance === e.entry.instance); if (x) refreshLogo(x) }
   })
   for (const entry of trust.entries()) onRegistry({ kind: 'entry', entry })
+  // A2.4: a local tab's logo is fetched once its entry is ready - for the canvases running at launch too, so a tab
+  // not yet shown wears its logo in the strip and on Home rather than its initials until its first showing
+  for (const t of allTabs()) if (t.kind === 'local' && t.reg?.state === 'ready') refreshLogo(t)
   trust.onReport((tabId, doc, r) => { onReport(tabId, doc, r); invalidateMenu() })
 
   startMenu({

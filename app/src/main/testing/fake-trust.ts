@@ -111,8 +111,9 @@ export function fakeTrust(): TrustPort {
     return true
   })
   provide('fake:admits', () => admits)
-  // the logo (A2.4): off until a case turns it on; each fetch answers after `delayMs`, or rejects when its signal aborts
-  const logo = { on: false, delayMs: 0, url: 'data:image/svg+xml;base64,PHN2Zy8+', started: 0, aborted: 0, answered: 0, inFlight: 0, maxInFlight: 0 }
+  // the logo (A2.4): off until a case turns it on (MARVER_APP_FAKE_LOGO=1 from launch); each fetch answers after
+  // `delayMs`, or rejects when its signal aborts
+  const logo = { on: process.env.MARVER_APP_FAKE_LOGO === '1', delayMs: 0, url: 'data:image/svg+xml;base64,PHN2Zy8+', started: 0, aborted: 0, answered: 0, inFlight: 0, maxInFlight: 0 }
   provide('fake:logo', (a) => { Object.assign(logo, a ?? {}); return { ...logo } })
   const fetchLogo = (t: Tab, signal: AbortSignal): Promise<string | null> => new Promise((ok, fail) => {
     logo.started += 1

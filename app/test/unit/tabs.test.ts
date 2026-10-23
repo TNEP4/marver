@@ -92,6 +92,12 @@ describe('the display state (A2.4, a pure function of the record)', () => {
     expect(v.folder).toMatch(/^\/Users\/nic|^~/)
   })
 
+  it('a TabView says whether the slot file offers the bridge, as the guard reads it - not from the version', () => {
+    // 0.27.1's code before its release still reads 0.27.0, and a 0.27.0 slot file lists no features
+    expect(viewOf(add({ version: '0.27.0', features: ['bridge'] }).t, true, '/Users/nic').bridge).toBe(true)
+    expect(viewOf(add({ version: '0.27.0', features: [] }).t, true, '/Users/nic').bridge).toBe(false)
+  })
+
   it('a TabView carries no instance, ws, origin or key, and the folder with ~', () => {
     const t = add({ root: '/Users/nic/tms broker' }).t
     const v = viewOf(t, true, '/Users/nic')

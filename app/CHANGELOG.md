@@ -23,6 +23,11 @@
   asks first (Cancel the default); the page's own `beforeunload` an extra veto. The quit is one guarded operation
   per canvas tab, cancelled by any refusal - and a refused quit shows the window, even one you had closed. Only a
   link that names a hash on the page's own document opens with no question; one without a hash is a new document.
+- Each canvas tab wears its canvas's logo (`design/logo.svg` and the rest of A1's ladder, proved like the page) once
+  the canvas is ready, shown or not; a canvas with none wears its initials.
+- Home lists the canvases running on this Mac, four across in a window of the default size, and Recently here; a
+  canvas whose slot file offers no bridge (Marver 0.27.0) says to update for the full unsaved-work guard. Settings is
+  a view of `~/.marver/config.json` and `theme.json`.
 - A canvas that starts after launch opens its tab on the board it was left on; a second `marver dev` of the same repo
   gets a tab of its own.
 - The tab's own page in place of an error page - starting, stopped, not a Marver canvas, can't be reached, crashed -

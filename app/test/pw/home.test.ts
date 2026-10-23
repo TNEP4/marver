@@ -81,14 +81,17 @@ describe('first launch and the empty Home (A2.12)', () => {
 
 describe('running and recent canvases (A2.7, A2.12)', () => {
   it('a card per local tab, a button named for what it says; a click activates its tab', async () => {
-    await tabs([...TABS, tab('t4', 'Marver site', 4809, { open: false, version: '0.27.0' })])
+    // t4's slot file offers no bridge (0.27.0); t5 reads 0.27.0 but offers it (0.27.1's code before its release): the
+    // note follows the bridge, as the guard does
+    await tabs([...TABS, tab('t4', 'Marver site', 4809, { open: false, version: '0.27.0', bridge: false }), tab('t5', 'Bridge build', 4810, { version: '0.27.0', bridge: true })])
     const names = await p.page.$$eval('button.card', (els) => els.map((e) => e.getAttribute('aria-label')))
     expect(names).toEqual([
       'Marver Platform, localhost:4805, running', 'TMS broker, localhost:4806, running', 'Tidewell, localhost:4807, stopped',
-      'Marver site, localhost:4809, running, tab closed',
+      'Marver site, localhost:4809, running, tab closed', 'Bridge build, localhost:4810, running',
     ])
     expect(await text('[data-key="tab:t4"]')).toContain('Update to Marver 0.27.1 for the full unsaved-work guard')
     expect(await text('[data-key="tab:t1"]')).not.toContain('Update to')
+    expect(await text('[data-key="tab:t5"]')).not.toContain('Update to')
     await p.page.click('[data-key="tab:t2"]')
     await p.page.click('[data-key="tab:t4"]')
     expect(await p.calls('tab:activate')).toEqual([{ id: 't2' }, { id: 't4' }])

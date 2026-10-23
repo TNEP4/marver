@@ -42,7 +42,7 @@ describe('a launch with tabs.json and two canvases running', () => {
             { ws: gammaWs, origin: gammaOrigin, path: '/#/b/gamma', shownAt: 5 },
           ],
         }))
-        return { extraEnv: { MARVER_APP_FAKE_ENTRIES: JSON.stringify([recOf(alpha), recOf(beta)]) }, fakes: [alpha, beta] }
+        return { extraEnv: { MARVER_APP_FAKE_ENTRIES: JSON.stringify([recOf(alpha), recOf(beta)]), MARVER_APP_FAKE_LOGO: '1' }, fakes: [alpha, beta] }
       },
     })
     const s = await w.until((x) => !!x.tabs.find((t) => t.reg?.instance === beta.instance)?.doc?.lifted, 10_000, 'Beta restored and lifted')
@@ -52,6 +52,11 @@ describe('a launch with tabs.json and two canvases running', () => {
     expect(b.doc!.url).toBe(`${beta.origin}/index.html#/b/beta`)
     expect(a).toMatchObject({ hasView: false, path: '/#/b/alpha', open: true })
     expect(alpha.requests.some((r) => r.path === '/')).toBe(false)
+    // A2.4: its logo is fetched once its entry is ready - running at launch, never shown, it still wears it (not
+    // its initials until its first showing), and still has no view
+    const s2 = await w.until((x) => !!x.tabs.find((t) => t.id === a.id)?.logo, 5000, "Alpha's logo, not shown")
+    expect(s2.tabs.find((t) => t.id === a.id)).toMatchObject({ hasView: false, logo: expect.stringMatching(/^data:image\//) })
+    expect((await w.log('logo')).some((l) => l.data.tab === a.id && l.data.applied === true)).toBe(true)
   })
 
   it('the other loads on its saved board when first shown', async () => {

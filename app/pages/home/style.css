@@ -27,7 +27,9 @@ body { overflow: auto }
 .hint.refused { color: var(--glass-warn) }
 
 .body { display: grid; gap: 16px; align-content: start }
-.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 14px }
+/* four across at the window's default size, as frames 04 and 10 draw them (a 1280 px window: about 278 px each); fewer,
+   never narrower than 210 px, in a narrower window */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(max(210px, calc((100% - 3 * 14px) / 4)), 1fr)); gap: 14px }
 
 /* a canvas's card: in the shell's glass */
 .card { position: relative; min-width: 0; border: 0; border-radius: 12px; padding: 14px; display: grid; gap: 6px; align-content: start;

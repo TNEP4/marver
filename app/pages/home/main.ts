@@ -52,9 +52,13 @@ const tabOnPort = (port: number) => canvases().find((t) => portOf(t.link) === po
   ?? canvases().find((t) => portOf(t.link) === port)
 const possessive = (name: string) => (name.endsWith('s') ? `${name}'` : `${name}'s`)
 
-/** True for a version before 0.27.1: no bridge, the degraded guard (A2.14 #15). */
-function beforeBridge(v?: string): boolean {
-  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(v ?? '')
+/**
+ * A canvas with no bridge gets the degraded guard (A2.14 #15): main's `bridge`, read from the slot file's features as
+ * the guard reads it. Only a TabView from before `bridge` existed falls back to the version (before 0.27.1).
+ */
+function noBridge(t: TabView): boolean {
+  if (t.bridge !== undefined) return !t.bridge
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(t.version ?? '')
   if (!m) return false
   const [a, b, c] = m.slice(1).map(Number)
   return a === 0 && (b < 27 || (b === 27 && c < 1))
@@ -78,7 +82,7 @@ function card(t: TabView): HTMLElement {
   t.folder ? h('small', {}, t.folder) : null,
   host || t.version ? h('small', {}, [host, t.version && `Marver ${t.version}`].filter(Boolean).join(' · ')) : null,
   h('span', { class: 'state' }, t.state === 'starting' ? h('i', { class: 'spin', 'aria-hidden': 'true' }) : null, word, t.open === false ? ' · tab closed' : null),
-  beforeBridge(t.version) ? h('span', { class: 'note' }, 'Update to Marver 0.27.1 for the full unsaved-work guard') : null)
+  noBridge(t) ? h('span', { class: 'note' }, 'Update to Marver 0.27.1 for the full unsaved-work guard') : null)
 }
 
 function recentCard(r: RecentView): HTMLElement {
