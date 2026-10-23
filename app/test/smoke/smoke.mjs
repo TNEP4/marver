@@ -264,7 +264,12 @@ function poll(port, everyMs = 10) {
   // the fake canvas registers in this launch's home, and the home names it the active tab, before the app starts
   const home = join(RUN, 'clean', 'home')
   mkdirSync(join(home, 'state'), { recursive: true, mode: 0o700 })
-  const fake = await startFakeCanvas({ home, slotBase: SLOT_BASE, slot: 1, cookie: true, name: 'Smoke canvas', root: join(RUN, 'clean', 'repo') })
+  // the page says what a 0.27.1 shell says at boot - its hello, then a clean busy (A2.9) - so its record is fresh and
+  // the SIGTERM's quit goes through the guard without asking: a page that never reported asks first with a native
+  // sheet (A2.2, v1.13 r2 #1), which on the release build is real and on the screen, and would hold the quit until
+  // the smoke's SIGKILL (and a killed Chromium never writes its Local State)
+  const fake = await startFakeCanvas({ home, slotBase: SLOT_BASE, slot: 1, cookie: true, name: 'Smoke canvas', root: join(RUN, 'clean', 'repo'),
+    script: "if (window.marverApp) { marverApp.hello({ version: '0.27.1', board: null, page: 'smoke-page-01' }); marverApp.busy({ busy: false, unsaved: false, why: [] }) }" })
   await fake.ready
   writeFileSync(join(home, 'state', 'launched'), '')
   writeFileSync(join(home, 'state', 'tabs.json'), JSON.stringify({ v: 1, active: { kind: 'canvas', ws: fake.ws, origin: fake.origin },
@@ -284,12 +289,17 @@ function poll(port, everyMs = 10) {
   const quit = await stop(C, 'SIGTERM')
   quit && C.code === 0 ? pass('quit-exit-code', `SIGTERM: exit 0 ${C.t0 + C.exitAt - termAt} ms later`) : fail('quit-exit-code', `code=${C.code} signal=${C.signal} graceful=${quit}`)
 
-  const wrote = ['Local State', 'Partitions'].filter((f) => existsSync(join(C.ud, f)))
+  // the temporary profile is the one Chromium wrote: its Local State (written at a graceful quit), persist:app and
+  // the canvas's own partition (persist:local:<ws>, one per canvas workspace, A2.5) - Nic's profiles are checked
+  // unchanged at the end (nic-profile-untouched)
+  const parts = existsSync(join(C.ud, 'Partitions')) ? readdirSync(join(C.ud, 'Partitions')).map((n) => { try { return decodeURIComponent(n) } catch { return n } }) : []
+  const want = ['app', `local:${fake.ws}`]
+  const missing = [...(existsSync(join(C.ud, 'Local State')) ? [] : ['Local State']), ...want.filter((p) => !parts.includes(p)).map((p) => `Partitions/${p}`)]
   const crashpad = existsSync(join(C.home, 'perf', 'crashpad', 'settings.dat'))
   const homeMode = existsSync(join(C.home, 'perf', 'crashpad')) ? (statSync(join(C.home, 'perf', 'crashpad')).mode & 0o777).toString(8) : 'missing'
-  wrote.length === 2 && crashpad && homeMode === '700'
-    ? pass('profile-written', `temporary profile: ${wrote.join(', ')}; MARVER_HOME/perf/crashpad (700) initialised`)
-    : fail('profile-written', `profile has ${wrote.join(', ') || 'nothing'}; crashpad ${crashpad} mode ${homeMode}`)
+  !missing.length && crashpad && homeMode === '700'
+    ? pass('profile-written', `temporary profile: Local State, Partitions/{${parts.sort().join(', ')}}; MARVER_HOME/perf/crashpad (700) initialised`)
+    : fail('profile-written', `missing ${missing.join(', ') || 'nothing'} (partitions: ${parts.join(', ') || 'none'}); crashpad ${crashpad} mode ${homeMode}`)
 
   // 11. cookie encryption, read from a real cookie when the app loaded the canvas (S9: value empty, encrypted_value 'v10...')
   const dbs = []
@@ -331,12 +341,15 @@ for (const flag of ['--inspect', '--inspect-brk']) {
   const P = poll(port, 50)
   const L = launch(`inspect${flag === '--inspect-brk' ? '-brk' : ''}`, { argv: [`${flag}=127.0.0.1:${port}`] })
   const ran = await waitFor(() => mainRan(L) || !alive(L), 20_000)
+  const started = mainRan(L)
   await sleep(1500)
   P.stop()
-  await stop(L)
+  const graceful = await stop(L)
   const name = flag === '--inspect' ? 'inspect' : 'inspect-brk'
   if (P.st.connects || /Debugger listening/.test(L.err)) fail(name, `the inspector listened on ${port}`)
-  else ran && L.code !== null ? pass(name, `${port} never listened; main ran (not held at a breakpoint)`) : fail(name, `the app did not start: ${L.err.trim().slice(-200)}`)
+  else if (ran && started && L.code !== null) pass(name, `${port} never listened; main ran (not held at a breakpoint)`)
+  else if (!started) fail(name, `the app did not start: code ${L.code} signal ${L.signal}; ${L.err.trim().slice(-200)}`)
+  else fail(name, `main ran but did not quit on SIGTERM: code ${L.code} signal ${L.signal} graceful ${graceful}; ${L.err.trim().slice(-200)}`)
 }
 
 // 15. a byte changed in app.asar refuses to start (S9 #7): in the archive's header, and in dist/main.cjs's bytes
