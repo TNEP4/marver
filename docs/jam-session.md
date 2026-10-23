@@ -214,6 +214,9 @@ was, which canvas runs there now (when one does), and the `--recover` number of 
 `--recover` starts the canvas there again. Stop the canvas first if it runs (`Ctrl-C`): one canvas runs per folder, so
 a recovery started beside it stops with "a canvas already runs here". The list works either way:
 
+The list holds the last five distinct addresses the canvas ran on (an older one drops off as a sixth arrives), then
+the address 0.26 gave the folder:
+
 ```bash
 npx marver dev --recover      # the addresses this canvas ran on, newest first
 npx marver dev --recover 2    # start on exactly that one

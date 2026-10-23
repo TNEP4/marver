@@ -35,8 +35,9 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   waiting in a page keeps it; only the address moved.
 - **Five viewer preferences are kept per canvas.** Your view theme, the update notice you closed, the mentions you
   opened, which sticky notes show and which folders are folded were kept per address, so two projects that ran on the
-  same address one after the other shared them. On a local canvas they are now kept per project, and start fresh
-  once: 0.26's are not carried over. A published canvas keeps them as before.
+  same address one after the other shared them. On a local canvas they are now kept per project at each address the
+  browser opens it on, and nothing carries them from one address to another: they start fresh after the upgrade, and
+  again whenever a canvas runs on a slot it has not used before. A published canvas keeps them as before.
 - **No service workers on a local canvas.** It refuses a worker's script, so a frame cannot register one in
   `marver dev`: an address is reused by whichever canvas starts there next, and a worker would outlive its canvas. A
   PWA prototype shows its screens, not its offline behaviour. A published canvas is unchanged.
@@ -141,7 +142,9 @@ open each canvas once in the browser you make captures in, with its old version 
 capture left unsent there sends itself. One left behind comes back with `npx marver dev --recover`. On its first
 start each canvas moves to a slot and says where; a bookmark to its old address no longer reaches it (`marver ls`
 lists the new one). A `port` you set in `design/config.ts` stays until you remove the line. The five viewer
-preferences start fresh once.
+preferences start fresh. **Then close every tab a 0.26 canvas opened** (send or save what they hold first) and open
+the canvas again from its new link: a page 0.26 served names no project in its requests, so the protection above -
+a stopped tab that never writes into another project - covers pages loaded from 0.27 on, not those older tabs.
 
 ## 0.26.1 - 2026-10-20
 
