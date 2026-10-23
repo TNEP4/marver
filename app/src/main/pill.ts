@@ -5,8 +5,10 @@
  * click that lands after a tab switch can never act on another canvas, and an old `rev` is refused.
  *
  * Highest first, the next one showing when it clears:
- *   1. the active tab's own state while its page is kept - "Unsaved work here" (the guard refused), "Stopped"
- *      (its start command the button that copies it), "Not responding" (Reload, which asks first);
+ *   1. the active tab's own state while its page is kept - "Not responding" (Reload, which asks first), "Unsaved
+ *      work here" (the guard refused), "Stopped" (its start command the button that copies it). A hung page
+ *      outranks its own unsaved hold (the lead's decision at integration): it cannot save anyway, and the hold's
+ *      pill would hide the one Reload that can end the hang until a tab switch;
  *   2. a confirmation, 4 s on screen - "Reloaded after a crash" in A2 (Flash marked A3, a missed notice A4);
  *   3. the files: "Settings not applied", "Files not saved" (A2.12, A2.14 #24);
  *   4. a dismissible offer (A4's notices; a test-only kind in A2); 5. the update (A5).
@@ -79,6 +81,11 @@ export const currentPill = (): (PillView & { tab?: string }) | null => shown ? {
 /** Tier 1: the active tab's own state while its page is kept. */
 function tier1(t: Tab | undefined, now: number): Rec | null {
   if (!t || t.kind !== 'local') return null
+  // a hung page first: it cannot save what it holds, and its Reload (which asks first) is the way out
+  if (t.hung && t.view === 'live') {
+    return { kind: 'not-responding', about: `hung:${t.id}:${t.doc?.commits}`, tab: t.id, commit: t.doc?.commits, lead: 'Not responding', text: '', short: 'Not responding',
+      button: { label: 'Reload', style: 'plain' } }
+  }
   if (t.held && liveDoc(t)) {
     // while the page says unsaved (a clean report clears the hold); else - no bridge, not yet heard, no longer
     // heard, or a page that refused though its last report said clean - 10 s
@@ -92,10 +99,6 @@ function tier1(t: Tab | undefined, now: number): Rec | null {
     const cmd = t.root ? startCommandShown({ root: t.root, port: t.reg.slot == null ? t.reg.port : null }, ports!.home) : null
     return { kind: 'stopped', about: `stopped:${t.id}:${t.doc?.commits}`, tab: t.id, commit: t.doc?.commits, lead: 'Stopped', text: '', short: 'Stopped',
       button: { label: 'npx marver dev', style: 'cmd' }, ...(cmd ? { tooltip: cmd.slice(0, 199) } : {}) }
-  }
-  if (t.hung && t.view === 'live') {
-    return { kind: 'not-responding', about: `hung:${t.id}:${t.doc?.commits}`, tab: t.id, commit: t.doc?.commits, lead: 'Not responding', text: '', short: 'Not responding',
-      button: { label: 'Reload', style: 'plain' } }
   }
   return null
 }

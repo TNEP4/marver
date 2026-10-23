@@ -15,17 +15,32 @@ const gone = (t: Tab) => onRegistry({ kind: 'gone', file: t.reg!.file, instance:
 const held = (t: Tab) => { t.held = { at: w.clock.now, action: 'close' }; recompute() }
 
 describe('the order: the active tab\'s own state, a confirmation, the files, an offer', () => {
-  it('unsaved work, then stopped, then not responding - each with a short form', () => {
+  it('not responding, then unsaved work, then stopped - each with a short form (a hung page outranks its own hold)', () => {
     const t = liveTab(w, { busy: { unsaved: true } })
     t.hung = true
     gone(t)
     held(t)
+    // the hung page cannot save anyway: its Reload, which asks first, shows over "Unsaved work here"
+    expect(currentPill()).toMatchObject({ kind: 'not-responding', short: 'Not responding', button: { label: 'Reload' } })
+    t.hung = false; recompute()
     expect(currentPill()).toMatchObject({ kind: 'unsaved', lead: 'Unsaved work here', short: 'Unsaved work' })
     t.held = undefined; recompute()
     expect(currentPill()).toMatchObject({ kind: 'stopped', lead: 'Stopped', short: 'Stopped', button: { label: 'npx marver dev', style: 'cmd' } })
     expect(currentPill()!.tooltip).toMatch(/^cd ~\/repo-\d+ && npx marver dev$/)
+    t.hung = true; recompute()
+    expect(currentPill()).toMatchObject({ kind: 'not-responding' })
+    t.hung = false
     onRegistry({ kind: 'entry', entry: { ...{ file: t.reg!.file, key: Buffer.alloc(32), pid: 1, slot: t.reg!.slot, port: t.reg!.port, origin: t.reg!.origin, url: '', root: t.root!, name: t.name, version: '0.27.1', features: ['bridge'], ws: t.reg!.ws, startedAt: 1 }, state: 'ready', instance: 'back' } })
-    expect(currentPill()).toMatchObject({ kind: 'not-responding', short: 'Not responding', button: { label: 'Reload' } })
+    expect(currentPill()).toBeNull()
+  })
+
+  it('⌘R refused on a hung page with fresh unsaved work: the pill stays Not responding with its Reload, no switch needed', () => {
+    const t = liveTab(w, { busy: { unsaved: true } })
+    t.hung = true; recompute()
+    const r = currentPill()!.rev
+    expect(currentPill()).toMatchObject({ kind: 'not-responding' })
+    held(t)   // the guard refused the reload: main's own fresh record says unsaved
+    expect(currentPill()).toMatchObject({ kind: 'not-responding', rev: r })
   })
 
   it('a confirmation below tier 1, the files below that, a dismissible offer last', () => {
