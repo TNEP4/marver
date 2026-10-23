@@ -853,6 +853,22 @@ function testHooks(): void {
   provide('resize', (a) => { const { width, height } = arg<{ width: number; height: number }>(a); mainWindow()?.setContentSize(width, height); return true })
   provide('fullscreen', (a) => { mainWindow()?.setFullScreen(!!arg<{ on: boolean }>(a).on); return true })
   provide('menu', () => menuModel())
+  // the application menu as built: each item's id, label, type, checked, enabled and accelerator
+  const dump = (m: Electron.Menu | null): unknown[] => (m?.items ?? []).map((i) => ({
+    id: i.id || undefined, label: i.label, type: i.type, checked: i.checked, enabled: i.enabled, accelerator: i.accelerator ?? undefined,
+    ...(i.submenu ? { submenu: dump(i.submenu) } : {}),
+  }))
+  const held = new Map<string, Electron.MenuItem>()
+  provide('menu:items', () => { buildNow(); return dump(Menu.getApplicationMenu()) })
+  // keep an item as built now, to click it later (a stale callback, v1.10 r1 #10)
+  provide('menu:hold', (a) => { const id = arg<{ id: string }>(a).id; const it = Menu.getApplicationMenu()?.getMenuItemById(id); if (it) held.set(id, it); return !!it })
+  provide('menu:click', (a) => {
+    const { id, stale } = arg<{ id: string; stale?: boolean }>(a)
+    const it = stale ? held.get(id) : Menu.getApplicationMenu()?.getMenuItemById(id)
+    if (!it) return false
+    it.click()
+    return true
+  })
   provide('writeTabs', () => { writeTabsNow(); return tabsFile })
   provide('settings:open', () => { openSettingsTab(); return true })
 }
