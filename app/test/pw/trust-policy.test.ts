@@ -84,6 +84,19 @@ describe('permissions', () => {
   })
 })
 
+describe('every view\'s preferences', () => {
+  it('a canvas view made without disableDialogs gets no channel, no admission and no document', async () => {
+    const f = await fake({ slot: 7 })
+    const { id } = await run.call<{ id: string }>('trust:open', { port: f.port, unsafe: true })
+    const s = await until('the load refused', async () => { const x = await tabState(run, id); return x.events.some((e) => e.e.kind === 'fail') ? x : null })
+    expect(s.events.find((e) => e.e.kind === 'fail')!.e).toMatchObject({ why: 'unverified', code: -20 })
+    expect(s.trusted).toBe(false)
+    expect((s as unknown as { kind: string | null }).kind ?? null).toBe(null)
+    expect(f.requests.filter((r) => r.path === '/')).toHaveLength(0)
+    expect((await journal(run, 'bridge')).some((l) => l.data.event === 'unsafe-view' && l.data.why === 'dialogs not disabled')).toBe(true)
+  })
+})
+
 describe('the navigation policy', () => {
   it('a same-origin path the policy refuses opens the canvas\'s people link outside; the page stays, trusted', async () => {
     const f = await fake({ slot: 3 })

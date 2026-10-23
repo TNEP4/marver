@@ -32,7 +32,7 @@ import { ipcMain, webFrameMain, type IpcMainEvent, type IpcMainInvokeEvent, type
 import { BOUNDS, CANVAS_CHANNELS, UNSAVED_WHY, WHY, type AppState, type Busy, type DocAnswer, type Hello, type MenuItem, type Theme, type Why } from '../../../src/shared/app-api.ts'
 import { CH, SENDERS, type PageKind } from '../shared/channels.ts'
 import { adapterFor, attachNav, type NavEvent } from './nav.ts'
-import { isTrusted, targetOf } from './proof.ts'
+import { isTrusted, targetOf, unsafePrefs } from './proof.ts'
 import { appRegistry, type Registry } from './registry.ts'
 import type { Safety } from './tabs.ts'
 import { note } from './testing/index.ts'
@@ -66,6 +66,9 @@ export interface Bridge {
   menuClick(tabId: string, id: string): boolean
   /** the next `mv:doc` from this tab's main frame answers `reopen: true`, once (A2.11's crash reload) */
   reopenNext(tabId: string): void
+  /** a tab's binding changed outside a registry event: every admitted document's trust is looked at again (the
+   *  bridge already does it on each registry event, and at each failed load) */
+  trustChanged(): void
   /** an app page's channel: called only for a valid sender and payload; an invoke answers with the return value */
   handle(channel: string, fn: (ctx: PageCtx, payload: unknown) => unknown): void
   /** an app page said `app:ready` (again after a reload): send it every snapshot now */
@@ -364,6 +367,13 @@ export function installBridge(): Bridge {
     register(wc, kind, tabId) {
       if (wc.isDestroyed()) return
       const id = wc.id
+      const unsafe = unsafePrefs(wc)
+      if (unsafe) {
+        // loud, and closed: a view made outside canvasWebPreferences / appWebPreferences gets no channel and no trust
+        process.stderr.write(`marver-app: a ${kind} view was made with ${unsafe} - it is refused every channel (sessions.ts canvasWebPreferences / appWebPreferences)\n`)
+        trace('unsafe-view', { wc: id, kind, why: unsafe })
+        return
+      }
       regs.set(id, { wc, kind, ...(tabId ? { tabId } : {}), ready: false })
       if (tabId && kind === 'canvas') tabWc.set(tabId, id)
       wc.once('destroyed', () => {
@@ -412,6 +422,7 @@ export function installBridge(): Bridge {
       return sendCanvas(id, CANVAS_CHANNELS.menuClick, { doc: rec.doc, id: itemId })
     },
     reopenNext(tabId) { reopen.add(tabId) },
+    trustChanged() { recheck() },
     handle(channel, fn) {
       if (!SENDERS[channel]) throw new Error(`bridge: ${channel} is not an app page channel`)
       handlers.set(channel, fn)

@@ -75,7 +75,7 @@ export function provideTrustHooks(): void {
     const entry = reg.byPort(port)
     if (!entry) throw new Error(`no canvas on port ${port}`)
     await localSession(entry.ws)
-    const view = new WebContentsView({ webPreferences: canvasWebPreferences(entry.ws) })
+    const view = new WebContentsView({ webPreferences: { ...canvasWebPreferences(entry.ws), ...(arg<boolean | undefined>(a, 'unsafe') ? { disableDialogs: false } : {}) } })
     const wc = view.webContents
     const id = `t${(++n).toString(36)}`
     const t: TestTab = { id, ws: entry.ws, port, entry, view, wc, nav: attachNav(wc), events: [], reports: [] }
@@ -135,7 +135,11 @@ export function provideTrustHooks(): void {
   provide('trust:menu-click', (a) => bridge.menuClick(arg<string>(a, 'id'), arg<string>(a, 'item')))
   provide('trust:reopen-next', (a) => { bridge.reopenNext(arg<string>(a, 'id')); return true })
   provide('trust:same-canvas', () => [...sameCanvas])
-  provide('trust:web-contents', () => webContents.getAllWebContents().filter((w) => !w.isDestroyed()).map((w) => ({ id: w.id, kind: kindOf(w.id) ?? null, url: w.getURL() })))
+  provide('trust:web-contents', () => webContents.getAllWebContents().filter((w) => !w.isDestroyed()).map((w) => {
+    const p = (w as unknown as { getLastWebPreferences?: () => Record<string, unknown> | null }).getLastWebPreferences?.() ?? null
+    const pick = p ? Object.fromEntries(['sandbox', 'contextIsolation', 'nodeIntegration', 'webviewTag', 'disableDialogs', 'partition'].map((k) => [k, p[k]])) : null
+    return { id: w.id, kind: kindOf(w.id) ?? null, url: w.getURL(), type: w.getType(), prefs: pick }
+  }))
   provide('trust:logo', async (a) => {
     const e = appRegistry()?.byPort(arg<number>(a, 'port'))
     const l = e ? await fetchLogo(e) : null

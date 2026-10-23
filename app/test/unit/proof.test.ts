@@ -9,7 +9,7 @@ import { createServer, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { docProof, logoProof } from '../../../src/server/proof.ts'
-import { checkProof, fetchLogo, oneHeaders, probeProof, shellDocUrl } from '../../src/main/proof.ts'
+import { checkProof, commitsNothing, fetchLogo, oneHeaders, probeProof, shellDocUrl, unsafePrefs } from '../../src/main/proof.ts'
 import type { RegistryEntry } from '../../src/main/registry.ts'
 
 const key = randomBytes(32)
@@ -75,6 +75,30 @@ describe('shellDocUrl: what a canvas tab\'s main frame may load', () => {
     expect(ok('http://[::1]:30003/', starting)).toBe(true)
     expect(ok('http://192.168.1.5:30003/', starting)).toBe(false)
     expect(ok('http://[::1]:30004/', starting)).toBe(false)
+  })
+})
+
+describe('what a view must be, and what commits nothing', () => {
+  const view = (p: Record<string, unknown> | null) => ({ getLastWebPreferences: () => p })
+  const ok = { sandbox: true, contextIsolation: true, nodeIntegration: false, webviewTag: false, disableDialogs: true }
+  it('unsafePrefs: sandboxed, isolated, no Node, no webview tags, no dialogs; nothing to tell, nothing refused', () => {
+    expect(unsafePrefs(view(ok))).toBe(null)
+    expect(unsafePrefs(view({ ...ok, sandbox: false }))).toBe('not sandboxed')
+    expect(unsafePrefs(view({ ...ok, sandbox: undefined }))).toBe('not sandboxed')
+    expect(unsafePrefs(view({ ...ok, contextIsolation: false }))).toBe('no context isolation')
+    expect(unsafePrefs(view({ ...ok, nodeIntegrationInSubFrames: true }))).toBe('Node in its pages')
+    expect(unsafePrefs(view({ ...ok, webviewTag: true }))).toBe('webview tags')
+    expect(unsafePrefs(view({ ...ok, disableDialogs: false }))).toBe('dialogs not disabled')
+    expect(unsafePrefs(view(null))).toBe(null)
+    expect(unsafePrefs({})).toBe(null)
+  })
+  it('commitsNothing: a 204, a 205 or a download', () => {
+    expect(commitsNothing(204, {})).toBe(true)
+    expect(commitsNothing(205, {})).toBe(true)
+    expect(commitsNothing(200, { 'content-disposition': 'attachment; filename="x"' })).toBe(true)
+    expect(commitsNothing(200, { 'content-disposition': 'inline' })).toBe(false)
+    expect(commitsNothing(200, {})).toBe(false)
+    expect(commitsNothing(500, {})).toBe(false)
   })
 })
 

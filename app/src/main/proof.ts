@@ -103,6 +103,25 @@ export function checkProof(input: { headers: Record<string, string>; nonce: stri
 export const commitsNothing = (status: number, h: Record<string, string>): boolean =>
   status === 204 || status === 205 || /^\s*attachment\b/i.test(h['content-disposition'] ?? '')
 
+/**
+ * Why a webContents' preferences break the rules every view keeps (the app's shape, A2.14 #14): sandboxed, isolated,
+ * no Node, no webview tags, no dialogs - or null. Electron 45 keeps `getLastWebPreferences()` out of its typings; when
+ * it is not there nothing can be told and nothing is refused.
+ */
+export function unsafePrefs(wc: object | null | undefined): string | null {
+  const get = (wc as { getLastWebPreferences?: () => Record<string, unknown> | null } | null | undefined)?.getLastWebPreferences
+  if (typeof get !== 'function') return null
+  let p: Record<string, unknown> | null
+  try { p = get.call(wc) } catch { return null }
+  if (!p) return null
+  if (p.sandbox !== true) return 'not sandboxed'
+  if (p.contextIsolation !== true) return 'no context isolation'
+  if (p.nodeIntegration === true || p.nodeIntegrationInSubFrames === true || p.nodeIntegrationInWorker === true) return 'Node in its pages'
+  if (p.webviewTag === true) return 'webview tags'
+  if (p.disableDialogs !== true) return 'dialogs not disabled'
+  return null
+}
+
 const isSwScript = (h: Record<string, string>) => Object.entries(h).some(([k, v]) => k.toLowerCase() === 'service-worker' && String(v).toLowerCase() === 'script')
 
 interface Pending { nonce: string; gen: number | null; wcId: number; ws: string; port: number; at: number }
@@ -152,7 +171,7 @@ function beforeSend(d: OnBeforeSendHeadersListenerDetails, cb: (r: { cancel?: bo
     cb({ cancel: true })
   }
   if (!t || id === undefined) return fail('gone')
-  if (!shellDocUrl(d.url, t.entry)) return fail('unverified')
+  if (!shellDocUrl(d.url, t.entry) || unsafePrefs(d.webContents)) return fail('unverified')
   const nonce = randomBytes(24).toString('base64url')
   prune()
   pending.set(d.id, { nonce, gen, wcId: id, ws: t.entry.ws, port: t.entry.port, at: Date.now() })
