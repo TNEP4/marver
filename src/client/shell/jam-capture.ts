@@ -13,6 +13,7 @@
  * starts nothing - it is ended (E) or dropped (Esc) first. Each message lands in the capture whose
  * id it carries.
  */
+import { onScreen, usable } from './inset.ts'
 import { create } from 'zustand'
 import { slideSize } from '../const.ts'
 import { CONFIG, SLIDE_INTRINSIC, stoppedFor, useStore, type Node } from './store.ts'
@@ -176,7 +177,7 @@ function sizeNow(f: string, key?: string): { w: number; h: number; play?: true }
     const entry = st.manifest?.frames.find((x) => x.id === f)
     const slide = (entry && slideSize(entry, CONFIG.viewports)) ?? (st.play.slides ? SLIDE_INTRINSIC : null)
     if (slide) return { w: Math.round(slide.width), h: Math.round(slide.height), play: true }
-    if (st.play.device === 'fill') return { w: window.innerWidth, h: window.innerHeight, play: true }
+    if (st.play.device === 'fill') { const u = usable(); return { w: u.width, h: u.height, play: true } }
     const v = CONFIG.viewports[st.play.device]
     return v ? { w: Math.round(v.width), h: Math.round(v.height), play: true } : undefined
   }
@@ -244,13 +245,13 @@ const viewNow = (focus = false): View => {
  *  nothing that covers it (the panel and the lane leave their own room). */
 export function visibleNodes(): Node[] {
   const s = useStore.getState()
-  const W = window.innerWidth, H = window.innerHeight
   const out: Node[] = []
   for (const n of s.nodes) {
     if (n.missing) continue
     const el = document.querySelector(`.sh-node[data-node="${CSS.escape(n.key)}"]`)
     const r = el?.getBoundingClientRect()
-    if (r && r.right > 0 && r.bottom > 0 && r.left < W && r.top < H) out.push(n)
+    // on screen below the scroll edge (inset.ts): a frame under the Mac app's strip is not in view
+    if (r && onScreen(r)) out.push(n)
   }
   return out.slice(0, 20)
 }
@@ -1020,4 +1021,4 @@ export function captureCounts(c: Cap | undefined, t = now()): { time: string; co
   }
 }
 
-if (typeof window !== 'undefined' && (import.meta as any).env?.DEV) { (window as any).__mvJamCapture = useJamCapture; (window as any).__mvJamInstances = instances }
+if (typeof window !== 'undefined' && (import.meta as any).env?.DEV) { (window as any).__mvJamCapture = useJamCapture; (window as any).__mvJamInstances = instances; (window as any).__mvJamVisible = visibleNodes }

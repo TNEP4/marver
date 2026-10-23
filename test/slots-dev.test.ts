@@ -80,7 +80,7 @@ describe('two projects on the slots (A1.3)', () => {
     expect([devA.port, devB.port]).toEqual([BASE + 1, BASE + 2])
     for (const [n, root] of [[1, a], [2, b]] as const) {
       const f = record(`slot-${n}.json`)
-      expect(f).toMatchObject({ v: 1, state: 'ready', slot: n, port: BASE + n, url: `http://localhost:${BASE + n}/`, root, ws: workspaceId(root), features: ['bridge'], version: expect.stringMatching(/^\d+\.\d+\.\d+/) })
+      expect(f).toMatchObject({ v: 1, state: 'ready', slot: n, port: BASE + n, url: `http://localhost:${BASE + n}/`, root, ws: workspaceId(root), features: ['bridge', 'inset'], version: expect.stringMatching(/^\d+\.\d+\.\d+/) })
       // no share.name: the folder's name, as the shell shows it
       expect(f.name).toBe(root.split('/').pop())
       expect(f.origin).toMatch(new RegExp(`^http://(\\[::1\\]|127\\.0\\.0\\.1):${BASE + n}$`))

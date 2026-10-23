@@ -11,6 +11,7 @@
  * next) stays prototype-only.
  */
 import { setStageSize } from './stage-size.ts'
+import { usable } from './inset.ts'
 import { frameLoaded, frameReady, onFrameMessage, stageNavigated } from './jam-capture.ts'
 import { jamKey } from './jam-keys.ts'
 import { letGoOfTile } from './jam-state.ts'
@@ -310,7 +311,8 @@ function PlayInner() {
     : ''
   // the stage runs the project's frames: its URL names the workspace like a frame's (A1.11)
   const src = useRef(play ? withWs(`${ROUTE}/stage/?at=${encodeURIComponent(play.at)}&theme=${encodeURIComponent(play.theme)}${slParams(play)}`) : '')
-  const [win, setWin] = useState({ w: window.innerWidth, h: window.innerHeight })
+  // the view below the Mac app's strip when the shell took the inset (inset.ts): fill, the doc preset and every fit
+  const [win, setWin] = useState(() => { const u = usable(); return { w: u.width, h: u.height } })
   const [pillOpen, setPillOpen] = useState(true)          // collapse (pill -> re-open fab), like the canvas
   const [stageReady, setStageReady] = useState(0)         // bumps on each sh:stage-ready (reload) - re-drives the highlight
   const [away, setAway] = useState(false)                 // the stage shows another project's "another canvas" page (A1.11)
@@ -581,7 +583,7 @@ function PlayInner() {
   }, [])
 
   useEffect(() => {
-    const onResize = () => setWin({ w: window.innerWidth, h: window.innerHeight })
+    const onResize = () => { const u = usable(); setWin({ w: u.width, h: u.height }) }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])

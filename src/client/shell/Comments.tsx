@@ -5,6 +5,7 @@
  * size via --sh-inv (the vbadge pattern) so zoom never shrinks them away, and never
  * overlap (pin-layout.ts places them).
  */
+import { TOP } from './inset.ts'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { avatarFallback, useComments } from './comments-store.ts'
@@ -729,15 +730,16 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
   // a device/theme switch resizes .sh-play-stage and a window resize shifts it.
   const computeStagePos = (): React.CSSProperties | null => {
     if (!stage) return null
-    const W = 320, M = 12, maxH = Math.min(660, window.innerHeight - 2 * M)
+    // the view below the Mac app's strip when the shell took the inset (TOP 44)
+    const W = 320, M = 12, maxH = Math.min(660, window.innerHeight - TOP - 2 * M)
     const rect = document.querySelector('.sh-play-stage')?.getBoundingClientRect()
-    if (!rect) return { position: 'fixed', left: M, top: 72, maxHeight: maxH }
+    if (!rect) return { position: 'fixed', left: M, top: TOP + 72, maxHeight: maxH }
     const roomR = window.innerWidth - rect.right >= W + 30
     const roomL = rect.left >= W + 30
     const s: 'l' | 'r' = at.x < bounds.w / 2 ? (roomL ? 'l' : 'r') : (roomR ? 'r' : 'l')
     const x = Math.min(Math.max(s === 'r' ? rect.right + 18 : rect.left - 18 - W, M), window.innerWidth - W - M)
     // worst-case clamp (content = maxH): even a full-height thread keeps its composer on screen
-    const y = Math.min(Math.max(rect.top + at.y - 36, M), Math.max(M, window.innerHeight - maxH - M))
+    const y = Math.min(Math.max(rect.top + at.y - 36, TOP + M), Math.max(TOP + M, window.innerHeight - maxH - M))
     return { position: 'fixed', left: x, top: y, maxHeight: maxH }
   }
   const [stagePos, setStagePos] = useState<React.CSSProperties | null>(computeStagePos)
