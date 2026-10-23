@@ -3,11 +3,17 @@
  * The packaged smoke (spec 28 A2.8, A2.10, A2.14 #29, #30, v1.12 r1 #9): no Playwright, on the signed, fused
  * build - spike S9's twelve checks and X7's cases, against the real app.
  *
- *   node test/smoke/smoke.mjs [<Marver.app>] [--adhoc] [--keep]
+ *   node test/smoke/smoke.mjs [<Marver.app>] [--adhoc] [--keep] [--tamper] [--report=<dir>]
  *
  * The default app is out/Marver-darwin-arm64/Marver.app. `--adhoc` expects an ad-hoc signature (no Developer ID,
- * no timestamp). `--keep` leaves the run's temporary folder. Every line is PASS, FAIL or WARN; the exit code is
- * the number of FAILs; a JSON report goes beside the app's out/ folder (smoke-<time>.json).
+ * no timestamp). `--keep` leaves the run's temporary folder. Every line is PASS, FAIL, WARN or SKIP; the exit code
+ * is the number of FAILs; a JSON report goes beside the app's out/ folder (smoke-<time>.json), or into --report's.
+ *
+ * Nothing on Nic's screen by default (spec 28 A2.8). The cases that crash the app on purpose - a byte changed in
+ * app.asar (twice), and on a signed build the renamed copy the kernel kills - each make macOS show its "quit
+ * unexpectedly" dialog, so they run only with `--tamper` and are SKIP lines otherwise; the run then checks that no
+ * crash report of Marver's appeared while it ran. And no launch at all of a bundle whose Mach-O parts carry more
+ * than one Team ID (scripts/team-id.mjs): a bundle caught while it is being signed crashes at once, with the dialog.
  *
  * Every launch runs on its own temporary profile - MARVER_APP_USER_DATA, MARVER_HOME and MARVER_SLOT_BASE - so a
  * Marver Nic has open holds another lock and nothing of his is read or written: the smoke checks that
@@ -25,7 +31,8 @@ import { request } from 'node:http'
 import { createRequire } from 'node:module'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
-import { BUNDLE_ID, IDENTITY, MIC, MIN_MACOS, PRODUCT, TEST_SENTINELS } from '../../scripts/build.mjs'
+import { BUNDLE_ID, IDENTITY, MIC, MIN_MACOS, PRODUCT, TEAM, TEST_SENTINELS } from '../../scripts/build.mjs'
+import { bundleOf, checkTeams, machOParts } from '../../scripts/team-id.mjs'
 
 const APP_DIR = resolve(import.meta.dirname, '..', '..')
 const require = createRequire(join(APP_DIR, 'package.json'))
@@ -33,9 +40,10 @@ const args = process.argv.slice(2)
 const appPath = resolve(args.find((a) => !a.startsWith('--')) ?? join(APP_DIR, 'out', `${PRODUCT}-darwin-arm64`, `${PRODUCT}.app`))
 const adhoc = args.includes('--adhoc')
 const keep = args.includes('--keep')
+const tamper = args.includes('--tamper')
+const reportArg = args.find((a) => a.startsWith('--report='))?.slice('--report='.length)
 const BIN = join(appPath, 'Contents', 'MacOS', PRODUCT)
 const VERSION = JSON.parse(readFileSync(join(APP_DIR, 'package.json'), 'utf8')).version
-const TEAM = /\(([A-Z0-9]{10})\)$/.exec(IDENTITY)?.[1]
 if (!existsSync(BIN)) { console.error(`smoke: no app at ${appPath}`); process.exit(1) }
 
 // short paths: a Unix socket or a Chromium profile path must stay well under macOS's limits
@@ -49,6 +57,8 @@ const log = (verdict, name, detail = '') => {
 const pass = (n, d) => log('PASS', n, d)
 const fail = (n, d) => log('FAIL', n, d)
 const warn = (n, d) => log('WARN', n, d)
+const skip = (n, d) => log('SKIP', n, d)
+const TAMPER_SKIP = 'run with --tamper: it crashes the app on purpose, and macOS shows a dialog for it'
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const sh = (cmd, argv, opts = {}) => spawnSync(cmd, argv, { encoding: 'utf8', ...opts })
 
@@ -60,6 +70,13 @@ function snapshot(dir) {
   return JSON.stringify({ mtime: st.mtimeMs, entries: readdirSync(dir).sort().map((n) => { const s = lstatSync(join(dir, n)); return [n, s.mtimeMs, s.size] }) })
 }
 const nicBefore = NIC.map(snapshot)
+// macOS's crash reports: one of Marver's written during the run is a "quit unexpectedly" dialog on Nic's screen
+const REPORTS = join(homedir(), 'Library', 'Logs', 'DiagnosticReports')
+function crashReports() {
+  try {
+    return readdirSync(REPORTS).filter((n) => n.startsWith(PRODUCT) && statSync(join(REPORTS, n)).mtimeMs >= t0).sort()
+  } catch { return null }
+}
 // and the login keychain: every launch below passes Chromium's --use-mock-keychain, so the cookie key never
 // reaches "Marver Safe Storage" (an item an ad-hoc build made would make Nic's signed app ask for it later)
 const KEYCHAIN_ITEM = `${PRODUCT} Safe Storage`
@@ -156,11 +173,30 @@ function plist(file) { return JSON.parse(sh('plutil', ['-convert', 'json', '-o',
   bad.length ? fail('asar-contents', bad.join('; ')) : pass('asar-contents', `${files.length} entries: package.json and dist/, no test hook, no source map`)
 }
 
+// ---- one Team ID, or no launch at all ------------------------------------------------------------------
+const started = []   // every process group this smoke started
+let block = null
+const teamChecks = new Map()
+/** The bundle holding `bin` carries one Team ID (scripts/team-id.mjs); checked once per bundle. */
+function teamCheck(bin) {
+  const app = bundleOf(bin) ?? appPath
+  if (!teamChecks.has(app)) teamChecks.set(app, checkTeams(app))
+  return teamChecks.get(app)
+}
+{
+  const v = teamCheck(BIN)
+  const want = adhoc ? null : TEAM
+  if (!v.ok) { fail('team-id', v.message); await finish('no launch: the bundle carries more than one Team ID') }
+  else if (adhoc ? v.team !== null : v.team === null || (want && v.team !== want)) {
+    fail('team-id', `refusing to launch ${appPath}: every part carries Team ID ${v.team ?? 'none'}, ${adhoc ? 'an ad-hoc build carries none' : `the signed build wants ${want ?? 'one'}`}`)
+    await finish('no launch: the bundle carries another Team ID')
+  } else pass('team-id', v.message)
+}
+
 // ---- launches ---------------------------------------------------------------------------------------
 const { takeBlock } = await import(resolve(APP_DIR, '..', 'test', 'slot-block.ts'))
-const block = await takeBlock()
+block = await takeBlock()
 const SLOT_BASE = block.base
-const started = []   // every process group this smoke started
 
 function freePort() {
   // the X7 probes poll a port nothing should ever open: one in the smoke's own block, past the twenty slots
@@ -168,13 +204,21 @@ function freePort() {
   return SLOT_BASE + freePort.n
 }
 
-/** One launch on its own profile. Returns { pid, dir, ud, home, out, err, exit (promise), t0 }. */
+/**
+ * One launch on its own profile. Returns { pid, dir, ud, home, out, err, exit (promise), t0 }. A bundle whose
+ * Mach-O parts carry more than one Team ID is never launched: the case gets a launch that never ran (`refused`).
+ */
 function launch(name, { argv = [], env = {}, bin = BIN, stdio } = {}) {
   const dir = join(RUN, name)
   const ud = join(dir, 'ud')
   const home = join(dir, 'home')
   mkdirSync(home, { recursive: true, mode: 0o700 })
   const t = Date.now()
+  const teams = teamCheck(bin)
+  if (!teams.ok) {
+    fail(`team-id-${name}`, teams.message)
+    return { name, child: null, pid: 0, dir, ud, home, out: '', err: teams.message, t0: t, exitAt: 0, code: null, signal: 'REFUSED', refused: true, exit: Promise.resolve({ code: null, signal: 'REFUSED' }) }
+  }
   const child = spawn(bin, [...argv, MOCK_KEYCHAIN], {
     env: { ...process.env, MARVER_APP_USER_DATA: ud, MARVER_HOME: home, MARVER_SLOT_BASE: String(SLOT_BASE), ...env },
     stdio: stdio ?? ['ignore', 'pipe', 'pipe'], detached: true,
@@ -194,6 +238,7 @@ const mainRan = (L) => lexists(join(L.ud, 'SingletonLock')) && existsSync(join(L
 const reachedReady = (L) => existsSync(join(L.ud, 'Partitions'))
 async function waitFor(fn, ms, every = 50) { const end = Date.now() + ms; while (Date.now() < end) { if (fn()) return true; await sleep(every) } return fn() }
 async function stop(L, signal = 'SIGTERM', ms = 10_000) {
+  if (L.refused) return true
   if (alive(L)) { try { process.kill(-L.pid, signal) } catch { /* gone */ } }
   const done = await Promise.race([L.exit.then(() => true), sleep(ms).then(() => false)])
   if (!done) { try { process.kill(-L.pid, 'SIGKILL') } catch { /* gone */ } await L.exit }
@@ -310,7 +355,10 @@ async function tampered(name, mutate) {
   const why = /ASAR Integrity Violation[^\n]*|Integrity check failed[^\n]*/.exec(L.err)?.[0]?.slice(0, 90) ?? L.err.trim().slice(-120)
   return { exited, ran, code: L.code, signal: L.signal, why }
 }
-{
+if (!tamper) {
+  skip('asar-tamper-header', TAMPER_SKIP)
+  skip('asar-tamper-content', TAMPER_SKIP)
+} else {
   const headerSize = (buf) => buf.readUInt32LE(12)   // the pickle's JSON length, after 16 bytes of sizes
   const r1 = await tampered('tamper-header', (buf) => {
     const i = buf.indexOf('"package.json"', 16)
@@ -394,8 +442,14 @@ async function guarded(name, { argv, bin, stdio, pipe, refusedByMacOS = false })
   cpSync(join(copy, 'Contents', 'MacOS', PRODUCT), join(copy, 'Contents', 'MacOS', 'electron'))
   const renamed = join(copy, 'Contents', 'MacOS', 'electron')
   if (!adhoc) {
-    p = freePort()
-    await guarded('rdp-electron-name-signed', { argv: { port: p, list: [`--remote-debugging-port=${p}`] }, bin: renamed, refusedByMacOS: true })
+    if (tamper) {
+      p = freePort()
+      await guarded('rdp-electron-name-signed', { argv: { port: p, list: [`--remote-debugging-port=${p}`] }, bin: renamed, refusedByMacOS: true })
+    } else skip('rdp-electron-name-signed', TAMPER_SKIP)
+    // signed again ad-hoc, all of it: `--deep` leaves the Mach-O files outside what codesign counts as nested code
+    // (the framework's Libraries/ dylibs, Squirrel's ShipIt) with the Developer ID, and a bundle of two Team IDs is
+    // never launched (team-id.mjs). So each part first, then the bundle resealed - one Team ID, none.
+    for (const f of machOParts(copy)) execFileSync('codesign', ['--force', '--sign', '-', f], { stdio: 'ignore' })
     execFileSync('codesign', ['--force', '--deep', '--sign', '-', copy], { stdio: 'ignore' })
   }
   p = freePort()
@@ -431,27 +485,41 @@ async function guarded(name, { argv, bin, stdio, pipe, refusedByMacOS = false })
   bad.length ? fail('rdp-open-args', bad.join('; ')) : pass('rdp-open-args', `open -a ... --args: gone in ${Date.now() - t} ms, nothing answered on ${port}, no lock, no DevToolsActivePort`)
 }
 
-// ---- after everything --------------------------------------------------------------------------------
-await sleep(500)
-{
-  const left = started.flatMap((pid) => sh('pgrep', ['-g', String(pid)]).stdout.trim().split('\n').filter(Boolean))
-  const byPath = sh('pgrep', ['-f', RUN]).stdout.trim().split('\n').filter(Boolean)
-  const all = [...new Set([...left, ...byPath])]
-  all.length ? fail('no-leftovers', sh('ps', ['-o', 'pid=,command=', '-p', all.join(',')]).stdout.trim().slice(0, 300)) : pass('no-leftovers', `${started.length} launches, every process gone`)
-}
-{
-  const nicAfter = NIC.map(snapshot)
-  const changed = NIC.filter((_, i) => nicBefore[i] !== nicAfter[i])
-  changed.length ? fail('nic-profile-untouched', `changed: ${changed.join(', ')}`) : pass('nic-profile-untouched', NIC.map((d, i) => `${basename(d)}: ${nicAfter[i] === 'absent' ? 'absent' : 'unchanged'}`).join(', '))
-  const kc = keychainHas()
-  kc === keychainBefore ? pass('keychain-untouched', `"${KEYCHAIN_ITEM}" ${kc ? 'present before and after' : 'absent before and after'}`) : fail('keychain-untouched', `"${KEYCHAIN_ITEM}" ${kc ? 'appeared' : 'went away'} during the smoke`)
-}
+await finish()
 
-block.release()
-const failures = results.filter((r) => r.verdict === 'FAIL').length
-const report = { app: appPath, adhoc, version: VERSION, at: new Date().toISOString(), seconds: (Date.now() - t0) / 1000, failures, results }
-const reportDir = appPath.includes(`${join(APP_DIR, 'out')}/`) ? join(APP_DIR, 'out') : RUN
-writeFileSync(join(reportDir, `smoke-${Date.now()}.json`), JSON.stringify(report, null, 2) + '\n')
-if (!keep) rmSync(RUN, { recursive: true, force: true, maxRetries: 3 })
-console.log(`FAILURES=${failures} (${results.filter((r) => r.verdict === 'PASS').length} pass, ${results.filter((r) => r.verdict === 'WARN').length} warn) in ${report.seconds.toFixed(1)} s${keep ? `; run folder ${RUN}` : ''}`)
-process.exit(failures)
+// ---- after everything --------------------------------------------------------------------------------
+/** The closing checks, the report and the exit (also when the smoke refused to launch anything). */
+async function finish(stopped) {
+  if (stopped) console.log(`smoke: ${stopped}`)
+  await sleep(500)
+  {
+    const left = started.flatMap((pid) => sh('pgrep', ['-g', String(pid)]).stdout.trim().split('\n').filter(Boolean))
+    const byPath = sh('pgrep', ['-f', RUN]).stdout.trim().split('\n').filter(Boolean)
+    const all = [...new Set([...left, ...byPath])]
+    all.length ? fail('no-leftovers', sh('ps', ['-o', 'pid=,command=', '-p', all.join(',')]).stdout.trim().slice(0, 300)) : pass('no-leftovers', `${started.length} launches, every process gone`)
+  }
+  {
+    const nicAfter = NIC.map(snapshot)
+    const changed = NIC.filter((_, i) => nicBefore[i] !== nicAfter[i])
+    changed.length ? fail('nic-profile-untouched', `changed: ${changed.join(', ')}`) : pass('nic-profile-untouched', NIC.map((d, i) => `${basename(d)}: ${nicAfter[i] === 'absent' ? 'absent' : 'unchanged'}`).join(', '))
+    const kc = keychainHas()
+    kc === keychainBefore ? pass('keychain-untouched', `"${KEYCHAIN_ITEM}" ${kc ? 'present before and after' : 'absent before and after'}`) : fail('keychain-untouched', `"${KEYCHAIN_ITEM}" ${kc ? 'appeared' : 'went away'} during the smoke`)
+  }
+  { // no "quit unexpectedly" dialog: no crash report of Marver's written during the run (expected with --tamper only)
+    const reports = crashReports()
+    if (reports === null) warn('no-crash-dialogs', `${REPORTS} unreadable`)
+    else if (tamper) pass('no-crash-dialogs', `--tamper: ${reports.length} crash report(s) from the cases that crash on purpose${reports.length ? ` (${reports.slice(0, 4).join(', ')})` : ''}`)
+    else reports.length ? fail('no-crash-dialogs', `${reports.length} crash report(s) during the run, each a macOS dialog: ${reports.slice(0, 4).join(', ')}`) : pass('no-crash-dialogs', 'no crash report of Marver\'s during the run: no macOS dialog')
+  }
+
+  block?.release()
+  const count = (v) => results.filter((r) => r.verdict === v).length
+  const failures = count('FAIL')
+  const report = { app: appPath, adhoc, tamper, version: VERSION, at: new Date().toISOString(), seconds: (Date.now() - t0) / 1000, failures, results }
+  const reportDir = reportArg ? resolve(reportArg) : appPath.includes(`${join(APP_DIR, 'out')}/`) ? join(APP_DIR, 'out') : RUN
+  mkdirSync(reportDir, { recursive: true })
+  writeFileSync(join(reportDir, `smoke-${Date.now()}.json`), JSON.stringify(report, null, 2) + '\n')
+  if (!keep) rmSync(RUN, { recursive: true, force: true, maxRetries: 3 })
+  console.log(`FAILURES=${failures} (${count('PASS')} pass, ${count('WARN')} warn, ${count('SKIP')} skip) in ${report.seconds.toFixed(1)} s${keep ? `; run folder ${RUN}` : ''}`)
+  process.exit(failures)
+}

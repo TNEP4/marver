@@ -9,13 +9,15 @@
  *   hidden tabs and the memory budget.
  *
  * Both answer the same `call(hook, args)`. `close()` asks the app to quit and, when it does not within 10 s,
- * ends the process it started - never another.
+ * ends the process it started - never another. Neither launches a bundle whose Mach-O parts carry more than one
+ * Team ID (scripts/team-id.mjs, spec 28 A2.8): such a bundle crashes at once, with a macOS dialog.
  */
 import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { _electron, type ElectronApplication } from 'playwright-core'
+import { assertOneTeam } from '../../scripts/team-id.mjs'
 import { playwrightControl, socketControl, type Control } from './control.ts'
 import type { TestEnv } from './env.ts'
 
@@ -39,6 +41,7 @@ export interface AppRun {
 
 function checkBuilt() {
   if (!existsSync(join(APP_DIR, 'dist', 'main.cjs'))) throw new Error('no dist/main.cjs: run `node scripts/build.mjs --js` (the global setup does)')
+  assertOneTeam(ELECTRON_BIN)   // throws "refusing to launch ...", naming each Team ID and its parts
 }
 
 export async function launchPW(env: TestEnv, opts: { args?: string[]; extraEnv?: Record<string, string> } = {}): Promise<AppRun> {

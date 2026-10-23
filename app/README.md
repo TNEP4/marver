@@ -9,7 +9,7 @@ pnpm --filter marver-app build:js             # the dev flavour into app/dist/ (
 pnpm --filter marver-app dev                  # build:js, then run it as "Marver Dev"
 pnpm --filter marver-app package              # the release flavour, Developer ID signed, then the smoke
 pnpm --filter marver-app package:adhoc        # the same, ad-hoc signed, into out/adhoc/ (agents, CI, a locked keychain)
-pnpm --filter marver-app smoke [-- <app>]     # the packaged smoke on its own
+pnpm --filter marver-app smoke [-- <app>]     # the packaged smoke on its own (no dialog: add --tamper for the crashing cases)
 pnpm --filter marver-app test                 # unit, fake canvas, Playwright
 pnpm --filter marver-app test:prod            # the production-switch harness
 ```
@@ -26,7 +26,7 @@ app/
   src/shared/         channels.ts (the app pages' channels)
   pages/<page>/       index.html, main.ts, style.css - built into dist/pages/, listed in dist/pages/manifest.json
   build/              the icon's sources, Marver.icns, the entitlements (build/README.md)
-  scripts/            build.mjs, tokens.mjs, icon.mjs (+ icon-render.cjs)
+  scripts/            build.mjs, team-id.mjs, tokens.mjs, icon.mjs (+ icon-render.cjs)
   test/               unit/, fake/, pw/, prod/, harness/, smoke/smoke.mjs
 ```
 
@@ -78,6 +78,22 @@ window, the tabs, the menu. Each module after the guard is its stream's; its hea
 `build/Marver.icns` comes from `build/a-mark.svg` (`node scripts/icon.mjs`). `build/Marver.icon`, the icon macOS 26
 draws in its own glass, is made by hand in Icon Composer and is **not made yet** - see `build/README.md`. Nothing
 may stand at that path until then.
+
+## Never a half-signed bundle in out/
+
+A bundle launched while `@electron/osx-sign` works on it carries two Team IDs (the parts already signed with the
+Developer ID, the rest still ad-hoc) and crashes at once, with macOS's "quit unexpectedly" dialog. So:
+
+- `build.mjs` packages, fuses and signs in `app/.stage/<signed|adhoc>/` (hidden, gitignored), checks
+  `codesign --verify --deep --strict` and one Team ID across every Mach-O part (`scripts/team-id.mjs`: the main
+  binary, the frameworks and their libraries, the helpers), runs the smoke there, and only then moves the finished
+  bundle into `out/` by rename. A build that fails leaves `out/` as it was.
+- The smoke and both test launchers refuse to launch a bundle whose parts carry more than one Team ID, and name
+  each Team ID with its parts. (`codesign --verify --deep` alone passes such a bundle.)
+- The smoke's cases that crash the app on purpose - a byte changed in `app.asar`, twice, and on a signed build the
+  renamed copy the kernel kills - each put a dialog on screen, so they run only with `--tamper` (`build.mjs
+  --tamper` passes it on); otherwise they are SKIP lines, and the run checks that macOS wrote no crash report of
+  Marver's while it ran.
 
 ## Signing
 

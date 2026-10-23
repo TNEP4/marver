@@ -6,23 +6,30 @@
  *   node scripts/build.mjs            the release flavour, Developer ID signed, then the packaged smoke
  *   node scripts/build.mjs --adhoc    the same, ad-hoc signed (agents, CI, a locked keychain)
  *   --no-smoke                        skip the smoke (it runs on every build otherwise)
+ *   --tamper                          the smoke's cases that crash the app on purpose too (each shows a macOS dialog)
  *
  * The release pipeline, each step failing the build, nothing retried:
  *   checks -> tsdown (release flavour) -> pages + manifest -> stage { package.json, dist/ } -> @electron/packager
  *   (unsigned, asar, arm64) -> @electron/fuses (all nine, strict) -> @electron/osx-sign (hardened runtime,
- *   per-helper entitlements) -> test/smoke/smoke.mjs
+ *   per-helper entitlements) -> verify (codesign --deep --strict, one Team ID) -> test/smoke/smoke.mjs -> out/
  * Fuses come before signing: flipping them changes the binary. Output: out/Marver-darwin-arm64/Marver.app, and an
  * ad-hoc build in out/adhoc/Marver-darwin-arm64/Marver.app, so it never replaces Nic's signed one.
+ *
+ * Never a half-signed bundle in out/ (spec 28 A2.8): everything up to the smoke happens in app/.stage/<flavour>/
+ * (a hidden folder, outside out/), and the finished bundle - signed, verified and smoked - moves into out/ only at
+ * the end, by rename. A bundle launched while osx-sign works on it carries two Team IDs and crashes with macOS's
+ * dialog; the one in out/ is always the last finished build. A build that fails leaves out/ as it was.
  *
  * The signing identity is Nic's Developer ID (MARVER_SIGN_IDENTITY overrides). The first signing on a Mac asks
  * the keychain for the private key ("Always Allow" once); Apple's timestamp server needs the network - an offline
  * build uses --adhoc.
  */
 import { execFileSync, spawnSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { arch, platform, release } from 'node:os'
 import { join, resolve } from 'node:path'
+import { checkTeams } from './team-id.mjs'
 import { tokensFrom } from './tokens.mjs'
 
 export const APP = resolve(import.meta.dirname, '..')
@@ -31,6 +38,8 @@ export const ELECTRON = '45.0.0'
 export const BUNDLE_ID = 'design.marver.app'
 export const PRODUCT = 'Marver'
 export const IDENTITY = process.env.MARVER_SIGN_IDENTITY || 'Developer ID Application: Nicolas Touron (PXV6WER853)'
+/** The Team ID in the identity's name, which every Mach-O part of a signed build carries. */
+export const TEAM = /\(([A-Z0-9]{10})\)$/.exec(IDENTITY)?.[1] ?? null
 export const MIC = 'Marver uses the microphone only during a Jam session you start.'
 export const MIN_MACOS = '13.0'
 /** Strings only the dev flavour's test hooks hold (testing/index.ts): the release bundle must have none. */
@@ -136,12 +145,15 @@ export function buildJs() {
   step(`dist/ (dev flavour): main, 2 preloads, ${Object.keys(manifest).length} pages`)
 }
 
-async function buildRelease({ adhoc, smoke }) {
+async function buildRelease({ adhoc, smoke, tamper }) {
   checks({ release: true })
   const out = adhoc ? join(APP, 'out', 'adhoc') : join(APP, 'out')
-  const stage = join(out, 'stage')
-  rmSync(stage, { recursive: true, force: true })
+  // the staging folder: never under out/, so nothing there is ever a bundle half-way through
+  const work = join(APP, '.stage', adhoc ? 'adhoc' : 'signed')
+  const stage = join(work, 'src')
+  rmSync(work, { recursive: true, force: true })
   mkdirSync(stage, { recursive: true })
+  rmSync(join(out, 'stage'), { recursive: true, force: true })   // the old layout's stage, from before .stage/
 
   step('bundles (release flavour)')
   bundles('release', join(stage, 'dist'))
@@ -155,7 +167,7 @@ async function buildRelease({ adhoc, smoke }) {
   const { packager } = await import('@electron/packager')
   const icon = iconComposerReady() ? [ICON_COMPOSER, ICNS] : [ICNS]
   const [dir] = await packager({
-    dir: stage, out, overwrite: true, quiet: true,
+    dir: stage, out: work, overwrite: true, quiet: true,
     name: PRODUCT, platform: 'darwin', arch: 'arm64', electronVersion: ELECTRON,
     asar: true, prune: false, junk: true,
     appBundleId: BUNDLE_ID, appCategoryType: 'public.app-category.developer-tools',
@@ -202,21 +214,44 @@ async function buildRelease({ adhoc, smoke }) {
       ...(adhoc ? { timestamp: 'none' } : {}),
     }),
   })
-  const report = { app, adhoc, version: pkg.version, electron: ELECTRON, icon: icon.map((p) => p.slice(APP.length + 1)), seconds: (Date.now() - t0) / 1000 }
-  writeFileSync(join(out, 'build.json'), JSON.stringify(report, null, 2) + '\n')
-  step(`built ${app}`)
+  step('verify (codesign --deep --strict, one Team ID)')
+  const v = spawnSync('codesign', ['--verify', '--deep', '--strict', app], { encoding: 'utf8' })
+  if (v.status !== 0) fail(`the signature does not verify: ${v.stderr.trim().split('\n').slice(-2).join(' | ')}`)
+  const teams = checkTeams(app)
+  if (!teams.ok) fail(teams.message)
+  const want = adhoc ? null : TEAM   // a signed build with an identity whose name has no Team ID wants one, any
+  if (adhoc ? teams.team !== null : teams.team === null || (want && teams.team !== want)) {
+    fail(`every part carries Team ID ${teams.team ?? 'none'}, the build wants ${want ?? (adhoc ? 'none' : 'one')}`)
+  }
+  step(teams.message)
 
   if (smoke) {
-    step('smoke')
-    const r = spawnSync(process.execPath, [join(APP, 'test', 'smoke', 'smoke.mjs'), app, ...(adhoc ? ['--adhoc'] : [])], { stdio: 'inherit' })
-    if (r.status !== 0) fail(`the packaged smoke failed (${r.status} failing checks)`)
+    step(`smoke (in .stage/, before the move${tamper ? '; with --tamper' : ''})`)
+    mkdirSync(out, { recursive: true })
+    const r = spawnSync(process.execPath, [join(APP, 'test', 'smoke', 'smoke.mjs'), app, `--report=${out}`,
+      ...(adhoc ? ['--adhoc'] : []), ...(tamper ? ['--tamper'] : [])], { stdio: 'inherit' })
+    if (r.status !== 0) fail(`the packaged smoke failed (${r.status} failing checks); out/ left as it was, the build in ${work}`)
   }
-  console.log(`APP=${app}`)
+
+  // the move: the finished bundle replaces out/'s by rename, the old one put aside first (never a mix of the two)
+  step('into out/')
+  mkdirSync(out, { recursive: true })
+  const dest = join(out, `${PRODUCT}-darwin-arm64`)
+  const old = join(work, 'previous')
+  if (existsSync(dest)) renameSync(dest, old)
+  renameSync(dir, dest)
+  rmSync(work, { recursive: true, force: true })
+  const final = join(dest, `${PRODUCT}.app`)
+  const report = { app: final, adhoc, version: pkg.version, electron: ELECTRON, team: teams.team, parts: teams.parts.length,
+    icon: icon.map((p) => p.slice(APP.length + 1)), smoke: smoke ? (tamper ? 'with --tamper' : 'default') : 'skipped', seconds: (Date.now() - t0) / 1000 }
+  writeFileSync(join(out, 'build.json'), JSON.stringify(report, null, 2) + '\n')
+  step(`built ${final}`)
+  console.log(`APP=${final}`)
 }
 
 // run as a script (tests import the constants above without building)
 if (process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.filename)) {
   const args = process.argv.slice(2)
   if (args.includes('--js')) buildJs()
-  else await buildRelease({ adhoc: args.includes('--adhoc'), smoke: !args.includes('--no-smoke') })
+  else await buildRelease({ adhoc: args.includes('--adhoc'), smoke: !args.includes('--no-smoke'), tamper: args.includes('--tamper') })
 }
