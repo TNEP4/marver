@@ -322,15 +322,18 @@ describe('a run\'s bakes, compiled slowly', () => {
     const c = need(ctx, B)
     const logBefore = c.dev.out().length
     const ac = new AbortController()
-    let id = ''
-    const done = run(c, 'videos', { signal: ac.signal, onLine: (l) => { if ('phase' in l && l.phase === 'warm') { id = l.run; setTimeout(() => ac.abort(), 3500) } } })
+    let id = '', cancelledAt = 0
+    // cancelled 3.5 s in: the warm-up's page has asked for both frames' bakes, one compile at a time, each held 5 s
+    const done = run(c, 'videos', { signal: ac.signal, onLine: (l) => { if ('phase' in l && l.phase === 'warm') { id = l.run; setTimeout(() => { cancelledAt = Date.now(); ac.abort() }, 3500) } } })
     await done
     expect(id).toMatch(/^[0-9a-f]{16}$/)
     // the line comes once the run's compiles have ended: the one rendering finished, the one queued never started
     const line = await lineOf(c, id)
+    const lineAfter = Date.now() - cancelledAt
     expect(line).toMatchObject({ valid: false, invalidReason: 'cancelled' })
     const compiled = c.dev.out().slice(logBefore).split('\n').filter((x) => /bake: media\//.test(x))
-    expect(compiled.length, compiled.join('\n')).toBeLessThanOrEqual(1)
+    expect(compiled.length, compiled.join('\n')).toBe(1)
+    expect(lineAfter, 'the line waited for the compile under way').toBeGreaterThan(1500)
     expect(existsSync(join(c.root, 'design', 'assets', 'clip.webm.poster.png'))).toBe(false)
     await wait(2000)
     expect(existsSync(join(c.root, 'design', 'assets', 'clip.webm.poster.png'))).toBe(false)
