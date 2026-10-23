@@ -10,7 +10,8 @@ import { NOTE_GAP } from '../notes.ts'
 import { onMotion, startCameraBroadcast, setCameraScale } from './camera-broadcast.ts'
 import { attachCanvas, recorder } from '../recorder.ts'
 import { sleepingCount } from './sleep.ts'
-import { keepOverResume, resumed } from '../api.ts'
+import { keepOverResume, resumed, WS } from '../api.ts'
+import { APP_REOPEN } from '../marver-app.ts'
 
 /**
  * The world. rzpp owns pan/zoom; nodes are absolutely positioned children of #sh-world.
@@ -34,6 +35,30 @@ import { keepOverResume, resumed } from '../api.ts'
  */
 const GAP = 32
 const BAR = 56
+
+/** The camera survives a reload (spec 28 A2.9): kept per canvas and board, `mv-camera:<workspace>:<board>`, a second
+ *  after it settles, and the next load of that board opens there - when its link names no selection, or when the Mac
+ *  app reloaded the tab after a crash (`marverApp.reopen`). A1's camera carried over a resume wins. Dev canvases only:
+ *  a published one has no workspace, and opens on the whole board as before. */
+type Camera = { x: number; y: number; scale: number }
+const cameraKey = (board: string) => `mv-camera:${WS}:${board}`
+function savedCamera(board: string): Camera | null {
+  if (!WS) return null
+  try {
+    const c = JSON.parse(localStorage.getItem(cameraKey(board)) ?? 'null')
+    return c && [c.x, c.y, c.scale].every((v) => typeof v === 'number' && Number.isFinite(v)) && c.scale >= 0.05 && c.scale <= 5 ? { x: c.x, y: c.y, scale: c.scale } : null
+  } catch { return null }
+}
+let keepTimer: ReturnType<typeof setTimeout> | undefined
+function keepCamera(x: number, y: number, scale: number) {
+  if (!WS) return
+  const board = useStore.getState().board
+  clearTimeout(keepTimer)
+  keepTimer = setTimeout(() => {
+    if (useStore.getState().board !== board) return   // switched meanwhile: this camera was the other board's
+    try { localStorage.setItem(cameraKey(board), JSON.stringify({ x: Math.round(x * 100) / 100, y: Math.round(y * 100) / 100, scale })) } catch { /* storage off: the next load fits */ }
+  }, 1000)
+}
 function insets(el: HTMLElement) {
   const c = el.getBoundingClientRect()
   const rect = (q: string) => document.querySelector(q)?.getBoundingClientRect()
@@ -253,7 +278,12 @@ export function Canvas() {
     let revealed = false
     booted.current = true
     // the page before this one reloaded itself when its canvas came back: its camera, on the board it showed
-    const cam = resumed?.camera && resumed.board === useStore.getState().board ? resumed.camera : null
+    const board = useStore.getState().board
+    const carried = resumed?.camera && resumed.board === board ? resumed.camera : null
+    // else the camera this board was left at (A2.9) - a link naming a selection fits it instead, unless the app
+    // reloaded this tab after a crash
+    const named = !!(bootHash.n?.length || bootHash.f?.length || bootHash.s?.length)
+    const cam = carried ?? (!named || APP_REOPEN ? savedCamera(board) : null)
     const fit = () => {
       const keys = linkTargets(bootHash, useStore.getState().nodes)
       if (keys.length) {
@@ -429,6 +459,7 @@ export function Canvas() {
       onTransformed={(r) => {
         paintGrid(r.state.positionX, r.state.positionY, r.state.scale)
         setCameraScale(r.state.scale)   // keep the LOD's settle-scale current (cheap number write, no React)
+        if (booted.current) keepCamera(r.state.positionX, r.state.positionY, r.state.scale)   // over a reload (A2.9)
         clearTimeout(scaleTimer.current)
         scaleTimer.current = window.setTimeout(() => setScale(r.state.scale), 120)
       }}
