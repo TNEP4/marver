@@ -75,6 +75,15 @@ export function pageFor(t: Tab, now: number, home: string = homedir()): PageBody
   return { ...base, page: 'starting', phase: starting ? 'starting' : 'opening', since: starting ? (t.regAt ?? now) : (t.loadAt ?? t.regAt ?? now) }
 }
 
+/**
+ * What decides a new snapshot (and a new `rev`): the body without the probe's `lastAt`, which rides along with the
+ * next snapshot - so repeated probes that find the same thing never bump the rev under a button (v1.14 r3 #3).
+ */
+export function snapshotKey(b: PageBody): string {
+  if (!('probe' in b)) return JSON.stringify(b)
+  return JSON.stringify({ ...b, probe: { state: b.probe.state } })
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Crashes: one owner, a latch (A2.11, v1.10 r1 #7)
 
@@ -108,7 +117,7 @@ function startReload(t: Tab, why: 'auto' | 'person' | 'force'): void {
   const p = P()
   const c = t.crash
   c.inFlight = why
-  c.counted = false
+  c.epoch = (c.epoch ?? 0) + 1
   if (why === 'auto') c.lastAuto = p.now()
   // the shell restores its saved camera on the app's reload after a crash, even under a selection link (A2.9)
   t.reopen = true
@@ -119,7 +128,8 @@ function startReload(t: Tab, why: 'auto' | 'person' | 'force'): void {
 /**
  * The only reload after a renderer went: at once for the active tab, on showing for a hidden one; a second
  * unexpected crash within 60 s of an automatic reload latches the tab - no automatic reload any more, until the
- * person presses Reload. While an attempt is in flight, further crashes of the tab count once.
+ * person presses Reload. One renderer's life (an epoch: from a reload started or a document lifted) counts one
+ * crash: further render-process-gone events of it count nothing.
  */
 export function recover(t: Tab, cause: RecoverCause): void {
   const p = P()
@@ -143,12 +153,13 @@ export function recover(t: Tab, cause: RecoverCause): void {
   const now = p.now()
   const cancelClear = () => { const x = latchTimers.get(t.id); if (x) { clearTimeout(x); latchTimers.delete(t.id) } c.personLiftAt = undefined }
   cancelClear()
-  if (c.inFlight && c.counted) { p.log?.('crash', { tab: t.id, counted: false, attempt: c.inFlight }); p.changed(); return }
+  const epoch = c.epoch ?? 0
+  if (c.countedIn === epoch) { p.log?.('crash', { tab: t.id, counted: false, epoch }); p.changed(); return }
   c.count += 1
+  c.countedIn = epoch
   c.times = [...(c.times ?? []), now].slice(-10)
   c.reason = reasonOf(cause.reason)
   c.exitCode = cause.exitCode
-  if (c.inFlight) c.counted = true
   const latch = c.latched || (c.lastAuto !== undefined && now - c.lastAuto < T.crashWindowMs)
   p.log?.('crash', { tab: t.id, reason: cause.reason, count: c.count, latched: latch })
   if (latch) {
@@ -187,7 +198,7 @@ export function onLifted(t: Tab): void {
   const c = t.crash
   const was = c.inFlight
   c.inFlight = false
-  c.counted = false
+  c.epoch = (c.epoch ?? 0) + 1   // a new document: a crash of it is a new one
   stopRetries(t)
   if (was === 'auto') p.confirmed(t)
   if (was === 'person' && c.latched) {
@@ -204,7 +215,7 @@ export function onLifted(t: Tab): void {
 /** The attempt in flight ended without a lift (a failure): the tab page shows the failure. */
 export function onAttemptFailed(t: Tab): void {
   t.crash.inFlight = false
-  t.crash.counted = false
+  t.crash.epoch = (t.crash.epoch ?? 0) + 1
 }
 
 /** The tab went away (closed, dropped): its timers with it. */

@@ -21,7 +21,7 @@ import { app, BaseWindow, nativeTheme, View, WebContentsView, type WebContents, 
 import { CH, type PageKind, type PageFocus, type TabsSnapshot, type TabView, type WindowView } from '../shared/channels.ts'
 import { STRIP_HEIGHT, below, ground, plan, type Plan, type PlanTab } from './plan.ts'
 import { activeTab, allTabs, darkOf, getTab, ordered, viewOf, type Tab } from './tabs.ts'
-import { pageFor, type PageBody } from './tabpage.ts'
+import { pageFor, snapshotKey, type PageBody } from './tabpage.ts'
 import { recompute as recomputePill, onVisibility } from './pill.ts'
 import { afterShow, setFocusPorts, track } from './focus.ts'
 import { invalidateMenu } from './menu.ts'
@@ -138,7 +138,7 @@ export function onAppReady(wc: WebContents): void {
   if (kind === 'strip' && pillBody !== null) send(wc, CH.pill, pillBody)
   if (kind === 'tabpage') {
     const h = [...pages.values()].find((x) => x.view.webContents === wc)
-    if (h) { h.sent = undefined; sendTabpage(h) }
+    if (h?.body) send(wc, CH.tabpage, { rev: h.rev, ...h.body })   // the latest, under the rev it already has
   }
   const f = heldFocus.get(wc)
   if (f) { heldFocus.delete(wc); wc.send(CH.pageFocus, f) }
@@ -230,9 +230,9 @@ function closePage(tabId: string): void {
 /** The page's snapshot, when it changed (no clock in it: time passing never bumps the rev under a button). */
 function sendTabpage(h: PageHandle): void {
   if (!h.body) return
-  const s = JSON.stringify(h.body)
-  if (s === h.sent && ready.has(h.view.webContents)) return
-  if (s !== h.sent) h.rev += 1
+  const s = snapshotKey(h.body)
+  if (s === h.sent) return
+  h.rev += 1
   h.sent = s
   send(h.view.webContents, CH.tabpage, { rev: h.rev, ...h.body })
 }

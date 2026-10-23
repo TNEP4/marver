@@ -77,8 +77,10 @@ export interface TabCrash {
   exitCode?: number
   /** the reload in flight after a crash, by whom - until its document commits or fails */
   inFlight?: false | 'auto' | 'person' | 'force'
-  /** this attempt already counted one crash: further ones count nothing (A2.11) */
-  counted?: boolean
+  /** bumped at each reload started and each document lifted: one renderer's life, for counting a crash once */
+  epoch?: number
+  /** the epoch whose crash was counted: further events of it count nothing (A2.11) */
+  countedIn?: number
   /** a hidden tab crashed: its one automatic attempt waits for it to be shown */
   pendingShow?: boolean
   /** when a person's reload lifted: the latch clears 60 s later without a crash */
@@ -689,6 +691,7 @@ export function activate(id: string): void {
   next.open = true
   if (prev && prev !== next) {
     prev.hiddenAt = now
+    prev.held = undefined   // the unsaved pill lasts while its tab is active (A2.14 #33)
     if (prev.kind === 'local' && prev.doc?.trusted) p.appState(prev, 'hidden')
   }
   activeId = next.id
