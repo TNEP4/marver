@@ -115,6 +115,12 @@ uncovered until a stream fills its own, so app 0.2's base behaves as app 0.1.
   `test/prod/guard-bridge.test.ts` (skipped, saying so, without them). Helpers in `test/harness/window.ts`; real key
   events in `test/native/keypost.swift` (Accessibility for the terminal, else those cases say they are
   inconclusive); the focus cases read focus only while the window is key, else they are skipped as inconclusive.
+- **unloading** (A3.8 #39-#45; `test/unit/unload.test.ts`, `memory.test.ts`, `test/prod/unload.test.ts`): memory.ts's
+  hooks - `memory:tick` (one tick now, on a sample the case describes: a pressure `level`, `canvasMB` as one canvas
+  process, or `procs`; `real: true` takes the sampler's own `requestSample()`), `memory:state` (each canvas tab's
+  refusal, the cooldown, the last tick), `memory:totalmem { mb }` (null: `os.totalmem()` again) - and the window's
+  `page:event` (Chromium's `audio-state-changed` and DevTools events emitted on a view's own webContents, so no case
+  plays a sound or opens a window). Every record the stream writes is a journal `record` line too.
 - **the packaged smoke** (`test/smoke/smoke.mjs`): S9's checks and X7's cases on the signed build; every launch on
   its own profile with `--use-mock-keychain`. Its clean launch loads a fake canvas as the active tab: the first frame
   callback, a canvas cookie read back encrypted (`v10`) after a SIGTERM to main alone (a group SIGTERM ends the network
