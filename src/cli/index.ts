@@ -319,8 +319,11 @@ cli
       process.exit(1)
     }
     const { perfCommand, perfRunCommand } = await import('./perf.ts')
-    if (action !== 'run') return perfCommand(resolve(opts.root), opts)
-    try { process.exit(await perfRunCommand(resolve(opts.root), board, opts)) }
+    // a run id or a board name all of digits is read back as typed: the parser made it a number (and a 16-digit id
+    // past 2^53 a different one)
+    const typed = (v: unknown): string | undefined => (typeof v === 'number' ? process.argv.find((t) => !t.startsWith('-') && Number(t) === v) ?? String(v) : v === undefined ? undefined : String(v))
+    if (action !== 'run') return perfCommand(resolve(opts.root), { ...opts, against: typed(opts.against) })
+    try { process.exit(await perfRunCommand(resolve(opts.root), typed(board), opts)) }
     catch (err) {
       console.error(`[${NAME}] ${(err as Error).message}`)
       process.exit(1)
