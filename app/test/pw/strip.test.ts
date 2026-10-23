@@ -13,7 +13,8 @@ const tab = (id: string, name: string, over: Partial<TabView> = {}): TabView =>
 let rev = 0
 const snap = (active: string, tabs: TabView[]): TabsSnapshot => ({ rev: ++rev, active, tabs })
 
-const FOUR = [home, tab('t1', 'Marver Platform', { key: 1 }), tab('t2', 'TMS broker', { key: 2, state: 'gone' }), tab('t3', 'localhost:4808', { key: 3, state: 'unverified' }), tab('t4', 'Tidewell', { key: 9, state: 'starting' })]
+// t3's slot file names a canvas, but its proof failed: the strip names it by its address, never that name (A2.13)
+const FOUR = [home, tab('t1', 'Marver Platform', { key: 1 }), tab('t2', 'TMS broker', { key: 2, state: 'gone' }), tab('t3', 'Hertz dealer', { key: 3, state: 'unverified', link: 'http://localhost:4808/' }), tab('t4', 'Tidewell', { key: 9, state: 'starting' })]
 
 let p: PageRun
 const readyCalls: unknown[] = []
@@ -220,11 +221,15 @@ describe('the one pill (A2.2)', () => {
     expect(await p.calls('pill:action')).toEqual([{ rev: 3, act: 'button' }])
   })
 
-  it('a command button copies through main (pill:action button)', async () => {
+  it('a command button, named for the active tab, copies through main (pill:action button) and never claims "Copied"', async () => {
+    await p.send('tabs', snap('t1', FOUR))
     await p.send('pill', { ...stopped, rev: 4 })
-    expect(await p.page.locator('#pill .cmd').getAttribute('aria-label')).toBe('Copy the start command')
+    expect(await p.page.locator('#pill .cmd').getAttribute('aria-label')).toBe('Copy the start command for Marver Platform')
     await p.page.click('#pill .cmd')
     expect(await p.calls('pill:action')).toEqual([{ rev: 4, act: 'button' }])
+    // a send has no answer, and main refuses an old rev: the button cannot know it copied
+    await p.page.waitForTimeout(50)
+    expect(await p.page.locator('#pill .cmd').innerText()).not.toContain('Copied')
   })
 
   it('a dismissible pill closes with its × ("Not now") and with Esc when focused', async () => {
@@ -266,6 +271,55 @@ describe('the live region (A2.13)', () => {
       await q.send('pill', { rev: 9, kind: 'confirmation', icon: 'check', text: 'Reloaded after a crash', short: 'Reloaded' })
       await q.page.waitForFunction(() => document.getElementById('live')!.textContent === 'Reloaded after a crash')
     } finally { await q.close() }
+  })
+})
+
+describe('the live region: only what a sighted person would notice (A2.13)', () => {
+  const live = (q: PageRun) => q.page.$eval('#live', (e) => e.textContent)
+
+  it('a closed tab\'s stop says nothing (the strip does not show it); a shown one\'s does', async () => {
+    const q = await openPage('strip', { width: 1280, height: 44 })
+    try {
+      await q.send('tabs', { rev: 1, active: 't1', tabs: [home, tab('t1', 'One'), tab('t2', 'Closed one', { open: false })] })
+      await q.send('pill', null)
+      await q.send('tabs', { rev: 2, active: 't1', tabs: [home, tab('t1', 'One'), tab('t2', 'Closed one', { open: false, state: 'gone' })] })
+      await q.page.waitForTimeout(100)
+      expect(await live(q)).toBe('')
+      await q.send('tabs', { rev: 3, active: 't1', tabs: [home, tab('t1', 'One', { state: 'crashed' }), tab('t2', 'Closed one', { open: false, state: 'gone' })] })
+      await q.page.waitForFunction(() => document.getElementById('live')!.textContent === 'One crashed')
+    } finally { await q.close() }
+  })
+
+  it('a stop and a pill that arrive together are both said, in order', async () => {
+    const q = await openPage('strip', { width: 1280, height: 44 })
+    try {
+      await q.send('tabs', { rev: 1, active: 't1', tabs: [home, tab('t1', 'One')] })
+      await q.send('pill', null)
+      await q.page.evaluate(() => new Promise((r) => setTimeout(r, 50)))
+      await q.app.evaluate(() => {
+        const g = (globalThis as unknown as { __pages: { send(c: string, p: unknown): void } }).__pages
+        g.send('tabs', { rev: 2, active: 't1', tabs: [{ id: 'h', kind: 'home', name: 'Home', state: 'live', verified: true, open: true }, { id: 't1', kind: 'local', name: 'One', state: 'gone', verified: true, open: true, link: 'http://localhost:4901/' }] })
+        g.send('pill', { rev: 1, kind: 'stopped', lead: 'Stopped', text: '', short: 'Stopped', button: { label: 'npx marver dev', style: 'cmd' } })
+      })
+      await q.page.waitForFunction(() => document.getElementById('live')!.textContent === 'One stopped. Stopped')
+    } finally { await q.close() }
+  })
+
+  it('with no null pill at ready: one with the first snapshot is the launch state, a later first pill is said', async () => {
+    const q = await openPage('strip', { width: 1280, height: 44 })
+    try {
+      await q.send('tabs', { rev: 1, active: 't1', tabs: [home, tab('t1', 'One')] })
+      await q.page.waitForTimeout(1100)
+      await q.send('pill', { rev: 1, kind: 'files', lead: 'config.json', text: 'did not apply · using the last good one', short: 'Settings not applied' })
+      await q.page.waitForFunction(() => document.getElementById('live')!.textContent === 'config.json did not apply · using the last good one')
+    } finally { await q.close() }
+    const r = await openPage('strip', { width: 1280, height: 44 })
+    try {
+      await r.send('tabs', { rev: 1, active: 't1', tabs: [home, tab('t1', 'One')] })
+      await r.send('pill', { rev: 1, kind: 'files', lead: 'config.json', text: 'did not apply · using the last good one', short: 'Settings not applied' })
+      await r.page.waitForTimeout(150)
+      expect(await live(r)).toBe('')
+    } finally { await r.close() }
   })
 })
 

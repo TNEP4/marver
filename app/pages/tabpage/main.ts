@@ -5,6 +5,9 @@
  * a start or a crash's reload (a quick one shows only ground and dots), "Still starting" after 15 s. Its buttons
  * send `tabpage:action { rev, action }` with the snapshot's own `rev`; main refuses an old one, and the tab is the
  * view's own in main's map, never named here. Neutral words: a canvas is named only once main says it proved itself.
+ * A send has no answer, so no button says "Copied". A new snapshot redraws the page but keeps focus on the same
+ * action (A2.13 moves focus only when the focused view goes away): a probe's update never sends VoiceOver back to
+ * the heading.
  */
 import type { TabPageAction, TabPageView } from '../../src/shared/channels.ts'
 import { clock, cmdButton, fill, h, icon, logo, pageApi, setLook, shown } from '../../src/pages/dom.ts'
@@ -34,15 +37,8 @@ function local(origin?: string): string | null {
 
 function button(label: string, action: TabPageAction, primary = false): HTMLButtonElement {
   const rev = view!.rev
-  const b = h('button', { class: `btn${primary ? ' primary' : ''}`, type: 'button' }, label)
-  b.addEventListener('click', () => {
-    api?.action(rev, action)
-    if (action === 'copy-details') {
-      b.textContent = 'Copied'
-      b.classList.add('done')
-      setTimeout(() => { b.textContent = label; b.classList.remove('done') }, 1500)
-    }
-  })
+  const b = h('button', { class: `btn${primary ? ' primary' : ''}`, type: 'button', 'data-act': action }, label)
+  b.addEventListener('click', () => { api?.action(rev, action) })
   return b
 }
 
@@ -110,19 +106,27 @@ function render(): void {
   setLook(v.dark)
   const p = parts(v, now)
   const hadFocus = content.contains(document.activeElement)
+  // focus is kept by action across a redraw: the same button in the new page, if it has one
+  const focusedAct = hadFocus ? (document.activeElement as HTMLElement | null)?.dataset?.act : undefined
   if (!p) fill(content)
   else {
     const rev = v.rev
+    let cmd: HTMLButtonElement | null = null
+    if (p.cmd) {
+      cmd = cmdButton(p.cmd, `Copy the start command for ${v.name}`, () => { api?.action(rev, 'copy-start'); return false })
+      cmd.dataset.act = 'copy-start'
+    }
     fill(content,
       h('div', { class: 'tp-mark', 'aria-hidden': 'true' }, p.mark),
       h('h1', { class: 'tp-title', id: 'tp-title' }, p.spin ? h('i', { class: 'spin', 'aria-hidden': 'true' }) : null, p.title),
       p.body ? h('p', { class: 'tp-body' }, ...p.body) : null,
       p.line ? h('p', { class: 'tp-line' }, p.line) : null,
-      p.cmd ? cmdButton(p.cmd, `Copy the start command for ${v.name}`, () => { api?.action(rev, 'copy-start') }) : null,
+      cmd,
       p.actions?.length ? h('div', { class: 'tp-act' }, ...p.actions) : null,
       p.meta ? h('p', { class: 'tp-meta' }, p.meta) : null)
   }
   document.title = p?.title ?? v.name
+  if (focusedAct) (content.querySelector(`[data-act="${CSS.escape(focusedAct)}"]`) as HTMLElement | null)?.focus()
   if (hadFocus && !content.contains(document.activeElement)) content.focus()
   // the page's own timers, from `since`: never a rev bump from main for time passing (A2.14 #19)
   const age = now - v.since

@@ -11,11 +11,15 @@
  *   not fit goes behind `»` (`tabs:more` with the ids, main pops a native menu). The pill takes its room first and
  *   shows its short form below 960 px.
  * - **The look**: the active tab's own (`TabView.dark`), else the app's theme.
- * - **Announcements**: a polite live region says a tab that stopped or crashed, at most once per tab per minute, and
- *   each new pill - nothing for what was found at launch.
+ * - **Names**: an unverified tab by its address, never a name it has not proved ("localhost:4808, not a Marver
+ *   canvas", A2.13; frame mac-app/05).
+ * - **Announcements**: a polite live region says a tab shown in the strip that stopped or crashed, at most once per
+ *   tab per minute, and each new pill - nothing for what was found at launch: the first `tabs` snapshot, and the
+ *   pill main sends with it at `app:ready` (null when none; a pill within a second of that first snapshot counts as
+ *   found at launch when main sent no null). Words that arrive together are said together.
  */
 import type { PillView, TabsSnapshot, TabView, WindowView } from '../../src/shared/channels.ts'
-import { cmdButton, fill, h, icon, logo, pageApi, say, setLook, shown } from '../../src/pages/dom.ts'
+import { cmdButton, fill, h, hostOf, icon, logo, pageApi, say, setLook, shown } from '../../src/pages/dom.ts'
 
 const api = pageApi('strip')
 const tabsEl = document.getElementById('tabs') as HTMLElement
@@ -37,11 +41,15 @@ const lastState = new Map<string, string>()
 const announcedAt = new Map<string, number>()
 let tabsBaseline = true
 let pillBaseline = true
+/** after the first `tabs` snapshot, how long a pill with no null before it still counts as found at launch */
+const LAUNCH_PILL_MS = 1000
 
 const WORDS: Partial<Record<TabView['state'], string>> = {
   gone: 'stopped', unverified: 'not a Marver canvas', starting: 'starting', unreachable: 'can\'t be reached', crashed: 'crashed',
 }
-const nameOf = (t: TabView) => (t.kind === 'home' ? 'Home' : WORDS[t.state] ? `${t.name}, ${WORDS[t.state]}` : t.name)
+/** What the eye reads on a tab: an unverified one by its address (A2.13), never a name it has not proved. */
+const shownName = (t: TabView) => (t.state === 'unverified' ? hostOf(t.link) ?? t.name : t.name)
+const nameOf = (t: TabView) => (t.kind === 'home' ? 'Home' : WORDS[t.state] ? `${shownName(t)}, ${WORDS[t.state]}` : shownName(t))
 const shownTabs = (): TabView[] => (snap?.tabs ?? []).filter((t) => t.kind === 'home' || t.open !== false)
 const visibleEls = (): HTMLElement[] => shownTabs().map((t) => els.get(t.id)).filter((e): e is HTMLElement => !!e && !e.hidden)
 const idOf = (el: Element | null) => (el as HTMLElement | null)?.dataset?.id ?? null
@@ -71,7 +79,7 @@ function paintTab(el: HTMLElement, t: TabView, active: boolean): void {
   if (t.key) el.setAttribute('aria-keyshortcuts', `Meta+${t.key}`)
   else el.removeAttribute('aria-keyshortcuts')
   el.removeAttribute('title')
-  fill(el, slotFor(t), h('span', { class: 'name' }, t.name), t.key ? h('kbd', { class: 'key', 'aria-hidden': 'true' }, `⌘${t.key}`) : null)
+  fill(el, slotFor(t), h('span', { class: 'name' }, shownName(t)), t.key ? h('kbd', { class: 'key', 'aria-hidden': 'true' }, `⌘${t.key}`) : null)
 }
 
 function renderTabs(): void {
@@ -148,11 +156,15 @@ function rove(): void {
 function announceTabs(): void {
   if (!snap) return
   const now = Date.now()
-  for (const t of snap.tabs) {
+  // only what a sighted person would notice: a tab the strip shows (a closed one is Home's, and says nothing here)
+  const shownNow = shownTabs()
+  const ids = new Set(shownNow.map((t) => t.id))
+  for (const id of [...lastState.keys()]) if (!ids.has(id)) lastState.delete(id)
+  for (const t of shownNow) {
     const before = lastState.get(t.id)
     lastState.set(t.id, t.state)
     if (tabsBaseline || before === undefined || before === t.state) continue
-    const words = t.state === 'gone' ? `${t.name} stopped` : t.state === 'crashed' ? `${t.name} crashed` : null
+    const words = t.state === 'gone' ? `${shownName(t)} stopped` : t.state === 'crashed' ? `${shownName(t)} crashed` : null
     if (!words || now - (announcedAt.get(t.id) ?? -Infinity) < ANNOUNCE_EVERY) continue
     announcedAt.set(t.id, now)
     say(live, words)
@@ -176,8 +188,12 @@ function renderPill(): void {
   const act = () => api?.pillAction({ rev: p.rev, act: 'button' })
   let btn: HTMLElement | null = null
   if (p.button) {
+    // the cmd pill is the active tab's own (A2.2 tier 1): named for it (A2.13). A send main may refuse for an old
+    // rev, so it never says "Copied"
+    const active = snap?.tabs.find((t) => t.id === snap!.active)
+    const cmdLabel = active?.kind === 'local' ? `Copy the start command for ${shownName(active)}` : 'Copy the start command'
     btn = p.button.style === 'cmd'
-      ? cmdButton(p.button.label, 'Copy the start command', () => { act() })
+      ? cmdButton(p.button.label, cmdLabel, () => { act(); return false })
       : h('button', { class: 'pill-btn', type: 'button', onclick: act }, p.button.label)
   }
   const x = p.dismissible
@@ -248,12 +264,24 @@ new ResizeObserver(() => { if (pill) renderPill(); else fit() }).observe(documen
 setLook(undefined)
 shown()
 if (api) {
-  api.onTabs((s) => { snap = s; renderTabs(); announceTabs() })
+  let firstTabsAt: number | null = null
+  api.onTabs((s) => {
+    const before = snap
+    snap = s
+    firstTabsAt ??= Date.now()
+    renderTabs()
+    announceTabs()
+    // the active tab's name in the pill's button
+    if (pill?.button?.style === 'cmd' && before?.active !== s.active) renderPill()
+  })
   api.onPill((p) => {
     const fresh = !!p && (!pill || p.rev !== pill.rev) && [p.lead, p.text].join(' ') !== [pill?.lead, pill?.text].join(' ')
+    // found at launch: the first pill message (main sends one, null when none, at app:ready), or one that comes
+    // within a second of the first tabs snapshot without a null before it
+    const launch = pillBaseline && (p === null || firstTabsAt === null || Date.now() - firstTabsAt < LAUNCH_PILL_MS)
     pill = p
     renderPill()
-    if (fresh && !pillBaseline) say(live, [p!.lead, p!.text].filter(Boolean).join(' '))
+    if (fresh && !launch) say(live, [p!.lead, p!.text].filter(Boolean).join(' '))
     pillBaseline = false
   })
   api.onWindow((w: WindowView) => {

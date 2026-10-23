@@ -13,8 +13,8 @@ const tab = (id: string, name: string, port: number, over: Partial<TabView> = {}
   ({ id, kind: 'local', name, state: 'live', verified: true, open: true, link: `http://localhost:${port}/`, folder: `~/${name.toLowerCase().replace(/ /g, '-')}`, version: '0.27.1', ...over })
 const TABS = [home, tab('t1', 'Marver Platform', 4805), tab('t2', 'TMS broker', 4806), tab('t3', 'Tidewell', 4807, { state: 'gone' })]
 const RECENT: RecentView[] = [
-  { id: 'r:0000000000000001', name: 'OS alignment', folder: '~/os', lastSeen: Date.now() - 2 * 3600_000 },
-  { id: 'r:0000000000000002', name: '<b>Gen lab</b>', folder: '~/gen <lab>', lastSeen: Date.now() - 30_000 },
+  { id: 'r_0000000000000001', name: 'OS alignment', folder: '~/os', lastSeen: Date.now() - 2 * 3600_000 },
+  { id: 'r_0000000000000002', name: '<b>Gen lab</b>', folder: '~/gen <lab>', lastSeen: Date.now() - 30_000 },
 ]
 let rev = 0
 
@@ -100,7 +100,7 @@ describe('running and recent canvases (A2.7, A2.12)', () => {
       .toEqual(['OS alignment ~/os Ran 2 hours ago npx marver dev', '<b>Gen lab</b> ~/gen <lab> Ran just now npx marver dev'])
     expect(await p.page.$$eval('.card.stopped .logo b', (els) => els.map((e) => e.textContent))).toEqual(['OA', 'BL'])
     await p.page.click('[aria-label="Copy the start command for OS alignment"]')
-    expect(await p.calls('home:action')).toEqual([{ action: 'copy-start', id: 'r:0000000000000001' }])
+    expect(await p.calls('home:action')).toEqual([{ action: 'copy-start', id: 'r_0000000000000001' }])
     expect(await text('[aria-label="Copy the start command for OS alignment"]')).toContain('Copied')
   })
 
@@ -108,6 +108,23 @@ describe('running and recent canvases (A2.7, A2.12)', () => {
     await p.answer('home:action', { ok: false })
     await p.page.click('[aria-label="Copy the start command for <b>Gen lab</b>"]')
     expect(await text('[aria-label="Copy the start command for <b>Gen lab</b>"]')).not.toContain('Copied')
+  })
+
+  it('a copy main never answers (no handler, or it threw) shows no "Copied", and the page goes on', async () => {
+    await p.send('recent', [...RECENT])   // fresh cards: the last case's "Copied" gone
+    await p.reject('home:action')
+    await p.page.click('[aria-label="Copy the start command for OS alignment"]')
+    await p.page.click('text=Show the Files')
+    await p.page.waitForTimeout(50)
+    expect(await text('[aria-label="Copy the start command for OS alignment"]')).not.toContain('Copied')
+    expect(await p.calls('home:action')).toEqual([{ action: 'copy-start', id: 'r_0000000000000001' }, { action: 'show-files' }])
+  })
+
+  it('a tab that is not verified is named by its address, never by the canvas its slot file names', async () => {
+    await tabs([home, tab('t8', 'Hertz dealer', 4808, { state: 'unverified' })])
+    expect(await p.page.$eval('[data-key="tab:t8"]', (e) => e.getAttribute('aria-label'))).toBe('localhost:4808, not a Marver canvas')
+    expect(await text('[data-key="tab:t8"] .card-hd')).toBe('localhost:4808')
+    expect(await p.page.$('[data-key="tab:t8"] .logo')).toBeNull()
   })
 
   it('names are text, never markup', async () => {
@@ -132,9 +149,33 @@ describe('the link field (A2.7, v1.13 r2 #6)', () => {
     expect(await text('#hint')).toBe('Shared canvases open in a later build')
     await p.page.fill('#link', 'http://example.com/')
     expect(await text('#hint')).toBe('Not a canvas link')
+    // only a canvas's own page opens in its tab: the proof admits nothing else (A2.14 #11)
+    await p.page.fill('#link', 'http://localhost:4806/design/frames/x.html')
+    expect(await text('#hint')).toBe('Not a canvas link: only a canvas\'s own page opens in its tab')
+    await p.page.fill('#link', 'http://localhost:4806/index.html#/b/x')
+    expect(await text('#hint')).toBe('↩ opens in TMS broker\'s tab, on that board')
     await p.page.fill('#link', '')
     expect(await text('#hint')).toBe('')
     expect(await p.page.getAttribute('#link', 'aria-describedby')).toBe('hint')
+  })
+
+  it('a port whose tab is not verified says so before Return', async () => {
+    await tabs([...TABS, tab('t8', 'Hertz dealer', 4808, { state: 'unverified' })])
+    await p.page.fill('#link', 'http://localhost:4808/#/b/x')
+    expect(await text('#hint')).toBe('Something else answers on localhost:4808: not a Marver canvas')
+  })
+
+  it('a second Return while the first is unanswered is ignored: one link:open, one answer drawn', async () => {
+    await p.answerLater('link:open', { ok: false, why: 'refused' }, 300)
+    await p.page.fill('#link', 'http://localhost:4806/?n=2')
+    await p.page.press('#link', 'Enter')
+    await p.page.press('#link', 'Enter')
+    await p.page.waitForFunction(() => document.getElementById('hint')!.textContent!.startsWith('Not opened'))
+    expect(await p.calls('link:open')).toEqual([{ url: 'http://localhost:4806/?n=2' }])
+    await p.answer('link:open', { ok: true })
+    await p.page.press('#link', 'Enter')   // answered: Return asks again
+    await p.page.waitForFunction(() => (document.getElementById('link') as HTMLInputElement).value === '')
+    expect(await p.calls('link:open')).toHaveLength(2)
   })
 
   it('Return sends what was typed; ok empties the field', async () => {
@@ -199,10 +240,13 @@ describe('⌘L (A2.7, A2.13)', () => {
     expect(await p.calls('tab:activate')).toEqual([{ id: 't1' }, { id: 't1' }])
   })
 
-  it('if that tab has closed, Esc stays on Home', async () => {
+  it('if that tab has closed, Esc stays on Home: main keeps a running canvas\'s closed tab, open: false', async () => {
     await p.send('home:focus', { field: 'link', back: 't1' })
-    await tabs([home, tab('t2', 'TMS broker', 4806)])
+    await tabs([home, tab('t1', 'Marver Platform', 4805, { open: false }), tab('t2', 'TMS broker', 4806)])
     expect(await text('#back')).toBe('')
+    await p.page.press('#link', 'Escape')
+    expect(await p.calls('tab:activate')).toEqual([])
+    await tabs([home, tab('t2', 'TMS broker', 4806)])   // and once main drops it
     await p.page.press('#link', 'Escape')
     expect(await p.calls('tab:activate')).toEqual([])
   })

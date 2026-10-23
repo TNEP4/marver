@@ -77,10 +77,12 @@ describe('stopped (A2.11, v1.13 r2 #3, v1.14 r3 #4)', () => {
 
 describe('not a Marver canvas (A2.11, A2.14 #11)', () => {
   it('the warning, never a logo; Try Again and Close Tab; who registered the port', async () => {
-    const r = await show({ page: 'unverified', name: 'localhost:4808', folder: '~/hertz-dealer', since: Date.now(), origin: 'http://[::1]:4808', retained: false, probe: none })
+    // main may send the slot file's name: the page names no canvas until it proves itself
+    const r = await show({ page: 'unverified', name: 'Hertz dealer', folder: '~/hertz-dealer', since: Date.now(), origin: 'http://[::1]:4808', retained: false, probe: none })
     expect(await p.page.$('#content .logo')).toBeNull()
     expect(await p.page.$('#content .warn')).not.toBeNull()
     expect(await words()).toBe('Not a Marver canvas Something else answers on this port: a canvas that stopped without cleaning up, or another program, or the canvas failed to render - its terminal says why. The app shows nothing it serves. Try Again Close Tab Registered by ~/hertz-dealer · localhost:4808')
+    expect(await p.page.title()).toBe('Not a Marver canvas')
     await p.page.getByRole('button', { name: 'Try Again' }).click()
     expect(await p.calls('tabpage:action')).toEqual([{ rev: r, action: 'retry' }])
   })
@@ -118,7 +120,8 @@ describe('crashed (A2.11)', () => {
     await p.page.getByRole('button', { name: 'Reload' }).click()
     await p.page.getByRole('button', { name: 'Copy Details' }).click()
     expect(await p.calls('tabpage:action')).toEqual([{ rev: r, action: 'reload' }, { rev: r, action: 'copy-details' }])
-    expect(await p.page.$eval('.btn.done', (e) => e.textContent)).toBe('Copied')
+    // a send has no answer, and main refuses an old rev: no button claims it copied
+    expect(await buttons()).toEqual(['Reload', 'Copy Details'])
   })
 })
 
@@ -143,6 +146,25 @@ describe('revisions, names, focus (A2.13, A2.14 #19)', () => {
     await p.send('page:focus', { target: 'heading' })
     expect(await p.page.evaluate(() => [document.activeElement?.id, document.activeElement?.getAttribute('role')])).toEqual(['content', 'region'])
     expect(await p.page.locator('#content').ariaSnapshot()).toMatch(/^- region "TMS broker stopped":/)
+  })
+
+  it('a new snapshot keeps focus on the same action: a probe\'s update never sends VoiceOver back to the heading', async () => {
+    const base = { page: 'stopped', name: 'TMS broker', since: Date.now(), command: 'cd ~/tms-broker && npx marver dev', retained: true } as const
+    await show({ ...base, probe: none })
+    await p.page.getByRole('button', { name: 'Try Again' }).focus()
+    await show({ ...base, probe: { state: 'answers', lastAt: Date.now() } })
+    expect(await p.page.$eval('.tp-line', (e) => e.textContent)).toBe('The address answers again')
+    expect(await p.page.evaluate(() => [document.activeElement?.textContent, (document.activeElement as HTMLElement).dataset.act])).toEqual(['Try Again', 'retry'])
+    await p.page.getByRole('button', { name: 'Copy the start command for TMS broker' }).focus()
+    const r = await show({ ...base, probe: { state: 'proved', lastAt: Date.now() } })
+    expect(await p.page.evaluate(() => (document.activeElement as HTMLElement).dataset.act)).toBe('copy-start')
+    await p.page.keyboard.press('Enter')
+    expect(await p.calls('tabpage:action')).toEqual([{ rev: r, action: 'copy-start' }])
+    expect(await p.page.locator('#content .cmd').innerText()).not.toContain('Copied')
+    // the focused action gone (no page retained: no Try Again), focus goes to the heading region, never nothing
+    await p.page.getByRole('button', { name: 'Try Again' }).focus()
+    await show({ ...base, retained: false, probe: none })
+    expect(await p.page.evaluate(() => document.activeElement?.id)).toBe('content')
   })
 
   it('loads under the CSP with nothing refused', async () => { expect(await p.csp()).toEqual([]) })

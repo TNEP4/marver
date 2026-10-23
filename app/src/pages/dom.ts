@@ -124,22 +124,38 @@ export function portOf(link?: string): number | null {
   try { const p = Number(new URL(link).port); return Number.isInteger(p) && p > 0 ? p : null } catch { return null }
 }
 
-/** A polite announcement in the page's live region; the same words twice are said twice. */
+const queued = new WeakMap<HTMLElement, string[]>()
+/**
+ * A polite announcement in the page's live region; the same words twice are said twice. Words said within the same
+ * 30 ms are said together, in order - one never replaces another.
+ */
 export function say(region: HTMLElement, words: string): void {
+  const q = queued.get(region)
+  if (q) { if (!q.includes(words)) q.push(words); return }
+  const list = [words]
+  queued.set(region, list)
   region.textContent = ''
-  setTimeout(() => { region.textContent = words }, 30)
+  setTimeout(() => {
+    queued.delete(region)
+    region.textContent = list.length === 1 ? list[0] : list.map((w) => w.replace(/[.\s]+$/, '')).join('. ')
+  }, 30)
 }
 
-/** A command that is its own button: one click copies it (the shell's update pill does the same). */
-export function cmdButton(text: string, label: string, onCopy: () => Promise<boolean> | boolean | void): HTMLButtonElement {
+/**
+ * A command that is its own button: one click copies it (the shell's update pill does the same). It says "Copied" only
+ * when `onCopy` answers true - main said it copied; a send that main may refuse (an old `rev`) answers false, and a
+ * rejected invoke counts as false.
+ */
+export function cmdButton(text: string, label: string, onCopy: () => Promise<boolean> | boolean): HTMLButtonElement {
   const btn = h('button', { class: 'cmd', type: 'button', 'aria-label': label, title: label })
   const code = h('code', {}, text)
   const tail = h('span', { class: 'cmd-tail' }, icon('copy', 12))
   btn.append(code, tail)
   let timer: ReturnType<typeof setTimeout> | undefined
   btn.addEventListener('click', async () => {
-    const ok = await onCopy()
-    if (ok === false) return
+    let ok = false
+    try { ok = (await onCopy()) === true } catch { ok = false }
+    if (!ok) return
     btn.classList.add('copied')
     fill(tail, h('span', { class: 'cmd-copied' }, 'Copied'))
     if (timer) clearTimeout(timer)

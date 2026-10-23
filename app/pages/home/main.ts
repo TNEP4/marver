@@ -10,8 +10,11 @@
  *   says ("TMS broker, localhost:4806, running").
  * - Nothing running: how to start one (and on the first launch, the two steps for a repo without Marver).
  * - Recently here: initials (A2.14 #5), the folder, when it last ran (refreshed each minute), its start command.
- * - The link field (`⌘L`): the line under it says where Return opens it, named from the tabs; Return asks main;
- *   `refused` keeps the link selected with its line; Esc goes back to the tab it came from, whatever it holds.
+ * - The link field (`⌘L`): the line under it says where Return opens it, named from the tabs; Return asks main (one
+ *   at a time: a second Return while the first is unanswered is ignored); `refused` keeps the link selected with its
+ *   line; Esc goes back to the tab it came from, whatever it holds - unless that tab has closed (`open: false`).
+ *   Only a canvas's own page opens in its tab (`/` or `/index.html`, src/shared/links.ts): the line says so first.
+ * - A tab that is not verified is named by its address, never by a canvas's name (A2.13, frame mac-app/05).
  * - No Shared canvases section in app 0.1 (A2.14 #3).
  */
 import type { HomeInfo, LinkOpenAnswer, RecentView, TabsSnapshot, TabView } from '../../src/shared/channels.ts'
@@ -41,6 +44,10 @@ const STATE_WORDS: Record<TabView['state'], string> = {
   unverified: 'Not a Marver canvas', unreachable: 'Can\'t reach', crashed: 'Crashed',
 }
 const canvases = (): TabView[] => (snap?.tabs ?? []).filter((t) => t.kind === 'local')
+/** What a tab is called here: an unverified one by its address (A2.13), never a name it has not proved. */
+const nameOf = (t: TabView): string => (t.state === 'unverified' ? hostOf(t.link) ?? t.name : t.name)
+/** The tab ⌘L came from, while it is still open. */
+const backTab = (): TabView | undefined => (back ? snap?.tabs.find((t) => t.id === back && t.open !== false) : undefined)
 const tabOnPort = (port: number) => canvases().find((t) => portOf(t.link) === port && t.state !== 'gone')
   ?? canvases().find((t) => portOf(t.link) === port)
 const possessive = (name: string) => (name.endsWith('s') ? `${name}'` : `${name}'s`)
@@ -53,19 +60,21 @@ function beforeBridge(v?: string): boolean {
   return a === 0 && (b < 27 || (b === 27 && c < 1))
 }
 
-const copyFixed = (id: 'dev' | 'init' | 'update') => async () => (await api?.action({ action: 'copy', id }))?.ok ?? false
+const copyFixed = (id: 'dev' | 'init' | 'update') => async () => (await api?.action({ action: 'copy', id }))?.ok === true
 
 function card(t: TabView): HTMLElement {
   const host = hostOf(t.link)
   const word = STATE_WORDS[t.state]
-  const label = [t.name, host, t.open === false ? `${word.toLowerCase()}, tab closed` : word.toLowerCase()].filter(Boolean).join(', ')
+  const name = nameOf(t)
+  const said = word.charAt(0).toLowerCase() + word.slice(1)   // "not a Marver canvas", never "marver"
+  const label = [name, name === host ? null : host, t.open === false ? `${said}, tab closed` : said].filter(Boolean).join(', ')
   const tone = t.state === 'gone' || t.state === 'unreachable' ? 'grey' : t.state === 'crashed' ? 'dim' : undefined
   const mark = t.state === 'unverified' ? h('span', { class: 'slot-warn', 'aria-hidden': 'true' }, icon('warning', 28)) : logo(t, 30, tone)
   return h('button', {
     class: `card is-${t.state}`, type: 'button', 'data-key': `tab:${t.id}`, 'aria-label': label,
     onclick: () => api?.activate(t.id),
   },
-  h('span', { class: 'card-hd' }, mark, h('span', {}, t.name)),
+  h('span', { class: 'card-hd' }, mark, h('span', {}, name)),
   t.folder ? h('small', {}, t.folder) : null,
   host || t.version ? h('small', {}, [host, t.version && `Marver ${t.version}`].filter(Boolean).join(' · ')) : null,
   h('span', { class: 'state' }, t.state === 'starting' ? h('i', { class: 'spin', 'aria-hidden': 'true' }) : null, word, t.open === false ? ' · tab closed' : null),
@@ -77,7 +86,7 @@ function recentCard(r: RecentView): HTMLElement {
     h('span', { class: 'card-hd' }, logo(r, 30, 'grey'), h('span', {}, r.name)),
     h('small', {}, r.folder),
     h('small', { class: 'ran' }, `Ran ${ago(r.lastSeen)}`),
-    cmdButton('npx marver dev', `Copy the start command for ${r.name}`, async () => (await api?.action({ action: 'copy-start', id: r.id }))?.ok ?? false))
+    cmdButton('npx marver dev', `Copy the start command for ${r.name}`, async () => (await api?.action({ action: 'copy-start', id: r.id }))?.ok === true))
 }
 
 function emptyCard(): HTMLElement[] {
@@ -120,7 +129,7 @@ function renderFoot(): void {
       info.writable
         ? h('span', { class: 'hint' }, 'Settings and notes for agents live in ', h('code', {}, '~/.marver/'))
         : h('span', { class: 'hint unwritable' }, '~/.marver can\'t be written · nothing is kept'),
-      h('button', { class: 'quiet', type: 'button', onclick: () => void api?.action({ action: 'show-files' }) }, 'Show the Files')))
+      h('button', { class: 'quiet', type: 'button', onclick: () => { api?.action({ action: 'show-files' }).catch(() => {}) } }, 'Show the Files')))
 }
 
 function renderTitle(): void {
@@ -129,23 +138,30 @@ function renderTitle(): void {
 
 // ---- the link field ----------------------------------------------------------------------------------------------
 
+/** Why a link is not one Return opens: another document on a canvas's port, or not a canvas link at all. */
+function badWords(text: string): string {
+  const p = parseLink(text)
+  return p.kind === 'bad' && p.why === 'page' ? 'Not a canvas link: only a canvas\'s own page opens in its tab' : 'Not a canvas link'
+}
+
 function hintFor(text: string): (Node | string)[] {
   if (answer && answer.sent === text) {
     const t = answer.port ? tabOnPort(answer.port) : undefined
     switch (answer.why) {
-      case 'refused': return [`Not opened: ${t ? possessive(t.name) : 'the canvas\'s'} page stays as it was`]
+      case 'refused': return [`Not opened: ${t ? possessive(nameOf(t)) : 'the canvas\'s'} page stays as it was`]
       case 'nothing': return [`Nothing is running on localhost:${answer.port ?? ''}`]
       case 'not-canvas': return [`Something else answers on localhost:${answer.port ?? ''}: not a Marver canvas`]
       case 'later': return ['Shared canvases open in a later build']
-      case 'bad': return ['Not a canvas link']
+      case 'bad': return [badWords(text)]
     }
   }
   if (!text.trim()) return []
   const p = parseLink(text)
-  if (p.kind === 'bad') return ['Not a canvas link']
+  if (p.kind === 'bad') return [badWords(text)]
   if (p.kind === 'https') return ['Shared canvases open in a later build']
   const t = tabOnPort(p.port)
   if (!t) return [`Nothing is running on localhost:${p.port}`]
+  if (t.state === 'unverified') return [`Something else answers on localhost:${p.port}: not a Marver canvas`]
   return [h('kbd', { 'aria-hidden': 'true' }, '↩'), ' opens in ', logo(t, 14), h('b', {}, possessive(t.name)), ` tab${p.board ? ', on that board' : ''}`]
 }
 
@@ -153,20 +169,25 @@ function renderHint(): void {
   const nodes = hintFor(input.value)
   fill(hintEl, ...nodes)
   hintEl.classList.toggle('refused', answer?.why === 'refused' && answer.sent === input.value)
-  const b = back ? snap?.tabs.find((t) => t.id === back) : undefined
-  fill(backEl, ...(b ? [h('kbd', { 'aria-hidden': 'true' }, 'esc'), ` back to ${b.kind === 'home' ? 'Home' : b.name}`] : []))
+  const b = backTab()
+  fill(backEl, ...(b ? [h('kbd', { 'aria-hidden': 'true' }, 'esc'), ` back to ${b.kind === 'home' ? 'Home' : nameOf(b)}`] : []))
 }
+
+/** a Return still waiting for main's answer: another is ignored until it lands */
+let submitting = false
 
 async function submit(): Promise<void> {
   const sent = input.value
-  if (!sent.trim() || !api) return
+  if (!sent.trim() || !api || submitting) return
   const p = parseLink(sent)
-  const a = await api.openLink(sent)
+  submitting = true
+  let a: LinkOpenAnswer
+  try { a = await api.openLink(sent) } catch { a = { ok: false, why: 'bad' } } finally { submitting = false }
   if (a.ok) {
     if (input.value === sent) input.value = ''
     answer = null
   } else {
-    answer = { why: a.why, sent, port: p.kind === 'local' ? p.port : null }
+    answer = { why: a.why, sent, port: p.kind === 'local' ? p.port : p.kind === 'bad' ? p.port ?? null : null }
     if (input.value === sent) input.select()
   }
   renderHint()
@@ -179,7 +200,8 @@ input.addEventListener('keydown', (e) => {
   else if (e.key === 'Escape') {
     e.preventDefault()
     // back to the tab ⌘L came from, whatever the field holds; if that tab has closed, stay on Home
-    if (back && snap?.tabs.some((t) => t.id === back)) api?.activate(back)
+    const b = backTab()
+    if (b) api?.activate(b.id)
   }
 })
 
