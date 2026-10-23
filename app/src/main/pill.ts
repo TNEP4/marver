@@ -80,7 +80,9 @@ export const currentPill = (): (PillView & { tab?: string }) | null => shown ? {
 function tier1(t: Tab | undefined, now: number): Rec | null {
   if (!t || t.kind !== 'local') return null
   if (t.held && liveDoc(t)) {
-    const lasts = fresh(t) ? t.reports.busy?.unsaved === true : now - t.held.at < T.unsavedPillMs
+    // while the page says unsaved (a clean report clears the hold); else - no bridge, not yet heard, no longer
+    // heard, or a page that refused though its last report said clean - 10 s
+    const lasts = (fresh(t) && t.reports.busy?.unsaved === true) || now - t.held.at < T.unsavedPillMs
     if (lasts) {
       return { kind: 'unsaved', about: `unsaved:${t.id}:${t.held.at}`, tab: t.id, commit: t.doc?.commits, lead: 'Unsaved work here',
         text: t.held.action === 'update' ? 'the update waits' : '', short: 'Unsaved work' }
@@ -148,7 +150,7 @@ function arm(now: number): void {
   if (shown?.kind === 'confirmation' && wasVisible) { const w = confirms.get(shown.sub!); if (w) ends.push(w.left) }
   for (const w of confirms.values()) if (w.left === T.pillConfirmMs && w.rec !== shown) ends.push(w.created + T.pillDropMs - now)
   const t = activeTab()
-  if (t?.held && !fresh(t)) ends.push(t.held.at + T.unsavedPillMs - now)
+  if (t?.held && !(fresh(t) && t.reports.busy?.unsaved)) ends.push(t.held.at + T.unsavedPillMs - now)
   const soonest = Math.min(...ends.filter((x) => x > -1000))
   if (Number.isFinite(soonest)) { timer = setTimeout(() => { timer = undefined; recompute() }, Math.max(0, soonest) + 5); (timer as { unref?: () => void }).unref?.() }
   void p

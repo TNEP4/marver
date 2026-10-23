@@ -83,8 +83,10 @@ export async function launchWindow(kind: 'pw' | 'prod', o: { extraEnv?: Record<s
   }
 }
 
-/** A page script: answers every beforeunload with a refusal, and tells the server each time. */
-export const REFUSE_UNLOAD = `addEventListener('beforeunload', function (e) { try { navigator.sendBeacon('/__mv/test/beforeunload') } catch (x) {} e.preventDefault(); e.returnValue = '' });`
+/** A page script: answers every beforeunload with a refusal (until `window.__mayLeave`), and tells the server each time. */
+export const REFUSE_UNLOAD = `addEventListener('beforeunload', function (e) { if (window.__mayLeave) return; try { navigator.sendBeacon('/__mv/test/beforeunload') } catch (x) {} e.preventDefault(); e.returnValue = '' });`
+/** Let every refusing page go, so the case's last quit can go through. */
+export const MAY_LEAVE = 'window.__mayLeave = true; 1'
 /** A page script: swallows every key, telling the server which. */
 export const SWALLOW_KEYS = `addEventListener('keydown', function (e) { e.preventDefault(); e.stopImmediatePropagation(); try { navigator.sendBeacon('/__mv/test/key-' + encodeURIComponent(e.key)) } catch (x) {} }, true);`
 

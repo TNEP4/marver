@@ -797,6 +797,8 @@ function testHooks(): void {
   provide('sheet', (a) => { sheetMode = arg<{ mode: SheetMode | null }>(a).mode; return true })
   provide('sheet:answer', (a) => { const h = heldSheets.shift(); if (!h) return false; h.answer(arg<{ ok: boolean }>(a).ok); return true })
   provide('sheets', () => ({ shown: [...sheetsShown], held: heldSheets.length }))
+  // the page reloading itself (A1's resume reload): main's own reload, around the guard - as the page's would be
+  provide('reloadPage', (a) => { const wc = wcOf(arg<{ target: string }>(a).target); if (!wc) return false; wc.reload(); return true })
   provide('crash', (a) => { const wc = wcOf(arg<{ target: string }>(a).target); if (!wc) return false; wc.forcefullyCrashRenderer(); return true })
   provide('exec', async (a) => { const { target, js, gesture } = arg<{ target: string; js: string; gesture?: boolean }>(a); const wc = wcOf(target); return wc ? wc.executeJavaScript(js, !!gesture) : null })
   provide('focused', () => {
