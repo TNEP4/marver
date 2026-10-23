@@ -146,7 +146,6 @@ export interface PlaceInput {
   /** the workspace this run serves under: written into the record */
   ws: string
   instance: string
-  pid?: number
   /** --port, or a config.port other than 5199 */
   explicit?: { port: number; from: 'flag' | 'config' }
   /** --recover: exactly this port, never another */
@@ -172,7 +171,7 @@ async function take(i: PlaceInput, slot: number | null, port: number): Promise<T
   made(runningDir())
   const key = randomBytes(32)
   const rec: SlotFile = {
-    v: 1, state: 'starting', pid: i.pid ?? process.pid, instance: i.instance, slot, port, origin: null, url: `http://localhost:${port}/`,
+    v: 1, state: 'starting', pid: process.pid, instance: i.instance, slot, port, origin: null, url: `http://localhost:${port}/`,
     root: i.root, name: i.name, version: i.version, features: [], ws: i.ws, startedAt: Date.now(), key: key.toString('base64url'),
   }
   const r = await takeExclusive(file, { pid: rec.pid, instance: rec.instance, at: rec.startedAt }, JSON.stringify(rec, null, 2) + '\n', { reclaimWaitMs: i.reclaimWaitMs })

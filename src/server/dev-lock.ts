@@ -22,8 +22,8 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { pidRuns, portInUse, readJson, releaseExclusive, takeExclusive, type Holder } from './exclusive.ts'
 
-// the shared primitives (spec 28 A1.2) - re-exported for the callers and tests that import them from here
-export { createExclusive, pidRuns, portInUse, type Holder } from './exclusive.ts'
+// pidRuns lives in exclusive.ts (spec 28 A1.2) - re-exported for dev-lock.test.ts, which stays as it was
+export { pidRuns } from './exclusive.ts'
 export type Taken = { ok: true; instance: string; release(): void } | { ok: false; message: string }
 
 const localDir = (root: string) => join(root, 'design', '.local')

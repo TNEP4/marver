@@ -28,7 +28,6 @@ function broadcast(moving: boolean): void {
 export interface Motion { camera: boolean; preset: boolean }
 let motion: Motion = { camera: false, preset: false }
 const motionListeners = new Set<(m: Motion) => void>()
-export const motionNow = (): Motion => motion
 /** Called with the new motion at each change; returns the unsubscribe. */
 export function onMotion(fn: (m: Motion) => void): () => void { motionListeners.add(fn); return () => { motionListeners.delete(fn) } }
 
