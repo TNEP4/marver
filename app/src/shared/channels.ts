@@ -85,7 +85,11 @@ interface TabPageFailure {
 }
 
 /** `tabpage` (main to a tab page): the state as a union; timestamps only, never a countdown (A2.14 #19). */
-interface TabPageBase { rev: number; name: string; logo?: string; dark?: boolean; folder?: string; since: number }
+interface TabPageBase {
+  rev: number; name: string; logo?: string; dark?: boolean; folder?: string; since: number
+  /** as `TabView.hue` (optional, added by the pages stream): the tab page wears the strip's initials hue */
+  hue?: number
+}
 export type TabPageView =
   | TabPageBase & { page: 'starting'; phase: 'starting' | 'opening' }
   | TabPageBase & TabPageFailure & { page: 'stopped'; command: string; origin?: string }

@@ -57,6 +57,9 @@ describe('initials and hues (A2.4)', () => {
     expect(initials('localhost:4808')).toBe('L4')
     expect(initials('  ')).toBe('?')
     expect(initials('élan vital')).toBe('ÉV')
+    expect(initials('(beta) Tidewell')).toBe('BT')
+    expect(initials('<b>Gen lab</b>')).toBe('BL')
+    expect(initials('— —')).toBe('?')
   })
 
   it('a hue stable per key, one of eight', () => {

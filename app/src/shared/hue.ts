@@ -11,8 +11,8 @@ export function hueOf(key: string): number {
   return h % HUES.length
 }
 
+/** The first letter or digit of up to two words; '?' when the name has none. */
 export function initials(name: string): string {
-  const words = name.split(/[\s._:/-]+/u).filter(Boolean).slice(0, 2)
-  const out = words.map((w) => [...w][0]!.toLocaleUpperCase()).join('')
-  return out || '?'
+  const firsts = name.split(/[\s._:/-]+/u).map((w) => /[\p{L}\p{N}]/u.exec(w)?.[0]).filter((c): c is string => !!c)
+  return firsts.slice(0, 2).map((c) => c.toLocaleUpperCase()).join('') || '?'
 }

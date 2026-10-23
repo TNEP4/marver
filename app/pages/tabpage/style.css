@@ -1,2 +1,19 @@
-/* The tab's own page (spec 28 A2.11). SKELETON. */
-html, body { margin: 0; height: 100%; background: var(--ground, #e7e9ef); }
+/* The tab's own page (spec 28 A2.11; frame mac-app/09): on the tab's ground under the still dots, centred, no card -
+   it sits on the ground like an empty board. The shell's sizes: a 44 px logo, a 17 px title, 13 px lines, jm-btn
+   buttons, the command in the update pill's style, the meta line in --glass-ink-3. */
+
+body { overflow: hidden }
+.tp { height: 100%; display: grid; place-items: center; padding: 12px 24px 28px; color: var(--glass-ink); font: 13px/1.45 -apple-system, system-ui, sans-serif }
+.tp-in { width: 100%; max-width: 352px; display: grid; justify-items: center; text-align: center; border-radius: 12px }
+.tp-in:focus-visible { box-shadow: none; outline: none }
+.tp-mark { display: grid; place-items: center; margin-bottom: 14px; min-height: 44px }
+.tp-mark .warn { color: #d97706 }
+.tp-title { display: flex; align-items: center; justify-content: center; gap: 9px; font: 600 17px/1.25 -apple-system, system-ui, sans-serif; letter-spacing: -.01em }
+.tp-body { margin-top: 6px; color: var(--glass-ink-2); text-wrap: pretty }
+.tp-line { margin-top: 8px; font-size: 12px; color: var(--glass-good) }
+.tp-in .cmd { margin-top: 14px }
+.tp-act { margin-top: 16px; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px }
+.tp-act:empty { display: none }
+.tp-meta { margin-top: 14px; font-size: 11.5px; color: var(--glass-ink-3) }
+.tp-meta:empty { display: none }
+.btn.done { color: var(--glass-good) }
