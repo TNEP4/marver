@@ -304,8 +304,10 @@ function sweepTemps(dir: string) {
  *  own and must not wait out a batch of shots. */
 const chains = new Map<string, Promise<unknown>>()
 
-export function withBrowser<T>(lane: 'shot' | 'poster' | 'check', fn: (b: Browser) => Promise<T>): Promise<T> {
+export function withBrowser<T>(lane: 'shot' | 'poster' | 'check', fn: (b: Browser) => Promise<T>, o: { skip?: () => boolean; skipped?: T } = {}): Promise<T> {
   const run = async () => {
+    // asked once the lane is free: an operation nobody waits for any more (a perf run that ended) starts no browser
+    if (o.skip?.()) return o.skipped as T
     const b = await Browser.launch()
     try { return await fn(b) } finally { await b.close() }
   }
