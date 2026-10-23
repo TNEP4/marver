@@ -11,7 +11,7 @@
  */
 import { writeFileSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
-import { app } from 'electron'
+import { app, webContents } from 'electron'
 import type { AppBody, Sample } from '../../../../src/shared/app-perf.ts'
 import { values, type Home } from '../config.ts'
 import { flashPorts, perfDirOf } from '../flash-ports.ts'
@@ -57,6 +57,20 @@ export function provideFlashHooks(home: Home): void {
   })
   provide('flash:records', () => records)
   provide('flash:quit', () => { quitFlashes(); return records.length })
+  // the budgets' roles in a dev build (A3.8 #48, #49): each canvas tab's main-frame and subframe processes, and the
+  // app pages'. The signed build has no hook: there the roles come from the recorder's own sample lines
+  provide('procs:roles', () => {
+    const canvas = new Set<number>()
+    const pages = new Set<number>()
+    for (const wc of webContents.getAllWebContents()) {
+      if (wc.isDestroyed()) continue
+      const url = wc.getURL()
+      const pids = new Set<number>([wc.getOSProcessId()])
+      try { for (const f of wc.mainFrame.framesInSubtree) pids.add(f.osProcessId) } catch { /* going */ }
+      for (const p of pids) if (p > 0) (url.startsWith('marver-app://') ? pages : canvas).add(p)
+    }
+    return { canvas: [...canvas], pages: [...pages].filter((p) => !canvas.has(p)) }
+  })
   provide('picture:app', async (a) => {
     const o = a as { width?: number; path: string }
     if (!o?.path || !isAbsolute(o.path)) throw new Error('picture:app needs an absolute path')
