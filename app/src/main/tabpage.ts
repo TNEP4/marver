@@ -8,7 +8,7 @@
  */
 import { homedir } from 'node:os'
 import type { TabPageProbe, TabPageView } from '../shared/channels.ts'
-import { startCommand, tilde } from '../shared/command.ts'
+import { startCommandShown, tilde } from '../shared/command.ts'
 import { WHY_WORDS } from '../../../src/shared/app-api.ts'
 import { T } from './timings.ts'
 import { liveDoc, onDocumentGone, tabName, type Tab } from './tabs.ts'
@@ -50,7 +50,7 @@ export function pageFor(t: Tab, now: number, home: string = homedir()): PageBody
   const gone = !t.reg || t.reg.state === 'gone'
   const stopped = (retained: boolean, probe: TabPageProbe): PageBody => ({
     ...base, page: 'stopped', since: t.goneAt ?? t.fail?.at ?? now, retained, probe,
-    command: t.root ? startCommand(t.root, home, t.reg?.slot == null ? t.reg?.port : undefined).shown : 'npx marver dev',
+    command: t.root ? startCommandShown({ root: t.root, port: t.reg?.slot == null ? t.reg?.port : null }, home) : 'npx marver dev',
     ...(t.reg?.origin ? { origin: t.reg.origin } : t.reg ? { origin: `http://localhost:${t.reg.port}` } : {}),
   })
   const origin = t.reg?.origin ?? (t.reg ? `http://localhost:${t.reg.port}` : '')

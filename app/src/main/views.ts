@@ -22,9 +22,10 @@ import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from 'node:fs'
 import { homedir, totalmem } from 'node:os'
 import { join } from 'node:path'
-import { app, clipboard, dialog, Menu, nativeTheme, powerMonitor, shell, WebContentsView, type MenuItemConstructorOptions, type Session, type WebContents } from 'electron'
+import { app, dialog, Menu, nativeTheme, powerMonitor, shell, WebContentsView, type MenuItemConstructorOptions, type Session, type WebContents } from 'electron'
 import type { PageKind, TabPageAction } from '../shared/channels.ts'
 import { startCommand } from '../shared/command.ts'
+import { effects } from './effects.ts'
 import type { AppState, MenuItem } from '../../../src/shared/app-api.ts'
 import { docProof } from '../../../src/server/proof.ts'
 import type { Files, Home } from './config.ts'
@@ -71,7 +72,18 @@ export interface TrustPort {
   onReport(fn: (tabId: string, doc: string, r: CanvasReports) => void): () => void
 }
 
-export interface StartInput { trust: TrustPort; home: Home; files: Files; firstLaunch?: boolean }
+/**
+ * What the window stream tells Home's main side (the home-and-files stream's home.ts): Home has first shown (the
+ * first-launch marker), a canvas was verified - its first trusted commit on an instance (Recently here) - and a
+ * canvas went. main.ts wires these to `noteHomeShown`, `noteVerified` and `noteGone` once both streams meet.
+ */
+export interface HomeNotes {
+  homeShown(): void
+  verified(c: { ws: string; root: string; name: string; origin: string; slot: number | null; port: number }): void
+  gone(ws: string): void
+}
+
+export interface StartInput { trust: TrustPort; home: Home; files: Files; firstLaunch?: boolean; notes?: HomeNotes }
 
 const j = (topic: string, data: unknown) => { if (__MV_TEST__) note(topic, data) }
 
@@ -81,6 +93,9 @@ const keys = (wc: WebContents) => attachKeys(wc, (c) => runCommand(c, 'key'),
 
 let trust: TrustPort
 let homeDir: Home
+let notes: HomeNotes | undefined
+/** the instance each tab was last noted verified on: Recently here hears once per instance */
+const notedVerified = new Map<string, string>()
 let quitting = false
 const canvases = new Map<string, { view: WebContentsView; nav: NavAdapter; off: () => void }>()
 const making = new Map<string, Promise<WebContentsView | null>>()
@@ -176,8 +191,15 @@ function onNav(t: Tab, wc: WebContents, e: NavEvent): void {
       const admitted = e.attributed && t.reg?.state === 'ready' ? trust.admit(t.id) : null
       onCommit(t, { gen: e.gen, url: e.url, attributed: e.attributed, admitted })
       void wc.insertCSS(NO_DRAG, { cssOrigin: 'user' }).catch(() => {})
-      if (t.doc?.lifted) { clearUnattributed(t); onLifted(t) }
-      else scheduleUnattributed(t, wc)
+      if (t.doc?.lifted) {
+        clearUnattributed(t)
+        onLifted(t)
+        const r = t.reg
+        if (r?.origin && t.root && notedVerified.get(t.id) !== r.instance) {
+          notedVerified.set(t.id, r.instance)
+          notes?.verified({ ws: r.ws, root: t.root, name: t.name, origin: r.origin, slot: r.slot, port: r.port })
+        }
+      } else scheduleUnattributed(t, wc)
       compose()
       return
     }
@@ -477,6 +499,42 @@ export function runCommand(c: AppCommand, via: 'key' | 'menu'): void {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// ⌘L's link, opened in its canvas's tab (A2.7, A2.14 #24, v1.12 r1 #3, v1.13 r2 #6): the window stream's half of
+// home.ts's `LinkPorts.open`. `url` is already rebuilt on the entry's bound origin and checked; null while the
+// entry is starting (the path kept, loaded at ready). A link that changes more than the hash replaces the document,
+// through the guard.
+
+export interface LinkTarget { state: string; origin: string | null; port: number; ws: string; name: string }
+type LinkAnswer = { ok: true } | { ok: false; why: 'bad' | 'nothing' | 'not-canvas' | 'later' | 'refused' }
+
+const noHash = (u: string) => { try { const x = new URL(u); x.hash = ''; return x.href } catch { return u } }
+
+export async function openInTab(e: LinkTarget, url: string | null, rest: string): Promise<LinkAnswer> {
+  const locals = allTabs().filter((t) => t.kind === 'local' && t.reg?.ws === e.ws)
+  const t = locals.find((x) => e.origin ? x.reg!.origin === e.origin : x.reg!.port === e.port) ?? locals.find((x) => x.reg!.port === e.port)
+  if (!t) return { ok: false, why: 'nothing' }
+  if (t.fail?.why === 'unverified') return { ok: false, why: 'not-canvas' }
+  const path = safePath(url ? (() => { const u = new URL(url); return u.pathname + u.search + u.hash })() : rest)
+  if (!t.open) reopenTab(t.id)
+  if (!url || !liveDoc(t)) {
+    // nothing to replace: the tab goes to the link's board when it loads (at ready for a starting canvas)
+    t.path = path
+    if (contentView(t.id)) t.needsLoad = true
+    activate(t.id)
+    return { ok: true }
+  }
+  const wc = contentView(t.id)?.webContents
+  if (wc && t.doc && noHash(t.doc.url) === noHash(url)) {
+    // only the hash changes: the same document, its trust kept - no question asked
+    activate(t.id)
+    void wc.loadURL(url).catch(() => {})
+    return { ok: true }
+  }
+  activate(t.id)
+  return (await guard(t, { kind: 'load', url })) === 'done' ? { ok: true } : { ok: false, why: 'refused' }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // The app pages' messages: the bridge calls these once it has checked the sender (kind, main frame, own URL) and
 // every field (channels.ts SENDERS). Each acts on main's own records alone.
 
@@ -495,12 +553,28 @@ function tabAct(k: MenuToken, what: 'activate' | 'open-browser' | 'reveal' | 'co
   const link = t.reg ? `http://localhost:${t.reg.port}${safePath(t.path)}` : undefined
   switch (what) {
     case 'activate': if (t.kind === 'local' && !t.open) reopenTab(t.id); else activate(t.id); return
-    case 'open-browser': if (link && t.doc?.trusted) void shell.openExternal(link); return
-    case 'reveal': if (t.root) shell.showItemInFolder(t.root); return
-    case 'copy-link': if (link && t.doc?.trusted) clipboard.writeText(link); return
+    case 'open-browser': if (link && t.doc?.trusted) openOutside(link); return
+    case 'reveal': reveal(t); return
+    case 'copy-link': if (link && t.doc?.trusted) effects.copy(link); return
     case 'close': void closeTab(t.id); return
     case 'mark-all-seen': if (t.doc?.trusted) contentView(t.id)?.webContents.send('mv:menu-click', { id: 'mark-all-seen' }); return
   }
+}
+
+/**
+ * Reveal in Finder and Open in Browser, run in main from the tab's record. A test run never opens a Finder window
+ * or a browser on the screen of whoever is at the Mac: recorded instead, as effects.ts records its copies.
+ */
+const outside: { revealed: string[]; opened: string[] } = { revealed: [], opened: [] }
+const recordOutside = (): boolean => __MV_TEST__ && testMode() && process.env.MARVER_APP_REAL_EFFECTS !== '1'
+function reveal(t: Tab): void {
+  if (!t.root) return
+  if (__MV_TEST__ && recordOutside()) { outside.revealed.push(t.root); return }
+  shell.showItemInFolder(t.root)
+}
+function openOutside(url: string): void {
+  if (__MV_TEST__ && recordOutside()) { outside.opened.push(url); return }
+  void shell.openExternal(url)
 }
 
 function popup(items: MenuItemConstructorOptions[], x: number, y: number): void {
@@ -570,9 +644,9 @@ export const pageHandlers = {
         else load(t)
         return true
       case 'reload': personReload(t); compose(); return true
-      case 'copy-start': if (t.root) clipboard.writeText(startCommand(t.root, homedir(), t.reg?.slot == null ? t.reg?.port : undefined).copy); return true
-      case 'copy-details': clipboard.writeText(details(t)); return true
-      case 'reveal': if (t.root) shell.showItemInFolder(t.root); return true
+      case 'copy-start': if (t.root) effects.copy(startCommand({ root: t.root, port: t.reg?.slot == null ? t.reg?.port : null })); return true
+      case 'copy-details': effects.copy(details(t)); return true
+      case 'reveal': reveal(t); return true
       case 'close': void closeTab(t.id); return true
       default: return false
     }
@@ -662,6 +736,7 @@ function saveSoon(): void {
 export function startViews(i: StartInput): void {
   trust = i.trust
   homeDir = i.home
+  notes = i.notes
   const home = homedir()
   const sendState = (t: Tab, s: AppState) => {
     const wc = contentView(t.id)?.webContents
@@ -685,7 +760,7 @@ export function startViews(i: StartInput): void {
   })
   setPillPorts({
     now: () => Date.now(), home, visible: windowVisible, send: sendPill, log: j,
-    copyStart: (t) => { if (t.root) clipboard.writeText(startCommand(t.root, home, t.reg?.slot == null ? t.reg?.port : undefined).copy) },
+    copyStart: (t) => { if (t.root) effects.copy(startCommand({ root: t.root, port: t.reg?.slot == null ? t.reg?.port : null })) },
     notResponding: (t) => { void notResponding(t) },
   })
 
@@ -700,7 +775,11 @@ export function startViews(i: StartInput): void {
   const plan = restorePlan(tabsFile, trust.entries(), { restore: i.files.config.restoreTabs, firstLaunch: !!i.firstLaunch })
   applyRestore(plan)
   ensureAppViews()
-  trust.onRegistry((e) => onRegistry(e))
+  trust.onRegistry((e) => {
+    const t = e.kind === 'gone' ? allTabs().find((x) => x.reg?.instance === e.instance) : undefined
+    onRegistry(e)
+    if (t?.reg) notes?.gone(t.reg.ws)
+  })
   for (const entry of trust.entries()) onRegistry({ kind: 'entry', entry })
   trust.onReport((tabId, doc, r) => { onReport(tabId, doc, { busy: r.busy, theme: r.theme, menu: r.menu }); invalidateMenu() })
 
@@ -710,8 +789,8 @@ export function startViews(i: StartInput): void {
     acts: {
       run: (c) => runCommand(c, 'menu'), holds, canvasClick,
       tab: (k, what) => tabAct(k, what),
-      help: () => { void shell.openExternal(HELP_URL) },
-      perfFiles: () => { void shell.openPath(join(homeDir.dir, 'perf')) },
+      help: () => openOutside(HELP_URL),
+      perfFiles: () => effects.openPath(join(homeDir.dir, 'perf')),
       rebuild: () => buildNow(true),
     },
   })
@@ -727,6 +806,7 @@ export function startViews(i: StartInput): void {
     const inactive = __MV_TEST__ && process.env.MARVER_APP_TEST === '1' && process.env.MARVER_APP_SHOW !== 'focus'
     showWindow({ focus: !inactive })
     compose({ focus: 'shown' })
+    noteHome()
   }
   strip?.once('did-finish-load', show)
   strip?.once('did-fail-load', show)
@@ -759,7 +839,15 @@ export function startViews(i: StartInput): void {
 }
 
 /** Home's view always, Settings' while its tab is open (⌘, makes the tab; this its view). */
+let homeNoted = false
+function noteHome(): void {
+  if (homeNoted || activeTab()?.kind !== 'home' || !windowVisible()) return
+  homeNoted = true
+  notes?.homeShown()
+}
+
 function ensureAppViews(): void {
+  noteHome()
   for (const page of ['home', 'settings'] as const) {
     const t = getTab(page)
     if (t && !contentView(page)) makeAppView(t, page)
@@ -846,6 +934,8 @@ function testHooks(): void {
   })
   provide('page', (a) => { const wc = pageView(arg<{ tab: string }>(a).tab)?.webContents; return wc ? pageOf(wc) : null })
   provide('show', (a) => { showWindow({ focus: arg<{ focus?: boolean }>(a).focus }); return true })
+  // the focus cases need the key window: take it (for a moment) from whatever app is in front
+  provide('focusApp', () => { app.focus({ steal: true }); mainWindow()?.focus(); return mainWindow()?.isFocused() ?? false })
   provide('hide', () => { hideWindow(); return true })
   // kept above other windows without taking the keyboard: Chromium tells an occluded page nothing (its hang
   // monitor's 'unresponsive' needs the contents visible)
@@ -853,6 +943,8 @@ function testHooks(): void {
   provide('resize', (a) => { const { width, height } = arg<{ width: number; height: number }>(a); mainWindow()?.setContentSize(width, height); return true })
   provide('fullscreen', (a) => { mainWindow()?.setFullScreen(!!arg<{ on: boolean }>(a).on); return true })
   provide('menu', () => menuModel())
+  provide('outside', () => ({ ...outside }))
+  provide('openInTab', async (a) => { const { entry, url, rest } = arg<{ entry: LinkTarget; url: string | null; rest: string }>(a); return openInTab(entry, url, rest) })
   // the application menu as built: each item's id, label, type, checked, enabled and accelerator
   const dump = (m: Electron.Menu | null): unknown[] => (m?.items ?? []).map((i) => ({
     id: i.id || undefined, label: i.label, type: i.type, checked: i.checked, enabled: i.enabled, accelerator: i.accelerator ?? undefined,

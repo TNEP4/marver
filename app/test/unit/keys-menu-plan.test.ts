@@ -1,13 +1,13 @@
 /**
  * The app's keys (spec 28 A2.4, A2.14 #25), the menu's template (A2.7, v1.10 r1 #3, #10, r2 #1, r3 #3), the
- * window's layout (A2.2, A2.14 #1) and the start command (A2.11, A2.14 #24) - pure, no Electron.
+ * window's layout (A2.2, A2.14 #1) - pure, no Electron. (The start command's own cases are the pages stream's
+ * test/unit/command.test.ts.)
  */
 import { describe, expect, it, vi } from 'vitest'
 import type { MenuItemConstructorOptions } from 'electron'
 import { matchKey, type AppCommand } from '../../src/main/keys.ts'
 import { menuTemplate, type MenuActs, type MenuModel } from '../../src/main/menu.ts'
 import { GROUND, plan } from '../../src/main/plan.ts'
-import { startCommand, tilde } from '../../src/shared/command.ts'
 
 type K = Parameters<typeof matchKey>[0]
 const key = (o: Partial<K>): K => ({ type: 'keyDown', key: '', code: '', isAutoRepeat: false, shift: false, control: false, alt: false, meta: false, ...o })
@@ -166,17 +166,5 @@ describe('the layout: the opaque strip (A2.14 #1)', () => {
   it('a hidden tab\'s page view (closing in 30 s) stays hidden', () => {
     const p = plan({ tabs: [tab('home', 'home'), tab('t1', 'local', { page: true, pageView: true })], active: 'home', w: 800, h: 600, appDark: false })
     expect(p.views.filter((v) => v.visible).map((v) => v.key)).toEqual(['home:view'])
-  })
-})
-
-describe('the start command (A2.14 #24)', () => {
-  it('shown with ~, copied with the full real path quoted; a quote, a space, an explicit port', () => {
-    expect(startCommand('/Users/nic/tms-broker', '/Users/nic')).toEqual({ shown: 'cd ~/tms-broker && npx marver dev', copy: "cd '/Users/nic/tms-broker' && npx marver dev" })
-    expect(startCommand("/Users/nic/nic's repo", '/Users/nic', 41234)).toEqual({
-      shown: "cd ~/'nic'\\''s repo' && npx marver dev --port 41234",
-      copy: "cd '/Users/nic/nic'\\''s repo' && npx marver dev --port 41234",
-    })
-    expect(startCommand('/opt/x y', '/Users/nic').shown).toBe("cd '/opt/x y' && npx marver dev")
-    expect(tilde('/Users/nicola/x', '/Users/nic')).toBe('/Users/nicola/x')
   })
 })

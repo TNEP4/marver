@@ -170,19 +170,34 @@ describe('the app\'s keys over a page that swallows every key (A2.4, A2.14 #25)'
   })
 })
 
+/**
+ * What holds focus: Electron's own answer when the window is the key window, else main's record of the rule's
+ * decisions (macOS gives a window focus only while its app is in front, and the person at the Mac may be using
+ * another app).
+ */
+async function focused(): Promise<string[]> {
+  const f = await w.run.call<{ focused: string[]; owner: { part: string; tab?: string } | null; key?: boolean }>('focused')
+  const key = (await w.run.call<{ focused: boolean }>('window')).focused
+  if (key) return f.focused
+  const o = f.owner
+  return o ? [o.part === 'strip' ? 'strip' : `${o.tab}:${o.part === 'content' ? 'view' : 'page'}`] : []
+}
+
 describe('one focus rule, and F6 (A2.13)', () => {
+  beforeAll(async () => { await w.run.call('focusApp') })
+
   it('activating a tab focuses its view; F6 moves to the strip and back; ⇧F6 is the same toggle', async () => {
     const s = await w.state()
     const a = s.canvases[0]!
     await w.run.call('activate', { id: a })
     await sleep(200)
-    expect((await w.run.call<{ focused: string[] }>('focused')).focused).toEqual([`${a}:view`])
+    expect(await focused()).toEqual([`${a}:view`])
     await w.run.call('key', { target: a, keyCode: 'F6' })
     await sleep(150)
-    expect((await w.run.call<{ focused: string[] }>('focused')).focused).toEqual(['strip'])
+    expect(await focused()).toEqual(['strip'])
     await w.run.call('key', { target: 'strip', keyCode: 'F6', modifiers: ['shift'] })
     await sleep(150)
-    expect((await w.run.call<{ focused: string[] }>('focused')).focused).toEqual([`${a}:view`])
+    expect(await focused()).toEqual([`${a}:view`])
   })
 
   it('a crash of the focused view moves focus to its tab page, then to the canvas when it lifts', async () => {
@@ -198,16 +213,16 @@ describe('one focus rule, and F6 (A2.13)', () => {
     await w.run.call('activate', { id: g })
     await w.until((x) => !!x.tabs.find((t) => t.id === g)?.doc?.lifted, 10_000, 'Gamma lifted')
     await sleep(200)
-    expect((await w.run.call<{ focused: string[] }>('focused')).focused).toEqual([`${g}:view`])
+    expect(await focused()).toEqual([`${g}:view`])
     const since = (await w.log()).length
     slow = true
     await w.run.call('crash', { target: g })
     await w.until((x) => x.tabs.find((t) => t.id === g)!.pageView, 5000, 'the tab page')
     await sleep(300)
-    expect((await w.run.call<{ focused: string[] }>('focused')).focused).toEqual([`${g}:page`])
+    expect(await focused()).toEqual([`${g}:page`])
     await w.until((x) => !!x.tabs.find((t) => t.id === g)?.doc?.lifted && !x.tabs.find((t) => t.id === g)!.pageView, 10_000, 'the reload to lift')
     await sleep(200)
-    expect((await w.run.call<{ focused: string[] }>('focused')).focused).toEqual([`${g}:view`])
+    expect(await focused()).toEqual([`${g}:view`])
     const moves = (await w.log('focus', since)).map((l) => l.data.to).filter(Boolean)
     expect(moves[0]).toEqual({ part: 'page', tab: g })
     expect(moves.at(-1)).toEqual({ part: 'content', tab: g })

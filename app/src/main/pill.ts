@@ -18,7 +18,7 @@
  * Pure (no Electron import): the ports send, copy and act.
  */
 import type { PillView } from '../shared/channels.ts'
-import { startCommand } from '../shared/command.ts'
+import { startCommandShown } from '../shared/command.ts'
 import { T } from './timings.ts'
 import { activeTab, fresh, getTab, liveDoc, tabName, type Tab } from './tabs.ts'
 
@@ -89,9 +89,9 @@ function tier1(t: Tab | undefined, now: number): Rec | null {
     }
   }
   if (t.reg?.state === 'gone' && liveDoc(t) && !t.fail) {
-    const cmd = t.root ? startCommand(t.root, ports!.home, t.reg.slot == null ? t.reg.port : undefined) : null
+    const cmd = t.root ? startCommandShown({ root: t.root, port: t.reg.slot == null ? t.reg.port : null }, ports!.home) : null
     return { kind: 'stopped', about: `stopped:${t.id}:${t.doc?.commits}`, tab: t.id, commit: t.doc?.commits, lead: 'Stopped', text: '', short: 'Stopped',
-      button: { label: 'npx marver dev', style: 'cmd' }, ...(cmd ? { tooltip: cmd.shown.slice(0, 199) } : {}) }
+      button: { label: 'npx marver dev', style: 'cmd' }, ...(cmd ? { tooltip: cmd.slice(0, 199) } : {}) }
   }
   if (t.hung && t.view === 'live') {
     return { kind: 'not-responding', about: `hung:${t.id}:${t.doc?.commits}`, tab: t.id, commit: t.doc?.commits, lead: 'Not responding', text: '', short: 'Not responding',
