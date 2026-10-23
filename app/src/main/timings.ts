@@ -38,6 +38,12 @@ export const T = {
   stateDebounceMs: 1000,
   /** the menu is rebuilt at most this often (A2.7) */
   menuDebounceMs: 100,
+  /**
+   * the guard's act: how long main waits for Chromium's outcome (the page closed or navigated, or refused) before
+   * it answers 'refused' - Chromium itself goes on past a renderer that does not answer its beforeunload in time
+   * (A2.14 v1.13 r2 #4); the view is still removed whenever it is destroyed
+   */
+  guardActMs: 60_000,
 } satisfies Record<string, number | readonly number[]>
 
 export type Timings = typeof T

@@ -11,24 +11,29 @@
  *   8. the marver-app:// scheme
  *   9. the files' first read
  *  10. at ready: the theme, persist:app and its protocol, the web-contents-created hook (before any view),
- *      the bridge, the registry, the window, the tabs, the menu.
+ *      the bridge, the registry, then views.ts: the window, the tabs (restored from tabs.json; only the active
+ *      one loads), the menu, the guarded quit.
  *
  * Every module below is a skeleton its stream fills (see each file's header); this file keeps the order.
  */
 import './guard.ts'
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { app, crashReporter, protocol } from 'electron'
 import { installSpies } from './testing/spies.ts'
 import { note, startTesting, testMode } from './testing/index.ts'
 import { overrideTimings } from './timings.ts'
 import { applyTheme, ensureHome, readFiles } from './config.ts'
-import { installNavigationPolicy, setupAppSession } from './sessions.ts'
+import { installNavigationPolicy, localSession, setupAppSession } from './sessions.ts'
 import { installBridge } from './bridge.ts'
 import { createRegistry } from './registry.ts'
-import { focusWindow, mainWindow, openWindow } from './window.ts'
+import { installDispatcher, type Dispatcher } from './proof.ts'
+import { attachNav } from './nav.ts'
+import { focusWindow } from './window.ts'
 import { startTabs } from './tabs.ts'
 import { buildMenu } from './menu.ts'
+import { startViews, type TrustPort } from './views.ts'
+import { fakeTrust } from './testing/fake-trust.ts'
 
 /** The app's own scheme for its pages (A2.5). */
 export const APP_SCHEME = 'marver-app'
@@ -88,19 +93,41 @@ function start(): void {
   const files = readFiles(home)
 
   app.on('second-instance', () => focusWindow())
-  app.on('activate', () => { if (!mainWindow()) openWindow() })
 
   // 10. at ready
   void app.whenReady().then(async () => {
     applyTheme(files)
     setupAppSession()
     installNavigationPolicy()
-    installBridge()
+    const bridge = installBridge()
     const registry = createRegistry()
     await registry.start()
-    openWindow()
-    startTabs()
     buildMenu()
+    startTabs()
+    // the window, the tabs (restored), the menu: views.ts, against the trust stream's frozen interfaces
+    const dispatchers = new Map<string, Dispatcher>()
+    const real: TrustPort = {
+      async session(ws) {
+        const ses = await localSession(ws)
+        if (!dispatchers.has(ws)) dispatchers.set(ws, installDispatcher(ses))
+        return ses
+      },
+      attach(wc, tab) {
+        const nav = attachNav(wc)
+        const entry = () => registry.entries().find((e) => e.instance === tab.reg?.instance)
+        if (tab.reg) dispatchers.get(tab.reg.ws)?.attach(wc.id, () => { const e = entry(); return e ? { entry: e, gen: () => nav.stamp() } : undefined })
+        wc.once('destroyed', () => { if (tab.reg) dispatchers.get(tab.reg.ws)?.detach(wc.id) })
+        return nav
+      },
+      admit: (tabId) => bridge.admit(tabId),
+      register: (wc, kind, tabId) => bridge.register(wc, kind, tabId),
+      entries: () => registry.entries(),
+      entryFor: (t) => registry.entries().find((e) => e.instance === t.reg?.instance),
+      onRegistry: (fn) => registry.on(fn),
+      onReport: (fn) => bridge.onReport(fn),
+    }
+    const trust = __MV_TEST__ && testMode() && process.env.MARVER_APP_FAKE_TRUST === '1' ? fakeTrust() : real
+    startViews({ trust, home, files, firstLaunch: !existsSync(join(home.state, 'launched')) })
     if (__MV_TEST__) note('startup', { step: 'ready' })
   })
 }
