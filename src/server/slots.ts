@@ -6,8 +6,10 @@
  *
  * - A slot file (`running/slot-<n>.json`; an explicit port outside the range is `port-<p>.json`) is
  *   taken with the exclusive-file rules (exclusive.ts) while the port is checked free, written
- *   `starting`, and rewritten whole as `ready` with the bound origin once the server listens - a
- *   reader sees one or the other, never half a file. It holds the document proof's key (A1.4), which
+ *   `starting`, rewritten whole as `ready` with the bound origin once the server listens, and as
+ *   `closing` the moment a close begins - held still, and removed last, once nothing of the start can
+ *   bind or serve (startup.ts) - so a reader sees one state or another, never half a file, and never
+ *   `ready` for a canvas that has stopped serving. It holds the document proof's key (A1.4), which
  *   never leaves the file.
  * - A live holder means the next slot; a port another program holds is released and skipped, said
  *   once; a stuck `.reclaim` skips its slot with the repair line. All twenty taken: the start stops
@@ -72,9 +74,14 @@ function writeWhole(file: string, body: string): void {
 
 // ---- the record -------------------------------------------------------------------------------
 
+/** `starting` until the server listens; `ready` while it serves; `closing` from the moment a close begins until the
+ *  file goes - its pid runs and it holds its slot, but nothing should open it (the Mac app opens `ready` alone).
+ *  A state a later version adds reads as `starting`: not ready. */
+export type SlotState = 'starting' | 'ready' | 'closing'
+
 export interface SlotFile {
   v: 1
-  state: 'starting' | 'ready'
+  state: SlotState
   pid: number
   instance: string
   /** null for an explicit port outside the range (port-<p>.json) */
@@ -103,7 +110,7 @@ function asRecord(v: unknown): SlotFile | null {
   const r = v as Partial<SlotFile> | null
   if (!h || !r || typeof r.port !== 'number' || typeof r.url !== 'string') return null
   return {
-    v: 1, state: r.state === 'ready' ? 'ready' : 'starting', pid: h.pid, instance: h.instance,
+    v: 1, state: r.state === 'ready' || r.state === 'closing' ? r.state : 'starting', pid: h.pid, instance: h.instance,
     slot: typeof r.slot === 'number' ? r.slot : null, port: r.port, origin: typeof r.origin === 'string' ? r.origin : null, url: r.url,
     root: typeof r.root === 'string' ? r.root : '', name: typeof r.name === 'string' ? r.name : '', version: typeof r.version === 'string' ? r.version : '',
     features: Array.isArray(r.features) ? r.features.filter((f): f is string => typeof f === 'string') : [],
@@ -122,6 +129,9 @@ export interface Claim {
   url: string
   /** the file rewritten whole as `ready`, with the bound origin (same instance, same key) */
   ready(origin: string): void
+  /** the file rewritten whole as `closing` (same instance, same key, the origin kept), the moment a close begins:
+   *  still held, so no start takes the slot, and never again `ready` */
+  closing(): void
   /** removes the file while it still names this instance */
   release(): void
 }
@@ -169,15 +179,19 @@ async function take(i: PlaceInput, slot: number | null, port: number): Promise<T
   if (!r.ok) return r.why === 'held' ? { ok: false, why: 'held', holder: asRecord(readJson(file)), file } : { ok: false, why: r.why, file }
   i.onHold?.(r.release)
   if (await (i.inUse ?? portInUse)(port)) { r.release(); return { ok: false, why: 'busy', file } }
+  let now = rec
+  const rewrite = (next: SlotFile) => {
+    // only over our own claim: a file some other start holds is never overwritten
+    if (asHolder(readJson(file))?.instance !== rec.instance) return
+    writeWhole(file, JSON.stringify(next, null, 2) + '\n')
+    now = next
+  }
   return {
     ok: true,
     claim: {
       slot, port, file, instance: rec.instance, key, url: rec.url, release: r.release,
-      ready(origin: string) {
-        // only over our own claim: a file some other start holds is never overwritten
-        if (asHolder(readJson(file))?.instance !== rec.instance) return
-        writeWhole(file, JSON.stringify({ ...rec, state: 'ready', origin }, null, 2) + '\n')
-      },
+      ready(origin: string) { if (now.state !== 'closing') rewrite({ ...now, state: 'ready', origin }) },
+      closing() { if (now.state !== 'closing') rewrite({ ...now, state: 'closing' }) },
     },
   }
 }
@@ -210,7 +224,8 @@ export async function place(i: PlaceInput): Promise<Placed> {
     if (t.ok) return { ok: true, claim: t.claim, notes: [] }
     const never = '--recover never takes another address'
     return { ok: false, message:
-      t.why === 'held' ? `port ${port} is held by ${canvasOf(t.holder)} - ${never}; stop it (Ctrl-C in its terminal) and run it again`
+      t.why === 'held' && t.holder?.state === 'closing' ? `port ${port} is held by ${canvasOf(t.holder)}, which is closing - ${never}; run it again once it has stopped`
+      : t.why === 'held' ? `port ${port} is held by ${canvasOf(t.holder)} - ${never}; stop it (Ctrl-C in its terminal) and run it again`
       : t.why === 'busy' ? `port ${port} is in use - ${never}; stop what holds it and run it again`
       : t.why === 'stuck' && n ? `${stuckLine(n)} - ${never}`
       : `${unreadableLine(t.file, n)} - ${never}` }
@@ -224,7 +239,8 @@ export async function place(i: PlaceInput): Promise<Placed> {
       if (t.ok) return { ok: true, claim: t.claim, notes: [] }
       const instead = from === 'config' ? 'or remove `port` from design/config.ts' : 'or start without --port'
       return { ok: false, message:
-        t.why === 'held' ? `port ${port} is slot ${n}, and ${canvasOf(t.holder)} holds it - stop it first (Ctrl-C in its terminal), ${instead}`
+        t.why === 'held' && t.holder?.state === 'closing' ? `port ${port} is slot ${n}, and ${canvasOf(t.holder)} holds it while it closes - start again once it has stopped, ${instead}`
+        : t.why === 'held' ? `port ${port} is slot ${n}, and ${canvasOf(t.holder)} holds it - stop it first (Ctrl-C in its terminal), ${instead}`
         : t.why === 'busy' ? `port ${port} (slot ${n}) is in use by another program - stop it, ${instead}`
         : t.why === 'stuck' ? stuckLine(n)
         : unreadableLine(t.file, n) }
@@ -375,7 +391,8 @@ export function startedWhere(b: Before): string[] {
   }
   const p = b.previous
   if (!p || p.url === b.run.url) return []
-  const holder = readRunning().find((r) => r.url === p.url && r.pid !== process.pid)
+  // one that is closing runs there no more: on its way out, it is not who to stop
+  const holder = readRunning().find((r) => r.url === p.url && r.pid !== process.pid && r.state !== 'closing')
   const who = holder ? `"${holder.name || '?'}"` : null
   // its place in --recover's list: this run is the newest, the address before it next
   const n = recoverEntries(b.root).findIndex((e) => e.url === p.url && e.bind === p.bind && e.ws === p.ws) + 1
@@ -420,7 +437,8 @@ export const uptime = (ms: number): string => {
 }
 
 /** The list as `marver ls` prints it: slot, link, name, version, state, uptime, then the folder - last, its length
- *  its own, so the columns before it stay on the line. */
+ *  its own, so the columns before it stay on the line. A canvas that is closing is listed, `closing`: it still holds
+ *  its slot and its folder, so a start there is refused until it has gone, and the list says why. */
 export function formatRunning(list: Running[], now: number = Date.now()): string[] {
   const rows = [['slot', 'link', 'name', 'version', 'state', 'up', 'folder'],
     ...list.map((r) => [r.slot === null ? '-' : String(r.slot), r.url, r.name, r.version, r.state, uptime(now - r.startedAt), tilde(r.root)])]

@@ -186,6 +186,36 @@ describe('the slots: claims (A1.3)', () => {
     expect(existsSync(running('slot-1.json'))).toBe(false)
   })
 
+  it('closing rewrites it whole as a close begins - same instance, key and origin - and never ready again; the list says closing, and a start that wants exactly that slot is told it closes', async () => {
+    const r = await place(input())
+    if (!r.ok) throw new Error(r.message)
+    r.claim.ready(`http://[::1]:${BASE + 1}`)
+    const ready = read('slot-1.json')
+    r.claim.closing()
+    expect(read('slot-1.json')).toEqual({ ...ready, state: 'closing' })
+    r.claim.ready(`http://127.0.0.1:${BASE + 1}`)
+    expect(read('slot-1.json')).toEqual({ ...ready, state: 'closing' })
+    expect(mode(running('slot-1.json'))).toBe(0o600)
+    expect(readdirSync(running())).toEqual(['slot-1.json'])   // no temp file left
+    // still held: listed, as closing - by the list `marver ls` prints too
+    const list = readRunning()
+    expect(list.map((x) => [x.slot, x.state])).toEqual([[1, 'closing']])
+    expect(formatRunning(list)[1]).toMatch(new RegExp(`^ +1 +http://localhost:${BASE + 1}/ +p +0\\.27\\.0 +closing +\\S+ +/tmp/p$`))
+    expect(await place(input({ explicit: { port: BASE + 1, from: 'flag' } }))).toEqual({ ok: false,
+      message: `port ${BASE + 1} is slot 1, and "p" (/tmp/p) holds it while it closes - start again once it has stopped, or start without --port` })
+    expect(await place(input({ recover: { port: BASE + 1 } }))).toEqual({ ok: false,
+      message: `port ${BASE + 1} is held by "p" (/tmp/p), which is closing - --recover never takes another address; run it again once it has stopped` })
+    // and the claims go back last, as before
+    r.claim.release()
+    expect(existsSync(running('slot-1.json'))).toBe(false)
+    // a file some other start holds is never rewritten
+    const other = await place(input())
+    if (!other.ok) throw new Error(other.message)
+    writeFileSync(running('slot-1.json'), JSON.stringify({ ...read('slot-1.json'), instance: 'someone-else' }))
+    other.claim.closing()
+    expect(read('slot-1.json')).toMatchObject({ instance: 'someone-else', state: 'starting' })
+  })
+
   it('each file\'s release is handed over the moment it is held, before the port check', async () => {
     const held: string[] = []
     let checked = 0
@@ -358,6 +388,13 @@ describe('what a start says about where it ran before (A1.6)', () => {
     expect(lines[2]).toBe('stop "atlas" and this canvas, then `npx marver dev --recover 2`')
     expect(recoverEntries(root)[1].url).toBe(`http://localhost:${BASE + 2}/`)
     expect(lines.join('\n')).not.toContain('bound')
+    // one that is closing there runs there no more: not named, not who to stop
+    writeFileSync(join(running(), 'slot-3.json'), JSON.stringify({ v: 1, state: 'closing', pid: pid.pid, instance: 'leaving', slot: 3, port: BASE + 3, origin: null, url: `http://localhost:${BASE + 3}/`, root: '/tmp/orbit', name: 'orbit', version: '0.27.0', features: [], ws: 'f'.repeat(16), startedAt: 1, key: '' }))
+    expect(say(at(BASE + 4))).toEqual([
+      `last run was at http://localhost:${BASE + 3}/`,
+      'a tab still open there keeps its unsaved edits until this canvas runs there again (a Jam capture left unsent there waits too):',
+      'stop this canvas, then `npx marver dev --recover 2`',
+    ])
   })
 
   it('the traces an earlier marver dev leaves in design/.local, and a failed first start taking back its own', () => {

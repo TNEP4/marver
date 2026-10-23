@@ -72,6 +72,15 @@ describe('marver ls (A1.5)', () => {
     expect(out).not.toContain('instance')
   }, 30_000)
 
+  it('a canvas that is closing is listed, closing - it holds its slot until it has gone', async () => {
+    const home = freshHome()
+    mkdirSync(join(home, 'running'), { recursive: true })
+    writeFileSync(join(home, 'running', 'slot-3.json'), record({ pid: sleeper(), slot: 3, port: 4807, root: '/tmp/leaving', state: 'closing' }))
+    const rows = (await ls(home)).out.split('\n').map((l) => l.trim()).filter(Boolean)
+    expect(rows[1]).toMatch(/^3\s+http:\/\/localhost:4807\/\s+leaving\s+0\.27\.0\s+closing\s+2m\s+\/tmp\/leaving$/)
+    expect(JSON.parse((await ls(home, '--json')).out).canvases.map((c: { state: string }) => c.state)).toEqual(['closing'])
+  }, 30_000)
+
   it('no registry, or an empty one: says so, and makes none', async () => {
     const home = join(freshHome(), 'not-there')
     for (const h of [home, freshHome()]) {

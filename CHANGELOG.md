@@ -52,7 +52,8 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 ### Added
 
 - **`npx marver ls`** lists the canvases running on this Mac - slot, link, name, version, state, uptime, folder - with
-  `--json` for agents (never a canvas's key). It needs no repo; a canvas that died without stopping is left out.
+  `--json` for agents (never a canvas's key). It needs no repo; a canvas that died without stopping is left out. The
+  state is `starting`, `ready`, or `closing` once a canvas has begun to stop: it holds its slot until it has gone.
 - **`npx marver dev --recover`** starts a canvas on an address it ran on before - exactly its port, the address it
   bound and the project key that run used, never another - so a Jam capture left unsent in that browser sends itself.
   Alone it lists them, newest first, then the one 0.26 gave the folder; `--recover <n>` starts on one;

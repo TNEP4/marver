@@ -60,9 +60,11 @@ const local = (f: string) => join(root, 'design', '.local', f)
 const runningIn = (home: string) => existsSync(join(home, 'running')) ? readdirSync(join(home, 'running')) : []
 
 interface State { lock: boolean; devJson: boolean; running: string[]; inUse: boolean | null; live: string[]; signals: number }
-interface Report { ok: boolean; typed?: boolean; message?: string; port: number | null; steps: string[]; after?: State; late?: boolean; traces?: string[]; again?: { ok: boolean; message?: string; lines: string[]; port?: number }; restarted?: boolean; before?: State; now?: State; during?: State; waits?: boolean; waited?: boolean; took?: number | null; outcome?: string; bound?: boolean; replaced?: boolean; order?: string[]; released?: { bound: number; live: string[]; lock: boolean } }
+interface Report { ok: boolean; typed?: boolean; message?: string; port: number | null; steps: string[]; after?: State; late?: boolean; traces?: string[]; again?: { ok: boolean; message?: string; lines: string[]; port?: number }; restarted?: boolean; before?: State; now?: State; during?: State; waits?: boolean; waited?: boolean; took?: number | null; outcome?: string; bound?: boolean; replaced?: boolean; order?: string[]; released?: { bound: number; live: string[]; lock: boolean }; slot?: { before: Listed; during: Listed } }
+/** The start's slot file's state, as a reader finds it, and what \`marver ls\` prints for it: its rows and its --json states. */
+interface Listed { file: string[]; ls: string[]; json: string[] }
 
-const CHILD = `import { existsSync, readdirSync, writeFileSync } from 'node:fs'
+const CHILD = `import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import dns from 'node:dns'
 import { createServer } from 'node:net'
@@ -89,6 +91,7 @@ if (o.updateCheck) {
 const { dev, DevStartError } = await import(o.devModule)
 const { portInUse } = await import(o.exclusiveModule)
 const { Startup } = await import(o.startupModule)
+const { lsCommand } = await import(o.lsModule)
 // the signal listeners a package installs as it loads (signal-exit) are there before any start: counted from here
 const listening = () => ['SIGINT', 'SIGTERM', 'SIGHUP'].reduce((n, s) => n + process.listenerCount(s), 0)
 const loaded = listening()
@@ -143,6 +146,19 @@ const state = async () => ({
   signals: listening() - loaded,
 })
 const say = (v) => process.stdout.write('@@' + JSON.stringify(v) + '\\n')
+// the start's slot file as a reader finds it - its state - and what \`marver ls\` prints for it, as rows and as --json
+const listed = () => {
+  const dir = join(home, 'running')
+  const files = existsSync(dir) ? readdirSync(dir).filter((f) => /^(slot|port)-\\d+\\.json$/.test(f)) : []
+  const lines = [], log = console.log
+  console.log = (...a) => { lines.push(a.join(' ')) }
+  try {
+    lsCommand({})
+    const rows = lines.splice(0).map((l) => l.trim()).filter(Boolean).slice(1)   // under the heading
+    lsCommand({ json: true })
+    return { file: files.map((f) => JSON.parse(readFileSync(join(dir, f), 'utf8')).state), ls: rows, json: JSON.parse(lines.join('\\n')).canvases.map((c) => c.state) }
+  } finally { console.log = log }
+}
 try {
   const server = await dev(o.root, { at })
   let restart = {}
@@ -177,6 +193,7 @@ try {
       lookingUp = true
       try { return listen.apply(this, args) } finally { lookingUp = false }
     }
+    const before = listed()
     restarting = true
     const restarted = server.restart().then(() => { order.push('restart'); return 'resolved' }, (e) => 'rejected: ' + e.message)
     await there
@@ -186,7 +203,7 @@ try {
     // the close has had its moment: what it would give back at once is gone by now - and the claims stay while the new
     // server could still bind, the close waiting for it
     await new Promise((r) => setTimeout(r, 300))
-    const during = await state()
+    const during = await state(), slot = { before, during: listed() }
     const waits = !closedYet
     go()
     await closed
@@ -200,7 +217,7 @@ try {
       try { const a = await dev(o.root, {}); again = { ok: true, port: a.httpServer.address().port, lines: [] }; await a.close() }
       catch (e) { again = { ok: false, message: e.message, lines: [] } }
     }
-    say({ ok: true, port, steps, during, waits, outcome, bound, replaced: server.httpServer !== old, order, released, after, again })
+    say({ ok: true, port, steps, during, slot, waits, outcome, bound, replaced: server.httpServer !== old, order, released, after, again })
     held = null
   } else if (o.closeInDispose) {
     // a restart whose new server throws (at o.restartThrows): Vite says so and serves on with the old one, and what the
@@ -210,6 +227,7 @@ try {
     let reached, go
     const there = new Promise((r) => { reached = r }), gate = new Promise((r) => { go = r })
     holdDispose = { reached, gate }
+    const before = listed()
     restarting = true
     const restarted = server.restart().then(() => { order.push('restart'); return 'resolved' }, (e) => 'rejected: ' + e.message)
     await there
@@ -219,7 +237,7 @@ try {
     let closedYet = false, took = null
     void closed.then(() => { closedYet = true; took = Date.now() - asked; order.push('close') }, () => { closedYet = true; order.push('close') })
     await new Promise((r) => setTimeout(r, 300))
-    const during = await state()
+    const during = await state(), slot = { before, during: listed() }
     const waits = !closedYet
     if (o.slowDispose) await new Promise((r) => setTimeout(r, o.slowDispose))
     const waited = !closedYet
@@ -227,7 +245,7 @@ try {
     await closed
     const outcome = await restarted
     restarting = false
-    say({ ok: true, port, steps, during, waits, waited, took, outcome, order, released, after: await state() })
+    say({ ok: true, port, steps, during, slot, waits, waited, took, outcome, order, released, after: await state() })
   } else if (o.restart) {
     // an .env edit: Vite restarts in place - a new HTTP server on this same object, listening on the same port
     const before = await state(), http = server.httpServer
@@ -290,7 +308,7 @@ function start(o: { fail?: string; pause?: string; race?: boolean; hold?: boolea
   const c = spawn(process.execPath, ['--experimental-strip-types', '--no-warnings', '--import', pathToFileURL(join(repo, 'test', 'fixtures', 'marver-handles.mjs')).href, '--input-type=module', '-e', CHILD], {
     cwd: at, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, MARVER_HOME: home, MARVER_SLOT_BASE: BASE, MARVER_NO_UPDATE_CHECK: '1', CI: '1', BROWSER: 'none', MV_HANDLES_SRC: join(repo, 'src') + '/',
-      MV_START: JSON.stringify({ ...o, root: at, devModule: join(repo, 'src', 'server', 'dev.ts'), exclusiveModule: join(repo, 'src', 'server', 'exclusive.ts'), startupModule: join(repo, 'src', 'server', 'startup.ts') }) },
+      MV_START: JSON.stringify({ ...o, root: at, devModule: join(repo, 'src', 'server', 'dev.ts'), exclusiveModule: join(repo, 'src', 'server', 'exclusive.ts'), startupModule: join(repo, 'src', 'server', 'startup.ts'), lsModule: join(repo, 'src', 'cli', 'ls.ts') }) },
   })
   children.push(c)
   let out = '', err = ''
@@ -518,7 +536,8 @@ describe('a close while a restart is on its way is the start\'s end (A1.1)', () 
   // from within the restart - and are never taken for it); while Vite closes the old server to put the new one in place;
   // once Vite has put the new one in place on the start's server object (its methods, close and restart among them,
   // copied over it), before that one binds; or once its listen is past every check of Marver's, Node looking 'localhost'
-  // up before it binds. Whichever: the claims go back last, once nothing of the start can bind or serve
+  // up before it binds. Whichever: the claims go back last, once nothing of the start can bind or serve - and from the
+  // moment the close is asked for, the slot file says closing, never ready
   const cases = [
     { at: 'env', then: 'fail' }, { at: 'env', then: 'made' },
     { at: 'configure', then: 'fail' }, { at: 'configure', then: 'made' },
@@ -531,11 +550,16 @@ describe('a close while a restart is on its way is the start\'s end (A1.1)', () 
   const when = (c: (typeof cases)[number]) => c.at === 'replace' ? 'Vite puts the new server in place'
     : c.at === 'listen' ? 'the new server is in place, before it binds'
     : `the new server is made (held at "${c.at}", then ${c.then === 'fail' ? 'thrown' : 'made'})${'from' in c ? by[c.from] : ''}`
-  /** The claims stay while the close waits - the old server still closing (`replace`) bound, else nothing listening. */
+  /** The claims stay while the close waits - the old server still closing (`replace`) bound, else nothing listening -
+   *  and the slot file, `ready` until the close, says `closing` all the while: `marver ls` lists it so, rows and --json. */
   const holding = (r: Report, inUse: boolean) => {
     const { live: _live, signals: _signals, ...during } = r.during!
-    expect(during, 'the claims stay while the close waits').toEqual({ lock: true, devJson: true, running: [`slot-${r.port! - Number(BASE)}.json`], inUse })
+    const n = r.port! - Number(BASE)
+    expect(during, 'the claims stay while the close waits').toEqual({ lock: true, devJson: true, running: [`slot-${n}.json`], inUse })
     expect(r.waits).toBe(true)
+    const row = (state: string) => new RegExp(`^${n}\\s+http://localhost:${r.port}/\\s+mv-startup-\\S+\\s+\\S+\\s+${state}\\s+\\S+\\s+/`)
+    expect(r.slot!.before).toEqual({ file: ['ready'], ls: [expect.stringMatching(row('ready'))], json: ['ready'] })
+    expect(r.slot!.during, 'the slot file says closing while the close waits').toEqual({ file: ['closing'], ls: [expect.stringMatching(row('closing'))], json: ['closing'] })
   }
   /** The claims went back last: after what the restart's server made was closed, nothing of the start bound or running. */
   const releasedLast = (r: Report, order: string[]) => {
@@ -584,7 +608,7 @@ describe('a close while a restart is on its way is the start\'s end (A1.1)', () 
   }, 60_000)
 
   for (const step of ['env', 'configure'] as const) {
-    it(`closed while what a new server that threw at "${step}" made is still closing: the claims held until that is closed, then given back, the close returning after`, async () => {
+    it(`closed while what a new server that threw at "${step}" made is still closing: the claims held until that is closed - the slot file saying closing meanwhile, and \`marver ls\` listing it so - then given back, the close returning after`, async () => {
       const s = start({ closeInDispose: true, restartThrows: step })
       const r = await s.report
       expect(r.ok, s.out()).toBe(true)

@@ -10,6 +10,9 @@
  *   is bound, or about to be.
  * - closers: what runs (Marver's watchers, sweeps and timers, the Vite server). Closed, awaited, on a
  *   failed start or a close; an exit or a signal ends them with the process.
+ * A close says so first, before anything closes (`onClose`: the slot file rewritten as `closing`, dev.ts), since
+ * its claims stay until the end and what it waits for can take long: no reader takes a canvas whose serving has
+ * ended for one that serves. An exit or a signal gives the claims back at once, so it has nothing to say.
  * A Vite restart (an .env edit) is no way out: it replaces the server and keeps the start (dev.ts).
  */
 const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const
@@ -20,9 +23,13 @@ export class Startup {
   private closing: Promise<void> | null = null
   private hooked: { exit: () => void; signal: (sig: NodeJS.Signals) => void } | null = null
   private say: (() => void) | null = null
+  private marks: (() => void)[] = []
 
   /** What a signal says before it ends the process (dev.ts: once the canvas serves, that it stopped). Synchronous. */
   onSignal(say: () => void): void { this.say = say }
+  /** What a close says first, as it is asked for and before anything closes (dev.ts: the slot file, `closing`).
+   *  Synchronous; each runs once, and a failure to say it never holds the close. */
+  onClose(mark: () => void): void { this.marks.push(mark) }
 
   /** A file held: given back on every way out. */
   claim(release: () => void): void { this.claims.push(release) }
@@ -38,11 +45,13 @@ export class Startup {
     for (const r of this.claims.splice(0).reverse()) { try { r() } catch { /* already gone */ } }
   }
 
-  /** Close what runs, newest first and awaited, then what `until` waits for (dev.ts: every restart's own server, to
-   *  its last cleanup), and only then give back the claims. Idempotent: Vite's own SIGTERM path and an embedding
-   *  caller's `server.close()` can both reach it - the first close's `until` is the one. */
+  /** Say it is closing (synchronously, in this call), close what runs, newest first and awaited, then what `until`
+   *  waits for (dev.ts: every restart's own server, to its last cleanup), and only then give back the claims.
+   *  Idempotent: Vite's own SIGTERM path and an embedding caller's `server.close()` can both reach it - the first
+   *  close's `until` is the one. */
   close(until?: () => Promise<unknown>): Promise<void> {
     this.closing ??= (async () => {
+      for (const m of this.marks.splice(0)) { try { m() } catch { /* saying it never holds the close */ } }
       for (const c of this.closers.splice(0).reverse()) { try { await c() } catch { /* closing what failed */ } }
       if (until) { try { await until() } catch { /* closing what failed */ } }
       this.release()

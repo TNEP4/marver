@@ -261,7 +261,7 @@ const STOPPED = 'canvas stopped - open tabs keep their edits and save when it is
 /**
  * Start the canvas (spec 28 A1.1): 1. dev.lock, 2. an address - a slot, a port of its own, or
  * --recover's - held as a file, 3. Vite's server, 4. listening on exactly that port, 5. published: the
- * slot file as ready, dev.json, 6. the close. Every step's claims belong to one Startup, so a failure
+ * slot file as ready, dev.json, 6. the close (the slot file `closing` first). Every step's claims belong to one Startup, so a failure
  * anywhere closes what was made and gives back what was held, and `dev()` rejects with a DevStartError -
  * it never ends the process itself (the CLI does, A1.13 #4), so an embedding caller is left clean.
  */
@@ -321,6 +321,9 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
   })
   if (!placed.ok) throw new DevStartError(placed.message)
   const { claim } = placed
+  // a close, whatever asks for it, first rewrites the slot file `closing` - still held, the file gone last, once nothing
+  // of the start can bind or serve: however long that takes, `marver ls` and the app never read `ready` meanwhile
+  t.onClose(() => claim.closing())
   for (const n of placed.notes) console.log(`  ${n}`)
   await opts.at?.('claimed', { port: claim.port })
 
@@ -764,7 +767,8 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
   // only until that turn ends (a test reads Vite's restart for that order: startup.test.ts). It closes the old server
   // alone (Marver's watchers go with its HTTP server); the claims, dev.json, the slot file and the process hooks stay.
   // Any other close, at any point of a restart - a timer set off while the new server was made among them - is the
-  // start's end: it closes what runs at once - the server serving, which is the old one until the new one listens, and
+  // start's end: it rewrites the slot file `closing` (held still), then closes what runs at once - the server serving,
+  // which is the old one until the new one listens, and
   // Marver's things - but not the new server, which the restart closes once Vite is done with it (closed half-made, Vite
   // would go on making it; closed while it binds, Vite's close, which runs once, would find nothing bound and leave the
   // socket open): Vite's close of the old server is then refused, so the new one is never put in place, and one in place
@@ -773,7 +777,8 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
   // for every restart to be over (`restarts`), to its last cleanup - its server closed, what a server that could not be
   // made made, closed - however long that takes, and only then gives back the claims and the process hooks, last: while
   // anything of the start could still bind or serve, its lock, slot file and dev.json stay, and no starter finds the slot
-  // free. No restart awaits that end, so the wait ends. The one close a restart awaits is its own end when its new server
+  // free - the slot file saying `closing` all the while, so `marver ls` and the app never take it for a canvas that
+  // serves. No restart awaits that end, so the wait ends. The one close a restart awaits is its own end when its new server
   // cannot listen, which never waits on that restart (the server it put in place closes with what runs). An exit or a
   // signal still gives the claims back at once, synchronously: the process ends, and its sockets with it. That reading of
   // Vite's restart is Vite 8.2's, not a contract: package.json takes vite ~8.2 only, and a test reads Vite's restart for
