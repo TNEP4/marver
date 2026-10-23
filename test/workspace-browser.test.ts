@@ -384,9 +384,11 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
     expect(await browser.eval(s, `window.__mark`)).toBe(3)
     expect(await browser.eval(s, `document.getElementById('typed-late')?.value`)).toBe('typed while it saved')
     expect(await browser.eval(s, `__mvLink.getState().link`)).toBe('live')
-    // sent (the field empties): nothing holds it, and it reloads on its own canvas
+    // sent (the field empties): nothing holds it, and it reloads on its own canvas - saying the save the reload waited
+    // after was made, though nothing was left to save when it came
     await browser.eval(s, `(() => { const t = document.getElementById('typed-late'); t.value = ''; t.dispatchEvent(new Event('input', { bubbles: true })); return 1 })()`)
     await browser.until(s, `window.__mark === undefined && !!window.__mvStore && document.querySelectorAll('.sh-node').length === 2`, 15_000)
+    await browser.until(s, `__mvStore.getState().toasts.some((t) => t.text === 'Back - your edits were saved')`, 5_000)
     expect(await browser.eval(s, `__mvStore.getState().nodes.find((n) => n.key === 'n-home').x`)).toBe(Math.round(x + 70))
   }, 240_000)
 
@@ -438,5 +440,49 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
     await wait(500)
     expect(await browser.eval(s, saidBack)).toBe(false)
     expect(existsSync(join(rootA, 'design', 'boards', 'other.json'))).toBe(false)
+  }, 240_000)
+
+  it('back after the board changed on disk meanwhile, words not sent holding the reload: once they are sent it reloads, and the reloaded page still says the file won', async (ctx) => {
+    if (!browser) return ctx.skip()
+    await stopDev(b, PORT); b = null
+    a ??= await startDev(rootA, PORT)
+    const s = await browser.tab({ width: 1400, height: 900 })
+    await browser.go(s, `${ORIGIN}/#/b/main`)
+    await browser.until(s, `(() => { const t = (k) => document.querySelector('[data-node="' + k + '"] iframe')?.contentDocument?.getElementById('who')?.textContent; return t('n-home') === 'A' && t('n-page') === 'A' })()`, 30_000)
+    const DISK_WON = 'board changed on disk - canvas layout reloaded'
+    const said = (text: string) => `__mvStore.getState().toasts.some((t) => t.text === ${JSON.stringify(text)})`
+    const saidBack = `__mvStore.getState().toasts.some((t) => t.text.startsWith('Back'))`
+    const file = join(rootA, 'design', 'boards', 'main.json')
+    const onDisk = (key: string) => JSON.parse(readFileSync(file, 'utf8')).nodes.find((n: any) => n.key === key).x
+
+    // the canvas stops with a move only this tab holds, and words typed and not sent; an agent writes the board meanwhile
+    await browser.eval(s, `window.__mark = 7`)
+    await stopDev(a, PORT); a = null
+    await browser.until(s, `__mvLink.getState().link === 'down' && !!document.querySelector('.sh-stopped')`, 5_000)
+    const x = await browser.eval(s, `__mvStore.getState().nodes.find((n) => n.key === 'n-home').x`)
+    await browser.eval(s, `__mvStore.getState().moveNode('n-home', ${x} + 50, 0)`)
+    await browser.eval(s, `(() => { const t = document.createElement('textarea'); t.id = 'typed-disk'; document.body.appendChild(t); t.value = 'not sent yet'; t.dispatchEvent(new Event('input', { bubbles: true })); return 1 })()`)
+    const agent = JSON.parse(readFileSync(file, 'utf8'))
+    const page = agent.nodes.find((n: any) => n.key === 'n-page').x + 130
+    agent.nodes.find((n: any) => n.key === 'n-page').x = page
+    writeFileSync(file, JSON.stringify(agent, null, 2) + '\n')
+
+    // back: the save meets the changed file and the file wins, said on this page - which stays, the words holding it
+    a = await startDev(rootA, PORT)
+    await browser.until(s, `__mvLink.getState().link === 'live' && ${said(DISK_WON)}`, 15_000)
+    await wait(2500)
+    expect(await browser.eval(s, `window.__mark`)).toBe(7)
+    expect(await browser.eval(s, `document.getElementById('typed-disk')?.value`)).toBe('not sent yet')
+
+    // sent (the field empties): nothing holds it, it reloads - and the reloaded page says the file won, never "Back"
+    await browser.eval(s, `(() => { const t = document.getElementById('typed-disk'); t.value = ''; t.dispatchEvent(new Event('input', { bubbles: true })); return 1 })()`)
+    await browser.until(s, `window.__mark === undefined && !!window.__mvStore && document.querySelectorAll('.sh-node').length === 2`, 15_000)
+    await browser.until(s, said(DISK_WON), 5_000)
+    await wait(500)
+    expect(await browser.eval(s, saidBack)).toBe(false)
+    // the tab's move never reached the disk; the agent's is there, and the page shows the file
+    expect(onDisk('n-home')).toBe(Math.round(x))
+    expect(onDisk('n-page')).toBe(page)
+    expect(await browser.eval(s, `__mvStore.getState().nodes.find((n) => n.key === 'n-home').x`)).toBe(Math.round(x))
   }, 240_000)
 })

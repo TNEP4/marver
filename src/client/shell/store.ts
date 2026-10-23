@@ -4,7 +4,7 @@ import { tidy, parseLayout, type BoardLayout, type TidyNode } from './tidy.ts'
 import { clearNoteHeights, noteHeight, noteReserve, notesCramped, scopeNotes, setNoteHeight } from './notes.ts'
 import { stableNodeKey } from './keys.ts'
 import { canvasCtl } from './canvas/ctl.ts'
-import { api, beforeResume, canvasStopped, holdsReload, lostInResume, mvFetch, noteUnsaved, onLinkNotice, scoped, STOPPED_WAY, withWs } from './api.ts'
+import { api, beforeResume, canvasStopped, holdsReload, lostInResume, mvFetch, noteUnsaved, onLinkNotice, savedInResume, scoped, STOPPED_WAY, withWs } from './api.ts'
 // @ts-expect-error virtual module provided by the plugin
 import shConfig from 'virtual:sh-config'
 // @ts-expect-error virtual module: null in dev; a published build inlines manifest+boards
@@ -2131,6 +2131,7 @@ export const useStore = create<State>((set, get) => {
             const { sha256 } = await res.json()
             // an edit that landed after this save started keeps dirty set for the next save
             set({ boardHash: sha256, ...(editRev === rev ? { dirty: false } : {}) })
+            savedInResume()   // a resume's save: the page after its reload says the edits were saved
             return true
           }
           return false

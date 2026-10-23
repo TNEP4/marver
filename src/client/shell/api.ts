@@ -111,10 +111,8 @@ async function probe() {
 
 async function resume() {
   const back = useLink.getState().link !== 'live'      // from a stop; 'live' is a page that owes a reload
-  const had = held()                                   // what only this page held: saved below, or the page stays
   if (back) useLink.setState({ link: 'resuming' })     // requests flow again: the flushers use them
   let ok = true
-  lostOnResume = null
   flushing = true
   try { for (const fn of flushers) ok = (await fn().catch(() => false)) && ok } finally { flushing = false }
   const now = useLink.getState().link
@@ -122,10 +120,12 @@ async function resume() {
   // asked here, with nothing awaited between the answer and the reload: words typed or an edit made while a
   // flusher waited on the server hold it too
   if (ok && held()) ok = false
-  // a fresh document on the canvas that answered: live updates again
-  if (hmrLost && ok) { keepOverReload(lostOnResume ?? (back && had ? 'saved' : null)); return void location.reload() }
+  // a fresh document on the canvas that answered: live updates again - and the next page says what the resumes came to,
+  // this one's and those this reload waited after (a draft, a capture), whose toasts go with this page
+  if (hmrLost && ok) { keepOverReload(lostOnResume ?? (savedOnResume ? 'saved' : null)); return void location.reload() }
   if (back || useLink.getState().shown) useLink.setState({ link: 'live', shown: false })
-  if (!hmrLost) return
+  // no reload owed (Vite's socket held): the page goes on as it is, and what this resume came to was said on it
+  if (!hmrLost) { lostOnResume = null; savedOnResume = false; return }
   // Vite's socket never comes back (its client waits on the listener below), so this page owes a reload:
   // until nothing holds it (a capture recording, words not sent) it works as live, keeps asking - a stop
   // is seen again - and reloads the moment it may
@@ -146,15 +146,22 @@ export function stranded(f: HTMLIFrameElement | null): boolean {
 
 // ---- over the resume's own reload: where the person was looking, and what its save came to --------------------
 
-/** What the resume's save came to, said by the page after its reload: 'saved' - what only this tab held reached the
- *  disk; 'disk' - the board's file changed on disk meanwhile and won, the tab's board edits dropped; 'gone' - the board
+/** What the resume's save came to, said by the page after its reload: 'saved' - the board edits only this tab held
+ *  reached the disk; 'disk' - the board's file changed on disk meanwhile and won, the tab's board edits dropped; 'gone' - the board
  *  was renamed or removed meanwhile and is not created again; null - there was nothing to save. */
 export type ResumeOutcome = 'saved' | 'disk' | 'gone' | null
 let flushing = false
+/** What the resumes came to - the board save's own word, lost or saved - kept until the reload that carries it: a
+ *  resume whose reload is held (a draft, a capture) is not the last one, and the one that reloads at last may have
+ *  nothing left to save. Each later resume only adds to it - the first loss stays, and a loss outranks a save. A resume
+ *  that owes no reload (Vite's socket held) ends it. */
 let lostOnResume: 'disk' | 'gone' | null = null
+let savedOnResume = false
 /** The board save, while the resume's flushers run: what this tab held did not reach the disk (store.ts) - the page
  *  after the reload says what happened instead, never that the edits were saved. */
-export function lostInResume(why: 'disk' | 'gone') { if (flushing) lostOnResume = why }
+export function lostInResume(why: 'disk' | 'gone') { if (flushing) lostOnResume ??= why }
+/** The board save, while the resume's flushers run: what this tab held reached the disk (store.ts). */
+export function savedInResume() { if (flushing) savedOnResume = true }
 
 const RESUMED = 'mv-resumed'
 const keepers = new Set<() => Record<string, unknown>>()

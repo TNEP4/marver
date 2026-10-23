@@ -99,8 +99,8 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   says "board changed on disk - canvas layout reloaded" instead; a board renamed or removed meanwhile is not created
   again, and that is what it says. If something holds the reload - a capture recording, finishing or still
   on its way to the canvas, words typed and not sent, an unsaved Jam edit or note, a frame mid-drag - it works as
-  live, says "marver dev is back - this page reloads once nothing is in progress", and reloads once nothing does.
-  Leaving a stopped tab with unsaved board edits asks first.
+  live, says "marver dev is back - this page reloads once nothing is in progress", and reloads once nothing does -
+  still saying what its save came to. Leaving a stopped tab with unsaved board edits asks first.
 - **Editing `.env` no longer stops Live Jam.** Vite restarts the canvas's server in place when an `.env` file
   changes, and 0.26 took that for a stop: Live Jam stopped, the working glow and comments written from the terminal
   no longer reached the page at once, and `marver shot`, `work` and `link` lost the canvas. Now only the server
