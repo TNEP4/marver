@@ -96,11 +96,25 @@ export async function launchWindow(kind: 'pw' | 'prod', o: {
 }
 
 /** A page script: answers every beforeunload with a refusal (until `window.__mayLeave`), and tells the server each time. */
-export const REFUSE_UNLOAD = `addEventListener('beforeunload', function (e) { if (window.__mayLeave) return; try { navigator.sendBeacon('/__mv/test/beforeunload') } catch (x) {} e.preventDefault(); e.returnValue = '' });`
+export const REFUSE_UNLOAD = `addEventListener('beforeunload', function (e) { if (window.__mayLeave) return; try { navigator.sendBeacon('/__mv/test/beforeunload') } catch (x) {} e.preventDefault(); e.returnValue = '' }); say('script');`
 /** Let every refusing page go, so the case's last quit can go through. */
 export const MAY_LEAVE = 'window.__mayLeave = true; 1'
 /** A page script: swallows every key, telling the server which. */
 export const SWALLOW_KEYS = `addEventListener('keydown', function (e) { e.preventDefault(); e.stopImmediatePropagation(); try { navigator.sendBeacon('/__mv/test/key-' + encodeURIComponent(e.key)) } catch (x) {} }, true);`
 
 export const hits = (f: FakeCanvas, path: string) => f.requests.filter((r) => r.path === path).length
+
+/**
+ * The fake page's own script has run (a page script that ends with `say('script')` - REFUSE_UNLOAD does - reports
+ * it; `n` documents so far). A commit comes before the document's scripts: a case that needs its listeners waits.
+ * (Not the first animation frame: an occluded window's page gets none outside Playwright's switches.)
+ */
+export async function scripted(f: FakeCanvas, n = 1, ms = 10_000): Promise<void> {
+  const end = Date.now() + ms
+  while (hits(f, '/__mv/test/script') < n) {
+    if (Date.now() > end) throw new Error(`the fake page's script never reported (${hits(f, '/__mv/test/script')} of ${n})`)
+    await new Promise((r) => setTimeout(r, 25))
+  }
+}
+
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))

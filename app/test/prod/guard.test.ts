@@ -6,7 +6,7 @@
  * operation per canvas tab.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { hits, launchWindow, MAY_LEAVE, REFUSE_UNLOAD, sleep, type WindowRun } from '../harness/window.ts'
+import { hits, launchWindow, MAY_LEAVE, scripted, REFUSE_UNLOAD, sleep, type WindowRun } from '../harness/window.ts'
 
 let w: WindowRun
 beforeAll(async () => { w = await launchWindow('prod') })
@@ -16,6 +16,7 @@ async function shown(o: Parameters<WindowRun['canvas']>[0] = {}) {
   const c = await w.canvas(o)
   await w.run.call('activate', { id: c.id })
   await w.until((x) => !!x.tabs.find((t) => t.id === c.id)?.doc?.lifted && x.tabs.find((t) => t.id === c.id)!.retained, 10_000, `${c.id} lifted`)
+  if (o.script?.includes("say('script')")) await scripted(c.fake)   // its script ran: its beforeunload listener is in place
   return c
 }
 const gesture = (id: string) => w.run.call('exec', { target: id, js: 'document.body.click(); 1', gesture: true })
@@ -58,11 +59,12 @@ describe('a fresh, clean record: the act, the page\'s beforeunload a best-effort
   })
 
   it('reload: the refusal holds only after a gesture since load; without one Chromium goes on', async () => {
-    const { id } = await shown({ slot: 3, script: REFUSE_UNLOAD })
+    const { id, fake } = await shown({ slot: 3, script: REFUSE_UNLOAD })
     await w.report(id, { unsaved: false })
     const before = await commits(id)
     expect(await w.run.call('guard', { id, action: { kind: 'reload' } })).toBe('done')
     await w.until((x) => (x.tabs.find((t) => t.id === id)!.doc?.commits ?? 0) > before && !!x.tabs.find((t) => t.id === id)!.doc?.lifted, 10_000, 'the reload')
+    await scripted(fake, 2)
     await w.report(id, { unsaved: false })
     await gesture(id)
     const mid = await commits(id)

@@ -654,10 +654,13 @@ function pathOf(url: string): string | null {
 }
 
 /** A report from the admitted document (the bridge checked its `doc`, its trust and every field). */
-export function onReport(tabId: string, doc: string, r: { busy?: Busy; theme?: Theme; menu?: MenuItem[] }): void {
+export function onReport(tabId: string, doc: string, r: { safety?: Safety; busy?: Busy; theme?: Theme; menu?: MenuItem[] }): void {
   const t = tabs.get(tabId)
-  if (!t?.doc?.trusted || t.doc.doc !== doc) return
+  if (!t?.doc || !doc || t.doc.doc !== doc) return
   const p = P()
+  // the bridge's own word on the document's safety: it goes stale when trust goes while the document lives
+  if (r.safety === 'stale' && t.reports.safety !== 'stale') { t.reports.safety = 'stale'; t.reports.menu = undefined; p.changed() }
+  if (!t.doc.trusted) return
   if (r.busy) {
     // busy is any reason, unsaved any of the first five: a message where they disagree is refused (A2.14 #18)
     if (r.busy.unsaved !== r.busy.why.some((w) => (UNSAVED_WHY as readonly string[]).includes(w)) || r.busy.busy !== r.busy.why.length > 0) return

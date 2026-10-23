@@ -113,5 +113,8 @@ export function fakeTrust(): TrustPort {
     entryFor: (t) => (t.reg ? entries.get(t.reg.instance) : undefined),
     onRegistry(fn) { regFns.add(fn); return () => regFns.delete(fn) },
     onReport(fn) { reportFns.add(fn); return () => reportFns.delete(fn) },
+    appState(tabId, s) { note('fake-trust', { appState: s, tab: tabId }); return true },
+    menuClick(tabId, id) { note('fake-trust', { menuClick: id, tab: tabId }); return true },
+    reopenNext(tabId) { note('fake-trust', { reopenNext: tabId }) },
   }
 }

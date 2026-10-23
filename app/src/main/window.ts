@@ -42,6 +42,8 @@ export interface WindowDeps {
   wire(wc: WebContents, kind: PageKind, tabId?: string): void
   /** the window's red button and ⇧⌘W hide it; the quit itself is main.ts's guarded quit */
   quitting(): boolean
+  /** the bridge's send (it checks the page is ready and on its pinned document); else main sends itself */
+  send?(wc: WebContents, channel: string, payload: unknown): boolean
 }
 
 let win: BaseWindow | null = null
@@ -114,7 +116,8 @@ let pillBody: unknown = null
 
 function send(wc: WebContents | undefined, channel: string, payload: unknown): void {
   if (!wc || wc.isDestroyed() || !ready.has(wc)) return
-  wc.send(channel, payload)
+  if (deps?.send) deps.send(wc, channel, payload)
+  else wc.send(channel, payload)
 }
 
 /** Every app page's webContents main made, with its kind. */
@@ -141,7 +144,7 @@ export function onAppReady(wc: WebContents): void {
     if (h?.body) send(wc, CH.tabpage, { rev: h.rev, ...h.body })   // the latest, under the rev it already has
   }
   const f = heldFocus.get(wc)
-  if (f) { heldFocus.delete(wc); wc.send(CH.pageFocus, f) }
+  if (f) { heldFocus.delete(wc); send(wc, CH.pageFocus, f) }
 }
 
 function registerApp(wc: WebContents, kind: PageKind, tabId?: string): void {
@@ -156,7 +159,7 @@ function registerApp(wc: WebContents, kind: PageKind, tabId?: string): void {
 /** `page:focus`, held until the page says ready (A2.13). */
 export function sendPageFocus(wc: WebContents, f: PageFocus): void {
   if (wc.isDestroyed()) return
-  if (ready.has(wc)) wc.send(CH.pageFocus, f)
+  if (ready.has(wc)) send(wc, CH.pageFocus, f)
   else heldFocus.set(wc, f)
 }
 

@@ -23,7 +23,7 @@ import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, re
 import { homedir, totalmem } from 'node:os'
 import { join } from 'node:path'
 import { app, dialog, Menu, nativeTheme, powerMonitor, shell, WebContentsView, type MenuItemConstructorOptions, type Session, type WebContents } from 'electron'
-import type { PageKind, TabPageAction } from '../shared/channels.ts'
+import { CH, type PageKind, type TabPageAction } from '../shared/channels.ts'
 import { startCommand } from '../shared/command.ts'
 import { effects } from './effects.ts'
 import type { AppState, MenuItem } from '../../../src/shared/app-api.ts'
@@ -70,6 +70,22 @@ export interface TrustPort {
   entryFor(t: Tab): RegistryEntry | undefined
   onRegistry(fn: (e: RegistryEvent) => void): () => void
   onReport(fn: (tabId: string, doc: string, r: CanvasReports) => void): () => void
+  /** `mv:app-state` to the tab's admitted, trusted document (stamped with its `doc`); `untrusted` is the bridge's own */
+  appState(tabId: string, s: AppState): boolean
+  /** `mv:menu-click` to the tab's admitted, trusted document, for an item its last `mv:menu` offers */
+  menuClick(tabId: string, id: string): boolean
+  /** the tab's next `mv:doc` answers `{ reopen: true }`, once (`recover`'s reload, A2.14 #9) */
+  reopenNext(tabId: string): void
+  /** what answers on a failed tab's address (v1.14 r3 #4); views.ts probes by itself without it */
+  probe?(t: Tab): Promise<'silent' | 'answers' | 'proved'>
+  /** the tab's logo, proved like the document (A2.4): a checked `data:` URL, or null */
+  fetchLogo?(t: Tab): Promise<string | null>
+  /** the bridge's app-page plumbing (A2.14 #19): when present, the window stream's handlers are mounted on it */
+  pages?: {
+    onReady(fn: (wc: WebContents) => void): void
+    handle(channel: string, fn: (wc: WebContents, payload: unknown) => unknown): void
+    send(wc: WebContents, channel: string, payload: unknown): boolean
+  }
 }
 
 /**
@@ -429,6 +445,7 @@ async function notResponding(t: Tab): Promise<void> {
 
 async function probe(t: Tab): Promise<'silent' | 'answers' | 'proved'> {
   if (!t.reg?.origin) return 'silent'
+  if (trust.probe) return trust.probe(t)
   const ses = await trust.session(t.reg.ws)
   const origin = t.reg.origin
   try {
@@ -534,6 +551,40 @@ export async function openInTab(e: LinkTarget, url: string | null, rest: string)
   return (await guard(t, { kind: 'load', url })) === 'done' ? { ok: true } : { ok: false, why: 'refused' }
 }
 
+/**
+ * A canvas's same-origin `window.open` of its own shell document (sessions.ts `onSameCanvasOpen`, A2.14 #4): that
+ * canvas's tab, focused and taken there - with no question when only the hash changes, else through the guard.
+ * One local tab per canvas in app 0.1. `url` is already rebuilt on the tab's bound origin and checked.
+ */
+export function openSameCanvas(webContentsId: number, url: string): void {
+  const t = allTabs().find((x) => contentView(x.id)?.webContents.id === webContentsId)
+  if (!t || t.kind !== 'local') return
+  activate(t.id)
+  const wc = contentView(t.id)?.webContents
+  if (wc && t.doc?.url && noHash(t.doc.url) === noHash(url)) { void wc.loadURL(url).catch(() => {}); return }
+  void guard(t, { kind: 'load', url })
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The logo (A2.4): fetched once the entry is ready, on each new instance and when the tab is shown; proved like the
+// document by the trust stream's fetchLogo. At most one in flight per tab; applied only if the tab, its instance and
+// its document are unchanged; never for an unverified tab.
+
+const logoFetch = new Map<string, number>()
+let logoSeq = 0
+function refreshLogo(t: Tab): void {
+  if (!trust.fetchLogo || t.kind !== 'local' || t.reg?.state !== 'ready' || t.fail?.why === 'unverified') return
+  const seq = ++logoSeq
+  logoFetch.set(t.id, seq)
+  const at = { instance: t.reg.instance, commits: t.doc?.commits ?? 0 }
+  void trust.fetchLogo(t).then((url) => {
+    if (logoFetch.get(t.id) !== seq) return
+    logoFetch.delete(t.id)
+    if (!getTab(t.id) || t.reg?.instance !== at.instance || (t.doc?.commits ?? 0) !== at.commits || t.fail?.why === 'unverified') return
+    if (t.logo !== (url ?? undefined)) { t.logo = url ?? undefined; compose() }
+  }, () => { if (logoFetch.get(t.id) === seq) logoFetch.delete(t.id) })
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // The app pages' messages: the bridge calls these once it has checked the sender (kind, main frame, own URL) and
 // every field (channels.ts SENDERS). Each acts on main's own records alone.
@@ -557,7 +608,7 @@ function tabAct(k: MenuToken, what: 'activate' | 'open-browser' | 'reveal' | 'co
     case 'reveal': reveal(t); return
     case 'copy-link': if (link && t.doc?.trusted) effects.copy(link); return
     case 'close': void closeTab(t.id); return
-    case 'mark-all-seen': if (t.doc?.trusted) contentView(t.id)?.webContents.send('mv:menu-click', { id: 'mark-all-seen' }); return
+    case 'mark-all-seen': if (t.doc?.trusted) trust.menuClick(t.id, 'mark-all-seen'); return
   }
 }
 
@@ -653,6 +704,18 @@ export const pageHandlers = {
   },
 }
 
+/** The bridge checked the sender (kind, main frame, its pinned URL) and every field; these act on main's records. */
+function mountPages(pages: NonNullable<TrustPort['pages']>): void {
+  const o = (p: unknown) => (p ?? {}) as Record<string, unknown>
+  pages.onReady((wc) => onAppReady(wc))
+  pages.handle(CH.tabActivate, (_wc, p) => pageHandlers.tabActivate(String(o(p).id)))
+  pages.handle(CH.tabClose, (_wc, p) => pageHandlers.tabClose(String(o(p).id)))
+  pages.handle(CH.tabMenu, (_wc, p) => pageHandlers.tabMenu(String(o(p).id), Number(o(p).x), Number(o(p).y)))
+  pages.handle(CH.tabsMore, (_wc, p) => pageHandlers.tabsMore(((o(p).ids as unknown[]) ?? []).map(String), Number(o(p).x), Number(o(p).y)))
+  pages.handle(CH.pillAction, (_wc, p) => pageHandlers.pillAction(Number(o(p).rev), o(p).act === 'dismiss' ? 'dismiss' : 'button'))
+  pages.handle(CH.tabpageAction, (wc, p) => pageHandlers.tabpageAction(wc, Number(o(p).rev), String(o(p).action) as TabPageAction))
+}
+
 function details(t: Tab): string {
   return copyDetails(t, {
     app: app.getVersion(), electron: process.versions.electron, chrome: process.versions.chrome, marver: t.reg?.version,
@@ -664,7 +727,7 @@ function details(t: Tab): string {
 function canvasClick(k: MenuToken, id: string): void {
   const t = getTab(k.tab)
   if (!t || !holds(k) || !t.doc?.trusted || !t.reports.menu?.some((m: MenuItem) => m.id === id)) return
-  contentView(t.id)?.webContents.send('mv:menu-click', { id })
+  trust.menuClick(t.id, id)
   j('menu', { click: id, tab: t.id })
 }
 
@@ -738,20 +801,18 @@ export function startViews(i: StartInput): void {
   homeDir = i.home
   notes = i.notes
   const home = homedir()
-  const sendState = (t: Tab, s: AppState) => {
-    const wc = contentView(t.id)?.webContents
-    if (wc && !wc.isDestroyed() && canvases.has(t.id)) wc.send('mv:app-state', s)
-  }
+  const sendState = (t: Tab, s: AppState) => { if (canvases.has(t.id)) trust.appState(t.id, s) }
   setTabsPorts({
     now: () => Date.now(), home, appDark: () => nativeTheme.shouldUseDarkColors,
     changed: (o) => { ensureAppViews(); compose(o) }, load, appState: sendState, act, ask, forget, save: saveSoon,
-    shown: (t) => onShown(t), log: j,
+    shown: (t) => { onShown(t); refreshLogo(t) }, log: j,
   })
   setTabpagePorts({
     now: () => Date.now(), isActive, changed: () => compose(), log: j, load,
     reload: (t) => {
       // the reload after a crash: rebuilt from the bound origin and the saved path, in its own view (a new renderer)
       if (!t.reg?.origin) return
+      trust.reopenNext(t.id)
       const url = t.reg.origin + safePath(t.path)
       void ensureView(t).then((v) => { if (v && !v.webContents.isDestroyed()) void v.webContents.loadURL(url).catch(() => {}) })
     },
@@ -768,7 +829,9 @@ export function startViews(i: StartInput): void {
     register: (wc, kind, tabId) => trust.register(wc, kind, tabId),
     wire: (wc) => keys(wc),
     quitting: () => quitting,
+    ...(trust.pages ? { send: trust.pages.send } : {}),
   })
+  if (trust.pages) mountPages(trust.pages)
 
   // restore (v1.12 r1 #5): only the active tab loads; the others when first shown
   tabsFile = i.files.config.restoreTabs ? readTabsFile() : null
@@ -779,9 +842,10 @@ export function startViews(i: StartInput): void {
     const t = e.kind === 'gone' ? allTabs().find((x) => x.reg?.instance === e.instance) : undefined
     onRegistry(e)
     if (t?.reg) notes?.gone(t.reg.ws)
+    if (e.kind === 'entry' && e.entry.state === 'ready') { const x = allTabs().find((y) => y.reg?.instance === e.entry.instance); if (x) refreshLogo(x) }
   })
   for (const entry of trust.entries()) onRegistry({ kind: 'entry', entry })
-  trust.onReport((tabId, doc, r) => { onReport(tabId, doc, { busy: r.busy, theme: r.theme, menu: r.menu }); invalidateMenu() })
+  trust.onReport((tabId, doc, r) => { onReport(tabId, doc, r); invalidateMenu() })
 
   startMenu({
     model: menuModel,
