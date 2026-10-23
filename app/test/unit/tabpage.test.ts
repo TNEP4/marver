@@ -4,9 +4,9 @@
  * the retry and check schedule, the hang sheet's words and Copy Details' allowlist.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { allTabs, onCommit, onDocumentGone, onRegistry, onFail, wantsLoad, type Tab } from '../../src/main/tabs.ts'
+import { allTabs, displayState, guard, liveDoc, onCommit, onDocumentGone, onRegistry, onFail, wantsLoad, type Tab } from '../../src/main/tabs.ts'
 import {
-  copyDetails, hangDecision, hangSheetText, nextDelay, onLifted, onShown, onViewClosed, pageFor, personReload, recover, reloadIsPersons,
+  copyDetails, hangDecision, hangSheetText, nextDelay, onAttemptFailed, onLifted, onShown, onViewClosed, pageFor, personReload, recover, reloadIsPersons,
   scheduleRetry, snapshotKey, stopRetries, type HangCheck, type ProcessSnapshot,
 } from '../../src/main/tabpage.ts'
 import { entry, liveTab, show, world, type World } from './window-fakes.ts'
@@ -98,7 +98,6 @@ describe('crashes: one owner, a latch (A2.11, the budget: a reload started withi
     const t = liveTab(w)
     recover(t, { kind: 'crash', reason: 'crashed', exitCode: 1 })
     expect(w.reloads).toEqual([t.id])
-    expect(t.reopen).toBe(true)
     expect(t.crash).toMatchObject({ count: 1, inFlight: 'auto', latched: false })
     onCommit(t, { gen: 2, url: `${t.reg!.origin}/`, attributed: true, admitted: 'd2' })
     onLifted(t)
@@ -297,6 +296,139 @@ describe('coming back from a failure (A2.3, A2.11, v1.13 r2 #3)', () => {
     expect(k.probe?.state).toBe('proved')
     expect(w.loads).toEqual([])
     stopRetries(k)
+  })
+})
+
+describe('the canvas ready again: what waited for it runs (A2.3, A2.11)', () => {
+  /** the same workspace and port back as a new instance, still starting (no origin yet) */
+  const restartStarting = (t: Tab, instance: string) => {
+    const e = { ...entry({ ws: t.reg!.ws, port: t.reg!.port, slot: t.reg!.slot, file: t.reg!.file }), state: 'starting' as const, origin: null, instance }
+    onRegistry({ kind: 'entry', entry: e })
+    return e
+  }
+  const goReady = (t: Tab, e: ReturnType<typeof restartStarting>, origin: string) => onRegistry({ kind: 'entry', entry: { ...e, state: 'ready', origin } })
+
+  it('a reload the person confirmed met nothing listening while the canvas was starting: at ready the active tab loads, never left on "Trying again"', async () => {
+    vi.useFakeTimers()
+    const t = liveTab(w)
+    const origin = t.reg!.origin!
+    gone(t)
+    const e = restartStarting(t, 'back-a')
+    expect(t.reg!.instance).toBe('back-a')
+    expect(liveDoc(t)).toBe(true)   // the kept page: untrusted, no pill, left to its own reload
+    // ⌘R: the guard asks (stale), the person confirms; nothing listens yet, so Chromium commits its error page
+    w.askWith = () => true
+    expect(await guard(t, { kind: 'reload' })).toBe('done')
+    onFail(t, { why: 'unreachable', code: -102, errorPage: true })
+    onAttemptFailed(t)
+    scheduleRetry(t)   // as views.ts does at a failure: nothing to look at while starting
+    expect(pageFor(t, 1, HOME)).toMatchObject({ page: 'unreachable', retained: false })
+    w.loads.length = 0
+    goReady(t, e, origin)
+    expect(w.loads).toEqual([t.id])
+    expect(t.fail).toBeUndefined()
+    expect(pageFor(t, 1, HOME)).toMatchObject({ page: 'starting', phase: 'opening' })
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(w.loads).toEqual([t.id])   // one load: no retry left armed under it
+  })
+
+  it('the page\'s own reload landed in the gap between listening and ready (unattributed): at ready the active tab loads; a hidden one when shown', () => {
+    const t = liveTab(w)
+    const origin = t.reg!.origin!
+    gone(t)
+    const e = restartStarting(t, 'back-b')
+    onCommit(t, { gen: 2, url: `${origin}/`, attributed: true, admitted: null })
+    expect(t.doc!.trusted).toBe(false)
+    expect(liveDoc(t)).toBe(false)
+    w.loads.length = 0
+    goReady(t, e, origin)
+    expect(w.loads).toEqual([t.id])
+    // hidden: nothing until it is shown, then the load
+    const h = liveTab(w)
+    show('home')
+    gone(h)
+    const eh = restartStarting(h, 'back-c')
+    onCommit(h, { gen: 2, url: `${h.reg!.origin ?? origin}/`, attributed: true, admitted: null })
+    w.loads.length = 0
+    goReady(h, eh, `http://[::1]:${h.reg!.port}`)
+    expect(w.loads).toEqual([])
+    expect(wantsLoad(h)).toBe(true)
+    show(h.id)
+    expect(w.loads).toEqual([h.id])
+  })
+
+  it('a renderer that crashed while its canvas was gone, the canvas back through starting: its one automatic reload at ready, the starting page meanwhile', () => {
+    const t = liveTab(w)
+    const origin = t.reg!.origin!
+    gone(t)
+    recover(t, { kind: 'crash', reason: 'crashed', exitCode: 1 })
+    expect(t.crash.pendingShow).toBe(true)
+    const e = restartStarting(t, 'back-d')
+    for (const id of w.shown.splice(0)) if (id === t.id) onShown(t)   // what views.ts's shown port does
+    expect(w.reloads).toEqual([])
+    expect(pageFor(t, 1, HOME)).toMatchObject({ page: 'starting', phase: 'starting' })   // not a spinner that waits on nothing
+    goReady(t, e, origin)
+    for (const id of w.shown.splice(0)) if (id === t.id) onShown(t)
+    expect(w.reloads).toEqual([t.id])
+    expect(t.crash.inFlight).toBe('auto')
+  })
+
+  it('a page retained beneath a failure: its retries stopped while the canvas was away; the rebind to a ready instance looks at once and only probes', async () => {
+    vi.useFakeTimers()
+    const t = liveTab(w)
+    onFail(t, { why: 'unreachable', code: -102, errorPage: false })
+    expect(t.retained).toBe(true)
+    gone(t)
+    scheduleRetry(t)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(w.probes).toEqual([])
+    w.probeWith = () => 'proved'
+    onRegistry({ kind: 'entry', entry: { ...entry({ ws: t.reg!.ws, port: t.reg!.port, origin: t.reg!.origin!, slot: t.reg!.slot }), instance: 'back-e' } })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(w.probes).toEqual([t.id])
+    expect(t.probe?.state).toBe('proved')
+    expect(pageFor(t, 1, HOME)).toMatchObject({ page: 'unreachable', retained: true, probe: { state: 'proved' } })
+    expect(w.loads).toEqual([])   // Try Again stays the person's
+    stopRetries(t)
+  })
+})
+
+describe('the crash page shows only what Reload can do (A2.11)', () => {
+  it('a latched tab whose canvas stops shows stopped, starting while it starts, and keeps crashing with Reload once it is ready', () => {
+    const t = liveTab(w)
+    const origin = t.reg!.origin!
+    recover(t, { kind: 'crash', reason: 'crashed', exitCode: 1 })
+    recover(t, { kind: 'crash', reason: 'crashed', exitCode: 1 })   // the reload's renderer: a new life, counted
+    t.crash.latched = true
+    gone(t)
+    expect(pageFor(t, 1, HOME)!.page).toBe('stopped')
+    expect(displayState(t, true)).toBe('gone')
+    const e = { ...entry({ ws: t.reg!.ws, port: t.reg!.port, slot: t.reg!.slot }), state: 'starting' as const, origin: null, instance: 'back-f' }
+    onRegistry({ kind: 'entry', entry: e })
+    expect(pageFor(t, 1, HOME)!.page).toBe('starting')
+    onRegistry({ kind: 'entry', entry: { ...e, state: 'ready', origin } })
+    expect(pageFor(t, 1, HOME)).toMatchObject({ page: 'crashed', latched: true })
+    expect(w.reloads.length).toBe(1)   // rebound, never reloaded: its Reload is the person's
+    personReload(t)
+    expect(w.reloads.length).toBe(2)
+  })
+
+  it('the reload after a crash fails on the network: the failure shows, not "Reloading after a crash"; its retry loads', async () => {
+    vi.useFakeTimers()
+    const t = liveTab(w)
+    recover(t, { kind: 'crash', reason: 'oom', exitCode: 9 })
+    expect(t.crash.inFlight).toBe('auto')
+    expect(pageFor(t, 1, HOME)).toMatchObject({ page: 'crashed', latched: false })
+    onFail(t, { why: 'unreachable', code: -102, errorPage: true })
+    onAttemptFailed(t)
+    expect(t.view).toBe('live')
+    expect(pageFor(t, 1, HOME)).toMatchObject({ page: 'unreachable', retained: false })
+    expect(displayState(t, true)).toBe('unreachable')
+    w.probeWith = () => 'proved'
+    scheduleRetry(t)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(w.loads).toEqual([t.id])
+    stopRetries(t)
   })
 })
 

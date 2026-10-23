@@ -14,7 +14,9 @@
  *      (before any view), the registry, the bridge, the tabs' record, then views.ts: the window with the opaque
  *      strip and its pages (strip, Home, Settings, the tab pages), the tabs restored from tabs.json (only the
  *      active one loads; each canvas view on its repo's partition, its proof dispatcher attached before its first
- *      load), the menu, the quit through guardAll; and last the Home and Settings channels (home.ts mountPages).
+ *      load), the menu, the quit through guardAll; then the Home and Settings channels (home.ts mountPages); and
+ *      last the error policy (errors.ts): from here an uncaught error is recorded and the app goes on, never
+ *      Electron's modal box over pages that may hold unsaved work.
  *
  * Who calls what across the streams is app/src/main/ports.ts's table; this file keeps the order and makes the calls.
  */
@@ -23,7 +25,7 @@ import { mkdirSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { app, crashReporter, protocol } from 'electron'
 import { installSpies } from './testing/spies.ts'
-import { note, startTesting, testMode } from './testing/index.ts'
+import { note, provide, startTesting, testMode } from './testing/index.ts'
 import { provideTrustHooks } from './testing/trust.ts'
 import { overrideTimings } from './timings.ts'
 import { applyTheme, ensureHome, readFiles, readTabsFile, startFiles, tabsWriter } from './config.ts'
@@ -37,6 +39,7 @@ import { focusWindow } from './window.ts'
 import { startTabs, type Tab } from './tabs.ts'
 import { openSameCanvas, startViews, windowPorts, type TrustPort } from './views.ts'
 import { fakeTrust } from './testing/fake-trust.ts'
+import { installErrorPolicy, setErrorHome } from './errors.ts'
 
 /** The app's own scheme for its pages (A2.5). */
 export const APP_SCHEME = 'marver-app'
@@ -164,6 +167,20 @@ function start(): void {
     })
     // Home's and Settings' channels and pushes, ⌘L's links into their tabs, the files pill (home.ts, ports.ts)
     mountPages(bridge, windowPorts())
+    // the pages exist: an uncaught error is recorded (perf/app.jsonl) and the app goes on (errors.ts)
+    setErrorHome(home)
+    installErrorPolicy()
+    if (__MV_TEST__ && testMode()) {
+      // an error nothing catches, thrown in a later turn as an event handler's would be (the error policy's cases)
+      provide('throw', (a) => {
+        const what = (a as { what?: unknown } | null)?.what === 'rejection' ? 'rejection' : 'exception'
+        setTimeout(() => {
+          if (what === 'rejection') void Promise.reject(new Error('mv-test: a rejection nothing caught'))
+          else throw new Error('mv-test: an exception nothing caught')
+        }, 0)
+        return true
+      })
+    }
     if (__MV_TEST__) note('startup', { step: 'ready' })
   })
 }

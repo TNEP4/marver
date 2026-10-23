@@ -6,7 +6,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   activeTab, allTabs, applyRestore, canvasOrder, cycleFrom, displayState, forDigit, getTab, hashOnly, keyOf, onCommit, onFail, onRegistry,
-  onReport, openSettingsTab, ordered, parseTabsFile, restorePlan, safePath, snapshotFile, takeReopen, viewOf, wantsLoad, type TabsFile,
+  onReport, openSettingsTab, ordered, parseTabsFile, restorePlan, safePath, snapshotFile, viewOf, wantsLoad, type TabsFile,
 } from '../../src/main/tabs.ts'
 import { entry, liveTab, show, world, type World } from './window-fakes.ts'
 
@@ -407,10 +407,4 @@ describe('the document (A2.14 #8, v1.12 r1 #1, v1.13 r2 #3)', () => {
     expect(hashOnly('', 'http://[::1]:40100/#/b/x')).toBe(false)
   })
 
-  it('mv:doc\'s reopen is one-shot', () => {
-    const t = add().t
-    t.reopen = true
-    expect(takeReopen(t.id)).toBe(true)
-    expect(takeReopen(t.id)).toBe(false)
-  })
 })

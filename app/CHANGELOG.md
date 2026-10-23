@@ -34,6 +34,19 @@
   and crashes with one owner: the first reloads at once, a second within a minute latches until you press Reload.
 - A quit whose helpers end at the same moment (a SIGTERM to the app's process group) exits cleanly: a page whose
   renderer went is never read in a way that throws, so main no longer stops on Electron's error box.
+- Once the window is up, an error nothing in main caught is recorded in `~/.marver/perf/app.jsonl` and the app goes
+  on - never Electron's modal error box over pages that may hold unsaved work. A quit whose guard fails is refused,
+  never left waiting: the next `⌘Q` quits.
+- A canvas back after a stop or a restart picks up what waited for it: a tab whose reload met nothing listening, or
+  whose page reloaded itself while the canvas was still starting, loads once it is ready; a crash's reload waits for
+  it; a page kept under a failure is looked at again. A crash page offers Reload only when there is something to
+  reload into, and a crash's reload that fails shows the failure.
+- Home and Settings come back from a renderer that went, and an app page that tried to leave its own address keeps
+  getting the app's news. A tab closed while its first view was being made stays closed and loads nothing.
+- Mark All as Seen in a canvas tab's right-click menu clears every frame's "new" (Marver 0.27.1; disabled on a
+  canvas without the bridge). A link from `⌘L` into a canvas that is restarting under a page it keeps is refused,
+  saying the page stays as it was. With Reopen tabs at launch off, the boards saved for canvases not running stay in
+  `tabs.json`.
 - Not responding: the pill's Reload asks first, then ends the page's renderer once and reloads every tab it held.
 - The menu bar: the app's keys fire once whatever the page does with keys; the canvas's own items with their keys in
   their names; a stale click does nothing. F6 between the strip and the page; focus never left beneath a tab page.

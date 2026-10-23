@@ -231,6 +231,8 @@ function launch(name, { argv = [], env = {}, bin = BIN, stdio } = {}) {
   return L
 }
 const alive = (L) => L.code === null && L.signal === null
+/** what main's error policy recorded on this launch (errors.ts): an uncaught exception or rejection, never a box */
+const mainErrors = (L) => { try { return readFileSync(join(L.home, 'perf', 'app.jsonl'), 'utf8').split('\n').filter((l) => l.includes('"main-error"')).map((l) => l.slice(0, 300)) } catch { return [] } }
 const lexists = (p) => { try { lstatSync(p); return true } catch { return false } }
 /** main.ts ran on this launch's profile: the lock taken there, and the crash reporter's database made in its home */
 const mainRan = (L) => lexists(join(L.ud, 'SingletonLock')) && existsSync(join(L.home, 'perf', 'crashpad', 'settings.dat'))
@@ -292,7 +294,9 @@ function poll(port, everyMs = 10) {
   // below would read a store never written (the group's SIGTERM quit is test/prod/quit.test.ts's)
   const termAt = Date.now()
   const quit = await stop(C, 'SIGTERM', 10_000, { group: false })
-  quit && C.code === 0 ? pass('quit-exit-code', `SIGTERM: exit 0 ${C.t0 + C.exitAt - termAt} ms later`) : fail('quit-exit-code', `code=${C.code} signal=${C.signal} graceful=${quit}`)
+  const errsC = mainErrors(C)
+  quit && C.code === 0 && !errsC.length ? pass('quit-exit-code', `SIGTERM to main: exit 0 ${C.t0 + C.exitAt - termAt} ms later; nothing uncaught in main`)
+    : fail('quit-exit-code', `code=${C.code} signal=${C.signal} graceful=${quit}; main errors: ${errsC.join(' | ') || 'none'}`)
 
   // the temporary profile is the one Chromium wrote: its Local State (written at a graceful quit), persist:app and
   // the canvas's own partition (persist:local:<ws>, one per canvas workspace, A2.5) - Nic's profiles are checked
@@ -314,6 +318,33 @@ function poll(port, everyMs = 10) {
   if (!rows.length && !doc) warn('cookie-encrypted', `pending: no canvas cookie written yet (${dbs.length} cookie store(s), no canvas loaded); EnableCookieEncryption read on above`)
   else if (!rows.length) fail('cookie-encrypted', `the canvas page set mvfake and no cookie store holds it (${dbs.length} store(s)) after a graceful quit`)
   else rows.every((r) => r === 'mvfake|0|763130') ? pass('cookie-encrypted', `${rows.length} cookie(s): value empty, encrypted_value 'v10...'`) : fail('cookie-encrypted', rows.join(' '))
+  await fake.close()
+}
+
+// 11b. the process group's SIGTERM with a canvas loaded (A2.14 #33): main and every helper at once - the strip's,
+// Home's and the canvas's renderers, the GPU and the network service go while main's quit runs through guardAll, as a
+// terminal's signal or a logout ends them. Exit 0, and nothing uncaught in main: the release build loads no catcher
+// (the NodeOptions fuse), so the error policy's own record (MARVER_HOME/perf/app.jsonl, errors.ts) is the witness
+{
+  const { startFakeCanvas } = await import(join(APP_DIR, 'test', 'harness', 'fake-canvas.ts'))
+  const home = join(RUN, 'group', 'home')
+  mkdirSync(join(home, 'state'), { recursive: true, mode: 0o700 })
+  const fake = await startFakeCanvas({ home, slotBase: SLOT_BASE, slot: 2, name: 'Smoke group canvas', root: join(RUN, 'group', 'repo'),
+    script: "if (window.marverApp) { marverApp.hello({ version: '0.27.1', board: null, page: 'smoke-page-02' }); marverApp.busy({ busy: false, unsaved: false, why: [] }) }" })
+  await fake.ready
+  writeFileSync(join(home, 'state', 'launched'), '')
+  writeFileSync(join(home, 'state', 'tabs.json'), JSON.stringify({ v: 1, active: { kind: 'canvas', ws: fake.ws, origin: fake.origin },
+    canvases: [{ ws: fake.ws, origin: fake.origin, path: '/', shownAt: Date.now() }], settings: false, closed: [] }))
+  const G = launch('group')
+  await waitFor(() => (mainRan(G) && reachedReady(G) && fake.requests.some((r) => r.path === '/__mv/test/raf')) || !alive(G), 20_000)
+  const loaded = fake.requests.some((r) => r.path === '/__mv/test/raf')
+  await sleep(500)
+  const termAt = Date.now()
+  const quit = await stop(G, 'SIGTERM', 10_000)
+  const errs = mainErrors(G)
+  if (!loaded) fail('quit-group-exit-code', `the canvas never drew (alive=${alive(G)} code=${G.code}); stderr: ${G.err.trim().split('\n').slice(-2).join(' | ')}`)
+  else quit && G.code === 0 && !errs.length ? pass('quit-group-exit-code', `SIGTERM to the process group, the canvas loaded: exit 0 ${G.t0 + G.exitAt - termAt} ms later; nothing uncaught in main`)
+    : fail('quit-group-exit-code', `code=${G.code} signal=${G.signal} graceful=${quit}; main errors: ${errs.join(' | ') || 'none'}`)
   await fake.close()
 }
 

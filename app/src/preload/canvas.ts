@@ -4,7 +4,7 @@
  *
  * It runs sandboxed, in the main frame only: one bundle of its own that may `require` only `electron`
  * (test/unit/bundle.test.ts). As `MarverAppV1` (src/shared/app-api.ts):
- * - one synchronous `mv:doc` at document start, answered whether or not the document is trusted: `{ reopen }`;
+ * - one synchronous `mv:doc { origin }` at document start, answered whether or not the document is trusted: `{ reopen }`;
  * - nothing is sent before an `mv:admit { doc }`: the page's latest hello, theme, busy and menu - each a whole
  *   state - are held, and on every admit with a new `doc` all four go, hello first, stamped with it; later ones go
  *   as they come, with the latest admit's `doc`. The same admit again (main repeats it at `dom-ready`) replays
@@ -21,7 +21,11 @@ const ORDER: readonly Report[] = ['hello', 'theme', 'busy', 'menu']
 
 let answer: DocAnswer = { reopen: false }
 try {
-  const a = ipcRenderer.sendSync(CANVAS_CHANNELS.doc) as Partial<DocAnswer> | null
+  // this document's own origin, as it knows it now: main gives the crash reload's `reopen` only to a document on
+  // its canvas's origin, never to an error page (A2.14 #9)
+  let origin = ''
+  try { origin = String(location.origin) } catch { /* none */ }
+  const a = ipcRenderer.sendSync(CANVAS_CHANNELS.doc, { origin }) as Partial<DocAnswer> | null
   if (a && typeof a.reopen === 'boolean') answer = { reopen: a.reopen }
 } catch { /* answered no */ }
 

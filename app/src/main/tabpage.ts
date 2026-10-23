@@ -36,8 +36,9 @@ export function netReason(code: number | undefined): string {
 
 /**
  * The page a tab shows now, or null when its canvas view shows (A2.11's table). `rev` is filled by the sender.
- * Precedence: a crash not yet recovered; a failed load (with the page it may have left `retained` beneath); a gone
- * canvas with nothing kept; a kept page (none: the pill speaks instead); starting or opening.
+ * Precedence: a crash not yet recovered, while its canvas is ready (with it stopped or starting, Reload has nothing
+ * to reload into: that state shows, as the strip's does); a failed load (with the page it may have left `retained`
+ * beneath); a gone canvas with nothing kept; a kept page (none: the pill speaks instead); starting or opening.
  */
 export function pageFor(t: Tab, now: number, home: string = homedir()): PageBody | null {
   if (t.kind !== 'local') return null
@@ -61,9 +62,10 @@ export function pageFor(t: Tab, now: number, home: string = homedir()): PageBody
   if (c.inFlight === 'force' && !c.latched && !t.doc?.lifted && !gone) {
     return { ...base, page: 'starting', phase: 'opening', since: t.loadAt ?? now }
   }
-  // a crash: the page holds nothing until a reload lifts it
+  // a crash: the page holds nothing until a reload lifts it - shown while there is something to reload into, so
+  // its Reload always does what it says
   const crashed = t.view === 'crashed' || (!t.doc?.lifted && (c.latched || !!c.pendingShow || c.inFlight === 'auto'))
-  if (crashed && !(gone && !c.latched)) {
+  if (crashed && t.reg?.state === 'ready') {
     return { ...base, page: 'crashed', latched: c.latched, since: c.times?.at(-1) ?? now,
       ...(c.reason ? { reason: c.reason } : {}), ...(c.count ? { crashes: c.count } : {}) }
   }
@@ -125,9 +127,9 @@ function startReload(t: Tab, why: 'auto' | 'person' | 'force'): void {
   c.inFlight = why
   c.epoch = (c.epoch ?? 0) + 1
   if (why === 'auto') c.lastAuto = p.now()
-  // the shell restores its saved camera on the app's reload after a crash, even under a selection link (A2.9)
-  t.reopen = true
   p.log?.('crash', { tab: t.id, reload: why })
+  // the port arms mv:doc's one `reopen` with the bridge: the shell restores its saved camera on the app's reload
+  // after a crash, even under a selection link (A2.9)
   p.reload(t)
 }
 

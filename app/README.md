@@ -56,7 +56,10 @@ The guard (first import) - test spies - Marver Dev's name and userData - `MARVER
 the files' first read - at ready: the theme and the files' watch, `persist:app`, the navigation hook (before any
 view), the registry, the bridge, then `views.ts` - the window with the opaque strip and its pages, the tabs restored
 from `tabs.json` (only the active one loads; each canvas view on its workspace's partition, its proof dispatcher
-attached before its first load), the menu, the quit through `guardAll` - and last Home's and Settings' channels. Each module after the guard is its stream's; its header says what is still to build.
+attached before its first load), the menu, the quit through `guardAll` - then Home's and Settings' channels, and last
+the error policy (`errors.ts`): from there an uncaught exception or rejection in main is a line in
+`~/.marver/perf/app.jsonl` and the app goes on, never Electron's modal box over pages that may hold unsaved work
+(before it, a startup that fails keeps Electron's box: no page holds anything yet). Each module after the guard is its stream's; its header says what is still to build.
 
 ## Tests (A2.10, A2.14 #27)
 
@@ -66,7 +69,8 @@ attached before its first load), the menu, the quit through `guardAll` - and las
 - **prod** (`launchProd`): the real binary with the app folder and nothing else, driven over the control socket
   (`MARVER_APP_CONTROL`, mode 600). The hang, one copy of each guard case, hidden tabs and the memory budget, and a
   quit whose helpers end with it (`test/prod/quit.test.ts`: `test/harness/catch-uncaught.cjs`, loaded with
-  `NODE_OPTIONS=--require`, records an uncaught exception in main instead of Electron's modal error box).
+  `NODE_OPTIONS=--require`, records an uncaught exception in main instead of Electron's modal error box), and the
+  error policy (`test/prod/errors.test.ts`: the `throw` hook raises one in a later turn; the catcher is its safety net).
 - Hooks: `provide(name, fn)` in `src/main/testing/index.ts`, reached as `run.call(name, args)`; `note(topic, data)`
   writes the journal the `log` hook returns (the view journal goes there). Base hooks: `ping`, `log`, `hooks`,
   `quit`, `exit`, and `spies` with `MARVER_APP_SPY=1`. Every call site is `if (__MV_TEST__) ...`.
@@ -84,15 +88,16 @@ attached before its first load), the menu, the quit through `guardAll` - and las
 - **the window hooks** (`src/main/views.ts` `testHooks`; the window stream): `state` (main's record of every tab,
   the pill, the focus owner), `views` (every view's bounds and visibility as Electron reports them), `window`,
   `activate`, `command`, `close`, `guard`, `guardAll`, `crash`, `reloadPage`, `exec`, `key`, `click`, `focused`,
-  `focusApp`, `onTop`, `page`, `tabpage:action`, `pill:raise`, `pill:action`, `menu:items`, `menu:hold`,
+  `focusApp`, `onTop`, `drag` (down, held moves, up), `page`, `tabpage:action`, `pill:raise`, `pill:action`, `menu:items`, `menu:hold`,
   `menu:click`, `openInTab`, `openSameCanvas`, `outside`, `effects`, `resume` (powerMonitor's wake), `silent` (a main
   frame that does not answer for a while), `cdpClick` (a click hit-tested by the browser, so it reaches a
   cross-process iframe), `frames`, `hang:report` (the hang monitor's report made by hand). A test build never shows
-  a native sheet: `sheet` sets how the seam answers (`confirm` by default, `cancel`, or `hold` until `sheet:answer`,
+  a native sheet: `sheet` sets how the seam answers (`confirm` by default, `cancel`, `throw` - an exception in the
+  guard's wait - or `hold` until `sheet:answer`,
   a held hang sheet closing itself when its signal aborts, as `showMessageBox` does), `sheets` lists what was asked;
   nor a native popup: `tabMenu` and `tabsMore` record the strip's menus in the journal (`popup`), `popup:click`
   chooses an item. With `MARVER_APP_FAKE_TRUST=1` the window stream's cases run before the trust stream's modules
-  (`testing/fake-trust.ts`: `fake:entry`, `fake:gone`, `fake:mode`, `fake:report`, `fake:logo`;
+  (`testing/fake-trust.ts`: `fake:entry`, `fake:gone`, `fake:mode`, `fake:report`, `fake:logo`, `fake:session` (each partition's preparation held until released);
   `MARVER_APP_FAKE_ENTRIES` for the canvases running at launch). The fake trust registers nothing with the real
   bridge: once the trust stream's modules are built in, its policy lets a subframe navigate only for a canvas the
   bridge knows, so a case with iframes runs on the real trust (`test/prod/hang.test.ts`), as does
@@ -102,8 +107,10 @@ attached before its first load), the menu, the quit through `guardAll` - and las
 - **the packaged smoke** (`test/smoke/smoke.mjs`): S9's checks and X7's cases on the signed build; every launch on
   its own profile with `--use-mock-keychain`. Its clean launch loads a fake canvas as the active tab: the first frame
   callback, a canvas cookie read back encrypted (`v10`) after a SIGTERM to main alone (a group SIGTERM ends the network
-  service, which holds the cookie store, before it writes it - that quit is `test/prod/quit.test.ts`'s), and the
-  canvas's own partition in the temporary profile. The one WARN left is `build/Marver.icon` (Icon Composer, by hand).
+  service, which holds the cookie store, before it writes it), and the canvas's own partition in the temporary
+  profile. A second launch with a canvas loaded quits on a SIGTERM to its whole process group (`quit-group-exit-code`):
+  exit 0, and no `main-error` in its `perf/app.jsonl` - the release build loads no catcher, so the error policy's
+  record is the witness. The one WARN left is `build/Marver.icon` (Icon Composer, by hand).
 
 ## The icon
 

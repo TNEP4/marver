@@ -40,8 +40,8 @@ import { buildNow, HELP_URL, invalidateMenu, startMenu, type MenuModel, type Men
 import { crashReloaded, currentPill, onPillAction, setCondition, setPillPorts } from './pill.ts'
 import {
   activate, activeTab, allTabs, applyRestore, canvasOrder, closeTab, cycleFrom, displayState, forDigit, getTab, guard,
-  guardAll, hashOnly, isActive, keyOf, liveDoc, onCommit, onDocumentGone, onFail, onInPage, onRegistry, onReport, openSettingsTab,
-  ordered, parseTabsFile, reopenTab, restorePlan, safePath, savedPathIn, setTabsPorts, sheetText, snapshotFile, tabName,
+  guardAll, hasBridge, hashOnly, isActive, keyOf, liveDoc, onCommit, onDocumentGone, onFail, onInPage, onRegistry, onReport, openSettingsTab,
+  ordered, parseTabsFile, reopenTab, restorePlan, safePath, savedPathIn, setTabsPorts, sheetBox, sheetConfirmed, sheetText, snapshotFile, tabName,
   type GuardAction, type GuardAnswer, type Sheet, type Tab, type TabsFile,
 } from './tabs.ts'
 import {
@@ -165,7 +165,9 @@ async function ensureView(t: Tab): Promise<WebContentsView | null> {
   const p = (async () => {
     if (!t.reg) return null
     const ses = await trust.session(t.reg.ws)
-    if (!getTab(t.id) || !t.reg) return null
+    // closed (⌘W) or gone while its partition was prepared: no view - the close saw none to guard, so one made now
+    // would load hidden and keep a document nobody asked for
+    if (!getTab(t.id) || !t.reg || !t.open) { j('view', { tab: t.id, abandoned: true }); return null }
     // sessions.ts's canvasWebPreferences(ws) when the trust stream provides it (the one place it writes them; its
     // partition is the session just prepared), else the same rules written here
     const fromTrust = (sessions as { canvasWebPreferences?: (ws: string) => WebPreferences }).canvasWebPreferences
@@ -229,9 +231,10 @@ function load(t: Tab): void {
   if (!t.reg?.origin || t.reg.state !== 'ready') return
   t.needsLoad = false
   t.loadAt = Date.now()
+  clearUnattributed(t)   // this load replaces the reload an unattributed commit had waiting
   const url = t.reg.origin + safePath(t.path)
   void ensureView(t).then((v) => {
-    if (!v || v.webContents.isDestroyed() || !getTab(t.id)) return
+    if (!v || v.webContents.isDestroyed() || !getTab(t.id) || !t.open) return
     j('load', { tab: t.id, url })
     void v.webContents.loadURL(url).catch(() => { /* the adapter's events carry the outcome */ })
     compose()
@@ -304,6 +307,12 @@ function makeAppView(t: Tab, page: 'home' | 'settings'): WebContentsView {
   attachContent(t.id, view, page)   // registered with the bridge and wired (keys) by window.ts, as every app page
   track(view.webContents, { part: 'content', tab: t.id })
   if (page === 'home') view.webContents.once('did-finish-load', () => { homeLoaded = true; noteHome() })
+  // its renderer went (memory pressure, a crash): the page comes back, as the strip does (window.ts) - it says
+  // app:ready again and is sent everything
+  view.webContents.on('render-process-gone', (_e, d) => {
+    j('app-page', { page, gone: d.reason })
+    setTimeout(() => { if (!view.webContents.isDestroyed() && contentView(t.id) === view) void view.webContents.loadURL(`${APP_ORIGIN}${page}/`).catch(() => {}) }, 0)
+  })
   t.view = 'live'
   void view.webContents.loadURL(`${APP_ORIGIN}${page}/`).catch(() => { /* served by sessions.ts */ })
   return view
@@ -374,7 +383,7 @@ function act(t: Tab, a: GuardAction): Promise<GuardAnswer> {
 }
 
 /** Sheets for test builds: answered by a hook (no automation presses a native sheet; A2.14 #22's `ask()` seam). */
-type SheetMode = 'confirm' | 'cancel' | 'hold'
+type SheetMode = 'confirm' | 'cancel' | 'hold' | 'throw'
 let sheetMode: SheetMode | null = null
 const heldSheets: { sheet: unknown; answer: (ok: boolean) => void }[] = []
 const sheetsShown: unknown[] = []
@@ -384,6 +393,8 @@ async function testSheet(sheet: unknown, signal?: AbortSignal): Promise<boolean>
   j('sheet', sheet)
   if (sheetMode === 'confirm' || sheetMode === null) return true
   if (sheetMode === 'cancel') return false
+  // a sheet that throws (the quit's error case): what an exception in the guard's wait does to its caller
+  if (sheetMode === 'throw') throw new Error('mv-test: the sheet threw')
   // held until the case answers - or closed by its signal, as showMessageBox closes a native sheet (the hang sheet)
   return new Promise<boolean>((answer) => {
     const h = { sheet, answer: (ok: boolean) => { signal?.removeEventListener('abort', onAbort); answer(ok) } }
@@ -409,8 +420,8 @@ async function ask(s: Sheet): Promise<boolean> {
   if (__MV_TEST__ && seamed()) return testSheet({ kind: 'guard', action: s.action.kind, tabs: s.tabs.map((x) => x.id), ...words })
   const win = mainWindow()
   if (!win) return false
-  const r = await dialog.showMessageBox(win, { type: 'warning', message: words.message, detail: words.detail, buttons: words.buttons, defaultId: 0, cancelId: 0, noLink: true })
-  return r.response === 1
+  const r = await dialog.showMessageBox(win, sheetBox(words))
+  return sheetConfirmed(r.response)
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -489,8 +500,8 @@ async function notResponding(t: Tab): Promise<void> {
       else {
         const win = mainWindow()
         if (!win) return
-        const r = await dialog.showMessageBox(win, { type: 'warning', message: words.message, detail: words.detail, buttons: words.buttons, defaultId: 0, cancelId: 0, noLink: true, signal: ac.signal })
-        reload = r.response === 1 && !ac.signal.aborted
+        const r = await dialog.showMessageBox(win, { ...sheetBox(words), signal: ac.signal })
+        reload = sheetConfirmed(r.response) && !ac.signal.aborted
       }
     } finally { hangSheetOpen = false; h.abort = undefined }
     if (!reload) return
@@ -603,6 +614,14 @@ export async function openInTab(e: LinkTarget, url: string | null, rest: string)
   if (!t) return { ok: false, why: 'nothing' }
   if (t.fail?.why === 'unverified') return { ok: false, why: 'not-canvas' }
   const path = safePath(url ? (() => { const u = new URL(url); return u.pathname + u.search + u.hash })() : rest)
+  if (!url && liveDoc(t)) {
+    // still starting, and its tab keeps a page: the link would replace that page, which only the guard may do -
+    // and the guard's load needs the canvas ready. Nothing is opened: "Not opened: <name>'s page stays as it was"
+    // (Home keeps the link selected; Return opens it once the canvas is ready). Never a path kept for a load that
+    // cannot come: the kept page's own reload would overwrite it
+    j('link', { tab: t.id, refused: 'starting-kept' })
+    return { ok: false, why: 'refused' }
+  }
   if (!t.open) reopenTab(t.id)
   if (!url || !liveDoc(t)) {
     // nothing to replace: the tab goes to the link's board when it loads (at ready for a starting canvas)
@@ -695,7 +714,7 @@ function tabAct(k: MenuToken, what: 'activate' | 'open-browser' | 'reveal' | 'co
     case 'reveal': reveal(t); return
     case 'copy-link': if (link && t.doc?.trusted) effects.copy(link); return
     case 'close': void closeTab(t.id); return
-    case 'mark-all-seen': if (t.doc?.trusted) trust.menuClick(t.id, 'mark-all-seen'); return
+    case 'mark-all-seen': if (t.doc?.trusted && hasBridge(t)) { const sent = trust.menuClick(t.id, 'mark-all-seen'); j('tab-act', { what, tab: t.id, sent }) } return
     // the menu's Reload Canvas and Force Reload: the tab the menu was built for, its document and trust unchanged
     case 'reload': reloadTab(t, false); return
     case 'force-reload': reloadTab(t, true); return
@@ -755,7 +774,8 @@ export const pageHandlers = {
         { label: 'Open in Browser', enabled: !!t.doc?.trusted, click: () => tabAct(k, 'open-browser') },
         { label: 'Reveal in Finder', enabled: !!t.root, click: () => tabAct(k, 'reveal') },
         { label: 'Copy Local Link', enabled: !!t.doc?.trusted, click: () => tabAct(k, 'copy-link') },
-        { label: 'Mark All as Seen', enabled: !!t.doc?.trusted, click: () => tabAct(k, 'mark-all-seen') },
+        // main's own mv:menu-click (app-api.ts APP_MENU_IDS): only a canvas with the bridge (0.27.1) hears it
+        { label: 'Mark All as Seen', enabled: !!t.doc?.trusted && hasBridge(t), click: () => tabAct(k, 'mark-all-seen') },
         { type: 'separator' },
       )
     }
@@ -955,6 +975,7 @@ export function startViews(i: StartInput): void {
     now: () => Date.now(), home, appDark: () => nativeTheme.shouldUseDarkColors,
     changed: (o) => { ensureAppViews(); compose(o) }, load, appState: sendState, act, ask, forget, save: saveSoon,
     shown: (t) => { onShown(t); refreshLogo(t) }, forward,
+    recheck: (t) => scheduleRetry(t, { now: true }),
     // a canvas that starts after launch opens on its saved board (A2.14 #23): the file as read at launch, kept
     // whole since (snapshotFile keeps the entries of canvases not running), read only with restoreTabs on
     savedPath: (ws, origin) => i.files.config.restoreTabs ? savedPathIn(tabsFile, ws, origin) : undefined,
@@ -964,10 +985,10 @@ export function startViews(i: StartInput): void {
     now: () => Date.now(), isActive, changed: () => compose(), log: j, load,
     reload: (t) => {
       // the reload after a crash: rebuilt from the bound origin and the saved path, in its own view (a new renderer)
-      if (!t.reg?.origin) return
+      if (!t.reg?.origin || !t.open) return
       trust.reopenNext(t.id)
       const url = t.reg.origin + safePath(t.path)
-      void ensureView(t).then((v) => { if (v && !v.webContents.isDestroyed()) void v.webContents.loadURL(url).catch(() => {}) })
+      void ensureView(t).then((v) => { if (v && !v.webContents.isDestroyed() && getTab(t.id) && t.open) void v.webContents.loadURL(url).catch(() => {}) })
     },
     confirmed: (t) => crashReloaded(t),
     probe,
@@ -986,9 +1007,10 @@ export function startViews(i: StartInput): void {
   })
   if (trust.pages) mountPages(trust.pages)
 
-  // restore (v1.12 r1 #5): only the active tab loads; the others when first shown
-  // read only with restoreTabs on: off, it is still written, so turning it back on restores (A2.14 #23)
-  tabsFile = i.files.config.restoreTabs ? (store.read() ?? null) : null
+  // restore (v1.12 r1 #5): only the active tab loads; the others when first shown. The file is read whatever
+  // restoreTabs says, but restores only with it on: off, it is still written - keeping the saved boards of the
+  // canvases not running (snapshotFile) - so turning it back on restores (A2.14 #23)
+  tabsFile = store.read() ?? null
   const plan = restorePlan(tabsFile, trust.entries(), { restore: i.files.config.restoreTabs, firstLaunch: !!i.firstLaunch })
   applyRestore(plan)
   ensureAppViews()
@@ -1044,16 +1066,22 @@ export function startViews(i: StartInput): void {
     e.preventDefault()
     if (quitInFlight) return
     quitInFlight = true
-    writeTabsNow()   // the session as the quit starts
+    try { writeTabsNow() } catch (err) { j('quit', { tabsJson: String((err as Error)?.message ?? err) }) }   // the session as the quit starts
     j('quit', { asked: true })
-    void guardAll({ kind: 'quit' }).then((r) => {
+    void guardAll({ kind: 'quit' }).catch((err: unknown) => {
+      // a throw in the guard (its sheet, an act, a compose): this quit is refused, never the next one - a quit left
+      // in flight would swallow every later ⌘Q, Dock quit and logout until Force Quit
+      j('quit', { error: String((err as Error)?.message ?? err) })
+      return 'refused' as const
+    }).then((r) => {
       quitInFlight = false
       j('quit', { answer: r })
       // the quit is cancelled, and says so where the person can see it: a quit from the Dock or a logout may start
       // with the window hidden (tabs.ts refuse() brought its tab forward); never retried by itself
-      if (r !== 'done') { forward(); return }
-      writeTabsNow()
-      notes?.quitting?.(runningWorkspaces())
+      if (r !== 'done') { try { forward() } catch { /* the window went */ } return }
+      // what is saved on the way out never holds the quit
+      try { writeTabsNow() } catch (err) { j('quit', { tabsJson: String((err as Error)?.message ?? err) }) }
+      try { notes?.quitting?.(runningWorkspaces()) } catch (err) { j('quit', { recent: String((err as Error)?.message ?? err) }) }
       quitting = true
       app.quit()
     })
@@ -1173,6 +1201,20 @@ function testHooks(): void {
     const at = { x: x ?? 40, y: y ?? 40 }
     wc.sendInputEvent({ type: 'mouseDown', ...at, button: 'left', clickCount: 1 })
     wc.sendInputEvent({ type: 'mouseUp', ...at, button: 'left', clickCount: 1 })
+    return true
+  })
+  // a drag, as a hand makes it: down, moves with the button held (one a frame), up - a real edit for the shell
+  provide('drag', async (a) => {
+    const { target, from, to, steps } = arg<{ target: string; from: { x: number; y: number }; to: { x: number; y: number }; steps?: number }>(a)
+    const wc = wcOf(target)
+    if (!wc || wc.isDestroyed()) return false
+    const n = Math.max(1, steps ?? 8)
+    wc.sendInputEvent({ type: 'mouseDown', x: from.x, y: from.y, button: 'left', clickCount: 1 })
+    for (let i = 1; i <= n; i++) {
+      await new Promise((r) => setTimeout(r, 16))
+      wc.sendInputEvent({ type: 'mouseMove', x: Math.round(from.x + (to.x - from.x) * i / n), y: Math.round(from.y + (to.y - from.y) * i / n), button: 'left', modifiers: ['leftbuttondown'] })
+    }
+    wc.sendInputEvent({ type: 'mouseUp', x: to.x, y: to.y, button: 'left', clickCount: 1 })
     return true
   })
   // a click routed as a real one is - hit-tested by the browser, so it reaches a cross-process iframe, which

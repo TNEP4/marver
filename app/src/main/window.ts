@@ -162,8 +162,11 @@ function registerApp(wc: WebContents, kind: PageKind, tabId?: string): void {
   kindOf.set(wc, kind)
   deps?.register(wc, kind, tabId)
   deps?.wire(wc, kind, tabId)
-  // a page that reloads (or whose renderer went) says ready again before it gets anything
-  wc.on('did-start-navigation', (d) => { if (d.isMainFrame && !d.isSameDocument) ready.delete(wc) })
+  // a page that reloads (or whose renderer went) says ready again before it gets anything - from the commit of its
+  // new document, as the bridge counts it (bridge.ts register): did-start-navigation also fires for a navigation
+  // the policy then refuses, and the page that stays has said ready already, so it would get nothing again
+  wc.on('did-navigate', () => ready.delete(wc))
+  wc.on('did-fail-provisional-load', (_e, _code, _d, _url, isMain) => { if (isMain) ready.delete(wc) })
   wc.on('render-process-gone', () => ready.delete(wc))
 }
 

@@ -33,6 +33,12 @@ export interface DocAnswer { reopen: boolean }
 export interface Admit { doc: string }
 /** `mv:menu-click` (main to canvas). */
 export interface MenuClick { id: string }
+/**
+ * The ids main sends of its own, never in the page's `mv:menu`: the tab's right-click Mark All as Seen (A2.4's
+ * channels table: "Mark all as seen sends `mv:menu-click mark-all-seen` to the canvas"). A shell that does not know
+ * one does nothing with it.
+ */
+export const APP_MENU_IDS = ['mark-all-seen'] as const
 
 /** The canvas channels. `mv:inset`, `mv:present` and `mv:presented` are A3's; `mv:perf` A3's; needs-you and capture A4's. */
 export const CANVAS_CHANNELS = {

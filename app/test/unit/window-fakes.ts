@@ -4,7 +4,7 @@
  */
 import type { RegistryEntry } from '../../src/main/registry.ts'
 import { resetTabs, setTabsPorts, onRegistry, allTabs, onCommit, onReport, activate, isActive, savedPathIn, type GuardAction, type GuardAnswer, type Sheet, type Tab, type TabsFile } from '../../src/main/tabs.ts'
-import { setTabpagePorts } from '../../src/main/tabpage.ts'
+import { scheduleRetry, setTabpagePorts } from '../../src/main/tabpage.ts'
 import { recompute, resetPill, setPillPorts } from '../../src/main/pill.ts'
 import type { PillView } from '../../src/shared/channels.ts'
 import type { AppState } from '../../../src/shared/app-api.ts'
@@ -55,6 +55,8 @@ export function world(): World {
     act: async (t, a) => { w.acts.push({ tab: t.id, action: a }); return w.actWith(t, a) },
     ask: async (s) => { w.sheets.push(s); return w.askWith(s) },
     forget: (t) => { w.forgets.push(t.id) }, save: () => {}, shown: (t) => { w.shown.push(t.id) },
+    // as views.ts installs it: the failed tab's look, at once
+    recheck: (t) => scheduleRetry(t, { now: true }),
     forward: () => { w.forwards += 1 }, savedPath: (ws, origin) => savedPathIn(w.saved, ws, origin),
   })
   setTabpagePorts({

@@ -6,8 +6,10 @@
  * reads, at event time.
  *
  * **Canvas documents** (src/shared/app-api.ts; v1.12 r1 #1, v1.13 r2 #1):
- * - `mv:doc` - the preload's one synchronous call at document start - always answers `{ reopen }`, trusted or not,
- *   from a one-shot flag the tab's crash recovery sets (`reopenNext`); it grants and binds nothing;
+ * - `mv:doc` - the preload's one synchronous call at document start, naming its document's own origin - always
+ *   answers `{ reopen }`, trusted or not, from a one-shot flag the tab's crash recovery sets (`reopenNext`), which
+ *   only a document on the tab's canvas origin takes: never an error page (an opaque origin) or another site, so a
+ *   reload that failed leaves it for the load that lifts; it grants and binds nothing;
  * - at an attributed (trusted) commit main mints the document's `doc` and sends `mv:admit { doc }` to the frame
  *   that committed - in the same turn, from the adapter's commit event - and again at its `dom-ready` while nothing
  *   stamped with that `doc` has arrived (Electron drops a message that reaches a frame before its document element
@@ -31,7 +33,7 @@
  */
 import { randomBytes } from 'node:crypto'
 import { ipcMain, webFrameMain, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents, type WebFrameMain } from 'electron'
-import { BOUNDS, CANVAS_CHANNELS, UNSAVED_WHY, WHY, type AppState, type Busy, type DocAnswer, type Hello, type MenuItem, type Theme, type Why } from '../../../src/shared/app-api.ts'
+import { APP_MENU_IDS, BOUNDS, CANVAS_CHANNELS, UNSAVED_WHY, WHY, type AppState, type Busy, type DocAnswer, type Hello, type MenuItem, type Theme, type Why } from '../../../src/shared/app-api.ts'
 import { CH, INVOKES as INVOKE_LIST, SENDERS, type PageKind } from '../shared/channels.ts'
 import { mainFrameOf, safely } from './frames.ts'
 import { adapterFor, attachNav, type NavEvent } from './nav.ts'
@@ -67,7 +69,7 @@ export interface Bridge {
   appState(tabId: string, state: Exclude<AppState, 'untrusted'>): boolean
   /** `mv:menu-click` to a tab's admitted, trusted document, for an item its last `mv:menu` offers */
   menuClick(tabId: string, id: string): boolean
-  /** the next `mv:doc` from this tab's main frame answers `reopen: true`, once (A2.11's crash reload) */
+  /** the next `mv:doc` from this tab's main frame, of a document on the tab's canvas origin, answers `reopen: true`, once (A2.11's crash reload) */
   reopenNext(tabId: string): void
   /** a tab's binding changed outside a registry event: every admitted document's trust is looked at again (the
    *  bridge already does it on each registry event, and at each failed load) */
@@ -321,12 +323,18 @@ export function installBridge(): Bridge {
     }
   }
 
-  // mv:doc - synchronous, always answered, grants nothing
-  ipcMain.on(CANVAS_CHANNELS.doc, (e: IpcMainEvent) => {
+  // mv:doc - synchronous, always answered, grants nothing. The origin is the document's own (the preload reads
+  // location.origin at document start, before main may have processed the commit): only a document on the tab's
+  // canvas origin takes the flag - an error page of a reload that failed (opaque, 'null') leaves it for the next
+  // load, which is still the reload after the crash
+  ipcMain.on(CANVAS_CHANNELS.doc, (e: IpcMainEvent, msg: unknown) => {
     let answer: DocAnswer = { reopen: false }
     try {
       const r = regs.get(e.sender.id)
-      if (r?.kind === 'canvas' && r.tabId && sameFrame(e.senderFrame, mainFrameOf(e.sender)) && reopen.delete(r.tabId)) answer = { reopen: true }
+      const origin = obj(msg) && typeof msg.origin === 'string' ? msg.origin : null
+      const own = r?.tabId && reopen.has(r.tabId) ? targetOf(e.sender.id)?.entry.origin : undefined
+      if (r?.kind === 'canvas' && r.tabId && own && origin === own && sameFrame(e.senderFrame, mainFrameOf(e.sender)) && reopen.delete(r.tabId)) answer = { reopen: true }
+      if (r?.tabId && reopen.has(r.tabId)) trace('reopen-kept', { wc: e.sender.id, origin })
     } finally { e.returnValue = answer }
   })
 
@@ -358,7 +366,11 @@ export function installBridge(): Bridge {
   const pageCtx = (e: IpcMainEvent | IpcMainInvokeEvent, channel: string): PageCtx | null => {
     const r = regs.get(e.sender.id)
     const ok = mayUsePageChannel(channel, r?.kind, sameFrame(e.senderFrame, mainFrameOf(e.sender)), e.senderFrame?.url)
-    if (!ok || !r) { trace('page-refused', { wc: e.sender.id, channel, kind: r?.kind }); return null }
+    if (!ok || !r) {
+      const m = mainFrameOf(e.sender)
+      trace('page-refused', { wc: e.sender.id, channel, kind: r?.kind, main: !!m, same: sameFrame(e.senderFrame, m), sender: safely(() => e.senderFrame ? [e.senderFrame.processId, e.senderFrame.routingId] : null), mainIds: safely(() => m ? [m.processId, m.routingId] : null), url: safely(() => e.senderFrame?.url) })
+      return null
+    }
     return { wc: r.wc, kind: r.kind, ...(r.tabId ? { tabId: r.tabId } : {}) }
   }
   const listen = (channel: string) => {
@@ -457,7 +469,9 @@ export function installBridge(): Bridge {
     menuClick(tabId, itemId) {
       const id = tabWc.get(tabId)
       const rec = id === undefined ? undefined : docs.get(id)
-      if (id === undefined || !rec?.doc || !isTrusted(id) || !rec.menu?.some((m) => m.id === itemId)) return false
+      // an item the page's last mv:menu offers, or one of main's own (the tab's right-click Mark All as Seen)
+      const offered = rec?.menu?.some((m) => m.id === itemId) || (APP_MENU_IDS as readonly string[]).includes(itemId)
+      if (id === undefined || !rec?.doc || !isTrusted(id) || !offered) return false
       return sendCanvas(id, CANVAS_CHANNELS.menuClick, { doc: rec.doc, id: itemId })
     },
     reopenNext(tabId) { reopen.add(tabId) },

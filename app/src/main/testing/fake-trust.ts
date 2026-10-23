@@ -8,7 +8,8 @@
  * `MARVER_APP_FAKE_ENTRIES` (a JSON array of slot records) are the canvases running at launch.
  * Hooks: `fake:entry` (a registry entry, starting or ready), `fake:gone`, `fake:mode` (a tab's next commits:
  * `prove`, `unattributed`, `unverified` - a failure as the proof's cancel would make it), `fake:report` (a canvas
- * report from the admitted document, as the bridge would hand it on), `fake:admits`.
+ * report from the admitted document, as the bridge would hand it on), `fake:admits`, `fake:session` (`{ hold }`:
+ * every partition's preparation waits until released, as the real one awaits its service-worker sweep).
  */
 import { randomBytes } from 'node:crypto'
 import { session, type WebContents } from 'electron'
@@ -111,6 +112,13 @@ export function fakeTrust(): TrustPort {
     return true
   })
   provide('fake:admits', () => admits)
+  let held: { until: Promise<void>; release: () => void } | null = null
+  provide('fake:session', (a) => {
+    const hold = !!(a as { hold?: boolean } | null)?.hold
+    if (hold && !held) { let release!: () => void; const until = new Promise<void>((r) => { release = r }); held = { until, release } }
+    else if (!hold && held) { held.release(); held = null }
+    return true
+  })
   // the logo (A2.4): off until a case turns it on (MARVER_APP_FAKE_LOGO=1 from launch); each fetch answers after
   // `delayMs`, or rejects when its signal aborts
   const logo = { on: process.env.MARVER_APP_FAKE_LOGO === '1', delayMs: 0, url: 'data:image/svg+xml;base64,PHN2Zy8+', started: 0, aborted: 0, answered: 0, inFlight: 0, maxInFlight: 0 }
@@ -128,7 +136,11 @@ export function fakeTrust(): TrustPort {
   })
 
   return {
-    async session(ws) { return session.fromPartition(localPartition(ws)) },
+    async session(ws) {
+      const h = held
+      if (h) { note('fake-trust', { session: 'held', ws }); await h.until }
+      return session.fromPartition(localPartition(ws))
+    },
     attach,
     admit(tabId) { const doc = randomBytes(16).toString('base64url'); admits.push({ tab: tabId, doc }); return doc },
     register() { /* the bridge's capability map: nothing to check here */ },

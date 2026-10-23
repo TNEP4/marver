@@ -124,8 +124,6 @@ export interface Tab {
   held?: { at: number; action: GuardAction['kind'] }
   /** the app is ending this renderer itself: its render-process-gone counts nothing (A2.11) */
   appEnding?: boolean
-  /** one-shot: the next document is `recover`'s reload, so `mv:doc` answers `{ reopen: true }` (A2.14 #9) */
-  reopen?: boolean
   /** the tab's look this run: its documents' last trusted `mv:theme`, kept through a crash or a stop (A2.14 #26) */
   look?: boolean
   /** a checked `data:` URL (A2.4); never shown for an unverified tab */
@@ -210,6 +208,8 @@ export interface TabsPorts {
   save(): void
   /** the tab was just shown: its pending automatic crash reload starts now (tabpage.ts) */
   shown(t: Tab): void
+  /** a failed tab's address looked at again now (tabpage.ts `scheduleRetry(t, { now: true })`): its canvas is ready again */
+  recheck?(t: Tab): void
   /**
    * the window shown and brought to the front: a refused quit or update, or a refusal for unsaved work, brings its
    * tab forward - in a window the red button or ⇧⌘W may have hidden (A2.2)
@@ -577,7 +577,11 @@ export function onRegistry(ev: RegistryEvent): void {
         const exact = p.savedPath?.(e.ws, e.origin ?? null)
         if (exact !== undefined) { t.path = exact; restoredPath.set(t, exact) }
       }
-      if (was === 'starting' && t.reg.state === 'ready' && isActive(t) && wantsLoad(t)) p.load(t)
+      if (was === 'starting' && t.reg.state === 'ready') {
+        // what happened while it was starting - a reload that met nothing listening, a crash - holds no document
+        if (!liveDoc(t)) documentless(t)
+        atReady(t)
+      }
       p.changed(); p.save()
       return
     }
@@ -601,17 +605,33 @@ function rebind(t: Tab, e: RegistryEntry): void {
   t.root = e.root
   t.regAt = p.now()
   t.open = true   // a new instance opens its tab by itself (A2.12)
-  if (!liveDoc(t)) {
-    t.fail = undefined
-    t.probe = undefined
-    if (t.view === 'live') t.needsLoad = true
-    // documentless: loads when shown - at once if active; a latched tab is rebound, never reloaded (A2.11)
-    if (isActive(t) && wantsLoad(t)) p.load(t)
-    // a renderer that crashed while its canvas was gone: its one automatic attempt, at once for the active tab
-    // (tabpage.ts recover left it pending; a hidden tab's starts when shown)
-    else if (isActive(t) && t.crash.pendingShow && !t.crash.latched) p.shown(t)
-  }
+  if (!liveDoc(t)) documentless(t)
+  atReady(t)
   p.log?.('registry', { tab: t.id, rebind: e.instance, live: liveDoc(t) })
+}
+
+/** No live document: nothing of it to keep. The last failure and its probe go; a view that holds one loads when shown. */
+function documentless(t: Tab): void {
+  t.fail = undefined
+  t.probe = undefined
+  if (t.view === 'live') t.needsLoad = true
+}
+
+/**
+ * The tab's canvas is ready on the tab's own instance - a starting entry that went ready, or a rebind to a ready
+ * one (A2.3, A2.11): what waited for it runs now, and nothing while it is not ready. A tab with no live document
+ * loads, at once when active, else when next shown (lazy, A2.4); a latched tab is rebound, never reloaded. The active
+ * tab's one automatic attempt after a crash that came while its canvas was away starts (tabpage.ts recover left it
+ * pending; a hidden tab's starts when shown). A page retained beneath a failure is only looked at again: the
+ * retries stopped while the canvas was away, and its Try Again stays the person's (v1.13 r2 #3).
+ */
+function atReady(t: Tab): void {
+  const p = P()
+  if (t.reg?.state !== 'ready') return
+  if (liveDoc(t)) { if (t.fail) p.recheck?.(t); return }
+  if (!isActive(t)) return
+  if (wantsLoad(t)) p.load(t)
+  else if (t.crash.pendingShow && !t.crash.latched) p.shown(t)
 }
 
 const originOf = (u: string): string | null => { try { return new URL(u).origin } catch { return null } }
@@ -651,7 +671,6 @@ export function onCommit(t: Tab, c: { gen: number; url: string; href?: string; a
   t.reports = { safety: 'unknown' }
   t.view = 'live'
   t.hung = false
-  t.reopen = false
   if (d.trusted) {
     // the lift (A2.11): the tab page goes, in the turn compose() shows the canvas view
     t.fail = undefined
@@ -679,6 +698,9 @@ export function onFail(t: Tab, f: { why: FailWhy; code: number; errorPage: boole
   t.probe = { state: 'none', lastAt: null }
   // an error page committed proves the earlier document gone; in doubt it stays retained (v1.13 r2 #3)
   if (f.errorPage) { t.retained = false; d.lifted = false; d.doc = undefined }
+  // the reload after a crash failed: the view has a renderer again, holding no document - the failure is what
+  // the tab shows now, not "Reloading after a crash" (its crash record stays: a latch still outranks it)
+  if (t.view === 'crashed' && t.crash.inFlight) t.view = 'live'
   p.log?.('fail', { tab: t.id, why: f.why, code: f.code, errorPage: f.errorPage, retained: t.retained })
 }
 
@@ -737,14 +759,6 @@ export function onReport(tabId: string, doc: string, r: { safety?: Safety; busy?
   if (r.theme) { t.reports.theme = { dark: r.theme.dark }; t.look = r.theme.dark }
   if (r.menu) t.reports.menu = r.menu.map((m) => ({ ...m }))
   p.changed()
-}
-
-/** `mv:doc`'s answer for this tab's next document (A2.14 #9): one-shot, set by `recover`'s reload. */
-export function takeReopen(tabId: string): boolean {
-  const t = tabs.get(tabId)
-  if (!t?.reopen) return false
-  t.reopen = false
-  return true
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -981,6 +995,16 @@ export function sheetText(s: Sheet): { message: string; detail: string; buttons:
   const cost = s.tabs.length > 1 ? 'What they haven\'t saved is lost.' : 'What it hasn\'t saved is lost.'
   return { message, detail: `${lines.join('\n')}\n\n${cost}`, buttons: ['Cancel', VERB[a.kind]] }
 }
+
+/**
+ * The native sheet as `dialog.showMessageBox` takes it (main's words, `sheetText` or tabpage.ts `hangSheetText`):
+ * the safe answer first - the default (Return) and `Esc` alike - and the act second.
+ */
+export function sheetBox(words: { message: string; detail: string; buttons: [string, string] }) {
+  return { type: 'warning' as const, message: words.message, detail: words.detail, buttons: [...words.buttons], defaultId: 0, cancelId: 0, noLink: true }
+}
+/** The person chose the act: its button, the second. Electron's `response` is the index into `buttons`, whatever order macOS draws them in. */
+export const sheetConfirmed = (response: number): boolean => response === 1
 
 /** The theme a tab and its page wear right now. */
 export const tabDark = (t: Tab | undefined): boolean => darkOf(t, P().appDark())

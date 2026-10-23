@@ -6,8 +6,9 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
-  activeTab, closeTab, closeView, guard, guardAll, onCommit, onFail, onRegistry, sheetText, type GuardAction, type Tab,
+  activeTab, closeTab, closeView, guard, guardAll, onCommit, onFail, onRegistry, sheetBox, sheetConfirmed, sheetText, type GuardAction, type Tab,
 } from '../../src/main/tabs.ts'
+import { hangSheetText } from '../../src/main/tabpage.ts'
 import { deferred, liveTab, report, show, world, type World } from './window-fakes.ts'
 
 let w: World
@@ -333,5 +334,16 @@ describe('guardAll: one operation per canvas tab, one shared step 1 and sheet (r
     expect(await quit).toBe('refused')
     expect(w.acts.map((x) => x.tab)).toEqual([a.id])
     expect(activeTab()?.id).toBe(late.id)
+  })
+})
+
+describe('the native sheet (A2.2, A2.11): what showMessageBox is given and how its answer is read', () => {
+  it('Cancel first, the default and Esc alike; only the act\'s button - the second - confirms; the hang sheet the same, Keep Waiting first', () => {
+    const words = sheetText({ action: { kind: 'close' }, tabs: [{ id: 't1', name: 'Birch', why: { kind: 'unknown' } }] })
+    expect(sheetBox(words)).toEqual({ type: 'warning', message: 'Close Birch anyway?', detail: words.detail, buttons: ['Cancel', 'Close'], defaultId: 0, cancelId: 0, noLink: true })
+    expect([0, 1, 2, -1].map(sheetConfirmed)).toEqual([false, true, false, false])
+    const t = liveTab(w)
+    const hang = sheetBox(hangSheetText(t, []))
+    expect([hang.buttons, hang.defaultId, hang.cancelId]).toEqual([['Keep Waiting', 'Reload Page'], 0, 0])
   })
 })

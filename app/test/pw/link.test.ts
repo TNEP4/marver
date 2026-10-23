@@ -84,6 +84,31 @@ describe('a local link opened in its canvas\'s tab', () => {
     await w.report(id, { unsaved: false })
   })
 
+  it('a canvas restarting whose tab keeps a page: refused, nothing opened, the page and its path as they were', async () => {
+    // the canvas stops and starts again on its port: the tab rebinds to the starting instance, its page kept
+    await w.run.call('activate', { id })
+    await w.until((x) => !!x.tabs.find((t) => t.id === id)?.doc?.lifted, 10_000, 'lifted')
+    const t0 = await w.tab(id)
+    const rec = { ...fake.record(), file: fake.slotFile }
+    await w.run.call('fake:gone', { instance: fake.instance })
+    await w.run.call('fake:entry', { ...rec, instance: `${fake.instance}-again`, state: 'starting', origin: null })
+    await w.until((x) => x.tabs.find((t) => t.id === id)?.reg?.state === 'starting', 3000, 'rebound, starting')
+    expect((await w.tab(id)).retained).toBe(true)
+    await w.run.call('activate', { id: 'home' })
+    const since = (await w.log()).length
+    expect(await w.run.call('openInTab', { entry: { state: 'starting', origin: null, port: fake.port, ws: fake.ws, name: 'Tidewell' }, url: null, rest: '/#/b/elsewhere' })).toEqual({ ok: false, why: 'refused' })
+    const s = await w.state()
+    expect(s.active).toBe('home')   // Home keeps the link, selected, and says why
+    expect(s.tabs.find((t) => t.id === id)).toMatchObject({ path: t0.path, retained: true })
+    expect(s.tabs.find((t) => t.id === id)!.doc!.commits).toBe(t0.doc!.commits)
+    expect((await w.log('link', since)).map((l) => l.data)).toEqual([{ tab: id, refused: 'starting-kept' }])
+    // ready again: the page's own reload is the shell's (A1.11); nothing here loads it
+    await w.run.call('fake:entry', { ...rec, instance: `${fake.instance}-again` })
+    await w.until((x) => x.tabs.find((t) => t.id === id)?.reg?.state === 'ready', 3000, 'ready')
+    await sleep(300)
+    expect((await w.tab(id)).doc!.commits).toBe(t0.doc!.commits)
+  })
+
   it('a canvas still starting: its tab opens on its starting page and keeps the link\'s path for its first load', async () => {
     const f = await startFakeCanvas({ home: w.env.home, slotBase: w.slotBase, slot: 2, name: 'Later' })
     await f.ready

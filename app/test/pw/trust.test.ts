@@ -211,7 +211,9 @@ describe('the bridge', () => {
     expect(await run.call('trust:app-state', { id, s: 'shown' })).toBe(true)
     expect(await run.call('trust:menu-click', { id, item: 'fit-all' })).toBe(true)
     expect(await run.call('trust:menu-click', { id, item: 'not-offered' })).toBe(false)
-    await until('the page to hear them', async () => (await evalIn<string>(run, id, 'JSON.stringify([window.__states, window.__clicks])')) === '[["shown"],["fit-all"]]')
+    // main's own id, never in the page's mv:menu: the tab's right-click Mark All as Seen (app-api.ts APP_MENU_IDS)
+    expect(await run.call('trust:menu-click', { id, item: 'mark-all-seen' })).toBe(true)
+    await until('the page to hear them', async () => (await evalIn<string>(run, id, 'JSON.stringify([window.__states, window.__clicks])')) === '[["shown"],["fit-all","mark-all-seen"]]')
   })
 
   it('mv:doc answers reopen once after the app reloaded the tab after a crash, and nothing else', async () => {
@@ -224,6 +226,37 @@ describe('the bridge', () => {
     await until('the second reload', async () => (await tabState(run, id)).commits >= 3)
     await trusted(run, id)
     expect(await evalIn(run, id, 'window.marverApp.reopen')).toBe(false)
+  })
+
+  it('mv:doc\'s reopen goes only to a document on the canvas\'s origin: a reload that failed leaves it for the load that lifts', async () => {
+    const ws = randomBytes(8).toString('hex')
+    const a = await startFakeCanvas({ home: env.home, slotBase, slot: 17, ws })
+    await a.ready
+    await inRegistry(run, a.port, 'ready')
+    const tid = await open(run, a.port)
+    const s0 = await trusted(run, tid)
+    await run.call('trust:reopen-next', { id: tid })
+    // nothing answers: the reload commits Chromium's error page, which runs the preload and asks mv:doc
+    await a.close()
+    await run.call('trust:reread')
+    await run.call('trust:reload', { id: tid })
+    await until('the failure', async () => { const t = await tabState(run, tid); return t.events.slice(s0.events.length).some((e) => e.e.kind === 'fail') ? t : null }, 10_000)
+    await sleep(300)
+    const onError = await evalIn<string>(run, tid, 'JSON.stringify([location.protocol, typeof window.marverApp, window.marverApp ? window.marverApp.reopen : null])').catch(() => '"no page"')
+    // the canvas back on its port: the next load is still the reload after the crash
+    const b = await startFakeCanvas({ home: env.home, slotBase, slot: 17, ws })
+    fakes.push(b)
+    await b.ready
+    await inRegistry(run, b.port, 'ready')
+    await run.call('trust:load', { id: tid, url: `${b.origin}/` })
+    await until('trusted under the new instance', async () => { const t = await tabState(run, tid); return t.trusted && t.committed?.instance === b.instance ? t : null }, 10_000)
+    expect(await evalIn(run, tid, 'window.marverApp.reopen'), `on the error page: ${onError}`).toBe(true)
+    // and once only
+    await run.call('trust:reload', { id: tid })
+    await until('the next reload', async () => { const t = await tabState(run, tid); return t.trusted && t.commits > 0 ? t : null })
+    await sleep(200)
+    await trusted(run, tid)
+    expect(await evalIn(run, tid, 'window.marverApp.reopen')).toBe(false)
   })
 
   it('the page speaks well before its admit lands: what it said is held, then replayed under the admit, hello first, the latest of each, nothing refused', async () => {

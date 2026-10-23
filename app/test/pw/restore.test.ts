@@ -131,6 +131,40 @@ describe('on the real trust, whose commit carries no hash (nav.ts)', () => {
   })
 })
 
+describe('restoreTabs off (A2.14 #23)', () => {
+  it('nothing restored, but the file keeps the saved boards of canvases not running - so turning it back on restores them', async () => {
+    let alpha!: FakeCanvas
+    let state = ''
+    const goneWs = randomBytes(8).toString('hex')
+    w = await launchWindow('pw', {
+      prepare: async (env, slotBase) => {
+        alpha = await startFakeCanvas({ home: env.home, slotBase, slot: 2, name: 'Alpha' })
+        await alpha.ready
+        writeFileSync(join(env.home, 'config.json'), '{ "restoreTabs": false }\n')
+        state = join(env.home, 'state-dev')
+        mkdirSync(state, { recursive: true })
+        writeFileSync(join(state, 'launched'), '')
+        writeFileSync(join(state, 'tabs.json'), JSON.stringify({ v: 1, active: { kind: 'canvas', ws: alpha.ws, origin: alpha.origin }, settings: false, closed: [],
+          canvases: [
+            { ws: alpha.ws, origin: alpha.origin, path: '/#/b/alpha', shownAt: 10 },
+            { ws: goneWs, origin: `http://[::1]:${slotBase + 9}`, path: '/#/b/kept', shownAt: 5 },
+          ] }))
+        return { extraEnv: { MARVER_APP_FAKE_ENTRIES: JSON.stringify([recOf(alpha)]) }, fakes: [alpha] }
+      },
+    })
+    const s = await w.until((x) => x.tabs.some((t) => t.reg?.instance === alpha.instance), 5000, 'the canvas tab')
+    expect(s.active).toBe('home')
+    expect(s.tabs.find((t) => t.reg?.instance === alpha.instance)!.path).toBe('/')   // off: nothing restored
+    const written = await w.run.call<{ canvases: { ws: string; path: string }[] }>('writeTabs')
+    expect(written.canvases.find((c) => c.ws === goneWs)).toMatchObject({ path: '/#/b/kept' })
+    await sleep(200)
+    const onDisk = JSON.parse(readFileSync(join(state, 'tabs.json'), 'utf8')) as { canvases: { ws: string; path: string }[] }
+    expect(onDisk.canvases.find((c) => c.ws === goneWs)).toMatchObject({ path: '/#/b/kept' })
+    await w.close()
+    w = undefined
+  })
+})
+
 describe('a tabs.json of another version', () => {
   it('goes aside as tabs.json.bad; the app starts on Home with every running canvas at /', async () => {
     let alpha!: FakeCanvas

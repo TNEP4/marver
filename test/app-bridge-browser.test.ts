@@ -520,3 +520,36 @@ describe('without the app: 0.27.0\'s shell, in Chrome', () => {
     }
   }, 60_000)
 })
+
+// last in the file: it adds frames to the canvas and takes them away again
+describe('the app\'s own menu item (A2.4)', () => {
+  let s = ''
+  beforeAll(async () => { if (browser) s = await open({ on: true }) }, 60_000)
+
+  it('the app\'s own Mark All as Seen (the tab\'s right-click, A2.4): every frame\'s "new" cleared, here and on disk; never an item of the menu', async (ctx) => {
+    skip(ctx)
+    const seenOnDisk = () => { try { return JSON.parse(readFileSync(join(root, 'design', '.local', 'seen.json'), 'utf8')).frames as Record<string, number> } catch { return {} } }
+    // two frames changed on disk, neither on the board the page shows (nothing looks at them): new until seen
+    writeFileSync(join(root, 'design/scenes/demo/three.tsx'), FRAME('Three'))
+    writeFileSync(join(root, 'design/scenes/demo/four.tsx'), FRAME('Four'))
+    const isNew = (id: string) => `(() => { const m = __mvStore.getState().marks; return !!m && (m.changed['${id}'] ?? 0) > (m.seen['${id}'] ?? 0) })()`
+    try {
+      await until(s, `${isNew('demo/three')} && ${isNew('demo/four')}`, 15_000)
+      expect(await ev(s, `__fake.last('menu').some((m) => m.id === 'mark-all-seen')`)).toBe(false)
+      expect(await ev(s, `__fake.click('mark-all-seen')`)).toBeGreaterThan(0)
+      await until(s, `(() => { const m = __mvStore.getState().marks; return Object.keys(m.changed).every((id) => (m.changed[id] ?? 0) <= (m.seen[id] ?? 0)) })()`)
+      const changed = await ev(s, `__mvStore.getState().marks.changed`) as Record<string, number>
+      const end = Date.now() + 5000
+      while (Date.now() < end && !(seenOnDisk()['demo/three'] >= changed['demo/three'] && seenOnDisk()['demo/four'] >= changed['demo/four'])) await wait(50)
+      expect(seenOnDisk()['demo/three']).toBeGreaterThanOrEqual(changed['demo/three']!)
+      expect(seenOnDisk()['demo/four']).toBeGreaterThanOrEqual(changed['demo/four']!)
+    } finally {
+      rmSync(join(root, 'design/scenes/demo/three.tsx'), { force: true })
+      rmSync(join(root, 'design/scenes/demo/four.tsx'), { force: true })
+      // the canvas has dropped them again before anything else runs on it
+      await until(s, `!__mvStore.getState().manifest.frames.some((f) => f.id === 'demo/three' || f.id === 'demo/four')`, 15_000).catch(() => {})
+    }
+    await atRest(s)
+  }, 60_000)
+
+})

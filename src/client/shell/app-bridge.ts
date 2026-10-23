@@ -100,8 +100,14 @@ export function menuNow(): MenuItem[] {
 
 /** A menu item chosen in the app: its key, replayed on the shell's window - the same handlers, the same rules (a
  *  text field holding the focus does not stop it: the person chose the item). An id the page does not offer now
- *  does nothing. */
+ *  does nothing. One id is the app's own, never in the menu: the tab's right-click Mark All as Seen clears every
+ *  frame's "new" in this canvas, here and on disk, as the sidebar's Mark all as seen does for a board. */
 export function runMenuItem(id: string): void {
+  if (id === 'mark-all-seen') {
+    const s = useStore.getState()
+    if (!PUBLISHED && s.marks) s.markSeen(Object.keys(s.marks.changed))
+    return
+  }
   const it = ITEMS.find((x) => x.id === id)
   if (!it || !offered(it)) return
   window.dispatchEvent(new KeyboardEvent('keydown', { ...it.key, bubbles: true, cancelable: true }))

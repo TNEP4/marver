@@ -62,6 +62,23 @@ describe('the strip\'s menus, from main\'s record (A2.4, A2.7, A2.14 #19, #24)',
     const copies = (await effects()).copies
     expect(copies.length).toBe(before + 1)
     expect(copies.at(-1)).toBe(`http://localhost:${port}/`)   // the people link, never the bound origin
+    // Mark All as Seen: main's own mv:menu-click to the canvas - not an item the page's mv:menu offers
+    await w.run.call('tabMenu', { id })
+    const since = (await w.log()).length
+    expect(await w.run.call('popup:click', { label: 'Mark All as Seen' })).toBe(true)
+    expect((await w.log('fake-trust', since)).map((l) => l.data)).toContainEqual({ menuClick: 'mark-all-seen', tab: id })
+    expect((await w.log('tab-act', since)).map((l) => l.data)).toContainEqual({ what: 'mark-all-seen', tab: id, sent: true })
+  })
+
+  it('a canvas without the bridge (0.27.0) cannot hear Mark All as Seen: the item is disabled', async () => {
+    const c = await w.canvas({ slot: 5, name: 'Older', version: '0.27.0', features: [] })
+    await w.run.call('activate', { id: c.id })
+    await w.until((x) => !!x.tabs.find((t) => t.id === c.id)?.doc?.lifted, 10_000, 'lifted')
+    await w.run.call('tabMenu', { id: c.id })
+    const items = await lastPopup()
+    expect(items.find((i) => i.label === 'Copy Local Link')!.enabled).toBe(true)
+    expect(items.find((i) => i.label === 'Mark All as Seen')!.enabled).toBe(false)
+    await w.run.call('activate', { id })
   })
 
   it('once the bridge says the document went stale, the items that would hand on its address are disabled', async () => {
@@ -139,5 +156,33 @@ describe('a failed tab when the Mac wakes (A2.11)', () => {
     await w.run.call('resume')
     for (let i = 0; i < 30 && !(await w.log('probe', since)).some((l) => l.data.tab === c.id); i++) await sleep(100)
     expect((await w.log('probe', since)).filter((l) => l.data.tab === c.id).map((l) => l.data.state)).toEqual(['silent'])
+  })
+})
+
+describe('a tab closed while its first view is made (A2.4)', () => {
+  it('gets no view and loads nothing hidden; reopened, it loads as any documentless tab', async () => {
+    await w.run.call('fake:session', { hold: true })
+    try {
+      const c = await w.canvas({ slot: 6, name: 'Closed early' })
+      await w.run.call('activate', { id: c.id })
+      // the view waits on its partition's preparation (the real one awaits the service-worker sweep): ⌘W now
+      for (let i = 0; i < 40 && !(await w.log('fake-trust')).some((l) => l.data.session === 'held'); i++) await sleep(25)
+      expect(await w.run.call('close', { id: c.id })).toBe('closed')
+      const since = (await w.log()).length
+      await w.run.call('fake:session', { hold: false })
+      await sleep(800)
+      const t = await w.tab(c.id)
+      expect(t.open).toBe(false)
+      expect(t.hasView).toBe(false)
+      expect(t.view).toBe('none')
+      expect((await w.log('load', since)).filter((l) => l.data.tab === c.id)).toEqual([])
+      expect(c.fake.requests.filter((r) => r.path === '/')).toEqual([])
+      expect((await w.log('view', since)).map((l) => l.data)).toContainEqual({ tab: c.id, abandoned: true })
+      // reopened from Home: its first view now, and its load
+      await w.run.call('activate', { id: c.id })
+      await w.until((x) => !!x.tabs.find((q) => q.id === c.id)?.doc?.lifted, 10_000, 'loaded once reopened')
+      expect((await w.tab(c.id)).open).toBe(true)
+    } finally { await w.run.call('fake:session', { hold: false }) }
+    await w.run.call('activate', { id: 'home' })
   })
 })
