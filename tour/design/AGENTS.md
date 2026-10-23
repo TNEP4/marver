@@ -1,10 +1,20 @@
-<!-- marver:managed 071aac3f5c1845b5786abef759bf810eaa353d3ea0369fd498cb10cbe9d59b75 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed bbc617bce88e071c0da98baf67672f351ffea4807ef0faa59c0d41b226b7c9c3 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Design canvas - agent contract
 
 You design by writing files. The canvas at the printed localhost URL reflects them live.
 Never drive or automate the canvas UI; read and write files only. (Starting
-`npx marver dev` so the human has a live canvas - first session, or on request -
-is the one allowed touch.)
+the canvas so the human has a live one - first session, or on request - is the one
+allowed touch: `npx marver dev`, never with a port. It takes a free slot,
+localhost:4805-4824, usually the same one next time, and prints its link.)
+
+**Keeping the canvas up.** A canvas you start dies with the job that started it: Claude Code
+stops a background job after 10 minutes, and a headless session never exits while one runs.
+So `npx marver ls` first - one may already run for this folder. None: ask the person to run
+`npx marver dev` in their own terminal. If you start it yourself, start it detached so it
+outlives you - `mkdir -p design/.local && nohup npx marver dev > design/.local/dev.log 2>&1 &` -
+then read its link from `npx marver ls`. In a sandbox where it cannot start ("cannot watch
+this folder") or cannot be reached ("cannot be reached from here"), ask the person to run it:
+`npx marver shot`, `marks`, `ls` and `perf --loads` still work there.
 
 ## Before the method: a project with no `context/`
 
@@ -127,8 +137,10 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
   scene ...>` for any set. Each opens a board they sit on (one link per board when they sit
   on several) with them selected and in view -
   the human finds the work at once on a board of fifty frames. Never a full-screen focus link
-  (`#/f/...`) unless they ask for full screen. No `marver dev` running? End with
-  `npx marver dev` instead - the link carries its port.
+  (`#/f/...`) unless they ask for full screen. `npx marver ls` lists the canvases running on
+  this Mac and their links; none for this folder? End by asking the person to run
+  `npx marver dev` in their own terminal (or start it detached: "Keeping the canvas up") - the
+  link carries its port.
 - **Answer each comment thread you addressed, in the thread**: `npx marver comments reply
   <thread> --body "<what changed>"` - one line, no longer than their comment. On a thread
   the human started it posts as Marver and pings them on the frame. A reply that asks them
@@ -224,6 +236,10 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
   waiting on them (your notes and replies they have not resolved - the ones that ask first) and
   the frames new since they last looked. When it bears on the work, say so in your first message
   ("you have not looked at the checkout frames since I changed them").
+- **Performance.** `npx marver perf --loads --json` says what each board load did - time to
+  settled, how many moves and why, the slowest frames, errors. To make a board faster, name
+  the lever, change it, compare the next load. A slow frame's `admittedMs` is when its turn to
+  start came: a long wait is the queue, not the frame (`ms - admittedMs` is the frame's own).
 - **Names vs titles.** A board's file name, a folder's `name`, a scene's directory are
   IDENTITIES: slugs you address, that publish.json, URLs and comment threads hold, and
   that never move on a rename. `title` is what humans see - free text (casing,
@@ -247,6 +263,8 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
 - Do not import from "design/" inside src/ or app/. The arrow points one way.
 - Do not add network calls, app stores, or auth to frames. Mocked data only.
 - Keep each frame self-sufficient: it must render from its file + fixtures + ui imports alone.
+- Frames cannot register a service worker on the local canvas (it refuses the script): a PWA
+  prototype shows its screens, not its offline behaviour.
 - A scene may not be named "components" or "screens".
 
 ## Promotion (when a design is approved)

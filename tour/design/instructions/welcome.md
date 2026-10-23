@@ -1,4 +1,4 @@
-<!-- marver:managed 1e2e1fe8fc428afcce2bce8cbaf5180c54b5f5688b141c5f685290cf85a2a067 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 9409dbd54c59ee9d6423c3c254f6dec0afcdd7e0f7411d04cff8baa029b7067e - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Welcome - the human's first session
 
 Run this the FIRST time you work with the human in a repo, or whenever they ask
@@ -108,9 +108,12 @@ without narrating into the void; your next message is the reveal.
 ## The reveal
 
 Deliver conversationally when the first draft is ready - a short guided
-message, not a manual. Start `npx marver dev` if it is not already running
-(allowed for this purpose) and ALWAYS hand a deep link to the board you
-prepared, using the port the dev server PRINTED:
+message, not a manual. The canvas must be running: `npx marver ls` lists it.
+Not yet? Ask the person to run `npx marver dev` in their own terminal - a
+canvas you start dies with your job - or start it detached, as design/AGENTS.md
+says ("Keeping the canvas up"); never with a port. ALWAYS hand a deep link to
+the board you prepared, using the port the dev server printed (`npx marver ls`
+lists it):
 `http://localhost:<port>/#/b/<board>` - never the bare root URL. The link goes
 at the BOTTOM of the message, on its own line: the human reads through, then
 clicks. The human has already played with the hosted tour by now, so keep it
