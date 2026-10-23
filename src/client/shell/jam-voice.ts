@@ -145,8 +145,11 @@ interface Segment {
 }
 interface Mic { ctx: AudioContext; stream: MediaStream; node: AudioWorkletNode; seg: Segment | null; closed: boolean }
 let mic: Mic | null = null
-/** A microphone being opened (its permission, its worklet): a newer change cancels it. */
-let opening: { cancelled: boolean } | null = null
+/** A microphone being opened (its permission, its worklet, its connection): a newer change cancels it. It holds
+ *  what it has opened so far, so a cancel stops its track and closes its context in that same turn - an opening
+ *  can wait on a request that never answers, and a track it holds is live until stopped (A2.14 #13). */
+interface Opening { cancelled: boolean; stream: MediaStream | null; ctx: AudioContext | null }
+let opening: Opening | null = null
 let segN = 0
 /** segment -> its owner (the words it brings back belong to it) */
 const owners = new Map<string, Owner>()
@@ -370,19 +373,20 @@ async function step() {
 
 /** Open the microphone for `owner` - one step of the chain; a newer state cancels it at its next wait. */
 async function open(owner: Owner) {
-  const op = { cancelled: false }
+  const op: Opening = { cancelled: false, stream: null, ctx: null }
   opening = op
   const stale = () => op.cancelled || wanted()?.id !== owner.id
-  let stream: MediaStream | null = null
-  let ctx: AudioContext | null = null
-  const undo = () => { stream?.getTracks().forEach((t) => t.stop()); void ctx?.close().catch(() => {}) }
+  const undo = () => release(op)
   try {
     // the microphone first (its permission, its worklet), the connection last: a page never holds the one
     // audio connection while it is still starting - and a reclaim takes it only if it is free
+    let stream: MediaStream
     try { stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } }) }
     catch { useJamVoice.setState({ denied: true }); useStore.getState().toast('the microphone is blocked for this page - typed notes only'); return }
+    op.stream = stream
     if (stale()) { undo(); return }
-    ctx = new AudioContext({ sampleRate: RATE })
+    const ctx = new AudioContext({ sampleRate: RATE })
+    op.ctx = ctx
     await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' })))
     if (stale()) { undo(); return }
     // a capture is something you just did here: it takes the connection; a session's talk only takes it if it
@@ -395,6 +399,9 @@ async function open(owner: Owner) {
     const node = new AudioWorkletNode(ctx, 'mv-pcm')
     ctx.createMediaStreamSource(stream).connect(node)
     const m: Mic = { ctx, stream, node, seg: null, closed: false }
+    // the microphone owns them now: closeNow stops them, never the opening
+    op.stream = null
+    op.ctx = null
     mic = m
     const seg = segmentFor(owner, -1)
     m.seg = seg
@@ -405,10 +412,21 @@ async function open(owner: Owner) {
     setLive()
   } catch {
     undo()
-    useStore.getState().toast('the microphone could not start - typed notes only')
+    // a cancelled opening whose context closed under its worklet says nothing: nothing failed
+    if (!op.cancelled) useStore.getState().toast('the microphone could not start - typed notes only')
   } finally { if (opening === op) opening = null }
 }
-const cancelOpening = () => { if (opening) opening.cancelled = true }
+/** What an opening holds goes, once: its tracks stopped, its context closed. */
+function release(op: Opening) {
+  const { stream, ctx } = op
+  op.stream = null
+  op.ctx = null
+  stream?.getTracks().forEach((t) => t.stop())
+  void ctx?.close().catch(() => {})
+}
+/** A newer change, or the app's `untrusted`: the opening goes, and what it already holds stops now - not at its
+ *  next wait, which may never come. The opening still sees itself cancelled when that wait ends, and opens nothing. */
+const cancelOpening = () => { if (opening) { opening.cancelled = true; release(opening) } }
 /** The chain settled - but never longer than `ms` (an opening may wait on the browser's permission
  *  question; what the caller needs - the cuts of its segments - is done before it). */
 const settle = (ms = 2_000) => Promise.race([reconcile(), new Promise<void>((r) => setTimeout(r, ms))])

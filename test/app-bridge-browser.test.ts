@@ -79,7 +79,7 @@ afterAll(async () => {
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 /** The fake bridge, run at document start: the preload's contract, recorded. `cfg.on` false: no bridge at all (Chrome). */
-type Fake = { on: boolean; v?: number; reopen?: boolean; partial?: boolean; mic?: boolean; ws?: string }
+type Fake = { on: boolean; v?: number; reopen?: boolean; partial?: boolean; mic?: boolean; stallTicket?: boolean; ws?: string }
 const FAKE = (cfg: Fake) => `(() => {
   const cfg = ${JSON.stringify(cfg)}
   const realFetch = window.fetch.bind(window)
@@ -90,6 +90,8 @@ const FAKE = (cfg: Fake) => `(() => {
     fetched.push(url)
     // the microphone's case: a speech engine that is ready, and an audio connection that opens (no model needed)
     if (cfg.mic && url.includes('/__mv/api/jam/voice')) return json({ state: 'ready', mb: 1 })
+    // stallTicket: the audio ticket's request waits until the case lets it go (the page itself stays responsive)
+    if (cfg.mic && cfg.stallTicket && url.includes('/__mv/api/jam/audio-ticket')) return new Promise((r) => { window.__releaseTicket = () => { r(new Response(JSON.stringify({ ticket: 't' }), { status: 200, headers: { 'content-type': 'application/json' } })); return 1 } })
     if (cfg.mic && url.includes('/__mv/api/jam/audio-ticket')) return json({ ticket: 't' })
     return realFetch(input, init)
   }
@@ -394,6 +396,21 @@ describe('untrusted: the page stops every microphone track it holds (A2.14 #13)'
     await ev(s, `__mvJamVoiceTalk('ses-2', performance.timeOrigin + performance.now()).then(() => 1)`)
     await wait(1500)
     expect(await ev(s, `[__fakeTracks().length, __mvJamVoice.getState().live]`)).toEqual([1, false])
+  }, 60_000)
+
+  it('a microphone still opening - its track live, its audio ticket\'s request stalled - is stopped in the same turn', async (ctx) => {
+    skip(ctx)
+    const s = await open({ on: true, mic: true, stallTicket: true })
+    void ev(s, `__mvJamVoiceTalk('ses-open', performance.timeOrigin + performance.now()).then(() => 1)`).catch(() => {})
+    // the opening holds a live track and waits on the ticket; the page answers meanwhile
+    await until(s, `__fakeTracks().includes('audio:live') && __fakeFetched.some((u) => u.includes('/__mv/api/jam/audio-ticket'))`, 15_000)
+    expect(await ev(s, `__mvJamVoice.getState().live`)).toBe(false)
+    // the track has ended by the time the app's message returns - not at the opening's next wait
+    expect(await ev(s, `(__fake.state('untrusted'), __fakeTracks())`)).toEqual(['audio:ended'])
+    // the ticket comes back late: the opening finds itself cancelled and opens nothing
+    expect(await ev(s, `__releaseTicket()`)).toBe(1)
+    await wait(1500)
+    expect(await ev(s, `[__fakeTracks(), __mvJamVoice.getState().live]`)).toEqual([['audio:ended'], false])
   }, 60_000)
 })
 

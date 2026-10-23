@@ -50,7 +50,7 @@ The canvas's side of the Mac app (app 0.1), and what it brings to every browser.
   reloading asks first or waits instead of losing it - its theme (the app's tabs follow it), and its View and Jam menu
   items with their keys, which the app shows in its menu bar. When its tab is shown again, it reads its marks, its
   agents' work, the Jam queue and its board again; when the app stops trusting it, it lets go of the microphone at
-  once. In a browser, nothing of this runs. Each canvas's registry file lists `bridge` among its features.
+  once - one still opening too. In a browser, nothing of this runs. Each canvas's registry file lists `bridge` among its features.
 - **`GET /__mv/logo`** on `marver dev`: the canvas's logo, from the same ladder and checks as `marver build`, with an
   `ETag`. A request carrying `x-mv-nonce` gets `x-mv-instance` and `x-mv-proof` over that logo (`logo|<nonce>|<port>`),
   so the Mac app shows a logo only from the canvas it verified.
