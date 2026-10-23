@@ -289,11 +289,50 @@ strings cut to 200 characters, 512 KB a request - and appends them to `page.json
 |---|---|
 | `--loads` | each board load in full |
 | `--jam` | Jam's timings |
+| `--crashes` | the Mac app's crashes and hangs of this repo's canvases (below) |
+| `--flashes` | the flashes marked in the Mac app, and the white-out candidates (below) |
+| `--machine` | the machine profiles (below) |
+| `--all` | with `--flashes`: also the marks on other canvases or on Home |
+| `--days <n>` | how far back `--crashes`, `--flashes` and `--machine` read: 14 by default |
 | `--json` | machine-readable |
 | `--minutes <n>` | how far back to read: 60 by default (24 h with `--jam`) |
 | `--root <dir>` | the project (default: here) |
 
-Plain `npx marver perf` reads the reload log and ends with one line per board load.
+Plain `npx marver perf` reads the reload log and ends with one line per board load. It and `--loads` leave out a
+headless run's loads (`marver perf run`): they say how many.
+
+## The Mac app's half
+
+The Mac app (0.2 and later) records what only the app can see, in `~/.marver/perf/`: `app.jsonl` (Marver Dev writes
+`app-dev.jsonl`; one writer per file), one line per event with `{ v, ts, kind, app, seq, flavour, machine }` - `app`
+names the launch, `seq` counts its lines, `machine` the profile the line was written on. Every 5 s the app samples its
+processes (`getAppMetrics()`: CPU from cumulative time, memory as each process's working set, a canvas renderer's own
+footprint from its page, the memory pressure level), keeps the last minute in memory and writes one `sample` line a
+minute; and it records renderer and GPU process ends, hangs, GPU changes, power and thermal events, each tab's state
+and document, and the time a tab switch takes to its second frame (`shown`). A line about a tab carries its `tab`,
+`ws`, `commit` and `page` - the page id the shell's hello sent, which is the `page` of its records in
+`page.jsonl`. With Settings' recorder off, nothing of this is written (a flash you mark still is).
+`machine/<hash>.json` holds one profile per distinct machine state (the chip, the displays and their rates, the
+GPU's renderer, power): a display change or a GPU fallback makes a new one, and old lines keep theirs. The app keeps
+14 days of it (`keepPerfDays`), at most 5 MB a file, 50 flash pictures and 10 crash reports.
+
+`marver perf` joins the two halves by `page`, so each app event lands on the board load it happened in:
+
+- `--crashes`: each canvas crash of this repo (not one the app ended itself: an unload, Reload Page) with its board,
+  whether its load had settled, the last gesture before it, and the minute before it; hangs, and when the page
+  answered again; then, **by time (machine-wide)**, the GPU process's and utility processes' ends and a GPU process
+  replaced silently (`gpu-restart`); and how many crash reports `crashpad/completed` holds.
+- `--flashes`: each flash you marked with `⌃⌥F` on this repo's canvases, with its board, the gesture that ended
+  within 2 s of it, the GPU process's events within a second, pressure, thermal state, the GPU figures (machine-wide)
+  and the picture's path. The picture is the app's views as the app stacks them, not the screen: it holds no traffic
+  lights and may miss a flash that happens in the compositor. Marks on Home or other canvases are counted (`--all`
+  shows them). White-out candidates, found automatically during gestures, are listed apart: automatic, not verified.
+- `--machine`: the profiles, grouped by host (the app and a headless run of one Mac share its `hostHash`), which is
+  current, and how many records and runs name each.
+
+A record that carries no page (a 0.27.0 canvas, or a document that has not said hello) is joined by workspace and
+time, and the output says so. The repo's workspaces are its own and every workspace in its `page.jsonl`, so a
+`--recover` run's records join too.
 
 ## In the page
 

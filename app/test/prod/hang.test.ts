@@ -77,6 +77,9 @@ describe('a page that stops responding (A2.11)', () => {
     const log = await w.log(undefined, since)
     expect(log.filter((l) => l.topic === 'hang' && l.data.ended).length).toBe(1)
     expect(log.find((l) => l.topic === 'gone')!.data).toMatchObject({ tab: id, app: true })
+    // the recorder's gone is ours: main ended that renderer itself (A3.8 #9); the hang was recorded before it
+    expect(log.find((l) => l.topic === 'recorder' && l.data.kind === 'gone')!.data).toMatchObject({ tab: id, role: 'canvas', ours: true, source: 'reload-page' })
+    expect((await w.log('recorder')).some((l) => l.data.kind === 'unresponsive' && l.data.tab === id)).toBe(true)
     expect(log.some((l) => l.topic === 'crash' && l.data.reload === 'force')).toBe(true)
     expect(s.pill).toBeNull()
   })
