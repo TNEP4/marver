@@ -2,6 +2,9 @@
    Light board -> light glass chrome over a paper canvas; dark board -> dark glass
    chrome over a dark canvas. Frames are cards; chrome is glass. */
 
+/* @tokens */
+/* The token block (spec 28 A2.2, A2.9): the Mac app copies everything between these two markers into its own pages
+   at build time (app/scripts/tokens.mjs, rewritten onto :root), so its strip and pages wear exactly this glass. */
 .sh-app {
   --ground: #e7e9ef; --dot: #c9cbd5;
   --accent: #0088ff; --accent-ring: rgba(0, 136, 255, .2); --beam: rgba(0, 136, 255, .42); --beam-blur: 6px; --beam-bottom: -13px; --beam-h: 12px; --beam-inset: 12%; --edge-accent: rgba(0, 136, 255, .8); --inner-tint: rgba(0, 136, 255, .13); --tip-bg: #18181b; --tip-ink: #fafafa; --accent-wash: rgba(0, 136, 255, .07);
@@ -101,6 +104,17 @@
 @property --accent-wash { syntax: '<color>'; inherits: true; initial-value: rgba(0, 136, 255, .07); }
 @property --glass-accent { syntax: '<color>'; inherits: true; initial-value: #0077e6; }
 @property --glass-accent-bg { syntax: '<color>'; inherits: true; initial-value: rgba(0, 136, 255, .13); }
+
+/* Reduce Transparency and Increase Contrast (spec 28 A2.9, A2.13): every glass surface opaque - its fill the solid
+   one, its border the node's, no blur - in both themes (the dark rule's own specificity, later in the file); and
+   with more contrast the dimmer inks take the full one. macOS's settings reach Chrome too. */
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .sh-app, .sh-app.dark { --glass: var(--solid); --glass-brd: var(--node-brd); --blur: none; }
+}
+@media (prefers-contrast: more) {
+  .sh-app, .sh-app.dark { --glass-ink-2: var(--glass-ink); --glass-ink-3: var(--glass-ink); }
+}
+/* @end-tokens */
 
 /* interact mode: the whole shell shifts to the interactive purple - one token override,
    and every accent-derived surface (mark, sidebar actives, selection bar, beams, rings,
