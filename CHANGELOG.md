@@ -2,6 +2,46 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## 0.27.1 - unreleased
+
+The canvas's side of the Mac app (app 0.1), and what it brings to every browser.
+
+### Changed
+
+- **Leaving a canvas that holds unsaved work asks first, in every browser.** Chrome asked only while a Jam capture was
+  being recorded, or on a stopped tab with board edits. Now a reload or a close asks whenever the page holds anything
+  the canvas does not have yet: a capture recording or finishing, a capture sealed and not taken by the canvas yet
+  (also one kept only in memory), a board edit not saved yet - a save on its way or one that failed - heights not
+  written yet, and words typed and not sent (a comment, a Jam edit or note). A drag is not work until it drops. The
+  page's own reload when its canvas comes back still goes without asking: it saves first. Chrome shows its question
+  only on a page you have clicked or typed in since it loaded. A published canvas is unchanged.
+- **A canvas opens where you left it.** A board you reload opens on the view you had (kept per project and board, a
+  second after the view settles), unless the link names a selection - then it fits that, as before. A published canvas
+  still opens on the whole board.
+- **The logo ladder reads `public/favicon.png` and `public/favicon.ico` too, and a logo must be one.** After
+  `share.logo`, `design/logo.svg|png`, `public/logo.svg|png` and `public/favicon.svg`, `marver build` now tries
+  `public/favicon.png` and `public/favicon.ico`. A candidate counts only as a regular file inside the repo (a symlink
+  never counts, even one inside it), of at most 256 KB, whose bytes are an SVG, a PNG or an ICO - its type comes from
+  its bytes, so a PNG named `.svg` is published as `logo.png`. A `share.logo` that fails is ignored with one line
+  saying why; 0.27.0 followed a symlink and copied `share.logo` from anywhere. A gated `marver serve` shows a
+  `logo.ico` before sign-in, as it does a `.svg` or `.png`.
+- **Reduce Transparency and Increase Contrast make the glass opaque.** With either set in macOS, the sidebar, the
+  toolbar and every glass surface take a solid fill and a plain border; with Increase Contrast the dimmer text takes the
+  full ink. Chrome reads the same settings.
+- **`marver ls` and the registry name a canvas as the canvas does.** A canvas's line in `~/.marver/running/` carries
+  `share.name` when you set one ("TMS broker", not "tms-broker"), else the folder name.
+
+### Added
+
+- **The Mac app's bridge.** In the Mac app, a canvas page tells the app what it holds - so closing its tab, quitting or
+  reloading asks first or waits instead of losing it - its theme (the app's tabs follow it), and its View and Jam menu
+  items with their keys, which the app shows in its menu bar. When its tab is shown again, it reads its marks, its
+  agents' work, the Jam queue and its board again; when the app stops trusting it, it lets go of the microphone at
+  once. In a browser, nothing of this runs. Each canvas's registry file lists `bridge` among its features.
+- **`GET /__mv/logo`** on `marver dev`: the canvas's logo, from the same ladder and checks as `marver build`, with an
+  `ETag`. A request carrying `x-mv-nonce` gets `x-mv-instance` and `x-mv-proof` over that logo (`logo|<nonce>|<port>`),
+  so the Mac app shows a logo only from the canvas it verified.
+
 ## 0.27.0 - 2026-10-23
 
 ### Highlights
