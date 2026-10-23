@@ -36,6 +36,7 @@ function route(req: IncomingMessage, res: ServerResponse): boolean {
   const q = u.searchParams
   if (q.has('redirect')) { res.writeHead(302, { location: '/index.html?r' }); res.end(); return true }
   if (q.has('204')) { res.writeHead(204); res.end(); return true }
+  if (q.has('304')) { res.writeHead(304, { etag: '"x"' }); res.end(); return true }
   if (q.has('download')) { res.writeHead(200, { ...signed, 'content-disposition': 'attachment; filename="x.html"' }); res.end(PAGE); return true }
   if (q.has('late')) {
     res.writeHead(200, signed)
@@ -174,6 +175,15 @@ describe('the adapter\'s traces', () => {
     console.log('204:', (await raw(s.wc, m)).join(' | '))
     expect(adapterSince(t, n).map((e) => e.kind)).toEqual(['start', 'abort'])
     expect(t.trusted).toBe(true)
+  })
+
+  it('a 304 is not a redirect: refused like any answer without a proof', async () => {
+    const s = await fresh()
+    const n = s.events.length
+    await run.call('trust:load', { id: s.id, url: `${f.origin}/?304` })
+    const t = await until('the 304 refused', async () => { const x = await tabState(run, s.id); return adapterSince(x, n).some((e) => e.kind === 'fail') ? x : null })
+    expect(adapterSince(t, n).find((e) => e.kind === 'fail')).toMatchObject({ why: 'unverified', code: -20 })
+    expect(t.trusted).toBe(false)
   })
 
   it('a download: no commit, the shown document keeps its trust, and no save sheet', async () => {

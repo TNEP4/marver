@@ -163,6 +163,11 @@ export function localSession(ws: string): Promise<Session> {
       const plant = __MV_TEST__ && testMode() && process.env.MARVER_APP_TEST_ALLOW_SW === ws
       harden(ses, 'local')
       installDispatcher(ses, { allowServiceWorkers: plant })
+      // a download of the canvas's own document is what only a listener on its port could answer: never saved
+      ses.on('will-download', (e, item, wc) => {
+        const t = wc && !wc.isDestroyed() ? targetOf(wc.id) : undefined
+        if (t && shellDocUrl(item.getURL(), t.entry)) e.preventDefault()
+      })
       if (__MV_TEST__ && testMode()) ses.on('will-download', (e, item) => { e.preventDefault(); note('download', { url: item.getURL() }) })   // no save sheet in tests
       if (!plant) {
         await ses.clearStorageData({ storages: ['serviceworkers'] }).catch((err: Error) => {

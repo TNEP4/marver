@@ -99,6 +99,9 @@ export function checkProof(input: { headers: Record<string, string>; nonce: stri
   return same(got, want) ? 'ok' : 'proof'
 }
 
+/** The statuses Chromium follows as redirects. A 304 is not one: passing it would commit a cached copy unproved. */
+export const REDIRECTS: ReadonlySet<number> = new Set([301, 302, 303, 307, 308])
+
 /** A final response Chromium never commits as a document: no content, or a download (pure). */
 export const commitsNothing = (status: number, h: Record<string, string>): boolean =>
   status === 204 || status === 205 || /^\s*attachment\b/i.test(h['content-disposition'] ?? '')
@@ -184,7 +187,7 @@ function beforeSend(d: OnBeforeSendHeadersListenerDetails, cb: (r: { cancel?: bo
 async function headersReceived(d: OnHeadersReceivedListenerDetails): Promise<{ cancel?: boolean }> {
   const req = pending.get(d.id)
   if (!req) return { cancel: true }   // a main-frame response to a request we never stamped
-  if (d.statusCode >= 300 && d.statusCode < 400) return {}   // a redirect authorizes nothing; the next hop is stamped again
+  if (REDIRECTS.has(d.statusCode)) return {}   // a redirect authorizes nothing; the next hop is stamped again
   pending.delete(d.id)
   const report = (o: Outcome) => {
     if (__MV_TEST__) note('proof', { wc: req.wcId, event: 'outcome', gen: req.gen, outcome: o, status: d.statusCode })

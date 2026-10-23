@@ -9,7 +9,7 @@ import { createServer, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { docProof, logoProof } from '../../../src/server/proof.ts'
-import { checkProof, commitsNothing, fetchLogo, oneHeaders, probeProof, shellDocUrl, unsafePrefs } from '../../src/main/proof.ts'
+import { checkProof, commitsNothing, fetchLogo, oneHeaders, probeProof, REDIRECTS, shellDocUrl, unsafePrefs } from '../../src/main/proof.ts'
 import type { RegistryEntry } from '../../src/main/registry.ts'
 
 const key = randomBytes(32)
@@ -91,6 +91,10 @@ describe('what a view must be, and what commits nothing', () => {
     expect(unsafePrefs(view({ ...ok, disableDialogs: false }))).toBe('dialogs not disabled')
     expect(unsafePrefs(view(null))).toBe(null)
     expect(unsafePrefs({})).toBe(null)
+  })
+  it('a redirect is 301, 302, 303, 307 or 308 - never a 304, which would commit a cached copy unproved', () => {
+    expect([301, 302, 303, 307, 308].every((c) => REDIRECTS.has(c))).toBe(true)
+    expect([300, 304, 305, 306].some((c) => REDIRECTS.has(c))).toBe(false)
   })
   it('commitsNothing: a 204, a 205 or a download', () => {
     expect(commitsNothing(204, {})).toBe(true)

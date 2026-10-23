@@ -374,12 +374,19 @@ export function installBridge(): Bridge {
         trace('unsafe-view', { wc: id, kind, why: unsafe })
         return
       }
+      const had = regs.get(id)
+      if (had) {
+        // once per webContents: a second call changes nothing but its tab
+        if (had.kind === kind && tabId && had.tabId !== tabId) { had.tabId = tabId; if (kind === 'canvas') tabWc.set(tabId, id) }
+        return
+      }
       regs.set(id, { wc, kind, ...(tabId ? { tabId } : {}), ready: false })
       if (tabId && kind === 'canvas') tabWc.set(tabId, id)
       wc.once('destroyed', () => {
+        const r = regs.get(id)
         regs.delete(id)
         docs.delete(id)
-        if (tabId && tabWc.get(tabId) === id) tabWc.delete(tabId)
+        if (r?.tabId && tabWc.get(r.tabId) === id) tabWc.delete(r.tabId)
       })
       if (kind !== 'canvas') {
         // a page that reloads says ready again; until then it gets nothing
