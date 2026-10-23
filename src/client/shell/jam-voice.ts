@@ -316,8 +316,28 @@ function endSegment(s: Segment, at: { start: number; pcm: Int16Array; mark: numb
 /** Who the microphone should hear now: what runs (a capture, else the session's talk) - if you said yes
  *  and the engine can run. */
 const wanted = (): Owner | null => {
+  if (barred) return null
   const v = useJamVoice.getState()
   return v.choice === 'yes' && (v.server === 'ready' || v.server === 'loading') ? target() : null
+}
+
+/** The page lost the Mac app's trust while it lives (spec 28 A2.14 #13, `mv:app-state untrusted`): the app can refuse
+ *  every new microphone request, but only the page can stop a track it already holds. */
+let barred = false
+/** Every microphone track this page holds stops now - the way a lost connection stops it: the words heard so far
+ *  are kept, marked maybe incomplete - an opening still waiting is cancelled, and nothing opens the microphone again
+ *  in this document (the next one is proved afresh). */
+export function voiceUntrusted(): void {
+  barred = true
+  cancelOpening()
+  const m = mic
+  if (m && !m.closed) {
+    if (m.seg) broken.add(m.seg.owner.id)
+    closeNow(m)
+    if (mic === m) mic = null
+    setLive()
+  }
+  useJamVoice.setState({ asking: false })
 }
 
 /** Bring the microphone to what should be heard NOW. Every change - open, switch, close - is one step in
@@ -478,4 +498,4 @@ export async function voiceSessionEnd(): Promise<void> {
   await settled(s.id)
 }
 
-if (typeof window !== 'undefined' && (import.meta as any).env?.DEV) { (window as any).__mvJamVoice = useJamVoice; (window as any).__mvJamVoiceSession = voiceSessionId }
+if (typeof window !== 'undefined' && (import.meta as any).env?.DEV) { (window as any).__mvJamVoice = useJamVoice; (window as any).__mvJamVoiceSession = voiceSessionId; (window as any).__mvJamVoiceTalk = voiceSession }
