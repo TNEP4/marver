@@ -60,7 +60,8 @@ from `tabs.json` (only the active one loads; each canvas view on its workspace's
 attached before its first load), the menu, the quit through `guardAll` - then Home's and Settings' channels, the
 unloading policy (`memory.ts`) and the white-out detector (`whiteout.ts`), and last
 the error policy (`errors.ts`): from there an uncaught exception or rejection in main is a line in
-`~/.marver/perf/app.jsonl` and the app goes on, never Electron's modal box over pages that may hold unsaved work
+`~/.marver/perf/app.jsonl` (Marver Dev: `app-dev.jsonl`), through the recorder's writer, and the app goes on, never
+Electron's modal box over pages that may hold unsaved work
 (before it, a startup that fails keeps Electron's box: no page holds anything yet). Each module after the guard is its stream's; its header says what is still to build.
 
 A3's contracts (spec 28 A3.8 #53) are frozen on `a3-base` before its five streams split: `src/shared/app-api.ts`
@@ -71,6 +72,13 @@ recorder's ports (`recorder.ts`), the journal topics (`testing/index.ts` `Journa
 modules - `procs`, `recorder`, `pressure`, `machine`, `perflog`, `flashes`, `whiteout`, `memory`, `layout`,
 `present`, `cover` - start as their exported signatures with inert bodies: nothing is sampled, written, unloaded or
 uncovered until a stream fills its own, so app 0.2's base behaves as app 0.1.
+
+The recorder (A3.1, A3.2, A3.6; `procs`, `recorder`, `pressure`, `machine`, `perflog`): one `getAppMetrics()` tick
+every 5 s while the recorder is on or memory.ts wants it (nothing at all otherwise), its samples in a 60 s ring and
+one `sample` line a minute; the events; the machine profile under `perf/machine/`; one writer per file
+(`app.jsonl`, Marver Dev `app-dev.jsonl`) with retention at launch and daily. Its test hooks are
+`testing/recorder.ts`'s (`recorder:samples`, `:events`, `:tick`, `:flush`, `:need`, `:inject`, `:machine`,
+`:prune`, `:metrics`, `pressure:inject`); `test/prod/recorder.test.ts` runs it on the real binary.
 
 ## Tests (A2.10, A2.14 #27)
 
