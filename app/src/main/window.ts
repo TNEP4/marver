@@ -120,7 +120,8 @@ let lastTabs = ''
 let lastWindow = ''
 let tabsBody: Omit<TabsSnapshot, 'rev'> | null = null
 let windowBody: Omit<WindowView, 'rev'> | null = null
-let pillBody: unknown = null
+/** the pill main chose, null for none; undefined until pill.ts first chose (the strip gets its first `pill` even when null) */
+let pillBody: unknown = undefined
 
 function send(wc: WebContents | undefined, channel: string, payload: unknown): void {
   if (!wc || wc.isDestroyed() || !ready.has(wc)) return
@@ -146,7 +147,9 @@ export function onAppReady(wc: WebContents): void {
   j('page', { ready: kind })
   if (windowBody) send(wc, CH.window, { rev: revs.window, ...windowBody })
   if ((kind === 'strip' || kind === 'home') && tabsBody) send(wc, CH.tabs, { rev: revs.tabs, ...tabsBody })
-  if (kind === 'strip' && pillBody !== null) send(wc, CH.pill, pillBody)
+  // the first pill even when it is null: the strip takes the first tabs and the first pill after ready as the state
+  // found at launch and announces neither (pages/strip)
+  if (kind === 'strip' && pillBody !== undefined) send(wc, CH.pill, pillBody)
   if (kind === 'tabpage') {
     const h = [...pages.values()].find((x) => x.view.webContents === wc)
     if (h?.body) send(wc, CH.tabpage, { rev: h.rev, ...h.body })   // the latest, under the rev it already has

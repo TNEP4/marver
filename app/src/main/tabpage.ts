@@ -9,6 +9,7 @@
 import { homedir } from 'node:os'
 import type { TabPageProbe, TabPageView } from '../shared/channels.ts'
 import { startCommandShown, tilde } from '../shared/command.ts'
+import { hueOf } from '../shared/hue.ts'
 import { WHY_WORDS } from '../../../src/shared/app-api.ts'
 import { T } from './timings.ts'
 import { liveDoc, onDocumentGone, tabName, type Tab } from './tabs.ts'
@@ -46,6 +47,7 @@ export function pageFor(t: Tab, now: number, home: string = homedir()): PageBody
     ...(t.logo && t.fail?.why !== 'unverified' ? { logo: t.logo } : {}),
     ...(t.look !== undefined ? { dark: t.look } : {}),
     ...(t.root ? { folder: tilde(t.root, home) } : {}),
+    ...(t.reg ? { hue: hueOf(t.reg.ws) } : {}),
   }
   const gone = !t.reg || t.reg.state === 'gone'
   const stopped = (retained: boolean, probe: TabPageProbe): PageBody => ({

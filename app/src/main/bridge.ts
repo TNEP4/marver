@@ -32,7 +32,7 @@
 import { randomBytes } from 'node:crypto'
 import { ipcMain, webFrameMain, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents, type WebFrameMain } from 'electron'
 import { BOUNDS, CANVAS_CHANNELS, UNSAVED_WHY, WHY, type AppState, type Busy, type DocAnswer, type Hello, type MenuItem, type Theme, type Why } from '../../../src/shared/app-api.ts'
-import { CH, SENDERS, type PageKind } from '../shared/channels.ts'
+import { CH, INVOKES as INVOKE_LIST, SENDERS, type PageKind } from '../shared/channels.ts'
 import { adapterFor, attachNav, type NavEvent } from './nav.ts'
 import { isTrusted, targetOf, unsafePrefs } from './proof.ts'
 import { appRegistry, type Registry } from './registry.ts'
@@ -176,10 +176,10 @@ export function mayUsePageChannel(channel: string, kind: PageKind | undefined, m
 }
 
 /**
- * The page-to-main channels that are invokes, answered with the handler's value: the same list as the app
- * preload's (`INVOKES` in channels.ts, from the pages stream). Every other channel is a send.
+ * The page-to-main channels that are invokes, answered with the handler's value: channels.ts's `INVOKES` itself,
+ * the one list the app preload also follows, so the two can never disagree. Every other channel is a send.
  */
-export const INVOKES: ReadonlySet<string> = new Set([CH.linkOpen, CH.homeAction, CH.settingsGet, CH.settingsSet])
+export const INVOKES: ReadonlySet<string> = new Set<string>(INVOKE_LIST)
 /** What an invoke whose payload is refused answers (the channel's own "no"). */
 const REFUSED_ANSWER: Record<string, unknown> = {
   [CH.linkOpen]: { ok: false, why: 'bad' },

@@ -20,6 +20,7 @@ import { UNSAVED_WHY, WHY_WORDS } from '../../../src/shared/app-api.ts'
 import type { FailWhy } from './nav.ts'
 import type { RegistryEntry, RegistryEvent } from './registry.ts'
 import { tilde } from '../shared/command.ts'
+import { hueOf } from '../shared/hue.ts'
 
 export type TabKind = 'local' | 'home' | 'settings'   // 'remote' from A4
 
@@ -351,6 +352,7 @@ export function viewOf(t: Tab, active: boolean, home: string, list: Tab[] = allT
   if (t.reg) v.link = `http://localhost:${t.reg.port}${t.path}`
   if (t.logo && t.fail?.why !== 'unverified') v.logo = t.logo
   if (t.look !== undefined) v.dark = t.look
+  if (t.reg) v.hue = hueOf(t.reg.ws)   // the same initials hue as its Recently here card and its tab page
   return v
 }
 
