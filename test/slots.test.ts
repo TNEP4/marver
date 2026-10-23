@@ -10,6 +10,7 @@ import {
   slotBase, slotOfPort, slotPort, startedWhere, stopPrefer, type PlaceInput,
 } from '../src/server/slots.ts'
 import { legacyWorkspace, workspaceId } from '../src/server/workspace.ts'
+import { deadPid, sleeper } from './pids.ts'
 
 /**
  * The slots (spec 28 A1.3): twenty fixed ports, one file each in the registry, claimed by real
@@ -40,16 +41,6 @@ afterEach(async () => {
 
 const running = (f = '') => join(home, 'running', f)
 const read = (f: string) => JSON.parse(readFileSync(running(f), 'utf8'))
-const sleeper = (): ChildProcess => {
-  const c = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
-  children.push(c)
-  return c
-}
-const deadPid = async (): Promise<number> => {
-  const c = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' })
-  await new Promise((r) => c.once('exit', r))
-  return c.pid!
-}
 /** A slot file as another canvas would have left it. */
 const holderFile = (n: number, pid: number, extra: Record<string, unknown> = {}) => {
   mkdirSync(running(), { recursive: true })
@@ -107,7 +98,7 @@ describe('the slots: claims (A1.3)', () => {
   }, 60_000)
 
   it('a live holder is never taken: the claim goes to the next slot', async () => {
-    holderFile(1, sleeper().pid!)
+    holderFile(1, sleeper(children))
     const r = await place(input())
     expect(r.ok && r.claim.slot).toBe(2)
     expect(read('slot-1.json').instance).toBe('held-1')
@@ -136,7 +127,7 @@ describe('the slots: claims (A1.3)', () => {
   }
 
   it('the twenty-first stops, with the list and what to do', async () => {
-    const pid = sleeper().pid!
+    const pid = sleeper(children)
     for (let n = 1; n <= 20; n++) holderFile(n, pid)
     const r = await place(input())
     expect(r.ok).toBe(false)
@@ -232,7 +223,7 @@ describe('the slots: explicit ports and --recover (A1.3, A1.6)', () => {
   })
 
   it('...and while another canvas holds it, stops with who - never another slot', async () => {
-    holderFile(6, sleeper().pid!)
+    holderFile(6, sleeper(children))
     const r = await place(input({ explicit: { port: BASE + 6, from: 'flag' } }))
     expect(r).toEqual({ ok: false, message: `port ${BASE + 6} is slot 6, and "project-6" (/tmp/project-6) holds it - stop it first (Ctrl-C in its terminal), or start without --port` })
     expect(readdirSync(running())).toEqual(['slot-6.json'])
@@ -379,17 +370,16 @@ describe('what a start says about where it ran before (A1.6)', () => {
       'stop this canvas, then `npx marver dev --recover 2`',
     ])
     // moved, and a canvas holds the old one: it is named
-    const pid = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
-    children.push(pid)
+    const pid = sleeper(children)
     mkdirSync(running(), { recursive: true })
-    writeFileSync(join(running(), 'slot-2.json'), JSON.stringify({ v: 1, state: 'ready', pid: pid.pid, instance: 'other', slot: 2, port: BASE + 2, origin: null, url: `http://localhost:${BASE + 2}/`, root: '/tmp/atlas', name: 'atlas', version: '0.27.0', features: [], ws: 'e'.repeat(16), startedAt: 1, key: '' }))
+    writeFileSync(join(running(), 'slot-2.json'), JSON.stringify({ v: 1, state: 'ready', pid, instance: 'other', slot: 2, port: BASE + 2, origin: null, url: `http://localhost:${BASE + 2}/`, root: '/tmp/atlas', name: 'atlas', version: '0.27.0', features: [], ws: 'e'.repeat(16), startedAt: 1, key: '' }))
     const lines = say(at(BASE + 3))
     expect(lines[0]).toBe(`last run was at http://localhost:${BASE + 2}/ - "atlas" runs there now`)
     expect(lines[2]).toBe('stop "atlas" and this canvas, then `npx marver dev --recover 2`')
     expect(recoverEntries(root)[1].url).toBe(`http://localhost:${BASE + 2}/`)
     expect(lines.join('\n')).not.toContain('bound')
     // one that is closing there runs there no more: not named, not who to stop
-    writeFileSync(join(running(), 'slot-3.json'), JSON.stringify({ v: 1, state: 'closing', pid: pid.pid, instance: 'leaving', slot: 3, port: BASE + 3, origin: null, url: `http://localhost:${BASE + 3}/`, root: '/tmp/orbit', name: 'orbit', version: '0.27.0', features: [], ws: 'f'.repeat(16), startedAt: 1, key: '' }))
+    writeFileSync(join(running(), 'slot-3.json'), JSON.stringify({ v: 1, state: 'closing', pid, instance: 'leaving', slot: 3, port: BASE + 3, origin: null, url: `http://localhost:${BASE + 3}/`, root: '/tmp/orbit', name: 'orbit', version: '0.27.0', features: [], ws: 'f'.repeat(16), startedAt: 1, key: '' }))
     expect(say(at(BASE + 4))).toEqual([
       `last run was at http://localhost:${BASE + 3}/`,
       'a tab still open there keeps its unsaved edits until this canvas runs there again (a Jam capture left unsent there waits too):',
@@ -434,7 +424,7 @@ describe('ports and the list', () => {
   })
 
   it('the list hides dead pids and keeps the key out', async () => {
-    holderFile(2, sleeper().pid!)
+    holderFile(2, sleeper(children))
     holderFile(1, await deadPid())
     const list = readRunning()
     expect(list.map((r) => r.slot)).toEqual([2])

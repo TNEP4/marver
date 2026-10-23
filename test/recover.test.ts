@@ -1,11 +1,12 @@
 import { afterAll, afterEach, beforeAll, describe, expect, inject, it } from 'vitest'
-import { spawn, type ChildProcess } from 'node:child_process'
+import type { ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync, mkdtempSync, realpathSync } from 'node:fs'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fixtureRoot, runDev, startDev, type Dev } from './dev-server.ts'
+import { sleeper } from './pids.ts'
 import { portInUse } from '../src/server/exclusive.ts'
 import { legacyPort } from '../src/server/slots.ts'
 import { workspaceId } from '../src/server/workspace.ts'
@@ -36,9 +37,8 @@ const start = async (root: string, args: string[] = []) => { const d = await sta
 const stop = async (d: Dev) => { await d.stop('SIGINT'); devs.splice(devs.indexOf(d), 1) }
 const running = (f = '') => join(home, 'running', f)
 const preferOf = (root: string) => join(home, 'prefer', `${workspaceId(root)}.json`)
-const sleeper = () => { const c = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }); children.push(c); return c.pid! }
 /** Another canvas holding slot n (a live pid). */
-const hold = (n: number, pid = sleeper()) => {
+const hold = (n: number, pid = sleeper(children)) => {
   mkdirSync(running(), { recursive: true })
   writeFileSync(running(`slot-${n}.json`), JSON.stringify({ v: 1, state: 'ready', pid, instance: `fake-${n}`, slot: n, port: BASE + n, origin: `http://[::1]:${BASE + n}`,
     url: `http://localhost:${BASE + n}/`, root: `/tmp/other-${n}`, name: `other-${n}`, version: '0.27.0', features: [], ws: 'c'.repeat(16), startedAt: Date.now(), key: 'k'.repeat(43) }))

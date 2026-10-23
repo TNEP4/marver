@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, inject, it } from 'vitest'
-import { execFile, spawn, type ChildProcess } from 'node:child_process'
+import { execFile, type ChildProcess } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createHash, createHmac, randomBytes } from 'node:crypto'
 import { createServer, type Server } from 'node:net'
@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WebSocket } from 'ws'
 import { CLI, fixtureRoot, runDev, startDev, type Dev } from './dev-server.ts'
+import { deadPid, sleeper } from './pids.ts'
 import { portInUse } from '../src/server/exclusive.ts'
 import { findChrome } from '../src/server/cdp.ts'
 import { collabFileFor } from '../src/server/sync.ts'
@@ -63,7 +64,6 @@ const occupy = async (port: number) => {
   await new Promise<void>((r, j) => { s.once('error', j); s.listen(port, '127.0.0.1', () => r()) })
 }
 const freePort = async (from: number) => { let p = from + Math.floor(Math.random() * 500); while (await portInUse(p)) p++; return p }
-const sleeper = () => { const c = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }); children.push(c); return c.pid! }
 
 describe('two projects on the slots (A1.3)', () => {
   let a = '', b = ''
@@ -168,7 +168,7 @@ describe('two projects on the slots (A1.3)', () => {
 
   it('a project whose slot is taken moves, and says where it was last, who runs there now and how to run there again', async () => {
     await stop(devA)
-    const fake = sleeper()
+    const fake = sleeper(children)
     writeFileSync(running('slot-1.json'), JSON.stringify({ v: 1, state: 'ready', pid: fake, instance: 'fake', slot: 1, port: BASE + 1, origin: null, url: `http://localhost:${BASE + 1}/`, root: '/tmp/x', name: 'x', version: '0', features: [], ws: 'd'.repeat(16), startedAt: Date.now(), key: '' }))
     devA = await start(a)
     expect(devA.port).toBe(BASE + 2)
@@ -246,7 +246,7 @@ describe('a canvas in a sandbox', () => {
   it('link and work, when dev.json names a canvas that runs but cannot be reached: the link from dev.json, and no "start it"', async () => {
     const r = project('mv-slots-unreach-')
     const port = await freePort(47_000)   // nothing answers there: a sandbox that keeps the agent off localhost
-    const pid = sleeper()
+    const pid = sleeper(children)
     mkdirSync(join(r, 'design', '.local'), { recursive: true })
     writeFileSync(join(r, 'design', '.local', 'dev.json'), JSON.stringify({ port, token: 't', pid, instance: 'i', ts: Date.now() }))
     const link = await cli(['link', 'demo/one'], r)
@@ -260,9 +260,7 @@ describe('a canvas in a sandbox', () => {
       expect(w.out).toContain(`\`marver dev\` runs (pid ${pid}) but cannot be reached from here - a sandbox? The working glow needs it; the canvas itself is fine - \`npx marver link <scene/frame>\` still prints its link`)
     }
     // its process gone: not running, and the way to start it
-    const dead = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' })
-    await new Promise((res) => dead.once('exit', res))
-    writeFileSync(join(r, 'design', '.local', 'dev.json'), JSON.stringify({ port, token: 't', pid: dead.pid, instance: 'i', ts: Date.now() }))
+    writeFileSync(join(r, 'design', '.local', 'dev.json'), JSON.stringify({ port, token: 't', pid: await deadPid(), instance: 'i', ts: Date.now() }))
     const gone = await cli(['link', 'demo/one'], r)
     expect(gone.code).toBe(1)
     expect(gone.out).toContain('`marver dev` is not running in this repo - start it')

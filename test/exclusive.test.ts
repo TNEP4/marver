@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pidRuns, releaseExclusive, takeExclusive } from '../src/server/exclusive.ts'
+import { deadPid } from './pids.ts'
 
 /**
  * The one-holder-per-file helper dev.lock and the slot files share (spec 28 A1.2): dev-lock's own
@@ -24,12 +25,6 @@ const fresh = () => {
   return join(dir, 'slot-1.json')
 }
 const me = (instance = 'mine') => ({ pid: process.pid, instance, at: Date.now() })
-
-const deadPid = async (): Promise<number> => {
-  const c = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' })
-  await new Promise((r) => c.once('exit', r))
-  return c.pid!
-}
 
 /** A separate starter: takes the file in its own process, prints the result, holds it until killed. */
 const starter = (file: string, body: Record<string, unknown> = {}): Promise<{ ok: boolean; why?: string; child: ChildProcess }> => new Promise((res, rej) => {

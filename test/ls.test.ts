@@ -1,8 +1,9 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { execFile, spawn, type ChildProcess } from 'node:child_process'
+import { execFile, type ChildProcess } from 'node:child_process'
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { deadPid, sleeper } from './pids.ts'
 
 /**
  * `marver ls` (spec 28 A1.5): the canvases running on this Mac, from the registry - live holders only,
@@ -23,8 +24,6 @@ const ls = (home: string, ...args: string[]) => new Promise<{ code: number; out:
   execFile(process.execPath, [CLI, 'ls', ...args], { cwd, env: { ...process.env, MARVER_HOME: home } }, (err, stdout, stderr) =>
     resolve({ code: err ? (err as any).code ?? 1 : 0, out: stdout + stderr }))
 })
-const sleeper = () => { const c = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }); children.push(c); return c.pid! }
-const deadPid = async () => { const c = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' }); await new Promise((r) => c.once('exit', r)); return c.pid! }
 const record = (o: { pid: number; slot: number | null; port: number; root: string; state?: string; startedAt?: number }) => JSON.stringify({
   v: 1, state: o.state ?? 'ready', pid: o.pid, instance: `instance-${o.port}`, slot: o.slot, port: o.port, origin: `http://[::1]:${o.port}`, url: `http://localhost:${o.port}/`,
   root: o.root, name: o.root.split('/').pop(), version: '0.27.0', features: [], ws: 'b'.repeat(16), startedAt: o.startedAt ?? Date.now() - 125_000, key: 'SECRET'.repeat(7) + 'x',
@@ -35,7 +34,7 @@ describe('marver ls (A1.5)', () => {
     const home = freshHome()
     const run = join(home, 'running')
     mkdirSync(run, { recursive: true })
-    const live = sleeper()
+    const live = sleeper(children)
     writeFileSync(join(run, 'port-5298.json'), record({ pid: live, slot: null, port: 5298, root: '/tmp/platform/canvas' }))
     writeFileSync(join(run, 'slot-2.json'), record({ pid: live, slot: 2, port: 4806, root: join(homedir(), 'atlas-app') }))
     writeFileSync(join(run, 'slot-1.json'), record({ pid: await deadPid(), slot: 1, port: 4805, root: '/tmp/dead' }))
@@ -59,7 +58,7 @@ describe('marver ls (A1.5)', () => {
   it('--json: the public fields, never a key or an instance', async () => {
     const home = freshHome()
     mkdirSync(join(home, 'running'), { recursive: true })
-    const pid = sleeper()
+    const pid = sleeper(children)
     writeFileSync(join(home, 'running', 'slot-1.json'), record({ pid, slot: 1, port: 4805, root: '/tmp/one', state: 'starting', startedAt: 1_000 }))
     const { code, out } = await ls(home, '--json')
     expect(code).toBe(0)
@@ -75,7 +74,7 @@ describe('marver ls (A1.5)', () => {
   it('a canvas that is closing is listed, closing - it holds its slot until it has gone', async () => {
     const home = freshHome()
     mkdirSync(join(home, 'running'), { recursive: true })
-    writeFileSync(join(home, 'running', 'slot-3.json'), record({ pid: sleeper(), slot: 3, port: 4807, root: '/tmp/leaving', state: 'closing' }))
+    writeFileSync(join(home, 'running', 'slot-3.json'), record({ pid: sleeper(children), slot: 3, port: 4807, root: '/tmp/leaving', state: 'closing' }))
     const rows = (await ls(home)).out.split('\n').map((l) => l.trim()).filter(Boolean)
     expect(rows[1]).toMatch(/^3\s+http:\/\/localhost:4807\/\s+leaving\s+0\.27\.0\s+closing\s+2m\s+\/tmp\/leaving$/)
     expect(JSON.parse((await ls(home, '--json')).out).canvases.map((c: { state: string }) => c.state)).toEqual(['closing'])
