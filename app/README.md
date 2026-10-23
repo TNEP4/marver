@@ -98,8 +98,10 @@ window, the tabs, the menu. Each module after the guard is its stream's; its hea
   events in `test/native/keypost.swift` (Accessibility for the terminal, else those cases say they are
   inconclusive); the focus cases read focus only while the window is key, else they are skipped as inconclusive.
 - **the packaged smoke** (`test/smoke/smoke.mjs`): S9's checks and X7's cases on the signed build; every launch on
-  its own profile with `--use-mock-keychain`. WARN lines are what the skeleton cannot do yet (a canvas cookie, the
-  launch's first frame callback); they turn PASS by themselves once a canvas tab loads.
+  its own profile with `--use-mock-keychain`. Its clean launch loads a fake canvas as the active tab: the first frame
+  callback, a canvas cookie read back encrypted (`v10`) after a SIGTERM to main alone (a group SIGTERM ends the network
+  service, which holds the cookie store, before it writes it - that quit is `test/prod/quit.test.ts`'s), and the
+  canvas's own partition in the temporary profile. The one WARN left is `build/Marver.icon` (Icon Composer, by hand).
 
 ## The icon
 

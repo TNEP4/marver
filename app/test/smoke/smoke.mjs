@@ -237,9 +237,11 @@ const mainRan = (L) => lexists(join(L.ud, 'SingletonLock')) && existsSync(join(L
 /** ready: persist:app made (sessions.ts at ready) */
 const reachedReady = (L) => existsSync(join(L.ud, 'Partitions'))
 async function waitFor(fn, ms, every = 50) { const end = Date.now() + ms; while (Date.now() < end) { if (fn()) return true; await sleep(every) } return fn() }
-async function stop(L, signal = 'SIGTERM', ms = 10_000) {
+/** `signal` to the launch's process group (main and every helper at once), or with `{ group: false }` to main alone, as
+ *  `kill <pid>` would; then up to `ms`, then SIGKILL to the group. */
+async function stop(L, signal = 'SIGTERM', ms = 10_000, { group = true } = {}) {
   if (L.refused) return true
-  if (alive(L)) { try { process.kill(-L.pid, signal) } catch { /* gone */ } }
+  if (alive(L)) { try { process.kill(group ? -L.pid : L.pid, signal) } catch { /* gone */ } }
   const done = await Promise.race([L.exit.then(() => true), sleep(ms).then(() => false)])
   if (!done) { try { process.kill(-L.pid, 'SIGKILL') } catch { /* gone */ } await L.exit }
   return done
@@ -285,8 +287,11 @@ function poll(port, everyMs = 10) {
   if (raf) pass('launch-frame-callback', `${raf.t - C.t0} ms from spawn to the canvas page's first animation-frame callback (first launch; the budget gates the second)`)
   else warn('launch-frame-callback', doc ? 'the canvas document was requested, no frame callback seen' : 'pending: the app loads no canvas yet (trust and window streams)')
 
+  // SIGTERM to main alone: its quit runs through guardAll while the helpers live, and the network service, which holds
+  // the cookie store, writes it as it shuts down - a group SIGTERM ends that process at once, so the cookie check
+  // below would read a store never written (the group's SIGTERM quit is test/prod/quit.test.ts's)
   const termAt = Date.now()
-  const quit = await stop(C, 'SIGTERM')
+  const quit = await stop(C, 'SIGTERM', 10_000, { group: false })
   quit && C.code === 0 ? pass('quit-exit-code', `SIGTERM: exit 0 ${C.t0 + C.exitAt - termAt} ms later`) : fail('quit-exit-code', `code=${C.code} signal=${C.signal} graceful=${quit}`)
 
   // the temporary profile is the one Chromium wrote: its Local State (written at a graceful quit), persist:app and
@@ -306,7 +311,8 @@ function poll(port, everyMs = 10) {
   const find = (d) => { for (const e of readdirSync(d, { withFileTypes: true })) { const p = join(d, e.name); if (e.isDirectory()) find(p); else if (e.name === 'Cookies') dbs.push(p) } }
   find(C.ud)
   const rows = dbs.flatMap((db) => sh('sqlite3', [db, "select name||'|'||length(value)||'|'||substr(hex(encrypted_value),1,6) from cookies where name='mvfake'"]).stdout.trim().split('\n').filter(Boolean))
-  if (!rows.length) warn('cookie-encrypted', `pending: no canvas cookie written yet (${dbs.length} cookie store(s), no canvas loaded); EnableCookieEncryption read on above`)
+  if (!rows.length && !doc) warn('cookie-encrypted', `pending: no canvas cookie written yet (${dbs.length} cookie store(s), no canvas loaded); EnableCookieEncryption read on above`)
+  else if (!rows.length) fail('cookie-encrypted', `the canvas page set mvfake and no cookie store holds it (${dbs.length} store(s)) after a graceful quit`)
   else rows.every((r) => r === 'mvfake|0|763130') ? pass('cookie-encrypted', `${rows.length} cookie(s): value empty, encrypted_value 'v10...'`) : fail('cookie-encrypted', rows.join(' '))
   await fake.close()
 }
