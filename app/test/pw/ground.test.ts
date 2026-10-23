@@ -328,6 +328,62 @@ describe('the one ground through navigation, fullscreen, switching and the GPU p
   })
 })
 
+describe('stalled renderers: covering never waits on one, uncovering waits for the canvas (A2.10\'s stalled cases, A3.8 #30)', () => {
+  let a = ''
+  let below = ''
+  beforeAll(async () => {
+    ;({ id: a } = await canvas(14, 'Stall see-through'))
+    ;({ id: below } = await canvas(15, 'Stall below', { features: ['bridge'] }))
+    for (const id of [below, a]) { await w.run.call('activate', { id }); await lifted(id) }
+    await uncovered(a)
+  })
+
+  it('the strip\'s main thread stalled: rapid switches still cover in the turn of every view change, and lift only on an answer', async () => {
+    // the strip busy for good (its renderer ended after), as a hung strip page would be
+    await exec('strip', `setTimeout(() => { for (;;) {} }, 0); 1`)
+    await sleep(100)
+    const since = await mark()
+    for (let i = 0; i < 20; i++) { await w.run.call('activate', { id: i % 2 ? a : below }); await sleep(30) }
+    await uncovered(a)
+    const ok = new Set((await presents(since)).filter((p) => p.op === 'answer').map((p) => p.turn))
+    let shows = 0
+    for (const x of await composes(since)) {
+      if (x.changes.some((ch) => (ch.key === `${a}:view` || ch.key === `${below}:view`) && ch.op === 'visible' && ch.visible === true)) { shows++; expect(x.cover).toBe(true) }
+      if (x.changes.some((ch) => ch.key === 'cover' && ch.visible === false)) expect(ok.has(x.turn)).toBe(true)
+    }
+    expect(shows).toBeGreaterThanOrEqual(19)
+    // the strip comes back (window.ts reloads it), and says ready again
+    const s2 = await mark()
+    await w.run.call('crash', { target: 'strip' })
+    await waitFor('the strip back', async () => (await w.log('page', s2)).some((l) => l.data.ready === 'strip'))
+  })
+
+  it('the canvas stalled: a resize covers at once, and no answer lifts it until the page runs again; shown while stalled, the same', async () => {
+    const c = await content()
+    let since = await mark()
+    await exec(a, `setTimeout(() => { const e = Date.now() + 2000; while (Date.now() < e) {} }, 0); 1`)
+    await sleep(100)
+    await w.run.call('resize', { width: c.width - 80, height: c.height })
+    await sleep(1500)
+    expect((await ground()).cover.visible).toBe(true)
+    expect((await presents(since, a)).filter((p) => p.op === 'answer')).toEqual([])
+    await uncovered(a, 6000)
+    expect((await presents(since, a)).filter((p) => p.op === 'answer').length).toBeGreaterThan(0)
+    // switched away, the page stalls; shown again while it is: covered until it answers, after the stall
+    await w.run.call('activate', { id: below })
+    await exec(a, `setTimeout(() => { const e = Date.now() + 1500; while (Date.now() < e) {} }, 0); 1`)
+    await sleep(100)
+    since = await mark()
+    await w.run.call('activate', { id: a })
+    await sleep(1000)
+    expect((await ground()).cover.visible).toBe(true)
+    expect((await presents(since, a)).filter((p) => p.op === 'answer')).toEqual([])
+    await uncovered(a, 6000)
+    await w.run.call('resize', { width: c.width, height: c.height })
+    await uncovered(a)
+  })
+})
+
 describe('the mv:doc trace (A3.8 #26)', () => {
   it('100 loads - reloads, navigations the page starts, crash reloads in a new renderer - and every document is told 44', { timeout: 240_000 }, async () => {
     const { fake, id } = await canvas(12, 'Trace')
