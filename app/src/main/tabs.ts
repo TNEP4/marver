@@ -310,6 +310,8 @@ let activeId = 'home'
 let counter = 0
 /** A quit or an update has begun: no unload is admitted (cleared when it is refused; A3.8 #42) */
 let sweeping = false
+/** reopens lifted and waiting for their document's hello (the unload section's; A3.8 #45) */
+const reopened = new Map<Tab, Reopened>()
 /** closes for a canvas's run, `ws|instance` (A2.14 #23), kept in tabs.json */
 const closed = new Set<string>()
 const closeKey = (ws: string, instance: string) => `${ws}|${instance}`
@@ -321,6 +323,8 @@ export function blankTab(id: string, kind: TabKind, name: string, extra: Partial
 /** Test seam: an empty model with Home. */
 export function resetTabs(): void {
   tabs.clear(); closed.clear(); counter = 0; activeId = 'home'; sweeping = false
+  for (const r of reopened.values()) clearTimeout(r.timer)
+  reopened.clear()
   tabs.set('home', blankTab('home', 'home', 'Home'))
 }
 resetTabs()
@@ -1315,7 +1319,6 @@ function reopenIfShown(t: Tab): void {
 
 /** A reopen lifted, waiting for its document's hello (A3.8 #45, r1 #9). */
 interface Reopened { activateToLiftMs: number; unloadedForMs: number; ident: TabIdent; timer: ReturnType<typeof setTimeout> }
-const reopened = new WeakMap<Tab, Reopened>()
 
 /** The reopened document lifted (its attributed commit): timed on main's clock from the activation (A3.8 #45). */
 function reopenLifted(t: Tab, u: TabUnload, now: number): void {

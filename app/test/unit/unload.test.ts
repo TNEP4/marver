@@ -147,6 +147,7 @@ describe('what else happens to a tab while it unloads (A3.8 #42, r1 #2, r3 #3)',
     const t = candidate()
     const c = closer()
     const u = guard(t, warn)
+    activate(t.id)   // shown, then closed, while it closes
     const close = closeTab(t.id)
     await flush()
     expect(w.acts.map((a) => a.action.kind)).toEqual(['unload'])   // nothing runs while the close is outstanding
@@ -185,11 +186,12 @@ describe('what else happens to a tab while it unloads (A3.8 #42, r1 #2, r3 #3)',
     expect(w.sheets.map((s) => s.tabs[0]!.why.kind)).toEqual(['stale'])
   })
 
-  it('a load that waited loads its own URL, once; the reopen is dropped', async () => {
+  it('a load that waited beside an activation loads its own URL, once; the reopen is dropped', async () => {
     const t = candidate()
     const c = closer()
     const u = guard(t, warn)
     const l = guard(t, { kind: 'load', url: `${t.reg!.origin}/#/b/other?n=k1` })
+    activate(t.id)   // shown meanwhile: the reopen it queued is the last thing decided, and the link has taken its place
     c.destroyed(t)
     await u
     expect(await l).toBe('done')

@@ -203,7 +203,8 @@ describe('the tick, on the one sampler (A3.8 #6, #41, #45)', () => {
   let total: number
   let emit: (s: Sample) => void
   let want: () => boolean
-  let next: Sample | null
+  // each case's own sampler and its own next sample: an effect a case left waiting never reads the next case's
+  let next: { s: Sample | null }
   let events: { kind: string; who: unknown; body: Record<string, unknown> }[]
   let gates: Map<string, Deferred<GuardAnswer>>
   const savedEffect = T.unloadEffectMs
@@ -211,13 +212,14 @@ describe('the tick, on the one sampler (A3.8 #6, #41, #45)', () => {
   beforeEach(() => {
     on = true
     total = 16_384
-    next = null
+    next = { s: null }
+    const mine = next
     events = []
     gates = new Map()
     const sampler: Sampler = {
       onSample(fn) { emit = fn; return () => {} },
       wantPressure(fn) { want = fn },
-      requestSample: async () => { if (!next) throw new Error('no sample'); return next },
+      requestSample: async () => { if (!mine.s) throw new Error('no sample'); return mine.s },
       last: () => null,
     }
     startMemory({
@@ -315,7 +317,7 @@ describe('the tick, on the one sampler (A3.8 #6, #41, #45)', () => {
   it('unload-effect: unloadEffectMs after the unload, the after sample\'s figures and whether its process went', async () => {
     const t = candidate()
     emit(sample({ level: 4, procs: [proc({ pid: 7, born: 70, tabs: [t.id], rssMB: 200 })] }))
-    next = sample({ level: 2, gpuMB: 50, procs: [proc({ pid: 7, born: 71, tabs: [] })] })   // pid 7 reused: a new process
+    next.s = sample({ level: 2, gpuMB: 50, procs: [proc({ pid: 7, born: 71, tabs: [] })] })   // pid 7 reused: a new process
     destroyed(t)
     await new Promise((r) => setTimeout(r, 30))   // the effect's wait (0 here), then its sample
     expect(kinds('unload-effect')).toEqual([expect.objectContaining({ body: {
