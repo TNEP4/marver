@@ -22,7 +22,8 @@ import { app, crashReporter, protocol } from 'electron'
 import { installSpies } from './testing/spies.ts'
 import { note, startTesting, testMode } from './testing/index.ts'
 import { overrideTimings } from './timings.ts'
-import { applyTheme, ensureHome, readFiles } from './config.ts'
+import { applyTheme, ensureHome, readFiles, startFiles } from './config.ts'
+import { startHome } from './home.ts'
 import { installNavigationPolicy, setupAppSession } from './sessions.ts'
 import { installBridge } from './bridge.ts'
 import { createRegistry } from './registry.ts'
@@ -84,8 +85,9 @@ function start(): void {
   // 8. the app pages' scheme (served on persist:app only, sessions.ts)
   protocol.registerSchemesAsPrivileged([{ scheme: APP_SCHEME, privileges: { standard: true, secure: true } }])
 
-  // 9. the files, read once before ready
+  // 9. the files, read once before ready; Home's state (first launch, Recently here)
   const files = readFiles(home)
+  startHome()
 
   app.on('second-instance', () => focusWindow())
   app.on('activate', () => { if (!mainWindow()) openWindow() })
@@ -93,6 +95,7 @@ function start(): void {
   // 10. at ready
   void app.whenReady().then(async () => {
     applyTheme(files)
+    startFiles()
     setupAppSession()
     installNavigationPolicy()
     installBridge()
