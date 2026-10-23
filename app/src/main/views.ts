@@ -1408,6 +1408,16 @@ function testHooks(): void {
   // that never answers its input (hang.test.ts), so the app's own half of that case - the main frame asked, its
   // answer, the guarded reload - is driven so, against a frame that really is hung
   provide('hang:report', (a) => { const wc = wcOf(arg<{ target: string }>(a).target); if (!wc || wc.isDestroyed()) return false; wc.emit('unresponsive'); return true })
+  // what an unload's admission reads, as Chromium reports it (A3.8 #40): a page playing sound, DevTools opened or
+  // closed - emitted on the view's own webContents, so a case neither plays sound nor opens a window on the Mac
+  provide('page:event', (a) => {
+    const { target, event } = arg<{ target: string; event: 'audible' | 'silent' | 'devtools-opened' | 'devtools-closed' }>(a)
+    const wc = wcOf(target)
+    if (!wc || wc.isDestroyed()) return false
+    if (event === 'audible' || event === 'silent') wc.emit('audio-state-changed', { audible: event === 'audible' })
+    else wc.emit(event)
+    return true
+  })
   // the view's frames and the renderer process of each
   provide('frames', (a) => {
     const wc = wcOf(arg<{ target: string }>(a).target)
