@@ -148,9 +148,10 @@ export function recover(t: Tab, cause: RecoverCause): void {
     return
   }
   if (cause.reason === 'clean-exit') {
-    // not a crash (A2.11's `crashed` excludes it): nothing counted; reloaded when it is in front
+    // not a crash (A2.11's `crashed` excludes it): nothing counted; reloaded when it is in front (and, with its
+    // canvas gone, once it is back: the rebind or the showing starts it)
     p.log?.('crash', { tab: t.id, cleanExit: true })
-    if (t.reg?.state === 'ready' && !c.latched) { if (p.isActive(t)) startReload(t, 'person'); else c.pendingShow = true }
+    if (!c.latched) { if (t.reg?.state === 'ready' && p.isActive(t)) startReload(t, 'person'); else c.pendingShow = true }
     p.changed()
     return
   }
@@ -173,7 +174,9 @@ export function recover(t: Tab, cause: RecoverCause): void {
     p.changed()
     return
   }
-  if (t.reg?.state !== 'ready') { c.inFlight = false; p.changed(); return }   // nothing to reload into: stopped
+  // nothing to reload into: stopped. Its one automatic attempt waits for the canvas - a rebind starts it for the
+  // active tab, the showing for a hidden one (A2.14 v1.13 r2 #5)
+  if (t.reg?.state !== 'ready') { c.inFlight = false; c.pendingShow = true; p.changed(); return }
   if (p.isActive(t)) startReload(t, 'auto')                                  // the budget: started within 1 s
   else { c.inFlight = false; c.pendingShow = true }                         // dimmed; its one automatic attempt when shown
   p.changed()
@@ -188,6 +191,13 @@ export function onShown(t: Tab): void {
   }
   if (t.fail) checkSoon(t)   // A2.11: a check at once when the tab is activated (a retained page's only probes)
 }
+
+/**
+ * ⌘R, ⇧⌘R and the menu's Reload on this tab are the person's crash reload, never the guard's: a crashed view, or a
+ * latched tab with no live document. Once a person's reload has brought the page back, the latch stays 60 s
+ * (A2.11), but that page is live and may hold work: its reload goes through the guard (A2.2) like any other.
+ */
+export const reloadIsPersons = (t: Tab): boolean => t.view === 'crashed' || (t.crash.latched && !liveDoc(t))
 
 /** Reload on a crashed tab's page (latched or not) and ⌘R there: the person's (A2.11). */
 export function personReload(t: Tab): void {
@@ -220,6 +230,25 @@ export function onLifted(t: Tab): void {
 export function onAttemptFailed(t: Tab): void {
   t.crash.inFlight = false
   t.crash.epoch = (t.crash.epoch ?? 0) + 1
+}
+
+/**
+ * The tab's view closed - not a crash: its page went because the person closed it (or a quit did). A latch waiting
+ * out the 60 s after the person's reload lifted is cleared now: that reload ran without crashing until its page
+ * went, and a tab reopened later loads as any documentless tab - a crash then is counted from scratch, its one
+ * automatic reload and a latch on the second as A2.11 says. Without it the timer would find no live view and leave
+ * the tab latched for good.
+ */
+export function onViewClosed(t: Tab): void {
+  const c = t.crash
+  const x = latchTimers.get(t.id)
+  if (x) clearTimeout(x)
+  latchTimers.delete(t.id)
+  if (c.personLiftAt !== undefined && c.latched) {
+    c.latched = false; c.count = 0; c.times = []
+    P().log?.('crash', { tab: t.id, latch: 'cleared', closed: true })
+  }
+  c.personLiftAt = undefined
 }
 
 /** The tab went away (closed, dropped): its timers with it. */

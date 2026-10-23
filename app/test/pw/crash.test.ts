@@ -60,6 +60,19 @@ describe('a crash of the active tab (A2.11)', () => {
     expect(await w.run.call('tabpage:action', { tab: id, action: 'reload' })).toBe(true)
     await w.until(lifted(id, before), 10_000, 'the person\'s reload to lift')
     expect((await w.tab(id)).crash.latched).toBe(true)   // clears after 60 s without a crash
+    // that page is live and may hold work: ⌘R and ⇧⌘R are the guard's now, though the latch stays its 60 s
+    await w.report(id, { unsaved: true, why: ['board-unsaved'] })
+    const held = (await w.tab(id)).doc!.commits
+    const since = (await w.log()).length
+    await w.run.call('command', { cmd: 'reload' })
+    await w.run.call('command', { cmd: 'force-reload' })
+    await sleep(300)
+    const kept = await w.tab(id)
+    expect(kept.doc!.commits).toBe(held)
+    expect(kept.held?.action).toBe('forceReload')
+    expect((await w.log('crash', since)).filter((l) => l.data.reload)).toEqual([])
+    expect((await w.state()).pill).toMatchObject({ kind: 'unsaved', tab: id })
+    await w.report(id, { unsaved: false })
     // an old rev is refused
     await w.run.call('crash', { target: id })
     await w.until((x) => x.tabs.find((t) => t.id === id)!.pageView, 5000, 'the page again')

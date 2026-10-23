@@ -48,7 +48,7 @@ export interface MenuActs {
   run(cmd: AppCommand): void
   holds(t: MenuToken): boolean
   canvasClick(t: MenuToken, id: string): void
-  tab(t: MenuToken, what: 'activate' | 'open-browser' | 'reveal' | 'copy-link'): void
+  tab(t: MenuToken, what: 'activate' | 'open-browser' | 'reveal' | 'copy-link' | 'reload' | 'force-reload'): void
   help(): void
   perfFiles(): void
   /** build the menu again now (after any canvas item's click: the mark shows the page's state) */
@@ -102,8 +102,10 @@ export function menuTemplate(m: MenuModel, acts: MenuActs): MenuItemConstructorO
     ] },
     { label: 'View', submenu: [
       ...(viewItems.length ? [header(a.name), ...viewItems.map(canvasItem), sep] : []),
-      cmd('reload', 'Reload Canvas', { enabled: a.canReload }),
-      cmd('force-reload', 'Force Reload', { enabled: a.canReload }), sep,
+      // tab items (v1.10 r1 #10): a click reloads the tab the menu was built for, only while its document and
+      // trust still hold - never whichever tab is active by then. The keys are the app's (keys.ts: the active tab)
+      cmd('reload', 'Reload Canvas', { id: 'reload', enabled: a.canReload, click: guarded(a.token, () => acts.tab(a.token, 'reload')) }),
+      cmd('force-reload', 'Force Reload', { id: 'force-reload', enabled: a.canReload, click: guarded(a.token, () => acts.tab(a.token, 'force-reload')) }), sep,
       { role: 'togglefullscreen', accelerator: 'Ctrl+Cmd+F' },
       cmd('devtools', 'Developer Tools'),
     ] },

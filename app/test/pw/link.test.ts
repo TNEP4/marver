@@ -54,6 +54,36 @@ describe('a local link opened in its canvas\'s tab', () => {
     await w.report(id, { unsaved: false })
   })
 
+  it('a link with no hash is a new document, never "only the hash": into a page holding unsaved work it answers refused and opens nothing', async () => {
+    // the page is at /index.html#/b/checkout; /index.html differs from it only by the hash it lacks - Electron 45
+    // loads it as a new document, so it is the guard's
+    expect((await w.tab(id)).doc!.url).toBe(`${fake.origin}/index.html#/b/checkout`)
+    await w.report(id, { unsaved: true, why: ['board-unsaved'] })
+    await w.run.call('activate', { id: 'home' })
+    const before = (await w.tab(id)).doc!.commits
+    const reqs = fake.requests.length
+    const since = (await w.log()).length
+    expect(await w.run.call('openInTab', { entry: entryOf(fake), url: `${fake.origin}/index.html`, rest: '/index.html' })).toEqual({ ok: false, why: 'refused' })
+    await sleep(400)
+    const s = await w.state()
+    expect(s.tabs.find((t) => t.id === id)!.doc!.commits).toBe(before)
+    expect(fake.requests.slice(reqs).filter((r) => r.path === '/' || r.path === '/index.html')).toEqual([])
+    expect(await w.log('link', since)).toEqual([])
+    expect(s.pill).toMatchObject({ kind: 'unsaved', tab: id })
+    // the same from the page itself: a same-origin window.open of its own document with no hash
+    await w.run.call('activate', { id: 'home' })
+    await w.run.call('openSameCanvas', { tab: id, url: `${fake.origin}/index.html` })
+    await sleep(400)
+    expect((await w.tab(id)).doc!.commits).toBe(before)
+    expect((await w.state()).active).toBe(id)
+    expect(fake.requests.slice(reqs).filter((r) => r.path === '/' || r.path === '/index.html')).toEqual([])
+    // with a hash, the same document: no question, even with work held
+    expect(await w.run.call('openInTab', { entry: entryOf(fake), url: `${fake.origin}/index.html#/b/elsewhere`, rest: '/index.html#/b/elsewhere' })).toEqual({ ok: true })
+    await w.until((x) => x.tabs.find((t) => t.id === id)!.path === '/index.html#/b/elsewhere', 3000, 'the hash to follow')
+    expect((await w.tab(id)).doc!.commits).toBe(before)
+    await w.report(id, { unsaved: false })
+  })
+
   it('a canvas still starting: its tab opens on its starting page and keeps the link\'s path for its first load', async () => {
     const f = await startFakeCanvas({ home: w.env.home, slotBase: w.slotBase, slot: 2, name: 'Later' })
     await f.ready

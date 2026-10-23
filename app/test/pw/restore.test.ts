@@ -4,6 +4,7 @@
  * the pages (a board change inside a page included) and is written whole; a file of another version is set aside
  * as tabs.json.bad and the app starts as if it were empty.
  */
+import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -19,6 +20,9 @@ describe('a launch with tabs.json and two canvases running', () => {
   let alpha: FakeCanvas
   let beta: FakeCanvas
   let state: string
+  // a third canvas in the file, not running at launch: its workspace and the origin its slot will bind
+  const gammaWs = randomBytes(8).toString('hex')
+  let gammaOrigin = ''
 
   it('the active canvas by (ws, origin) loads its saved path; the other waits, its path kept', async () => {
     w = await launchWindow('pw', {
@@ -29,11 +33,13 @@ describe('a launch with tabs.json and two canvases running', () => {
         state = join(env.home, 'state-dev')
         mkdirSync(state, { recursive: true })
         writeFileSync(join(state, 'launched'), '')
+        gammaOrigin = `http://[::1]:${slotBase + 4}`
         writeFileSync(join(state, 'tabs.json'), JSON.stringify({
           v: 1, active: { kind: 'canvas', ws: beta.ws, origin: beta.origin }, settings: false, closed: [],
           canvases: [
             { ws: alpha.ws, origin: alpha.origin, path: '/#/b/alpha', shownAt: 10 },
             { ws: beta.ws, origin: beta.origin, path: '/index.html#/b/beta', shownAt: 20 },
+            { ws: gammaWs, origin: gammaOrigin, path: '/#/b/gamma', shownAt: 5 },
           ],
         }))
         return { extraEnv: { MARVER_APP_FAKE_ENTRIES: JSON.stringify([recOf(alpha), recOf(beta)]) }, fakes: [alpha, beta] }
@@ -65,6 +71,19 @@ describe('a launch with tabs.json and two canvases running', () => {
     expect(file.active).toEqual({ kind: 'canvas', ws: alpha.ws, origin: alpha.origin })
     expect(file.canvases.find((c: { ws: string }) => c.ws === alpha.ws).path).toBe('/#/b/other')
     expect(file.canvases.find((c: { ws: string }) => c.ws === beta.ws).path).toBe('/index.html#/b/beta')
+  })
+
+  it('a canvas not running at launch got no tab; started later, its tab opens on its saved board (A2.14 #23)', async () => {
+    expect((await w!.state()).tabs.filter((t) => t.kind === 'local').map((t) => t.reg!.instance).sort()).toEqual([alpha.instance, beta.instance].sort())
+    const g = await w!.canvas({ slot: 4, ws: gammaWs, name: 'Gamma' })
+    expect(g.fake.origin).toBe(gammaOrigin)
+    const t = await w!.tab(g.id)
+    expect(t).toMatchObject({ path: '/#/b/gamma', hasView: false })
+    await w!.run.call('activate', { id: g.id })
+    const s = await w!.until((x) => !!x.tabs.find((q) => q.id === g.id)?.doc?.lifted, 10_000, 'Gamma lifted')
+    expect(s.tabs.find((q) => q.id === g.id)!.doc!.url).toBe(`${gammaOrigin}/#/b/gamma`)
+    const a = s.tabs.find((q) => q.reg?.instance === alpha.instance)!
+    await w!.run.call('activate', { id: a.id })
   })
 
   it('a tab closed for its canvas\'s run is kept closed in the file', async () => {

@@ -60,15 +60,24 @@ describe('the menu bar (A2.7)', () => {
   it('a canvas item or a tab item chosen after a reload, a switch or a loss of trust does nothing', async () => {
     await w.run.call('menu:hold', { id: 'cv:fit-all' })
     await w.run.call('menu:hold', { id: `tab:${id}` })
+    await w.run.call('menu:hold', { id: 'reload' })
+    await w.run.call('menu:hold', { id: 'force-reload' })
     const since = (await w.log()).length
     await w.run.call('reloadPage', { target: id })
     await w.until((x) => { const t = x.tabs.find((q) => q.id === id)!; return !!t.doc?.lifted && t.doc.commits >= 2 }, 10_000, 'the reload')
     expect(await w.run.call('menu:click', { id: 'cv:fit-all', stale: true })).toBe(true)
+    // Reload Canvas and Force Reload held from before the page's reload: its document changed, they reload nothing
+    const commits = (await w.tab(id)).doc!.commits
+    const mid = (await w.log()).length
+    expect(await w.run.call('menu:click', { id: 'reload', stale: true })).toBe(true)
+    expect(await w.run.call('menu:click', { id: 'force-reload', stale: true })).toBe(true)
     await w.run.call('activate', { id: 'home' })
     expect(await w.run.call('menu:click', { id: `tab:${id}`, stale: true })).toBe(true)
     await sleep(150)
     expect(await w.log('menu', since)).toEqual([])
     expect((await w.state()).active).toBe('home')
+    expect((await w.log('guard', mid)).concat(await w.log('act', mid))).toEqual([])
+    expect((await w.tab(id)).doc!.commits).toBe(commits)
     // after the reload the page has said nothing yet: no canvas items
     await w.run.call('activate', { id })
     await sleep(200)

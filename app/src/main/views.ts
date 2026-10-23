@@ -26,7 +26,7 @@ import { app, dialog, Menu, nativeTheme, powerMonitor, shell, WebContentsView, t
 import * as sessions from './sessions.ts'
 import { CH, type PageKind, type TabPageAction } from '../shared/channels.ts'
 import { startCommand } from '../shared/command.ts'
-import { effects } from './effects.ts'
+import { effects, provideEffectHooks } from './effects.ts'
 import type { AppState, MenuItem } from '../../../src/shared/app-api.ts'
 import { docProof } from '../../../src/server/proof.ts'
 import type { Files, Home } from './config.ts'
@@ -39,12 +39,13 @@ import { buildNow, HELP_URL, invalidateMenu, startMenu, type MenuModel, type Men
 import { crashReloaded, currentPill, onPillAction, setCondition, setPillPorts } from './pill.ts'
 import {
   activate, activeTab, allTabs, applyRestore, canvasOrder, closeTab, cycleFrom, displayState, forDigit, getTab, guard,
-  guardAll, isActive, keyOf, liveDoc, onCommit, onDocumentGone, onFail, onInPage, onRegistry, onReport, openSettingsTab,
-  ordered, parseTabsFile, reopenTab, restorePlan, safePath, setTabsPorts, sheetText, snapshotFile, tabName,
+  guardAll, hashOnly, isActive, keyOf, liveDoc, onCommit, onDocumentGone, onFail, onInPage, onRegistry, onReport, openSettingsTab,
+  ordered, parseTabsFile, reopenTab, restorePlan, safePath, savedPathIn, setTabsPorts, sheetText, snapshotFile, tabName,
   type GuardAction, type GuardAnswer, type Sheet, type Tab, type TabsFile,
 } from './tabs.ts'
 import {
-  copyDetails, forgetTab, hangSheetText, onAttemptFailed, onLifted, onShown, personReload, recover, scheduleRetry, setTabpagePorts,
+  copyDetails, forgetTab, hangSheetText, onAttemptFailed, onLifted, onShown, onViewClosed, personReload, recover, reloadIsPersons,
+  scheduleRetry, setTabpagePorts,
 } from './tabpage.ts'
 import {
   appPrefs, APP_ORIGIN, attachContent, compose, contentView, detachContent, hideWindow, mainWindow, onAppReady, openWindow,
@@ -79,8 +80,11 @@ export interface TrustPort {
   reopenNext(tabId: string): void
   /** what answers on a failed tab's address (v1.14 r3 #4); views.ts probes by itself without it */
   probe?(t: Tab): Promise<'silent' | 'answers' | 'proved'>
-  /** the tab's logo, proved like the document (A2.4): a checked `data:` URL, or null */
-  fetchLogo?(t: Tab): Promise<string | null>
+  /**
+   * the tab's logo, proved like the document (A2.4): a checked `data:` URL, or null. `signal` aborts it when a newer
+   * fetch starts or the tab navigates or closes (proof.ts `fetchLogo(entry, signal)`)
+   */
+  fetchLogo?(t: Tab, signal: AbortSignal): Promise<string | null>
   /** the bridge's app-page plumbing (A2.14 #19): when present, the window stream's handlers are mounted on it */
   pages?: {
     onReady(fn: (wc: WebContents) => void): void
@@ -121,6 +125,16 @@ export interface TabsStore {
 export interface StartInput { trust: TrustPort; home: Home; files: Files; firstLaunch?: boolean; notes?: HomeNotes; tabsStore?: TabsStore }
 
 const j = (topic: string, data: unknown) => { if (__MV_TEST__) note(topic, data) }
+
+/**
+ * The window shown and in front: a refused quit's tab, a sheet. A test run shows it without taking the keyboard
+ * from whoever is at the Mac (as at launch), unless the case asks for focus.
+ */
+function forward(): void {
+  const inactive = __MV_TEST__ && testMode() && process.env.MARVER_APP_SHOW !== 'focus'
+  if (windowVisible() && (inactive || mainWindow()?.isFocused())) return
+  showWindow({ focus: !inactive })
+}
 
 /** The app's keys on one view; the key harness's control case (test builds only) leaves the menu its key equivalents. */
 const keys = (wc: WebContents) => attachKeys(wc, (c) => runCommand(c, 'key'),
@@ -203,7 +217,8 @@ function forgetCanvas(t: Tab, view: WebContentsView): void {
   c.nav.dispose()
   detachContent(t.id)
   clearHang(t)
-  if (getTab(t.id)) onDocumentGone(t, 'none')
+  abortLogo(t)
+  if (getTab(t.id)) { onDocumentGone(t, 'none'); onViewClosed(t) }
   j('view', { tab: t.id, forgot: true })
   compose()
 }
@@ -228,11 +243,14 @@ function onNav(t: Tab, wc: WebContents, e: NavEvent): void {
   switch (e.kind) {
     case 'commit': {
       const admitted = e.attributed && t.reg?.state === 'ready' ? trust.admit(t.id) : null
+      // the tab navigated: a logo fetch in flight is aborted (A2.4); one the lift starts again for the new document
+      const logoWas = abortLogo(t)
       onCommit(t, { gen: e.gen, url: e.url, attributed: e.attributed, admitted })
       void wc.insertCSS(NO_DRAG, { cssOrigin: 'user' }).catch(() => {})
       if (t.doc?.lifted) {
         clearUnattributed(t)
         onLifted(t)
+        if (logoWas) refreshLogo(t)
         const r = t.reg
         if (r?.origin && t.root && notedVerified.get(t.id) !== r.instance) {
           notedVerified.set(t.id, r.instance)
@@ -245,6 +263,7 @@ function onNav(t: Tab, wc: WebContents, e: NavEvent): void {
     case 'fail': {
       let errorPage = false
       try { errorPage = wc.mainFrame?.origin === 'null' } catch { /* the frame went */ }
+      abortLogo(t)
       onFail(t, { why: e.why, code: e.code, errorPage })
       onAttemptFailed(t)
       scheduleRetry(t)
@@ -324,7 +343,14 @@ function act(t: Tab, a: GuardAction): Promise<GuardAnswer> {
     }
     // never preventDefault: the page's refusal stands (r2 #4: a best-effort extra veto)
     const onPrevent = () => done('refused', 'will-prevent-unload')
-    const onStart = (d: { isMainFrame: boolean; isSameDocument: boolean }) => { if (d.isMainFrame) done('done', d.isSameDocument ? 'same-document' : 'navigation') }
+    // the act happened when the new document's navigation starts. A same-document start is the page's own hash or
+    // history.replaceState (the shell writes the camera so) while beforeunload is still being asked - not the act -
+    // except a load whose own URL turned out to be the same document
+    const onStart = (d: { isMainFrame: boolean; isSameDocument: boolean; url: string }) => {
+      if (!d.isMainFrame) return
+      if (!d.isSameDocument) done('done', 'navigation')
+      else if (a.kind === 'load' && d.url === a.url) done('done', 'same-document')
+    }
     wc.on('will-prevent-unload', onPrevent)
     // Chromium goes on past a renderer that does not answer in time: the outcome comes as one of these events
     const timer = setTimeout(() => done('refused', 'timeout'), T.guardActMs)
@@ -350,12 +376,24 @@ let sheetMode: SheetMode | null = null
 const heldSheets: { sheet: unknown; answer: (ok: boolean) => void }[] = []
 const sheetsShown: unknown[] = []
 
-async function testSheet(sheet: unknown): Promise<boolean> {
+async function testSheet(sheet: unknown, signal?: AbortSignal): Promise<boolean> {
   sheetsShown.push(sheet)
   j('sheet', sheet)
   if (sheetMode === 'confirm' || sheetMode === null) return true
   if (sheetMode === 'cancel') return false
-  return new Promise<boolean>((answer) => heldSheets.push({ sheet, answer }))
+  // held until the case answers - or closed by its signal, as showMessageBox closes a native sheet (the hang sheet)
+  return new Promise<boolean>((answer) => {
+    const h = { sheet, answer: (ok: boolean) => { signal?.removeEventListener('abort', onAbort); answer(ok) } }
+    const onAbort = () => {
+      const i = heldSheets.indexOf(h)
+      if (i >= 0) heldSheets.splice(i, 1)
+      j('sheet', { closed: 'signal' })
+      answer(false)
+    }
+    if (signal?.aborted) { onAbort(); return }
+    signal?.addEventListener('abort', onAbort, { once: true })
+    heldSheets.push(h)
+  })
 }
 
 /** A test build never puts a native sheet on the screen: its sheets are answered by the seam ('confirm' unless a case says). */
@@ -363,6 +401,8 @@ const seamed = (): boolean => __MV_TEST__ && (sheetMode !== null || testMode())
 
 async function ask(s: Sheet): Promise<boolean> {
   const words = sheetText(s)
+  // a sheet on a hidden window is a question nobody sees (a quit from the Dock, the menu's Close Tab after ⇧⌘W)
+  forward()
   if (__MV_TEST__ && seamed()) return testSheet({ kind: 'guard', action: s.action.kind, tabs: s.tabs.map((x) => x.id), ...words })
   const win = mainWindow()
   if (!win) return false
@@ -437,7 +477,7 @@ async function notResponding(t: Tab): Promise<void> {
   h.abort = ac
   let reload = false
   try {
-    if (__MV_TEST__ && seamed()) reload = await testSheet({ kind: 'hang', tab: t.id, others: snap.tabs.map((x) => x.id), ...words })
+    if (__MV_TEST__ && seamed()) reload = (await testSheet({ kind: 'hang', tab: t.id, others: snap.tabs.map((x) => x.id), ...words }, ac.signal)) && !ac.signal.aborted
     else {
       const win = mainWindow()
       if (!win) return
@@ -492,12 +532,13 @@ async function probe(t: Tab): Promise<'silent' | 'answers' | 'proved'> {
 // ---------------------------------------------------------------------------------------------------------------
 // Commands: one path for the keys and the menu (A2.4, A2.7, A2.14 #25)
 
-function reloadActive(force: boolean): void {
-  const t = activeTab()
+/** ⌘R, ⇧⌘R and the menu's Reload: the person's crash reload on a crashed or latched tab with no live page, else the guard's. */
+function reloadTab(t: Tab | undefined, force: boolean): void {
   if (!t || t.kind !== 'local') return
-  if (t.view === 'crashed' || t.crash.latched) { personReload(t); compose(); return }
+  if (reloadIsPersons(t)) { personReload(t); compose(); return }
   void guard(t, { kind: force ? 'forceReload' : 'reload' })
 }
+const reloadActive = (force: boolean): void => reloadTab(activeTab(), force)
 
 /** ⌘L: Home with its link field, `back` the tab it came from (A2.7). The home stream's page does the rest. */
 let linkBack: string | undefined
@@ -548,8 +589,6 @@ export function runCommand(c: AppCommand, via: 'key' | 'menu'): void {
 export interface LinkTarget { state: string; origin: string | null; port: number; ws: string; name: string }
 type LinkAnswer = { ok: true } | { ok: false; why: 'bad' | 'nothing' | 'not-canvas' | 'later' | 'refused' }
 
-const noHash = (u: string) => { try { const x = new URL(u); x.hash = ''; return x.href } catch { return u } }
-
 export async function openInTab(e: LinkTarget, url: string | null, rest: string): Promise<LinkAnswer> {
   const locals = allTabs().filter((t) => t.kind === 'local' && t.reg?.ws === e.ws)
   const t = locals.find((x) => e.origin ? x.reg!.origin === e.origin : x.reg!.port === e.port) ?? locals.find((x) => x.reg!.port === e.port)
@@ -565,9 +604,10 @@ export async function openInTab(e: LinkTarget, url: string | null, rest: string)
     return { ok: true }
   }
   const wc = contentView(t.id)?.webContents
-  if (wc && t.doc && noHash(t.doc.url) === noHash(url)) {
+  if (wc && !wc.isDestroyed() && hashOnly(wc.getURL(), url)) {
     // only the hash changes: the same document, its trust kept - no question asked
     activate(t.id)
+    j('link', { tab: t.id, hashOnly: true })
     void wc.loadURL(url).catch(() => {})
     return { ok: true }
   }
@@ -585,7 +625,7 @@ export function openSameCanvas(webContentsId: number, url: string): void {
   if (!t || t.kind !== 'local') return
   activate(t.id)
   const wc = contentView(t.id)?.webContents
-  if (wc && t.doc?.url && noHash(t.doc.url) === noHash(url)) { void wc.loadURL(url).catch(() => {}); return }
+  if (wc && !wc.isDestroyed() && hashOnly(wc.getURL(), url)) { j('link', { tab: t.id, hashOnly: true }); void wc.loadURL(url).catch(() => {}); return }
   void guard(t, { kind: 'load', url })
 }
 
@@ -594,19 +634,33 @@ export function openSameCanvas(webContentsId: number, url: string): void {
 // document by the trust stream's fetchLogo. At most one in flight per tab; applied only if the tab, its instance and
 // its document are unchanged; never for an unverified tab.
 
-const logoFetch = new Map<string, number>()
-let logoSeq = 0
+const logoFetch = new Map<string, AbortController>()
+
+/** Abort the tab's logo fetch in flight (a newer one, a navigation, a close): true when there was one. */
+function abortLogo(t: Tab): boolean {
+  const ac = logoFetch.get(t.id)
+  if (!ac) return false
+  logoFetch.delete(t.id)
+  ac.abort()
+  j('logo', { tab: t.id, aborted: true })
+  return true
+}
+
 function refreshLogo(t: Tab): void {
   if (!trust.fetchLogo || t.kind !== 'local' || t.reg?.state !== 'ready' || t.fail?.why === 'unverified') return
-  const seq = ++logoSeq
-  logoFetch.set(t.id, seq)
+  abortLogo(t)
+  const ac = new AbortController()
+  logoFetch.set(t.id, ac)
   const at = { instance: t.reg.instance, commits: t.doc?.commits ?? 0 }
-  void trust.fetchLogo(t).then((url) => {
-    if (logoFetch.get(t.id) !== seq) return
-    logoFetch.delete(t.id)
+  j('logo', { tab: t.id, fetch: true, commits: at.commits })
+  const settle = () => { if (logoFetch.get(t.id) === ac) logoFetch.delete(t.id) }
+  void trust.fetchLogo(t, ac.signal).then((url) => {
+    if (ac.signal.aborted || logoFetch.get(t.id) !== ac) return
+    settle()
     if (!getTab(t.id) || t.reg?.instance !== at.instance || (t.doc?.commits ?? 0) !== at.commits || t.fail?.why === 'unverified') return
+    j('logo', { tab: t.id, applied: !!url })
     if (t.logo !== (url ?? undefined)) { t.logo = url ?? undefined; compose() }
-  }, () => { if (logoFetch.get(t.id) === seq) logoFetch.delete(t.id) })
+  }, settle)
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -621,9 +675,10 @@ function holds(k: MenuToken): boolean {
   return !!t && (t.doc?.commits ?? 0) === k.commit && !!t.doc?.trusted === k.trusted
 }
 
-function tabAct(k: MenuToken, what: 'activate' | 'open-browser' | 'reveal' | 'copy-link' | 'close' | 'mark-all-seen'): void {
+function tabAct(k: MenuToken, what: 'activate' | 'open-browser' | 'reveal' | 'copy-link' | 'close' | 'mark-all-seen' | 'reload' | 'force-reload'): void {
   const t = getTab(k.tab)
-  if (!t || !holds(k)) return
+  if (!t || !holds(k)) { j('tab-act', { what, tab: k.tab, stale: true }); return }
+  j('tab-act', { what, tab: t.id })
   // the people link (the slot file's `url`): what a browser opens and a person shares - never the bound origin
   const link = t.reg ? `http://localhost:${t.reg.port}${safePath(t.path)}` : undefined
   switch (what) {
@@ -633,6 +688,9 @@ function tabAct(k: MenuToken, what: 'activate' | 'open-browser' | 'reveal' | 'co
     case 'copy-link': if (link && t.doc?.trusted) effects.copy(link); return
     case 'close': void closeTab(t.id); return
     case 'mark-all-seen': if (t.doc?.trusted) trust.menuClick(t.id, 'mark-all-seen'); return
+    // the menu's Reload Canvas and Force Reload: the tab the menu was built for, its document and trust unchanged
+    case 'reload': reloadTab(t, false); return
+    case 'force-reload': reloadTab(t, true); return
   }
 }
 
@@ -652,9 +710,17 @@ function openOutside(url: string): void {
   void shell.openExternal(url)
 }
 
+/** The last native popup a test run would have shown: kept, never put on the screen (its items clicked by a hook). */
+let lastPopup: MenuItemConstructorOptions[] = []
+
 function popup(items: MenuItemConstructorOptions[], x: number, y: number): void {
   const win = mainWindow()
   if (!win || !items.length) return
+  if (__MV_TEST__ && testMode()) {
+    lastPopup = items
+    j('popup', { x: Math.round(x), y: Math.round(y), items: items.filter((i) => i.type !== 'separator').map((i) => ({ label: i.label, enabled: i.enabled !== false, ...(i.type === 'checkbox' ? { checked: !!i.checked } : {}) })) })
+    return
+  }
   Menu.buildFromTemplate(items).popup({ window: win, x: Math.round(x), y: Math.round(y) })
 }
 
@@ -880,7 +946,11 @@ export function startViews(i: StartInput): void {
   setTabsPorts({
     now: () => Date.now(), home, appDark: () => nativeTheme.shouldUseDarkColors,
     changed: (o) => { ensureAppViews(); compose(o) }, load, appState: sendState, act, ask, forget, save: saveSoon,
-    shown: (t) => { onShown(t); refreshLogo(t) }, log: j,
+    shown: (t) => { onShown(t); refreshLogo(t) }, forward,
+    // a canvas that starts after launch opens on its saved board (A2.14 #23): the file as read at launch, kept
+    // whole since (snapshotFile keeps the entries of canvases not running), read only with restoreTabs on
+    savedPath: (ws, origin) => i.files.config.restoreTabs ? savedPathIn(tabsFile, ws, origin) : undefined,
+    log: j,
   })
   setTabpagePorts({
     now: () => Date.now(), isActive, changed: () => compose(), log: j, load,
@@ -953,7 +1023,7 @@ export function startViews(i: StartInput): void {
   setTimeout(show, 300)
 
   app.on('activate', () => showWindow())   // the Dock icon
-  powerMonitor.on('resume', () => { for (const t of allTabs()) if (t.fail) scheduleRetry(t, { now: true }) })
+  powerMonitor.on('resume', onResume)
   execFile('/usr/sbin/sysctl', ['-n', 'hw.model'], { timeout: 2000 }, (err, out) => { if (!err) macModel = String(out).trim() })
 
   // ⌘Q, the menu, the Dock: every canvas tab through guardAll (A2.2, v1.13 r2 #2, v1.14 r3 #1)
@@ -968,7 +1038,9 @@ export function startViews(i: StartInput): void {
     void guardAll({ kind: 'quit' }).then((r) => {
       quitInFlight = false
       j('quit', { answer: r })
-      if (r !== 'done') return   // the quit is cancelled; a refused quit is never retried by itself
+      // the quit is cancelled, and says so where the person can see it: a quit from the Dock or a logout may start
+      // with the window hidden (tabs.ts refuse() brought its tab forward); never retried by itself
+      if (r !== 'done') { forward(); return }
       writeTabsNow()
       notes?.quitting?.(runningWorkspaces())
       quitting = true
@@ -977,6 +1049,12 @@ export function startViews(i: StartInput): void {
   })
 
   if (__MV_TEST__) testHooks()
+}
+
+/** The Mac woke: every failed tab looks again at once (A2.11: a check on `powerMonitor` `resume`). */
+function onResume(): void {
+  j('resume', { failed: allTabs().filter((t) => t.fail).map((t) => t.id) })
+  for (const t of allTabs()) if (t.fail) scheduleRetry(t, { now: true })
 }
 
 /** Home's first load while it is the active tab, the window shown: Home has shown (ports.ts `noteHomeShown`). */
@@ -1006,7 +1084,7 @@ function tabDump(t: Tab) {
     id: t.id, kind: t.kind, name: tabName(t), open: t.open, view: t.view, retained: t.retained, path: t.path,
     state: displayState(t, t === activeTab()), reg: t.reg ? { state: t.reg.state, instance: t.reg.instance, origin: t.reg.origin, port: t.reg.port, slot: t.reg.slot } : null,
     doc: t.doc ? { ...t.doc } : null, reports: { ...t.reports }, crash: { ...t.crash }, fail: t.fail ?? null, probe: t.probe ?? null,
-    hung: !!t.hung, held: t.held ?? null, replacing: !!t.replacing, key: keyOf(t), look: t.look ?? null,
+    hung: !!t.hung, held: t.held ?? null, replacing: !!t.replacing, key: keyOf(t), look: t.look ?? null, logo: t.logo ?? null,
     hasView: canvases.has(t.id) || !!contentView(t.id), wcId: contentView(t.id)?.webContents.id ?? null, pageView: !!pageView(t.id),
   }
 }
@@ -1089,6 +1167,14 @@ function testHooks(): void {
   provide('menu', () => menuModel())
   provide('outside', () => ({ ...outside }))
   provide('openInTab', async (a) => { const { entry, url, rest } = arg<{ entry: LinkTarget; url: string | null; rest: string }>(a); return openInTab(entry, url, rest) })
+  // sessions.ts onSameCanvasOpen's call, as the trust stream's policy makes it for a canvas's same-origin window.open
+  provide('openSameCanvas', (a) => {
+    const { tab, url } = arg<{ tab: string; url: string }>(a)
+    const wc = contentView(tab)?.webContents
+    if (!wc) return false
+    openSameCanvas(wc.id, url)
+    return true
+  })
   // the application menu as built: each item's id, label, type, checked, enabled and accelerator
   const dump = (m: Electron.Menu | null): unknown[] => (m?.items ?? []).map((i) => ({
     id: i.id || undefined, label: i.label, type: i.type, checked: i.checked, enabled: i.enabled, accelerator: i.accelerator ?? undefined,
@@ -1108,4 +1194,15 @@ function testHooks(): void {
   provide('writeTabs', () => { writeTabsNow(); return tabsFile })
   provide('notes', () => ({ homeNoted }))
   provide('settings:open', () => { openSettingsTab(); return true })
+  // the strip's tab:menu and tabs:more, as the bridge hands them on; their popup recorded, never shown
+  provide('tabMenu', (a) => { const { id, x, y } = arg<{ id: string; x?: number; y?: number }>(a); pageHandlers.tabMenu(id, x ?? 10, y ?? 40); return true })
+  provide('tabsMore', (a) => { const { ids, x, y } = arg<{ ids: string[]; x?: number; y?: number }>(a); pageHandlers.tabsMore(ids, x ?? 10, y ?? 40); return true })
+  provide('popup:click', (a) => {
+    const it = lastPopup.find((i) => i.label === arg<{ label: string }>(a).label)
+    if (!it?.click || it.enabled === false) return false
+    ;(it.click as unknown as () => void)()
+    return true
+  })
+  provideEffectHooks()   // `effects`: the copies and folders recorded (home.ts provides it too once the streams meet)
+  provide('resume', () => { onResume(); return true })
 }

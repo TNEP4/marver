@@ -3,7 +3,7 @@
  * guard's act and sheet answered by the case. No Electron.
  */
 import type { RegistryEntry } from '../../src/main/registry.ts'
-import { resetTabs, setTabsPorts, onRegistry, allTabs, onCommit, onReport, activate, isActive, type GuardAction, type GuardAnswer, type Sheet, type Tab } from '../../src/main/tabs.ts'
+import { resetTabs, setTabsPorts, onRegistry, allTabs, onCommit, onReport, activate, isActive, savedPathIn, type GuardAction, type GuardAnswer, type Sheet, type Tab, type TabsFile } from '../../src/main/tabs.ts'
 import { setTabpagePorts } from '../../src/main/tabpage.ts'
 import { recompute, resetPill, setPillPorts } from '../../src/main/pill.ts'
 import type { PillView } from '../../src/shared/channels.ts'
@@ -28,6 +28,12 @@ export interface World {
   copies: string[]
   confirmed: string[]
   probes: string[]
+  /** forward(): the window shown and brought to the front */
+  forwards: number
+  /** shown(): the tab was shown (its pending crash reload starts) */
+  shown: string[]
+  /** tabs.json as read at launch, with restoreTabs on (null: off, or no file) */
+  saved: TabsFile | null
   /** how the next act answers: a value, or a deferred the case resolves */
   actWith: (t: Tab, a: GuardAction) => Promise<GuardAnswer> | GuardAnswer
   askWith: (s: Sheet) => Promise<boolean> | boolean
@@ -38,6 +44,7 @@ export interface World {
 export function world(): World {
   const w: World = {
     clock: { now: 1_000_000 }, acts: [], sheets: [], loads: [], reloads: [], states: [], forgets: [], pills: [], copies: [], confirmed: [], probes: [],
+    forwards: 0, shown: [], saved: null,
     actWith: () => 'done', askWith: () => false, probeWith: () => 'silent', visible: true,
   }
   resetTabs()
@@ -47,7 +54,8 @@ export function world(): World {
     changed: () => recompute(), load: (t) => { w.loads.push(t.id) }, appState: (t, s) => { w.states.push({ tab: t.id, s }) },
     act: async (t, a) => { w.acts.push({ tab: t.id, action: a }); return w.actWith(t, a) },
     ask: async (s) => { w.sheets.push(s); return w.askWith(s) },
-    forget: (t) => { w.forgets.push(t.id) }, save: () => {}, shown: () => {},
+    forget: (t) => { w.forgets.push(t.id) }, save: () => {}, shown: (t) => { w.shown.push(t.id) },
+    forward: () => { w.forwards += 1 }, savedPath: (ws, origin) => savedPathIn(w.saved, ws, origin),
   })
   setTabpagePorts({
     now: () => w.clock.now, isActive,

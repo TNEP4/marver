@@ -16,7 +16,7 @@ export interface TabDump {
   crash: { count: number; latched: boolean; inFlight?: string | false; pendingShow?: boolean }
   fail: { why: string; at: number; code?: number } | null
   hung: boolean; held: { at: number; action: string } | null; replacing: boolean; key?: number
-  hasView: boolean; wcId: number | null; pageView: boolean
+  hasView: boolean; wcId: number | null; pageView: boolean; logo: string | null
 }
 export interface State { active: string; tabs: TabDump[]; order: string[]; canvases: string[]; pill: { rev: number; kind: string; short: string; tab?: string } | null; focus: unknown; quitting: boolean }
 export interface LogLine { topic: string; turn: number; t: string; data: Record<string, unknown> }

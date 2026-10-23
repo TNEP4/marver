@@ -5,7 +5,7 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
-  activeTab, allTabs, applyRestore, canvasOrder, cycleFrom, displayState, forDigit, getTab, keyOf, onCommit, onFail, onRegistry,
+  activeTab, allTabs, applyRestore, canvasOrder, cycleFrom, displayState, forDigit, getTab, hashOnly, keyOf, onCommit, onFail, onRegistry,
   onReport, openSettingsTab, ordered, parseTabsFile, restorePlan, safePath, snapshotFile, takeReopen, viewOf, wantsLoad, type TabsFile,
 } from '../../src/main/tabs.ts'
 import { entry, liveTab, show, world, type World } from './window-fakes.ts'
@@ -156,6 +156,44 @@ describe('tabs.json (v1.12 r1 #5)', () => {
     expect(restorePlan(f, [e], { restore: true, firstLaunch: true }).active).toEqual({ kind: 'home' })
   })
 
+  it('a canvas not running at launch gets no tab; when it starts, its tab opens on its saved board (A2.14 #23)', () => {
+    const later = entry({ ws: WS_A })
+    w.saved = file({ canvases: [{ ws: WS_A, origin: 'http://[::1]:40805', path: '/#/b/older', shownAt: 30 }, { ws: WS_A, origin: later.origin!, path: '/#/b/mine', shownAt: 10 }] })
+    applyRestore(restorePlan(w.saved, [], { restore: true, firstLaunch: false }))
+    expect(allTabs().filter((x) => x.kind === 'local')).toHaveLength(0)
+    onRegistry({ kind: 'entry', entry: later })
+    const t = allTabs().find((x) => x.reg?.instance === later.instance)!
+    expect(t.path).toBe('/#/b/mine')   // its own (ws, origin) entry, not the latest of its workspace
+    // one that moved slot takes the latest shown entry of its workspace
+    const moved = entry({ ws: 'bbbbbbbbbbbbbbbb' })
+    w.saved = file({ canvases: [{ ws: 'bbbbbbbbbbbbbbbb', origin: 'http://[::1]:40805', path: '/#/b/a', shownAt: 5 }, { ws: 'bbbbbbbbbbbbbbbb', origin: 'http://[::1]:40806', path: '/#/b/b', shownAt: 9 }] })
+    onRegistry({ kind: 'entry', entry: moved })
+    expect(allTabs().find((x) => x.reg?.instance === moved.instance)!.path).toBe('/#/b/b')
+    // restoreTabs off (nothing read): at /
+    w.saved = null
+    const off = entry({ ws: 'cccccccccccccccc' })
+    onRegistry({ kind: 'entry', entry: off })
+    expect(allTabs().find((x) => x.reg?.instance === off.instance)!.path).toBe('/')
+  })
+
+  it('one that starts after launch, still starting: its workspace\'s latest entry, then its own at ready; a link\'s path is kept', () => {
+    const s = entry({ ws: WS_A, state: 'starting', origin: null })
+    const origin = `http://[::1]:${s.port}`
+    w.saved = file({ canvases: [{ ws: WS_A, origin: 'http://[::1]:40805', path: '/#/b/latest', shownAt: 30 }, { ws: WS_A, origin, path: '/#/b/own', shownAt: 10 }] })
+    onRegistry({ kind: 'entry', entry: s })
+    const t = allTabs().find((x) => x.reg?.instance === s.instance)!
+    expect(t.path).toBe('/#/b/latest')
+    onRegistry({ kind: 'entry', entry: { ...s, state: 'ready', origin } })
+    expect(t.path).toBe('/#/b/own')
+    const s2 = entry({ ws: 'dddddddddddddddd', state: 'starting', origin: null })
+    w.saved = file({ canvases: [{ ws: 'dddddddddddddddd', origin: `http://[::1]:${s2.port}`, path: '/#/b/saved', shownAt: 1 }] })
+    onRegistry({ kind: 'entry', entry: s2 })
+    const t2 = allTabs().find((x) => x.reg?.instance === s2.instance)!
+    t2.path = '/#/b/from-a-link'   // ⌘L to a canvas still starting keeps the link's path (A2.14 #24)
+    onRegistry({ kind: 'entry', entry: { ...s2, state: 'ready', origin: `http://[::1]:${s2.port}` } })
+    expect(t2.path).toBe('/#/b/from-a-link')
+  })
+
   it('applied, then written back: the active canvas by (ws, origin), its path, the closes of runs still known', () => {
     const e = entry({ ws: WS_A })
     applyRestore(restorePlan(file({ active: { kind: 'canvas', ws: WS_A, origin: e.origin! }, canvases: [{ ws: WS_A, origin: e.origin!, path: '/#/b/x', shownAt: 1 }] }), [e], { restore: true, firstLaunch: false }))
@@ -235,6 +273,23 @@ describe('the registry (A2.3, A2.14 #10, v1.12 r1 #3, v1.13 r2 #5)', () => {
     expect(t.reg!.state).toBe('gone')
   })
 
+  it('a second instance of a running canvas\'s workspace (another slot, or --port) gets its own tab; the first keeps its own', () => {
+    const a = liveTab(w)
+    const never = add({ ws: 'abcdefabcdefabcd' }).t   // a running canvas whose tab was never shown: no live document
+    const b = entry({ ws: a.reg!.ws })
+    onRegistry({ kind: 'entry', entry: b })
+    const c = entry({ ws: 'abcdefabcdefabcd', slot: null, port: 41999, origin: 'http://[::1]:41999' })
+    onRegistry({ kind: 'entry', entry: c })
+    expect(allTabs().filter((x) => x.kind === 'local')).toHaveLength(4)
+    expect(a.reg!.instance).not.toBe(b.instance)
+    expect(never.reg!.instance).not.toBe(c.instance)
+    expect(never.reg!.state).toBe('ready')
+    // each is still reachable, and a later stop finds its own tab
+    onRegistry({ kind: 'gone', file: never.reg!.file, instance: never.reg!.instance, why: 'pid' })
+    expect(never.reg!.state).toBe('gone')
+    expect(allTabs().find((x) => x.reg?.instance === c.instance)!.reg!.state).toBe('ready')
+  })
+
   it('another workspace on the same origin is another tab', () => {
     const t = liveTab(w)
     onRegistry({ kind: 'gone', file: t.reg!.file, instance: t.reg!.instance, why: 'pid' })
@@ -277,6 +332,28 @@ describe('the document (A2.14 #8, v1.12 r1 #1, v1.13 r2 #3)', () => {
     expect(t.unattributed).toBe(1)
   })
 
+  it('an attributed commit the bridge would not admit (its isTrusted said no) is untrusted: not lifted, its reports never accepted', () => {
+    const t = add().t
+    onCommit(t, { gen: 1, url: `${t.reg!.origin}/`, attributed: true, admitted: null })
+    expect(t.doc).toMatchObject({ trusted: false, lifted: false })
+    expect(t.doc!.doc).toBeUndefined()
+    expect(t.retained).toBe(false)
+    expect(t.unattributed).toBe(1)
+  })
+
+  it('the bridge says a document went stale: its trust goes with it - the items gated on it disabled (A2.14 #24)', () => {
+    const t = liveTab(w)
+    onReport(t.id, t.doc!.doc!, { menu: [{ id: 'fit-all', group: 'view', label: 'Fit All' }] })
+    expect(viewOf(t, true, '/Users/nic').verified).toBe(true)
+    onReport(t.id, t.doc!.doc!, { safety: 'stale' })
+    expect(t.doc!.trusted).toBe(false)
+    expect(t.reports).toMatchObject({ safety: 'stale', menu: undefined })
+    expect(viewOf(t, true, '/Users/nic').verified).toBe(false)
+    // nothing it says after counts
+    onReport(t.id, t.doc!.doc!, { busy: { busy: false, unsaved: false, why: [] } })
+    expect(t.reports.safety).toBe('stale')
+  })
+
   it('reports: only from the admitted document; incoherent busy refused; the first busy makes it fresh', () => {
     const t = liveTab(w, { busy: null })
     onReport(t.id, 'doc-other', { busy: { busy: true, unsaved: true, why: ['typing'] } })
@@ -298,6 +375,19 @@ describe('the document (A2.14 #8, v1.12 r1 #1, v1.13 r2 #3)', () => {
     expect(t.probe).toEqual({ state: 'none', lastAt: null })
     onFail(t, { why: 'unverified', code: -20, errorPage: true })
     expect(t.retained).toBe(false)
+  })
+
+  it('a link changes only the hash when it names one and the page\'s current URL is the same without it', () => {
+    const at = 'http://[::1]:40100/#/b/x'
+    expect(hashOnly(at, 'http://[::1]:40100/#/b/y')).toBe(true)
+    expect(hashOnly(at, at)).toBe(true)
+    expect(hashOnly('http://[::1]:40100/', 'http://[::1]:40100/#/b/y')).toBe(true)
+    // no hash: Electron 45 loads it as a new document - the guard's
+    expect(hashOnly(at, 'http://[::1]:40100/')).toBe(false)
+    expect(hashOnly(at, 'http://[::1]:40100/#')).toBe(false)
+    expect(hashOnly(at, 'http://[::1]:40100/index.html#/b/x')).toBe(false)
+    expect(hashOnly(at, 'http://[::1]:40100/?q=1#/b/x')).toBe(false)
+    expect(hashOnly('', 'http://[::1]:40100/#/b/x')).toBe(false)
   })
 
   it('mv:doc\'s reopen is one-shot', () => {

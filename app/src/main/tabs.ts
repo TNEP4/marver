@@ -209,6 +209,16 @@ export interface TabsPorts {
   save(): void
   /** the tab was just shown: its pending automatic crash reload starts now (tabpage.ts) */
   shown(t: Tab): void
+  /**
+   * the window shown and brought to the front: a refused quit or update, or a refusal for unsaved work, brings its
+   * tab forward - in a window the red button or ⇧⌘W may have hidden (A2.2)
+   */
+  forward?(): void
+  /**
+   * tabs.json's saved path for a canvas that was not running at launch (A2.14 #23): its `(ws, origin)` entry, else
+   * the latest shown entry of its `ws`; undefined with `restoreTabs` off or nothing saved
+   */
+  savedPath?(ws: string, origin: string | null): string | undefined
   /** a journal line (test builds) */
   log?(topic: string, data: unknown): void
 }
@@ -420,12 +430,7 @@ export function restorePlan(file: TabsFile | null, entries: RegistryEntry[], o: 
     return { canvases: live.map((entry) => ({ entry, path: '/', open: true })), settings: false, active: { kind: 'home' }, closed: [] }
   }
   const isClosed = (e: RegistryEntry) => file.closed.some((c) => c.ws === e.ws && c.instance === e.instance)
-  const pathOf = (e: RegistryEntry) => {
-    const exact = e.origin ? file.canvases.find((c) => c.ws === e.ws && c.origin === e.origin) : undefined
-    const latest = [...file.canvases].filter((c) => c.ws === e.ws).sort((a, b) => b.shownAt - a.shownAt)[0]
-    return safePath((exact ?? latest)?.path ?? '/')
-  }
-  const canvases = live.map((entry) => ({ entry, path: pathOf(entry), open: !isClosed(entry) }))
+  const canvases = live.map((entry) => ({ entry, path: savedPathIn(file, entry.ws, entry.origin ?? null) ?? '/', open: !isClosed(entry) }))
   let active: RestorePlan['active'] = { kind: 'home' }
   if (!o.firstLaunch) {
     const a = file.active
@@ -437,6 +442,29 @@ export function restorePlan(file: TabsFile | null, entries: RegistryEntry[], o: 
   }
   const closedKept = file.closed.filter((c) => live.some((e) => e.ws === c.ws && e.instance === c.instance))
   return { canvases, settings: file.settings || active.kind === 'settings', active, closed: closedKept }
+}
+
+/**
+ * A canvas's saved path in the file (v1.12 r1 #5): the entry with its `(ws, origin)`, else the latest shown entry of
+ * its `ws` (a canvas that moved slot, or one still `starting`, with no origin yet); undefined when the file has none.
+ */
+export function savedPathIn(file: TabsFile | null, ws: string, origin: string | null): string | undefined {
+  if (!file) return undefined
+  const exact = origin ? file.canvases.find((c) => c.ws === ws && c.origin === origin) : undefined
+  const latest = [...file.canvases].filter((c) => c.ws === ws).sort((a, b) => b.shownAt - a.shownAt)[0]
+  const p = (exact ?? latest)?.path
+  return p === undefined ? undefined : safePath(p)
+}
+
+const noHash = (u: string): string => { const x = new URL(u); x.hash = ''; return x.href }
+
+/**
+ * A link that changes only the hash of the page's current document - its URL now, `replaceState` included - opens
+ * with no question (v1.12 r1 #3, A2.14 #4): the link must name a hash. Electron 45 loads a link with none as a new
+ * document even when nothing else differs (`/` into a page at `/#/b/x`), so that one goes through the guard.
+ */
+export function hashOnly(current: string, url: string): boolean {
+  try { return new URL(url).hash !== '' && noHash(current) === noHash(url) } catch { return false }
 }
 
 /** The file as the model stands (written debounced 1 s; A5's quit snapshot writes it at once). */
@@ -457,8 +485,9 @@ export function snapshotFile(previous: TabsFile | null, now: number): TabsFile {
 export function applyRestore(plan: RestorePlan): void {
   for (const c of plan.closed) closed.add(closeKey(c.ws, c.instance))
   for (const c of plan.canvases) {
-    const t = createLocal(c.entry, c.open)
+    const t = createLocal(c.entry, c.open, false)
     t.path = c.path
+    restoredPath.set(t, c.path)
   }
   if (plan.settings) openSettingsTab(false)
   const a = plan.active
@@ -480,9 +509,18 @@ function factsOf(e: RegistryEntry): TabReg {
   }
 }
 
-function createLocal(e: RegistryEntry, open: boolean): Tab {
+/**
+ * The path a tab took from tabs.json, until it loads or something else sets it: a canvas that was `starting` takes
+ * its workspace's latest entry, and its exact `(ws, origin)` entry at `ready` (A2.14 #23, v1.12 r1 #5).
+ */
+const restoredPath = new WeakMap<Tab, string>()
+
+/** A new canvas tab; one that starts after launch opens on its saved board (A2.14 #23), the file read with `restoreTabs` on. */
+function createLocal(e: RegistryEntry, open: boolean, saved = true): Tab {
   const now = ports?.now() ?? Date.now()
   const t = blankTab(`t${(++counter).toString(36)}`, 'local', e.name || `localhost:${e.port}`, { reg: factsOf(e), root: e.root, open, regAt: now })
+  const path = saved ? ports?.savedPath?.(e.ws, e.origin ?? null) : undefined
+  if (path !== undefined) { t.path = path; restoredPath.set(t, path) }
   tabs.set(t.id, t)
   return t
 }
@@ -531,13 +569,20 @@ export function onRegistry(ev: RegistryEvent): void {
       t.name = e.name || t.name
       t.root = e.root
       if (was !== t.reg.state) t.regAt = now
+      if (was === 'starting' && t.reg.state === 'ready' && !t.doc && restoredPath.get(t) === t.path) {
+        // bound at starting with its workspace's latest saved path: its own (ws, origin) entry now that it has one
+        const exact = p.savedPath?.(e.ws, e.origin ?? null)
+        if (exact !== undefined) { t.path = exact; restoredPath.set(t, exact) }
+      }
       if (was === 'starting' && t.reg.state === 'ready' && isActive(t) && wantsLoad(t)) p.load(t)
       p.changed(); p.save()
       return
     }
   }
   const sameAddr = (x: Tab) => x.reg?.ws === e.ws && (e.state === 'ready' && e.origin ? x.reg.origin === e.origin : x.reg.port === e.port)
-  t = locals.find((x) => x.reg && sameAddr(x)) ?? locals.find((x) => x.reg?.ws === e.ws && !liveDoc(x))
+  // across origins only a grey tab with no live document rebinds (A2.3, A2.14 #10): a running instance's tab is
+  // never taken by a second instance of its workspace (another slot, or --port) - that one gets its own tab
+  t = locals.find((x) => x.reg && sameAddr(x)) ?? locals.find((x) => x.reg?.ws === e.ws && x.reg.state === 'gone' && !liveDoc(x))
   if (t) rebind(t, e)
   else createLocal(e, !closed.has(closeKey(e.ws, e.instance)))
   p.changed(); p.save()
@@ -559,6 +604,9 @@ function rebind(t: Tab, e: RegistryEntry): void {
     if (t.view === 'live') t.needsLoad = true
     // documentless: loads when shown - at once if active; a latched tab is rebound, never reloaded (A2.11)
     if (isActive(t) && wantsLoad(t)) p.load(t)
+    // a renderer that crashed while its canvas was gone: its one automatic attempt, at once for the active tab
+    // (tabpage.ts recover left it pending; a hidden tab's starts when shown)
+    else if (isActive(t) && t.crash.pendingShow && !t.crash.latched) p.shown(t)
   }
   p.log?.('registry', { tab: t.id, rebind: e.instance, live: liveDoc(t) })
 }
@@ -586,7 +634,9 @@ export function onCommit(t: Tab, c: { gen: number; url: string; attributed: bool
   d.commits += 1
   d.gen = c.gen
   d.url = c.url
-  d.trusted = c.attributed && t.reg?.state === 'ready'
+  // one source of truth: the bridge admits only what its isTrusted holds (v1.12 r1 #1) - an attributed commit it
+  // would not admit is shown nothing, its reports never accepted, and reloaded like any unattributed one
+  d.trusted = c.attributed && t.reg?.state === 'ready' && c.admitted !== null
   d.doc = d.trusted ? (c.admitted ?? undefined) : undefined
   d.lifted = d.trusted
   d.shown = false
@@ -658,8 +708,14 @@ export function onReport(tabId: string, doc: string, r: { safety?: Safety; busy?
   const t = tabs.get(tabId)
   if (!t?.doc || !doc || t.doc.doc !== doc) return
   const p = P()
-  // the bridge's own word on the document's safety: it goes stale when trust goes while the document lives
-  if (r.safety === 'stale' && t.reports.safety !== 'stale') { t.reports.safety = 'stale'; t.reports.menu = undefined; p.changed() }
+  // the bridge's own word on the document's safety: it goes stale when trust goes while the document lives, and
+  // with it the trust the tab's items are gated on (Open in Browser, Copy Local Link, its menus: A2.14 #24)
+  if (r.safety === 'stale' && (t.reports.safety !== 'stale' || t.doc.trusted)) {
+    t.reports.safety = 'stale'
+    t.reports.menu = undefined
+    t.doc.trusted = false
+    p.changed()
+  }
   if (!t.doc.trusted) return
   if (r.busy) {
     // busy is any reason, unsaved any of the first five: a message where they disagree is refused (A2.14 #18)
@@ -798,8 +854,11 @@ function refuse(t: Tab, a: GuardAction, unsaved: boolean): GuardAnswer {
   const p = P()
   if (unsaved) t.held = { at: p.now(), action: a.kind }
   p.log?.('guard', { tab: t.id, action: a.kind, answer: 'refused', unsaved })
-  if ((a.kind === 'quit' || a.kind === 'update' || unsaved) && !isActive(t)) activate(t.id)
+  const forward = a.kind === 'quit' || a.kind === 'update' || unsaved
+  if (forward && !isActive(t)) activate(t.id)
   else p.changed()
+  // the tab comes forward in a window the person can see: a quit from the Dock or a logout may start hidden
+  if (forward) p.forward?.()
   return 'refused'
 }
 
@@ -839,7 +898,7 @@ export async function guardAll(action: GuardAllAction): Promise<GuardAnswer> {
   const a = copyAction(action) as GuardAllAction
   const list = ordered(allTabs()).filter((t) => t.kind === 'local' && guarded(t))
   const busy = allTabs().find((t) => t.replacing)
-  if (busy) { p.log?.('guard', { all: a.kind, answer: 'refused', busy: busy.id }); if (!isActive(busy)) activate(busy.id); return 'refused' }
+  if (busy) { p.log?.('guard', { all: a.kind, answer: 'refused', busy: busy.id }); if (!isActive(busy)) activate(busy.id); p.forward?.(); return 'refused' }
   const ops = new Map<Tab, GuardOperation>()
   for (const t of list) { const op: GuardOperation = { commit: t.doc?.commits ?? 0, doc: t.doc?.doc, action: a }; ops.set(t, op); t.replacing = op }
   try {

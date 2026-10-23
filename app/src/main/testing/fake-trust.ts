@@ -111,6 +111,20 @@ export function fakeTrust(): TrustPort {
     return true
   })
   provide('fake:admits', () => admits)
+  // the logo (A2.4): off until a case turns it on; each fetch answers after `delayMs`, or rejects when its signal aborts
+  const logo = { on: false, delayMs: 0, url: 'data:image/svg+xml;base64,PHN2Zy8+', started: 0, aborted: 0, answered: 0, inFlight: 0, maxInFlight: 0 }
+  provide('fake:logo', (a) => { Object.assign(logo, a ?? {}); return { ...logo } })
+  const fetchLogo = (t: Tab, signal: AbortSignal): Promise<string | null> => new Promise((ok, fail) => {
+    logo.started += 1
+    logo.inFlight += 1
+    logo.maxInFlight = Math.max(logo.maxInFlight, logo.inFlight)
+    note('fake-trust', { logo: 'start', tab: t.id })
+    const end = () => { logo.inFlight -= 1; signal.removeEventListener('abort', onAbort) }
+    const x = setTimeout(() => { end(); logo.answered += 1; ok(logo.url) }, logo.delayMs)
+    const onAbort = () => { clearTimeout(x); end(); logo.aborted += 1; fail(new Error('aborted')) }
+    if (signal.aborted) onAbort()
+    else signal.addEventListener('abort', onAbort, { once: true })
+  })
 
   return {
     async session(ws) { return session.fromPartition(localPartition(ws)) },
@@ -124,5 +138,6 @@ export function fakeTrust(): TrustPort {
     appState(tabId, s) { note('fake-trust', { appState: s, tab: tabId }); return true },
     menuClick(tabId, id) { note('fake-trust', { menuClick: id, tab: tabId }); return true },
     reopenNext(tabId) { note('fake-trust', { reopenNext: tabId }) },
+    fetchLogo(t, signal) { return logo.on ? fetchLogo(t, signal) : Promise.resolve(null) },
   }
 }

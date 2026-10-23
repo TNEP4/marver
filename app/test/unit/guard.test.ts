@@ -218,6 +218,27 @@ describe('guardAll: one operation per canvas tab, one shared step 1 and sheet (r
     expect(b.held?.action).toBe('quit')
   })
 
+  it('a refused quit shows the window: its tab comes forward where the person can see it (a quit may start hidden)', async () => {
+    const a = liveTab(w)
+    const b = liveTab(w, { busy: { unsaved: true, why: ['board-unsaved'] } })
+    show(a.id)
+    expect(await guardAll({ kind: 'quit' })).toBe('refused')
+    expect(w.forwards).toBeGreaterThan(0)
+    // a page that refuses its close too
+    w.forwards = 0
+    const c = liveTab(w)
+    report(b, false)
+    w.actWith = (t) => t.id === c.id ? 'refused' : 'done'
+    expect(await guardAll({ kind: 'update' })).toBe('refused')
+    expect(w.forwards).toBeGreaterThan(0)
+    // a clean close that goes through brings nothing forward
+    w.forwards = 0
+    const d = liveTab(w)
+    w.actWith = () => 'done'
+    expect(await closeView(d)).toBe('closed')
+    expect(w.forwards).toBe(0)
+  })
+
   it('one sheet names every tab not fresh; Cancel cancels the quit and closes nothing', async () => {
     liveTab(w, { busy: null })
     liveTab(w, { entry: { features: [] }, busy: null })

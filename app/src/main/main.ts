@@ -122,7 +122,7 @@ function start(): void {
     const b = bridge as FullBridge
     const p2 = proof as typeof proof & Partial<{
       probeProof(e: ReturnType<typeof registry.entries>[number]): Promise<'proved' | 'answers' | 'silent'>
-      fetchLogo(e: ReturnType<typeof registry.entries>[number]): Promise<{ dataUrl: string } | null>
+      fetchLogo(e: ReturnType<typeof registry.entries>[number], signal?: AbortSignal): Promise<{ dataUrl: string } | null>
     }>
     const entryOf = (t: { reg?: { instance: string } }) => registry.entries().find((e) => e.instance === t.reg?.instance)
     const real: TrustPort = {
@@ -149,7 +149,7 @@ function start(): void {
       menuClick: (tabId, id) => b.menuClick?.(tabId, id) ?? false,
       reopenNext: (tabId) => b.reopenNext?.(tabId),
       ...(p2.probeProof ? { probe: async (t: Parameters<NonNullable<TrustPort['probe']>>[0]) => { const e = entryOf(t); return e ? p2.probeProof!(e) : 'silent' } } : {}),
-      ...(p2.fetchLogo ? { fetchLogo: async (t: Parameters<NonNullable<TrustPort['fetchLogo']>>[0]) => { const e = entryOf(t); return e ? ((await p2.fetchLogo!(e))?.dataUrl ?? null) : null } } : {}),
+      ...(p2.fetchLogo ? { fetchLogo: async (t: Parameters<NonNullable<TrustPort['fetchLogo']>>[0], signal: AbortSignal) => { const e = entryOf(t); return e ? ((await p2.fetchLogo!(e, signal))?.dataUrl ?? null) : null } } : {}),
       ...(['onReady', 'handle', 'send'].every((k) => typeof (b as unknown as Record<string, unknown>)[k] === 'function') ? {
         pages: {
           onReady: (fn: (wc: WebContents) => void) => { b.onReady!((ctx) => fn(ctx.wc)) },

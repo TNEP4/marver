@@ -253,6 +253,12 @@ function sendTabpage(h: PageHandle): void {
   send(h.view.webContents, CH.tabpage, { rev: h.rev, ...h.body })
 }
 
+/** The tab a tab page belongs to (registered with it, as createPage does); other app pages none. */
+function tabOfPage(wc: WebContents): string | undefined {
+  for (const h of pages.values()) if (h.view.webContents === wc) return h.tab
+  return undefined
+}
+
 /** The latest rev main sent a tab page view, and its tab - for `tabpage:action`'s check. */
 export function pageOf(wc: WebContents): { tab: string; rev: number; body: PageBody | null } | undefined {
   for (const h of pages.values()) if (h.view.webContents === wc) return { tab: h.tab, rev: h.rev, body: h.body }
@@ -375,9 +381,20 @@ export function viewsNow(): { key: string; bounds: { x: number; y: number; width
 // ---------------------------------------------------------------------------------------------------------------
 // The window itself
 
-export function openWindow(d: WindowDeps): BaseWindow {
-  if (win) return win
-  deps = d
+/**
+ * The window, once. views.ts's startViews calls it with the deps; a call made earlier without them (main.ts of
+ * another stream's merge) makes the window, and the later call binds the deps and registers and wires every app
+ * page already made - so no page goes unregistered with the bridge or without its keys, whichever call came first.
+ */
+export function openWindow(d?: WindowDeps): BaseWindow {
+  if (win) {
+    if (d && !deps) {
+      deps = d
+      for (const wc of appPages()) { const kind = kindOf.get(wc); if (kind) { d.register(wc, kind, tabOfPage(wc)); d.wire(wc, kind, tabOfPage(wc)) } }
+    }
+    return win
+  }
+  deps = d ?? null
   const dark = nativeTheme.shouldUseDarkColors
   win = new BaseWindow({
     name: 'main', windowStatePersistence: true,

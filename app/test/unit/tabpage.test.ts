@@ -4,9 +4,10 @@
  * the retry and check schedule, the hang sheet's words and Copy Details' allowlist.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { allTabs, onCommit, onRegistry, onFail, type Tab } from '../../src/main/tabs.ts'
+import { allTabs, onCommit, onDocumentGone, onRegistry, onFail, wantsLoad, type Tab } from '../../src/main/tabs.ts'
 import {
-  copyDetails, hangSheetText, nextDelay, onLifted, onShown, pageFor, personReload, recover, scheduleRetry, snapshotKey, stopRetries,
+  copyDetails, hangSheetText, nextDelay, onLifted, onShown, onViewClosed, pageFor, personReload, recover, reloadIsPersons, scheduleRetry,
+  snapshotKey, stopRetries,
 } from '../../src/main/tabpage.ts'
 import { entry, liveTab, show, world, type World } from './window-fakes.ts'
 
@@ -198,6 +199,75 @@ describe('crashes: one owner, a latch (A2.11, the budget: a reload started withi
     recover(t, { kind: 'crash', reason: 'crashed', exitCode: 1 })
     expect(w.reloads).toEqual([])
     expect(pageFor(t, 1, HOME)!.page).toBe('stopped')
+  })
+
+  it('a renderer that crashed while its canvas was gone: its one automatic attempt once the canvas is back - at once for the active tab, on showing for a hidden one', () => {
+    const restart = (t: Tab) => onRegistry({ kind: 'entry', entry: { ...entry({ ws: t.reg!.ws, port: t.reg!.port, origin: t.reg!.origin!, slot: t.reg!.slot }), instance: `${t.id}-back` } })
+    const a = liveTab(w)
+    gone(a)
+    recover(a, { kind: 'crash', reason: 'oom', exitCode: 0 })   // the page kept after Ctrl-C runs out of memory
+    expect(w.reloads).toEqual([])
+    restart(a)
+    expect(w.shown).toContain(a.id)
+    onShown(a)   // what the shown port does (views.ts): the attempt starts now
+    expect(w.reloads).toEqual([a.id])
+    expect(a.crash.inFlight).toBe('auto')
+    // a hidden one waits for its showing
+    const h = liveTab(w)
+    show('home')
+    gone(h)
+    recover(h, { kind: 'crash', reason: 'crashed', exitCode: 1 })
+    restart(h)
+    expect(w.reloads).toEqual([a.id])
+    expect(pageFor(h, 1, HOME)).toMatchObject({ page: 'crashed', latched: false })
+    show(h.id)
+    onShown(h)
+    expect(w.reloads).toEqual([a.id, h.id])
+    // latched while gone: rebound, never reloaded
+    const l = liveTab(w)
+    l.crash.latched = true
+    gone(l)
+    recover(l, { kind: 'crash', reason: 'crashed', exitCode: 1 })
+    restart(l)
+    onShown(l)
+    expect(w.reloads).toEqual([a.id, h.id])
+  })
+
+  it('⌘R on a latched tab: the person\'s reload while no live page shows; once that reload brought the page back, the guard\'s', () => {
+    const t = liveTab(w)
+    recover(t, { kind: 'crash', reason: 'crashed', exitCode: 1 })
+    onCommit(t, { gen: 2, url: `${t.reg!.origin}/`, attributed: true, admitted: 'd2' }); onLifted(t)
+    recover(t, { kind: 'crash', reason: 'crashed', exitCode: 1 })
+    expect(t.crash.latched).toBe(true)
+    expect(reloadIsPersons(t)).toBe(true)                   // the crashed page: Reload is the person's
+    personReload(t)
+    onCommit(t, { gen: 3, url: `${t.reg!.origin}/`, attributed: true, admitted: 'd3' }); onLifted(t)
+    t.retained = true                                        // shown (compose marks it)
+    expect(t.crash.latched).toBe(true)                       // for 60 s more
+    expect(reloadIsPersons(t)).toBe(false)                   // a live page that may hold work: the guard's
+    t.view = 'crashed'
+    expect(reloadIsPersons(t)).toBe(true)
+  })
+
+  it('a latch whose person\'s reload ran until the tab was closed is cleared then, not left for good; a crash later counts afresh', () => {
+    vi.useFakeTimers()
+    const t = liveTab(w)
+    t.crash.latched = true; t.crash.count = 2; t.view = 'crashed'
+    personReload(t)
+    onCommit(t, { gen: 3, url: `${t.reg!.origin}/`, attributed: true, admitted: 'd3' }); onLifted(t)
+    vi.advanceTimersByTime(10_000)
+    onDocumentGone(t, 'none')   // the person closed the tab: its view went, no crash
+    onViewClosed(t)
+    expect(t.crash).toMatchObject({ latched: false, count: 0 })
+    vi.advanceTimersByTime(60_000)
+    expect(t.crash.latched).toBe(false)
+    expect(wantsLoad(t)).toBe(true)   // reopened, it loads as any documentless tab
+    // a latch the person never reloaded stays when its view closes
+    const k = liveTab(w)
+    k.crash.latched = true; k.crash.count = 2
+    onDocumentGone(k, 'none')
+    onViewClosed(k)
+    expect(k.crash.latched).toBe(true)
   })
 })
 

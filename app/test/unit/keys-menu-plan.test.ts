@@ -128,6 +128,20 @@ describe('the menu bar (A2.7)', () => {
     expect(item(file, 'Reveal in Finder').enabled).toBeUndefined()
   })
 
+  it('Reload Canvas and Force Reload are tab items: their keys, and a click reloads the tab the menu was built for only while it holds', () => {
+    const a = acts()
+    const view = sub(menuTemplate(model(), a), 'View')
+    expect(item(view, 'reload')).toMatchObject({ label: 'Reload Canvas', accelerator: 'Cmd+R', enabled: true })
+    expect(item(view, 'force-reload')).toMatchObject({ label: 'Force Reload', accelerator: 'Shift+Cmd+R' })
+    click(item(view, 'reload'))
+    click(item(view, 'force-reload'))
+    expect(a.tab.mock.calls).toEqual([[token('t1'), 'reload'], [token('t1'), 'force-reload']])
+    expect(a.run).not.toHaveBeenCalled()   // never "whichever tab is active by then"
+    const stale = acts(false)
+    click(item(sub(menuTemplate(model(), stale), 'View'), 'reload'))
+    expect(stale.tab).not.toHaveBeenCalled()
+  })
+
   it('the Window menu lists every tab with its key and state; the active one checked; a stale tab item does nothing', () => {
     const a = acts(false)
     const win = sub(menuTemplate(model(), a), 'Window')
