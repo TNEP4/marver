@@ -68,8 +68,8 @@ export const api = (path: string, init?: RequestInit) => mvFetch(`${ROUTE}/api/$
  *  nothing to do. */
 const flushers = new Set<() => Promise<boolean>>()
 export const beforeResume = (fn: () => Promise<boolean>) => { flushers.add(fn); return () => { flushers.delete(fn) } }
-/** What holds a reload while it answers true: an edit not saved, a capture recording, words typed and not
- *  sent. Synchronous, and asked right before the reload, after every flusher has finished - so what a person
+/** What holds a reload while it answers true: an edit not saved, heights not in the file yet, a capture recording,
+ *  words typed and not sent. Synchronous, and asked right before the reload, after every flusher has finished - so what a person
  *  does while the flushers wait on the server holds it as surely as what was there before they began. */
 const holds = new Set<() => boolean>()
 export const holdsReload = (fn: () => boolean) => { holds.add(fn); return () => { holds.delete(fn) } }
