@@ -19,7 +19,7 @@
  */
 import { execFile } from 'node:child_process'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
-import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from 'node:fs'
+import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync, writeSync } from 'node:fs'
 import { homedir, totalmem } from 'node:os'
 import { join } from 'node:path'
 import { app, dialog, Menu, nativeTheme, powerMonitor, shell, WebContentsView, type MenuItemConstructorOptions, type Session, type WebContents, type WebPreferences } from 'electron'
@@ -48,7 +48,7 @@ import {
   reloadIsPersons, scheduleRetry, setTabpagePorts, type ProcessSnapshot,
 } from './tabpage.ts'
 import {
-  appPrefs, APP_ORIGIN, attachContent, compose, contentView, detachContent, hideWindow, mainWindow, onAppReady, openWindow,
+  appPrefs, APP_ORIGIN, attachContent, captureWindow, compose, contentView, detachContent, hideWindow, mainWindow, onAppReady, openWindow,
   pageOf, pageView, sendHeld, sendPill, showWindow, stripContents, viewsNow, windowVisible,
 } from './window.ts'
 import { note, provide, testMode } from './testing/index.ts'
@@ -1107,6 +1107,14 @@ function testHooks(): void {
     pill: currentPill(), focus: focusOwner(), quitting,
   }))
   provide('views', () => viewsNow())
+  // a picture of the window (window.ts captureWindow), written to an absolute path the case names
+  provide('capture', async (x) => {
+    const { path } = arg<{ path: string }>(x)
+    if (typeof path !== 'string' || !path.startsWith('/') || !path.endsWith('.png')) throw new Error('capture: an absolute .png path')
+    const c = await captureWindow()
+    writeFileSync(path, c.png)
+    return { path, width: c.width, height: c.height, scale: c.scale, layers: c.layers }
+  })
   provide('window', () => {
     const w = mainWindow()
     return w ? { bounds: w.getBounds(), content: w.getContentBounds(), fullScreen: w.isFullScreen(), visible: w.isVisible(), focused: w.isFocused(), minimized: w.isMinimized() } : null

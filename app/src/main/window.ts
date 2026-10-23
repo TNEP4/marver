@@ -17,7 +17,7 @@
  */
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import { app, BaseWindow, nativeTheme, View, WebContentsView, type WebContents, type WebPreferences } from 'electron'
+import { app, BaseWindow, nativeImage, nativeTheme, screen, View, WebContentsView, type WebContents, type WebPreferences } from 'electron'
 import * as sessions from './sessions.ts'
 import { CH, type PageKind, type PageFocus, type TabsSnapshot, type TabView, type WindowView } from '../shared/channels.ts'
 import { STRIP_HEIGHT, below, ground, plan, type Plan, type PlanTab } from './plan.ts'
@@ -379,6 +379,71 @@ export function viewsNow(): { key: string; bounds: { x: number; y: number; width
   if (cover) out.push({ key: 'cover', bounds: cover.getBounds(), visible: cover.getVisible() })
   if (strip) out.push({ key: 'strip', bounds: strip.getBounds(), visible: strip.getVisible() })
   return out
+}
+
+/**
+ * Test builds: a picture of the window's content area as the person sees it - every shown view, bottom to top, each
+ * from its own `capturePage()` (the cover a plain fill of its ground), composited at the display's scale. The
+ * traffic lights are AppKit's, outside any view, so they are not in it. Main's view stack is the one source: what
+ * the picture holds is exactly what compose() left shown.
+ */
+export async function captureWindow(): Promise<{ png: Buffer; width: number; height: number; scale: number; layers: string[] }> {
+  if (!win || win.isDestroyed()) throw new Error('window.ts: no window')
+  const { width: W, height: H } = win.getContentBounds()
+  const sf = screen.getDisplayMatching(win.getBounds()).scaleFactor || 1
+  const PW = Math.round(W * sf)
+  const PH = Math.round(H * sf)
+  const out = Buffer.alloc(PW * PH * 4)   // BGRA, premultiplied (Skia's N32 on this Mac)
+  const fill = (x0: number, y0: number, w: number, h: number, hex: string) => {
+    const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(hex)
+    if (!m) return
+    const [r, g, b] = [m[1], m[2], m[3]].map((c) => parseInt(c!, 16))
+    for (let y = Math.max(0, y0); y < Math.min(PH, y0 + h); y++) {
+      for (let x = Math.max(0, x0); x < Math.min(PW, x0 + w); x++) { const i = (y * PW + x) * 4; out[i] = b!; out[i + 1] = g!; out[i + 2] = r!; out[i + 3] = 255 }
+    }
+  }
+  const blend = (bmp: Buffer, bw: number, bh: number, x0: number, y0: number) => {
+    for (let y = 0; y < bh; y++) {
+      const oy = y0 + y
+      if (oy < 0 || oy >= PH) continue
+      for (let x = 0; x < bw; x++) {
+        const ox = x0 + x
+        if (ox < 0 || ox >= PW) continue
+        const si = (y * bw + x) * 4
+        const di = (oy * PW + ox) * 4
+        const a = bmp[si + 3]!
+        if (a === 255) { out[di] = bmp[si]!; out[di + 1] = bmp[si + 1]!; out[di + 2] = bmp[si + 2]!; out[di + 3] = 255; continue }
+        if (a === 0) continue
+        const k = (255 - a) / 255
+        for (let c = 0; c < 4; c++) out[di + c] = Math.min(255, Math.round(bmp[si + c]! + out[di + c]! * k))
+      }
+    }
+  }
+  fill(0, 0, PW, PH, coverWas.color || '#000000')
+  const layers: string[] = []
+  for (const child of win.contentView.children) {
+    if (!child.getVisible()) continue
+    const b = child.getBounds()
+    const x0 = Math.round(b.x * sf)
+    const y0 = Math.round(b.y * sf)
+    const bw = Math.round(b.width * sf)
+    const bh = Math.round(b.height * sf)
+    if (child instanceof WebContentsView) {
+      if (child.webContents.isDestroyed()) continue
+      let img = await child.webContents.capturePage()
+      if (img.isEmpty()) { layers.push(`${child.webContents.getURL()} (empty)`); continue }
+      let bmp = img.toBitmap({ scaleFactor: sf })
+      if (bmp.length !== bw * bh * 4) { img = nativeImage.createFromBuffer(img.resize({ width: bw, height: bh, quality: 'best' }).toPNG()); bmp = img.toBitmap() }
+      if (bmp.length !== bw * bh * 4) { layers.push(`${child.webContents.getURL()} (size ${img.getSize().width}x${img.getSize().height})`); continue }
+      blend(bmp, bw, bh, x0, y0)
+      layers.push(`${child.webContents.getURL()} @${b.x},${b.y} ${b.width}x${b.height}`)
+    } else {
+      fill(x0, y0, bw, bh, coverWas.color)
+      layers.push(`cover ${coverWas.color} @${b.x},${b.y} ${b.width}x${b.height}`)
+    }
+  }
+  const png = nativeImage.createFromBitmap(out, { width: PW, height: PH, scaleFactor: 1 }).toPNG()
+  return { png, width: PW, height: PH, scale: sf, layers }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
