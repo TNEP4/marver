@@ -62,12 +62,15 @@ export function matchKey(i: KeyInput): AppCommand | null {
 /** The n-th canvas key's command (1-8; 9 is the last canvas). */
 export const digitOf = (c: AppCommand): number | null => c === 'tab-last' ? 9 : /^tab-([1-8])$/.test(c) ? Number(c.slice(4)) : null
 
-/** Wire one webContents: its app keys never reach its page, and run once. */
+/**
+ * Wire one webContents: its app keys never reach its page, and run once - a held key's repeats are swallowed too
+ * (the page never sees the app's keys, and the menu's key equivalent never fires for them).
+ */
 export function attachKeys(wc: WebContents, run: (c: AppCommand, from: WebContents) => void): void {
   wc.on('before-input-event', (e, input) => {
-    const c = matchKey(input)
+    const c = matchKey(input.isAutoRepeat ? { ...input, isAutoRepeat: false } : input)
     if (!c) return
     e.preventDefault()
-    run(c, wc)
+    if (!input.isAutoRepeat) run(c, wc)
   })
 }

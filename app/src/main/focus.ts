@@ -34,9 +34,28 @@ let owner: Owner | null = null
 export function setFocusPorts(p: FocusPorts): void { ports = p }
 export const focusOwner = (): Owner | null => owner
 
-/** Record each webContents' focus as it happens. */
+/** A view that holds focus while it does not show (beneath a tab page, a hidden tab): never allowed to keep it. */
+function misplaced(o: Owner): boolean {
+  const p = ports
+  if (!p || o.part === 'strip') return false
+  return o.tab !== p.active() || (o.part === 'content' ? !p.content(o.tab) : !p.page(o.tab))
+}
+
+let moving = false
+/**
+ * Record each webContents' focus as it happens. Chromium can hand focus back to a view the app has hidden - a
+ * crashed canvas's renderer coming back beneath its tab page takes it - so a view that takes focus while it does
+ * not show gives it at once to what the active tab shows (A2.11: nothing beneath a tab page).
+ */
 export function track(wc: WebContents, o: Owner): void {
-  wc.on('focus', () => { owner = o; ports?.log?.('focus', o) })
+  wc.on('focus', () => {
+    owner = o
+    ports?.log?.('focus', o)
+    if (!moving && misplaced(o)) {
+      moving = true
+      try { ports?.log?.('focus', { misplaced: o }); focusShown() } finally { moving = false }
+    }
+  })
   wc.on('destroyed', () => { if (owner && sameOwner(owner, o)) owner = null })
 }
 
@@ -48,6 +67,7 @@ function focusStrip(): void {
   s.focus()
   owner = { part: 'strip' }
   ports!.pageFocus(s, { target: 'active-tab' })
+  ports!.log?.('focus', { to: owner })
 }
 
 /** Focus what the active tab shows: its tab page's heading, else its view, else the strip's active tab. */
@@ -61,10 +81,11 @@ export function focusShown(): void {
     page.focus()
     owner = { part: 'page', tab: id }
     p.pageFocus(page, { target: 'heading' })
+    p.log?.('focus', { to: owner })
     return
   }
   const content = p.content(id)
-  if (content && !content.isDestroyed()) { content.focus(); owner = { part: 'content', tab: id }; return }
+  if (content && !content.isDestroyed()) { content.focus(); owner = { part: 'content', tab: id }; p.log?.('focus', { to: owner }); return }
   focusStrip()
 }
 

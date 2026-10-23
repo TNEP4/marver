@@ -266,6 +266,9 @@ function syncPages(now: number): void {
 
 let composing = false
 let again: { focus?: 'shown' } | null = null
+/** the plan compose() last derived: what shows now, or is about to in this turn */
+let lastPlan: Plan | null = null
+const shownNow = (key: string): boolean => !!lastPlan?.views.find((v) => v.key === key)?.visible
 
 export function compose(o: { focus?: 'shown' } = {}): void {
   if (!win || win.isDestroyed()) return
@@ -297,6 +300,7 @@ function composeOnce(o: { focus?: 'shown' }): void {
   const { width: w, height: h } = win!.getContentBounds()
   const appDark = nativeTheme.shouldUseDarkColors
   const p: Plan = plan({ tabs: allTabs().map((t) => planTab(t, appDark)), active: activeTab()?.id ?? 'home', w, h, appDark })
+  lastPlan = p
   const changes: unknown[] = []
   // 1. bounds, shown or hidden, and each view's ground
   for (const v of p.views) {
@@ -384,8 +388,9 @@ export function openWindow(d: WindowDeps): BaseWindow {
   setFocusPorts({
     active: () => activeTab()?.id,
     strip: () => stripContents(),
-    content: (id) => { const c = content.get(id); return c && applied.get(`${id}:view`)?.vis ? c.view.webContents : undefined },
-    page: (id) => { const h = pages.get(id); return h && !h.closing && h.body ? h.view.webContents : undefined },
+    // what the plan being applied shows (focus runs between the shows and the hides)
+    content: (id) => { const c = content.get(id); return c && shownNow(`${id}:view`) ? c.view.webContents : undefined },
+    page: (id) => { const h = pages.get(id); return h && !h.closing && h.body && shownNow(`${id}:page`) ? h.view.webContents : undefined },
     pageFocus: sendPageFocus,
     log: (t, data) => j(t, data),
   })
