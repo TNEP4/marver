@@ -69,6 +69,16 @@ window, the tabs, the menu. Each module after the guard is its stream's; its hea
 - **the fake canvas** (`test/harness/fake-canvas.ts`): its own slot file, a signed `GET /` (A1's `proofHeaders`),
   `proof: 'invalid' | 'none'`, IPv4 or IPv6, A1's guard answers, a request log, a page that reports its first frame
   callback and can set a cookie; `script` and `onRequest` for the rest. In-process or as a child (`kill -9`).
+- **the window hooks** (`src/main/views.ts` `testHooks`; the window stream): `state` (main's record of every tab,
+  the pill, the focus owner), `views` (every view's bounds and visibility as Electron reports them), `window`,
+  `activate`, `command`, `close`, `guard`, `guardAll`, `crash`, `reloadPage`, `exec`, `key`, `click`, `focused`,
+  `focusApp`, `onTop`, `page`, `tabpage:action`, `pill:raise`, `pill:action`, `menu:items`, `menu:hold`,
+  `menu:click`, `openInTab`, `outside`. A test build never shows a native sheet: `sheet` sets how the seam answers
+  (`confirm` by default, `cancel`, or `hold` until `sheet:answer`), `sheets` lists what was asked. With
+  `MARVER_APP_FAKE_TRUST=1` the window stream's cases run before the trust stream's modules (`testing/fake-trust.ts`:
+  `fake:entry`, `fake:gone`, `fake:mode`, `fake:report`; `MARVER_APP_FAKE_ENTRIES` for the canvases running at
+  launch). Helpers in `test/harness/window.ts`; real key events in `test/native/keypost.swift` (Accessibility for
+  the terminal, else those cases say they are inconclusive).
 - **the packaged smoke** (`test/smoke/smoke.mjs`): S9's checks and X7's cases on the signed build; every launch on
   its own profile with `--use-mock-keychain`. WARN lines are what the skeleton cannot do yet (a canvas cookie, the
   launch's first frame callback); they turn PASS by themselves once a canvas tab loads.

@@ -106,7 +106,8 @@ export function detachContent(tabId: string): void {
 
 const ready = new WeakSet<WebContents>()
 const kindOf = new WeakMap<WebContents, PageKind>()
-const heldFocus = new WeakMap<WebContents, PageFocus>()
+/** messages a page gets once it says ready, the latest of each channel (page:focus, home:focus) */
+const heldFor = new WeakMap<WebContents, Map<string, unknown>>()
 const revs = { tabs: 0, window: 0 }
 let lastTabs = ''
 let lastWindow = ''
@@ -143,8 +144,8 @@ export function onAppReady(wc: WebContents): void {
     const h = [...pages.values()].find((x) => x.view.webContents === wc)
     if (h?.body) send(wc, CH.tabpage, { rev: h.rev, ...h.body })   // the latest, under the rev it already has
   }
-  const f = heldFocus.get(wc)
-  if (f) { heldFocus.delete(wc); send(wc, CH.pageFocus, f) }
+  const held = heldFor.get(wc)
+  if (held) { heldFor.delete(wc); for (const [ch, p] of held) send(wc, ch, p) }
 }
 
 function registerApp(wc: WebContents, kind: PageKind, tabId?: string): void {
@@ -156,12 +157,17 @@ function registerApp(wc: WebContents, kind: PageKind, tabId?: string): void {
   wc.on('render-process-gone', () => ready.delete(wc))
 }
 
-/** `page:focus`, held until the page says ready (A2.13). */
-export function sendPageFocus(wc: WebContents, f: PageFocus): void {
+/** A message to one app page now, or held (the latest of its channel) until the page says ready. */
+export function sendHeld(wc: WebContents, channel: string, payload: unknown): void {
   if (wc.isDestroyed()) return
-  if (ready.has(wc)) send(wc, CH.pageFocus, f)
-  else heldFocus.set(wc, f)
+  if (ready.has(wc)) { send(wc, channel, payload); return }
+  const m = heldFor.get(wc) ?? new Map<string, unknown>()
+  m.set(channel, payload)
+  heldFor.set(wc, m)
 }
+
+/** `page:focus`, held until the page says ready (A2.13). */
+export function sendPageFocus(wc: WebContents, f: PageFocus): void { sendHeld(wc, CH.pageFocus, f) }
 
 /** The strip's `pill` (pill.ts chose it). */
 export function sendPill(v: unknown): void {

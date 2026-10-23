@@ -19,7 +19,7 @@
  */
 import { execFile } from 'node:child_process'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from 'node:fs'
+import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from 'node:fs'
 import { homedir, totalmem } from 'node:os'
 import { join } from 'node:path'
 import { app, dialog, Menu, nativeTheme, powerMonitor, shell, WebContentsView, type MenuItemConstructorOptions, type Session, type WebContents } from 'electron'
@@ -47,7 +47,7 @@ import {
 } from './tabpage.ts'
 import {
   appPrefs, APP_ORIGIN, attachContent, compose, contentView, detachContent, hideWindow, mainWindow, onAppReady, openWindow,
-  pageOf, pageView, sendPill, showWindow, stripContents, viewsNow, windowVisible,
+  pageOf, pageView, sendHeld, sendPill, showWindow, stripContents, viewsNow, windowVisible,
 } from './window.ts'
 import { note, provide, testMode } from './testing/index.ts'
 import { T } from './timings.ts'
@@ -502,7 +502,7 @@ function openLink(): void {
   else if (linkBack && !getTab(linkBack)) linkBack = undefined
   activate('home')
   const home = contentView('home')
-  if (home) home.webContents.send('home:focus', { field: 'link', ...(linkBack ? { back: linkBack } : {}) })
+  if (home) sendHeld(home.webContents, CH.homeFocus, { field: 'link', ...(linkBack ? { back: linkBack } : {}) })
 }
 
 export function runCommand(c: AppCommand, via: 'key' | 'menu'): void {

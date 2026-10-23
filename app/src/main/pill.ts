@@ -20,7 +20,7 @@
 import type { PillView } from '../shared/channels.ts'
 import { startCommandShown } from '../shared/command.ts'
 import { T } from './timings.ts'
-import { activeTab, fresh, getTab, liveDoc, tabName, type Tab } from './tabs.ts'
+import { activeTab, fresh, getTab, liveDoc, type Tab } from './tabs.ts'
 
 type Kind = PillView['kind']
 /** What a pill is about; `about` names it for "the same pill" (no new rev for the same thing). */
@@ -145,7 +145,6 @@ export function recompute(): void {
 function arm(now: number): void {
   if (timer) clearTimeout(timer)
   timer = undefined
-  const p = ports!
   const ends: number[] = []
   if (shown?.kind === 'confirmation' && wasVisible) { const w = confirms.get(shown.sub!); if (w) ends.push(w.left) }
   for (const w of confirms.values()) if (w.left === T.pillConfirmMs && w.rec !== shown) ends.push(w.created + T.pillDropMs - now)
@@ -153,7 +152,6 @@ function arm(now: number): void {
   if (t?.held && !(fresh(t) && t.reports.busy?.unsaved)) ends.push(t.held.at + T.unsavedPillMs - now)
   const soonest = Math.min(...ends.filter((x) => x > -1000))
   if (Number.isFinite(soonest)) { timer = setTimeout(() => { timer = undefined; recompute() }, Math.max(0, soonest) + 5); (timer as { unref?: () => void }).unref?.() }
-  void p
 }
 
 /** A confirmation (tier 2): "Reloaded after a crash" in A2. One of each kind waits; a newer replaces it. */
@@ -206,6 +204,3 @@ export function onPillAction(r: number, act: 'button' | 'dismiss'): boolean {
     default: return false
   }
 }
-
-/** For the tab page and the live region: the words of the pill now, by tab (none when the pill is not that tab's). */
-export const pillNameOf = (t: Tab): string => tabName(t)
