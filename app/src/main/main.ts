@@ -21,6 +21,7 @@ import { isAbsolute, join } from 'node:path'
 import { app, crashReporter, protocol } from 'electron'
 import { installSpies } from './testing/spies.ts'
 import { note, startTesting, testMode } from './testing/index.ts'
+import { provideTrustHooks } from './testing/trust.ts'
 import { overrideTimings } from './timings.ts'
 import { applyTheme, ensureHome, readFiles } from './config.ts'
 import { installNavigationPolicy, setupAppSession } from './sessions.ts'
@@ -98,6 +99,7 @@ function start(): void {
     installBridge()
     const registry = createRegistry()
     await registry.start()
+    if (__MV_TEST__ && testMode()) provideTrustHooks()
     openWindow()
     startTabs()
     buildMenu()
