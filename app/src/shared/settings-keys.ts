@@ -11,7 +11,7 @@
 export type Stage = 'a2' | 'a3' | 'a4' | 'a5'
 export const STAGES: readonly Stage[] = ['a2', 'a3', 'a4', 'a5']
 /** The milestone this build is: Settings shows the keys with `since <= STAGE`. */
-export const STAGE: Stage = 'a2'
+export const STAGE: Stage = 'a3'
 /** The app version that brings each milestone, for the README's tables. */
 export const STAGE_VERSION: Record<Stage, string> = { a2: '0.1', a3: '0.2', a4: '0.3', a5: '1.0' }
 
@@ -31,7 +31,7 @@ export const KEYS = {
     },
     unloadUnderPressure: {
       type: 'boolean', def: true, since: 'a3', label: 'Unload hidden tabs when memory runs short', note: 'never a busy one',
-      does: 'When macOS runs short of memory, unload the least recently shown hidden tab - never one with unsaved work. It reopens where it was when shown.',
+      does: 'When macOS runs short of memory, unload the least recently shown hidden tab - never one that is busy: unsaved work, a Jam session, the microphone or an agent at work. It reopens on its board and camera when shown.',
     },
     recorder: {
       type: 'boolean', def: true, since: 'a3', label: 'Performance recorder',

@@ -86,7 +86,9 @@ function parts(v: TabPageView, now: number): Parts | null {
         meta: v.retained ? undefined : 'Trying again every few seconds',
       }
     case 'reopening':
-      // A3 (A3.8 #43): the unloading stream owns this page's look (the dimmed logo, its pulse under Reduce Motion)
+      // A3 (A3.8 #42, #43): an unloaded tab opening again, or one activated while its unload closes - the dimmed logo
+      // and the spinner (a pulse under Reduce Motion), words only after 400 ms; it promises the board, and the camera
+      // only on the origin that kept it
       if (age < QUIET_MS) return null
       return {
         mark: mark('dim'), spin: true, title: `Reopening ${v.name}`,
@@ -137,7 +139,7 @@ function render(): void {
   if (hadFocus && !content.contains(document.activeElement)) content.focus()
   // the page's own timers, from `since`: never a rev bump from main for time passing (A2.14 #19)
   const age = now - v.since
-  const next = (v.page === 'starting' || (v.page === 'crashed' && !v.latched)) && age < QUIET_MS ? QUIET_MS - age
+  const next = (v.page === 'starting' || v.page === 'reopening' || (v.page === 'crashed' && !v.latched)) && age < QUIET_MS ? QUIET_MS - age
     : v.page === 'starting' && v.phase === 'starting' && age < STILL_MS ? STILL_MS - age : null
   if (next !== null) timer = setTimeout(render, next + 5)
 }

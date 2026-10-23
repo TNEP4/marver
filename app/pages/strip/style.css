@@ -49,6 +49,8 @@ body.fullscreen .strip { padding-left: 10px }
 .tab.is-gone .logo, .tab.is-unreachable .logo { filter: grayscale(1); opacity: .45 }
 .tab.is-crashed .logo { opacity: .55 }
 .tab.is-crashed .name { color: var(--glass-ink-3) }
+/* unloaded to free memory (A3.8 #46): dimmed, its name kept; it reopens when shown */
+.tab.is-unloaded .logo { opacity: .55 }
 
 /* the window in the background: dimmed, as native title bars do */
 body.inactive .tab, body.inactive .home { opacity: .55 }

@@ -72,7 +72,7 @@ function card(t: TabView): HTMLElement {
   const name = nameOf(t)
   const said = word.charAt(0).toLowerCase() + word.slice(1)   // "not a Marver canvas", never "marver"
   const label = [name, name === host ? null : host, t.open === false ? `${said}, tab closed` : said].filter(Boolean).join(', ')
-  const tone = t.state === 'gone' || t.state === 'unreachable' ? 'grey' : t.state === 'crashed' ? 'dim' : undefined
+  const tone = t.state === 'gone' || t.state === 'unreachable' ? 'grey' : t.state === 'crashed' || t.state === 'unloaded' ? 'dim' : undefined
   const mark = t.state === 'unverified' ? h('span', { class: 'slot-warn', 'aria-hidden': 'true' }, icon('warning', 28)) : logo(t, 30, tone)
   return h('button', {
     class: `card is-${t.state}`, type: 'button', 'data-key': `tab:${t.id}`, 'aria-label': label,
