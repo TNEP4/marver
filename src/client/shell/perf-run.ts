@@ -56,6 +56,13 @@ export function perfRunGate(url: string, init: RequestInit = {}): Response | nul
   return new Response('{"error":"a perf run is read-only"}', { status: 403, headers: { 'content-type': 'application/json', [RUN_HEADER]: 'refused' } })
 }
 
+/** Same-origin frames whose document skipped a missing poster (the Video primitive's `data-mv-poster-skipped`). */
+export function postersSkipped(): number {
+  let n = 0
+  for (const f of document.querySelectorAll('iframe')) { try { if (f.contentDocument?.documentElement.hasAttribute('data-mv-poster-skipped')) n++ } catch { /* another origin */ } }
+  return n
+}
+
 /** main.tsx in perf mode: `window.__mvPerfRun`. */
 export function installPerfRunProbe(probe: PerfRunProbe): void {
   if (!PERF_RUN) return

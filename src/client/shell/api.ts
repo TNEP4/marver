@@ -9,6 +9,7 @@
 import { create } from 'zustand'
 import { ROUTE } from '../const.ts'
 import { guardLeaving, leaveNow, unsavedWhen, workChanged } from './unsaved.ts'
+import { PERF_RUN, perfRunGate, RUN_HEADER, RUN_PARAM } from './perf-run.ts'
 // @ts-expect-error virtual module provided by the plugin
 import shConfig from 'virtual:sh-config'
 // @ts-expect-error virtual module: null in dev; a published build inlines manifest+boards
@@ -19,8 +20,15 @@ export const WS: string = shData === null && typeof shConfig?.workspace === 'str
 
 /** A per-viewer preference kept per canvas (A1.6): `<key>:<workspace>` in dev, the bare key when published. */
 export const scoped = (key: string) => (WS ? `${key}:${WS}` : key)
-/** A URL a document or an <img> loads, naming the workspace (frames, the stage, Jam pictures). */
-export const withWs = (url: string) => (WS ? `${url}${url.includes('?') ? '&' : '?'}ws=${WS}` : url)
+const param = (url: string, k: string, v: string) => `${url}${url.includes('?') ? '&' : '?'}${k}=${v}`
+/** A URL a document or an <img> loads, naming the workspace (frames, the stage, Jam pictures) - and, in a headless
+ *  perf run, the run (spec 28 A3.8 #17): a frame's own writes are refused by its Referer, its Video asks no poster. */
+export const withWs = (url: string) => {
+  const u = WS ? param(url, 'ws', WS) : url
+  return PERF_RUN ? param(u, RUN_PARAM, PERF_RUN.id) : u
+}
+/** The headers every request of this page carries: its workspace, and its perf run's id. */
+const named = (h: Record<string, string> | undefined): Record<string, string> => ({ ...h, ...(WS ? { 'x-mv-ws': WS } : {}), ...(PERF_RUN ? { [RUN_HEADER]: PERF_RUN.id } : {}) })
 
 /** live; checking (the live socket dropped, the first answer not in); down (nothing, or not this canvas,
  *  answers); elsewhere (another canvas answers here); resuming (this canvas answered: saving, then reload). */
@@ -42,10 +50,13 @@ const stoppedAnswer = () => new Response('{"error":"this canvas stopped"}', { st
 
 /** Any request to this page's dev server. `fetch` is looked up at call time (tests patch window.fetch)
  *  and called before any await, so a `keepalive` request made in `pagehide` still goes out. Callers pass
- *  plain-object headers; a GET keeps its init without a method. */
+ *  plain-object headers; a GET keeps its init without a method. In a headless perf run the barrier comes first
+ *  (perf-run.ts): a write the run may not make is answered 403 here, never sent, and never stops the page. */
 export function mvFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const refused = perfRunGate(url, init)
+  if (refused) return Promise.resolve(refused)
   if (WS && canvasStopped()) return Promise.resolve(stoppedAnswer())
-  const sent = fetch(url, WS ? { ...init, headers: { ...(init.headers as Record<string, string> | undefined), 'x-mv-ws': WS } } : init)
+  const sent = fetch(url, WS || PERF_RUN ? { ...init, headers: named(init.headers as Record<string, string> | undefined) } : init)
   if (!WS) return sent
   // the server's refusal is told apart here, before any caller's own 409 (a board conflict, a stale tree)
   return sent.then((r) => {
@@ -100,7 +111,7 @@ function lost(why: 'down' | 'elsewhere') {
 async function probe() {
   let r: Response | null = null
   // a server that takes the connection and never answers (half up, hung, paused) is no answer: a miss
-  try { r = await fetch(`${ROUTE}/api/hello`, { headers: { 'x-mv-ws': WS }, cache: 'no-store', signal: AbortSignal.timeout(2000) }) } catch { r = null }
+  try { r = await fetch(`${ROUTE}/api/hello`, { headers: named({}), cache: 'no-store', signal: AbortSignal.timeout(2000) }) } catch { r = null }
   const ours = !!r?.ok && (await r.json().catch(() => null))?.ws === WS
   probeTimer = null
   if (ours) return void resume()
@@ -205,8 +216,9 @@ if (WS) {
 }
 
 // one question before this page goes, whatever it holds that the server does not have (unsaved.ts): a capture, a
-// board edit, heights, words - in every browser, and the Mac app reads the same reasons
-if (typeof window !== 'undefined') guardLeaving(window)
+// board edit, heights, words - in every browser, and the Mac app reads the same reasons. Never in a headless perf run
+// (spec 28 A3.8 #17): its writes are refused, so `heights` would hold for good and block the context's end
+if (typeof window !== 'undefined' && !PERF_RUN) guardLeaving(window)
 
 // Vite's client awaits every `vite:ws:disconnect` listener before it pings the server and reloads the
 // page (vite/dist/client/client.mjs, Vite 8). This one never settles: the canvas page is never reloaded by
@@ -217,3 +229,5 @@ if (WS && import.meta.hot) import.meta.hot.on('vite:ws:disconnect', () => { hmrL
 
 // dev-only inspection hook for tests (never installed in published builds)
 if (WS && import.meta.env.DEV) (window as unknown as { __mvLink: unknown }).__mvLink = useLink
+// and, in a headless perf run only, the page's own way out: a test sends through the barrier as the shell does
+if (PERF_RUN && import.meta.env.DEV) (window as unknown as { __mvApi: unknown }).__mvApi = { api, withWs }

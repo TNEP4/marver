@@ -34,6 +34,12 @@ const enabled = (): boolean => {
 interface Run { t0: number; last: number; dts: number[]; pan: boolean; zoom: boolean; layout: boolean; longs: number[]; obs?: PerformanceObserver; raf: number }
 /** the gesture running now */
 let g: Run | null = null
+/** gestures ended so far, every one (a headless perf run waits for each of its three, spec 28 A3.8 #20) */
+let ended = 0
+/** How many gestures have ended since the page loaded. */
+export const gesturesEnded = (): number => ended
+/** Is a gesture (a pan, a zoom, a layout animation) running now? */
+export const gestureRunning = (): boolean => g !== null
 
 function note(m: Motion) {
   if (!g) return
@@ -62,6 +68,7 @@ function begin(m: Motion) {
 function end() {
   const run = g!
   g = null
+  ended++
   cancelAnimationFrame(run.raf)
   const t1 = performance.now()
   for (const e of run.obs?.takeRecords() ?? []) if (e.startTime >= run.t0 && e.startTime <= t1) run.longs.push(e.duration)

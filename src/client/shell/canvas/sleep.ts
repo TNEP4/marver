@@ -54,13 +54,24 @@ const asleep = new Map<string, { key: string; doc: Document }>()
 export const sleepingCount = (): number => asleep.size
 /**
  * The page's own bake work (spec 28 A3.8 #18): four counts of their own - `pending` below is the current request
- * per node and survives a successful sleep, so it says nothing about idleness. FROZEN signature (A3.8 #53); the
- * headless stream counts `scheduled` (one `scheduleSleep()` for FrameNode's timer and both retries), `running` (a
- * sleep from entry to `finally`) and `inflight` (the bake POST). Until then only the batch queue is counted.
+ * per node and survives a successful sleep, so it says nothing about idleness. `scheduled`: FrameNode's 250 ms
+ * timer and both retry timers, every one through `scheduleSleep()`; `running`: a sleep from its entry to its
+ * `finally` (fonts, the ask, the decode, the texture installed); `queued`: asks batched and not sent yet;
+ * `inflight`: the bake POST on its way. A headless perf run measures only once all four are zero and the server's
+ * own jobs for the run are too (bake.ts `jobsOf`).
  */
-export const bakeWork = (): BakeWork => ({ scheduled: 0, running: 0, queued: queue.length, inflight: 0 })
+let scheduled = 0, running = 0, inflight = 0
+export const bakeWork = (): BakeWork => ({ scheduled, running, queued: queue.length, inflight })
 /** All four at zero. Not the run's bake-idle: the driver adds the server's `jobsOf(run)`. */
 export const bakeIdle = (): boolean => { const w = bakeWork(); return !w.scheduled && !w.running && !w.queued && !w.inflight }
+/** A sleep to try in `ms` (FrameNode's settle, a compile still running, one retry of a failed compile), counted while
+ *  it waits; the cancel stops it and its count. */
+export function scheduleSleep(fn: () => void, ms: number): () => void {
+  scheduled++
+  let done = false
+  const t = setTimeout(() => { if (done) return; done = true; scheduled--; fn() }, ms)
+  return () => { if (done) return; done = true; scheduled--; clearTimeout(t) }
+}
 /** The node's current request, so a stale answer (a newer sleep, a wake in between) is dropped. */
 const pending = new Map<string, number>()
 let seq = 0
@@ -105,20 +116,27 @@ function ask(key: SleepKey): Promise<Answer> {
       for (const q of batch) { const kk = keyOf(q.key); const e = byKey.get(kk); if (e) e.waiters.push(q.resolve); else byKey.set(kk, { key: q.key, waiters: [q.resolve] }) }
       const asks = [...byKey.values()].map((e) => ({ frame: e.key.frame, theme: e.key.theme, w: Math.round(e.key.w), h: Math.round(e.key.h), ...(e.key.doc ? { doc: e.key.doc } : {}) }))
       let data: { answers?: (Answer & SleepKey)[] } | null = null
-      const index = PUBLISHED ? await staticAnswers() : null
-      if (!index) {
-        try {
-          const r = await api('bakes', { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify({ asks }) })
-          data = r.ok ? await r.json() : null
-        } catch { data = null }
-      }
-      for (const e of byKey.values()) {
-        const a = index ? index[keyOf(e.key)] : data?.answers?.find((x) => keyOf(x) === keyOf(e.key))
-        const answer: Answer = a ? (a.ok ? { ok: true, targets: a.targets } : { ok: false, error: a.error }) : { ok: false, error: 'no answer' }
-        for (const w of e.waiters) w(answer)
-      }
+      inflight++
+      try {
+        const index = PUBLISHED ? await staticAnswers() : null
+        if (!index) {
+          try {
+            const r = await api('bakes', { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify({ asks }) })
+            data = r.ok ? await r.json() : null
+          } catch { data = null }
+        }
+        answerAll(byKey, index, data)
+      } finally { inflight-- }
     }, 40)
   })
+}
+/** Every waiter of a batch, its key's answer - before the POST stops counting, so the page is never idle between. */
+function answerAll(byKey: Map<string, { key: SleepKey; waiters: ((a: Answer) => void)[] }>, index: Record<string, Answer> | null, data: { answers?: (Answer & SleepKey)[] } | null): void {
+  for (const e of byKey.values()) {
+    const a = index ? index[keyOf(e.key)] : data?.answers?.find((x) => keyOf(x) === keyOf(e.key))
+    const answer: Answer = a ? (a.ok ? { ok: true, targets: a.targets } : { ok: false, error: a.error }) : { ok: false, error: 'no answer' }
+    for (const w of e.waiters) w(answer)
+  }
 }
 
 /** Put a node's live document to sleep under `key`. Resolves once the override is installed (or
@@ -126,6 +144,11 @@ function ask(key: SleepKey): Promise<Answer> {
  *  A wake or a newer sleep in the meantime supersedes it. */
 export async function sleep(nodeKey: string, iframe: HTMLIFrameElement, key: SleepKey): Promise<'asleep' | 'live'> {
   if (AWAKE) return 'live'
+  running++
+  try { return await sleepNow(nodeKey, iframe, key) } finally { running-- }
+}
+
+async function sleepNow(nodeKey: string, iframe: HTMLIFrameElement, key: SleepKey): Promise<'asleep' | 'live'> {
   const k = keyOf(key)
   const doc = iframe.contentDocument
   if (!doc?.body) return 'live'
@@ -152,7 +175,7 @@ export async function sleep(nodeKey: string, iframe: HTMLIFrameElement, key: Sle
     const was = compiling.get(nodeKey)
     const n = (was && was.key === k ? was.n : 0) + 1
     compiling.set(nodeKey, { key: k, n })
-    if (n <= COMPILING_TRIES) { setTimeout(() => { if (current()) void sleep(nodeKey, iframe, key) }, RETRY_MS); return 'live' }
+    if (n <= COMPILING_TRIES) { scheduleSleep(() => { if (current()) void sleep(nodeKey, iframe, key) }, RETRY_MS); return 'live' }
   }
   // no compiler (a published canvas, a compile that failed): the pause alone, the glass live -
   // never an effect layer without its texture
@@ -166,10 +189,11 @@ export async function sleep(nodeKey: string, iframe: HTMLIFrameElement, key: Sle
   if (PUBLISHED && targets.length && doc.querySelector('meta[name="mv-bakes"]')?.getAttribute('content') !== String(BAKES)) targets = []
   if (!install(doc, targets)) return 'live'
   // a certified sleep is remembered; the pause-only fallback is not, so the next lifecycle event
-  // asks again (a compile the source outran, a server hiccup), and one retry is scheduled now
-  if (targets.length) { asleep.set(nodeKey, { key: k, doc }); compiling.delete(nodeKey) }
+  // asks again (a compile the source outran, a server hiccup), and one retry is scheduled now - one until the
+  // node wakes: a retry that fails again asks nothing more (it asked every 4 s for as long as the frame rested)
+  if (targets.length) { asleep.set(nodeKey, { key: k, doc }); compiling.delete(nodeKey); retried.delete(nodeKey) }
   else if (answer.ok === false && answer.error === COMPILING) { /* out of looks: the pause alone, final */ }
-  else if (!PUBLISHED && !retried.has(nodeKey)) { retried.add(nodeKey); setTimeout(() => { retried.delete(nodeKey); if (current()) void sleep(nodeKey, iframe, key) }, RETRY_MS) }   // a static miss is final
+  else if (!PUBLISHED && !retried.has(nodeKey)) { retried.add(nodeKey); scheduleSleep(() => { if (current()) void sleep(nodeKey, iframe, key) }, RETRY_MS) }   // a static miss is final
   return 'asleep'
 }
 
@@ -178,6 +202,7 @@ export function wake(nodeKey: string, iframe: HTMLIFrameElement | null): void {
   pending.delete(nodeKey)
   asleep.delete(nodeKey)
   compiling.delete(nodeKey)
+  retried.delete(nodeKey)
   const doc = iframe?.contentDocument
   const st = doc?.getElementById(STYLE_ID)
   if (!doc || !st) return
