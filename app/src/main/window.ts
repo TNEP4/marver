@@ -18,6 +18,7 @@
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { app, BaseWindow, nativeTheme, View, WebContentsView, type WebContents, type WebPreferences } from 'electron'
+import * as sessions from './sessions.ts'
 import { CH, type PageKind, type PageFocus, type TabsSnapshot, type TabView, type WindowView } from '../shared/channels.ts'
 import { STRIP_HEIGHT, below, ground, plan, type Plan, type PlanTab } from './plan.ts'
 import { activeTab, allTabs, darkOf, getTab, ordered, viewOf, type Tab } from './tabs.ts'
@@ -54,11 +55,17 @@ let turn = 0
 
 const j = (topic: string, data: unknown) => { if (__MV_TEST__) note(topic, data) }
 
-/** The app pages' preferences: sandboxed, isolated, no dialogs, the app preload, on persist:app (A2.5, A2.14 #14). */
-export const appPrefs = (): WebPreferences => ({
-  partition: 'persist:app', preload: PRELOAD_APP, sandbox: true, contextIsolation: true, nodeIntegration: false,
-  webviewTag: false, spellcheck: false, disableDialogs: true,
-})
+/**
+ * The app pages' preferences: sandboxed, isolated, no dialogs, the app preload, on persist:app (A2.5, A2.14 #14) -
+ * sessions.ts's `appWebPreferences()` when the trust stream provides it (the one place it writes them), else these.
+ */
+export const appPrefs = (): WebPreferences => {
+  const fromTrust = (sessions as { appWebPreferences?: () => WebPreferences }).appWebPreferences
+  return fromTrust ? { ...fromTrust(), spellcheck: false } : {
+    partition: 'persist:app', preload: PRELOAD_APP, sandbox: true, contextIsolation: true, nodeIntegration: false,
+    webviewTag: false, spellcheck: false, disableDialogs: true,
+  }
+}
 
 // ---------------------------------------------------------------------------------------------------------------
 // The view registry: content views by tab, tab pages by tab

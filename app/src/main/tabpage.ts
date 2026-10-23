@@ -55,8 +55,12 @@ export function pageFor(t: Tab, now: number, home: string = homedir()): PageBody
   })
   const origin = t.reg?.origin ?? (t.reg ? `http://localhost:${t.reg.port}` : '')
 
+  // the app ended the page itself (Reload Page on a page not responding): no crash, the page opening again
+  if (c.inFlight === 'force' && !c.latched && !t.doc?.lifted && !gone) {
+    return { ...base, page: 'starting', phase: 'opening', since: t.loadAt ?? now }
+  }
   // a crash: the page holds nothing until a reload lifts it
-  const crashed = t.view === 'crashed' || (!t.doc?.lifted && (c.latched || !!c.pendingShow || c.inFlight === 'auto' || c.inFlight === 'force'))
+  const crashed = t.view === 'crashed' || (!t.doc?.lifted && (c.latched || !!c.pendingShow || c.inFlight === 'auto'))
   if (crashed && !(gone && !c.latched)) {
     return { ...base, page: 'crashed', latched: c.latched, since: c.times?.at(-1) ?? now,
       ...(c.reason ? { reason: c.reason } : {}), ...(c.count ? { crashes: c.count } : {}) }

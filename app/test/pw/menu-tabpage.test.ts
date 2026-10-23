@@ -104,12 +104,16 @@ describe('coming back from a canvas that stopped answering (A2.3, A2.11)', () =>
     expect(t.state).toBe('unreachable')
     expect(await w.run.call('page', { tab: c.id })).toMatchObject({ body: { page: 'unreachable', retained: false, reason: 'nothing' } })
     // the canvas answers again on its port: the 5 s check finds it and loads the tab, which lifts
+    const since = (await w.log()).length
     const back = await startFakeCanvas({ home: w.env.home, slotBase: w.slotBase, slot: 2, name: 'Gen lab', ws: c.fake.ws })
     await back.ready
     try {
       s = await w.until((x) => { const y = x.tabs.find((q) => q.id === c.id)!; return !!y.doc?.lifted && !y.fail }, 12_000, 'the check to load it')
-      expect(s.tabs.find((x) => x.id === c.id)!.pageView).toBe(false)
-      expect((await w.log('probe')).some((l) => l.data.tab === c.id && l.data.state !== 'silent')).toBe(true)
+      expect((await w.log('probe', since)).some((l) => l.data.tab === c.id && l.data.state !== 'silent')).toBe(true)
+      // the lift: the canvas view shown and its tab page hidden in one compose (A2.11)
+      const lift = (await w.log('compose', since)).find((l) => (l.data.changes as { key: string; op: string; visible?: boolean }[]).some((ch) => ch.key === `${c.id}:view` && ch.op === 'visible' && ch.visible))
+      expect(lift).toBeTruthy()
+      expect((lift!.data.changes as { key: string; op: string; visible?: boolean }[]).some((ch) => ch.key === `${c.id}:page` && ch.visible === false)).toBe(true)
     } finally { await back.close() }
   })
 })

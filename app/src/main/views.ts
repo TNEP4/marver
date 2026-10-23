@@ -22,7 +22,8 @@ import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from 'node:fs'
 import { homedir, totalmem } from 'node:os'
 import { join } from 'node:path'
-import { app, dialog, Menu, nativeTheme, powerMonitor, shell, WebContentsView, type MenuItemConstructorOptions, type Session, type WebContents } from 'electron'
+import { app, dialog, Menu, nativeTheme, powerMonitor, shell, WebContentsView, type MenuItemConstructorOptions, type Session, type WebContents, type WebPreferences } from 'electron'
+import * as sessions from './sessions.ts'
 import { CH, type PageKind, type TabPageAction } from '../shared/channels.ts'
 import { startCommand } from '../shared/command.ts'
 import { effects } from './effects.ts'
@@ -150,10 +151,14 @@ async function ensureView(t: Tab): Promise<WebContentsView | null> {
     if (!t.reg) return null
     const ses = await trust.session(t.reg.ws)
     if (!getTab(t.id) || !t.reg) return null
-    const view = new WebContentsView({ webPreferences: {
-      session: ses, preload: PRELOAD_CANVAS, sandbox: true, contextIsolation: true, nodeIntegration: false, webviewTag: false,
-      spellcheck: false, focusOnNavigation: false, disableHtmlFullscreenWindowResize: true, disableDialogs: true,
-    } })
+    // sessions.ts's canvasWebPreferences(ws) when the trust stream provides it (the one place it writes them; its
+    // partition is the session just prepared), else the same rules written here
+    const fromTrust = (sessions as { canvasWebPreferences?: (ws: string) => WebPreferences }).canvasWebPreferences
+    const prefs: WebPreferences = fromTrust
+      ? { ...fromTrust(t.reg.ws), spellcheck: false, focusOnNavigation: false, disableHtmlFullscreenWindowResize: true, disableDialogs: true }
+      : { session: ses, preload: PRELOAD_CANVAS, sandbox: true, contextIsolation: true, nodeIntegration: false, webviewTag: false,
+          spellcheck: false, focusOnNavigation: false, disableHtmlFullscreenWindowResize: true, disableDialogs: true }
+    const view = new WebContentsView({ webPreferences: prefs })
     wireCanvas(t, view)
     attachContent(t.id, view, 'canvas')
     t.view = 'live'

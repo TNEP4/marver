@@ -155,7 +155,7 @@ describe('crashes: one owner, a latch (A2.11, the budget: a reload started withi
     expect(t.crash.count).toBe(3)
   })
 
-  it('a renderer the app ended itself counts nothing; a confirmed force reload reloads through recover', () => {
+  it('a renderer the app ended itself counts nothing; a confirmed force reload reloads through recover, the page opening', () => {
     const t = liveTab(w)
     t.appEnding = true
     t.crash.inFlight = 'force'
@@ -164,6 +164,7 @@ describe('crashes: one owner, a latch (A2.11, the budget: a reload started withi
     expect(t.crash.latched).toBe(false)
     expect(w.reloads).toEqual([t.id])
     expect(t.appEnding).toBe(false)
+    expect(pageFor(t, 1, HOME)).toMatchObject({ page: 'starting', phase: 'opening' })
   })
 
   it('a latch clears when the person\'s reload has run 60 s without crashing - and not before', () => {
