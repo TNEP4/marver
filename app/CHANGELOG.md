@@ -10,5 +10,6 @@
 - Trust: the app reads `~/.marver/running/` itself and proves each canvas document before it commits (a fresh nonce,
   A1's proof, the registry read again once when a restarted canvas's own reload beats its slot file); trust belongs
   to the committed document. No service worker on a local canvas, swept before its partition's first load. The
-  microphone only for a trusted canvas's main frame; app pages pinned; every view sandboxed with dialogs off. The
-  canvas bridge admits a trusted document and replays what the page said before, hello first.
+  microphone only for a trusted canvas's main frame; app pages pinned; every view sandboxed with dialogs off; a link
+  or a window leaves for the browser only from a trusted canvas, and a save sheet only for a trusted canvas in use.
+  The canvas bridge admits a trusted document and replays what the page said before, hello first.

@@ -71,9 +71,12 @@ window, the tabs, the menu. Each module after the guard is its stream's; its hea
   callback and can set a cookie; `script` and `onRequest` for the rest. In-process or as a child (`kill -9`).
 - **the trust hooks** (`src/main/testing/trust.ts`, `trust:*`): a test tab wired exactly as the frozen interfaces
   say - `localSession`, `canvasWebPreferences`, `attachNav`, the dispatcher's `attach`, `bridge.register` - so the
-  proof, the bridge and the policy run for real before the tabs exist; `trust:tab` reads its adapter events, trust and
-  reports, `trust:ipc` reaches the bridge as a message from a sender a case picks, `trust:opened` lists what
-  `openOutside` let out (tests never open a browser). Helpers in `test/harness/trust.ts`.
+  proof, the bridge and the policy run for real before the tabs exist (`target: 'registry'` gives the dispatcher a
+  target only while the registry holds the tab's instance, as the window stream's does); `trust:tab` reads its
+  adapter events, trust and reports, `trust:ipc` and `trust:invoke` reach the bridge as a message or an invoke from a
+  sender a case picks, `trust:admit-delay` holds each `mv:admit` so a page speaks well before it, `trust:opened`
+  lists what `openOutside` let out (tests never open a browser), and the `download` journal what each download was
+  decided (a test build never shows the save sheet). Helpers in `test/harness/trust.ts`.
 - **the packaged smoke** (`test/smoke/smoke.mjs`): S9's checks and X7's cases on the signed build; every launch on
   its own profile with `--use-mock-keychain`. WARN lines are what the skeleton cannot do yet (a canvas cookie, the
   launch's first frame callback); they turn PASS by themselves once a canvas tab loads.
