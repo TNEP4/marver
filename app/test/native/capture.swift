@@ -5,7 +5,7 @@
 //   capture check                                   {"access":true|false}; exit 0, or 77 without the permission
 //   capture window --window-id <CGWindowID> [--regions 'name:x,y,w,h;...'] [--grid <cols>x<rows>] [--fps <n>]
 //   capture window --pid <pid> [--title <title>]    the same, the window found by its owner (and title)
-//   capture display [--display-id <id>] --detect <rrggbb>:<minPx>[:<belowY>]
+//   capture display [--display-id <id>] --detect <rrggbb>:<minPx>[:<belowY>] [--heartbeat]
 //
 // stdout, one JSON object a line (app/test/harness/capture.ts reads it; the shape is frozen there):
 //   {"ready":{"hostNs":"…","refreshHz":120,"scale":2,"window":{"w":…,"h":…}}}   once the stream started
@@ -16,6 +16,9 @@
 // A region is sampled on a grid of cell centres, each sample "rrggbb" in sRGB; its coordinates are window points
 // from the window's top-left (titleBarStyle 'hidden': the content view is the whole window).
 // stdin: a line "png <path>" writes the last complete frame there (a failing case's evidence); EOF stops the stream.
+// `--heartbeat` (display mode): the helper keeps a 2 x 2 px window in the display's bottom-left corner changing at the
+// refresh rate, so every refresh has something to capture and a gap means a missed frame - a display stream skips
+// the refreshes in which nothing changed (on this Mac, 41 of 136 in 1.5 s, up to 58 ms apart, with no heartbeat).
 //
 // **Screen Recording is the runner's** (A3.8 #37): without it this exits 77 - "blind", reported as not run, never as
 // a pass. The process macOS asks about is the one that started this helper (the terminal or the agent's host).
@@ -249,6 +252,11 @@ func start() async throws {
     cfg.height = Int(size.height)
   } else { fail(2, "unknown mode \(mode)") }
   if let f = opt("--fps").flatMap({ Int($0) }) { hz = f }
+  if mode == "display" && args.contains("--heartbeat") {
+    let id = opt("--display-id").flatMap { UInt32($0) } ?? CGMainDisplayID()
+    let hzNow = hz
+    DispatchQueue.main.async { startHeartbeat(display: id, hz: hzNow) }
+  }
   cfg.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(hz))
   cfg.queueDepth = 8
   cfg.pixelFormat = kCVPixelFormatType_32BGRA
@@ -262,6 +270,25 @@ func start() async throws {
   print("{\"ready\":{\"hostNs\":\"\(toNs(mach_absolute_time()))\",\"refreshHz\":\(hz),\"scale\":\(scale),\"window\":{\"w\":\(Int(size.width)),\"h\":\(Int(size.height))}}}")
 }
 
+/// The heartbeat: a borderless 2 x 2 window above everything, ignoring the mouse, toggled at the refresh rate.
+var heartbeat: NSWindow?
+func startHeartbeat(display: CGDirectDisplayID, hz: Int) {
+  let screen = NSScreen.screens.first { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == display } ?? NSScreen.main
+  guard let s = screen else { return }
+  let w = NSWindow(contentRect: NSRect(x: s.frame.minX, y: s.frame.minY, width: 2, height: 2), styleMask: .borderless, backing: .buffered, defer: false)
+  w.level = .screenSaver
+  w.ignoresMouseEvents = true
+  w.isOpaque = true
+  w.hasShadow = false
+  w.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+  w.backgroundColor = .black
+  w.orderFrontRegardless()
+  heartbeat = w
+  var on = false
+  let t = Timer(timeInterval: 1.0 / Double(max(30, hz)), repeats: true) { _ in on.toggle(); w.backgroundColor = on ? NSColor(white: 0.2, alpha: 1) : .black }
+  RunLoop.main.add(t, forMode: .common)
+}
+
 signal(SIGTERM) { _ in exit(0) }
 signal(SIGINT) { _ in exit(0) }
 Thread.detachNewThread {
@@ -273,4 +300,6 @@ Thread.detachNewThread {
 Task {
   do { try await start() } catch { fail(4, "\(error.localizedDescription)") }
 }
-dispatchMain()
+// the main run loop (not only the main queue): the heartbeat's window and timer live on it
+NSApplication.shared.setActivationPolicy(.accessory)
+RunLoop.main.run()

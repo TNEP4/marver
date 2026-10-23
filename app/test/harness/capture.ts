@@ -110,6 +110,8 @@ export async function startCapture(o: {
   regions?: Record<string, { x: number; y: number; w: number; h: number }>
   grid?: [number, number]
   fps?: number
+  /** display mode: the helper's 2 px heartbeat window, so every refresh is captured and a gap is a missed frame */
+  heartbeat?: boolean
 }): Promise<CaptureSession> {
   const bin = nativeTool('capture')
   const args: string[] = [o.mode]
@@ -118,6 +120,7 @@ export async function startCapture(o: {
   if (o.regions) args.push('--regions', Object.entries(o.regions).map(([n, r]) => `${n}:${r.x},${r.y},${r.w},${r.h}`).join(';'))
   if (o.grid) args.push('--grid', `${o.grid[0]}x${o.grid[1]}`)
   if (o.fps) args.push('--fps', String(o.fps))
+  if (o.heartbeat) args.push('--heartbeat')
   const child = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'] })
   let err = ''
   child.stderr.on('data', (c) => { err += c })
