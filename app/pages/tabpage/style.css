@@ -1,0 +1,2 @@
+/* The tab's own page (spec 28 A2.11). SKELETON. */
+html, body { margin: 0; height: 100%; background: var(--ground, #e7e9ef); }

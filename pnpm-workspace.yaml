@@ -1,2 +1,8 @@
+# The Mac app (spec 28 A2) is a private workspace member with its own devDependencies. It is never in
+# the npm package: `files` in package.json names what ships, and `app/` is not in it.
+packages:
+  - app
 allowBuilds:
   esbuild: true
+  # Electron's install script is what downloads its binary; pnpm 11 runs no install script without this
+  electron: true

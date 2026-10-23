@@ -1,0 +1,2 @@
+/* The strip: transparent over the cover (spec 28 A2.2). SKELETON. */
+html, body { margin: 0; height: 100%; background: transparent; }

@@ -1,0 +1,28 @@
+{
+  "name": "marver-app",
+  "productName": "Marver Dev",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The Marver Mac app (spec 28). Never published to npm: scripts/build.mjs builds, signs and smokes it.",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build:js": "node scripts/build.mjs --js",
+    "dev": "node scripts/build.mjs --js && electron .",
+    "package": "node scripts/build.mjs",
+    "package:adhoc": "node scripts/build.mjs --adhoc",
+    "smoke": "node test/smoke/smoke.mjs",
+    "icon": "node scripts/icon.mjs",
+    "test": "vitest run --project unit --project fake --project pw",
+    "test:prod": "vitest run --project prod",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "devDependencies": {
+    "@electron/asar": "4.3.1",
+    "@electron/fuses": "2.1.3",
+    "@electron/osx-sign": "2.7.1",
+    "@electron/packager": "20.3.0",
+    "electron": "45.0.0",
+    "playwright-core": "1.62.1"
+  }
+}
