@@ -4,8 +4,10 @@
  * Each thing is registered the moment it is taken, so whatever is held when a way out comes is given
  * back, and nothing else. Two kinds, because the ways out differ:
  * - claims: files (dev.lock, the slot file, dev.json, the preference file's stop). Released
- *   synchronously, so `exit` and a signal, which cannot wait, give them back too; on a close, after the
- *   socket has closed, so a starter never finds a slot free while its port is still bound.
+ *   synchronously, so `exit` and a signal, which cannot wait, give them back too (a dying process frees its
+ *   sockets with it); on a close, last - once everything that could still bind or serve has closed, a server a
+ *   restart was making included (dev.ts) - so a starter never finds a slot free while a socket of this start
+ *   is bound, or about to be.
  * - closers: what runs (Marver's watchers, sweeps and timers, the Vite server). Closed, awaited, on a
  *   failed start or a close; an exit or a signal ends them with the process.
  * A Vite restart (an .env edit) is no way out: it replaces the server and keeps the start (dev.ts).
@@ -36,11 +38,13 @@ export class Startup {
     for (const r of this.claims.splice(0).reverse()) { try { r() } catch { /* already gone */ } }
   }
 
-  /** Close what runs, newest first and awaited, then give back the claims. Idempotent: Vite's own SIGTERM
-   *  path and an embedding caller's `server.close()` can both reach it. */
-  close(): Promise<void> {
+  /** Close what runs, newest first and awaited, then what `until` waits for (dev.ts: every restart's own server, to
+   *  its last cleanup), and only then give back the claims. Idempotent: Vite's own SIGTERM path and an embedding
+   *  caller's `server.close()` can both reach it - the first close's `until` is the one. */
+  close(until?: () => Promise<unknown>): Promise<void> {
     this.closing ??= (async () => {
       for (const c of this.closers.splice(0).reverse()) { try { await c() } catch { /* closing what failed */ } }
+      if (until) { try { await until() } catch { /* closing what failed */ } }
       this.release()
       this.unhook()
     })()

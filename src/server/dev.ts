@@ -207,7 +207,7 @@ export class DevStartError extends Error {}
 export class DevLockError extends DevStartError {}
 
 /** The steps of a start, as `DevOptions.at` sees them. */
-export type StartStep = 'locked' | 'claimed' | 'env' | 'configure' | 'created' | 'listening' | 'published' | 'dispose'
+export type StartStep = 'locked' | 'claimed' | 'env' | 'configure' | 'created' | 'listening' | 'published' | 'dispose' | 'disposed'
 export interface DevOptions {
   /** --port: a port of its own; inside the slot range it claims exactly that slot (spec 28 A1.3) */
   port?: number
@@ -216,7 +216,7 @@ export interface DevOptions {
   /** tests only (startup.test.ts): called at each step of the start - a throw fails it there, a promise
    *  that never settles pauses it. 'env' runs inside Vite's environment initialisation, 'configure'
    *  after Marver's configureServer, 'dispose' as what a server that never serves made begins to close
-   *  (a failed start's, a failed or left restart's) - a promise there holds that close */
+   *  (a failed start's, a failed or left restart's) - a promise there holds that close - and 'disposed' once it is closed */
   at?: (step: StartStep, info?: { port: number }) => unknown
   /** the canvas ended on its own once it served - a file watcher failed: called once everything is closed (the CLI
    *  prints it and exits 1). Without it, the line is printed */
@@ -395,6 +395,7 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
       await Promise.allSettled([...c.parts].map(async (p) => p.close()))
     }
     for (const fn of [...c.mine].reverse()) { try { await fn() } catch { /* closing what failed */ } }
+    if (opts.at) await opts.at('disposed')
   }
   // a restart's construction the start has left - or one begun once the start has ended - is the restart's to close
   const own = (c: Construction) => { if (!c.left && !ending) c.withdraw ??= t.defer(() => dispose(c)) }
@@ -449,8 +450,9 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
         // the whole server now: its close closes the environments, the watcher, the socket and its SIGTERM handler with the rest
         c.close = vite.close.bind(vite)
         own(c)
-        // a server binds only while the start lasts: a restart's that Vite puts in place after the start has ended fails
-        // its listen - said as a listen error, which ends that restart - and never holds the port (step 6)
+        // a server binds only while the start lasts: a restart's whose listen Vite asks for once the start has ended fails
+        // it - said as a listen error, which ends that restart. One asked for before cannot be called back (Node looks
+        // the host up, then binds): it binds, and its restart closes it before the claims go back (step 6)
         const http = vite.httpServer as { listen: (...args: unknown[]) => unknown; emit(event: 'error', err: Error): boolean } | null
         if (http) {
           const listen = http.listen
@@ -762,25 +764,31 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
   // only until that turn ends (a test reads Vite's restart for that order: startup.test.ts). It closes the old server
   // alone (Marver's watchers go with its HTTP server); the claims, dev.json, the slot file and the process hooks stay.
   // Any other close, at any point of a restart - a timer set off while the new server was made among them - is the
-  // start's end: it closes what the start holds at once - the server serving, which is the old one until the new one
-  // listens, Marver's things, then the claims and the process hooks - but not the new server, which the restart closes
-  // once Vite is done with it (closed half-made, Vite would go on making it; closed while it binds, Vite's close, which
-  // runs once, would find nothing bound and leave the socket open): Vite's close of the old server is then refused, so
-  // the new one is never put in place, and one already in place never binds (its listen fails, above). The close returns
-  // once every restart is over (`restarts`), to its last cleanup - what a server that could not be made made, closed -
-  // however long that takes: no restart awaits that close, so the wait ends. The one close a restart awaits is its own
-  // end when its new server cannot listen, which never waits on that restart. That reading of Vite's restart is Vite
-  // 8.2's, not a contract: package.json takes vite ~8.2 only, and a test reads Vite's restart for the order above
-  // (startup.test.ts) - re-check this step before widening that range.
+  // start's end: it closes what runs at once - the server serving, which is the old one until the new one listens, and
+  // Marver's things - but not the new server, which the restart closes once Vite is done with it (closed half-made, Vite
+  // would go on making it; closed while it binds, Vite's close, which runs once, would find nothing bound and leave the
+  // socket open): Vite's close of the old server is then refused, so the new one is never put in place, and one in place
+  // whose listen is asked for from now on never binds (it fails, above). One whose listen was already on its way - Node
+  // looking 'localhost' up before it binds - binds once that is done, and its restart closes it. So the end then waits
+  // for every restart to be over (`restarts`), to its last cleanup - its server closed, what a server that could not be
+  // made made, closed - however long that takes, and only then gives back the claims and the process hooks, last: while
+  // anything of the start could still bind or serve, its lock, slot file and dev.json stay, and no starter finds the slot
+  // free. No restart awaits that end, so the wait ends. The one close a restart awaits is its own end when its new server
+  // cannot listen, which never waits on that restart (the server it put in place closes with what runs). An exit or a
+  // signal still gives the claims back at once, synchronously: the process ends, and its sockets with it. That reading of
+  // Vite's restart is Vite 8.2's, not a contract: package.json takes vite ~8.2 only, and a test reads Vite's restart for
+  // the order above (startup.test.ts) - re-check this step before widening that range.
   const end = (self?: Replacing): Promise<void> => {
+    // every restart over, to its last cleanup - never a restart's own end waiting on that restart: it waits on this close
+    const others = () => Promise.all([...restarts].filter((x) => x !== self).map((x) => x.over))
     ending ??= (async () => {
       const r = replacing
       const made = r && latest !== r.from ? latest : null
       if (made) { made.withdraw?.(); made.withdraw = null; made.left = true }
-      await t.close()
+      // what runs closes, then every restart's own server, and the claims go back last
+      await t.close(others)
     })()
-    // every restart over, to its last cleanup - never a restart's own end waiting on that restart: it waits on this close
-    return ending.then(() => Promise.all([...restarts].filter((x) => x !== self).map((x) => x.over))).then(() => {})
+    return ending.then(others).then(() => {})
   }
   /** Vite's own close and restart of the server on this object: the first server's, then those each restart put in place */
   const live = { close: server.close, restart: server.restart }
@@ -806,8 +814,9 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
       // the server this restart began to make, if it got as far as resolving its config
       const made = latest !== r.from ? latest : null
       if (ending) {
-        // the start ended while this restart ran: what it made closes now - refused its place, or put in place and
-        // never bound - and the restart ends with it, nothing to say: the close is what was asked for
+        // the start ended while this restart ran: what it made closes now - refused its place, put in place and never
+        // bound, or bound by a listen already on its way - and the restart ends with it, nothing to say: the close is what
+        // was asked for, and gives the claims back once this is done
         if (made) await settle(made, false)
         return
       }
