@@ -1,10 +1,9 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
-import { randomUUID } from 'node:crypto'
+import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { TestProject } from 'vitest/node'
-import { portInUse, takeExclusive } from '../src/server/exclusive.ts'
+import { takeBlock } from './slot-block.ts'
 
 /**
  * Build the CLI once, before any suite runs.
@@ -35,34 +34,12 @@ import { portInUse, takeExclusive } from '../src/server/exclusive.ts'
  * and not the machine's ports: two worktrees running the suite at once would
  * each see the other's canvases as "another program" on its slots, and every
  * suite that asserts an exact port would fail. Each run takes two hundred ports
- * in 40000-46999 - clear of the ports the browser suites and the free-port
- * probes use (4400-8300, 47000-49000) and below macOS's ephemeral range
- * (49152+) - checked free when taken and held, while the run lasts, by a lock
- * in the temp folder (the exclusive-file rules: a block whose run was killed is
- * taken back). The suite's slots are its first twenty; the suites that assert
- * exact ports each have twenty more (SUITES; room for nine).
+ * (test/slot-block.ts, shared with the Mac app's suite). The suite's slots are its
+ * first twenty; the suites that assert exact ports each have twenty more (SUITES;
+ * room for nine).
  */
-const BLOCKS = { from: 40_000, to: 47_000, size: 200 }
 /** Each suite that asserts exact ports: its twenty, after the suite's own. */
 const SUITES = ['startup', 'slots', 'slotsDev', 'recover'] as const
-
-async function takeBlock(): Promise<{ base: number; release: () => void }> {
-  const dir = join(tmpdir(), 'marver-test-ports')
-  mkdirSync(dir, { recursive: true })
-  const count = (BLOCKS.to - BLOCKS.from) / BLOCKS.size
-  const first = Math.floor(Math.random() * count)
-  for (let k = 0; k < count; k++) {
-    const base = BLOCKS.from + ((first + k) % count) * BLOCKS.size
-    const me = { pid: process.pid, instance: randomUUID(), at: Date.now() }
-    const lock = await takeExclusive(join(dir, `${base}.lock`), me, JSON.stringify(me), { reclaimWaitMs: 100 })
-    if (!lock.ok) continue   // another run's
-    let busy = false
-    for (let p = base + 1; p <= base + BLOCKS.size && !busy; p++) busy = await portInUse(p)
-    if (!busy) return { base, release: lock.release }
-    lock.release()   // something else on this machine listens in it
-  }
-  throw new Error(`no free block of ${BLOCKS.size} ports in ${BLOCKS.from}-${BLOCKS.to - 1} for the suite's slots`)
-}
 
 export default async function setup(project: TestProject) {
   const root = join(import.meta.dirname, '..')
