@@ -22,7 +22,8 @@ export const PAGE_ID = newId()
 
 type State = ReturnType<typeof useStore.getState>
 type View = { x: number; y: number; w: number; h: number }
-type Gesture = { type: 'pan' | 'zoom' | 'layout'; ms: number; frames: number; p50: number; p95: number; max: number; over17ms: number; over33ms: number; longFrames: number }
+/** `hz`: the display's rate the Mac app told the shell (spec 28 A3.8 #9), only there */
+type Gesture = { type: 'pan' | 'zoom' | 'layout'; ms: number; frames: number; p50: number; p95: number; max: number; over17ms: number; over33ms: number; longFrames: number; hz?: number }
 
 interface Load {
   id: string; board: string; cause: LoadCause; t0: number

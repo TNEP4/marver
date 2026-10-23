@@ -4,19 +4,32 @@
  * with what came just before; the slowest frames to settle; one line per board load. Reads
  * design/.local/perf/reloads.jsonl, and page.jsonl for the loads (`--loads`: each load in full, spec 28 A1.8).
  */
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { boardFields, checkBoardsDir, listBoardFiles } from '../server/boards.ts'
-import { readPage, readReloads } from '../server/perf.ts'
+import { readPage, readReloads, readRuns } from '../server/perf.ts'
 import { readJam } from '../server/perf-jam.ts'
+import { marverHome } from '../server/slots.ts'
 import { isBoardName, labelOf } from '../shared/board-tree.ts'
+import type { RunLine } from '../shared/perf-run.ts'
+import { crashesSummary, flashesSummary, machineSummary, readAppLog, repoWorkspaces, type PageMoment } from './perf-app.ts'
 
-export function perfCommand(root: string, opts: { minutes?: number; json?: boolean; jam?: boolean; loads?: boolean }): void {
+export interface PerfOptions {
+  minutes?: number; json?: boolean; jam?: boolean; loads?: boolean
+  /** the Mac app's records (spec 28 A3.5): 14 days by default (`days`) */
+  crashes?: boolean; flashes?: boolean; machine?: boolean; all?: boolean; days?: number
+}
+
+export function perfCommand(root: string, opts: PerfOptions): void {
   if (opts.jam) return jamPerf(root, opts)
   if (opts.loads) return loadsPerf(root, opts)
+  if (opts.crashes) return crashesPerf(root, opts)
+  if (opts.flashes) return flashesPerf(root, opts)
+  if (opts.machine) return machinePerf(root, opts)
   const minutes = Number(opts.minutes) > 0 ? Number(opts.minutes) : 60
   const since = Date.now() - minutes * 60_000
   const log = readReloads(root, since)
-  const loads = loadsSummary(readPage(root, since))
+  const loads = loadsSummary(withoutRuns(readPage(root, since)).records)
   const files = new Map<string, { edits: number; reload: Set<string>; inPlace: Set<string> }>()
   for (const e of log) if (e.kind === 'update') {
     const f = files.get(e.file ?? '(no file)') ?? { edits: 0, reload: new Set(), inPlace: new Set() }
@@ -229,14 +242,26 @@ function endOf(l: LoadSummary): string {
   return 'not settled yet'
 }
 
+/** A headless run's records (the server stamps `run`, spec 28 A3.8 #17) apart from the canvas's own: `--loads` shows these, `--runs` those. */
+export function withoutRuns(records: Record<string, any>[]): { records: Record<string, any>[]; runLoads: number } {
+  const loads = new Set<string>()
+  const records2 = records.filter((r) => {
+    if (typeof r.run !== 'string') return true
+    if (r.kind === 'load') loads.add(`${r.ws}/${r.page}/${r.load}`)
+    return false
+  })
+  return { records: records2, runLoads: loads.size }
+}
+
 /** `marver perf --loads` (spec 28 A1.8): each board load in full, from design/.local/perf/page.jsonl. */
 function loadsPerf(root: string, opts: { minutes?: number; json?: boolean }) {
   const minutes = Number(opts.minutes) > 0 ? Number(opts.minutes) : 60
-  const records = readPage(root, Date.now() - minutes * 60_000)
+  const { records, runLoads } = withoutRuns(readPage(root, Date.now() - minutes * 60_000))
   const loads = loadsSummary(records)
   const dropped = droppedOf(records)
-  if (opts.json) { console.log(JSON.stringify({ minutes, loads, unowned: unownedOf(records), dropped }, null, 2)); return }
+  if (opts.json) { console.log(JSON.stringify({ minutes, loads, unowned: unownedOf(records), dropped, runLoads }, null, 2)); return }
   console.log(`board loads, last ${minutes} min - design/.local/perf/page.jsonl`)
+  if (runLoads) console.log(`(${runLoads} headless run load${runLoads === 1 ? '' : 's'} not shown: marver perf --runs)`)
   if (!loads.length) { console.log('\nnothing yet - open a board in the canvas'); return }
   const t = (ts: number) => new Date(ts).toLocaleTimeString()
   const list = (r: Ranked) => r.map(([k, n]) => `${k} ${n}`).join(', ')
@@ -341,5 +366,93 @@ function jamPerf(root: string, opts: { minutes?: number; json?: boolean }) {
   if (sum.problems.length) {
     console.log('\nlately')
     for (const p of sum.problems) console.log(`  ${new Date(p.ts).toLocaleTimeString()}  ${p.what}`)
+  }
+}
+
+// ---- the Mac app's records (spec 28 A3.5, A3.8 #23) -------------------------------------------------------------
+
+/** What the app's half and the repo's page half read, over `--days` (14 by default). */
+function appInputs(root: string, opts: PerfOptions) {
+  const days = Number(opts.days) > 0 ? Math.min(90, Number(opts.days)) : 14
+  const since = Date.now() - days * 86_400_000
+  const home = marverHome()
+  const page = withoutRuns(readPage(root, since)).records
+  return { days, since, home, page, app: readAppLog(home, since), workspaces: repoWorkspaces(root, page) }
+}
+const when = (ts: number) => new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+const LEVEL: Record<number, string> = { 1: 'normal', 2: 'warn', 4: 'critical' }
+const level = (n: unknown) => (typeof n === 'number' ? LEVEL[n] ?? String(n) : 'unknown')
+const tilde = (p: string) => { const h = homedir(); return p.startsWith(h + '/') ? `~${p.slice(h.length)}` : p }
+/** The page half at a moment, in a few words, with how it was joined. */
+function momentWords(m: PageMoment, name: (b?: string) => string): string {
+  if (m.join === 'none') return 'no page record of it (its canvas recorded nothing here)'
+  const bits = [name(m.board)]
+  if (m.load) bits.push(m.load.settled ? `its load settled${m.load.settledMs !== undefined ? ` in ${secs(m.load.settledMs)}` : ''}` : 'its load had not settled')
+  if (m.gesture) bits.push(`last gesture ${m.gesture.type} ${secs2(m.gesture.endedMsBefore)} before`)
+  return bits.join(' · ') + (m.join === 'ws+time' ? ' (joined by workspace and time: no page id)' : '')
+}
+
+/** `marver perf --crashes`: the app's canvas crashes and hangs for this repo, joined to the page half; the machine-wide ends by time. */
+function crashesPerf(root: string, opts: PerfOptions) {
+  const i = appInputs(root, opts)
+  const sum = crashesSummary(i.app, i.page, i.workspaces, i.home)
+  if (opts.json) { console.log(JSON.stringify({ days: i.days, workspaces: [...i.workspaces], ...sum }, null, 2)); return }
+  const name = namer(root)
+  console.log(`crashes, last ${i.days} days - ${tilde(join(i.home, 'perf'))}/app.jsonl and app-dev.jsonl, joined to design/.local/perf/page.jsonl by page`)
+  console.log(`\ncanvas crashes: ${sum.crashes.length}`)
+  for (const c of sum.crashes) {
+    console.log(`  ${when(c.at)}  ${c.reason}${typeof c.exitCode === 'number' ? ` (exit ${c.exitCode})` : ''} · pid ${c.pid} · pressure ${level(c.pressure)}${c.flavour === 'dev' ? ' · Marver Dev' : ''}`)
+    console.log(`    ${momentWords(c, name)}`)
+    const b = c.before
+    if (b) console.log(`    the minute before (by time, machine-wide): pressure ${level(b.pressure)}, thermal ${b.thermal}, canvases ${b.canvasMB ?? '-'} MB, the GPU process ${b.gpuProcessRssMB ?? '-'} MB${b.procMB != null ? `, this renderer ${Math.round(b.procMB)} MB` : ''}`)
+  }
+  if (sum.hangs.length) {
+    console.log(`\nnot responding: ${sum.hangs.length}`)
+    for (const h of sum.hangs) console.log(`  ${when(h.at)}  pid ${h.pid}${h.respondedAfterMs !== undefined ? `, answered again after ${secs(h.respondedAfterMs)}` : ', never answered again'} · ${momentWords(h, name)}`)
+  }
+  console.log(`\nby time (machine-wide): ${sum.byTime.length}`)
+  for (const m of sum.byTime) console.log(`  ${when(m.at)}  ${m.text}${m.flavour === 'dev' ? ' (Marver Dev)' : ''}`)
+  console.log(`\ncrash reports: ${sum.dumps} in ${tilde(join(i.home, 'perf', 'crashpad', 'completed'))}`)
+}
+
+/** `marver perf --flashes`: the marks made on this repo's canvases (`--all`: every one), and the detector's candidates apart. */
+function flashesPerf(root: string, opts: PerfOptions) {
+  const i = appInputs(root, opts)
+  const sum = flashesSummary(i.app, i.page, i.workspaces, { all: !!opts.all, home: i.home })
+  if (opts.json) { console.log(JSON.stringify({ days: i.days, workspaces: [...i.workspaces], ...sum }, null, 2)); return }
+  const name = namer(root)
+  console.log(`flashes marked (⌃⌥F), last ${i.days} days - ${tilde(join(i.home, 'perf'))}, joined to design/.local/perf/page.jsonl by page`)
+  if (!sum.marks.length) console.log('\nnone on this repo\'s canvases')
+  for (const m of sum.marks) {
+    console.log(`\n  ${when(m.at)}  ${m.join === 'none' ? (m.tab ? 'a canvas of another repo' : 'Home or Settings') : momentWords(m, name)}`)
+    const agx = m.agx as Record<string, unknown>
+    console.log(`    pressure ${level(m.pressure)} · thermal ${m.thermal} · the GPU process ${m.gpuProcessRssMB !== null ? `${Math.round(m.gpuProcessRssMB)} MB` : 'unknown'} · GPU in use ${agx.gpuSystemMemoryMB ?? 'unknown'} MB, ${agx.utilPct ?? 'unknown'} % (machine-wide)`)
+    if (m.gpuEvents.length) console.log(`    GPU process events within 1 s: ${m.gpuEvents.map((e) => `${e.kind} ${e.ts >= m.at ? '+' : ''}${secs2(e.ts - m.at)}`).join(', ')}`)
+    if (!m.recorder) console.log('    the recorder was off: no samples before it')
+    console.log(`    ${m.picture ? `picture (the app's views, not the screen): ${m.picture}` : `no picture: ${m.pictureWhy ?? 'unknown'}`}`)
+  }
+  if (!opts.all && sum.others) console.log(`\n${sum.others} more mark${sum.others === 1 ? '' : 's'} on other canvases or on Home (--all shows them)`)
+  console.log(`\nwhite-out candidates (automatic, not verified): ${sum.candidates.length}`)
+  for (const c of sum.candidates) console.log(`  ${when(c.at)}  white at ${c.observedAt.length} samples ${c.rateHz ? `at ${c.rateHz} Hz ` : ''}(${c.observedAt.map((t) => secs2(t - c.at)).join(', ')}) · ${momentWords(c, name)}`)
+}
+
+/** `marver perf --machine`: the machine profiles, by host, which is current, and how many records and runs name each. */
+function machinePerf(root: string, opts: PerfOptions) {
+  const i = appInputs(root, opts)
+  const runs = readRuns(root, i.since) as RunLine[]
+  const sum = machineSummary(i.home, i.app, runs)
+  if (opts.json) { console.log(JSON.stringify({ days: i.days, ...sum }, null, 2)); return }
+  console.log(`machine profiles - ${tilde(join(i.home, 'perf', 'machine'))} (records of the last ${i.days} days)`)
+  if (!sum.profiles.length) { console.log('\nnone yet - the Mac app and `marver perf run` write them'); return }
+  const by = new Map(sum.profiles.map((p) => [p.hash, p]))
+  for (const g of sum.byHost) {
+    const first = by.get(g.profiles[0]!)!
+    console.log(`\nhost ${g.hostHash ?? 'unknown'}: ${[first.chip, first.model, first.os ? `macOS ${first.os}` : undefined].filter(Boolean).join(' · ')}`)
+    for (const h of g.profiles) {
+      const p = by.get(h)!
+      console.log(`  ${p.hash}  ${p.kind}${p.current ? ' (current)' : ''} · ${p.records} app record${p.records === 1 ? '' : 's'}, ${p.runs} run${p.runs === 1 ? '' : 's'}`)
+      const more = [p.electron, p.gpu, p.displays, p.power ? `power ${p.power}` : undefined].filter(Boolean)
+      if (more.length) console.log(`    ${more.join(' · ')}`)
+    }
   }
 }

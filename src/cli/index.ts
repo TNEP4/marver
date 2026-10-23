@@ -302,11 +302,16 @@ cli
   })
 
 cli
-  .command('perf', 'The reload log: what each edit reloaded, page-wide reloads, the slowest frames to settle, one line per board load; --loads: what each board load did; --jam: Jam\'s timings')
+  .command('perf', 'The reload log: what each edit reloaded, page-wide reloads, the slowest frames to settle, one line per board load; --loads: what each board load did; --jam: Jam\'s timings; --crashes, --flashes, --machine: the Mac app\'s records')
   .option('--root <dir>', 'Host repo root', { default: '.' })
   .option('--minutes <n>', 'How far back to read (default 60; 24 h with --jam)')
   .option('--loads', 'Board loads, from the page, each board by its title: time to the visible frames ready and all ready (each frame\'s first render), still from the last move and settled (a second still after it) - or why it was cut, and how many frames were ready by then - how many moves and their causes, when the first frame started, the slowest frames to settle (their last height) and how long each waited for its turn to start, errors (design/.local/perf/page.jsonl)')
   .option('--jam', 'Jam\'s timings: captures, pictures, words, naming, runs, shots - numbers only (design/.local/perf/jam.jsonl)')
+  .option('--crashes', 'The Mac app\'s crashes and hangs of this repo\'s canvases, each joined to its board load by page (what had settled, the last gesture), the minute before it, and the GPU and utility processes\' ends by time (~/.marver/perf/app.jsonl, app-dev.jsonl)')
+  .option('--flashes', 'The flashes marked in the Mac app (⌃⌥F) on this repo\'s canvases: the board, the gesture ending within 2 s, GPU process events, pressure, the GPU figures and the picture\'s path; the white-out detector\'s candidates apart, automatic and not verified')
+  .option('--machine', 'The machine profiles the Mac app and headless runs wrote (~/.marver/perf/machine), by host, which is current, and how many records and runs name each')
+  .option('--all', 'With --flashes: also the marks made on other canvases or on Home')
+  .option('--days <n>', 'How far back --crashes, --flashes and --machine read (default 14)')
   .option('--json', 'Machine-readable output')
   .action(async (opts) => {
     const { perfCommand } = await import('./perf.ts')
