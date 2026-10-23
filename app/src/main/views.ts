@@ -75,6 +75,10 @@ export interface StartInput { trust: TrustPort; home: Home; files: Files; firstL
 
 const j = (topic: string, data: unknown) => { if (__MV_TEST__) note(topic, data) }
 
+/** The app's keys on one view; the key harness's control case (test builds only) leaves the menu its key equivalents. */
+const keys = (wc: WebContents) => attachKeys(wc, (c) => runCommand(c, 'key'),
+  { prevent: !(__MV_TEST__ && testMode() && process.env.MARVER_APP_KEYS_NO_PREVENT === '1') })
+
 let trust: TrustPort
 let homeDir: Home
 let quitting = false
@@ -132,7 +136,7 @@ function wireCanvas(t: Tab, view: WebContentsView): void {
   wc.on('enter-html-full-screen', () => { j('fullscreen', { tab: t.id, html: true }); compose() })
   wc.on('leave-html-full-screen', () => { j('fullscreen', { tab: t.id, html: false }); compose() })
   wc.on('destroyed', () => forgetCanvas(t, view))
-  attachKeys(wc, (c) => runCommand(c, 'key'))
+  keys(wc)
   track(wc, { part: 'content', tab: t.id })
 }
 
@@ -687,7 +691,7 @@ export function startViews(i: StartInput): void {
 
   openWindow({
     register: (wc, kind, tabId) => trust.register(wc, kind, tabId),
-    wire: (wc) => attachKeys(wc, (c) => runCommand(c, 'key')),
+    wire: (wc) => keys(wc),
     quitting: () => quitting,
   })
 

@@ -66,11 +66,12 @@ export const digitOf = (c: AppCommand): number | null => c === 'tab-last' ? 9 : 
  * Wire one webContents: its app keys never reach its page, and run once - a held key's repeats are swallowed too
  * (the page never sees the app's keys, and the menu's key equivalent never fires for them).
  */
-export function attachKeys(wc: WebContents, run: (c: AppCommand, from: WebContents) => void): void {
+export function attachKeys(wc: WebContents, run: (c: AppCommand, from: WebContents) => void, o: { prevent?: boolean } = {}): void {
+  const prevent = o.prevent !== false   // false only for the key harness's control case (test builds)
   wc.on('before-input-event', (e, input) => {
     const c = matchKey(input.isAutoRepeat ? { ...input, isAutoRepeat: false } : input)
     if (!c) return
-    e.preventDefault()
+    if (prevent) e.preventDefault()
     if (!input.isAutoRepeat) run(c, wc)
   })
 }
