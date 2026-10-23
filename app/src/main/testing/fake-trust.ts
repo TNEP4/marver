@@ -5,6 +5,7 @@
  * fullscreen, the quit, the hang - runs against real webContents before the trust stream's modules land. It
  * proves nothing: a commit on the tab's own bound origin counts as attributed unless a case says otherwise.
  *
+ * `MARVER_APP_FAKE_ENTRIES` (a JSON array of slot records) are the canvases running at launch.
  * Hooks: `fake:entry` (a registry entry, starting or ready), `fake:gone`, `fake:mode` (a tab's next commits:
  * `prove`, `unattributed`, `unverified` - a failure as the proof's cancel would make it), `fake:report` (a canvas
  * report from the admitted document, as the bridge would hand it on), `fake:admits`.
@@ -28,6 +29,10 @@ export function fakeTrust(): TrustPort {
   const modes = new Map<string, Mode>()
   const admits: { tab: string; doc: string }[] = []
   const emit = (e: RegistryEvent) => { for (const f of regFns) f(e) }
+  // the canvases already running at launch (restore's cases): MARVER_APP_FAKE_ENTRIES, a JSON array of slot records
+  try {
+    for (const r of JSON.parse(process.env.MARVER_APP_FAKE_ENTRIES ?? '[]') as RegistryEntry[]) entries.set(r.instance, { ...r, key: Buffer.alloc(32), features: r.features ?? ['bridge'] })
+  } catch { /* none */ }
 
   const noHash = (u: string) => { try { const x = new URL(u); x.hash = ''; return x.toString() } catch { return u } }
 

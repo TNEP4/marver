@@ -36,15 +36,25 @@ export interface WindowRun {
   until(pred: (s: State) => boolean, ms?: number, what?: string): Promise<State>
   /** the canvas's page reported this (as the bridge would hand it on) */
   report(id: string, busy: { unsaved: boolean; why?: string[] } | null, extra?: Record<string, unknown>): Promise<void>
-  close(): Promise<number | null>
+  /** quits the app; `keep` leaves the home and the fake canvases for a second launch */
+  close(o?: { keep?: boolean }): Promise<number | null>
 }
 
-export async function launchWindow(kind: 'pw' | 'prod', o: { extraEnv?: Record<string, string> } = {}): Promise<WindowRun> {
+export interface Prepared { extraEnv?: Record<string, string>; fakes?: FakeCanvas[] }
+
+export async function launchWindow(kind: 'pw' | 'prod', o: {
+  extraEnv?: Record<string, string>
+  /** before the app starts: canvases already running, files in its home; what it returns joins the launch */
+  prepare?: (env: TestEnv, slotBase: number) => Promise<Prepared>
+  /** reuse a test home (a second launch on the same profile) */
+  env?: TestEnv
+} = {}): Promise<WindowRun> {
   const slotBase = runSlotBase()
-  const env = testEnv(slotBase)
-  const extraEnv = { MARVER_APP_FAKE_TRUST: '1', ...o.extraEnv }
+  const env = o.env ?? testEnv(slotBase)
+  const prepared = (await o.prepare?.(env, slotBase)) ?? {}
+  const extraEnv = { MARVER_APP_FAKE_TRUST: '1', ...o.extraEnv, ...prepared.extraEnv }
   const run = kind === 'pw' ? await launchPW(env, { extraEnv }) : await launchProd(env, { extraEnv })
-  const fakes: FakeCanvas[] = []
+  const fakes: FakeCanvas[] = [...(prepared.fakes ?? [])]
   const state = () => run.call<State>('state')
   const until = async (pred: (s: State) => boolean, ms = 10_000, what = 'the state') => {
     const end = Date.now() + ms
@@ -74,9 +84,10 @@ export async function launchWindow(kind: 'pw' | 'prod', o: { extraEnv?: Record<s
       const why = busy ? (busy.why ?? (busy.unsaved ? ['board-unsaved'] : [])) : undefined
       await run.call('fake:report', { tab: id, ...(busy ? { busy: { busy: why!.length > 0, unsaved: busy.unsaved, why } } : {}), ...extra })
     },
-    async close() {
+    async close(o2: { keep?: boolean } = {}) {
       try { await run.call('sheet', { mode: 'confirm' }) } catch { /* gone already */ }
       const code = await run.close()
+      if (o2.keep) return code
       for (const f of fakes) await f.close().catch(() => {})
       env.cleanup()
       return code
