@@ -246,7 +246,9 @@ function onNav(t: Tab, wc: WebContents, e: NavEvent): void {
       const admitted = e.attributed && t.reg?.state === 'ready' ? trust.admit(t.id) : null
       // the tab navigated: a logo fetch in flight is aborted (A2.4); one the lift starts again for the new document
       const logoWas = abortLogo(t)
-      onCommit(t, { gen: e.gen, url: e.url, attributed: e.attributed, admitted })
+      // the committed URL with its hash (the adapter's has none): the tab's path keeps the board a restore opened
+      const href = safely(() => wc.isDestroyed() ? undefined : wc.getURL())
+      onCommit(t, { gen: e.gen, url: e.url, ...(href ? { href } : {}), attributed: e.attributed, admitted })
       void wc.insertCSS(NO_DRAG, { cssOrigin: 'user' }).catch(() => {})
       if (t.doc?.lifted) {
         clearUnattributed(t)

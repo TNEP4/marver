@@ -630,8 +630,13 @@ function ensureDoc(t: Tab): TabDoc {
   return t.doc
 }
 
-/** A main-frame commit of the current generation. `admitted` is the bridge's `doc` for an attributed commit. */
-export function onCommit(t: Tab, c: { gen: number; url: string; attributed: boolean; admitted: string | null }): void {
+/**
+ * A main-frame commit of the current generation. `admitted` is the bridge's `doc` for an attributed commit. `url` is
+ * the adapter's, without its fragment (nav.ts compares it with the proved request); `href`, when given, is the same
+ * document's URL as Chromium committed it, hash included - the tab's path follows it, so a tab restored on
+ * `/#/b/board` keeps its board in tabs.json until the page itself moves.
+ */
+export function onCommit(t: Tab, c: { gen: number; url: string; href?: string; attributed: boolean; admitted: string | null }): void {
   const p = P()
   const d = ensureDoc(t)
   d.commits += 1
@@ -654,7 +659,7 @@ export function onCommit(t: Tab, c: { gen: number; url: string; attributed: bool
     t.unattributed = 0
     t.retained = true
     t.held = undefined
-    const path = pathOf(c.url)
+    const path = pathOf(c.href !== undefined && noHashOf(c.href) === noHashOf(c.url) ? c.href : c.url)
     if (path) t.path = path
   } else {
     // unattributed: untrusted, kept beneath its tab page, reloaded by main (views.ts) - never shown, it holds nothing of the person's
@@ -697,6 +702,8 @@ export function onInPage(t: Tab, url: string): void {
   const path = pathOf(url)
   if (path) { t.path = path; P().save() }
 }
+
+const noHashOf = (url: string): string => { const i = url.indexOf('#'); return i < 0 ? url : url.slice(0, i) }
 
 function pathOf(url: string): string | null {
   try {

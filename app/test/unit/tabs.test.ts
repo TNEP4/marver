@@ -329,6 +329,17 @@ describe('the document (A2.14 #8, v1.12 r1 #1, v1.13 r2 #3)', () => {
     expect(t.reports.safety).toBe('unknown')
   })
 
+  it('the path keeps the committed hash: the adapter\'s URL has none, the href of the same document does', () => {
+    // a restored tab loads /#/b/plans; the real adapter reports the commit without its fragment (nav.ts noHash)
+    const t = add().t
+    t.path = '/#/b/plans'
+    onCommit(t, { gen: 1, url: `${t.reg!.origin}/`, href: `${t.reg!.origin}/#/b/plans`, attributed: true, admitted: 'doc-1' })
+    expect(t.path).toBe('/#/b/plans')
+    // an href of another document (not this commit's URL without its hash) is never taken
+    onCommit(t, { gen: 2, url: `${t.reg!.origin}/`, href: `${t.reg!.origin}/other#/b/x`, attributed: true, admitted: 'doc-2' })
+    expect(t.path).toBe('/')
+  })
+
   it('an unattributed commit is untrusted, never admitted, not retained', () => {
     const t = add().t
     onCommit(t, { gen: 1, url: `${t.reg!.origin}/`, attributed: false, admitted: null })

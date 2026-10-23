@@ -103,6 +103,34 @@ describe('a launch with tabs.json and two canvases running', () => {
   })
 })
 
+describe('on the real trust, whose commit carries no hash (nav.ts)', () => {
+  it('the restored tab keeps its saved board: the path, and the file written back', async () => {
+    let alpha!: FakeCanvas
+    let state = ''
+    w = await launchWindow('pw', {
+      prepare: async (env, slotBase) => {
+        alpha = await startFakeCanvas({ home: env.home, slotBase, slot: 1, name: 'Alpha' })
+        await alpha.ready
+        state = join(env.home, 'state-dev')
+        mkdirSync(state, { recursive: true })
+        writeFileSync(join(state, 'launched'), '')
+        writeFileSync(join(state, 'tabs.json'), JSON.stringify({ v: 1, active: { kind: 'canvas', ws: alpha.ws, origin: alpha.origin }, settings: false, closed: [],
+          canvases: [{ ws: alpha.ws, origin: alpha.origin, path: '/#/b/alpha', shownAt: 10 }] }))
+        // the registry, proof, adapter and bridge as built: the real adapter reports a commit without its fragment
+        return { extraEnv: { MARVER_APP_FAKE_TRUST: '0' }, fakes: [alpha] }
+      },
+    })
+    const s = await w.until((x) => { const t = x.tabs.find((q) => q.reg?.instance === alpha.instance); return !!t?.doc?.trusted && !!t.doc.lifted }, 10_000, 'Alpha trusted and lifted')
+    const a = s.tabs.find((t) => t.reg?.instance === alpha.instance)!
+    expect(a.doc!.url).toBe(`${alpha.origin}/`)   // the adapter's URL, no hash
+    expect(a.path).toBe('/#/b/alpha')
+    await sleep(1500)
+    expect(JSON.parse(readFileSync(join(state, 'tabs.json'), 'utf8')).canvases[0].path).toBe('/#/b/alpha')
+    await w.close()
+    w = undefined
+  })
+})
+
 describe('a tabs.json of another version', () => {
   it('goes aside as tabs.json.bad; the app starts on Home with every running canvas at /', async () => {
     let alpha!: FakeCanvas
