@@ -328,6 +328,39 @@ describe('the one ground through navigation, fullscreen, switching and the GPU p
   })
 })
 
+describe('the mv:doc trace (A3.8 #26)', () => {
+  it('100 loads - reloads, navigations the page starts, crash reloads in a new renderer - and every document is told 44', { timeout: 240_000 }, async () => {
+    const { fake, id } = await canvas(12, 'Trace')
+    await w.run.call('activate', { id })
+    await lifted(id)
+    await uncovered(id)
+    const told: { i: number; kind: string; inset: number; pid: number }[] = []
+    for (let i = 0; i < 100; i++) {
+      const kind = i % 5 === 4 ? 'crash' : i % 5 === 2 ? 'navigate' : 'reload'
+      const before = (await w.tab(id)).doc?.commits ?? 0
+      if (kind === 'reload') await w.run.call('reloadPage', { target: id })
+      else if (kind === 'navigate') await exec(id, `location.href = '/?n=${i}'; 1`)
+      else {
+        await w.run.call('crash', { target: id })
+        // the first crash in a minute reloads by itself; a later one latches, and the person's reload brings it back
+        const t = await w.until((x) => { const q = x.tabs.find((y) => y.id === id)!; return q.crash.latched || ((q.doc?.commits ?? 0) > before + 1 && !!q.doc?.lifted) }, 10_000, 'the crash reload')
+        if (t.tabs.find((y) => y.id === id)!.crash.latched) await w.run.call('command', { cmd: 'reload' })
+      }
+      await w.until((x) => { const q = x.tabs.find((y) => y.id === id)!; return (q.doc?.commits ?? 0) > before && !!q.doc?.lifted && !!q.doc.trusted }, 10_000, `load ${i} (${kind})`)
+      await waitFor(`load ${i}'s script`, async () => (await exec<boolean>(id, '!!window.__ground')))
+      const inset = await exec<number>(id, 'window.marverApp.topInset')
+      const frames = await w.run.call<{ pid: number; main: boolean }[]>('frames', { target: id })
+      told.push({ i, kind, inset, pid: frames.find((f) => f.main)!.pid })
+    }
+    const wrong = told.filter((x) => x.inset !== 44)
+    const pids = new Set(told.map((x) => x.pid))
+    process.stdout.write(`mv:doc trace: ${told.length} loads (${told.filter((x) => x.kind === 'reload').length} reloads, ${told.filter((x) => x.kind === 'navigate').length} page navigations, ${told.filter((x) => x.kind === 'crash').length} crash reloads) in ${pids.size} renderer processes; told 44: ${told.length - wrong.length}\n`)
+    expect(wrong).toEqual([])
+    expect(pids.size).toBeGreaterThan(10)   // the crash reloads each came up in a renderer of their own
+    await fake.close()
+  })
+})
+
 describe('the app\'s own pages at the full height (A3.8 #32)', () => {
   it('Home and Settings: full bounds, the cover hidden, nothing scrolls but the area 44 px down, focus targets below it', async () => {
     for (const page of ['home', 'settings'] as const) {

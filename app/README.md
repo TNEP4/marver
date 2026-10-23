@@ -55,7 +55,9 @@ The guard (first import) - test spies - Marver Dev's name and userData - `MARVER
 `ensureHome()` - crash dumps under `~/.marver/perf/crashpad` and `crashReporter.start` - the `marver-app` scheme -
 the files' first read - at ready: the theme and the files' watch, `persist:app`, the navigation hook (before any
 view), the registry, the bridge (`mv:doc` answering each document's inset from layout.ts), the recorder (A3: its
-writer, the machine profile, the one sampler), then `views.ts` - the window with the opaque strip and its pages, the tabs restored
+writer, the machine profile, the one sampler), then `views.ts` - the window and its pages (the transparent strip, painting controls only, over the cover; Home,
+Settings and the tab pages at the full height; a canvas at the full height only once spike S15 has picked the cover,
+until then below the strip as in app 0.1), the tabs restored
 from `tabs.json` (only the active one loads; each canvas view on its workspace's partition, its proof dispatcher
 attached before its first load), the menu, the quit through `guardAll` - then Home's and Settings' channels, the
 unloading policy (`memory.ts`) and the white-out detector (`whiteout.ts`), and last
@@ -115,6 +117,14 @@ uncovered until a stream fills its own, so app 0.2's base behaves as app 0.1.
   `test/prod/guard-bridge.test.ts` (skipped, saying so, without them). Helpers in `test/harness/window.ts`; real key
   events in `test/native/keypost.swift` (Accessibility for the terminal, else those cases say they are
   inconclusive); the focus cases read focus only while the window is key, else they are skipped as inconclusive.
+- **the one ground's hooks** (`src/main/window.ts` `groundHooks`; A3.8 #24-#33): `ground:state` (the gate, the live
+  resize, the cover, each tab's geometry, epoch and gen), `ground:emit` (`will-resize`, `resized`, `resize` as macOS
+  sends them for a person's drag), `ground:gpu-lost` and `ground:gpu` (the GPU process gone, or its identity read
+  changed, with nothing killed), `ground:heartbeat` (the capture matrix's 1 px compositor animation in the strip).
+  `MARVER_APP_GROUND=1` opens layout.ts's gate in a test build, so main's half runs over app 0.1's plain cover - its
+  decisions, from the journal's `compose`, `layout`, `present` and `resize` topics, never its pixels.
+  `test/harness/ground-shell.ts` is a fake 0.27.2 shell for a fake canvas's `script` (the inset, hello, the answers,
+  and their failure modes).
 - **the packaged smoke** (`test/smoke/smoke.mjs`): S9's checks and X7's cases on the signed build; every launch on
   its own profile with `--use-mock-keychain`. Its clean launch loads a fake canvas as the active tab: the first frame
   callback, a canvas cookie read back encrypted (`v10`) after a SIGTERM to main alone (a group SIGTERM ends the network
