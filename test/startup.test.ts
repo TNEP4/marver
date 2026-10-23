@@ -271,7 +271,7 @@ try {
       writeFileSync(join(o.root, '.env'), 'MV_RESTART=' + Date.now() + '\\n')
       const lock = join(o.root, 'design', '.local', 'dev.lock')
       for (let i = 0; i < 600 && !(server.httpServer !== http && (server.httpServer.listening || !existsSync(lock))); i++) await new Promise((r) => setTimeout(r, 50))
-      await new Promise((r) => setTimeout(r, 500))   // the old server's watchers closed, the wraps back on
+      await new Promise((r) => setTimeout(r, 500))   // the old server's watchers closed, the restart settled
     }
     restart = { restarted: server.httpServer !== http, before, now: await state() }
   }
