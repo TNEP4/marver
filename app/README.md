@@ -8,7 +8,7 @@ pnpm install                                  # once; electron 45.0.0's binary d
 pnpm --filter marver-app build:js             # the dev flavour into app/dist/ (tests, `electron .`)
 pnpm --filter marver-app dev                  # build:js, then run it as "Marver Dev"
 pnpm --filter marver-app package              # the release flavour, Developer ID signed, then the smoke
-pnpm --filter marver-app package:adhoc        # the same, ad-hoc signed (agents, CI, a locked keychain)
+pnpm --filter marver-app package:adhoc        # the same, ad-hoc signed, into out/adhoc/ (agents, CI, a locked keychain)
 pnpm --filter marver-app smoke [-- <app>]     # the packaged smoke on its own
 pnpm --filter marver-app test                 # unit, fake canvas, Playwright
 pnpm --filter marver-app test:prod            # the production-switch harness
