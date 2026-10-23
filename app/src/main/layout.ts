@@ -55,6 +55,11 @@ export function setGround(on: boolean): void { ground = on }
 /** A canvas may be placed full height now. */
 export const groundOn = (): boolean => ground
 
+let insetOff = false
+/** A test build's switch (A3.8 #51, the scroll edge's cost): `mv:doc` answers 0 to every document, so the same board pans
+ *  with the inset and without it. Never set in a release (window.ts's `ground:inset-off` hook, test mode only). */
+export function setInsetOff(on: boolean): void { insetOff = on }
+
 type LayoutLog = (d: { tab: string; event: string; from: Geometry; to: Geometry }) => void
 let log: LayoutLog | null = null
 /** The journal's `layout` topic (test builds): every commitLayout that changed something. */
@@ -127,7 +132,7 @@ export function commitLayout(t: Tab, e: LayoutEvent): boolean {
 export const placed = (t: Tab): Layout => (t.geo.htmlFullscreen ? 'below' : t.geo.layout)
 
 /** `mv:doc`'s inset for the document now committing: 44 when it is placed `full` (its pending, else the committed layout). */
-export const docInset = (t: Tab): Inset => ((t.geo.pending?.layout ?? t.geo.layout) === 'full' ? 44 : 0)
+export const docInset = (t: Tab): Inset => (!insetOff && (t.geo.pending?.layout ?? t.geo.layout) === 'full' ? 44 : 0)
 
 /** The cover may lift over the tab's view (decided in main, the exact half): a trusted, lifted, full document that applied the inset. */
 export const seeThrough = (t: Tab): boolean => t.kind === 'local' && placed(t) === 'full' && !!t.doc?.trusted && !!t.doc.lifted && t.geo.inset === 44

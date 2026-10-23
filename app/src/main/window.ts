@@ -44,7 +44,7 @@ import { afterShow, setFocusPorts, track } from './focus.ts'
 import { invalidateMenu } from './menu.ts'
 import { note, noteTopic, provide, testMode } from './testing/index.ts'
 import { T } from './timings.ts'
-import { groundOn, onLayoutChange, placed, rectFor, seeThrough, setGround } from './layout.ts'
+import { groundOn, onLayoutChange, placed, rectFor, seeThrough, setGround, setInsetOff } from './layout.ts'
 import { bumpAll, bumpGen, epochOf, flush as presentFlush, genOf, gpuGone, liftAt, noteGpu, observe, onCoverRecord, onPresentLog, uncovered } from './present.ts'
 import { identity, recorder } from './recorder.ts'
 import type { TabIdent } from '../../../src/shared/app-perf.ts'
@@ -676,6 +676,8 @@ function groundHooks(): void {
     win.emit(ev as 'resize', { preventDefault() {}, defaultPrevented: false }, win.getBounds(), { edge: 'bottom-right' })
     return true
   })
+  // the scroll edge's cost (A3.8 #51): every document told 0 from now on (its next load), so the same board pans without the inset
+  provide('ground:inset-off', (a) => { setInsetOff(!!arg<{ on?: boolean }>(a).on); return true })
   // child-process-gone with type GPU, as views.ts hears it - no process is killed
   provide('ground:gpu-lost', () => { gpuGone(); compose(); return true })
   // an identity read (a sample, a gpu-info-update): a replacement with no child-process-gone

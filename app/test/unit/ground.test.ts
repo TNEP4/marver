@@ -5,7 +5,7 @@
  * lift's delay); plan.ts's placement and cover; and the rules as tabs.ts hands them the model's events.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { commitLayout, docInset, onLayoutChange, placed, rectFor, seeThrough, setGround, type LayoutEvent } from '../../src/main/layout.ts'
+import { commitLayout, docInset, onLayoutChange, placed, rectFor, seeThrough, setGround, setInsetOff, type LayoutEvent } from '../../src/main/layout.ts'
 import {
   answer, bumpAll, bumpGen, epochOf, flush, forget, genOf, gpuGone, liftAt, noteGpu, observe, onCoverRecord, resetPresent, uncovered, type PresentKey,
 } from '../../src/main/present.ts'
@@ -144,6 +144,17 @@ describe('layout.ts: the rules (A3.8 #24-#26)', () => {
     expect(docInset(canvas({ geo: { layout: 'full', htmlFullscreen: false } }))).toBe(44)
     expect(docInset(canvas({ geo: { layout: 'full', htmlFullscreen: false, pending: { gen: 1, instance: 'i1', layout: 'below' } } }))).toBe(0)
     expect(docInset(canvas())).toBe(0)
+  })
+
+  it('the test build\'s inset switch (A3.8 #51): every document told 0 while it is on; a hello of 0 then moves it below', () => {
+    const t = canvas({ geo: { layout: 'full', htmlFullscreen: false } })
+    setInsetOff(true)
+    try {
+      expect(docInset(t)).toBe(0)
+      run(t, { kind: 'hello', inset: 0 })
+      expect(placed(t)).toBe('below')
+    } finally { setInsetOff(false) }
+    expect(docInset(canvas({ geo: { layout: 'full', htmlFullscreen: false } }))).toBe(44)
   })
 
   it('seeThrough needs all of it: local, placed full, trusted, lifted, and a hello that said 44', () => {

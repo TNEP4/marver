@@ -400,6 +400,25 @@ describe('stalled renderers: covering never waits on one, uncovering waits for t
   })
 })
 
+describe('the scroll edge\'s cost switch (A3.8 #51)', () => {
+  it('ground:inset-off: the next document is told 0, applies no inset and is moved below; off again, full', async () => {
+    const { id } = await canvas(16, 'Switch')
+    await w.run.call('activate', { id })
+    await lifted(id)
+    await uncovered(id)
+    await w.run.call('ground:inset-off', { on: true })
+    try {
+      await reloadInto(id, null)
+      await waitFor('its hello', async () => (await geoOf(id)).geo.inset === 0)
+      expect(await exec(id, 'JSON.stringify([window.marverApp.topInset, window.__ground.applied])')).toBe('[0,0]')
+      expect((await bounds(`${id}:view`))!.bounds).toEqual(BELOW(await content()))
+    } finally { await w.run.call('ground:inset-off', { on: false }) }
+    await reloadInto(id, null)
+    await uncovered(id)
+    expect((await bounds(`${id}:view`))!.bounds).toEqual(FULL(await content()))
+  })
+})
+
 describe('the mv:doc trace (A3.8 #26)', () => {
   it('100 loads - reloads, navigations the page starts, crash reloads in a new renderer - and every document is told 44', { timeout: 240_000 }, async () => {
     const { fake, id } = await canvas(12, 'Trace')
