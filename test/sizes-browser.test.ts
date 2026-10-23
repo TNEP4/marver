@@ -323,6 +323,57 @@ describe('calm loading', () => {
     await until(() => heights()['docs/b@760'] === H)
   }, 90_000)
 
+  it('a write the server fails (500) keeps the heights unsaved and is sent again - a newer height queued meanwhile wins', async () => {
+    if (!browser) return
+    await closeAll()
+    const s = await open('#/b/docs')
+    await wait(2500)
+    const H = heights()['docs/b@760']
+    const unsaved = () => browser!.eval(s, `window.__mvApp.busy().why.includes('heights')`)
+    // the next two writes fail: the first answers 500 a second late, the second answers 500 at once
+    await browser.eval(s, `(() => { const f = window.fetch; window.__sizesFails = 2; window.__sizesSent = []; window.fetch = (u, o) => {
+      if (!String(u).includes('/api/sizes') || !o || o.method !== 'POST') return f(u, o)
+      window.__sizesSent.push(JSON.parse(o.body).heights['docs/b@760'])
+      if (window.__sizesFails <= 0) return f(u, o)
+      const late = window.__sizesFails === 2
+      window.__sizesFails -= 1
+      const fail = () => new Response(JSON.stringify({ error: 'boom' }), { status: 500, headers: { 'content-type': 'application/json' } })
+      return late ? new Promise((r) => setTimeout(() => r(fail()), 1000)) : Promise.resolve(fail())
+    } })()`)
+    const measure = (h: number) => browser!.eval(s, `window.__mvStore.getState().measureNode('k-b', 'docs/b', 760, 760, ${h}, true)`)
+    await measure(H + 100)
+    await wait(1800)                                                     // the throttle fired: H+100 is in flight
+    await measure(H + 200)                                               // a newer height, queued behind it
+    await browser.until(s, `window.__sizesSent.length >= 1 && window.__sizesFails === 1`, 5_000)
+    await wait(300)                                                      // the first 500 came back
+    expect(await unsaved()).toBe(true)                                   // nothing reached the file
+    expect(heights()['docs/b@760']).toBe(H)
+    // the next write fails at once - still unsaved - and the one after lands the newest height
+    await until(() => heights()['docs/b@760'] === H + 200, 20_000)
+    await browser.until(s, `!window.__mvApp.busy().why.includes('heights')`, 5_000)
+    const sent = await browser.eval(s, `window.__sizesSent`) as number[]
+    expect(sent[0]).toBe(H + 100)
+    expect(sent.slice(1).every((h) => h === H + 200)).toBe(true)        // the failed H+100 never overwrote the newer one
+    expect(sent.length).toBeGreaterThanOrEqual(3)
+  }, 90_000)
+
+  it('a write the server fails while nothing newer is queued is sent again: the height lands', async () => {
+    if (!browser) return
+    await closeAll()
+    const s = await open('#/b/docs')
+    await wait(2500)
+    const H = heights()['docs/b@760']
+    await browser.eval(s, `(() => { const f = window.fetch; let fails = 1; window.fetch = (u, o) => String(u).includes('/api/sizes') && o && o.method === 'POST' && fails-- > 0
+      ? Promise.resolve(new Response('{}', { status: 500 })) : f(u, o) })()`)
+    await browser.eval(s, `window.__mvStore.getState().measureNode('k-b', 'docs/b', 760, 760, ${H + 50}, true)`)
+    await wait(2000)                                                     // the throttle fired and the write failed
+    expect(await browser.eval(s, `window.__mvApp.busy().why.includes('heights')`)).toBe(true)
+    await until(() => heights()['docs/b@760'] === H + 50, 20_000)
+    await browser.until(s, `!window.__mvApp.busy().why.includes('heights')`, 5_000)
+    await browser.eval(s, `window.__mvStore.getState().measureNode('k-b', 'docs/b', 760, 760, ${H}, true)`)
+    await until(() => heights()['docs/b@760'] === H)
+  }, 90_000)
+
   it('a Doc turned bare Md in an open page opens at the size its next board gives it, not its old height', async () => {
     if (!browser) return
     await closeAll()

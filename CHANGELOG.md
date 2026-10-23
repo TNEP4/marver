@@ -12,7 +12,8 @@ The canvas's side of the Mac app (app 0.1), and what it brings to every browser.
   being recorded, or on a stopped tab with board edits. Now a reload or a close asks whenever the page holds anything
   the canvas does not have yet: a capture recording or finishing, a capture sealed and not taken by the canvas yet
   (also one kept only in memory), a board edit not saved yet - a save on its way or one that failed - heights not
-  written yet, and words typed and not sent (a comment, a Jam edit or note). A drag is not work until it drops. The
+  written yet (a write the canvas failed is sent again, later each time), and words typed and not sent (a comment, a
+  Jam edit or note). A drag is not work until it drops. The
   page's own reload when its canvas comes back still goes without asking: it saves first. Chrome shows its question
   only on a page you have clicked or typed in since it loaded. A published canvas is unchanged.
 - **A canvas opens where you left it.** A board you reload opens on the view you had (kept per project and board, a

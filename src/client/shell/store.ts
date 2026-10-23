@@ -392,17 +392,22 @@ const measures = (frameId: string) => { const m = preparing ? preparing.measurin
 
 // settled heights that differ from the committed ones, written back in batches (dev only). One
 // write in flight at a time; a height that changes while its write is in flight queues behind it,
-// so the LAST settled height is the one the file ends with
+// so the LAST settled height is the one the file ends with. A write the server did not take (no
+// answer, or an error status) goes back in the queue - behind any newer height for the same key,
+// which wins - so the heights stay unsaved until they reach the file, and is sent again after a
+// wait that doubles with each failure in a row (1.5 s to 24 s)
 const pendingHeights = new Map<string, number>()
 const inflightHeights = new Map<string, number>()
 let heightsTimer: ReturnType<typeof setTimeout> | undefined
 let flushing = false
+let heightsFailed = 0
+const HEIGHTS_MS = 1500
 const persistHeight = (key: string, h: number) => {
   if (DATA) return
   if (!inflightHeights.has(key) && savedHeights.get(key) === h) { if (pendingHeights.delete(key)) workChanged(); return }
   if (!pendingHeights.size) workChanged()   // heights not written yet: unsaved (unsaved.ts)
   pendingHeights.set(key, h)
-  if (!flushing) heightsTimer ??= setTimeout(flushHeights, 1500)   // a throttle, not a debounce: a board settling in waves still writes
+  if (!flushing) heightsTimer ??= setTimeout(flushHeights, HEIGHTS_MS)   // a throttle, not a debounce: a board settling in waves still writes
 }
 async function flushHeights() {
   heightsTimer = undefined
@@ -421,14 +426,16 @@ async function flushHeights() {
     }
   } catch { /* lost: below */ }
   // no answer = the write may or may not have landed: what the file holds is unknown, so nothing is
-  // deduplicated against it - a correction queued meanwhile still goes, the next report still writes
-  if (!answered) for (const k of Object.keys(batch)) savedHeights.delete(k)
+  // deduplicated against it - a correction queued meanwhile still goes, the next report still writes.
+  // Each of its heights is owed again, unless a newer one for that key is already queued
+  if (!answered) for (const [k, v] of Object.entries(batch)) { savedHeights.delete(k); if (!pendingHeights.has(k)) pendingHeights.set(k, v) }
   for (const k of Object.keys(batch)) inflightHeights.delete(k)
   // a height that settled while the write was in flight: still owed only if it differs from what landed
   for (const [k, v] of pendingHeights) if (savedHeights.get(k) === v) pendingHeights.delete(k)
+  heightsFailed = answered ? 0 : Math.min(heightsFailed + 1, 5)
   flushing = false
   workChanged()
-  if (pendingHeights.size) heightsTimer ??= setTimeout(flushHeights, 1500)
+  if (pendingHeights.size) heightsTimer ??= setTimeout(flushHeights, HEIGHTS_MS * 2 ** Math.max(0, heightsFailed - 1))
 }
 
 const hasKnownHeight = (frameId: string, w: number) => measures(frameId) && (measuredHeights.has(`${frameId}@${w}`) || savedNow().has(`${frameId}@${w}`))
