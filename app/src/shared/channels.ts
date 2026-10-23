@@ -17,6 +17,11 @@ export type DisplayState = 'none' | 'live' | 'hidden' | 'gone' | 'starting' | 'u
 export interface TabView {
   id: string
   kind: 'local' | 'home' | 'settings'
+  /**
+   * The canvas's name as its shell shows it (the slot file's `name`). For an `unverified` tab the pages never show
+   * it: they name the tab by its link's host ("localhost:4808, not a Marver canvas", A2.13; frame mac-app/05), so
+   * main may send either and no page wears a name a canvas has not proved.
+   */
   name: string
   state: DisplayState
   verified: boolean
@@ -33,6 +38,11 @@ export interface TabView {
   logo?: string
   /** the tab's own look (A2.14 #26) */
   dark?: boolean
+  /**
+   * 0-7: which of the eight initials hues (A2.4) a tab without a logo wears, picked by main from `workspaceId` -
+   * `hueOf(ws)` in src/shared/hue.ts. Optional (added by the pages stream): absent, the page picks one from the name.
+   */
+  hue?: number
 }
 
 /** `tabs` (main to strip, home). */
@@ -80,7 +90,11 @@ interface TabPageFailure {
 }
 
 /** `tabpage` (main to a tab page): the state as a union; timestamps only, never a countdown (A2.14 #19). */
-interface TabPageBase { rev: number; name: string; logo?: string; dark?: boolean; folder?: string; since: number }
+interface TabPageBase {
+  rev: number; name: string; logo?: string; dark?: boolean; folder?: string; since: number
+  /** as `TabView.hue` (optional, added by the pages stream): the tab page wears the strip's initials hue */
+  hue?: number
+}
 export type TabPageView =
   | TabPageBase & { page: 'starting'; phase: 'starting' | 'opening' }
   | TabPageBase & TabPageFailure & { page: 'stopped'; command: string; origin?: string }
@@ -89,21 +103,78 @@ export type TabPageView =
   | TabPageBase & { page: 'crashed'; latched: boolean; reason?: string; crashes?: number }
 export type TabPageAction = 'retry' | 'reload' | 'copy-start' | 'copy-details' | 'reveal' | 'open-browser' | 'close'
 
-/** `recent` (main to home): Recently here (A2.12). `id` is main's; `folder` with `~`. */
-export interface RecentView { id: string; name: string; folder: string; lastSeen: number; logo?: string }
+/**
+ * `recent` (main to home): Recently here (A2.12). `id` is main's (`r_` and the workspace, within the bridge's id
+ * pattern `[A-Za-z0-9_-]{1,32}`); `folder` with `~`. `hue` as `TabView.hue`.
+ */
+export interface RecentView { id: string; name: string; folder: string; lastSeen: number; logo?: string; hue?: number }
 
 /** `home:info` (main to home). */
 export interface HomeInfo { welcome: boolean; writable: boolean }
 /** `home:focus` (main to home). */
 export interface HomeFocus { field: 'link'; back?: string }
-/** `home:action` (home to main). */
+/** `home:action` (home to main; an invoke, `INVOKES`, answering `HomeActionAnswer`). */
 export type HomeAction =
   | { action: 'copy'; id: 'dev' | 'init' | 'update' }
   | { action: 'copy-start'; id: string }
   | { action: 'show-files' }
 
+/** `home:action`'s answer: false when there was nothing to do (a recent id main no longer holds). */
+export interface HomeActionAnswer { ok: boolean }
+
 /** `link:open` (strip, home; an invoke). */
 export type LinkOpenAnswer = { ok: true } | { ok: false; why: 'bad' | 'nothing' | 'not-canvas' | 'later' | 'refused' }
+
+/**
+ * Settings, a view of the files (A2.7, A2.12; the home-and-files stream). `settings:get` answers a `SettingsView`;
+ * `status` (main to settings) pushes a `FilesStatus` whenever a file is judged or a write fails or recovers, and
+ * the page asks `settings:get` again. `notices` joins at A4.2.
+ */
+export interface FileProblem { key?: string; message: string }
+/** What main last judged of one file, and what is in force. Written whole into `state/status.json` (README rule). */
+export interface FileState {
+  present: boolean
+  ok: boolean
+  /** sha256 (hex) of the bytes last judged; '' when absent */
+  sha256: string
+  problems?: FileProblem[]
+  /** what is in force: the last file that applied (this run, or `status.json`'s at launch), else the defaults ('') */
+  applied: { sha256: string; values: Record<string, unknown> }
+}
+export interface FilesStatus {
+  v: 1
+  /** the app's version */
+  app: string
+  at: number
+  writable: boolean
+  /** why the home cannot be written (an errno code) */
+  reason?: string
+  files: { 'config.json': FileState; 'theme.json': FileState }
+  /** the last failed app-owned write, until that file writes again */
+  write?: { file: string; code: string; at: number }
+}
+export interface SettingsFileView extends FileState {
+  /** effective values: the defaults, then what is applied */
+  values: Record<string, unknown>
+  /** the file's text, only when it does not apply (at most 64 KB; shown as text) */
+  text?: string
+}
+export interface SettingsView {
+  /** the folder, with `~` */
+  dir: string
+  /** where an agent checks its edit, with `~`: `state/status.json`, `state-dev/status.json` in Marver Dev */
+  statusFile: string
+  config: SettingsFileView
+  theme: SettingsFileView
+  status: FilesStatus
+  /** the keys this build shows, as `<file>.<key>` (settings-keys.ts `since`) */
+  shown: string[]
+}
+/** `settings:set` (settings to main; an invoke): one key into one file. */
+export interface SettingsSet { file: 'config' | 'theme'; key: string; value: boolean | number | string }
+export type SettingsSetResult =
+  | { ok: true }
+  | { ok: false; why: 'unknown-key' | 'bad-value' | 'unwritable' | 'write-failed'; code?: string }
 
 /** The channel names. */
 export const CH = {
@@ -130,6 +201,19 @@ export const CH = {
   status: 'status',
 } as const
 
+/**
+ * The page-to-main channels that are invokes (`ipcRenderer.invoke` / `ipcMain.handle`, the handler's return value
+ * the answer); every other channel in `SENDERS` is a send (`ipcRenderer.send` / `ipcMain.on`). The preload, the
+ * bridge and the pages harness all read this list (added by the pages stream: the draft named `link:open` alone).
+ *   link:open    -> LinkOpenAnswer
+ *   home:action  -> HomeActionAnswer
+ *   settings:get -> SettingsView
+ *   settings:set -> SettingsSetResult
+ */
+export const INVOKES = [CH.linkOpen, CH.homeAction, CH.settingsGet, CH.settingsSet] as const
+export type InvokeChannel = (typeof INVOKES)[number]
+export const isInvoke = (ch: string): ch is InvokeChannel => (INVOKES as readonly string[]).includes(ch)
+
 /** Who may SEND each page-to-main channel (bridge.ts refuses anyone else, A2.5). */
 export const SENDERS: Record<string, readonly PageKind[]> = {
   [CH.ready]: ['strip', 'home', 'settings', 'tabpage'],
@@ -145,3 +229,62 @@ export const SENDERS: Record<string, readonly PageKind[]> = {
   [CH.settingsSet]: ['settings'],
   [CH.settingsReveal]: ['settings'],
 }
+
+/** Main-to-page channels each kind receives: the app preload subscribes to these alone (added by the pages stream). */
+export const RECEIVES: Record<Exclude<PageKind, 'canvas'>, readonly string[]> = {
+  strip: [CH.tabs, CH.window, CH.pill, CH.pageFocus],
+  home: [CH.tabs, CH.window, CH.recent, CH.homeInfo, CH.homeFocus],
+  settings: [CH.window, CH.status],
+  tabpage: [CH.window, CH.tabpage, CH.pageFocus],
+}
+
+/**
+ * What the app preload (src/preload/app.ts) exposes as `window.marverPage` (added by the pages stream): narrow named
+ * methods for the one page kind it finds at document start (`marver-app://<kind>/`), never a generic send.
+ * Subscriptions get the payload alone (no Electron event), the latest held value at once, and after it only a
+ * newer `rev` (A2.14 #19). `ready()` says `app:ready` once; main sends a page nothing before it, then every snapshot
+ * its kind receives. `window` reaches every app page.
+ */
+type Off = () => void
+interface PageApiBase {
+  ready(): void
+  onWindow(fn: (w: WindowView) => void): Off
+}
+export interface StripApi extends PageApiBase {
+  readonly kind: 'strip'
+  onTabs(fn: (s: TabsSnapshot) => void): Off
+  onPill(fn: (p: PillView | null) => void): Off
+  onPageFocus(fn: (f: PageFocus) => void): Off
+  activate(id: string): void
+  close(id: string): void
+  tabMenu(id: string, x: number, y: number): void
+  more(m: TabsMore): void
+  pillAction(a: PillAction): void
+  openLink(url: string): Promise<LinkOpenAnswer>
+}
+export interface HomeApi extends PageApiBase {
+  readonly kind: 'home'
+  onTabs(fn: (s: TabsSnapshot) => void): Off
+  onRecent(fn: (r: RecentView[]) => void): Off
+  onHomeInfo(fn: (i: HomeInfo) => void): Off
+  onHomeFocus(fn: (f: HomeFocus) => void): Off
+  activate(id: string): void
+  close(id: string): void
+  tabMenu(id: string, x: number, y: number): void
+  openLink(url: string): Promise<LinkOpenAnswer>
+  action(a: HomeAction): Promise<HomeActionAnswer>
+}
+export interface SettingsApi extends PageApiBase {
+  readonly kind: 'settings'
+  onStatus(fn: (s: FilesStatus) => void): Off
+  get(): Promise<SettingsView>
+  set(s: SettingsSet): Promise<SettingsSetResult>
+  reveal(): void
+}
+export interface TabPageApi extends PageApiBase {
+  readonly kind: 'tabpage'
+  onTabpage(fn: (v: TabPageView) => void): Off
+  onPageFocus(fn: (f: PageFocus) => void): Off
+  action(rev: number, action: TabPageAction): void
+}
+export type PageApi = StripApi | HomeApi | SettingsApi | TabPageApi

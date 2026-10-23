@@ -1,0 +1,74 @@
+/* What every app page shares (spec 28 A2.2, A2.11, A2.13, A2.14 #26), in the shell's tokens only (tokens.css, copied
+   from the package's styles.css at build time): the type, the focus ring, the buttons, the logo, the spinner and the
+   system settings followed live. The look is `:root` or `:root.dark` (src/pages/dom.ts setLook). */
+
+* { box-sizing: border-box }
+[hidden] { display: none !important }
+html { font: 13px/1.35 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; color: var(--glass-ink);
+  -webkit-font-smoothing: antialiased; -webkit-user-select: none; user-select: none; cursor: default }
+html, body { margin: 0; height: 100% }
+/* until the page has drawn, its view's own background shows (main gives it the right ground): never a wrong one */
+html:not(.mv-ready) { background: transparent !important }
+html:not(.mv-ready) body { visibility: hidden }
+button, input, select { font: inherit; color: inherit }
+button { cursor: default }
+h1, h2, p { margin: 0 }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace }
+
+/* the ground and its still dots: the app's own pages sit on the canvas's ground, like an empty board */
+.ground { background: radial-gradient(var(--dot) 1px, transparent 1px) 0 0 / 20px 20px, var(--ground) }
+
+/* a visible focus ring in the shell's accent (A2.13) */
+:focus { outline: none }
+:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; box-shadow: 0 0 0 4px var(--accent-ring) }
+
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0);
+  clip-path: inset(50%); white-space: nowrap; border: 0 }
+
+/* a canvas's logo: its own image, else its initials on its hue */
+.logo { flex: none; display: grid; overflow: hidden; font-style: normal; box-shadow: inset 0 0 0 .5px rgba(0, 0, 0, .12) }
+.logo img { width: 100%; height: 100%; object-fit: contain; display: block }
+.logo b { display: grid; place-items: center; color: #fff; font-weight: 650; letter-spacing: -.02em; line-height: 1 }
+.logo.grey { filter: grayscale(1); opacity: .45 }
+.logo.dim { opacity: .55 }
+
+/* the spinner: it turns; under Reduce Motion it becomes a slow opacity pulse, the one animation left */
+.spin { flex: none; display: inline-block; width: 14px; height: 14px; margin: 0 2px; border-radius: 50%;
+  border: 1.5px solid var(--glass-ink-3); border-top-color: transparent; animation: mv-spin .9s linear infinite }
+@keyframes mv-spin { to { transform: rotate(360deg) } }
+@keyframes mv-pulse { 50% { opacity: .35 } }
+
+/* buttons: the shell's jm-btn (34 px pills; primary is Marver's blue) */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 13px;
+  border-radius: 999px; border: 1px solid var(--glass-brd); background: none; color: var(--glass-ink);
+  font: 600 12px -apple-system, system-ui, sans-serif; white-space: nowrap; transition: background-color .15s }
+.btn:hover { background: var(--glass-hover) }
+.btn.primary { background: var(--mv-blue, #0088ff); border-color: transparent; color: #fff }
+.btn.primary:hover { filter: brightness(1.08) }
+
+/* a command that is its own button: one click copies it (the shell's update pill, .sh-update .cmd) */
+.cmd { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; min-width: 0; height: 30px; padding: 0 12px;
+  border-radius: 999px; border: 1px solid var(--glass-brd); background: var(--glass-hover); color: var(--glass-ink-3) }
+.cmd code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 11.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--glass-ink-2) }
+.cmd:hover code { color: var(--glass-ink) }
+.cmd-tail { flex: none; display: inline-flex; align-items: center }
+.cmd-copied { font: 600 11px/1 -apple-system, system-ui, sans-serif; color: var(--glass-good) }
+
+/* a quiet capsule button (Show the Files) */
+.quiet { height: 26px; padding: 0 11px; border: 0; border-radius: 999px; background: var(--glass);
+  box-shadow: inset 0 0 0 .5px var(--glass-brd); color: var(--glass-ink-2); font: 500 11.5px/1 -apple-system, system-ui, sans-serif }
+.quiet:hover { color: var(--glass-ink) }
+
+.hint { color: var(--glass-ink-3); font-size: 12px }
+.hint code { font: 500 11.5px/1 ui-monospace, Menlo, monospace; color: var(--glass-ink-2); background: var(--glass-hover); padding: 2px 5px; border-radius: 5px }
+
+/* the system's settings, followed live (A2.13): the glass is opaque through the tokens (tokens.css); borders solid */
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .cmd, .btn, .quiet { border-color: var(--node-brd) }
+}
+/* Reduce Motion: nothing moves - no transition, no spinner turning (A2.14 #26) */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; scroll-behavior: auto !important }
+  .spin { animation: mv-pulse 1.6s ease-in-out infinite; border-top-color: var(--glass-ink-3) }
+}
