@@ -7,6 +7,7 @@
  * when its turn comes.
  */
 import { admit, release } from './admission.ts'
+import { canvasCtl } from './ctl.ts'
 import { frameIsLeased, useStore, type Node } from '../store.ts'
 
 const rect = (key: string) => document.querySelector(`[data-node="${CSS.escape(key)}"]`)?.getBoundingClientRect()
@@ -21,7 +22,7 @@ function onScreen(key: string): boolean {
   return r.right > c.left - mx && r.left < c.right + mx && r.bottom > c.top - my && r.top < c.bottom + my
 }
 const rank = (key: string) => () => {
-  const r = rect(key), c = view()
+  const now = rect(key), c = view(), r = now && canvasCtl.landing(now)   // where it will be once a camera flight lands
   return r && c ? Math.hypot(r.x + r.width / 2 - c.x - c.width / 2, r.y + r.height / 2 - c.y - c.height / 2) : Infinity
 }
 

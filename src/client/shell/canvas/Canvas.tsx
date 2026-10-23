@@ -10,6 +10,7 @@ import { NOTE_GAP } from '../notes.ts'
 import { onMotion, startCameraBroadcast, setCameraScale } from './camera-broadcast.ts'
 import { attachCanvas, recorder } from '../recorder.ts'
 import { sleepingCount } from './sleep.ts'
+import { aimed } from './admission.ts'
 import { keepOverResume, resumed, WS } from '../api.ts'
 import { APP_REOPEN } from '../marver-app.ts'
 
@@ -50,6 +51,8 @@ function savedCamera(board: string): Camera | null {
   } catch { return null }
 }
 let keepTimer: ReturnType<typeof setTimeout> | undefined
+/** Where the camera's flight lands (a fit, a zoom), for canvasCtl.landing: read only while rzpp animates. */
+let flight: Camera | null = null
 function keepCamera(x: number, y: number, scale: number) {
   if (!WS) return
   const board = useStore.getState().board
@@ -170,6 +173,13 @@ export function Canvas() {
   const gesture = useStore((s) => s.gesture)
   const setScale = useStore((s) => s.setScale)
   const ref = useRef<ReactZoomPanPinchContentRef>(null)
+  // every camera move the canvas aims (a fit, a zoom, a camera restored): where it lands, while rzpp flies there, and the
+  // boot queue told - the first frame of a board starts now, ranked on that view, not once the flight is over
+  const fly = (x: number, y: number, scale: number, ms: number) => {
+    flight = ms ? { x, y, scale } : null
+    ref.current?.setTransform(x, y, scale, ms, 'easeOut')
+    aimed()
+  }
   const scaleTimer = useRef(0)
 
   // B0.4: frame-time sampler + image-LOD camera signal; the recorder hears when the camera stops and what sleeps (spec 28 A1.7)
@@ -199,7 +209,7 @@ export function Canvas() {
       const tx = px - x * scale, ty = py - y * scale
       // where this fit lands, in world px: the first one after a board's commit shows its visible cohort (spec 28 A1.7)
       recorder.placed({ x: -tx / scale, y: -ty / scale, w: vw / scale, h: vh / scale })
-      ref.current.setTransform(tx, ty, scale, 320, 'easeOut')
+      fly(tx, ty, scale, 320)
     }
     const fitKeys = (keys: string[], focus: boolean) => {
       const st = useStore.getState()
@@ -239,9 +249,17 @@ export function Canvas() {
       const { positionX, positionY, scale } = inst.instance.transformState
       const cx = el.clientWidth / 2, cy = el.clientHeight / 2
       const k = target / scale   // zoom about the viewport center
-      inst.setTransform(cx - (cx - positionX) * k, cy - (cy - positionY) * k, target, 250, 'easeOut')
+      fly(cx - (cx - positionX) * k, cy - (cy - positionY) * k, target, 250)
     }
     canvasCtl.cameraBusy = () => !!ref.current?.instance.animation
+    // a rect on screen now, where it will be when the flight lands: the same world point under the landing transform
+    canvasCtl.landing = (r: DOMRect) => {
+      const el = wrap(), inst = ref.current
+      if (!flight || !el || !inst?.instance.animation) return r
+      const { positionX, positionY, scale } = inst.instance.transformState
+      const c = el.getBoundingClientRect(), k = flight.scale / scale
+      return new DOMRect(c.left + flight.x + (r.left - c.left - positionX) * k, c.top + flight.y + (r.top - c.top - positionY) * k, r.width * k, r.height * k)
+    }
     // a page that reloads itself when its canvas comes back (spec 28 A1.11) opens where the person was looking
     const unkeep = keepOverResume(() => {
       const t = ref.current?.instance.transformState
@@ -294,7 +312,7 @@ export function Canvas() {
       const el = document.querySelector('.sh-canvas') as HTMLElement | null
       if (cam && el && ref.current) {
         recorder.placed({ x: -cam.x / cam.scale, y: -cam.y / cam.scale, w: el.clientWidth / cam.scale, h: el.clientHeight / cam.scale })
-        ref.current.setTransform(cam.x, cam.y, cam.scale, 0)
+        fly(cam.x, cam.y, cam.scale, 0)
       } else if (keys.length) {
         canvasCtl.fitNodes(keys)
       } else {

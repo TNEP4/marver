@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { cap, frameUrl, shownRev, useStore, CONFIG, type Node } from '../store.ts'
 import { admit, release } from './admission.ts'
+import { canvasCtl } from './ctl.ts'
 import { CopyIcon, IntentGlyph, ParallelogramFillIcon, ReloadIcon, SlideFrameIcon, XIcon } from '../icons.tsx'
 import { CommentLayer } from '../Comments.tsx'
 import { useComments } from '../comments-store.ts'
@@ -108,9 +109,12 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   useEffect(() => {
     if (!frame || node.missing) { admittedRef.current = false; setSrc(undefined); return }   // gone: the card replaces the iframe; a return is a new document, admitted anew
     if (admittedRef.current) return   // the document exists (the frame's id changed under it): no slot
-    const rank = () => {   // visible first, then by distance to the centre of the canvas (the panel offsets the window's)
-      const r = iframeRef.current?.getBoundingClientRect(), c = document.querySelector('.sh-canvas')?.getBoundingClientRect()
-      if (!r || !c) return Infinity
+    // visible first, then by distance to the centre of the canvas (the panel offsets the window's) - where the frame
+    // will be once the camera lands from a fit or zoom on its way (a board's first pick comes as the fit sets off)
+    const rank = () => {
+      const now = iframeRef.current?.getBoundingClientRect(), c = document.querySelector('.sh-canvas')?.getBoundingClientRect()
+      if (!now || !c) return Infinity
+      const r = canvasCtl.landing(now)
       const visible = r.right > c.left && r.left < c.right && r.bottom > c.top && r.top < c.bottom
       return (visible ? 0 : 1e7) + Math.hypot(r.x + r.width / 2 - c.x - c.width / 2, r.y + r.height / 2 - c.y - c.height / 2)
     }

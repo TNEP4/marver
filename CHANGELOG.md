@@ -34,6 +34,13 @@ The canvas's side of the Mac app (app 0.1), and what it brings to every browser.
   which read as a contradiction (`quietMs` stays in `--json`). `slowest` is now `slowest to settle`: a frame's time
   to its last height, which can come after `all ready`, each frame's first render. [Performance](docs/performance.md)
   says what settled means: every frame done, and the board still for one second after its last change.
+- **A board's first frame starts about 0.3 s sooner when the board opens.** It waited 0.35 s after the board
+  mounted, for the camera's first fit to land, so that it would be the frame nearest the centre of the view you
+  see. It now starts as the fit sets off, chosen on where the fit will land - the same frame. On a real project's
+  boards, the first frame started at 0.04-0.11 s instead of 0.37-0.43 s, the frames were ready 0.1-0.4 s sooner
+  (a 30-frame board: 1.3 s to 1.0 s), and the board that settled last settled 0.2-0.3 s sooner; nothing moved more
+  ([Performance](docs/performance.md#making-a-board-faster) has the numbers). The zoom of that first fit draws a
+  frame or two fewer while the frame boots.
 - **`marver ls` and the registry name a canvas as the canvas does.** A canvas's line in `~/.marver/running/` carries
   `share.name` when you set one ("TMS broker", not "tms-broker"), else the folder name.
 

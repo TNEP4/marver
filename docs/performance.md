@@ -59,23 +59,23 @@ was known; the second time the heights the first load settled at were in `design
 $ npx marver perf --loads
 board loads, last 60 min - design/.local/perf/page.jsonl
 
-  3:41:36 PM  Checkout flow (boot)                     settled 2.1 s
+  3:41:36 PM  Checkout flow (boot)                     settled 1.8 s
     committed 0.0 s · 3 frames (3 content) · 3 measure, 0 opened at a known height
-    first frame started 0.36 s · visible ready 0.5 s (3 frames) · all ready 0.5 s · still from 1.1 s · settled 2.1 s
+    first frame started 0.05 s · visible ready 0.2 s (3 frames) · all ready 0.2 s · still from 0.8 s · settled 1.8 s
     5 moves, 1650 px: measure-height 3, reflow:measured 2
-    slowest to settle: checkout/risks 0.7 s (waited 0.42 s, then 0.28 s), checkout/flows 0.6 s (waited 0.42 s, then 0.18 s), checkout/brief 0.6 s (waited 0.36 s, then 0.24 s)
+    slowest to settle: checkout/risks 0.4 s (waited 0.11 s, then 0.28 s), checkout/flows 0.3 s (waited 0.11 s, then 0.18 s), checkout/brief 0.3 s (waited 0.05 s, then 0.24 s)
 
   3:42:03 PM  Checkout flow (boot)                     settled 1.0 s
     committed 0.0 s · 3 frames (3 content) · 3 measure, 3 opened at a known height
-    first frame started 0.36 s · visible ready 0.5 s (3 frames) · all ready 0.5 s · still from 0.0 s · settled 1.0 s
+    first frame started 0.05 s · visible ready 0.2 s (3 frames) · all ready 0.2 s · still from 0.0 s · settled 1.0 s
     0 moves
-    slowest to settle: checkout/risks 0.6 s (waited 0.42 s, then 0.18 s), checkout/flows 0.6 s (waited 0.42 s, then 0.18 s), checkout/brief 0.5 s (waited 0.36 s, then 0.14 s)
+    slowest to settle: checkout/risks 0.3 s (waited 0.11 s, then 0.18 s), checkout/flows 0.3 s (waited 0.11 s, then 0.18 s), checkout/brief 0.2 s (waited 0.05 s, then 0.14 s)
 ```
 
 Each load names its board as the sidebar does - its title, else its name - and `--json` by its name
 (`board`). The first load opened each frame at a guess: each reported its height (`measure-height`) and
-the frames below moved with the re-flow (`reflow:measured`) - five moves, the last at 1.1 s: still from
-1.1 s, settled at 2.1 s. The second opened at the known heights: nothing moved, so it was still from the
+the frames below moved with the re-flow (`reflow:measured`) - five moves, the last at 0.8 s: still from
+0.8 s, settled at 1.8 s. The second opened at the known heights: nothing moved, so it was still from the
 mount, and it settled at 1.0 s, the one-second floor.
 
 **Ready and settled are two clocks.** A frame is *ready* at its first render: `visible ready` and `all
@@ -87,10 +87,10 @@ The board has *settled* once every frame has, and it has been still for one seco
 `settled` comes a second after it at the soonest, later when a frame was still on its way.
 
 Each frame in `slowest to settle` says how long it waited for its turn to start, then how long it took once
-started. The canvas starts a board's frames a few at a time: the first alone, once the first camera fit has
-settled - about 0.35 s after the board mounts, `first frame started` - then up to four at once, those in view
-first. Here every frame took a quarter of a second or less of its own; most of the time before them was the
-wait.
+started. The canvas starts a board's frames a few at a time: the first alone, as the board's first camera fit
+sets off - a frame after the board mounts, 0.06 s later on a switch: `first frame started` - chosen as the
+one nearest the centre of where the fit will land, then up to four at once, those in view first. Here every
+frame took a quarter of a second or less of its own, and none waited much more than a tenth of one.
 
 `--json` also has `quietMs`: when the first still second after the mount began. On a heavy board they part:
 one that held still for a second after a move at 1.8 s, then moved again as late frames reported their
@@ -122,9 +122,35 @@ Read the load, name the lever, change it, compare the next load - you, or your a
   lighten what its frames load.
 - **A frame that waits long to start: the queue, not the frame.** `waited` (and `first frame started`) is the
   time before its turn came; nothing in the frame shortens it. On a board of many frames the last wait for those
-  before them: fewer frames on the board, or lighter ones that hand their turn on sooner. The first frame's wait,
-  about 0.35 s, is the canvas's own and the same on every board - a one-frame board that settles at 1.0 s has no
+  before them: fewer frames on the board, or lighter ones that hand their turn on sooner. The first frame's wait
+  is the canvas's own and about the same on every board - 0.03-0.08 s on a page's first load, 0.08-0.11 s on a
+  switch, the time until the camera's first fit sets off - and a one-frame board that settles at 1.0 s has no
   lever left in the project.
+- **The canvas's own lever, taken in 0.27.1.** Until 0.27.0 the first frame waited 0.35 s after the board
+  mounted, for the first camera fit to land (`SETTLE` in `canvas/admission.ts`): that wait exists so the first
+  frame - booting alone, the quickest first content - is the one nearest the centre of the view you will see,
+  not of a camera still on its way. It now starts as the fit sets off, ranked on where the fit will land
+  (`canvasCtl.landing`); with no fit said (a frame added, a calm update), it waits as before. Measured on a
+  real project's boards - four of them, each opened three times in a fresh tab (`boot`) and three times picked
+  from another board (`switch`), headless Chrome at 1440x900, `perf --loads --json`, medians in ms (every frame
+  was in view, so visible ready and all ready are the same):
+
+  | board, frames | load | first frame started | ready | settled | moves |
+  |---|---|---|---|---|---|
+  | v1 build, 4 content | boot | 392 → 39 | 672 → 251 | 1051 → 1025 | 0 → 0 |
+  | v1 lo-fi, 30 | boot | 425 → 83 | 1306 → 1039 | 1370 → 1087 | 0 → 0 |
+  | Meeting, 14 | boot | 409 → 64 | 769 → 504 | 1029 → 1027 | 0 → 0 |
+  | Capture, 13 | boot | 404 → 52 | 721 → 457 | 1028 → 1019 | 0 → 0 |
+  | v1 build | switch | 369 → 82 | 613 → 500 | 1005 → 1005 | 0 → 0 |
+  | v1 lo-fi | switch | 395 → 112 | 1187 → 912 | 1194 → 1007 | 0 → 0 |
+  | Meeting | switch | 388 → 103 | 752 → 472 | 1005 → 1005 | 0 → 0 |
+  | Capture | switch | 380 → 93 | 636 → 377 | 1005 → 1005 | 0 → 0 |
+
+  Every board's first frame was the same one before and after. What it costs: that frame boots during the
+  fit's 0.32 s zoom over blank cards, which draws a frame or two fewer - over the twelve switches, 221 frames
+  drawn instead of 241, 18 intervals over 17 ms instead of 3 (4 over 33 ms instead of 3, none over 50 ms).
+  The boards that settle at 1.0 s were already at the one-second floor; a board whose frames finish later
+  settles sooner.
 - **Never ready, missing, errors** are broken frames, not slow ones: fix them first. A missing frame's
   file was deleted or renamed.
 - **The weight** (`settled.weight`) says how heavy the settled board is: elements in the page and its
