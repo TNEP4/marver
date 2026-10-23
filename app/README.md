@@ -73,12 +73,20 @@ window, the tabs, the menu. Each module after the guard is its stream's; its hea
   the pill, the focus owner), `views` (every view's bounds and visibility as Electron reports them), `window`,
   `activate`, `command`, `close`, `guard`, `guardAll`, `crash`, `reloadPage`, `exec`, `key`, `click`, `focused`,
   `focusApp`, `onTop`, `page`, `tabpage:action`, `pill:raise`, `pill:action`, `menu:items`, `menu:hold`,
-  `menu:click`, `openInTab`, `outside`. A test build never shows a native sheet: `sheet` sets how the seam answers
-  (`confirm` by default, `cancel`, or `hold` until `sheet:answer`), `sheets` lists what was asked. With
-  `MARVER_APP_FAKE_TRUST=1` the window stream's cases run before the trust stream's modules (`testing/fake-trust.ts`:
-  `fake:entry`, `fake:gone`, `fake:mode`, `fake:report`; `MARVER_APP_FAKE_ENTRIES` for the canvases running at
-  launch). Helpers in `test/harness/window.ts`; real key events in `test/native/keypost.swift` (Accessibility for
-  the terminal, else those cases say they are inconclusive).
+  `menu:click`, `openInTab`, `openSameCanvas`, `outside`, `effects`, `resume` (powerMonitor's wake), `silent` (a main
+  frame that does not answer for a while), `cdpClick` (a click hit-tested by the browser, so it reaches a
+  cross-process iframe), `frames`, `hang:report` (the hang monitor's report made by hand). A test build never shows
+  a native sheet: `sheet` sets how the seam answers (`confirm` by default, `cancel`, or `hold` until `sheet:answer`,
+  a held hang sheet closing itself when its signal aborts, as `showMessageBox` does), `sheets` lists what was asked;
+  nor a native popup: `tabMenu` and `tabsMore` record the strip's menus in the journal (`popup`), `popup:click`
+  chooses an item. With `MARVER_APP_FAKE_TRUST=1` the window stream's cases run before the trust stream's modules
+  (`testing/fake-trust.ts`: `fake:entry`, `fake:gone`, `fake:mode`, `fake:report`, `fake:logo`;
+  `MARVER_APP_FAKE_ENTRIES` for the canvases running at launch). The fake trust registers nothing with the real
+  bridge: once the trust stream's modules are built in, its policy lets a subframe navigate only for a canvas the
+  bridge knows, so a case with iframes runs on the real trust (`test/prod/hang.test.ts`), as does
+  `test/prod/guard-bridge.test.ts` (skipped, saying so, without them). Helpers in `test/harness/window.ts`; real key
+  events in `test/native/keypost.swift` (Accessibility for the terminal, else those cases say they are
+  inconclusive); the focus cases read focus only while the window is key, else they are skipped as inconclusive.
 - **the packaged smoke** (`test/smoke/smoke.mjs`): S9's checks and X7's cases on the signed build; every launch on
   its own profile with `--use-mock-keychain`. WARN lines are what the skeleton cannot do yet (a canvas cookie, the
   launch's first frame callback); they turn PASS by themselves once a canvas tab loads.

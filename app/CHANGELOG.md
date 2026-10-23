@@ -15,7 +15,10 @@
 - One guard for every document the app replaces - closing a tab, quitting, `⌘R`, `⇧⌘R`, Try Again, a link: a page
   that said it holds unsaved work is refused at once and comes forward with "Unsaved work here"; one main cannot hear
   asks first (Cancel the default); the page's own `beforeunload` an extra veto. The quit is one guarded operation
-  per canvas tab, cancelled by any refusal.
+  per canvas tab, cancelled by any refusal - and a refused quit shows the window, even one you had closed. Only a
+  link that names a hash on the page's own document opens with no question; one without a hash is a new document.
+- A canvas that starts after launch opens its tab on the board it was left on; a second `marver dev` of the same repo
+  gets a tab of its own.
 - The tab's own page in place of an error page - starting, stopped, not a Marver canvas, can't be reached, crashed -
   and crashes with one owner: the first reloads at once, a second within a minute latches until you press Reload.
 - Not responding: the pill's Reload asks first, then ends the page's renderer once and reloads every tab it held.
