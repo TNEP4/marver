@@ -125,6 +125,9 @@ beforeAll(async () => {
   await browser.send('Page.addScriptToEvaluateOnNewDocument', { source: HELPERS }, s)
   await browser.go(s, `${ORIGIN}/#/b/main`)
   await until(`window.__mvStore?.getState().nodes.length === 4 && !!window.__mvComments && window.__mvStore.getState().nodes.every((n) => n.status === 'ready')`, 45_000)
+  // and the board's first fit landed: its frames start as the fit sets off (0.27.1), and four small ones are all ready
+  // a quarter of a second before the camera's 0.32 s flight ends - a click aimed at a button aims at the board at rest
+  await until(`!!window.__mvJamCanvas && !window.__mvJamCanvas.cameraBusy()`, 5_000)
 }, 120_000)
 
 afterAll(async () => {
