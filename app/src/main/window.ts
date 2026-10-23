@@ -1,10 +1,25 @@
 /**
- * The window (spec 28 A2.2, A2.11, A2.13, A2.14 #1, #19, #20, #21, #33). Owner: the window stream.
+ * The window (spec 28 A2.2, A2.11, A2.13, A2.14 #1, #19, #20, #21, #33, A3.8 #24-#33). Owner: the window stream;
+ * the one ground's parts (A3) the one-ground stream's.
  *
  * One `BaseWindow` named `main` (window place: `windowStatePersistence` does nothing without a name). Its stack,
- * bottom to top: the content views (canvases, Home, Settings), the tab pages, the cover, the strip. App 0.1 has
- * the opaque strip: every view sits below the 44 px strip, and the cover - main's plain view, in the ground of the
- * active tab's look - is always shown under the strip's tabs (plan.ts).
+ * bottom to top: the content views (canvases, Home, Settings), the tab pages, the cover, the strip. The strip is
+ * transparent and paints controls only (A3.8 #29). Home, Settings and every tab page run the window's full height
+ * and paint the ground and still dots under the strip themselves; a canvas runs full height only when its layout
+ * says so (layout.ts), else below the strip; the cover - cover.ts's, in the ground of the active tab's look - is
+ * shown whenever the active view may not be seen through (plan.ts).
+ *
+ * **The cover waits for spike S15** (A3.8 #3): until cover.ts makes one, the cover is app 0.1's plain view behind
+ * cover.ts's interface, and no canvas is placed full height (layout.ts `setGround(false)`): a plain `View` may be
+ * drawn beneath a full-height web view on macOS, and nothing has shown it is not. Over views below the strip it
+ * covers by construction - they never overlap it. A test build can turn the gate on (`MARVER_APP_GROUND=1`) to drive
+ * main's half of the one ground - the decisions, never the pixels.
+ *
+ * The presentation (A3.8 #27, #28): before the plan, compose derives the active canvas view's presentation key
+ * (present.ts `observe`) - advancing its `gen` when it is shown after being hidden - and the cover lifts only for a
+ * see-through view whose latest epoch is answered, with no live resize running; after the turn's view changes it
+ * sends that epoch's request once (`flush`). A live resize is a person's drag, `will-resize` to `resized` (or 500 ms
+ * of quiet): covered throughout, no request, and at its end every view's `gen` advances.
  *
  * `compose()` is the one writer of bounds and visibility (A2.14 #20): every handler changes the model, then calls
  * it; it derives the plan and applies only what changed, in one turn and in a fixed order - bounds, shows, the
@@ -21,14 +36,17 @@ import { app, BaseWindow, nativeImage, nativeTheme, screen, View, WebContentsVie
 import * as sessions from './sessions.ts'
 import type { Present } from '../../../src/shared/app-api.ts'
 import { CH, type PageKind, type PageFocus, type TabsSnapshot, type TabView, type WindowView } from '../shared/channels.ts'
-import { STRIP_HEIGHT, below, ground, plan, type Plan, type PlanTab } from './plan.ts'
-import { activeTab, allTabs, darkOf, getTab, ordered, viewOf, type Tab } from './tabs.ts'
+import { STRIP_HEIGHT, full, ground, plan, type Plan, type PlanTab } from './plan.ts'
+import { activeTab, allTabs, darkOf, getTab, ordered, viewOf, type Layout, type Tab } from './tabs.ts'
 import { pageFor, snapshotKey, type PageBody } from './tabpage.ts'
 import { recompute as recomputePill, onVisibility } from './pill.ts'
 import { afterShow, setFocusPorts, track } from './focus.ts'
 import { invalidateMenu } from './menu.ts'
-import { note } from './testing/index.ts'
+import { note, noteTopic, provide, testMode } from './testing/index.ts'
 import { T } from './timings.ts'
+import { groundOn, onLayoutChange, placed, rectFor, seeThrough, setGround } from './layout.ts'
+import { bumpAll, bumpGen, epochOf, flush as presentFlush, genOf, gpuGone, liftAt, noteGpu, observe, onPresentLog } from './present.ts'
+import { makeCover, type Cover } from './cover.ts'
 
 export { STRIP_HEIGHT }
 
@@ -53,7 +71,7 @@ export interface WindowDeps {
 }
 
 let win: BaseWindow | null = null
-let cover: View | null = null
+let cover: Cover | null = null
 let strip: WebContentsView | null = null
 let deps: WindowDeps | null = null
 let turn = 0
@@ -95,7 +113,7 @@ export function attachContent(tabId: string, view: WebContentsView, kind: PageKi
   const t = getTab(tabId)
   view.setBackgroundColor(ground(darkOf(t, nativeTheme.shouldUseDarkColors)))
   const { width, height } = win.getContentBounds()
-  view.setBounds(below(width, height))
+  view.setBounds(t ? rectFor(t, width, height) : rectFor('app-page', width, height))
   win.contentView.addChildView(view, 0)
   content.set(tabId, { view, kind })
   applied.delete(`${tabId}:view`)
@@ -234,9 +252,9 @@ function createPage(t: Tab): PageHandle {
   track(view.webContents, { part: 'page', tab: t.id })
   view.webContents.on('render-process-gone', () => { if (pages.get(t.id) === h) { closePage(t.id); compose() } })   // made again by the next compose
   const { width, height } = win!.getContentBounds()
-  view.setBounds(below(width, height))
-  // above the content views, beneath the cover and the strip
-  win!.contentView.addChildView(view, Math.max(0, win!.contentView.children.length - 2))
+  view.setBounds(full(width, height))   // the window's full height: it paints the ground under the strip (A3.8 #32)
+  // above the content views, beneath the cover (when it is a view) and the strip
+  win!.contentView.addChildView(view, Math.max(0, win!.contentView.children.length - (cover?.view ? 2 : 1)))
   void view.webContents.loadURL(`${APP_ORIGIN}tabpage/`).catch(() => { /* served by sessions.ts; a failure leaves its ground */ })
   pages.set(t.id, h)
   j('view', { turn, op: 'add', key: `${t.id}:page`, kind: 'tabpage' })
@@ -313,12 +331,43 @@ export function compose(o: { focus?: 'shown' } = {}): void {
   } finally { composing = false }
 }
 
-function planTab(t: Tab, appDark: boolean): PlanTab {
+/** The tab's own page shows over it this turn (A2.11). */
+const pageShows = (t: Tab): boolean => { const h = pages.get(t.id); return !!h && !h.closing && !!h.body }
+
+function planTab(t: Tab, appDark: boolean, presented: boolean): PlanTab {
   const h = pages.get(t.id)
   return {
     id: t.id, kind: t.kind, view: content.has(t.id), page: !!h && !h.closing && !!h.body, pageView: !!h,
-    dark: darkOf(t, appDark),
+    dark: darkOf(t, appDark), placed: placed(t), seeThrough: seeThrough(t), presented,
   }
+}
+
+// ---- the one ground's state: a live resize, the lift's delay ----
+
+/** a person's live resize, `will-resize` .. `resized` (or the quiet timer) */
+let resizing = false
+let quietTimer: ReturnType<typeof setTimeout> | undefined
+let liftTimer: ReturnType<typeof setTimeout> | undefined
+
+function armQuiet(): void {
+  clearTimeout(quietTimer)
+  quietTimer = setTimeout(() => endLiveResize('quiet'), T.liveResizeQuietMs)
+}
+function startLiveResize(): void {
+  armQuiet()
+  if (resizing) return
+  resizing = true
+  if (__MV_TEST__) noteTopic('resize', { live: true, via: 'will-resize' })
+  compose()
+}
+/** The drag ended: what was presented no longer counts - every view's gen advances, and one request follows (A3.8 #28). */
+function endLiveResize(via: 'resized' | 'quiet'): void {
+  if (!resizing) return
+  resizing = false
+  clearTimeout(quietTimer)
+  bumpAll()
+  if (__MV_TEST__) noteTopic('resize', { live: false, via })
+  compose()
 }
 
 function viewFor(key: string): WebContentsView | undefined {
@@ -332,7 +381,25 @@ function composeOnce(o: { focus?: 'shown' }): void {
   syncPages(now)
   const { width: w, height: h } = win!.getContentBounds()
   const appDark = nativeTheme.shouldUseDarkColors
-  const p: Plan = plan({ tabs: allTabs().map((t) => planTab(t, appDark)), active: activeTab()?.id ?? 'home', w, h, appDark })
+  const a = activeTab()
+  // 0. the presentation, before the plan (A3.8 #27): the active canvas view's key, from the model as it is now. A view
+  // shown after being hidden advances its gen; any shown view with an admitted document has a key (so leaving HTML
+  // fullscreen, or a hello, is a fresh epoch); only a see-through one asks and may lift the cover
+  let presented = false
+  let eligible = false
+  if (a?.kind === 'local' && content.has(a.id) && !pageShows(a)) {
+    if (!applied.get(`${a.id}:view`)?.vis) bumpGen(a.id)
+    const doc = a.doc?.trusted && a.doc.lifted ? a.doc.doc : undefined
+    if (doc) {
+      const r = rectFor(a, w, h)
+      presented = observe(a.id, { doc, w: r.width, h: r.height, fs: a.geo.htmlFullscreen, gen: genOf(a.id) }, now)
+      eligible = seeThrough(a)
+      // a lift waiting on uncoverDelayMs: compose again then
+      const at = liftAt(a.id)
+      if (eligible && !presented && at !== null && at > now) { clearTimeout(liftTimer); liftTimer = setTimeout(() => compose(), at - now + 1) }
+    }
+  }
+  const p: Plan = plan({ tabs: allTabs().map((t) => planTab(t, appDark, t === a && eligible && presented)), active: a?.id ?? 'home', w, h, appDark, resizing })
   lastPlan = p
   const changes: unknown[] = []
   // 1. bounds, shown or hidden, and each view's ground
@@ -352,11 +419,15 @@ function composeOnce(o: { focus?: 'shown' }): void {
     if (!a || !view) continue
     if (v.visible && !a.vis) { view.setVisible(true); a.vis = true; changes.push({ key: v.key, op: 'visible', visible: true }) }
   }
-  // 3. the cover (always shown in 0.1) and the strip, on top
-  cover!.setBounds(p.cover.rect)
+  // 3. the cover and the strip, on top - the cover in the same turn as the views beneath (A3.8 #30)
+  cover!.setRect(p.cover.rect)
   strip!.setBounds(p.strip)
-  if (p.cover.color !== coverWas.color) { cover!.setBackgroundColor(p.cover.color); win!.setBackgroundColor(p.cover.color) }
-  if (p.cover.visible !== coverWas.visible) cover!.setVisible(p.cover.visible)
+  if (p.cover.color !== coverWas.color) { cover!.setLook(p.cover.dark); win!.setBackgroundColor(p.cover.color) }
+  if (p.cover.visible !== coverWas.visible) {
+    cover!.setVisible(p.cover.visible)
+    changes.push({ key: 'cover', op: 'visible', visible: p.cover.visible })
+    if (__MV_TEST__ && !p.cover.visible && a && eligible) noteTopic('present', { tab: a.id, op: 'uncover', epoch: epochOf(a.id) ?? 0, gen: genOf(a.id) })
+  }
   coverWas = { visible: p.cover.visible, color: p.cover.color }
   // 4. focus, before the hides: what the active tab shows now holds it (A2.13)
   afterShow(o.focus)
@@ -370,9 +441,15 @@ function composeOnce(o: { focus?: 'shown' }): void {
   // 6. lifted tab pages, closed after the canvas view shows
   for (const [id, hp] of [...pages]) if (hp.closing) closePage(id)
   // a document the person can see is retained: it may hold their work (v1.13 r2 #3)
-  const a = activeTab()
   if (a?.kind === 'local' && a.doc && a.doc.lifted && applied.get(`${a.id}:view`)?.vis) { a.doc.shown = true; a.retained = true }
-  if (__MV_TEST__ && changes.length) note('compose', { turn, active: p.active, w, h, cover: coverWas, changes })
+  // 7. after the views changed in this turn: the request goes out, so it reaches a view already shown and sized
+  // (A3.8 #27) - never during a live resize; a send that fails is retried by the next compose
+  if (a && eligible && !resizing && deps?.present) presentFlush(a.id, (doc, r) => deps!.present!(a.id, doc, r), T.presentFrames)
+  if (__MV_TEST__ && changes.length) {
+    const layouts: Record<string, Layout> = {}
+    for (const t of allTabs()) if (t.kind === 'local' && content.has(t.id)) layouts[t.id] = placed(t)
+    noteTopic('compose', { turn, active: p.active, w, h, cover: coverWas, changes, resizing, layouts })
+  }
   feedTabs()
   feedWindow()
   recomputePill()
@@ -385,7 +462,7 @@ export function viewsNow(): { key: string; bounds: { x: number; y: number; width
   const out: { key: string; bounds: { x: number; y: number; width: number; height: number }; visible: boolean }[] = []
   for (const [id, c] of content) out.push({ key: `${id}:view`, bounds: c.view.getBounds(), visible: c.view.getVisible() })
   for (const [id, h] of pages) out.push({ key: `${id}:page`, bounds: h.view.getBounds(), visible: h.view.getVisible() })
-  if (cover) out.push({ key: 'cover', bounds: cover.getBounds(), visible: cover.getVisible() })
+  if (cover?.view) out.push({ key: 'cover', bounds: cover.view.getBounds(), visible: cover.view.getVisible() })
   if (strip) out.push({ key: 'strip', bounds: strip.getBounds(), visible: strip.getVisible() })
   return out
 }
@@ -460,7 +537,10 @@ export async function captureWindow(): Promise<AppPicture> {
       blend(bmp, bw, bh, x0, y0)
       layers.push(`${child.webContents.getURL()} @${b.x},${b.y} ${b.width}x${b.height}`)
     } else {
-      fill(x0, y0, bw, bh, coverWas.color)
+      // the cover as cover.ts draws it; app 0.1's plain view a fill of its ground
+      const bmp = child === cover?.view ? cover.bitmap(bw, bh, sf) : null
+      if (bmp && bmp.length === bw * bh * 4) blend(bmp, bw, bh, x0, y0)
+      else fill(x0, y0, bw, bh, coverWas.color)
       layers.push(`cover ${coverWas.color} @${b.x},${b.y} ${b.width}x${b.height}`)
     }
   }
@@ -492,11 +572,21 @@ export function openWindow(d?: WindowDeps): BaseWindow {
     titleBarStyle: 'hidden', trafficLightPosition: LIGHTS,
     backgroundColor: ground(dark), show: false, title: 'Marver',
   })
-  cover = new View()
-  cover.setBackgroundColor(ground(dark))
+  // the cover S15 chose (cover.ts), else app 0.1's plain view - and with it no canvas at full height (A3.8 #3)
+  let chosen: Cover | null = null
+  try { chosen = makeCover(win) } catch (err) { j('cover', { s15: String((err as Error)?.message ?? err) }) }
+  cover = chosen ?? plainCover()
+  setGround(!!chosen || (__MV_TEST__ && testMode() && process.env.MARVER_APP_GROUND === '1'))
+  j('cover', { chosen: !!chosen, ground: groundOn() })
+  cover.setLook(dark)
+  cover.setVisible(true)
   coverWas = { visible: true, color: ground(dark) }
+  if (__MV_TEST__) {
+    onLayoutChange((d) => noteTopic('layout', d))
+    onPresentLog((d) => noteTopic('present', d))
+  }
   strip = new WebContentsView({ webPreferences: appPrefs() })
-  strip.setBackgroundColor('#00000000')   // transparent over the cover: only the strip draws the tabs and dots
+  strip.setBackgroundColor('#00000000')   // transparent: it paints controls only, over the cover or the views beneath (A3.8 #29)
   registerApp(strip.webContents, 'strip')
   track(strip.webContents, { part: 'strip' })
   strip.webContents.on('render-process-gone', () => {
@@ -504,7 +594,7 @@ export function openWindow(d?: WindowDeps): BaseWindow {
     j('strip', { gone: true })
     setTimeout(() => { if (strip && !strip.webContents.isDestroyed()) void strip.webContents.loadURL(`${APP_ORIGIN}strip/`).catch(() => {}) }, 0)
   })
-  win.contentView.addChildView(cover)
+  if (cover.view) win.contentView.addChildView(cover.view)
   win.contentView.addChildView(strip)
   void strip.webContents.loadURL(`${APP_ORIGIN}strip/`).catch(() => { /* served by sessions.ts */ })
 
@@ -519,7 +609,11 @@ export function openWindow(d?: WindowDeps): BaseWindow {
   })
 
   const deferred = () => setTimeout(() => compose(), 0)
-  win.on('resize', () => { compose(); deferred() })
+  // a live resize is a person's drag (A3.8 #28): macOS sends will-resize only for one, and resized at its end; a
+  // full-screen transition, the window place restored and a test's setContentSize send only resize
+  win.on('will-resize', () => startLiveResize())
+  win.on('resized', () => endLiveResize('resized'))
+  win.on('resize', () => { if (resizing) armQuiet(); compose(); deferred() })
   win.on('enter-full-screen', () => { compose(); deferred() })
   win.on('leave-full-screen', () => { compose(); deferred() })
   win.on('focus', () => feedWindow())
@@ -533,8 +627,57 @@ export function openWindow(d?: WindowDeps): BaseWindow {
   })
   win.on('closed', () => { win = null })
   nativeTheme.on('updated', () => compose())
+  if (__MV_TEST__) groundHooks()
   compose()
   return win
+}
+
+/**
+ * App 0.1's cover - one plain `View`, its background the ground - behind cover.ts's interface, until S15 picks one
+ * (A3.8 #3). It is not S15's variant 1: whether a plain view can sit over a full-height web view is the spike's
+ * question, so with this one no canvas is placed full height (`setGround`), and it only ever sits over nothing.
+ */
+function plainCover(): Cover {
+  const view = new View()
+  return {
+    view,
+    contents: () => null,
+    setRect: (r) => view.setBounds(r),
+    setVisible: (v) => view.setVisible(v),
+    setLook: (d) => view.setBackgroundColor(ground(d)),
+    bitmap: () => null,
+  }
+}
+
+/** The one ground's test hooks (dev builds, MARVER_APP_TEST=1): a live resize's events, the GPU process lost or replaced, the strip's heartbeat. */
+function groundHooks(): void {
+  const arg = <A>(a: unknown) => (a ?? {}) as A
+  // will-resize / resized / resize as macOS sends them for a person's drag (a test cannot drag the window's corner)
+  provide('ground:emit', (a) => {
+    const ev = arg<{ event: string }>(a).event
+    if (!win || !['will-resize', 'resized', 'resize'].includes(ev)) return false
+    win.emit(ev as 'resize', { preventDefault() {}, defaultPrevented: false }, win.getBounds(), { edge: 'bottom-right' })
+    return true
+  })
+  // child-process-gone with type GPU, as views.ts hears it - no process is killed
+  provide('ground:gpu-lost', () => { gpuGone(); compose(); return true })
+  // an identity read (a sample, a gpu-info-update): a replacement with no child-process-gone
+  provide('ground:gpu', (a) => { const id = arg<{ id?: { pid: number; born: number } | null }>(a).id ?? null; const changed = noteGpu(id); if (changed) compose(); return changed })
+  provide('ground:state', () => ({
+    ground: groundOn(), resizing, cover: { ...coverWas },
+    tabs: allTabs().map((t) => ({ id: t.id, geo: { ...t.geo }, placed: placed(t), seeThrough: seeThrough(t), epoch: epochOf(t.id), gen: genOf(t.id) })),
+  }))
+  // the capture matrix's heartbeat (A3.8 #29): a 1 px compositor animation in the strip's corner, so a stalled strip
+  // main thread keeps the display at its rate - test builds only; the release never carries it
+  let beat: string | null = null
+  provide('ground:heartbeat', async (a) => {
+    const s = stripContents()
+    if (!s) return false
+    const on = !!arg<{ on?: boolean }>(a).on
+    if (beat) { await s.removeInsertedCSS(beat).catch(() => {}); beat = null }
+    if (on) beat = await s.insertCSS('html::after { content: ""; position: fixed; right: 0; bottom: 0; width: 1px; height: 1px; background: #808080; will-change: opacity; animation: mv-beat 1s steps(2) infinite; pointer-events: none } @keyframes mv-beat { to { opacity: .5 } }', { cssOrigin: 'user' })
+    return true
+  })
 }
 
 /** Show the window: at launch (once the strip loaded, or after 300 ms), from the Dock, a second launch. */

@@ -1,13 +1,15 @@
-/* The strip (spec 28 A2.2, A2.13; frames mac-app/01-06, 11): 44 px, transparent over main's cover (the active tab's
-   ground), drawing still dots and the tabs on it - no bar and no line. The tabs are floating glass capsules hugging
-   their logo and name; the active one wears the shell's glass exactly as the sidebar and the toolbar do (fill,
-   hairline, shadow, edge light; no blur - the strip cannot sample what is under it). The only drag region. */
+/* The strip (spec 28 A2.2, A2.13, A3.8 #29; frames mac-app/01-06, 11): 44 px, transparent, painting controls only -
+   no ground, no dots, no bar and no line. Under it is main's cover (the active tab's ground) or, from app 0.2, the
+   view beneath: a see-through canvas's own scroll edge, Home's, Settings' or a tab page's ground and still dots. Dots
+   drawn here would sit over a canvas's moving grid, and a stalled strip renderer could not take them away. The tabs
+   are floating glass capsules hugging their logo and name; the active one wears the shell's glass exactly as the
+   sidebar and the toolbar do (fill, hairline, shadow, edge light; no blur - the strip cannot sample what is under
+   it). The only drag region. */
 
 html, body { background: transparent; overflow: hidden }
 body { -webkit-app-region: drag }
 .strip { position: fixed; left: 0; right: 0; top: 0; height: 44px; display: flex; align-items: center; gap: 8px;
-  padding: 0 14px 0 82px;   /* the traffic lights: x 14, three of 12 px 8 apart, then room */
-  background: radial-gradient(var(--dot) 1px, transparent 1px) 0 0 / 20px 20px }
+  padding: 0 14px 0 82px }   /* the traffic lights: x 14, three of 12 px 8 apart, then room */
 body.fullscreen .strip { padding-left: 10px }
 
 #tabs { flex: 1; min-width: 0; height: 44px; display: flex; align-items: center; gap: 8px }

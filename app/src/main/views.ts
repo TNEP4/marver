@@ -1090,7 +1090,7 @@ export function startViews(i: StartInput): void {
   })
   // the presentation (A3.8 #27): an accepted answer, judged with the GPU identity read in its turn; the GPU
   // process gone or replaced covers every view until each presents again
-  trust.onPresented?.((tabId, doc, r) => { if (presentAnswer(tabId, doc, r, Date.now(), gpuIdentity()) === 'ok') compose() })
+  trust.onPresented?.((tabId, doc, r) => { const v = presentAnswer(tabId, doc, r, Date.now(), gpuIdentity()); if (v === 'ok' || v === 'lost') compose() })
   app.on('child-process-gone', (_e, d) => { if (d.type === 'GPU') { gpuGone(); compose() } })
   app.on('gpu-info-update', () => { if (noteGpu(gpuIdentity())) compose() })
   sampler.onSample((x) => { if (noteGpu(x.gpu ? { pid: x.gpu.pid, born: x.gpu.born } : null)) compose() })
@@ -1214,6 +1214,7 @@ function tabDump(t: Tab) {
     doc: t.doc ? { ...t.doc } : null, reports: { ...t.reports }, crash: { ...t.crash }, fail: t.fail ?? null, probe: t.probe ?? null,
     hung: !!t.hung, held: t.held ?? null, replacing: !!t.replacing, key: keyOf(t), look: t.look ?? null, logo: t.logo ?? null,
     hasView: canvases.has(t.id) || !!contentView(t.id), wcId: contentView(t.id)?.webContents.id ?? null, pageView: !!pageView(t.id),
+    geo: { ...t.geo },
   }
 }
 

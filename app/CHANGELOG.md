@@ -1,5 +1,19 @@
 # Changelog - the Marver Mac app
 
+## 0.2.0 - unreleased (spec 28 A3)
+
+- One ground, main's half (A3.8 #24-#33): Home, Settings and every tab page run the window's full height under the
+  strip, painting the ground and still dots there themselves, with everything to read, click or scroll 44 px down;
+  the strip paints controls only. A canvas whose shell offers `inset` (Marver 0.27.2) is placed at the full height
+  when its own document commits on that instance, told 44 by `mv:doc`, moved below for the rest of its life by a
+  hello that says 0, and uncovered only once it is trusted, said 44 and answered the latest presentation request at
+  its size; a resize, a show, HTML fullscreen, a live resize's end and the GPU process lost or replaced each cover
+  it until it answers again. Any other canvas stays below the strip, covered.
+- **Not on screen yet: the cover waits for spike S15.** Until a cover is shown to sit over a full-height web view,
+  the app keeps 0.1's plain view and places no canvas at full height, so every canvas still looks as in 0.1 - with
+  plain ground, no dots, under the tabs. Main's decisions are built and tested from its journal; what reaches the
+  screen is the capture matrix's, after S15.
+
 ## 0.1.0 - unreleased (spec 28 A2, for Nic)
 
 - The build: one bundle for main and one per preload, the release flavour packaged for Apple silicon, all nine
