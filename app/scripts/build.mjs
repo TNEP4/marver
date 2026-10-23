@@ -11,7 +11,8 @@
  *   checks -> tsdown (release flavour) -> pages + manifest -> stage { package.json, dist/ } -> @electron/packager
  *   (unsigned, asar, arm64) -> @electron/fuses (all nine, strict) -> @electron/osx-sign (hardened runtime,
  *   per-helper entitlements) -> test/smoke/smoke.mjs
- * Fuses come before signing: flipping them changes the binary. Output: out/Marver-darwin-arm64/Marver.app.
+ * Fuses come before signing: flipping them changes the binary. Output: out/Marver-darwin-arm64/Marver.app, and an
+ * ad-hoc build in out/adhoc/Marver-darwin-arm64/Marver.app, so it never replaces Nic's signed one.
  *
  * The signing identity is Nic's Developer ID (MARVER_SIGN_IDENTITY overrides). The first signing on a Mac asks
  * the keychain for the private key ("Always Allow" once); Apple's timestamp server needs the network - an offline
@@ -137,7 +138,7 @@ export function buildJs() {
 
 async function buildRelease({ adhoc, smoke }) {
   checks({ release: true })
-  const out = join(APP, 'out')
+  const out = adhoc ? join(APP, 'out', 'adhoc') : join(APP, 'out')
   const stage = join(out, 'stage')
   rmSync(stage, { recursive: true, force: true })
   mkdirSync(stage, { recursive: true })

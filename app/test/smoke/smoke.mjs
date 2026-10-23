@@ -345,8 +345,11 @@ async function tampered(name, mutate) {
 }
 
 // ---- X7: the debugging guard (A2.1, A2.14 #30) --------------------------------------------------------
-/** A guarded launch: the DevTools endpoint never answers, exit code 3, and the guard ran before the lock. */
-async function guarded(name, { argv, bin, stdio, pipe }) {
+/**
+ * A guarded launch: the DevTools endpoint never answers, exit code 3, and the guard ran before the lock.
+ * `refusedByMacOS`: the case expects the kernel to refuse the binary instead (SIGKILL before any code runs).
+ */
+async function guarded(name, { argv, bin, stdio, pipe, refusedByMacOS = false }) {
   const port = argv.port
   const P = port ? poll(port, 10) : null
   await sleep(50)
@@ -366,12 +369,13 @@ async function guarded(name, { argv, bin, stdio, pipe }) {
   const active = lexists(join(L.ud, 'DevToolsActivePort'))
   const bad = []
   if (!exited) bad.push('still running after 5 s')
-  if (L.code !== 3) bad.push(`exit ${L.code ?? L.signal} (want 3)`)
+  if (refusedByMacOS ? L.signal !== 'SIGKILL' : L.code !== 3) bad.push(`exit ${L.code ?? L.signal} (want ${refusedByMacOS ? 'SIGKILL from the kernel' : 3})`)
   if (P && (P.st.connects || P.st.answers)) bad.push(`DevTools answered on ${port} (${P.st.connects} connects)`)
   if (pipe && pipeReply) bad.push(`a reply on fd 4: ${pipeReply.slice(0, 60)}`)
   if (lock) bad.push('the lock was taken (the guard ran late)')
   if (active) bad.push('DevToolsActivePort written')
-  bad.length ? fail(name, bad.join('; ')) : pass(name, `exit 3 in ${L.exitAt} ms; ${pipe ? 'nothing on fd 4' : `nothing answered on ${port}`}; no lock, no DevToolsActivePort`)
+  const how = refusedByMacOS ? `refused by macOS (SIGKILL: its signature no longer matches the bundle) in ${L.exitAt} ms` : `exit 3 in ${L.exitAt} ms`
+  bad.length ? fail(name, bad.join('; ')) : pass(name, `${how}; ${pipe ? 'nothing on fd 4' : `nothing answered on ${port}`}; no lock, no DevToolsActivePort`)
 }
 {
   let p = freePort()
@@ -381,13 +385,21 @@ async function guarded(name, { argv, bin, stdio, pipe }) {
   p = freePort()
   await guarded('rdp-port-dash1', { argv: { port: p, list: [`-remote-debugging-port=${p}`] } })
   await guarded('rdp-pipe', { argv: { list: ['--remote-debugging-pipe'] }, stdio: ['ignore', 'pipe', 'pipe', 'pipe', 'pipe'], pipe: true })
-  // a copy of the bundle whose binary is named `electron`: app.isPackaged reads false there, the build constant does not
+  // a copy of the bundle whose binary is named `electron`: app.isPackaged reads false there, the build constant does not.
+  // A Developer ID copy is refused by macOS outright (its signature no longer matches the bundle's main executable);
+  // whoever made the copy can sign it again ad-hoc, and then it runs - and must meet the guard.
   const copy = join(RUN, 'electron-name', `${PRODUCT}.app`)
   mkdirSync(dirname(copy), { recursive: true })
   execFileSync('ditto', [appPath, copy])
   cpSync(join(copy, 'Contents', 'MacOS', PRODUCT), join(copy, 'Contents', 'MacOS', 'electron'))
+  const renamed = join(copy, 'Contents', 'MacOS', 'electron')
+  if (!adhoc) {
+    p = freePort()
+    await guarded('rdp-electron-name-signed', { argv: { port: p, list: [`--remote-debugging-port=${p}`] }, bin: renamed, refusedByMacOS: true })
+    execFileSync('codesign', ['--force', '--deep', '--sign', '-', copy], { stdio: 'ignore' })
+  }
   p = freePort()
-  await guarded('rdp-electron-name', { argv: { port: p, list: [`--remote-debugging-port=${p}`] }, bin: join(copy, 'Contents', 'MacOS', 'electron') })
+  await guarded('rdp-electron-name', { argv: { port: p, list: [`--remote-debugging-port=${p}`] }, bin: renamed })
 }
 
 { // through LaunchServices: open -n -W -a <app> --args --remote-debugging-port=<p>
