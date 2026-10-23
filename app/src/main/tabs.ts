@@ -934,8 +934,11 @@ export async function guardAll(action: GuardAllAction): Promise<GuardAnswer> {
       if (!ok) { p.log?.('guard', { all: a.kind, answer: 'refused', sheet: 'cancel' }); return 'refused' }
       for (const t of ask) { const op = ops.get(t)!; op.consent = { tab: t.id, commit: op.commit, doc: op.doc, action: a } }
     }
-    // a tab that came to hold a live document meanwhile was named by no step: the whole stops
-    const newcomer = () => allTabs().find((t) => guarded(t) && !ops.has(t))
+    // a live document no step named stops the whole: a tab that came to hold one meanwhile, or a tab this quit
+    // already closed that the person reopened while a later close waited - its new document is not the one its
+    // operation bound. Every live document is read again before each act and once more before the answer, in
+    // the turn the caller quits in (views.ts quits in the answer's own microtask)
+    const newcomer = () => allTabs().find((t) => { const op = ops.get(t); return guarded(t) && (!op || !sameDoc(t, op)) })
     // after the sheet, every tab in one turn before any closes
     for (const t of list) if (!mayGo(t, ops.get(t)!)) return refuse(t, a, freshUnsaved(t))
     for (const t of list) {

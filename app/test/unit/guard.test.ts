@@ -6,10 +6,10 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
-  activeTab, closeTab, closeView, guard, guardAll, onCommit, onFail, onRegistry, sheetBox, sheetConfirmed, sheetText, type GuardAction, type Tab,
+  activeTab, closeTab, closeView, guard, guardAll, onCommit, onDocumentGone, onFail, onRegistry, sheetBox, sheetConfirmed, sheetText, type GuardAction, type Tab,
 } from '../../src/main/tabs.ts'
 import { hangSheetText } from '../../src/main/tabpage.ts'
-import { deferred, liveTab, report, show, world, type World } from './window-fakes.ts'
+import { deferred, flush, liveTab, report, show, world, type World } from './window-fakes.ts'
 
 let w: World
 beforeEach(() => { w = world() })
@@ -321,6 +321,56 @@ describe('guardAll: one operation per canvas tab, one shared step 1 and sheet (r
     expect(w.sheets).toHaveLength(1)
     sheet.resolve(false)
     await close
+  })
+
+  it('a tab the quit already closed, reopened while another tab\'s close waits, holds a new document: the quit stops', async () => {
+    const a = liveTab(w)
+    const b = liveTab(w)
+    show(a.id)
+    const second = deferred<'done' | 'refused'>()
+    // a's close happens (its view destroyed, as views.ts forgetCanvas reports it); b's waits
+    w.actWith = (t) => { if (t.id === a.id) { onDocumentGone(a, 'none'); return 'done' } return second.promise }
+    const quit = guardAll({ kind: 'quit' })
+    await flush()
+    expect(w.acts.map((x) => x.tab)).toEqual([a.id, b.id])
+    show(a.id)   // the person clicks a's tab in the strip: lazily loaded again
+    expect(w.loads).toContain(a.id)
+    a.view = 'live'
+    onCommit(a, { gen: 2, url: `${a.reg!.origin}/`, attributed: true, admitted: `doc-${a.id}-again` })
+    report(a, true)   // work made in the new document
+    second.resolve('done')
+    expect(await quit).toBe('refused')
+    expect(activeTab()?.id).toBe(a.id)
+    expect(a.held?.action).toBe('quit')
+  })
+
+  it('a tab the quit closed and reopened, its new document not yet heard: the quit stops too', async () => {
+    const a = liveTab(w)
+    const b = liveTab(w)
+    show(b.id)
+    const second = deferred<'done' | 'refused'>()
+    w.actWith = (t) => { if (t.id === a.id) { onDocumentGone(a, 'none'); return 'done' } return second.promise }
+    const quit = guardAll({ kind: 'quit' })
+    await flush()
+    show(a.id)
+    a.view = 'live'
+    onCommit(a, { gen: 2, url: `${a.reg!.origin}/`, attributed: true, admitted: `doc-${a.id}-again` })
+    second.resolve('done')
+    expect(await quit).toBe('refused')
+    expect(activeTab()?.id).toBe(a.id)
+  })
+
+  it('a tab the quit closed, reopened and still loading at the end holds nothing to lose: the quit goes on', async () => {
+    const a = liveTab(w)
+    const b = liveTab(w)
+    const second = deferred<'done' | 'refused'>()
+    w.actWith = (t) => { if (t.id === a.id) { onDocumentGone(a, 'none'); return 'done' } return second.promise }
+    const quit = guardAll({ kind: 'quit' })
+    await flush()
+    show(a.id)   // its load starts; nothing has committed
+    second.resolve('done')
+    expect(await quit).toBe('done')
+    expect(w.acts.map((x) => x.tab)).toEqual([a.id, b.id])
   })
 
   it('a tab that comes to hold a live document during the quit was named by no step: the quit stops', async () => {

@@ -21,8 +21,9 @@
 - One guard for every document the app replaces - closing a tab, quitting, `⌘R`, `⇧⌘R`, Try Again, a link: a page
   that said it holds unsaved work is refused at once and comes forward with "Unsaved work here"; one main cannot hear
   asks first (Cancel the default); the page's own `beforeunload` an extra veto. The quit is one guarded operation
-  per canvas tab, cancelled by any refusal - and a refused quit shows the window, even one you had closed. Only a
-  link that names a hash on the page's own document opens with no question; one without a hash is a new document.
+  per canvas tab, cancelled by any refusal - and a refused quit shows the window, even one you had closed. A tab the
+  quit already closed and you open again while it runs stops it, once its page is back. Only a link that names a
+  hash on the page's own document opens with no question; one without a hash is a new document.
 - Each canvas tab wears its canvas's logo (`design/logo.svg` and the rest of A1's ladder, proved like the page) once
   the canvas is ready, shown or not; a canvas with none wears its initials.
 - Home lists the canvases running on this Mac, four across in a window of the default size, and Recently here; a
