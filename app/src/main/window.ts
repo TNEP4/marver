@@ -126,7 +126,7 @@ let pillBody: unknown = undefined
 function send(wc: WebContents | undefined, channel: string, payload: unknown): void {
   if (!wc || wc.isDestroyed() || !ready.has(wc)) return
   if (deps?.send) deps.send(wc, channel, payload)
-  else wc.send(channel, payload)
+  else { try { wc.send(channel, payload) } catch { /* its renderer went: sent again at its next app:ready */ } }
 }
 
 /** Every app page's webContents main made, with its kind. */

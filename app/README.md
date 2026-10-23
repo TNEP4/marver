@@ -62,7 +62,9 @@ window, the tabs, the menu. Each module after the guard is its stream's; its hea
 - **pw** (`test/harness/app.ts` `launchPW`): Playwright's own Electron launch. Its loader turns on Chromium's test
   switches (the hang monitor off, paint holding off, no backgrounding, no back-forward cache, a mock keychain).
 - **prod** (`launchProd`): the real binary with the app folder and nothing else, driven over the control socket
-  (`MARVER_APP_CONTROL`, mode 600). The hang, one copy of each guard case, hidden tabs and the memory budget.
+  (`MARVER_APP_CONTROL`, mode 600). The hang, one copy of each guard case, hidden tabs and the memory budget, and a
+  quit whose helpers end with it (`test/prod/quit.test.ts`: `test/harness/catch-uncaught.cjs`, loaded with
+  `NODE_OPTIONS=--require`, records an uncaught exception in main instead of Electron's modal error box).
 - Hooks: `provide(name, fn)` in `src/main/testing/index.ts`, reached as `run.call(name, args)`; `note(topic, data)`
   writes the journal the `log` hook returns (the view journal goes there). Base hooks: `ping`, `log`, `hooks`,
   `quit`, `exit`, and `spies` with `MARVER_APP_SPY=1`. Every call site is `if (__MV_TEST__) ...`.

@@ -33,6 +33,7 @@ import type { Files, Home } from './config.ts'
 import type { CanvasReports } from './bridge.ts'
 import type { NavAdapter, NavEvent } from './nav.ts'
 import type { RegistryEntry, RegistryEvent } from './registry.ts'
+import { mainFrameOf, safely } from './frames.ts'
 import { attachKeys, digitOf, type AppCommand } from './keys.ts'
 import { focusOwner, f6, track } from './focus.ts'
 import { buildNow, HELP_URL, invalidateMenu, startMenu, type MenuModel, type MenuToken } from './menu.ts'
@@ -423,10 +424,11 @@ function clearHang(t: Tab): void {
 }
 
 function onUnresponsive(t: Tab, wc: WebContents): void {
-  if (wc.isDestroyed()) return
+  const frame = mainFrameOf(wc)
+  const pid = frame && safely(() => frame.osProcessId)
+  if (!frame || pid === undefined) return
   t.hung = true
-  const frame = wc.mainFrame
-  const h: Hang = { pid: frame.osProcessId, since: Date.now(), answered: false }
+  const h: Hang = { pid, since: Date.now(), answered: false }
   hangs.set(t.id, h)
   j('hang', { tab: t.id, unresponsive: true, pid: h.pid })
   // the frame's own executeJavaScript does not wait for a load; it has no deadline of its own - main keeps one, 1 s
@@ -446,10 +448,9 @@ function processOf(pid: number): ProcessSnapshot {
     if (wc.isDestroyed()) continue
     const t = getTab(id)
     if (!t) continue
-    let frames: { osProcessId: number }[] = []
-    try { frames = wc.mainFrame.framesInSubtree } catch { continue }
-    if (!frames.some((f) => f.osProcessId === pid)) continue
-    tabs.push({ id, commit: t.doc?.commits ?? 0, main: wc.mainFrame.osProcessId === pid })
+    const seen = safely(() => { const m = mainFrameOf(wc); return m ? { frames: m.framesInSubtree.map((f) => f.osProcessId), main: m.osProcessId } : undefined })
+    if (!seen || !seen.frames.includes(pid)) continue
+    tabs.push({ id, commit: t.doc?.commits ?? 0, main: seen.main === pid })
   }
   return { pid, tabs }
 }
@@ -494,7 +495,7 @@ async function notResponding(t: Tab): Promise<void> {
     // checked again before ending anything: the same frame, process and documents, still silent
     const now = processOf(h.pid)
     const c = canvases.get(t.id)
-    const samePid = !!c && !c.view.webContents.isDestroyed() && c.view.webContents.mainFrame.osProcessId === h.pid
+    const samePid = !!c && safely(() => mainFrameOf(c.view.webContents)?.osProcessId) === h.pid
     const d = hangDecision({ hung: !!t.hung, current: hangs.get(t.id) === h, samePid, answered: h.answered, commit: t.doc?.commits ?? 0, named, now, before: snap })
     if (d === 'nothing') { j('hang', { tab: t.id, recheck: 'nothing' }); return }
     if (d === 'again') { j('hang', { tab: t.id, recheck: 'again', tabs: now.tabs }); continue }   // the sheet again, with the new list

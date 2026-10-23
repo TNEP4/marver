@@ -32,6 +32,8 @@
   gets a tab of its own.
 - The tab's own page in place of an error page - starting, stopped, not a Marver canvas, can't be reached, crashed -
   and crashes with one owner: the first reloads at once, a second within a minute latches until you press Reload.
+- A quit whose helpers end at the same moment (a SIGTERM to the app's process group) exits cleanly: a page whose
+  renderer went is never read in a way that throws, so main no longer stops on Electron's error box.
 - Not responding: the pill's Reload asks first, then ends the page's renderer once and reloads every tab it held.
 - The menu bar: the app's keys fire once whatever the page does with keys; the canvas's own items with their keys in
   their names; a stale click does nothing. F6 between the strip and the page; focus never left beneath a tab page.

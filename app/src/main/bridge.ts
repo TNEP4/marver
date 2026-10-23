@@ -33,6 +33,7 @@ import { randomBytes } from 'node:crypto'
 import { ipcMain, webFrameMain, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents, type WebFrameMain } from 'electron'
 import { BOUNDS, CANVAS_CHANNELS, UNSAVED_WHY, WHY, type AppState, type Busy, type DocAnswer, type Hello, type MenuItem, type Theme, type Why } from '../../../src/shared/app-api.ts'
 import { CH, INVOKES as INVOKE_LIST, SENDERS, type PageKind } from '../shared/channels.ts'
+import { mainFrameOf, safely } from './frames.ts'
 import { adapterFor, attachNav, type NavEvent } from './nav.ts'
 import { isTrusted, targetOf, unsafePrefs } from './proof.ts'
 import { appRegistry, type Registry } from './registry.ts'
@@ -216,12 +217,12 @@ const docs = new Map<number, DocRecord>()
 const reopen = new Set<string>()
 
 function sameFrame(a: WebFrameMain | null | undefined, b: WebFrameMain | null | undefined): boolean {
-  return !!a && !!b && a.processId === b.processId && a.routingId === b.routingId
+  return !!a && !!b && !!safely(() => a.processId === b.processId && a.routingId === b.routingId)
 }
 function frameOf(wc: WebContents, rec: DocRecord): WebFrameMain | null {
   if (wc.isDestroyed()) return null
   const f = rec.frame ? webFrameMain.fromId(rec.frame.processId, rec.frame.routingId) : undefined
-  const frame = f && !f.isDestroyed() && !f.detached ? f : wc.mainFrame
+  const frame = f && !f.isDestroyed() && !f.detached ? f : mainFrameOf(wc)
   return frame && !frame.isDestroyed() ? frame : null
 }
 const trace = (event: string, data: Record<string, unknown>) => { if (__MV_TEST__) note('bridge', { event, ...data }) }
@@ -325,7 +326,7 @@ export function installBridge(): Bridge {
     let answer: DocAnswer = { reopen: false }
     try {
       const r = regs.get(e.sender.id)
-      if (r?.kind === 'canvas' && r.tabId && sameFrame(e.senderFrame, e.sender.mainFrame) && reopen.delete(r.tabId)) answer = { reopen: true }
+      if (r?.kind === 'canvas' && r.tabId && sameFrame(e.senderFrame, mainFrameOf(e.sender)) && reopen.delete(r.tabId)) answer = { reopen: true }
     } finally { e.returnValue = answer }
   })
 
@@ -336,7 +337,7 @@ export function installBridge(): Bridge {
       const refuse = (why: string) => { trace('refused', { wc: id, ch, why }) }
       const r = regs.get(id)
       if (!r || r.kind !== 'canvas') return refuse('not a canvas')
-      if (!sameFrame(e.senderFrame, e.sender.mainFrame)) return refuse('not the main frame')
+      if (!sameFrame(e.senderFrame, mainFrameOf(e.sender))) return refuse('not the main frame')
       const rec = docs.get(id)
       const m = obj(msg) ? msg : null
       if (!m || typeof m.doc !== 'string' || !rec?.doc || m.doc !== rec.doc) return refuse('not the admitted document')
@@ -356,7 +357,7 @@ export function installBridge(): Bridge {
   // app pages
   const pageCtx = (e: IpcMainEvent | IpcMainInvokeEvent, channel: string): PageCtx | null => {
     const r = regs.get(e.sender.id)
-    const ok = mayUsePageChannel(channel, r?.kind, sameFrame(e.senderFrame, e.sender.mainFrame), e.senderFrame?.url)
+    const ok = mayUsePageChannel(channel, r?.kind, sameFrame(e.senderFrame, mainFrameOf(e.sender)), e.senderFrame?.url)
     if (!ok || !r) { trace('page-refused', { wc: e.sender.id, channel, kind: r?.kind }); return null }
     return { wc: r.wc, kind: r.kind, ...(r.tabId ? { tabId: r.tabId } : {}) }
   }
@@ -475,9 +476,10 @@ export function installBridge(): Bridge {
       const to = typeof target === 'string' ? [...regs.values()].filter((r) => r.kind === target) : [regs.get(target.id)].filter((r): r is Reg => !!r)
       let sent = false
       for (const r of to) {
-        if (r.kind === 'canvas' || !r.ready || r.wc.isDestroyed() || !isPinnedUrl(r.wc.mainFrame.url, r.kind)) continue
-        r.wc.send(channel, payload)
-        sent = true
+        const url = r.kind === 'canvas' || !r.ready ? undefined : safely(() => mainFrameOf(r.wc)?.url)
+        if (url === undefined || !isPinnedUrl(url, r.kind)) continue
+        // a page whose renderer went (the strip's is reloaded by window.ts) gets nothing; it is sent all again at its next app:ready
+        try { r.wc.send(channel, payload); sent = true } catch { /* the frame went */ }
       }
       return sent
     },
