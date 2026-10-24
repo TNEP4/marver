@@ -7,7 +7,9 @@
  * skipped), machine profiles kept while a retained line names them. The review of a3-recorder: an append cut short
  * queues again only what did not land; a launch after a torn file starts on a line of its own; a rewrite cut at a
  * byte, never inside a character; a rewrite's new file written off the main thread while appends wait, and a quit
- * during it losing nothing; one line larger than half the file kept; main's error written in its own turn.
+ * during it losing nothing; one line larger than half the file kept; main's error written in its own turn. The second
+ * review: the test hook's flush keeps the hold at launch (its lines stamped with the hash once it exists, never
+ * null); a headless run's profile kept as long as runs.jsonl's lines may name it (14 days) whatever keepPerfDays says.
  */
 import { closeSync, constants, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -402,5 +404,44 @@ describe('whole rewrites, off the main thread (A3.8 #12, #50)', () => {
         expect(lines(perfFile()).map((l) => (JSON.parse(l) as { n: number }).n)).toEqual([1, 5])
       } finally { vi.useRealTimers(); hooks.open(); await P.idle(); P.resetPerflog() }
     }
+  })
+})
+
+describe('the second review of a3-recorder (A3.6, A3.8 #11, #12)', () => {
+  it('the test hook\'s flush is the timer\'s: the hold at launch kept, the lines stamped with the hash once it exists - never null', async () => {
+    let hash: string | null = null
+    L.startPerflog({ home, flavour: 'release', config: () => config(), machine: () => hash })
+    const f = join(home.dir, 'perf', 'app.jsonl')
+    L.append('start', { version: '0.2.0', electron: '45.0.0', chrome: '142', recorder: true, pid: 1 })
+    expect(await L.flushQueued()).toBe(true)
+    expect(L.holdingAtLaunch()).toBe(true)
+    expect(lines(f)).toEqual([])   // held: no hash yet, and the flush did not end the hold
+    hash = H1
+    await L.flushQueued()
+    expect(L.holdingAtLaunch()).toBe(false)
+    expect(lines(f).map((l) => parseAppLine(l)!.machine)).toEqual([H1])
+  })
+
+  it('a headless run\'s profile stays while runs.jsonl may name it (14 days) whatever a shorter keepPerfDays says; an app\'s unnamed one goes', async () => {
+    const machine = join(home.dir, 'perf', 'machine')
+    mkdirSync(machine, { recursive: true })
+    const put = (h: string, kind: string, ageDays: number) => {
+      const p = join(machine, `${h}.json`)
+      writeFileSync(p, JSON.stringify({ v: 1, kind }), { mode: 0o600 })
+      const t = new Date(Date.now() - ageDays * DAY)
+      utimesSync(p, t, t)
+    }
+    const RUN_10 = '1000000000000000', RUN_20 = '2000000000000000', APP_10 = '3000000000000000', BAD_10 = '4000000000000000'
+    put(RUN_10, 'headless', 10)   // a run 10 days ago: its line is still in a repo's runs.jsonl
+    put(RUN_20, 'headless', 20)   // past the repos' 14 days
+    put(APP_10, 'app', 10)        // an app profile no retained line names
+    writeFileSync(join(machine, `${BAD_10}.json`), '{', { mode: 0o600 })
+    utimesSync(join(machine, `${BAD_10}.json`), new Date(Date.now() - 10 * DAY), new Date(Date.now() - 10 * DAY))
+    L.startPerflog({ home, flavour: 'release', config: () => config({ keepPerfDays: 7 }), machine: () => H1 })
+    await L.idle()
+    const r = await L.prune()
+    expect(readdirSync(machine).sort()).toEqual([`${RUN_10}.json`])
+    expect(r.profiles).toBe(0)   // the launch's pass took them
+    expect(L.RUN_LINES_DAYS).toBe(14)
   })
 })

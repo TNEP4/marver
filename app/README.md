@@ -81,8 +81,10 @@ state at its mark, every call through `recorder.ts` `appMetrics(why)`, counted; 
 `sample` line a minute; the events; the machine profile under `perf/machine/`; one writer per file (`app.jsonl`,
 Marver Dev `app-dev.jsonl`; main's errors written in their own turn) with retention a few seconds after launch and
 daily, its whole rewrites written off the main thread. Its test hooks are `testing/recorder.ts`'s
-(`recorder:samples`, `:events`, `:tick`, `:flush`, `:need`, `:inject`, `:machine`, `:prune`, `:metrics`, `:raw`,
-`pressure:inject`); `test/prod/recorder.test.ts` runs it on the real binary.
+(`recorder:samples`, `:events`, `:tick`, `:flush`, `:need`, `:inject`, `:machine`, `:prune`, `:metrics`,
+`pressure:inject`): `:tick` returns its sample with what that tick's `getAppMetrics()` said, and `:flush` is the
+writer's 2 s flush run now, which never ends the hold at launch; `test/prod/recorder.test.ts` runs it on the real
+binary.
 
 ## Tests (A2.10, A2.14 #27)
 

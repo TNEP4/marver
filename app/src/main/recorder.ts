@@ -38,6 +38,12 @@
  * - The display's rate goes again to the canvases when the window moves to a display of another rate (no display
  *   event says so), and the machine profile is collected again (its tile budget is the window's display's).
  * - A process's `born` that the recorder never saw (a renderer that went before any sample read it) is 0.
+ * - The GPU process events a flash and a white-out candidate quote (`gpuEvents`) are the GPU process's alone: its
+ *   `child-gone` (type GPU), `gpu-restart` and `gpu` - never a renderer's `gone` (a crash, an unload's own) nor a
+ *   utility process's end (A3.3, A3.8 #13).
+ * - The pressure a record quotes outside a sample (a flash's, a `gone`'s) is the last reading only while it is at
+ *   most two ticks old (`freshPressure`); older - the recorder off and nothing to unload, so nothing reads it - it is
+ *   unknown, never hours stale.
  */
 import { app, powerMonitor, screen, webContents as allContents, type BaseWindow, type ProcessMetric, type RenderProcessGoneDetails, type WebContents } from 'electron'
 import { join } from 'node:path'
@@ -76,10 +82,17 @@ export function identity(t: Tab): TabIdent {
 export type MetricsWhy = 'tick' | 'mark' | 'identity' | 'test'
 const metricsBy: Record<MetricsWhy, number> = { tick: 0, mark: 0, identity: 0, test: 0 }
 
+/** Test builds: what `getAppMetrics()` said, per process, at the tick a sample was built from (the RSS case compares the two). */
+export interface RawMetric { pid: number; born: number; type: string; workingSetKB: number }
+let lastTickRaw: RawMetric[] | null = null
+
 /** Every `getAppMetrics()` the app makes, counted by why (A3.8 #4: only the tick samples; test builds read the counts). */
 export function appMetrics(why: MetricsWhy): ProcessMetric[] {
   metricsBy[why] += 1
-  return safely(() => app.getAppMetrics()) ?? []
+  const m = safely(() => app.getAppMetrics()) ?? []
+  // test builds: the tick's answer as Electron gave it, before the sampler's wiring reads it
+  if (__MV_TEST__ && why === 'tick') lastTickRaw = m.map((x) => ({ pid: x.pid, born: x.creationTime, type: x.type, workingSetKB: x.memory.workingSetSize }))
+  return m
 }
 
 /** The GPU process's identity now (A3.8 #27, r3 #1): `getAppMetrics()`'s GPU entry, or null when there is none. */
@@ -94,8 +107,8 @@ export function gpuIdentity(): GpuIdentity | null {
 const RING_SAMPLES = 12
 const RING_EVENTS_MS = 60_000
 const RING_EVENTS_MAX = 2000
-/** The kinds a flash and a candidate quote as GPU process events. */
-const GPU_KINDS = new Set<AppKind>(['gone', 'child-gone', 'gpu-restart', 'gpu'])
+/** The GPU process's own events, which a flash and a candidate quote (A3.3, A3.8 #13): never a renderer's `gone`, nor a utility process's end. */
+export const isGpuProcessEvent = (e: RingEvent): boolean => e.kind === 'gpu-restart' || e.kind === 'gpu' || (e.kind === 'child-gone' && e.type === 'GPU')
 
 const sampleFns = new Set<(s: Sample) => void>()
 const wants: (() => boolean)[] = []
@@ -119,6 +132,8 @@ let ticksRun = 0
 const bornOf = new Map<number, number>()
 /** a webContents' renderer pid, last seen (a crashed one no longer says) */
 const wcPid = new Map<number, number>()
+/** test builds: the raw metrics each published sample was built from */
+const rawOfSample = new WeakMap<Sample, RawMetric[]>()
 /** the preload's `mem` answers: a process's footprint (MB) and when */
 const footprints = new Map<number, { mb: number; at: number }>()
 let visibleAnswer: (TabIdent & { privateMB: number; heapMB: number; at: number }) | null = null
@@ -255,6 +270,7 @@ async function sampleNow(): Promise<Sample> {
   const ts = Date.now()
   const mono = performance.now()
   const metrics = appMetrics('tick')
+  const raw = __MV_TEST__ ? lastTickRaw : null
   const owners = ownersNow()
   const b = build(metrics, owners, baselines, mono, footprintsNow(ts))
   baselines = b.baselines
@@ -269,6 +285,7 @@ async function sampleNow(): Promise<Sample> {
   const pressure: PressureReading = await readPressure()
   spawnMs += performance.now() - t0
   const s: Sample = { ts, mono, dt, procs: b.procs, gpu: b.gpu, pressure, thermal: thermalNow(), sys: sysNow(), visible: visibleNow() }
+  if (__MV_TEST__ && raw) rawOfSample.set(s, raw)
   publish(s)
   return s
 }
@@ -285,11 +302,14 @@ function publish(s: Sample): void {
   if (span >= T.sampleDiskMs - T.sampleMs / 2) writeMinute()
 }
 
-function writeMinute(): void {
+/** The minute on disk; what it folded (its body, and in test builds the last sample's raw metrics) for the test hook. */
+function writeMinute(): { body: ReturnType<typeof foldMinute>; last: Sample | null } {
   const body = minuteBody()
+  const last = minute.at(-1) ?? null
   minute = []
   spawnMs = 0
   if (body) record('sample', null, body as unknown as Record<string, unknown>)
+  return { body, last }
 }
 const minuteBody = () => (minute.length ? foldMinuteSafe() : null)
 function foldMinuteSafe() {
@@ -320,12 +340,22 @@ function requestSample(): Promise<Sample> {
   return p
 }
 
+/**
+ * The last pressure reading while it says something about now: at most two ticks old (A3.8 #13's "pressure at the
+ * mark"). With the recorder off and nothing to unload no tick reads it (A3.8 #6), and a reading hours old is not the
+ * pressure at a mark: unknown then.
+ */
+export function freshPressure(now = Date.now()): PressureReading | null {
+  const p = lastPressure()
+  return p && now - p.at <= 2 * T.sampleMs ? p : null
+}
+
 /** The state at a mark (a flash): one getAppMetrics() on the sampler's baselines, which it leaves as they are. */
 function stateNow(): Sample {
   const ts = Date.now()
   const mono = performance.now()
   const b = build(appMetrics('mark'), ownersNow(), baselines, mono, footprintsNow(ts))
-  return { ts, mono, dt: lastMono !== null && mono > lastMono ? (mono - lastMono) / 1000 : null, procs: b.procs, gpu: b.gpu, pressure: lastPressure(), thermal: thermalNow(), sys: sysNow(), visible: visibleNow() }
+  return { ts, mono, dt: lastMono !== null && mono > lastMono ? (mono - lastMono) / 1000 : null, procs: b.procs, gpu: b.gpu, pressure: freshPressure(ts), thermal: thermalNow(), sys: sysNow(), visible: visibleNow() }
 }
 
 /** The one sampler (A3.8 #4). */
@@ -370,9 +400,9 @@ function writeStart(): void {
   append('start', { version: safely(() => app.getVersion()) ?? '0.0.0', electron: process.versions.electron ?? '', chrome: process.versions.chrome ?? '', recorder: recorderOn(), pid: process.pid })
 }
 
-/** The ring's GPU process events between two times (gone, child-gone, gpu-restart, gpu). */
+/** The ring's GPU process events between two times: the GPU process's child-gone, gpu-restart and gpu (`isGpuProcessEvent`). */
 function gpuEvents(from: number, to: number): RingEvent[] {
-  return events.filter((e) => GPU_KINDS.has(e.kind) && e.ts >= from && e.ts <= to).map((e) => ({ ...e }))
+  return events.filter((e) => isGpuProcessEvent(e) && e.ts >= from && e.ts <= to).map((e) => ({ ...e }))
 }
 
 /** A process's pid and creation time, as far as the recorder knows (a crashed renderer no longer says its pid). */
@@ -511,7 +541,7 @@ function flashPorts(): FlashPorts {
     stateNow,
     gpuEvents,
     thermal: thermalNow,
-    pressure: lastPressure,
+    pressure: () => freshPressure(),
     featureStatus: () => (safely(() => app.getGPUFeatureStatus()) as unknown as Record<string, string> | undefined) ?? {},
     readAgx,
     capture: (o) => captureApp(o),
@@ -561,7 +591,7 @@ export const recorder = {
     app.on('render-process-gone', (_e, wc, d) => {
       const pg = pageOf(wc)
       if (pg?.role === 'canvas' || (!pg && kindOf(wc.id) === 'canvas')) return   // views.ts's processGone
-      record('gone', null, { role: pg?.role ?? 'unknown', ...procOf(wc), reason: d.reason, exitCode: d.exitCode, ours: false, pressure: lastPressure()?.level ?? null })
+      record('gone', null, { role: pg?.role ?? 'unknown', ...procOf(wc), reason: d.reason, exitCode: d.exitCode, ours: false, pressure: freshPressure()?.level ?? null })
     })
     app.on('child-process-gone', (_e, d) => {
       if (d.type === 'GPU') { gpuGoneAt.push(Date.now()); if (gpuGoneAt.length > 20) gpuGoneAt.shift() }
@@ -609,7 +639,7 @@ export const recorder = {
     const ident = identity(t)
     record('gone', ident, {
       role: 'canvas', ...procOf(contentView(t.id)?.webContents), reason: d.reason, exitCode: d.exitCode, ours,
-      ...(ours ? { source: t.unload ? 'unload' : 'reload-page' } : {}), pressure: lastPressure()?.level ?? null,
+      ...(ours ? { source: t.unload ? 'unload' : 'reload-page' } : {}), pressure: freshPressure()?.level ?? null,
     })
   },
   /** views.ts, in the turn `mv:app-state shown` is sent (tab switches only): the `shown` ask */
@@ -660,7 +690,7 @@ export const recorder = {
     const b = boards.get(tabId)
     return b && getTab(tabId)?.doc?.doc === b.doc ? { frames: b.frames, asleep: b.asleep } : null
   },
-  /** the ring's GPU process events (gone, child-gone, gpu-restart, gpu) between two times: a flash's and a candidate's */
+  /** the ring's GPU process events (the GPU process's child-gone, gpu-restart, gpu) between two times: a flash's and a candidate's */
   gpuEvents,
   /** runCommand('mark-flash'): flashes.ts's transaction, with this file's ports */
   markFlash(via: 'key' | 'menu'): void {
@@ -682,16 +712,18 @@ export const recorderTesting = {
   ring: () => ({ samples: samples.map((s) => ({ ...s })), events: events.map((e) => ({ ...e })) }),
   /** `metricsCalls`: every getAppMetrics() the app made (the test hooks' own apart, in `metrics.test`) */
   stats: () => ({ metricsCalls: metricsBy.tick + metricsBy.mark + metricsBy.identity, metrics: { ...metricsBy }, ticks: ticksRun, minute: minute.length, startWritten, recorder: recorderOn(), need: need(), suspended }),
-  /** getAppMetrics() and build() of that same call, side by side (the RSS case compares them exactly) */
-  raw: () => {
-    const metrics = appMetrics('test')
-    const b = build(metrics, ownersNow(), baselines, performance.now(), footprintsNow())
-    return { metrics: metrics.map((m) => ({ pid: m.pid, born: m.creationTime, type: m.type, workingSetKB: m.memory.workingSetSize })), procs: b.procs }
-  },
   /** one tick now, as the timer would run it (null when nothing needs the sampler) */
   tick: async () => (await tick()) ?? null,
-  /** the unwritten minute written now (with the recorder on) */
-  writeMinute: () => { if (recorderOn() && minute.length) { writeMinute(); return true } return false },
+  /** the flash's ports as the flash stream receives them */
+  flashPorts: () => flashPorts(),
+  /** what getAppMetrics() said at the tick a sample was built from (null for one not sampled here: an injected one) */
+  rawOf: (s: Sample): RawMetric[] | null => rawOfSample.get(s) ?? null,
+  /** the unwritten minute written now (with the recorder on): its body, and the raw metrics of the last tick it folded */
+  writeMinute: (): { body: ReturnType<typeof foldMinute>; lastTs: number; lastRaw: RawMetric[] | null } | null => {
+    if (!recorderOn() || !minute.length) return null
+    const w = writeMinute()
+    return { body: w.body, lastTs: w.last?.ts ?? 0, lastRaw: w.last ? rawOfSample.get(w.last) ?? null : null }
+  },
   need: (on: boolean) => { forcedNeed = on },
   /** a sample handed to the consumers as if sampled (memory.ts's cases); never written to disk */
   inject: (s: Sample) => { lastSample = s; for (const fn of [...sampleFns]) { try { fn(s) } catch { /* the consumer's */ } } },

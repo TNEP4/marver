@@ -5,7 +5,9 @@
  * only for its tick and document within 1 s; `shown`'s time; `gone` with its identity and `ours`; a `tab` line for a
  * new commit and for a new main-frame process with nothing else changed; gpu-restart only without a child-gone; a
  * flash held in the ring by its kind, time and identity only; the visible tab's answer only while it is visible; the
- * window moved to a display of another rate; every getAppMetrics() through the one counted wrapper.
+ * window moved to a display of another rate; every getAppMetrics() through the one counted wrapper. The second
+ * review: a flash's GPU process events are the GPU process's alone; the pressure a flash or a gone quotes is unknown
+ * once two ticks old; the raw metrics a tick read, beside the sample and the minute built from them.
  */
 import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -410,8 +412,73 @@ describe('the review of a3-recorder', () => {
     const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith('.ts') ? [join(d, e.name)] : []))
     const calls = walk(src).flatMap((f) => readFileSync(f, 'utf8').split('\n').map((l, i) => ({ f, i, l })))
       .filter(({ l }) => /\.getAppMetrics\(/.test(l) && !/^\s*(\*|\/\/)/.test(l))
-    expect(calls.map(({ f, l }) => `${f.slice(src.length)}: ${l.trim()}`)).toEqual(['/main/recorder.ts: return safely(() => app.getAppMetrics()) ?? []'])
+    expect(calls.map(({ f, l }) => `${f.slice(src.length)}: ${l.trim()}`)).toEqual(['/main/recorder.ts: const m = safely(() => app.getAppMetrics()) ?? []'])
     const n = recorderTesting.stats()
     expect(n.metricsCalls).toBe(n.metrics.tick + n.metrics.mark + n.metrics.identity)
+  })
+})
+
+describe('the second review of a3-recorder', () => {
+  it('a flash\'s GPU process events are the GPU process\'s: no renderer gone (a crash, an unload\'s own), no utility process\'s end', async () => {
+    const w = world()
+    const t = canvas(w, 330)
+    recording = true
+    await recorderTesting.tick()
+    const from = Date.now() - 1
+    recorder.processGone(t, { reason: 'crashed', exitCode: 11 } as never, false)
+    recorder.event('gone', t, { role: 'canvas', pid: 330, born: 3300, reason: 'killed', exitCode: 9, ours: true, source: 'unload', pressure: null })
+    emit(appOn, 'child-process-gone', {}, { type: 'Utility', name: 'Network Service', reason: 'crashed', exitCode: 11 })
+    emit(appOn, 'child-process-gone', {}, { type: 'GPU', reason: 'crashed', exitCode: 11 })
+    fx.feature = { gpu_compositing: 'disabled_software', n: String(Math.random()) }
+    emit(appOn, 'gpu-info-update')
+    const to = Date.now() + 1
+    expect(recorderTesting.ring().events.filter((e) => e.ts >= from).map((e) => e.kind)).toEqual(['gone', 'gone', 'child-gone', 'child-gone', 'gpu'])
+    const quoted = recorder.gpuEvents(from, to)
+    expect(quoted.map((e) => [e.kind, e.type ?? null])).toEqual([['child-gone', 'GPU'], ['gpu', null]])
+    expect(recorderTesting.flashPorts().gpuEvents(from, to).map((e) => e.kind)).toEqual(['child-gone', 'gpu'])
+  })
+
+  it('the pressure a flash and a gone quote is the last reading only while it is at most two ticks old; older, unknown', async () => {
+    const w = world()
+    const t = canvas(w, 331)
+    recording = true
+    await recorderTesting.tick()   // a reading now: level 1
+    const ports = recorderTesting.flashPorts()
+    expect(ports.pressure()).toMatchObject({ level: 1 })
+    expect(ports.stateNow().pressure).toMatchObject({ level: 1 })
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(Date.now() + 2 * T.sampleMs - 100)
+      expect(ports.pressure()).toMatchObject({ level: 1 })
+      // the recorder off and nothing to unload: nothing reads it; an hour on, a mark or a crash must not quote it
+      vi.setSystemTime(Date.now() + 3_600_000)
+      expect(ports.pressure()).toBe(null)
+      expect(ports.stateNow().pressure).toBe(null)
+      recorder.processGone(t, { reason: 'crashed', exitCode: 11 } as never, false)
+      expect(recorderTesting.ring().events.filter((e) => e.kind === 'gone').at(-1)).toMatchObject({ tab: t.id, pressure: null })
+    } finally { vi.useRealTimers() }
+  })
+
+  it('the raw metrics a tick read are kept beside its sample, and the minute names the last tick it folded', async () => {
+    const w = world()
+    canvas(w, 332)
+    recording = true
+    recorderTesting.writeMinute()   // an earlier test's minute out of the way
+    const s = (await recorderTesting.tick())!
+    const raw = recorderTesting.rawOf(s)!
+    expect(raw).toEqual(fx.metrics.map((m) => ({ pid: m.pid, born: m.creationTime, type: m.type, workingSetKB: m.kb })))
+    for (const p of s.procs) expect(p.rssMB).toBe(raw.find((m) => m.pid === p.pid && m.born === p.born)!.workingSetKB / 1024)
+    // a tick reads the metrics again: a later sample has its own
+    fx.metrics[0] = { ...fx.metrics[0]!, kb: 123 * 1024 }
+    const s2 = (await recorderTesting.tick())!
+    expect(recorderTesting.rawOf(s2)!.find((m) => m.pid === 1)!.workingSetKB).toBe(123 * 1024)
+    expect(recorderTesting.rawOf(s)!.find((m) => m.pid === 1)!.workingSetKB).toBe(100 * 1024)
+    const minute = recorderTesting.writeMinute()!
+    expect(minute.lastTs).toBe(s2.ts)
+    expect(minute.lastRaw).toEqual(recorderTesting.rawOf(s2))
+    const line = lines().filter((l) => l.kind === 'sample').at(-1)!
+    expect(line.procs.find((p: { pid: number }) => p.pid === 1).rssMB.last).toBe(123)
+    // a sample injected (memory.ts's cases) was read from no tick
+    expect(recorderTesting.rawOf({ ...s })).toBe(null)
   })
 })

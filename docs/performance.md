@@ -318,7 +318,8 @@ error main did not catch: a `main-error` line, in `app-dev.jsonl` for Marver Dev
 `machine/<hash>.json` holds one profile per distinct machine state (the chip, the displays and their rates, the
 GPU's renderer, power): a display change, the window moved to another display, or a GPU fallback makes a new one, and
 old lines keep theirs. The app keeps 14 days of it (`keepPerfDays`, pruned a few seconds after launch and then
-daily), at most 5 MB a file, 50 flash pictures and 10 crash reports.
+daily), at most 5 MB a file, 50 flash pictures and 10 crash reports; a profile a headless run wrote stays at least 14
+days, as long as a repo's `runs.jsonl` may name it.
 
 `marver perf` joins the two halves by `page`, so each app event lands on the board load it happened in:
 

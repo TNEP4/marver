@@ -7,10 +7,13 @@
  * - retention at launch: a home seeded with a 20-day-old line, 51 pictures and 11 completed Crashpad reports is
  *   pruned before the first sample line (which must exist);
  * - the start line names the machine profile, whose file has every field filled or 'unknown', collected in under
- *   50 ms of main-thread work - every step of the launch's collection counted, the spawns' too;
- * - samples: each `(pid, born)` once, RSS what getAppMetrics says (KB / 1024, within 1 %, both from one call), the
- *   canvas renderer named for its tab, the app pages by role, the GPU process apart; the visible tab's preload
- *   answers its memory;
+ *   50 ms of main-thread work - every step of the launch's collection counted, the spawns' too; the start line was
+ *   written within the launch's first second, held, and stamped with that hash when its file existed (the hold
+ *   ended by the hash: `recorder:flush` never ends it);
+ * - samples: each `(pid, born)` once; RSS as Electron said it - the sample a tick published against what that tick's
+ *   own getAppMetrics() returned (KB / 1024), and the minute on disk against the last tick it folded; the canvas
+ *   renderer named for its tab, the app pages by role, the GPU process apart; the visible tab's preload answers its
+ *   memory, whose `private` is within 10 % of `footprint -p` read from outside within a second of it (A3.8 #5);
  * - a tab switch writes `shown` with its time;
  * - a killed renderer writes `gone` with `tab`, `ws`, `commit` and the page its hello sent, not ours;
  * - `recorder: false` set live: no sample line, getAppMetrics no longer called by anything (every call is counted
@@ -26,6 +29,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { launchWindow, sleep, type WindowRun } from '../harness/window.ts'
 import { startFakeCanvas, type FakeCanvas } from '../harness/fake-canvas.ts'
 import { parseAppLine, type AppRecord, type Sample } from '../../../src/shared/app-perf.ts'
+import type { RawMetric } from '../../src/main/recorder.ts'
 
 const DAY = 86_400_000
 const TIMINGS = { sampleMs: 500, sampleDiskMs: 3000, writeBatchMs: 250, agxMs: 1500, memServesMs: 3000, retentionDelayMs: 200 }
@@ -115,6 +119,13 @@ describe('the recorder on the real binary (A3.7)', () => {
     expect(m.launchMs!).toBeLessThan(50)
     expect(m.maxMs).toBeLessThan(50)
     process.stdout.write(`recorder: the launch's profile collection ${m.launchMs!.toFixed(2)} ms of main-thread work (the last: ${JSON.stringify(Object.fromEntries(Object.entries(m.parts).map(([k, v]) => [k, Math.round(v * 100) / 100])))})\n`)
+    // the hold at launch (A3.8 #11): the start line, written in the launch's first second before any profile existed,
+    // waited and was stamped with the hash once its file was written - the hold ended by the hash, never forced
+    const hold = (await w.log('perflog')).find((l) => 'hold' in l.data)?.data.hold as { by: string; machine: string | null; lines: number; startedAt: number; waitedMs: number } | undefined
+    expect(hold).toMatchObject({ by: 'hash', machine: start.machine })
+    expect(hold!.lines).toBeGreaterThanOrEqual(1)
+    expect(start.ts - hold!.startedAt).toBeLessThan(1000)
+    process.stdout.write(`recorder: the hold at launch ended by the hash after ${hold!.waitedMs} ms, ${hold!.lines} line(s) held\n`)
     const profile = JSON.parse(readFileSync(join(w.env.home, 'perf', 'machine', `${start.machine}.json`), 'utf8'))
     expect(profile).toMatchObject({ v: 1, kind: 'app', electron: '45.0.0', hostHash: expect.stringMatching(/^[0-9a-f]{16}$/) })
     const walk = (v: unknown, path: string): void => {
@@ -143,26 +154,40 @@ describe('the recorder on the real binary (A3.7)', () => {
     expect(s.procs.filter((p) => p.type === 'browser')).toHaveLength(1)
     expect(s.gpu).not.toBe(null)
     expect(s.procs.find((p) => p.role === 'strip')).toBeDefined()
-    // RSS is getAppMetrics' working set in KB / 1024, once per process: both from one call, so within 1 %
-    const raw = await w.run.call<{ metrics: { pid: number; born: number; workingSetKB: number }[]; procs: Sample['procs'] }>('recorder:raw')
-    expect(raw.procs.length).toBe(raw.metrics.length)
-    for (const p of raw.procs) {
-      const m = raw.metrics.find((x) => x.pid === p.pid && x.born === p.born)!
-      expect(m).toBeDefined()
-      expect(Math.abs(p.rssMB - m.workingSetKB / 1024) / Math.max(1, m.workingSetKB / 1024)).toBeLessThan(0.01)
+    // RSS is Electron's working set in KB / 1024, once per process: the sample a tick published against what that
+    // tick's own getAppMetrics() returned (kept by the counted wrapper, before the sampler's wiring read it)
+    const key = (x: { pid: number; born: number }) => `${x.pid}:${x.born}`
+    const t = await w.run.call<{ sample: Sample; metrics: RawMetric[] | null } | null>('recorder:tick')
+    expect(t?.metrics).toBeTruthy()
+    expect(t!.sample.procs.map(key).sort()).toEqual(t!.metrics!.map(key).sort())
+    for (const p of t!.sample.procs) expect(p.rssMB).toBeCloseTo(t!.metrics!.find((m) => key(m) === key(p))!.workingSetKB / 1024, 6)
+    const gpuRaw = t!.metrics!.find((m) => m.type === 'GPU')!
+    expect(t!.sample.gpu).toMatchObject({ pid: gpuRaw.pid, born: gpuRaw.born })
+    expect(t!.sample.gpu!.gpuProcessRssMB).toBeCloseTo(gpuRaw.workingSetKB / 1024, 6)
+    // the minute on disk: each process's last RSS is the last tick's figure for that (pid, born)
+    type Folded = { body: { procs: { pid: number; born: number; rssMB: { last: number | null } }[] } | null; lastTs: number; lastRaw: RawMetric[] | null }
+    const fold = await until('a minute folded', async () => { const f = (await w.run.call<{ minute: Folded | null }>('recorder:flush', { minute: true })).minute; return f?.body && f.lastRaw ? f : null })
+    const minuteLine = await until('that minute on disk', async () => (await of('sample')).find((x) => JSON.stringify(x.procs) === JSON.stringify(fold.body!.procs)))
+    let met = 0
+    for (const p of minuteLine.procs) {
+      const m = fold.lastRaw!.find((x) => key(x) === key(p))
+      if (!m) continue   // a process gone before the minute's last tick
+      met++
+      expect(p.rssMB.last).toBeCloseTo(m.workingSetKB / 1024, 3)
     }
+    expect(met).toBe(fold.lastRaw!.length)
     expect(s.visible).toMatchObject({ tab: id, page: PAGE1, commit: tab.doc!.commits })
     expect(s.visible!.ws).toMatch(/^[0-9a-f]{16}$/)
     expect(s.visible!.privateMB).toBeGreaterThan(0)
     expect(s.visible!.heapMB).toBeGreaterThan(0)
     const canvasProc = s.procs.find((p) => p.role === 'canvas' && p.tabs.includes(id))!
-    // the preload's `private` against macOS's footprint, from outside: reported (A3.8 #5's first-build check), never gated here
-    let footprint = 'not read'
-    try {
-      const out = execFileSync('/usr/bin/footprint', ['-p', String(canvasProc.pid)], { encoding: 'utf8', timeout: 5000 })
-      footprint = /phys_footprint:\s*([\d.]+\s*\w+)/i.exec(out)?.[1] ?? out.split('\n').find((l) => /footprint/i.test(l)) ?? out.slice(0, 200)
-    } catch (err) { footprint = `unreadable (${(err as Error).message.split('\n')[0]})` }
-    process.stdout.write(`recorder: canvas renderer ${canvasProc.pid}: preload private ${s.visible!.privateMB} MB, footprint ${footprint}, RSS ${canvasProc.rssMB.toFixed(1)} MB\n`)
+    // A3.8 #5's first-build check: the preload's `private` against macOS's footprint, read from outside within a second
+    // of the answer, within 10 % (if not, canvas memory falls back to RSS, labelled: a design change, so this fails)
+    const fresh = await until('a mem answer under a second old', async () => { const v = (await ring()).last?.visible; return v?.tab === id && Date.now() - v.at < 1000 ? v : null })
+    const fp = footprintMB(canvasProc.pid)
+    process.stdout.write(`recorder: canvas renderer ${canvasProc.pid}: preload private ${fresh.privateMB} MB, footprint -p ${fp.mb === null ? fp.why : `${fp.mb.toFixed(1)} MB`}, RSS ${canvasProc.rssMB.toFixed(1)} MB\n`)
+    expect(fp.mb, `footprint -p not read: ${fp.why}`).not.toBe(null)
+    expect(Math.abs(fresh.privateMB - fp.mb!) / fp.mb!, `preload private ${fresh.privateMB} MB against footprint ${fp.mb!.toFixed(1)} MB`).toBeLessThan(0.1)
     // the minute on disk names the same processes
     const minute = await until('a sample line naming the canvas', async () => (await of('sample')).find((x) => x.procs.some((p) => p.role === 'canvas' && p.tabs.includes(id))), 10_000)
     expect(minute.n).toBeGreaterThan(1)
@@ -231,6 +256,15 @@ describe('the recorder on the real binary (A3.7)', () => {
     expect((await of('gpu-restart')).filter((x) => x.pid === after.pid)).toHaveLength(0)
   })
 })
+
+/** A process's physical footprint from outside (`footprint -p <pid> -f bytes`), in MB (MiB, as the preload's KB / 1024). */
+function footprintMB(pid: number): { mb: number | null; why: string } {
+  try {
+    const out = execFileSync('/usr/bin/footprint', ['-p', String(pid), '-f', 'bytes', '--noCategories'], { encoding: 'utf8', timeout: 10_000 })
+    const m = /Footprint:\s*(\d+)\s*B\b/.exec(out)
+    return m ? { mb: Number(m[1]) / 2 ** 20, why: '' } : { mb: null, why: `no footprint in: ${out.slice(0, 200)}` }
+  } catch (err) { return { mb: null, why: (err as Error).message.split('\n')[0]! } }
+}
 
 function statMode(p: string): number {
   return Number.parseInt(execFileSync('/usr/bin/stat', ['-f', '%Lp', p], { encoding: 'utf8' }).trim(), 8)

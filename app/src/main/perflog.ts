@@ -30,6 +30,11 @@
  * - A failed append (ENOSPC) queues again only the lines past what landed (a line cut short is written again whole);
  *   the next write starts on a fresh line, and so does a launch's first write after a file an earlier launch left
  *   ending inside a line. No line is lost, written twice or joined to a torn one.
+ * - A headless run's profile (`kind: 'headless'`) is named only by `runs.jsonl` lines in the repos, which the app
+ *   cannot read: it is kept at least as long as those lines are (14 days, A1's `tidyPerfDir`), whatever a shorter
+ *   `keepPerfDays` says, so `--machine` never lists a retained run under no profile (A3.6: "kept while a retained line
+ *   names them").
+ * - The test hook's flush (`flushQueued`) is the 2 s timer's, run now: it never ends the hold at launch.
  *
  * FROZEN signatures (A3.8 #53).
  */
@@ -62,6 +67,8 @@ export const ROTATE_BYTES = 5 * 1024 * 1024
 export const PICTURES_KEPT = 50
 /** Completed Crashpad reports kept (A3.6). */
 export const DUMPS_KEPT = 10
+/** The repos keep `runs.jsonl` this long (A1's tidyPerfDir, A3.6): a headless run's profile is kept at least as long. */
+export const RUN_LINES_DAYS = 14
 /** Darwin's O_EXLOCK (fcntl.h), which Node's fs.constants lacks and `open` passes through (A3.8 r1 #7). */
 export const O_EXLOCK = 0x20
 const DAY = 86_400_000
@@ -115,6 +122,8 @@ function release(force = false): void {
   const m = s.machine()
   if (m === null && !force && Date.now() - startedAt < T.profileHoldMs) return
   holding = false
+  // test builds: how the hold ended - by the hash, past profileHoldMs, or forced (a quit, main's error) - and over what
+  if (__MV_TEST__) note('perflog', { hold: { by: m !== null ? 'hash' : force ? 'forced' : 'timeout', machine: m, lines: held.length, startedAt, waitedMs: Date.now() - startedAt } })
   for (const h of held) enqueue(lineOf(h, m))
   held = []
   for (const f of released.splice(0)) f()
@@ -276,8 +285,20 @@ function endsWithNewline(f: string): boolean {
 /** `will-quit`: everything queued, written now. */
 export function flushSync(): void { flush(true) }
 
-/** Test builds: write what is queued now (the hold included). */
+/** Unit tests: write what is queued now, the hold ended for it (as a quit does). */
 export const flushNow = (): boolean => flush(true)
+
+/**
+ * Test builds (`recorder:flush`): what the 2 s timer does, now, once a rewrite under way has ended - the queue
+ * appended, the hold at launch kept (it ends at the first hash or after profileHoldMs, as it would without the hook).
+ */
+export async function flushQueued(): Promise<boolean> {
+  for (let i = 0; i < 20 && rewriting; i++) await rewriting
+  return flush(false)
+}
+
+/** Whether lines at launch are still held for the first hash. */
+export const holdingAtLaunch = (): boolean => holding
 
 // ---- whole rewrites: rotation and pruning --------------------------------------------------------------------
 
@@ -494,15 +515,23 @@ async function pruneOnce(now: number): Promise<PruneReport> {
       for (const l of text.split('\n')) { const m = MACHINE.exec(l); if (m) named.add(m[1]!) }
     }
     const profiles = (await listed(machine)).filter((f) => /^[0-9a-f]{16}\.json$/.test(f.name))
+    // a headless run touches its profile at each run; only runs.jsonl lines, kept 14 days in the repos, name it
+    const runsCutoff = now - Math.max(days(), RUN_LINES_DAYS) * DAY
     for (const f of profiles) {
       const hash = f.name.slice(0, 16)
       if (hash === cur) { const d = new Date(now); await utimes(f.path, d, d).catch(() => {}); await mode600(f.path); continue }
       if (f.mtime >= cutoff || named.has(hash)) { await mode600(f.path); continue }
+      if (f.mtime >= runsCutoff && (await profileKind(f.path)) === 'headless') { await mode600(f.path); continue }
       await unlink(f.path).then(() => { r.profiles++ }, () => {})
     }
   }
   if (__MV_TEST__) note('perflog', { profiles: r.profiles })
   return r
+}
+
+/** A profile's `kind` ('app', 'headless'), or null when it cannot be read. */
+async function profileKind(f: string): Promise<string | null> {
+  try { const k = (JSON.parse(await readFile(f, 'utf8')) as { kind?: unknown }).kind; return typeof k === 'string' ? k : null } catch { return null }
 }
 
 /** Tests: retention's launch pass, if it is still waiting, run now; then once every rewrite and prune under way has ended. */
