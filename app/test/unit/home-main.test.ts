@@ -310,7 +310,7 @@ describe('mountPages (ports.ts): the pages\' channels, mounted once at ready', (
     expect(await f.invoke(CH.homeAction, { action: 'copy-start', id: `r_${WS(1)}` })).toEqual({ ok: true })
     expect(await f.invoke(CH.linkOpen, { url: 'http://localhost:4901/#/b/x' })).toEqual({ ok: true })
     expect(await f.invoke(CH.linkOpen, { url: 'http://localhost:4902/' })).toEqual({ ok: false, why: 'nothing' })
-    expect(await f.invoke(CH.settingsGet)).toMatchObject({ dir: home, shown: ['config.restoreTabs', 'config.unloadUnderPressure', 'config.recorder', 'config.keepPerfDays', 'theme.mode'] })
+    expect(await f.invoke(CH.settingsGet)).toMatchObject({ dir: home, shown: ['config.restoreTabs', 'theme.mode'] })
     expect(await f.invoke(CH.settingsSet, { file: 'config', key: 'restoreTabs', value: false })).toEqual({ ok: true })
     await f.invoke(CH.settingsReveal)
     expect(fx.opened).toEqual([home])

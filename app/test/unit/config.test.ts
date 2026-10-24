@@ -258,17 +258,14 @@ describe('settings:set', () => {
 
   it('refuses a key of a later milestone, an unknown key, a bad value and a bad shape', async () => {
     start()
-    // app 0.2 is A3: unloading, the recorder and its days are shown (and set); A4's keys not yet
-    expect(await cfg.settingsSet({ file: 'config', key: 'notifications', value: true })).toEqual({ ok: false, why: 'unknown-key' })
-    expect(await cfg.settingsSet({ file: 'config', key: 'dockBadge', value: false })).toEqual({ ok: false, why: 'unknown-key' })
+    expect(await cfg.settingsSet({ file: 'config', key: 'recorder', value: false })).toEqual({ ok: false, why: 'unknown-key' })
+    expect(await cfg.settingsSet({ file: 'config', key: 'unloadUnderPressure', value: false })).toEqual({ ok: false, why: 'unknown-key' })
     expect(await cfg.settingsSet({ file: 'config', key: 'nope', value: true })).toEqual({ ok: false, why: 'unknown-key' })
     expect(await cfg.settingsSet({ file: 'config', key: 'restoreTabs', value: 'no' })).toEqual({ ok: false, why: 'bad-value' })
     expect(await cfg.settingsSet({ file: 'theme', key: 'mode', value: 'midnight' })).toEqual({ ok: false, why: 'bad-value' })
     expect(await cfg.settingsSet({ file: 'other', key: 'mode', value: 'dark' })).toEqual({ ok: false, why: 'bad-value' })
     expect(await cfg.settingsSet({ file: 'config', key: '__proto__', value: true })).toEqual({ ok: false, why: 'bad-value' })
     expect(existsSync(join(home, 'config.json'))).toBe(false)
-    expect(await cfg.settingsSet({ file: 'config', key: 'unloadUnderPressure', value: false })).toEqual({ ok: true })
-    expect(cfg.values().config.unloadUnderPressure).toBe(false)
   })
 
   it('onto a file that does not apply: the last good values plus the change, the broken bytes kept as .bad', async () => {
@@ -358,7 +355,7 @@ describe('settings:set', () => {
     writeFileSync(join(home, 'theme.json'), '{ "mode": "midnight" }')
     await cfg.reread()
     const v = cfg.settingsView()
-    expect(v.shown).toEqual(['config.restoreTabs', 'config.unloadUnderPressure', 'config.recorder', 'config.keepPerfDays', 'theme.mode'])
+    expect(v.shown).toEqual(['config.restoreTabs', 'theme.mode'])
     expect(v.statusFile).toBe(join(home, 'state-dev', 'status.json'))   // under the temp home: no ~ to shorten
     expect(v.config).toMatchObject({ ok: true, present: false, values: { restoreTabs: true } })
     expect(v.config).not.toHaveProperty('text')

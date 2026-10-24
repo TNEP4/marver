@@ -82,7 +82,8 @@ uncovered until a stream fills its own, so app 0.2's base behaves as app 0.1.
   quit whose helpers end with it (`test/prod/quit.test.ts`: `test/harness/catch-uncaught.cjs`, loaded with
   `NODE_OPTIONS=--require`, records an uncaught exception in main instead of Electron's modal error box), and the
   error policy (`test/prod/errors.test.ts`: the `throw` hook raises one in a later turn; the catcher is its safety net).
-- Hooks: `provide(name, fn)` in `src/main/testing/index.ts`, reached as `run.call(name, args)`; `note(topic, data)`
+- Hooks: `provide(name, fn)` in `src/main/testing/index.ts`, reached as `run.call(name, args)`, each name provided
+  once (a second throws at launch); `note(topic, data)`
   writes the journal the `log` hook returns (the view journal goes there). Base hooks: `ping`, `log`, `hooks`,
   `quit`, `exit`, and `spies` with `MARVER_APP_SPY=1`. Every call site is `if (__MV_TEST__) ...`.
 - **the fake canvas** (`test/harness/fake-canvas.ts`): its own slot file, a signed `GET /` (A1's `proofHeaders`),

@@ -24,9 +24,11 @@ export const effects = {
   },
 }
 
-/** Test builds: the `effects` hook returns (and with `{ clear: true }` empties) what was recorded. */
+let effectHooks = false
+/** Test builds: the `effects` hook returns (and with `{ clear: true }` empties) what was recorded. Once, whoever calls first (views.ts and config.ts both do). */
 export function provideEffectHooks(): void {
-  if (!__MV_TEST__) return
+  if (!__MV_TEST__ || effectHooks) return
+  effectHooks = true
   provide('effects', (a) => {
     const out = { copies: [...recorded.copies], opened: [...recorded.opened] }
     if ((a as { clear?: unknown } | null)?.clear === true) { recorded.copies.length = 0; recorded.opened.length = 0 }

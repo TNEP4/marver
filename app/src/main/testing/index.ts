@@ -29,9 +29,15 @@ export function testMode(): boolean {
   return __MV_TEST__ && !__MARVER_RELEASE__ && process.env.MARVER_APP_TEST === '1'
 }
 
-/** Register a hook (dev builds in test mode only). A second registration of a name replaces the first. */
+/**
+ * Register a hook (dev builds in test mode only). A name is registered once: a second registration throws, so two
+ * streams that both provide a name (memory's and the recorder's, say) find out at the first launch of a case rather
+ * than one quietly replacing the other.
+ */
 export function provide(name: string, fn: Hook): void {
-  if (__MV_TEST__ && testMode()) hooks.set(name, fn)
+  if (!(__MV_TEST__ && testMode())) return
+  if (hooks.has(name)) throw new Error(`${SENTINEL}: the hook ${name} is provided twice`)
+  hooks.set(name, fn)
 }
 
 /**
