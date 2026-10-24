@@ -321,26 +321,33 @@ run's alone, never the shared cache. A frame's own code can still write: runs ar
 not.
 
 **Valid or not.** A run is valid when none of these held, and its line names the first that did:
-`cancelled`, `crash`, `inputs` (a watched file changed during the run, even if it was put back, or the dev server
-restarted), `writes` (a write was refused), `cut` (the load never settled - its `cut` says why, `unresponsive`
-when the page stopped answering), `frames` (a frame missing or never ready), `errors`, `bakes` (still compiling 30 s
-after the load), `gesture` (a gesture the canvas never ended within 5 s, or one in which no frame was timed - then
-`over33ms` is `null`, never 0), `records` (the page's records did not all land, or the page lost some to its
-queue's bound). Headless numbers are intervals in headless Chrome - not what a display shows.
+`cancelled`, `crash` (the page or the browser crashed), `inputs` (a watched file changed during the run, even if it
+was put back, or the dev server restarted), `writes` (a write was refused), `cut` (the load never settled - its
+`cut` says why: `unresponsive` when the page stopped answering, `driver: ...` when the run failed for another
+reason, such as a page script that threw), `frames` (a frame missing or never ready), `errors`, `bakes` (still
+compiling 30 s after the load), `gesture` (the camera never came to rest after the fit, a gesture the canvas never
+ended within 5 s, or one in which no frame was timed - then `over33ms` is `null`, never 0), `records` (the page's
+records did not all land, or some were lost to a bound on the way). `gestures` counts the run's own three that the
+canvas ended. A compile of the run still running 50 s after it ends is said in its line (`bakesPending`), and the
+next run, measured beside it, is `overlapped`. Headless numbers are intervals in headless Chrome - not what a display
+shows.
 
-**The inputs.** `inputs` fingerprints every file the dev server watches (git status plays no part, so an
-ignored file a frame imports counts) plus the board files and `_sizes.json`. A file outside the project that a
-frame imports - a sibling package's source in a monorepo - counts too, once a page has loaded it: the dev server
-watches it from then on, so a run takes its fingerprint after its warm-up has loaded the board, and hashes the
-same files again at its end. `GET /__mv/api/perf/inputs` reads it alone. A frame importing from a folder the dev
-server ignores (a sibling package's `dist/`) is not in it.
+**The inputs.** `inputs` fingerprints every file in the project the dev server watches (git status plays no part,
+so an ignored file a frame imports counts) plus the board files and `_sizes.json`. Outside the project - a sibling
+package's source in a monorepo - it counts the files the board itself loads: the run takes its fingerprint after its
+warm-up has loaded the board, from the files that page requested, what they import directly (a stylesheet's
+`@import`s) and the `tsconfig` above them, and hashes the same files again at its end. Another board's sibling
+files, which the dev server watches once any page loaded them, are never in it, so two runs of a board with nothing
+changed have the same inputs. `GET /__mv/api/perf/inputs?run=<id>` reads a run's own files again now (for the last
+32 runs, while the dev server runs); without `?run=` it reads every file the dev server watches. A frame importing
+from a folder the dev server ignores (a sibling package's `dist/`) is not in it.
 
 **Comparing.** `npx marver perf --runs` compares runs only inside a cohort - the same script, board, Chrome,
 flags, Mac (`machine`, a profile of its own in `~/.marver/perf/machine/`), power source, `--slow` and warm or
 cold bakes - and inside it by inputs: the latest run against the one before with the same inputs ("within
 10 %" of its load to settled and p95, or not), and against the last one with other inputs (the deltas).
-`--against <run>` compares the latest run of a cohort with that one whatever their inputs, when you changed
-something on purpose. Runs that overlapped another are listed, never compared; invalid runs are listed with
+`--against <run>` compares the latest run of its cohort made after it with that one, whatever their inputs, when you
+changed something on purpose. Runs that overlapped another are listed, never compared; invalid runs are listed with
 their reason. `--days <n>` (14 by default) and `--json` as elsewhere.
 
 ## Options

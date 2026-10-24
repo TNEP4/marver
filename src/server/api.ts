@@ -395,7 +395,16 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         if (!ownerGated(req) && !(token && req.headers['x-mv-work'] === token)) return json(res, 403, { error: 'forbidden' })
         if (path === 'perf/inputs') {
           if (!opts.inputs) return json(res, 200, { inputs: null })
-          const { fingerprint } = await import('./perf-inputs.ts')
+          const { fingerprint, hashInputs } = await import('./perf-inputs.ts')
+          // ?run=<id>: that run's own set read again now - its files outside the root are its page's, which only the
+          // run knew (the review of a3-runs' fixes); without it, every file the dev server watches now
+          const run = url.searchParams.get('run')
+          if (run !== null) {
+            const { runInputPaths } = await import('./perf-run.ts')
+            const paths = runInputPaths(run)
+            if (!paths) return json(res, 404, { inputs: null, error: `run ${run} is not one of the last 32 this dev server ran` })
+            return json(res, 200, { run, inputs: await hashInputs(root, paths) })
+          }
           return json(res, 200, { inputs: await fingerprint(root, opts.inputs) })
         }
         const origin = opts.origin?.() ?? `http://${req.headers.host ?? 'localhost'}`

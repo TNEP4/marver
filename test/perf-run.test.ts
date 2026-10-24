@@ -19,7 +19,10 @@ import type { RunLine, RunStreamLine } from '../src/shared/perf-run.ts'
  * `unresponsive` within the deadlines; an edit put back with its mtime, in a source file or in `_sizes.json`, is caught
  * by the sticky flag alone; the dev server restarting in place mid-run (an .env edit) gives `inputs`, and the CLI says
  * so; and a third canvas - one compile held 25 s, the page told to stop asking - proves the gestures and the line wait
- * for the server's jobs once the page is idle. Skips, never fails, without Chrome.
+ * for the server's jobs once the page is idle. Added by the review of a3-runs' fixes: a fourth canvas, the same held
+ * compile with the warm-up's full 60 s, proves the warm-up too is bake-idle only once the server's job ends; and a
+ * module outside the root that another page loaded leaves a run's inputs as they were (`GET /api/perf/inputs?run=`
+ * reads a run's own set again). Skips, never fails, without Chrome.
  */
 
 const CHROME = !!findChrome()
@@ -78,6 +81,7 @@ interface Canvas { root: string; dev: Dev }
 let A: Canvas | null = null   // the canvas most cases run on
 let B: Canvas | null = null   // each compile held 5 s, a 3 s warm-up: cold bakes and the cancel
 let C: Canvas | null = null   // each compile held 25 s, a 3 s warm-up, the page told to stop asking: the server's half of bake-idle
+let D: Canvas | null = null   // C's held compile with the warm-up's own 60 s: the warm-up's server half
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const sha = (p: string) => { try { return createHash('sha256').update(readFileSync(p)).digest('hex') } catch { return 'absent' } }
 const put = (root: string, rel: string, body: string | Buffer) => { const p = join(root, rel); mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, body) }
@@ -106,7 +110,9 @@ async function run(c: Canvas, board: string, o: { slow?: boolean; repeat?: numbe
   } catch (e) { if (!o.signal?.aborted) throw e }
   return { stream, lines: stream.flatMap((l) => ('line' in l ? [l.line] : [])) }
 }
-const inputsNow = async (c: Canvas) => (await (await fetch(`${c.dev.origin}/__mv/api/perf/inputs`, { headers: { 'x-mv-work': token(c) } })).json()).inputs as { hash: string; files: number } | null
+const inputsNow = async (c: Canvas, run?: string) => (await (await fetch(`${c.dev.origin}/__mv/api/perf/inputs${run ? `?run=${run}` : ''}`, { headers: { 'x-mv-work': token(c) } })).json()).inputs as { hash: string; files: number } | null
+/** This repo, which the fixture's @marver-design/marver links to from outside its root - as a monorepo's sibling package. */
+const REPO = join(import.meta.dirname, '..')
 /** A run's line in runs.jsonl, once it is there. */
 async function lineOf(c: Canvas, id: string, ms = 120_000): Promise<RunLine> {
   for (const by = Date.now() + ms; Date.now() < by; await wait(200)) { const l = runsLog(c).find((x) => x.run === id); if (l) return l }
@@ -163,20 +169,22 @@ function fixture(prefix: string): string {
 
 beforeAll(async () => {
   if (!CHROME) return
-  const ra = fixture('mv-perfrun-a-'), rb = fixture('mv-perfrun-b-'), rc = fixture('mv-perfrun-c-')
-  const [da, db, dc] = await Promise.all([
+  const ra = fixture('mv-perfrun-a-'), rb = fixture('mv-perfrun-b-'), rc = fixture('mv-perfrun-c-'), rd = fixture('mv-perfrun-d-')
+  const [da, db, dc, dd] = await Promise.all([
     startDev(ra),
     startDev(rb, { env: { MV_BAKE_HOLD_MS: '5000', MV_PERF_RUN_T: JSON.stringify({ warmMs: 3000 }), MARVER_SHOT_CONCURRENCY: '1' } }),
     startDev(rc, { env: { MV_BAKE_HOLD_MS: '25000', MV_BAKE_STOP_ASKING: '1', MV_PERF_RUN_T: JSON.stringify({ warmMs: 3000, bakeIdleMs: 60_000 }) } }),
+    startDev(rd, { env: { MV_BAKE_HOLD_MS: '25000', MV_BAKE_STOP_ASKING: '1' } }),
   ])
   A = { root: ra, dev: da }
   B = { root: rb, dev: db }
   C = { root: rc, dev: dc }
+  D = { root: rd, dev: dd }
 }, 120_000)
 
 afterAll(async () => {
-  await Promise.all([A?.dev.stop(), B?.dev.stop(), C?.dev.stop()])
-  for (const c of [A, B, C]) if (c) rmSync(c.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  await Promise.all([A?.dev.stop(), B?.dev.stop(), C?.dev.stop(), D?.dev.stop()])
+  for (const c of [A, B, C, D]) if (c) rmSync(c.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
 })
 
 const need = (ctx: { skip: () => void }, c: Canvas | null): Canvas => { if (!c) ctx.skip(); return c! }
@@ -250,6 +258,23 @@ describe('a headless run', () => {
     expect(bakeDirs(c).filter((d) => !before.includes(d))).toEqual([])
   }, 240_000)
 
+  it('a run\'s inputs are its board\'s: a module outside the root that another page loaded since - watched from then on - changes nothing of them', async (ctx) => {
+    const c = need(ctx, A)
+    const { lines: [a] } = await run(c, 'video')
+    expect(a.inputs).not.toBeNull()
+    expect(await inputsNow(c, a.run), 'its own set, read again').toEqual(a.inputs)
+    // another page loads a file of the linked package that no board's page does: the dev server watches it from now on
+    const watchedBefore = (await inputsNow(c))!.files
+    const r = await fetch(`${c.dev.origin}/@fs${join(REPO, 'src', 'shared', 'app-perf.ts')}`)
+    expect(r.status).toBe(200)
+    let watched = watchedBefore
+    for (const by = Date.now() + 10_000; Date.now() < by && watched === watchedBefore; await wait(100)) watched = (await inputsNow(c))!.files
+    expect(watched, 'every watched file: the new one is in it').toBeGreaterThan(watchedBefore)
+    const { lines: [b] } = await run(c, 'video')
+    expect(b.inputs, 'the same board, nothing of it changed: the same inputs').toEqual(a.inputs)
+    expect(b.inputs!.files).toBeLessThan(watched)
+  }, 240_000)
+
   it('an edit to a component a frame imports, between two runs, changes the inputs; so do the layout, the heights and an ignored import', async (ctx) => {
     const c = need(ctx, A)
     const base = first?.inputs?.hash ?? (await inputsNow(c))!.hash
@@ -258,12 +283,14 @@ describe('a headless run', () => {
     const { lines } = await run(c, 'main')
     expect(lines[0].inputs?.hash).not.toBe(base)
     expect(lines[0].valid, JSON.stringify(lines[0])).toBe(true)
-    // the fingerprint alone, as an agent reads it: a board's layout, a saved height, a git-ignored file a frame imports
-    let last = (await inputsNow(c))!.hash
+    // the fingerprint alone, as an agent reads it - the run's own set read again: a board's layout, a saved height, a
+    // git-ignored file a frame imports
+    const id = lines[0].run
+    let last = (await inputsNow(c, id))!.hash
     expect(last).toBe(lines[0].inputs?.hash)
     const step = async (what: string, change: () => void) => {
       change(); await wait(50)
-      const now = (await inputsNow(c))!.hash
+      const now = (await inputsNow(c, id))!.hash
       expect(now, what).not.toBe(last)
       last = now
     }
@@ -422,6 +449,26 @@ describe('a run\'s bakes, compiled slowly', () => {
     expect(r.status, await r.clone().text()).toBe(200)
     expect(await r.json()).toMatchObject({ generated: true })
     expect(existsSync(join(c.root, 'design', 'assets', 'clip.webm.poster.png'))).toBe(true)
+  }, 240_000)
+})
+
+describe('a run\'s bakes, the warm-up\'s page idle before the server', () => {
+  it('a warm-up whose page is idle while the server still compiles is not bake-idle: it is warm only once the compile ends', async (ctx) => {
+    const c = need(ctx, D)
+    // the warm-up asks for glass1's compile (held 25 s), is answered "stop asking" at 2.5 s, retries once 4 s later
+    // and asks no more - idle some 10 s into the warm-up, while the server compiles on for 15 s or more. Only
+    // jobsOf(run) keeps the warm-up open; with the warm-up's own 60 s it ends warm, after the compile.
+    const logged: number[] = []
+    const poll = setInterval(() => { while (logged.length < (c.dev.out().match(/bake: app\/glass1/g) ?? []).length) logged.push(Date.now()) }, 20)
+    let warmAt = 0, measuredAt = 0
+    const { lines } = await run(c, 'glass', { onLine: (l) => { if ('phase' in l && l.phase === 'warm') warmAt = Date.now(); if ('phase' in l && l.phase === 'measured') measuredAt = Date.now() } })
+    clearInterval(poll)
+    const l = lines[0]
+    expect(l, JSON.stringify(l)).toMatchObject({ bakes: 'warm', gestures: 3 })
+    expect(logged, 'one compile, the run\'s warm-up\'s').toHaveLength(1)
+    const compiled = logged[0]
+    expect(compiled - warmAt, 'the compile outlasted the page\'s asks').toBeGreaterThan(20_000)
+    expect(measuredAt, 'the measured load began only after the compile\'s log line').toBeGreaterThan(compiled)
   }, 240_000)
 })
 

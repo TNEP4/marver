@@ -70,10 +70,12 @@ export function runsSummary(runs: RunLine[], o: { against?: string } = {}): Runs
     const base = ordered.find((r) => r.run === o.against)
     if (!base) out.against = { run: o.against, error: 'no such run in the window' }
     else {
-      const latest = [...ordered].reverse().find((r) => r.run !== base.run && cohortKey(r) === cohortKey(base) && comparable(r))
+      // the latest run of its cohort AFTER it: the deltas always go from the earlier run to the later (the review of
+      // a3-runs' fixes - the latest other run could be older, and its signs reversed)
+      const latest = [...ordered].reverse().find((r) => r.run !== base.run && r.ts > base.ts && cohortKey(r) === cohortKey(base) && comparable(r))
       out.against = latest && comparable(base)
         ? { run: base.run, ...compare(base, latest), within10: within(base, latest) }
-        : { run: base.run, error: !comparable(base) ? `run ${base.run} is ${base.valid ? 'overlapped' : `invalid (${base.invalidReason})`}: never compared` : 'no later valid run of its cohort (script, board, Chrome, flags, machine, power, --slow, bakes)' }
+        : { run: base.run, error: !comparable(base) ? `run ${base.run} is ${base.valid ? 'overlapped' : `invalid (${base.invalidReason})`}: never compared` : 'no later valid run of its cohort (script, board, Chrome, flags, machine, power, --slow, bakes) - pass the earlier run' }
     }
   }
   return out

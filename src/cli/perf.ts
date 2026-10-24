@@ -364,15 +364,17 @@ const ms2 = (v: number | null | undefined) => (typeof v === 'number' ? (v >= 100
 const mms = (v: number | null | undefined) => (typeof v === 'number' ? `${v} ms` : '-')
 const why = (l: RunLine) => `invalid: ${l.invalidReason}${l.restarted ? ' (the dev server restarted)' : l.cut ? ` (${l.cut})` : ''}`
 const over33 = (n: number | null) => (n === null ? 'frames over 33 ms not measured' : `${n} frame${n === 1 ? '' : 's'} over 33 ms`)
-/** What an invalid run asks of the agent, when its reason alone does not say it. */
+/** What a run asks of the agent, when its reason alone does not say it - an invalid run's, or a compile it left running. */
 const hint = (l: RunLine): string | null =>
   l.restarted ? 'the dev server restarted during the run (an .env or config edit): its inputs changed - run it again'
   : l.cut === 'unresponsive' ? 'the page stopped answering for 15 s: a frame\'s script that never returns (an endless loop) - open the board and see which frame hangs'
   : l.invalidReason === 'gesture' && l.over33ms === null ? 'no frame was timed: requestAnimationFrame never ran in the gestures (the page read as hidden?)'
+  : l.invalidReason === 'gesture' && l.gestures < 3 ? `the canvas ended ${l.gestures} of the 3 gestures within 5 s: the camera kept moving (an animation that never ends?)`
+  : l.bakesPending ? 'a compile of this run was still running 50 s after it: the next run is overlapped'
   : null
-/** One run, as `perf run` and `perf --runs` print it: three lines, and a fourth when an invalid run has a hint. */
+/** One run, as `perf run` and `perf --runs` print it: three lines, and a fourth when it has a hint. */
 export function runBlock(l: RunLine, name: (b?: string) => string): string[] {
-  const h = l.valid ? null : hint(l)
+  const h = hint(l)
   return [
     `run ${l.run} · ${name(l.board)} · Chrome ${l.chrome.split('.')[0]} · bakes ${l.bakes}${l.slow ? ' · --slow' : ''}${l.overlapped ? ' · overlapped' : ''}`,
     `load to settled ${ms2(l.loadToSettledMs)} · ${l.moves} move${l.moves === 1 ? '' : 's'}${l.lateMoves ? ` (${l.lateMoves} late)` : ''} · p50 ${mms(l.p50)} p95 ${mms(l.p95)} · ${over33(l.over33ms)} · heap peak ${l.heapPeakMB ?? '-'} MB${l.postersMissing ? ` · ${l.postersMissing} without a poster` : ''}`,
@@ -402,10 +404,17 @@ async function lineAfterDrop(root: string, run: string, port: number): Promise<R
   return null
 }
 
+/** The dev server's own `{ error }` stream line: the run failed there before it had a line (no Chrome, a launch that
+ *  failed) - the server said so and ended the stream, so no line will come and none is waited for (the review of
+ *  a3-runs' fixes, major #1). */
+class ServerSaid extends Error {}
+
 /**
  * `marver perf run <board> [--slow] [--repeat n] [--json]`: the board's script in the canvas's own headless Chrome
  * (`marver dev` must be running), read-only - one line per run in design/.local/perf/runs.jsonl. Ctrl-C closes the
- * request, which cancels the run (its line says `cancelled`).
+ * request, which cancels the run (its line says `cancelled`). A failure the server reports ends the command at once,
+ * with the lines of the runs before it (`--json`: `{ runs, error }`); only a stream that breaks, or ends before its
+ * `done`, under a run waits for that run's line.
  */
 export async function perfRunCommand(root: string, board: string | undefined, opts: { slow?: boolean; repeat?: string | number; json?: boolean }): Promise<number> {
   if (!board) throw new Error('name the board: marver perf run <board> [--slow] [--repeat 1-5] [--json]')
@@ -429,7 +438,7 @@ export async function perfRunCommand(root: string, board: string | undefined, op
       const b = await res.json().catch(() => ({})) as { error?: string }
       throw new Error(b.error ?? `the run could not start (${res.status})`)
     }
-    let buf = ''
+    let buf = '', finished = false
     const dec = new TextDecoder()
     for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
       buf += dec.decode(chunk, { stream: true })
@@ -438,13 +447,22 @@ export async function perfRunCommand(root: string, board: string | undefined, op
         const text = buf.slice(0, nl); buf = buf.slice(nl + 1)
         let m: RunStreamLine
         try { m = JSON.parse(text) } catch { continue }
-        if ('error' in m) throw new Error(m.error)
+        // the server's own answer is final: the run under way ended without a line, and none will come
+        if ('error' in m) { under = null; throw new ServerSaid(`the run failed in the dev server: ${m.error}`) }
         if ('phase' in m) { under = m.run; if (!opts.json) console.log(m.phase === 'warm' ? `run ${m.run}: warming up` : m.phase === 'measured' ? '  measuring' : '  closing') }
         if ('line' in m) { under = null; lines.push(m.line); if (!opts.json) for (const l of runBlock(m.line, name)) console.log(`  ${l}`) }
+        if ('done' in m) finished = true
       }
     }
+    // a stream that ends quietly before its `done` broke too: under a run, that run's line is waited for below
+    if (!finished) throw new Error('the dev server ended the stream before the runs did')
   } catch (err) {
     if (ac.signal.aborted) { if (!opts.json) console.log('  cancelled - the run\'s line says so'); return 130 }
+    if (err instanceof ServerSaid) {
+      if (!opts.json) throw err
+      console.log(JSON.stringify({ runs: lines, error: err.message }, null, 2))
+      return 1
+    }
     // the stream broke under a run: the dev server restarted (spec 28 A3.8 #22) or stopped - its line says which
     if (!under) throw err
     if (!opts.json) console.log('  the connection to the dev server dropped - waiting for the run\'s line')

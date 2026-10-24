@@ -1,15 +1,16 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createServer, request, type Server } from 'node:http'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { closePage, Halt, openPage, readRunRequest, REPORT_FRAMES_MAX, runLine, runs, runSeams, runT, RUN_T, serveRun, timedGesture, type RunBrowser, type RunOptions } from '../src/server/perf-run.ts'
-import { boardInputs, fingerprint, hashInputs, inputPaths, type InputsWatch } from '../src/server/perf-inputs.ts'
+import { closePage, failureOf, Halt, measureGestures, openPage, readRunRequest, REPORT_FRAMES_MAX, runLine, runs, runSeams, runT, RUN_T, serveRun, timedGesture, type RunBrowser, type RunOptions, type RunPage } from '../src/server/perf-run.ts'
+import { boardInputs, fileOfUrl, fingerprint, hashInputs, inputPaths, loadedFiles, type InputsWatch, type ModuleFiles } from '../src/server/perf-inputs.ts'
+import { appendRun } from '../src/server/perf.ts'
 import { basicHost, hostProfile, parseHostSysctl, parseOs, parsePower, profileHash, spawnOut, writeHeadlessProfile } from '../src/server/machine-host.ts'
 import { canonical, readHost, type HostProfile } from '../src/shared/machine.ts'
 import { INVALID_REASONS, type RunLine, type RunStreamLine } from '../src/shared/perf-run.ts'
 import { cohortOf, runsSummary, within } from '../src/cli/perf-app.ts'
-import { ownLoads } from '../src/cli/perf.ts'
+import { ownLoads, perfRunCommand } from '../src/cli/perf.ts'
 
 /**
  * Headless runs' parts that need no browser (spec 28 A3.8 #11, #20-#22, r2 #3): the run request and its stream - the
@@ -129,6 +130,63 @@ describe('POST /api/perf/run', () => {
   })
 })
 
+// ---- `marver perf run`, the CLI's half of the stream ---------------------------------------------------------------
+
+describe('marver perf run (the CLI)', () => {
+  const A = 'aaaaaaaaaaaaaaaa', B = 'bbbbbbbbbbbbbbbb'
+  /** A dev server whose perf/run streams `lines` as serveRun writes them and ends; its other answers 200 (it stays up).
+   *  The repo's dev.json points at it. */
+  async function stubDev(lines: RunStreamLine[]): Promise<string> {
+    server = createServer((req, res) => {
+      if (!req.url?.startsWith('/__mv/api/perf/run')) return void res.end('up')
+      res.writeHead(200, { 'content-type': 'application/x-ndjson' })
+      for (const l of lines) res.write(JSON.stringify(l) + '\n')
+      res.end()
+    })
+    await new Promise<void>((r) => server!.listen(0, r))   // both families: the CLI asks for localhost
+    const root = temp('mv-perfcli-')
+    put(root, 'design/.local/dev.json', JSON.stringify({ port: (server.address() as { port: number }).port, token: 't' }))
+    return root
+  }
+  /** The command, its console.log lines kept. */
+  async function cli(root: string, opts: { json?: boolean; repeat?: number } = {}): Promise<{ code?: number; error?: Error; out: string[]; ms: number }> {
+    const out: string[] = []
+    const log = vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => { out.push(a.join(' ')) })
+    const t0 = Date.now()
+    try { return { code: await perfRunCommand(root, 'main', opts), out, ms: Date.now() - t0 } }
+    catch (e) { return { error: e as Error, out, ms: Date.now() - t0 } }
+    finally { log.mockRestore() }
+  }
+  const NO_CHROME = 'no Chrome/Chromium found - install one or set MARVER_CHROME to a browser binary'
+
+  it('a run the server failed before it had a line (no Chrome) ends the command at once, with the server\'s reason - never 90 s waiting for a line, never "did marver dev stop?"', async () => {
+    // exactly what serveRun writes when runOnce throws before a browser exists: the warm phase, the closing phase, the error
+    const root = await stubDev([{ phase: 'warm', run: A }, { phase: 'closing', run: A }, { error: NO_CHROME }])
+    const r = await cli(root)
+    expect(r.error?.message).toBe(`the run failed in the dev server: ${NO_CHROME}`)
+    expect(r.ms).toBeLessThan(2000)
+    expect(r.out.join('\n')).not.toMatch(/dropped/)
+  })
+
+  it('--json: the runs before the failure and the server\'s reason, on stdout, exit 1 - a repeat that failed loses nothing before it', async () => {
+    const root = await stubDev([{ phase: 'warm', run: A }, { phase: 'measured', run: A }, { phase: 'closing', run: A }, { line: LINE({ run: A }) }, { phase: 'warm', run: B }, { phase: 'closing', run: B }, { error: NO_CHROME }])
+    const r = await cli(root, { json: true, repeat: 2 })
+    expect(r.code).toBe(1)
+    expect(r.ms).toBeLessThan(2000)
+    expect(JSON.parse(r.out.join('\n'))).toEqual({ runs: [LINE({ run: A })], error: `the run failed in the dev server: ${NO_CHROME}` })
+  })
+
+  it('a stream that ends quietly before its done, under a run, waits for that run\'s line in runs.jsonl', async () => {
+    const root = await stubDev([{ phase: 'warm', run: A }, { phase: 'measured', run: A }])
+    setTimeout(() => appendRun(root, LINE({ run: A, ts: Date.now() }) as unknown as Record<string, unknown>), 400)
+    const r = await cli(root)
+    expect(r.error).toBeUndefined()
+    expect(r.code).toBe(0)
+    expect(r.out.join('\n')).toMatch(/the connection to the dev server dropped - waiting for the run's line/)
+    expect(r.out.join('\n')).toMatch(new RegExp(`run ${A} .* bakes warm`))
+  })
+})
+
 // ---- the page's context ------------------------------------------------------------------------------------------
 
 describe('a run\'s page', () => {
@@ -225,6 +283,92 @@ describe('a run\'s page', () => {
   })
 })
 
+// ---- the driver's gestures and its failures ----------------------------------------------------------------------
+
+describe('the driver', () => {
+  /**
+   * A measured page as the shell answers the driver, after perf.ts: one gesture runs while the camera moves - the
+   * fit's motion (`fitMs`, for ever with Infinity) or a wheel series (ended 60 ms after its last event) - and ends when
+   * it stops, its frames pushed then (the fit's 100 ms each, a wheel's 16 ms), even after a reset(). fit() answers
+   * `fitAnswer` at once, as the shell's does after its own 3 s.
+   */
+  function fakePage(o: { fitAnswer: boolean; fitMs: number }) {
+    let fitMoving = false, wheelMoving = false, gestures = 0
+    let g: { fit: boolean; wheel: boolean } | null = null
+    let frames: number[] = []
+    let wheelEnd: ReturnType<typeof setTimeout> | undefined
+    const moving = () => fitMoving || wheelMoving
+    const update = () => {
+      if (moving()) { g ??= { fit: false, wheel: false }; g.fit ||= fitMoving; g.wheel ||= wheelMoving; return }
+      if (!g) return
+      if (g.fit) frames.push(...Array(5).fill(100))
+      if (g.wheel) frames.push(...Array(10).fill(16))
+      g = null; gestures++
+    }
+    const pct = (q: number) => { const s = [...frames].sort((a, b) => a - b); return s.length ? s[Math.min(s.length - 1, Math.floor(q * s.length))] : 0 }
+    const evaluate = (x: string): unknown => {
+      if (x.includes('status()')) return { gestures, moving: moving() }
+      if (x.includes('fit()')) {
+        fitMoving = true; update()
+        if (Number.isFinite(o.fitMs)) setTimeout(() => { fitMoving = false; update() }, o.fitMs)
+        return o.fitAnswer
+      }
+      if (x.includes('centre()')) return { x: 720, y: 450 }
+      if (x.includes('reset()')) { frames = []; return undefined }
+      if (x.includes('report()')) return { gestureFrames: frames.length, frameP50: pct(0.5), frameP95: pct(0.95), over33ms: frames.filter((f) => f > 33).length }
+      return undefined
+    }
+    const page: RunPage = {
+      context: 'c', session: 's', slow: false, crashed: false, stalled: false, stop: () => {},
+      send: async (method: string, params: Record<string, unknown> = {}) => {
+        if (method === 'Input.dispatchMouseEvent' && params.type === 'mouseWheel') {
+          wheelMoving = true; update()
+          clearTimeout(wheelEnd)
+          wheelEnd = setTimeout(() => { wheelMoving = false; update() }, 60)
+        }
+        return {}
+      },
+      eval: async <T,>(x: string) => evaluate(x) as T,
+    }
+    return { page, pageGestures: () => gestures }
+  }
+  const quick = () => { process.env.MARVER_SLOT_BASE ??= '1'; runSeams.t = { eventMs: 1, pauseMs: 5, gestureEndMs: 1000, statusMs: 5 } }
+
+  it('a fit not at rest when it answers is waited for before the frames are reset: its motion is in neither the frames nor the gestures, which are the driver\'s three', async () => {
+    quick()
+    const { page, pageGestures } = fakePage({ fitAnswer: false, fitMs: 400 })
+    const m = await measureGestures(page, () => {})
+    expect(m.gesturesOk).toBe(true)
+    expect(m.gestures).toBe(3)
+    expect(pageGestures(), 'the page counted the fit\'s own').toBe(4)
+    // only the three wheel gestures' frames: none of the fit's 100 ms ones
+    expect(m.stats).toEqual({ p50: 16, p95: 16, over33ms: 0 })
+  })
+
+  it('a fit that never comes to rest makes the run invalid (gesture): no gesture ends, none is counted', async () => {
+    quick()
+    const { page } = fakePage({ fitAnswer: false, fitMs: Infinity })
+    const m = await measureGestures(page, () => {})
+    expect(m.gesturesOk).toBe(false)
+    expect(m.gestures).toBe(0)
+  })
+
+  it('only a crash is crash: a page script that threw is cut by the driver, its reason said; a halt is its own cut; a client gone is cancelled', () => {
+    const at = { clientGone: false, halted: null, stalled: false, browser: 'alive' as const, pageCrashed: false }
+    expect(failureOf(new Error('the page threw: TypeError: Cannot read properties of undefined (reading \'status\')'), at))
+      .toEqual({ cut: 'driver: the page threw: TypeError: Cannot read properties of undefined (reading \'status\')' })
+    expect(failureOf(new TypeError('c is undefined'), at)).toEqual({ cut: 'driver: c is undefined' })
+    expect(failureOf(new Error('x'), { ...at, pageCrashed: true })).toEqual({ crashed: true })
+    expect(failureOf(new Error('Target.createTarget: the browser exited (SIGSEGV)'), { ...at, browser: 'dead' })).toEqual({ crashed: true })
+    expect(failureOf(new Error('no Chrome/Chromium found'), { ...at, browser: 'none' })).toBeNull()
+    expect(failureOf(new Halt('unresponsive'), { ...at, pageCrashed: true })).toEqual({ cut: 'unresponsive' })
+    expect(failureOf(new Error('x'), { ...at, stalled: true })).toEqual({ cut: 'unresponsive' })
+    expect(failureOf(new Error('x'), { ...at, halted: 'overrun' })).toEqual({ cut: 'overrun' })
+    expect(failureOf(new Error('x'), { ...at, clientGone: true, pageCrashed: true })).toEqual({ cancelled: true })
+    expect((failureOf(new Error('y'.repeat(1000)), at) as { cut: string }).cut).toHaveLength('driver: '.length + 300)
+  })
+})
+
 // ---- the line --------------------------------------------------------------------------------------------------
 
 describe('the run line', () => {
@@ -283,6 +427,24 @@ describe('the run line', () => {
     expect(runLine(reg({ records: [...good(), rec('dropped', { n: 3 })] }), seen())).toMatchObject({ valid: false, invalidReason: 'records' })
     runs.end('abcdefabcdefabcd')
     expect(runLine(reg({ records: [...good(), rec('dropped', { n: 1, reason: 'errors' })] }), seen()).valid).toBe(true)
+    runs.end('abcdefabcdefabcd')
+  })
+  it('records the collector refused past its bound count as lost: invalid (records) - never a valid line with moves or errors missing', () => {
+    const r = runs.register('main', 'abcdefabcdefabcd')
+    runs.records(r.id, good())
+    runs.records(r.id, Array.from({ length: 20_000 }, () => rec('move', {})))
+    expect(r.records).toHaveLength(20_000)
+    expect(r.overflow).toBe(good().length)
+    expect(runLine(r, seen())).toMatchObject({ valid: false, invalidReason: 'records' })
+    runs.end('abcdefabcdefabcd')
+    expect(runLine(reg({ records: good() }), seen()).valid).toBe(true)
+    runs.end('abcdefabcdefabcd')
+  })
+  it('a compile of the run still running past its end\'s wait is said, the run itself still valid', () => {
+    const l = runLine(reg({ records: good() }), seen({ bakesPending: true }))
+    expect(l).toMatchObject({ valid: true, bakesPending: true })
+    runs.end('abcdefabcdefabcd')
+    expect(runLine(reg({ records: good() }), seen()).bakesPending).toBeUndefined()
     runs.end('abcdefabcdefabcd')
   })
   it('a run the dev server\'s in-place restart ended says inputs, never cancelled, and says it restarted', () => {
@@ -362,6 +524,46 @@ describe('the inputs\' fingerprint', () => {
   })
 })
 
+describe('a run\'s own inputs', () => {
+  it('outside the root are its page\'s: another page\'s sibling files - watched since it loaded them - stay out, so two runs of a board with nothing changed agree', async () => {
+    const root = temp('mv-inputs-'), sib = temp('mv-sibling-')
+    put(root, 'design/scenes/a.tsx', 'a')
+    put(root, 'design/boards/main.json', '{}')
+    for (const [f, body] of [['a/ui.ts', 'ui-a'], ['a/ui.css', 'css'], ['a/base.css', 'base'], ['b/ui.ts', 'ui-b'], ['tsconfig.json', '{}'], ['b/tsconfig.json', '{}']]) put(sib, f, body)
+    const watched: Record<string, string[]> = { [join(root, 'design', 'scenes')]: ['a.tsx'], [join(sib, 'a')]: ['ui.ts', 'ui.css', 'base.css'], [sib]: ['tsconfig.json'] }
+    // Vite's module graph: a's stylesheet inlines base.css - an imported module there, never a request of the page
+    const graph: ModuleFiles = { getModulesByFile: (f) => (f === join(sib, 'a', 'ui.css') ? [{ importedModules: [{ file: join(sib, 'a', 'base.css') }] }] : undefined) }
+    const w: InputsWatch = { ready: async () => true, watched: () => watched, loaded: (urls) => loadedFiles(urls, root, graph) }
+    // the warm-up page's requests: the shell, a frame's module, a's source and stylesheet by /@fs/, Vite's own client
+    const urls = ['/', '/design/scenes/a.tsx?t=1', `/@fs${join(sib, 'a', 'ui.ts')}?v=3`, `/@fs${join(sib, 'a', 'ui.css')}?direct`, '/@vite/client'].map((u) => `http://localhost:5300${u}`)
+    const set = async () => hashInputs(root, (await inputPaths(root, w, urls))!)
+    const first = await set()
+    // a.tsx and the board; a's source, stylesheet and its inlined @import; the tsconfig in a folder above them
+    expect(first.files).toBe(6)
+    // a normal tab opens board b: the watcher watches its sibling files - and their tsconfig - from now on
+    watched[join(sib, 'b')] = ['ui.ts', 'tsconfig.json']
+    expect(await set()).toEqual(first)
+    // every watched file, as GET /api/perf/inputs reads without a run: b's are in it
+    expect((await fingerprint(root, w))!.files).toBe(8)
+    // an edit to the inlined stylesheet, or to the tsconfig above a's files, still changes the run's
+    put(sib, 'a/base.css', 'base2')
+    const edited = await set()
+    expect(edited.hash).not.toBe(first.hash)
+    put(sib, 'tsconfig.json', '{"compilerOptions":{}}')
+    expect((await set()).hash).not.toBe(edited.hash)
+    // and with no requests at all (the start's fingerprint) nothing outside the root is in it
+    expect((await hashInputs(root, (await inputPaths(root, w, []))!)).files).toBe(2)
+  })
+  it('reads a request URL as the dev server does: /@fs/ outside the root, a path under Vite\'s root, never Vite\'s own ids', () => {
+    expect(fileOfUrl('http://localhost:5300/@fs/Users/me/ui/a.ts?v=1', '/r')).toBe('/Users/me/ui/a.ts')
+    expect(fileOfUrl('http://localhost:5300/@fs/Users/me/a%20b.ts', '/r')).toBe('/Users/me/a b.ts')
+    expect(fileOfUrl('http://localhost:5300/design/scenes/a.tsx?t=5&import', '/r')).toBe('/r/design/scenes/a.tsx')
+    expect(fileOfUrl('http://localhost:5300/base/x.ts', '/r', '/base/')).toBe('/r/x.ts')
+    expect(fileOfUrl('http://localhost:5300/@vite/client', '/r')).toBeNull()
+    expect(fileOfUrl('http://localhost:5300/@id/react', '/r')).toBeNull()
+  })
+})
+
 // ---- the host ----------------------------------------------------------------------------------------------------
 
 describe('the host profile', () => {
@@ -437,6 +639,9 @@ describe('marver perf --runs', () => {
     expect(runsSummary(runs, { against: 'a' }).against).toMatchObject({ run: 'a', to: { run: 'c' }, within10: false })
     expect(runsSummary(runs, { against: 'e' }).against).toMatchObject({ error: expect.stringMatching(/overlapped/) })
     expect(runsSummary(runs, { against: 'zz' }).against).toMatchObject({ error: 'no such run in the window' })
+    // always from the earlier run to a later one: the latest itself has none later - never the deltas reversed
+    expect(runsSummary(runs, { against: 'b' }).against).toMatchObject({ run: 'b', from: { run: 'b' }, to: { run: 'c' }, deltas: { loadToSettledMs: 50 } })
+    expect(runsSummary(runs, { against: 'c' }).against).toMatchObject({ run: 'c', error: expect.stringMatching(/^no later valid run of its cohort/) })
     expect(within(L('x', 1, { loadToSettledMs: 1000, p95: 16 }), L('y', 2, { loadToSettledMs: 1100, p95: 17.5 }))).toBe(true)
     expect(within(L('x', 1, { loadToSettledMs: 1000, p95: 16 }), L('y', 2, { loadToSettledMs: 1101, p95: 16 }))).toBe(false)
     // an over33ms not measured (an older invalid line) compares as unknown, never as 0

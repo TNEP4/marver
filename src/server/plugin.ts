@@ -21,7 +21,7 @@ import { checkUpdate, installedVersion } from './update.ts'
 import { workspaceId } from './workspace.ts'
 import { originOf } from './slots.ts'
 import { perfRunBarrier, runs, runT } from './perf-run.ts'
-import type { InputsWatch } from './perf-inputs.ts'
+import { loadedFiles, type InputsWatch } from './perf-inputs.ts'
 import type { DocProof } from './proof.ts'
 
 const VIRTUAL_THEME = 'virtual:sh-theme'
@@ -66,7 +66,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
   let served = 0   // servers configured: more than one is a Vite restart
   // a headless run's inputs (spec 28 A3.8 #21) read the watcher of the server serving NOW: a Vite restart closes the
   // one a run began with, and its end and the next runs read the new one. Its 'ready' waited for, 30 s at most
-  const watching: { watcher: ViteDevServer['watcher'] | null; ready: boolean; waiters: Set<() => void> } = { watcher: null, ready: false, waiters: new Set() }
+  const watching: { server: ViteDevServer | null; watcher: ViteDevServer['watcher'] | null; ready: boolean; waiters: Set<() => void> } = { server: null, watcher: null, ready: false, waiters: new Set() }
   const inputs: InputsWatch = {
     ready: () => (watching.ready ? Promise.resolve(true) : new Promise((resolve) => {
       const done = () => { clearTimeout(t); resolve(true) }
@@ -74,6 +74,11 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       watching.waiters.add(done)
     })),
     watched: () => watching.watcher?.getWatched() ?? {},
+    // a run's own page's files outside the root, read in this server's module graph (the review of a3-runs' fixes)
+    loaded: (urls) => {
+      const s = watching.server
+      return s ? loadedFiles(urls, s.config.root, s.environments?.client?.moduleGraph ?? null, s.config.base) : []
+    },
   }
   const bootId = String(process.hrtime.bigint())   // opaque, boot-scoped: a restart never mints a "lower" rev
   let invRev = 0
@@ -268,6 +273,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       // a run's inputs (A3.8 #21): the files this watcher watches - this server's from now on - and every event it fires
       // marks the runs under way, even an edit undone before they end
       const viteWatcher = server.watcher
+      watching.server = server
       watching.watcher = viteWatcher
       watching.ready = (viteWatcher as unknown as { _readyEmitted?: boolean })._readyEmitted === true
       viteWatcher.once('ready', () => {
