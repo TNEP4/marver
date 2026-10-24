@@ -26,7 +26,7 @@ afterAll(async () => {
 describe('the dev build under Playwright', () => {
   it('starts as Marver Dev on its own profile and home', async () => {
     const p = await run.call<Ping>('ping')
-    expect(p).toMatchObject({ name: 'Marver Dev', version: '0.1.0', electron: '45.0.0', ready: true, userData: env.userData })
+    expect(p).toMatchObject({ name: 'Marver Dev', version: '0.2.0', electron: '45.0.0', ready: true, userData: env.userData })
     expect(p.env.MARVER_HOME).toBe(env.home)
     expect(p.crashDumps).toBe(join(env.home, 'perf', 'crashpad'))
     expect(statSync(join(env.home, 'perf', 'crashpad')).mode & 0o777).toBe(0o700)

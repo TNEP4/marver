@@ -63,7 +63,7 @@ describe('first launch (A2.12, A2.14 #24)', () => {
     // stream's, and gets its own end-to-end case once it merges
     await call('home.shown')
     await until(async () => existsSync(state('launched')), (x) => x)
-    expect(JSON.parse(readFileSync(state('launched'), 'utf8'))).toMatchObject({ v: 1, app: '0.1.0' })
+    expect(JSON.parse(readFileSync(state('launched'), 'utf8'))).toMatchObject({ v: 1, app: '0.2.0' })
     expect((await call<{ welcome: boolean }>('home.info')).welcome).toBe(true)
     await relaunch()
     expect((await call<{ welcome: boolean }>('home.info')).welcome).toBe(false)
@@ -193,7 +193,8 @@ describe('Settings through main (A2.7)', () => {
     writeFileSync(`${p}.x.tmp`, '{ "restoreTabs": true }')
     renameSync(`${p}.x.tmp`, p)
     await until(() => call<Values>('files.values'), (v) => v.config.restoreTabs === true)
-    for (const s of [{ file: 'config', key: 'recorder', value: false }, { file: 'config', key: 'unloadUnderPressure', value: false }, { file: 'config', key: 'nope', value: true }]) {
+    // app 0.2 is A3: unloading and the recorder are set from Settings; A4's notices are a later milestone's
+    for (const s of [{ file: 'config', key: 'notifications', value: true }, { file: 'config', key: 'dockBadge', value: false }, { file: 'config', key: 'nope', value: true }]) {
       expect(await call('files.set', s)).toEqual({ ok: false, why: 'unknown-key' })
     }
     expect(await call('files.set', { file: 'config', key: 'restoreTabs', value: 'no' })).toEqual({ ok: false, why: 'bad-value' })

@@ -75,8 +75,8 @@ describe('the keys (A2.7, A2.14 #23)', () => {
   })
 })
 
-describe('A3\'s rows, as main sends them once STAGE is a3 (A3.8 #46)', () => {
-  // this branch's build is STAGE a2 until the streams meet (settings-keys.ts): main sends shownKeys('a3') then
+describe('A3\'s rows, as main sends them at STAGE a3 (app 0.2, A3.8 #46)', () => {
+  // main sends shownKeys() - STAGE a3 since the streams met (settings-keys.ts); named here so the case reads the same at A4
   const a3 = (unload = true): SettingsView => { const v = view(); return { ...v, shown: shownKeys('a3'), config: { ...v.config, values: { ...v.config.values, unloadUnderPressure: unload } } } }
 
   it('Unload hidden tabs when memory runs short: on by default, its key and note under it; a switch is one settings:set of it', async () => {
