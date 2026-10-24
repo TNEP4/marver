@@ -422,7 +422,7 @@ function crashesPerf(root: string, opts: PerfOptions) {
     console.log(`  ${when(c.at)}  ${c.reason}${typeof c.exitCode === 'number' ? ` (exit ${c.exitCode})` : ''} · pid ${c.pid} · pressure ${level(c.pressure)}${c.flavour === 'dev' ? ' · Marver Dev' : ''}`)
     console.log(`    ${momentWords(c, name, { ended: true })}`)
     const b = c.before
-    if (b) console.log(`    the minute before (by time, machine-wide): pressure ${level(b.pressure)}, thermal ${b.thermal}, canvases ${b.canvasMB ?? '-'} MB, the GPU process ${b.gpuProcessRssMB ?? '-'} MB${b.procMB != null ? `, this renderer ${Math.round(b.procMB)} MB` : ''}`)
+    if (b) console.log(`    the minute before (by time, machine-wide): pressure ${level(b.pressure)}, thermal ${b.thermal}, canvases ${b.canvasMB != null ? Math.round(b.canvasMB) : '-'} MB, the GPU process ${b.gpuProcessRssMB != null ? Math.round(b.gpuProcessRssMB) : '-'} MB${b.procMB != null ? `, this renderer ${Math.round(b.procMB)} MB` : ''}`)
   }
   if (sum.hangs.length) {
     console.log(`\nnot responding: ${sum.hangs.length}`)
