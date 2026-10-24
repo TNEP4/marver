@@ -102,8 +102,6 @@ const pages = new Map<string, PageHandle>()
 /** what compose() last applied, by plan key */
 const applied = new Map<string, { r: string; vis: boolean; color: string }>()
 let coverWas = { visible: false, color: '' }
-/** app 0.1's plain cover is the one in use (no cover S15 chose): the strip draws the still dots while it covers (A3.8 #3) */
-let plainInUse = false
 
 export const mainWindow = (): BaseWindow | null => win
 export const stripContents = (): WebContents | undefined => strip && !strip.webContents.isDestroyed() ? strip.webContents : undefined
@@ -236,9 +234,10 @@ function feedTabs(): void {
 
 function feedWindow(): void {
   if (!win) return
-  // the strip's still dots while app 0.1's cover covers: a canvas keeps 0.1's look under the tabs until S15 (A3.8 #3);
-  // over Home, Settings and a tab page the cover is hidden and the page's own dots show there
-  const body = { focused: win.isFocused(), fullScreen: win.isFullScreen(), dots: plainInUse && coverWas.visible }
+  // the strip's still dots while a cover that has the strip draw them covers (app 0.1's plain view until S15, A3.8 #3;
+  // variant 4 after): a canvas keeps 0.1's look under the tabs; over Home, Settings and a tab page the cover is hidden
+  // and the page's own dots show there
+  const body = { focused: win.isFocused(), fullScreen: win.isFullScreen(), dots: !!cover?.stripDraws && coverWas.visible }
   const s = JSON.stringify(body)
   if (s === lastWindow) return
   lastWindow = s
@@ -548,6 +547,10 @@ export async function captureWindow(): Promise<AppPicture> {
     const y0 = Math.round(b.y * sf)
     const bw = Math.round(b.width * sf)
     const bh = Math.round(b.height * sf)
+    // the cover as cover.ts draws it, whatever view it is; a web-view cover with no bitmap of its own (S15's variant 3)
+    // falls through to its capture, a plain one to a fill of its ground
+    const own = child === cover?.view ? cover.bitmap(bw, bh, sf) : null
+    if (own && own.length === bw * bh * 4) { blend(own, bw, bh, x0, y0); layers.push(`cover (bitmap) @${b.x},${b.y} ${b.width}x${b.height}`); continue }
     if (child instanceof WebContentsView) {
       if (child.webContents.isDestroyed()) continue
       let img = await child.webContents.capturePage()
@@ -558,10 +561,8 @@ export async function captureWindow(): Promise<AppPicture> {
       blend(bmp, bw, bh, x0, y0)
       layers.push(`${child.webContents.getURL()} @${b.x},${b.y} ${b.width}x${b.height}`)
     } else {
-      // the cover as cover.ts draws it; app 0.1's plain view a fill of its ground
-      const bmp = child === cover?.view ? cover.bitmap(bw, bh, sf) : null
-      if (bmp && bmp.length === bw * bh * 4) blend(bmp, bw, bh, x0, y0)
-      else fill(x0, y0, bw, bh, coverWas.color)
+      // app 0.1's plain view, or a cover whose bitmap is null: a fill of its ground
+      fill(x0, y0, bw, bh, coverWas.color)
       layers.push(`cover ${coverWas.color} @${b.x},${b.y} ${b.width}x${b.height}`)
     }
   }
@@ -593,11 +594,13 @@ export function openWindow(d?: WindowDeps): BaseWindow {
     titleBarStyle: 'hidden', trafficLightPosition: LIGHTS,
     backgroundColor: ground(dark), show: false, title: 'Marver',
   })
+  // the strip first, so a cover can use it (S15's variant 4 colours its native background); added last, on top
+  strip = new WebContentsView({ webPreferences: appPrefs() })
+  strip.setBackgroundColor('#00000000')   // transparent: it paints controls only, over the cover or the views beneath (A3.8 #29)
   // the cover S15 chose (cover.ts), else app 0.1's plain view - and with it no canvas at full height (A3.8 #3)
   let chosen: Cover | null = null
-  try { chosen = makeCover(win) } catch (err) { j('cover', { s15: String((err as Error)?.message ?? err) }) }
+  try { chosen = makeCover(win, strip) } catch (err) { j('cover', { s15: String((err as Error)?.message ?? err) }) }
   cover = chosen ?? plainCover()
-  plainInUse = !chosen
   setGround(!!chosen || (__MV_TEST__ && testMode() && process.env.MARVER_APP_GROUND === '1'))
   j('cover', { chosen: !!chosen, ground: groundOn() })
   cover.setLook(dark)
@@ -615,8 +618,6 @@ export function openWindow(d?: WindowDeps): BaseWindow {
     if (__MV_TEST__) note('cover-record', { ...who, ...body })
     try { recorder.event('cover', who, body) } catch { /* the recorder's to keep; the window goes on */ }
   })
-  strip = new WebContentsView({ webPreferences: appPrefs() })
-  strip.setBackgroundColor('#00000000')   // transparent: it paints controls only, over the cover or the views beneath (A3.8 #29)
   registerApp(strip.webContents, 'strip')
   track(strip.webContents, { part: 'strip' })
   strip.webContents.on('render-process-gone', () => {
@@ -683,6 +684,7 @@ function plainCover(): Cover {
   const view = new View()
   return {
     view,
+    stripDraws: true,
     contents: () => null,
     setRect: (r) => view.setBounds(r),
     setVisible: (v) => view.setVisible(v),
