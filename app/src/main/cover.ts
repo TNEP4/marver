@@ -4,10 +4,14 @@
  * and nothing of it is built before S15's result** (A3.8 #3): 1 a plain `View` with the ground as its background,
  * 2 an `ImageView` of still dots, 3 a `WebContentsView` on persist:app loading `marver-app://cover/` (its renderer
  * then counts in the app's own memory, A3.8 #48), 4 no view - the strip's own background. This file hides the
- * choice, so it is a one-file change.
+ * choice. What else each outcome touches: 1-3 nothing - with a cover chosen, window.ts sends the strip `dots: false`
+ * and the strip paints controls only (#29; 3 adds `pages/cover/` and its session pinning); 4 the strip's page too,
+ * which then paints the ground as well as the dots while covered (window.ts's `dots`, today app 0.1's look, is where
+ * that starts); none passing - the gate stays shut and app 0.1's look stays: the plain view covering every canvas,
+ * the strip's dots over it.
  *
- * FROZEN (A3.8 #53): the `Cover` interface and `makeCover`. App 0.1's cover - window.ts's plain `View`, always shown
- * under the opaque strip - stays until then.
+ * FROZEN (A3.8 #53): the `Cover` interface and `makeCover`. App 0.1's cover - window.ts's plain `View`, the strip
+ * drawing its still dots while it covers - stays until then.
  */
 import type { BaseWindow, View, WebContents } from 'electron'
 import type { Rect } from './plan.ts'

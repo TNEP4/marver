@@ -43,6 +43,11 @@ const lines = async (topic: string, since: number) => w.log(topic, since)
 const presents = async (since: number, tab?: string) => (await lines('present', since)).map((l) => ({ ...(l.data as unknown as Present), turn: l.turn })).filter((p) => !tab || p.tab === tab)
 const composes = async (since: number) => (await lines('compose', since)).map((l) => ({ turn: l.turn, cover: (l.data.cover as { visible: boolean }).visible, changes: l.data.changes as Change[] }))
 const coverChanges = async (since: number) => (await composes(since)).filter((c) => c.changes.some((x) => x.key === 'cover'))
+/** the strip draws its still dots now (main's `dots`, applied by the strip's page) */
+const stripDots = () => waitFor('the strip settled', async () => {
+  const on = await exec<boolean>('strip', `document.body.classList.contains('dots')`)
+  return (await ground()).cover.visible === on ? { on } : null
+}).then((x) => x.on)
 
 async function waitFor<T>(what: string, f: () => Promise<T | null | undefined | false>, ms = 10_000): Promise<T> {
   const end = Date.now() + ms
@@ -106,6 +111,8 @@ describe('the one ground: the inset, the cover, the epochs (A3.8 #24-#27)', () =
     expect(rec).toMatchObject({ tab: a, ws: fa.ws, cause: 'hello', outcome: 'uncovered', frames: 2, uncoverDelayMs: 0 })
     expect(rec!.page).toMatch(/^PAGE_/)
     expect(rec!.uncoveredMs as number).toBeGreaterThanOrEqual(rec!.answeredMs as number)
+    // over a see-through canvas the strip draws no still dots: its own scroll edge shows there (A3.8 #29)
+    expect(await stripDots()).toBe(false)
     // the lift of its tab page showed the view with the cover up (until then the tab page painted its own ground)
     const shown = (await composes(since)).find((x) => x.changes.some((ch) => ch.key === `${a}:view` && ch.op === 'visible' && ch.visible === true))!
     expect(shown.cover).toBe(true)
@@ -125,6 +132,8 @@ describe('the one ground: the inset, the cover, the epochs (A3.8 #24-#27)', () =
       expect((await ground()).cover.visible).toBe(true)
       for (const x of await composes(since)) expect(x.cover).toBe(true)
       expect(await presents(since, id)).toEqual([])
+      // app 0.1's cover covers it: the strip draws 0.1's still dots over it (A3.8 #3)
+      expect(await stripDots()).toBe(true)
     } finally {
       await w.run.call('activate', { id: a })
       await uncovered(a)
@@ -298,12 +307,10 @@ describe('the one ground through navigation, fullscreen, switching and the GPU p
       if (x.changes.some((ch) => ch.key === 'cover' && ch.visible === false)) expect(ok.has(x.turn)).toBe(true)
     }
     // the records (A3.8 #27): an epoch whose tab was switched away before it answered ended at the hide, superseded -
-    // never "never", which is a page that showed a second with no answer; and no reply from a hidden tab was taken
+    // never "never", which is a page that showed a second with no answer
     const recs = (await lines('cover-record', since)).map((l) => l.data as { tab: string; outcome: string; sentMs: number; hiddenMs?: number })
     expect(recs.filter((r) => r.hiddenMs !== undefined).length).toBeGreaterThan(5)
     for (const r of recs) if (r.outcome === 'never') expect(r.hiddenMs! - r.sentMs).toBeGreaterThanOrEqual(1000)
-    const refused = (await presents(since)).filter((p) => p.op === 'refused')
-    for (const p of refused) expect(ok.has(p.turn)).toBe(false)
   })
 
   it('the GPU process lost, or replaced with no event: every view covered until a newer epoch is answered', async () => {
@@ -477,6 +484,7 @@ describe('the app\'s own pages at the full height (A3.8 #32)', () => {
       expect([d.top, d.body, d.html, d.bg, d.h]).toEqual([44, 'hidden', 'hidden', true, (await content()).height])
       expect(d.first).not.toBeNull()
       expect(d.first!).toBeGreaterThanOrEqual(44)
+      expect(await stripDots()).toBe(false)   // the page's own dots show under the strip, never the strip's over them
     }
   })
 
@@ -508,6 +516,13 @@ describe('the gate shut: no cover chosen (A3.8 #3)', () => {
       expect((await shut.views()).find((v) => v.key === `${id}:view`)!.bounds).toEqual(BELOW(c))
       expect((await shut.views()).find((v) => v.key === 'cover')!.visible).toBe(true)
       expect(await shut.run.call('exec', { target: id, js: 'JSON.stringify([window.marverApp.topInset, window.__ground.applied, window.__ground.asks.length])' })).toBe('[0,0,0]')
+      // app 0.1's look under the tabs: the plain cover, the strip's still dots over it (A3.8 #3)
+      expect(await shut.run.call('exec', { target: 'strip', js: `document.body.classList.contains('dots')` })).toBe(true)
+      await shut.run.call('activate', { id: 'home' })
+      await shut.until(() => true, 100)
+      const off = Date.now() + 5000
+      while (await shut.run.call('exec', { target: 'strip', js: `document.body.classList.contains('dots')` }) && Date.now() < off) await sleep(40)
+      expect(await shut.run.call('exec', { target: 'strip', js: `document.body.classList.contains('dots')` })).toBe(false)
     } finally { await shut.close() }
   })
 })

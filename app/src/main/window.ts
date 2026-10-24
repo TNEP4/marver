@@ -4,7 +4,8 @@
  *
  * One `BaseWindow` named `main` (window place: `windowStatePersistence` does nothing without a name). Its stack,
  * bottom to top: the content views (canvases, Home, Settings), the tab pages, the cover, the strip. The strip is
- * transparent and paints controls only (A3.8 #29). Home, Settings and every tab page run the window's full height
+ * transparent and paints controls only (A3.8 #29) - and the still dots while app 0.1's plain cover covers (the window
+ * snapshot's `dots`), so a canvas keeps 0.1's look until S15 chooses a cover. Home, Settings and every tab page run the window's full height
  * and paint the ground and still dots under the strip themselves; a canvas runs full height only when its layout
  * says so (layout.ts), else below the strip; the cover - cover.ts's, in the ground of the active tab's look - is
  * shown whenever the active view may not be seen through (plan.ts).
@@ -101,6 +102,8 @@ const pages = new Map<string, PageHandle>()
 /** what compose() last applied, by plan key */
 const applied = new Map<string, { r: string; vis: boolean; color: string }>()
 let coverWas = { visible: false, color: '' }
+/** app 0.1's plain cover is the one in use (no cover S15 chose): the strip draws the still dots while it covers (A3.8 #3) */
+let plainInUse = false
 
 export const mainWindow = (): BaseWindow | null => win
 export const stripContents = (): WebContents | undefined => strip && !strip.webContents.isDestroyed() ? strip.webContents : undefined
@@ -233,7 +236,9 @@ function feedTabs(): void {
 
 function feedWindow(): void {
   if (!win) return
-  const body = { focused: win.isFocused(), fullScreen: win.isFullScreen() }
+  // the strip's still dots while app 0.1's cover covers: a canvas keeps 0.1's look under the tabs until S15 (A3.8 #3);
+  // over Home, Settings and a tab page the cover is hidden and the page's own dots show there
+  const body = { focused: win.isFocused(), fullScreen: win.isFullScreen(), dots: plainInUse && coverWas.visible }
   const s = JSON.stringify(body)
   if (s === lastWindow) return
   lastWindow = s
@@ -591,6 +596,7 @@ export function openWindow(d?: WindowDeps): BaseWindow {
   let chosen: Cover | null = null
   try { chosen = makeCover(win) } catch (err) { j('cover', { s15: String((err as Error)?.message ?? err) }) }
   cover = chosen ?? plainCover()
+  plainInUse = !chosen
   setGround(!!chosen || (__MV_TEST__ && testMode() && process.env.MARVER_APP_GROUND === '1'))
   j('cover', { chosen: !!chosen, ground: groundOn() })
   cover.setLook(dark)

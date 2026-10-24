@@ -55,9 +55,9 @@ The guard (first import) - test spies - Marver Dev's name and userData - `MARVER
 `ensureHome()` - crash dumps under `~/.marver/perf/crashpad` and `crashReporter.start` - the `marver-app` scheme -
 the files' first read - at ready: the theme and the files' watch, `persist:app`, the navigation hook (before any
 view), the registry, the bridge (`mv:doc` answering each document's inset from layout.ts), the recorder (A3: its
-writer, the machine profile, the one sampler), then `views.ts` - the window and its pages (the transparent strip, painting controls only, over the cover; Home,
+writer, the machine profile, the one sampler), then `views.ts` - the window and its pages (the transparent strip, painting controls over the cover; Home,
 Settings and the tab pages at the full height; a canvas at the full height only once spike S15 has picked the cover,
-until then below the strip as in app 0.1), the tabs restored
+until then below the strip as in app 0.1, the strip drawing 0.1's still dots while the cover covers), the tabs restored
 from `tabs.json` (only the active one loads; each canvas view on its workspace's partition, its proof dispatcher
 attached before its first load), the menu, the quit through `guardAll` - then Home's and Settings' channels, the
 unloading policy (`memory.ts`) and the white-out detector (`whiteout.ts`), and last

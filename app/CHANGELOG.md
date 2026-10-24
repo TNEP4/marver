@@ -4,15 +4,19 @@
 
 - One ground, main's half (A3.8 #24-#33): Home, Settings and every tab page run the window's full height under the
   strip, painting the ground and still dots there themselves, with everything to read, click or scroll 44 px down;
-  the strip paints controls only. A canvas whose shell offers `inset` (Marver 0.27.2) is placed at the full height
+  the strip paints its controls, and its still dots only while app 0.1's cover covers. A canvas whose shell offers
+  `inset` (Marver 0.27.2) is placed at the full height
   when its own document commits on that instance, told 44 by `mv:doc`, moved below for the rest of its life by a
   hello that says 0, and uncovered only once it is trusted, said 44 and answered the latest presentation request at
   its size; a resize, a show, HTML fullscreen, a live resize's end and the GPU process lost or replaced each cover
   it until it answers again. Any other canvas stays below the strip, covered.
 - **Not on screen yet: the cover waits for spike S15.** Until a cover is shown to sit over a full-height web view,
-  the app keeps 0.1's plain view and places no canvas at full height, so every canvas still looks as in 0.1 - with
-  plain ground, no dots, under the tabs. Main's decisions are built and tested from its journal; what reaches the
-  screen is the capture matrix's, after S15.
+  the app keeps 0.1's plain view and places no canvas at full height, so every canvas still looks as in 0.1: below
+  the strip, with the ground and still dots under the tabs (the strip draws them while that cover covers). Main's
+  decisions are built and tested from its journal; what reaches the screen is the capture matrix's, after S15. S15's
+  outcome then touches `cover.ts` alone for its variants 1-3 (with a cover chosen the strip paints no dots, A3.8
+  #29); variant 4 also changes the strip's page (it paints the ground and dots while covered), and if none passes
+  this look stays.
 
 ## 0.1.0 - unreleased (spec 28 A2, for Nic)
 

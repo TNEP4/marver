@@ -50,6 +50,18 @@ describe('the tab list (A2.13)', () => {
     expect(await p.page.$eval('.strip', (e) => getComputedStyle(e).paddingLeft)).toBe('82px')
   })
 
+  it('the still dots only while main says app 0.1\'s cover covers (A3.8 #3, #29): controls alone otherwise', async () => {
+    const bg = () => p.page.$eval('.strip', (e) => getComputedStyle(e).backgroundImage)
+    expect(await bg()).toBe('none')
+    await p.send('window', { rev: 3, focused: true, fullScreen: false, dots: true })
+    expect(await bg()).toMatch(/^radial-gradient/)
+    expect(await p.page.$eval('.strip', (e) => [getComputedStyle(e).backgroundSize, getComputedStyle(e).backgroundPosition, getComputedStyle(e).backgroundColor])).toEqual(['20px 20px', '0px 0px', 'rgba(0, 0, 0, 0)'])
+    await p.send('window', { rev: 4, focused: true, fullScreen: false, dots: false })
+    expect(await bg()).toBe('none')
+    await p.send('window', { rev: 5, focused: true, fullScreen: false })   // absent reads false
+    expect(await bg()).toBe('none')
+  })
+
   it('is a tablist "Canvases" whose tabs carry their names, states and keys', async () => {
     await p.send('tabs', snap('t1', FOUR))
     // a tab's children are presentational (WAI-ARIA): its name is what is read; Playwright also shows the visible text
