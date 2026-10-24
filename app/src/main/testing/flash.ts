@@ -51,7 +51,7 @@ function metricsNow(): Sample {
 export function provideFlashHooks(home: Home): void {
   if (!__MV_TEST__) return
   const ports = () => flashPorts({
-    flavour: __MARVER_RELEASE__ ? 'release' : 'dev', perfDir: perfDirOf(home.dir),
+    flavour: __MARVER_RELEASE__ ? 'release' : 'dev', perfDir: perfDirOf(home.dir), writable: () => home.writable,
     recorderOn: () => values().config.recorder,
     ring: () => { const s = sampler.last(); return { samples: s ? [s] : [], events: [] } },
     stateNow: () => sampler.last() ?? metricsNow(),

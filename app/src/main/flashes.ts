@@ -13,6 +13,12 @@
  *    quit an unfinished mark is written at once with what it has (`pictureWhy: 'quit'`, AGX 'unknown').
  * With the recorder off the mark carries no history, and the pill adds "no samples before it: the recorder is off".
  *
+ * **The mark's time is in its id** (`flashTime(id)`, UTC to the ms): the record's envelope `ts` is when the record was
+ * written - about a second after the mark, more after a slow picture - and the frozen body has no field of its own
+ * for it. The debounce and the wait for the GPU-event window run on a monotonic clock (`mono`, performance.now() in
+ * the app), so a wall clock stepped back never blocks marks; the GPU events themselves are read by wall time, as the
+ * ring stamps them (review of a3-native, minor #14).
+ *
  * FROZEN (A3.8 #53): `FlashPorts`, `markFlash`, `quitFlashes`. Where each port comes from: `capture` is window.ts's
  * `captureApp`, `writePicture` this file's `pictureWriter(perfDir)`, `confirm` pill.ts's `flashMarked`; the rest are
  * the recorder's (its ring and its sampler, `recorder.gpuEvents`, pressure.ts, machine.ts's `readAgx`, perflog.ts's
@@ -34,6 +40,8 @@ export const FLASH_PICTURES_KEPT = 50
 /** What a mark needs of the recorder and the window (the recorder stream builds these). */
 export interface FlashPorts {
   now(): number
+  /** a monotonic clock, ms: the debounce and the GPU-event window's wait; absent, `now` (additive, optional) */
+  mono?(): number
   flavour: Flavour
   recorderOn(): boolean
   /** the active local tab's identity, in this turn; null on Home, Settings or with no canvas */
@@ -68,6 +76,14 @@ export const whyOf = (e: unknown): PictureWhy => {
   return typeof w === 'string' && WHYS.has(w as PictureWhy) ? w as PictureWhy : 'empty'
 }
 
+/** The mark's time from its id (UTC, to the ms), or null for an id not made by flashId. */
+export function flashTime(id: string): number | null {
+  const m = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})-(\d{3})-[0-9a-f]+(?:-dev)?$/.exec(id)
+  if (!m) return null
+  const [, y, mo, d, h, mi, s, ms] = m.map(Number) as number[]
+  return Date.UTC(y!, mo! - 1, d!, h!, mi!, s!, ms!)
+}
+
 /** `20261023-205103-412-ab12` (`-dev` in Marver Dev): sortable, no colon, unique enough for a person's marks. */
 export function flashId(now: number, flavour: Flavour, rand = randomBytes(2).toString('hex')): string {
   const d = new Date(now)
@@ -84,7 +100,7 @@ interface Mark {
   write: (o: { quit: boolean }) => void
 }
 const marks = new Set<Mark>()
-/** the last mark's time: the debounce counts from it, never from a press that marked nothing */
+/** the last mark's time on the ports' monotonic clock: the debounce counts from it, never from a press that marked nothing */
 let lastMark: number | null = null
 
 /** Test seam. */
@@ -92,10 +108,13 @@ export function resetFlashes(): void { lastMark = null; marks.clear() }
 
 /** runCommand('mark-flash'), through the recorder's port. Resolves once the record is written (or the quit wrote it). */
 export async function markFlash(via: 'key' | 'menu', p: FlashPorts): Promise<void> {
-  // 1. the debounce, reserved at once
+  // 1. the debounce, reserved at once, on the monotonic clock (a wall clock stepped back never blocks a mark)
   const at = p.now()
-  if (lastMark !== null && at - lastMark < T.flashDebounceMs) return
-  lastMark = at
+  const mono = () => (p.mono ? p.mono() : p.now())
+  const atMono = mono()
+  const since = lastMark === null ? null : atMono - lastMark
+  if (since !== null && since >= 0 && since < T.flashDebounceMs) return
+  lastMark = atMono
 
   // 2. everything of the moment, in this turn
   const id = flashId(at, p.flavour)
@@ -156,7 +175,7 @@ export async function markFlash(via: 'key' | 'menu', p: FlashPorts): Promise<voi
   try { p.confirm({ at, recorder, picture }) } catch { /* the strip is going: the record still lands */ }
 
   // 5. the record: the AGX read ended and the GPU-event window closed at mark + 1 s
-  const left = at + T.flashGpuWindowMs - p.now()
+  const left = T.flashGpuWindowMs - (mono() - atMono)
   await Promise.race([Promise.all([agxRead, left > 0 ? wait(left) : Promise.resolve()]), quitting])
   m.write({ quit: false })
 }
@@ -178,10 +197,14 @@ function emptySample(at: number): Sample {
 // ---------------------------------------------------------------------------------------------------------------
 // The pictures' folder: perf/flashes, 700; each picture written whole, 600; the newest 50 kept (both flavours)
 
-/** The `writePicture` port over `<perfDir>/flashes`. Never throws: a failure is `write failed`. */
-export function pictureWriter(perfDir: string): FlashPorts['writePicture'] {
+/**
+ * The `writePicture` port over `<perfDir>/flashes`. Never throws: a failure is `write failed`. `writable` is the
+ * home's own guard (config.ts `Home.writable`, which the recorder keeps): false, and nothing is written.
+ */
+export function pictureWriter(perfDir: string, writable: () => boolean = () => true): FlashPorts['writePicture'] {
   return async (name, png) => {
     if (!/^[0-9a-z-]+\.png$/.test(name)) return { why: 'write failed' }
+    if (!writable()) return { why: 'write failed' }
     const dir = join(perfDir, 'flashes')
     try {
       mkdirSync(dir, { recursive: true, mode: 0o700 })

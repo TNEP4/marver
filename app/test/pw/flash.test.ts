@@ -61,7 +61,10 @@ describe('Mark a Flash (A3.8 #13)', () => {
     const r = await w.run.call<{ width: number; height: number; layers: string[] }>('picture:app', { width: 480, path: out })
     expect(r.width).toBe(480)
     expect(r.layers.some((l) => l.startsWith('cover'))).toBe(true)
-    expect(r.layers.some((l) => l.includes('localhost') || l.includes('[::1]') || l.includes('127.0.0.1'))).toBe(true)
+    // a canvas layer blended: its line carries ' @x,y' - never only a 'url (empty)' or 'url (size WxH)' note (minor #16)
+    const canvas = (l: string) => l.includes('localhost') || l.includes('[::1]') || l.includes('127.0.0.1')
+    expect(r.layers.some((l) => canvas(l) && l.includes(' @'))).toBe(true)
+    expect(r.layers.filter(canvas).every((l) => !/\((empty|size \d+x\d+)\)$/.test(l))).toBe(true)
   })
 
   it('with the window hidden: a mark with no picture (window hidden), and a pill with no button', async () => {

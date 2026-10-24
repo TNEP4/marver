@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgxReading, AppBody, RingEvent, Sample } from '../../../src/shared/app-perf.ts'
-import { AGX_UNKNOWN, FLASH_WIDTH, flashId, markFlash, pendingFlashes, pictureWriter, prunePictures, quitFlashes, resetFlashes, type FlashPorts } from '../../src/main/flashes.ts'
+import { AGX_UNKNOWN, FLASH_WIDTH, flashId, flashTime, markFlash, pendingFlashes, pictureWriter, prunePictures, quitFlashes, resetFlashes, type FlashPorts } from '../../src/main/flashes.ts'
 import { PictureRefused, type AppPicture } from '../../src/main/window.ts'
 
 vi.mock('electron', () => ({ BaseWindow: class {}, View: class {}, WebContentsView: class {}, nativeImage: {}, nativeTheme: { shouldUseDarkColors: false, on() {} }, screen: {}, app: {} }))
@@ -143,6 +143,29 @@ describe('the debounce, from the last mark (A3.8 #13.1)', () => {
     expect(r.records[0]!.id).not.toBe(r.records[1]!.id)
   })
 
+  it('on the monotonic clock: a wall clock stepped back an hour after a mark never blocks the next one (minor #14)', async () => {
+    const r = rig()
+    // the wall clock: an hour back after the first mark; the monotonic one runs on
+    let back = 0
+    r.p = { ...r.p, now: () => Date.now() - back, mono: () => Date.now() }
+    void markFlash('key', r.p)
+    await vi.advanceTimersByTimeAsync(1200)
+    back = 3_600_000
+    await vi.advanceTimersByTimeAsync(1000)   // +2.2 s on the monotonic clock, -59 min on the wall
+    void markFlash('key', r.p)
+    await vi.advanceTimersByTimeAsync(1100)
+    expect(r.pills).toHaveLength(2)
+    expect(r.records).toHaveLength(2)
+    // and the record waited its 1 s on the monotonic clock, not until the wall clock caught up
+    expect(pendingFlashes()).toBe(0)
+  })
+
+  it('the mark\'s time is in its id (the envelope\'s ts is when the record was written)', () => {
+    expect(flashTime(flashId(T0, 'release', 'ab12'))).toBe(T0)
+    expect(flashTime(flashId(T0, 'dev', 'ab12'))).toBe(T0)
+    expect(flashTime('not-an-id')).toBeNull()
+  })
+
   it('counted from the last mark, not the last press: presses every second mark every other one', async () => {
     const r = rig()
     for (let i = 0; i < 6; i++) { void markFlash('key', r.p); await vi.advanceTimersByTimeAsync(1000) }
@@ -239,6 +262,10 @@ describe('the ids and the pictures\' folder', () => {
     expect(statSync(join(perf, 'flashes')).mode & 0o777).toBe(0o700)
     expect(statSync(join(perf, 'flashes', '20261023-205103-412-ab12.png')).mode & 0o777).toBe(0o600)
     expect(await write('../evil.png', PNG)).toEqual({ why: 'write failed' })
+    // the home not writable (the recorder's guard, minor #4): nothing written
+    const ro = mkdtempSync(join(tmpdir(), 'mvflash-ro-'))
+    expect(await pictureWriter(ro, () => false)('20261023-205103-412-cd34.png', PNG)).toEqual({ why: 'write failed' })
+    expect(readdirSync(ro)).toEqual([])
     const dir = join(perf, 'flashes')
     for (let i = 0; i < 55; i++) {
       const f = join(dir, `old-${String(i).padStart(2, '0')}.png`)

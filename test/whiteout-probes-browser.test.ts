@@ -10,8 +10,9 @@ import { fixtureRoot, startDev, type Dev } from './dev-server.ts'
  * the canvas surface under them - and `verify` keeps only those the camera moved by less than their clearance. Run
  * on the shell's own module instance (the page imports whiteout-probes.ts by its dev URL, so canvasCtl is the
  * canvas's). Checked at rest, over a board with a frame that is white on purpose, and while the camera pans fast and
- * zooms in and out (A3.7's staged white-out runs during a synthetic zoom): no accepted probe ever lies inside a frame
- * at any animation frame of its bracket - at pick, at each frame between and at verify. In Chrome there is no inset:
+ * zooms in and out (A3.7's staged white-out runs during a synthetic zoom), and when a pan turns back inside one
+ * 500 ms bracket: no accepted probe ever lies inside a frame at any animation frame of its bracket - at pick, at each
+ * frame between and at verify. In Chrome there is no inset:
  * the whole canvas is usable. Skips without Chrome.
  */
 
@@ -156,6 +157,63 @@ describe('the probes (A3.8 #16)', () => {
     expect(r.valid).toBeLessThan(r.points)   // the bracket dropped the points the camera moved too far
     expect(r.bad).toEqual([])
   })
+
+  /**
+   * One bracket of `ms` in the page (main's can last some 800 ms: 150 + 500 + 150): pick, every node's rect at each
+   * frame, verify. Also what the two-end check alone - the pick's camera against the verify's - would have accepted,
+   * so a run shows the case can fail it.
+   */
+  const BRACKET = `window.__bracket = async (k, ms) => {
+    const raf = () => new Promise((r) => requestAnimationFrame(() => r()))
+    const b = __probes.pick(k)
+    const seen = [__rects()]
+    const grey = () => [...document.querySelectorAll('.sh-node')].find((e) => e.textContent.includes('Grey')).getBoundingClientRect().left
+    const g0 = grey()
+    let maxMid = 0
+    const end = performance.now() + ms
+    while (performance.now() < end) { await raf(); seen.push(__rects()); maxMid = Math.max(maxMid, Math.abs(grey() - g0)) }
+    const a = __probes.verify(k)
+    seen.push(__rects())
+    const o = document.querySelector('.sh-canvas').getBoundingClientRect()
+    const inside = ([x, y]) => seen.some((rs) => __dist(x, y, rs) <= 0)
+    const twoEnds = b.points.filter(([x, y]) => {
+      const c = __dist(x, y, seen[0])
+      return a.cam && b.cam && __probes.moved(x, y, b.cam, a.cam, { x: o.left, y: o.top }) < c && __probes.moved(x, y, a.cam, b.cam, { x: o.left, y: o.top }) < c
+        && __dist(x, y, seen.at(-1)) >= 8 && __probes.isSurface(document.elementFromPoint(x, y))
+    })
+    return { points: b.points.length, valid: a.valid.filter(Boolean).length, bad: b.points.filter((p, i) => a.valid[i] && inside(p)).length,
+      twoEnds: twoEnds.length, wouldBeBad: twoEnds.filter(inside).length, maxMid, endMove: Math.abs(grey() - g0), frames: seen.length }
+  }; 1`
+
+  it('a pan that turns back inside one 500 ms bracket: no accepted probe lies inside a frame at any frame of it (review of a3-native, minor #16)', async (ctx) => {
+    skip(ctx)
+    await ev(HELPERS)
+    await ev(BRACKET)
+    const runs: { points: number; valid: number; bad: number; twoEnds: number; wouldBeBad: number; maxMid: number; endMove: number; frames: number }[] = []
+    for (let t = 0; t < 4; t++) {
+      // close in on the grey frame, so its edges sweep across the probes beside it and come back
+      await ev(`__mvJamCanvas.fitNode('n-grey'); 1`)
+      await browser!.until(s, `!__mvJamCanvas.cameraBusy()`, 5000)
+      await ev(`__mvJamCanvas.zoomTo(0.7); 1`)
+      await browser!.until(s, `!__mvJamCanvas.cameraBusy()`, 5000)
+      await new Promise((r) => setTimeout(r, 300))
+      await ev(`window.__b = __bracket(${5000 + t}, 520); 1`)
+      // 15 wheel events one way, 15 the other, 16 ms apart: out some 900 px and back inside the bracket
+      const dx = t % 2 ? -60 : 60
+      for (let i = 0; i < 30; i++) {
+        void browser!.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 700, y: 450, deltaX: i < 15 ? dx : -dx, deltaY: 0 }, s)
+        await new Promise((r) => setTimeout(r, 16))
+      }
+      runs.push(await ev(`window.__b`))
+    }
+    process.stdout.write(`probes-turn: ${JSON.stringify(runs)}\n`)
+    // the camera went out far and came back: the two ends alone say little moved
+    expect(Math.max(...runs.map((r) => r.maxMid))).toBeGreaterThan(2 * 48)
+    expect(runs.some((r) => r.endMove < 48)).toBe(true)
+    // the two-end check would have accepted probes a frame swept over; the frames' cameras accept none
+    expect(runs.reduce((n, r) => n + r.wouldBeBad, 0)).toBeGreaterThan(0)
+    expect(runs.reduce((n, r) => n + r.bad, 0)).toBe(0)
+  }, 30_000)
 
   it('while the camera zooms in and out about a point near a probe (ctrl-wheel), no accepted probe lies inside a frame at any frame of its bracket', async (ctx) => {
     skip(ctx)

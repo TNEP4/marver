@@ -1,9 +1,19 @@
 /**
  * Mark a Flash's ports in the app (spec 28 A3.8 #13, #14): the flash stream's half of `FlashPorts` - the active tab's
  * identity, the moment's thermal state and GPU feature status, the picture (window.ts `captureApp`), its file
- * (`pictureWriter`) and the pill (`flashMarked`) - joined to the recorder's half, which the recorder stream passes in
- * (its ring, its sampler's state now, its GPU events, pressure, the AGX read and the writer). So `recorder.markFlash`
- * is `void markFlash(via, flashPorts({ ...its parts }))`, and the test hook drives the same composition.
+ * (`pictureWriter`, mode 600, the newest 50 kept) and the pill (`flashMarked`, Show bound to the picture) - joined to
+ * the recorder's half, which the recorder stream passes in (its ring, its sampler's state now, its GPU events,
+ * pressure, the AGX read, the writer, and the home's `writable` guard). **This is the composition `recorder.markFlash`
+ * must use** (review of a3-native, major #4), never ports of its own - else the pill has no Show button (A3.8 #13.4)
+ * and the journal no `flash` lines (flash-native.test.ts reads them):
+ *
+ *   markFlash(via) { if (!P) return; void markFlash(via, flashPorts({ flavour: flavour(), perfDir: join(P.home.dir,
+ *     'perf'), writable: () => P.home.writable, recorderOn, ring: () => (recorderOn() ? { samples: ..., events: ... } :
+ *     null), stateNow, gpuEvents, pressure: lastPressure, readAgx, append: (body) => record('flash', null, body,
+ *     true) })).catch(...) }
+ *
+ * recorder.ts importing this file, and this file `identity` from recorder.ts, is a cycle esbuild bundles: each side
+ * reads the other's exports only when a mark is made. The test hook drives the same composition.
  *
  * In test builds each step goes into the journal (`flash` topic: capture, written, pill, record), for "the pill after
  * the picture" read from the app itself.
@@ -23,14 +33,17 @@ export type RecorderFlashParts = Pick<FlashPorts, 'recorderOn' | 'ring' | 'state
   flavour: Flavour
   /** `<MARVER_HOME>/perf` */
   perfDir: string
+  /** the home's guard (config.ts `Home.writable`): false, and no picture is written */
+  writable?: () => boolean
 }
 
 const j = (data: unknown) => { if (__MV_TEST__) note('flash', data) }
 
 export function flashPorts(r: RecorderFlashParts): FlashPorts {
-  const write = pictureWriter(r.perfDir)
+  const write = pictureWriter(r.perfDir, r.writable)
   return {
     now: () => Date.now(),
+    mono: () => performance.now(),
     flavour: r.flavour,
     recorderOn: r.recorderOn,
     identity: () => { const t = activeTab(); return t?.kind === 'local' ? identity(t) : null },

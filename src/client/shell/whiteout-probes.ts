@@ -12,15 +12,20 @@
  * FROZEN signatures (A3.8 #53). The geometry: a 12 x 8 grid of cell centres over the usable rectangle, below the
  * scroll edge; a point's clearance is its distance to the nearest node's rect (`getBoundingClientRect`: transforms and
  * animation included); the 16 with the most clearance that have the canvas surface under them are kept, with the
- * camera (`canvasCtl.transform()`) for the bracket. `verify` maps each point through the two cameras, both ways: the
- * world point under it before, drawn now, and the world point under it now, drawn as the camera was before. The
- * second is the one that matters under a zoom - the world points the probe's screen point passed over lie between the
- * two, so if the one under it now was, at the first camera, closer than the clearance, no node (each at least the
- * clearance away then) can have covered it in between; under a zoom out a node's edge moves further than the probe's
- * own world point, so the first alone does not say that. A point is valid when both moves are under its clearance, it
- * is still `VERIFY_MARGIN` (8 px) clear of every node now, and the surface is still under it. With no camera (no
- * canvas) every point is invalid: the sample is inconclusive. Nodes that move on the board themselves (a drag, a
- * layout animation) are not the camera's and not covered by this.
+ * camera (`canvasCtl.transform()`) for the bracket. **The camera at every animation frame of the bracket**: from
+ * `pick` to `verify` the shell records the camera once a frame (the frames a capture can have read), since a pan
+ * that turns back - the recorder's own pan is 60 wheel events one way and 60 the other, and main's bracket can last
+ * some 800 ms (150 + 500 + 150) - can sweep a node over a probe and back with the two ends the same (review of
+ * a3-native, minor #16). `verify` maps each point through the pick's camera and each recorded one, both ways: the
+ * world point under it at pick, drawn at that frame, and the world point under it at that frame, drawn as the camera
+ * was at pick. The second is the one that matters under a zoom - if the world point under the probe at a frame was,
+ * at the pick's camera, closer than the clearance, no node (each at least the clearance away then) covered it at that
+ * frame; under a zoom out a node's edge moves further than the probe's own world point, so the first alone does not
+ * say that. A point is valid when every frame's moves are under its clearance, it is still `VERIFY_MARGIN` (8 px)
+ * clear of every node now, and the surface is still under it. With no camera (no canvas) every point is invalid: the
+ * sample is inconclusive. A main thread stalled for the whole bracket records no frame between, and draws none
+ * either: the camera is the shell's. Nodes that move on the board themselves (a drag, a layout animation) are not the
+ * camera's and not covered by this.
  */
 import { PERF_BOUNDS, type PerfCam, type PerfMsg } from '../../shared/app-api.ts'
 import { canvasCtl } from './canvas/ctl.ts'
@@ -66,8 +71,25 @@ export function moved(x: number, y: number, a: PerfCam, b: PerfCam, o: { x: numb
 const nodeRects = (): Rect[] => [...document.querySelectorAll('.sh-node')].map((e) => e.getBoundingClientRect())
 const origin = () => { const r = document.querySelector('.sh-canvas')?.getBoundingClientRect(); return { x: r?.left ?? 0, y: r?.top ?? 0 } }
 
-/** The points a tick picked, its clearances and its camera, for its `verify` (the last four ticks kept). */
-const kept = new Map<number, { pts: [number, number][]; clear: number[]; cam: PerfCam | null }>()
+/** The points a tick picked, its clearances, its camera and the camera at each frame since, for its `verify` (the last four ticks kept). */
+const kept = new Map<number, { pts: [number, number][]; clear: number[]; cam: PerfCam | null; path: PerfCam[]; stop(): void }>()
+/** The longest bracket recorded, in frames (5 s at 120 Hz): past it a verify finds the path cut, and says invalid. */
+export const PATH_FRAMES = 600
+
+/** The camera at each animation frame from now until `stop()`, or until it holds PATH_FRAMES (then the path is cut). */
+function cameraPath(): { path: PerfCam[]; stop(): void } {
+  const path: PerfCam[] = []
+  let on = true
+  const step = () => {
+    if (!on) return
+    const c = canvasCtl.transform()
+    if (c) path.push({ ...c })
+    if (path.length >= PATH_FRAMES) { on = false; return }
+    requestAnimationFrame(step)
+  }
+  requestAnimationFrame(step)
+  return { path, stop: () => { on = false } }
+}
 
 /** The `before` answer for `tick`: the points chosen now, the camera and the viewport. */
 export function pick(tick: number): Extract<PerfMsg, { kind: 'probes'; at: 'before' }> {
@@ -89,8 +111,10 @@ export function pick(tick: number): Extract<PerfMsg, { kind: 'probes'; at: 'befo
   cands.sort((a, b) => b.c - a.c)
   const chosen = cands.slice(0, MAX_PROBES)
   const cam = canvasCtl.transform()
-  kept.set(tick, { pts: chosen.map((x) => x.p), clear: chosen.map((x) => Math.min(x.c, 1e6)), cam })
-  for (const k of [...kept.keys()]) if (kept.size > 4 && k !== tick) kept.delete(k)
+  const run = cameraPath()
+  kept.get(tick)?.stop()
+  kept.set(tick, { pts: chosen.map((x) => x.p), clear: chosen.map((x) => Math.min(x.c, 1e6)), cam, path: run.path, stop: run.stop })
+  for (const k of [...kept.keys()]) if (kept.size > 4 && k !== tick) { kept.get(k)!.stop(); kept.delete(k) }
   return { kind: 'probes', tick, at: 'before', points: chosen.map((x) => x.p), cam, view: view() }
 }
 
@@ -100,12 +124,16 @@ export function verify(tick: number): Extract<PerfMsg, { kind: 'probes'; at: 'af
   const cam = canvasCtl.transform()
   if (!k) return { kind: 'probes', tick, at: 'after', valid: [], cam, view: view() }
   kept.delete(tick)
+  const cut = k.path.length >= PATH_FRAMES
+  k.stop()
   const rects = nodeRects()
   const o = origin()
+  // every camera the bracket's frames showed, and the one now
+  const cams = cam ? [...k.path, cam] : []
   const valid = k.pts.map(([x, y], i) => {
-    if (!k.cam || !cam) return false
+    if (!k.cam || !cam || cut) return false
     const c = k.clear[i]!
-    if (moved(x, y, k.cam, cam, o) >= c || moved(x, y, cam, k.cam, o) >= c) return false
+    for (const at of cams) if (moved(x, y, k.cam, at, o) >= c || moved(x, y, at, k.cam, o) >= c) return false
     if (clearance(x, y, rects) < VERIFY_MARGIN) return false
     return isSurface(document.elementFromPoint(x, y))
   })
