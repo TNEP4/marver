@@ -16,6 +16,7 @@ import { admissionIdle, onAdmissionIdle } from './canvas/admission.ts'
 import { canvasCtl } from './canvas/ctl.ts'
 import { bootOf, iframeOf } from './canvas/frame-registry.ts'
 import { adopt, bound, fitWithin, KEEPALIVE_BYTES, LOAD_MAX_MS, newId, Outbox, outcomeOf, QUIET_MS, SEND_MS, stackLines, type Kind, type Outcome, type PerfRecord, type Track } from './recorder-core.ts'
+import { PERF_RUN, type PerfRunStatus } from './perf-run.ts'
 import { displayHz } from './app-perf.ts'
 
 /** This document, in every record (and, in the app, in its hello: the app's records about this tab carry it). */
@@ -41,6 +42,8 @@ interface Load {
   /** node key -> `${outcome}:${boot}` its last frame record said */
   reported: Map<string, string>
   done?: 'settled' | 'cut'
+  /** why it was cut, request or load (a headless perf run's status says it) */
+  cutReason?: string
   quietTimer?: ReturnType<typeof setTimeout>; timeout?: ReturnType<typeof setTimeout>; retry?: ReturnType<typeof setTimeout>
 }
 
@@ -67,6 +70,14 @@ const open = new Map<string, PerfRecord>()
 let inFlight: PerfRecord[] = []
 let sendTimer: ReturnType<typeof setTimeout> | undefined
 let sending = false
+/** sends whose records never landed, since the page loaded (a headless perf run's `flush()` answers with it) */
+let failedSends = 0
+/** records lost on this page's side since it loaded - the queue's bound, a send that never landed - however many
+ *  `dropped` records said so: the count each one carries starts over, this one never does (`flush()`) */
+let lostEver = 0
+/** The warm-up load of a headless perf run (spec 28 A3.8 #17): the recorder runs - the driver reads `settled` from
+ *  it - and posts nothing. */
+const WARM = PERF_RUN?.warm === true
 /** what only the canvas knows (Canvas.tsx attaches it): is a pan, zoom or layout animation running; frames asleep */
 let motion = { camera: false, preset: false }
 let sleeping = (): number => 0
@@ -167,6 +178,7 @@ function cutRequest(id: string, reason: RequestCut | 'timeout' | 'hidden'): void
   clearTimeout(L.timeout)
   L.timeout = undefined
   L.done = 'cut'
+  L.cutReason = reason
   rec('cut', id, { reason, request: id, ms: Math.round(performance.now() - L.t0) })
   // its fetch may still answer and mount it
   if (reason === 'timeout' || reason === 'hidden') {
@@ -364,6 +376,7 @@ function cut(L: Load, reason: 'switch' | 'reload' | 'hidden' | 'timeout'): void 
     else if (L.reported.get(n.key) !== said(n, o)) frameRecord(L, n, o)
   }
   rec('cut', L.id, { reason, ms: Math.round(performance.now() - L.t0), lastMove: rel(L, L.movedAt), frames: s.nodes.length, ready })
+  L.cutReason = reason
   finish(L, 'cut')
 }
 
@@ -440,6 +453,7 @@ const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 const droppedNow = (more = 0): PerfRecord[] => {
   const n = outbox.dropped + more
   outbox.dropped = 0
+  lostEver += n
   return n ? [env('dropped', ownerId(), { n })] : []
 }
 
@@ -450,6 +464,8 @@ async function send(): Promise<void> {
   clearTimeout(sendTimer)
   sendTimer = undefined
   if (!on || sending || !outbox.size) return
+  // a perf run's warm-up: what it recorded is the driver's to read, never the log's
+  if (WARM) { outbox.takeAll(); outbox.dropped = 0; open.clear(); return }
   sending = true
   let batch: PerfRecord[] = []
   let ok = false
@@ -467,7 +483,7 @@ async function send(): Promise<void> {
       } catch { /* the network: again */ }
     }
   } catch { /* never in the way: what it held is counted below */ }
-  if (!ok) outbox.dropped += batch.filter((r) => r.kind !== 'dropped').length + batch.filter((r) => r.kind === 'dropped').reduce((n, r) => n + (r.n as number), 0)
+  if (!ok) { failedSends++; outbox.dropped += batch.filter((r) => r.kind !== 'dropped').length + batch.filter((r) => r.kind === 'dropped').reduce((n, r) => n + (r.n as number), 0) }
   inFlight = []
   sending = false
   armSend()
@@ -482,13 +498,38 @@ function leave(): void {
   clearTimeout(sendTimer)
   sendTimer = undefined
   sealCaptures()
-  if (capturesPending()) return
+  if (capturesPending() || WARM) return
   // a send on its way may not outlive the page: its records again (the report drops a duplicate by its seq)
   const all = [...inFlight, ...outbox.takeAll()]
   if (!all.length) return
   // the cuts first, newest first: the load this page leaves in flight ends in the last of them
   const { fit, lost } = fitWithin(all.filter((r) => r.kind === 'cut').reverse(), all.filter((r) => r.kind !== 'cut'), KEEPALIVE_BYTES)
   try { void post([...fit, ...droppedNow(lost)], true).catch(() => {}) } catch { /* going anyway */ }
+}
+
+// ---- a headless perf run (spec 28 A3.8 #17) ----------------------------------------------------------------------
+
+/** The load the page has now - the newest request still waiting, else the one that owns the geometry - and where it
+ *  is: requested, committed, settled or cut (with why). `sinceNav`, a boot load's request on the page's clock. */
+export function currentLoad(): PerfRunStatus['load'] {
+  const L = [...pending.values()].at(-1) ?? owner
+  if (!L) return null
+  const state = L.done ?? (L.committedAt !== undefined ? 'committed' : 'requested')
+  return { id: L.id, state, ...(L.cutReason ? { reason: L.cutReason } : {}), ...(L.cause === 'boot' ? { sinceNav: Math.round(L.t0) } : {}) }
+}
+
+/** Everything recorded so far sent now, until nothing waits and nothing is on its way (15 s at most): whether every
+ *  batch this page ever sent landed, and no record was ever lost to the queue's bound. The driver awaits it before it
+ *  ends the page. A warm-up posts nothing: true. */
+export async function flush(): Promise<boolean> {
+  if (!on) return false
+  if (WARM) return true
+  const by = performance.now() + 15_000
+  while ((sending || outbox.size) && performance.now() < by) {
+    if (!sending) await send()
+    else await wait(25)
+  }
+  return !sending && !outbox.size && !outbox.dropped && failedSends === 0 && lostEver === 0
 }
 
 // ---- for tests --------------------------------------------------------------------------------------------------

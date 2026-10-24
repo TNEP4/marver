@@ -47,7 +47,9 @@ export interface BakeTarget {
   bad: number
 }
 export type BakeResult =
-  | { ok: true; targets: BakeTarget[]; levels: number; rejected: number; ms: number; outside?: Outside; effects?: number }
+  /** `posterSkipped`: the frame's document skipped a missing poster (a headless perf run's frame URL, spec 28 A3.8
+   *  #19) - a texture of the frame without its poster, which never fills the shared cache */
+  | { ok: true; targets: BakeTarget[]; levels: number; rejected: number; ms: number; outside?: Outside; effects?: number; posterSkipped?: true }
   | { ok: false; error: string }
 
 const DSF = 2
@@ -55,6 +57,8 @@ const DSF = 2
  *  (29 px > 8 of 5.18 M, none > 32) at a quarter of the memory; 0.5x fails on 30 px pills. */
 const TEXTURE_DSF = 1
 const DEADLINE_MS = 45_000
+/** What a compile past its deadline answers. */
+export const TIMED_OUT = 'the bake timed out'
 /** The refusal for a frame with a looping animation: it rests paused, never compiled. */
 export const LOOPING = 'a looping animation - the frame rests paused, uncompiled'
 /** The largest frame an ask may name, in CSS px: the shot pipeline's bitmap budget at DPR 2. */
@@ -269,7 +273,10 @@ export async function bakeIn(b: Browser, opts: { url: string; width: number; hei
   const t0 = Date.now()
   const me = {}
   let targetId: string | undefined
-  const deadline = setTimeout(() => b.abort(me, 'the bake timed out'), DEADLINE_MS)
+  // a deadline's abort settles the call under way as `<method>: <why>`: the answer says the bare reason, so the
+  // failure cache knows it for a timeout (the review of a3-runs' fixes, minor #7)
+  let timedOut = false
+  const deadline = setTimeout(() => { timedOut = true; b.abort(me, TIMED_OUT) }, bakeSeams.deadlineMs ?? DEADLINE_MS)
   // a close that cannot hang the operation: bounded, outside the abort owner
   const closeTarget = async (id: string) => { let t: ReturnType<typeof setTimeout> | undefined; await Promise.race([b.send('Target.closeTarget', { targetId: id }).catch(() => {}), new Promise((r) => { t = setTimeout(r, 2000) })]); clearTimeout(t) }
   try {
@@ -316,9 +323,11 @@ export async function bakeIn(b: Browser, opts: { url: string; width: number; hei
     const err = await ev(`window.__mvFrameError || ''`)
     if (err) return { ok: false, error: `the frame rendered an error - ${err}` }
 
+    // a perf run's frame (its URL names the run): a Video whose poster is missing rested without it (video.tsx)
+    const posterSkipped = (await ev(`document.documentElement.hasAttribute('data-mv-poster-skipped')`)) === true ? { posterSkipped: true as const } : {}
     const targets = (await ev(`(window.__mvBakeTargets = ${DETECT})`)) as { i: number; sel: string; rect: BakeTarget['rect']; filter: string; level: number }[]
     const effects = Number(await ev('window.__mvBakeDetected')) || 0   // every backdrop-filter element, nested ones included
-    if (!targets?.length) return { ok: true, targets: [], levels: 0, rejected: 0, ms: Date.now() - t0, effects }
+    if (!targets?.length) return { ok: true, targets: [], levels: 0, rejected: 0, ms: Date.now() - t0, effects, ...posterSkipped }
     if (targets.length > MAX_TARGETS) return { ok: false, error: `too many effects to compile (${targets.length})` }
     if (targets.some((t) => t.rect.w * t.rect.h > MAX_TARGET_AREA)) return { ok: false, error: 'an effect larger than the texture budget' }
     const levels = Math.max(...targets.map((t) => t.level)) + 1
@@ -397,9 +406,9 @@ export async function bakeIn(b: Browser, opts: { url: string; width: number; hei
     if (moved) for (const t of done.values()) t.verified = false
 
     const out = [...done.values()]
-    return { ok: true, targets: out, levels, rejected: out.filter((t) => !t.verified).length, ms: Date.now() - t0, outside, effects }
+    return { ok: true, targets: out, levels, rejected: out.filter((t) => !t.verified).length, ms: Date.now() - t0, outside, effects, ...posterSkipped }
   } catch (err) {
-    return { ok: false, error: (err as Error).message }
+    return { ok: false, error: timedOut ? TIMED_OUT : (err as Error).message }
   } finally {
     clearTimeout(deadline)
     b.abort(me, 'the bake finished')
@@ -500,9 +509,77 @@ export const flightKey = (root: string, gen: number, ask: BakeAsk, owner: BakeOw
  * deadline. The run's driver reads it directly: a run is bake-idle when the page's four counts and these two are zero.
  */
 export function jobsOf(owner: BakeOwner): { queued: number; running: number } {
-  void owner
-  return { queued: 0, running: 0 }   // A3 headless stream: counted per owner once bakeBatch keys by it
+  const j = jobs.get(owner)
+  return j ? { queued: j.queued, running: j.running } : { queued: 0, running: 0 }
 }
+const jobs = new Map<BakeOwner, { queued: number; running: number }>()
+const idleWaiters = new Map<BakeOwner, Set<() => void>>()
+type JobState = 'queued' | 'running' | 'done'
+/** A job of `owner` moves from one state to the next: the counts follow, and an owner left with none is idle. */
+function move(owner: BakeOwner, from: JobState | null, to: JobState): void {
+  const j = jobs.get(owner) ?? { queued: 0, running: 0 }
+  if (from === 'queued') j.queued--; else if (from === 'running') j.running--
+  if (to === 'queued') j.queued++; else if (to === 'running') j.running++
+  if (j.queued > 0 || j.running > 0) { jobs.set(owner, j); return }
+  jobs.delete(owner)
+  const ws = idleWaiters.get(owner)
+  idleWaiters.delete(owner)
+  for (const w of ws ?? []) w()
+}
+/** Once `owner` has no compile queued or running: true, or false when `ms` passed first. */
+export function jobsIdle(owner: BakeOwner, ms: number): Promise<boolean> {
+  if (!jobs.has(owner)) return Promise.resolve(true)
+  return new Promise((resolve) => {
+    let set = idleWaiters.get(owner)
+    if (!set) idleWaiters.set(owner, set = new Set())
+    const done = () => { clearTimeout(t); resolve(true) }
+    const t = setTimeout(() => { set!.delete(done); resolve(false) }, ms)
+    set.add(done)
+  })
+}
+
+/** What a compile of a run that has ended answers, without rendering (A3.8 #19). */
+export const RUN_ENDED = 'the run ended'
+/** Runs that ended, cancelled or not: their compiles not started yet answer RUN_ENDED (bounded, oldest out). */
+const ended = new Set<BakeOwner>()
+/** A run's own answers, in memory while it runs: a compile whose document skipped a missing poster, which never
+ *  fills the shared cache - its later asks find it here. */
+const runAnswers = new Map<BakeOwner, Map<string, BakeAnswer>>()
+/** Has this run ended (its compiles answer RUN_ENDED)? */
+export const bakesEnded = (owner: BakeOwner): boolean => owner !== NORMAL_OWNER && ended.has(owner)
+/** Each run's compiles not started yet - waiting for the lane or for the pool - by the function that ends one: a run's
+ *  end settles them at once, never on their turn (the review of a3-runs' fixes, minor #3). */
+const queuedJobs = new Map<BakeOwner, Set<() => void>>()
+/**
+ * A run ends (A3.8 #19, #20): its compiles not started answer RUN_ENDED at once, without rendering - those waiting for
+ * the lane behind another batch and those waiting for the pool alike; one already rendering finishes (its frame URL
+ * names the run, so it asks for no poster) and keeps nothing for the run; its answers and its failures go. The driver
+ * then waits for its running jobs (`jobsIdle`).
+ */
+export function endRunBakes(owner: BakeOwner): void {
+  if (owner === NORMAL_OWNER) return
+  ended.add(owner)
+  if (ended.size > 256) ended.delete(ended.values().next().value!)
+  runAnswers.delete(owner)
+  for (const k of [...failed.keys()]) if (k.endsWith(`|${owner}`)) failed.delete(k)
+  for (const end of [...(queuedJobs.get(owner) ?? [])]) end()
+}
+
+/** Test seams - the environment's read only with MARVER_SLOT_BASE set (the suite's marker, as RUN_T's):
+ *  MV_BAKE_HOLD_MS holds each compile that long before it renders, so a test can find one still compiling.
+ *  `deadlineMs` (in-process only) shortens a compile's 45 s deadline, so a test can force "the bake timed out".
+ *  MV_BAKE_STOP_ASKING=1 answers a caller who stops waiting STOP_ASKING instead of COMPILING: the page takes it for a
+ *  failed compile, retries once and asks no more, so it goes idle while the server still compiles - the page's own 15
+ *  looks at a COMPILING outlast any held compile (A3.8 r1 #4's case, added by the review of a3-runs). */
+export const bakeSeams: { holdMs?: number; stopAsking?: boolean; deadlineMs?: number } = {}
+const holdMs = (): number => {
+  if (bakeSeams.holdMs !== undefined) return bakeSeams.holdMs
+  const v = process.env.MARVER_SLOT_BASE ? Number(process.env.MV_BAKE_HOLD_MS) : NaN
+  return Number.isFinite(v) && v > 0 ? Math.min(v, 60_000) : 0
+}
+/** The suite's answer for a compile still running, under MV_BAKE_STOP_ASKING (above). */
+export const STOP_ASKING = 'still compiling - the suite asks the page to stop asking'
+const stillCompiling = (): string => ((bakeSeams.stopAsking ?? (!!process.env.MARVER_SLOT_BASE && process.env.MV_BAKE_STOP_ASKING === '1')) ? STOP_ASKING : COMPILING)
 
 /** Compiles in flight, by generation and key: identical asks - inside one request or across
  *  concurrent ones - share one compile. */
@@ -515,7 +592,7 @@ const inflight = new Map<string, Promise<BakeAnswer>>()
  *  a cache write failed) says nothing about the frame and is tried again. */
 const failed = new Map<string, string>()
 const FAILED_MAX = 2000
-export const ofTheFrame = (error: string): boolean => error === LOOPING || /^the frame (never stopped changing|did not settle|never rendered|rendered an error)|^the bake timed out$|^too many effects|^an effect larger than/.test(error)
+export const ofTheFrame = (error: string): boolean => error === LOOPING || /^the frame (never stopped changing|did not settle|never rendered|rendered an error)|(^|: )the bake timed out$|^too many effects|^an effect larger than/.test(error)
 
 /** The answer for a compile still running when a request stops waiting (`waitMs`): the frame stays
  *  live for now, and its next ask finds the result in the cache. */
@@ -524,55 +601,90 @@ export const COMPILING = 'compiling - ask again'
 /** Compile many frames as ONE operation (one browser, `shotConcurrency()` at a time), the cache
  *  first. `urlFor(ask)` gives the frame's own URL; `urlBase` is where textures are served from;
  *  `live()` is the source generation NOW - a compile the source outran is not published. */
-export async function bakeBatch(opts: { root: string; gen: number; asks: BakeAsk[]; urlFor: (ask: BakeAsk) => string; urlBase: string; live?: () => number; log?: (a: BakeAnswer) => void; waitMs?: number }): Promise<BakeAnswer[]> {
+export async function bakeBatch(opts: { root: string; gen: number; asks: BakeAsk[]; urlFor: (ask: BakeAsk) => string; urlBase: string; live?: () => number; log?: (a: BakeAnswer) => void; waitMs?: number; owner?: BakeOwner }): Promise<BakeAnswer[]> {
   const { root, gen, asks, urlFor, urlBase, live, log, waitMs } = opts
+  // who the compiles are for (A3.8 #19): a run's never meet a normal caller's - in flight, failed or remembered
+  const owner = opts.owner ?? NORMAL_OWNER
   if (!cacheInside(root)) return asks.map((ask) => ({ ...ask, ok: false as const, error: 'design/.local/bakes resolves outside the project' }))
-  const failedKey = (ask: BakeAsk) => `${root}|${gen}|${bakeKey(ask)}`
+  const key = (ask: BakeAsk) => flightKey(root, gen, ask, owner)
+  const theirs = owner === NORMAL_OWNER ? undefined : runAnswers.get(owner)
   const answers: (BakeAnswer | null)[] = asks.map((ask) => {
-    const error = failed.get(failedKey(ask))
-    return error !== undefined ? { ...ask, ok: false as const, error } : readCached(root, gen, ask, urlBase)
+    const error = failed.get(key(ask))
+    if (error !== undefined) return { ...ask, ok: false as const, error }
+    // the shared cache was filled by compiles with their posters: a run reads it as any caller does
+    return readCached(root, gen, ask, urlBase) ?? theirs?.get(key(ask)) ?? (bakesEnded(owner) ? { ...ask, ok: false as const, error: RUN_ENDED } : null)
   })
   const protect = new Set(asks.map(bakeKey))   // keys this response names: never evicted under it
   const misses = new Map<string, { ask: BakeAsk; at: number[] }>()
-  asks.forEach((ask, i) => { if (answers[i]) return; const k = `${root}|${gen}|${bakeKey(ask)}`; const m = misses.get(k); if (m) m.at.push(i); else misses.set(k, { ask, at: [i] }) })
-  const mine: { ask: BakeAsk; resolve: (a: BakeAnswer) => void; done: boolean }[] = []
+  asks.forEach((ask, i) => { if (answers[i]) return; const k = key(ask); const m = misses.get(k); if (m) m.at.push(i); else misses.set(k, { ask, at: [i] }) })
+  type Job = { ask: BakeAsk; resolve: (a: BakeAnswer) => void; state: JobState; end?: () => void }
+  const mine: Job[] = []
+  // a run's job leaves the queue its end reads when it starts rendering or settles
+  const unqueue = (job: Job) => {
+    if (!job.end) return
+    const s = queuedJobs.get(owner)
+    s?.delete(job.end)
+    if (s && !s.size) queuedJobs.delete(owner)
+    job.end = undefined
+  }
+  const settle = (job: Job, a: BakeAnswer) => { if (job.state === 'done') return; unqueue(job); move(owner, job.state, 'done'); job.state = 'done'; job.resolve(a) }
+  const runEnded = (job: Job) => settle(job, { ...job.ask, ok: false, error: RUN_ENDED })
   const waits = [...misses.entries()].map(([k, m]) => {
     let p = inflight.get(k)
     if (!p) {
-      p = new Promise<BakeAnswer>((resolve) => mine.push({ ask: m.ask, resolve, done: false }))
+      p = new Promise<BakeAnswer>((resolve) => {
+        const job: Job = { ask: m.ask, resolve, state: 'queued' }
+        mine.push(job); move(owner, null, 'queued')
+        if (owner !== NORMAL_OWNER) { job.end = () => runEnded(job); let s = queuedJobs.get(owner); if (!s) queuedJobs.set(owner, s = new Set()); s.add(job.end) }
+      })
       inflight.set(k, p)
       void p.then(() => inflight.delete(k))
     }
     return p.then((a) => { for (const i of m.at) answers[i] = { ...a, ...m.ask } })
   })
   async function compile(): Promise<void> {
-    const settle = (job: typeof mine[number], a: BakeAnswer) => { job.done = true; job.resolve(a) }
     try {
+      // a run that ended while its batch waited for the lane launches no browser for it
       await withBrowser('shot', (b) => pool(shotConcurrency(), mine, async (job) => {
+        if (job.state !== 'queued') return   // ended while it waited (endRunBakes)
+        if (bakesEnded(owner)) return runEnded(job)
         const cached = readCached(root, gen, job.ask, urlBase)   // another request may have filled it since we looked
         if (cached) return settle(job, cached)
-        const r = await bakeIn(b, { url: urlFor(job.ask), width: Math.round(job.ask.w), height: Math.round(job.ask.h) }).catch((e) => ({ ok: false as const, error: (e as Error).message }))
+        unqueue(job); move(owner, 'queued', 'running'); job.state = 'running'
+        const hold = holdMs()
+        if (hold) await new Promise((r) => setTimeout(r, hold))
+        const r: BakeResult = await bakeIn(b, { url: urlFor(job.ask), width: Math.round(job.ask.w), height: Math.round(job.ask.h) }).catch((e) => ({ ok: false as const, error: (e as Error).message }))
         if (live && live() !== gen) return settle(job, { ...job.ask, ok: false, error: 'the source changed during the compile' })
         let a: BakeAnswer
-        try { a = r.ok ? writeCached(root, gen, job.ask, r, urlBase, protect) : { ...job.ask, ...r } } catch (e) { a = { ...job.ask, ok: false, error: (e as Error).message } }
-        if (!a.ok && ofTheFrame(a.error)) {
+        if (r.ok && r.posterSkipped) {
+          // a texture of the frame without its poster: never the shared cache - its run's own, in memory, while it runs
+          a = { ...job.ask, ok: true, targets: r.targets.map((t) => ({ ...t, texture: t.verified ? t.texture : '' })), levels: r.levels, rejected: r.rejected, ms: r.ms, posterSkipped: true }
+          if (owner !== NORMAL_OWNER && !bakesEnded(owner)) { let m = runAnswers.get(owner); if (!m) runAnswers.set(owner, m = new Map()); m.set(key(job.ask), a) }
+        } else {
+          try { a = r.ok ? writeCached(root, gen, job.ask, r, urlBase, protect) : { ...job.ask, ...r } } catch (e) { a = { ...job.ask, ok: false, error: (e as Error).message } }
+        }
+        if (!a.ok && ofTheFrame(a.error) && !bakesEnded(owner)) {
           if (failed.size >= FAILED_MAX) failed.clear()
-          failed.set(failedKey(job.ask), a.error)
+          failed.set(key(job.ask), a.error)
         }
         log?.(a)
         settle(job, a)
-      }))
+      }), { skip: () => bakesEnded(owner), skipped: [] })
+      for (const job of mine) runEnded(job)   // skipped: the run ended while its batch waited for the lane
     } catch (e) {
-      for (const job of mine) if (!job.done) settle(job, { ...job.ask, ok: false, error: (e as Error).message })
+      for (const job of mine) settle(job, { ...job.ask, ok: false, error: (e as Error).message })
     }
   }
   // The compile runs on its own; a caller with `waitMs` (the page, whose few connections must never
   // be held for minutes - issue #23) gets what is ready by then and COMPILING for the rest.
   const work = mine.length ? compile() : Promise.resolve()
-  const all = work.then(() => Promise.all(waits))
+  // a run's caller is answered once its jobs settled - at once when the run ends while they wait for the lane (the
+  // review of a3-runs' fixes); a normal caller once the batch is over, its browser closed
+  const all = owner === NORMAL_OWNER ? work.then(() => Promise.all(waits)) : Promise.all(waits)
   if (waitMs === undefined) { await all; return answers as BakeAnswer[] }
   let timer: ReturnType<typeof setTimeout> | undefined
   await Promise.race([all, new Promise((r) => { timer = setTimeout(r, waitMs) })])
   clearTimeout(timer)
-  return answers.map((a, i) => a ?? { ...asks[i], ok: false as const, error: COMPILING })
+  const still = stillCompiling()
+  return answers.map((a, i) => a ?? { ...asks[i], ok: false as const, error: still })
 }

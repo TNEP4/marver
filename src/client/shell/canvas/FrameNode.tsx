@@ -9,7 +9,7 @@ import { threadHostKey } from '../keys.ts'
 import { registerFrame, unregisterFrame } from './frame-registry.ts'
 import { canvasClick, canvasPointer, frameGone, frameLoaded, pressNow, useJamCapture } from '../jam-capture.ts'
 import { primeCameraFor } from './camera-broadcast.ts'
-import { sleep, wake } from './sleep.ts'
+import { scheduleSleep, sleep, wake } from './sleep.ts'
 import { canAutoReload, shouldArmReadyWatch } from './ready-watch.ts'
 import { Stickies, type NoteSpec } from './Sticky.tsx'
 import { recorder } from '../recorder.ts'
@@ -219,8 +219,8 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     // one being installed
     if (interact || dirty.current || resizing.current || node.status !== 'ready' || node.stale || behind) return
     if (node.themeOn !== undefined && node.themeOn !== node.theme) return   // the frame has not painted the new theme yet
-    const t = setTimeout(() => { void sleep(node.key, iframe, { frame: frame.id, theme: node.theme, w, h, doc: node.shown }) }, 250)
-    return () => clearTimeout(t)
+    // counted while it waits (sleep.ts bakeWork): a headless perf run measures only once no sleep is still to come
+    return scheduleSleep(() => { void sleep(node.key, iframe, { frame: frame.id, theme: node.theme, w, h, doc: node.shown }) }, 250)
   }, [interact, node.status, node.theme, node.themeOn, node.rev, node.nav, node.stale, behind, w, h, node.missing, frame?.id, node.key, resizeTick])
   useEffect(() => () => wake(node.key, iframeRef.current), [node.key])
 

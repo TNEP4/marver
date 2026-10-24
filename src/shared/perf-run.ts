@@ -99,9 +99,13 @@ export interface RunLine {
   where: 'headless' | 'app'
   ts: number
   board: string
-  /** the fingerprint at the start (A3.8 #21): null when the watcher was not ready - the run is invalid 'inputs' */
+  /** the fingerprint at the start (A3.8 #21) - once the warm-up has loaded the board: every watched file under the
+   *  root, the board files and `_sizes.json`, and the watched files outside the root that the run's own warm-up page
+   *  loaded, with their direct imports (the review of a3-runs' fixes: never another page's), so it depends on the board
+   *  and the files alone. A later `where: 'app'` producer must fingerprint the same set. Null when the watcher was not
+   *  ready - the run is invalid 'inputs' */
   inputs: { hash: string; files: number } | null
-  /** the fingerprint after the end and the 300 ms wait */
+  /** the same files' fingerprint after the end and the 300 ms wait */
   inputsEnd: string | null
   frames: number | null
   marver: string
@@ -125,22 +129,36 @@ export interface RunLine {
   settledMs: number | null
   moves: number
   lateMoves: number
+  /** the driver's own gestures (of three) whose end the shell reported - never the page's count since its load, which
+   *  a fit's own motion raises (the review of a3-runs' fixes) */
   gestures: number
   p50: number | null
   p95: number | null
-  over33ms: number
+  /** null when no frame was timed (the review of a3-runs: widened from `number` - "not measured" is not "no slow
+   *  frames"); a valid run always has it */
+  over33ms: number | null
   /** Runtime.getHeapUsage at 1 Hz */
   heapPeakMB: number | null
   errors: number
   /** mutating requests the server refused for this run id */
   forbidden: number
   refusedInPage: number
-  /** another run was registered at any moment of this one: never compared */
+  /** another run was registered at any moment of this one, or an earlier run's compile was still running when this one
+   *  started (that run's `bakesPending`): never compared */
   overlapped: boolean
   valid: boolean
   invalidReason?: InvalidReason
-  /** the cut's reason, when the load was cut */
+  /** the cut's reason, when the load was cut - the recorder's (`timeout`, `hidden`, ...), or the driver's: `unresponsive`
+   *  (a call to the page went unanswered for 15 s: its main thread stopped, a frame's script that never returns),
+   *  `overrun` (the run drove past its 7 minutes) and `driver: <why>` (the driver failed for another reason than a
+   *  crash - a page script that threw between two reads; added by the review of a3-runs' fixes) */
   cut?: string
+  /** the dev server restarted in place during the run (an .env or config edit): its inputs changed, and its stream
+   *  ended - invalid `inputs`, never `cancelled` (A3.8 #22; added by the review of a3-runs) */
+  restarted?: true
+  /** the run's own compiles were still running 50 s after its end (added by the review of a3-runs' fixes): the next run
+   *  started beside them, so it is `overlapped` */
+  bakesPending?: true
 }
 
 /**

@@ -10,9 +10,10 @@ import { boardFields, checkBoardsDir, listBoardFiles } from '../server/boards.ts
 import { readPage, readReloads, readRuns } from '../server/perf.ts'
 import { readJam } from '../server/perf-jam.ts'
 import { marverHome } from '../server/slots.ts'
+import { readDevInfo } from '../server/work.ts'
 import { isBoardName, labelOf } from '../shared/board-tree.ts'
-import type { RunLine } from '../shared/perf-run.ts'
-import { crashesSummary, flashesSummary, machineSummary, PRESSURE_FRESH_MS, readAppLog, repoWorkspaces, type PageMoment } from './perf-app.ts'
+import type { RunLine, RunStreamLine } from '../shared/perf-run.ts'
+import { crashesSummary, flashesSummary, machineSummary, PRESSURE_FRESH_MS, readAppLog, repoWorkspaces, runsSummary, type PageMoment } from './perf-app.ts'
 
 export interface PerfOptions {
   minutes?: number; json?: boolean; jam?: boolean; loads?: boolean
@@ -25,6 +26,7 @@ export interface PerfOptions {
 export function perfCommand(root: string, opts: PerfOptions): void {
   if (opts.jam) return jamPerf(root, opts)
   if (opts.loads) return loadsPerf(root, opts)
+  if (opts.runs) return runsPerf(root, opts)
   if (opts.crashes) return crashesPerf(root, opts)
   if (opts.flashes) return flashesPerf(root, opts)
   if (opts.machine) return machinePerf(root, opts)
@@ -477,5 +479,152 @@ function machinePerf(root: string, opts: PerfOptions) {
       const more = [p.electron, p.gpu, p.displays, p.power ? `power ${p.power}` : undefined].filter(Boolean)
       if (more.length) console.log(`    ${more.join(' · ')}`)
     }
+  }
+}
+
+// ---- headless perf runs (spec 28 A3.4, A3.8 #20-#22) ---------------------------------------------------------------
+
+const ms2 = (v: number | null | undefined) => (typeof v === 'number' ? (v >= 1000 ? `${(v / 1000).toFixed(2)} s` : `${Math.round(v)} ms`) : '-')
+const mms = (v: number | null | undefined) => (typeof v === 'number' ? `${v} ms` : '-')
+const why = (l: RunLine) => `invalid: ${l.invalidReason}${l.restarted ? ' (the dev server restarted)' : l.cut ? ` (${l.cut})` : ''}`
+const over33 = (n: number | null) => (n === null ? 'frames over 33 ms not measured' : `${n} frame${n === 1 ? '' : 's'} over 33 ms`)
+/** What a run asks of the agent, when its reason alone does not say it - an invalid run's, or a compile it left running. */
+const hint = (l: RunLine): string | null =>
+  l.restarted ? 'the dev server restarted during the run (an .env or config edit): its inputs changed - run it again'
+  : l.cut === 'unresponsive' ? 'the page stopped answering for 15 s: a frame\'s script that never returns (an endless loop) - open the board and see which frame hangs'
+  : l.invalidReason === 'gesture' && l.over33ms === null ? 'no frame was timed: requestAnimationFrame never ran in the gestures (the page read as hidden?)'
+  : l.invalidReason === 'gesture' && l.gestures < 3 ? `the canvas ended ${l.gestures} of the 3 gestures within 5 s: the camera kept moving (an animation that never ends?)`
+  : l.bakesPending ? 'a compile of this run was still running 50 s after it: the next run is overlapped'
+  : null
+/** One run, as `perf run` and `perf --runs` print it: three lines, and a fourth when it has a hint. */
+export function runBlock(l: RunLine, name: (b?: string) => string): string[] {
+  const h = hint(l)
+  return [
+    `run ${l.run} · ${name(l.board)} · Chrome ${l.chrome.split('.')[0]} · bakes ${l.bakes}${l.slow ? ' · --slow' : ''}${l.overlapped ? ' · overlapped' : ''}`,
+    `load to settled ${ms2(l.loadToSettledMs)} · ${l.moves} move${l.moves === 1 ? '' : 's'}${l.lateMoves ? ` (${l.lateMoves} late)` : ''} · p50 ${mms(l.p50)} p95 ${mms(l.p95)} · ${over33(l.over33ms)} · heap peak ${l.heapPeakMB ?? '-'} MB${l.postersMissing ? ` · ${l.postersMissing} without a poster` : ''}`,
+    `${l.valid ? 'valid' : why(l)} · inputs ${l.inputs ? `${l.inputs.hash.slice(0, 8)}… (${l.inputs.files.toLocaleString('en-US')} files)` : 'unknown'}${l.forbidden ? ` · ${l.forbidden} write${l.forbidden === 1 ? '' : 's'} refused` : ''}`,
+    ...(h ? [h] : []),
+  ]
+}
+
+/**
+ * The stream broke before its end with a run under way: the dev server restarted in place (an .env or config edit) or
+ * stopped. The run's line reaches runs.jsonl once its end has run - its pages closed, its compiles awaited, 50 s at
+ * most - so it is waited for, 90 s at most, and no longer once the dev server has not answered for 5 s (it stopped).
+ */
+async function lineAfterDrop(root: string, run: string, port: number): Promise<RunLine | null> {
+  const by = Date.now() + 90_000
+  let downSince: number | null = null
+  for (let n = 0; Date.now() < by; n++) {
+    const l = (readRuns(root, Date.now() - 3_600_000) as RunLine[]).find((x) => x.run === run)
+    if (l) return l
+    if (n % 4 === 0) {
+      const up = await fetch(`http://localhost:${port}/`, { signal: AbortSignal.timeout(1000) }).then(() => true, () => false)
+      if (up) downSince = null
+      else if ((downSince ??= Date.now()) < Date.now() - 5000) return null
+    }
+    await new Promise((r) => setTimeout(r, 250))
+  }
+  return null
+}
+
+/** The dev server's own `{ error }` stream line: the run failed there before it had a line (no Chrome, a launch that
+ *  failed) - the server said so and ended the stream, so no line will come and none is waited for (the review of
+ *  a3-runs' fixes, major #1). */
+class ServerSaid extends Error {}
+
+/**
+ * `marver perf run <board> [--slow] [--repeat n] [--json]`: the board's script in the canvas's own headless Chrome
+ * (`marver dev` must be running), read-only - one line per run in design/.local/perf/runs.jsonl. Ctrl-C closes the
+ * request, which cancels the run (its line says `cancelled`). A failure the server reports ends the command at once,
+ * with the lines of the runs before it (`--json`: `{ runs, error }`); only a stream that breaks, or ends before its
+ * `done`, under a run waits for that run's line.
+ */
+export async function perfRunCommand(root: string, board: string | undefined, opts: { slow?: boolean; repeat?: string | number; json?: boolean }): Promise<number> {
+  if (!board) throw new Error('name the board: marver perf run <board> [--slow] [--repeat 1-5] [--json]')
+  const info = readDevInfo(root)
+  if (!info) throw new Error('`marver dev` is not running in this repo (design/.local/dev.json not found) - start it first.')
+  const repeat = opts.repeat === undefined ? 1 : Number(opts.repeat)
+  if (!(Number.isInteger(repeat) && repeat >= 1 && repeat <= 5)) throw new Error('--repeat must be 1-5')
+  const ac = new AbortController()
+  const stop = () => ac.abort()
+  process.once('SIGINT', stop)
+  const name = namer(root)
+  const lines: RunLine[] = []
+  let under: string | null = null   // the run under way: its phases name it, its line ends it
+  try {
+    const res = await fetch(`http://localhost:${info.port}/__mv/api/perf/run`, {
+      method: 'POST', signal: ac.signal,
+      headers: { 'x-mv-work': info.token, 'content-type': 'application/json' },
+      body: JSON.stringify({ board, slow: !!opts.slow, repeat }),
+    })
+    if (!res.ok || !res.body) {
+      const b = await res.json().catch(() => ({})) as { error?: string }
+      throw new Error(b.error ?? `the run could not start (${res.status})`)
+    }
+    let buf = '', finished = false
+    const dec = new TextDecoder()
+    for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+      buf += dec.decode(chunk, { stream: true })
+      let nl: number
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const text = buf.slice(0, nl); buf = buf.slice(nl + 1)
+        let m: RunStreamLine
+        try { m = JSON.parse(text) } catch { continue }
+        // the server's own answer is final: the run under way ended without a line, and none will come
+        if ('error' in m) { under = null; throw new ServerSaid(`the run failed in the dev server: ${m.error}`) }
+        if ('phase' in m) { under = m.run; if (!opts.json) console.log(m.phase === 'warm' ? `run ${m.run}: warming up` : m.phase === 'measured' ? '  measuring' : '  closing') }
+        if ('line' in m) { under = null; lines.push(m.line); if (!opts.json) for (const l of runBlock(m.line, name)) console.log(`  ${l}`) }
+        if ('done' in m) finished = true
+      }
+    }
+    // a stream that ends quietly before its `done` broke too: under a run, that run's line is waited for below
+    if (!finished) throw new Error('the dev server ended the stream before the runs did')
+  } catch (err) {
+    if (ac.signal.aborted) { if (!opts.json) console.log('  cancelled - the run\'s line says so'); return 130 }
+    if (err instanceof ServerSaid) {
+      if (!opts.json) throw err
+      console.log(JSON.stringify({ runs: lines, error: err.message }, null, 2))
+      return 1
+    }
+    // the stream broke under a run: the dev server restarted (spec 28 A3.8 #22) or stopped - its line says which
+    if (!under) throw err
+    if (!opts.json) console.log('  the connection to the dev server dropped - waiting for the run\'s line')
+    const line = await lineAfterDrop(root, under, info.port)
+    if (!line) throw new Error(`the connection to the dev server dropped during run ${under}, and no line came for it - did \`marver dev\` stop? (${(err as Error).message})`)
+    lines.push(line)
+    if (!opts.json) for (const l of runBlock(line, name)) console.log(`  ${l}`)
+  } finally { process.off('SIGINT', stop) }
+  if (opts.json) console.log(JSON.stringify({ runs: lines }, null, 2))
+  else console.log(`\n  design/.local/perf/runs.jsonl · compare: npx marver perf --runs`)
+  return lines.length && lines.every((l) => l.valid) ? 0 : 1
+}
+
+/** `marver perf --runs [--against <run>] [--days n]`: the headless runs, compared inside their cohorts. */
+function runsPerf(root: string, opts: { days?: number | string; json?: boolean; against?: string }) {
+  const days = Number(opts.days) > 0 ? Number(opts.days) : 14
+  const lines = readRuns(root, Date.now() - days * 86_400_000) as RunLine[]
+  const sum = runsSummary(lines, { against: opts.against })
+  if (opts.json) { console.log(JSON.stringify({ days, runs: lines, ...sum }, null, 2)); return }
+  const name = namer(root)
+  console.log(`headless runs, last ${days} days - design/.local/perf/runs.jsonl`)
+  if (!lines.length) { console.log('\nnone yet - npx marver perf run <board>'); return }
+  const pct = (a: number | null, b: number | null) => (a && b !== null ? `${b >= a ? '+' : ''}${Math.round(((b - a) / a) * 100)} %` : '-')
+  for (const b of sum.boards) {
+    console.log(`\n  ${name(b.board)} · Chrome ${String(b.cohort.chrome).split('.')[0]} · bakes ${b.cohort.bakes}${b.cohort.slow ? ' · --slow' : ''} · ${b.runs} valid run${b.runs === 1 ? '' : 's'}`)
+    const d33 = b.afterChange?.deltas.over33ms ?? null
+    console.log(`    latest ${b.latest.run}: load to settled ${ms2(b.latest.loadToSettledMs)} · p95 ${mms(b.latest.p95)} · ${b.latest.over33ms ?? '-'} over 33 ms · inputs ${b.latest.inputs?.slice(0, 8) ?? 'unknown'}…`)
+    if (b.sameInputs) console.log(`    against ${b.sameInputs.from.run} (same inputs): ${b.sameInputs.within10 ? 'within 10 %' : 'NOT within 10 %'} - load ${pct(b.sameInputs.from.loadToSettledMs, b.latest.loadToSettledMs)}, p95 ${pct(b.sameInputs.from.p95, b.latest.p95)}`)
+    if (b.afterChange) console.log(`    after a change, against ${b.afterChange.from.run}: load ${pct(b.afterChange.from.loadToSettledMs, b.latest.loadToSettledMs)}, p95 ${pct(b.afterChange.from.p95, b.latest.p95)}, over 33 ms ${d33 === null ? '-' : `${d33 >= 0 ? '+' : ''}${d33}`}`)
+  }
+  if (sum.against) {
+    const a = sum.against
+    if ('error' in a) console.log(`\n  --against ${a.run}: ${a.error}`)
+    else console.log(`\n  --against ${a.run}: ${a.to.run} ${a.within10 ? 'within 10 %' : 'differs'} - load ${pct(a.from.loadToSettledMs, a.to.loadToSettledMs)}, p95 ${pct(a.from.p95, a.to.p95)}`)
+  }
+  if (sum.overlapped.length) console.log(`\n  ${sum.overlapped.length} overlapped (another run at the same time): never compared - ${sum.overlapped.map((r) => r.run).join(', ')}`)
+  if (sum.invalid.length) {
+    console.log(`\n  invalid (${sum.invalid.length})`)
+    for (const r of sum.invalid.slice(-10)) console.log(`    ${new Date(r.ts).toLocaleString()}  ${r.run}  ${name(r.board)}  ${why(r)}`)
   }
 }

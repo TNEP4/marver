@@ -12,6 +12,8 @@ import { annotateBoards, planNames, planWithStage, readContextFacts } from './bo
 import { autoWidthOf, keptSizes, measuringFrames, mergeSizes, readSizes, readSizesFile, serializeSizes, sizesPath, SIZES_BATCH_MAX } from './sizes.ts'
 import { workspaceId } from './workspace.ts'
 import { logPage, PAGE_BODY_MAX } from './perf.ts'
+import { RUN_PARAM, runIdOf, runs } from './perf-run.ts'
+import type { InputsWatch } from './perf-inputs.ts'
 const BODY_LIMIT = 1_000_000
 const CSRF_MAX_AGE = 30 * 24 * 3600
 
@@ -111,7 +113,7 @@ function contained(target: string, base: string): boolean {
   } catch { return false }
 }
 
-export function apiMiddleware(root: string, opts: { viewports?: Record<string, { width: number; height: number }>; origin?: () => string | null; bakeGen?: () => number; notify?: (event: string) => void; manifest?: () => Manifest; settled?: () => boolean; workspace?: string } = {}): Connect.NextHandleFunction {
+export function apiMiddleware(root: string, opts: { viewports?: Record<string, { width: number; height: number }>; origin?: () => string | null; bakeGen?: () => number; notify?: (event: string) => void; manifest?: () => Manifest; settled?: () => boolean; workspace?: string; inputs?: InputsWatch } = {}): Connect.NextHandleFunction {
   // the run's workspace (spec 28 A1.6): a --recover run serves under an earlier address's key
   const ws = opts.workspace ?? workspaceId(root)
   // the frames as the dev server knows them now (its cached manifest), else as the disk says
@@ -375,11 +377,40 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
       // rebuilt from its kind's allowlist, strings cut to 200 characters, 512 KB a request at most
       if (path === 'perf/page' && req.method === 'POST') {
         if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        // a headless run's page (spec 28 A3.8 #17): its records stamped with its run by the server, after the cleaner, and
+        // kept for its line; a run that ended takes nothing more
+        const run = runIdOf(req)
+        if (run && !runs.get(run)) return json(res, 409, { error: 'run ended' })
         const raw = await readBody(req, PAGE_BODY_MAX)
         if (raw == null) return json(res, 400, { error: 'body too large or unreadable' })
         let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
         if (!Array.isArray(b?.records)) return json(res, 400, { error: 'expected { records: [...] }' })
-        return json(res, 200, { ok: true, accepted: logPage(root, b.records) })
+        return json(res, 200, { ok: true, accepted: logPage(root, b.records, run ? { run, kept: (recs) => runs.records(run, recs) } : {}) })
+      }
+      // headless perf runs (spec 28 A3.4, A3.8 #20-#22): run a board's script in this canvas's own headless Chrome and
+      // stream its progress and lines; or read the inputs' fingerprint alone. Gated like `shot` (it spawns a browser)
+      if ((path === 'perf/run' && req.method === 'POST') || (path === 'perf/inputs' && req.method === 'GET')) {
+        const { readDevInfo } = await import('./work.ts')
+        const token = readDevInfo(root)?.token
+        if (!ownerGated(req) && !(token && req.headers['x-mv-work'] === token)) return json(res, 403, { error: 'forbidden' })
+        if (path === 'perf/inputs') {
+          if (!opts.inputs) return json(res, 200, { inputs: null })
+          const { fingerprint, hashInputs } = await import('./perf-inputs.ts')
+          // ?run=<id>: that run's own set read again now - its files outside the root are its page's, which only the
+          // run knew (the review of a3-runs' fixes); without it, every file the dev server watches now
+          const run = url.searchParams.get('run')
+          if (run !== null) {
+            const { runInputPaths } = await import('./perf-run.ts')
+            const paths = runInputPaths(run)
+            if (!paths) return json(res, 404, { inputs: null, error: `run ${run} is not one of the last 32 this dev server ran` })
+            return json(res, 200, { run, inputs: await hashInputs(root, paths) })
+          }
+          return json(res, 200, { inputs: await fingerprint(root, opts.inputs) })
+        }
+        const origin = opts.origin?.() ?? `http://${req.headers.host ?? 'localhost'}`
+        const { serveRun } = await import('./perf-run.ts')
+        const boards = () => (checkBoardsDir(root, boardsDir) ? [] : listBoardFiles(boardsDir).boards.filter((x) => !x.error).map((x) => x.name))
+        return await serveRun(req, res, { root, origin, boards, watch: opts.inputs })
       }
       if (path === 'sizes' && req.method === 'GET') {
         const frames = readManifestFrames()
@@ -816,7 +847,11 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         let body: { asks?: unknown } | null
         try { body = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
         if (!body || typeof body !== 'object' || !Array.isArray(body.asks) || !body.asks.length || body.asks.length > 200) return json(res, 400, { error: 'asks must list 1-200 frames' })
-        const { bakeBatch, ASK_MAX } = await import('./bake.ts')
+        const { bakeBatch, ASK_MAX, NORMAL_OWNER, RUN_ENDED } = await import('./bake.ts')
+        // a headless run's sleeps (spec 28 A3.8 #19): its compiles are its own - never joined with a normal caller's,
+        // never filling the shared cache without their posters - and its frame URLs name it, so nothing they render
+        // asks for a poster. A run that has ended compiles nothing more.
+        const run = runIdOf(req)
         let manifest: { frames?: { id: string; file: string; kind: string }[] } = {}
         try { manifest = JSON.parse(readFileSync(join(root, 'design', 'manifest.json'), 'utf8')) } catch { /* no manifest yet */ }
         const frames = new Map((manifest.frames ?? []).map((f) => [f.id, f]))
@@ -840,10 +875,11 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const { ROUTE } = await import('../cli/name.ts')
         const gen = opts.bakeGen?.() ?? 0
         const current = asks.filter((_, i) => !behind[i])
-        const baked = await bakeBatch({
-          root, gen, asks: current, live: () => opts.bakeGen?.() ?? 0,
+        const named = (u: string) => (run ? `${u}&${RUN_PARAM}=${run}` : u)
+        const baked = run && !runs.get(run) ? current.map((a) => ({ ...a, ok: false as const, error: RUN_ENDED })) : await bakeBatch({
+          root, gen, asks: current, live: () => opts.bakeGen?.() ?? 0, owner: run ?? NORMAL_OWNER,
           log: (a) => { if (a.ok) console.log(`  bake: ${a.frame} ${a.theme} ${a.w}x${a.h} - ${a.targets.length} effects, ${a.rejected} stay live, ${a.ms} ms`); else console.log(`  bake: ${a.frame} ${a.theme} ${a.w}x${a.h} - stays live: ${a.error}`) },
-          urlFor: (ask) => { const f = frames.get(ask.frame)!; return f.kind === 'html' ? `${origin}/${f.file}?theme=${encodeURIComponent(ask.theme)}` : `${origin}${ROUTE}/frame/?id=${encodeURIComponent(ask.frame)}&theme=${encodeURIComponent(ask.theme)}` },
+          urlFor: (ask) => { const f = frames.get(ask.frame)!; return named(f.kind === 'html' ? `${origin}/${f.file}?theme=${encodeURIComponent(ask.theme)}` : `${origin}${ROUTE}/frame/?id=${encodeURIComponent(ask.frame)}&theme=${encodeURIComponent(ask.theme)}`) },
           urlBase: `${ROUTE}/bakes`,
           // never hold the page's connection for a compile: the browser has six per host, and a
           // comment or a board save must not queue behind a frame compiling (issue #23)
