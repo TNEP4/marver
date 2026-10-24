@@ -10,8 +10,8 @@
  *   equivalent does not fire either - each key fires once, whatever the page does with keys. A menu click runs the
  *   same command.
  * - The Edit keys (⌘C, ⌘V, ⌘X, ⌘Z, ⇧⌘Z, ⌘A) are not the app's: they reach the page, with the menu's roles behind.
- * - ⌃⌥F (Mark a Flash) is A3's: its command is in the union below (views.ts runs it); the flash stream catches the
- *   key here and adds Help's item (A3.8 #13).
+ * - ⌃⌥F is Mark a Flash (A3.3, A3.8 #13), matched by `input.code` like every ⌥ key, on every view: the page never
+ *   sees it, and Help's item shows it.
  *
  * Pure: no Electron import (unit-tested without it). The names match the home stream's `commands.ts` draft.
  */
@@ -31,6 +31,7 @@ export const ACCELERATORS: Partial<Record<AppCommand, string>> = {
   reload: 'Cmd+R', 'force-reload': 'Shift+Cmd+R', settings: 'Cmd+,', quit: 'Cmd+Q',
   hide: 'Cmd+H', 'hide-others': 'Alt+Cmd+H', minimize: 'Cmd+M',
   'next-tab': 'Ctrl+Tab', 'prev-tab': 'Ctrl+Shift+Tab', devtools: 'Alt+Cmd+I', fullscreen: 'Ctrl+Cmd+F',
+  'mark-flash': 'Ctrl+Alt+F',
   'tab-1': 'Cmd+1', 'tab-2': 'Cmd+2', 'tab-3': 'Cmd+3', 'tab-4': 'Cmd+4', 'tab-5': 'Cmd+5', 'tab-6': 'Cmd+6',
   'tab-7': 'Cmd+7', 'tab-8': 'Cmd+8', 'tab-last': 'Cmd+9',
 }
@@ -58,6 +59,7 @@ export function matchKey(i: KeyInput): AppCommand | null {
   }
   if (meta && alt && !ctrl && !shift) return i.code === 'KeyH' ? 'hide-others' : i.code === 'KeyI' ? 'devtools' : null
   if (meta && ctrl && !alt && !shift) return i.code === 'KeyF' ? 'fullscreen' : null
+  if (ctrl && alt && !meta && !shift) return i.code === 'KeyF' ? 'mark-flash' : null
   if (ctrl && !meta && !alt && i.code === 'Tab') return shift ? 'prev-tab' : 'next-tab'
   return null
 }

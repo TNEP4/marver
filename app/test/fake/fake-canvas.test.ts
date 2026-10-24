@@ -120,3 +120,49 @@ describe('as a child process', () => {
     await expect(fetch(`http://[::1]:${ready.port}/`)).rejects.toThrow()
   })
 })
+
+describe('A3\'s options (spec 28 A3.8 #34, #45, #49, #50)', () => {
+  const page = async (f: FakeCanvas, q = '') => (await fetch(`${f.url}${q}`)).text()
+
+  it('ground mode: the ground under the tabs, a document tag unique to each load (or the URL\'s), the size tag at innerWidth - 260, the content at half luminance; it offers the inset', async () => {
+    const f = await start({ slot: 3, ground: true })
+    expect(f.record().features).toEqual(['bridge', 'inset'])
+    const a = await page(f)
+    const b = await page(f)
+    const c = await page(f, '?mvtag=12AB34')
+    expect(f.tags.map((t) => t.tag)).toEqual(['ff0080', '00c0ff', '12ab34'])
+    expect(a).toContain('id="mv-band" style="position:fixed;left:0;top:0;right:0;height:44px;background:#e7e9ef"')
+    expect(a).toContain('id="mv-doc-tag"')
+    expect(a).toContain('background:#ff0080')
+    expect(b).toContain('background:#00c0ff')
+    expect(c).toContain('background:#12ab34')
+    expect(a).toContain('left:calc(100% - 260px);width:12px;height:20px;background:#202020')
+    expect(a).toContain('background:#800040')   // ff0080 at half luminance
+    expect(a).toContain('A.onPresent(function (r)')
+  })
+
+  it('ground mode: every document load a tag of its own - a reload of a ?mvtag= URL included - and the app\'s proof probes are not loads (review of a3-native, major #6)', async () => {
+    const f = await start({ slot: 6, ground: true })
+    const get = (q: string, headers: Record<string, string> = {}) => fetch(`${f.url}${q}`, { headers }).then((r) => r.text())
+    await get('?mvtag=ff0080')
+    // the same URL again (a reload): the next of DOC_TAGS, never the tag the document before it showed
+    await get('?mvtag=ff0080')
+    // main's proof probe: a GET of / with a nonce and no fetch metadata - answered, never counted, never a new tag
+    await get('', { 'x-mv-nonce': 'abc' })
+    // a navigation carries the nonce too (proof.ts), and says it is a document
+    await get('?mvtag=00c0ff', { 'x-mv-nonce': 'def', 'sec-fetch-dest': 'document' })
+    // a fetch() of / from a page (sec-fetch-dest empty) is no load either
+    await get('', { 'sec-fetch-dest': 'empty' })
+    expect(f.tags.map((t) => t.tag)).toEqual(['ff0080', '00c0ff', 'ffb000'])
+  })
+
+  it('the ballasts and the sentinel are in the page only when asked', async () => {
+    const plain = await page(await start({ slot: 4 }))
+    expect(plain).not.toMatch(/__mvBallast|__mvGpu|cpu-ballast|mv-doc-tag/)
+    const f = await page(await start({ slot: 5, ballastMB: 400, gpuBallast: 32, cpuBallast: true, sentinel: '00c853' }))
+    expect(f).toContain('new Uint8Array(400 * 1048576)')
+    expect(f).toContain('for (var g = 0; g < 32; g++)')
+    expect(f).toContain("say('cpu-ballast')")
+    expect(f).toContain('background:#00c853')
+  })
+})

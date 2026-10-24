@@ -495,14 +495,28 @@ export function viewsNow(): { key: string; bounds: { x: number; y: number; width
 /** A reconstructed app-content picture (A3.8 #14): each visible view as main stacks them, the cover as cover.ts draws it - never the screen. */
 export interface AppPicture { png: Buffer; width: number; height: number; scale: number; layers: string[] }
 
+/** Why captureApp took no picture (flashes.ts reads `why`). */
+export class PictureRefused extends Error {
+  readonly why: 'window hidden' | 'no window' | 'empty'
+  constructor(why: 'window hidden' | 'no window' | 'empty') { super(`no picture: ${why}`); this.why = why }
+}
+
 /**
  * A3: Mark a Flash's picture (A3.3, A3.8 #14) - `captureWindow()` built into the release and scaled to `width` px
  * (480 for a flash). It refuses with 'window hidden' when the window is not visible. FROZEN signature (A3.8 #53):
  * the flash stream fills it, the one-ground stream draws its cover through cover.ts's `bitmap()`.
+ *
+ * Each layer is scaled before it is blended, so a 480 px picture never builds a full-resolution buffer: one
+ * `capturePage()` per visible web view (a full readback each, 7-10 ms, S4), one resize, one blend. It is a picture of
+ * what main stacked, not of the screen: no traffic lights, and a flash that happens in the compositor may not be in
+ * it (the docs call it so; screen evidence is ScreenCaptureKit's, in tests only).
  */
 export async function captureApp(o: { width?: number } = {}): Promise<AppPicture> {
-  void o
-  throw new Error('window.ts: captureApp is not built yet (spec 28 A3.8 #14)')
+  if (!win || win.isDestroyed()) throw new PictureRefused('no window')
+  if (!windowVisible()) throw new PictureRefused('window hidden')
+  const { drew, ...pic } = await composite(o.width)
+  if (!drew) throw new PictureRefused('empty')
+  return pic
 }
 
 /**
@@ -513,10 +527,21 @@ export async function captureApp(o: { width?: number } = {}): Promise<AppPicture
  */
 export async function captureWindow(): Promise<AppPicture> {
   if (!win || win.isDestroyed()) throw new Error('window.ts: no window')
-  const { width: W, height: H } = win.getContentBounds()
-  const sf = screen.getDisplayMatching(win.getBounds()).scaleFactor || 1
-  const PW = Math.round(W * sf)
-  const PH = Math.round(H * sf)
+  const { drew: _drew, ...pic } = await composite()
+  return pic
+}
+
+/** Every visible view of the window, bottom to top, `width` px wide (default: at the display's scale). */
+async function composite(width?: number): Promise<AppPicture & { drew: boolean }> {
+  const w0 = win!
+  const { width: W, height: H } = w0.getContentBounds()
+  const dsf = screen.getDisplayMatching(w0.getBounds()).scaleFactor || 1
+  // sf: the picture's px per window point - the display's scale, or a picture of its own width (a flash's 480 px).
+  // Every layer is drawn at it, the cover's bitmap too (cover.ts `bitmap(w, h, sf)`): never the display's scale
+  // with a width at the picture's
+  const sf = width && width > 0 ? width / Math.max(1, W) : dsf
+  const PW = Math.max(1, Math.round(W * sf))
+  const PH = Math.max(1, Math.round(H * sf))
   const out = Buffer.alloc(PW * PH * 4)   // BGRA, premultiplied (Skia's N32 on this Mac)
   const fill = (x0: number, y0: number, w: number, h: number, hex: string) => {
     const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(hex)
@@ -538,20 +563,22 @@ export async function captureWindow(): Promise<AppPicture> {
         const a = bmp[si + 3]!
         if (a === 255) { out[di] = bmp[si]!; out[di + 1] = bmp[si + 1]!; out[di + 2] = bmp[si + 2]!; out[di + 3] = 255; continue }
         if (a === 0) continue
-        const k = (255 - a) / 255
-        for (let c = 0; c < 4; c++) out[di + c] = Math.min(255, Math.round(bmp[si + c]! + out[di + c]! * k))
+        const kk = (255 - a) / 255
+        for (let c = 0; c < 4; c++) out[di + c] = Math.min(255, Math.round(bmp[si + c]! + out[di + c]! * kk))
       }
     }
   }
   fill(0, 0, PW, PH, coverWas.color || '#000000')
   const layers: string[] = []
-  for (const child of win.contentView.children) {
+  let drew = false
+  for (const child of w0.contentView.children) {
     if (!child.getVisible()) continue
     const b = child.getBounds()
     const x0 = Math.round(b.x * sf)
     const y0 = Math.round(b.y * sf)
     const bw = Math.round(b.width * sf)
     const bh = Math.round(b.height * sf)
+    if (bw <= 0 || bh <= 0) continue
     // the cover as cover.ts draws it, whatever view it is; a web-view cover with no bitmap of its own (S15's variant 3)
     // falls through to its capture, a plain one to a fill of its ground
     const own = child === cover?.view ? cover.bitmap(bw, bh, sf) : null
@@ -560,10 +587,12 @@ export async function captureWindow(): Promise<AppPicture> {
       if (child.webContents.isDestroyed()) continue
       let img = await child.webContents.capturePage()
       if (img.isEmpty()) { layers.push(`${child.webContents.getURL()} (empty)`); continue }
-      let bmp = img.toBitmap({ scaleFactor: sf })
-      if (bmp.length !== bw * bh * 4) { img = nativeImage.createFromBuffer(img.resize({ width: bw, height: bh, quality: 'best' }).toPNG()); bmp = img.toBitmap() }
-      if (bmp.length !== bw * bh * 4) { layers.push(`${child.webContents.getURL()} (size ${img.getSize().width}x${img.getSize().height})`); continue }
+      // at the display's scale the capture is the layer as it is; a picture of another width scales it first
+      let bmp = width ? Buffer.alloc(0) : img.toBitmap({ scaleFactor: dsf })
+      if (bmp.length !== bw * bh * 4) { img = img.resize({ width: bw, height: bh, quality: width ? 'good' : 'best' }); bmp = img.toBitmap() }
+      if (bmp.length !== bw * bh * 4) { const z = img.getSize(); layers.push(`${child.webContents.getURL()} (size ${z.width}x${z.height})`); continue }
       blend(bmp, bw, bh, x0, y0)
+      drew = true
       layers.push(`${child.webContents.getURL()} @${b.x},${b.y} ${b.width}x${b.height}`)
     } else {
       // app 0.1's plain view, or a cover whose bitmap is null: a fill of its ground
@@ -572,7 +601,7 @@ export async function captureWindow(): Promise<AppPicture> {
     }
   }
   const png = nativeImage.createFromBitmap(out, { width: PW, height: PH, scaleFactor: 1 }).toPNG()
-  return { png, width: PW, height: PH, scale: sf, layers }
+  return { png, width: PW, height: PH, scale: sf, layers, drew }
 }
 
 // ---------------------------------------------------------------------------------------------------------------

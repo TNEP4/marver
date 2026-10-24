@@ -45,7 +45,21 @@ export interface Cover {
   bitmap(width: number, height: number, scaleFactor: number): Buffer | null
   /** the strip's page draws the still dots while this cover covers (app 0.1's plain view; variant 4): window.ts's `dots` */
   readonly stripDraws?: boolean
+  /**
+   * S15 (24 Oct, two runs): variant 3 covers only while its renderer is alive and has presented a frame - a
+   * `WebContentsView`'s native background is the base of its renderer's frame, so with its renderer crashed, or
+   * before its page's first paint, it never covers (p95 n 25-26, the whole hold). `ready()` is false until the cover's
+   * renderer has presented, and again from its loss (or the GPU process's) until it presents again; while it is false
+   * layout keeps every canvas below the strip (app 0.1's opaque layout). Variant 3 must implement both; a cover that
+   * never waits on a renderer leaves them out (always ready). Added by the native stream from S15's result.
+   */
+  ready?(): boolean
+  /** called with each change of `ready()` (so compose runs again); returns its unsubscribe */
+  onReady?(fn: (ready: boolean) => void): () => void
 }
+
+/** Whether a cover covers now: `ready()` where the cover has it, else always (S15: only variant 3 waits on a renderer). */
+export const coverReady = (c: Pick<Cover, 'ready'> | null | undefined): boolean => !c || !c.ready || c.ready()
 
 /**
  * The cover S15 chose, made hidden at openWindow and added between the tab pages and the strip. `strip` is the

@@ -3,7 +3,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { onRegistry, type Tab } from '../../src/main/tabs.ts'
-import { crashReloaded, currentPill, onPillAction, onVisibility, recompute, setCondition } from '../../src/main/pill.ts'
+import { clockOf, crashReloaded, currentPill, flashMarked, onPillAction, onVisibility, recompute, setCondition, setPillPorts } from '../../src/main/pill.ts'
 import { liveTab, report, show, world, type World } from './window-fakes.ts'
 
 let w: World
@@ -181,6 +181,74 @@ describe('revs: a click acts on main\'s own record of that rev (v1.10 r1 #10)', 
     expect(onPillAction(currentPill()!.rev, 'dismiss')).toBe(true)
     expect(currentPill()).toBeNull()
     setCondition('test', { text: 'Offer', short: 'Offer', dismissible: true })
+    expect(currentPill()).toBeNull()
+  })
+})
+
+describe('Flash marked (A3.3, A3.8 #13; frame mac-app/11-moments)', () => {
+  const showing = (): string[] => {
+    const shown: string[] = []
+    setPillPorts({
+      now: () => w.clock.now, home: '/Users/nic', visible: () => w.visible, send: (v) => { w.pills.push(v) },
+      copyStart: (t) => { w.copies.push(t.id) }, notResponding: () => {}, showFlash: (ref) => { shown.push(ref) },
+    })
+    return shown
+  }
+
+  it('says the mark\'s time for 4 s; its Show reveals that mark\'s picture, also after a switch to another tab', () => {
+    const shown = showing()
+    const a = liveTab(w)
+    show(a.id)
+    flashMarked({ at: w.clock.now, recorder: true, picture: 'flashes/20261023-205103-412-ab12.png' })
+    const p = currentPill()!
+    expect(p).toMatchObject({ kind: 'confirmation', lead: 'Flash marked', text: clockOf(w.clock.now), short: 'Flash marked', icon: 'check', button: { label: 'Show', style: 'plain' } })
+    const b = liveTab(w)
+    show(b.id)
+    expect(currentPill()!.rev).toBe(p.rev)
+    expect(onPillAction(p.rev, 'button')).toBe(true)
+    expect(shown).toEqual(['flashes/20261023-205103-412-ab12.png'])
+    tick(4_100)
+    expect(currentPill()).toBeNull()
+    expect(onPillAction(p.rev, 'button')).toBe(false)
+    expect(shown).toHaveLength(1)
+  })
+
+  it('no picture, no button; with the recorder off it says there are no samples before it', () => {
+    showing()
+    flashMarked({ at: w.clock.now, recorder: false, picture: null })
+    const p = currentPill()!
+    expect(p.button).toBeUndefined()
+    expect(p.text).toBe(`${clockOf(w.clock.now)} · no samples before it: the recorder is off`)
+    expect(onPillAction(p.rev, 'button')).toBe(false)
+  })
+
+  it('a newer mark replaces the waiting one; the old rev is refused', () => {
+    const shown = showing()
+    flashMarked({ at: w.clock.now, recorder: true, picture: 'flashes/a.png' })
+    const r1 = currentPill()!.rev
+    tick(2500)
+    flashMarked({ at: w.clock.now, recorder: true, picture: 'flashes/b.png' })
+    const r2 = currentPill()!.rev
+    expect(r2).toBeGreaterThan(r1)
+    expect(onPillAction(r1, 'button')).toBe(false)
+    expect(onPillAction(r2, 'button')).toBe(true)
+    expect(shown).toEqual(['flashes/b.png'])
+  })
+
+  it('pushed off by the active tab\'s own state, it waits and then shows its full 4 s', () => {
+    showing()
+    const a = liveTab(w, { busy: { unsaved: true } })
+    show(a.id)
+    flashMarked({ at: w.clock.now, recorder: true, picture: null })
+    tick(1000)
+    held(a)
+    expect(currentPill()!.kind).toBe('unsaved')
+    tick(5000)
+    a.held = undefined; recompute()
+    expect(currentPill()).toMatchObject({ kind: 'confirmation', lead: 'Flash marked' })
+    tick(2900)
+    expect(currentPill()).not.toBeNull()
+    tick(200)
     expect(currentPill()).toBeNull()
   })
 })

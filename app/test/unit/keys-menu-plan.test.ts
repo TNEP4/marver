@@ -39,12 +39,20 @@ describe('the app\'s keys: by key or by code, keyDown only, held keys once (A2.1
     expect(matchKey(key({ shift: true, key: 'F6', code: 'F6' }))).toBe('focus-strip-back')
   })
 
-  it('never the Edit keys, never a canvas key, never ⌃⌥F in A2; keyUp and auto-repeat are nothing', () => {
+  it('⌃⌥F is Mark a Flash, by code (A3.8 #13); ⌥F, ⌘⌥F and ⌃⌥⇧F are not', () => {
+    expect(matchKey(key({ control: true, alt: true, key: 'ƒ', code: 'KeyF' }))).toBe('mark-flash')
+    expect(matchKey(key({ control: true, alt: true, key: 'f', code: 'KeyF', isAutoRepeat: true }))).toBeNull()
+    expect(matchKey(key({ alt: true, key: 'ƒ', code: 'KeyF' }))).toBeNull()
+    expect(matchKey(key({ meta: true, alt: true, key: 'ƒ', code: 'KeyF' }))).toBeNull()
+    expect(matchKey(key({ control: true, alt: true, shift: true, key: 'Ï', code: 'KeyF' }))).toBeNull()
+    expect(matchKey(key({ control: true, alt: true, key: 'g', code: 'KeyG' }))).toBeNull()
+  })
+
+  it('never the Edit keys, never a canvas key; keyUp and auto-repeat are nothing', () => {
     for (const k of ['c', 'v', 'x', 'z', 'a']) expect(matchKey(key({ meta: true, key: k, code: `Key${k.toUpperCase()}` }))).toBeNull()
     expect(matchKey(key({ meta: true, shift: true, key: 'Z', code: 'KeyZ' }))).toBeNull()
     expect(matchKey(key({ key: 'j', code: 'KeyJ' }))).toBeNull()
     expect(matchKey(key({ shift: true, key: '!', code: 'Digit1' }))).toBeNull()
-    expect(matchKey(key({ control: true, alt: true, key: 'f', code: 'KeyF' }))).toBeNull()
     expect(matchKey(key({ type: 'keyUp', meta: true, key: 'w', code: 'KeyW' }))).toBeNull()
     expect(matchKey(key({ meta: true, key: '2', code: 'Digit2', isAutoRepeat: true }))).toBeNull()
   })
@@ -118,6 +126,16 @@ describe('the menu bar (A2.7)', () => {
     const file = sub(t, 'File')
     expect(['Home', 'Open Link…', 'Close Tab', 'Close Window'].map((l) => item(file, l).accelerator)).toEqual(['Cmd+T', 'Cmd+L', 'Cmd+W', 'Shift+Cmd+W'])
     expect(sub(t, 'Edit').map((m) => m.role).filter(Boolean)).toEqual(['undo', 'redo', 'cut', 'copy', 'paste', 'pasteAndMatchStyle', 'delete', 'selectAll'])
+  })
+
+  it('Help: Marver Help, then Mark a Flash with ⌃⌥F (A3), then Show Performance Files', () => {
+    const a = acts()
+    const help = sub(menuTemplate(model(), a), 'help')
+    expect(help.filter((m) => m.type !== 'separator').map((m) => m.label)).toEqual(['Marver Help', 'Mark a Flash', 'Show Performance Files'])
+    const mark = item(help, 'Mark a Flash')
+    expect(mark.accelerator).toBe('Ctrl+Alt+F')
+    click(mark)
+    expect(a.run).toHaveBeenCalledWith('mark-flash' satisfies AppCommand)
   })
 
   it('the File menu\'s canvas items run from main, Open in Browser and Copy Local Link only while trusted', () => {
