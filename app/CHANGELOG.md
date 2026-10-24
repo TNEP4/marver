@@ -2,28 +2,19 @@
 
 ## 0.2.0 - unreleased (spec 28 A3)
 
-- One ground, main's half (A3.8 #24-#33): Home, Settings and every tab page run the window's full height under the
-  strip, painting the ground and still dots there themselves, with everything to read, click or scroll 44 px down;
-  the strip paints its controls, and its still dots only while a cover that has it draw them covers (app 0.1's, until
-  S15). A canvas whose shell offers
-  `inset` (Marver 0.27.2) is placed at the full height
-  when its own document commits on that instance, told 44 by `mv:doc`, moved below for the rest of its life by a
-  hello that says 0, and uncovered only once it is trusted, said 44 and answered the latest presentation request at
-  its size; a resize, a show, HTML fullscreen, a live resize's end and the GPU process lost or replaced each cover
-  it until it answers again. Any other canvas stays below the strip, covered.
-- **Not on screen yet for canvases: the cover waits for spike S15.** Until a cover is shown to sit over a
-  full-height web view, the app keeps 0.1's plain view and places no canvas at full height, so every canvas still
-  looks as in 0.1: below the strip, with the ground and still dots under the tabs (the strip draws them while that
-  cover covers). Main's decisions are built and tested from its journal; what reaches the screen is the capture
-  matrix's, after S15. S15's outcome then touches `cover.ts` for its variants 1 and 2 (with a cover chosen the strip
-  paints no dots, A3.8 #29); variant 3 also adds `pages/cover/` and its serving and pinning in `sessions.ts`, and
-  variant 4 has the strip draw the dots while covered (`stripDraws`) and colours the strip's native background. If
-  none passes, this look stays for canvases.
-- **What does change in every 0.2 build, the gate open or shut:** Home, Settings and the tab pages run at the full
-  height under the transparent strip (A3.8 #32), so a web view now lies under the strip's drag region on the launch
-  screen, and the strip's dots switch on and off through its renderer at each switch between them and a canvas (a
-  frame of plain ground, or of doubled dots, longer while the strip is stalled). A2.2's fallback if S15 fails is the
-  opaque strip with every view below; whether these pages then stay at the full height is Nic's decision.
+- **A canvas runs under the tabs** (the one ground, A3.8 #24-#33). A canvas whose shell offers `inset` (Marver
+  0.27.2) is placed at the window's full height under the transparent strip when its own document commits on that
+  instance, told 44 by `mv:doc`; it is uncovered only once it is trusted, said 44 in its hello and answered the
+  latest presentation request at its size, and a resize, a show, HTML fullscreen, a live resize's end and the GPU
+  process lost or replaced each cover it until it answers again. A hello that says 0 moves its document below for
+  the rest of its life; any other canvas (Marver 0.27.1 and earlier) stays below the strip, covered, as in 0.1.
+- **The cover is S15's** (A3.8 #3; spikes.md S15): a web view whose ground is its own native background and whose
+  page draws the still dots, between the canvases and the strip - a plain view, or an image of the dots, is drawn
+  beneath a full-height web view on macOS and never covers. It covers only once its own renderer has made a frame,
+  so until then, and again after its renderer or the GPU process is lost until it makes one, every canvas is placed
+  below the strip (app 0.1's opaque layout). The strip paints its controls only; Home, Settings and every tab page
+  run the full height too, painting the ground and still dots under the strip themselves, with everything to read,
+  click or scroll 44 px down. The cover's renderer counts in the app's own memory.
 - Presentation requests wait while the window cannot draw (hidden, minimised, or covered entirely by other windows):
   an epoch made meanwhile is asked when the window shows, so no `cover` record blames the page for time hidden.
 - Hidden tabs are unloaded when macOS runs short of memory (Settings: Unload hidden tabs when memory runs short, on by
@@ -33,8 +24,25 @@
   Marver 0.27.0 canvas), one playing sound, one with DevTools open, one hidden less than 10 s or one whose page
   declined. Nothing asks and nothing comes forward. An unloaded tab keeps its place, name and logo, dimmed, and
   reopens on its board and camera when shown, saying "Reopening" until it is back (its board alone if its canvas came
-  back on another address); a link opened into it opens on what the link names instead. What an unload does not keep is the page's undo, Back and Forward, and a selection the link
-  does not name.
+  back on another address); a link opened into it opens on what the link names instead. What an unload does not keep
+  is the page's undo, Back and Forward, and a selection the link does not name.
+- **The performance recorder** (Settings: Performance recorder, on by default; Keep performance files, 14 days). Every
+  5 s the app samples its processes - CPU, memory, each canvas's own footprint, the memory pressure - keeps a minute
+  in memory and writes one `sample` line a minute to `~/.marver/perf/app.jsonl` (Marver Dev: `app-dev.jsonl`), with
+  every renderer and GPU process end, hang, GPU change, power and thermal event, tab state and switch time, each line
+  about a tab carrying the page id its canvas said hello with; the machine's profile in `perf/machine/`. One sampler
+  serves the recorder and unloading; with the recorder off nothing is written and the sampler runs only while a tab
+  could be unloaded. `npx marver perf --crashes`, `--flashes` and `--machine` read it, joined to the repo's board
+  loads. Retention: 5 MB a file, 50 flash pictures, 10 crash reports, `keepPerfDays`.
+- **Mark a Flash** (⌃⌥F on any view, or Help > Mark a Flash): the moment, the minute of samples before it, the GPU
+  process's events around it, the pressure and the GPU figures, and a 480 px picture of the app's views as the app
+  stacks them (not the screen), in `perf/flashes/`. The picture is taken and written first; then the strip's pill
+  says "Flash marked" with its time, and Show reveals the picture. A second press within 2 s marks nothing new.
+  With the recorder off a mark is still written, saying it has no samples before it.
+- **White-out candidates**: during a canvas's gestures, a quarter-second check of the visible view for a white-out,
+  written as `whiteout-candidate` - automatic and not verified; the marks are the evidence.
+- Uncaught errors in main go through the recorder's writer (`main-error`, in `app-dev.jsonl` for Marver Dev), written
+  in their own turn, whatever the recorder setting.
 
 ## 0.1.0 - unreleased (spec 28 A2, for Nic)
 

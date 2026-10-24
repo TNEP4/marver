@@ -18,9 +18,30 @@ The canvas's side of the Mac app 0.2: its one ground, its recorder and its unloa
   answers the app's requests to show its latest state, so the app uncovers it only once it has drawn at its size.
   Its slot file lists `inset` beside `bridge`. Everywhere else - Chrome, a published canvas, `marver shot`, app 0.1 -
   nothing moves.
+- **`npx marver perf run <board>`: a board measured the same way every time.** In the canvas's own headless Chrome
+  (`marver dev` running; no app, no window): one warm-up load, then a measured load, a fit and three gestures -
+  zoom in, zoom out, a pan that turns back - and one line in `design/.local/perf/runs.jsonl`: load to settled, the
+  frame intervals (p50, p95, frames over 33 ms), the heap's peak, and whether the run is valid, with the first
+  reason it is not. The run is read-only: its page refuses every write before it is sent and the dev server refuses
+  and counts any that gets through; only its own load records and the sleep bakes go out, a run's compiles its own.
+  `--slow` throttles the CPU 4x, `--repeat <n>` runs it up to 5 times. `npx marver perf --runs` compares runs inside
+  a cohort (board, Chrome, machine, power, `--slow`, warm or cold bakes) - the latest against the last with the same
+  inputs and the last with other inputs; `--against <run>` against one you name. See
+  [docs/performance.md](docs/performance.md#headless-runs).
+- **`npx marver perf --crashes`, `--flashes` and `--machine` read the Mac app's records** (app 0.2), joined to this
+  repo's board loads by page: each canvas crash with its board, whether its load had settled and the last gesture
+  before it; each flash you marked with ⌃⌥F, with the gesture it fell in, the GPU process's events around it, the
+  pressure and the picture; the white-out candidates apart; the machine profiles by host. `--days <n>` (14) for all
+  four readers.
+- **In the Mac app (0.2), the canvas tells the app's recorder its gestures, its frame count and the white-out
+  probes' points**, so the app's records land on the board load and the gesture they happened in. Nowhere else does
+  anything of it run.
 
 ### Changed
 
+- **A frame whose sleep bake timed out stays failed until it is edited.** The bake's failure cache always meant to
+  keep a timeout; it kept every other failure but retried a timeout at each request, so a frame that could not
+  compile in 45 s tried again, and timed out again, on every load.
 - **The view you left is written the moment the page hides or leaves.** A canvas kept its camera a second after the
   view settled; a tab switched away from, closed or ended within that second lost the last move. Now the waiting
   camera is written at once when the page is hidden or unloads, and a page hidden while the view is still flying (a

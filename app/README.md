@@ -56,8 +56,9 @@ The guard (first import) - test spies - Marver Dev's name and userData - `MARVER
 the files' first read - at ready: the theme and the files' watch, `persist:app`, the navigation hook (before any
 view), the registry, the bridge (`mv:doc` answering each document's inset from layout.ts), the recorder (A3: its
 writer, the machine profile, the one sampler), then `views.ts` - the window and its pages (the transparent strip, painting controls over the cover; Home,
-Settings and the tab pages at the full height; a canvas at the full height only once spike S15 has picked the cover,
-until then below the strip as in app 0.1, the strip drawing 0.1's still dots while the cover covers), the tabs restored
+Settings and the tab pages at the full height; S15's cover, a web view on `marver-app://cover/` drawing the still dots
+over its native ground; a canvas whose shell offers `inset` at the full height once that cover has made a frame,
+below the strip until then and after a loss of its renderer or the GPU process until it makes one), the tabs restored
 from `tabs.json` (only the active one loads; each canvas view on its workspace's partition, its proof dispatcher
 attached before its first load), the menu, the quit through `guardAll` - then Home's and Settings' channels, the
 unloading policy (`memory.ts`) and the white-out detector (`whiteout.ts`), and last
@@ -144,15 +145,18 @@ binary.
   board panning in a second window) is the native acceptance stream's.
   `trust:hold-proved` holds a proved document response before Chromium may commit it (proof.ts `holdProved`: "a new
   instance taking the port after the proof's headers"), and `exec`'s `frame` runs in the main frame without waiting
-  for a load in flight. `MARVER_APP_GROUND=1` opens layout.ts's gate in a test build, so main's half runs over app 0.1's plain cover - its
-  decisions, from the journal's `compose`, `layout`, `present` and `resize` topics, never its pixels.
+  for a load in flight. The cover (cover.ts, S15's variant 3) opens layout.ts's gate by itself; its readiness is the
+  journal's `cover` topic (`{ ready, why }`), `ground:state`'s `cover.ready`, and `ground:cover-crash` crashes its
+  renderer (every canvas below until its reload makes a frame). `MARVER_APP_COVER=plain` stands app 0.1's plain view
+  in (a cover that could not be made: the gate shut, the strip drawing the dots); `MARVER_APP_GROUND=1` then opens the
+  gate over it, main's half alone - its decisions, from the journal's `compose`, `layout`, `present` and `resize`
+  topics, never its pixels.
   `test/harness/ground-shell.ts` is a fake 0.27.2 shell for a fake canvas's `script` (the inset, hello, the answers,
   and their failure modes).
-- **by hand on the first 0.2 build** (no harness reaches them yet; #38's `clickpost.swift` is the native acceptance
-  stream's): over Home and over Settings - which run at the full height under the transparent strip in every 0.2
-  build, S15's gate open or shut - a drag in the strip's empty part moves the window, and a click there reaches
-  neither page (nothing on Home or Settings reacts); a click on a tab activates it. Then the same over a canvas once
-  S15 opens the gate. And a switch Home ↔ canvas, watched for a frame of plain ground or doubled dots under the tabs.
+- **by hand on the first 0.2 build** (`clickpost.swift` needs Accessibility for the runner): over Home, over
+  Settings and over a canvas - each at the full height under the transparent strip - a drag in the strip's empty part
+  moves the window, and a click there reaches no page; a click on a tab activates it. And a switch Home ↔ canvas,
+  watched for a frame of plain ground or doubled dots under the tabs.
 - **unloading** (A3.8 #39-#45; `test/unit/unload.test.ts`, `memory.test.ts`, `unload-act.test.ts` - the act on a fake
   webContents: refusal, `unsure`, a renderer gone mid-close, the backstop - `test/prod/unload.test.ts`,
   `unload-shell.test.ts`): memory.ts's
@@ -213,12 +217,12 @@ binary.
   are drawn beneath the web views, and the strip's own background stops covering when the strip's renderer stalls.
   **Variant 3's covering waits on its own renderer** (24 Oct, two runs): with that renderer crashed, or before its
   page has painted, it never covers (p95 n 25-26, about 220 ms - the whole hold), since a `WebContentsView`'s native
-  background is the base of its renderer's frame. So `cover.ts` must keep every canvas below the strip until the
-  cover has presented, and again from its renderer's loss until it presents; A3.8 #3's "covering never waits on a
-  renderer" does not hold for variant 3.
+  background is the base of its renderer's frame. So `cover.ts` keeps every canvas below the strip until the cover
+  has made a frame, and again from its renderer's or the GPU process's loss until it makes one (layout.ts
+  `setCoverReady`); A3.8 #3's "covering never waits on a renderer" does not hold for variant 3.
 - **The capture matrix** (`node app/test/capture/matrix.ts`): the transitions judged at every refresh against main's
   journal (`test/harness/capture.ts` `judgeTransition`, `judgeCase`; `test/capture/matrix-judge.ts`). **It proves
-  nothing until the one ground lands**: in the opaque layout every canvas view sits below the strip, so the strip's
+  nothing in the opaque layout** (`MARVER_APP_COVER=plain`): there every canvas view sits below the strip, so the strip's
   empty part can only show the strip or the cover and every case would pass by construction - it then reports each
   case not applicable and exits 3, never 0. In the one ground: A2.2's threshold, each transition from main's decision
   to 100 ms and 4 refreshes after the journal says the state settled, the size tag allowed only where a view of the
