@@ -13,8 +13,14 @@
  *   tab's; `pending` and `inset` cleared (the new document has not spoken);
  * - fail: `pending` dropped; `below` only when main positively knows an error page committed (`errorPage`);
  *   otherwise the committed geometry stays (A3.8 #25: a failure alone proves no error page);
- * - abort: that generation's `pending` dropped, nothing else; rebind, gone: `pending` dropped, the committed layout
- *   kept (trust is revoked elsewhere, so the page is covered);
+ * - abort: that generation's `pending` dropped, nothing else;
+ * - rebind, gone: the pending generation kept, but `below` (a documentless view pre-sized to it), the committed layout
+ *   of a shown or retained document kept (trust is revoked elsewhere, so the page is covered). Kept, not dropped:
+ *   `mv:doc` reads `pending` first, and after a cross-process load or a crash reload the new document can ask before
+ *   main has handled its commit - a dropped pending fell back to the old document's `full` and told it 44, then the
+ *   commit (which needs a `full` pending) placed it below with the inset applied. Below it is told 0 and lands below.
+ *   Not closed: a rebind between the document's `mv:doc` and main's handling of its commit - it was told 44 for the
+ *   instance it started on, and the commit lands below (a document told is never told again);
  * - hello: `inset`; a `full` layout with inset 0 becomes `below` for the rest of that document (a late hello is the
  *   same rule; a hello never moves a document back to `full`);
  * - html-fullscreen: the override `placed()` reads first; renderer-gone, view-gone: `below`, all cleared.
@@ -107,8 +113,11 @@ function next(t: Tab, e: LayoutEvent): Geometry {
       return g.pending?.gen === e.gen ? without(g, 'pending') : g
     }
     case 'rebind':
-    case 'gone':
-      return without(g, 'pending')
+    case 'gone': {
+      if (!g.pending) return g
+      const pending = { ...g.pending, layout: 'below' as const }
+      return t.retained ? { ...g, pending } : { ...g, pending, layout: 'below' }
+    }
     case 'hello':
       return { ...g, inset: e.inset, layout: g.layout === 'full' && e.inset === 0 ? 'below' : g.layout }
     case 'html-fullscreen':

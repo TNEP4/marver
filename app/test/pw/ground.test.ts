@@ -586,23 +586,36 @@ describe('navigation outcomes from a full, uncovered page (A2.10\'s (A3) cases, 
     await uncovered(id)
   })
 
-  for (const inset of [true, false]) {
-    it(`a new instance ${inset ? 'with' : 'without'} inset before the commit (the response still on its way): the pending dropped, the document lands below - never told 44 - and its own reload is ${inset ? 'full again' : 'below too'}`, async () => {
+  for (const [inset, via] of [[true, 'reload'], [false, 'reload'], [true, 'coop']] as const) {
+    const how = via === 'coop' ? 'a cross-process load (COOP: a new renderer, the old frame alive)' : 'a same-process reload'
+    it(`a new instance ${inset ? 'with' : 'without'} inset before the commit of ${how}: the pending turned below, the document lands below - never told 44 - and its own reload is ${inset ? 'full again' : 'below too'}`, async () => {
       m.mode.hold = true
       const before = (await w.tab(id)).doc!.commits
       const since = await mark()
-      await w.run.call('reloadPage', { target: id })
-      await waitFor('the reload\'s request held', async () => m.held() > 0)
+      if (via === 'coop') await execNow(id, `location.href = '/?coop=1'; 1`)
+      else await w.run.call('reloadPage', { target: id })
+      await waitFor('the request held', async () => m.held() > 0)
       m.mode.hold = false
       await m.rebind(inset ? ['bridge', 'inset'] : ['bridge'])
       m.release()
       await w.until((x) => { const t = x.tabs.find((q) => q.id === id)!; return (t.doc?.commits ?? 0) > before && !!t.doc?.lifted }, 10_000, 'the commit under the new instance')
       await waitFor('its hello', async () => (await geoOf(id)).geo.inset !== undefined)
-      // the registry's change drops the pending (the old instance gone, or the tab rebound: whichever main hears first)
+      // the registry's change turns the pending below (the old instance gone, or the tab rebound: whichever main hears
+      // first; the other changes nothing), so mv:doc says 0 whether it comes before main has handled the commit or after
       const ls = await layoutOf(id, since)
       expect(ls.map((l) => l.event === 'gone' ? 'rebind' : l.event)).toEqual(['start', 'rebind', 'commit', 'hello'])
-      expect(ls[1]!.to.pending).toBeUndefined()
+      expect(ls[1]!.to.pending).toMatchObject({ gen: ls[0]!.to.pending!.gen, layout: 'below' })
+      expect(ls[1]!.to.layout).toBe('full')                 // the retained document's committed layout, kept
       expect(ls.find((l) => l.event === 'commit')!.to.layout).toBe('below')
+      // every mv:doc of the tab since the rebind told 0. Which came first, it or main's handling of the commit, is the
+      // load's to decide and is reported, not asserted: on this Mac every variant, the cross-process one too, had main
+      // handle the commit first (24 Oct), so the order #26 warns about - mv:doc first - is proven by unit ground 6b
+      const all = await w.log(undefined, since)
+      const at = all.indexOf(all.find((l) => l.topic === 'layout' && l.data.tab === id && l.data.event !== 'start')!)
+      const docs = all.slice(at).filter((l) => l.topic === 'bridge' && l.data.event === 'doc' && l.data.tab === id)
+      expect(docs.map((l) => l.data.inset)).toEqual([0])
+      const commitAt = all.findIndex((l) => l.topic === 'layout' && l.data.tab === id && l.data.event === 'commit')
+      process.stdout.write(`before-the-commit (${via}): mv:doc ${all.indexOf(docs[0]!) < commitAt ? 'before' : 'after'} main handled the commit, told ${docs[0]!.data.inset}\n`)
       // trusted under the new instance, below the strip, told 0 (mv:doc answered for where it lands), covered
       expect(await trustedNow()).toBe(true)
       expect(await exec(id, 'JSON.stringify([window.marverApp.topInset, window.__ground.applied])')).toBe('[0,0]')
@@ -618,6 +631,13 @@ describe('navigation outcomes from a full, uncovered page (A2.10\'s (A3) cases, 
       }
       await uncovered(id)
       expect((await bounds(`${id}:view`))!.bounds).toEqual(FULL(await content()))
+      if (via === 'coop') {
+        // back to the plain document the next cases start from
+        const c = (await w.tab(id)).doc!.commits
+        await execNow(id, `location.href = '/'; 1`)
+        await w.until((x) => { const t = x.tabs.find((q) => q.id === id)!; return (t.doc?.commits ?? 0) > c && !!t.doc?.lifted }, 10_000, 'back to /')
+        await uncovered(id)
+      }
     })
   }
 

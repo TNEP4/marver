@@ -99,14 +99,44 @@ describe('layout.ts: the rules (A3.8 #24-#26)', () => {
     expect(t.geo).toEqual({ layout: 'full', htmlFullscreen: false, inset: 44 })
   })
 
-  it('6. a rebind and gone drop pending at once, the committed layout kept; a commit after them lands below', () => {
+  it('6. a rebind and gone turn the pending generation below at once, the committed layout kept; a commit after them lands below', () => {
     for (const kind of ['rebind', 'gone'] as const) {
       const t = canvas({ retained: true, geo: { layout: 'full', htmlFullscreen: false, inset: 44 } })
       run(t, { kind: 'start', gen: 1 }, { kind })
-      expect(t.geo).toEqual({ layout: 'full', htmlFullscreen: false, inset: 44 })
+      expect(t.geo).toEqual({ layout: 'full', htmlFullscreen: false, inset: 44, pending: { gen: 1, instance: 'i1', layout: 'below' } })
       run(t, { kind: 'commit', gen: 1, attributed: true, instance: 'i1' })
-      expect(t.geo.layout).toBe('below')
+      expect(t.geo).toEqual({ layout: 'below', htmlFullscreen: false })
+      // with nothing pending, nothing changes
+      const quiet = canvas({ retained: true, geo: { layout: 'full', htmlFullscreen: false, inset: 44 } })
+      expect(run(quiet, { kind })).toEqual([false])
     }
+  })
+
+  it('6b. mv:doc after a rebind and before main handles the commit (a cross-process load, a crash reload) is told 0, and the document lands below', () => {
+    // a retained, full, uncovered document reloads; the canvas restarts (a new instance) before the new document commits
+    const t = canvas({ retained: true, geo: { layout: 'full', htmlFullscreen: false, inset: 44 } })
+    run(t, { kind: 'start', gen: 2 })
+    expect(docInset(t)).toBe(44)
+    t.reg = reg({ instance: 'i2' })
+    run(t, { kind: 'rebind' })
+    expect(docInset(t)).toBe(0)                             // the new document asks first: 0, never the old document's full
+    run(t, { kind: 'commit', gen: 2, attributed: true, instance: 'i2' })
+    expect([placed(t), docInset(t)]).toEqual(['below', 0])
+    // a crash reload: documentless, pre-sized full at its start, then the same race - pre-sized below at the rebind
+    const c = canvas({ geo: { layout: 'below', htmlFullscreen: false } })
+    run(c, { kind: 'start', gen: 5 })
+    expect([c.geo.layout, docInset(c)]).toEqual(['full', 44])
+    c.reg = reg({ instance: 'i3' })
+    run(c, { kind: 'gone' })
+    expect([c.geo.layout, docInset(c)]).toEqual(['below', 0])
+    run(c, { kind: 'commit', gen: 5, attributed: true, instance: 'i3' })
+    expect([placed(c), docInset(c)]).toEqual(['below', 0])
+    // an abort of that generation still drops it; the next start pends as its instance offers
+    const a = canvas({ retained: true, geo: { layout: 'full', htmlFullscreen: false, inset: 44 } })
+    run(a, { kind: 'start', gen: 3 }, { kind: 'rebind' }, { kind: 'abort', gen: 3 })
+    expect(a.geo).toEqual({ layout: 'full', htmlFullscreen: false, inset: 44 })
+    run(a, { kind: 'start', gen: 4 })
+    expect(a.geo.pending).toEqual({ gen: 4, instance: 'i1', layout: 'full' })
   })
 
   it('7. hello: inset 0 moves a full layout below; 44 keeps it; it never moves below to full, nor back after a 0', () => {
