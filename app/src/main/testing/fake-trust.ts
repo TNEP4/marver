@@ -151,6 +151,7 @@ export function fakeTrust(): TrustPort {
     appState(tabId, s) { note('fake-trust', { appState: s, tab: tabId }); return true },
     menuClick(tabId, id) { note('fake-trust', { menuClick: id, tab: tabId }); return true },
     reopenNext(tabId) { note('fake-trust', { reopenNext: tabId }) },
+    reopenCancel(tabId) { note('fake-trust', { reopenCancel: tabId }) },
     fetchLogo(t, signal) { return logo.on ? fetchLogo(t, signal) : Promise.resolve(null) },
   }
 }

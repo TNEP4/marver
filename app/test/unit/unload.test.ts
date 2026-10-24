@@ -6,12 +6,12 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  activate, activeTab, closeTab, closeView, displayState, guard, guardAll, isActive, onCommit, onFail, onRegistry, onReport, onUnloaded, ordered,
+  activate, activeTab, allTabs, closeTab, closeView, displayState, guard, guardAll, isActive, linkOpens, onCommit, onFail, onRegistry, onReport, onUnloaded, ordered,
   snapshotFile, startReopen, unloadRefusal, viewlessAct, wantsLoad, type GuardAction, type GuardAnswer, type Tab,
 } from '../../src/main/tabs.ts'
 import { onLifted, pageFor, recover } from '../../src/main/tabpage.ts'
 import { T } from '../../src/main/timings.ts'
-import { deferred, flush, liveTab, report, show, world, type Deferred, type World } from './window-fakes.ts'
+import { deferred, entry, flush, liveTab, report, show, world, type Deferred, type World } from './window-fakes.ts'
 
 let w: World
 beforeEach(() => { w = world() })
@@ -220,7 +220,9 @@ describe('what else happens to a tab while it unloads (A3.8 #42, r1 #2, r3 #3)',
     }
   })
 
-  it('a load queued behind an unload whose close outlived unloadActMs runs only after destroyed (main ended the close itself)', async () => {
+  // the model's wait is the same in both phases of the close; views.ts's timer, main's own close and their order
+  // against destroyed are unload-act.test.ts's and test/prod/unload.test.ts's
+  it('a load queued behind an unload still closing past unloadActMs (unsure) waits for destroyed, then loads its own URL', async () => {
     const t = candidate()
     const c = closer()
     const u = guard(t, warn)
@@ -491,7 +493,8 @@ describe('the crash latch is held apart (A3.8 #44, r1 #8)', () => {
     report(t, false)
   }
 
-  it('a renderer gone during the close counts nothing; a latched or recovering tab is never a candidate', () => {
+  // a renderer gone during the close is unload-act.test.ts's (the act) and test/prod/unload.test.ts's (the window)
+  it('a latched or recovering tab is never a candidate', () => {
     const t = candidate()
     for (const c of [{ latched: true }, { inFlight: 'auto' as const }, { pendingShow: true }]) {
       t.crash = { count: 1, latched: false, ...c }
@@ -551,5 +554,176 @@ describe('the act owns the tab until its close ends (A3.8 r1 #2)', () => {
     expect(isActive(t)).toBe(false)
     c.destroyed(t)
     expect(await r).toBe('done')
+  })
+})
+
+describe('a link into an unloaded tab opens on what it names, never as the reopen (A3.8 #42, r3 #3)', () => {
+  async function unloadedTab(): Promise<Tab> {
+    const t = candidate()
+    t.path = '/#/b/b?n=k'
+    const c = closer()
+    const u = guard(t, critical)
+    c.destroyed(t)
+    await u
+    await flush()
+    return t
+  }
+
+  // views.ts openInTab's documentless branch, as the model sees it
+  function openLink(t: Tab, path: string): boolean {
+    const armed = linkOpens(t)
+    t.path = path
+    activate(t.id)
+    return armed
+  }
+
+  it('unloaded: the unload ends, the load is a plain one - no reopen, no reopening page, no reopen record', async () => {
+    const t = await unloadedTab()
+    expect(openLink(t, '/#/b/a?n=f1')).toBe(false)
+    expect(t.unload).toBeUndefined()
+    expect(w.loads).toEqual([t.id])
+    expect(w.reopens).toEqual([])
+    expect(pageFor(t, w.clock.now)?.page).toBe('starting')
+    lift(t)
+    expect(t.path).toBe('/#/b/a?n=f1')
+    onReport(t.id, t.doc!.doc!, { hello: { version: '0.27.2', board: 'a', page: 'PAGE_link00001' } })
+    expect(recs('reopen')).toEqual([])
+  })
+
+  it('its canvas still starting: the link\'s path waits for ready, and ready loads it plainly', async () => {
+    const t = await unloadedTab()
+    onRegistry({ kind: 'gone', file: t.reg!.file, instance: t.reg!.instance, why: 'pid' })
+    const e = entry({ ws: t.reg!.ws, state: 'starting', origin: undefined, port: 40777, instance: 'inst-later' })
+    onRegistry({ kind: 'entry', entry: e })
+    expect(t.reg!.instance).toBe('inst-later')
+    expect(openLink(t, '/#/b/a?n=f2')).toBe(false)
+    expect(w.loads).toEqual([])
+    onRegistry({ kind: 'entry', entry: { ...e, state: 'ready', origin: 'http://[::1]:40777' } })
+    expect(w.loads).toEqual([t.id])
+    expect(w.reopens).toEqual([])
+    expect(t.path).toBe('/#/b/a?n=f2')
+  })
+
+  it('a reopen already under way: the unload ends, and the caller is told to take its mv:doc flag back', async () => {
+    const t = await unloadedTab()
+    activate(t.id)
+    expect(w.reopens).toEqual([t.id])
+    t.view = 'live'   // its view made, its document not yet lifted
+    expect(openLink(t, '/#/b/a?n=f3')).toBe(true)
+    expect(t.unload).toBeUndefined()
+    expect(pageFor(t, w.clock.now)?.page).not.toBe('reopening')
+  })
+
+  it('while its close is outstanding the link is not this: the unload stays, and the link waits through the guard', async () => {
+    const t = candidate()
+    closer()
+    void guard(t, warn)
+    expect(linkOpens(t)).toBe(false)
+    expect(t.unload?.phase).toBe('closing')
+  })
+})
+
+describe('the tab page while the close is outstanding (A3.8 #42)', () => {
+  it('its canvas stopped meanwhile: the stopped page over the view (nothing kept), never the page being closed', async () => {
+    const t = candidate()
+    const c = closer()
+    const u = guard(t, warn)
+    activate(t.id)
+    onRegistry({ kind: 'gone', file: t.reg!.file, instance: t.reg!.instance, why: 'pid' })
+    expect(pageFor(t, w.clock.now)).toMatchObject({ page: 'stopped', retained: false })
+    c.destroyed(t)
+    await u
+    expect(pageFor(t, w.clock.now)).toMatchObject({ page: 'stopped', retained: false })
+  })
+
+  it('rebound to a starting instance on its port meanwhile: the reopening page, the camera not promised', () => {
+    const t = candidate()
+    closer()
+    void guard(t, warn)
+    activate(t.id)
+    onRegistry({ kind: 'gone', file: t.reg!.file, instance: t.reg!.instance, why: 'pid' })
+    onRegistry({ kind: 'entry', entry: entry({ ws: t.reg!.ws, state: 'starting', origin: undefined, port: t.reg!.port, instance: 'inst-restart' }) })
+    expect(t.reg!.state).toBe('starting')
+    expect(pageFor(t, w.clock.now)).toMatchObject({ page: 'reopening', cameraKept: false })
+  })
+})
+
+describe('a quit or an update under way holds the reopen (A3.8 #42)', () => {
+  it('activated while the quit waits on its sheet: no load; the quit refused, it reopens once', async () => {
+    const t = candidate()
+    const stale = candidate()
+    stale.reports.safety = 'stale'
+    const c = closer()
+    const u = guard(t, warn)
+    c.destroyed(t)
+    await u
+    await flush()
+    const sheet = deferred<boolean>()
+    w.askWith = () => sheet.promise
+    const q = guardAll({ kind: 'quit' })
+    await flush()
+    expect(w.sheets).toHaveLength(1)
+    activate(t.id)
+    expect(w.loads).toEqual([])
+    expect(pageFor(t, w.clock.now)?.page).toBe('reopening')
+    sheet.resolve(false)
+    expect(await q).toBe('refused')
+    await flush()
+    expect(w.loads).toEqual([t.id])
+    expect(w.reopens).toEqual([t.id])
+  })
+})
+
+describe('a new instance of its canvas on another origin while it closes (A2.14 #10, A3.8 #42)', () => {
+  const other = (t: Tab, instance = 'inst-moved') => entry({ ws: t.reg!.ws, port: 40888, origin: 'http://[::1]:40888', instance })
+
+  it('waits for the close: at destroyed the same tab rebinds, unloaded on the new instance; shown, it reopens there, board only', async () => {
+    const t = candidate()
+    const c = closer()
+    const u = guard(t, warn)
+    onRegistry({ kind: 'gone', file: t.reg!.file, instance: t.reg!.instance, why: 'pid' })
+    onRegistry({ kind: 'entry', entry: other(t) })
+    expect(allTabs().filter((x) => x.kind === 'local' && x.reg?.ws === t.reg!.ws)).toEqual([t])   // no tab beside it
+    c.destroyed(t)
+    await u
+    await flush()
+    expect(t.reg).toMatchObject({ instance: 'inst-moved', origin: 'http://[::1]:40888', state: 'ready' })
+    expect(t.view).toBe('unloaded')
+    expect(allTabs().filter((x) => x.kind === 'local' && x.reg?.ws === t.reg!.ws)).toEqual([t])
+    activate(t.id)
+    expect(w.reopens).toEqual([t.id])
+    expect(pageFor(t, w.clock.now)).toMatchObject({ page: 'reopening', cameraKept: false })
+  })
+
+  it('the page refuses instead: its kept page stays grey, the instance gets its own tab', async () => {
+    const t = candidate()
+    const c = closer()
+    const u = guard(t, warn)
+    onRegistry({ kind: 'gone', file: t.reg!.file, instance: t.reg!.instance, why: 'pid' })
+    onRegistry({ kind: 'entry', entry: other(t) })
+    c.refuse()
+    expect(await u).toBe('refused')
+    const mine = allTabs().filter((x) => x.kind === 'local' && x.reg?.ws === t.reg!.ws)
+    expect(mine).toHaveLength(2)
+    expect(t.reg!.state).toBe('gone')
+    expect(mine.find((x) => x !== t)!.reg!.instance).toBe('inst-moved')
+  })
+
+  it('an instance gone before the close ended binds nothing; a queued close leaves the next one a tab of its own', async () => {
+    const t = candidate()
+    const c = closer()
+    const u = guard(t, warn)
+    onRegistry({ kind: 'gone', file: t.reg!.file, instance: t.reg!.instance, why: 'pid' })
+    onRegistry({ kind: 'entry', entry: other(t) })
+    onRegistry({ kind: 'gone', file: '/x', instance: 'inst-moved', why: 'pid' })
+    onRegistry({ kind: 'entry', entry: other(t, 'inst-third') })
+    const close = closeTab(t.id)
+    c.destroyed(t)
+    await u
+    expect(await close).toBe('closed')
+    await flush()
+    const mine = allTabs().filter((x) => x.kind === 'local' && x.reg?.ws === other(t).ws)
+    expect(mine.map((x) => x.reg!.instance)).toEqual(['inst-third'])
+    expect(mine[0]).not.toBe(t)
   })
 })

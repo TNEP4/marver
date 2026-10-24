@@ -115,7 +115,9 @@ uncovered until a stream fills its own, so app 0.2's base behaves as app 0.1.
   `test/prod/guard-bridge.test.ts` (skipped, saying so, without them). Helpers in `test/harness/window.ts`; real key
   events in `test/native/keypost.swift` (Accessibility for the terminal, else those cases say they are
   inconclusive); the focus cases read focus only while the window is key, else they are skipped as inconclusive.
-- **unloading** (A3.8 #39-#45; `test/unit/unload.test.ts`, `memory.test.ts`, `test/prod/unload.test.ts`): memory.ts's
+- **unloading** (A3.8 #39-#45; `test/unit/unload.test.ts`, `memory.test.ts`, `unload-act.test.ts` - the act on a fake
+  webContents: refusal, `unsure`, a renderer gone mid-close, the backstop - `test/prod/unload.test.ts`,
+  `unload-shell.test.ts`): memory.ts's
   hooks - `memory:tick` (one tick now, on a sample the case describes: a pressure `level`, `canvasMB` as one canvas
   process, or `procs`; `real: true` takes the sampler's own `requestSample()`), `memory:state` (each canvas tab's
   refusal, the cooldown, the last tick), `memory:totalmem { mb }` (null: `os.totalmem()` again) - and the window's

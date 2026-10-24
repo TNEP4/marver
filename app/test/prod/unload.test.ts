@@ -8,9 +8,11 @@
  * A page playing sound and DevTools opened are Chromium's events emitted on the view's own webContents
  * (`page:event`): a case never plays a sound or opens a window on the Mac it runs on.
  */
+import { renameSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { hits, launchWindow, MAY_LEAVE, REFUSE_UNLOAD, scripted, sleep, type LogLine, type State, type TabDump, type WindowRun } from '../harness/window.ts'
-import type { FakeOptions } from '../harness/fake-canvas.ts'
+import type { FakeCanvas, FakeOptions } from '../harness/fake-canvas.ts'
 
 const TIMINGS = { unloadMinHiddenMs: 300, unloadCooldownMs: 2000, unloadActMs: 1500, unloadEffectMs: 200 }
 const HIDDEN = TIMINGS.unloadMinHiddenMs + 150
@@ -35,6 +37,21 @@ async function shown(run: WindowRun, o: Partial<FakeOptions> = {}, idle = true) 
   return c
 }
 const tab = (s: State, id: string): TabDump => s.tabs.find((t) => t.id === id)!
+/** the time between two journal lines, ms (their `t` is process.hrtime) */
+const msBetween = (a: LogLine, b: LogLine) => Number(BigInt(b.t) - BigInt(a.t)) / 1e6
+/** Home's link field, as home.ts hands a checked link to the tabs (`LinkPorts.open`) */
+const openLink = (f: FakeCanvas, rest: string, run = w) => run.run.call('openInTab', { entry: { state: 'ready', origin: f.origin, port: f.port, ws: f.ws, name: 'Linked' }, url: `${f.origin}${rest}`, rest })
+/**
+ * config.json's unloadUnderPressure, as a person or an agent writes the file. Settings shows its row from the build
+ * whose STAGE is A3, which the integration sets once the recorder's sampler is in.
+ */
+async function unloading(on: boolean, run = w) {
+  const p = join(run.env.home, 'config.json')
+  writeFileSync(`${p}.tmp`, JSON.stringify({ unloadUnderPressure: on }))
+  renameSync(`${p}.tmp`, p)
+  await run.run.call('files.reread')
+  expect((await run.run.call<{ config: { unloadUnderPressure: boolean } }>('files.values')).config.unloadUnderPressure).toBe(on)
+}
 const tick = (o: Record<string, unknown>, run = w) => run.run.call<{ candidates: { id: string }[]; unload: { id: string; reason: string }[] }>('memory:tick', o)
 const mark = async (run = w) => (await run.run.call<unknown[]>('log')).length
 const since = (n: number, topic?: string, run = w): Promise<LogLine[]> => run.log(topic, n)
@@ -53,7 +70,7 @@ async function still() {
 /** Every canvas tab closed, Home active, the pressure episode over: each case starts from the same place. */
 afterEach(async () => {
   await w.run.call('memory:totalmem', { mb: null })
-  await w.run.call('files.set', { file: 'config', key: 'unloadUnderPressure', value: true })
+  await unloading(true)
   await tick({ level: 1 })
   await w.run.call('activate', { id: 'home' })
   for (const t of (await w.state()).tabs.filter((x) => x.kind === 'local' && x.open)) {
@@ -123,14 +140,14 @@ describe('the policy on a real window (A3.8 #41)', () => {
   })
 
   it('off: nothing unloads at critical; turned on again, the next tick does', async () => {
-    expect(await w.run.call('files.set', { file: 'config', key: 'unloadUnderPressure', value: false })).toMatchObject({ ok: true })
+    await unloading(false)
     const a = await shown(w)
     await shown(w)
     await sleep(HIDDEN)
     expect(await tick({ level: 4 })).toMatchObject({ candidates: [], unload: [] })
     await sleep(300)
     expect((await w.tab(a.id)).view).toBe('live')
-    await w.run.call('files.set', { file: 'config', key: 'unloadUnderPressure', value: true })
+    await unloading(true)
     expect((await tick({ level: 4 })).unload.map((u) => u.id)).toEqual([a.id])
     await unloaded(a.id)
   })
@@ -290,7 +307,8 @@ describe('while it closes, and after (A3.8 #42-#44, r1 #2, r2 #4, r3 #3)', () =>
     await tick({ level: 4 })
     await unloaded(a.id)
     expect((await w.tab(a.id)).crash).toMatchObject({ count: 0, latched: false })
-    expect((await since(n, 'gone')).filter((l) => l.data.tab === a.id).every((l) => l.data.ours === true)).toBe(true)
+    // the unload's own gone, one: close() ends the renderer with no render-process-gone of its own
+    expect((await since(n, 'gone')).filter((l) => l.data.tab === a.id).map((l) => l.data)).toEqual([expect.objectContaining({ ours: true, source: 'unload', reason: 'unload' })])
     await w.run.call('activate', { id: a.id })
     await w.until((s) => !!tab(s, a.id).doc?.lifted, 10_000, 'reopened')
     await w.run.call('crash', { target: a.id })
@@ -300,16 +318,52 @@ describe('while it closes, and after (A3.8 #42-#44, r1 #2, r2 #4, r3 #3)', () =>
     await w.until((s) => tab(s, a.id).crash.latched, 10_000, 'latched')
   })
 
-  it('stopped while it closes: unloaded, its page stopped when shown; a new instance of its canvas elsewhere reopens it there, board only', async () => {
+  it('its renderer gone while it closes: ours, counting nothing - one gone, never crashed, unloaded; the reopen works', async () => {
     const a = await shown(w, { script: SLOW_UNLOAD(800) })
     await shown(w)
     await sleep(HIDDEN)
+    const n = await mark()
+    expect((await tick({ level: 4 })).unload.map((u) => u.id)).toEqual([a.id])
+    await w.until((s) => tab(s, a.id).unload?.phase === 'closing', 5000, 'closing')
+    expect(await w.run.call('crash', { target: a.id })).toBe(true)
+    await unloaded(a.id)
+    const t = await w.tab(a.id)
+    expect(t.crash).toMatchObject({ count: 0, latched: false })
+    expect(t.state).toBe('unloaded')
+    const log = await since(n)
+    const mine = (topic: string) => log.filter((l) => l.topic === topic && l.data.tab === a.id)
+    // the renderer's own gone is the unload's, handed to the recorder as ours; forgetCanvas writes none beside it
+    expect(mine('gone').map((l) => l.data)).toEqual([expect.objectContaining({ ours: true, source: 'unload' })])
+    expect(mine('gone')[0]!.data.reason).not.toBe('unload')
+    expect((await records(n, 'gone', a.id))).toEqual([])
+    expect(mine('crash')).toEqual([])
+    expect(mine('layout').some((l) => l.data.event === 'renderer-gone')).toBe(false)
+    expect(mine('unload').some((l) => l.data.endClose === 'gone')).toBe(true)
+    expect((await records(n, 'unload', a.id)).map((r) => r.phase)).toEqual(['start', 'done'])
+    await w.run.call('activate', { id: a.id })
+    await w.until((s) => !!tab(s, a.id).doc?.lifted && tab(s, a.id).unload == null, 10_000, 'reopened')
+    expect((await w.tab(a.id)).crash).toMatchObject({ count: 0, latched: false })
+  })
+
+  it('stopped while it closes: shown meanwhile, its stopped page stands over the view being closed; unloaded; a new instance of its canvas elsewhere reopens it there, board only', async () => {
+    const a = await shown(w, { script: SLOW_UNLOAD(800) })
+    await shown(w)
+    await sleep(HIDDEN)
+    const n = await mark()
     await tick({ level: 4 })
     await w.until((s) => tab(s, a.id).unload?.phase === 'closing', 5000, 'closing')
     await w.run.call('fake:gone', { instance: a.fake.instance })
+    await w.run.call('activate', { id: a.id })
+    const mid = await w.tab(a.id)
+    expect(mid.unload?.phase).toBe('closing')
+    expect((await w.run.call<{ body: { page: string; retained: boolean } }>('page', { tab: a.id })).body).toMatchObject({ page: 'stopped', retained: false })
     const s = await unloaded(a.id)
     expect(tab(s, a.id).reg?.state).toBe('gone')
-    await w.run.call('activate', { id: a.id })
+    // the view being closed was never shown, the canvas gone or not
+    const log = await since(n)
+    const gone = log.findIndex((l) => l.topic === 'gone' && l.data.tab === a.id)
+    expect(gone).toBeGreaterThan(-1)
+    expect(log.slice(0, gone).some((l) => l.topic === 'compose' && (l.data.changes as { key: string; visible?: boolean }[]).some((c) => c.key === `${a.id}:view` && c.visible === true))).toBe(false)
     await w.until((x) => tab(x, a.id).pageView, 5000, 'its tab page')
     expect((await w.run.call<{ body: { page: string; retained: boolean } }>('page', { tab: a.id })).body).toMatchObject({ page: 'stopped', retained: false })
     await w.run.call('fake:session', { hold: true })
@@ -322,6 +376,86 @@ describe('while it closes, and after (A3.8 #42-#44, r1 #2, r2 #4, r3 #3)', () =>
       expect((await w.run.call<{ body: { page: string; cameraKept: boolean } }>('page', { tab: a.id })).body).toMatchObject({ page: 'reopening', cameraKept: false })
     } finally { await w.run.call('fake:session', { hold: false }) }
     await w.until((x) => !!tab(x, a.id).doc?.lifted && tab(x, a.id).reg?.origin === again!.fake.origin, 10_000, 'reopened on the new origin')
+  })
+
+  it('a new instance of its canvas elsewhere while it closes: no tab beside it - at destroyed the same tab is unloaded on the new instance, and reopens there, board only', async () => {
+    const a = await shown(w, { script: SLOW_UNLOAD(800) })
+    await w.run.call('exec', { target: a.id, js: `location.hash = '#/b/x'; 1` })
+    await w.until((s) => tab(s, a.id).path === '/#/b/x', 5000, 'the board in the path')
+    await shown(w)
+    await sleep(HIDDEN)
+    const n = await mark()
+    await tick({ level: 4 })
+    await w.until((s) => tab(s, a.id).unload?.phase === 'closing', 5000, 'closing')
+    await w.run.call('fake:gone', { instance: a.fake.instance })
+    port += 1
+    const again = await w.canvas({ port: w.slotBase + 40 + port, name: 'Canvas moved', ws: a.fake.ws })
+    expect(again.id).toBe(a.id)   // the same tab: it waited for the close, then rebound
+    const log = await since(n)
+    const waits = log.findIndex((l) => l.topic === 'registry' && l.data.tab === a.id && l.data.waits === again.fake.instance)
+    const gone = log.findIndex((l) => l.topic === 'gone' && l.data.tab === a.id)
+    expect(waits).toBeGreaterThan(-1)
+    expect(gone).toBeGreaterThan(waits)   // it arrived while the close was outstanding
+    const s = await unloaded(a.id)
+    expect(tab(s, a.id).reg).toMatchObject({ instance: again.fake.instance, origin: again.fake.origin, state: 'ready' })
+    expect(s.tabs.filter((t) => t.kind === 'local' && t.reg?.port === again.fake.port)).toHaveLength(1)
+    await w.run.call('fake:session', { hold: true })
+    try {
+      await w.run.call('activate', { id: a.id })
+      await w.until((x) => tab(x, a.id).unload?.phase === 'reopening', 5000, 'reopening')
+      expect((await w.run.call<{ body: { page: string; cameraKept: boolean } }>('page', { tab: a.id })).body).toMatchObject({ page: 'reopening', cameraKept: false })
+    } finally { await w.run.call('fake:session', { hold: false }) }
+    await w.until((x) => !!tab(x, a.id).doc?.lifted && tab(x, a.id).path === '/#/b/x', 10_000, 'reopened on the new origin on its board')
+  })
+})
+
+describe('a link into an unloaded tab (A3.8 #42, r3 #3)', () => {
+  it('opens on what it names: a plain load of the link - no reopen flag, no reopening page, no reopen record', async () => {
+    const a = await shown(w)
+    await w.run.call('exec', { target: a.id, js: `location.hash = '#/b/x'; 1` })
+    await w.until((s) => tab(s, a.id).path === '/#/b/x', 5000, 'the board in the path')
+    await shown(w)
+    await sleep(HIDDEN)
+    await tick({ level: 4 })
+    await unloaded(a.id)
+    const n = await mark()
+    await w.run.call('fake:session', { hold: true })   // the load waits on its partition: the tab page shows meanwhile
+    try {
+      expect(await openLink(a.fake, '/#/b/y?n=f1')).toEqual({ ok: true })
+      await sleep(120)
+      expect((await w.tab(a.id)).unload).toBe(null)
+      expect((await w.run.call<{ body: { page: string } } | null>('page', { tab: a.id }))?.body.page).toBe('starting')
+    } finally { await w.run.call('fake:session', { hold: false }) }
+    await w.until((s) => !!tab(s, a.id).doc?.lifted, 10_000, 'the link loaded')
+    expect((await w.tab(a.id)).path).toBe('/#/b/y?n=f1')
+    await w.report(a.id, null, { hello: { version: '0.27.2', board: 'y', page: 'PAGE_link000001' } })
+    const log = await since(n)
+    expect(log.filter((l) => l.topic === 'load' && l.data.tab === a.id).map((l) => l.data.url)).toEqual([`${a.fake.origin}/#/b/y?n=f1`])
+    expect(log.filter((l) => l.topic === 'fake-trust' && (l.data.reopenNext === a.id || l.data.reopenCancel === a.id))).toEqual([])
+    expect(await records(n, 'reopen', a.id)).toEqual([])
+  })
+
+  it('a hash-only link while its close is outstanding waits for the close: never sent to the page being closed, loaded on its own URL after destroyed', async () => {
+    const a = await shown(w, { script: SLOW_UNLOAD(800) })
+    await shown(w)
+    await sleep(HIDDEN)
+    await tick({ level: 4 })
+    await w.until((s) => tab(s, a.id).unload?.phase === 'closing', 5000, 'closing')
+    const n = await mark()
+    expect(await openLink(a.fake, '/#/b/z')).toEqual({ ok: true })
+    await w.until((s) => !!tab(s, a.id).doc?.lifted && tab(s, a.id).hasView, 10_000, 'the link loaded')
+    const log = await since(n)
+    expect(log.filter((l) => l.topic === 'link' && l.data.tab === a.id)).toEqual([])
+    const gone = log.findIndex((l) => l.topic === 'gone' && l.data.tab === a.id)
+    const act = log.findIndex((l) => l.topic === 'act' && l.data.tab === a.id && l.data.action === 'load')
+    expect(gone).toBeGreaterThan(-1)
+    expect(act).toBeGreaterThan(gone)
+    expect(log[act]!.data).toMatchObject({ noView: true, loads: true, path: '/#/b/z' })
+    expect(log.filter((l) => l.topic === 'load' && l.data.tab === a.id).map((l) => l.data.url)).toEqual([`${a.fake.origin}/#/b/z`])
+    expect(log.filter((l) => l.topic === 'fake-trust' && l.data.reopenNext === a.id)).toEqual([])
+    const t = await w.tab(a.id)
+    expect(t.unload).toBe(null)
+    expect(t.path).toBe('/#/b/z')
   })
 })
 
@@ -343,9 +477,17 @@ describe('a close that outlives unloadActMs (A3.8 #39, r1 #2)', () => {
       expect(Date.now() - at).toBeLessThan(3000)
       const lines = (await since(n, 'record', u)).filter((l) => l.data.kind === 'unload' && l.data.tab === s.id)
       expect(lines.map((l) => l.data.phase)).toEqual(['start', 'unsure', 'done'])
-      const ms = Number(BigInt(lines[1]!.t) - BigInt(lines[0]!.t)) / 1e6
-      expect(ms).toBeGreaterThanOrEqual(250)   // unsure at unloadActMs from the act
+      const [start, unsure, done] = lines as [LogLine, LogLine, LogLine]
+      expect(msBetween(start, unsure)).toBeGreaterThanOrEqual(250)   // unsure at unloadActMs from the act
+      // main's own end, not Chromium's: destroyed follows main's plain close within a few tasks, long before
+      // Chromium's own beforeunload timeout (about 1 s) would have ended the close
+      expect(msBetween(unsure, done)).toBeLessThan(150)
+      expect(msBetween(start, done)).toBeLessThan(500)
       const log = await since(n, undefined, u)
+      const end = log.findIndex((l) => l.topic === 'unload' && l.data.tab === s.id && l.data.endClose === 'unsure')
+      const destroyed = log.findIndex((l) => l.topic === 'act' && l.data.tab === s.id && l.data.action === 'unload' && l.data.why === 'destroyed')
+      expect(end).toBeGreaterThan(-1)
+      expect(destroyed).toBeGreaterThan(end)
       const gone = log.findIndex((l) => l.topic === 'gone' && l.data.tab === s.id)
       const load = log.findIndex((l) => l.topic === 'act' && l.data.tab === s.id && l.data.action === 'load')
       expect(gone).toBeGreaterThan(-1)

@@ -8,8 +8,9 @@
   is busy - unsaved work, a Jam session, the microphone, an agent at work - nor one that has not said it is idle (a
   Marver 0.27.0 canvas), one playing sound, one with DevTools open, one hidden less than 10 s or one whose page
   declined. Nothing asks and nothing comes forward. An unloaded tab keeps its place, name and logo, dimmed, and
-  reopens on its board and camera when shown, saying "Reopening" until it is back; what an unload does not keep is
-  the page's undo, Back and Forward, and a selection the link does not name.
+  reopens on its board and camera when shown, saying "Reopening" until it is back; a link opened into it opens on what
+  the link names instead. What an unload does not keep is the page's undo, Back and Forward, and a selection the link
+  does not name.
 
 ## 0.1.0 - unreleased (spec 28 A2, for Nic)
 

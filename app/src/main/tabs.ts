@@ -312,6 +312,8 @@ let counter = 0
 let sweeping = false
 /** reopens lifted and waiting for their document's hello (the unload section's; A3.8 #45) */
 const reopened = new Map<Tab, Reopened>()
+/** a new instance of a grey tab's workspace, on another origin, waiting for that tab's unload to end its close (A3.8 #42) */
+const afterClose = new Map<Tab, RegistryEntry>()
 /** closes for a canvas's run, `ws|instance` (A2.14 #23), kept in tabs.json */
 const closed = new Set<string>()
 const closeKey = (ws: string, instance: string) => `${ws}|${instance}`
@@ -325,6 +327,7 @@ export function resetTabs(): void {
   tabs.clear(); closed.clear(); counter = 0; activeId = 'home'; sweeping = false
   for (const r of reopened.values()) clearTimeout(r.timer)
   reopened.clear()
+  afterClose.clear()
   tabs.set('home', blankTab('home', 'home', 'Home'))
 }
 resetTabs()
@@ -357,6 +360,12 @@ export const liveDoc = (t: Tab): boolean => t.kind === 'local' && t.view === 'li
  */
 export const wantsLoad = (t: Tab): boolean => t.kind === 'local' && t.reg?.state === 'ready' && !!t.reg.origin && !t.crash.latched
   && t.view !== 'crashed' && !liveDoc(t) && !t.crash.inFlight && (t.view === 'none' || t.view === 'unloaded' || !!t.needsLoad)
+
+/**
+ * wantsLoad, now: an unloaded tab stays unloaded while a quit or an update sweeps (A3.8 #42) - a new document would
+ * meet the quit's newcomer check; if the quit is refused, the active one reopens then (sweepRefused).
+ */
+const loadsNow = (t: Tab): boolean => wantsLoad(t) && !(t.view === 'unloaded' && sweeping)
 
 /** The current document's record is fresh: trusted now, and heard since its commit. */
 export const fresh = (t: Tab): boolean => t.reports.safety === 'fresh' && !!t.doc?.trusted
@@ -623,6 +632,8 @@ export function onRegistry(ev: RegistryEvent): void {
   const p = P()
   const now = p.now()
   if (ev.kind === 'gone') {
+    // an instance waiting for a close went before it ended: nothing of it to bind
+    for (const [g, w] of afterClose) if (w.instance === ev.instance) { afterClose.delete(g); p.log?.('registry', { tab: g.id, waited: ev.instance, gone: ev.why }) }
     const t = allTabs().find((x) => x.kind === 'local' && x.reg?.instance === ev.instance)
     if (!t || t.reg!.state === 'gone') return
     if (!t.open && !liveDoc(t)) { dropTab(t); return }
@@ -670,6 +681,36 @@ export function onRegistry(ev: RegistryEvent): void {
   // never taken by a second instance of its workspace (another slot, or --port) - that one gets its own tab
   t = locals.find((x) => x.reg && sameAddr(x)) ?? locals.find((x) => x.reg?.ws === e.ws && x.reg.state === 'gone' && !liveDoc(x))
   if (t) rebind(t, e)
+  else if (!waitForClose(locals, e)) createLocal(e, !closed.has(closeKey(e.ws, e.instance)))
+  p.changed(); p.save()
+}
+
+/**
+ * A grey tab of this workspace whose document an unload is closing (A3.8 #42) is about to hold none: the new instance
+ * waits for the close's end rather than getting a tab of its own beside it. At `destroyed` that tab rebinds, unloaded
+ * on the new instance (onUnloaded's task); if the page refuses, its kept page stays grey and the instance gets its
+ * own tab, as A2.14 #10 says. True when the entry waits (a later event of the same instance updates it).
+ */
+function waitForClose(locals: Tab[], e: RegistryEntry): boolean {
+  const g = locals.find((x) => x.reg?.ws === e.ws && x.reg.state === 'gone' && unloadClosing(x))
+  if (!g) return false
+  const w = afterClose.get(g)
+  if (w && w.instance !== e.instance) return false
+  afterClose.set(g, e)
+  P().log?.('registry', { tab: g.id, waits: e.instance, state: e.state })
+  return true
+}
+
+/**
+ * The close ended (destroyed: `bind` true; the page's refusal: false): the instance that waited for it binds now -
+ * to this tab if it is still here, grey and documentless, else to a tab of its own.
+ */
+function closeEnded(t: Tab, bind: boolean): void {
+  const e = afterClose.get(t)
+  if (!e) return
+  afterClose.delete(t)
+  const p = P()
+  if (bind && getTab(t.id) === t && t.reg?.state === 'gone' && !liveDoc(t)) rebind(t, e)
   else createLocal(e, !closed.has(closeKey(e.ws, e.instance)))
   p.changed(); p.save()
 }
@@ -710,7 +751,7 @@ function atReady(t: Tab): void {
   if (t.reg?.state !== 'ready') return
   if (liveDoc(t)) { if (t.fail) p.recheck?.(t); return }
   if (!isActive(t)) return
-  if (wantsLoad(t)) p.load(t)
+  if (loadsNow(t)) p.load(t)
   else if (t.crash.pendingShow && !t.crash.latched) p.shown(t)
 }
 
@@ -884,8 +925,8 @@ export function activate(id: string): void {
     if (u && u.phase !== 'reopening') u.activatedAt = now
     p.shown(next)
     // lazy views: a documentless tab loads when shown (never a latched one: its Reload is the person's); an unloaded
-    // one reopens on its saved path
-    if (wantsLoad(next)) p.load(next)
+    // one reopens on its saved path - not while a quit or an update sweeps: it shows its reopening page until then
+    if (loadsNow(next)) p.load(next)
     // an activation during an unload's close is queued under its tab page: no shown until the outcome (A3.8 #42)
     const closing = u?.phase === 'closing' || u?.phase === 'unsure'
     if (prev !== next && next.doc?.trusted && !closing) p.appState(next, 'shown')
@@ -1045,8 +1086,8 @@ export async function guard(tab: Tab, action: GuardAction): Promise<GuardAnswer>
 /**
  * Every canvas tab, for a quit or an update: one operation each, one shared step 1 and sheet; one refusal stops the
  * whole. From its start no unload is admitted (`sweeping`, cleared when it is refused); unloads already under way
- * are closes the quit wanted - waited for (each ends within `unloadActMs` and a task), never a reason to refuse
- * (A3.8 #42).
+ * are closes the quit wanted - waited for (each ends within `unloadActMs` and a task, or at the act's backstop a
+ * second `unloadActMs` later if `destroyed` never comes: unload-act.ts), never a reason to refuse (A3.8 #42).
  */
 export async function guardAll(action: GuardAllAction): Promise<GuardAnswer> {
   sweeping = true
@@ -1248,6 +1289,8 @@ async function unloadOp(tab: Tab, op: GuardOperation, a: Extract<GuardAction, { 
   tab.unloadRefused = op.commit
   p.log?.('unload', { tab: tab.id, reason: a.reason, refused: 'page', commit: op.commit })
   p.record?.('unload', tab, { phase: 'refused', reason: a.reason, why: 'page' })
+  // a new instance that waited for this close: the kept page stays grey, the instance gets its own tab (A2.14 #10)
+  closeEnded(tab, false)
   // activated while it closed: its tab page goes and the kept page shows, its shown sent now, as on any switch (r2 #4)
   if (isActive(tab)) {
     if (tab.doc?.trusted) p.appState(tab, 'shown')
@@ -1270,7 +1313,9 @@ export function onUnloaded(t: Tab): void {
   if (u) { u.phase = 'unloaded'; u.unloadedAt = p.now() }
   p.log?.('unload', { tab: t.id, phase: 'unloaded', reason: u?.reason ?? null })
   if (u) p.record?.('unload', who, { phase: 'done', reason: u.reason })
-  setImmediate(() => reopenIfShown(t))
+  // in one task after every waiter: a new instance that waited for this close binds the tab (a queued close has
+  // dropped it, and the instance then gets a tab of its own), then the reopen is decided (r3 #3)
+  setImmediate(() => { closeEnded(t, true); reopenIfShown(t) })
   p.changed(); p.save()
 }
 
@@ -1284,6 +1329,24 @@ export function startReopen(t: Tab): boolean {
   u.phase = 'reopening'
   P().log?.('unload', { tab: t.id, phase: 'reopening', path: t.path })
   return true
+}
+
+/** An unload's close is under way on the tab: from the act until `destroyed` or the page's refusal. */
+export const unloadClosing = (t: Tab): boolean => t.unload?.phase === 'closing' || t.unload?.phase === 'unsure'
+
+/**
+ * A link opened into a tab with no live document (views.ts openInTab: ⌘L, Home's link field, the links agents and
+ * `marver work done` hand back) opens on what it names, never as the reopen (A3.8 #42, r3 #3): an unloaded tab's
+ * unload ends here, so its load is a plain one - no `mv:doc` reopen, no reopening page, no reopen record. True when a
+ * reopen was already under way (its load sent, `mv:doc`'s one-shot flag armed): the caller disarms that flag. A tab
+ * whose close is still outstanding is not this: its link waits for the close through the guard.
+ */
+export function linkOpens(t: Tab): boolean {
+  const u = t.unload
+  if (!u || unloadClosing(t)) return false
+  t.unload = undefined
+  P().log?.('unload', { tab: t.id, link: true, was: u.phase })
+  return u.phase === 'reopening'
 }
 
 /**

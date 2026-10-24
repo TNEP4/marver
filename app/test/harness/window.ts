@@ -10,7 +10,7 @@ import { startFakeCanvas, type FakeCanvas, type FakeOptions } from './fake-canva
 
 export interface TabDump {
   id: string; kind: string; name: string; open: boolean; view: string; retained: boolean; path: string; state: string
-  reg: { state: string; instance: string; origin: string | null; port: number; slot: number | null } | null
+  reg: { state: string; instance: string; origin: string | null; port: number; slot: number | null; ws?: string } | null
   doc: { gen: number; url: string; trusted: boolean; doc?: string; commits: number; shown: boolean; lifted?: boolean } | null
   reports: { safety: string; busy?: { busy: boolean; unsaved: boolean; why: string[] } }
   crash: { count: number; latched: boolean; inFlight?: string | false; pendingShow?: boolean }

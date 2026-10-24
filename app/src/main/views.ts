@@ -49,9 +49,9 @@ import { buildNow, HELP_URL, invalidateMenu, startMenu, type MenuModel, type Men
 import { crashReloaded, currentPill, onPillAction, setCondition, setPillPorts } from './pill.ts'
 import {
   activate, activeTab, allTabs, applyRestore, canvasOrder, closeTab, cycleFrom, displayState, forDigit, getTab, guard,
-  guardAll, hasBridge, hashOnly, isActive, keyOf, liveDoc, onCommit, onDocumentGone, onFail, onInPage, onRegistry, onReport, onUnloaded, openSettingsTab,
+  guardAll, hasBridge, hashOnly, isActive, keyOf, linkOpens, liveDoc, onCommit, onDocumentGone, onFail, onInPage, onRegistry, onReport, onUnloaded, openSettingsTab,
   ordered, parseTabsFile, reopenTab, restorePlan, safePath, savedPathIn, setTabsPorts, sheetBox, sheetConfirmed, sheetText, snapshotFile, startReopen, tabName,
-  viewlessAct, type GuardAction, type GuardAnswer, type Sheet, type Tab, type TabsFile,
+  unloadClosing, viewlessAct, type GuardAction, type GuardAnswer, type Sheet, type Tab, type TabsFile,
 } from './tabs.ts'
 import {
   copyDetails, forgetTab, hangDecision, hangSheetText, onAttemptFailed, onLifted, onShown, onViewClosed, personReload, recover,
@@ -67,6 +67,7 @@ import { commitLayout } from './layout.ts'
 import { answer as presentAnswer, forget as presentForget, gpuGone, noteGpu } from './present.ts'
 import { gpuIdentity, recorder, sampler } from './recorder.ts'
 import { lastPressure } from './pressure.ts'
+import { actUnload as unloadAct, takeAct, unloadGone as actGone, type ActPorts } from './unload-act.ts'
 
 export const PRELOAD_CANVAS = join(__dirname, 'preload-canvas.cjs')
 
@@ -92,6 +93,8 @@ export interface TrustPort {
   menuClick(tabId: string, id: string): boolean
   /** the tab's next `mv:doc` answers `{ reopen: true }`, once (`recover`'s reload, A2.14 #9) */
   reopenNext(tabId: string): void
+  /** A3: that flag taken back, if no document has taken it yet: a link opened into a tab whose reopen was under way (A3.8 #42) */
+  reopenCancel?(tabId: string): void
   /** what answers on a failed tab's address (v1.14 r3 #4); views.ts probes by itself without it */
   probe?(t: Tab): Promise<'silent' | 'answers' | 'proved'>
   /**
@@ -211,10 +214,14 @@ function wireCanvas(t: Tab, view: WebContentsView): void {
   const nav = trust.attach(wc, t)
   const off = nav.on((e) => onNav(t, wc, e))
   canvases.set(t.id, { view, nav, off })
-  wc.on('did-navigate-in-page', (_e, url, isMain) => { if (isMain) onInPage(t, url) })
+  // the tab's view still: a webContents the unload's backstop took out without its destroyed (unload-act.ts) says
+  // nothing more to the tab - no crash counted, no hang, no sound or DevTools on a tab that has none
+  const mine = () => canvases.get(t.id)?.view === view
+  wc.on('did-navigate-in-page', (_e, url, isMain) => { if (isMain && mine()) onInPage(t, url) })
   wc.on('render-process-gone', (_e, d) => {
+    if (!mine()) return
     // an unload's own end, or a crash while it closes: ours, counting nothing, the tab ends unloaded (A3.8 #39, #44)
-    if (unloadGone(t, wc, d)) return
+    if (unloadGone(t, d)) return
     const app = !!t.appEnding
     j('gone', { tab: t.id, reason: d.reason, app })
     recorder.processGone(t, d, app)
@@ -222,15 +229,15 @@ function wireCanvas(t: Tab, view: WebContentsView): void {
     recover(t, app ? { kind: 'app' } : { kind: 'crash', reason: d.reason, exitCode: d.exitCode })
     compose()
   })
-  wc.on('unresponsive', () => onUnresponsive(t, wc))
-  wc.on('responsive', () => { t.hung = false; clearHang(t); j('hang', { tab: t.id, responsive: true }); compose() })
+  wc.on('unresponsive', () => { if (mine()) onUnresponsive(t, wc) })
+  wc.on('responsive', () => { if (!mine()) return; t.hung = false; clearHang(t); j('hang', { tab: t.id, responsive: true }); compose() })
   // HTML fullscreen stays in its view (disableHtmlFullscreenWindowResize); from A3 layout.ts places it below the strip
-  wc.on('enter-html-full-screen', () => { j('fullscreen', { tab: t.id, html: true }); commitLayout(t, { kind: 'html-fullscreen', on: true }); compose() })
-  wc.on('leave-html-full-screen', () => { j('fullscreen', { tab: t.id, html: false }); commitLayout(t, { kind: 'html-fullscreen', on: false }); compose() })
+  wc.on('enter-html-full-screen', () => { if (!mine()) return; j('fullscreen', { tab: t.id, html: true }); commitLayout(t, { kind: 'html-fullscreen', on: true }); compose() })
+  wc.on('leave-html-full-screen', () => { if (!mine()) return; j('fullscreen', { tab: t.id, html: false }); commitLayout(t, { kind: 'html-fullscreen', on: false }); compose() })
   // what an unload's admission reads (A3.8 #40): a page playing sound, DevTools open
-  wc.on('audio-state-changed', (e) => { t.audible = e.audible })
-  wc.on('devtools-opened', () => { t.devtools = true })
-  wc.on('devtools-closed', () => { t.devtools = false })
+  wc.on('audio-state-changed', (e) => { if (mine()) t.audible = e.audible })
+  wc.on('devtools-opened', () => { if (mine()) t.devtools = true })
+  wc.on('devtools-closed', () => { if (mine()) t.devtools = false })
   wc.on('destroyed', () => forgetCanvas(t, view))
   keys(wc)
   track(wc, { part: 'content', tab: t.id })
@@ -250,16 +257,17 @@ function forgetCanvas(t: Tab, view: WebContentsView): void {
   t.audible = false
   t.devtools = false
   t.loading = false
-  const act = unloadActs.get(t.id)
-  unloadActs.delete(t.id)
+  const act = takeAct(t.id)
   if (getTab(t.id)) {
     // an unload's close ended at destroyed: the tab is unloaded, never crashed nor documentless (A3.8 #39); the
     // crash latch's clearing (onViewClosed) is never reached by an unload (A3.8 #44)
     if (t.unload && (t.unload.phase === 'closing' || t.unload.phase === 'unsure')) {
       // close() need not end the renderer with a render-process-gone: the unload writes its own `gone`, ours, unless
-      // the renderer's own went while it closed (A3.8 #9)
-      if (!act?.gone) record('gone', t, { role: 'canvas', pid: act?.pid ?? 0, born: act?.born ?? 0, reason: 'unload', exitCode: 0, ours: true, source: 'unload', pressure: lastPressure()?.level ?? null })
-      j('gone', { tab: t.id, reason: 'unload', ours: true, source: 'unload' })
+      // the renderer's own went while it closed (A3.8 #9) - one `gone` for each unload, the journal's too
+      if (!act?.gone) {
+        record('gone', t, { role: 'canvas', pid: act?.pid ?? 0, born: act?.born ?? 0, reason: 'unload', exitCode: 0, ours: true, source: 'unload', pressure: lastPressure()?.level ?? null })
+        j('gone', { tab: t.id, reason: 'unload', ours: true, source: 'unload' })
+      }
       onUnloaded(t)
     } else { onDocumentGone(t, 'none'); onViewClosed(t) }
   }
@@ -413,10 +421,12 @@ function act(t: Tab, a: GuardAction): Promise<GuardAnswer> {
       settled = true
       clearTimeout(timer)
       wc.off('will-prevent-unload', onPrevent)
-      if (!wc.isDestroyed()) wc.off('did-start-navigation', onStart)
+      // a refused close leaves its page kept: its destroyed listener goes too, or each refusal adds one more
+      if (!wc.isDestroyed()) { wc.off('did-start-navigation', onStart); wc.off('destroyed', onDestroyed) }
       j('act', { tab: t.id, action: a.kind, answer: r, why })
       resolve(r)
     }
+    const onDestroyed = () => done('done', 'destroyed')
     // never preventDefault: the page's refusal stands (r2 #4: a best-effort extra veto)
     const onPrevent = () => done('refused', 'will-prevent-unload')
     // the act happened when the new document's navigation starts. A same-document start is the page's own hash or
@@ -431,7 +441,7 @@ function act(t: Tab, a: GuardAction): Promise<GuardAnswer> {
     // Chromium goes on past a renderer that does not answer in time: the outcome comes as one of these events
     const timer = setTimeout(() => done('refused', 'timeout'), T.guardActMs)
     if (closeLike(a)) {
-      wc.once('destroyed', () => done('done', 'destroyed'))
+      wc.once('destroyed', onDestroyed)
       wc.close({ waitForBeforeUnload: true })
       return
     }
@@ -446,76 +456,32 @@ function act(t: Tab, a: GuardAction): Promise<GuardAnswer> {
   })
 }
 
-// ---- the unload's act (A2.6, A3.8 #39, #42, #43) -------------------------------------------------------------------
+// ---- the unload's act (A2.6, A3.8 #39, #42, #43): unload-act.ts, on this webContents ---------------------------------
 
-/** Each unload's close under way: its renderer (for its own `gone`), whether main ended the close itself, whether the renderer went. */
-const unloadActs = new Map<string, { plain: boolean; gone: boolean; pid?: number; born?: number }>()
+/** The unload act's ports: the journal, its unsure record, and its backstop's forgetCanvas. */
+const actPorts: ActPorts = {
+  log: (topic, data) => j(topic, data),
+  unsure: (t, a) => record('unload', t, { phase: 'unsure', reason: a.reason }),
+  forget: (t) => { const c = canvases.get(t.id); if (c) forgetCanvas(t, c.view) },
+}
 
-/**
- * `act(t, { kind: 'unload' })`: `close({ waitForBeforeUnload: true })`, owning the tab until `destroyed` (the tab
- * unloaded, forgetCanvas -> onUnloaded) or the page's refusal (`will-prevent-unload`, never prevented: kept). Past
- * `unloadActMs` with neither, `unsure`: main ends the close with a plain `close()` - what Chromium does to a page
- * that does not answer its beforeunload in time (A3.8 #40's veto) - and then only `destroyed` ends it; a refusal
- * after that is journaled and changes nothing. No timer releases the tab: Electron cannot cancel a close (r1 #2).
- * Never `forcefullyCrashRenderer()`: a renderer shared with another tab lives on, and a close ends only this tab's frames.
- */
+/** `act(t, { kind: 'unload' })` (unload-act.ts): its renderer read first, for the unload's own `gone`. */
 function actUnload(t: Tab, wc: WebContents, a: Extract<GuardAction, { kind: 'unload' }>): Promise<GuardAnswer> {
   const pid = safely(() => wc.getOSProcessId())
   const born = pid ? safely(() => app.getAppMetrics().find((m) => m.pid === pid)?.creationTime) : undefined
-  const st = { plain: false, gone: false, ...(pid ? { pid } : {}), ...(born !== undefined ? { born } : {}) }
-  unloadActs.set(t.id, st)
-  j('act', { tab: t.id, action: a.kind, reason: a.reason, pid: pid ?? null })
-  return new Promise<GuardAnswer>((resolve) => {
-    let settled = false
-    const done = (r: GuardAnswer, why: string) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      if (!wc.isDestroyed()) wc.off('will-prevent-unload', onPrevent)
-      if (r === 'refused') unloadActs.delete(t.id)
-      j('act', { tab: t.id, action: a.kind, answer: r, why })
-      resolve(r)
-    }
-    const onPrevent = () => {
-      if (st.plain) { j('unload', { tab: t.id, lateRefusal: true }); return }
-      done('refused', 'will-prevent-unload')
-    }
-    wc.on('will-prevent-unload', onPrevent)
-    // forgetCanvas (registered first, in wireCanvas) has made the tab unloaded by the time this runs
-    wc.once('destroyed', () => done('done', 'destroyed'))
-    const timer = setTimeout(() => {
-      if (settled) return
-      if (t.unload?.phase === 'closing') t.unload.phase = 'unsure'
-      j('unload', { tab: t.id, phase: 'unsure' })
-      record('unload', t, { phase: 'unsure', reason: a.reason })
-      endClose(t, wc)
-    }, T.unloadActMs)
-    wc.close({ waitForBeforeUnload: true })
-  })
-}
-
-/** Main ends an unload's close itself, asking nothing: Electron 45's plain close() destroys the webContents (on a posted task). */
-function endClose(t: Tab, wc: WebContents): void {
-  const st = unloadActs.get(t.id)
-  if (st) st.plain = true
-  if (!wc.isDestroyed()) wc.close()
+  return unloadAct(t, wc, a, actPorts, { ...(pid ? { pid } : {}), ...(born !== undefined ? { born } : {}) })
 }
 
 /**
- * A render-process-gone while an unload closes the tab (A3.8 #39, #44): ours - the document is gone either way and
- * reopens when shown - counting nothing; the close is finished without asking, and `destroyed` ends the unload.
- * True when it was one.
+ * A render-process-gone while an unload closes the tab (A3.8 #39, #44): ours, counting nothing, handed to the
+ * recorder as its one `gone` (forgetCanvas writes none of its own then); unload-act.ts finishes the close. True when
+ * it was one.
  */
-function unloadGone(t: Tab, wc: WebContents, d: Electron.RenderProcessGoneDetails): boolean {
-  const u = t.unload
-  const st = unloadActs.get(t.id)
-  if (!u || (u.phase !== 'closing' && u.phase !== 'unsure') || !st) return false
-  st.gone = true
-  st.plain = true   // nothing left to ask: a refusal can no longer come
+function unloadGone(t: Tab, d: Electron.RenderProcessGoneDetails): boolean {
+  if (!actGone(t)) return false
   j('gone', { tab: t.id, reason: d.reason, ours: true, source: 'unload' })
   recorder.processGone(t, d, true)
   clearHang(t)
-  setImmediate(() => endClose(t, wc))
   compose()
   return true
 }
@@ -778,14 +744,19 @@ export async function openInTab(e: LinkTarget, url: string | null, rest: string)
   }
   if (!t.open) reopenTab(t.id)
   if (!url || !liveDoc(t)) {
-    // nothing to replace: the tab goes to the link's board when it loads (at ready for a starting canvas)
+    // nothing to replace: the tab goes to the link's board when it loads (at ready for a starting canvas). An
+    // unloaded tab's load is then a plain one, not its reopen: the link opens on what it names, never under the
+    // saved camera (A3.8 #42); a reopen already sent has its mv:doc flag taken back
+    if (linkOpens(t)) trust.reopenCancel?.(t.id)
     t.path = path
     if (contentView(t.id)) t.needsLoad = true
     activate(t.id)
     return { ok: true }
   }
   const wc = contentView(t.id)?.webContents
-  if (wc && !wc.isDestroyed() && hashOnly(wc.getURL(), url)) {
+  // a page an unload is closing is never navigated: the link waits for the close through the guard, which then
+  // loads it on a tab with no document (A3.8 #42)
+  if (wc && !wc.isDestroyed() && !unloadClosing(t) && hashOnly(wc.getURL(), url)) {
     // only the hash changes: the same document, its trust kept - no question asked
     activate(t.id)
     j('link', { tab: t.id, hashOnly: true })
@@ -806,7 +777,7 @@ export function openSameCanvas(webContentsId: number, url: string): void {
   if (!t || t.kind !== 'local') return
   activate(t.id)
   const wc = contentView(t.id)?.webContents
-  if (wc && !wc.isDestroyed() && hashOnly(wc.getURL(), url)) { j('link', { tab: t.id, hashOnly: true }); void wc.loadURL(url).catch(() => {}); return }
+  if (wc && !wc.isDestroyed() && !unloadClosing(t) && hashOnly(wc.getURL(), url)) { j('link', { tab: t.id, hashOnly: true }); void wc.loadURL(url).catch(() => {}); return }
   void guard(t, { kind: 'load', url })
 }
 
@@ -1292,7 +1263,7 @@ function ensureAppViews(): void {
 function tabDump(t: Tab) {
   return {
     id: t.id, kind: t.kind, name: tabName(t), open: t.open, view: t.view, retained: t.retained, path: t.path,
-    state: displayState(t, t === activeTab()), reg: t.reg ? { state: t.reg.state, instance: t.reg.instance, origin: t.reg.origin, port: t.reg.port, slot: t.reg.slot } : null,
+    state: displayState(t, t === activeTab()), reg: t.reg ? { state: t.reg.state, instance: t.reg.instance, origin: t.reg.origin, port: t.reg.port, slot: t.reg.slot, ws: t.reg.ws } : null,
     doc: t.doc ? { ...t.doc } : null, reports: { ...t.reports }, crash: { ...t.crash }, fail: t.fail ?? null, probe: t.probe ?? null,
     hung: !!t.hung, held: t.held ?? null, replacing: !!t.replacing, key: keyOf(t), look: t.look ?? null, logo: t.logo ?? null,
     hasView: canvases.has(t.id) || !!contentView(t.id), wcId: contentView(t.id)?.webContents.id ?? null, pageView: !!pageView(t.id),

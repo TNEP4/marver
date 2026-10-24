@@ -80,11 +80,13 @@ export function pageFor(t: Tab, now: number, home: string = homedir()): PageBody
     return stopped(t.retained, probe)
   }
   // an unload (A3.8 #42, #43): an activation queued while its close is outstanding - over the view, hidden beneath it
-  // in the same turn - then the reopen until its document lifts. A stopped canvas shows stopped ("comes back by itself")
+  // in the same turn - then the reopen until its document lifts. While the close is outstanding a page stands over
+  // the view whatever the canvas does meanwhile (stopped: its stopped page, nothing kept), so the page being closed
+  // never shows or takes a key; once unloaded, a stopped canvas shows stopped ("comes back by itself")
   const u = t.unload
-  if (u && !gone && t.reg!.state === 'ready' && (u.phase !== 'reopening' || !t.doc?.lifted)) {
-    return { ...base, page: 'reopening', since: u.activatedAt ?? t.loadAt ?? now, unloadedAt: u.unloadedAt ?? u.at, cameraKept: u.origin === t.reg!.origin }
-  }
+  const reopening = (): PageBody => ({ ...base, page: 'reopening', since: u!.activatedAt ?? t.loadAt ?? now, unloadedAt: u!.unloadedAt ?? u!.at, cameraKept: u!.origin === t.reg?.origin })
+  if (u && (u.phase === 'closing' || u.phase === 'unsure')) return gone ? stopped(false, NO_PROBE) : reopening()
+  if (u && !gone && t.reg!.state === 'ready' && (u.phase !== 'reopening' || !t.doc?.lifted)) return reopening()
   if (liveDoc(t)) return null                       // a page that is kept gets no tab page (A2.11): the pill speaks
   if (gone) return stopped(false, NO_PROBE)
   if (t.doc?.lifted && t.view === 'live') return null

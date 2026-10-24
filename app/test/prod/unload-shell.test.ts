@@ -4,7 +4,8 @@
  * with its production switches. The camera a person left 150 ms after a zoom - inside the shell's second of quiet -
  * comes back exactly after an unload and its reopen, under a selection link (the 0.27.2 shell writes it as the page
  * hides; without that write it is lost: app-bridge-browser's camera case fails so). An agent at work keeps its tab;
- * its work done, the tab is unloaded at the next tick. The pressure is a sample the case describes (`memory:tick`).
+ * its work done, the tab is unloaded at the next tick. A link into the unloaded tab opens on the frame it names, not
+ * under the saved camera. The pressure is a sample the case describes (`memory:tick`).
  */
 import { execFileSync, spawnSync } from 'node:child_process'
 import { rmSync } from 'node:fs'
@@ -77,11 +78,17 @@ describe('a real shell (A2.10 (A3), A3.8 #43)', () => {
     await waitIn(onB)
     await w.until((s) => tab(s, id).path === '/#/b/b?n=n-two', 5000, 'the selection link in the path')
     await idle()
+    const zoomAt = Date.now()
     await exec(`__mvJamCanvas.zoomTo(1.37); 1`)
     await sleep(250 + 150)   // landed, then 150 ms: the shell's own write is still most of a second away
     const left = await camera()
     expect(left.s).toBeCloseTo(1.37, 2)
     await w.run.call('activate', { id: 'home' })
+    // the hide wrote it, read back through the hidden page inside the shell's second of quiet - before its own
+    // debounced write could have come: so it is the 0.27.2 write at the hide that keeps it, nothing slower
+    const stored = await exec<{ x: number; y: number; scale: number } | null>(`(() => { const k = Object.keys(localStorage).find((x) => x.startsWith('mv-camera:') && x.endsWith(':b')); return k ? JSON.parse(localStorage.getItem(k)) : null })()`)
+    expect(Date.now() - zoomAt).toBeLessThan(1000)
+    expect(stored?.scale).toBeCloseTo(left.s, 2)
     await sleep(HIDDEN)
     await idle()
     expect((await tick({ level: 4 })).unload.map((u) => u.id)).toEqual([id])
@@ -115,5 +122,26 @@ describe('a real shell (A2.10 (A3), A3.8 #43)', () => {
     await idle()
     expect((await tick({ level: 4 })).unload.map((u) => u.id)).toEqual([id])
     await w.until((s) => tab(s, id).view === 'unloaded', 10_000, 'unloaded')
+  }, 120_000)
+
+  it('a link into the unloaded tab opens on what it names: the frame it selects fitted, never the camera the tab was left at', async () => {
+    // the cases above left it unloaded on board b, its camera at 1.37 on n-two: a link to n-one on that board
+    const t = await w.tab(id)
+    expect(t.view).toBe('unloaded')
+    const entry = { state: 'ready', origin: t.reg!.origin, port: t.reg!.port, ws: t.reg!.ws, name: 'Unload canvas' }
+    expect(await w.run.call('openInTab', { entry, url: `${t.reg!.origin}/#/b/b?n=n-one`, rest: '/#/b/b?n=n-one' })).toEqual({ ok: true })
+    await w.until((s) => !!tab(s, id).doc?.lifted && tab(s, id).doc!.trusted && tab(s, id).unload == null, 30_000, 'the link loaded')
+    await waitIn(onB)
+    expect(await exec('window.marverApp.reopen')).toBe(false)
+    expect((await w.tab(id)).path).toBe('/#/b/b?n=n-one')
+    await sleep(400)   // the fit's flight
+    expect(await exec('__mvStore.getState().selection')).toEqual(['n-one'])
+    // n-one spans 0..390 by 0..844 on the board; the camera left on n-two looks near (1795, 1322)
+    const v = await exec<{ x: number; y: number; w: number; h: number }>('__mvJamCanvas.view()')
+    const centre = { x: v.x + v.w / 2, y: v.y + v.h / 2 }
+    expect(centre.x).toBeGreaterThan(0)
+    expect(centre.x).toBeLessThan(390)
+    expect(centre.y).toBeGreaterThan(0)
+    expect(centre.y).toBeLessThan(844)
   }, 120_000)
 })
