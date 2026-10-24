@@ -217,7 +217,10 @@ function anyLingering(): boolean {
 /** Why the driver stops before its script's end: the client went away (the one cancel), the page stopped answering,
  *  or the run drove past `runMs`. */
 export type HaltWhy = 'cancelled' | 'unresponsive' | 'overrun'
-export class Halt extends Error { constructor(readonly why: HaltWhy) { super(why) } }
+export class Halt extends Error {
+  readonly why: HaltWhy
+  constructor(why: HaltWhy) { super(why); this.why = why }
+}
 /** A browser-level call that never answered: the browser is gone, a crash. */
 class BrowserSilent extends Error {}
 /** A promise given `ms` to settle, else rejected with `what` (a browser-level call: one that never answers is a crash). */
