@@ -16,14 +16,14 @@ import { admissionIdle, onAdmissionIdle } from './canvas/admission.ts'
 import { canvasCtl } from './canvas/ctl.ts'
 import { bootOf, iframeOf } from './canvas/frame-registry.ts'
 import { adopt, bound, fitWithin, KEEPALIVE_BYTES, LOAD_MAX_MS, newId, Outbox, outcomeOf, QUIET_MS, SEND_MS, stackLines, type Kind, type Outcome, type PerfRecord, type Track } from './recorder-core.ts'
+import { displayHz } from './app-perf.ts'
 
 /** This document, in every record (and, in the app, in its hello: the app's records about this tab carry it). */
 export const PAGE_ID = newId()
 
 type State = ReturnType<typeof useStore.getState>
 type View = { x: number; y: number; w: number; h: number }
-/** `hz`: the display's rate the Mac app told the shell (spec 28 A3.8 #9), only there */
-type Gesture = { type: 'pan' | 'zoom' | 'layout'; ms: number; frames: number; p50: number; p95: number; max: number; over17ms: number; over33ms: number; longFrames: number; hz?: number }
+type Gesture = { type: 'pan' | 'zoom' | 'layout'; ms: number; frames: number; p50: number; p95: number; max: number; over17ms: number; over33ms: number; longFrames: number }
 
 interface Load {
   id: string; board: string; cause: LoadCause; t0: number
@@ -557,7 +557,7 @@ export const recorder = {
     rec('visible', L.id, { nodes: L.cohort.size, ms: Math.round(performance.now() - L.t0) })
   }),
   /** A pan, zoom or layout animation ended (perf.ts). */
-  gesture: guard((g: Gesture) => { rec('gesture', ownerId(), g); settleSoon() }),
+  gesture: guard((g: Gesture) => { rec('gesture', ownerId(), { ...g, hz: displayHz() ?? undefined }); settleSoon() }),
   /** An error the shell saw: its own (window, ShellBoundary) or the play stage's. A shell error goes out at once. */
   error: guard((e: { source: 'shell' | 'stage'; message: unknown; stack?: unknown; component?: string }) => {
     logError(e)

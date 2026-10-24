@@ -12,7 +12,7 @@
  * perfMark(name) + counters are the plug points later stages use (blank-frame / warm-latency).
  */
 import { onMotion, type Motion } from './canvas/camera-broadcast.ts'
-import { displayHz, gestureOff, gestureOn } from './app-perf.ts'
+import { gestureOff, gestureOn } from './app-perf.ts'
 import { recorder } from './recorder.ts'
 import { gestureStats } from './recorder-core.ts'
 
@@ -73,9 +73,7 @@ function end() {
   for (const d of run.dts) { frames.push(d); if (frames.length > MAX) frames.shift() }
   for (const d of run.longs) { longs.push(d); if (longs.length > MAX) longs.shift() }
   if (run.dts.length < 2) return   // a press that never moved the camera
-  // in the Mac app, the display's rate main said: "p50 33 ms" reads otherwise on a 60 Hz display (A1.7, A3.8 #9)
-  const hz = displayHz()
-  recorder.gesture({ type: run.pan ? 'pan' : run.zoom ? 'zoom' : 'layout', ms: Math.round(t1 - run.t0), ...gestureStats(run.dts, run.longs.length), ...(hz !== null ? { hz } : {}) })
+  recorder.gesture({ type: run.pan ? 'pan' : run.zoom ? 'zoom' : 'layout', ms: Math.round(t1 - run.t0), ...gestureStats(run.dts, run.longs.length) })
 }
 
 /** One-shot event later stages record (e.g. a blank frame, or warm-promotion latency). */

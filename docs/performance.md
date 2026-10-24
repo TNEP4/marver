@@ -293,7 +293,7 @@ strings cut to 200 characters, 512 KB a request - and appends them to `page.json
 | `--flashes` | the flashes marked in the Mac app, and the white-out candidates (below) |
 | `--machine` | the machine profiles (below) |
 | `--all` | with `--flashes`: also the marks on other canvases or on Home |
-| `--days <n>` | how far back `--crashes`, `--flashes` and `--machine` read: 14 by default |
+| `--days <n>` | how far back `--runs`, `--crashes`, `--flashes` and `--machine` read: 14 by default |
 | `--json` | machine-readable |
 | `--minutes <n>` | how far back to read: 60 by default (24 h with `--jam`) |
 | `--root <dir>` | the project (default: here) |

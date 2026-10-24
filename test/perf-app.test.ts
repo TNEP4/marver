@@ -210,11 +210,11 @@ describe('the page half beside the app\'s', () => {
     expect(j.loads.map((l: { page: string }) => l.page)).toEqual([P1, P2])
     out.length = 0
     perfCommand(root, { loads: true })
-    expect(out.join('\n')).toMatch(/1 headless run load not shown: marver perf --runs/)
+    expect(out.join('\n')).toMatch(/1 headless run load not shown: npx marver perf --runs/)
     // plain perf hides them too, and says so (its --json counts them)
     out.length = 0
     perfCommand(root, {})
-    expect(out.join('\n')).toMatch(/board loads: 2 .*\n\(1 headless run load not shown: marver perf --runs\)/)
+    expect(out.join('\n')).toMatch(/board loads: 2 .*\n\(1 headless run load not shown: npx marver perf --runs\)/)
     out.length = 0
     perfCommand(root, { json: true })
     const plain = JSON.parse(out.join('\n'))

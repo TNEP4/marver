@@ -16,8 +16,10 @@ import { crashesSummary, flashesSummary, machineSummary, readAppLog, repoWorkspa
 
 export interface PerfOptions {
   minutes?: number; json?: boolean; jam?: boolean; loads?: boolean
-  /** the Mac app's records (spec 28 A3.5): 14 days by default (`days`) */
-  crashes?: boolean; flashes?: boolean; machine?: boolean; all?: boolean; days?: number
+  /** the headless runs (spec 28 A3.4, the headless stream's `--runs`, `--against`) */
+  runs?: boolean; against?: string
+  /** the Mac app's records (spec 28 A3.5): 14 days by default (`days`, which `--runs` reads too) */
+  crashes?: boolean; flashes?: boolean; machine?: boolean; all?: boolean; days?: number | string
 }
 
 export function perfCommand(root: string, opts: PerfOptions): void {
@@ -29,7 +31,7 @@ export function perfCommand(root: string, opts: PerfOptions): void {
   const minutes = Number(opts.minutes) > 0 ? Number(opts.minutes) : 60
   const since = Date.now() - minutes * 60_000
   const log = readReloads(root, since)
-  const { records: pageRecords, runLoads } = withoutRuns(readPage(root, since))
+  const { records: pageRecords, runLoads } = ownLoads(readPage(root, since))
   const loads = loadsSummary(pageRecords)
   const files = new Map<string, { edits: number; reload: Set<string>; inPlace: Set<string> }>()
   for (const e of log) if (e.kind === 'update') {
@@ -65,7 +67,7 @@ export function perfCommand(root: string, opts: PerfOptions): void {
     for (const s of slow) console.log(`  ${s.frame}  ${s.ms} ms`)
   }
   if (loads.length || runLoads) console.log(`\nboard loads: ${loads.length}  (--loads: each in full)`)
-  if (runLoads) console.log(`(${runLoads} headless run load${runLoads === 1 ? '' : 's'} not shown: marver perf --runs)`)
+  if (runLoads) console.log(`(${runLoads} headless run load${runLoads === 1 ? '' : 's'} not shown: npx marver perf --runs)`)
   if (loads.length) {
     const name = namer(root)
     const w = Math.max(...loads.map((l) => name(l.board).length))
@@ -244,27 +246,24 @@ function endOf(l: LoadSummary): string {
   return 'not settled yet'
 }
 
-/** A headless run's records (the server stamps `run`, spec 28 A3.8 #17) apart from the canvas's own: `--loads` shows these, `--runs` those. */
-export function withoutRuns(records: Record<string, any>[]): { records: Record<string, any>[]; runLoads: number } {
+/** A page's records without a headless run's (spec 28 A3.8 #17: the server stamps them `run`; `--runs` is theirs),
+ *  and how many run loads that hid. */
+export function ownLoads(records: Record<string, any>[]): { records: Record<string, any>[]; runLoads: number } {
   const loads = new Set<string>()
-  const records2 = records.filter((r) => {
-    if (typeof r.run !== 'string') return true
-    if (r.kind === 'load') loads.add(`${r.ws}/${r.page}/${r.load}`)
-    return false
-  })
-  return { records: records2, runLoads: loads.size }
+  const own = records.filter((r) => { if (typeof r.run !== 'string') return true; if (r.kind === 'load') loads.add(`${r.ws}/${r.page}/${r.load}`); return false })
+  return { records: own, runLoads: loads.size }
 }
 
 /** `marver perf --loads` (spec 28 A1.8): each board load in full, from design/.local/perf/page.jsonl. */
 function loadsPerf(root: string, opts: { minutes?: number; json?: boolean }) {
   const minutes = Number(opts.minutes) > 0 ? Number(opts.minutes) : 60
-  const { records, runLoads } = withoutRuns(readPage(root, Date.now() - minutes * 60_000))
+  const { records, runLoads } = ownLoads(readPage(root, Date.now() - minutes * 60_000))
   const loads = loadsSummary(records)
   const dropped = droppedOf(records)
   if (opts.json) { console.log(JSON.stringify({ minutes, loads, unowned: unownedOf(records), dropped, runLoads }, null, 2)); return }
   console.log(`board loads, last ${minutes} min - design/.local/perf/page.jsonl`)
-  if (runLoads) console.log(`(${runLoads} headless run load${runLoads === 1 ? '' : 's'} not shown: marver perf --runs)`)
-  if (!loads.length) { console.log('\nnothing yet - open a board in the canvas'); return }
+  const hidden = runLoads ? `${runLoads} headless run load${runLoads === 1 ? '' : 's'} not shown: npx marver perf --runs` : ''
+  if (!loads.length) { console.log(`\nnothing yet - open a board in the canvas${hidden ? `\n  ${hidden}` : ''}`); return }
   const t = (ts: number) => new Date(ts).toLocaleTimeString()
   const list = (r: Ranked) => r.map(([k, n]) => `${k} ${n}`).join(', ')
   const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
@@ -302,6 +301,7 @@ function loadsPerf(root: string, opts: { minutes?: number; json?: boolean }) {
     if (l.gestures) console.log(`    ${plural(l.gestures.n, 'gesture')} · worst p95 ${l.gestures.worstP95} ms · ${plural(l.gestures.over33ms, 'frame')} over 33 ms`)
   }
   if (dropped) console.log(`\n  ${plural(dropped, 'record')} never reached this log: a page's queue was full, or its sends failed`)
+  if (hidden) console.log(`\n  ${hidden}`)
 }
 
 /** Count, median, p90 and max of a list of ms. */
@@ -378,7 +378,7 @@ function appInputs(root: string, opts: PerfOptions) {
   const days = Number(opts.days) > 0 ? Math.min(90, Number(opts.days)) : 14
   const since = Date.now() - days * 86_400_000
   const home = marverHome()
-  const page = withoutRuns(readPage(root, since)).records
+  const page = ownLoads(readPage(root, since)).records
   return { days, since, home, page, app: readAppLog(home, since), workspaces: repoWorkspaces(root, page) }
 }
 const when = (ts: number) => new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })

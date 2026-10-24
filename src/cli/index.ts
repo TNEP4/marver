@@ -311,7 +311,7 @@ cli
   .option('--flashes', 'The flashes marked in the Mac app (⌃⌥F) on this repo\'s canvases: the board, the gesture ending within 2 s, GPU process events, pressure, the GPU figures and the picture\'s path; the white-out detector\'s candidates apart, automatic and not verified')
   .option('--machine', 'The machine profiles the Mac app and headless runs wrote (~/.marver/perf/machine), by host, which is current, and how many records and runs name each')
   .option('--all', 'With --flashes: also the marks made on other canvases or on Home')
-  .option('--days <n>', 'How far back --crashes, --flashes and --machine read (default 14)')
+  .option('--days <n>', 'How far back --runs, --crashes, --flashes and --machine read (default 14)')
   .option('--json', 'Machine-readable output')
   .action(async (opts) => {
     const { perfCommand } = await import('./perf.ts')
