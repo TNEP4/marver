@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest'
 import type { CpuPass } from '../harness/outside.ts'
 import { cpuWindow } from '../harness/outside.ts'
-import { churn, crossCheck, releaseEvidence } from '../budgets/evidence.ts'
+import { churn, cpuGate, crossCheck, releaseEvidence } from '../budgets/evidence.ts'
 
 const APP = 'a1b2c3d4e5f6'
 const MIN = 60_000
@@ -142,5 +142,43 @@ describe('the window\'s figure (r3 #2; review minors #9, #18)', () => {
     expect(churn([s(1, 2), s(1, 2, 9), s(1, 2)])).toEqual({ started: [9], ended: [9] })
     expect(churn([s(1, 2), s(1), s(1, 3)])).toEqual({ started: [3], ended: [2] })
     expect(churn([s(1)])).toEqual({ started: [], ended: [] })
+  })
+})
+
+describe('the gate\'s verdict: the recorder\'s log and its agreement, or no verdict (code review r1 #3)', () => {
+  const a = pass(0, 1.0, [[200, 5, 10], [201, 5, 2]])
+  const b = pass(300_000, 1.3, [[200, 5, 40], [201, 5, 2.3]])
+  const canvasOf = (pid: number) => pid === 200
+  const rec = [{ pid: 100, born: 1000, seconds: 0.24, spanS: 240 }, { pid: 201, born: 5000, seconds: 0.24, spanS: 240 }]
+  const win = cpuWindow(a, b, canvasOf)
+  const agree = crossCheck(a, b, rec, canvasOf)
+
+  it('invalid recorder evidence - a seq gap, a canvas reloaded inside the window, no sample line - is inconclusive in either flavour, never a pass on a test hook', () => {
+    const gap = releaseEvidence(log().filter((l) => l.seq !== 5) as never, FROM, TO, 'release')
+    const reload = ev(log((s) => [tab(s, T + 3 * MIN, 't1', 4)]))
+    const devGap = releaseEvidence(log().filter((l) => l.seq !== 5).map((l) => ({ ...l, flavour: 'dev' })) as never, FROM, TO, 'dev')
+    for (const e of [gap, reload, devGap, null]) {
+      // the window's figure under the budget, as the dev build's procs:roles hook would have given it: no matter
+      expect(cpuGate({ ev: e, win, cross: agree, budget: 0.01 })).toMatchObject({ kind: 'inconclusive', why: expect.stringContaining('the recorder\'s log does not prove') })
+    }
+  })
+
+  it('a cross-check not made (no minute line inside the window, nothing joined) is inconclusive, never a pass', () => {
+    const e = ev(log())
+    expect(win.kind).toBe('measured')
+    expect(win.cores).toBeLessThan(0.01)
+    const unchecked = crossCheck(a, b, [], canvasOf)
+    expect(unchecked.kind).toBe('unchecked')
+    expect(cpuGate({ ev: e, win, cross: unchecked, budget: 0.01 })).toMatchObject({ kind: 'inconclusive', why: expect.stringContaining('not checked') })
+    expect(cpuGate({ ev: e, win, cross: null, budget: 0.01 }).kind).toBe('inconclusive')
+  })
+
+  it('whole evidence and the recorder agreeing: the budget decides; disagreeing is the harness\'s error; the window inconclusive stays so', () => {
+    const e = ev(log())
+    expect(agree.kind).toBe('agree')
+    expect(cpuGate({ ev: e, win, cross: agree, budget: 0.01 }).kind).toBe('pass')
+    expect(cpuGate({ ev: e, win, cross: agree, budget: 0.0001 }).kind).toBe('fail')
+    expect(cpuGate({ ev: e, win, cross: { ...agree, kind: 'disagree' }, budget: 0.01 }).kind).toBe('harness-error')
+    expect(cpuGate({ ev: e, win: { ...win, kind: 'inconclusive', why: 'the browser changed' }, cross: agree, budget: 0.01 })).toMatchObject({ kind: 'inconclusive', why: 'the browser changed' })
   })
 })

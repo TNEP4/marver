@@ -240,8 +240,9 @@ binary.
 - **A3's budgets** (`test/budgets/`, every launch on a temporary world with the production switches and Chromium's
   mock keychain; `--app <Marver.app>` for the signed build): `memory.mjs` (two footprint gates, A3.8 #48),
   `hidden-cpu.mjs` (the window hidden, the app's own CPU counted from outside with canvases taken out, A3.8 #49; the
-  release's evidence in `evidence.ts`; `--ballast` makes one hidden canvas burn a third of a core, which must be taken
-  out), `launch-painted.mjs` (spawn to the first painted sentinel frame, A3.8 #50: the sentinel counted only inside
+  canvases named only by the recorder's own log, in either flavour, whole and its figure agreeing with the outside
+  one, else inconclusive - `evidence.ts`; `--ballast` makes one hidden canvas burn a third of a core, which must be
+  taken out), `launch-painted.mjs` (spawn to the first painted sentinel frame, A3.8 #50: the sentinel counted only inside
   the spawned app's window, 44 pt below its top; a clock control on display times first; no gap before the detection
   unless `--gap-refreshes 3`, a narrowing the report states; any launch with a frame past 1.5 s and no sentinel fails
   the gate, conclusive or not; the mock keychain skips the real Safe Storage read, a narrowing the report states -

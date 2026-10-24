@@ -19,9 +19,10 @@
  * one within 0.001 cores or 20 %, else the harness fails as its own error - compared like with like (evidence.ts
  * `crossCheck`): the processes alive at both outside passes, joined by pid and start time, each one's own CPU (no
  * reaped children, no Crashpad handler), against the recorder's minute lines that lie inside the window, the GPU
- * process counted once. The dev build (default; test mode over its control socket, production switches) names the
- * canvases with its procs:roles hook when the recorder has written no sample line - labelled, since a test hook is
- * not the release's evidence; what that hook cannot place is `unknown` and stays the app's.
+ * process counted once. The dev build (default; test mode over its control socket, production switches) is held to
+ * the same: its recorder's own log (app-dev.jsonl), whole, and the agreement - no test hook names its canvases for
+ * the gate (code review r1 #3). Evidence missing or not whole, or a cross-check not made (`unchecked`), is
+ * inconclusive, never a pass (evidence.ts `cpuGate`).
  *
  * Reported, not gated: helpers seen to start or end between any two of the 5 s reads, each canvas renderer's CPU,
  * the probes' spawn time, and (with --scene) Home active with every canvas hidden, or the window minimised.
@@ -36,7 +37,7 @@ import { join, resolve } from 'node:path'
 import { launch, sleep, world } from './launcher.ts'
 import { startFakeCanvas } from '../harness/fake-canvas.ts'
 import { appProcesses, cpuPass, cpuWindow, crashpadOf } from '../harness/outside.ts'
-import { churn, crossCheck, releaseEvidence } from './evidence.ts'
+import { churn, cpuGate, crossCheck, releaseEvidence } from './evidence.ts'
 import { nativeTool, responsibleApp } from '../harness/capture.ts'
 import { parseAppLine } from '../../../src/shared/app-perf.ts'
 
@@ -93,44 +94,37 @@ async function once(attempt) {
     if (fs.some((f) => !f.requests.some((q) => q.path === '/' && q.method === 'GET'))) return { ...res, kind: 'inconclusive', why: 'a canvas was never loaded' }
     await sleep(SETTLE * 1000)
     const handler = await crashpadOf({ database: join(w.home, 'perf', 'crashpad') })
-    const rolesA = drive ? await L.call('procs:roles') : null
     const a = await cpuPass(L.pid, handler, 'start')
     // the 5 s reads: helpers seen to start or end (an idle app should have none)
     const seen = [new Set((await appProcesses(L.pid, { database: join(w.home, 'perf', 'crashpad') })).map((p) => p.pid))]
     const end = Date.now() + MINUTES * 60_000
     while (Date.now() < end) { await sleep(Math.min(5000, end - Date.now())); seen.push(new Set((await appProcesses(L.pid, { database: join(w.home, 'perf', 'crashpad') })).map((p) => p.pid))) }
     const b = await cpuPass(L.pid, handler, 'end')
-    const rolesB = drive ? await L.call('procs:roles') : null
-    // the canvases: the release log, else (dev only) the hook, labelled
-    let lines = appLines(w.home)
-    let ev = null
-    if (lines?.some((l) => l.kind === 'sample')) {
-      const waitEnd = Date.now() + 70_000
-      while (!(ev = evidence(lines, a.at, b.at)).canvas && /after it/.test(ev.why ?? '') && Date.now() < waitEnd) { await sleep(2000); lines = appLines(w.home) }
-    }
-    let canvasOf
-    let rolesFrom
-    if (ev?.canvas) { canvasOf = (pid, startedAt) => ev.canvas.some((c) => c.pid === pid && Math.abs(c.born - startedAt) <= 1000); rolesFrom = 'app.jsonl' }
-    else if (APP) return { ...res, kind: 'inconclusive', why: `the release's log does not prove the roles: ${ev?.why ?? 'no sample line (the recorder wrote none)'}` }
-    else { const c = new Set([...rolesA.canvas, ...rolesB.canvas]); canvasOf = (pid) => c.has(pid); rolesFrom = `the dev build's procs:roles hook (no recorder sample line${ev?.why ? `: ${ev.why}` : ''})` }
+    // the canvases: the recorder's own log only, in either flavour (code review r1 #3) - its sample after the window
+    // waited for, 70 s at most
+    let ev = evidence(appLines(w.home) ?? [], a.at, b.at)
+    const waitEnd = Date.now() + 70_000
+    while (ev.why !== undefined && /after it|no start line/.test(ev.why) && Date.now() < waitEnd) { await sleep(2000); ev = evidence(appLines(w.home) ?? [], a.at, b.at) }
+    if (ev.why !== undefined) return { ...res, ...cpuGate({ ev, budget: BUDGET }) }
+    const canvasOf = (pid, startedAt) => ev.canvas.some((c) => c.pid === pid && Math.abs(c.born - startedAt) <= 1000)
+    const rolesFrom = APP ? 'app.jsonl' : 'app-dev.jsonl'
     const win = cpuWindow(a, b, canvasOf)
     const { started, ended } = churn(seen)
-    const base = { ...res, rolesFrom, minutes: MINUTES, cores: Math.round(win.cores * 1e5) / 1e5, seconds: Math.round(win.seconds * 1000) / 1000, canvases: win.canvases, helpersStarted: started, helpersEnded: ended, passes: { start: a, end: b }, spawnMs: ev?.spawnMs ?? null }
-    if (win.kind === 'inconclusive') return { ...base, kind: 'inconclusive', why: win.why }
+    const base = { ...res, rolesFrom, minutes: MINUTES, cores: Math.round(win.cores * 1e5) / 1e5, seconds: Math.round(win.seconds * 1000) / 1000, canvases: win.canvases, helpersStarted: started, helpersEnded: ended, passes: { start: a, end: b }, spawnMs: ev.spawnMs }
+    if (win.kind === 'inconclusive') return { ...base, ...cpuGate({ ev, win, budget: BUDGET }) }
     if (BALLAST) {
       // the burning canvas must be one of those taken out, and burning: else the check checked nothing
       const burned = Math.max(0, ...win.canvases.map((c) => c.seconds))
       base.ballastSeconds = Math.round(burned * 1000) / 1000
       if (burned < 0.1 * MINUTES * 60) return { ...base, kind: 'inconclusive', why: `the ballast canvas burned ${burned.toFixed(2)} s, not a third of a core: it was not taken out, or did not burn` }
     }
-    // the recorder against the outside reads, like with like: the processes alive through the window, own CPU only
-    if (ev?.canvas) {
-      const x = crossCheck(a, b, ev.recorder, canvasOf)
-      const r5 = (v) => Math.round(v * 1e5) / 1e5
-      base.recorderCheck = { ...x, outsideCores: r5(x.outsideCores), recorderCores: r5(x.recorderCores), minutes: ev.minutes }
-      if (x.kind === 'disagree') return { ...base, kind: 'harness-error', why: `the recorder's figure ${x.recorderCores.toFixed(5)} and the outside one ${x.outsideCores.toFixed(5)} for the same ${x.joined} processes disagree: the recorder is broken (it cannot pass itself)` }
-    } else base.recorderCheck = { kind: 'unchecked', why: 'no recorder sample lines' }
-    return { ...base, kind: win.cores < BUDGET ? 'pass' : 'fail' }
+    // the recorder against the outside reads, like with like: the processes alive through the window, own CPU only;
+    // the gate is decided only once they agree
+    const x = crossCheck(a, b, ev.recorder, canvasOf)
+    const r5 = (v) => Math.round(v * 1e5) / 1e5
+    base.recorderCheck = { ...x, outsideCores: r5(x.outsideCores), recorderCores: r5(x.recorderCores), minutes: ev.minutes }
+    const g = cpuGate({ ev, win, cross: x, budget: BUDGET })
+    return { ...base, kind: g.kind, ...(g.why ? { why: g.why } : {}) }
   } finally { await L.stop(); for (const f of fs) await f.close(); w.release() }
 }
 

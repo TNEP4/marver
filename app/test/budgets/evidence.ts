@@ -10,7 +10,7 @@
  * cross-check against the outside one (`crossCheck`).
  */
 import type { AppRecord } from '../../../src/shared/app-perf.ts'
-import type { CpuPass, CpuRead } from '../harness/outside.ts'
+import type { CpuPass, CpuRead, CpuWindow } from '../harness/outside.ts'
 
 type Line = AppRecord & Record<string, any>   // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -135,4 +135,24 @@ export function churn(seen: readonly ReadonlySet<number>[]): { started: number[]
     for (const p of seen[i - 1]!) if (!seen[i]!.has(p)) ended.add(p)
   }
   return { started: [...started], ended: [...ended] }
+}
+
+/** The gate's verdict, and why when it is not one. */
+export interface CpuGate { kind: 'pass' | 'fail' | 'inconclusive' | 'harness-error'; why?: string }
+
+/**
+ * The hidden-app CPU gate's verdict (A3.8 #49, r4 #1; code review r1 #3), in this order, each step only reached when
+ * the one before it holds: the recorder's own log whole for the window (`releaseEvidence` without a `why`; else, or
+ * none, inconclusive - in either flavour: a test hook naming the canvases is never the gate's evidence), the window's
+ * figure measured (`cpuWindow`), the recorder's figure checked against the outside one and agreeing (`crossCheck`:
+ * `unchecked` or none is inconclusive, `disagree` the harness's own error); only then the budget, pass or fail.
+ * Missing evidence never passes and never fails: the roles it gives are what take the canvases out of the figure.
+ */
+export function cpuGate(o: { ev: Evidence | null; win?: CpuWindow | null; cross?: CrossCheck | null; budget: number }): CpuGate {
+  if (!o.ev || o.ev.why !== undefined) return { kind: 'inconclusive', why: `the recorder's log does not prove the roles: ${o.ev?.why ?? 'no sample line (the recorder wrote none)'}` }
+  if (!o.win) return { kind: 'inconclusive', why: 'the window was not measured' }
+  if (o.win.kind !== 'measured') return { kind: 'inconclusive', why: o.win.why ?? 'the window was not measured' }
+  if (!o.cross || o.cross.kind === 'unchecked') return { kind: 'inconclusive', why: `the recorder's figure was not checked against the outside one: ${o.cross?.why ?? 'no cross-check'}` }
+  if (o.cross.kind === 'disagree') return { kind: 'harness-error', why: `the recorder's figure ${o.cross.recorderCores.toFixed(5)} and the outside one ${o.cross.outsideCores.toFixed(5)} for the same ${o.cross.joined} processes disagree: the recorder is broken (it cannot pass itself)` }
+  return { kind: o.win.cores < o.budget ? 'pass' : 'fail' }
 }
