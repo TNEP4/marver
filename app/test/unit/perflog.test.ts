@@ -4,13 +4,17 @@
  * the machine's first hash, the 2,000-line bound and its `dropped` line, an ENOSPC that loses no earlier line,
  * rotation past 5 MB to the newest half of whole lines, and retention at launch: old lines, the newest 50 pictures,
  * the newest 10 completed Crashpad reports (each under its lock; new/ and settings.dat untouched; a locked one
- * skipped), machine profiles kept while a retained line names them.
+ * skipped), machine profiles kept while a retained line names them. The review of a3-recorder: an append cut short
+ * queues again only what did not land; a launch after a torn file starts on a line of its own; a rewrite cut at a
+ * byte, never inside a character; a rewrite's new file written off the main thread while appends wait, and a quit
+ * during it losing nothing; one line larger than half the file kept; main's error written in its own turn.
  */
 import { closeSync, constants, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Config, Home } from '../../src/main/config.ts'
+import { T } from '../../src/main/timings.ts'
 import { parseAppLine } from '../../../src/shared/app-perf.ts'
 
 type Perflog = typeof import('../../src/main/perflog.ts')
@@ -142,7 +146,7 @@ describe('the writer (A3.8 #12)', () => {
     expect(L.newestHalf(['aa', 'bb', 'cc', 'dd'])).toEqual(['cc', 'dd'])
   })
 
-  it('two flavours on one perf/, writing at once: two files, every line whole and parsed', async () => {
+  it('two flavours\' writers on one perf/, interleaved in one process (two module copies): two files, every line whole and parsed', async () => {
     L.startPerflog({ home, flavour: 'release', config: () => config(), machine: () => H1 })
     vi.resetModules()
     const D = await import('../../src/main/perflog.ts')
@@ -251,5 +255,152 @@ describe('retention at launch (A3.6, A3.8 #12, r1 #7)', () => {
     const r2 = await L.prune()
     expect(r2.dumps).toBe(1)
     expect(existsSync(held)).toBe(false)
+  })
+})
+
+describe('the review of a3-recorder (A3.8 #12)', () => {
+  const f = () => join(home.dir, 'perf', 'app.jsonl')
+  const parsed = () => lines(f()).map((l) => parseAppLine(l) as unknown as { seq: number; n?: number } | null)
+
+  it('an append cut short (ENOSPC partway through a batch) queues again only what did not land: no line twice, none lost', () => {
+    L.startPerflog({ home, flavour: 'release', config: () => config(), machine: () => H1 })
+    L.append('dropped', { n: 0 })
+    L.flushNow()
+    for (const n of [1, 2, 3]) L.append('dropped', { n })
+    // line 1 lands whole, line 2 is cut 10 bytes in, line 3 never starts
+    const one = readFileSync(f()).length
+    L.failAppendAfter(lineBytes(1) + 10)
+    expect(L.flushNow()).toBe(false)
+    expect(readFileSync(f()).length).toBe(one + lineBytes(1) + 10)
+    expect(L.flushNow()).toBe(true)
+    const recs = parsed()
+    // line 1 once, the torn piece of line 2 unparsed, then line 2 whole on a fresh line, then line 3
+    expect(recs.map((r) => (r ? r.n : 'torn'))).toEqual([0, 1, 'torn', 2, 3])
+    const seqs = recs.filter(Boolean).map((r) => r!.seq)
+    expect(new Set(seqs).size).toBe(seqs.length)
+    expect(seqs).toEqual([0, 1, 2, 3])
+
+    function lineBytes(n: number): number {
+      // the queued line for `n`, as the writer stamps it (the envelope then the body)
+      return Buffer.byteLength(JSON.stringify({ v: 1, ts: Date.now(), kind: 'dropped', app: L.launchId(), seq: n, flavour: 'release', machine: H1, n }) + '\n')
+    }
+  })
+
+  it('a launch after a file an earlier one left ending inside a line starts on a line of its own: its first line parses', () => {
+    mkdirSync(join(home.dir, 'perf'), { recursive: true, mode: 0o700 })
+    const prior = JSON.stringify({ v: 1, ts: Date.now(), kind: 'dropped', app: 'aaaaaaaaaaaa', seq: 0, flavour: 'release', machine: H1, n: 9 })
+    writeFileSync(f(), prior + '\n' + '{"v":1,"ts":17,"kind":"sam', { mode: 0o600 })
+    L.startPerflog({ home, flavour: 'release', config: () => config(), machine: () => H1 })
+    L.append('start', { version: '0.2.0', electron: '45.0.0', chrome: '142', recorder: true, pid: 1 })
+    expect(L.flushNow()).toBe(true)
+    const recs = parsed()
+    expect(recs.map((r) => (r ? r.seq : 'torn'))).toEqual([0, 'torn', 0])
+    expect((recs.at(-1) as unknown as { kind: string; app: string }).kind).toBe('start')
+    expect((recs.at(-1) as unknown as { app: string }).app).toBe(L.launchId())
+  })
+
+  it('one line larger than half the file is kept on its own; no lines keep none', () => {
+    expect(L.newestHalf(['a', 'x'.repeat(100)])).toEqual(['x'.repeat(100)])
+    expect(L.newestHalf(['x'.repeat(100), 'b', 'c'])).toEqual(['b', 'c'])
+    expect(L.newestHalf([])).toEqual([])
+  })
+
+  it('main\'s error is on disk in its own turn - the hold at launch ended for it, machine null with no hash yet', () => {
+    L.startPerflog({ home, flavour: 'release', config: () => config(), machine: () => null })
+    L.append('dropped', { n: 1 })
+    expect(lines(f())).toEqual([])   // held: no hash yet
+    L.appendNow('main-error', { what: 'exception', name: 'Error', message: 'boom', stack: [] })
+    const recs = lines(f()).map((l) => parseAppLine(l)! as unknown as { kind: string; machine: string | null; seq: number })
+    expect(recs.map((r) => [r.seq, r.kind, r.machine])).toEqual([[0, 'dropped', null], [1, 'main-error', null]])
+  })
+})
+
+describe('whole rewrites, off the main thread (A3.8 #12, #50)', () => {
+  const perfFile = () => join(home.dir, 'perf', 'app.jsonl')
+  const old = (n: number, ts: number, extra: Record<string, unknown> = {}) => JSON.stringify({ v: 1, ts, kind: 'dropped', app: 'aaaaaaaaaaaa', seq: n, flavour: 'release', machine: H1, n, ...extra })
+
+  /** perflog with node:fs/promises wrapped: `afterRead` runs once a read of app.jsonl ended; a temp file of app.jsonl opens only when `gate` is opened */
+  async function wrapped() {
+    const hooks: { afterRead: (() => void) | null; gated: boolean; reached: () => void; open: () => void } = { afterRead: null, gated: false, reached: () => {}, open: () => {} }
+    let reachedP!: Promise<void>
+    let gateP: Promise<void> = Promise.resolve()
+    const arm = () => {
+      reachedP = new Promise((r) => { hooks.reached = r })
+      gateP = new Promise((r) => { hooks.open = r })
+      hooks.gated = true
+    }
+    vi.resetModules()
+    vi.doMock('node:fs/promises', async (orig) => {
+      const m = await orig<typeof import('node:fs/promises')>()
+      return {
+        ...m,
+        readFile: async (...a: Parameters<typeof m.readFile>) => {
+          const r = await m.readFile(...a)
+          if (String(a[0]).endsWith('app.jsonl') && hooks.afterRead) { const f = hooks.afterRead; hooks.afterRead = null; f() }
+          return r
+        },
+        open: async (...a: Parameters<typeof m.open>) => {
+          if (hooks.gated && /app\.jsonl\.[0-9a-f]{12}\.tmp$/.test(String(a[0]))) { hooks.gated = false; hooks.reached(); await gateP }
+          return m.open(...a)
+        },
+      }
+    })
+    const P = await import('../../src/main/perflog.ts')
+    vi.doUnmock('node:fs/promises')
+    return { P, hooks, arm, reached: () => reachedP }
+  }
+
+  it('a rewrite cuts at the last newline byte: a read that ends inside a character, then an append, loses and doubles no byte', async () => {
+    mkdirSync(join(home.dir, 'perf'), { recursive: true, mode: 0o700 })
+    const now = Date.now()
+    const dot = Buffer.from('·')   // two bytes
+    // an old line to prune, a kept one with a non-ASCII message, and a line torn inside the '·'
+    const torn = Buffer.concat([Buffer.from('{"v":1,"ts":5,"kind":"dropped","m":"a'), dot.subarray(0, 1)])
+    writeFileSync(perfFile(), Buffer.concat([Buffer.from(old(0, now - 20 * DAY) + '\n' + old(1, now - DAY, { m: 'Reload · Page' }) + '\n'), torn]), { mode: 0o600 })
+    const { P, hooks } = await wrapped()
+    try {
+      P.startPerflog({ home, flavour: 'release', config: () => config(), machine: () => H1 })
+      // an append lands between the rewrite's read and its turn
+      hooks.afterRead = () => { P.append('dropped', { n: 7, m: 'après · coup' } as never); P.flushNow() }
+      await P.idle()
+      const bytes = readFileSync(perfFile())
+      const text = bytes.toString('utf8').split('\n')
+      expect(JSON.parse(text[0]!)).toMatchObject({ n: 1, m: 'Reload · Page' })
+      // the torn piece kept byte for byte, then the appended line whole on its own line
+      expect(bytes.includes(torn)).toBe(true)
+      expect(JSON.parse(text[2]!)).toMatchObject({ n: 7, m: 'après · coup', seq: 0 })
+      expect(text.filter(Boolean)).toHaveLength(3)
+    } finally { await P.idle(); P.resetPerflog() }
+  })
+
+  it('appends wait while the new file is written, then land in it; a quit meanwhile writes both at once and the rewrite stands down', async () => {
+    mkdirSync(join(home.dir, 'perf'), { recursive: true, mode: 0o700 })
+    const now = Date.now()
+    const seed = old(0, now - 20 * DAY) + '\n' + old(1, now - DAY) + '\n'
+    for (const quit of [false, true]) {
+      writeFileSync(perfFile(), seed, { mode: 0o600 })
+      const { P, arm, hooks, reached } = await wrapped()
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] })
+      try {
+        P.startPerflog({ home, flavour: 'release', config: () => config(), machine: () => H1 })
+        arm()
+        const pruned = P.prune()
+        await reached()
+        // the rewrite's new file is being written: a flush keeps its lines queued; the old file is as it was
+        P.append('dropped', { n: 5 })
+        vi.advanceTimersByTime(T.writeBatchMs)
+        expect(readFileSync(perfFile(), 'utf8')).toBe(seed)
+        if (quit) {
+          P.flushSync()
+          const atQuit = lines(perfFile()).map((l) => (JSON.parse(l) as { n: number }).n)
+          expect(atQuit).toEqual([1, 5])
+        }
+        hooks.open()
+        await pruned
+        await P.idle()
+        // the old line gone, the kept one, and the line that waited - once
+        expect(lines(perfFile()).map((l) => (JSON.parse(l) as { n: number }).n)).toEqual([1, 5])
+      } finally { vi.useRealTimers(); hooks.open(); await P.idle(); P.resetPerflog() }
+    }
   })
 })

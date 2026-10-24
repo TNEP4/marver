@@ -53,6 +53,18 @@ describe('recordError', () => {
     expect(err.mock.calls.length).toBe(MAX_RECORDS + 5)
   })
 
+  it('each line is on disk in the error\'s own turn, the hold at launch ended for it (machine null with no hash yet)', () => {
+    const home = mkdtempSync(join(tmpdir(), 'mv-errors-'))
+    dirs.push(home)
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    startPerflog({ home: { dir: home, writable: true, state: '', crashpad: '', ms: 0 }, flavour: 'release', config: () => config, machine: () => null })
+    setErrorHome({ dir: home, writable: true })
+    recordError('exception', new Error('then the process ended'))
+    // no flush: a SIGKILL now would keep it
+    const got = readFileSync(join(home, 'perf', 'app.jsonl'), 'utf8').trim().split('\n').map((l) => parseAppLine(l) as unknown as Record<string, unknown>)
+    expect(got).toEqual([expect.objectContaining({ kind: 'main-error', message: 'then the process ended', machine: null, seq: 0 })])
+  })
+
   it('an unwritable home, or no writer: stderr alone, and it never throws', () => {
     vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
     setErrorHome({ dir: '/nonexistent/never', writable: false })

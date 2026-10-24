@@ -52,8 +52,9 @@ export const T = {
   sampleDiskMs: 60_000,
   /** the JSONL writer's flush (A3.8 #12) */
   writeBatchMs: 2000,
-  /** retention at launch, then daily (A3.6) */
+  /** retention at launch, then daily (A3.6); the launch's pass waits this long after ready, past the launch budget's window (A3.8 #50) */
   retentionMs: 86_400_000,
+  retentionDelayMs: 5000,
   /** ioreg's AGX read while recording with the window visible (A3.1) */
   agxMs: 30_000,
   /** every probe spawn's timeout: ioreg, sysctl for the profile (A3.2) */

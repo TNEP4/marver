@@ -9,8 +9,9 @@
  *   `perf/app-dev.jsonl` for Marver Dev (one writer per file, A3.8 #12), with the envelope `{ v: 1, ts, kind, app,
  *   seq, flavour, machine }` and `what, name, message, stack` (mode 600). The message and the first stack lines can
  *   hold paths, so like the page half's (A1.7) they stay on the Mac. At most 20 lines a run, each under 2 KB; written
- *   whatever `recorder` says (an error is not a sample). App 0.1 appended them itself, to app.jsonl, in Marver Dev
- *   too;
+ *   whatever `recorder` says (an error is not a sample). Each is written in its own turn (`appendNow`: the hold at
+ *   launch ends for it, `machine: null` if no profile hash exists yet), as app 0.1 wrote it, since what follows may be
+ *   the process's end. App 0.1 appended them itself, to app.jsonl, in Marver Dev too;
  * - a line on stderr; in a test build, the journal (`main-error`), so a case sees it.
  *
  * Installed by main.ts once the window and its pages exist: from then on an error has pages to keep alive. Before
@@ -19,7 +20,7 @@
  * has no `uncaughtException` listener of its own; Node turns an unhandled rejection into one only while there is
  * no `unhandledRejection` listener.) Pure but for `process` and the writer.
  */
-import { append, writing } from './perflog.ts'
+import { appendNow, writing } from './perflog.ts'
 import { note } from './testing/index.ts'
 
 export const MAX_RECORDS = 20
@@ -57,7 +58,8 @@ export function recordError(what: 'exception' | 'rejection', err: unknown): void
   try { if (__MV_TEST__) note('main-error', { what, line }) } catch { /* the journal went */ }
   if (!body || !writable || !writing() || written >= MAX_RECORDS) return
   written += 1
-  try { append('main-error', body) } catch { /* stderr has it */ }
+  // written in this turn, not left in the writer's 2 s queue: what follows an uncaught error may be the process's end
+  try { appendNow('main-error', body) } catch { /* stderr has it */ }
 }
 
 /** The listeners, once. */
