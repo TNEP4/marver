@@ -30,11 +30,14 @@ export const effects = {
   },
 }
 
-/** Test builds: the `effects` hook returns (and with `{ clear: true }` empties) what was recorded. */
+/**
+ * Test builds: the `effects` hook returns (and with `{ clear: true }` empties) what was recorded. `shown` is there
+ * only once a file was shown, so A2's `{ copies, opened }` answers keep their shape.
+ */
 export function provideEffectHooks(): void {
   if (!__MV_TEST__) return
   provide('effects', (a) => {
-    const out = { copies: [...recorded.copies], opened: [...recorded.opened], shown: [...recorded.shown] }
+    const out = { copies: [...recorded.copies], opened: [...recorded.opened], ...(recorded.shown.length ? { shown: [...recorded.shown] } : {}) }
     if ((a as { clear?: unknown } | null)?.clear === true) { recorded.copies.length = 0; recorded.opened.length = 0; recorded.shown.length = 0 }
     return out
   })

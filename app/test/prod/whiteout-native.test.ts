@@ -8,9 +8,24 @@
  * fixture page standing for a heavy board: the real board needs the shell's gestures, which the recorder stream wires).
  * The window is kept on top (an occluded view gives capturePage nothing).
  */
+import { execFileSync } from 'node:child_process'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { nativeTool } from '../harness/capture.ts'
 import { startFakeCanvas, type FakeCanvas } from '../harness/fake-canvas.ts'
 import { launchWindow, sleep, type LogLine, type WindowRun } from '../harness/window.ts'
+
+/** A locked screen or a sleeping display composites nothing: a view gives `capturePage` no new frame and a page no
+ *  animation frames, so every case here would measure nothing. Then they are skipped and say so, never passed. */
+function dark(): string | null {
+  let out = ''
+  try { out = execFileSync(nativeTool('capture'), ['check'], { encoding: 'utf8', timeout: 15_000 }) } catch (e) { out = String((e as { stdout?: unknown }).stdout ?? '') }
+  try {
+    const c = JSON.parse(out.trim().split('\n').pop() ?? '{}') as { locked?: boolean; asleep?: boolean }
+    return c.locked ? 'the screen is locked' : c.asleep ? 'the display is asleep' : null
+  } catch { return null }
+}
+const DARK = dark()
+if (DARK) process.stdout.write(`whiteout-native: NOT RUN - ${DARK}, so nothing is composited; the cases are skipped\n`)
 
 /** A page that keeps the compositor and the main thread busy: 1,200 boxes scaled and moved every frame, and a
  *  measure of its own animation-frame intervals. */
@@ -41,7 +56,7 @@ const exec = <T = unknown>(w: WindowRun, id: string, js: string) => w.run.call<T
 const whiteout = async (w: WindowRun, since: number) => (await w.log('whiteout', since)) as LogLine[]
 const count = (ls: LogLine[], f: (d: Record<string, unknown>) => boolean) => ls.filter((l) => f(l.data)).length
 
-describe('a staged white-out and a white frame on purpose, at 4 Hz', () => {
+describe.skipIf(!!DARK)('a staged white-out and a white frame on purpose, at 4 Hz', () => {
   let r: Awaited<ReturnType<typeof open>>
   beforeAll(async () => { r = await open() }, 60_000)
   afterAll(async () => { await r?.w.close(); await r?.fake.close() })
@@ -77,7 +92,7 @@ describe('a staged white-out and a white frame on purpose, at 4 Hz', () => {
   })
 })
 
-describe('at 2 Hz (the detector\'s fallback, A3.8 #15, r1 #5)', () => {
+describe.skipIf(!!DARK)('at 2 Hz (the detector\'s fallback, A3.8 #15, r1 #5)', () => {
   it('a white overlay held 1.5 s is a candidate at 2 Hz', async () => {
     const r = await open({ MARVER_APP_TIMINGS: JSON.stringify({ whiteoutTickMs: 500 }) })
     try {
@@ -92,7 +107,7 @@ describe('at 2 Hz (the detector\'s fallback, A3.8 #15, r1 #5)', () => {
   }, 60_000)
 })
 
-describe('the detector\'s cost (A3.8 #15)', () => {
+describe.skipIf(!!DARK)('the detector\'s cost (A3.8 #15)', () => {
   it('the same animated page, detector on and off, five runs each: the median rAF interval p95 within 1 ms', async () => {
     const r = await open({}, HEAVY)
     try {
