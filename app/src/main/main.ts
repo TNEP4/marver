@@ -124,8 +124,10 @@ function start(): void {
     const registry = createRegistry()
     await registry.start()
     // the bridge: the capability map, the canvas admission, the app pages' channels - before any view. `mv:doc`
-    // answers each document's inset from its tab's layout (A3.8 #26)
-    const bridge = installBridge({ insetFor: (id) => { const t = getTab(id); return t ? docInset(t) : 0 } })
+    // answers each document's inset from its tab's layout (A3.8 #26). MARVER_APP_INSET0=1, in a test build only, answers
+    // 0 whatever the layout: the scroll edge's cost is measured against it (A3.8 #51)
+    const inset0 = __MV_TEST__ && testMode() && process.env.MARVER_APP_INSET0 === '1'
+    const bridge = installBridge({ insetFor: (id) => { const t = getTab(id); return t && !inset0 ? docInset(t) : 0 } })
     if (__MV_TEST__ && testMode()) provideTrustHooks()
     startTabs()
     // the recorder: after the bridge, before the views (A3.8 #53)
