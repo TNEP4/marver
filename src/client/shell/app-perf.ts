@@ -1,6 +1,7 @@
 /**
  * The shell's side of `mv:perf` (spec 28 A3.8 #9, #10, #16): what a 0.27.2 shell tells the Mac app's recorder -
- * its gestures (perf.ts's begin and end, the white-out detector's window), its probe answers (whiteout-probes.ts)
+ * its gestures (perf.ts's begin and end, the white-out detector's window), its probe answers (whiteout-probes.ts,
+ * given by the canvas: `answerProbesWith`)
  * and its board's frame count at each commit. Inert unless `window.marverApp.perf` exists (app 0.2): in Chrome, on
  * a published canvas and inside app 0.1 nothing here sends, listens or runs a timer. The preload sends `mem` and
  * `shown` by itself; the shell never sees a `doc`.
@@ -16,10 +17,17 @@ import type { PerfMsg } from '../../shared/app-api.ts'
 import { APP } from './marver-app.ts'
 import { useStore } from './store.ts'
 import { sleepingCount } from './canvas/sleep.ts'
-import { pick, verify } from './whiteout-probes.ts'
 
 /** Whether this page talks to the recorder at all. */
 export const PERF_ON = typeof APP?.perf === 'function'
+
+/** The white-out probes (whiteout-probes.ts' pick and verify), given by the canvas (Canvas.tsx): canvas code, never
+ *  in an all-boards-locked bundle, whose shell has no canvas - an ask there goes unanswered, which main reads as an
+ *  inconclusive sample, as it reads any probe answer that never came. */
+export interface Probes { pick(tick: number): PerfMsg; verify(tick: number): PerfMsg }
+let probes: Probes | null = null
+/** Canvas.tsx, at import: the probes this page answers with. */
+export function answerProbesWith(p: Probes): void { probes = p }
 
 let started = false
 let seq = 0
@@ -37,8 +45,8 @@ export function startAppPerf(): void {
   started = true
   try {
     APP!.onPerfAsk?.((a) => {
-      if (a.kind !== 'probes') return
-      try { sendPerf(a.at === 'before' ? pick(a.tick) : verify(a.tick)) } catch { /* no answer: main reads the sample as inconclusive */ }
+      if (a.kind !== 'probes' || !probes) return
+      try { sendPerf(a.at === 'before' ? probes.pick(a.tick) : probes.verify(a.tick)) } catch { /* no answer: main reads the sample as inconclusive */ }
     })
   } catch { /* the app's own */ }
   useStore.subscribe((s, prev) => { if (s.nodes !== prev.nodes) boardNow() })

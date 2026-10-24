@@ -14,6 +14,11 @@ import { aimed } from './admission.ts'
 import { keepOverResume, resumed, WS } from '../api.ts'
 import { APP_REOPEN } from '../marver-app.ts'
 import { TOP } from '../inset.ts'
+import { answerProbesWith } from '../app-perf.ts'
+import { pick, verify } from '../whiteout-probes.ts'
+
+// the white-out probes the Mac app's recorder asks for (app-perf.ts): the canvas's own, so a locked bundle has none
+answerProbesWith({ pick, verify })
 
 /**
  * The world. rzpp owns pan/zoom; nodes are absolutely positioned children of #sh-world.

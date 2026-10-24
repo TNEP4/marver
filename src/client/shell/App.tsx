@@ -10,6 +10,8 @@ import { useStore, BOARD_GONE, CONFIG, CANVAS_NAME, DISK_WON, LOCKED_SHELL, PUBL
 import { AddToBoard, BoardList } from './BoardList.tsx'
 import { ContextMenu, copyToClipboard, framePath, useContextMenu, type MenuItem } from './ContextMenu.tsx'
 import { TOP } from './inset.ts'
+// a headless run's probe (main.tsx): canvas code, so it comes through this module, never into a locked bundle
+export { startPerfRunProbe } from './perf-run-probe.ts'
 import { Tip } from './Tip.tsx'
 import { PKG, ROUTE } from '../const.ts'
 import { api, resumed, scoped, useLink } from './api.ts'
