@@ -586,12 +586,17 @@ const stillCompiling = (): string => ((bakeSeams.stopAsking ?? (!!process.env.MA
 const inflight = new Map<string, Promise<BakeAnswer>>()
 
 /** Compiles that FAILED for the frame's own reasons (it loops, never stops changing, never settles,
- *  timed out, has too many effects), by generation and key, so it is answered at once from memory
+ *  timed out - a run's only, `keptFor` -, has too many effects), by generation and key, so it is answered at once from memory
  *  instead of being compiled again on every rest. The generation is in the key: an edit retries it.
  *  Only these are kept - anything else (the source moved mid-compile, the browser or its pipe died,
  *  a cache write failed) says nothing about the frame and is tried again. */
 const failed = new Map<string, string>()
 const FAILED_MAX = 2000
+/** Is this failure kept for `owner`? Of the frame, and - for a timeout - a run's alone: a run's failures go with it,
+ *  but a normal caller's 45 s deadline passed under a loaded machine as often as for the frame (a first compile of a
+ *  fresh canvas took 24 s under the suite), and kept it would leave the frame live until an edit. A normal caller's
+ *  timeout is tried again at its next ask, as before 0.27.2. */
+const keptFor = (owner: BakeOwner, error: string): boolean => ofTheFrame(error) && !(owner === NORMAL_OWNER && error === TIMED_OUT)
 export const ofTheFrame = (error: string): boolean => error === LOOPING || /^the frame (never stopped changing|did not settle|never rendered|rendered an error)|(^|: )the bake timed out$|^too many effects|^an effect larger than/.test(error)
 
 /** The answer for a compile still running when a request stops waiting (`waitMs`): the frame stays
@@ -663,7 +668,7 @@ export async function bakeBatch(opts: { root: string; gen: number; asks: BakeAsk
         } else {
           try { a = r.ok ? writeCached(root, gen, job.ask, r, urlBase, protect) : { ...job.ask, ...r } } catch (e) { a = { ...job.ask, ok: false, error: (e as Error).message } }
         }
-        if (!a.ok && ofTheFrame(a.error) && !bakesEnded(owner)) {
+        if (!a.ok && keptFor(owner, a.error) && !bakesEnded(owner)) {
           if (failed.size >= FAILED_MAX) failed.clear()
           failed.set(key(job.ask), a.error)
         }

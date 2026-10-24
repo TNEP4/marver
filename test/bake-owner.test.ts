@@ -90,7 +90,7 @@ describe('bakes owned per run', () => {
     expect(hits.restless - before, 'the normal caller compiled it').toBe(2)
   })
 
-  skippable('a run\'s compile that timed out (a forced deadline) is the run\'s failure, kept as such: a normal request for the frame compiles it', async () => {
+  skippable('a run\'s compile that timed out (a forced deadline) is the run\'s failure, kept as such: a normal request for the frame compiles it; a normal caller\'s own timeout is never kept', async () => {
     const id = '00000000000000cc'
     bakeSeams.deadlineMs = 150
     const r = await one('second', 6, { owner: id })
@@ -102,13 +102,15 @@ describe('bakes owned per run', () => {
     const n = await one('second', 6)
     expect(n.ok, 'a normal caller is never answered with the run\'s timeout').toBe(true)
     expect((hits.second ?? 0) - before).toBe(1)
-    // and a normal caller's own timeout is kept for normal callers: asked again, nothing compiles
+    // and a normal caller's own timeout is never kept (a deadline passed under load says little about the frame): asked
+    // again, the frame compiles - as before 0.27.2, when the suite's loaded first compiles passed 45 s and slept later
     bakeSeams.deadlineMs = 150
     expect(await one('third', 6)).toMatchObject({ ok: false, error: TIMED_OUT })
     const third = hits.third ?? 0
     bakeSeams.deadlineMs = undefined
-    expect(await one('third', 6)).toMatchObject({ ok: false, error: TIMED_OUT })
-    expect((hits.third ?? 0) - third).toBe(0)
+    const again = await one('third', 6)
+    expect(again.ok, 'a normal caller\'s timeout is tried again').toBe(true)
+    expect((hits.third ?? 0) - third).toBe(1)
   })
 
   skippable('a run that ends while its batch waits for the lane behind a normal compile: its compiles answer at once, never on their turn, and it is idle at once', async () => {

@@ -39,9 +39,6 @@ The canvas's side of the Mac app 0.2: its one ground, its recorder and its unloa
 
 ### Changed
 
-- **A frame whose sleep bake timed out stays failed until it is edited.** The bake's failure cache always meant to
-  keep a timeout; it kept every other failure but retried a timeout at each request, so a frame that could not
-  compile in 45 s tried again, and timed out again, on every load.
 - **The view you left is written the moment the page hides or leaves.** A canvas kept its camera a second after the
   view settled; a tab switched away from, closed or ended within that second lost the last move. Now the waiting
   camera is written at once when the page is hidden or unloads, and a page hidden while the view is still flying (a
