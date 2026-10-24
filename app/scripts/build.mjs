@@ -7,6 +7,9 @@
  *   node scripts/build.mjs --adhoc    the same, ad-hoc signed (agents, CI, a locked keychain)
  *   --no-smoke                        skip the smoke (it runs on every build otherwise)
  *   --tamper                          the smoke's cases that crash the app on purpose too (each shows a macOS dialog)
+ *   --known-fail=<check>[,<check>]    a smoke whose only failures are these named checks, each failing at a measured
+ *                                     number, still moves into out/ - said loudly, with the number, and recorded in
+ *                                     out/build.json (KNOWN_FAILABLE lists the only checks it can name)
  *
  * The release pipeline, each step failing the build, nothing retried:
  *   checks -> tsdown (release flavour) -> pages + manifest -> stage { package.json, dist/ } -> @electron/packager
@@ -51,6 +54,62 @@ const ENT_APP = join(APP, 'build', 'entitlements', 'app.plist')
 const ENT_JIT = join(APP, 'build', 'entitlements', 'jit.plist')
 const ICNS = join(APP, 'build', 'Marver.icns')
 const ICON_COMPOSER = join(APP, 'build', 'Marver.icon')
+
+/**
+ * The smoke checks a build may ship failing, by name, only with `--known-fail=<name>` (Nic, 24 Oct: app 0.2 goes to
+ * him with the no-canvas memory gate failing at its measured value - 214 MB against 200 - the limit unchanged, the
+ * cause investigated later). Each entry reads its measured number from the check's line in the smoke's report; a
+ * failure with no number (an inconclusive gate) is never a known one. No other check can be named: a crash dialog, a
+ * signature, a fuse or a budget not listed here always fails the build.
+ */
+export const KNOWN_FAILABLE = {
+  'memory-no-canvas': {
+    measured: (r) => r.memory?.totalMB,
+    budget: (r) => r.memory?.budgetMB ?? 200,
+    unit: 'MB',
+    decision: 'Nic, 24 Oct: app 0.2 ships with it, the 200 MB limit unchanged; investigated later',
+  },
+}
+
+/** `--known-fail=a,b` (repeatable) as names, or why the option is refused - an empty or unlisted name is never ignored. */
+export function parseKnownFail(argv) {
+  const names = []
+  for (const a of argv) {
+    if (a !== '--known-fail' && !a.startsWith('--known-fail=')) continue
+    const list = a.startsWith('--known-fail=') ? a.slice('--known-fail='.length).split(',').map((x) => x.trim()) : []
+    if (!list.length || list.some((x) => !x)) return { error: '--known-fail needs a check\'s name: --known-fail=memory-no-canvas' }
+    for (const n of list) {
+      if (!Object.hasOwn(KNOWN_FAILABLE, n)) return { error: `--known-fail=${n}: ${n} cannot be a known failure - only ${Object.keys(KNOWN_FAILABLE).join(', ')}` }
+      if (!names.includes(n)) names.push(n)
+    }
+  }
+  return { names }
+}
+
+/**
+ * The smoke's verdict under the named known failures: ok only when every FAIL is a named, listed check failing at a
+ * measured number, and the report adds up (its FAIL lines, its `failures` and the smoke's exit status agree). `known`
+ * carries each one's number and its loud line; `other` the failures that are not known ones; `passed` the named
+ * checks that passed this time.
+ */
+export function judgeSmoke(report, status, names) {
+  const fails = report?.results?.filter((r) => r.verdict === 'FAIL')
+  if (!fails) return { ok: false, known: [], other: [], passed: [], why: 'no smoke report to read' }
+  if (fails.length !== report.failures || fails.length !== status) return { ok: false, known: [], other: [], passed: [], why: `the smoke's report does not add up: ${fails.length} FAIL lines, failures ${report.failures}, exit status ${status}` }
+  const known = [], other = []
+  for (const r of fails) {
+    const k = names.includes(r.name) ? KNOWN_FAILABLE[r.name] : undefined
+    const measured = k?.measured(r)
+    if (!k || !Number.isFinite(measured)) { other.push(r.name); continue }
+    const budget = k.budget(r)
+    known.push({
+      name: r.name, measured, unit: k.unit, budget, detail: r.detail, decision: k.decision,
+      line: `KNOWN FAILURE ${r.name}: ${measured} ${k.unit} measured against the ${budget} ${k.unit} budget - let through by --known-fail=${r.name} (${k.decision})`,
+    })
+  }
+  const passed = names.filter((n) => report.results.some((r) => r.name === n && r.verdict === 'PASS'))
+  return { ok: !other.length, known, other, passed, ...(other.length ? { why: `${other.length} failing check(s) that are not named known failures: ${other.join(', ')}` } : {}) }
+}
 
 const t0 = Date.now()
 const step = (s) => console.log(`[${((Date.now() - t0) / 1000).toFixed(1)}s] ${s}`)
@@ -145,8 +204,9 @@ export function buildJs() {
   step(`dist/ (dev flavour): main, 2 preloads, ${Object.keys(manifest).length} pages`)
 }
 
-async function buildRelease({ adhoc, smoke, tamper }) {
+async function buildRelease({ adhoc, smoke, tamper, knownFail }) {
   checks({ release: true })
+  if (knownFail.length && !smoke) fail('--known-fail names smoke checks: it cannot go with --no-smoke')
   const out = adhoc ? join(APP, 'out', 'adhoc') : join(APP, 'out')
   // the staging folder: never under out/, so nothing there is ever a bundle half-way through
   const work = join(APP, '.stage', adhoc ? 'adhoc' : 'signed')
@@ -225,12 +285,35 @@ async function buildRelease({ adhoc, smoke, tamper }) {
   }
   step(teams.message)
 
+  let verdict = null
+  let smokeReport = null
   if (smoke) {
-    step(`smoke (in .stage/, before the move${tamper ? '; with --tamper' : ''})`)
+    step(`smoke (in .stage/, before the move${tamper ? '; with --tamper' : ''}${knownFail.length ? `; known failures named: ${knownFail.join(', ')}` : ''})`)
     mkdirSync(out, { recursive: true })
-    const r = spawnSync(process.execPath, [join(APP, 'test', 'smoke', 'smoke.mjs'), app, `--report=${out}`,
+    // its report into a folder of this build's own, so the one read is this smoke's; then beside out/ as before
+    const reports = join(work, 'smoke')
+    mkdirSync(reports, { recursive: true })
+    const r = spawnSync(process.execPath, [join(APP, 'test', 'smoke', 'smoke.mjs'), app, `--report=${reports}`,
       ...(adhoc ? ['--adhoc'] : []), ...(tamper ? ['--tamper'] : [])], { stdio: 'inherit' })
-    if (r.status !== 0) fail(`the packaged smoke failed (${r.status} failing checks); out/ left as it was, the build in ${work}`)
+    const file = readdirSync(reports).filter((f) => /^smoke-\d+\.json$/.test(f)).sort().at(-1)
+    let report = null
+    if (file) {
+      cpSync(join(reports, file), join(out, file))
+      smokeReport = file
+      try { report = JSON.parse(readFileSync(join(reports, file), 'utf8')) } catch { report = null }
+    }
+    if (r.status !== 0 && !knownFail.length) fail(`the packaged smoke failed (${r.status} failing checks); out/ left as it was, the build in ${work}`)
+    if (knownFail.length) {
+      verdict = judgeSmoke(report, r.status, knownFail)
+      if (!verdict.ok) fail(`the packaged smoke failed (${r.status} failing checks): ${verdict.why}; --known-fail lets through only ${knownFail.join(', ')} failing at a measured number; out/ left as it was, the build in ${work}`)
+      const bar = '='.repeat(100)
+      if (verdict.known.length) {
+        console.error(`build: ${bar}`)
+        for (const k of verdict.known) { console.error(`build: ${k.line}`); console.error(`build:   ${k.detail}`) }
+        console.error(`build: ${bar}`)
+      }
+      for (const n of verdict.passed) console.log(`build: --known-fail=${n}: ${n} PASSED this time - the option is not needed for this build`)
+    }
   }
 
   // the move: the finished bundle replaces out/'s by rename, the old one put aside first (never a mix of the two)
@@ -242,16 +325,25 @@ async function buildRelease({ adhoc, smoke, tamper }) {
   renameSync(dir, dest)
   rmSync(work, { recursive: true, force: true })
   const final = join(dest, `${PRODUCT}.app`)
+  const known = verdict?.known ?? []
   const report = { app: final, adhoc, version: pkg.version, electron: ELECTRON, team: teams.team, parts: teams.parts.length,
-    icon: icon.map((p) => p.slice(APP.length + 1)), smoke: smoke ? (tamper ? 'with --tamper' : 'default') : 'skipped', seconds: (Date.now() - t0) / 1000 }
+    icon: icon.map((p) => p.slice(APP.length + 1)), smoke: smoke ? (tamper ? 'with --tamper' : 'default') : 'skipped',
+    ...(smokeReport ? { smokeReport } : {}),
+    // never left out: a build moved into out/ with failing checks says which, at what number, and on whose decision
+    knownFailures: known.map(({ name, measured, unit, budget, detail, decision }) => ({ name, measured, unit, budget, detail, decision })),
+    ...(knownFail.length ? { knownFailNamed: knownFail } : {}),
+    seconds: (Date.now() - t0) / 1000 }
   writeFileSync(join(out, 'build.json'), JSON.stringify(report, null, 2) + '\n')
-  step(`built ${final}`)
+  step(`built ${final}${known.length ? ` WITH ${known.length} KNOWN FAILURE${known.length > 1 ? 'S' : ''}: ${known.map((k) => `${k.name} ${k.measured} ${k.unit} (budget ${k.budget})`).join(', ')}` : ''}`)
+  for (const k of known) console.error(`build: ${k.line}`)
   console.log(`APP=${final}`)
 }
 
 // run as a script (tests import the constants above without building)
 if (process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.filename)) {
   const args = process.argv.slice(2)
+  const known = parseKnownFail(args)
+  if (known.error) fail(known.error)
   if (args.includes('--js')) buildJs()
-  else await buildRelease({ adhoc: args.includes('--adhoc'), smoke: !args.includes('--no-smoke'), tamper: args.includes('--tamper') })
+  else await buildRelease({ adhoc: args.includes('--adhoc'), smoke: !args.includes('--no-smoke'), tamper: args.includes('--tamper'), knownFail: known.names })
 }

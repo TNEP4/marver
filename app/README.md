@@ -272,6 +272,11 @@ Developer ID, the rest still ad-hoc) and crashes at once, with macOS's "quit une
   renamed copy the kernel kills - each put a dialog on screen, so they run only with `--tamper` (`build.mjs
   --tamper` passes it on); otherwise they are SKIP lines, and the run checks that macOS wrote no crash report of
   Marver's while it ran.
+- A failing smoke check never moves a build into `out/`, with one named exception: `build.mjs
+  --known-fail=memory-no-canvas` lets through a smoke whose only failures are the checks it names, each failing at a
+  measured number (an inconclusive gate is never one), prints each in a banner with its number and budget, and
+  records it in `out/build.json`'s `knownFailures`. `KNOWN_FAILABLE` in `build.mjs` lists the only checks it can
+  name - today the no-canvas memory gate (Nic, 24 Oct: app 0.2 ships with it failing, the 200 MB limit unchanged).
 
 ## Signing
 

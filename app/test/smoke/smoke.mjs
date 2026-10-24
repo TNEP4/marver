@@ -356,7 +356,7 @@ async function memoryGate(name, L, { canvas, countGpu, check }) {
   const detail = `${mb(total)} MB footprint, mean of 3 reads 10 s apart: ${parts.join(', ')}; RSS beside it ${mb(meanRss(counted))} MB counted, ${mb(meanRss(() => true))} MB all ${last.length} processes`
   MB(total) < BUDGET_MEMORY_MB ? pass(name, `${detail}; under ${BUDGET_MEMORY_MB} MB`)
     : fail(name, `${detail}; over the ${BUDGET_MEMORY_MB} MB budget - the limit stays (Nic, 23 Oct): the numbers go to Nic`)
-  results.at(-1).memory = { totalMB: +MB(total).toFixed(1), gpuMB: +MB(gpu).toFixed(1), countGpu, samples: samples.map((x) => x.map(({ pid, role, sub, fp, rssKB }) => ({ pid, role, sub, fpMB: +MB(fp).toFixed(1), rssMB: +(rssKB / 1024).toFixed(1), canvas: isCanvas({ pid }) }))) }
+  results.at(-1).memory = { totalMB: +MB(total).toFixed(1), budgetMB: BUDGET_MEMORY_MB, gpuMB: +MB(gpu).toFixed(1), countGpu, samples: samples.map((x) => x.map(({ pid, role, sub, fp, rssKB }) => ({ pid, role, sub, fpMB: +MB(fp).toFixed(1), rssMB: +(rssKB / 1024).toFixed(1), canvas: isCanvas({ pid }) }))) }
   return gpu
 }
 
