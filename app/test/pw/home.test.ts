@@ -89,7 +89,7 @@ describe('running and recent canvases (A2.7, A2.12)', () => {
       'Marver Platform, localhost:4805, running', 'TMS broker, localhost:4806, running', 'Tidewell, localhost:4807, stopped',
       'Marver site, localhost:4809, running, tab closed', 'Bridge build, localhost:4810, running',
     ])
-    expect(await text('[data-key="tab:t4"]')).toContain('Update to Marver 0.27.1 for the full unsaved-work guard')
+    expect(await text('[data-key="tab:t4"]')).toContain('Update to Marver 0.27.2 for the full unsaved-work guard')
     expect(await text('[data-key="tab:t1"]')).not.toContain('Update to')
     expect(await text('[data-key="tab:t5"]')).not.toContain('Update to')
     await p.page.click('[data-key="tab:t2"]')

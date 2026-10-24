@@ -39,7 +39,7 @@ export interface TabView {
   version?: string
   /**
    * Whether the canvas's slot file offers the bridge (`features: ['bridge']`, A2.9; 0.27.1 on): the guard's own fact
-   * (tabs.ts hasBridge), so Home's "Update to Marver 0.27.1" note and the degraded guard never disagree - a canvas
+   * (tabs.ts hasBridge), so Home's "Update to Marver 0.27.2" note and the degraded guard never disagree - a canvas
    * built from 0.27.1's code still reads 0.27.0 until its release. Absent for a tab with no registry entry.
    */
   bridge?: boolean
