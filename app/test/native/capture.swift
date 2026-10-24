@@ -17,8 +17,9 @@
 // from the window's top-left (titleBarStyle 'hidden': the content view is the whole window).
 // stdin: a line "png <path>" writes the last complete frame there ({"png":"done"}); "png-at <id> <hostNs> <path>"
 // writes the frame displayed at that time from the ring ({"png":"done"|"missing","id":…}): `--ring x,y,w,h` (window
-// points) keeps that rect of the last 60 complete frames, so a case can keep the frames around its first bad one - the
-// strip, not the window (60 strips of 2560 x 88 px are 54 MB). EOF stops the stream.
+// points) keeps that rect of the last `--ring-frames` (60) complete frames at one pixel a point, so a case can keep
+// the frames around its first bad one - the strip, not the window (a 1280 x 44 strip is 225 KB: 240 frames, two
+// seconds at 120 Hz, 54 MB). EOF stops the stream.
 // `--heartbeat` (display mode): the helper keeps a 2 x 2 px window in the display's bottom-left corner changing at the
 // refresh rate, so every refresh has something to capture and a gap means a missed frame - a display stream skips
 // the refreshes in which nothing changed (on this Mac, 41 of 136 in 1.5 s, up to 58 ms apart, with no heartbeat).
@@ -103,7 +104,7 @@ func parseDetect(_ s: String?) -> Detect? {
 }
 let detect = parseDetect(opt("--detect"))
 let ringRect: Region? = parseRegions(opt("--ring").map { "ring:" + $0 }).first
-let RING = 60
+let RING = max(1, min(600, opt("--ring-frames").flatMap { Int($0) } ?? 60))
 
 // ---- the stream's output -----------------------------------------------------------------------------------------
 
@@ -218,8 +219,11 @@ final class Output: NSObject, SCStreamOutput, SCStreamDelegate {
   func ringKeep(_ r: Region, _ ns: UInt64, _ base: UnsafePointer<UInt8>, _ w: Int, _ h: Int, _ row: Int, _ ox: Double, _ oy: Double, _ sx: Double, _ sy: Double) {
     let x0 = max(0, Int(ox + r.x * sx)), y0 = max(0, Int(oy + r.y * sy))
     let x1 = min(w, Int(ox + (r.x + r.w) * sx)), y1 = min(h, Int(oy + (r.y + r.h) * sy))
+    // one pixel a point: every step-th pixel of every step-th row
+    let step = max(1, Int(sx.rounded()))
     guard x1 > x0, y1 > y0 else { return }
-    let cw = x1 - x0, ch = y1 - y0
+    let cw = (x1 - x0) / step, ch = (y1 - y0) / step
+    guard cw > 0, ch > 0 else { return }
     lock.lock(); defer { lock.unlock() }
     let k: Kept
     if ring.count < RING { k = Kept(); ring.append(k) } else { k = ring[ringNext] }
@@ -227,7 +231,12 @@ final class Output: NSObject, SCStreamOutput, SCStreamDelegate {
     if k.bytes.count != cw * ch * 4 { k.bytes = [UInt8](repeating: 0, count: cw * ch * 4) }
     k.ns = ns; k.w = cw; k.h = ch
     k.bytes.withUnsafeMutableBytes { dst in
-      for yy in 0..<ch { memcpy(dst.baseAddress! + yy * cw * 4, base + (y0 + yy) * row + x0 * 4, cw * 4) }
+      let d = dst.baseAddress!.assumingMemoryBound(to: UInt8.self)
+      for yy in 0..<ch {
+        let src = base + (y0 + yy * step) * row + x0 * 4
+        if step == 1 { memcpy(d + yy * cw * 4, src, cw * 4); continue }
+        for xx in 0..<cw { let s = src + xx * step * 4, o = d + (yy * cw + xx) * 4; o[0] = s[0]; o[1] = s[1]; o[2] = s[2]; o[3] = s[3] }
+      }
     }
   }
 

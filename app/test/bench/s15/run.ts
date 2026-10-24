@@ -59,7 +59,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { readFileSync } from 'node:fs'
-import { CaptureBlind, Palette, TRIES, blindLine, captureAccess, judgeCase, judgeTransition, retried, startCapture, type CaptureFrame, type CaseVerdict, type TransitionVerdict } from '../../harness/capture.ts'
+import { CaptureBlind, Palette, TRIES, blindLine, captureAccess, clockControl, judgeCase, judgeTransition, retried, startCapture, type CaptureFrame, type CaseVerdict, type ClockControl, type TransitionVerdict } from '../../harness/capture.ts'
 
 const APP = resolve(import.meta.dirname, '..', '..', '..')
 const ELECTRON = createRequire(join(APP, 'package.json'))('electron') as unknown as string
@@ -87,26 +87,6 @@ interface RunDump {
 }
 const paletteOf = (c: RunDump['calibration']) => new Palette(20).add('ground', c.ground).add('a', c.a).add('b', c.b).between('ground', GROUND, DOT)
 const verdictOf = (pal: Palette) => (f: CaptureFrame) => (f.regions?.empty ?? []).every((s) => pal.classify(s) === 'ground') ? 'good' as const : 'bad' as const
-
-/** The clock control's figures: each change's lag to its first frame, in refreshes; ok when every one is 0 to 3. */
-interface Clock { ok: boolean; lags: (number | null)[]; why?: string }
-/** Judged from a run's frames: for each stamped change, the first complete frame whose marker shows it. */
-function clockOf(frames: readonly CaptureFrame[], marks: { ns: bigint; on: boolean }[], hz: number, isOn: (f: CaptureFrame) => boolean | null): Clock {
-  const R = 1e9 / hz
-  const lags: (number | null)[] = []
-  let why: string | undefined
-  for (const [k, m] of marks.entries()) {
-    const next = marks[k + 1]?.ns
-    const early = frames.find((f) => f.status === 'complete' && BigInt(f.hostNs) < m.ns - 500_000n && (k === 0 || BigInt(f.hostNs) > marks[k - 1]!.ns + BigInt(Math.round(4 * R))) && isOn(f) === m.on)
-    if (early) { why ??= `change ${k} (${m.on ? 'shown' : 'hidden'}) on the screen ${((Number(m.ns - BigInt(early.hostNs))) / 1e6).toFixed(1)} ms before main made it: the clocks disagree`; lags.push(null); continue }
-    const hit = frames.find((f) => f.status === 'complete' && BigInt(f.hostNs) >= m.ns - 500_000n && (next === undefined || BigInt(f.hostNs) < next) && isOn(f) === m.on)
-    if (!hit) { why ??= `change ${k} never reached the screen before the next`; lags.push(null); continue }
-    const lag = Number(BigInt(hit.hostNs) - m.ns) / R
-    lags.push(Math.round(lag * 100) / 100)
-    if (lag > 3) why ??= `change ${k} reached the screen ${lag.toFixed(1)} refreshes after main made it`
-  }
-  return { ok: !why, lags, ...(why ? { why } : {}) }
-}
 
 interface Ev { ns: string; ev: string; [k: string]: unknown }
 
@@ -136,7 +116,7 @@ interface Result {
   name: string
   refreshHz: number
   clockSkewMs: number
-  clock: Clock
+  clock: ClockControl
   steady: { frames: number; bad: number }
   toggles: CaseVerdict & { detail: TransitionVerdict[] }
   stalledStrip: CaseVerdict & { detail: TransitionVerdict[] }
@@ -171,7 +151,7 @@ async function runVariant(v: number): Promise<Result> {
     await sleep(100)
     const red = new Palette(60).add('on', ['ff0000'])
     const isOn = (f: CaptureFrame) => { const xs = f.regions?.marker?.filter(Boolean) ?? []; return xs.length ? xs.every((x) => red.classify(x) === 'on') : null }
-    const clock = clockOf(cap.frames, marks, hz, isOn)
+    const clock = clockControl(cap.frames, marks, hz, isOn)
 
     // calibration: the ground and its dots, A's and B's patterns, each as the capture shows them
     await b.cmd({ op: 'state', canvas: 'a', cover: false }, 'state')

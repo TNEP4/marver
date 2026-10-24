@@ -160,11 +160,17 @@ uncovered until a stream fills its own, so app 0.2's base behaves as app 0.1.
   a `WebContentsView` whose ground is its native background covers (variant 3); a plain `View` and an `ImageView`
   are drawn beneath the web views.
 - **The capture matrix** (`node app/test/capture/matrix.ts`): the transitions judged at every refresh against main's
-  journal (`test/harness/capture.ts` `judgeTransition`, `judgeCase`). With app 0.1's opaque strip every case is exact;
-  with the one ground, A2.2's threshold. A window stream skips the refreshes in which nothing changed, so the runner
-  puts a 1 px compositor heartbeat in the strip's corner (main inserts it in test builds once the one ground lands)
-  and checks it first: a second with no complete frame is blind. `--n 40` is the acceptance count; exit 0 pass, 1
-  fail, 3 inconclusive, 77 blind.
+  journal (`test/harness/capture.ts` `judgeTransition`, `judgeCase`; `test/capture/matrix-judge.ts`). **It proves
+  nothing until the one ground lands**: in the opaque layout every canvas view sits below the strip, so the strip's
+  empty part can only show the strip or the cover and every case would pass by construction - it then reports each
+  case not applicable and exits 3, never 0. In the one ground: A2.2's threshold, each transition from main's decision
+  to 100 ms and 4 refreshes after the journal says the state settled, the size tag allowed only where a view of the
+  uncovered width draws it, the colours calibrated from a known source (a test-mode marker view) and from see-through
+  frames, and three inconclusive runs failing a case. A window stream skips the refreshes in which nothing changed, so
+  the runner puts a heartbeat in the strip's corner and checks it first (a second with no complete frame is blind):
+  a block its page recolours at every animation frame - a CSS opacity animation did not keep this Mac's window stream
+  at its rate. Main's clock is checked against the helper's display times with a marker it shows and hides (`--control`
+  runs only that). `--n 40` is the acceptance count; exit 0 pass, 1 fail, 3 inconclusive or not applicable, 77 blind.
 - **A3's budgets** (`test/budgets/`, every launch on a temporary world with the production switches; `--app
   <Marver.app>` for the signed build): `memory.mjs` (two footprint gates, A3.8 #48), `hidden-cpu.mjs` (the window
   hidden, the app's own CPU counted from outside with canvases taken out, A3.8 #49), `launch-painted.mjs` (spawn to

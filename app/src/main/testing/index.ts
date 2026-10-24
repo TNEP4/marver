@@ -20,8 +20,10 @@ export const SENTINEL = 'mv-test-hook'
 export type Hook = (args: unknown) => unknown
 
 const hooks = new Map<string, Hook>()
-const journal: { topic: string; turn: number; t: string; data: unknown }[] = []
+const journal: { topic: string; turn: number; seq: number; t: string; data: unknown }[] = []
 let turn = 0
+/** every line's number, never reset: the journal keeps its last 20,000 lines, so a reader past that reads by `seq` or `t`, never by index */
+let seq = 0
 let turnQueued = false
 
 /** True only in a dev build launched with MARVER_APP_TEST=1. */
@@ -56,7 +58,7 @@ export function noteTopic<K extends keyof JournalTopics>(topic: K, data: Journal
 export function note(topic: string, data: unknown): void {
   if (!(__MV_TEST__ && testMode())) return
   if (!turnQueued) { turnQueued = true; setImmediate(() => { turn++; turnQueued = false }) }
-  journal.push({ topic, turn, t: process.hrtime.bigint().toString(), data })
+  journal.push({ topic, turn, seq: ++seq, t: process.hrtime.bigint().toString(), data })
   if (journal.length > 20_000) journal.splice(0, journal.length - 20_000)
 }
 
@@ -83,9 +85,13 @@ export function startTesting(): void {
     env: { MARVER_HOME: process.env.MARVER_HOME, MARVER_SLOT_BASE: process.env.MARVER_SLOT_BASE },
     ready: app.isReady(),
   }))
+  // { since } an index into what is kept (A2's readers); { afterSeq } the lines numbered after it, { afterT } those
+  // stamped after that hrtime (ns, a string) - both still right once the journal has dropped its oldest lines
   provide('log', (a) => {
-    const since = typeof (a as { since?: unknown })?.since === 'number' ? (a as { since: number }).since : 0
-    return journal.slice(since)
+    const o = (a ?? {}) as { since?: unknown; afterSeq?: unknown; afterT?: unknown }
+    if (typeof o.afterSeq === 'number') { const n = o.afterSeq; return journal.filter((l) => l.seq > n) }
+    if (typeof o.afterT === 'string' && /^\d+$/.test(o.afterT)) { const t = BigInt(o.afterT); return journal.filter((l) => BigInt(l.t) > t) }
+    return journal.slice(typeof o.since === 'number' ? o.since : 0)
   })
   provide('hooks', () => [...hooks.keys()].sort())
   provide('exit', (a) => {

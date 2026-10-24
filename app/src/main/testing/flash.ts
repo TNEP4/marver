@@ -8,10 +8,15 @@
  *   `recorder.markFlash` (⌃⌥F, the menu, the `command` hook) is the recorder stream's composition of the same ports.
  * - `flash:records`: the records so far; `flash:quit`: `quitFlashes()` now, as will-quit does.
  * - `picture:app { width?, path }`: captureApp's picture written to an absolute path the case names.
+ * - `procs:roles`: the budgets' roles in a dev build - canvas renderers from the canvas tabs' own views, app pages from
+ *   the strip, Home, Settings and the tab pages; any other webContents' process `unknown` (counted against the app).
+ * - `clock:marker { on, color? }`: the capture harness's clock control (A3.8 #36) - a red page view on top of the
+ *   window's bottom-left corner shown or hidden, journaled (`clock` topic) right after main made the change; `color`
+ *   (hex) paints it another colour first, a known source the matrix calibrates the ground and its dots from (#34).
  */
 import { writeFileSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
-import { app, webContents } from 'electron'
+import { app, WebContentsView, webContents, type WebContents } from 'electron'
 import type { AppBody, Sample } from '../../../../src/shared/app-perf.ts'
 import { values, type Home } from '../config.ts'
 import { flashPorts, perfDirOf } from '../flash-ports.ts'
@@ -19,10 +24,14 @@ import { markFlash, quitFlashes } from '../flashes.ts'
 import { readAgx } from '../machine.ts'
 import { lastPressure } from '../pressure.ts'
 import { recorder, sampler } from '../recorder.ts'
-import { captureApp, contentView, mainWindow } from '../window.ts'
-import { provide } from './index.ts'
+import { allTabs } from '../tabs.ts'
+import { captureApp, contentView, mainWindow, pageView, stripContents } from '../window.ts'
+import { note, provide } from './index.ts'
 
 const records: AppBody<'flash'>[] = []
+/** the clock control's marker view (test mode only), and where it sits: 24 x 24 pt, 24 pt from the bottom-left corner */
+let marker: WebContentsView | null = null
+const MARKER_AT = (h: number) => ({ x: 24, y: h - 48, width: 24, height: 24 })
 
 /** One getAppMetrics() as a Sample, for when the sampler has none yet (the recorder stream's is the real one). */
 function metricsNow(): Sample {
@@ -59,17 +68,65 @@ export function provideFlashHooks(home: Home): void {
   provide('flash:quit', () => { quitFlashes(); return records.length })
   // the budgets' roles in a dev build (A3.8 #48, #49): each canvas tab's main-frame and subframe processes, and the
   // app pages'. The signed build has no hook: there the roles come from the recorder's own sample lines
+  // app pages', from main's own views (never from a URL: a view not yet loaded, DevTools or about:blank is no canvas);
+  // anything else is `unknown`, which the budgets count against the app (it can fail a run, never pass one)
   provide('procs:roles', () => {
+    const pidsOf = (wc: WebContents | undefined): number[] => {
+      if (!wc || wc.isDestroyed()) return []
+      const ps = new Set<number>([wc.getOSProcessId()])
+      try { for (const f of wc.mainFrame.framesInSubtree) ps.add(f.osProcessId) } catch { /* going */ }
+      return [...ps].filter((p) => p > 0)
+    }
+    const canvasWc = new Set<number>()
+    const pageWc = new Set<number>()
     const canvas = new Set<number>()
     const pages = new Set<number>()
-    for (const wc of webContents.getAllWebContents()) {
-      if (wc.isDestroyed()) continue
-      const url = wc.getURL()
-      const pids = new Set<number>([wc.getOSProcessId()])
-      try { for (const f of wc.mainFrame.framesInSubtree) pids.add(f.osProcessId) } catch { /* going */ }
-      for (const p of pids) if (p > 0) (url.startsWith('marver-app://') ? pages : canvas).add(p)
+    for (const t of allTabs()) {
+      const v = contentView(t.id)?.webContents
+      if (v && !v.isDestroyed()) { (t.kind === 'local' ? canvasWc : pageWc).add(v.id); for (const p of pidsOf(v)) (t.kind === 'local' ? canvas : pages).add(p) }
+      const pv = pageView(t.id)?.webContents
+      if (pv && !pv.isDestroyed()) { pageWc.add(pv.id); for (const p of pidsOf(pv)) pages.add(p) }
     }
-    return { canvas: [...canvas], pages: [...pages].filter((p) => !canvas.has(p)) }
+    const strip = stripContents()
+    if (strip) { pageWc.add(strip.id); for (const p of pidsOf(strip)) pages.add(p) }
+    if (marker && !marker.webContents.isDestroyed()) { pageWc.add(marker.webContents.id); for (const p of pidsOf(marker.webContents)) pages.add(p) }
+    const unknown = new Set<number>()
+    for (const wc of webContents.getAllWebContents()) {
+      if (wc.isDestroyed() || canvasWc.has(wc.id) || pageWc.has(wc.id)) continue
+      for (const p of pidsOf(wc)) if (!canvas.has(p) && !pages.has(p)) unknown.add(p)
+    }
+    // a process shared by a canvas and an app page (never expected) is the app's: counted, not taken out
+    return { canvas: [...canvas].filter((p) => !pages.has(p) && !unknown.has(p)), pages: [...pages], unknown: [...unknown] }
+  })
+  // the capture harness's clock control (A3.8 #36): a red page view on top, in the window's bottom-left corner, shown
+  // or hidden and journaled right after - its first frame on the screen must follow within 3 refreshes. A
+  // WebContentsView paints nothing until its renderer has presented (S15, 24 Oct), so the page is loaded first
+  provide('clock:marker', async (a) => {
+    const o = (a ?? {}) as { on?: boolean; remove?: boolean; color?: string }
+    const win = mainWindow()
+    if (!win) return false
+    if (o.remove) { if (marker) { try { win.contentView.removeChildView(marker); marker.webContents.close() } catch { /* gone */ } marker = null } return true }
+    if (!marker || marker.webContents.isDestroyed()) {
+      marker = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } })
+      marker.setBackgroundColor('#ff0000')
+      marker.setVisible(false)
+      win.contentView.addChildView(marker)
+      await marker.webContents.loadURL('data:text/html,<style>html,body{margin:0;height:100%;background:%23ff0000}</style>')
+    }
+    if (typeof o.color === 'string' && /^#?[0-9a-f]{6}$/i.test(o.color)) {
+      const hex = `#${o.color.replace('#', '')}`
+      marker.setBackgroundColor(hex)
+      await marker.webContents.executeJavaScript(`document.documentElement.style.background = document.body.style.background = ${JSON.stringify(hex)}; new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(1))))`)
+    }
+    const { height } = win.getContentBounds()
+    marker.setBounds(MARKER_AT(height))
+    // on top of everything added since - re-added only when something went above it: re-adding a WebContentsView
+    // detaches it, and its next frame then waits on its renderer
+    const kids = win.contentView.children
+    if (kids[kids.length - 1] !== marker) win.contentView.addChildView(marker)
+    marker.setVisible(!!o.on)
+    note('clock', { marker: !!o.on })
+    return { rect: MARKER_AT(height) }
   })
   // the recorder's pan in the real window (A3.8 #51, the detector's cost on a real board): wheel events into a
   // tab's view on an absolute schedule, never awaiting an ack (A3.8 #20)

@@ -139,8 +139,8 @@ export interface CaptureSession {
   /** write the last complete frame as a PNG */
   png(path: string): Promise<void>
   /**
-   * write the frame displayed at `hostNs` as a PNG - the strip of the window that holds the regions, from the helper's
-   * ring of the last 60 complete frames (window mode with regions only): false when it has left the ring
+   * write the frame displayed at `hostNs` as a PNG - the `ring` rect, from the helper's ring of the last `ringFrames`
+   * complete frames (window mode): false when it has left the ring, or no ring was asked for
    */
   pngAt(hostNs: string, path: string): Promise<boolean>
   stop(): Promise<void>
@@ -157,8 +157,9 @@ export async function startCapture(o: {
   fps?: number
   /** display mode: the helper's 2 px heartbeat window, so every refresh is captured and a gap is a missed frame */
   heartbeat?: boolean
-  /** window points kept for each of the last 60 complete frames, for `pngAt` (a failing transition's evidence) */
+  /** window points kept, one pixel a point, for each of the last `ringFrames` (60) complete frames: `pngAt`'s evidence */
   ring?: { x: number; y: number; w: number; h: number }
+  ringFrames?: number
 }): Promise<CaptureSession> {
   const bin = nativeTool('capture')
   const args: string[] = [o.mode]
@@ -169,6 +170,7 @@ export async function startCapture(o: {
   if (o.fps) args.push('--fps', String(o.fps))
   if (o.heartbeat) args.push('--heartbeat')
   if (o.ring) args.push('--ring', `${o.ring.x},${o.ring.y},${o.ring.w},${o.ring.h}`)
+  if (o.ringFrames) args.push('--ring-frames', String(o.ringFrames))
   const child = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'] })
   let err = ''
   child.stderr.on('data', (c) => { err += c })
@@ -246,6 +248,40 @@ export async function startCapture(o: {
       if (code === 'late') child.kill('SIGKILL')
     },
   }
+}
+
+/** The clock control's figures (A3.8 #36): each change's lag to its first frame, in refreshes; ok when every one is 0 to 3. */
+export interface ClockControl { ok: boolean; lags: (number | null)[]; why?: string; inconclusive?: boolean }
+/**
+ * The clock control, judged from a run's frames: main shows or hides a marker and stamps each change on its own clock
+ * right after making it; for each, the first complete frame whose marker shows the change must be displayed 0 to 3
+ * refreshes after the stamp, and none before it. This is what proves main's journal and the helper's display times
+ * share a clock - the ready line's comparison checks only the helper's "now" against the runner's.
+ */
+export function clockControl(frames: readonly CaptureFrame[], marks: readonly { ns: bigint; on: boolean }[], hz: number, isOn: (f: CaptureFrame) => boolean | null): ClockControl {
+  const R = 1e9 / hz
+  const lags: (number | null)[] = []
+  let why: string | undefined
+  let inconclusive = false
+  for (const [k, m] of marks.entries()) {
+    const next = marks[k + 1]?.ns
+    const early = frames.find((f) => f.status === 'complete' && BigInt(f.hostNs) < m.ns - 500_000n && (k === 0 || BigInt(f.hostNs) > marks[k - 1]!.ns + BigInt(Math.round(4 * R))) && isOn(f) === m.on)
+    if (early) { why ??= `change ${k} (${m.on ? 'shown' : 'hidden'}) on the screen ${((Number(m.ns - BigInt(early.hostNs))) / 1e6).toFixed(1)} ms before main made it: the clocks disagree`; lags.push(null); continue }
+    const hit = frames.find((f) => f.status === 'complete' && BigInt(f.hostNs) >= m.ns - 500_000n && (next === undefined || BigInt(f.hostNs) < next) && isOn(f) === m.on)
+    // the frames from the refresh before the change to the first one showing it must be contiguous: a stream that
+    // skipped refreshes there says nothing about when the change reached the screen
+    const upTo = hit ? BigInt(hit.hostNs) : (next ?? m.ns + BigInt(Math.round(8 * R)))
+    let i0 = -1
+    for (let i = 0; i < frames.length && BigInt(frames[i]!.hostNs) <= m.ns; i++) i0 = i
+    const span = i0 < 0 ? [] : frames.slice(i0).filter((f) => BigInt(f.hostNs) <= upTo)
+    const holed = span.length < 2 || span.some((f, i) => i > 0 && (f.gap || Number(BigInt(f.hostNs) - BigInt(span[i - 1]!.hostNs)) > 1.5 * R))
+    if (holed) { inconclusive = true; why ??= `frames missing around change ${k}: the stream skipped refreshes, so the clocks were not checked`; lags.push(null); continue }
+    if (!hit) { why ??= `change ${k} never reached the screen before the next`; lags.push(null); continue }
+    const lag = Number(BigInt(hit.hostNs) - m.ns) / R
+    lags.push(Math.round(lag * 100) / 100)
+    if (lag > 3) why ??= `change ${k} reached the screen ${lag.toFixed(1)} refreshes after main made it`
+  }
+  return { ok: !why, lags, ...(why ? { why } : {}), ...(inconclusive ? { inconclusive } : {}) }
 }
 
 // ---- colours, as the capture sees them ---------------------------------------------------------------------------
