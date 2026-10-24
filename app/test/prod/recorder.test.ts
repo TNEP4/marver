@@ -221,7 +221,9 @@ describe('the recorder on the real binary (A3.7)', () => {
   })
 
   it('recorder: false set live: no sample line and no getAppMetrics; memory.ts wanting it samples again, still nothing on disk', async () => {
-    writeFileSync(join(w.env.home, 'config.json'), JSON.stringify({ recorder: false }))
+    // unloading off too: with it on, memory.ts wants the sampler while a hidden canvas could be unloaded (A3.8 #4) -
+    // this case's own `recorder:need` stands in for it below
+    writeFileSync(join(w.env.home, 'config.json'), JSON.stringify({ recorder: false, unloadUnderPressure: false }))
     await w.run.call('files.reread')
     await until('the recorder off', async () => !(await ring()).stats.recorder)
     await sleep(TIMINGS.sampleMs * 2)
