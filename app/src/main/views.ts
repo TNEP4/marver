@@ -1090,9 +1090,9 @@ export function startViews(i: StartInput): void {
   })
   // the presentation (A3.8 #27): an accepted answer, judged with the GPU identity read in its turn; the GPU
   // process gone or replaced covers every view until each presents again
-  trust.onPresented?.((tabId, doc, r) => { if (presentAnswer(tabId, doc, r, Date.now(), gpuIdentity()) === 'ok') compose() })
-  app.on('child-process-gone', (_e, d) => { if (d.type === 'GPU') { gpuGone(); compose() } })
-  app.on('gpu-info-update', () => { if (noteGpu(gpuIdentity())) compose() })
+  trust.onPresented?.((tabId, doc, r) => { const v = presentAnswer(tabId, doc, r, Date.now(), gpuIdentity()); if (v === 'ok' || v === 'lost') compose() })
+  app.on('child-process-gone', (_e, d) => { if (d.type === 'GPU') { j('gpu', { gone: d.reason }); gpuGone(); compose() } })
+  app.on('gpu-info-update', () => { const id = gpuIdentity(); if (noteGpu(id)) { j('gpu', { changed: id }); compose() } })
   sampler.onSample((x) => { if (noteGpu(x.gpu ? { pid: x.gpu.pid, born: x.gpu.born } : null)) compose() })
   if (trust.pages) mountPages(trust.pages)
 
@@ -1214,6 +1214,7 @@ function tabDump(t: Tab) {
     doc: t.doc ? { ...t.doc } : null, reports: { ...t.reports }, crash: { ...t.crash }, fail: t.fail ?? null, probe: t.probe ?? null,
     hung: !!t.hung, held: t.held ?? null, replacing: !!t.replacing, key: keyOf(t), look: t.look ?? null, logo: t.logo ?? null,
     hasView: canvases.has(t.id) || !!contentView(t.id), wcId: contentView(t.id)?.webContents.id ?? null, pageView: !!pageView(t.id),
+    geo: { ...t.geo },
   }
 }
 
@@ -1253,7 +1254,8 @@ function testHooks(): void {
   // the page reloading itself (A1's resume reload): main's own reload, around the guard - as the page's would be
   provide('reloadPage', (a) => { const wc = wcOf(arg<{ target: string }>(a).target); if (!wc) return false; wc.reload(); return true })
   provide('crash', (a) => { const wc = wcOf(arg<{ target: string }>(a).target); if (!wc) return false; wc.forcefullyCrashRenderer(); return true })
-  provide('exec', async (a) => { const { target, js, gesture } = arg<{ target: string; js: string; gesture?: boolean }>(a); const wc = wcOf(target); return wc ? wc.executeJavaScript(js, !!gesture) : null })
+  // `frame`: the main frame's own executeJavaScript, which does not wait for a load in flight (a page navigating)
+  provide('exec', async (a) => { const { target, js, gesture, frame } = arg<{ target: string; js: string; gesture?: boolean; frame?: boolean }>(a); const wc = wcOf(target); return wc ? (frame ? wc.mainFrame.executeJavaScript(js, !!gesture) : wc.executeJavaScript(js, !!gesture)) : null })
   // whether the main frame stays silent for `ms` (its own executeJavaScript, which does not wait for a load): a
   // case that hangs a page knows its busy loop runs before it acts
   provide('silent', async (a) => {

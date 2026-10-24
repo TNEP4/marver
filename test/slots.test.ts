@@ -80,7 +80,7 @@ describe('the slots: claims (A1.3)', () => {
     for (const r of results) {
       const f = read(`slot-${r.slot}.json`)
       // 0.27.1: the bridge is offered from the starting write on (A2.14 #15) - before the app reads `ready`
-      expect(f).toMatchObject({ v: 1, state: 'starting', pid: r.child.pid, slot: r.slot, port: BASE + r.slot!, origin: null, url: `http://localhost:${BASE + r.slot!}/`, features: ['bridge'], ws: '0123456789abcdef' })
+      expect(f).toMatchObject({ v: 1, state: 'starting', pid: r.child.pid, slot: r.slot, port: BASE + r.slot!, origin: null, url: `http://localhost:${BASE + r.slot!}/`, features: ['bridge', 'inset'], ws: '0123456789abcdef' })
       expect(f.key).toMatch(/^[A-Za-z0-9_-]{43}$/)
       expect(mode(running(`slot-${r.slot}.json`))).toBe(0o600)
     }

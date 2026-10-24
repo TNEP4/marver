@@ -1,8 +1,9 @@
 /**
- * The window in app 0.1 (spec 28 A2.2, A2.4, A2.10, A2.13, A2.14 #1, #21, #25), under Playwright's driver with the
- * fake trust: every view below the strip with the cover shown in every turn the journal records; lazy views and
- * hidden tabs kept; HTML fullscreen staying in its view; closing the window keeping the views; the app's keys over
- * a page that swallows every key; the one focus rule and F6.
+ * The window (spec 28 A2.2, A2.4, A2.10, A2.13, A2.14 #1, #21, #25, A3.8 #24, #32), under Playwright's driver with
+ * the fake trust: every canvas without the one ground below the strip with the cover shown in every turn the journal
+ * records while one is active; Home, Settings and the tab pages at the window's full height with the cover hidden
+ * over them; lazy views and hidden tabs kept; HTML fullscreen staying in its view; closing the window keeping the
+ * views; the app's keys over a page that swallows every key; the one focus rule and F6.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { launchWindow, sleep, SWALLOW_KEYS, hits, type WindowRun } from '../harness/window.ts'
@@ -14,25 +15,31 @@ beforeAll(async () => { w = await launchWindow('pw', { extraEnv: { MARVER_APP_SH
 afterAll(async () => { await w?.close() })
 
 const BELOW = (width: number, height: number) => ({ x: 0, y: 44, width, height: height - 44 })
+const FULL = (width: number, height: number) => ({ x: 0, y: 0, width, height })
+/** the app's own pages: Home, Settings, a tab page */
+const appPage = (key: string) => key === 'home:view' || key === 'settings:view' || key.endsWith(':page')
 
 async function contentSize() {
   const win = await w.run.call<{ content: { width: number; height: number } }>('window')
   return win.content
 }
 
-async function expectAllBelow() {
+/** Every canvas below the strip (these offer no inset), every app page full height; the cover over a canvas, never over an app page. */
+async function expectPlaced() {
   const { width, height } = await contentSize()
   const views = await w.views()
-  for (const v of views.filter((x) => x.key !== 'cover' && x.key !== 'strip')) expect(v.bounds, v.key).toEqual(BELOW(width, height))
-  expect(views.find((v) => v.key === 'cover')).toMatchObject({ visible: true, bounds: { x: 0, y: 0, width, height: 44 } })
+  for (const v of views.filter((x) => x.key !== 'cover' && x.key !== 'strip')) expect(v.bounds, v.key).toEqual(appPage(v.key) ? FULL(width, height) : BELOW(width, height))
+  const shownPage = views.some((v) => v.visible && appPage(v.key))
+  expect(views.find((v) => v.key === 'cover')).toMatchObject({ visible: !shownPage, bounds: { x: 0, y: 0, width, height: 44 } })
   expect(views.find((v) => v.key === 'strip')).toMatchObject({ visible: true, bounds: { x: 0, y: 0, width, height: 44 } })
 }
+const expectAllBelow = expectPlaced
 
 describe('the window (A2.10\'s "the window in app 0.1")', () => {
   let a: string
   let b: string
 
-  it('opens on Home: Home\'s view below the strip, the cover shown', async () => {
+  it('opens on Home: Home\'s view at the full height under the strip, the cover hidden over it', async () => {
     const s = await w.until((x) => x.active === 'home')
     expect(s.tabs.find((t) => t.id === 'home')!.hasView).toBe(true)
     await expectAllBelow()
@@ -66,7 +73,7 @@ describe('the window (A2.10\'s "the window in app 0.1")', () => {
     expect(after.doc!.trusted).toBe(true)
   })
 
-  it('every view, shown or hidden, below the strip after resizes and a switch; the cover in every journal turn', async () => {
+  it('every view, shown or hidden, in its place after resizes and a switch; the cover in every journal turn over a canvas', async () => {
     const since = (await w.log()).length
     for (const [width, height] of [[900, 600], [1300, 860], [720, 480]] as const) {
       await w.run.call('resize', { width, height })
@@ -79,8 +86,8 @@ describe('the window (A2.10\'s "the window in app 0.1")', () => {
     const composes = await w.log('compose', since)
     expect(composes.length).toBeGreaterThan(2)
     for (const c of composes) {
-      expect((c.data.cover as { visible: boolean }).visible).toBe(true)
-      for (const ch of c.data.changes as { op: string; rect?: { y: number } }[]) if (ch.op === 'bounds') expect(ch.rect!.y).toBe(44)
+      expect((c.data.cover as { visible: boolean }).visible).toBe(true)   // a canvas is active throughout
+      for (const ch of c.data.changes as { key: string; op: string; rect?: { y: number } }[]) if (ch.op === 'bounds') expect(ch.rect!.y, ch.key).toBe(appPage(ch.key) ? 0 : 44)
     }
   })
 

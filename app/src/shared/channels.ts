@@ -62,7 +62,15 @@ export interface TabsSnapshot { rev: number; active: string; tabs: TabView[] }
 export interface TabsMore { ids: string[]; x: number; y: number }
 
 /** `window` (main to every app page): replaces `focus`. */
-export interface WindowView { rev: number; focused: boolean; fullScreen: boolean }
+export interface WindowView {
+  rev: number; focused: boolean; fullScreen: boolean
+  /**
+   * The strip draws the still dots under its tabs now (A3.8 #3, #29): while app 0.1's plain cover is shown - the look
+   * 0.1 had, kept until spike S15 chooses a cover (with one chosen, never: the cover or plain ground holds them, #29).
+   * Absent reads false.
+   */
+  dots?: boolean
+}
 
 /** `page:focus` (main to the strip and a tab page): A2.13's focus rule and F6. */
 export interface PageFocus { target: 'active-tab' | 'heading' }

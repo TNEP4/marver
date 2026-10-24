@@ -13,7 +13,7 @@ import { BaseWindow, ipcMain, session, WebContentsView, webContents, type WebCon
 import { delayAdmits, installBridge, kindOf, type CanvasReports } from '../bridge.ts'
 import type { PageKind } from '../../shared/channels.ts'
 import { attachNav, type NavAdapter, type NavEvent } from '../nav.ts'
-import { fetchLogo, installDispatcher, isTrusted, probeProof } from '../proof.ts'
+import { fetchLogo, holdProved, installDispatcher, isTrusted, probeProof } from '../proof.ts'
 import { appRegistry, publicEntry, type RegistryEntry } from '../registry.ts'
 import { APP_PARTITION, appWebPreferences, canvasWebPreferences, localSession, onSameCanvasOpen, pinnedUrl, type AppPage } from '../sessions.ts'
 import { mainWindow } from '../window.ts'
@@ -142,6 +142,15 @@ export function provideTrustHooks(): void {
   provide('trust:menu-click', (a) => bridge.menuClick(arg<string>(a, 'id'), arg<string>(a, 'item')))
   provide('trust:reopen-next', (a) => { bridge.reopenNext(arg<string>(a, 'id')); return true })
   provide('trust:admit-delay', (a) => { delayAdmits(arg<number>(a, 'ms') ?? 0); return true })
+  // a proved main-frame response held before Chromium may commit it, until { on: false } (proof.ts holdProved)
+  let release: (() => void) | null = null
+  provide('trust:hold-proved', (a) => {
+    release?.()
+    release = null
+    if (arg<boolean>(a, 'on')) holdProved(new Promise<void>((r) => { release = r }))
+    else holdProved(null)
+    return true
+  })
   provide('trust:same-canvas', () => [...sameCanvas])
   provide('trust:web-contents', () => webContents.getAllWebContents().filter((w) => !w.isDestroyed()).map((w) => {
     const p = (w as unknown as { getLastWebPreferences?: () => Record<string, unknown> | null }).getLastWebPreferences?.() ?? null

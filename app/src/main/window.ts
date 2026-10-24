@@ -1,10 +1,31 @@
 /**
- * The window (spec 28 A2.2, A2.11, A2.13, A2.14 #1, #19, #20, #21, #33). Owner: the window stream.
+ * The window (spec 28 A2.2, A2.11, A2.13, A2.14 #1, #19, #20, #21, #33, A3.8 #24-#33). Owner: the window stream;
+ * the one ground's parts (A3) the one-ground stream's.
  *
  * One `BaseWindow` named `main` (window place: `windowStatePersistence` does nothing without a name). Its stack,
- * bottom to top: the content views (canvases, Home, Settings), the tab pages, the cover, the strip. App 0.1 has
- * the opaque strip: every view sits below the 44 px strip, and the cover - main's plain view, in the ground of the
- * active tab's look - is always shown under the strip's tabs (plan.ts).
+ * bottom to top: the content views (canvases, Home, Settings), the tab pages, the cover, the strip. The strip is
+ * transparent and paints controls only (A3.8 #29) - and the still dots while a cover that has it draw them covers
+ * (the window snapshot's `dots`, from cover.ts's `stripDraws`: app 0.1's plain view until S15, variant 4 after), so a
+ * canvas keeps 0.1's look until S15 chooses a cover. Home, Settings and every tab page run the window's full height
+ * and paint the ground and still dots under the strip themselves - in every build, the gate open or shut (A3.8 #32
+ * is built ungated: if S15 fails, #3's fallback is the opaque strip, and whether these pages stay at the full height
+ * then is Nic's call). So in every 0.2 build a web view lies under the strip's transparent drag region over them,
+ * and the strip's dots switch on and off through its renderer at each switch between them and a canvas (a frame of
+ * plain ground or doubled dots, longer while the strip is stalled). A canvas runs full height only when its layout
+ * says so (layout.ts), else below the strip; the cover - cover.ts's, in the ground of the active tab's look - is
+ * shown whenever the active view may not be seen through (plan.ts).
+ *
+ * **The cover waits for spike S15** (A3.8 #3): until cover.ts makes one, the cover is app 0.1's plain view behind
+ * cover.ts's interface, and no canvas is placed full height (layout.ts `setGround(false)`): a plain `View` may be
+ * drawn beneath a full-height web view on macOS, and nothing has shown it is not. Over views below the strip it
+ * covers by construction - they never overlap it. A test build can turn the gate on (`MARVER_APP_GROUND=1`) to drive
+ * main's half of the one ground - the decisions, never the pixels.
+ *
+ * The presentation (A3.8 #27, #28): before the plan, compose derives the active canvas view's presentation key
+ * (present.ts `observe`) - advancing its `gen` when it is shown after being hidden - and the cover lifts only for a
+ * see-through view whose latest epoch is answered, with no live resize running; after the turn's view changes it
+ * sends that epoch's request once (`flush`). A live resize is a person's drag, `will-resize` to `resized` (or 500 ms
+ * of quiet): covered throughout, no request, and at its end every view's `gen` advances.
  *
  * `compose()` is the one writer of bounds and visibility (A2.14 #20): every handler changes the model, then calls
  * it; it derives the plan and applies only what changed, in one turn and in a fixed order - bounds, shows, the
@@ -21,14 +42,19 @@ import { app, BaseWindow, nativeImage, nativeTheme, screen, View, WebContentsVie
 import * as sessions from './sessions.ts'
 import type { Present } from '../../../src/shared/app-api.ts'
 import { CH, type PageKind, type PageFocus, type TabsSnapshot, type TabView, type WindowView } from '../shared/channels.ts'
-import { STRIP_HEIGHT, below, ground, plan, type Plan, type PlanTab } from './plan.ts'
-import { activeTab, allTabs, darkOf, getTab, ordered, viewOf, type Tab } from './tabs.ts'
+import { STRIP_HEIGHT, full, ground, plan, type Plan, type PlanTab } from './plan.ts'
+import { activeTab, allTabs, darkOf, getTab, ordered, viewOf, type Layout, type Tab } from './tabs.ts'
 import { pageFor, snapshotKey, type PageBody } from './tabpage.ts'
 import { recompute as recomputePill, onVisibility } from './pill.ts'
 import { afterShow, setFocusPorts, track } from './focus.ts'
 import { invalidateMenu } from './menu.ts'
-import { note } from './testing/index.ts'
+import { note, noteTopic, provide, testMode } from './testing/index.ts'
 import { T } from './timings.ts'
+import { groundOn, onLayoutChange, placed, rectFor, seeThrough, setGround, setInsetOff } from './layout.ts'
+import { bumpAll, bumpGen, epochOf, flush as presentFlush, genOf, gpuGone, liftAt, noteGpu, observe, onCoverRecord, onPresentLog, quitting as presentQuitting, showing, uncovered, windowHidden, windowShown } from './present.ts'
+import { identity, recorder } from './recorder.ts'
+import type { TabIdent } from '../../../src/shared/app-perf.ts'
+import { makeCover, type Cover } from './cover.ts'
 
 export { STRIP_HEIGHT }
 
@@ -53,7 +79,7 @@ export interface WindowDeps {
 }
 
 let win: BaseWindow | null = null
-let cover: View | null = null
+let cover: Cover | null = null
 let strip: WebContentsView | null = null
 let deps: WindowDeps | null = null
 let turn = 0
@@ -95,7 +121,7 @@ export function attachContent(tabId: string, view: WebContentsView, kind: PageKi
   const t = getTab(tabId)
   view.setBackgroundColor(ground(darkOf(t, nativeTheme.shouldUseDarkColors)))
   const { width, height } = win.getContentBounds()
-  view.setBounds(below(width, height))
+  view.setBounds(t ? rectFor(t, width, height) : rectFor('app-page', width, height))
   win.contentView.addChildView(view, 0)
   content.set(tabId, { view, kind })
   applied.delete(`${tabId}:view`)
@@ -213,7 +239,10 @@ function feedTabs(): void {
 
 function feedWindow(): void {
   if (!win) return
-  const body = { focused: win.isFocused(), fullScreen: win.isFullScreen() }
+  // the strip's still dots while a cover that has the strip draw them covers (app 0.1's plain view until S15, A3.8 #3;
+  // variant 4 after): a canvas keeps 0.1's look under the tabs; over Home, Settings and a tab page the cover is hidden
+  // and the page's own dots show there
+  const body = { focused: win.isFocused(), fullScreen: win.isFullScreen(), dots: !!cover?.stripDraws && coverWas.visible }
   const s = JSON.stringify(body)
   if (s === lastWindow) return
   lastWindow = s
@@ -234,9 +263,9 @@ function createPage(t: Tab): PageHandle {
   track(view.webContents, { part: 'page', tab: t.id })
   view.webContents.on('render-process-gone', () => { if (pages.get(t.id) === h) { closePage(t.id); compose() } })   // made again by the next compose
   const { width, height } = win!.getContentBounds()
-  view.setBounds(below(width, height))
-  // above the content views, beneath the cover and the strip
-  win!.contentView.addChildView(view, Math.max(0, win!.contentView.children.length - 2))
+  view.setBounds(full(width, height))   // the window's full height: it paints the ground under the strip (A3.8 #32)
+  // above the content views, beneath the cover (when it is a view) and the strip
+  win!.contentView.addChildView(view, Math.max(0, win!.contentView.children.length - (cover?.view ? 2 : 1)))
   void view.webContents.loadURL(`${APP_ORIGIN}tabpage/`).catch(() => { /* served by sessions.ts; a failure leaves its ground */ })
   pages.set(t.id, h)
   j('view', { turn, op: 'add', key: `${t.id}:page`, kind: 'tabpage' })
@@ -313,12 +342,45 @@ export function compose(o: { focus?: 'shown' } = {}): void {
   } finally { composing = false }
 }
 
-function planTab(t: Tab, appDark: boolean): PlanTab {
+/** The tab's own page shows over it this turn (A2.11). */
+const pageShows = (t: Tab): boolean => { const h = pages.get(t.id); return !!h && !h.closing && !!h.body }
+
+function planTab(t: Tab, appDark: boolean, presented: boolean): PlanTab {
   const h = pages.get(t.id)
   return {
     id: t.id, kind: t.kind, view: content.has(t.id), page: !!h && !h.closing && !!h.body, pageView: !!h,
-    dark: darkOf(t, appDark),
+    dark: darkOf(t, appDark), placed: placed(t), seeThrough: seeThrough(t), presented,
   }
+}
+
+// ---- the one ground's state: a live resize, the lift's delay ----
+
+/** a person's live resize, `will-resize` .. `resized` (or the quiet timer) */
+let resizing = false
+let quietTimer: ReturnType<typeof setTimeout> | undefined
+let liftTimer: ReturnType<typeof setTimeout> | undefined
+/** each tab's current epoch and the tab's identity when it began: its `cover` record names that document (A3.8 #8) */
+const epochIdent = new Map<string, { epoch: number; who: TabIdent }>()
+
+function armQuiet(): void {
+  clearTimeout(quietTimer)
+  quietTimer = setTimeout(() => endLiveResize('quiet'), T.liveResizeQuietMs)
+}
+function startLiveResize(): void {
+  armQuiet()
+  if (resizing) return
+  resizing = true
+  if (__MV_TEST__) noteTopic('resize', { live: true, via: 'will-resize' })
+  compose()
+}
+/** The drag ended: what was presented no longer counts - every view's gen advances, and one request follows (A3.8 #28). */
+function endLiveResize(via: 'resized' | 'quiet'): void {
+  if (!resizing) return
+  resizing = false
+  clearTimeout(quietTimer)
+  bumpAll()
+  if (__MV_TEST__) noteTopic('resize', { live: false, via })
+  compose()
 }
 
 function viewFor(key: string): WebContentsView | undefined {
@@ -332,7 +394,33 @@ function composeOnce(o: { focus?: 'shown' }): void {
   syncPages(now)
   const { width: w, height: h } = win!.getContentBounds()
   const appDark = nativeTheme.shouldUseDarkColors
-  const p: Plan = plan({ tabs: allTabs().map((t) => planTab(t, appDark)), active: activeTab()?.id ?? 'home', w, h, appDark })
+  const a = activeTab()
+  // 0. the presentation, before the plan (A3.8 #27): the active canvas view's key, from the model as it is now. A view
+  // shown after being hidden advances its gen; any shown view with an admitted document has a key (so leaving HTML
+  // fullscreen, or a hello, is a fresh epoch); only a see-through one asks and may lift the cover
+  let presented = false
+  let eligible = false
+  let observed = false
+  if (a?.kind === 'local' && content.has(a.id) && !pageShows(a)) {
+    if (!applied.get(`${a.id}:view`)?.vis) bumpGen(a.id)
+    const doc = a.doc?.trusted && a.doc.lifted ? a.doc.doc : undefined
+    if (doc) {
+      observed = true
+      const r = rectFor(a, w, h)
+      presented = observe(a.id, { doc, w: r.width, h: r.height, fs: a.geo.htmlFullscreen, gen: genOf(a.id) }, now)
+      const e = epochOf(a.id)
+      if (e !== null && epochIdent.get(a.id)?.epoch !== e) epochIdent.set(a.id, { epoch: e, who: identity(a) })
+      eligible = seeThrough(a)
+      // a lift waiting on uncoverDelayMs: compose again then
+      const at = liftAt(a.id)
+      if (eligible && !presented && at !== null && at > now) { clearTimeout(liftTimer); liftTimer = setTimeout(() => compose(), at - now + 1) }
+    }
+  }
+  // no view observed this turn (Home, Settings, a tab page, a document not presentable): the one shown before ends
+  // its sent epoch's record as hidden, and its replies are refused from now (A3.8 #27)
+  if (!observed) showing(null, now)
+  for (const id of epochIdent.keys()) if (epochOf(id) === null) epochIdent.delete(id)   // its view forgotten
+  const p: Plan = plan({ tabs: allTabs().map((t) => planTab(t, appDark, t === a && eligible && presented)), active: a?.id ?? 'home', w, h, appDark, resizing })
   lastPlan = p
   const changes: unknown[] = []
   // 1. bounds, shown or hidden, and each view's ground
@@ -352,11 +440,18 @@ function composeOnce(o: { focus?: 'shown' }): void {
     if (!a || !view) continue
     if (v.visible && !a.vis) { view.setVisible(true); a.vis = true; changes.push({ key: v.key, op: 'visible', visible: true }) }
   }
-  // 3. the cover (always shown in 0.1) and the strip, on top
-  cover!.setBounds(p.cover.rect)
+  // 3. the cover and the strip, on top - the cover in the same turn as the views beneath (A3.8 #30)
+  cover!.setRect(p.cover.rect)
   strip!.setBounds(p.strip)
-  if (p.cover.color !== coverWas.color) { cover!.setBackgroundColor(p.cover.color); win!.setBackgroundColor(p.cover.color) }
-  if (p.cover.visible !== coverWas.visible) cover!.setVisible(p.cover.visible)
+  if (p.cover.color !== coverWas.color) { cover!.setLook(p.cover.dark); win!.setBackgroundColor(p.cover.color) }
+  if (p.cover.visible !== coverWas.visible) {
+    cover!.setVisible(p.cover.visible)
+    changes.push({ key: 'cover', op: 'visible', visible: p.cover.visible })
+    if (!p.cover.visible && a && eligible) {
+      uncovered(a.id, now)
+      if (__MV_TEST__) noteTopic('present', { tab: a.id, op: 'uncover', epoch: epochOf(a.id) ?? 0, gen: genOf(a.id) })
+    }
+  }
   coverWas = { visible: p.cover.visible, color: p.cover.color }
   // 4. focus, before the hides: what the active tab shows now holds it (A2.13)
   afterShow(o.focus)
@@ -370,9 +465,16 @@ function composeOnce(o: { focus?: 'shown' }): void {
   // 6. lifted tab pages, closed after the canvas view shows
   for (const [id, hp] of [...pages]) if (hp.closing) closePage(id)
   // a document the person can see is retained: it may hold their work (v1.13 r2 #3)
-  const a = activeTab()
   if (a?.kind === 'local' && a.doc && a.doc.lifted && applied.get(`${a.id}:view`)?.vis) { a.doc.shown = true; a.retained = true }
-  if (__MV_TEST__ && changes.length) note('compose', { turn, active: p.active, w, h, cover: coverWas, changes })
+  // 7. after the views changed in this turn: the request goes out, so it reaches a view already shown and sized
+  // (A3.8 #27) - never during a live resize, and never while the window cannot draw (present.ts holds it until the
+  // window's show); a send that fails is retried by the next compose
+  if (a && eligible && !resizing && deps?.present) presentFlush(a.id, (doc, r) => deps!.present!(a.id, doc, r), T.presentFrames)
+  if (__MV_TEST__ && changes.length) {
+    const layouts: Record<string, Layout> = {}
+    for (const t of allTabs()) if (t.kind === 'local' && content.has(t.id)) layouts[t.id] = placed(t)
+    noteTopic('compose', { turn, active: p.active, w, h, cover: coverWas, changes, resizing, layouts })
+  }
   feedTabs()
   feedWindow()
   recomputePill()
@@ -385,7 +487,7 @@ export function viewsNow(): { key: string; bounds: { x: number; y: number; width
   const out: { key: string; bounds: { x: number; y: number; width: number; height: number }; visible: boolean }[] = []
   for (const [id, c] of content) out.push({ key: `${id}:view`, bounds: c.view.getBounds(), visible: c.view.getVisible() })
   for (const [id, h] of pages) out.push({ key: `${id}:page`, bounds: h.view.getBounds(), visible: h.view.getVisible() })
-  if (cover) out.push({ key: 'cover', bounds: cover.getBounds(), visible: cover.getVisible() })
+  if (cover?.view) out.push({ key: 'cover', bounds: cover.view.getBounds(), visible: cover.view.getVisible() })
   if (strip) out.push({ key: 'strip', bounds: strip.getBounds(), visible: strip.getVisible() })
   return out
 }
@@ -450,6 +552,10 @@ export async function captureWindow(): Promise<AppPicture> {
     const y0 = Math.round(b.y * sf)
     const bw = Math.round(b.width * sf)
     const bh = Math.round(b.height * sf)
+    // the cover as cover.ts draws it, whatever view it is; a web-view cover with no bitmap of its own (S15's variant 3)
+    // falls through to its capture, a plain one to a fill of its ground
+    const own = child === cover?.view ? cover.bitmap(bw, bh, sf) : null
+    if (own && own.length === bw * bh * 4) { blend(own, bw, bh, x0, y0); layers.push(`cover (bitmap) @${b.x},${b.y} ${b.width}x${b.height}`); continue }
     if (child instanceof WebContentsView) {
       if (child.webContents.isDestroyed()) continue
       let img = await child.webContents.capturePage()
@@ -460,6 +566,7 @@ export async function captureWindow(): Promise<AppPicture> {
       blend(bmp, bw, bh, x0, y0)
       layers.push(`${child.webContents.getURL()} @${b.x},${b.y} ${b.width}x${b.height}`)
     } else {
+      // app 0.1's plain view, or a cover whose bitmap is null: a fill of its ground
       fill(x0, y0, bw, bh, coverWas.color)
       layers.push(`cover ${coverWas.color} @${b.x},${b.y} ${b.width}x${b.height}`)
     }
@@ -492,11 +599,30 @@ export function openWindow(d?: WindowDeps): BaseWindow {
     titleBarStyle: 'hidden', trafficLightPosition: LIGHTS,
     backgroundColor: ground(dark), show: false, title: 'Marver',
   })
-  cover = new View()
-  cover.setBackgroundColor(ground(dark))
-  coverWas = { visible: true, color: ground(dark) }
+  // the strip first, so a cover can use it (S15's variant 4 colours its native background); added last, on top
   strip = new WebContentsView({ webPreferences: appPrefs() })
-  strip.setBackgroundColor('#00000000')   // transparent over the cover: only the strip draws the tabs and dots
+  strip.setBackgroundColor('#00000000')   // transparent: it paints controls only, over the cover or the views beneath (A3.8 #29)
+  // the cover S15 chose (cover.ts), else app 0.1's plain view - and with it no canvas at full height (A3.8 #3)
+  let chosen: Cover | null = null
+  try { chosen = makeCover(win, strip) } catch (err) { j('cover', { s15: String((err as Error)?.message ?? err) }) }
+  cover = chosen ?? plainCover()
+  setGround(!!chosen || (__MV_TEST__ && testMode() && process.env.MARVER_APP_GROUND === '1'))
+  j('cover', { chosen: !!chosen, ground: groundOn() })
+  cover.setLook(dark)
+  cover.setVisible(true)
+  coverWas = { visible: true, color: ground(dark) }
+  if (__MV_TEST__) {
+    onLayoutChange((d) => noteTopic('layout', d))
+    onPresentLog((d) => noteTopic('present', d))
+  }
+  // each sent epoch's outcome, for tuning presentFrames and uncoverDelayMs (A3.8 #27): the recorder's `cover` line
+  onCoverRecord((tab, epoch, body) => {
+    const kept = epochIdent.get(tab)
+    const t = getTab(tab)
+    const who = kept?.epoch === epoch ? kept.who : t ? identity(t) : { tab }
+    if (__MV_TEST__) note('cover-record', { ...who, ...body })
+    try { recorder.event('cover', who, body) } catch { /* the recorder's to keep; the window goes on */ }
+  })
   registerApp(strip.webContents, 'strip')
   track(strip.webContents, { part: 'strip' })
   strip.webContents.on('render-process-gone', () => {
@@ -504,7 +630,7 @@ export function openWindow(d?: WindowDeps): BaseWindow {
     j('strip', { gone: true })
     setTimeout(() => { if (strip && !strip.webContents.isDestroyed()) void strip.webContents.loadURL(`${APP_ORIGIN}strip/`).catch(() => {}) }, 0)
   })
-  win.contentView.addChildView(cover)
+  if (cover.view) win.contentView.addChildView(cover.view)
   win.contentView.addChildView(strip)
   void strip.webContents.loadURL(`${APP_ORIGIN}strip/`).catch(() => { /* served by sessions.ts */ })
 
@@ -519,12 +645,28 @@ export function openWindow(d?: WindowDeps): BaseWindow {
   })
 
   const deferred = () => setTimeout(() => compose(), 0)
-  win.on('resize', () => { compose(); deferred() })
+  // a live resize is a person's drag (A3.8 #28): macOS sends will-resize only for one, and resized at its end; a
+  // full-screen transition, the window place restored and a test's setContentSize send only resize
+  win.on('will-resize', () => startLiveResize())
+  win.on('resized', () => endLiveResize('resized'))
+  win.on('resize', () => { if (resizing) armQuiet(); compose(); deferred() })
   win.on('enter-full-screen', () => { compose(); deferred() })
   win.on('leave-full-screen', () => { compose(); deferred() })
   win.on('focus', () => feedWindow())
   win.on('blur', () => feedWindow())
   for (const ev of ['show', 'hide', 'minimize', 'restore'] as const) win.on(ev as 'show', () => { onVisibility(); feedWindow() })
+  // the window hidden (on macOS also covered entirely: Electron 45 emits hide and show from its occlusion state alone):
+  // the shown view's open epoch ends its record now, and no request goes out while its pages draw nothing (A3.8 #27).
+  // Shown again, compose sends the epoch held meanwhile, its times starting then. Made hidden, it cannot draw until
+  // showWindow shows it: a window made with show: false sends no show when it first appears (its occlusion state
+  // never changed), so showWindow says so itself
+  windowHidden(Date.now())
+  win.on('hide', () => windowHidden(Date.now()))
+  win.on('minimize', () => windowHidden(Date.now()))
+  win.on('show', () => { if (windowShown(Date.now())) compose() })
+  win.on('restore', () => { if (windowShown(Date.now())) compose() })
+  // quitting: every open epoch's record, before the recorder's last write (main.ts's will-quit flushSync)
+  app.prependListener('will-quit', () => presentQuitting(Date.now()))
   win.on('close', (e) => {
     // ⇧⌘W and the red button hide the window: the views stay as they are (A2.2)
     if (deps?.quitting()) return
@@ -533,8 +675,104 @@ export function openWindow(d?: WindowDeps): BaseWindow {
   })
   win.on('closed', () => { win = null })
   nativeTheme.on('updated', () => compose())
+  if (__MV_TEST__) groundHooks()
   compose()
   return win
+}
+
+/**
+ * App 0.1's cover - one plain `View`, its background the ground - behind cover.ts's interface, until S15 picks one
+ * (A3.8 #3). It is not S15's variant 1: whether a plain view can sit over a full-height web view is the spike's
+ * question, so with this one no canvas is placed full height (`setGround`), and it only ever sits over nothing.
+ */
+function plainCover(): Cover {
+  const view = new View()
+  return {
+    view,
+    stripDraws: true,
+    contents: () => null,
+    setRect: (r) => view.setBounds(r),
+    setVisible: (v) => view.setVisible(v),
+    setLook: (d) => view.setBackgroundColor(ground(d)),
+    bitmap: () => null,
+  }
+}
+
+/**
+ * The one ground's test hooks (dev builds, MARVER_APP_TEST=1): a live resize's events, the GPU process lost, replaced
+ * or killed, the scroll edge's cost switch, the strip's heartbeat and its empty regions (the capture matrix's, A3.8
+ * #34: read from the strip itself, never guessed). The matrix's case 15 load - a heavy board panning in a second
+ * window on the same GPU process (`loadWindow`) - is the native acceptance stream's, with its heavy board.
+ */
+function groundHooks(): void {
+  const arg = <A>(a: unknown) => (a ?? {}) as A
+  // will-resize / resized / resize as macOS sends them for a person's drag (a test cannot drag the window's corner)
+  provide('ground:emit', (a) => {
+    const ev = arg<{ event: string }>(a).event
+    if (!win || !['will-resize', 'resized', 'resize'].includes(ev)) return false
+    win.emit(ev as 'resize', { preventDefault() {}, defaultPrevented: false }, win.getBounds(), { edge: 'bottom-right' })
+    return true
+  })
+  // the scroll edge's cost (A3.8 #51): every document told 0 from now on (its next load), so the same board pans
+  // without the inset. Its confound, for whoever reads the numbers: a document told 0 applies no inset and its hello
+  // moves it below the strip (layout.ts), so the run without the band also paints a viewport 44 px shorter - the A/B
+  // is TOP 44 at the full height against TOP 0 at h - 44, which can only make the band look dearer than it is
+  provide('ground:inset-off', (a) => { setInsetOff(!!arg<{ on?: boolean }>(a).on); return true })
+  // child-process-gone with type GPU, as views.ts hears it - no process is killed
+  provide('ground:gpu-lost', () => { gpuGone(); compose(); return true })
+  // the GPU process killed for real (SIGKILL: no crash report, no dialog): Electron's child-process-gone and the
+  // replacement's gpu-info-update reach views.ts's own handlers. Its identity before, or null with none
+  provide('ground:gpu-kill', () => {
+    const m = app.getAppMetrics().find((x) => x.type === 'GPU')
+    if (!m) return null
+    process.kill(m.pid, 'SIGKILL')
+    return { pid: m.pid, born: m.creationTime }
+  })
+  // an identity read (a sample, a gpu-info-update): a replacement with no child-process-gone
+  provide('ground:gpu', (a) => { const id = arg<{ id?: { pid: number; born: number } | null }>(a).id ?? null; const changed = noteGpu(id); if (changed) compose(); return changed })
+  provide('ground:state', () => ({
+    ground: groundOn(), resizing, cover: { ...coverWas },
+    tabs: allTabs().map((t) => ({ id: t.id, geo: { ...t.geo }, placed: placed(t), seeThrough: seeThrough(t), epoch: epochOf(t.id), gen: genOf(t.id) })),
+  }))
+  // the capture matrix's heartbeat (A3.8 #29): a 1 px opacity animation in the strip's corner, run by the compositor
+  // and changing every frame - so the strip makes a frame each refresh (a ProMotion display stays at its full rate)
+  // and a stalled strip main thread keeps it - test builds only; the release never carries it
+  let beat: string | null = null
+  provide('ground:heartbeat', async (a) => {
+    const s = stripContents()
+    if (!s) return false
+    const on = !!arg<{ on?: boolean }>(a).on
+    if (beat) { await s.removeInsertedCSS(beat).catch(() => {}); beat = null }
+    if (on) beat = await s.insertCSS('html::after { content: ""; position: fixed; right: 0; bottom: 0; width: 1px; height: 1px; background: #808080; will-change: opacity; animation: mv-beat 1s linear infinite alternate; pointer-events: none } @keyframes mv-beat { from { opacity: 1 } to { opacity: .4 } }')   // the author origin: removeInsertedCSS takes only that one back
+    return true
+  })
+  // the heartbeat's corner as the strip's compositor last drew it (capturePage, browser-side: it needs nothing of the
+  // strip's main thread): the bottom-right device pixel, BGRA
+  provide('ground:beat-pixel', async () => {
+    const s = stripContents()
+    if (!s || !strip) return null
+    const b = strip.getBounds()
+    const img = await s.capturePage({ x: b.width - 2, y: b.height - 2, width: 2, height: 2 })
+    const bmp = img.toBitmap()
+    return bmp.length >= 4 ? [...bmp.subarray(bmp.length - 4)] : null
+  })
+  // the strip's empty part, from the strip itself (A3.8 #34): right of the last tab (and `»`), left of the pill (or
+  // the strip's right padding); the heartbeat's corner. In the strip's CSS px, which are the window's content coordinates
+  provide('ground:strip-regions', async () => {
+    const s = stripContents()
+    if (!s) return null
+    return s.executeJavaScript(`(() => {
+      const W = innerWidth, H = innerHeight, cs = getComputedStyle(document.getElementById('strip'))
+      const shown = (e) => e && !e.hidden && e.getClientRects().length > 0
+      const rights = [...document.querySelectorAll('#tabs > *')].filter(shown).map((e) => e.getBoundingClientRect().right)
+      const more = document.getElementById('more'), pill = document.getElementById('pill')
+      if (shown(more)) rights.push(more.getBoundingClientRect().right)
+      const tabsRight = Math.ceil(Math.max(parseFloat(cs.paddingLeft), ...rights))
+      const pillLeft = Math.floor(shown(pill) ? pill.getBoundingClientRect().left : W - parseFloat(cs.paddingRight))
+      const x = tabsRight + 8, r = pillLeft - 8
+      return { width: W, height: H, tabsRight, pillLeft, empty: r > x ? [{ x, y: 0, width: r - x, height: H }] : [], heartbeat: { x: W - 1, y: H - 1, width: 1, height: 1 } }
+    })()`)
+  })
 }
 
 /** Show the window: at launch (once the strip loaded, or after 300 ms), from the Dock, a second launch. */
@@ -544,6 +782,8 @@ export function showWindow(o: { focus?: boolean } = {}): void {
   if (o.focus === false) win.showInactive()
   else { win.show(); win.focus() }
   onVisibility()
+  // in front now, so it can draw: requests held while it could not go out (present.ts), the first show at launch too
+  if (windowShown(Date.now())) compose()
 }
 
 /** A second launch focuses the window (A2.1). */

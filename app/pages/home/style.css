@@ -1,8 +1,11 @@
 /* Home (spec 28 A2.7, A2.12; frames mac-app/04, 10, 11, 14): the app's own page, on the ground and its still dots,
    in the shell's glass. */
 
-body { overflow: auto }
-.home { min-height: 100%; padding: 30px 48px 26px; display: flex; flex-direction: column; gap: 16px }
+/* the window's full height under the transparent strip (A3.8 #32): the page never scrolls - its ground and still dots
+   fill the view, under the strip too - and its one scroll area starts 44 px down, so nothing to read or click, and
+   nothing scrolled, ever passes under the tabs */
+html, body { overflow: hidden }
+.home { position: fixed; inset: 44px 0 0 0; overflow: auto; padding: 30px 48px 26px; display: flex; flex-direction: column; gap: 16px }
 .top { display: flex; align-items: flex-start; gap: 16px; flex-wrap: wrap }
 .h1 { flex: 1; min-width: 200px; padding-top: 6px; font: 600 20px/1.2 -apple-system, system-ui, sans-serif; letter-spacing: -.01em }
 .h2 { font: 600 11px/1 -apple-system, system-ui, sans-serif; letter-spacing: .02em; color: var(--glass-ink-3); text-transform: uppercase; margin-top: 10px }

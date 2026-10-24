@@ -122,8 +122,11 @@ function asRecord(v: unknown): SlotFile | null {
 
 /** What this version's shell offers the Mac app, written from the `starting` write on (spec 28 A2.14 #15): `bridge` -
  *  its shell sends A2.9's hello, theme, menu and `mv:busy` with `unsaved`, so the app's guard can trust what the page
- *  reports. A canvas without it (0.27.0) gets the app's degraded guard, which asks first. `inset` joins at 0.27.2. */
-export const FEATURES: readonly string[] = ['bridge']
+ *  reports. A canvas without it (0.27.0) gets the app's degraded guard, which asks first. `inset` (0.27.2, A3.8 #31):
+ *  its shell takes the top inset under the app's transparent strip, keeps what it means to be read or clicked below
+ *  it and its scroll edge, and answers the app's presentation requests - so app 0.2 may run it at the window's full
+ *  height. A canvas without it stays below the strip. */
+export const FEATURES: readonly string[] = ['bridge', 'inset']
 
 export interface Claim {
   slot: number | null

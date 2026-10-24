@@ -1,5 +1,32 @@
 # Changelog - the Marver Mac app
 
+## 0.2.0 - unreleased (spec 28 A3)
+
+- One ground, main's half (A3.8 #24-#33): Home, Settings and every tab page run the window's full height under the
+  strip, painting the ground and still dots there themselves, with everything to read, click or scroll 44 px down;
+  the strip paints its controls, and its still dots only while a cover that has it draw them covers (app 0.1's, until
+  S15). A canvas whose shell offers
+  `inset` (Marver 0.27.2) is placed at the full height
+  when its own document commits on that instance, told 44 by `mv:doc`, moved below for the rest of its life by a
+  hello that says 0, and uncovered only once it is trusted, said 44 and answered the latest presentation request at
+  its size; a resize, a show, HTML fullscreen, a live resize's end and the GPU process lost or replaced each cover
+  it until it answers again. Any other canvas stays below the strip, covered.
+- **Not on screen yet for canvases: the cover waits for spike S15.** Until a cover is shown to sit over a
+  full-height web view, the app keeps 0.1's plain view and places no canvas at full height, so every canvas still
+  looks as in 0.1: below the strip, with the ground and still dots under the tabs (the strip draws them while that
+  cover covers). Main's decisions are built and tested from its journal; what reaches the screen is the capture
+  matrix's, after S15. S15's outcome then touches `cover.ts` for its variants 1 and 2 (with a cover chosen the strip
+  paints no dots, A3.8 #29); variant 3 also adds `pages/cover/` and its serving and pinning in `sessions.ts`, and
+  variant 4 has the strip draw the dots while covered (`stripDraws`) and colours the strip's native background. If
+  none passes, this look stays for canvases.
+- **What does change in every 0.2 build, the gate open or shut:** Home, Settings and the tab pages run at the full
+  height under the transparent strip (A3.8 #32), so a web view now lies under the strip's drag region on the launch
+  screen, and the strip's dots switch on and off through its renderer at each switch between them and a canvas (a
+  frame of plain ground, or of doubled dots, longer while the strip is stalled). A2.2's fallback if S15 fails is the
+  opaque strip with every view below; whether these pages then stay at the full height is Nic's decision.
+- Presentation requests wait while the window cannot draw (hidden, minimised, or covered entirely by other windows):
+  an epoch made meanwhile is asked when the window shows, so no `cover` record blames the page for time hidden.
+
 ## 0.1.0 - unreleased (spec 28 A2, for Nic)
 
 - The build: one bundle for main and one per preload, the release flavour packaged for Apple silicon, all nine

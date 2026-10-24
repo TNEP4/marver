@@ -1,5 +1,6 @@
 import { cloneElement, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { TOP } from './inset.ts'
 
 /** shadcn-style tooltip: snappy (150ms in, instant out), contrast-flipped, zoom-fade.
  *  Portaled to the app root - glass never nests, and neither do overlays. `inv` pins the
@@ -37,9 +38,10 @@ export function Tip({ label, side = 'top', inv = false, only, children }: { labe
     if (over > 0) el.style.marginLeft = `${-over}px`
     else if (r.left < 8) el.style.marginLeft = `${8 - r.left}px`
     // and up and down: a tall tip beside a row near the bottom (a status and its evidence) stays whole
+    // never under the Mac app's strip (TOP 44 when the shell took the inset: 52 px)
     const below = r.bottom - (window.innerHeight - 8)
     if (below > 0) el.style.marginTop = `${-below}px`
-    else if (r.top < 8) el.style.marginTop = `${8 - r.top}px`
+    else if (r.top < TOP + 8) el.style.marginTop = `${TOP + 8 - r.top}px`
   }, [pos])
   // a tip is placed once, where its trigger was: anything that scrolls under it puts it away
   useLayoutEffect(() => {

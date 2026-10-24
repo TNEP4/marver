@@ -59,6 +59,14 @@ const LOOPBACK = new Set(['127.0.0.1', '[::1]', 'localhost'])
 const targets = new Map<number, { now: () => ProofTarget | undefined; last?: ProofTarget }>()
 
 /**
+ * Test builds only: a proved response waits for this before Chromium may commit it - A2.10's "a new instance taking
+ * the port after the proof's headers and before the commit", which no fake server can time (Chromium commits as soon
+ * as the headers are through). Set by `trust:hold-proved`; never in a release.
+ */
+let provedHold: Promise<void> | null = null
+export function holdProved(p: Promise<void> | null): void { if (__MV_TEST__) provedHold = p }
+
+/**
  * The target of a webContents: what its callback gives now, else the last one it gave (a gone tab keeps its
  * canvas's address, `Dispatcher.attach`), else undefined - a webContents never attached. A throwing callback
  * counts as giving nothing.
@@ -249,6 +257,7 @@ async function headersReceived(d: OnHeadersReceivedListenerDetails): Promise<{ c
   const r = checkProof({ headers: h, nonce: req.nonce, key: entry.key, port: entry.port, instance: entry.instance })
   if (r !== 'ok') return fail(r === 'elsewhere' ? 'elsewhere' : 'unverified')
   report({ kind: 'proved', url: noHash(d.url), instance: entry.instance })
+  if (__MV_TEST__ && provedHold) { if (__MV_TEST__) note('proof', { wc: req.wcId, event: 'held', gen: req.gen }); await provedHold }
   return {}
 }
 

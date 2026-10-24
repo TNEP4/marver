@@ -13,6 +13,7 @@ import { sleepingCount } from './sleep.ts'
 import { aimed } from './admission.ts'
 import { keepOverResume, resumed, WS } from '../api.ts'
 import { APP_REOPEN } from '../marver-app.ts'
+import { TOP } from '../inset.ts'
 
 /**
  * The world. rzpp owns pan/zoom; nodes are absolutely positioned children of #sh-world.
@@ -75,7 +76,8 @@ function insets(el: HTMLElement) {
   return {
     left: (leftEdge ? Math.max(0, leftEdge - c.left) : 0) + GAP,
     right: GAP + 16,
-    top: (pill ? Math.max(0, pill.bottom - c.top) : 0) + 12 + BAR,
+    // the toolbar's foot, or the Mac app's strip when the toolbar is hidden (Hide UI) - the strip is always there
+    top: Math.max(pill ? pill.bottom - c.top : 0, TOP) + 12 + BAR,
     bottom: (lane ? Math.max(0, c.bottom - lane.top) : 0) + GAP + 16,
   }
 }
@@ -89,23 +91,22 @@ function insets(el: HTMLElement) {
  */
 const GRID = 20
 function paintGrid(positionX: number, positionY: number, scale: number) {
-  const el = document.querySelector('.sh-canvas') as HTMLElement | null
-  if (!el) return
+  // on .sh-app, which the canvas's ::before and the scroll edge (A3.8 #31) both inherit them from - the same element the
+  // camera's own variables go on every frame, so the style work per frame does not grow
+  const app = document.querySelector('.sh-app') as HTMLElement | null
+  if (!app) return
   let step = GRID * scale
   while (step < 14) step *= 2
   while (step >= 28) step /= 2
   const t = (step - 14) / 14
-  el.style.setProperty('--grid-size', `${step}px ${step}px`)
-  el.style.setProperty('--grid-pos', `${positionX % step}px ${positionY % step}px`)
-  el.style.setProperty('--grid-alpha', (0.35 + 0.65 * Math.min(1, t)).toFixed(3))
+  app.style.setProperty('--grid-size', `${step}px ${step}px`)
+  app.style.setProperty('--grid-pos', `${positionX % step}px ${positionY % step}px`)
+  app.style.setProperty('--grid-alpha', (0.35 + 0.65 * Math.min(1, t)).toFixed(3))
   // screen-space overlays (selection bar) position themselves from these - no re-render per frame
-  const app = document.querySelector('.sh-app') as HTMLElement | null
-  if (app) {
-    app.style.setProperty('--sh-s', String(scale))
-    app.style.setProperty('--sh-inv', String(1 / scale))   // world-units-per-screen-px, for zoom-invariant strokes
-    app.style.setProperty('--sh-tx', `${positionX}px`)
-    app.style.setProperty('--sh-ty', `${positionY}px`)
-  }
+  app.style.setProperty('--sh-s', String(scale))
+  app.style.setProperty('--sh-inv', String(1 / scale))   // world-units-per-screen-px, for zoom-invariant strokes
+  app.style.setProperty('--sh-tx', `${positionX}px`)
+  app.style.setProperty('--sh-ty', `${positionY}px`)
 }
 
 /**
@@ -202,9 +203,10 @@ export function Canvas() {
       let px = p.left + (aw - w * scale) / 2
       let py = p.top + (ah - h * scale) / 2
       if (focus) {
-        // clamp order matters: left/top win when the band is tighter than the content
+        // clamp order matters: left/top win when the band is tighter than the content. The centre is the usable
+        // rectangle's: below the Mac app's strip when the shell took the inset (TOP 44)
         px = Math.max(Math.min((vw - w * scale) / 2, vw - p.right - w * scale), p.left)
-        py = Math.max(Math.min((vh - h * scale) / 2, vh - p.bottom - h * scale), p.top)
+        py = Math.max(Math.min(TOP + (vh - TOP - h * scale) / 2, vh - p.bottom - h * scale), p.top)
       }
       const tx = px - x * scale, ty = py - y * scale
       // where this fit lands, in world px: the first one after a board's commit shows its visible cohort (spec 28 A1.7)
@@ -247,8 +249,8 @@ export function Canvas() {
       const el = wrap(), inst = ref.current
       if (!el || !inst) return
       const { positionX, positionY, scale } = inst.instance.transformState
-      const cx = el.clientWidth / 2, cy = el.clientHeight / 2
-      const k = target / scale   // zoom about the viewport center
+      const cx = el.clientWidth / 2, cy = TOP + (el.clientHeight - TOP) / 2
+      const k = target / scale   // zoom about the usable rectangle's centre (below the Mac app's strip with the inset)
       fly(cx - (cx - positionX) * k, cy - (cy - positionY) * k, target, 250)
     }
     canvasCtl.cameraBusy = () => !!ref.current?.instance.animation

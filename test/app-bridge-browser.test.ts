@@ -183,8 +183,8 @@ describe('the slot file and the logo, for the app (A2.14 #15, #23; A2.4)', () =>
     throw new Error('no slot file for the canvas')
   }
 
-  it('0.27.1 lists the bridge, and the name the shell shows (share.name)', () => {
-    expect(slotFile()).toMatchObject({ state: 'ready', features: ['bridge'], name: 'Bridge canvas', ws })
+  it('0.27.2 lists the bridge and the inset, and the name the shell shows (share.name)', () => {
+    expect(slotFile()).toMatchObject({ state: 'ready', features: ['bridge', 'inset'], name: 'Bridge canvas', ws })
   })
 
   it('GET /__mv/logo is proved with the slot file\'s key - on a 200 and a 304 - and the workspace guard runs first', async () => {
@@ -214,7 +214,8 @@ describe('with the app\'s bridge (A2.9)', () => {
     const pkg = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'package.json'), 'utf8')).version
     const page = await ev(s, `__mvRecorder.page`)
     expect(page).toBe(await ev(s, `__mvApp.page`))
-    expect(log[0]).toEqual(['hello', { version: pkg, board: 'main', page }])
+    // 0.27.2 says the inset it applied: 0, under a bridge that answered no 44 (app 0.1's)
+    expect(log[0]).toEqual(['hello', { version: pkg, board: 'main', page, inset: 0 }])
     expect(page).toMatch(/^[A-Za-z0-9_-]{8,64}$/)
     expect(log[1]).toEqual(['theme', { dark: false }])
     // the first mv:busy at boot (v1.13 r2 #1): the app's record is unknown for one turn at most

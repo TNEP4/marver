@@ -288,6 +288,7 @@ if (api) {
   api.onWindow((w: WindowView) => {
     document.body.classList.toggle('inactive', !w.focused)
     document.body.classList.toggle('fullscreen', w.fullScreen)
+    document.body.classList.toggle('dots', w.dots === true)   // app 0.1's cover covers: its still dots, until S15 (A3.8 #3)
   })
   api.onPageFocus((f) => {
     if (f.target !== 'active-tab' || !snap) return

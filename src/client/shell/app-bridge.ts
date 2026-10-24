@@ -19,10 +19,16 @@
  * - `mv:app-state`: `shown` runs a resume reconcile, `untrusted` stops every microphone track the page holds (A2.14
  *   #13), `hidden` changes nothing (a hidden tab keeps running, A2.6).
  *
- * App 0.1 has the opaque strip: no top inset, no presentation epochs - those are 0.27.2's, with the one ground (A3).
+ * The one ground (0.27.2, A3.8 #27, #31): `mv:hello` says the inset the shell applied (inset.ts's `TOP`: 44 only when
+ * the app said so and gave the whole presentation contract), and each `mv:present { epoch, w, h, frames }` is answered
+ * once the viewport has that size (500 ms at most) and `frames` animation frames have passed, with the size it was
+ * answered at - a newer request cancels an older wait, which is never answered. A request that never fits is answered
+ * at the size found; main refuses it and the tab stays covered. rAF does not run in a hidden page, so a request to a
+ * page nobody sees waits by itself. App 0.1 says no inset and asks nothing: none of it runs there.
  */
-import { BOUNDS, type AppState, type Busy, type Hello, type MenuItem } from '../../shared/app-api.ts'
+import { BOUNDS, type AppState, type Busy, type Hello, type MarverAppV1, type MenuItem, type Present } from '../../shared/app-api.ts'
 import { APP } from './marver-app.ts'
+import { TOP } from './inset.ts'
 import { api, canvasStopped } from './api.ts'
 import { asksBeforeLeaving, busyWhen, busyWhy, isUnsaved, leaveNow, onWorkChange, workChanged } from './unsaved.ts'
 import { CONFIG, PUBLISHED, SOURCE_REVEALED, useStore } from './store.ts'
@@ -43,7 +49,34 @@ export function helloNow(): Hello {
   const v = CONFIG.version
   const version = typeof v === 'string' && v.length <= BOUNDS.version && BOUNDS.versionChars.test(v) ? v : '0.0.0'
   const b = bootHash.board
-  return { version, board: typeof b === 'string' && b.length <= BOUNDS.board ? b : null, page: PAGE_ID }
+  return { version, board: typeof b === 'string' && b.length <= BOUNDS.board ? b : null, page: PAGE_ID, inset: TOP }
+}
+
+/** How long the shell waits for its viewport to reach a request's size before it answers with the size it has. */
+export const PRESENT_FIT_MS = 500
+
+/**
+ * The presentation's answer (A3.8 #27): one request at a time - a newer one cancels the wait of an older, which is
+ * never answered. Wait for the asked viewport (1 px either way), then `frames` animation frames (1-8), then answer
+ * with the viewport as it is. Exported for the browser tests' fake bridge; startAppBridge installs it.
+ */
+export function answerPresents(app: Pick<MarverAppV1, 'onPresent' | 'presented'>, call: (fn: () => void) => void = (fn) => fn()): () => void {
+  if (typeof app.onPresent !== 'function' || typeof app.presented !== 'function') return () => {}
+  let want = -1
+  return app.onPresent((r: Present) => {
+    if (!r || typeof r.epoch !== 'number') return
+    want = r.epoch
+    const since = performance.now()
+    const frames = Math.min(BOUNDS.frames, Math.max(1, r.frames | 0))
+    const step = (left: number) => requestAnimationFrame(() => {
+      if (want !== r.epoch) return                                                  // superseded: never answered
+      const fits = Math.abs(innerWidth - r.w) <= 1 && Math.abs(innerHeight - r.h) <= 1
+      if (!fits && performance.now() - since < PRESENT_FIT_MS) return step(left)   // the resize has not reached this document yet
+      if (fits && left > 1) return step(left - 1)
+      call(() => app.presented!({ epoch: r.epoch, w: innerWidth, h: innerHeight }))
+    })
+    step(frames)
+  })
 }
 
 /** `mv:busy` now. */
@@ -160,6 +193,9 @@ export function startAppBridge(): void {
   // what the app says, listened for before the page says anything
   call(() => app.onAppState((s) => onAppState(s)))
   call(() => app.onMenuClick((p) => runMenuItem(typeof p?.id === 'string' ? p.id : '')))
+  // the one ground's presentation requests (0.27.2): answered only when the shell took the inset - a shell that did
+  // not is placed below the strip and never asked (A3.8 #31)
+  if (TOP) call(() => { answerPresents(app, call) })
 
   // 1. hello, first (A2.14 #9)
   call(() => app.hello(helloNow()))

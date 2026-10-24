@@ -1,8 +1,10 @@
 /* Settings, a view of the files (spec 28 A2.7; frame mac-app/06): each documented key with its value and a control,
    the key's name under its label; a file that does not apply says so, with its text beside. */
 
-body { overflow: auto }
-.settings { min-height: 100%; padding: 30px 48px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 380px); column-gap: 40px; align-items: start }
+/* the window's full height under the transparent strip (A3.8 #32): the page never scrolls, its scroll area starts
+   44 px down */
+html, body { overflow: hidden }
+.settings { position: fixed; inset: 44px 0 0 0; overflow: auto; padding: 30px 48px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 380px); column-gap: 40px; align-items: start }
 /* the frame's left column at the window's default size (1280 - 96 - 40 - 380), and no wider in a wider window */
 .col { display: grid; align-content: start; max-width: 764px }
 .h1 { font: 600 20px/1.2 -apple-system, system-ui, sans-serif; letter-spacing: -.01em; margin-bottom: 6px }

@@ -3,6 +3,7 @@
  * carries the state (blue new, orange needs you); the row's one right-hand slot holds what matters
  * most: a question's numbered bubble, then the row's own count or status, then a frame's dot.
  */
+import { onScreen } from './inset.ts'
 import { useEffect, type HTMLAttributes, type ReactNode } from 'react'
 import { create } from 'zustand'
 import { useStore, PUBLISHED, shownRev } from './store.ts'
@@ -95,13 +96,14 @@ export function useSeenOnScreen() {
       } else if (m && !document.hidden && s.scale >= 0.5) {
         // in view: some of it inside the window and not all of that under the open sidebar
         const P = document.querySelector('.sh-panel:not(.closed)')?.getBoundingClientRect()
-        const W = window.innerWidth, H = window.innerHeight
         for (const n of s.nodes) {
           if (n.status !== 'ready' || n.stale || !isNew(m, n.frame) || shownRev(n, m) < (m.doc[n.frame] ?? 0)) continue
           const r = document.querySelector<HTMLElement>(`.sh-node[data-node="${CSS.escape(n.key)}"]`)?.getBoundingClientRect()
           if (!r) continue
-          const x0 = Math.max(r.left, 0), x1 = Math.min(r.right, W), y0 = Math.max(r.top, 0), y1 = Math.min(r.bottom, H)
-          if (x0 >= x1 || y0 >= y1) continue
+          // the part on screen below the scroll edge (inset.ts): under the Mac app's strip is not seen
+          const on = onScreen(r)
+          if (!on) continue
+          const x0 = on.left, x1 = on.right, y0 = on.top, y1 = on.bottom
           if (P && x0 >= P.left && x1 <= P.right && y0 >= P.top && y1 <= P.bottom) continue
           shown.set(`${n.key}@${m.changed[n.frame] ?? 0}:${n.shown}`, n.key)
         }

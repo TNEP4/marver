@@ -2,6 +2,23 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## 0.27.2 - unreleased
+
+The canvas's side of the Mac app's one ground (app 0.2).
+
+### Added
+
+- **A canvas can run under the Mac app's tabs.** In the app (0.2 and later), when the app places a canvas at the
+  window's full height under its transparent strip, the canvas keeps everything you read or click below the strip:
+  the sidebar, the toolbar and their buttons, the Jam panel and sheet, play's pills and the stopped banner sit 44 px
+  lower; the selection bar, tooltips and right-click menus never go above 52 px; a fit, Hide UI included, and a
+  frame's focus leave the strip's room; play fits its stage below it. A band of the canvas's own ground and dots runs
+  under the strip and fades out 16 px below it, so a frame panned up fades out under the tabs while the dots run on,
+  and a frame under the band counts as out of view (it is not marked seen, and Jam does not name it). The canvas
+  answers the app's requests to show its latest state, so the app uncovers it only once it has drawn at its size.
+  Its slot file lists `inset` beside `bridge`. Everywhere else - Chrome, a published canvas, `marver shot`, app 0.1 -
+  nothing moves.
+
 ## 0.27.1 - unreleased
 
 The canvas's side of the Mac app (app 0.1), and what it brings to every browser.

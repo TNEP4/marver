@@ -27,6 +27,7 @@ import type { AppState, Busy, Hello, Inset, MenuItem, Theme, Why } from '../../.
 import { UNSAVED_WHY, WHY_WORDS } from '../../../src/shared/app-api.ts'
 import type { AppBody, AppKind, TabIdent, UnloadReason } from '../../../src/shared/app-perf.ts'
 import { commitLayout } from './layout.ts'
+import { bumpGen } from './present.ts'
 import type { FailWhy } from './nav.ts'
 import type { RegistryEntry, RegistryEvent } from './registry.ts'
 import { tilde } from '../shared/command.ts'
@@ -829,6 +830,8 @@ export function onReport(tabId: string, doc: string, r: { safety?: Safety; busy?
     // this document's hello, accepted once (A3): its inset is the layout's (A3.8 #24), its page the recorder's identity
     t.reports.hello = { ...r.hello }
     commitLayout(t, { kind: 'hello', inset: r.hello.inset === 44 ? 44 : 0 })
+    // what was presented before this document spoke no longer counts (A3.8 #27: the accepted hello advances its view's gen)
+    bumpGen(t.id, 'hello')
     onDocHello(t)
   }
   if (r.busy) {

@@ -233,6 +233,12 @@ export interface AppBodies {
     sentMs?: number
     answeredMs?: number
     uncoveredMs?: number
+    /**
+     * ms from the epoch's start to when it ended because its view stopped showing - another tab or an app page, a tab
+     * page over it, its document no longer presentable, the window hidden, the app quitting; absent when a newer key
+     * superseded it while shown. A hidden view draws no frames: its silence after this is not the page's
+     */
+    hiddenMs?: number
     frames: number
     uncoverDelayMs: number
   }

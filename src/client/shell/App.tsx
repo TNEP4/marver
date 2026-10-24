@@ -9,6 +9,7 @@ import { Component, useEffect, useLayoutEffect, useRef, useState, type MouseEven
 import { useStore, BOARD_GONE, CONFIG, CANVAS_NAME, DISK_WON, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, stoppedFor, logReload, takeReloadCause, addToBoard, boardLabel, cap, humanize, fetchBoardNames, landingBoard, tabTitle, hydrateBoardPolicy, landingMode, playsAsSlides, sceneLabel, switchCount, type FrameEntry } from './store.ts'
 import { AddToBoard, BoardList } from './BoardList.tsx'
 import { ContextMenu, copyToClipboard, framePath, useContextMenu, type MenuItem } from './ContextMenu.tsx'
+import { TOP } from './inset.ts'
 import { Tip } from './Tip.tsx'
 import { PKG, ROUTE } from '../const.ts'
 import { api, resumed, scoped, useLink } from './api.ts'
@@ -170,7 +171,8 @@ function SelectionBar() {
         left: barW
           ? `clamp(8px, calc(${centerX} - ${Math.round(barW / 2)}px), calc(100vw - ${barW + 8}px))`
           : centerX,
-        top: `clamp(8px, ${rawTop}, calc(100vh - 52px))`,
+        // below the Mac app's strip and its scroll edge when the shell took the inset (TOP 44: 52 px; else 8)
+        top: `clamp(${TOP + 8}px, ${rawTop}, calc(100vh - 52px))`,
         transform: barW ? undefined : 'translateX(-50%)',
       }}
     >
@@ -916,6 +918,8 @@ export function App() {
   return (
     <div ref={appRef} tabIndex={-1} className={`sh-app${dark ? ' dark' : ''}${interacting ? ' interacting' : ''}${laneLift}`}>
       <Canvas />
+      {/* the scroll edge under the Mac app's transparent strip (0.27.2, A3.8 #31): over the world, under the chrome */}
+      {TOP ? <div className="sh-edge" aria-hidden="true" /> : null}
       <SelectionBar />
 
       {/* floating pill panel (no top bar - spec); panel and fab are both always
@@ -1182,8 +1186,9 @@ function placeBanner(el: HTMLElement) {
   // the toolbar row: its centre line, and its foot - the sidebar runs down the page, so it is no part of the row
   const tall = !!left && left.bottom - left.top > 64
   const row = [right, tall ? null : left].filter((b): b is NonNullable<typeof b> => !!b)
-  const mid = row.length ? Math.max(...row.map((b) => (b.top + b.bottom) / 2)) : edge + 23
-  const foot = Math.max(edge + 46, ...row.map((b) => b.bottom))
+  // with no row to measure: the toolbar's line, below the Mac app's strip when the shell took the inset
+  const mid = row.length ? Math.max(...row.map((b) => (b.top + b.bottom) / 2)) : TOP + edge + 23
+  const foot = Math.max(TOP + edge + 46, ...row.map((b) => b.bottom))
   const W = app.clientWidth
   const from = left ? left.right + BANNER_GAP : edge, to = right ? right.left - BANNER_GAP : W - edge
   const at = (where: 'row' | 'stack' | 'below', x0: number, x1: number, top?: number) => {

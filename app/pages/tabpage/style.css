@@ -2,8 +2,10 @@
    it sits on the ground like an empty board. The shell's sizes: a 44 px logo, a 17 px title, 13 px lines, jm-btn
    buttons, the command in the update pill's style, the meta line in --glass-ink-3. */
 
-body { overflow: hidden }
-.tp { height: 100%; display: grid; place-items: center; padding: 12px 24px 28px; color: var(--glass-ink); font: 13px/1.45 -apple-system, system-ui, sans-serif }
+/* the window's full height under the transparent strip (A3.8 #32): the ground and still dots fill the view; the
+   words centre in the rectangle below the strip */
+html, body { overflow: hidden }
+.tp { position: fixed; inset: 44px 0 0 0; display: grid; place-items: center; padding: 12px 24px 28px; color: var(--glass-ink); font: 13px/1.45 -apple-system, system-ui, sans-serif }
 .tp-in { width: 100%; max-width: 352px; display: grid; justify-items: center; text-align: center; border-radius: 12px }
 .tp-in:focus-visible { box-shadow: none; outline: none }
 .tp-mark { display: grid; place-items: center; margin-bottom: 14px; min-height: 44px }

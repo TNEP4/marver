@@ -157,22 +157,23 @@ describe('the menu bar (A2.7)', () => {
   })
 })
 
-describe('the layout: the opaque strip (A2.14 #1)', () => {
+describe('the layout: a canvas without the one ground stays below the strip (A2.14 #1, A3.8 #24, #32)', () => {
   const tab = (id: string, kind: 'local' | 'home' | 'settings', o: Partial<{ view: boolean; page: boolean; pageView: boolean; dark: boolean }> = {}) =>
     ({ id, kind, view: true, page: false, pageView: false, dark: false, ...o })
 
-  it('every view below the 44 px strip, shown or hidden; the cover always shown in the active tab\'s ground', () => {
+  it('a canvas below the 44 px strip, covered in the active tab\'s ground; Home and Settings at the full height', () => {
     const p = plan({ tabs: [tab('home', 'home'), tab('t1', 'local', { dark: true }), tab('settings', 'settings')], active: 't1', w: 1280, h: 820, appDark: false })
-    for (const v of p.views) expect(v.rect).toEqual({ x: 0, y: 44, width: 1280, height: 776 })
+    expect(p.views.find((v) => v.key === 't1:view')!.rect).toEqual({ x: 0, y: 44, width: 1280, height: 776 })
+    for (const k of ['home:view', 'settings:view']) expect(p.views.find((v) => v.key === k)!.rect).toEqual({ x: 0, y: 0, width: 1280, height: 820 })
     expect(p.views.filter((v) => v.visible).map((v) => v.key)).toEqual(['t1:view'])
-    expect(p.cover).toEqual({ rect: { x: 0, y: 0, width: 1280, height: 44 }, visible: true, color: GROUND.dark })
+    expect(p.cover).toEqual({ rect: { x: 0, y: 0, width: 1280, height: 44 }, visible: true, color: GROUND.dark, dark: true })
     expect(p.strip).toEqual({ x: 0, y: 0, width: 1280, height: 44 })
   })
 
-  it('a tab page stands over its tab\'s view: the view hidden, the page shown; Home and Settings wear the app\'s ground', () => {
+  it('a tab page stands over its tab\'s view: the view hidden, the page shown full height; Home and Settings wear the app\'s ground', () => {
     const p = plan({ tabs: [tab('home', 'home'), tab('t1', 'local', { page: true, pageView: true })], active: 't1', w: 800, h: 600, appDark: true })
     expect(p.views.find((v) => v.key === 't1:view')!.visible).toBe(false)
-    expect(p.views.find((v) => v.key === 't1:page')!).toMatchObject({ visible: true, rect: { x: 0, y: 44, width: 800, height: 556 } })
+    expect(p.views.find((v) => v.key === 't1:page')!).toMatchObject({ visible: true, rect: { x: 0, y: 0, width: 800, height: 600 } })
     expect(p.views.find((v) => v.key === 'home:view')!.color).toBe(GROUND.dark)
     expect(plan({ tabs: [tab('home', 'home')], active: 'home', w: 800, h: 600, appDark: false }).cover.color).toBe(GROUND.light)
   })

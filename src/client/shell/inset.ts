@@ -39,3 +39,6 @@ export function onScreen(r: DOMRectReadOnly): DOMRect | null {
   const right = Math.min(r.right, innerWidth)
   return bottom > top && right > left ? new DOMRect(left, top, right - left, bottom - top) : null
 }
+
+// dev-only inspection hook for tests (never installed in published builds)
+if (typeof window !== 'undefined' && (import.meta as { env?: { DEV?: boolean } }).env?.DEV) (window as unknown as { __mvInset: unknown }).__mvInset = { TOP, VISIBLE_TOP, usable, onScreen }
