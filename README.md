@@ -116,13 +116,16 @@ The same glow, driven from the terminal. When your agent takes a request, it cre
 | `npx marver work …` | Working glow from the terminal: `start <scene/frame …>` · `done … \| --all` (prints the canvas link) · `list` |
 | `npx marver link <scene/frame \| scene ...>` | The canvas link that lands on those frames - their board, selected and in view (needs `dev` running) |
 | `npx marver shot <frame ...> \| --scene <name> \| --all [--scale 1-4] [--json]` | Render frames headless and print the PNG paths (needs `dev` running); a scene is one browser, several frames at a time; 2x by default |
-| `npx marver perf [--loads \| --jam] [--json]` | What the canvas did lately: each edit's reloads; `--loads` each board load (time to settled, how many moves and why, the slowest frames, errors); `--jam` Jam's timings ([Performance](docs/performance.md)) |
+| `npx marver perf [--loads \| --jam \| --runs] [--json]` | What the canvas did lately: each edit's reloads; `--loads` each board load (time to settled, how many moves and why, the slowest frames, errors); `--jam` Jam's timings; `--runs` the headless runs compared ([Performance](docs/performance.md)) |
+| `npx marver perf run <board> [--slow] [--repeat n]` | Measure a board the same way every time - a load, a fit, a zoom and a pan in the canvas's own headless Chrome, read-only - so you or your agent can compare before and after a change (needs `dev` running; [Headless runs](docs/performance.md#headless-runs)) |
 | `npx marver boards [--json]` | The sidebar as the files say it is: folders and sub-folders, boards in reading order with their title, type, status, `order` and description, the landing board; a board file that is not valid JSON says why, with line and column |
 | `npx marver boards new <name> [--folder f] [--type t]` | A board in its type's starting layout - a feature's spec, lo-fi and hi-fi bands, a start board rendering `context/` |
 | `npx marver folders add <module ...>` | Add a typed folder: `start`, `features`, `surfaces`, `projects`, `feedback`, `context`, `decks`, `archive` |
 | `npx marver context init \| check \| index` | Set up `context/`; check it (exit 0 / 1 / 2; `--base`, `--body-file` for a pull request); regenerate the index's capability table |
 
 **Where the canvas runs.** Each canvas on your Mac takes one of twenty fixed ports, localhost:4805 to localhost:4824 - usually the same one each time - and prints its link; `npx marver ls` lists them all. `--port <n>`, or a `port` in `design/config.ts` (other than the old 5199), gives a canvas a port of its own instead. Because an address is reused by whichever canvas starts there next, a tab left open after its canvas stopped says so, and how to bring it back, and keeps your unsaved edits until its own canvas is back, and a local canvas runs no service workers.
+
+**The Mac app.** In Marver's Mac app a canvas tells the app what it holds, so closing its tab, quitting or reloading asks before losing unsaved work, and the app follows its theme and shows its View and Jam items in the menu bar. In a browser none of this runs; browsers ask before a reload or a close loses unsaved work too.
 
 ## Shortcuts
 
@@ -147,7 +150,7 @@ The same glow, driven from the terminal. When your agent takes a request, it cre
 
 - **Next.js**: supported with one caveat - frames render in Vite, outside Next. `next/font` CSS variables are undefined inside frames (give font tokens a fallback chain), `next/image`/`next/link` should be plain `img`/`data-goto` in frames, and Server Components cannot run there. `init` writes the specifics into `design/AGENTS.md` when it detects Next.
 - **Upgrade**: `npm i -D @marver-design/marver@latest && npx marver init`. The canvas tells you when a new version is out (one anonymous registry check per day, cached in `design/.local/`; `MARVER_NO_UPDATE_CHECK=1` disables), and warns when your `design/instructions/` predate the installed package. Re-running init refreshes the managed files (AGENTS.md, `design/instructions/`) - your edits to them are detected and preserved; when both you and a release changed a file, the fresh version is staged at `design/.local/latest/` for you (or your agent) to merge. Everything else in `design/` is yours and never touched.
-- **Name your canvas**: `share: { name: "Your App" }` in `design/config.ts` titles the gate, labels the brand pill, and tags every powered-by link. Unset, the gate falls back to your `package.json` name and the canvas shell to the directory name - `app` inside most containers.
+- **Name your canvas**: `share: { name: "Your App" }` in `design/config.ts` titles the gate, labels the brand pill, names the canvas in `marver ls`, and tags every powered-by link. Unset, the gate falls back to your `package.json` name and the canvas shell to the directory name - `app` inside most containers. Its logo is the first of `share.logo`, `design/logo.svg|png`, `public/logo.svg|png` and `public/favicon.svg|png|ico` that is a real file in the repo (never a symlink) of at most 256 KB, an SVG, PNG or ICO by its bytes; the gate page and the Mac app's tab wear it.
 - **Uninstall**: delete `design/`, remove the dependency. (If `init` patched your tsconfig `exclude`, revert that one line.)
 
 ## Status

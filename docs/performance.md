@@ -127,7 +127,7 @@ Read the load, name the lever, change it, compare the next load - you, or your a
   is the canvas's own and about the same on every board - 0.03-0.08 s on a page's first load, 0.08-0.11 s on a
   switch, the time until the camera's first fit sets off - and a one-frame board that settles at 1.0 s has no
   lever left in the project.
-- **The canvas's own lever, taken in 0.27.1.** Until 0.27.0 the first frame waited 0.35 s after the board
+- **The canvas's own lever, taken in 0.27.2.** Until 0.27.0 the first frame waited 0.35 s after the board
   mounted, for the first camera fit to land (`SETTLE` in `canvas/admission.ts`): that wait exists so the first
   frame - booting alone, the quickest first content - is the one nearest the centre of the view you will see,
   not of a camera still on its way. It now starts as the fit sets off, ranked on where the fit will land

@@ -27,7 +27,8 @@ dot. While it records, everything you do is part of it:
 
 `E` ends it. `Esc` throws it away. One capture records at a time.
 
-Closing or reloading the tab asks first while a capture is recording or finishing. If you leave anyway, the capture
+Closing or reloading the tab asks first while a capture is recording, finishing or not yet taken by the canvas (as it
+does for any unsaved work). If you leave anyway, the capture
 is kept as it stood - its words and notes so far, and a line saying the page closed before it finished - and comes
 back as a draft to read, resume or drop; it never goes to your agent on its own. (Best effort: a crash gives the page
 no chance to keep it.)
