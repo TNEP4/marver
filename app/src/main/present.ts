@@ -22,9 +22,16 @@
  *   how it ended (`uncovered`, `mismatch`, `superseded` by a newer key or by its view no longer shown, or `never` -
  *   superseded or forgotten after it was shown a second or more since its send with no answer) and its times from its
  *   start: sent, answered, uncovered, and `hiddenMs` when it ended because its view stopped showing (another tab, an
- *   app page or a tab page over it, its document no longer presentable, the window hidden, the app quitting). A hidden
- *   view's animation frames stop, so its silence is never counted as the page's: these records are what
- *   `presentFrames` and `uncoverDelayMs` are tuned from (A3.8 #27). An epoch never sent records nothing.
+ *   app page or a tab page over it, its document no longer presentable, the window hidden, the app quitting). These
+ *   records are what `presentFrames` and `uncoverDelayMs` are tuned from (A3.8 #27). An epoch never sent records nothing.
+ * - **Nothing is asked while the window cannot draw** (`windowHidden` .. `windowShown`): a hidden view's animation
+ *   frames stop, so a request sent then could only end `never` (the page blamed) or answer after the whole time hidden.
+ *   The window cannot draw from its creation (`show: false`) until main shows it, and from each hide or minimise
+ *   until its show, restore or main's own show; on macOS Electron 45 emits `hide` and `show` from the window's
+ *   occlusion state alone, so a window covered entirely by other windows is hidden here too. An epoch made meanwhile (the page's own reload, a hello after a restart) is
+ *   held, unsent, and its times start when the window shows, the moment its request goes out. What the records still
+ *   cannot see: a canvas view covered by another window while part of the window stays visible (no `hide`; Chromium
+ *   may stop that view's frames on its own), whose record can then count the covering as the page's.
  *
  * FROZEN (A3.8 #53): `PresentKey`, `observe`, `flush`, `answer`, `forget`, `bumpGen`, `noteGpu`, `gpuGone`.
  */
@@ -59,6 +66,8 @@ let epochs = 0
 let gpu: GpuIdentity | null | undefined
 /** the tab compose observed last: the active view, shown, with a presentable document - the only one whose reply counts */
 let current: string | null = null
+/** the window can draw: false before its first show and from each hide or minimise until it shows again (flush holds) */
+let drawing = true
 
 export type PresentLog = (d: { tab: string; op: 'ask' | 'answer' | 'stale' | 'mismatch' | 'refused' | 'lost'; epoch: number; doc?: string; w?: number; h?: number; gen?: number }) => void
 let log: PresentLog | null = null
@@ -107,12 +116,28 @@ export function showing(tab: string | null, now: number): void {
 }
 
 /**
- * The window hidden or minimised (⇧⌘W, the red button, the Dock): the shown view's sent epoch ends its record now, as
- * hidden - its page's frames stop until the window shows again, so the times after would be the window's, not the
- * page's. It stays the shown view: not in the key (A3.8 #27's residual), its reply after the window shows still lifts
- * the cover.
+ * The window hidden, minimised or covered entirely (⇧⌘W, the red button, the Dock, another window over it), or made
+ * and not yet shown: the shown view's sent epoch ends its record now, as hidden - its page's frames stop until the
+ * window shows again, so the times after would be the window's, not the page's - and no request goes out until
+ * `windowShown`. It stays the shown view: not in the key (A3.8 #27's residual), its reply after the window shows still
+ * lifts the cover.
  */
-export function windowHidden(now: number): void { if (current !== null) left(current, now) }
+export function windowHidden(now: number): void {
+  drawing = false
+  if (current !== null) left(current, now)
+}
+
+/**
+ * The window shown or restored: requests go out again (the caller composes, so a held epoch is sent now). An epoch
+ * made while it could not draw, or sent never, starts now: its times are the page's from the moment it can answer.
+ * True when the window was hidden.
+ */
+export function windowShown(now: number): boolean {
+  if (drawing) return false
+  drawing = true
+  for (const s of slots.values()) if (s.sentAt === undefined && !s.recorded) s.at = now
+  return true
+}
 
 /** The app quitting (will-quit, before the recorder's last write): every sent epoch still open ends its record now. */
 export function quitting(now: number): void { for (const tab of slots.keys()) left(tab, now) }
@@ -145,10 +170,13 @@ export function observe(tab: string, k: PresentKey, now: number): boolean {
 /** When the tab's accepted epoch may lift the cover (its delay), or null: the caller composes then. */
 export const liftAt = (tab: string): number | null => slots.get(tab)?.okAt ?? null
 
-/** compose, after the views were applied and with no live resize: send the current epoch once; a failed send is retried by the next compose. */
+/**
+ * compose, after the views were applied and with no live resize: send the current epoch once; a failed send is retried
+ * by the next compose. Held while the window cannot draw (`windowHidden`): sent by the first compose after it shows.
+ */
 export function flush(tab: string, send: (doc: string, r: Present) => boolean, frames: number, now: number = Date.now()): void {
   const s = slots.get(tab)
-  if (!s || s.sent || s.okAt !== undefined) return
+  if (!s || s.sent || s.okAt !== undefined || !drawing) return
   const f = Math.min(BOUNDS.frames, Math.max(1, Math.round(frames) || 1))
   let ok = false
   try { ok = send(s.doc, { epoch: s.epoch, w: s.w, h: s.h, frames: f }) } catch { ok = false }
@@ -220,4 +248,4 @@ export function gpuGone(): void {
 }
 
 /** Test seam: nothing asked, nothing read. */
-export function resetPresent(): void { slots.clear(); gens.clear(); genCause.clear(); epochs = 0; gpu = undefined; current = null }
+export function resetPresent(): void { slots.clear(); gens.clear(); genCause.clear(); epochs = 0; gpu = undefined; current = null; drawing = true }

@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { commitLayout, docInset, onLayoutChange, placed, rectFor, seeThrough, setGround, setInsetOff, type LayoutEvent } from '../../src/main/layout.ts'
 import {
   answer, bumpAll, bumpGen, epochOf, flush, forget, genOf, gpuGone, liftAt, noteGpu, observe, onCoverRecord, quitting, resetPresent, showing, uncovered,
-  windowHidden, type PresentKey,
+  windowHidden, windowShown, type PresentKey,
 } from '../../src/main/present.ts'
 import { GROUND, plan, type PlanTab } from '../../src/main/plan.ts'
 import { allTabs, blankTab, onCommit, onDocumentGone, onFail, onRegistry, onReport, type Tab } from '../../src/main/tabs.ts'
@@ -449,6 +449,52 @@ describe('present.ts: the cover record, one per sent epoch (A3.8 #27; app-perf.t
     expect(observe('t1', K(), 3_600_020)).toBe(true)
     uncovered('t1', 3_600_020)
     expect(recs).toHaveLength(1)
+  })
+
+  it('the window hidden, the page reloading meanwhile: nothing is asked until it shows, and no record says never or counts the time hidden', () => {
+    const asks: number[] = []
+    const ask = (_doc: string, r: Present) => { asks.push(r.epoch); return true }
+    observe('t1', K(), 0); flush('t1', ask, 2, 0)
+    answer('t1', 'd1', { epoch: epochOf('t1')!, w: 1280, h: 820 }, 30, GPU)
+    expect(observe('t1', K(), 30)).toBe(true)
+    uncovered('t1', 30)
+    windowHidden(100)                                       // ⇧⌘W, or another window over it
+    observe('t1', K({ doc: 'd2' }), 5_000)                  // the page's own resume reload, while hidden: held
+    flush('t1', ask, 2, 5_000)
+    observe('t1', K({ doc: 'd3' }), 8_000)                  // a hello after a `marver dev` restart, 3 s later: held too
+    flush('t1', ask, 2, 8_000)
+    expect(asks).toEqual([1])                               // nothing went to a page whose frames had stopped
+    expect(windowShown(3_608_000)).toBe(true)               // shown an hour later
+    expect(windowShown(3_608_001)).toBe(false)              // the minimise's restore and the occlusion's show: once
+    observe('t1', K({ doc: 'd3' }), 3_608_000)
+    flush('t1', ask, 2, 3_608_000)
+    expect(asks).toEqual([1, 3])                            // the held epoch, now; the one it superseded never sent
+    answer('t1', 'd3', { epoch: 3, w: 1280, h: 820 }, 3_608_040, GPU)
+    expect(observe('t1', K({ doc: 'd3' }), 3_608_040)).toBe(true)
+    uncovered('t1', 3_608_040)
+    expect(recs.map((x) => x.r)).toEqual([
+      { epoch: 1, cause: 'doc', outcome: 'uncovered', sentMs: 0, answeredMs: 30, uncoveredMs: 30, frames: 2, uncoverDelayMs: 0 },
+      { epoch: 3, cause: 'doc', outcome: 'uncovered', sentMs: 0, answeredMs: 40, uncoveredMs: 40, frames: 2, uncoverDelayMs: 0 },
+    ])
+  })
+
+  it('made hidden, the window asks nothing before its first show; minimised and restored, the same', () => {
+    const asks: number[] = []
+    const ask = (_doc: string, r: Present) => { asks.push(r.epoch); return true }
+    windowHidden(0)                                         // openWindow: show: false
+    observe('t1', K(), 10); flush('t1', ask, 2, 10)
+    expect(asks).toEqual([])
+    windowShown(250); flush('t1', ask, 2, 250)
+    expect(asks).toEqual([1])
+    answer('t1', 'd1', { epoch: 1, w: 1280, h: 820 }, 290, GPU); uncovered('t1', 290)
+    expect(recs.at(-1)!.r).toMatchObject({ outcome: 'uncovered', sentMs: 0, answeredMs: 40 })
+    windowHidden(1000)                                      // minimised
+    bumpGen('t1', 'hello'); observe('t1', K({ gen: genOf('t1') }), 1500); flush('t1', ask, 2, 1500)
+    expect(asks).toEqual([1])
+    windowShown(9000); flush('t1', ask, 2, 9000)
+    expect(asks).toEqual([1, 2])
+    answer('t1', 'd1', { epoch: 2, w: 1280, h: 820 }, 9030, GPU); uncovered('t1', 9030)
+    expect(recs.at(-1)!.r).toMatchObject({ cause: 'hello', outcome: 'uncovered', sentMs: 0, answeredMs: 30 })
   })
 
   it('quitting: every sent epoch still open is recorded at the quit; one recorded already, or never sent, is not', () => {

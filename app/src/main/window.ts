@@ -46,7 +46,7 @@ import { invalidateMenu } from './menu.ts'
 import { note, noteTopic, provide, testMode } from './testing/index.ts'
 import { T } from './timings.ts'
 import { groundOn, onLayoutChange, placed, rectFor, seeThrough, setGround, setInsetOff } from './layout.ts'
-import { bumpAll, bumpGen, epochOf, flush as presentFlush, genOf, gpuGone, liftAt, noteGpu, observe, onCoverRecord, onPresentLog, quitting as presentQuitting, showing, uncovered, windowHidden } from './present.ts'
+import { bumpAll, bumpGen, epochOf, flush as presentFlush, genOf, gpuGone, liftAt, noteGpu, observe, onCoverRecord, onPresentLog, quitting as presentQuitting, showing, uncovered, windowHidden, windowShown } from './present.ts'
 import { identity, recorder } from './recorder.ts'
 import type { TabIdent } from '../../../src/shared/app-perf.ts'
 import { makeCover, type Cover } from './cover.ts'
@@ -463,7 +463,8 @@ function composeOnce(o: { focus?: 'shown' }): void {
   // a document the person can see is retained: it may hold their work (v1.13 r2 #3)
   if (a?.kind === 'local' && a.doc && a.doc.lifted && applied.get(`${a.id}:view`)?.vis) { a.doc.shown = true; a.retained = true }
   // 7. after the views changed in this turn: the request goes out, so it reaches a view already shown and sized
-  // (A3.8 #27) - never during a live resize; a send that fails is retried by the next compose
+  // (A3.8 #27) - never during a live resize, and never while the window cannot draw (present.ts holds it until the
+  // window's show); a send that fails is retried by the next compose
   if (a && eligible && !resizing && deps?.present) presentFlush(a.id, (doc, r) => deps!.present!(a.id, doc, r), T.presentFrames)
   if (__MV_TEST__ && changes.length) {
     const layouts: Record<string, Layout> = {}
@@ -648,9 +649,16 @@ export function openWindow(d?: WindowDeps): BaseWindow {
   win.on('focus', () => feedWindow())
   win.on('blur', () => feedWindow())
   for (const ev of ['show', 'hide', 'minimize', 'restore'] as const) win.on(ev as 'show', () => { onVisibility(); feedWindow() })
-  // the window hidden: the shown view's open epoch ends its record now, its page drawing nothing until it shows (A3.8 #27)
+  // the window hidden (on macOS also covered entirely: Electron 45 emits hide and show from its occlusion state alone):
+  // the shown view's open epoch ends its record now, and no request goes out while its pages draw nothing (A3.8 #27).
+  // Shown again, compose sends the epoch held meanwhile, its times starting then. Made hidden, it cannot draw until
+  // showWindow shows it: a window made with show: false sends no show when it first appears (its occlusion state
+  // never changed), so showWindow says so itself
+  windowHidden(Date.now())
   win.on('hide', () => windowHidden(Date.now()))
   win.on('minimize', () => windowHidden(Date.now()))
+  win.on('show', () => { if (windowShown(Date.now())) compose() })
+  win.on('restore', () => { if (windowShown(Date.now())) compose() })
   // quitting: every open epoch's record, before the recorder's last write (main.ts's will-quit flushSync)
   app.prependListener('will-quit', () => presentQuitting(Date.now()))
   win.on('close', (e) => {
@@ -767,6 +775,8 @@ export function showWindow(o: { focus?: boolean } = {}): void {
   if (o.focus === false) win.showInactive()
   else { win.show(); win.focus() }
   onVisibility()
+  // in front now, so it can draw: requests held while it could not go out (present.ts), the first show at launch too
+  if (windowShown(Date.now())) compose()
 }
 
 /** A second launch focuses the window (A2.1). */
