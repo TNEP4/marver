@@ -34,6 +34,7 @@ import { join, sep } from 'node:path'
 import { Browser } from './cdp.ts'
 import { AREA, SURFACE, pool, shotConcurrency, withBrowser } from './shot.ts'
 import { readOwn, sleepRule } from '../shared/sleep-rule.ts'
+import { TEST_BUILD } from './test-build.ts'
 
 export interface BakeTarget {
   sel: string
@@ -276,7 +277,7 @@ export async function bakeIn(b: Browser, opts: { url: string; width: number; hei
   // a deadline's abort settles the call under way as `<method>: <why>`: the answer says the bare reason, so the
   // failure cache knows it for a timeout (the review of a3-runs' fixes, minor #7)
   let timedOut = false
-  const deadline = setTimeout(() => { timedOut = true; b.abort(me, TIMED_OUT) }, bakeSeams.deadlineMs ?? DEADLINE_MS)
+  const deadline = setTimeout(() => { timedOut = true; b.abort(me, TIMED_OUT) }, (TEST_BUILD ? bakeSeams.deadlineMs : undefined) ?? DEADLINE_MS)
   // a close that cannot hang the operation: bounded, outside the abort owner
   const closeTarget = async (id: string) => { let t: ReturnType<typeof setTimeout> | undefined; await Promise.race([b.send('Target.closeTarget', { targetId: id }).catch(() => {}), new Promise((r) => { t = setTimeout(r, 2000) })]); clearTimeout(t) }
   try {
@@ -565,7 +566,8 @@ export function endRunBakes(owner: BakeOwner): void {
   for (const end of [...(queuedJobs.get(owner) ?? [])]) end()
 }
 
-/** Test seams - the environment's read only with MARVER_SLOT_BASE set (the suite's marker, as RUN_T's):
+/** Test seams, in the suite's build only (test-build.ts: the npm build drops them) - the environment's read only with
+ *  MARVER_SLOT_BASE set (the suite's marker, as RUN_T's):
  *  MV_BAKE_HOLD_MS holds each compile that long before it renders, so a test can find one still compiling.
  *  `deadlineMs` (in-process only) shortens a compile's 45 s deadline, so a test can force "the bake timed out".
  *  MV_BAKE_STOP_ASKING=1 answers a caller who stops waiting STOP_ASKING instead of COMPILING: the page takes it for a
@@ -573,13 +575,14 @@ export function endRunBakes(owner: BakeOwner): void {
  *  looks at a COMPILING outlast any held compile (A3.8 r1 #4's case, added by the review of a3-runs). */
 export const bakeSeams: { holdMs?: number; stopAsking?: boolean; deadlineMs?: number } = {}
 const holdMs = (): number => {
+  if (!TEST_BUILD) return 0
   if (bakeSeams.holdMs !== undefined) return bakeSeams.holdMs
   const v = process.env.MARVER_SLOT_BASE ? Number(process.env.MV_BAKE_HOLD_MS) : NaN
   return Number.isFinite(v) && v > 0 ? Math.min(v, 60_000) : 0
 }
 /** The suite's answer for a compile still running, under MV_BAKE_STOP_ASKING (above). */
 export const STOP_ASKING = 'still compiling - the suite asks the page to stop asking'
-const stillCompiling = (): string => ((bakeSeams.stopAsking ?? (!!process.env.MARVER_SLOT_BASE && process.env.MV_BAKE_STOP_ASKING === '1')) ? STOP_ASKING : COMPILING)
+const stillCompiling = (): string => (TEST_BUILD && (bakeSeams.stopAsking ?? (!!process.env.MARVER_SLOT_BASE && process.env.MV_BAKE_STOP_ASKING === '1')) ? STOP_ASKING : COMPILING)
 
 /** Compiles in flight, by generation and key: identical asks - inside one request or across
  *  concurrent ones - share one compile. */

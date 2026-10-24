@@ -46,6 +46,7 @@ import { basicHost, writeHeadlessProfile } from './machine-host.ts'
 import { marverHome } from './slots.ts'
 import { appendRun } from './perf.ts'
 import { installedVersion } from './update.ts'
+import { TEST_BUILD } from './test-build.ts'
 
 export * from '../shared/perf-run.ts'
 
@@ -182,13 +183,14 @@ export interface RunOptions {
 }
 
 type Durations = { -readonly [K in keyof typeof RUN_T]: number }
-/** In-process test seams: the driver the route runs, durations, every CDP call the driver makes. Never set outside tests. */
+/** In-process test seams: the driver the route runs, durations, every CDP call the driver makes. Never set outside tests,
+ *  and read in the suite's build only (test-build.ts: the npm build drops them, MV_PERF_RUN_T too). */
 export const runSeams: { driver?: (o: RunOptions) => Promise<RunLine>; t?: Partial<Durations>; cdp?: (method: string, params: Record<string, unknown>) => void } = {}
 /** RUN_T, with the suite's overrides: `runSeams.t` in-process, `MV_PERF_RUN_T` (JSON) for a dev server a test starts -
  *  both read only with MARVER_SLOT_BASE set (the suite's marker). */
 export function runT(): Durations {
   const t: Durations = { ...RUN_T }
-  if (!process.env.MARVER_SLOT_BASE) return t
+  if (!TEST_BUILD || !process.env.MARVER_SLOT_BASE) return t
   let env: Record<string, unknown> = {}
   try { env = JSON.parse(process.env.MV_PERF_RUN_T ?? '{}') } catch { /* none */ }
   for (const src of [env, runSeams.t ?? {}]) for (const k of Object.keys(t) as (keyof Durations)[]) { const v = (src as Record<string, unknown>)[k]; if (typeof v === 'number' && v >= 0) t[k] = v }
@@ -266,7 +268,7 @@ export async function openPage(b: RunBrowser, o: { cache: boolean; slow: boolean
     stop: () => { for (const off of offs.splice(0)) off() },
   }
   function call(m: string, p: Record<string, unknown> = {}, sid?: string, ms = T.callMs): Promise<any> {
-    runSeams.cdp?.(m, p)
+    if (TEST_BUILD) runSeams.cdp?.(m, p)
     const sent = b.send(m, p, sid, own)
     let t: ReturnType<typeof setTimeout> | undefined
     const late = new Promise<never>((_, reject) => {
@@ -308,7 +310,7 @@ export async function openPage(b: RunBrowser, o: { cache: boolean; slow: boolean
 export async function closePage(b: RunBrowser, page: RunPage): Promise<void> {
   page.stop()
   const bounded = async (m: string, p: Record<string, unknown>, sid?: string) => {
-    runSeams.cdp?.(m, p)
+    if (TEST_BUILD) runSeams.cdp?.(m, p)
     let t: ReturnType<typeof setTimeout> | undefined
     await Promise.race([b.send(m, p, sid).catch(() => {}), new Promise((r) => { t = setTimeout(r, 2000) })])
     clearTimeout(t)
@@ -689,7 +691,7 @@ export async function serveRun(req: IncomingMessage, res: ServerResponse, o: { r
   const write = (l: RunStreamLine) => { if (!res.destroyed && !res.writableEnded) res.write(JSON.stringify(l) + '\n') }
   const beat = setInterval(() => write({ heartbeat: Date.now() }), T.heartbeatMs)
   try {
-    const drive = runSeams.driver ?? runOnce
+    const drive = (TEST_BUILD ? runSeams.driver : undefined) ?? runOnce
     for (let i = 0; i < asked.req.repeat && !ac.signal.aborted; i++) {
       const line = await drive({ root: o.root, origin: o.origin, board: asked.req.board, slow: asked.req.slow, signal: ac.signal, progress: write, watch: o.watch })
       write({ line })
