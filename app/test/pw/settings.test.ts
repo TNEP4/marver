@@ -7,6 +7,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { FileState, SettingsView } from '../../src/shared/channels.ts'
 import { openPage, type PageRun } from '../harness/pages.ts'
+import { shownKeys } from '../../src/shared/settings-keys.ts'
 
 const fs = (ok = true, values: Record<string, unknown> = {}): FileState => ({ present: true, ok, sha256: 'x', applied: { sha256: 'x', values } })
 function view(o: { restoreTabs?: boolean; mode?: string; theme?: Partial<SettingsView['theme']>; writable?: boolean; write?: SettingsView['status']['write'] } = {}): SettingsView {
@@ -71,6 +72,24 @@ describe('the keys (A2.7, A2.14 #23)', () => {
     await p.page.selectOption('select', 'dark')
     await p.page.waitForFunction(() => (document.querySelector('select') as HTMLSelectElement).value === 'dark')
     expect(await p.calls('settings:set')).toEqual([{ file: 'theme', key: 'mode', value: 'dark' }])
+  })
+})
+
+describe('A3\'s rows, as main sends them once STAGE is a3 (A3.8 #46)', () => {
+  // this branch's build is STAGE a2 until the streams meet (settings-keys.ts): main sends shownKeys('a3') then
+  const a3 = (unload = true): SettingsView => { const v = view(); return { ...v, shown: shownKeys('a3'), config: { ...v.config, values: { ...v.config.values, unloadUnderPressure: unload } } } }
+
+  it('Unload hidden tabs when memory runs short: on by default, its key and note under it; a switch is one settings:set of it', async () => {
+    await p.answer('settings:get', a3())
+    await p.send('status', a3().status)
+    await p.page.waitForSelector('[data-ctl="config.unloadUnderPressure"]')
+    const config = await p.page.locator('section[aria-labelledby="h-config"]').ariaSnapshot()
+    expect(config).toContain('- text: Unload hidden tabs when memory runs short unloadUnderPressure - never a busy one')
+    expect(config).toContain('- switch "Unload hidden tabs when memory runs short" [checked]')
+    await p.answer('settings:get', a3(false))
+    await p.page.click('[data-ctl="config.unloadUnderPressure"]')
+    await p.page.waitForFunction(() => document.querySelector('[data-ctl="config.unloadUnderPressure"]')!.getAttribute('aria-checked') === 'false')
+    expect(await p.calls('settings:set')).toEqual([{ file: 'config', key: 'unloadUnderPressure', value: false }])
   })
 })
 

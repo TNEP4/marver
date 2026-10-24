@@ -31,7 +31,7 @@ export const KEYS = {
     },
     unloadUnderPressure: {
       type: 'boolean', def: true, since: 'a3', label: 'Unload hidden tabs when memory runs short', note: 'never a busy one',
-      does: 'When macOS runs short of memory, unload the least recently shown hidden tab - never one with unsaved work. It reopens where it was when shown.',
+      does: 'When macOS runs short of memory, unload the least recently shown hidden tab - never one that is busy: unsaved work, a Jam session, the microphone or an agent at work. It reopens on its board and camera when shown.',
     },
     recorder: {
       type: 'boolean', def: true, since: 'a3', label: 'Performance recorder',

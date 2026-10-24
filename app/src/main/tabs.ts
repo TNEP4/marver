@@ -19,8 +19,8 @@
  *   this file and views.ts hand it; `compose()` stays the one writer of native bounds;
  * - `{ kind: 'unload', reason }`, the same serialized operation as every other action with a silent refusal of its
  *   own: any other action on that tab waits for the unload's `done`, and `guardAll` sweeps no unload in (`sweeping`)
- *   and waits for those under way. The unload's admission (`unloadRefusal`), its op and `onUnloaded` are the
- *   unloading stream's to fill, in the section at the end; until then nothing is ever admitted.
+ *   and waits for those under way. The unload's admission (`unloadRefusal`), its op, `onUnloaded` and the reopen
+ *   are the section at the end (the unloading stream); memory.ts decides when.
  */
 import type { DisplayState, TabPageProbe, TabView } from '../shared/channels.ts'
 import type { AppState, Busy, Hello, Inset, MenuItem, Theme, Why } from '../../../src/shared/app-api.ts'
@@ -28,6 +28,7 @@ import { UNSAVED_WHY, WHY_WORDS } from '../../../src/shared/app-api.ts'
 import type { AppBody, AppKind, TabIdent, UnloadReason } from '../../../src/shared/app-perf.ts'
 import { commitLayout } from './layout.ts'
 import { bumpGen } from './present.ts'
+import { T } from './timings.ts'
 import type { FailWhy } from './nav.ts'
 import type { RegistryEntry, RegistryEvent } from './registry.ts'
 import { tilde } from '../shared/command.ts'
@@ -139,6 +140,11 @@ export interface TabUnload {
   unloadedAt?: number
   /** the activation that reopens it - one queued during the close keeps its own time (A3.8 r2 #4) */
   activatedAt?: number
+  /**
+   * the close never reached `destroyed`: main took the view out itself (unload-act.ts's backstop). Its webContents
+   * may live on, closed again until it goes, and the tab's next view waits for that (views.ts ensureView)
+   */
+  stuck?: boolean
 }
 
 export interface Tab {
@@ -308,6 +314,12 @@ const P = (): TabsPorts => {
 const tabs = new Map<string, Tab>()
 let activeId = 'home'
 let counter = 0
+/** A quit or an update has begun: no unload is admitted (cleared when it is refused; A3.8 #42) */
+let sweeping = false
+/** reopens lifted and waiting for their document's hello (the unload section's; A3.8 #45) */
+const reopened = new Map<Tab, Reopened>()
+/** a new instance of a grey tab's workspace, on another origin, waiting for that tab's unload to end its close (A3.8 #42) */
+const afterClose = new Map<Tab, RegistryEntry>()
 /** closes for a canvas's run, `ws|instance` (A2.14 #23), kept in tabs.json */
 const closed = new Set<string>()
 const closeKey = (ws: string, instance: string) => `${ws}|${instance}`
@@ -318,7 +330,10 @@ export function blankTab(id: string, kind: TabKind, name: string, extra: Partial
 
 /** Test seam: an empty model with Home. */
 export function resetTabs(): void {
-  tabs.clear(); closed.clear(); counter = 0; activeId = 'home'
+  tabs.clear(); closed.clear(); counter = 0; activeId = 'home'; sweeping = false
+  for (const r of reopened.values()) clearTimeout(r.timer)
+  reopened.clear()
+  afterClose.clear()
   tabs.set('home', blankTab('home', 'home', 'Home'))
 }
 resetTabs()
@@ -351,6 +366,12 @@ export const liveDoc = (t: Tab): boolean => t.kind === 'local' && t.view === 'li
  */
 export const wantsLoad = (t: Tab): boolean => t.kind === 'local' && t.reg?.state === 'ready' && !!t.reg.origin && !t.crash.latched
   && t.view !== 'crashed' && !liveDoc(t) && !t.crash.inFlight && (t.view === 'none' || t.view === 'unloaded' || !!t.needsLoad)
+
+/**
+ * wantsLoad, now: an unloaded tab stays unloaded while a quit or an update sweeps (A3.8 #42) - a new document would
+ * meet the quit's newcomer check; if the quit is refused, the active one reopens then (sweepRefused).
+ */
+const loadsNow = (t: Tab): boolean => wantsLoad(t) && !(t.view === 'unloaded' && sweeping)
 
 /** The current document's record is fresh: trusted now, and heard since its commit. */
 export const fresh = (t: Tab): boolean => t.reports.safety === 'fresh' && !!t.doc?.trusted
@@ -617,6 +638,8 @@ export function onRegistry(ev: RegistryEvent): void {
   const p = P()
   const now = p.now()
   if (ev.kind === 'gone') {
+    // an instance waiting for a close went before it ended: nothing of it to bind
+    for (const [g, w] of afterClose) if (w.instance === ev.instance) { afterClose.delete(g); p.log?.('registry', { tab: g.id, waited: ev.instance, gone: ev.why }) }
     const t = allTabs().find((x) => x.kind === 'local' && x.reg?.instance === ev.instance)
     if (!t || t.reg!.state === 'gone') return
     if (!t.open && !liveDoc(t)) { dropTab(t); return }
@@ -664,6 +687,36 @@ export function onRegistry(ev: RegistryEvent): void {
   // never taken by a second instance of its workspace (another slot, or --port) - that one gets its own tab
   t = locals.find((x) => x.reg && sameAddr(x)) ?? locals.find((x) => x.reg?.ws === e.ws && x.reg.state === 'gone' && !liveDoc(x))
   if (t) rebind(t, e)
+  else if (!waitForClose(locals, e)) createLocal(e, !closed.has(closeKey(e.ws, e.instance)))
+  p.changed(); p.save()
+}
+
+/**
+ * A grey tab of this workspace whose document an unload is closing (A3.8 #42) is about to hold none: the new instance
+ * waits for the close's end rather than getting a tab of its own beside it. At `destroyed` that tab rebinds, unloaded
+ * on the new instance (onUnloaded's task); if the page refuses, its kept page stays grey and the instance gets its
+ * own tab, as A2.14 #10 says. True when the entry waits (a later event of the same instance updates it).
+ */
+function waitForClose(locals: Tab[], e: RegistryEntry): boolean {
+  const g = locals.find((x) => x.reg?.ws === e.ws && x.reg.state === 'gone' && unloadClosing(x))
+  if (!g) return false
+  const w = afterClose.get(g)
+  if (w && w.instance !== e.instance) return false
+  afterClose.set(g, e)
+  P().log?.('registry', { tab: g.id, waits: e.instance, state: e.state })
+  return true
+}
+
+/**
+ * The close ended (destroyed: `bind` true; the page's refusal: false): the instance that waited for it binds now -
+ * to this tab if it is still here, grey and documentless, else to a tab of its own.
+ */
+function closeEnded(t: Tab, bind: boolean): void {
+  const e = afterClose.get(t)
+  if (!e) return
+  afterClose.delete(t)
+  const p = P()
+  if (bind && getTab(t.id) === t && t.reg?.state === 'gone' && !liveDoc(t)) rebind(t, e)
   else createLocal(e, !closed.has(closeKey(e.ws, e.instance)))
   p.changed(); p.save()
 }
@@ -704,7 +757,7 @@ function atReady(t: Tab): void {
   if (t.reg?.state !== 'ready') return
   if (liveDoc(t)) { if (t.fail) p.recheck?.(t); return }
   if (!isActive(t)) return
-  if (wantsLoad(t)) p.load(t)
+  if (loadsNow(t)) p.load(t)
   else if (t.crash.pendingShow && !t.crash.latched) p.shown(t)
 }
 
@@ -732,6 +785,7 @@ function ensureDoc(t: Tab): TabDoc {
  */
 export function onCommit(t: Tab, c: { gen: number; url: string; href?: string; attributed: boolean; admitted: string | null; instance?: string }): void {
   const p = P()
+  writeReopen(t, false)   // a reopened document that never said hello: its record now, with no page (A3.8 #45)
   const d = ensureDoc(t)
   d.commits += 1
   d.gen = c.gen
@@ -754,6 +808,9 @@ export function onCommit(t: Tab, c: { gen: number; url: string; href?: string; a
     t.held = undefined
     const path = pathOf(c.href !== undefined && noHashOf(c.href) === noHashOf(c.url) ? c.href : c.url)
     if (path) t.path = path
+    // an unloaded tab's reopen lifted: the unload ends, its record waits for this document's hello (A3.8 #45)
+    const u = t.unload
+    if (u?.phase === 'reopening') { t.unload = undefined; reopenLifted(t, u, p.now()) }
   } else {
     // unattributed: untrusted, kept beneath its tab page, reloaded by main (views.ts) - never shown, it holds nothing of the person's
     t.retained = false
@@ -766,6 +823,9 @@ export function onCommit(t: Tab, c: { gen: number; url: string; href?: string; a
 /** A failure of the current attempt (A2.14 #8): whatever is committed loses trust; the view goes beneath its tab page. */
 export function onFail(t: Tab, f: { why: FailWhy; code: number; errorPage: boolean; gen?: number }): void {
   const p = P()
+  writeReopen(t, false)
+  // a reopen that fails is the tab page's failure (A2.11): it never lifted, so it writes no reopen (A3.8 #45)
+  if (t.unload?.phase === 'reopening') t.unload = undefined
   const d = ensureDoc(t)
   d.commits += 1
   revoke(t)
@@ -780,8 +840,11 @@ export function onFail(t: Tab, f: { why: FailWhy; code: number; errorPage: boole
   p.log?.('fail', { tab: t.id, why: f.why, code: f.code, errorPage: f.errorPage, retained: t.retained })
 }
 
-/** The renderer went, or the view closed: the document is gone. */
+/** The renderer went, or the view closed or unloaded: the document is gone. */
 export function onDocumentGone(t: Tab, view: TabViewState): void {
+  writeReopen(t, false)
+  // a reopen whose renderer crashed or whose view closed before it lifted ends there; a crash counts as any (A3.8 #44)
+  if (view !== 'unloaded' && t.unload?.phase === 'reopening') t.unload = undefined
   const d = ensureDoc(t)
   d.commits += 1
   d.trusted = false
@@ -865,10 +928,16 @@ export function activate(id: string): void {
   activeId = next.id
   next.shownAt = now
   if (next.kind === 'local') {
+    // an unloaded tab, or one whose unload's close is outstanding: the activation's time, kept for its reopen (A3.8 #45)
+    const u = next.unload
+    if (u && u.phase !== 'reopening') u.activatedAt = now
     p.shown(next)
-    // lazy views: a documentless tab loads when shown (never a latched one: its Reload is the person's)
-    if (wantsLoad(next)) p.load(next)
-    if (prev !== next && next.doc?.trusted) p.appState(next, 'shown')
+    // lazy views: a documentless tab loads when shown (never a latched one: its Reload is the person's); an unloaded
+    // one reopens on its saved path - not while a quit or an update sweeps: it shows its reopening page until then
+    if (loadsNow(next)) p.load(next)
+    // an activation during an unload's close is queued under its tab page: no shown until the outcome (A3.8 #42)
+    const closing = u?.phase === 'closing' || u?.phase === 'unsure'
+    if (prev !== next && next.doc?.trusted && !closing) p.appState(next, 'shown')
   }
   p.changed({ focus: 'shown' })
   p.save()
@@ -1025,15 +1094,20 @@ export async function guard(tab: Tab, action: GuardAction): Promise<GuardAnswer>
 /**
  * Every canvas tab, for a quit or an update: one operation each, one shared step 1 and sheet; one refusal stops the
  * whole. From its start no unload is admitted (`sweeping`, cleared when it is refused); unloads already under way
- * are closes the quit wanted - waited for (each ends within `unloadActMs` and a task), never a reason to refuse
- * (A3.8 #42).
+ * are closes the quit wanted - waited for (each ends within `unloadActMs` and a task, or at the act's backstop a
+ * second `unloadActMs` later if `destroyed` never comes: unload-act.ts), never a reason to refuse (A3.8 #42).
  */
 export async function guardAll(action: GuardAllAction): Promise<GuardAnswer> {
   sweeping = true
   let r: GuardAnswer = 'refused'
   try {
     const unloading = allTabs().flatMap((t) => (t.replacing?.action.kind === 'unload' ? [t.replacing.done] : []))
-    if (unloading.length) await Promise.all(unloading)
+    if (unloading.length) {
+      await Promise.all(unloading)
+      // what waited on those unloads (a close, a link) is judged first, on a tab with no document: their own
+      // operations end before the sweep reads who is in flight
+      await new Promise<void>((r2) => setImmediate(r2))
+    }
     r = await sweep(action)
     return r
   } finally {
@@ -1137,8 +1211,9 @@ export const sheetConfirmed = (response: number): boolean => response === 1
 export const tabDark = (t: Tab | undefined): boolean => darkOf(t, P().appDark())
 
 // ---------------------------------------------------------------------------------------------------------------
-// Unloading (A2.6, A3.8 #39-#45): the unloading stream's section. FROZEN signatures; the bodies below admit
-// nothing, so app 0.2's base keeps every hidden tab loaded, as app 0.1 does.
+// Unloading (A2.6, A3.8 #39-#45): the unloading stream's section. memory.ts decides, under measured pressure, which
+// hidden tab goes; this is its admission, its one operation and what follows it. Nothing here asks, shows a pill,
+// brings a tab forward or shows the window: an unload's refusal is heard only by the journal and the recorder.
 
 /**
  * Why a tab is not a candidate (A3.8 #40), the first that holds, in this order: `not-canvas` (Home, Settings, a
@@ -1153,36 +1228,217 @@ export const tabDark = (t: Tab | undefined): boolean => darkOf(t, P().appDark())
 export type UnloadRefusal = 'not-canvas' | 'active' | 'no-document' | 'replacing' | 'sweeping' | 'no-bridge' | 'unknown'
   | 'stale' | 'unsaved' | 'busy' | 'crash' | 'hung' | 'audible' | 'devtools' | 'loading' | 'refused-before' | 'recent'
 
-/** A quit or an update has begun: no unload is admitted (cleared when it is refused). */
-let sweeping = false
+/** A quit or an update has begun: no unload is admitted (cleared when it is refused; `sweeping` is with the store). */
 export const isSweeping = (): boolean => sweeping
 
 /**
  * The unload's admission (A3.8 #40, r1 #1): null when `t` is a candidate now. `own` is the unload's own operation:
  * the act's recheck passes it (the guard has already installed it as `Tab.replacing`), and also requires
- * `sameDoc(t, own)`; the memory tick passes none, so a tab with any operation is never a candidate.
+ * `sameDoc(t, own)`; the memory tick passes none, so a tab with any operation is never a candidate. Stricter than
+ * A2.6's words, never weaker: idle means the page said exactly `{ busy: false, unsaved: false }` - an agent at work,
+ * a Jam session or the microphone keep it, as unsaved work does.
  */
 export function unloadRefusal(t: Tab, now: number, own?: GuardOperation): UnloadRefusal | null {
-  void now; void own
   if (t.kind !== 'local') return 'not-canvas'
-  return 'unknown'   // A3 unloading stream: #40's rules, in the order above
+  if (isActive(t)) return 'active'
+  if (!liveDoc(t) || !t.doc?.lifted || t.unload) return 'no-document'
+  if (t.replacing && t.replacing !== own) return 'replacing'
+  if (sweeping) return 'sweeping'
+  if (!hasBridge(t)) return 'no-bridge'
+  if (t.reports.safety === 'unknown') return 'unknown'
+  if (t.reports.safety === 'stale' || !t.doc.trusted || t.reg?.state !== 'ready') return 'stale'
+  const b = t.reports.busy
+  if (!b) return 'unknown'
+  if (b.unsaved) return 'unsaved'
+  if (b.busy || b.why.length > 0) return 'busy'
+  if (t.crash.latched || t.crash.inFlight || t.crash.pendingShow) return 'crash'
+  if (t.hung) return 'hung'
+  if (t.audible) return 'audible'
+  if (t.devtools) return 'devtools'
+  if (t.loading) return 'loading'
+  if (t.unloadRefused === t.doc.commits) return 'refused-before'
+  // never hidden yet counts as hidden just now: the safe side
+  if (t.hiddenAt === undefined || now - t.hiddenAt < T.unloadMinHiddenMs) return 'recent'
+  return null
 }
 
-/** The unload's operation (A3.8 #39): admission read again in the act's turn, then `act(tab, { kind: 'unload' })`; a refusal is silent. */
+/** A candidate now, or one once it has been hidden long enough: worth reading the pressure for (A3.8 #6). */
+export const couldUnload = (t: Tab, now: number): boolean => { const r = unloadRefusal(t, now); return r === null || r === 'recent' }
+
+/** A tab's identity now (A3.8 #8): recorder.ts's `identity`, kept here without Electron. */
+export function tabIdent(t: Tab): TabIdent {
+  return {
+    tab: t.id,
+    ...(t.reg?.ws ? { ws: t.reg.ws } : {}),
+    ...(t.doc ? { commit: t.doc.commits } : {}),
+    ...(t.reports.hello?.page ? { page: t.reports.hello.page } : {}),
+  }
+}
+
+/**
+ * The unload's operation (A3.8 #39): its admission read again in the act's own turn, then the act - `close({
+ * waitForBeforeUnload: true })` in views.ts, which answers only at `destroyed` ('done': onUnloaded has run) or at the
+ * page's refusal ('refused'). A refusal is silent, and per document: that commit is never asked again.
+ */
 async function unloadOp(tab: Tab, op: GuardOperation, a: Extract<GuardAction, { kind: 'unload' }>): Promise<GuardAnswer> {
-  const why = unloadRefusal(tab, P().now(), op) ?? (sameDoc(tab, op) ? null : 'no-document')
-  P().log?.('unload', { tab: tab.id, reason: a.reason, refused: why ?? 'not built' })
-  return 'refused'   // A3 unloading stream: the act, `unloadRefused` on the page's refusal (A3.8 #39, #42)
+  const p = P()
+  const why = unloadRefusal(tab, p.now(), op) ?? (sameDoc(tab, op) ? null : 'no-document')
+  if (why) {
+    p.log?.('unload', { tab: tab.id, reason: a.reason, refused: why })
+    p.record?.('unload', tab, { phase: 'refused', reason: a.reason, why })
+    return 'refused'
+  }
+  tab.unload = { phase: 'closing', reason: a.reason, at: p.now(), commit: op.commit, origin: tab.reg!.origin! }
+  p.log?.('unload', { tab: tab.id, reason: a.reason, phase: 'closing', commit: op.commit })
+  const r = await p.act(tab, a)
+  if (r === 'done') return 'done'
+  // the page refused its beforeunload: kept as it was, and this document never asked again (A2.6, A3.8 #42)
+  if (tab.unload?.phase === 'closing') tab.unload = undefined
+  tab.unloadRefused = op.commit
+  p.log?.('unload', { tab: tab.id, reason: a.reason, refused: 'page', commit: op.commit })
+  p.record?.('unload', tab, { phase: 'refused', reason: a.reason, why: 'page' })
+  // a new instance that waited for this close: the kept page stays grey, the instance gets its own tab (A2.14 #10)
+  closeEnded(tab, false)
+  // activated while it closed: its tab page goes and the kept page shows, its shown sent now, as on any switch (r2 #4)
+  if (isActive(tab)) {
+    if (tab.doc?.trusted) p.appState(tab, 'shown')
+    p.changed({ focus: 'shown' })
+  }
+  return 'refused'
 }
 
-/** views.ts at `destroyed` of an unload's close (forgetCanvas): the tab unloaded, its view gone; the reopen is decided last, in a task (A3.8 #42). */
+/**
+ * views.ts at `destroyed` of an unload's close (forgetCanvas): the tab unloaded, its view gone. It keeps its id, its
+ * path (the board and any selection), its look, its logo and its place; its crash record stays as it is (A3.8 #44).
+ * The reopen is the last thing decided, in a task after every action that waited on `done` has been judged (r3 #3).
+ */
 export function onUnloaded(t: Tab): void {
+  const p = P()
+  const u = t.unload
+  const who = tabIdent(t)   // the document it closed, before the reset
   onDocumentGone(t, 'unloaded')
-  P().changed()   // A3 unloading stream: phase, unloadedAt, the reopen's task
+  t.needsLoad = false
+  if (u) { u.phase = 'unloaded'; u.unloadedAt = p.now() }
+  p.log?.('unload', { tab: t.id, phase: 'unloaded', reason: u?.reason ?? null, ...(u?.stuck ? { stuck: true } : {}) })
+  // a close main ended by hand, its webContents perhaps alive still, says so in its record (unload-act.ts's backstop)
+  if (u) p.record?.('unload', who, { phase: 'done', reason: u.reason, ...(u.stuck ? { why: 'stuck' } : {}) })
+  // in one task after every waiter: a new instance that waited for this close binds the tab (a queued close has
+  // dropped it, and the instance then gets a tab of its own), then the reopen is decided (r3 #3)
+  setImmediate(() => { closeEnded(t, true); reopenIfShown(t) })
+  p.changed(); p.save()
+}
+
+/** The camera the tab was left at is on its bound origin: the one it was unloaded on (A3.8 #43; camera storage is per origin). */
+export const cameraKept = (t: Tab): boolean => !!t.unload && t.unload.origin === t.reg?.origin
+
+/**
+ * views.ts load(): an unloaded tab's load is its reopen (A3.8 #43): its saved path, under the `reopening` tab page
+ * until that document lifts, its reopen record at the hello. `camera` on the origin it was unloaded on: views.ts then
+ * arms its `mv:doc` to answer `{ reopen: true }`, so the shell takes the saved camera even under a selection link.
+ * `board` on another origin (rebound while unloaded, or while it closed): no flag - the shell would take whatever
+ * camera that origin once stored over the selection the path names - so the saved path loads as any load does, and
+ * the page promises the board only. null: not a reopen.
+ */
+export function startReopen(t: Tab): 'camera' | 'board' | null {
+  const u = t.unload
+  if (u?.phase !== 'unloaded') return null
+  u.phase = 'reopening'
+  const kept = cameraKept(t) ? 'camera' : 'board'
+  P().log?.('unload', { tab: t.id, phase: 'reopening', path: t.path, camera: kept === 'camera' })
+  return kept
+}
+
+/** An unload's close is under way on the tab: from the act until `destroyed` or the page's refusal. */
+export const unloadClosing = (t: Tab): boolean => t.unload?.phase === 'closing' || t.unload?.phase === 'unsure'
+
+/**
+ * A link opened into a tab with no live document (views.ts openInTab: ⌘L, Home's link field, the links agents and
+ * `marver work done` hand back) opens on what it names, never as the reopen (A3.8 #42, r3 #3): an unloaded tab's
+ * unload ends here, so its load is a plain one - no `mv:doc` reopen, no reopening page, no reopen record. True when a
+ * reopen was already under way (its load sent, `mv:doc`'s one-shot flag armed); views.ts takes that flag back for
+ * every link either way. A tab whose close is still outstanding is not this: its link waits for the close through
+ * the guard. The tab is then documentless, no longer unloaded: never dimmed or named "unloaded" while it waits to
+ * load its link (its canvas starting, say).
+ */
+export function linkOpens(t: Tab): boolean {
+  const u = t.unload
+  if (!u || unloadClosing(t)) return false
+  dropUnload(t)
+  P().log?.('unload', { tab: t.id, link: true, was: u.phase })
+  return u.phase === 'reopening'
+}
+
+/** The unload ends with no reopen: an unloaded tab with no view is a documentless one (A2.4's `none`), which loads when shown. */
+function dropUnload(t: Tab): void {
+  t.unload = undefined
+  if (t.view === 'unloaded') t.view = 'none'
+}
+
+/**
+ * views.ts's act on a tab with no view (A3.8 #42), as the model takes it; true when the action loads the tab. An
+ * action that waited for an unload is judged on what is left: a close of an unloaded tab ends its unload (it closes
+ * as any documentless tab, and nothing reopens); a link takes the tab's path - it opens on what it names, never the
+ * reopen's saved path - and ends the unload; a reload, a force reload or Try Again is the reopen itself, one load.
+ */
+export function viewlessAct(t: Tab, a: GuardAction): boolean {
+  if (a.kind === 'unload') return false
+  if (a.kind === 'close' || a.kind === 'quit' || a.kind === 'update') {
+    if (t.view === 'unloaded') dropUnload(t)
+    return false
+  }
+  if (a.kind === 'load') {
+    const path = pathOf(a.url)
+    if (path) t.path = path
+    // its canvas not ready (gone, or a rebind waiting for this close), the link loads at ready: documentless till then
+    if (t.unload?.phase === 'unloaded') dropUnload(t)
+  }
+  return true
+}
+
+/**
+ * The reopen of an unloaded tab no activation started (A3.8 #42, r3 #3): one activated while it closed, or a refused
+ * quit's. Only for a tab still active, still unloaded with no view and no load under way, and no quit or update in
+ * progress: a queued `load` loaded its own URL instead, a queued close closed it, a queued reload was the reopen.
+ */
+function reopenIfShown(t: Tab): void {
+  if (getTab(t.id) !== t || !isActive(t) || sweeping || t.unload?.phase !== 'unloaded' || t.view !== 'unloaded' || !wantsLoad(t)) return
+  P().log?.('unload', { tab: t.id, reopen: 'queued' })
+  P().load(t)
+}
+
+/** A reopen lifted, waiting for its document's hello (A3.8 #45, r1 #9). */
+interface Reopened { activateToLiftMs: number; unloadedForMs: number; ident: TabIdent; timer: ReturnType<typeof setTimeout> }
+
+/** The reopened document lifted (its attributed commit): timed on main's clock from the activation (A3.8 #45). */
+function reopenLifted(t: Tab, u: TabUnload, now: number): void {
+  const activatedAt = u.activatedAt ?? t.loadAt ?? now
+  const unloadedAt = u.unloadedAt ?? u.at
+  const r: Reopened = {
+    // a queued activation keeps its own time: its wait for destroyed is in activateToLiftMs, and unloadedForMs is 0
+    activateToLiftMs: Math.max(0, now - activatedAt), unloadedForMs: Math.max(0, activatedAt - unloadedAt),
+    ident: tabIdent(t),   // no page yet: a document that never says hello joins by ws and time (A3.8 #23)
+    timer: setTimeout(() => writeReopen(t, false), T.reopenHelloMs),
+  }
+  ;(r.timer as { unref?: () => void }).unref?.()
+  reopened.set(t, r)
+}
+
+/** The reopen's record: at the reopened document's accepted hello, with its page; else at its next document or 30 s after its lift, with none. */
+function writeReopen(t: Tab, hello: boolean): void {
+  const r = reopened.get(t)
+  if (!r) return
+  reopened.delete(t)
+  clearTimeout(r.timer)
+  const p = P()
+  p.log?.('reopen', { tab: t.id, activateToLiftMs: r.activateToLiftMs, unloadedForMs: r.unloadedForMs, hello })
+  p.record?.('reopen', hello ? t : r.ident, { activateToLiftMs: r.activateToLiftMs, unloadedForMs: r.unloadedForMs })
 }
 
 /** The first accepted hello of a document: a reopened one writes its `reopen` record now (A3.8 #45). */
-function onDocHello(t: Tab): void { void t }   // A3 unloading stream
+function onDocHello(t: Tab): void { writeReopen(t, true) }
 
 /** A quit or an update was refused: the active unloaded tab reopens now (A3.8 #42). */
-function sweepRefused(): void {}   // A3 unloading stream
+function sweepRefused(): void {
+  const a = activeTab()
+  if (a) reopenIfShown(a)
+}

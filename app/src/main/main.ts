@@ -161,6 +161,7 @@ function start(): void {
       appState: (tabId, s) => s === 'untrusted' ? false : bridge.appState(tabId, s),   // untrusted: the bridge sends it itself
       menuClick: (tabId, id) => bridge.menuClick(tabId, id),
       reopenNext: (tabId) => bridge.reopenNext(tabId),
+      reopenCancel: (tabId) => bridge.reopenCancel(tabId),
       present: (tabId, doc, r) => bridge.present(tabId, doc, r),
       onPresented: (fn) => bridge.onPresented(fn),
       probe: async (t) => { const e = entryOf(t); return e ? probeProof(e) : 'silent' },

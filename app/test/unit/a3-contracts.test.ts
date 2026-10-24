@@ -2,7 +2,8 @@
  * A3's frozen contracts (spec 28 A3.8 #53), without Electron: the bridge's checks of `mv:perf` and `mv:presented`
  * and `mv:hello`'s inset; the rate limit; the app.jsonl envelope; the machine profiles' canonical form and hash,
  * the same in the app and a headless run; the budgets' process sets; the geometry's pure reads; the guard's unload
- * as one serialized operation (`done`, the waits, `sweeping`, a silent refusal) while its admission is not built.
+ * as one serialized operation (`done`, the waits, `sweeping`, a silent refusal); its admission and what follows it
+ * are unload.test.ts's and memory.test.ts's.
  */
 import { beforeEach, describe, expect, it } from 'vitest'
 import { checkHello, checkPerf, checkPresented, perfBucket } from '../../src/main/bridge.ts'
@@ -151,7 +152,7 @@ describe('the geometry\'s pure reads (A3.8 #24, #26)', () => {
   })
 })
 
-describe('the guard\'s unload (A3.8 #39, #42) while its admission is not built', () => {
+describe('the guard\'s unload (A3.8 #39, #42): one serialized operation (its admission: unload.test.ts, memory.test.ts)', () => {
   let w: World
   beforeEach(() => { w = world() })
   const unload: GuardAction = { kind: 'unload', reason: 'warn' }

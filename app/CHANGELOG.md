@@ -26,6 +26,15 @@
   opaque strip with every view below; whether these pages then stay at the full height is Nic's decision.
 - Presentation requests wait while the window cannot draw (hidden, minimised, or covered entirely by other windows):
   an epoch made meanwhile is asked when the window shows, so no `cover` record blames the page for time hidden.
+- Hidden tabs are unloaded when macOS runs short of memory (Settings: Unload hidden tabs when memory runs short, on by
+  default): at warn the least recently shown one, then 30 s before the next; at critical every hidden tab but the one
+  in front; also when the canvases together pass half of the Mac's memory. Never the tab in front, and never one that
+  is busy - unsaved work, a Jam session, the microphone, an agent at work - nor one that has not said it is idle (a
+  Marver 0.27.0 canvas), one playing sound, one with DevTools open, one hidden less than 10 s or one whose page
+  declined. Nothing asks and nothing comes forward. An unloaded tab keeps its place, name and logo, dimmed, and
+  reopens on its board and camera when shown, saying "Reopening" until it is back (its board alone if its canvas came
+  back on another address); a link opened into it opens on what the link names instead. What an unload does not keep is the page's undo, Back and Forward, and a selection the link
+  does not name.
 
 ## 0.1.0 - unreleased (spec 28 A2, for Nic)
 

@@ -12,9 +12,12 @@ import { startCommandShown, tilde } from '../shared/command.ts'
 import { hueOf } from '../shared/hue.ts'
 import { WHY_WORDS } from '../../../src/shared/app-api.ts'
 import { T } from './timings.ts'
-import { liveDoc, onDocumentGone, tabName, type Tab } from './tabs.ts'
+import { cameraKept, liveDoc, onDocumentGone, tabName, type Tab } from './tabs.ts'
 
-/** Why a renderer went, as `recover` records it. The app's own endings (A3's unload, a confirmed force reload) count nothing. */
+/**
+ * Why a renderer went, as `recover` records it. The app's own endings (a confirmed force reload) count nothing; an
+ * unload never comes here - a renderer gone while it closes is the unload's own (views.ts `unloadGone`, A3.8 #44).
+ */
 export type RecoverCause =
   | { kind: 'crash'; reason: string; exitCode: number }
   | { kind: 'app' }
@@ -76,6 +79,14 @@ export function pageFor(t: Tab, now: number, home: string = homedir()): PageBody
     if (f.why === 'unreachable' && !gone) return { ...base, page: 'unreachable', since: f.at, retained: t.retained, probe, origin, reason: netReason(f.code) }
     return stopped(t.retained, probe)
   }
+  // an unload (A3.8 #42, #43): an activation queued while its close is outstanding - over the view, hidden beneath it
+  // in the same turn - then the reopen until its document lifts. While the close is outstanding a page stands over
+  // the view whatever the canvas does meanwhile (stopped: its stopped page, nothing kept), so the page being closed
+  // never shows or takes a key; once unloaded, a stopped canvas shows stopped ("comes back by itself")
+  const u = t.unload
+  const reopening = (): PageBody => ({ ...base, page: 'reopening', since: u!.activatedAt ?? t.loadAt ?? now, unloadedAt: u!.unloadedAt ?? u!.at, cameraKept: cameraKept(t) })
+  if (u && (u.phase === 'closing' || u.phase === 'unsure')) return gone ? stopped(false, NO_PROBE) : reopening()
+  if (u && !gone && t.reg!.state === 'ready' && (u.phase !== 'reopening' || !t.doc?.lifted)) return reopening()
   if (liveDoc(t)) return null                       // a page that is kept gets no tab page (A2.11): the pill speaks
   if (gone) return stopped(false, NO_PROBE)
   if (t.doc?.lifted && t.view === 'live') return null
@@ -144,7 +155,7 @@ export function recover(t: Tab, cause: RecoverCause): void {
   const c = t.crash
   onDocumentGone(t, 'crashed')
   if (cause.kind === 'app' || t.appEnding) {
-    // a renderer the app ended itself (a confirmed force reload; A3's unload) counts nothing
+    // a renderer the app ended itself (a confirmed force reload) counts nothing
     t.appEnding = false
     p.log?.('crash', { tab: t.id, app: true, inFlight: c.inFlight ?? false })
     if (c.inFlight === 'force') startReload(t, 'force')

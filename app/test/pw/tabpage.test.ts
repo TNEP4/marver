@@ -125,6 +125,25 @@ describe('crashed (A2.11)', () => {
   })
 })
 
+describe('reopening (A3.8 #42, #43)', () => {
+  it('an unloaded tab opening again: ground for 400 ms, then its name, when it unloaded, and board and camera promised', async () => {
+    const unloadedAt = Date.now() - 120_000
+    await show({ page: 'reopening', name: 'Tidewell', since: Date.now(), unloadedAt, cameraKept: true })
+    expect(await words()).toBe('')
+    await p.page.waitForFunction(() => document.querySelector('#content h1')?.textContent === 'Reopening Tidewell', null, { timeout: 2000 })
+    expect(await words()).toBe(`Reopening Tidewell Unloaded at ${at(unloadedAt)} to free memory. Its board and camera come back as you left them.`)
+    expect(await p.page.$('#content .logo.dim')).not.toBeNull()
+    expect(await p.page.$('#content .spin')).not.toBeNull()
+    expect(await buttons()).toEqual([])
+  })
+
+  it('rebound to another origin while unloaded: the board alone is promised (camera storage is per origin)', async () => {
+    const unloadedAt = Date.now() - 5000
+    await show({ page: 'reopening', name: 'Tidewell', since: Date.now() - 1000, unloadedAt, cameraKept: false })
+    expect(await words()).toBe(`Reopening Tidewell Unloaded at ${at(unloadedAt)} to free memory. Its board comes back as you left it.`)
+  })
+})
+
 describe('revisions, names, focus (A2.13, A2.14 #19)', () => {
   it('an older snapshot is ignored; buttons carry the newest rev', async () => {
     const r = await show({ page: 'unverified', name: 'Newer', since: Date.now(), origin: 'http://[::1]:4806', retained: false, probe: none })

@@ -69,7 +69,9 @@ ${keyTable('theme')}
 - A dark app: \`theme.json\` \`{ "mode": "dark" }\`. Canvases keep their own theme; frames that follow the system's
   colour scheme follow this.
 - Start on Home at every launch: \`config.json\` \`{ "restoreTabs": false }\`.
-- Keep hidden tabs loaded (from app 0.2): \`config.json\` \`{ "unloadUnderPressure": false }\`.
+- Keep hidden tabs loaded (from app 0.2): \`config.json\` \`{ "unloadUnderPressure": false }\`. An unloaded tab
+  reopens on its board and camera; its page's undo, Back and Forward, and a selection its link does not name, do not
+  come back.
 - Start fresh: delete the file. Absent is the defaults.
 `
 }

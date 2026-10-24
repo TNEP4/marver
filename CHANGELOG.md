@@ -4,7 +4,7 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 
 ## 0.27.2 - unreleased
 
-The canvas's side of the Mac app's one ground (app 0.2).
+The canvas's side of the Mac app 0.2: its one ground, its recorder and its unloading.
 
 ### Added
 
@@ -18,6 +18,13 @@ The canvas's side of the Mac app's one ground (app 0.2).
   answers the app's requests to show its latest state, so the app uncovers it only once it has drawn at its size.
   Its slot file lists `inset` beside `bridge`. Everywhere else - Chrome, a published canvas, `marver shot`, app 0.1 -
   nothing moves.
+
+### Changed
+
+- **The view you left is written the moment the page hides or leaves.** A canvas kept its camera a second after the
+  view settled; a tab switched away from, closed or ended within that second lost the last move. Now the waiting
+  camera is written at once when the page is hidden or unloads, and a page hidden while the view is still flying (a
+  fit, a zoom) keeps where it was going. In Chrome too.
 
 ## 0.27.1 - unreleased
 

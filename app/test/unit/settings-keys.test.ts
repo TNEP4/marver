@@ -43,6 +43,13 @@ describe('the table', () => {
     expect(shownKeys('a4')).toHaveLength(7)
   })
 
+  it('unloadUnderPressure, from A3: its label, its note and A3.8 #46\'s words exactly, in the README\'s row', () => {
+    const k = KEYS.config.unloadUnderPressure
+    expect(k).toMatchObject({ since: 'a3', def: true, label: 'Unload hidden tabs when memory runs short', note: 'never a busy one' })
+    expect(k.does).toBe('When macOS runs short of memory, unload the least recently shown hidden tab - never one that is busy: unsaved work, a Jam session, the microphone or an agent at work. It reopens on its board and camera when shown.')
+    expect(renderReadme('0.2.0')).toContain(`| \`unloadUnderPressure\` | true or false | \`true\` | 0.2 | ${k.does} |`)
+  })
+
   it('a key name that is a prototype property is not a key', () => {
     expect(keySpec('config', 'toString')).toBeUndefined()
     expect(keySpec('config', '__proto__')).toBeUndefined()

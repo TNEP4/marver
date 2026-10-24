@@ -87,6 +87,8 @@ export interface Bridge {
   menuClick(tabId: string, id: string): boolean
   /** the next `mv:doc` from this tab's main frame, of a document on the tab's canvas origin, answers `reopen: true`, once (A2.11's crash reload) */
   reopenNext(tabId: string): void
+  /** that flag taken back, if no `mv:doc` has taken it yet (A3: a link opened into a tab with no live document, A3.8 #42) */
+  reopenCancel(tabId: string): void
   /** a tab's binding changed outside a registry event: every admitted document's trust is looked at again (the
    *  bridge already does it on each registry event, and at each failed load) */
   trustChanged(): void
@@ -638,6 +640,7 @@ export function installBridge(o: BridgeOptions = {}): Bridge {
       return sendCanvas(id, CANVAS_CHANNELS.menuClick, { doc: rec.doc, id: itemId })
     },
     reopenNext(tabId) { reopen.add(tabId) },
+    reopenCancel(tabId) { reopen.delete(tabId) },
     trustChanged() { recheck() },
     handle(channel, fn) {
       if (!SENDERS[channel]) throw new Error(`bridge: ${channel} is not an app page channel`)
