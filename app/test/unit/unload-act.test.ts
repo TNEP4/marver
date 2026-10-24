@@ -2,15 +2,16 @@
  * The unload's act on a webContents (spec 28 A3.8 #39, #44, r1 #2; unload-act.ts), on a fake webContents: Chromium's
  * events are emitted by the case, `destroyed` included, so each state of the close runs in order - the page's refusal,
  * `unsure` and main's own plain close, a refusal after it, a renderer gone while it closes, and the retries when
- * `destroyed` never comes - the webContents closed again until it goes, the tab, its queued load and a quit held
- * until then (code review r1 #1).
+ * `destroyed` never comes - the webContents closed again until it goes, the tab and its queued load held until then
+ * (code review r1 #1), and a quit bounded on its own: 'stuck' at `quitWaitMs`, the unload still owning the tab, and
+ * Force Quit Tab its own outcome (code review r2 #1).
  * views.ts's forgetCanvas is the case's own `destroyed` listener, registered before the act as wireCanvas registers it.
  */
 import { EventEmitter } from 'node:events'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { guard, guardAll, onUnloaded, viewlessAct, type GuardAction, type GuardAnswer, type Tab } from '../../src/main/tabs.ts'
+import { guard, guardAll, isSweeping, onUnloaded, sheetText, stuckUnloads, viewlessAct, type GuardAction, type GuardAnswer, type Tab } from '../../src/main/tabs.ts'
 import { T } from '../../src/main/timings.ts'
-import { actUnload, resetActs, takeAct, unloadGone, type ActPorts, type UnloadActState } from '../../src/main/unload-act.ts'
+import { actUnload, forceUnload, resetActs, takeAct, unloadGone, type ActPorts, type UnloadActState } from '../../src/main/unload-act.ts'
 import { flush, liveTab, reopenOf, show, world, type World } from './window-fakes.ts'
 
 class FakeWc extends EventEmitter {
@@ -29,6 +30,7 @@ let wc: FakeWc
 let lines: { topic: string; data: Record<string, unknown> }[]
 let unsure: string[]
 let forgot: string[]
+let killed: string[]
 let taken: UnloadActState | undefined
 let ports: ActPorts
 
@@ -62,11 +64,12 @@ function closing(): { t: Tab; answer: Promise<string> } {
 beforeEach(() => {
   w = world()
   wc = new FakeWc()
-  lines = []; unsure = []; forgot = []; taken = undefined
+  lines = []; unsure = []; forgot = []; killed = []; taken = undefined
   ports = {
     log: (topic, data) => { lines.push({ topic, data }) },
     unsure: (t) => { unsure.push(t.id) },
     forget: (t) => { forgot.push(t.id); forgetCanvas(t) },   // the backstop's forgetCanvas, by hand
+    kill: (t) => { killed.push(t.id) },                       // Force Quit Tab's end of its renderer (views.ts)
   }
   resetActs()
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
@@ -150,12 +153,11 @@ describe('the act (A3.8 #39, r1 #2)', () => {
     expect(unloadGone(t)).toBe(false)
   })
 
-  it('destroyed never comes after main\'s own close: the unload keeps the tab, its view and its operation - the queued load and a quit wait - closing it again every unloadActMs, and only destroyed ends it (code review r1 #1)', async () => {
+  it('destroyed never comes after main\'s own close: the unload keeps the tab, its view and its operation - the queued load waits - closing it again every unloadActMs, and only destroyed ends it (code review r1 #1)', async () => {
     const { t, answer } = closing()
     const load = guard(t, { kind: 'load', url: `${t.reg!.origin}/#/b/next` })   // waits on the unload's done
-    const quit = guardAll({ kind: 'quit' })                                       // waits on every unload in flight
-    const settled = { answer: false, load: false, quit: false }
-    void answer.then(() => { settled.answer = true }); void load.then(() => { settled.load = true }); void quit.then(() => { settled.quit = true })
+    const settled = { answer: false, load: false }
+    void answer.then(() => { settled.answer = true }); void load.then(() => { settled.load = true })
     vi.advanceTimersByTime(T.unloadActMs)   // unsure: the plain close, which here destroys nothing
     expect(wc.closes).toHaveLength(2)
     for (let k = 1; k <= 6; k++) {
@@ -163,7 +165,7 @@ describe('the act (A3.8 #39, r1 #2)', () => {
       expect(wc.closes).toHaveLength(2 + k)   // closed again, asking nothing
       expect(wc.closes.at(-1)).toBeUndefined()
       await flush()
-      expect(settled).toEqual({ answer: false, load: false, quit: false })
+      expect(settled).toEqual({ answer: false, load: false })
       expect(forgot).toEqual([])                // the view never taken out while its webContents lives
       expect(t.unload?.phase).toBe('unsure')
       expect(t.replacing?.action.kind).toBe('unload')
@@ -215,5 +217,84 @@ describe('the act (A3.8 #39, r1 #2)', () => {
     expect(await answer).toBe('done')
     expect(t.view).toBe('unloaded')
     expect(taken).toMatchObject({ gone: true, plain: true })
+  })
+})
+
+describe('a quit over a close that never ends (code review r2 #1)', () => {
+  /** the sheet's answers: Keep Waiting (false) or Force Quit Tab (true), in order */
+  const answers: boolean[] = []
+  beforeEach(() => { answers.length = 0; w.askWith = () => answers.shift() ?? false })
+
+  it('the quit is bounded on its own: stuck at quitWaitMs - sweeping cleared, the unload still owning its tab and view, no unload recorded done - and a later quit is heard', async () => {
+    const { t, answer } = closing()
+    const quit = guardAll({ kind: 'quit' })
+    let r: string | null = null
+    void quit.then((x) => { r = x })
+    expect(isSweeping()).toBe(true)
+    vi.advanceTimersByTime(T.quitWaitMs - 1)
+    await flush()
+    expect(r).toBeNull()
+    vi.advanceTimersByTime(1)
+    await flush()
+    expect(r).toBe('stuck')
+    // the quit's flags cleared: an unload may be admitted again, a later quit starts afresh
+    expect(isSweeping()).toBe(false)
+    // the unload goes on owning the tab: its view, its operation, its retries
+    expect(stuckUnloads().map((x) => x.id)).toEqual([t.id])
+    expect(t.replacing?.action.kind).toBe('unload')
+    expect(t.unload?.phase).toBe('unsure')
+    expect(forgot).toEqual([])
+    expect(w.records.filter((x) => x.kind === 'unload' && x.body.phase === 'done')).toEqual([])
+    expect(w.logs.filter((l) => l.topic === 'guard' && l.data.answer === 'stuck').map((l) => l.data)).toEqual([{ all: 'quit', answer: 'stuck', tabs: [t.id] }])
+    let settled = false
+    void answer.then(() => { settled = true })
+    await flush()
+    expect(settled).toBe(false)
+    // a second quit is heard: sweeping again, bounded the same way
+    const again = guardAll({ kind: 'quit' })
+    expect(isSweeping()).toBe(true)
+    vi.advanceTimersByTime(T.quitWaitMs)
+    expect(await again).toBe('stuck')
+    // destroyed at last: a completed unload, and the next quit goes through
+    wc.destroy()
+    expect(await answer).toBe('done')
+    expect(w.records.filter((x) => x.kind === 'unload').map((x) => x.body)).toEqual([{ phase: 'done', reason: 'critical', why: 'stuck' }])
+    expect(await guardAll({ kind: 'quit' })).toBe('done')
+  })
+
+  it('the sheet that names it: Keep Waiting the default, Force Quit Tab the act', () => {
+    const t = liveTab(w)
+    const words = sheetText({ action: { kind: 'quit' }, tabs: [{ id: t.id, name: 'TMS broker', why: { kind: 'stuck' } }] })
+    expect(words.message).toBe('TMS broker isn\'t closing')
+    expect(words.buttons).toEqual(['Keep Waiting', 'Force Quit Tab'])
+    expect(words.detail).toMatch(/can't quit until it has closed/)
+    const two = sheetText({ action: { kind: 'quit' }, tabs: [{ id: 'a', name: 'A', why: { kind: 'stuck' } }, { id: 'b', name: 'B', why: { kind: 'stuck' } }] })
+    expect(two).toMatchObject({ message: '2 canvases aren\'t closing', buttons: ['Keep Waiting', 'Force Quit Tabs'] })
+  })
+
+  it('Force Quit Tab: a separate outcome - the view taken out by hand, the renderer ended, the record forced, never done; the unload\'s waiters released and the quit goes through', async () => {
+    const { t, answer } = closing()
+    const load = guard(t, { kind: 'load', url: `${t.reg!.origin}/#/b/next` })
+    const quit = guardAll({ kind: 'quit' })
+    vi.advanceTimersByTime(T.quitWaitMs)
+    expect(await quit).toBe('stuck')
+    const closes = wc.closes.length
+    expect(forceUnload(t)).toBe(true)
+    expect(t.view).toBe('unloaded')   // in the force's own turn; the queued load takes the tab after
+    expect(killed).toEqual([t.id])
+    expect(forgot).toEqual([t.id, `view:${t.id}`])   // forgetCanvas by hand, its webContents alive
+    expect(await answer).toBe('done')
+    expect(lines.find((l) => l.topic === 'act' && l.data.answer)?.data).toMatchObject({ answer: 'done', why: 'forced' })
+    expect(lines.filter((l) => l.data.forced === true).map((l) => l.data)).toEqual([{ tab: t.id, forced: true, destroyed: false }])
+    expect(w.records.filter((x) => x.kind === 'unload').map((x) => x.body)).toEqual([{ phase: 'forced', reason: 'critical' }])
+    expect(stuckUnloads()).toEqual([])
+    // never closed again, never forced twice
+    vi.advanceTimersByTime(T.unloadActMs * 3)
+    expect(wc.closes).toHaveLength(closes)
+    expect(forceUnload(t)).toBe(false)
+    expect(await load).toBe('done')
+    expect(w.loads).toEqual([t.id])   // the link waited for the close's end, then loaded its own URL
+    expect(t.replacing).toBeUndefined()
+    expect(await guardAll({ kind: 'quit' })).toBe('done')
   })
 })

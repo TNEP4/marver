@@ -24,6 +24,11 @@
  * hand (views.ts's forgetCanvas, as `destroyed` would), its `done` record saying `why: 'stuck'`; one that needed the
  * retries says the same once its `destroyed` comes. Never `forcefullyCrashRenderer()`: a renderer shared with another
  * tab lives on, and a close ends only this tab's frames.
+ *
+ * A quit does not wait on that forever (code review r2 #1): tabs.ts's guardAll answers 'stuck' after `quitWaitMs`,
+ * the unload still owning the tab, and views.ts asks the person about it. Force Quit Tab is `forceUnload`: the
+ * person's explicit answer, never automatic - the retries stopped, the renderer ended when no other tab's frame lives
+ * in it (`kill`), the view taken out by hand with its webContents alive, recorded `forced`, never a completed unload.
  */
 import type { GuardAction, GuardAnswer, Tab } from './tabs.ts'
 import { T } from './timings.ts'
@@ -47,6 +52,8 @@ export interface ActPorts {
   unsure(t: Tab, a: UnloadAction): void
   /** a webContents found destroyed whose `destroyed` never came: the view taken out and the tab unloaded as at that event (views.ts's forgetCanvas) */
   forget(t: Tab): void
+  /** Force Quit Tab (code review r2 #1): the tab's renderer ended, only when no other tab's frame lives in it */
+  kill?(t: Tab): void
 }
 
 /** One unload's close under way. */
@@ -60,7 +67,7 @@ export interface UnloadActState {
   gone: boolean
 }
 
-interface Act extends UnloadActState { tab: Tab; wc: ActWc; ports: ActPorts; stuck?: ReturnType<typeof setTimeout>; retries: number; onStuck(): void }
+interface Act extends UnloadActState { tab: Tab; wc: ActWc; ports: ActPorts; stuck?: ReturnType<typeof setTimeout>; retries: number; onStuck(): void; finish(r: GuardAnswer, why: string): void }
 
 const acts = new Map<string, Act>()
 
@@ -96,7 +103,7 @@ export function actUnload(t: Tab, wc: ActWc, a: UnloadAction, ports: ActPorts, p
       resolve(r)
     }
     const st: Act = {
-      tab: t, wc, ports, plain: false, gone: false, retries: 0,
+      tab: t, wc, ports, plain: false, gone: false, retries: 0, finish: (r, why) => done(r, why),
       ...(proc.pid ? { pid: proc.pid } : {}), ...(proc.born !== undefined ? { born: proc.born } : {}),
       // destroyed has not come after main's own close: closed again, the tab still owned (code review r1 #1); a
       // webContents already destroyed whose event never reached us is the one case taken out by hand
@@ -135,6 +142,27 @@ export function actUnload(t: Tab, wc: ActWc, a: UnloadAction, ports: ActPorts, p
     }, T.unloadActMs)
     wc.close({ waitForBeforeUnload: true })
   })
+}
+
+/**
+ * Force Quit Tab on a quit's stuck sheet (code review r2 #1): the person's explicit answer about a close still
+ * outstanding, never automatic. Journaled (`unload { forced }`); its retries stopped; its renderer ended when it hosts
+ * no other tab's frame (`kill`); the view taken out by hand (`forget`, views.ts's forgetCanvas: the tab unloaded, its
+ * record `forced`, never `done`); then the act answers 'done', why 'forced', and the unload's waiters go on. False
+ * when the tab has no close outstanding.
+ */
+export function forceUnload(t: Tab): boolean {
+  const st = acts.get(t.id)
+  const u = t.unload
+  if (!st || !u || (u.phase !== 'closing' && u.phase !== 'unsure')) return false
+  u.forced = true
+  st.plain = true   // nothing more is asked of the page: a refusal now changes nothing
+  if (st.stuck) { clearTimeout(st.stuck); st.stuck = undefined }
+  st.ports.log('unload', { tab: t.id, forced: true, destroyed: st.wc.isDestroyed() })
+  if (!st.wc.isDestroyed()) st.ports.kill?.(t)
+  st.ports.forget(t)
+  st.finish('done', 'forced')
+  return true
 }
 
 /**

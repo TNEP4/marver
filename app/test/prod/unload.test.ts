@@ -612,3 +612,78 @@ describe('a quit during an unload (A3.8 #42)', () => {
     }
   })
 })
+
+describe('a quit over a close that never ends (code review r2 #1)', () => {
+  /** the sheet the app holds now, once there are `n` held */
+  async function held(run: WindowRun, n = 1) {
+    const end = Date.now() + 10_000
+    for (;;) {
+      const s = await run.run.call<{ shown: Record<string, unknown>[]; held: number }>('sheets')
+      if (s.held >= n) return s.shown.at(-1)!
+      if (Date.now() > end) throw new Error(`no held sheet: ${JSON.stringify(s).slice(0, 500)}`)
+      await sleep(50)
+    }
+  }
+  const quitLines = async (n: number, run: WindowRun) => (await since(n, 'quit', run)).map((l) => l.data)
+  const phases = async (n: number, id: string, run: WindowRun) => (await since(n, 'record', run)).filter((l) => l.data.kind === 'unload' && l.data.tab === id).map((l) => l.data.phase)
+
+  it('stuck at quitWaitMs, the tab named on a sheet: Keep Waiting keeps it owned and a later quit is heard; Force Quit Tab ends it - recorded forced, never done - and the quit goes on: exits 0', async () => {
+    const q = await launchWindow('prod', { extraEnv: { MARVER_APP_TIMINGS: JSON.stringify({ ...TIMINGS, unloadActMs: 200, quitWaitMs: 1500 }) } })
+    let code: number | null = null
+    try {
+      const s = await shown(q)
+      // the active one never reports: the quit after the force asks about it, which holds the app while the case reads
+      const o = await shown(q, {}, false)
+      await sleep(HIDDEN)
+      expect(await q.run.call('closeNever', { target: s.id })).toBe(true)
+      await q.run.call('sheet', { mode: 'hold' })
+      const n = await mark(q)
+      expect((await tick({ level: 4 }, q)).unload.map((u) => u.id)).toEqual([s.id])
+      await q.until((x) => tab(x, s.id).unload?.phase === 'unsure', 5000, 'unsure')
+
+      // the quit: bounded on its own, stuck - the sheet names the tab, Keep Waiting the default
+      const at = Date.now()
+      await q.run.call('command', { cmd: 'quit' })
+      const sheet = await held(q)
+      expect(Date.now() - at).toBeGreaterThanOrEqual(1300)
+      expect(sheet).toMatchObject({ kind: 'guard', action: 'quit', tabs: [s.id], message: expect.stringMatching(/^Canvas \d+ isn't closing$/), buttons: ['Keep Waiting', 'Force Quit Tab'] })
+      expect(await quitLines(n, q)).toEqual([{ asked: true }, { answer: 'stuck' }])
+      // the unload still owns the tab: its view, unsure, no unload recorded done, closed again and again
+      const t = await q.tab(s.id)
+      expect(t.unload?.phase).toBe('unsure')
+      expect(t.hasView).toBe(true)
+      expect((await q.state()).quitting).toBe(false)
+      expect(await phases(n, s.id, q)).toEqual(['start', 'unsure'])
+      expect((await since(n, 'closeNever', q)).length).toBeGreaterThan(3)
+
+      // Keep Waiting: nothing changes
+      await q.run.call('sheet:answer', { ok: false })
+      await sleep(100)
+      expect(await quitLines(n, q)).toContainEqual({ stuck: 'keep-waiting', tabs: [s.id] })
+      expect((await q.tab(s.id)).hasView).toBe(true)
+
+      // a later quit is heard: asked again, stuck again, the sheet again
+      await q.run.call('command', { cmd: 'quit' })
+      await held(q)
+      expect((await quitLines(n, q)).filter((l) => l.asked)).toHaveLength(2)
+
+      // Force Quit Tab: its own outcome, then the quit goes on - and asks about the canvas that never reported
+      await q.run.call('sheet:answer', { ok: true })
+      const third = await held(q)
+      expect(third).toMatchObject({ kind: 'guard', action: 'quit', tabs: [o.id] })
+      expect(await phases(n, s.id, q)).toEqual(['start', 'unsure', 'forced'])
+      expect((await since(n, 'act', q)).find((l) => l.data.tab === s.id && l.data.answer)?.data).toMatchObject({ answer: 'done', why: 'forced' })
+      expect((await since(n, 'unload', q)).find((l) => l.data.tab === s.id && l.data.forced)?.data).toMatchObject({ forced: true, destroyed: false })
+      // its renderer ended: no other tab's frame lived in it
+      expect((await since(n, 'unload', q)).find((l) => l.data.tab === s.id && 'forcedKill' in l.data)?.data).toMatchObject({ shared: [] })
+      expect(await quitLines(n, q)).toContainEqual({ stuck: 'forced', tabs: [s.id] })
+      const after = await q.tab(s.id)
+      expect(after.view).toBe('unloaded')
+      expect(after.hasView).toBe(false)
+      await q.run.call('sheet:answer', { ok: true })
+    } finally {
+      code = await q.close()
+    }
+    expect(code).toBe(0)
+  })
+})

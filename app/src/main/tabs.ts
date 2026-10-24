@@ -19,8 +19,9 @@
  *   this file and views.ts hand it; `compose()` stays the one writer of native bounds;
  * - `{ kind: 'unload', reason }`, the same serialized operation as every other action with a silent refusal of its
  *   own: any other action on that tab waits for the unload's `done`, and `guardAll` sweeps no unload in (`sweeping`)
- *   and waits for those under way. The unload's admission (`unloadRefusal`), its op, `onUnloaded` and the reopen
- *   are the section at the end (the unloading stream); memory.ts decides when.
+ *   and waits for those under way - `quitWaitMs` at most, then it answers 'stuck' (code review r2 #1). The
+ *   unload's admission (`unloadRefusal`), its op, `onUnloaded` and the reopen are the section at the end (the
+ *   unloading stream); memory.ts decides when.
  */
 import type { DisplayState, TabPageProbe, TabView } from '../shared/channels.ts'
 import type { AppState, Busy, Hello, Inset, MenuItem, Theme, Why } from '../../../src/shared/app-api.ts'
@@ -145,6 +146,11 @@ export interface TabUnload {
    * (unload-act.ts's retries), the tab held all the while - or found it destroyed with no event and took the view out
    */
   stuck?: boolean
+  /**
+   * Force Quit Tab on a quit's stuck sheet (code review r2 #1; unload-act.ts forceUnload): the view taken out by hand
+   * with its webContents alive - a separate outcome, recorded `forced`, never a completed unload
+   */
+  forced?: boolean
 }
 
 export interface Tab {
@@ -237,6 +243,13 @@ export type GuardAction =
 export type GuardAllAction = Extract<GuardAction, { kind: 'quit' | 'update' }>
 
 /**
+ * `guardAll`'s answer: the guard's, or `'stuck'` (code review r2 #1) - an unload's close in flight has not ended
+ * within `quitWaitMs`. Nothing was replaced, the quit's flags are cleared, and the unload still owns its tab:
+ * `stuckUnloads()` names the tabs for the person's sheet (Force Quit Tab / Keep Waiting).
+ */
+export type GuardAllAnswer = GuardAnswer | 'stuck'
+
+/**
  * The person's answer on a sheet: exactly this tab, this document and this action (v1.14 r3 #1). Held by the one
  * operation that asked; never another action, tab or document. A shared quit sheet makes one per tab it names.
  */
@@ -253,6 +266,8 @@ export type SheetWhy =
   | { kind: 'no-bridge'; version?: string }
   | { kind: 'unknown' }
   | { kind: 'stale'; stopped: boolean; held: Why[] }
+  /** a quit's stuck sheet (code review r2 #1): the tab's unload close has not ended */
+  | { kind: 'stuck' }
 
 /** One native sheet the guard asks (Cancel the default). */
 export interface Sheet { action: GuardAction; tabs: { id: string; name: string; why: SheetWhy }[] }
@@ -1091,19 +1106,35 @@ export async function guard(tab: Tab, action: GuardAction): Promise<GuardAnswer>
   }
 }
 
+/** The tabs whose unload's close is still outstanding: its operation in flight until `destroyed` or the page's refusal. */
+export const stuckUnloads = (): Tab[] => allTabs().filter((t) => t.replacing?.action.kind === 'unload')
+
 /**
  * Every canvas tab, for a quit or an update: one operation each, one shared step 1 and sheet; one refusal stops the
  * whole. From its start no unload is admitted (`sweeping`, cleared when it is refused); unloads already under way
- * are closes the quit wanted - waited for (each ends within `unloadActMs` and a task, or at the act's backstop a
- * second `unloadActMs` later if `destroyed` never comes: unload-act.ts), never a reason to refuse (A3.8 #42).
+ * are closes the quit wanted - waited for (each ends within `unloadActMs` and a task), never a reason to refuse
+ * (A3.8 #42). That wait is bounded on its own (code review r2 #1): an unload owns its tab until `destroyed`, and a
+ * webContents that never goes would hold the quit forever, every later ⌘Q swallowed. Past `quitWaitMs` the answer
+ * is `'stuck'`: nothing replaced, `sweeping` cleared, the unload still owning its tab, its view and its operation,
+ * and nothing recorded done; the caller asks the person (Force Quit Tab / Keep Waiting) about `stuckUnloads()`.
  */
-export async function guardAll(action: GuardAllAction): Promise<GuardAnswer> {
+export async function guardAll(action: GuardAllAction): Promise<GuardAllAnswer> {
   sweeping = true
-  let r: GuardAnswer = 'refused'
+  let r: GuardAllAnswer = 'refused'
   try {
     const unloading = allTabs().flatMap((t) => (t.replacing?.action.kind === 'unload' ? [t.replacing.done] : []))
     if (unloading.length) {
-      await Promise.all(unloading)
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const ended = await Promise.race([
+        Promise.all(unloading).then(() => true),
+        new Promise<false>((r2) => { timer = setTimeout(() => r2(false), T.quitWaitMs) }),
+      ])
+      clearTimeout(timer)
+      if (!ended) {
+        P().log?.('guard', { all: action.kind, answer: 'stuck', tabs: stuckUnloads().map((t) => t.id) })
+        r = 'stuck'
+        return r
+      }
       // what waited on those unloads (a close, a link) is judged first, on a tab with no document: their own
       // operations end before the sweep reads who is in flight
       await new Promise<void>((r2) => setImmediate(r2))
@@ -1178,16 +1209,28 @@ export function sheetLine(name: string, why: SheetWhy): string {
   switch (why.kind) {
     case 'no-bridge': return `${name} runs Marver ${why.version ?? '0.27.0'}, which can't tell the app about unsaved work.`
     case 'unknown': return `${name} hasn't told the app yet whether it holds unsaved work.`
+    case 'stuck': return `${name} hasn't finished closing.`
     case 'stale':
       if (why.stopped) return why.held.length ? `When ${name} stopped, it held ${words(why.held)}.` : `${name} stopped, so the app can't hear it any more: it may hold work made since.`
       return why.held.length ? `The app can't hear ${name} any more. When it last could, it held ${words(why.held)}.` : `The app can't hear ${name} any more: it may hold work made since.`
   }
 }
 
-/** The native sheet's words: the question, what it costs, and its buttons - Cancel first (the default, `Esc`). */
+/**
+ * The native sheet's words: the question, what it costs, and its buttons - Cancel first (the default, `Esc`). A
+ * quit's stuck sheet (code review r2 #1) asks about closes that have not ended: Keep Waiting first, Force Quit Tab.
+ */
 export function sheetText(s: Sheet): { message: string; detail: string; buttons: [string, string] } {
   const a = s.action
   const one = s.tabs.length === 1 ? s.tabs[0]! : null
+  if (s.tabs.length && s.tabs.every((t) => t.why.kind === 'stuck')) {
+    const verb = a.kind === 'update' ? 'restart' : 'quit'
+    return {
+      message: one ? `${one.name} isn't closing` : `${s.tabs.length} canvases aren't closing`,
+      detail: `Marver closed ${one ? 'it' : 'them'} to free memory and can't ${verb} until ${one ? 'it has' : 'they have'} closed. Force Quit ${one ? 'Tab ends it' : 'Tabs ends them'} now; what ${one ? 'it hasn\'t' : 'they haven\'t'} saved is lost.`,
+      buttons: ['Keep Waiting', one ? 'Force Quit Tab' : 'Force Quit Tabs'],
+    }
+  }
   const message = a.kind === 'quit' ? 'Quit Marver anyway?'
     : a.kind === 'update' ? 'Restart to update anyway?'
       : a.kind === 'load' ? `Open the link in ${one?.name ?? 'this canvas'} anyway?`
@@ -1319,9 +1362,10 @@ export function onUnloaded(t: Tab): void {
   onDocumentGone(t, 'unloaded')
   t.needsLoad = false
   if (u) { u.phase = 'unloaded'; u.unloadedAt = p.now() }
-  p.log?.('unload', { tab: t.id, phase: 'unloaded', reason: u?.reason ?? null, ...(u?.stuck ? { stuck: true } : {}) })
-  // a close main ended by hand, its webContents perhaps alive still, says so in its record (unload-act.ts's backstop)
-  if (u) p.record?.('unload', who, { phase: 'done', reason: u.reason, ...(u.stuck ? { why: 'stuck' } : {}) })
+  p.log?.('unload', { tab: t.id, phase: 'unloaded', reason: u?.reason ?? null, ...(u?.stuck ? { stuck: true } : {}), ...(u?.forced ? { forced: true } : {}) })
+  // a close main ended by hand, its webContents perhaps alive still, says so in its record (unload-act.ts's backstop);
+  // one the person forced is its own outcome, never a completed unload (code review r2 #1)
+  if (u) p.record?.('unload', who, u.forced ? { phase: 'forced', reason: u.reason } : { phase: 'done', reason: u.reason, ...(u.stuck ? { why: 'stuck' } : {}) })
   // in one task after every waiter: a new instance that waited for this close binds the tab (a queued close has
   // dropped it, and the instance then gets a tab of its own), then the reopen is decided (r3 #3)
   setImmediate(() => { closeEnded(t, true); reopenIfShown(t) })

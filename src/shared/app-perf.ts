@@ -217,7 +217,8 @@ export interface AppBodies {
   shown: TabIdent & { ms: number }
   /** memory.ts: a change of level (A3.8 #45) */
   pressure: { level: PressureLevel | null; availablePct: number | null; was: PressureLevel | null }
-  unload: TabIdent & { phase: 'start' | 'unsure' | 'done' | 'refused'; reason: UnloadReason; why?: string; before?: UnloadFigures }
+  /** `forced`: Force Quit Tab on a quit's stuck sheet (app 0.2 code review r2 #1) - the view taken out by hand, never a completed unload */
+  unload: TabIdent & { phase: 'start' | 'unsure' | 'done' | 'forced' | 'refused'; reason: UnloadReason; why?: string; before?: UnloadFigures }
   /** once per tab and reason in each pressure episode (A3.8 #45); `why` an UnloadRefusal */
   'unload-skip': TabIdent & { reason: UnloadReason; why: string }
   /** 5 s after an unload (A3.8 #45) */

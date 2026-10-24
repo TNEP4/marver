@@ -96,6 +96,12 @@ export const T = {
   unloadActMs: 10_000,
   unloadEffectMs: 5000,
   reopenHelloMs: 30_000,
+  /**
+   * a quit's or an update's wait for unloads in flight, bounded on its own (code review r2 #1): past it the quit
+   * answers 'stuck' and the person is asked about the close that has not ended (Force Quit Tab / Keep Waiting) - an
+   * unload ends within `unloadActMs` and a task unless its webContents never goes, and that wait has no end of its own
+   */
+  quitWaitMs: 15_000,
 } satisfies Record<string, number | readonly number[]>
 
 export type Timings = typeof T

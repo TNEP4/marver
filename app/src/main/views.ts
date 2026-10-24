@@ -50,8 +50,8 @@ import { crashReloaded, currentPill, onPillAction, setCondition, setPillPorts } 
 import {
   activate, activeTab, allTabs, applyRestore, cameraKept, canvasOrder, closeTab, cycleFrom, displayState, forDigit, getTab, guard,
   guardAll, hasBridge, hashOnly, isActive, keyOf, linkOpens, liveDoc, onCommit, onDocumentGone, onFail, onInPage, onRegistry, onReport, onUnloaded, openSettingsTab,
-  ordered, parseTabsFile, reopenTab, restorePlan, safePath, savedPathIn, setTabsPorts, sheetBox, sheetConfirmed, sheetText, snapshotFile, startReopen, tabName,
-  unloadClosing, viewlessAct, type GuardAction, type GuardAnswer, type Sheet, type Tab, type TabsFile,
+  ordered, parseTabsFile, reopenTab, restorePlan, safePath, savedPathIn, setTabsPorts, sheetBox, sheetConfirmed, sheetText, snapshotFile, startReopen, stuckUnloads, tabName,
+  unloadClosing, viewlessAct, type GuardAllAction, type GuardAction, type GuardAnswer, type Sheet, type Tab, type TabsFile,
 } from './tabs.ts'
 import {
   copyDetails, forgetTab, hangDecision, hangSheetText, onAttemptFailed, onLifted, onShown, onViewClosed, personReload, recover,
@@ -67,7 +67,7 @@ import { commitLayout } from './layout.ts'
 import { answer as presentAnswer, forget as presentForget, gpuGone, noteGpu } from './present.ts'
 import { appMetrics, gpuIdentity, recorder, sampler } from './recorder.ts'
 import { lastPressure } from './pressure.ts'
-import { actUnload as unloadAct, takeAct, unloadGone as actGone, type ActPorts } from './unload-act.ts'
+import { actUnload as unloadAct, forceUnload, takeAct, unloadGone as actGone, type ActPorts } from './unload-act.ts'
 
 export const PRELOAD_CANVAS = join(__dirname, 'preload-canvas.cjs')
 
@@ -466,6 +466,17 @@ const actPorts: ActPorts = {
   log: (topic, data) => j(topic, data),
   unsure: (t, a) => record('unload', t, { phase: 'unsure', reason: a.reason }),
   forget: (t) => { const c = canvases.get(t.id); if (c) forgetCanvas(t, c.view) },
+  // Force Quit Tab (code review r2 #1): its renderer ended only when every frame in it is this tab's - a renderer
+  // shared with another tab lives on, and the view taken out ends this tab's part
+  kill: (t) => {
+    const c = canvases.get(t.id)
+    const pid = c && safely(() => mainFrameOf(c.view.webContents)?.osProcessId)
+    if (!c || !pid) return
+    const snap = processOf(pid)
+    const alone = snap.tabs.every((x) => x.id === t.id)
+    j('unload', { tab: t.id, forcedKill: alone ? pid : null, shared: snap.tabs.filter((x) => x.id !== t.id).map((x) => x.id) })
+    if (alone) safely(() => c.view.webContents.forcefullyCrashRenderer())
+  },
 }
 
 /** `act(t, { kind: 'unload' })` (unload-act.ts): its renderer read first, for the unload's own `gone`. */
@@ -1228,6 +1239,8 @@ export function startViews(i: StartInput): void {
     }).then((r) => {
       quitInFlight = false
       j('quit', { answer: r })
+      // an unload's close that has not ended (code review r2 #1): this quit is over, and the person is asked about it
+      if (r === 'stuck') { void stuckQuit({ kind: 'quit' }); return }
       // the quit is cancelled, and says so where the person can see it: a quit from the Dock or a logout may start
       // with the window hidden (tabs.ts refuse() brought its tab forward); never retried by itself
       if (r !== 'done') { try { forward() } catch { /* the window went */ } return }
@@ -1240,6 +1253,32 @@ export function startViews(i: StartInput): void {
   })
 
   if (__MV_TEST__) testHooks()
+}
+
+/**
+ * A quit answered 'stuck' (code review r2 #1): an unload's close has not ended within `quitWaitMs`. The quit is over
+ * and its flags cleared, so a later ⌘Q is heard; the person is asked, through the guard's sheet seam, about the tabs
+ * still closing - Keep Waiting (the default, `Esc`) changes nothing: the unload goes on owning its tab and ends at
+ * `destroyed`; Force Quit Tab ends each one by hand (unload-act.ts forceUnload: its own `forced` outcome, never a
+ * completed unload), then quits again - through guardAll, every other tab guarded as on any quit. One sheet at a
+ * time: a later stuck quit while it is open only brings the window forward.
+ */
+let stuckSheetOpen = false
+async function stuckQuit(action: GuardAllAction): Promise<void> {
+  const stuck = stuckUnloads()
+  // ended meanwhile: nothing to ask, and a later ⌘Q goes through
+  if (!stuck.length) { j('quit', { stuck: 'ended' }); return }
+  if (stuckSheetOpen) { forward(); return }
+  stuckSheetOpen = true
+  let force = false
+  try {
+    force = await ask({ action, tabs: stuck.map((t) => ({ id: t.id, name: tabName(t), why: { kind: 'stuck' } })) })
+  } catch (err) { j('quit', { stuckSheet: String((err as Error)?.message ?? err) }) } finally { stuckSheetOpen = false }
+  if (!force) { j('quit', { stuck: 'keep-waiting', tabs: stuck.map((t) => t.id) }); return }
+  // only those still closing: one that ended while the sheet was open is not forced
+  const forced = stuck.filter((t) => getTab(t.id) === t && forceUnload(t)).map((t) => t.id)
+  j('quit', { stuck: 'forced', tabs: forced })
+  if (action.kind === 'quit') app.quit()
 }
 
 /** The Mac woke: every failed tab looks again at once (A2.11: a check on `powerMonitor` `resume`). */
@@ -1320,6 +1359,14 @@ function testHooks(): void {
   // the page reloading itself (A1's resume reload): main's own reload, around the guard - as the page's would be
   provide('reloadPage', (a) => { const wc = wcOf(arg<{ target: string }>(a).target); if (!wc) return false; wc.reload(); return true })
   provide('crash', (a) => { const wc = wcOf(arg<{ target: string }>(a).target); if (!wc) return false; wc.forcefullyCrashRenderer(); return true })
+  // a webContents whose close never ends (code review r2 #1): every close() of it does nothing from now on, so an
+  // unload's close never reaches destroyed - Electron's own teardown at the app's exit is not a close() call
+  provide('closeNever', (a) => {
+    const wc = wcOf(arg<{ target: string }>(a).target)
+    if (!wc || wc.isDestroyed()) return false
+    Object.defineProperty(wc, 'close', { value: () => { j('closeNever', { target: arg<{ target: string }>(a).target }) }, configurable: true, writable: true })
+    return true
+  })
   // `frame`: the main frame's own executeJavaScript, which does not wait for a load in flight (a page navigating)
   provide('exec', async (a) => { const { target, js, gesture, frame } = arg<{ target: string; js: string; gesture?: boolean; frame?: boolean }>(a); const wc = wcOf(target); return wc ? (frame ? wc.mainFrame.executeJavaScript(js, !!gesture) : wc.executeJavaScript(js, !!gesture)) : null })
   // whether the main frame stays silent for `ms` (its own executeJavaScript, which does not wait for a load): a
