@@ -153,18 +153,24 @@ uncovered until a stream fills its own, so app 0.2's base behaves as app 0.1.
   Mac sleeps), `procusage.swift` (each process's own CPU and its reaped children's, from outside), `clickpost.swift`
   and `keypost.swift` (CGEvents to the app's pid alone). **The permissions are the runner's**: Screen Recording for
   the capture (without it the helper exits 77 and the case is *blind*, not run), Accessibility for posted keys and
-  clicks (without it those cases say INCONCLUSIVE and skip). The app itself never asks for either.
+  clicks (without it those cases say INCONCLUSIVE and skip). The app itself never asks for either. A locked screen or
+  a sleeping display is blind too (exit 77): WindowServer then composites nothing and a stream sends only `idle`
+  frames - an unattended Mac with its lid shut cannot run the capture cases.
 - **Spike S15** (`test/bench/s15/`): the four covers over a full-height web view, on the screen. On Nic's Mac only
   a `WebContentsView` whose ground is its native background covers (variant 3); a plain `View` and an `ImageView`
   are drawn beneath the web views.
 - **The capture matrix** (`node app/test/capture/matrix.ts`): the transitions judged at every refresh against main's
   journal (`test/harness/capture.ts` `judgeTransition`, `judgeCase`). With app 0.1's opaque strip every case is exact;
-  with the one ground, A2.2's threshold.
+  with the one ground, A2.2's threshold. A window stream skips the refreshes in which nothing changed, so the runner
+  puts a 1 px compositor heartbeat in the strip's corner (main inserts it in test builds once the one ground lands)
+  and checks it first: a second with no complete frame is blind. `--n 40` is the acceptance count; exit 0 pass, 1
+  fail, 3 inconclusive, 77 blind.
 - **A3's budgets** (`test/budgets/`, every launch on a temporary world with the production switches; `--app
   <Marver.app>` for the signed build): `memory.mjs` (two footprint gates, A3.8 #48), `hidden-cpu.mjs` (the window
   hidden, the app's own CPU counted from outside with canvases taken out, A3.8 #49), `launch-painted.mjs` (spawn to
-  the first painted sentinel frame, A3.8 #50), `scroll-edge.mjs` (the band's cost, A3.8 #51; it needs the one
-  ground's `MARVER_APP_INSET0=1` switch).
+  the first painted sentinel frame, A3.8 #50), `scroll-edge.mjs` (the band's cost, A3.8 #51: a real board panned in
+  the real window with `TOP` 44 and with 0 - `MARVER_APP_INSET0=1`, a test build's `insetFor` answering 0; the 44 run
+  needs the one ground).
 
 ## The icon
 

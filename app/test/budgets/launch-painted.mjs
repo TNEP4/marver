@@ -23,7 +23,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { launch, sleep, world } from './launcher.ts'
 import { startFakeCanvas } from '../harness/fake-canvas.ts'
-import { captureAccess, startCapture } from '../harness/capture.ts'
+import { blindLine, captureAccess, startCapture } from '../harness/capture.ts'
 
 const argv = process.argv.slice(2)
 const val = (n) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : undefined }
@@ -35,7 +35,7 @@ const SAY = "if (window.marverApp) { marverApp.hello({ version: '0.27.1', board:
 
 const access = await captureAccess()
 if (access !== true) {
-  process.stdout.write(`launch-painted: BLIND - not run. Screen Recording must be granted to ${access.needs}\n`)
+  process.stdout.write(`launch-painted: BLIND - not run. ${blindLine(access)}\n`)
   process.exit(77)
 }
 

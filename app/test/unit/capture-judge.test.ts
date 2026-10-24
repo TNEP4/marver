@@ -3,7 +3,7 @@
  * the case's p95, and what makes a run inconclusive - never a pass.
  */
 import { describe, expect, it } from 'vitest'
-import { Palette, judgeCase, judgeTransition, type CaptureFrame } from '../harness/capture.ts'
+import { Palette, blindOf, judgeCase, judgeTransition, type CaptureFrame } from '../harness/capture.ts'
 
 const HZ = 120
 const R = 1e9 / HZ
@@ -90,5 +90,23 @@ describe('Palette', () => {
     expect(p.classify('fe01fd')).toBe('a')
     expect(p.classify('ffffff')).toBe('other')
     expect(p.classify('')).toBe('none')
+  })
+})
+
+describe('blind, never a pass (A3.8 #37)', () => {
+  it('reads the helper check: the permission first, then a locked screen, then a sleeping display', () => {
+    expect(blindOf('{"access":true,"locked":false,"asleep":false}')).toBeNull()
+    expect(blindOf('{"access":false,"locked":false,"asleep":false}')?.why).toBe('permission')
+    expect(blindOf('{"access":false,"locked":true,"asleep":true}')?.why).toBe('permission')
+    expect(blindOf('{"access":true,"locked":true,"asleep":false}')?.why).toBe('locked')
+    expect(blindOf('{"access":true,"locked":false,"asleep":true}')?.why).toBe('asleep')
+  })
+  it('an old helper line (access only) and an unreadable one', () => {
+    expect(blindOf('{"access":true}')).toBeNull()
+    expect(blindOf('garbage')?.why).toBe('permission')
+  })
+  it('a stream of idle frames only is never a pass', () => {
+    const fs = frames(0, 'iiiiiiiiii')
+    expect(judgeTransition(fs, { t0: BigInt(Math.round(2 * R)), t1: BigInt(Math.round(9 * R)), refreshHz: HZ, verdict: () => 'good' }).kind).toBe('inconclusive')
   })
 })

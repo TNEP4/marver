@@ -90,7 +90,8 @@ export async function launch(w: World, o: { app?: string; drive?: boolean; env?:
     async stop() {
       if (code !== undefined) return
       // a page that never reported would hold the quit with a sheet: confirm it in a test build
-      if (control) await control.call('sheet', { mode: 'confirm' }).catch(() => {})
+      // (3 s at most: a main that no longer answers must not hold the run, nor its report, forever)
+      if (control) await Promise.race([control.call('sheet', { mode: 'confirm' }).catch(() => {}), new Promise((r) => setTimeout(r, 3000))])
       try { process.kill(child.pid!, 'SIGTERM') } catch { /* gone */ }
       const done = await Promise.race([exited.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 10_000))])
       if (!done) { try { process.kill(-child.pid!, 'SIGKILL') } catch { /* gone */ } await exited }

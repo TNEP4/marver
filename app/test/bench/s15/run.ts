@@ -33,7 +33,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
-import { CaptureBlind, Palette, captureAccess, judgeCase, judgeTransition, startCapture, type CaptureFrame, type CaseVerdict, type TransitionVerdict } from '../../harness/capture.ts'
+import { CaptureBlind, Palette, blindLine, captureAccess, judgeCase, judgeTransition, startCapture, type CaptureFrame, type CaseVerdict, type TransitionVerdict } from '../../harness/capture.ts'
 
 const APP = resolve(import.meta.dirname, '..', '..', '..')
 const ELECTRON = createRequire(join(APP, 'package.json'))('electron') as unknown as string
@@ -195,9 +195,9 @@ async function runVariant(v: number): Promise<Result> {
 
 const access = await captureAccess()
 if (access !== true) {
-  const r = { spike: 'S15', ran: false, blind: true, needs: access.needs }
+  const r = { spike: 'S15', ran: false, blind: true, why: access.why, needs: access.needs }
   writeFileSync(join(OUT, 's15.json'), JSON.stringify(r, null, 2))
-  process.stdout.write(`S15: BLIND - not run. Screen Recording must be granted to ${access.needs} (System Settings > Privacy & Security > Screen & System Audio Recording)\n`)
+  process.stdout.write(`S15: BLIND - not run. ${blindLine(access)}${access.why === 'permission' ? ' (System Settings > Privacy & Security > Screen & System Audio Recording)' : ''}\n`)
   process.exit(77)
 }
 const results: Result[] = []

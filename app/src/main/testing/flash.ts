@@ -19,7 +19,7 @@ import { markFlash, quitFlashes } from '../flashes.ts'
 import { readAgx } from '../machine.ts'
 import { lastPressure } from '../pressure.ts'
 import { recorder, sampler } from '../recorder.ts'
-import { captureApp } from '../window.ts'
+import { captureApp, contentView, mainWindow } from '../window.ts'
 import { provide } from './index.ts'
 
 const records: AppBody<'flash'>[] = []
@@ -71,6 +71,23 @@ export function provideFlashHooks(home: Home): void {
     }
     return { canvas: [...canvas], pages: [...pages].filter((p) => !canvas.has(p)) }
   })
+  // the recorder's pan in the real window (A3.8 #51, the detector's cost on a real board): wheel events into a
+  // tab's view on an absolute schedule, never awaiting an ack (A3.8 #20)
+  provide('wheel', async (a) => {
+    const o = a as { tab: string; x: number; y: number; dx?: number; dy?: number; n: number; everyMs?: number; ctrl?: boolean }
+    const wc = contentView(o.tab)?.webContents
+    if (!wc || wc.isDestroyed()) return false
+    const t0 = performance.now()
+    for (let i = 0; i < o.n; i++) {
+      const at = t0 + i * (o.everyMs ?? 16)
+      const wait = at - performance.now()
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait))
+      wc.sendInputEvent({ type: 'mouseWheel', x: o.x, y: o.y, deltaX: o.dx ?? 0, deltaY: o.dy ?? 0, modifiers: o.ctrl ? ['control'] : [] } as Electron.MouseWheelInputEvent)
+    }
+    return true
+  })
+  // the capture harness's window (A3.8 #35, #37): its CGWindowID, from getMediaSourceId() ("window:<id>:0")
+  provide('window:id', () => { const m = /^window:(\d+):/.exec(mainWindow()?.getMediaSourceId() ?? ''); return m ? Number(m[1]) : null })
   provide('picture:app', async (a) => {
     const o = a as { width?: number; path: string }
     if (!o?.path || !isAbsolute(o.path)) throw new Error('picture:app needs an absolute path')

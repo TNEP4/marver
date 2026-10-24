@@ -74,20 +74,49 @@ export function responsibleApp(): string {
   return 'the terminal or agent host running this suite'
 }
 
+/**
+ * Why a capture is blind: Screen Recording not granted to the runner (`needs` names the app), or nothing composited
+ * at all - the screen locked or the display asleep (a stream then sends only `idle` frames).
+ */
+export type BlindWhy = 'permission' | 'locked' | 'asleep'
+export interface Blind { needs: string; why: BlindWhy }
+const blindSays = (b: Blind) => b.why === 'permission' ? `Screen Recording is not granted to ${b.needs}` : `the ${b.why === 'locked' ? 'screen is locked' : 'display is asleep'}: nothing is composited (needs ${b.needs})`
+
 /** Raised by startCapture when the helper exits 77: report the case as blind, never as a pass. */
 export class CaptureBlind extends Error {
   readonly needs: string
-  constructor(needs: string) { super(`blind: Screen Recording is not granted to ${needs}`); this.needs = needs }
+  readonly why: BlindWhy
+  constructor(needs: string, why: BlindWhy = 'permission') { super(`blind: ${blindSays({ needs, why })}`); this.needs = needs; this.why = why }
 }
 
-/** Whether the helper may record the screen here: true, or the app that needs the permission. */
-export async function captureAccess(): Promise<true | { needs: string }> {
+/** The helper's check line read into a verdict (pure: `capture check`'s stdout). */
+export function blindOf(stdout: string): Blind | null {
+  let c: { access?: boolean; locked?: boolean; asleep?: boolean } = {}
+  try { c = JSON.parse(stdout.trim().split('\n').pop() ?? '{}') } catch { /* an unreadable line is the permission's */ }
+  if (c.access === false || c.access === undefined) return { needs: responsibleApp(), why: 'permission' }
+  if (c.locked) return { needs: 'the screen unlocked, the app window on it', why: 'locked' }
+  if (c.asleep) return { needs: 'the display awake', why: 'asleep' }
+  return null
+}
+
+/** Whether the helper can watch the screen here: true, or why it is blind (and what would make it see). */
+export async function captureAccess(): Promise<true | Blind> {
   const bin = nativeTool('capture')
   try { await promisify(execFile)(bin, ['check'], { timeout: 10_000 }); return true } catch (e) {
-    if ((e as { code?: number }).code === CAPTURE_BLIND) return { needs: responsibleApp() }
+    const x = e as { code?: number; stdout?: string }
+    if (x.code === CAPTURE_BLIND) return blindOf(x.stdout ?? '') ?? { needs: responsibleApp(), why: 'permission' }
     throw e
   }
 }
+
+/** Whether anything is composited now (a run that needs frames drawn but not captured: no permission asked). */
+export async function screenState(): Promise<{ locked: boolean; asleep: boolean }> {
+  const read = (out: string) => { try { const c = JSON.parse(out.trim().split('\n').pop() ?? '{}') as { locked?: boolean; asleep?: boolean }; return { locked: !!c.locked, asleep: !!c.asleep } } catch { return { locked: false, asleep: false } } }
+  try { return read((await promisify(execFile)(nativeTool('capture'), ['check'], { timeout: 10_000 })).stdout) } catch (e) { return read((e as { stdout?: string }).stdout ?? '') }
+}
+
+/** A blind verdict's words, for a report line. */
+export const blindLine = (b: Blind) => blindSays(b)
 
 export interface CaptureSession {
   /** the helper's first line */
@@ -148,7 +177,7 @@ export async function startCapture(o: {
     exited.then((code) => code),
   ])
   if (typeof first !== 'object' || first === null) {
-    if (first === CAPTURE_BLIND) throw new CaptureBlind(responsibleApp())
+    if (first === CAPTURE_BLIND) throw new CaptureBlind(/locked|asleep/.test(err) ? 'the screen unlocked and the display awake' : responsibleApp(), /locked|asleep/.test(err) ? 'locked' : 'permission')
     throw new Error(`capture.swift exited ${first}: ${err.trim()}`)
   }
   const lines: AsyncIterable<CaptureLine> = {

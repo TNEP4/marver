@@ -2,7 +2,7 @@
 // one window, or of a display, sampled at the regions a case names and written as JSON lines. Tests only: the app
 // itself never asks for Screen Recording (A2.12).
 //
-//   capture check                                   {"access":true|false}; exit 0, or 77 without the permission
+//   capture check                                   {"access":…,"locked":…,"asleep":…}; exit 0, or 77 when blind
 //   capture window --window-id <CGWindowID> [--regions 'name:x,y,w,h;...'] [--grid <cols>x<rows>] [--fps <n>]
 //   capture window --pid <pid> [--title <title>]    the same, the window found by its owner (and title)
 //   capture display [--display-id <id>] --detect <rrggbb>:<minPx>[:<belowY>] [--heartbeat]
@@ -21,7 +21,8 @@
 // the refreshes in which nothing changed (on this Mac, 41 of 136 in 1.5 s, up to 58 ms apart, with no heartbeat).
 //
 // **Screen Recording is the runner's** (A3.8 #37): without it this exits 77 - "blind", reported as not run, never as
-// a pass. The process macOS asks about is the one that started this helper (the terminal or the agent's host).
+// a pass. The process macOS asks about is the one that started this helper (the terminal or the agent's host). A
+// locked screen or a sleeping display is blind the same way (exit 77): WindowServer composites nothing to watch.
 import AppKit
 import CoreImage
 import CoreMedia
@@ -56,13 +57,23 @@ func opt(_ name: String) -> String? {
 }
 guard let mode = args.first else { fail(2, "usage: capture check | window --window-id <id> | window --pid <pid> | display --detect <hex>:<minPx>") }
 
+// Nothing is composited while the screen is locked or the main display asleep: a stream then sends only `idle` frames
+// (seen on this Mac, 24 Oct, the lid shut on battery: 212 idle frames in 2 s, none complete). That is blind too.
+func screenLocked() -> Bool {
+  guard let d = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
+  return (d["CGSSessionScreenIsLocked"] as? Bool) ?? ((d["CGSSessionScreenIsLocked"] as? NSNumber)?.boolValue ?? false)
+}
+let displayAsleep = CGDisplayIsAsleep(CGMainDisplayID()) != 0
+
 if mode == "check" {
   let ok = CGPreflightScreenCaptureAccess()
-  print("{\"access\":\(ok)}")
-  exit(ok ? 0 : BLIND)
+  let locked = screenLocked()
+  print("{\"access\":\(ok),\"locked\":\(locked),\"asleep\":\(displayAsleep)}")
+  exit(ok && !locked && !displayAsleep ? 0 : BLIND)
 }
 // never CGRequestScreenCaptureAccess(): a run must not raise the system's question on whoever sits at the Mac
 if !CGPreflightScreenCaptureAccess() { fail(BLIND, "blind: Screen Recording is not granted to the process that runs this helper") }
+if screenLocked() || displayAsleep { fail(BLIND, "blind: the screen is locked or the display asleep, so nothing is composited") }
 
 struct Region { let name: String; let x: Double; let y: Double; let w: Double; let h: Double }
 func parseRegions(_ s: String?) -> [Region] {
@@ -101,7 +112,7 @@ final class Output: NSObject, SCStreamOutput, SCStreamDelegate {
   var sizePt: CGSize
   var lastNs: UInt64 = 0
   var lastBuffer: CVPixelBuffer?
-  var infoSent = false
+  var lastInfo = ""
   let lock = NSLock()
 
   init(intervalNs: Double, sizePt: CGSize) { self.intervalNs = intervalNs; self.sizePt = sizePt }
@@ -135,25 +146,25 @@ final class Output: NSObject, SCStreamOutput, SCStreamDelegate {
       defer { CVPixelBufferUnlockBaseAddress(px, .readOnly) }
       let w = CVPixelBufferGetWidth(px), h = CVPixelBufferGetHeight(px), row = CVPixelBufferGetBytesPerRow(px)
       if let base = CVPixelBufferGetBaseAddress(px)?.assumingMemoryBound(to: UInt8.self) {
-        if !infoSent {
-          infoSent = true
-          var info = "\"info\":{\"px\":[\(w),\(h)],\"pt\":[\(Int(sizePt.width)),\(Int(sizePt.height))]"
-          if let d = a[.contentRect], let r = CGRect(dictionaryRepresentation: d as! CFDictionary) {
-            info += ",\"contentRect\":[\(r.origin.x),\(r.origin.y),\(r.size.width),\(r.size.height)]"
-          }
-          if let s = a[.contentScale] as? CGFloat { info += ",\"contentScale\":\(s)" }
-          if let s = a[.scaleFactor] as? CGFloat { info += ",\"scaleFactor\":\(s)" }
-          line += "," + info + "}"
+        // window points -> frame pixels, per frame: (contentRect.origin + p * contentScale) * scaleFactor, the rect in
+        // points of the frame (a window resized after the stream started is drawn smaller, or scaled down to fit)
+        var ox = 0.0, oy = 0.0
+        var sx = Double(w) / max(1, Double(sizePt.width)), sy = Double(h) / max(1, Double(sizePt.height))
+        if let d = a[.contentRect], let r = CGRect(dictionaryRepresentation: d as! CFDictionary),
+          let cs = a[.contentScale] as? CGFloat, let sf = a[.scaleFactor] as? CGFloat, cs > 0, sf > 0 {
+          ox = Double(r.origin.x * sf); oy = Double(r.origin.y * sf)
+          sx = Double(cs * sf); sy = Double(cs * sf)
+          let info = "\"info\":{\"px\":[\(w),\(h)],\"contentRect\":[\(r.origin.x),\(r.origin.y),\(r.size.width),\(r.size.height)],\"contentScale\":\(cs),\"scaleFactor\":\(sf)}"
+          if info != lastInfo { lastInfo = info; line += "," + info }
         }
-        let sx = Double(w) / max(1, Double(sizePt.width)), sy = Double(h) / max(1, Double(sizePt.height))
         if !regions.isEmpty {
           var parts: [String] = []
           for r in regions {
             var samples: [String] = []
             for j in 0..<gridRows {
               for i in 0..<gridCols {
-                let x = Int(((r.x + r.w * (Double(i) + 0.5) / Double(gridCols)) * sx).rounded(.down))
-                let y = Int(((r.y + r.h * (Double(j) + 0.5) / Double(gridRows)) * sy).rounded(.down))
+                let x = Int((ox + (r.x + r.w * (Double(i) + 0.5) / Double(gridCols)) * sx).rounded(.down))
+                let y = Int((oy + (r.y + r.h * (Double(j) + 0.5) / Double(gridRows)) * sy).rounded(.down))
                 if x < 0 || y < 0 || x >= w || y >= h { samples.append("\"\""); continue }
                 samples.append("\"\(hex(base + y * row + x * 4))\"")
               }
