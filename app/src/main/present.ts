@@ -228,6 +228,14 @@ export function bumpAll(cause: GenCause = 'resize'): void {
   for (const tab of new Set([...gens.keys(), ...slots.keys()])) bumpGen(tab, cause)
 }
 
+/**
+ * Who hears the GPU process lost (gone or replaced, A3.8 r3 #1) besides the views' gens: the cover (S15's variant 3),
+ * which is not ready again until its own renderer presents after the loss (cover.ts).
+ */
+const gpuLostFns = new Set<() => void>()
+export function onGpuLost(fn: () => void): () => void { gpuLostFns.add(fn); return () => { gpuLostFns.delete(fn) } }
+const tellGpuLost = () => { for (const fn of [...gpuLostFns]) { try { fn() } catch { /* the listener's own */ } } }
+
 /** The GPU identity read now (a sample, a gpu-info-update): true when it changed or went - every view's gen advanced; the caller composes. */
 export function noteGpu(id: GpuIdentity | null): boolean {
   if (gpu === undefined) { gpu = id; return false }
@@ -235,6 +243,7 @@ export function noteGpu(id: GpuIdentity | null): boolean {
   if (same) return false
   gpu = id
   bumpAll('gpu')
+  tellGpuLost()
   return true
 }
 
@@ -245,6 +254,7 @@ export function noteGpu(id: GpuIdentity | null): boolean {
 export function gpuGone(): void {
   gpu = undefined
   bumpAll('gpu')
+  tellGpuLost()
 }
 
 /** Test seam: nothing asked, nothing read. */

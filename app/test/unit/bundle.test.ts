@@ -42,7 +42,10 @@ describe('the dev build (dist/)', () => {
     const pages = readdirSync(join(APP, 'pages'), { withFileTypes: true }).filter((d) => d.isDirectory() && d.name !== 'shared').map((d) => d.name).sort()
     expect(Object.keys(manifest).sort()).toEqual(pages)
     for (const [page, files] of Object.entries(manifest)) {
-      for (const k of ['/', '/index.html', '/main.js', '/tokens.css']) expect(files[k], `${page} ${k}`).toBeTruthy()
+      // a page with a script of its own has its main.js; the cover (S15's variant 3) is HTML and CSS alone
+      const scripted = existsSync(join(APP, 'pages', page, 'main.ts'))
+      for (const k of ['/', '/index.html', ...(scripted ? ['/main.js'] : []), '/tokens.css']) expect(files[k], `${page} ${k}`).toBeTruthy()
+      if (!scripted) expect(files['/main.js'], `${page} /main.js`).toBeUndefined()
       for (const [url, file] of Object.entries(files)) {
         expect(url.startsWith('/') && !url.includes('..'), url).toBe(true)
         expect(existsSync(join(DIST, 'pages', file)), `${page}: ${file}`).toBe(true)

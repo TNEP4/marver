@@ -4,22 +4,21 @@
  *
  * One `BaseWindow` named `main` (window place: `windowStatePersistence` does nothing without a name). Its stack,
  * bottom to top: the content views (canvases, Home, Settings), the tab pages, the cover, the strip. The strip is
- * transparent and paints controls only (A3.8 #29) - and the still dots while a cover that has it draw them covers
- * (the window snapshot's `dots`, from cover.ts's `stripDraws`: app 0.1's plain view until S15, variant 4 after), so a
- * canvas keeps 0.1's look until S15 chooses a cover. Home, Settings and every tab page run the window's full height
- * and paint the ground and still dots under the strip themselves - in every build, the gate open or shut (A3.8 #32
- * is built ungated: if S15 fails, #3's fallback is the opaque strip, and whether these pages stay at the full height
- * then is Nic's call). So in every 0.2 build a web view lies under the strip's transparent drag region over them,
- * and the strip's dots switch on and off through its renderer at each switch between them and a canvas (a frame of
- * plain ground or doubled dots, longer while the strip is stalled). A canvas runs full height only when its layout
- * says so (layout.ts), else below the strip; the cover - cover.ts's, in the ground of the active tab's look - is
- * shown whenever the active view may not be seen through (plan.ts).
+ * transparent and paints controls only (A3.8 #29) - and the still dots only while a cover that has it draw them
+ * covers (the window snapshot's `dots`, from cover.ts's `stripDraws`: app 0.1's plain view, which stands in only if
+ * S15's cover could not be made). Home, Settings and every tab page run the window's full height and paint the
+ * ground and still dots under the strip themselves (A3.8 #32), so a web view lies under the strip's transparent drag
+ * region over them. A canvas runs full height only when its layout says so (layout.ts), else below the strip; the
+ * cover - cover.ts's, in the ground of the active tab's look - is shown whenever the active view may not be seen
+ * through (plan.ts).
  *
- * **The cover waits for spike S15** (A3.8 #3): until cover.ts makes one, the cover is app 0.1's plain view behind
- * cover.ts's interface, and no canvas is placed full height (layout.ts `setGround(false)`): a plain `View` may be
- * drawn beneath a full-height web view on macOS, and nothing has shown it is not. Over views below the strip it
- * covers by construction - they never overlap it. A test build can turn the gate on (`MARVER_APP_GROUND=1`) to drive
- * main's half of the one ground - the decisions, never the pixels.
+ * **The cover is S15's variant 3** (A3.8 #3, cover.ts): a web view whose ground is its native background and whose
+ * page draws the still dots, so the strip draws none (`stripDraws` false). Making it opens the gate (layout.ts
+ * `setGround(true)`), and its readiness gates full height: it covers only once its renderer has made a frame, and
+ * again after a loss only once it makes one, so until then every canvas is placed below the strip (`setCoverReady`,
+ * from its `onReady`, each change composing). If the cover cannot be made, app 0.1's plain view stands in behind
+ * cover.ts's interface and no canvas is placed full height: a plain `View` is drawn beneath a full-height web view
+ * on macOS (S15). A test build can turn the gate on over it (`MARVER_APP_GROUND=1`) to drive main's half alone.
  *
  * The presentation (A3.8 #27, #28): before the plan, compose derives the active canvas view's presentation key
  * (present.ts `observe`) - advancing its `gen` when it is shown after being hidden - and the cover lifts only for a
@@ -50,11 +49,11 @@ import { afterShow, setFocusPorts, track } from './focus.ts'
 import { invalidateMenu } from './menu.ts'
 import { note, noteTopic, provide, testMode } from './testing/index.ts'
 import { T } from './timings.ts'
-import { groundOn, onLayoutChange, placed, rectFor, seeThrough, setGround, setInsetOff } from './layout.ts'
+import { coverCovers, groundOn, onLayoutChange, placed, rectFor, seeThrough, setCoverReady, setGround, setInsetOff } from './layout.ts'
 import { bumpAll, bumpGen, epochOf, flush as presentFlush, genOf, gpuGone, liftAt, noteGpu, observe, onCoverRecord, onPresentLog, quitting as presentQuitting, showing, uncovered, windowHidden, windowShown } from './present.ts'
-import { identity, recorder } from './recorder.ts'
+import { appMetrics, identity, recorder } from './recorder.ts'
 import type { TabIdent } from '../../../src/shared/app-perf.ts'
-import { makeCover, type Cover } from './cover.ts'
+import { coverReady, makeCover, type Cover } from './cover.ts'
 
 export { STRIP_HEIGHT }
 
@@ -109,6 +108,8 @@ const applied = new Map<string, { r: string; vis: boolean; color: string }>()
 let coverWas = { visible: false, color: '' }
 
 export const mainWindow = (): BaseWindow | null => win
+/** The cover's renderer (S15's variant 3), for the recorder's role `cover`; null for a cover with none. */
+export const coverContents = (): WebContents | null => { try { return cover?.contents() ?? null } catch { return null } }
 export const stripContents = (): WebContents | undefined => strip && !strip.webContents.isDestroyed() ? strip.webContents : undefined
 export const contentView = (tabId: string): WebContentsView | undefined => content.get(tabId)?.view
 export const pageView = (tabId: string): WebContentsView | undefined => pages.get(tabId)?.view
@@ -632,11 +633,17 @@ export function openWindow(d?: WindowDeps): BaseWindow {
   strip = new WebContentsView({ webPreferences: appPrefs() })
   strip.setBackgroundColor('#00000000')   // transparent: it paints controls only, over the cover or the views beneath (A3.8 #29)
   // the cover S15 chose (cover.ts), else app 0.1's plain view - and with it no canvas at full height (A3.8 #3)
+  // (a test build may stand app 0.1's plain view in, MARVER_APP_COVER=plain: the fallback's own cases)
   let chosen: Cover | null = null
-  try { chosen = makeCover(win, strip) } catch (err) { j('cover', { s15: String((err as Error)?.message ?? err) }) }
+  const plainAsked = __MV_TEST__ && testMode() && process.env.MARVER_APP_COVER === 'plain'
+  if (!plainAsked) { try { chosen = makeCover(win, strip) } catch (err) { j('cover', { s15: String((err as Error)?.message ?? err) }) } }
   cover = chosen ?? plainCover()
   setGround(!!chosen || (__MV_TEST__ && testMode() && process.env.MARVER_APP_GROUND === '1'))
-  j('cover', { chosen: !!chosen, ground: groundOn() })
+  // S15's variant 3 covers only once its renderer has made a frame, and again only after one following a loss: until
+  // then every canvas is placed below the strip (layout.ts `setCoverReady`), and each change composes
+  setCoverReady(coverReady(cover))
+  cover.onReady?.((r) => { setCoverReady(r); compose() })
+  j('cover', { chosen: !!chosen, ground: groundOn(), ready: coverReady(cover) })
   cover.setLook(dark)
   cover.setVisible(true)
   coverWas = { visible: true, color: ground(dark) }
@@ -752,15 +759,24 @@ function groundHooks(): void {
   // the GPU process killed for real (SIGKILL: no crash report, no dialog): Electron's child-process-gone and the
   // replacement's gpu-info-update reach views.ts's own handlers. Its identity before, or null with none
   provide('ground:gpu-kill', () => {
-    const m = app.getAppMetrics().find((x) => x.type === 'GPU')
+    const m = appMetrics('test').find((x) => x.type === 'GPU')
     if (!m) return null
     process.kill(m.pid, 'SIGKILL')
     return { pid: m.pid, born: m.creationTime }
   })
+  // the cover's renderer crashed (S15: a crashed cover never covers): every canvas below until its reload has made a
+  // frame. Its pid before, or null for a cover with no renderer
+  provide('ground:cover-crash', () => {
+    const wc = coverContents()
+    if (!wc || wc.isDestroyed()) return null
+    const pid = wc.getOSProcessId()
+    wc.forcefullyCrashRenderer()
+    return { pid }
+  })
   // an identity read (a sample, a gpu-info-update): a replacement with no child-process-gone
   provide('ground:gpu', (a) => { const id = arg<{ id?: { pid: number; born: number } | null }>(a).id ?? null; const changed = noteGpu(id); if (changed) compose(); return changed })
   provide('ground:state', () => ({
-    ground: groundOn(), resizing, cover: { ...coverWas },
+    ground: groundOn(), resizing, cover: { ...coverWas, ready: coverCovers(), stripDraws: !!cover?.stripDraws, view: cover?.view ? (cover.view instanceof WebContentsView ? 'web' : 'plain') : null },
     tabs: allTabs().map((t) => ({ id: t.id, geo: { ...t.geo }, placed: placed(t), seeThrough: seeThrough(t), epoch: epochOf(t.id), gen: genOf(t.id) })),
   }))
   // the capture matrix's heartbeat (A3.8 #29): a 1 px opacity animation in the strip's corner, run by the compositor

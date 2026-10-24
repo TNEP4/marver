@@ -1,0 +1,6 @@
+/* The cover (spec 28 A3.8 #3, S15's variant 3): the still dots under the tabs while the active view may not be seen
+   through. Its ground is the view's native background (main sets it), so this page paints the dots only, from the
+   window's origin like the app pages' (A3.8 #32): they line up. No script, no words, nothing to click - the strip is
+   above it. main toggles `:root.dark` for a dark tab's look. */
+html, body { margin: 0; height: 100%; overflow: hidden; background: transparent }
+body { background: radial-gradient(var(--dot) 1px, transparent 1px) 0 0 / 20px 20px }

@@ -48,6 +48,8 @@ export type AppPage = 'strip' | 'home' | 'settings' | 'tabpage'
 export const APP_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'"
 /** The one URL each app page loads. */
 export const pinnedUrl = (page: AppPage): string => `${APP_SCHEME}://${page}/`
+/** The cover's one URL (S15's variant 3, cover.ts): an app page of the scheme, pinned like the others, never a bridge page. */
+export const COVER_URL = `${APP_SCHEME}://cover/`
 const WS = /^[0-9a-f]{16}$/
 
 /** The bundles' folder: dist/, beside main.cjs (in the packaged app, inside app.asar). */
@@ -70,6 +72,19 @@ export function appWebPreferences(): WebPreferences {
     partition: APP_PARTITION, preload: preloadPath('app'), sandbox: true, contextIsolation: true,
     nodeIntegration: false, nodeIntegrationInSubFrames: false, nodeIntegrationInWorker: false, webviewTag: false,
     disableDialogs: true, navigateOnDragDrop: false, safeDialogs: true, webSecurity: true,
+  }
+}
+
+/**
+ * The cover's preferences (S15's variant 3, A3.8 #3): `persist:app` like the app pages, but no preload - its page
+ * draws the still dots and nothing else, and hears nothing (cover.ts sets its look). Never throttled, as on S15's
+ * bench: it is ready only once its renderer has made a frame, which a hidden or occluded window must not withhold.
+ */
+export function coverWebPreferences(): WebPreferences {
+  return {
+    partition: APP_PARTITION, sandbox: true, contextIsolation: true, nodeIntegration: false, nodeIntegrationInSubFrames: false,
+    nodeIntegrationInWorker: false, webviewTag: false, disableDialogs: true, navigateOnDragDrop: false, safeDialogs: true,
+    webSecurity: true, spellcheck: false, backgroundThrottling: false,
   }
 }
 

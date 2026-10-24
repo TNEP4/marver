@@ -1,9 +1,9 @@
 /**
  * The one ground, main's half (spec 28 A2.2, A2.10's (A3) cases, A3.8 #24-#33): the decisions, from main's journal,
  * on the dev build under Playwright, with the real trust - the bridge, the canvas preload, the proof - and fake
- * canvases speaking 0.27.2's contract (harness/ground-shell.ts). Main's cover is app 0.1's plain view and the ground
- * gate is turned on for this launch (`MARVER_APP_GROUND=1`): S15 has not picked a cover (A3.8 #3), so these cases
- * prove what main decides and when, never what reaches the screen - that is the capture matrix's (A3.8 #35-#37).
+ * canvases speaking 0.27.2's contract (harness/ground-shell.ts). Main's cover is S15's variant 3 (cover.ts), which
+ * opens the ground gate by itself; these cases prove what main decides and when, never what reaches the screen -
+ * that is the capture matrix's (A3.8 #35-#37).
  *
  * Checked: an inset canvas runs full height and is uncovered only in the turn its document answers the latest
  * request, after its hello said 44; one without `inset` stays below and covered; a page that applied no inset is
@@ -23,7 +23,8 @@
  * page in the failure's turn, below only with an error page. HTML fullscreen in play mode (an element), with a
  * resize, a switch and a reload during it, and Electron's enter with no leave ending with its document; the window's own full screen in and
  * out, with HTML fullscreen inside it (a launch of its own). The GPU process killed for real. And with the gate shut
- * (no cover chosen, as in a release before S15): an inset canvas stays below, told 0, under 0.1's still dots.
+ * (app 0.1's plain view standing in, `MARVER_APP_COVER=plain`: a cover that could not be made): an inset canvas stays
+ * below, told 0, under 0.1's still dots.
  */
 import { randomBytes, randomUUID } from 'node:crypto'
 import { renameSync, rmSync, writeFileSync } from 'node:fs'
@@ -35,13 +36,13 @@ import { pageHtml, startFakeCanvas, type FakeCanvas, type FakeOptions } from '..
 import { GROUND_SHELL } from '../harness/ground-shell.ts'
 
 interface Geo { layout: 'full' | 'below'; pending?: { gen: number; instance: string; layout: string }; inset?: 0 | 44; htmlFullscreen: boolean }
-interface GroundState { ground: boolean; resizing: boolean; cover: { visible: boolean; color: string }; tabs: { id: string; geo: Geo; placed: string; seeThrough: boolean; epoch: number | null; gen: number }[] }
+interface GroundState { ground: boolean; resizing: boolean; cover: { visible: boolean; color: string; ready?: boolean; stripDraws?: boolean; view?: 'web' | 'plain' | null }; tabs: { id: string; geo: Geo; placed: string; seeThrough: boolean; epoch: number | null; gen: number }[] }
 interface Change { key: string; op: string; visible?: boolean; rect?: { x: number; y: number; width: number; height: number } }
 interface Present { tab: string; op: string; epoch: number; w?: number; h?: number }
 
 let w: WindowRun
 const fakes: FakeCanvas[] = []
-beforeAll(async () => { w = await launchWindow('pw', { extraEnv: { MARVER_APP_FAKE_TRUST: '0', MARVER_APP_GROUND: '1' } }) })
+beforeAll(async () => { w = await launchWindow('pw', { extraEnv: { MARVER_APP_FAKE_TRUST: '0' } }) })
 afterAll(async () => { await w?.close(); for (const f of fakes) await f.close().catch(() => {}) })
 
 const ground = () => w.run.call<GroundState>('ground:state')
@@ -58,10 +59,11 @@ const lines = async (topic: string, since: number) => w.log(topic, since)
 const presents = async (since: number, tab?: string) => (await lines('present', since)).map((l) => ({ ...(l.data as unknown as Present), turn: l.turn })).filter((p) => !tab || p.tab === tab)
 const composes = async (since: number) => (await lines('compose', since)).map((l) => ({ turn: l.turn, cover: (l.data.cover as { visible: boolean }).visible, changes: l.data.changes as Change[] }))
 const coverChanges = async (since: number) => (await composes(since)).filter((c) => c.changes.some((x) => x.key === 'cover'))
-/** the strip draws its still dots now (main's `dots`, applied by the strip's page) */
+/** the strip draws its still dots now (main's `dots`, applied by the strip's page): only while a cover that has it draw them covers */
 const stripDots = () => waitFor('the strip settled', async () => {
   const on = await exec<boolean>('strip', `document.body.classList.contains('dots')`)
-  return (await ground()).cover.visible === on ? { on } : null
+  const c = (await ground()).cover
+  return (c.visible && !!c.stripDraws) === on ? { on } : null
 }).then((x) => x.on)
 
 async function waitFor<T>(what: string, f: () => Promise<T | null | undefined | false>, ms = 10_000): Promise<T> {
@@ -219,8 +221,9 @@ describe('the one ground: the inset, the cover, the epochs (A3.8 #24-#27)', () =
       expect((await ground()).cover.visible).toBe(true)
       for (const x of await composes(since)) expect(x.cover).toBe(true)
       expect(await presents(since, id)).toEqual([])
-      // app 0.1's cover covers it: the strip draws 0.1's still dots over it (A3.8 #3)
-      expect(await stripDots()).toBe(true)
+      // S15's cover covers it: the cover's own page draws the still dots, the strip none (A3.8 #3, #29)
+      expect((await ground()).cover).toMatchObject({ view: 'web', ready: true, stripDraws: false })
+      expect(await stripDots()).toBe(false)
     } finally {
       await w.run.call('activate', { id: a })
       await uncovered(a)
@@ -1003,16 +1006,52 @@ describe('the GPU process killed (A2.10, A3.8 #27, r2 #2)', () => {
     const g = await uncovered(id, 30_000)
     const e = g.tabs.find((t) => t.id === id)!.epoch!
     expect(e).toBeGreaterThan(e0)
+    // S15's cover covers again only once its own renderer has made a frame after the loss: in between the canvas is
+    // placed below the strip, so the epoch that lifts it is the one at the full height again (its cause the size)
+    const ready = (await lines('cover', since)).map((l) => l.data as { ready?: boolean; why?: string }).filter((d) => 'ready' in d)
+    expect(ready).toEqual([{ ready: false, why: 'gpu' }, { ready: true, why: 'presented' }])
     const rec = (await lines('cover-record', since)).map((l) => l.data).find((d) => d.tab === id && d.epoch === e)
-    expect(rec).toMatchObject({ cause: 'gpu', outcome: 'uncovered' })
+    expect(rec).toMatchObject({ outcome: 'uncovered' })
+    expect(['gpu', 'size']).toContain((rec as { cause: string }).cause)
+    expect((await bounds(`${id}:view`))!.bounds).toEqual(FULL(await content()))
     // the replacement's first identity read is the loss already counted, not a second one (A3.8 r3 #1)
     expect((await lines('gpu', since)).filter((l) => 'changed' in l.data)).toEqual([])
   })
 })
 
-describe('the gate shut: no cover chosen (A3.8 #3)', () => {
+describe('the cover\'s own renderer (S15, 24 Oct: covering waits on it)', () => {
+  it('crashed: every canvas placed below the strip, covered, until the cover\'s reload has made a frame - then full again and uncovered on an answer', { timeout: 60_000 }, async () => {
+    const { id } = await canvas(18, 'Cover crash')
+    await w.run.call('activate', { id })
+    await lifted(id)
+    await uncovered(id)
+    const since = await mark()
+    const was = await w.run.call<{ pid: number } | null>('ground:cover-crash')
+    expect(was).not.toBeNull()
+    const ready = await waitFor('the cover ready again', async () => {
+      const r = (await lines('cover', since)).map((l) => l.data as { ready?: boolean; why?: string }).filter((d) => 'ready' in d)
+      return r.length >= 2 ? r : null
+    }, 15_000)
+    expect(ready[0]!.ready).toBe(false)
+    expect(ready[0]!.why).toMatch(/^renderer /)
+    expect(ready[1]).toEqual({ ready: true, why: 'presented' })
+    // below in the turn the cover stopped covering, covered there; full again once it covers
+    const moves = (await composes(since)).flatMap((c) => c.changes.filter((ch) => ch.key === `${id}:view` && ch.op === 'bounds').map((ch) => ({ y: ch.rect!.y, cover: c.cover })))
+    expect(moves.map((m) => m.y)).toEqual([44, 0])
+    expect(moves[0]!.cover).toBe(true)
+    const g = await uncovered(id, 15_000)
+    expect(g.cover).toMatchObject({ ready: true, view: 'web' })
+    expect((await bounds(`${id}:view`))!.bounds).toEqual(FULL(await content()))
+    // a new renderer for the cover, the role the budgets count (A3.8 #48)
+    const roles = await w.run.call<{ cover: number[] }>('procs:roles')
+    expect(roles.cover.length).toBe(1)
+    expect(roles.cover[0]).not.toBe(was!.pid)
+  })
+})
+
+describe('the gate shut: no cover made, app 0.1\'s plain view in its place (A3.8 #3)', () => {
   it('an inset canvas stays below the strip, covered, its document told 0', async () => {
-    const shut = await launchWindow('pw', { extraEnv: { MARVER_APP_FAKE_TRUST: '0' } })
+    const shut = await launchWindow('pw', { extraEnv: { MARVER_APP_FAKE_TRUST: '0', MARVER_APP_COVER: 'plain' } })
     try {
       const st = await shut.run.call<GroundState>('ground:state')
       expect(st.ground).toBe(false)
@@ -1052,7 +1091,7 @@ describe('the window\'s own full screen, and HTML fullscreen inside it (A2.10\'s
   let a = ''
   beforeAll(async () => {
     main = w
-    w = await launchWindow('pw', { extraEnv: { MARVER_APP_FAKE_TRUST: '0', MARVER_APP_GROUND: '1' } })
+    w = await launchWindow('pw', { extraEnv: { MARVER_APP_FAKE_TRUST: '0' } })
     ;({ id: a } = await canvas(13, 'Full screen'))
     await w.run.call('activate', { id: a })
     await lifted(a)

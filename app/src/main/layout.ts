@@ -30,7 +30,7 @@
  * - html-fullscreen: the override `placed()` reads first; renderer-gone, view-gone: `below`, all cleared.
  *
  * **The ground gate** (A3.8 #3): a canvas runs at full height only over a cover that spike S15 showed can sit over
- * a full-height web view. Until window.ts has one (`setGround(true)`, from cover.ts's `makeCover`), every start
+ * a full-height web view, and only while that cover covers (`setCoverReady`: S15's variant 3 waits on its renderer). Until window.ts has one (`setGround(true)`, from cover.ts's `makeCover`), every start
  * pends `below`, so `mv:doc` answers 0, a 0.27.2 shell applies no inset, and app 0.2 keeps app 0.1's look for
  * canvases while every other rule here runs as written. A test build may turn it on to drive main's half.
  *
@@ -64,6 +64,17 @@ let ground = false
 export function setGround(on: boolean): void { ground = on }
 /** A canvas may be placed full height now. */
 export const groundOn = (): boolean => ground
+
+/**
+ * Whether the cover covers now (cover.ts `coverReady`; S15, 24 Oct): variant 3 covers only once its renderer has
+ * presented, and again only after it presents following its renderer's loss or the GPU process's. While it does not,
+ * every canvas is placed below the strip (app 0.1's opaque layout) whatever its committed layout: a document told 44
+ * keeps its inset and shows the band of its own ground under the strip's line, never a canvas under the tabs with
+ * nothing over it. window.ts sets it from the cover's `onReady`; true where no cover waits on a renderer.
+ */
+let covering = true
+export function setCoverReady(on: boolean): void { covering = on }
+export const coverCovers = (): boolean => covering
 
 let insetOff = false
 /**
@@ -146,8 +157,8 @@ export function commitLayout(t: Tab, e: LayoutEvent): boolean {
   return true
 }
 
-/** Where compose places the tab's content view: HTML fullscreen first, then the committed layout. */
-export const placed = (t: Tab): Layout => (t.geo.htmlFullscreen ? 'below' : t.geo.layout)
+/** Where compose places the tab's content view: HTML fullscreen first, then a cover that does not cover yet, then the committed layout. */
+export const placed = (t: Tab): Layout => (t.geo.htmlFullscreen || !covering ? 'below' : t.geo.layout)
 
 /** `mv:doc`'s inset for the document now committing: 44 when it is placed `full` (its pending, else the committed layout). */
 export const docInset = (t: Tab): Inset => (!insetOff && (t.geo.pending?.layout ?? t.geo.layout) === 'full' ? 44 : 0)
