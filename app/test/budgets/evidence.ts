@@ -7,15 +7,28 @@
  * before the window (a reload, a navigation, a cross-process navigation) - a `tab` line is written only on a change,
  * so the comparison is with what the tab was before, never only between two lines inside. A canvas tab line inside
  * the window with no line before it to compare with is inconclusive too. Also the recorder's own figure, for the
- * cross-check against the outside one.
+ * cross-check against the outside one (`crossCheck`).
  */
 import type { AppRecord } from '../../../src/shared/app-perf.ts'
+import type { CpuPass, CpuRead } from '../harness/outside.ts'
 
 type Line = AppRecord & Record<string, any>   // eslint-disable-line @typescript-eslint/no-explicit-any
 
+/** One process's CPU as the recorder counted it over its minute lines inside the window. */
+export interface RecorderProc { pid: number; born: number; seconds: number; spanS: number }
+
 export type Evidence =
   | { why: string; canvas?: undefined }
-  | { canvas: { pid: number; born: number }[]; recorderCores: number | null; spawnMs: number; lines: number; why?: undefined }
+  | {
+    canvas: { pid: number; born: number }[]
+    /** the recorder's processes that are not canvases, the GPU process once (it is in `procs`; `gpu` repeats it) */
+    recorder: RecorderProc[]
+    /** the minute lines whose minute lies inside the window */
+    minutes: number
+    /** Σ of `recorder` over the minutes' span: reported, never compared (`crossCheck` compares like with like) */
+    recorderCores: number | null
+    spawnMs: number; lines: number; why?: undefined
+  }
 
 const sameMain = (a: { pid: number; born: number } | null | undefined, b: { pid: number; born: number } | null | undefined) =>
   (a?.pid ?? null) === (b?.pid ?? null) && Math.abs((a?.born ?? 0) - (b?.born ?? 0)) <= 1000
@@ -47,12 +60,71 @@ export function releaseEvidence(lines: readonly Line[], from: number, to: number
     }
   }
   const canvas = span.filter((l) => l.kind === 'sample').flatMap((l) => (l.procs as { pid: number; born: number; role: string }[]).filter((p) => p.role === 'canvas').map((p) => ({ pid: p.pid, born: p.born })))
-  // the recorder's own figure: its minute lines inside the evidence (each covering the minute before its ts), CPU of
-  // the processes it does not call canvas, and the GPU process's
-  const minutes = span.filter((l) => l.kind === 'sample' && l.seq > before.seq)
-  const secs = minutes.reduce((s, l) => s + (l.procs as { role: string; cpu: { mean: number | null } }[]).filter((p) => p.role !== 'canvas').reduce((a, p) => a + (p.cpu.mean ?? 0) * (l.span as number) / 1000, 0) + ((l.gpu as { cpu: { mean: number | null } } | null)?.cpu.mean ?? 0) * (l.span as number) / 1000, 0)
+  // the recorder's own figure (review of a3-native, minor #9): only the minute lines whose minute lies inside the
+  // window (each covers the `span` ms before its ts), per process, the processes it does not call canvas - the GPU
+  // process among them once: `procs` holds it, and `gpu` repeats it
+  const minutes = span.filter((l) => l.kind === 'sample' && l.ts - (l.span as number) >= from && l.ts <= to)
+  const per = new Map<string, RecorderProc>()
+  for (const l of minutes) {
+    for (const p of l.procs as { pid: number; born: number; role: string; cpu: { mean: number | null } }[]) {
+      if (p.role === 'canvas' || p.cpu.mean === null) continue
+      const k = `${p.pid}@${p.born}`
+      const r = per.get(k) ?? { pid: p.pid, born: p.born, seconds: 0, spanS: 0 }
+      r.seconds += p.cpu.mean * (l.span as number) / 1000
+      r.spanS += (l.span as number) / 1000
+      per.set(k, r)
+    }
+  }
+  const recorder = [...per.values()]
   const spanS = minutes.reduce((s, l) => s + (l.span as number) / 1000, 0)
-  return { canvas, recorderCores: spanS ? secs / spanS : null, spawnMs: minutes.reduce((s, l) => s + ((l.spawnMs as number | undefined) ?? 0), 0), lines: span.length }
+  return {
+    canvas, recorder, minutes: minutes.length, recorderCores: spanS ? recorder.reduce((s, r) => s + r.seconds, 0) / spanS : null,
+    spawnMs: minutes.reduce((s, l) => s + ((l.spawnMs as number | undefined) ?? 0), 0), lines: span.length,
+  }
+}
+
+/** The cross-check's verdict: the two figures for the same processes, and how many were joined. */
+export interface CrossCheck {
+  kind: 'agree' | 'disagree' | 'unchecked'
+  why?: string
+  outsideCores: number
+  recorderCores: number
+  joined: number
+  /** alive at both outside passes but in no minute line (or the reverse): left out of both sides */
+  unjoined: { outside: number[]; recorder: number[] }
+}
+
+/**
+ * The recorder against the outside figure, like with like (A3.8 #49, r3 #2; review of a3-native, minor #9): only the
+ * processes alive at both outside passes (the browser and its children, never Crashpad's handler, which
+ * getAppMetrics does not see), each one's own CPU (never the reaped children - the probes' sysctl and ioreg spawns,
+ * which no process metric holds), joined to the recorder's by pid and a start time within 1 s of `born`; canvases
+ * out of both. Each side's rate is Σ of its processes' own rates, so the windows need not be the same length. They
+ * agree within 0.001 cores or 20 %; a disagreement says the recorder is broken (the harness's own error), and with no
+ * minute line inside the window, or nothing joined, the check is not made.
+ */
+export function crossCheck(a: CpuPass, b: CpuPass, recorder: readonly RecorderProc[], canvas: (pid: number, startedAt: number) => boolean): CrossCheck {
+  const key = (r: CpuRead) => `${r.pid}@${Math.round(r.startedAt / 1000)}`
+  const at = (p: CpuPass) => new Map([...(p.browser ? [p.browser] : []), ...p.children].map((r) => [key(r), r]))
+  const A = at(a), B = at(b)
+  const spanS = (b.at - a.at) / 1000
+  const both = [...B.entries()].filter(([k]) => A.has(k)).map(([k, r]) => ({ r, own: r.ownS - A.get(k)!.ownS })).filter(({ r }) => !canvas(r.pid, r.startedAt))
+  const used = new Set<RecorderProc>()
+  let outside = 0, rec = 0, joined = 0
+  const lone: number[] = []
+  for (const { r, own } of both) {
+    const m = recorder.find((x) => x.pid === r.pid && Math.abs(x.born - r.startedAt) <= 1000 && !used.has(x))
+    if (!m || !(m.spanS > 0)) { lone.push(r.pid); continue }
+    used.add(m)
+    joined++
+    outside += own / spanS
+    rec += m.seconds / m.spanS
+  }
+  const unjoined = { outside: lone, recorder: recorder.filter((x) => !used.has(x)).map((x) => x.pid) }
+  if (!recorder.length) return { kind: 'unchecked', why: 'no recorder minute line inside the window', outsideCores: outside, recorderCores: rec, joined, unjoined }
+  if (!joined || !(spanS > 0)) return { kind: 'unchecked', why: 'no process the recorder and the outside reads both saw through the window', outsideCores: outside, recorderCores: rec, joined, unjoined }
+  const agree = Math.abs(rec - outside) <= Math.max(0.001, 0.2 * outside)
+  return { kind: agree ? 'agree' : 'disagree', outsideCores: outside, recorderCores: rec, joined, unjoined }
 }
 
 /** Helpers seen to start or end between consecutive reads (an idle app should have none): the union over every pair. */

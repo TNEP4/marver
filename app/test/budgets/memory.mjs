@@ -15,7 +15,14 @@
  * canvas renderer not told apart makes a run inconclusive, never a pass on RSS. A gate that fails gives its numbers
  * to Nic; the limit stays.
  *
- *   node app/test/budgets/memory.mjs [--app <Marver.app>] [--out <dir>]
+ * **The cover's renderer must be there** (review of a3-native, minor #15): once S15's variant 3 is built its renderer
+ * (25-35 MB) counts in the no-canvas gate, so a cover made lazily - on the first canvas - would pass that gate without
+ * it. The no-canvas run is inconclusive unless a process with the role `cover` is running: the dev build knows a cover
+ * was chosen from its journal (the one ground's `cover` line, `chosen`) and names its renderer with `procs:roles`; the
+ * signed build reads the role from the recorder's `sample` lines, and expects it unless `--no-cover` says the build
+ * has no S15 cover.
+ *
+ *   node app/test/budgets/memory.mjs [--app <Marver.app>] [--no-cover] [--out <dir>]
  *
  * The dev build (default) runs under the production switches in test mode (its control socket switches tabs and
  * names the canvas renderers; its window shows inactive, so a run never takes the person's focus). The signed build
@@ -34,6 +41,7 @@ const argv = process.argv.slice(2)
 const val = (n) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : undefined }
 const APP = val('--app') ? resolve(val('--app')) : undefined
 const OUT = resolve(val('--out') ?? '.')
+const NO_COVER = argv.includes('--no-cover')
 const BUDGET = 200
 const SAY = "if (window.marverApp) { marverApp.hello({ version: '0.27.1', board: null, page: 'budget-' + Math.random().toString(36).slice(2, 10) }); marverApp.busy({ busy: false, unsaved: false, why: [] }) }"
 
@@ -56,6 +64,25 @@ async function canvasPids(L, w) {
   const last = readFileSync(f, 'utf8').split('\n').filter((l) => l.includes('"kind":"sample"')).at(-1)
   if (!last) return null
   return new Set(JSON.parse(last).procs.filter((p) => p.role === 'canvas').map((p) => p.pid))
+}
+
+/**
+ * Whether the no-canvas run holds the cover's renderer when the build has one: null when it does (or the build has no
+ * S15 cover), else why the gate cannot be read. `cover` names the pids, for the report.
+ */
+async function coverHeld(L, w) {
+  if (L.control) {
+    const chosen = (await L.call('log', { afterSeq: 0 })).some((l) => l.topic === 'cover' && l.data?.chosen === true)
+    if (!chosen) return { why: null, cover: [], note: 'no S15 cover in this build (the journal\'s cover line has chosen false, or there is none)' }
+    const pids = (await L.call('procs:roles')).cover ?? []
+    return pids.length ? { why: null, cover: pids } : { why: 'S15\'s cover is built but its renderer is not running in the no-canvas run: the gate would leave out what #48 counts', cover: [] }
+  }
+  if (NO_COVER) return { why: null, cover: [], note: '--no-cover: a build without S15\'s cover' }
+  const f = join(w.home, 'perf', 'app.jsonl')
+  const last = existsSync(f) ? readFileSync(f, 'utf8').split('\n').filter((l) => l.includes('"kind":"sample"')).at(-1) : undefined
+  if (!last) return { why: 'the cover\'s renderer could not be told apart: no recorder sample line (pass --no-cover for a build without S15\'s cover)', cover: [] }
+  const pids = JSON.parse(last).procs.filter((p) => p.role === 'cover').map((p) => p.pid)
+  return pids.length ? { why: null, cover: pids } : { why: 'no process with the role cover in the recorder\'s last sample: the cover\'s renderer is not running in the no-canvas run', cover: [] }
 }
 
 /** One gate: `settleMs`, then three reads 10 s apart; the mean of the counted footprints. */
@@ -104,11 +131,16 @@ const drive = !APP
   const fs = await fakes(w)
   const L = await launch(w, { app: APP, drive })
   try {
+    let held = null
     const r = await gate('memory-no-canvas', L, w, {
       countGpu: true, canvas: new Set(), settleMs: 10_000,
-      check: async () => fs.some((f) => f.requests.some((q) => q.path === '/' && q.method === 'GET')) ? 'a canvas was shown in the no-canvas run' : null,
+      check: async () => {
+        if (fs.some((f) => f.requests.some((q) => q.path === '/' && q.method === 'GET'))) return 'a canvas was shown in the no-canvas run'
+        held = await coverHeld(L, w)
+        return held.why
+      },
     })
-    report.gates.push(r)
+    report.gates.push({ ...r, cover: held ? { pids: held.cover, ...(held.note ? { note: held.note } : {}) } : null })
   } finally { await L.stop(); for (const f of fs) await f.close(); w.release() }
 }
 

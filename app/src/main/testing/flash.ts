@@ -9,7 +9,9 @@
  * - `flash:records`: the records so far; `flash:quit`: `quitFlashes()` now, as will-quit does.
  * - `picture:app { width?, path }`: captureApp's picture written to an absolute path the case names.
  * - `procs:roles`: the budgets' roles in a dev build - canvas renderers from the canvas tabs' own views, app pages from
- *   the strip, Home, Settings and the tab pages; any other webContents' process `unknown` (counted against the app).
+ *   the strip, Home, Settings and the tab pages, the cover's renderer (S15's variant 3: a view of the window loading
+ *   `marver-app://cover/`) as `cover` and among the pages; any other webContents' process `unknown` (counted against
+ *   the app).
  * - `clock:marker { on, color? }`: the capture harness's clock control (A3.8 #36) - a red page view on top of the
  *   window's bottom-left corner shown or hidden, journaled (`clock` topic) right after main made the change; `color`
  *   (hex) paints it another colour first, a known source the matrix calibrates the ground and its dots from (#34).
@@ -25,7 +27,7 @@ import { readAgx } from '../machine.ts'
 import { lastPressure } from '../pressure.ts'
 import { recorder, sampler } from '../recorder.ts'
 import { allTabs } from '../tabs.ts'
-import { captureApp, contentView, mainWindow, pageView, stripContents } from '../window.ts'
+import { APP_ORIGIN, captureApp, contentView, mainWindow, pageView, stripContents } from '../window.ts'
 import { note, provide } from './index.ts'
 
 const records: AppBody<'flash'>[] = []
@@ -90,13 +92,21 @@ export function provideFlashHooks(home: Home): void {
     const strip = stripContents()
     if (strip) { pageWc.add(strip.id); for (const p of pidsOf(strip)) pages.add(p) }
     if (marker && !marker.webContents.isDestroyed()) { pageWc.add(marker.webContents.id); for (const p of pidsOf(marker.webContents)) pages.add(p) }
+    // the cover's renderer (S15's variant 3, A3.8 #48: it counts in the no-canvas gate): a view of the window on the
+    // cover's own page - an app page of our scheme, never a canvas
+    const cover = new Set<number>()
+    for (const v of mainWindow()?.contentView.children ?? []) {
+      if (!(v instanceof WebContentsView) || v.webContents.isDestroyed() || !v.webContents.getURL().startsWith(`${APP_ORIGIN}cover/`)) continue
+      pageWc.add(v.webContents.id)
+      for (const p of pidsOf(v.webContents)) { pages.add(p); cover.add(p) }
+    }
     const unknown = new Set<number>()
     for (const wc of webContents.getAllWebContents()) {
       if (wc.isDestroyed() || canvasWc.has(wc.id) || pageWc.has(wc.id)) continue
       for (const p of pidsOf(wc)) if (!canvas.has(p) && !pages.has(p)) unknown.add(p)
     }
     // a process shared by a canvas and an app page (never expected) is the app's: counted, not taken out
-    return { canvas: [...canvas].filter((p) => !pages.has(p) && !unknown.has(p)), pages: [...pages], unknown: [...unknown] }
+    return { canvas: [...canvas].filter((p) => !pages.has(p) && !unknown.has(p)), pages: [...pages], cover: [...cover], unknown: [...unknown] }
   })
   // the capture harness's clock control (A3.8 #36): a red page view on top, in the window's bottom-left corner, shown
   // or hidden and journaled right after - its first frame on the screen must follow within 3 refreshes. A

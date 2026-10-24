@@ -148,7 +148,9 @@ uncovered until a stream fills its own, so app 0.2's base behaves as app 0.1.
   never proof, until a real flash is filmed (spike B-S3.1).
 - **The native helpers** (`test/native/`, compiled once into a temp folder keyed by their source,
   `test/harness/capture.ts` `nativeTool`): `capture.swift` (ScreenCaptureKit, a window or a display stream, regions
-  sampled per frame, a sentinel block found, a 2 px heartbeat for display streams; its times on
+  sampled per frame, a sentinel block found - with `detect-pid` only inside that process's window, 44 pt below its
+  top - a 2 px heartbeat and a clock-control marker for display streams, a frame with no display time written
+  `untimed` and never evidence, the display held awake while it streams; its times on
   `mach_continuous_time`, as `process.hrtime.bigint()` is - SCK's own are `mach_absolute_time`, which stops while the
   Mac sleeps), `procusage.swift` (each process's own CPU and its reaped children's, from outside), `clickpost.swift`
   and `keypost.swift` (CGEvents to the app's pid alone). **The permissions are the runner's**: Screen Recording for
@@ -157,8 +159,13 @@ uncovered until a stream fills its own, so app 0.2's base behaves as app 0.1.
   a sleeping display is blind too (exit 77): WindowServer then composites nothing and a stream sends only `idle`
   frames - an unattended Mac with its lid shut cannot run the capture cases.
 - **Spike S15** (`test/bench/s15/`): the four covers over a full-height web view, on the screen. On Nic's Mac only
-  a `WebContentsView` whose ground is its native background covers (variant 3); a plain `View` and an `ImageView`
-  are drawn beneath the web views.
+  a `WebContentsView` whose ground is its native background covers (variant 3): a plain `View` and an `ImageView`
+  are drawn beneath the web views, and the strip's own background stops covering when the strip's renderer stalls.
+  **Variant 3's covering waits on its own renderer** (24 Oct, two runs): with that renderer crashed, or before its
+  page has painted, it never covers (p95 n 25-26, about 220 ms - the whole hold), since a `WebContentsView`'s native
+  background is the base of its renderer's frame. So `cover.ts` must keep every canvas below the strip until the
+  cover has presented, and again from its renderer's loss until it presents; A3.8 #3's "covering never waits on a
+  renderer" does not hold for variant 3.
 - **The capture matrix** (`node app/test/capture/matrix.ts`): the transitions judged at every refresh against main's
   journal (`test/harness/capture.ts` `judgeTransition`, `judgeCase`; `test/capture/matrix-judge.ts`). **It proves
   nothing until the one ground lands**: in the opaque layout every canvas view sits below the strip, so the strip's
@@ -166,18 +173,25 @@ uncovered until a stream fills its own, so app 0.2's base behaves as app 0.1.
   case not applicable and exits 3, never 0. In the one ground: A2.2's threshold, each transition from main's decision
   to 100 ms and 4 refreshes after the journal says the state settled, the size tag allowed only where a view of the
   uncovered width draws it, the colours calibrated from a known source (a test-mode marker view) and from see-through
-  frames, and three inconclusive runs failing a case. A window stream skips the refreshes in which nothing changed, so
-  the runner puts a heartbeat in the strip's corner and checks it first (a second with no complete frame is blind):
-  a block its page recolours at every animation frame - a CSS opacity animation did not keep this Mac's window stream
-  at its rate. Main's clock is checked against the helper's display times with a marker it shows and hides (`--control`
-  runs only that). `--n 40` is the acceptance count; exit 0 pass, 1 fail, 3 inconclusive or not applicable, 77 blind.
+  frames, and three inconclusive runs failing a case. An idle frame is the held frame judged at its own time, and
+  more than four in a row are not evidence. A window stream skips the refreshes in which nothing changed, so the
+  runner keeps a heartbeat and checks its own second first (no complete frame: blind; under 90 % of the refresh rate,
+  or a gap: inconclusive): in the one ground the one-ground stream's compositor animation (`ground:heartbeat`), which
+  a stalled strip does not stop; a script in the strip only in the opaque layout, where nothing is judged. The strip
+  is stalled per transition, its span checked against the window; every fixture load has a tag of its own, and a
+  transition whose documents before and after show one tag is inconclusive; the screen is checked before each case.
+  Main's clock is checked against the helper's display times with a marker it shows and hides, removed before the
+  cases (`--control` runs only that). `--n 40` is the acceptance count; exit 0 pass, 1 fail, 3 inconclusive, broke or
+  not applicable, 77 blind.
 - **A3's budgets** (`test/budgets/`, every launch on a temporary world with the production switches and Chromium's
   mock keychain; `--app <Marver.app>` for the signed build): `memory.mjs` (two footprint gates, A3.8 #48),
   `hidden-cpu.mjs` (the window hidden, the app's own CPU counted from outside with canvases taken out, A3.8 #49; the
   release's evidence in `evidence.ts`; `--ballast` makes one hidden canvas burn a third of a core, which must be taken
-  out), `launch-painted.mjs` (spawn to the first painted sentinel frame, A3.8 #50: any launch with a frame past 1.5 s
-  and no sentinel fails the gate, conclusive or not; the mock keychain skips the real Safe Storage read, a narrowing
-  the report states - `--real-keychain` only on a Mac with no Marver of the person's own), `scroll-edge.mjs` (the
+  out), `launch-painted.mjs` (spawn to the first painted sentinel frame, A3.8 #50: the sentinel counted only inside
+  the spawned app's window, 44 pt below its top; a clock control on display times first; no gap before the detection
+  unless `--gap-refreshes 3`, a narrowing the report states; any launch with a frame past 1.5 s and no sentinel fails
+  the gate, conclusive or not; the mock keychain skips the real Safe Storage read, a narrowing the report states -
+  `--real-keychain` only on a Mac with no Marver of the person's own), `scroll-edge.mjs` (the
   band's cost, A3.8 #51: a real board panned in the real window with `TOP` 44 and with 0 - the one-ground stream's
   `ground:inset-off` hook; until the one ground is merged the 0 run needs no switch and the 44 run is not run). The
   handler of Crashpad counted is the one with this run's `--database`, never one found by the bundle's path.

@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest'
 import type { CpuPass } from '../harness/outside.ts'
 import { cpuWindow } from '../harness/outside.ts'
-import { churn, releaseEvidence } from '../budgets/evidence.ts'
+import { churn, crossCheck, releaseEvidence } from '../budgets/evidence.ts'
 
 const APP = 'a1b2c3d4e5f6'
 const MIN = 60_000
@@ -42,6 +42,19 @@ describe('the release log\'s evidence (r4 #1)', () => {
     if (e.why !== undefined) throw new Error(e.why)
     expect(e.canvas).toContainEqual({ pid: 200, born: 5 })
     expect(e.recorderCores).toBeCloseTo(0.0005, 6)
+  })
+
+  it('the recorder\'s figure: only minute lines inside the window, the GPU process once (minor #9)', () => {
+    const e = ev(log())
+    if (e.why !== undefined) throw new Error(e.why)
+    // the window [T+1:05, T+6:05]: the minutes ending T+3..T+6 lie inside it (T+2's began at T+1:00, T+7's ends past it)
+    expect(e.minutes).toBe(4)
+    // the browser and the GPU process, each its own rate; the GPU's 0.002 from procs, never doubled by `gpu`
+    const withGpu = log().map((l) => l.kind === 'sample' ? { ...l, procs: [...(l.procs as unknown[]), { pid: 101, born: 1, type: 'gpu', role: 'none', tabs: [], cpu: { mean: 0.002, max: 0, last: 0 } }], gpu: { pid: 101, born: 1, cpu: { mean: 0.002, max: 0, last: 0 } } } : l)
+    const g = ev(withGpu)
+    if (g.why !== undefined) throw new Error(g.why)
+    expect(g.recorder.find((r) => r.pid === 101)?.seconds).toBeCloseTo(0.002 * 4 * 60, 6)
+    expect(g.recorderCores).toBeCloseTo(0.0025, 6)
   })
 
   it('a canvas reloaded inside the window - one tab line with a new commit, nothing else - is inconclusive', () => {
@@ -106,6 +119,22 @@ describe('the window\'s figure (r3 #2; review minors #9, #18)', () => {
     expect(cpuWindow(a, pass(300_000, 1.1, [], [[51, 2, 0.0]]), () => false)).toMatchObject({ kind: 'inconclusive', why: expect.stringContaining('handler changed') })
     expect(cpuWindow(a, pass(300_000, 1.1, [], [[50, 1, 0.01], [52, 9, 0]]), () => false).kind).toBe('inconclusive')
     expect(cpuWindow(a, pass(300_000, 0.5, []), () => false)).toMatchObject({ kind: 'inconclusive', why: expect.stringContaining('not a CPU time') })
+  })
+
+  it('the cross-check compares the same processes: alive at both passes, own CPU only, no handler, canvases out (minor #9)', () => {
+    // the browser reaped a probe's 3 s of CPU (childrenS): never in the comparison; the handler: never either
+    const a = { ...pass(0, 1.0, [[200, 5, 10], [201, 5, 2]], [[50, 1, 0.01]]), browser: { pid: 100, startedAt: 1000, ownS: 1.0, childrenS: 0 } }
+    const b = { ...pass(300_000, 1.3, [[200, 5, 40], [201, 5, 2.3]], [[50, 1, 9]]), browser: { pid: 100, startedAt: 1000, ownS: 1.3, childrenS: 3 } }
+    // the recorder: the browser 0.001 cores, the utility 0.001, the canvas burning (left out), one helper it saw that the passes did not
+    const rec = [{ pid: 100, born: 1000, seconds: 0.24, spanS: 240 }, { pid: 201, born: 5000, seconds: 0.24, spanS: 240 }, { pid: 777, born: 9, seconds: 5, spanS: 60 }]
+    const x = crossCheck(a, b, rec, (pid) => pid === 200)
+    expect(x).toMatchObject({ kind: 'agree', joined: 2, unjoined: { outside: [], recorder: [777] } })
+    expect(x.outsideCores).toBeCloseTo(0.6 / 300, 6)
+    expect(x.recorderCores).toBeCloseTo(0.002, 6)
+    // the recorder twice the outside figure: disagree, the harness's own error
+    expect(crossCheck(a, b, rec.map((r) => ({ ...r, seconds: r.seconds * 2 })), (pid) => pid === 200).kind).toBe('disagree')
+    // no minute inside the window: not checked
+    expect(crossCheck(a, b, [], () => false).kind).toBe('unchecked')
   })
 
   it('helpers that started and ended between two reads are reported, not only those that differ from first to last', () => {
