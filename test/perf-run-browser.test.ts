@@ -211,4 +211,25 @@ describe('perf mode in the page', () => {
       expect(dialogs).toEqual([])
     } finally { off() }
   }, 120_000)
+
+  it('a failed compile is asked again every 4 s on a canvas - its glass sleeps once the server recovers - and once in a run', async (ctx) => {
+    if (!dev) return ctx.skip()
+    const TEXTURES = `(document.querySelector('iframe.sh-live[title="app/glass"]')?.contentDocument?.querySelectorAll('[data-mv-sleep]').length ?? 0)`
+    // a normal canvas: two transient failures, then the server itself - the third ask compiles and the frame sleeps
+    // under its textures (failed before: the second failure was final, the glass live until the frame woke)
+    let bakes = 0
+    const canvas = await open('', (r) => (r.method === 'POST' && api(r) === 'bakes' && ++bakes <= 2 ? { status: 503, body: '{}' } : undefined))
+    await browser!.until(canvas.s, `${TEXTURES} > 0`, 90_000)
+    expect(bakes).toBeGreaterThanOrEqual(3)
+    // a run: the same two failures, and the retry stops there - bake-idle, nothing more asked
+    let runBakes = 0
+    const run = await open(`?mvperfrun=${ID}`, (r) => (r.method === 'POST' && api(r) === 'bakes' && ++runBakes <= 2 ? { status: 503, body: '{}' } : undefined))
+    for (const end = Date.now() + 30_000; runBakes < 2 && Date.now() < end;) await wait(100)
+    expect(runBakes).toBe(2)
+    await browser!.until(run.s, `window.__mvPerfRun.status().bakeIdle`, 30_000)
+    await wait(6000)
+    expect(runBakes, 'a run asked again after its retry').toBe(2)
+    expect((await status(run.s)).bakeIdle).toBe(true)
+    expect(await browser!.eval(run.s, TEXTURES)).toBe(0)
+  }, 180_000)
 })
