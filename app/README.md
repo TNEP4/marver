@@ -127,7 +127,9 @@ uncovered until a stream fills its own, so app 0.2's base behaves as app 0.1.
   (A3.8 #51's switch: every next document told 0 - which also moves it below the strip, so its run paints a viewport
   44 px shorter; the band's cost read from it is an upper bound). The matrix's case 15 load (`loadWindow`, a heavy
   board panning in a second window) is the native acceptance stream's.
-  `MARVER_APP_GROUND=1` opens layout.ts's gate in a test build, so main's half runs over app 0.1's plain cover - its
+  `trust:hold-proved` holds a proved document response before Chromium may commit it (proof.ts `holdProved`: "a new
+  instance taking the port after the proof's headers"), and `exec`'s `frame` runs in the main frame without waiting
+  for a load in flight. `MARVER_APP_GROUND=1` opens layout.ts's gate in a test build, so main's half runs over app 0.1's plain cover - its
   decisions, from the journal's `compose`, `layout`, `present` and `resize` topics, never its pixels.
   `test/harness/ground-shell.ts` is a fake 0.27.2 shell for a fake canvas's `script` (the inset, hello, the answers,
   and their failure modes).

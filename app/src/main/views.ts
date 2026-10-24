@@ -1254,7 +1254,8 @@ function testHooks(): void {
   // the page reloading itself (A1's resume reload): main's own reload, around the guard - as the page's would be
   provide('reloadPage', (a) => { const wc = wcOf(arg<{ target: string }>(a).target); if (!wc) return false; wc.reload(); return true })
   provide('crash', (a) => { const wc = wcOf(arg<{ target: string }>(a).target); if (!wc) return false; wc.forcefullyCrashRenderer(); return true })
-  provide('exec', async (a) => { const { target, js, gesture } = arg<{ target: string; js: string; gesture?: boolean }>(a); const wc = wcOf(target); return wc ? wc.executeJavaScript(js, !!gesture) : null })
+  // `frame`: the main frame's own executeJavaScript, which does not wait for a load in flight (a page navigating)
+  provide('exec', async (a) => { const { target, js, gesture, frame } = arg<{ target: string; js: string; gesture?: boolean; frame?: boolean }>(a); const wc = wcOf(target); return wc ? (frame ? wc.mainFrame.executeJavaScript(js, !!gesture) : wc.executeJavaScript(js, !!gesture)) : null })
   // whether the main frame stays silent for `ms` (its own executeJavaScript, which does not wait for a load): a
   // case that hangs a page knows its busy loop runs before it acts
   provide('silent', async (a) => {

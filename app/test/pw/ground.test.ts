@@ -14,11 +14,23 @@
  * fullscreen goes below and covered, then back full with a fresh epoch; a switch covers in its own turn, Home
  * uncovers it, rapid switches never show a canvas without the cover; the GPU process lost or replaced covers every
  * view until a newer epoch is answered; Home, Settings and a tab page run full height with their content 44 px down.
- * And with the gate shut (no cover chosen, as in a release before S15): an inset canvas stays below, told 0.
+ * Navigation outcomes from a full, uncovered page, through the real event order of views.ts and the nav adapter: a
+ * stop, a superseded navigation and a refused reload change no geometry and keep trust and the cover; a redirect
+ * lands full at a fresh epoch; a new instance after the commit (with and without inset) covers in the registry's
+ * turn and keeps the layout until the page's own reload; one before the commit drops the pending, so the document
+ * lands below, told 0; one after the proof's headers commits unattributed, below, beneath its tab page; a failed
+ * proof and an instance mismatch show the tab page in the failure's turn, below only with an error page. HTML
+ * fullscreen in play mode (an element), with a resize and a switch during it; the window's own full screen in and
+ * out, with HTML fullscreen inside it (a launch of its own). The GPU process killed for real. And with the gate shut
+ * (no cover chosen, as in a release before S15): an inset canvas stays below, told 0, under 0.1's still dots.
  */
+import { randomBytes, randomUUID } from 'node:crypto'
+import { renameSync, rmSync, writeFileSync } from 'node:fs'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { proofHeaders } from '../../../src/server/proof.ts'
 import { launchWindow, sleep, type WindowRun } from '../harness/window.ts'
-import { startFakeCanvas, type FakeCanvas, type FakeOptions } from '../harness/fake-canvas.ts'
+import { pageHtml, startFakeCanvas, type FakeCanvas, type FakeOptions } from '../harness/fake-canvas.ts'
 import { GROUND_SHELL } from '../harness/ground-shell.ts'
 
 interface Geo { layout: 'full' | 'below'; pending?: { gen: number; instance: string; layout: string }; inset?: 0 | 44; htmlFullscreen: boolean }
@@ -38,6 +50,8 @@ const FULL = (c: { width: number; height: number }) => ({ x: 0, y: 0, width: c.w
 const BELOW = (c: { width: number; height: number }) => ({ x: 0, y: 44, width: c.width, height: c.height - 44 })
 const bounds = async (key: string) => (await w.views()).find((v) => v.key === key)
 const exec = <T>(target: string, js: string, gesture = false) => w.run.call<T>('exec', { target, js, gesture })
+/** in the main frame now, never waiting for a load in flight */
+const execNow = <T>(target: string, js: string) => w.run.call<T>('exec', { target, js, frame: true })
 const mark = async () => (await w.log()).length
 const lines = async (topic: string, since: number) => w.log(topic, since)
 const presents = async (since: number, tab?: string) => (await lines('present', since)).map((l) => ({ ...(l.data as unknown as Present), turn: l.turn })).filter((p) => !tab || p.tab === tab)
@@ -78,6 +92,75 @@ async function reloadInto(id: string, cfg: Record<string, unknown> | null): Prom
   await w.until((x) => { const t = x.tabs.find((q) => q.id === id)!; return (t.doc?.commits ?? 0) > before && !!t.doc?.lifted }, 10_000, `${id} reloaded`)
   return since
 }
+
+/**
+ * A fake canvas whose identity and answers a case changes while it runs (A2.10's navigation outcomes): it serves the
+ * shell's document itself - signed with the identity it holds now, or with a wrong key (a failed proof), or naming an
+ * instance the registry never held (an instance mismatch); `/?redirect` is a 302 to `/index.html`; `?coop` adds
+ * `Cross-Origin-Opener-Policy: same-origin` (a browsing-instance swap, so a new renderer with the old one alive);
+ * `?slow`, or every document while `hold` is on, waits until `release()`. `rebind(features)` is a new instance
+ * taking the slot: the same server, a new slot file - new instance, new key, its features - as a restarted
+ * `marver dev` writes.
+ */
+interface Mutable {
+  fake: FakeCanvas
+  id: string
+  mode: { hold: boolean; proof: 'valid' | 'wrong-key' | 'other-instance' }
+  held(): number
+  release(): void
+  rebind(features: string[]): Promise<string>
+  close(): Promise<void>
+}
+async function mutable(slot: number, name: string, features: string[] = ['bridge', 'inset']): Promise<Mutable> {
+  const ident: { instance: string; key: Buffer; port: number } = { instance: '', key: Buffer.alloc(0), port: w.slotBase + slot }
+  const mode: Mutable['mode'] = { hold: false, proof: 'valid' }
+  const waiting: (() => void)[] = []
+  const html = pageHtml({ name, script: GROUND_SHELL })
+  const serve = (req: IncomingMessage, res: ServerResponse): boolean => {
+    const u = new URL(req.url ?? '/', 'http://x')
+    if ((u.pathname !== '/' && u.pathname !== '/index.html') || req.method !== 'GET') return false
+    if (u.searchParams.has('redirect')) { res.writeHead(302, { location: '/index.html?redirected=1', 'cache-control': 'no-store' }); res.end(); return true }
+    const answer = () => {
+      const p = mode.proof === 'wrong-key' ? { ...ident, key: randomBytes(32) } : mode.proof === 'other-instance' ? { ...ident, instance: randomUUID() } : ident
+      const h: Record<string, string> = { 'content-type': 'text/html', 'cache-control': 'no-store', ...proofHeaders(p, req.headers['x-mv-nonce']) }
+      if (u.searchParams.has('coop')) h['cross-origin-opener-policy'] = 'same-origin'
+      res.writeHead(200, h)
+      res.end(html)
+    }
+    if (mode.hold || u.searchParams.has('slow')) waiting.push(answer)
+    else answer()
+    return true
+  }
+  const fake = await startFakeCanvas({ home: w.env.home, slotBase: w.slotBase, slot, name, features, script: GROUND_SHELL, onRequest: serve })
+  fakes.push(fake)
+  ident.instance = fake.instance
+  ident.key = fake.key
+  await fake.ready
+  const s = await w.until((x) => x.tabs.some((t) => t.reg?.instance === fake.instance && t.reg.state === 'ready'), 10_000, `${name}'s tab`)
+  const id = s.tabs.find((t) => t.reg?.instance === fake.instance)!.id
+  return {
+    fake, id, mode,
+    held: () => waiting.length,
+    release: () => { for (const go of waiting.splice(0)) go() },
+    async rebind(f) {
+      const key = randomBytes(32)
+      const instance = randomUUID()
+      const rec = { ...fake.record(), instance, key: key.toString('base64url'), features: f, startedAt: Date.now() }
+      const tmp = `${fake.slotFile}.${randomBytes(4).toString('hex')}.tmp`
+      writeFileSync(tmp, JSON.stringify(rec, null, 2) + '\n', { mode: 0o600 })
+      renameSync(tmp, fake.slotFile)
+      ident.instance = instance
+      ident.key = key
+      await w.until((x) => { const t = x.tabs.find((q) => q.id === id); return t?.reg?.instance === instance && t.reg.state === 'ready' }, 10_000, `${name} rebound`)
+      return instance
+    },
+    async close() { rmSync(fake.slotFile, { force: true }); await fake.close() },
+  }
+}
+/** the tab's layout lines since a mark, as (event, layout, pending) */
+const layoutOf = async (id: string, since: number) => (await lines('layout', since)).map((l) => ({ turn: l.turn, ...(l.data as { tab: string; event: string; from: Geo; to: Geo }) })).filter((l) => l.tab === id)
+/** the adapter's events for the tab's webContents since a mark */
+const navOf = async (id: string, since: number) => { const wc = (await w.tab(id)).wcId; return (await lines('nav', since)).filter((l) => l.data.wc === wc).map((l) => l.data.event as string) }
 
 describe('the one ground: the inset, the cover, the epochs (A3.8 #24-#27)', () => {
   let a = ''
@@ -347,6 +430,301 @@ describe('the one ground through navigation, fullscreen, switching and the GPU p
   })
 })
 
+describe('navigation outcomes from a full, uncovered page (A2.10\'s (A3) cases, design-ground §6.3 #7)', () => {
+  let m: Mutable
+  let id = ''
+  beforeAll(async () => {
+    m = await mutable(18, 'Nav')
+    id = m.id
+    await w.run.call('activate', { id })
+    await lifted(id)
+    await uncovered(id)
+  })
+  afterAll(async () => { m.release(); await m.close() })
+  const trustedNow = async () => { const t = await w.tab(id); return !!t.doc?.trusted && !!t.doc.lifted }
+
+  it('a stop: the navigation\'s pending dropped, the committed document kept - full, trusted, uncovered, its epoch unchanged', async () => {
+    const before = await geoOf(id)
+    const since = await mark()
+    await execNow(id, `location.href = '/?slow=1'; 1`)
+    await waitFor('the slow request held', async () => m.held() > 0)
+    await execNow(id, `window.stop(); 1`)
+    await waitFor('the abort', async () => (await layoutOf(id, since)).some((l) => l.event === 'abort'))
+    // the adapter's abort (did-stop-loading, the attempt neither committed nor failed) drops that navigation's pending
+    const ls = await layoutOf(id, since)
+    expect(ls.map((l) => [l.event, l.to.layout])).toEqual([['start', 'full'], ['abort', 'full']])
+    expect(ls[0]!.to.pending).toMatchObject({ layout: 'full' })
+    expect(ls[1]!.to.pending).toBeUndefined()
+    m.release()
+    await sleep(300)
+    const g = await geoOf(id)
+    expect(g.geo).toEqual(before.geo)
+    expect(g.epoch).toBe(before.epoch)
+    expect(await trustedNow()).toBe(true)
+    expect((await ground()).cover.visible).toBe(false)
+    expect(await coverChanges(since)).toEqual([])
+    expect((await layoutOf(id, since)).every((l) => l.to.layout === 'full')).toBe(true)
+  })
+
+  it('a superseded navigation: the newer one commits full, uncovered on its answer; the older one\'s end never takes the newer\'s pending', async () => {
+    const since = await mark()
+    const commits = (await w.tab(id)).doc!.commits
+    await execNow(id, `location.href = '/?slow=1'; 1`)
+    await waitFor('the slow request held', async () => m.held() > 0)
+    await execNow(id, `location.href = '/?n=2'; 1`)
+    await w.until((x) => { const t = x.tabs.find((q) => q.id === id)!; return (t.doc?.commits ?? 0) > commits && !!t.doc?.lifted }, 10_000, 'the newer commit')
+    // the older navigation's end reaches commitLayout before the newer one starts (its did-stop-loading, as the
+    // renderer cancels its own navigation), so no abort ever takes the newer one's pending
+    const order = await layoutOf(id, since)
+    const starts = order.filter((l) => l.event === 'start')
+    expect(starts).toHaveLength(2)
+    expect(starts[1]!.to.pending!.gen).toBeGreaterThan(starts[0]!.to.pending!.gen)
+    expect(order.slice(order.indexOf(starts[1]!)).map((l) => l.event)).toEqual(['start', 'commit', 'hello'])
+    expect(order.find((l) => l.event === 'abort')!.from.pending!.gen).toBe(starts[0]!.to.pending!.gen)
+    await uncovered(id)
+    m.release()
+    const ls = await layoutOf(id, since)
+    const commit = ls.find((l) => l.event === 'commit')!
+    expect(commit.to.layout).toBe('full')
+    expect((await geoOf(id)).geo).toEqual({ layout: 'full', htmlFullscreen: false, inset: 44 })
+    const cov = (await coverChanges(since)).find((x) => x.changes.some((ch) => ch.key === 'cover' && ch.visible === true))!
+    expect(cov.turn).toBeLessThanOrEqual(commit.turn)
+  })
+
+  it('a refused reload: the page holds its beforeunload - no geometry change, trust and the cover as they were', async () => {
+    // Playwright answers a page's beforeunload itself unless someone listens (and fails: Electron shows none); the
+    // refusal is the page's and main's (will-prevent-unload), as test/prod/guard.test.ts's cases have it
+    const listen = () => {}
+    const pages = w.run.pw!.windows()
+    for (const p of pages) p.on('dialog', listen)
+    try {
+      await exec(id, `addEventListener('beforeunload', (e) => { if (window.__mayLeave) return; e.preventDefault(); e.returnValue = '' }); document.body.click(); 1`, true)
+      const before = await geoOf(id)
+      const since = await mark()
+      expect(await w.run.call('guard', { id, action: { kind: 'reload' } })).toBe('refused')
+      await sleep(300)
+      // no navigation started: nothing reached commitLayout, the epoch and the cover are the ones before
+      expect((await navOf(id, since)).filter((e) => e.startsWith('adapter:'))).toEqual([])
+      expect(await layoutOf(id, since)).toEqual([])
+      expect(await geoOf(id)).toEqual(before)
+      expect(await trustedNow()).toBe(true)
+      expect((await ground()).cover.visible).toBe(false)
+      expect(await coverChanges(since)).toEqual([])
+      // the page lets go: its next reload goes through
+      await exec(id, `window.__mayLeave = true; 1`)
+      await reloadInto(id, null)
+      await uncovered(id)
+    } finally { for (const p of pages) p.off('dialog', listen) }
+  })
+
+  it('a document navigation through a redirect: covered at its commit, full, a fresh epoch uncovered on its answer', async () => {
+    const e0 = (await geoOf(id)).epoch!
+    const since = await mark()
+    const commits = (await w.tab(id)).doc!.commits
+    await execNow(id, `location.href = '/?redirect=1'; 1`)
+    await w.until((x) => { const t = x.tabs.find((q) => q.id === id)!; return (t.doc?.commits ?? 0) > commits && !!t.doc?.lifted }, 10_000, 'the redirected commit')
+    const g = await uncovered(id)
+    expect((await navOf(id, since)).filter((e) => e.startsWith('adapter:'))).toEqual(['adapter:start', 'adapter:redirect', 'adapter:response', 'adapter:commit'])
+    expect((await w.tab(id)).doc!.url).toMatch(/\/index\.html\?redirected=1$/)
+    const ls = await layoutOf(id, since)
+    expect(ls.map((l) => l.event)).toEqual(['start', 'commit', 'hello'])
+    expect(ls.map((l) => l.to.layout)).toEqual(['full', 'full', 'full'])
+    const commit = ls.find((l) => l.event === 'commit')!
+    const cov = (await coverChanges(since)).find((x) => x.changes.some((ch) => ch.key === 'cover' && ch.visible === true))!
+    expect(cov.turn).toBeLessThanOrEqual(commit.turn)
+    expect(g.tabs.find((t) => t.id === id)!.epoch!).toBeGreaterThan(e0)
+  })
+
+  /** the page's own reload (A1's resume reload), waited for: the new document committed and lifted */
+  async function ownReload(): Promise<number> {
+    const before = (await w.tab(id)).doc!.commits
+    const since = await mark()
+    await execNow(id, 'location.reload(); 1')
+    await w.until((x) => { const t = x.tabs.find((q) => q.id === id)!; return (t.doc?.commits ?? 0) > before && !!t.doc?.lifted }, 10_000, 'its own reload')
+    return since
+  }
+  /** the cover shown in a turn, and the turn: the first such change since a mark */
+  const coveredAt = async (since: number) => (await coverChanges(since)).find((x) => x.changes.some((ch) => ch.key === 'cover' && ch.visible === true))
+  const registryTurn = async (since: number) => (await w.log('registry', since)).find((l) => l.data.tab === id)
+
+  it('a new instance after the commit, with inset: untrusted and covered in the registry\'s turn, its layout kept full; its own reload lands full and is uncovered', async () => {
+    const since = await mark()
+    await m.rebind(['bridge', 'inset'])
+    await waitFor('untrusted', async () => !(await trustedNow()))
+    const g = await geoOf(id)
+    expect([g.geo.layout, g.seeThrough]).toEqual(['full', false])
+    expect((await ground()).cover.visible).toBe(true)
+    const reg = (await registryTurn(since))!
+    expect((await coveredAt(since))!.turn).toBe(reg.turn)
+    expect((await layoutOf(id, since)).filter((l) => l.to.layout !== 'full')).toEqual([])
+    const s2 = await ownReload()
+    await uncovered(id)
+    expect((await layoutOf(id, s2)).find((l) => l.event === 'commit')!.to.layout).toBe('full')
+    expect(await exec(id, 'window.marverApp.topInset')).toBe(44)
+  })
+
+  it('a new instance after the commit, without inset (0.27.1): covered, kept full until its own reload, which lands below, told 0', async () => {
+    const since = await mark()
+    await m.rebind(['bridge'])
+    await waitFor('untrusted', async () => !(await trustedNow()))
+    expect((await geoOf(id)).geo.layout).toBe('full')
+    expect((await coveredAt(since))!.turn).toBe((await registryTurn(since))!.turn)
+    const s2 = await ownReload()
+    await waitFor('its hello', async () => (await geoOf(id)).geo.inset === 0)
+    const ls = await layoutOf(id, s2)
+    expect(ls.map((l) => [l.event, l.to.layout])).toEqual([['start', 'full'], ['commit', 'below'], ['hello', 'below']])
+    expect(ls[0]!.to.pending!.layout).toBe('below')
+    expect(await exec(id, 'JSON.stringify([window.marverApp.topInset, window.__ground.applied])')).toBe('[0,0]')
+    expect((await bounds(`${id}:view`))!.bounds).toEqual(BELOW(await content()))
+    expect((await ground()).cover.visible).toBe(true)
+    // inset again (a 0.27.2 restart), and its own reload: back to full, uncovered
+    await m.rebind(['bridge', 'inset'])
+    await ownReload()
+    await uncovered(id)
+  })
+
+  for (const inset of [true, false]) {
+    it(`a new instance ${inset ? 'with' : 'without'} inset before the commit (the response still on its way): the pending dropped, the document lands below - never told 44 - and its own reload is ${inset ? 'full again' : 'below too'}`, async () => {
+      m.mode.hold = true
+      const before = (await w.tab(id)).doc!.commits
+      const since = await mark()
+      await w.run.call('reloadPage', { target: id })
+      await waitFor('the reload\'s request held', async () => m.held() > 0)
+      m.mode.hold = false
+      await m.rebind(inset ? ['bridge', 'inset'] : ['bridge'])
+      m.release()
+      await w.until((x) => { const t = x.tabs.find((q) => q.id === id)!; return (t.doc?.commits ?? 0) > before && !!t.doc?.lifted }, 10_000, 'the commit under the new instance')
+      await waitFor('its hello', async () => (await geoOf(id)).geo.inset !== undefined)
+      // the registry's change drops the pending (the old instance gone, or the tab rebound: whichever main hears first)
+      const ls = await layoutOf(id, since)
+      expect(ls.map((l) => l.event === 'gone' ? 'rebind' : l.event)).toEqual(['start', 'rebind', 'commit', 'hello'])
+      expect(ls[1]!.to.pending).toBeUndefined()
+      expect(ls.find((l) => l.event === 'commit')!.to.layout).toBe('below')
+      // trusted under the new instance, below the strip, told 0 (mv:doc answered for where it lands), covered
+      expect(await trustedNow()).toBe(true)
+      expect(await exec(id, 'JSON.stringify([window.marverApp.topInset, window.__ground.applied])')).toBe('[0,0]')
+      expect((await bounds(`${id}:view`))!.bounds).toEqual(BELOW(await content()))
+      expect((await ground()).cover.visible).toBe(true)
+      const s2 = await ownReload()
+      await waitFor('its hello', async () => (await geoOf(id)).geo.inset !== undefined)
+      expect((await layoutOf(id, s2)).find((l) => l.event === 'commit')!.to.layout).toBe(inset ? 'full' : 'below')
+      if (!inset) {
+        expect((await ground()).cover.visible).toBe(true)
+        await m.rebind(['bridge', 'inset'])
+        await ownReload()
+      }
+      await uncovered(id)
+      expect((await bounds(`${id}:view`))!.bounds).toEqual(FULL(await content()))
+    })
+  }
+
+  it('a new instance taking the port after the proof\'s headers and before the commit: unattributed, below and untrusted beneath its tab page, then reloaded full', async () => {
+    await w.run.call('trust:hold-proved', { on: true })
+    const before = (await w.tab(id)).doc!.commits
+    const since = await mark()
+    try {
+      await w.run.call('reloadPage', { target: id })
+      await waitFor('the proof held', async () => (await lines('proof', since)).some((l) => l.data.event === 'held'))
+      await m.rebind(['bridge', 'inset'])
+    } finally { await w.run.call('trust:hold-proved', { on: false }) }
+    // the commit under the instance that left: unattributed (nav.ts), so below; the tab reloads it at once (A2.3)
+    await waitFor('the unattributed commit', async () => (await navOf(id, since)).includes('adapter:commit'))
+    const commit = (await lines('nav', since)).find((l) => l.data.event === 'adapter:commit' && l.data.wc === (0 as unknown) || (l.data.event === 'adapter:commit'))!
+    expect(commit.data.attributed).toBe(false)
+    const lay = (await layoutOf(id, since)).find((l) => l.event === 'commit')!
+    expect(lay.to.layout).toBe('below')
+    // in the commit's turn the view is hidden beneath its tab page, or never shown: no compose shows it uncovered
+    for (const x of await composes(since)) {
+      if (x.turn < lay.turn) continue
+      if (x.changes.some((ch) => ch.key === `${id}:view` && ch.op === 'visible' && ch.visible === true)) expect(x.cover).toBe(true)
+    }
+    // then the reload the tab makes at once: proved under the new instance, full, uncovered
+    await w.until((x) => { const t = x.tabs.find((q) => q.id === id)!; return (t.doc?.commits ?? 0) > before + 1 && !!t.doc?.lifted && !!t.doc.trusted }, 10_000, 'the reload under the new instance')
+    await uncovered(id)
+    expect((await geoOf(id)).geo).toEqual({ layout: 'full', htmlFullscreen: false, inset: 44 })
+  })
+
+  for (const kind of ['wrong-key', 'other-instance'] as const) {
+    it(`a ${kind === 'wrong-key' ? 'failed proof' : 'instance mismatch'} from a full, uncovered page: the tab page full and the view hidden in the failure's turn; below only with an error page committed`, async () => {
+      const since = await mark()
+      m.mode.proof = kind
+      try {
+        await w.run.call('reloadPage', { target: id })
+        await waitFor('the failure', async () => (await lines('fail', since)).some((l) => l.data.tab === id))
+      } finally { m.mode.proof = 'valid' }
+      const fail = (await lines('fail', since)).find((l) => l.data.tab === id)!
+      expect(fail.data.why).toBe('unverified')
+      const f = (await layoutOf(id, since)).find((l) => l.event === 'fail')!
+      expect(f.to.pending).toBeUndefined()
+      expect(f.to.layout).toBe(fail.data.errorPage ? 'below' : 'full')
+      // the tab page shows, full, the view hidden beneath it, in one turn; the cover hidden over the page
+      await waitFor('its tab page', async () => (await bounds(`${id}:page`))?.visible)
+      const turn = (await composes(since)).find((x) => x.changes.some((ch) => ch.key === `${id}:view` && ch.op === 'visible' && ch.visible === false))!
+      expect(turn.changes.some((ch) => ch.key === `${id}:page` && ch.op === 'visible' && ch.visible === true)).toBe(true)
+      expect((await bounds(`${id}:page`))!.bounds).toEqual(FULL(await content()))
+      expect(await trustedNow()).toBe(false)
+      // Try Again (the tab page's action) proves it again: full, uncovered
+      await w.run.call('command', { cmd: 'reload' })
+      await waitFor('trusted again', async () => trustedNow())
+      await uncovered(id)
+      expect((await geoOf(id)).geo).toEqual({ layout: 'full', htmlFullscreen: false, inset: 44 })
+    })
+  }
+})
+
+describe('HTML fullscreen in play mode (A2.10\'s (A3) cases, design-ground §6.3 #8)', () => {
+  let a = ''
+  let b = ''
+  beforeAll(async () => {
+    ;({ id: b } = await canvas(19, 'FS other'))
+    ;({ id: a } = await canvas(20, 'FS'))
+    for (const id of [b, a]) { await w.run.call('activate', { id }); await lifted(id); await uncovered(id) }
+  })
+  const fsElement = () => exec<string | null>(a, `document.fullscreenElement ? (document.fullscreenElement.id || document.fullscreenElement.tagName) : null`)
+  const winNow = () => w.run.call<{ bounds: { x: number; y: number; width: number; height: number }; fullScreen: boolean }>('window')
+
+  it('play mode (an element\'s fullscreen): below and covered; a resize keeps it below; switched away and back, still fullscreen and below; leaving, full, covered, then a fresh epoch', async () => {
+    const win0 = await winNow()
+    const since = await mark()
+    await exec(a, `(() => { const d = document.createElement('div'); d.id = 'stage'; d.style.background = '#123'; document.body.append(d); return d.requestFullscreen().then(() => true) })()`, true)
+    await waitFor('fullscreen', async () => (await geoOf(a)).geo.htmlFullscreen)
+    expect(await fsElement()).toBe('stage')
+    const enter = (await layoutOf(a, since)).find((l) => l.event === 'html-fullscreen')!
+    const moved = (await composes(since)).find((x) => x.turn === enter.turn && x.changes.some((ch) => ch.key === `${a}:view` && ch.op === 'bounds'))!
+    expect(moved.cover).toBe(true)
+    expect(moved.changes.find((ch) => ch.key === `${a}:view`)!.rect!.y).toBe(44)
+    // a resize meanwhile: still below, still covered, the window never in full screen
+    const c = await content()
+    await w.run.call('resize', { width: c.width - 60, height: c.height - 30 })
+    await sleep(300)
+    expect((await bounds(`${a}:view`))!.bounds).toEqual(BELOW(await content()))
+    expect((await ground()).cover.visible).toBe(true)
+    expect((await winNow()).fullScreen).toBe(false)
+    // away and back: still the element's fullscreen, still below and covered
+    await w.run.call('activate', { id: b })
+    await uncovered(b)
+    await w.run.call('activate', { id: a })
+    await sleep(300)
+    expect(await fsElement()).toBe('stage')
+    expect((await geoOf(a)).geo.htmlFullscreen).toBe(true)
+    expect((await bounds(`${a}:view`))!.bounds).toEqual(BELOW(await content()))
+    expect((await ground()).cover.visible).toBe(true)
+    // leaving: full, covered in its turn, then uncovered by a fresh epoch
+    const e1 = (await geoOf(a)).epoch!
+    const s2 = await mark()
+    await exec(a, 'document.exitFullscreen().then(() => true)')
+    await uncovered(a)
+    const leave = (await layoutOf(a, s2)).find((l) => l.event === 'html-fullscreen')!
+    const back = (await composes(s2)).find((x) => x.turn === leave.turn && x.changes.some((ch) => ch.key === `${a}:view` && ch.op === 'bounds'))!
+    expect(back.cover).toBe(true)
+    expect((await bounds(`${a}:view`))!.bounds).toEqual(FULL(await content()))
+    expect((await geoOf(a)).epoch!).toBeGreaterThan(e1)
+    await w.run.call('resize', { width: c.width, height: c.height })
+    await uncovered(a)
+    expect((await winNow()).bounds.width).toBe(win0.bounds.width)
+  })
+})
+
 describe('stalled renderers: covering never waits on one, uncovering waits for the canvas (A2.10\'s stalled cases, A3.8 #30)', () => {
   let a = ''
   let below = ''
@@ -582,5 +960,67 @@ describe('the gate shut: no cover chosen (A3.8 #3)', () => {
       while (await shut.run.call('exec', { target: 'strip', js: `document.body.classList.contains('dots')` }) && Date.now() < off) await sleep(40)
       expect(await shut.run.call('exec', { target: 'strip', js: `document.body.classList.contains('dots')` })).toBe(false)
     } finally { await shut.close() }
+  })
+})
+
+describe('the window\'s own full screen, and HTML fullscreen inside it (A2.10\'s (A3) cases, design-ground §6.3 #8): a launch of its own', () => {
+  // Its own launch, so no page of this window has been in HTML fullscreen before. In the shared one, after other
+  // views' HTML fullscreen entered and left in the windowed window, a document's requestFullscreen() in the
+  // full-screen window never settled under this launch: Electron still sends enter-html-full-screen, so main keeps
+  // the view below and covered (the safe side), but the page is never fullscreen, exitFullscreen() rejects
+  // "Document not active", and no leave-html-full-screen comes. Seen on 24 Oct under Playwright's launch only; not
+  // narrowed further, nor tried under the production switches.
+  let main: WindowRun
+  let a = ''
+  beforeAll(async () => {
+    main = w
+    w = await launchWindow('pw', { extraEnv: { MARVER_APP_FAKE_TRUST: '0', MARVER_APP_GROUND: '1' } })
+    ;({ id: a } = await canvas(13, 'Full screen'))
+    await w.run.call('activate', { id: a })
+    await lifted(a)
+    await uncovered(a)
+  })
+  afterAll(async () => { await w?.close(); w = main })
+  const winNow = () => w.run.call<{ bounds: { x: number; y: number; width: number; height: number }; fullScreen: boolean }>('window')
+
+  it('the window\'s own full screen, in and out: the view full at each size, covered with its bounds, uncovered on an answer at that size; HTML fullscreen inside it changes neither the window\'s size nor its state', { timeout: 120_000 }, async () => {
+    const before = await content()
+    let since = await mark()
+    await w.run.call('fullscreen', { on: true })
+    await waitFor('full screen', async () => (await winNow()).fullScreen, 15_000)
+    await sleep(800)   // the transition's last resize
+    let g = await uncovered(a, 15_000)
+    const fsSize = await content()
+    expect((await bounds(`${a}:view`))!.bounds).toEqual(FULL(fsSize))
+    const asks = (await presents(since, a)).filter((p) => p.op === 'ask')
+    expect(asks.at(-1)).toMatchObject({ w: fsSize.width, h: fsSize.height })
+    for (const x of await composes(since)) if (x.changes.some((ch) => ch.key === `${a}:view` && ch.op === 'bounds')) expect(x.cover).toBe(true)
+    // HTML fullscreen inside the full-screen window: the window's size and state never change; below and covered
+    const win1 = await winNow()
+    since = await mark()
+    await exec(a, 'window.__fs = "pending"; document.documentElement.requestFullscreen().then(() => { window.__fs = "ok" }, (e) => { window.__fs = String(e) }); true', true)
+    await waitFor('HTML fullscreen', async () => (await geoOf(a)).geo.htmlFullscreen)
+    await waitFor('the page in fullscreen', async () => (await execNow<string>(a, 'window.__fs')) === 'ok')
+    expect(await winNow()).toMatchObject({ bounds: win1.bounds, fullScreen: true })
+    expect((await bounds(`${a}:view`))!.bounds).toEqual(BELOW(fsSize))
+    expect((await ground()).cover.visible).toBe(true)
+    const enter = (await layoutOf(a, since)).find((l) => l.event === 'html-fullscreen')!
+    expect((await composes(since)).find((x) => x.turn === enter.turn && x.changes.some((ch) => ch.key === `${a}:view` && ch.op === 'bounds'))!.cover).toBe(true)
+    await execNow(a, 'document.exitFullscreen().catch(() => {}); true')
+    g = await uncovered(a)
+    expect(await winNow()).toMatchObject({ bounds: win1.bounds, fullScreen: true })
+    expect((await bounds(`${a}:view`))!.bounds).toEqual(FULL(fsSize))
+    // out of full screen: back at the windowed size, covered with its bounds, uncovered on its answer
+    since = await mark()
+    await w.run.call('fullscreen', { on: false })
+    await waitFor('windowed', async () => !(await winNow()).fullScreen, 15_000)
+    await sleep(800)
+    g = await uncovered(a, 15_000)
+    const after = await content()
+    expect([after.width, after.height]).toEqual([before.width, before.height])
+    expect((await bounds(`${a}:view`))!.bounds).toEqual(FULL(after))
+    for (const x of await composes(since)) if (x.changes.some((ch) => ch.key === `${a}:view` && ch.op === 'bounds')) expect(x.cover).toBe(true)
+    expect((await presents(since, a)).filter((p) => p.op === 'ask').at(-1)).toMatchObject({ w: after.width, h: after.height })
+    void g
   })
 })
