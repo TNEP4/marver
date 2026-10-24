@@ -80,7 +80,16 @@ export function flushCamera(): void {
   clearTimeout(keepTimer)
   keepPending()
 }
-if (typeof document !== 'undefined') {
+let leaveWatched = false
+/**
+ * The hide and the leave write the pending camera: listened for from the canvas's first mount, so after the page
+ * recorder's own listeners (startRecorder runs before the first render) - its cut of a load still waiting comes first,
+ * as `hidden`. Registered at import, ahead of the recorder's, the camera's pagehide write let a navigation away cut
+ * that load as `error` instead (page-recorder-browser's "the page goes").
+ */
+function watchLeave(): void {
+  if (leaveWatched || typeof document === 'undefined') return
+  leaveWatched = true
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushCamera() })
   addEventListener('pagehide', flushCamera)
 }
@@ -206,6 +215,8 @@ export function Canvas() {
 
   // B0.4: frame-time sampler + image-LOD camera signal; the recorder hears when the camera stops and what sleeps (spec 28 A1.7)
   useEffect(() => { startPerf(); startCameraBroadcast(); return attachCanvas({ onMotion, sleeping: sleepingCount }) }, [])
+  // the pending camera written as the page hides or leaves (A3.8 #43), after the recorder's own listeners
+  useEffect(() => { watchLeave() }, [])
 
   useEffect(() => {
     const wrap = () => document.querySelector('.sh-canvas') as HTMLElement | null
