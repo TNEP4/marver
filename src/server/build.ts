@@ -31,6 +31,7 @@ import { PUBLISHABLE, publishableStatus } from '../shared/status.ts'
 import { boardFields, checkBoardsDir, isRegularFile, listBoardFiles, readRegistry } from './boards.ts'
 import { appendEvents, legacyExposure, readLog, shareable } from './comments.ts'
 import { autoWidthOf, keptSizes, measuringFrames, readSizes } from './sizes.ts'
+import { publishLogo } from './logo.ts'
 
 const posix = (p: string) => p.split(sep).join('/')
 
@@ -764,22 +765,13 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   }
 
   // serve reads this: gate page title, branding footer, and the app's own logo when one
-  // exists (agent-native convention: design/logo.svg|png; host public/ as fallback)
+  // exists (agent-native convention: design/logo.svg|png; host public/ as fallback). The ladder and
+  // its checks are logo.ts's (spec 28 A2.9): a regular file inside the repo, an image by its bytes -
+  // never a link followed, never a share.logo from outside the repo
   let name = basename(root)
   try { name = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).name ?? name } catch { /* keep basename */ }
   if (config.share.name) name = config.share.name
-  let logo: string | undefined
-  const logoLadder = [
-    ...(config.share.logo ? [config.share.logo] : []),
-    'design/logo.svg', 'design/logo.png', 'public/logo.svg', 'public/logo.png', 'public/favicon.svg',
-  ]
-  for (const cand of logoLadder) {
-    if (!existsSync(join(root, cand))) continue
-    const ext = cand.endsWith('.png') ? 'png' : 'svg'
-    cpSync(join(root, cand), join(outDir, ROUTE.slice(1), `logo.${ext}`))
-    logo = `${ROUTE}/logo.${ext}`
-    break
-  }
+  const logo = publishLogo(root, config.share.logo, outDir, (m) => console.warn(`  ${m}`))
   // rights ride in meta.json so serve can enforce the policy on comment APIs without parsing the bundle - hiding UI controls is not authorization;
   // `shows` (each published board's frames) lets the old all-scenes log serve the threads whose frame ships (collab.ts, spec 26)
   writeFileSync(join(outDir, 'meta.json'), JSON.stringify({

@@ -443,7 +443,7 @@ export async function serve(root: string, portFlag?: number) {
 function isCosmetic(pathname: string): boolean {
   let decoded = pathname
   try { decoded = decodeURIComponent(pathname) } catch { /* keep raw - it won't match */ }
-  return /^\/__mv\/favicon\/[\w-]+(?:\.[\w-]+)+$/.test(decoded) || /^\/__mv\/logo\.(?:svg|png)$/.test(decoded)
+  return /^\/__mv\/favicon\/[\w-]+(?:\.[\w-]+)+$/.test(decoded) || /^\/__mv\/logo\.(?:svg|png|ico)$/.test(decoded)
 }
 
 /** The Marver logo mark (ParallelogramDuo, same as the shell's sidebar). */

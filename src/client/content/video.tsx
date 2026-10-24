@@ -27,6 +27,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties }
 import { ROUTE } from '../const.ts'
 import { assetUrl } from './md.ts'
 import { useSlidePlay } from './slide.tsx'
+import { RUN_ID, RUN_PARAM } from '../../shared/perf-run.ts'
 
 const isRemote = (s: string) => /^https:\/\//.test(s)
 const resolve = (s: string): string | null => (isRemote(s) ? s : assetUrl(s))
@@ -42,6 +43,11 @@ const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
 // it too, so a frame left open after its canvas stopped never asks another project for anything
 const WS = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('ws') : null
 const named = (h: Record<string, string> = {}) => (WS ? { ...h, 'x-mv-ws': WS } : h)
+// a headless perf run (spec 28 A3.8 #17, #19): the canvas names the run in the frame's URL, and the bake that renders
+// this frame for the run too. A run is read-only: a missing poster is never generated - the clip rests without one,
+// in the same box, and the document says so (`data-mv-poster-skipped`), so no compile of it fills the shared cache
+const RUN = (() => { try { const id = new URLSearchParams(location.search).get(RUN_PARAM); return id && RUN_ID.test(id) ? id : null } catch { return null } })()
+const POSTER_SKIPPED = 'data-mv-poster-skipped'
 // in-flight probes + generations, for the shot renderer's settle (like __mvLodBusy): a
 // screenshot taken while a poster is still being rendered would show the empty box
 let busy = 0
@@ -131,7 +137,7 @@ export function Video({ src, poster, ratio, autoplay = false }: { src: string; p
   // or failed (the card). The <img> mounts only once ready: no broken-image glyph while the
   // dev server renders the poster, and a shot taken meanwhile waits on __mvPosterBusy.
   const generated = !poster && !isRemote(src) ? posterNameFor(src) : null
-  const [gen, setGen] = useState<'probing' | 'ready' | 'failed'>(generated ? 'probing' : 'ready')
+  const [gen, setGen] = useState<'probing' | 'ready' | 'failed' | 'skipped'>(generated ? 'probing' : 'ready')
   const [bust, setBust] = useState(0)
   const posterUrl = poster ? resolve(poster) : generated ? resolve(generated) : null
   const posterSrc = posterUrl && bust ? `${posterUrl}?v=${bust}` : posterUrl
@@ -144,9 +150,11 @@ export function Video({ src, poster, ratio, autoplay = false }: { src: string; p
     busy++
     const done = () => { if (pending) { pending = false; busy-- } }
     const probe = new Image()
-    const settle = (state: 'ready' | 'failed', rebust = false) => { done(); if (!alive) return; if (rebust) setBust(Date.now()); setGen(state) }
+    const settle = (state: 'ready' | 'failed' | 'skipped', rebust = false) => { done(); if (!alive) return; if (rebust) setBust(Date.now()); setGen(state) }
     probe.onload = () => settle('ready')
     probe.onerror = () => {
+      // a perf run asks for nothing: the box rests without its poster
+      if (RUN) { document.documentElement.setAttribute(POSTER_SKIPPED, ''); return settle('skipped') }
       // not there yet: ask the dev server to render it (once per clip per document)
       void requestPoster(src).then((ok) => settle(ok ? 'ready' : 'failed', ok))
     }

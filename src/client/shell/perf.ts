@@ -12,6 +12,7 @@
  * perfMark(name) + counters are the plug points later stages use (blank-frame / warm-latency).
  */
 import { onMotion, type Motion } from './canvas/camera-broadcast.ts'
+import { gestureOff, gestureOn } from './app-perf.ts'
 import { recorder } from './recorder.ts'
 import { gestureStats } from './recorder-core.ts'
 
@@ -34,6 +35,12 @@ const enabled = (): boolean => {
 interface Run { t0: number; last: number; dts: number[]; pan: boolean; zoom: boolean; layout: boolean; longs: number[]; obs?: PerformanceObserver; raf: number }
 /** the gesture running now */
 let g: Run | null = null
+/** gestures ended so far, every one (a headless perf run waits for each of its three, spec 28 A3.8 #20) */
+let ended = 0
+/** How many gestures have ended since the page loaded. */
+export const gesturesEnded = (): number => ended
+/** Is a gesture (a pan, a zoom, a layout animation) running now? */
+export const gestureRunning = (): boolean => g !== null
 
 function note(m: Motion) {
   if (!g) return
@@ -45,6 +52,8 @@ function begin(m: Motion) {
   const run: Run = { t0: performance.now(), last: 0, dts: [], pan: false, zoom: false, layout: false, longs: [], raf: 0 }
   g = run
   note(m)
+  // the Mac app's recorder hears it start (the white-out detector's window, spec 28 A3.8 #15); nothing elsewhere
+  gestureOn(run.pan ? 'pan' : run.zoom ? 'zoom' : run.layout ? 'layout' : undefined)
   try {
     run.obs = new PerformanceObserver((l) => { for (const e of l.getEntries()) if (e.startTime >= run.t0) run.longs.push(e.duration) })
     run.obs.observe({ type: LOAF ? 'long-animation-frame' : 'longtask', buffered: false })
@@ -62,10 +71,12 @@ function begin(m: Motion) {
 function end() {
   const run = g!
   g = null
+  ended++
   cancelAnimationFrame(run.raf)
   const t1 = performance.now()
   for (const e of run.obs?.takeRecords() ?? []) if (e.startTime >= run.t0 && e.startTime <= t1) run.longs.push(e.duration)
   run.obs?.disconnect()
+  gestureOff()
   for (const d of run.dts) { frames.push(d); if (frames.length > MAX) frames.shift() }
   for (const d of run.longs) { longs.push(d); if (longs.length > MAX) longs.shift() }
   if (run.dts.length < 2) return   // a press that never moved the camera

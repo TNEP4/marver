@@ -10,9 +10,11 @@
  *
  * A new batch admits ONE frame first (the quickest first content: one boot alone is ~550 ms, four
  * together ~1.8 s), then up to SLOTS at a time. Pure, apart from its timing: a board that mounts
- * registers every node, the shell fits the camera (App.tsx, a few tens of ms later), then the first
- * pump ranks them (visible first, nearest the centre of the canvas first); a freed slot pumps on
- * the next microtask, ranking again by the view of that moment.
+ * registers every node, the shell aims the camera (its fit: a frame after mount at boot, 60 ms after
+ * on a switch; Canvas.tsx says so through aimed()), then the first pump ranks them (visible first,
+ * nearest the centre of the canvas first) on where each frame will be once the camera lands
+ * (canvasCtl.landing) - it need not wait out the fit's ~320 ms flight. With no aim it waits SETTLE, as
+ * long as that flight. A freed slot pumps on the next microtask, ranking again by the view of that moment.
  */
 export const SLOTS = 4
 /** A new batch's head start: one frame alone until it is done, or until this long - one stalled
@@ -21,6 +23,7 @@ export const HEAD_MS = 2000
 let primed = false   // the batch may use every slot
 let gen = 0          // the batch: a pump scheduled for an earlier one is void
 let timer: ReturnType<typeof setTimeout> | undefined
+let settling: ReturnType<typeof setTimeout> | undefined   // a pump waiting for the view to settle (SETTLE): aimed() runs it now
 
 export interface Admission { key: string; rank: () => number; start: () => void }
 
@@ -28,17 +31,29 @@ const waiting = new Map<string, Admission>()
 const active = new Set<string>()
 let scheduled = false
 
-/** Ask for a slot. Starts once the view has settled (SETTLE ms) when one is free; else queued by rank. */
+/** Ask for a slot. Starts once the view has settled - the camera aimed where it will rest (aimed()), else SETTLE ms -
+ *  when one is free; else queued by rank. */
 export function admit(a: Admission): void {
   if (active.has(a.key)) return
   if (!waiting.size && !active.size) {   // a new batch
-    primed = false; gen++; scheduled = false; clearTimeout(timer)
+    primed = false; gen++; scheduled = false; clearTimeout(timer); clearTimeout(settling); settling = undefined
     timer = setTimeout(() => { primed = true; schedule(0) }, HEAD_MS)
   }
   waiting.set(a.key, a)
   schedule(SETTLE)
 }
-const SETTLE = 350   // the board fit animates ~250 ms from 60 ms after mount: rank the first pick on the settled view
+/** The board fit animates ~320 ms from 60 ms after mount: with no aim said, the first pick waits for it to land and
+ *  ranks on the settled view. */
+const SETTLE = 350
+
+/** The camera was just sent where it will rest - a fit (a board's first, ⇧1, a link's selection), a zoom, a camera
+ *  restored (Canvas.tsx). A pump waiting for the view to settle runs now: its ranks read where each frame will be once
+ *  the camera lands (canvasCtl.landing), so the first pick is the one SETTLE would have made, a flight earlier. */
+export function aimed(): void {
+  if (settling === undefined) return
+  clearTimeout(settling); settling = undefined; scheduled = false
+  schedule(0)
+}
 
 /** The frame is done booting (ready, error, gone, or its watchdog took over): free the slot, or
  *  leave the queue if it never started. */
@@ -58,7 +73,7 @@ function schedule(ms: number): void {
   if (scheduled) return
   scheduled = true
   const g = gen, run = () => { if (g === gen) pump() }
-  if (ms) setTimeout(run, ms); else queueMicrotask(run)
+  if (ms) settling = setTimeout(() => { settling = undefined; run() }, ms); else queueMicrotask(run)
 }
 
 function pump(): void {
@@ -74,4 +89,4 @@ function pump(): void {
 }
 
 /** For tests: nothing queued, nothing active. */
-export function resetAdmission(): void { waiting.clear(); active.clear(); primed = false; scheduled = false; gen++; clearTimeout(timer) }
+export function resetAdmission(): void { waiting.clear(); active.clear(); primed = false; scheduled = false; gen++; clearTimeout(timer); clearTimeout(settling); settling = undefined }

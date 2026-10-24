@@ -10,7 +10,15 @@ import { NOTE_GAP } from '../notes.ts'
 import { onMotion, startCameraBroadcast, setCameraScale } from './camera-broadcast.ts'
 import { attachCanvas, recorder } from '../recorder.ts'
 import { sleepingCount } from './sleep.ts'
-import { keepOverResume, resumed } from '../api.ts'
+import { aimed } from './admission.ts'
+import { keepOverResume, resumed, WS } from '../api.ts'
+import { APP_REOPEN } from '../marver-app.ts'
+import { TOP } from '../inset.ts'
+import { answerProbesWith } from '../app-perf.ts'
+import { pick, verify } from '../whiteout-probes.ts'
+
+// the white-out probes the Mac app's recorder asks for (app-perf.ts): the canvas's own, so a locked bundle has none
+answerProbesWith({ pick, verify })
 
 /**
  * The world. rzpp owns pan/zoom; nodes are absolutely positioned children of #sh-world.
@@ -34,6 +42,62 @@ import { keepOverResume, resumed } from '../api.ts'
  */
 const GAP = 32
 const BAR = 56
+
+/** The camera survives a reload (spec 28 A2.9): kept per canvas and board, `mv-camera:<workspace>:<board>`, a second
+ *  after it settles, and the next load of that board opens there - when its link names no selection, or when the Mac
+ *  app reloaded the tab after a crash (`marverApp.reopen`). A1's camera carried over a resume wins. Dev canvases only:
+ *  a published one has no workspace, and opens on the whole board as before. */
+type Camera = { x: number; y: number; scale: number }
+const cameraKey = (board: string) => `mv-camera:${WS}:${board}`
+function savedCamera(board: string): Camera | null {
+  if (!WS) return null
+  try {
+    const c = JSON.parse(localStorage.getItem(cameraKey(board)) ?? 'null')
+    return c && [c.x, c.y, c.scale].every((v) => typeof v === 'number' && Number.isFinite(v)) && c.scale >= 0.05 && c.scale <= 5 ? { x: c.x, y: c.y, scale: c.scale } : null
+  } catch { return null }
+}
+let keepTimer: ReturnType<typeof setTimeout> | undefined
+/** the camera write waiting for its second of quiet, if any */
+let keepPending: (() => void) | undefined
+/** Where the camera's flight lands (a fit, a zoom), for canvasCtl.landing: read only while rzpp animates. */
+let flight: Camera | null = null
+function keepCamera(x: number, y: number, scale: number) {
+  if (!WS) return
+  const board = useStore.getState().board
+  clearTimeout(keepTimer)
+  const write = () => {
+    keepPending = undefined
+    if (useStore.getState().board !== board) return   // switched meanwhile: this camera was the other board's
+    try { localStorage.setItem(cameraKey(board), JSON.stringify({ x: Math.round(x * 100) / 100, y: Math.round(y * 100) / 100, scale })) } catch { /* storage off: the next load fits */ }
+  }
+  keepPending = write
+  keepTimer = setTimeout(write, 1000)
+}
+/**
+ * The pending camera, written now (spec 28 A3.8 #43): the page is hidden or leaving, and the Mac app may unload a
+ * hidden tab, which ends its page with the second of quiet not yet over. A hide mid-flight writes where the flight
+ * was going: a hidden page's animation frames stop, so it would not land before the page went. Nothing pending,
+ * nothing written. In Chrome too - a tab switch, a closed tab.
+ */
+export function flushCamera(): void {
+  if (flight && canvasCtl.cameraBusy()) keepCamera(flight.x, flight.y, flight.scale)
+  if (!keepPending) return
+  clearTimeout(keepTimer)
+  keepPending()
+}
+let leaveWatched = false
+/**
+ * The hide and the leave write the pending camera: listened for from the canvas's first mount, so after the page
+ * recorder's own listeners (startRecorder runs before the first render) - its cut of a load still waiting comes first,
+ * as `hidden`. Registered at import, ahead of the recorder's, the camera's pagehide write let a navigation away cut
+ * that load as `error` instead (page-recorder-browser's "the page goes").
+ */
+function watchLeave(): void {
+  if (leaveWatched || typeof document === 'undefined') return
+  leaveWatched = true
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushCamera() })
+  addEventListener('pagehide', flushCamera)
+}
 function insets(el: HTMLElement) {
   const c = el.getBoundingClientRect()
   const rect = (q: string) => document.querySelector(q)?.getBoundingClientRect()
@@ -47,7 +111,8 @@ function insets(el: HTMLElement) {
   return {
     left: (leftEdge ? Math.max(0, leftEdge - c.left) : 0) + GAP,
     right: GAP + 16,
-    top: (pill ? Math.max(0, pill.bottom - c.top) : 0) + 12 + BAR,
+    // the toolbar's foot, or the Mac app's strip when the toolbar is hidden (Hide UI) - the strip is always there
+    top: Math.max(pill ? pill.bottom - c.top : 0, TOP) + 12 + BAR,
     bottom: (lane ? Math.max(0, c.bottom - lane.top) : 0) + GAP + 16,
   }
 }
@@ -61,23 +126,22 @@ function insets(el: HTMLElement) {
  */
 const GRID = 20
 function paintGrid(positionX: number, positionY: number, scale: number) {
-  const el = document.querySelector('.sh-canvas') as HTMLElement | null
-  if (!el) return
+  // on .sh-app, which the canvas's ::before and the scroll edge (A3.8 #31) both inherit them from - the same element the
+  // camera's own variables go on every frame, so the style work per frame does not grow
+  const app = document.querySelector('.sh-app') as HTMLElement | null
+  if (!app) return
   let step = GRID * scale
   while (step < 14) step *= 2
   while (step >= 28) step /= 2
   const t = (step - 14) / 14
-  el.style.setProperty('--grid-size', `${step}px ${step}px`)
-  el.style.setProperty('--grid-pos', `${positionX % step}px ${positionY % step}px`)
-  el.style.setProperty('--grid-alpha', (0.35 + 0.65 * Math.min(1, t)).toFixed(3))
+  app.style.setProperty('--grid-size', `${step}px ${step}px`)
+  app.style.setProperty('--grid-pos', `${positionX % step}px ${positionY % step}px`)
+  app.style.setProperty('--grid-alpha', (0.35 + 0.65 * Math.min(1, t)).toFixed(3))
   // screen-space overlays (selection bar) position themselves from these - no re-render per frame
-  const app = document.querySelector('.sh-app') as HTMLElement | null
-  if (app) {
-    app.style.setProperty('--sh-s', String(scale))
-    app.style.setProperty('--sh-inv', String(1 / scale))   // world-units-per-screen-px, for zoom-invariant strokes
-    app.style.setProperty('--sh-tx', `${positionX}px`)
-    app.style.setProperty('--sh-ty', `${positionY}px`)
-  }
+  app.style.setProperty('--sh-s', String(scale))
+  app.style.setProperty('--sh-inv', String(1 / scale))   // world-units-per-screen-px, for zoom-invariant strokes
+  app.style.setProperty('--sh-tx', `${positionX}px`)
+  app.style.setProperty('--sh-ty', `${positionY}px`)
 }
 
 /**
@@ -145,10 +209,19 @@ export function Canvas() {
   const gesture = useStore((s) => s.gesture)
   const setScale = useStore((s) => s.setScale)
   const ref = useRef<ReactZoomPanPinchContentRef>(null)
+  // every camera move the canvas aims (a fit, a zoom, a camera restored): where it lands, while rzpp flies there, and the
+  // boot queue told - the first frame of a board starts now, ranked on that view, not once the flight is over
+  const fly = (x: number, y: number, scale: number, ms: number) => {
+    flight = ms ? { x, y, scale } : null
+    ref.current?.setTransform(x, y, scale, ms, 'easeOut')
+    aimed()
+  }
   const scaleTimer = useRef(0)
 
   // B0.4: frame-time sampler + image-LOD camera signal; the recorder hears when the camera stops and what sleeps (spec 28 A1.7)
   useEffect(() => { startPerf(); startCameraBroadcast(); return attachCanvas({ onMotion, sleeping: sleepingCount }) }, [])
+  // the pending camera written as the page hides or leaves (A3.8 #43), after the recorder's own listeners
+  useEffect(() => { watchLeave() }, [])
 
   useEffect(() => {
     const wrap = () => document.querySelector('.sh-canvas') as HTMLElement | null
@@ -167,14 +240,15 @@ export function Canvas() {
       let px = p.left + (aw - w * scale) / 2
       let py = p.top + (ah - h * scale) / 2
       if (focus) {
-        // clamp order matters: left/top win when the band is tighter than the content
+        // clamp order matters: left/top win when the band is tighter than the content. The centre is the usable
+        // rectangle's: below the Mac app's strip when the shell took the inset (TOP 44)
         px = Math.max(Math.min((vw - w * scale) / 2, vw - p.right - w * scale), p.left)
-        py = Math.max(Math.min((vh - h * scale) / 2, vh - p.bottom - h * scale), p.top)
+        py = Math.max(Math.min(TOP + (vh - TOP - h * scale) / 2, vh - p.bottom - h * scale), p.top)
       }
       const tx = px - x * scale, ty = py - y * scale
       // where this fit lands, in world px: the first one after a board's commit shows its visible cohort (spec 28 A1.7)
       recorder.placed({ x: -tx / scale, y: -ty / scale, w: vw / scale, h: vh / scale })
-      ref.current.setTransform(tx, ty, scale, 320, 'easeOut')
+      fly(tx, ty, scale, 320)
     }
     const fitKeys = (keys: string[], focus: boolean) => {
       const st = useStore.getState()
@@ -212,11 +286,24 @@ export function Canvas() {
       const el = wrap(), inst = ref.current
       if (!el || !inst) return
       const { positionX, positionY, scale } = inst.instance.transformState
-      const cx = el.clientWidth / 2, cy = el.clientHeight / 2
-      const k = target / scale   // zoom about the viewport center
-      inst.setTransform(cx - (cx - positionX) * k, cy - (cy - positionY) * k, target, 250, 'easeOut')
+      const cx = el.clientWidth / 2, cy = TOP + (el.clientHeight - TOP) / 2
+      const k = target / scale   // zoom about the usable rectangle's centre (below the Mac app's strip with the inset)
+      fly(cx - (cx - positionX) * k, cy - (cy - positionY) * k, target, 250)
     }
     canvasCtl.cameraBusy = () => !!ref.current?.instance.animation
+    // the camera as the world is drawn now, mid-flight included: the white-out probes' bracket (spec 28 A3.8 #16)
+    canvasCtl.transform = () => {
+      const t = ref.current?.instance.transformState
+      return t ? { x: t.positionX, y: t.positionY, s: t.scale } : null
+    }
+    // a rect on screen now, where it will be when the flight lands: the same world point under the landing transform
+    canvasCtl.landing = (r: DOMRect) => {
+      const el = wrap(), inst = ref.current
+      if (!flight || !el || !inst?.instance.animation) return r
+      const { positionX, positionY, scale } = inst.instance.transformState
+      const c = el.getBoundingClientRect(), k = flight.scale / scale
+      return new DOMRect(c.left + flight.x + (r.left - c.left - positionX) * k, c.top + flight.y + (r.top - c.top - positionY) * k, r.width * k, r.height * k)
+    }
     // a page that reloads itself when its canvas comes back (spec 28 A1.11) opens where the person was looking
     const unkeep = keepOverResume(() => {
       const t = ref.current?.instance.transformState
@@ -253,7 +340,12 @@ export function Canvas() {
     let revealed = false
     booted.current = true
     // the page before this one reloaded itself when its canvas came back: its camera, on the board it showed
-    const cam = resumed?.camera && resumed.board === useStore.getState().board ? resumed.camera : null
+    const board = useStore.getState().board
+    const carried = resumed?.camera && resumed.board === board ? resumed.camera : null
+    // else the camera this board was left at (A2.9) - a link naming a selection fits it instead, unless the app
+    // reloaded this tab after a crash
+    const named = !!(bootHash.n?.length || bootHash.f?.length || bootHash.s?.length)
+    const cam = carried ?? (!named || APP_REOPEN ? savedCamera(board) : null)
     const fit = () => {
       const keys = linkTargets(bootHash, useStore.getState().nodes)
       if (keys.length) {
@@ -264,7 +356,7 @@ export function Canvas() {
       const el = document.querySelector('.sh-canvas') as HTMLElement | null
       if (cam && el && ref.current) {
         recorder.placed({ x: -cam.x / cam.scale, y: -cam.y / cam.scale, w: el.clientWidth / cam.scale, h: el.clientHeight / cam.scale })
-        ref.current.setTransform(cam.x, cam.y, cam.scale, 0)
+        fly(cam.x, cam.y, cam.scale, 0)
       } else if (keys.length) {
         canvasCtl.fitNodes(keys)
       } else {
@@ -429,6 +521,7 @@ export function Canvas() {
       onTransformed={(r) => {
         paintGrid(r.state.positionX, r.state.positionY, r.state.scale)
         setCameraScale(r.state.scale)   // keep the LOD's settle-scale current (cheap number write, no React)
+        if (booted.current) keepCamera(r.state.positionX, r.state.positionY, r.state.scale)   // over a reload (A2.9)
         clearTimeout(scaleTimer.current)
         scaleTimer.current = window.setTimeout(() => setScale(r.state.scale), 120)
       }}

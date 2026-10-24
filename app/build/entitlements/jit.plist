@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The Renderer, GPU and Plugin helpers, and every other signed file: V8's JIT alone (spec 28 A2.14 #29).
+     @electron/osx-sign's defaults would add unsigned executable memory and no library validation to the Plugin
+     helper; no plugin runs. -->
+<plist version="1.0">
+  <dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+  </dict>
+</plist>

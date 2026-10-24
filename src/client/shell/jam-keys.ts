@@ -23,6 +23,7 @@ import { pressJ, startSession, wrapWrite } from './jam-session.tsx'
 import { clearMoreDraft } from './jam-panel.tsx'
 import { CONFIG, PUBLISHED, SOURCE_REVEALED, useStore } from './store.ts'
 import { holdsReload } from './api.ts'
+import { unsavedWhen, workChanged } from './unsaved.ts'
 
 export interface KeyIn { key: string; shift?: boolean; alt?: boolean; meta?: boolean; ctrl?: boolean }
 /** `[Ctrl+][Meta+][Alt+][Shift+]key`, a letter lowercase - the frames' descriptor (keys.js). */
@@ -59,12 +60,13 @@ export function saveEdit(c: JamCard, text: string) {
   const g = ++gen
   latest.set(c.id, g)
   unsaved.set(c.id, text)
+  workChanged()
   const before = saving.get(c.id) ?? Promise.resolve(true)
   // saves of one card run in order, each at the card's rev as the one before left it
   saving.set(c.id, before.then(() => {
     const fresh = useJamQueue.getState().cards?.find((x) => x.id === c.id) ?? c
     return useJamQueue.getState().act(fresh, 'edit', text)
-  }).then((ok) => { if (ok && latest.get(c.id) === g) unsaved.delete(c.id); return ok }))
+  }).then((ok) => { if (ok && latest.get(c.id) === g) { unsaved.delete(c.id); workChanged() } return ok }))
 }
 /** Notes added in a read-back not saved yet, per card: each with its own id - one on its way, or one that failed
  *  and waits to be sent again. Sent again (from the field, or before a decision) it keeps its id: the server
@@ -74,6 +76,8 @@ const unsavedNotes = new Map<string, PendingNote[]>()
 // spec 28 A1.11: a page whose canvas came back reloads only once every edit and note of a read-back has saved -
 // one that failed while the canvas was away waits for the read-back's own retry (a decision saves it first)
 holdsReload(() => unsaved.size > 0 || unsavedNotes.size > 0)
+// and leaving the page asks first (spec 28 A2.9): a read-back's edit or note not saved yet is words not sent
+unsavedWhen('typing', () => unsaved.size > 0 || unsavedNotes.size > 0)
 const sendNote = (c: JamCard, n: PendingNote): Promise<boolean> => {
   n.failed = false
   const before = saving.get(c.id) ?? Promise.resolve(true)
@@ -82,7 +86,7 @@ const sendNote = (c: JamCard, n: PendingNote): Promise<boolean> => {
     return useJamQueue.getState().act(fresh, 'note', JSON.stringify({ id: n.id, text: n.text, order: n.order }))
   }).then((ok) => {
     const list = unsavedNotes.get(c.id) ?? []
-    if (ok) { const left = list.filter((x) => x !== n); if (left.length) unsavedNotes.set(c.id, left); else unsavedNotes.delete(c.id) } else n.failed = true
+    if (ok) { const left = list.filter((x) => x !== n); if (left.length) unsavedNotes.set(c.id, left); else unsavedNotes.delete(c.id); workChanged() } else n.failed = true
     return ok
   }, () => { n.failed = true; return false })
   saving.set(c.id, p.then(() => true))
@@ -95,6 +99,7 @@ export function addNote(c: JamCard, text: string, id: string): Promise<boolean> 
   const was = (unsavedNotes.get(c.id) ?? []).find((x) => x.id === id)
   const n: PendingNote = { id, text, failed: false, order: was?.order ?? Date.now() }
   unsavedNotes.set(c.id, [...(unsavedNotes.get(c.id) ?? []).filter((x) => x.id !== id), n])
+  workChanged()
   return sendNote(c, n)
 }
 /** Every note added to a draft saved (a failed one sent again, once): before it is sent, kept or resumed. */
@@ -119,7 +124,7 @@ export async function decideDraft(id: string, action: 'confirm' | 'keep' | 'drop
   }
   // a note added in its read-back goes with it: one that did not save is sent again, and nothing is sent without it
   if (action !== 'drop' && unsavedNotes.has(id) && !(await notesSaved(id))) { useStore.getState().toast('your note could not be added - try again before you send it'); return }
-  if (action === 'drop') { unsaved.delete(id); unsavedNotes.delete(id) }
+  if (action === 'drop') { unsaved.delete(id); unsavedNotes.delete(id); workChanged() }
   const fresh = useJamQueue.getState().cards?.find((c) => c.id === id)
   if (!fresh) return
   if (await useJamQueue.getState().act(fresh, action)) useJamUi.getState().close()

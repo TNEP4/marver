@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { cap, frameUrl, shownRev, useStore, CONFIG, type Node } from '../store.ts'
 import { admit, release } from './admission.ts'
+import { canvasCtl } from './ctl.ts'
 import { CopyIcon, IntentGlyph, ParallelogramFillIcon, ReloadIcon, SlideFrameIcon, XIcon } from '../icons.tsx'
 import { CommentLayer } from '../Comments.tsx'
 import { useComments } from '../comments-store.ts'
@@ -8,7 +9,7 @@ import { threadHostKey } from '../keys.ts'
 import { registerFrame, unregisterFrame } from './frame-registry.ts'
 import { canvasClick, canvasPointer, frameGone, frameLoaded, pressNow, useJamCapture } from '../jam-capture.ts'
 import { primeCameraFor } from './camera-broadcast.ts'
-import { sleep, wake } from './sleep.ts'
+import { scheduleSleep, sleep, wake } from './sleep.ts'
 import { canAutoReload, shouldArmReadyWatch } from './ready-watch.ts'
 import { Stickies, type NoteSpec } from './Sticky.tsx'
 import { recorder } from '../recorder.ts'
@@ -108,9 +109,12 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   useEffect(() => {
     if (!frame || node.missing) { admittedRef.current = false; setSrc(undefined); return }   // gone: the card replaces the iframe; a return is a new document, admitted anew
     if (admittedRef.current) return   // the document exists (the frame's id changed under it): no slot
-    const rank = () => {   // visible first, then by distance to the centre of the canvas (the panel offsets the window's)
-      const r = iframeRef.current?.getBoundingClientRect(), c = document.querySelector('.sh-canvas')?.getBoundingClientRect()
-      if (!r || !c) return Infinity
+    // visible first, then by distance to the centre of the canvas (the panel offsets the window's) - where the frame
+    // will be once the camera lands from a fit or zoom on its way (a board's first pick comes as the fit sets off)
+    const rank = () => {
+      const now = iframeRef.current?.getBoundingClientRect(), c = document.querySelector('.sh-canvas')?.getBoundingClientRect()
+      if (!now || !c) return Infinity
+      const r = canvasCtl.landing(now)
       const visible = r.right > c.left && r.left < c.right && r.bottom > c.top && r.top < c.bottom
       return (visible ? 0 : 1e7) + Math.hypot(r.x + r.width / 2 - c.x - c.width / 2, r.y + r.height / 2 - c.y - c.height / 2)
     }
@@ -215,8 +219,8 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     // one being installed
     if (interact || dirty.current || resizing.current || node.status !== 'ready' || node.stale || behind) return
     if (node.themeOn !== undefined && node.themeOn !== node.theme) return   // the frame has not painted the new theme yet
-    const t = setTimeout(() => { void sleep(node.key, iframe, { frame: frame.id, theme: node.theme, w, h, doc: node.shown }) }, 250)
-    return () => clearTimeout(t)
+    // counted while it waits (sleep.ts bakeWork): a headless perf run measures only once no sleep is still to come
+    return scheduleSleep(() => { void sleep(node.key, iframe, { frame: frame.id, theme: node.theme, w, h, doc: node.shown }) }, 250)
   }, [interact, node.status, node.theme, node.themeOn, node.rev, node.nav, node.stale, behind, w, h, node.missing, frame?.id, node.key, resizeTick])
   useEffect(() => () => wake(node.key, iframeRef.current), [node.key])
 

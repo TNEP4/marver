@@ -5,6 +5,7 @@ import { clearNoteHeights, noteHeight, noteReserve, notesCramped, scopeNotes, se
 import { stableNodeKey } from './keys.ts'
 import { canvasCtl } from './canvas/ctl.ts'
 import { api, beforeResume, canvasStopped, holdsReload, lostInResume, mvFetch, noteUnsaved, onLinkNotice, savedInResume, scoped, STOPPED_WAY, withWs } from './api.ts'
+import { unsavedWhen, workChanged } from './unsaved.ts'
 // @ts-expect-error virtual module provided by the plugin
 import shConfig from 'virtual:sh-config'
 // @ts-expect-error virtual module: null in dev; a published build inlines manifest+boards
@@ -127,7 +128,7 @@ export interface JamNote {
 }
 export interface Toast { id: number; text: string; jam?: JamNote }
 
-export const CONFIG: { viewports: Record<string, { width: number; height: number }>; themes: string[]; zoomSpeed?: number; noTheme: boolean; setup?: boolean; projectName?: string; branding?: boolean; jam?: { chime: boolean; capture: 'confirm' | 'at-once'; names?: boolean } | null; workspace?: string } = shConfig
+export const CONFIG: { viewports: Record<string, { width: number; height: number }>; themes: string[]; zoomSpeed?: number; noTheme: boolean; setup?: boolean; projectName?: string; branding?: boolean; jam?: { chime: boolean; capture: 'confirm' | 'at-once'; names?: boolean } | null; workspace?: string; version?: string } = shConfig
 
 /** Invariant: `branding: false` strips every Marver mention - new chrome included. */
 export const BRANDING = CONFIG.branding !== false
@@ -391,22 +392,31 @@ const measures = (frameId: string) => { const m = preparing ? preparing.measurin
 
 // settled heights that differ from the committed ones, written back in batches (dev only). One
 // write in flight at a time; a height that changes while its write is in flight queues behind it,
-// so the LAST settled height is the one the file ends with
+// so the LAST settled height is the one the file ends with. A write the server did not take (no
+// answer, or an error status) goes back in the queue - behind any newer height for the same key,
+// which wins - so the heights stay unsaved until they reach the file, and is sent again after a
+// wait that doubles with each failure in a row (1.5 s to 24 s)
 const pendingHeights = new Map<string, number>()
 const inflightHeights = new Map<string, number>()
 let heightsTimer: ReturnType<typeof setTimeout> | undefined
-let flushing = false
+/** The write in flight, until it has answered and its heights are saved or queued again (the resume awaits it). */
+let flushing: Promise<void> | null = null
+let heightsFailed = 0
+const HEIGHTS_MS = 1500
 const persistHeight = (key: string, h: number) => {
   if (DATA) return
-  if (!inflightHeights.has(key) && savedHeights.get(key) === h) { pendingHeights.delete(key); return }
+  if (!inflightHeights.has(key) && savedHeights.get(key) === h) { if (pendingHeights.delete(key)) workChanged(); return }
+  if (!pendingHeights.size) workChanged()   // heights not written yet: unsaved (unsaved.ts)
   pendingHeights.set(key, h)
-  if (!flushing) heightsTimer ??= setTimeout(flushHeights, 1500)   // a throttle, not a debounce: a board settling in waves still writes
+  if (!flushing) heightsTimer ??= setTimeout(flushHeights, HEIGHTS_MS)   // a throttle, not a debounce: a board settling in waves still writes
 }
-async function flushHeights() {
+async function flushHeights(): Promise<void> {
   heightsTimer = undefined
-  if (flushing || !pendingHeights.size) return
+  if (flushing) return flushing
+  if (!pendingHeights.size) return
   if (canvasStopped()) return   // held until the canvas answers again (A1.11): the resume flushes them
-  flushing = true
+  let done = () => {}
+  flushing = new Promise<void>((r) => { done = r })
   const batch = Object.fromEntries([...pendingHeights].slice(0, 500))
   for (const [k, v] of Object.entries(batch)) { pendingHeights.delete(k); inflightHeights.set(k, v) }
   let answered = false
@@ -419,13 +429,26 @@ async function flushHeights() {
     }
   } catch { /* lost: below */ }
   // no answer = the write may or may not have landed: what the file holds is unknown, so nothing is
-  // deduplicated against it - a correction queued meanwhile still goes, the next report still writes
-  if (!answered) for (const k of Object.keys(batch)) savedHeights.delete(k)
+  // deduplicated against it - a correction queued meanwhile still goes, the next report still writes.
+  // Each of its heights is owed again, unless a newer one for that key is already queued
+  if (!answered) for (const [k, v] of Object.entries(batch)) { savedHeights.delete(k); if (!pendingHeights.has(k)) pendingHeights.set(k, v) }
   for (const k of Object.keys(batch)) inflightHeights.delete(k)
   // a height that settled while the write was in flight: still owed only if it differs from what landed
   for (const [k, v] of pendingHeights) if (savedHeights.get(k) === v) pendingHeights.delete(k)
-  flushing = false
-  if (pendingHeights.size) heightsTimer ??= setTimeout(flushHeights, 1500)
+  heightsFailed = answered ? 0 : Math.min(heightsFailed + 1, 5)
+  flushing = null
+  workChanged()
+  if (pendingHeights.size) heightsTimer ??= setTimeout(flushHeights, HEIGHTS_MS * 2 ** Math.max(0, heightsFailed - 1))
+  done()
+}
+/** Every height this page measured is in the file: none queued, none in flight. */
+const heightsSaved = () => !pendingHeights.size && !inflightHeights.size
+/** The resume's turn (A1.11): the write in flight answers first, then what is queued goes now - unless it is waiting
+ *  out a failure's backoff, which its own timer sends. True once every height is in the file. */
+async function settleHeights(): Promise<boolean> {
+  await flushing
+  if (pendingHeights.size && !(heightsFailed && heightsTimer)) { clearTimeout(heightsTimer); await flushHeights() }
+  return heightsSaved()
 }
 
 const hasKnownHeight = (frameId: string, w: number) => measures(frameId) && (measuredHeights.has(`${frameId}@${w}`) || savedNow().has(`${frameId}@${w}`))
@@ -2120,7 +2143,7 @@ export const useStore = create<State>((set, get) => {
               // renamed/deleted externally - drop the write, don't recreate it or loop
               set({ dirty: false })
               get().toast(BOARD_GONE)
-              lostInResume('gone')   // a resume's save: the page after its reload says this, not "saved"
+              lostInResume('gone')   // a save while a resume is owed: the page after its reload says this, not "saved"
               return true
             }
             const reloaded = await get().boot()   // hash advances only when the authoritative reload commits
@@ -2131,7 +2154,7 @@ export const useStore = create<State>((set, get) => {
             const { sha256 } = await res.json()
             // an edit that landed after this save started keeps dirty set for the next save
             set({ boardHash: sha256, ...(editRev === rev ? { dirty: false } : {}) })
-            savedInResume()   // a resume's save: the page after its reload says the edits were saved
+            savedInResume()   // a save while a resume is owed (the resume's, or this autosave): the page after its reload says the edits were saved
             return true
           }
           return false
@@ -2157,11 +2180,14 @@ beforeResume(async () => {
   const s = () => useStore.getState()
   if (s().gesture) return false
   for (let i = 0; i < 5 && s().dirty; i++) if (!(await s().save())) break
-  await flushHeights()
-  return !s().dirty && !s().gesture
+  // heights a write did not land (a 500, no answer) hold the reload too: queued again, they go on their timer while
+  // the page works as live, and it reloads the second after they reach the file
+  const heights = await settleHeights()
+  return heights && !s().dirty && !s().gesture
 })
-// and an edit made, or a drag begun, while that save was on its way holds the reload as well
-holdsReload(() => { const s = useStore.getState(); return s.dirty || !!s.gesture })
+// and an edit made, a drag begun, or a height measured or sent back to the queue while that save was on its way holds
+// the reload as well
+holdsReload(() => { const s = useStore.getState(); return s.dirty || !!s.gesture || !heightsSaved() })
 // while stopped, the banner says "your unsaved edits are kept" from the edit that makes some
 useStore.subscribe((s, p) => { if ((s.dirty !== p.dirty || s.gesture !== p.gesture) && canvasStopped()) noteUnsaved() })
 onLinkNotice((text) => useStore.getState().toast(text))
@@ -2172,12 +2198,14 @@ export function stoppedFor(what: string): boolean {
   useStore.getState().toast(`${what} - ${STOPPED_WAY}`)
   return true
 }
-// a stopped page holds edits only it has: leaving it (a reload by hand, a close) asks first
-if (typeof window !== 'undefined') window.addEventListener('beforeunload', (e) => {
-  if (!canvasStopped() || !useStore.getState().dirty) return
-  e.preventDefault()
-  e.returnValue = ''
-})
+// spec 28 A2.9: leaving a page that holds a board edit not on disk yet - dirty, a save in flight or one that failed -
+// or heights not written yet asks first (unsaved.ts's one beforeunload), live or stopped; the Mac app hears it too.
+// A drag is not work until it drops. A published canvas keeps its pins and sizes in the session: nothing to lose
+if (!PUBLISHED) {
+  unsavedWhen('board-unsaved', () => useStore.getState().dirty)
+  unsavedWhen('heights', () => !heightsSaved())
+  useStore.subscribe((s, p) => { if (s.dirty !== p.dirty) workChanged() })
+}
 
 // dev-only inspection hook for tests/debugging (never installed in published builds)
 if (import.meta.env.DEV) (window as unknown as { __mvStore: unknown }).__mvStore = useStore

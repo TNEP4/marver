@@ -13,6 +13,7 @@
  * starts nothing - it is ended (E) or dropped (Esc) first. Each message lands in the capture whose
  * id it carries.
  */
+import { onScreen, usable } from './inset.ts'
 import { create } from 'zustand'
 import { slideSize } from '../const.ts'
 import { CONFIG, SLIDE_INTRINSIC, stoppedFor, useStore, type Node } from './store.ts'
@@ -22,6 +23,7 @@ import { forgetHeard, RATE, setWordsListener, voiceBegin, voiceDrop, voiceEnd } 
 import { touchedFrames } from '../../shared/capture-frames.ts'
 import { onStageSize, stageSize } from './stage-size.ts'
 import { api, holdsReload } from './api.ts'
+import { unsavedWhen, workChanged } from './unsaved.ts'
 import { bytesOf } from './recorder-core.ts'
 
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
@@ -175,7 +177,7 @@ function sizeNow(f: string, key?: string): { w: number; h: number; play?: true }
     const entry = st.manifest?.frames.find((x) => x.id === f)
     const slide = (entry && slideSize(entry, CONFIG.viewports)) ?? (st.play.slides ? SLIDE_INTRINSIC : null)
     if (slide) return { w: Math.round(slide.width), h: Math.round(slide.height), play: true }
-    if (st.play.device === 'fill') return { w: window.innerWidth, h: window.innerHeight, play: true }
+    if (st.play.device === 'fill') { const u = usable(); return { w: u.width, h: u.height, play: true } }
     const v = CONFIG.viewports[st.play.device]
     return v ? { w: Math.round(v.width), h: Math.round(v.height), play: true } : undefined
   }
@@ -243,13 +245,13 @@ const viewNow = (focus = false): View => {
  *  nothing that covers it (the panel and the lane leave their own room). */
 export function visibleNodes(): Node[] {
   const s = useStore.getState()
-  const W = window.innerWidth, H = window.innerHeight
   const out: Node[] = []
   for (const n of s.nodes) {
     if (n.missing) continue
     const el = document.querySelector(`.sh-node[data-node="${CSS.escape(n.key)}"]`)
     const r = el?.getBoundingClientRect()
-    if (r && r.right > 0 && r.bottom > 0 && r.left < W && r.top < H) out.push(n)
+    // on screen below the scroll edge (inset.ts): a frame under the Mac app's strip is not in view
+    if (r && onScreen(r)) out.push(n)
   }
   return out.slice(0, 20)
 }
@@ -854,20 +856,16 @@ async function upload(record: CaptureRecord, leaving = false): Promise<void> {
 }
 
 /** A capture still recording, or finishing (its pictures and last words coming in), lives only in this page until it
- *  seals; a sealed one is kept in localStorage until it lands. Leaving the page asks first - and if you leave anyway
- *  (`pagehide`: a close, a reload, a navigation, the back-forward cache alike), every capture not sealed yet is sealed
- *  at once, as it stood, for good: a missing step says so, the server keeps it as a draft, and it goes out like any
- *  sealed record not sent yet - from the next page, or this one if it comes back. Carrying on is Resume, with a new id.
- *  Best effort: a crash or a killed process fires nothing. */
+ *  seals; a sealed one is kept in localStorage until it lands. Leaving the page asks first - unsaved.ts's one
+ *  `beforeunload`, which hears this module's two reasons below - and if you leave anyway (`pagehide`: a close, a
+ *  reload, a navigation, the back-forward cache alike), every capture not sealed yet is sealed at once, as it stood,
+ *  for good: a missing step says so, the server keeps it as a draft, and it goes out like any sealed record not sent
+ *  yet - from the next page, or this one if it comes back. Carrying on is Resume, with a new id. Best effort: a crash
+ *  or a killed process fires nothing. */
 let guarded = false
 function guardUnload() {
   if (guarded || typeof window === 'undefined') return
   guarded = true
-  window.addEventListener('beforeunload', (e) => {
-    if (!Object.keys(useJamCapture.getState().caps).length) return
-    e.preventDefault()
-    e.returnValue = ''
-  })
   window.addEventListener('pagehide', () => sealOnLeave())
   // back from the back-forward cache: what was kept goes out now (never amended, never dropped)
   window.addEventListener('pageshow', (e) => { if (e.persisted) for (const r of pendingUploads.values()) void upload(r) })
@@ -916,6 +914,10 @@ export function resendSealed() {
 // the canvas answered again after it stopped (spec 28 A1.11): the page reloads only when no capture is
 // recording or finishing - a sealed one waits in localStorage and goes out from the next page
 holdsReload(() => capturesPending())
+// leaving the page with a capture open, or one sealed and not taken by the server yet - a memory-only one too, its
+// localStorage copy failed - asks first (spec 28 A2.9); the Mac app hears the same two reasons
+unsavedWhen('capture-recording', () => Object.keys(useJamCapture.getState().caps).length > 0)
+unsavedWhen('capture-unsent', () => useJamCapture.getState().unsent.length > 0)
 
 /** Resume's work, while the caller holds `settling`: load the record, let the caller settle, start. */
 async function resumeNow(draft: string, ready?: () => Promise<boolean>): Promise<boolean> {
@@ -1002,6 +1004,9 @@ export const useJamCapture = create<CaptureState>((set, get) => ({
   },
 }))
 
+// a capture opened, sealed or taken by the server: what this page holds changed (unsaved.ts)
+useJamCapture.subscribe((s, p) => { if (Object.keys(s.caps).length !== Object.keys(p.caps).length || s.unsent.length !== p.unsent.length) workChanged() })
+
 /** What the capture tile shows: the timer and the counts. */
 export function captureCounts(c: Cap | undefined, t = now()): { time: string; counts: string; notes: number } {
   if (!c) return { time: '0:00', counts: '', notes: 0 }
@@ -1016,4 +1021,4 @@ export function captureCounts(c: Cap | undefined, t = now()): { time: string; co
   }
 }
 
-if (typeof window !== 'undefined' && (import.meta as any).env?.DEV) { (window as any).__mvJamCapture = useJamCapture; (window as any).__mvJamInstances = instances }
+if (typeof window !== 'undefined' && (import.meta as any).env?.DEV) { (window as any).__mvJamCapture = useJamCapture; (window as any).__mvJamInstances = instances; (window as any).__mvJamVisible = visibleNodes }

@@ -2,6 +2,114 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## 0.27.2 - unreleased
+
+The canvas's side of the Mac app 0.2: its one ground, its recorder and its unloading.
+
+### Added
+
+- **A canvas can run under the Mac app's tabs.** In the app (0.2 and later), when the app places a canvas at the
+  window's full height under its transparent strip, the canvas keeps everything you read or click below the strip:
+  the sidebar, the toolbar and their buttons, the Jam panel and sheet, play's pills and the stopped banner sit 44 px
+  lower; the selection bar, tooltips and right-click menus never go above 52 px; a fit, Hide UI included, and a
+  frame's focus leave the strip's room; play fits its stage below it. A band of the canvas's own ground and dots runs
+  under the strip and fades out 16 px below it, so a frame panned up fades out under the tabs while the dots run on,
+  and a frame under the band counts as out of view (it is not marked seen, and Jam does not name it). The canvas
+  answers the app's requests to show its latest state, so the app uncovers it only once it has drawn at its size.
+  Its slot file lists `inset` beside `bridge`. Everywhere else - Chrome, a published canvas, `marver shot`, app 0.1 -
+  nothing moves.
+- **`npx marver perf run <board>`: a board measured the same way every time.** In the canvas's own headless Chrome
+  (`marver dev` running; no app, no window): one warm-up load, then a measured load, a fit and three gestures -
+  zoom in, zoom out, a pan that turns back - and one line in `design/.local/perf/runs.jsonl`: load to settled, the
+  frame intervals (p50, p95, frames over 33 ms), the heap's peak, and whether the run is valid, with the first
+  reason it is not. The run is read-only: its page refuses every write before it is sent and the dev server refuses
+  and counts any that gets through; only its own load records and the sleep bakes go out, a run's compiles its own.
+  `--slow` throttles the CPU 4x, `--repeat <n>` runs it up to 5 times. `npx marver perf --runs` compares runs inside
+  a cohort (board, Chrome, machine, power, `--slow`, warm or cold bakes) - the latest against the last with the same
+  inputs and the last with other inputs; `--against <run>` against one you name. See
+  [docs/performance.md](docs/performance.md#headless-runs).
+- **`npx marver perf --crashes`, `--flashes` and `--machine` read the Mac app's records** (app 0.2), joined to this
+  repo's board loads by page: each canvas crash with its board, whether its load had settled and the last gesture
+  before it; each flash you marked with ⌃⌥F, with the gesture it fell in, the GPU process's events around it, the
+  pressure and the picture; the white-out candidates apart; the machine profiles by host. `--days <n>` (14) for all
+  four readers.
+- **In the Mac app (0.2), the canvas tells the app's recorder its gestures, its frame count and the white-out
+  probes' points**, so the app's records land on the board load and the gesture they happened in. Nowhere else does
+  anything of it run.
+
+### Changed
+
+- **The view you left is written the moment the page hides or leaves.** A canvas kept its camera a second after the
+  view settled; a tab switched away from, closed or ended within that second lost the last move. Now the waiting
+  camera is written at once when the page is hidden or unloads, and a page hidden while the view is still flying (a
+  fit, a zoom) keeps where it was going. In Chrome too.
+
+## 0.27.1 - unreleased
+
+The canvas's side of the Mac app (app 0.1), and what it brings to every browser.
+
+### Changed
+
+- **Leaving a canvas that holds unsaved work asks first, in every browser.** Chrome asked only while a Jam capture was
+  being recorded, or on a stopped tab with board edits. Now a reload or a close asks whenever the page holds anything
+  the canvas does not have yet: a capture recording or finishing, a capture sealed and not taken by the canvas yet
+  (also one kept only in memory), a board edit not saved yet - a save on its way or one that failed - heights not
+  written yet (a write the canvas failed is sent again, later each time), and words typed and not sent (a comment, a
+  Jam edit or note). A drag is not work until it drops. The
+  page's own reload when its canvas comes back still goes without asking: it saves first. Chrome shows its question
+  only on a page you have clicked or typed in since it loaded. A published canvas is unchanged.
+- **A canvas opens where you left it.** A board you reload opens on the view you had (kept per project and board, a
+  second after the view settles), unless the link names a selection - then it fits that, as before. A published canvas
+  still opens on the whole board.
+- **The logo ladder reads `public/favicon.png` and `public/favicon.ico` too, and a logo must be one.** After
+  `share.logo`, `design/logo.svg|png`, `public/logo.svg|png` and `public/favicon.svg`, `marver build` now tries
+  `public/favicon.png` and `public/favicon.ico`. A candidate counts only as a regular file inside the repo (a symlink
+  never counts, even one inside it), of at most 256 KB, whose bytes are an SVG, a PNG or an ICO - its type comes from
+  its bytes, so a PNG named `.svg` is published as `logo.png`. A `share.logo` that fails is ignored with one line
+  saying why; 0.27.0 followed a symlink and copied `share.logo` from anywhere. A gated `marver serve` shows a
+  `logo.ico` before sign-in, as it does a `.svg` or `.png`.
+- **Reduce Transparency and Increase Contrast make the glass opaque.** With either set in macOS, the sidebar, the
+  toolbar and every glass surface take a solid fill and a plain border; with Increase Contrast the dimmer text takes the
+  full ink. Chrome reads the same settings.
+- **`npx marver perf --loads` names each board as the sidebar does, and its two clocks apart.** A load is headed by
+  its board's title ("v1 lo-fi - Mac and iPhone", not "Journey"; `--json` keeps the board's name). A settled load
+  says `still from` its last move - or the mount, when nothing moved - where it said `quiet 0.0 s · last move 1.3 s`,
+  which read as a contradiction (`quietMs` stays in `--json`). `slowest` is now `slowest to settle`: a frame's time
+  to its last height, which can come after `all ready`, each frame's first render. [Performance](docs/performance.md)
+  says what settled means: every frame done, and the board still for one second after its last change.
+- **A board's first frame starts about 0.3 s sooner when the board opens.** It waited 0.35 s after the board
+  mounted, for the camera's first fit to land, so that it would be the frame nearest the centre of the view you
+  see. It now starts as the fit sets off, chosen on where the fit will land - the same frame. On a real project's
+  boards, the first frame started at 0.04-0.11 s instead of 0.37-0.43 s, the frames were ready 0.1-0.4 s sooner
+  (a 30-frame board: 1.3 s to 1.0 s), and the board that settled last settled 0.2-0.3 s sooner; nothing moved more
+  ([Performance](docs/performance.md#making-a-board-faster) has the numbers). The zoom of that first fit draws a
+  frame or two fewer while the frame boots.
+- **`marver ls` and the registry name a canvas as the canvas does.** A canvas's line in `~/.marver/running/` carries
+  `share.name` when you set one ("TMS broker", not "tms-broker"), else the folder name.
+
+### Added
+
+- **The Mac app's bridge.** In the Mac app, a canvas page tells the app what it holds - so closing its tab, quitting or
+  reloading asks first or waits instead of losing it - its theme (the app's tabs follow it), and its View and Jam menu
+  items with their keys, which the app shows in its menu bar. When its tab is shown again, it reads its marks, its
+  agents' work, the Jam queue and its board again; when the app stops trusting it, it lets go of the microphone at
+  once - one still opening too. In a browser, nothing of this runs. Each canvas's registry file lists `bridge` among its features.
+- **`GET /__mv/logo`** on `marver dev`: the canvas's logo, from the same ladder and checks as `marver build`, with an
+  `ETag`. A request carrying `x-mv-nonce` gets `x-mv-instance` and `x-mv-proof` over that logo (`logo|<nonce>|<port>`),
+  so the Mac app shows a logo only from the canvas it verified.
+
+### Fixed
+
+- **"Back - your edits were saved" every time.** A tab that held an edit when its canvas stopped saved it when the
+  canvas came back and reloaded, but said so only when the save it made on the way back carried the edit. Often the
+  ordinary autosave had already saved it - a frame still in your hand when the canvas answered, then dropped - and
+  the reloaded page said nothing, though the edit was on disk. Now every board save between the stop and the tab's
+  reload counts, and a lost one too: the reloaded page then says the file won, or that the board is gone.
+- **A tab whose canvas came back reloads only once its heights are saved.** It saved its board edit first, but went
+  whether or not the frame heights it had measured were in `_sizes.json`: a heights write the canvas failed on the way
+  back went back in the queue, and the reload dropped it. Now the tab reloads once every height has reached the file;
+  until then it works as live and sends them again, as it does while a capture records or words wait to be sent.
+
 ## 0.27.0 - 2026-10-23
 
 ### Highlights

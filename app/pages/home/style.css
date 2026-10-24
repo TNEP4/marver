@@ -1,0 +1,75 @@
+/* Home (spec 28 A2.7, A2.12; frames mac-app/04, 10, 11, 14): the app's own page, on the ground and its still dots,
+   in the shell's glass. */
+
+/* the window's full height under the transparent strip (A3.8 #32): the page never scrolls - its ground and still dots
+   fill the view, under the strip too - and its one scroll area starts 44 px down, so nothing to read or click, and
+   nothing scrolled, ever passes under the tabs */
+html, body { overflow: hidden }
+.home { position: fixed; inset: 44px 0 0 0; overflow: auto; padding: 30px 48px 26px; display: flex; flex-direction: column; gap: 16px }
+.top { display: flex; align-items: flex-start; gap: 16px; flex-wrap: wrap }
+.h1 { flex: 1; min-width: 200px; padding-top: 6px; font: 600 20px/1.2 -apple-system, system-ui, sans-serif; letter-spacing: -.01em }
+.h2 { font: 600 11px/1 -apple-system, system-ui, sans-serif; letter-spacing: .02em; color: var(--glass-ink-3); text-transform: uppercase; margin-top: 10px }
+
+/* the link field (⌘L) and the line under it */
+.link { width: min(440px, 100%); display: grid; gap: 6px }
+.field { height: 34px; border-radius: 9px; display: flex; align-items: center; gap: 8px; padding: 0 12px; color: var(--glass-ink-3);
+  background: var(--node-bg); box-shadow: inset 0 0 0 .5px var(--glass-brd), 0 1px 2px rgba(0, 0, 0, .04) }
+.field:focus-within { color: var(--glass-ink); box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-ring) }
+.field-ic { display: grid; flex: none }
+.field input { flex: 1; min-width: 0; height: 100%; border: 0; outline: none; background: none; padding: 0;
+  font: 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--glass-ink); -webkit-user-select: text; user-select: text }
+.field input::placeholder { font: 13px/1 -apple-system, system-ui, sans-serif; color: var(--glass-ink-3) }
+.field input:focus-visible { box-shadow: none; outline: none }
+.field-key { flex: none; font: 500 11px/1 -apple-system, system-ui, sans-serif; color: var(--glass-ink-3) }
+.hint-row { min-height: 16px; display: flex; align-items: center; gap: 12px; padding: 0 2px }
+.hint-row .hint { display: inline-flex; align-items: center; gap: 4px; min-width: 0 }
+.hint-row .back { margin-left: auto; flex: none }
+.hint b { font-weight: 600; color: var(--glass-ink-2) }
+.hint kbd { font: 500 10.5px/1 -apple-system, system-ui, sans-serif; color: var(--glass-ink-3) }
+.hint .logo { display: inline-grid; vertical-align: -3px; margin: 0 2px }
+.hint.refused { color: var(--glass-warn) }
+
+.body { display: grid; gap: 16px; align-content: start }
+/* four across at the window's default size, as frames 04 and 10 draw them (a 1280 px window: about 278 px each); fewer,
+   never narrower than 210 px, in a narrower window */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(max(210px, calc((100% - 3 * 14px) / 4)), 1fr)); gap: 14px }
+
+/* a canvas's card: in the shell's glass */
+.card { position: relative; min-width: 0; border: 0; border-radius: 12px; padding: 14px; display: grid; gap: 6px; align-content: start;
+  text-align: left; background: var(--glass); backdrop-filter: var(--blur);
+  box-shadow: inset 0 0 0 .5px var(--glass-brd), 0 1px 3px rgba(0, 0, 0, .05); color: var(--glass-ink); font: inherit }
+button.card:hover { box-shadow: inset 0 0 0 .5px var(--glass-brd), 0 2px 8px rgba(0, 0, 0, .08) }
+.card-hd { display: flex; align-items: center; gap: 10px; font-weight: 600; margin-bottom: 4px; min-width: 0 }
+.card-hd span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.card small { color: var(--glass-ink-3); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.card .state { margin-top: 4px; font-size: 11.5px; color: var(--glass-ink-2); display: flex; align-items: center; gap: 6px }
+.card .state .spin { width: 10px; height: 10px; margin: 0 }
+.card .note { font-size: 11px; color: var(--glass-ink-3) }
+.card.stopped .card-hd span { color: var(--glass-ink-2) }
+.slot-warn { flex: none; display: grid; place-items: center; width: 30px; height: 30px; color: #d97706 }
+.card.stopped .cmd { margin-top: 6px; justify-self: start }
+.card.is-gone .state, .card.is-unreachable .state { color: var(--glass-ink-3) }
+
+/* nothing running: how to start one */
+.empty { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 12px 14px 12px 18px }
+.empty > span { flex: 1; min-width: 0 }
+.empty b { font-weight: 600 }
+.empty .soft { color: var(--glass-ink-2) }
+.welcome { grid-column: span 2; padding: 18px 20px; gap: 10px }
+.welcome .lead { font: 600 15px/1.3 -apple-system, system-ui, sans-serif }
+.welcome .soft { color: var(--glass-ink-2) }
+.welcome hr { height: 1px; border: 0; background: var(--glass-brd); margin: 4px 0; width: 100% }
+.welcome .cmd { justify-self: start }
+.ghost { background: none; backdrop-filter: none; box-shadow: none; border: 1.5px dashed color-mix(in srgb, var(--glass-ink) 16%, transparent) }
+
+.foot { margin-top: auto; padding-top: 18px; display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center }
+.foot .old { flex: 1; min-width: 260px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap }
+.foot .cmd { height: 24px; padding: 0 9px }
+.foot .files { display: flex; align-items: center; gap: 10px }
+.foot .unwritable { color: var(--glass-warn) }
+
+@media (max-width: 760px) { .home { padding: 24px 24px 20px } .welcome { grid-column: auto } }
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .card { backdrop-filter: none; box-shadow: inset 0 0 0 1px var(--node-brd) }
+  .ghost { box-shadow: none }
+}

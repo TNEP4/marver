@@ -18,3 +18,8 @@ spike/
 
 # research outputs (screenshots, traces) - never committed
 research/hifi/out/
+
+# the Mac app's packaged builds and their smoke runs (app/dist/ is covered by dist/ above)
+app/out/
+# the Mac app's staging folder: builds are packaged and signed here, then moved into app/out/ (spec 28 A2.8)
+app/.stage/

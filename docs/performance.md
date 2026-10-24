@@ -11,6 +11,7 @@ agent. A published canvas records nothing.
 | `design/.local/perf/reloads.jsonl` | each edit and the frames it reached; page-wide reloads, sent or dropped; each frame document that booted, and how long it took | `npx marver perf` |
 | `design/.local/perf/page.jsonl` | each board load, as the page saw it: every frame's outcome, every move and why, when the board settled; gestures; errors | `npx marver perf --loads` |
 | `design/.local/perf/jam.jsonl` | Jam's timings: numbers and fixed codes only, never your words | `npx marver perf --jam` |
+| `design/.local/perf/runs.jsonl` | each headless run of a board (`npx marver perf run <board>`): one line, its numbers and whether it is valid | `npx marver perf --runs` |
 
 `design/.local/` is gitignored, and `marver dev` never serves it. The perf folder is yours alone: mode 700,
 each file 600 from the moment it is made - and files an earlier version made are tightened when `marver dev`
@@ -35,11 +36,13 @@ read again because its file changed on disk (`disk-reload`) - the page follows i
 5. **Quiet.** The first second after it mounts with nothing moving, written as that second ends: it says
    when the move before it came (the mount itself, when nothing had moved yet). It is not when the board
    stopped moving - a frame that reports its height later moves it again. That is the **last move**, on
-   the record that ends the load, settled or cut.
+   the record that ends the load, settled or cut. `perf --loads` prints only the last move (`still from`);
+   `quiet` is in `--json`.
 6. **Settled.** Every frame at its outcome, no re-flow pending or held, no frame booting or waiting its
-   turn to, the camera still, and a second with no move - so a load never settles in under a second. It says
-   how many moves and why, when the last one came, when the visible frames and all the frames were ready,
-   and how heavy the board is: elements, frames awake and asleep, the heap (in Chrome).
+   turn to, the camera still, and the board still for one second after its last change - its last move, or
+   the mount when nothing moved - so a load never settles in under a second. It says how many moves and why,
+   when the last one came, when the visible frames and all the frames were ready, and how heavy the board
+   is: elements, frames awake and asleep, the heap (in Chrome).
 
 Or **cut**: another board (`switch`), the same board loaded again (`reload`), the page hidden (`hidden`),
 or 120 s without settling (`timeout`). A request that never mounted is cut too: a newer load
@@ -50,44 +53,56 @@ cut (`late`), the cut stays, and what the board does from then is late.
 
 ## Reading `perf --loads`
 
-A board of three content frames, opened twice. The first time no height was known; the second time the
-heights the first load settled at were in `design/boards/_sizes.json`:
+A board of three content frames, `checkout`, titled "Checkout flow", opened twice. The first time no height
+was known; the second time the heights the first load settled at were in `design/boards/_sizes.json`:
 
 ```
 $ npx marver perf --loads
 board loads, last 60 min - design/.local/perf/page.jsonl
 
-  3:41:36 PM  Checkout (boot)                          settled 2.1 s
+  3:41:36 PM  Checkout flow (boot)                     settled 1.8 s
     committed 0.0 s · 3 frames (3 content) · 3 measure, 0 opened at a known height
-    first frame started 0.36 s · visible ready 0.5 s (3 frames) · all ready 0.5 s · quiet 1.1 s · last move 1.1 s · settled 2.1 s
+    first frame started 0.05 s · visible ready 0.2 s (3 frames) · all ready 0.2 s · still from 0.8 s · settled 1.8 s
     5 moves, 1650 px: measure-height 3, reflow:measured 2
-    slowest: checkout/risks 0.7 s (waited 0.42 s, then 0.28 s), checkout/flows 0.6 s (waited 0.42 s, then 0.18 s), checkout/brief 0.6 s (waited 0.36 s, then 0.24 s)
+    slowest to settle: checkout/risks 0.4 s (waited 0.11 s, then 0.28 s), checkout/flows 0.3 s (waited 0.11 s, then 0.18 s), checkout/brief 0.3 s (waited 0.05 s, then 0.24 s)
 
-  3:42:03 PM  Checkout (boot)                          settled 1.0 s
+  3:42:03 PM  Checkout flow (boot)                     settled 1.0 s
     committed 0.0 s · 3 frames (3 content) · 3 measure, 3 opened at a known height
-    first frame started 0.36 s · visible ready 0.5 s (3 frames) · all ready 0.5 s · quiet 0.0 s · settled 1.0 s
+    first frame started 0.05 s · visible ready 0.2 s (3 frames) · all ready 0.2 s · still from 0.0 s · settled 1.0 s
     0 moves
-    slowest: checkout/risks 0.6 s (waited 0.42 s, then 0.18 s), checkout/flows 0.6 s (waited 0.42 s, then 0.18 s), checkout/brief 0.5 s (waited 0.36 s, then 0.14 s)
+    slowest to settle: checkout/risks 0.3 s (waited 0.11 s, then 0.18 s), checkout/flows 0.3 s (waited 0.11 s, then 0.18 s), checkout/brief 0.2 s (waited 0.05 s, then 0.14 s)
 ```
 
-The first load opened each frame at a guess: each reported its height (`measure-height`) and the frames
-below moved with the re-flow (`reflow:measured`) - five moves, the last at 1.1 s, settled at 2.1 s. The
-second opened at the known heights: nothing moved (so no last move), and it settled at 1.0 s, the
-one-second floor.
+Each load names its board as the sidebar does - its title, else its name - and `--json` by its name
+(`board`). The first load opened each frame at a guess: each reported its height (`measure-height`) and
+the frames below moved with the re-flow (`reflow:measured`) - five moves, the last at 0.8 s: still from
+0.8 s, settled at 1.8 s. The second opened at the known heights: nothing moved, so it was still from the
+mount, and it settled at 1.0 s, the one-second floor.
 
-Each slowest frame says how long it waited for its turn to start, then how long it took once started. The canvas
-starts a board's frames a few at a time: the first alone, once the first camera fit has settled - about 0.35 s after
-the board mounts, `first frame started` - then up to four at once, those in view first. Here every frame took a
-quarter of a second or less of its own; most of the time before them was the wait.
+**Ready and settled are two clocks.** A frame is *ready* at its first render: `visible ready` and `all
+ready` say when the last of the frames in view, and of all the frames, was. A content frame that measures
+its own height has *settled* at its last height, later; `slowest to settle` lists the frames that took
+longest to reach that (ready, for a frame that does not measure), so its times can come after `all ready`.
+The board has *settled* once every frame has, and it has been still for one second after its last change:
+`still from` says when that stillness began - its last move, or the mount when nothing moved - and
+`settled` comes a second after it at the soonest, later when a frame was still on its way.
 
-`quiet` and `last move` agree here. On a heavy board they part: one that held still for its first second
-and then moved again as late frames reported their heights says `quiet 1.8 s · last move 15.0 s`. `quiet`
-is the first still second; `last move` is when it stopped moving.
+Each frame in `slowest to settle` says how long it waited for its turn to start, then how long it took once
+started. The canvas starts a board's frames a few at a time: the first alone, as the board's first camera fit
+sets off - a frame after the board mounts, 0.06 s later on a switch: `first frame started` - chosen as the
+one nearest the centre of where the fit will land, then up to four at once, those in view first. Here every
+frame took a quarter of a second or less of its own, and none waited much more than a tenth of one.
+
+`--json` also has `quietMs`: when the first still second after the mount began. On a heavy board they part:
+one that held still for a second after a move at 1.8 s, then moved again as late frames reported their
+heights, has `quietMs` 1800 and says `still from 15.0 s`. The printed report leaves `quiet` out: the settle
+waits on the last move, not the first still second.
 
 A load that was cut has no ready times to give; it says how many of its frames were ready by the cut
 instead - `69 of 121 ready`, of the frames on the board then (those placed while it loaded included, those
-removed not) - and, after its slowest, how many never finished (`52 never finished`):
-`slowest` lists only frames that finished. A load can also say `never ready: ...`, `missing: ...`, its
+removed not) - when it last moved (`last move`: it never settled, so nothing was still from then), and,
+after its slowest, how many never finished (`52 never finished`): `slowest to settle` lists only frames
+that finished. A load can also say `never ready: ...`, `missing: ...`, its
 errors (`late error` for one after it ended, settled or cut), how many errors past the first 50 went
 unrecorded, and its gestures (how many, the worst p95, the frames over 33 ms). The last line says how many
 records never reached the log, when any did.
@@ -102,15 +117,41 @@ Read the load, name the lever, change it, compare the next load - you, or your a
   ([Sizes](boards-and-folders.md#sizes)), and the next load opens at those heights (`savedHeights`
   counts them) and the moves go, as above. Commit it with the rest of `design/`, and every clone and the
   published canvas open at them too.
-- **`slowest`** names the frames that held the load longest, of those that finished. Look at those first:
+- **`slowest to settle`** names the frames that held the load longest, of those that finished. Look at those first:
   what they load, how much they render - the time after `then` is the frame's own. A load cut before its frames
   finished counts the rest apart; cut at 120 s (`timeout`), the board is too heavy to finish - split it, or
   lighten what its frames load.
 - **A frame that waits long to start: the queue, not the frame.** `waited` (and `first frame started`) is the
   time before its turn came; nothing in the frame shortens it. On a board of many frames the last wait for those
-  before them: fewer frames on the board, or lighter ones that hand their turn on sooner. The first frame's wait,
-  about 0.35 s, is the canvas's own and the same on every board - a one-frame board that settles at 1.0 s has no
+  before them: fewer frames on the board, or lighter ones that hand their turn on sooner. The first frame's wait
+  is the canvas's own and about the same on every board - 0.03-0.08 s on a page's first load, 0.08-0.11 s on a
+  switch, the time until the camera's first fit sets off - and a one-frame board that settles at 1.0 s has no
   lever left in the project.
+- **The canvas's own lever, taken in 0.27.1.** Until 0.27.0 the first frame waited 0.35 s after the board
+  mounted, for the first camera fit to land (`SETTLE` in `canvas/admission.ts`): that wait exists so the first
+  frame - booting alone, the quickest first content - is the one nearest the centre of the view you will see,
+  not of a camera still on its way. It now starts as the fit sets off, ranked on where the fit will land
+  (`canvasCtl.landing`); with no fit said (a frame added, a calm update), it waits as before. Measured on a
+  real project's boards - four of them, each opened three times in a fresh tab (`boot`) and three times picked
+  from another board (`switch`), headless Chrome at 1440x900, `perf --loads --json`, medians in ms (every frame
+  was in view, so visible ready and all ready are the same):
+
+  | board, frames | load | first frame started | ready | settled | moves |
+  |---|---|---|---|---|---|
+  | v1 build, 4 content | boot | 392 → 39 | 672 → 251 | 1051 → 1025 | 0 → 0 |
+  | v1 lo-fi, 30 | boot | 425 → 83 | 1306 → 1039 | 1370 → 1087 | 0 → 0 |
+  | Meeting, 14 | boot | 409 → 64 | 769 → 504 | 1029 → 1027 | 0 → 0 |
+  | Capture, 13 | boot | 404 → 52 | 721 → 457 | 1028 → 1019 | 0 → 0 |
+  | v1 build | switch | 369 → 82 | 613 → 500 | 1005 → 1005 | 0 → 0 |
+  | v1 lo-fi | switch | 395 → 112 | 1187 → 912 | 1194 → 1007 | 0 → 0 |
+  | Meeting | switch | 388 → 103 | 752 → 472 | 1005 → 1005 | 0 → 0 |
+  | Capture | switch | 380 → 93 | 636 → 377 | 1005 → 1005 | 0 → 0 |
+
+  Every board's first frame was the same one before and after. What it costs: that frame boots during the
+  fit's 0.32 s zoom over blank cards, which draws a frame or two fewer - over the twelve switches, 221 frames
+  drawn instead of 241, 18 intervals over 17 ms instead of 3 (4 over 33 ms instead of 3, none over 50 ms).
+  The boards that settle at 1.0 s were already at the one-second floor; a board whose frames finish later
+  settles sooner.
 - **Never ready, missing, errors** are broken frames, not slow ones: fix them first. A missing frame's
   file was deleted or renamed.
 - **The weight** (`settled.weight`) says how heavy the settled board is: elements in the page and its
@@ -203,16 +244,17 @@ counts every change to the board; `perf --loads` counts move records, where a dr
 
 ## `--json`
 
-`npx marver perf --loads --json` prints `{ minutes, loads, unowned, dropped }`. Each load has `board`,
-`cause` and `state` - `settled`, `cut`, or `open` (still going, or its end past the window) - and, as it
+`npx marver perf --loads --json` prints `{ minutes, loads, unowned, dropped }`. Each load has `board` (the
+board's name; the printed report shows its title), `cause` and `state` - `settled`, `cut`, or `open` (still going, or its end past the window) - and, as it
 got there:
 
 - `cut`: `reason`, `ms`, and `request: true` when the cut came before it mounted;
 - the commit: `commitMs`, `frames`, `byKind`, `measuring`, `savedHeights` - and `mountedAfterCut: true` for a
   request cut first whose board arrived after all (`perf --loads` says `cut (hidden) at 0.4 s before it
   mounted · mounted 3.2 s`, and counts its moves as late);
-- `visible` (with `visibleAssumed`), `visibleReadyMs`, `allReadyMs`, `quietMs`, `lastMoveMs` (settled or cut),
-  `settledMs`;
+- `visible` (with `visibleAssumed`), `visibleReadyMs`, `allReadyMs` (each frame's first render), `quietMs` (when
+  the first still second began), `lastMoveMs` (settled or cut; `still from` in the printed report, which says the
+  mount when it is absent), `settledMs`;
 - `moves`: `count`, `distance`, the top five `causes` as `[cause, count]` pairs, and `late` (count and
   causes of the moves after the load ended, settled or cut);
 - `slowest`: the five slowest frames that finished (`node`, `frame`, `ms` - when it settled, or was ready -
@@ -242,17 +284,135 @@ otherwise its last records go with `keepalive`, 16 KB at most.
 The dev server takes them only from the canvas's own page, rebuilds each from the fields its kind allows -
 strings cut to 200 characters, 512 KB a request - and appends them to `page.jsonl`.
 
+## Headless runs
+
+`npx marver perf run <board>` measures a board the same way every time, in the canvas's own headless Chrome
+(`marver dev` must be running; no app, no window): your agent's way to tell whether a change made a board
+faster or slower. One line per run goes to `design/.local/perf/runs.jsonl`.
+
+```
+$ npx marver perf run main
+run 3f1c9a20b7d4e815: warming up
+  measuring
+  closing
+  run 3f1c9a20b7d4e815 · Main · Chrome 156 · bakes warm
+  load to settled 1.57 s · 4 moves · p50 16.7 ms p95 16.8 ms · 0 frames over 33 ms · heap peak 26.1 MB
+  valid · inputs 68cff66a… (24 files)
+```
+
+**The script** (version 1). One warm-up load, not measured: Vite's transforms and the dependency cache warm up,
+and the frames' sleep bakes compile. It waits until the board settled and nothing is still compiling, 60 s at
+most; past that the run goes on and its line says `bakes: 'cold'`. Then a fresh browser context, the cache off,
+1440 x 900 at scale 2: the board loads, settles (120 s at most), waits again until nothing is compiling (30 s),
+fits, and runs three gestures with the pointer at the canvas's centre - 40 ctrl-wheel steps in, 40 out, then a
+pan of 60 steps right and 60 back - each ended by the canvas itself. `--slow` throttles the CPU 4x before the
+load: a stand-in for a slower Mac's CPU, not for its GPU or its memory. `--repeat <n>` runs it up to 5 times,
+one after another. Ctrl-C cancels: the line says `cancelled`. Every call to the page has 15 s to answer: a
+frame whose script never returns stops the canvas's page with it, and the run ends `cut` (`unresponsive`) instead
+of waiting for ever. If the dev server restarts in place during a run (an `.env` or config edit), the run's line
+says `inputs` - never `cancelled` - and `perf run` says the dev server restarted.
+
+**Read-only.** The run's page refuses every write before it is sent - board saves, heights, the seen marks,
+comments, captures, Jam, work - and the dev server refuses and counts any that gets through, from the page or
+from a frame. Only two kinds go out: the page's own load records (stamped with the run by the server, so
+`perf --loads` leaves them out and says how many) and the sleep bakes, which only fill a cache. A video whose
+generated poster is missing runs without it, and the line counts it (`postersMissing`); its frame's bake is the
+run's alone, never the shared cache. A frame's own code can still write: runs are for boards whose frames do
+not.
+
+**Valid or not.** A run is valid when none of these held, and its line names the first that did:
+`cancelled`, `crash` (the page or the browser crashed), `inputs` (a watched file changed during the run, even if it
+was put back, or the dev server restarted), `writes` (a write was refused), `cut` (the load never settled - its
+`cut` says why: `unresponsive` when the page stopped answering, `driver: ...` when the run failed for another
+reason, such as a page script that threw), `frames` (a frame missing or never ready), `errors`, `bakes` (still
+compiling 30 s after the load), `gesture` (the camera never came to rest after the fit, a gesture the canvas never
+ended within 5 s, or one in which no frame was timed - then `over33ms` is `null`, never 0), `records` (the page's
+records did not all land, or some were lost to a bound on the way). `gestures` counts the run's own three that the
+canvas ended. A compile of the run still running 50 s after it ends is said in its line (`bakesPending`), and the
+next run, measured beside it, is `overlapped`. Headless numbers are intervals in headless Chrome - not what a display
+shows.
+
+**The inputs.** `inputs` fingerprints every file in the project the dev server watches (git status plays no part,
+so an ignored file a frame imports counts) plus the board files and `_sizes.json`. Outside the project - a sibling
+package's source in a monorepo - it counts the files the board itself loads: the run takes its fingerprint after its
+warm-up has loaded the board, from the files that page requested, what they import directly (a stylesheet's
+`@import`s) and the `tsconfig` above them, and hashes the same files again at its end. Another board's sibling
+files, which the dev server watches once any page loaded them, are never in it, so two runs of a board with nothing
+changed have the same inputs. `GET /__mv/api/perf/inputs?run=<id>` reads a run's own files again now (for the last
+32 runs, while the dev server runs); without `?run=` it reads every file the dev server watches. A frame importing
+from a folder the dev server ignores (a sibling package's `dist/`) is not in it.
+
+**Comparing.** `npx marver perf --runs` compares runs only inside a cohort - the same script, board, Chrome,
+flags, Mac (`machine`, a profile of its own in `~/.marver/perf/machine/`), power source, `--slow` and warm or
+cold bakes - and inside it by inputs: the latest run against the one before with the same inputs ("within
+10 %" of its load to settled and p95, or not), and against the last one with other inputs (the deltas).
+`--against <run>` compares the latest run of its cohort made after it with that one, whatever their inputs, when you
+changed something on purpose. Runs that overlapped another are listed, never compared; invalid runs are listed with
+their reason. `--days <n>` (14 by default) and `--json` as elsewhere.
+
 ## Options
 
 | Option | |
 |---|---|
 | `--loads` | each board load in full |
 | `--jam` | Jam's timings |
+| `run <board>` | a headless run of the board ([Headless runs](#headless-runs)); with `--slow` and `--repeat <n>` (1-5) |
+| `--runs` | the headless runs, compared inside their cohorts; with `--against <run>` and `--days <n>` (14) |
+| `--crashes` | the Mac app's crashes and hangs of this repo's canvases (below) |
+| `--flashes` | the flashes marked in the Mac app, and the white-out candidates (below) |
+| `--machine` | the machine profiles (below) |
+| `--all` | with `--flashes`: also the marks on other canvases or on Home |
+| `--days <n>` | how far back `--runs`, `--crashes`, `--flashes` and `--machine` read: 14 by default |
 | `--json` | machine-readable |
 | `--minutes <n>` | how far back to read: 60 by default (24 h with `--jam`) |
 | `--root <dir>` | the project (default: here) |
 
-Plain `npx marver perf` reads the reload log and ends with one line per board load.
+Plain `npx marver perf` reads the reload log and ends with one line per board load. It and `--loads` leave out a
+headless run's loads (`marver perf run`): they say how many.
+
+## The Mac app's half
+
+The Mac app (0.2 and later) records what only the app can see, in `~/.marver/perf/`: `app.jsonl` (Marver Dev writes
+`app-dev.jsonl`; one writer per file), one line per event with `{ v, ts, kind, app, seq, flavour, machine }` - `app`
+names the launch, `seq` counts its lines, `machine` the profile the line was written on. Every 5 s the app samples its
+processes (`getAppMetrics()`: CPU from cumulative time, memory as each process's working set, a canvas renderer's own
+footprint from its page, the memory pressure level), keeps the last minute in memory and writes one `sample` line a
+minute; and it records renderer and GPU process ends, hangs, GPU changes, power and thermal events, each tab's state
+and document, and the time a tab switch takes to its second frame (`shown`: until the app hears back from that
+frame, so the reply's own way back is in it). A minute's canvas memory per tab (`canvases.byTab`) counts a renderer
+two tabs share in each of them and says `shared`; add up `canvases.memMB`, never `byTab`. A line about a tab carries
+its `tab`, `ws`, `commit` and `page` - the page id the shell's hello sent, which is the `page` of its records in
+`page.jsonl`. With Settings' recorder off, nothing of this is written (a flash you mark still is, and so is an
+error main did not catch: a `main-error` line, in `app-dev.jsonl` for Marver Dev, written the moment it happens).
+`machine/<hash>.json` holds one profile per distinct machine state (the chip, the displays and their rates, the
+GPU's renderer, power): a display change, the window moved to another display, or a GPU fallback makes a new one, and
+old lines keep theirs. The app keeps 14 days of it (`keepPerfDays`, pruned a few seconds after launch and then
+daily), at most 5 MB a file, 50 flash pictures and 10 crash reports; a profile a headless run wrote stays at least 14
+days, as long as a repo's `runs.jsonl` may name it.
+
+`marver perf` joins the two halves by `page`, so each app event lands on the board load it happened in:
+
+- `--crashes`: each canvas crash of this repo (not one the app ended itself: an unload, Reload Page) with its board,
+  whether its load had settled, the last gesture before it, and the minute before it - or, for a document that
+  ended before its first batch of records reached `page.jsonl`, that its page recorded nothing; hangs, and when the
+  page answered again; then, **by time (machine-wide)**, the GPU process's and utility processes' ends and a GPU process
+  replaced silently (`gpu-restart`); and how many crash reports `crashpad/completed` holds.
+- `--flashes`: each flash you marked with `⌃⌥F` on this repo's canvases, with its board, the gesture you marked it
+  during (when it started and when it ended) or else the one that ended within 2 s of it, before or after; the GPU
+  process's own events within a second (its end, its replacement, a feature change - not a renderer's or a utility
+  process's), the pressure at the mark (unknown when the last reading was over 10 s old: with the recorder off and
+  nothing to unload the app reads none), thermal state, the GPU figures (machine-wide) and the picture's path, or
+  that it was pruned since. A mark is dated by the moment you pressed it (the state the app took then), not by its
+  line, which is written a second or two later, once the picture and the GPU figures are in. The picture is the app's views as the app stacks them, not the screen: it holds no traffic
+  lights and may miss a flash that happens in the compositor. Marks on Home or other canvases are counted (`--all`
+  shows them). White-out candidates, found automatically during gestures, are listed apart: automatic, not verified.
+- `--machine`: the profiles, grouped by host (the app and a headless run of one Mac share its `hostHash`), which is
+  current, and how many records and runs name each.
+
+A record that carries a page joins that page and no other: when the page recorded nothing, the output says so
+rather than lending it the tab's earlier document. A record that carries no page (a 0.27.0 canvas, or a document that
+has not said hello) is joined by workspace and time, and the output says so. The repo's workspaces are its own and every workspace in its `page.jsonl`, so a
+`--recover` run's records join too.
 
 ## In the page
 

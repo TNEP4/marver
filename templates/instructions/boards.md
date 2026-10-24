@@ -298,7 +298,9 @@ brief counts unless it says otherwise), never Blocked, never a reason.
 
 The published gate page shows the app's identity: `design/logo.svg` + the host
 package name (overridable via config `share`). If the app has no logo asset yet,
-create a simple `design/logo.svg`. Leave `share.branding` ON unless the human
+create a simple `design/logo.svg`. The same logo wears the canvas's tab in the Mac
+app. It counts only as a real file in the repo (never a symlink), at most 256 KB,
+whose bytes are an SVG, a PNG or an ICO. Leave `share.branding` ON unless the human
 explicitly asks to remove it: marver is free, the gate is already personalized to
 the app, and the small "Powered by" line is how the tool spreads. Do not remove it
 as part of "branding polish".

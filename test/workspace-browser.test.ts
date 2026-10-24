@@ -34,6 +34,14 @@ const board = JSON.stringify({ version: 1, name: 'main', auto: false, nodes: [
   { key: 'n-home', frame: 'app/home', x: 0, y: 0, w: 390, h: 844 },
   { key: 'n-page', frame: 'app/page', x: 600, y: 0, w: 390, h: 844 },
 ] }, null, 2) + '\n'
+// a Doc (heights the shell writes to _sizes.json), on a board of its own
+const note = (paras: number) => `import { Doc, Md } from '@marver-design/marver/content'
+export default () => (
+  <Doc>
+${Array.from({ length: paras }, (_, i) => `    <Md>{${JSON.stringify(`## Section ${i + 1}\n\nA paragraph long enough to wrap across a couple of lines in a document-width frame.`)}}</Md>`).join('\n')}
+  </Doc>
+)
+`
 const project = (who: string) => makeProject(`mv-ws-${who.toLowerCase()}-`, {
   'design/scenes/app/home.tsx': `export const meta = { title: 'Home', viewport: 'mobile' }
 ;(window as any).__who = '${who}'
@@ -43,6 +51,8 @@ export default () => <main style={{ minHeight: '100vh', background: '#0b5' }}><h
   'design/boards/main.json': board,
   'design/boards/other.json': JSON.stringify({ version: 1, name: 'other', auto: false, nodes: [{ key: 'o-home', frame: 'app/home', x: 0, y: 0, w: 390, h: 844 }] }, null, 2) + '\n',
   'public/sw.js': `self.addEventListener('fetch', () => {})\n`,
+  'design/scenes/docs/note.tsx': note(2),
+  'design/boards/docs.json': JSON.stringify({ version: 1, name: 'docs', auto: false, nodes: [{ key: 'd-note', frame: 'docs/note', x: 0, y: 0 }] }, null, 2) + '\n',
 })
 
 let rootA = '', rootB = ''
@@ -412,6 +422,46 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
     expect(await browser.eval(s, `__mvStore.getState().nodes.find((n) => n.key === 'n-home').x`)).toBe(Math.round(x + 70))
   }, 240_000)
 
+  it('an edit made while stopped that the ordinary autosave saves before any resume flusher does: the reloaded page still says its edits were saved', async (ctx) => {
+    if (!browser) return ctx.skip()
+    await stopDev(b, PORT); b = null
+    a ??= await startDev(rootA, PORT)
+    const s = await tab({ width: 1400, height: 900 })
+    await browser.go(s, `${ORIGIN}/#/b/main`)
+    await browser.until(s, `(() => { const t = (k) => document.querySelector('[data-node="' + k + '"] iframe')?.contentDocument?.getElementById('who')?.textContent; return t('n-home') === 'A' && t('n-page') === 'A' })()`, 30_000)
+    await browser.eval(s, `window.__mark = 8`)
+    const onDisk = () => JSON.parse(readFileSync(join(rootA, 'design', 'boards', 'main.json'), 'utf8')).nodes.find((n: any) => n.key === 'n-home').x
+
+    // the canvas stops; a frame is picked up and moved - the move only this tab holds, its autosave refused
+    await stopDev(a, PORT); a = null
+    await browser.until(s, `__mvLink.getState().link === 'down' && !!document.querySelector('.sh-stopped')`, 5_000)
+    const x = await browser.eval(s, `__mvStore.getState().nodes.find((n) => n.key === 'n-home').x`)
+    await browser.eval(s, `(() => { const st = __mvStore.getState(); st.setGesture(true); st.moveNode('n-home', ${x} + 110, 0); return 1 })()`)
+    await wait(800)   // past the autosave's 500 ms: refused, the move stays dirty here
+    expect(await browser.eval(s, `__mvStore.getState().dirty`)).toBe(true)
+    expect(onDisk()).toBe(Math.round(x))
+
+    // back, the frame still in the hand: the resume's flusher saves nothing while a frame is held, and the page stays
+    a = await startDev(rootA, PORT)
+    await browser.until(s, `__mvLink.getState().link === 'live' && __mvStore.getState().toasts.some((t) => t.text.includes('reloads once nothing is in progress'))`, 15_000)
+    expect(await browser.eval(s, `window.__mark`)).toBe(8)
+    expect(onDisk()).toBe(Math.round(x))
+    // the pointer rests where it is (a move to the same place): the ordinary autosave goes now, while the frame is still
+    // held - so it, not a flusher, puts the move on disk, and leaves the resume nothing to save
+    await browser.eval(s, `__mvStore.getState().moveNode('n-home', ${x} + 110, 0)`)
+    const t0 = Date.now()
+    while (Date.now() - t0 < 10_000 && onDisk() !== Math.round(x + 110)) await wait(100)
+    expect(onDisk()).toBe(Math.round(x + 110))
+    await browser.until(s, `!__mvStore.getState().dirty`, 5_000)
+    expect(await browser.eval(s, `window.__mark`)).toBe(8)
+
+    // the drop: nothing holds the page, the next resume finds nothing to save, it reloads - and says the edits were saved
+    await browser.eval(s, `__mvStore.getState().setGesture(false)`)
+    await browser.until(s, `window.__mark === undefined && !!window.__mvStore && document.querySelectorAll('.sh-node').length === 2`, 15_000)
+    await browser.until(s, `__mvStore.getState().toasts.some((t) => t.text === 'Back - your edits were saved')`, 5_000)
+    expect(await browser.eval(s, `__mvStore.getState().nodes.find((n) => n.key === 'n-home').x`)).toBe(Math.round(x + 110))
+  }, 240_000)
+
   it('back after the board changed on disk meanwhile: the file wins, and the reloaded page says so - never that its edits were saved; a board removed meanwhile, the same', async (ctx) => {
     if (!browser) return ctx.skip()
     await stopDev(b, PORT); b = null
@@ -504,5 +554,72 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
     expect(onDisk('n-home')).toBe(Math.round(x))
     expect(onDisk('n-page')).toBe(page)
     expect(await browser.eval(s, `__mvStore.getState().nodes.find((n) => n.key === 'n-home').x`)).toBe(Math.round(x))
+  }, 240_000)
+
+  it('heights a write does not land during the resume hold its reload: the page works as live, and reloads once they reach the file', async (ctx) => {
+    if (!browser) return ctx.skip()
+    await stopDev(b, PORT); b = null
+    a ??= await startDev(rootA, PORT)
+    const sizes = (): Record<string, number> => { try { return JSON.parse(readFileSync(join(rootA, 'design', 'boards', '_sizes.json'), 'utf8')).heights ?? {} } catch { return {} } }
+    const s = await tab({ width: 1400, height: 900 })
+    await browser.go(s, `${ORIGIN}/#/b/docs`)
+    // the Doc's height reaches the file on its own
+    const t0 = Date.now()
+    let key: string | undefined
+    while (Date.now() - t0 < 30_000 && !(key = Object.keys(sizes()).find((k) => k.startsWith('docs/note@')))) await wait(200)
+    expect(key, 'the Doc wrote its height').toBeTruthy()
+    const H = sizes()[key!]
+    const unsaved = `window.__mvApp.busy().why.includes('heights')`
+    await browser.until(s, `!${unsaved}`, 10_000)
+    await browser.eval(s, `window.__mark = 9`)
+    // each /sizes write this page sends is logged where the page after its reload reads it; the server answers 500
+    // until the test lets them through
+    await browser.eval(s, `(() => {
+      const real = window.fetch.bind(window)
+      window.__fail = true
+      const log = (h, status) => { const l = JSON.parse(sessionStorage.getItem('sizes-log') ?? '[]'); l.push({ h, status }); sessionStorage.setItem('sizes-log', JSON.stringify(l)) }
+      window.fetch = (url, init) => {
+        if (init?.method !== 'POST' || !String(url).includes('/api/sizes')) return real(url, init)
+        const h = JSON.parse(init.body).heights[${JSON.stringify(key)}]
+        if (window.__fail) { log(h, 500); return Promise.resolve(new Response('{"error":"boom"}', { status: 500, headers: { 'content-type': 'application/json' } })) }
+        return real(url, init).then((r) => { log(h, r.status); return r })
+      }
+      return 1
+    })()`)
+    const sent = async () => JSON.parse(await browser!.eval(s, `sessionStorage.getItem('sizes-log') ?? '[]'`)) as { h: number; status: number }[]
+
+    // the canvas stops; the Doc grows meanwhile (an agent's edit), and words not sent hold the page while its frame,
+    // back on its canvas, reloads and measures the new height
+    await stopDev(a, PORT); a = null
+    await browser.until(s, `__mvLink.getState().link === 'down' && !!document.querySelector('.sh-stopped')`, 5_000)
+    writeFileSync(join(rootA, 'design', 'scenes', 'docs', 'note.tsx'), note(6))
+    await browser.eval(s, `(() => { const t = document.createElement('textarea'); t.id = 'typed-h'; document.body.appendChild(t); t.value = 'not sent yet'; t.dispatchEvent(new Event('input', { bubbles: true })); return 1 })()`)
+    a = await startDev(rootA, PORT)
+    await browser.until(s, `__mvLink.getState().link === 'live' && __mvStore.getState().toasts.some((t) => t.text.includes('reloads once nothing is in progress'))`, 15_000)
+    // the grown height's write fails: unsaved, the file as it was
+    await browser.until(s, `JSON.parse(sessionStorage.getItem('sizes-log') ?? '[]').some((e) => e.status === 500 && e.h > ${H})`, 30_000)
+    expect(await browser.eval(s, unsaved)).toBe(true)
+    expect(sizes()[key!]).toBe(H)
+
+    // the words are sent: nothing holds the page but the heights, and each resume's write fails - it stays, live
+    await browser.eval(s, `(() => { const t = document.getElementById('typed-h'); t.value = ''; t.dispatchEvent(new Event('input', { bubbles: true })); return 1 })()`)
+    const failed = (await sent()).length
+    const t1 = Date.now()
+    while (Date.now() - t1 < 15_000 && (await sent()).length < failed + 2) await wait(200)
+    await wait(1500)
+    expect((await sent()).length, 'writes failed after the words were sent').toBeGreaterThanOrEqual(failed + 2)
+    expect(await browser.eval(s, `window.__mark`)).toBe(9)
+    expect(await browser.eval(s, unsaved)).toBe(true)
+    expect(await browser.eval(s, `__mvLink.getState().link`)).toBe('live')
+    expect(sizes()[key!]).toBe(H)
+
+    // the server takes them: the heights reach the file from this page, and then it reloads
+    await browser.eval(s, `window.__fail = false`)
+    await browser.until(s, `window.__mark === undefined && !!window.__mvStore && document.querySelectorAll('.sh-node').length === 1`, 40_000)
+    const H2 = sizes()[key!]
+    expect(H2).toBeGreaterThan(H)
+    const log = await sent()
+    expect(log.at(-1), 'the page before the reload landed them').toEqual({ h: H2, status: 200 })
+    expect(log.slice(0, -1).every((e) => e.status === 500)).toBe(true)
   }, 240_000)
 })

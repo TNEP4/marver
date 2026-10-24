@@ -241,6 +241,9 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
   settled, how many moves and why, the slowest frames, errors. To make a board faster, name
   the lever, change it, compare the next load. A slow frame's `admittedMs` is when its turn to
   start came: a long wait is the queue, not the frame (`ms - admittedMs` is the frame's own).
+  To compare before and after a change, `npx marver perf run <board> --json` measures the board
+  the same way each time, read-only, in the canvas's own headless Chrome; `npx marver perf --runs
+  --json` compares the runs with the same inputs, and those after a change.
 - **Names vs titles.** A board's file name, a folder's `name`, a scene's directory are
   IDENTITIES: slugs you address, that publish.json, URLs and comment threads hold, and
   that never move on a rename. `title` is what humans see - free text (casing,

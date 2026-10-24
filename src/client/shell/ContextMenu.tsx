@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { createPortal } from 'react-dom'
 import { useStore, SOURCE_REVEALED } from './store.ts'
 import { UNPLACED } from './hash.ts'
+import { TOP } from './inset.ts'
 
 /** Copy text to the clipboard, toasting the outcome. Success is confirmed out loud; a
  *  blocked clipboard (no user gesture / permission) says so instead of failing silently. */
@@ -35,8 +36,9 @@ export function useContextMenu() {
     e.preventDefault()
     const MENU_W = 240   // the CSS max-width; labels ellipsize inside it
     // a menu taller than the window (many "Move to …" folders) pins to the top edge and scrolls
-    const h = Math.min(items.length * 32 + 12, window.innerHeight - 16)
-    setMenu({ x: Math.max(8, Math.min(e.clientX, window.innerWidth - MENU_W - 8)), y: Math.max(8, Math.min(e.clientY, window.innerHeight - h - 8)), items })
+    // ...and never under the Mac app's strip (TOP 44 when the shell took the inset)
+    const h = Math.min(items.length * 32 + 12, window.innerHeight - 16 - TOP)
+    setMenu({ x: Math.max(8, Math.min(e.clientX, window.innerWidth - MENU_W - 8)), y: Math.max(TOP + 8, Math.min(e.clientY, window.innerHeight - h - 8)), items })
   }
   return { menu, open, close: () => setMenu(null) }
 }
@@ -50,7 +52,7 @@ export function ContextMenu({ menu, close }: { menu: MenuState | null; close: ()
   useLayoutEffect(() => {
     if (!menu || !ref.current) return
     const h = ref.current.getBoundingClientRect().height
-    setTop(Math.max(8, Math.min(menu.y, window.innerHeight - h - 8)))
+    setTop(Math.max(TOP + 8, Math.min(menu.y, window.innerHeight - h - 8)))
   }, [menu, panel])
   useEffect(() => {
     if (!menu) return

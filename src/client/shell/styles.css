@@ -2,6 +2,9 @@
    Light board -> light glass chrome over a paper canvas; dark board -> dark glass
    chrome over a dark canvas. Frames are cards; chrome is glass. */
 
+/* @tokens */
+/* The token block (spec 28 A2.2, A2.9): the Mac app copies everything between these two markers into its own pages
+   at build time (app/scripts/tokens.mjs, rewritten onto :root), so its strip and pages wear exactly this glass. */
 .sh-app {
   --ground: #e7e9ef; --dot: #c9cbd5;
   --accent: #0088ff; --accent-ring: rgba(0, 136, 255, .2); --beam: rgba(0, 136, 255, .42); --beam-blur: 6px; --beam-bottom: -13px; --beam-h: 12px; --beam-inset: 12%; --edge-accent: rgba(0, 136, 255, .8); --inner-tint: rgba(0, 136, 255, .13); --tip-bg: #18181b; --tip-ink: #fafafa; --accent-wash: rgba(0, 136, 255, .07);
@@ -102,6 +105,17 @@
 @property --glass-accent { syntax: '<color>'; inherits: true; initial-value: #0077e6; }
 @property --glass-accent-bg { syntax: '<color>'; inherits: true; initial-value: rgba(0, 136, 255, .13); }
 
+/* Reduce Transparency and Increase Contrast (spec 28 A2.9, A2.13): every glass surface opaque - its fill the solid
+   one, its border the node's, no blur - in both themes (the dark rule's own specificity, later in the file); and
+   with more contrast the dimmer inks take the full one. macOS's settings reach Chrome too. */
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .sh-app, .sh-app.dark { --glass: var(--solid); --glass-brd: var(--node-brd); --blur: none; }
+}
+@media (prefers-contrast: more) {
+  .sh-app, .sh-app.dark { --glass-ink-2: var(--glass-ink); --glass-ink-3: var(--glass-ink); }
+}
+/* @end-tokens */
+
 /* interact mode: the whole shell shifts to the interactive purple - one token override,
    and every accent-derived surface (mark, sidebar actives, selection bar, beams, rings,
    handles, device chips) follows without knowing the mode exists */
@@ -146,6 +160,21 @@ button svg { pointer-events: none }   /* event targets stay on the button - pan 
   background-color: var(--ground) }
 /* world-space dot grid: size/position/alpha driven per-frame from the transform */
 .sh-canvas::before { content: ''; position: absolute; inset: 0; pointer-events: none;
+  background-image: radial-gradient(var(--dot) 1px, transparent 1px);
+  background-size: var(--grid-size, 20px 20px);
+  background-position: var(--grid-pos, 0 0);
+  opacity: var(--grid-alpha, 1) }
+/* the scroll edge (0.27.2, spec 28 A2.9 v1.8 #8, A3.8 #31): under the Mac app's transparent strip only (App.tsx renders
+   it when inset.ts's TOP is 44). One band over the world and under the chrome (z 9; the panels are 10): opaque ground
+   through --mv-top, fading out over 16 px more, the dots drawn from the same three grid variables paintGrid writes on
+   .sh-app - so nothing of a frame shows under the tabs, and a frame panned up fades out below them while the dots run
+   on. The grid's alpha reaches the dots only. The world itself carries no mask (one would add a render surface to every
+   frame). */
+.sh-edge { position: absolute; left: 0; right: 0; top: 0; height: calc(var(--mv-top, 0px) + 16px); z-index: 9; pointer-events: none;
+  background: var(--ground);
+  -webkit-mask-image: linear-gradient(#000 0 var(--mv-top, 0px), transparent calc(var(--mv-top, 0px) + 16px));
+  mask-image: linear-gradient(#000 0 var(--mv-top, 0px), transparent calc(var(--mv-top, 0px) + 16px)) }
+.sh-edge::before { content: ''; position: absolute; inset: 0;
   background-image: radial-gradient(var(--dot) 1px, transparent 1px);
   background-size: var(--grid-size, 20px 20px);
   background-position: var(--grid-pos, 0 0);
@@ -434,8 +463,8 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-ibtn:hover { background: var(--glass-hover); color: var(--glass-ink) }
 
 /* floating glass panel; collapses into the fab with a scale-fade morph */
-.sh-panel { position: absolute; left: var(--edge); top: var(--edge); width: 236px;
-  max-height: calc(100% - 2 * var(--edge)); z-index: 10;
+.sh-panel { position: absolute; left: var(--edge); top: calc(var(--mv-top, 0px) + var(--edge)); width: 236px;
+  max-height: calc(100% - 2 * var(--edge) - var(--mv-top, 0px)); z-index: 10;
   border-radius: var(--r-panel); padding: 10px; display: flex; flex-direction: column;
   font-size: 13px; color: var(--glass-ink);
   transform-origin: 22px 22px; transition: transform var(--morph), opacity .2s ease }
@@ -559,7 +588,7 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-panel .sub.dim:hover { background: none; color: var(--glass-ink-3) }
 
 /* collapsed panel: a round glass button; morphs against the panel */
-.sh-fab { position: absolute; left: var(--edge); top: var(--edge); z-index: 11; width: 44px; height: 44px;
+.sh-fab { position: absolute; left: var(--edge); top: calc(var(--mv-top, 0px) + var(--edge)); z-index: 11; width: 44px; height: 44px;
   display: grid; place-items: center; border-radius: 999px;
   color: var(--glass-ink-2); cursor: pointer;
   transition: transform var(--morph), opacity .2s ease }
@@ -568,13 +597,13 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 
 /* pill nav */
 /* uniform 5px inset on every side: 34px buttons + 2*5px = 44px, same as the fab */
-.sh-pill { position: absolute; right: var(--edge); top: var(--edge); z-index: 10; display: flex; align-items: center; gap: 1px;
+.sh-pill { position: absolute; right: var(--edge); top: calc(var(--mv-top, 0px) + var(--edge)); z-index: 10; display: flex; align-items: center; gap: 1px;
   border-radius: 999px; padding: 5px;
   transform-origin: calc(100% - 22px) 22px; transition: transform var(--morph), opacity .2s ease }
 .sh-pill.closed { transform: scale(.16); opacity: 0; pointer-events: none }
 /* the pill's expand chip - the sidebar fab, mirrored top-right: same glass (shared
    surface rule above), same morph, the bar shrinking into the chip's spot */
-.sh-pill-fab { position: absolute; right: var(--edge); top: var(--edge); z-index: 11; width: 44px; height: 44px;
+.sh-pill-fab { position: absolute; right: var(--edge); top: calc(var(--mv-top, 0px) + var(--edge)); z-index: 11; width: 44px; height: 44px;
   display: grid; place-items: center; border-radius: 999px;
   color: var(--glass-ink-2); cursor: pointer;
   transition: transform var(--morph), opacity .2s ease }
@@ -606,7 +635,7 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-menu button span { flex: 1; text-transform: capitalize }
 /* the sidebar right-click menu keeps its labels verbatim (they match the toolbar exactly);
    it scrolls rather than overflowing the window when the folder list grows long */
-.sh-ctxmenu { max-height: calc(100vh - 16px); max-width: 240px; overflow-y: auto; scrollbar-width: thin }
+.sh-ctxmenu { max-height: calc(100vh - 16px - var(--mv-top, 0px)); max-width: 240px; overflow-y: auto; scrollbar-width: thin }
 .sh-ctxmenu button { flex: none; max-width: 100% }
 .sh-ctxmenu button span { text-transform: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0 }
 .sh-menu .chk { color: var(--glass-accent) }
@@ -649,7 +678,7 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 /* a lane tile's whole title: wraps past one line, never wider than a short paragraph */
 .sh-tip .jm-tip-title { display: block; max-width: 320px; white-space: normal; line-height: 16px }
 /* a status's tooltip: the status, then where it came from - each piece of evidence on its own line */
-.sh-tip .sh-tip-lines { display: flex; flex-direction: column; gap: 2px; max-width: 420px; max-height: calc(100vh - 32px); overflow: hidden; white-space: normal }
+.sh-tip .sh-tip-lines { display: flex; flex-direction: column; gap: 2px; max-width: 420px; max-height: calc(100vh - 32px - var(--mv-top, 0px)); overflow: hidden; white-space: normal }
 /* read by a screen reader, never seen: what a glyph says to the eye */
 .sh-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0 }
 .sh-tip .sh-tip-lines small { opacity: .62; font-size: 11px; line-height: 1.35; overflow-wrap: anywhere }
@@ -742,7 +771,7 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 
 /* ---- Play mode: near-black stage, one centered device, auto-hiding bar.
    Fixed dark palette - the backdrop never follows the board theme, so no tokens here. */
-.sh-play { position: absolute; inset: 0; z-index: 30; background: #0a0a0b; display: flex;
+.sh-play { position: absolute; inset: 0; z-index: 30; background: #0a0a0b; display: flex; padding-top: var(--mv-top, 0px);
   align-items: center; justify-content: center; animation: sh-play-in .28s ease-out; cursor: auto }
 @keyframes sh-play-in { from { opacity: 0 } }
 /* the device wears the frame-node card language: same theme border tokens, the same
@@ -773,7 +802,10 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-play.fill .dev { border-radius: 0; box-shadow: none; transition: none }
 .sh-play.fill .dev::after { display: none }
 
-/* the two floating chrome pieces share one glass language and one idle behavior */
+/* the two floating chrome pieces share one glass language and one idle behavior. Of them only .sh-play-nav is still
+   rendered: play's top chrome is the shared pill (Play.tsx: nav.sh-pill.sh-play-pill, .sh-pill-fab), which takes the
+   Mac app's inset through .sh-pill's own rule - .sh-play-bar, its menu and .sh-play-chip below are unused, left as
+   they were */
 .sh-play-bar, .sh-play-nav { position: absolute; display: flex; align-items: center; gap: 1px;
   padding: 4px; border-radius: 999px;
   background: rgba(18, 18, 24, .82); border: 1px solid rgba(255, 255, 255, .12);
@@ -1254,7 +1286,7 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
 .sh-tip .cm-meta-row b { font-weight: 600; opacity: 1; margin: 0; color: var(--tip-ink) }        /* value: bold, full-bright */
 .sh-tip .cm-meta-row .k { margin: 0; opacity: .5; font-weight: 500; color: var(--tip-ink) }       /* label: muted qualifier */
 /* identity modal - same glass family */
-.cm-modal-wrap { position: fixed; inset: 0; z-index: 300; display: flex; align-items: center; justify-content: center;
+.cm-modal-wrap { position: fixed; inset: var(--mv-top, 0px) 0 0 0; z-index: 300; display: flex; align-items: center; justify-content: center;
   background: rgba(24,24,27,.45); backdrop-filter: blur(5px) }
 /* the auth modal is a focused surface, not a floating glass panel - near-solid so
    the canvas behind never bleeds through the fields */
@@ -1586,7 +1618,7 @@ body.sh-commenting .sh-sticky-body { cursor: crosshair }
 .jm-rename input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring) }
 
 /* ---- the capture: an edge ring round the window, the chip, the caption, points ---- */
-.jm-edge { position: absolute; inset: 0; pointer-events: none; z-index: 40;
+.jm-edge { position: absolute; inset: var(--mv-top, 0px) 0 0 0; pointer-events: none; z-index: 40;
   box-shadow: inset 0 0 0 2px var(--jm-rec), inset 0 0 0 6px var(--jm-rec-ring) }
 /* the capture recording NOW (round 3): the last tile of the lane, two lines like the others - a pulsing
    teal dot, "Capturing" and the timer over what it holds so far - then Stop. A little wider, never cut. */
@@ -1810,7 +1842,7 @@ body.sh-commenting .sh-sticky-body { cursor: crosshair }
 .jm-notefield .caret { display: inline-block; width: 1px; height: 15px; background: var(--accent); vertical-align: -3px; margin-left: 1px }
 .jm-notes .foot { display: flex; gap: 12px; justify-content: flex-end; font: 500 11px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3) }
 /* the focus panel: top edge to just above the lane; the panel inside fills it and its middle scrolls */
-.jm-focus { position: absolute; top: var(--edge); bottom: calc(var(--edge) + var(--jm-lane) + 2px); z-index: 31; display: flex }
+.jm-focus { position: absolute; top: calc(var(--mv-top, 0px) + var(--edge)); bottom: calc(var(--edge) + var(--jm-lane) + 2px); z-index: 31; display: flex }
 .jm-focus > .jm-panel { width: 100%; height: 100%; min-height: 0 }
 /* one big picture at a time: the frame tabs and a Before | After switch above it (B flips) */
 .jm-fbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap }   /* a narrow window wraps the switch under the tabs */
@@ -1884,14 +1916,14 @@ button.jm-link { padding: 0; border: 0; background: none; text-align: left; widt
 
 /* Jam V2: while the lane shows, the sidebar stops above it and the bottom edge rises one lane - the
    Update pill, toasts and notices (LANE_H, jam-lane.tsx) */
-.sh-app.jm-lane-on .sh-panel { max-height: calc(100% - 2 * var(--edge) - 56px); bottom: auto }
+.sh-app.jm-lane-on .sh-panel { max-height: calc(100% - 2 * var(--edge) - 56px - var(--mv-top, 0px)); bottom: auto }
 .sh-app.jm-lane-on .sh-update { bottom: calc(var(--edge) + 56px) }
 .sh-app.jm-lane-on .sh-toasts { bottom: calc(var(--edge) + 56px) }
 .sh-app.jm-lane-on .sh-banner { bottom: calc(var(--edge) + 56px) }
 /* the canvas stopped (spec 28 A1.11): on the toolbar's centre line in the gap between the sidebar and the
    toolbar, or just below the toolbar row - placed by the shell (App.tsx placeBanner), which measures both; above
    play and focus. The fallback before it measures: top centre, on the line (34px tall, the row 46px) */
-.sh-app .sh-banner.sh-stopped { top: calc(var(--edge) + 6px); bottom: auto; left: 50%; right: auto; transform: translateX(-50%);
+.sh-app .sh-banner.sh-stopped { top: calc(var(--mv-top, 0px) + var(--edge) + 6px); bottom: auto; left: 50%; right: auto; transform: translateX(-50%);
   z-index: 40; width: max-content; max-width: none; white-space: nowrap; text-align: center; text-wrap: balance; pointer-events: auto }
 .sh-banner.sh-stopped code { font: 500 11.5px/14px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 1px 5px; border-radius: 5px;
   background: color-mix(in srgb, currentColor 11%, transparent); white-space: nowrap }
@@ -2001,7 +2033,7 @@ button.jm-link { padding: 0; border: 0; background: none; text-align: left; widt
 .jm-panel button.row:hover { background: var(--glass-hover) }
 textarea.jm-field { width: 100%; resize: none; outline: none; overflow: hidden; display: block }
 textarea.jm-field:focus { border-color: transparent; box-shadow: 0 0 0 1px var(--accent), 0 0 0 4px var(--accent-ring) }
-.jm-sheet-at { position: absolute; right: var(--edge); top: 64px; z-index: 42 }
+.jm-sheet-at { position: absolute; right: var(--edge); top: calc(var(--mv-top, 0px) + 64px); z-index: 42 }
 .jm-sheet .rows, .jm-wrapup .rows { margin: 0 -8px }
 .jm-sc-row { position: relative; cursor: default; outline: none }
 .jm-record-panel .jm-body { overflow: auto }

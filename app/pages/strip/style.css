@@ -1,0 +1,93 @@
+/* The strip (spec 28 A2.2, A2.13, A3.8 #3, #29; frames mac-app/01-06, 11): 44 px, transparent, painting controls -
+   no ground, no bar and no line. Under it is main's cover (the active tab's ground) or, from app 0.2, the view
+   beneath: Home's, Settings' or a tab page's ground and still dots, or a see-through canvas's own scroll edge. The
+   still dots are drawn here only while app 0.1's plain cover covers (main's `dots`), so a canvas keeps 0.1's look
+   until spike S15 chooses a cover; with one chosen, never (#29: they would sit over a canvas's moving grid, and a
+   stalled strip renderer could not take them away). The tabs are floating glass capsules hugging their logo and name;
+   the active one wears the shell's glass exactly as the sidebar and the toolbar do (fill, hairline, shadow, edge
+   light; no blur - the strip cannot sample what is under it). The only drag region. */
+
+html, body { background: transparent; overflow: hidden }
+body { -webkit-app-region: drag }
+.strip { position: fixed; left: 0; right: 0; top: 0; height: 44px; display: flex; align-items: center; gap: 8px;
+  padding: 0 14px 0 82px }   /* the traffic lights: x 14, three of 12 px 8 apart, then room */
+body.fullscreen .strip { padding-left: 10px }
+/* app 0.1's cover covers: its still dots, from the window's origin like the app pages' (A3.8 #3, #32) */
+body.dots .strip { background: radial-gradient(var(--dot) 1px, transparent 1px) 0 0 / 20px 20px }
+
+#tabs { flex: 1; min-width: 0; height: 44px; display: flex; align-items: center; gap: 8px }
+
+/* Home: a 30 px circle in the same style */
+.home { flex: none; position: relative; width: 30px; height: 30px; border: 1px solid transparent; border-radius: 50%;
+  display: grid; place-items: center; color: var(--glass-ink-2); -webkit-app-region: no-drag }
+.home:hover { background: var(--glass-hover); color: var(--glass-ink) }
+
+/* a tab hugs its logo and name: 8 px before the logo, 14 after the last thing in it; a long name ellipsises at 176 px,
+   and a full strip shrinks them to no less than 58 px - the active one never shrinks */
+.tab { position: relative; flex: 0 1 auto; min-width: 58px; max-width: 176px; height: 30px; padding: 0 14px 0 8px;
+  border: 1px solid transparent; border-radius: 999px; display: flex; align-items: center; gap: 8px;
+  font: 500 12.5px/1 -apple-system, system-ui, sans-serif; color: var(--glass-ink-2); -webkit-app-region: no-drag }
+.tab:hover { background: var(--glass-hover); color: var(--glass-ink) }
+.tab.on { flex-shrink: 0 }
+#tabs.measure .tab { flex: none; min-width: 58px }
+
+.tab.on, .home.on { background: var(--glass); border-color: var(--glass-brd); color: var(--glass-ink); box-shadow: var(--shadow-glass) }
+.tab.on::after, .home.on::after, .pill::after { content: ''; position: absolute; inset: -1px; padding: 1px; border-radius: inherit;
+  background: var(--edge-light); pointer-events: none;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite: exclude }
+
+.slot { position: relative; flex: none; display: grid; place-items: center; width: 18px; height: 18px }
+.slot .warn { color: #d97706 }
+.slot .gear { color: var(--glass-ink-2) }
+.name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+/* hover shows the tab's key over the end of its name: nothing moves (frame 05) */
+.key { position: absolute; right: 10px; top: 0; bottom: 0; display: flex; align-items: center; opacity: 0; pointer-events: none;
+  font: 500 10.5px/1 -apple-system, system-ui, sans-serif; color: var(--glass-ink-3); transition: opacity .12s }
+.tab:hover .key { opacity: 1 }
+.tab:hover:has(.key) .name { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 26px), transparent calc(100% - 12px));
+  mask-image: linear-gradient(90deg, #000 calc(100% - 26px), transparent calc(100% - 12px)) }
+
+/* the logo carries the state: a spinner while starting, a warning when the proof failed, greyed when stopped or out
+   of reach, dimmed after a crash */
+.tab.is-gone .name, .tab.is-unreachable .name { color: var(--glass-ink-3); font-style: italic }
+.tab.is-gone .logo, .tab.is-unreachable .logo { filter: grayscale(1); opacity: .45 }
+.tab.is-crashed .logo { opacity: .55 }
+.tab.is-crashed .name { color: var(--glass-ink-3) }
+/* unloaded to free memory (A3.8 #46): dimmed, its name kept; it reopens when shown */
+.tab.is-unloaded .logo { opacity: .55 }
+
+/* the window in the background: dimmed, as native title bars do */
+body.inactive .tab, body.inactive .home { opacity: .55 }
+body.inactive .tab.on { opacity: .8; box-shadow: none }
+body.inactive .tab.on::after { opacity: .5 }
+
+/* more tabs than fit: the rest behind one bare capsule (a native menu) */
+.more { flex: none; height: 30px; padding: 0 11px; border: 1px solid transparent; border-radius: 999px; display: flex;
+  align-items: center; gap: 5px; background: var(--glass-hover); color: var(--glass-ink-2);
+  font: 500 12.5px/1 -apple-system, system-ui, sans-serif; -webkit-app-region: no-drag }
+.more span { font-size: 11px; color: var(--glass-ink-3) }
+
+/* the one pill, at the right end, in the active tab's glass exactly */
+.pill { position: relative; flex: none; height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 12px;
+  border-radius: 999px; background: var(--glass); border: 1px solid var(--glass-brd); box-shadow: var(--shadow-glass);
+  color: var(--glass-ink-2); font: 500 12px/1 -apple-system, system-ui, sans-serif; white-space: nowrap; -webkit-app-region: no-drag }
+.pill.has-btn { padding-right: 4px }
+.pill > svg { flex: none; color: var(--glass-good) }
+.pill b { font-weight: 600; color: var(--glass-ink) }
+.pill-txt { display: flex; align-items: center; gap: 4px }
+.pill-btn { height: 22px; padding: 0 10px; border: 0; border-radius: 999px; background: var(--glass-hover); color: var(--glass-ink);
+  font: 600 11.5px/1 -apple-system, system-ui, sans-serif; white-space: nowrap }
+.pill.accent .pill-btn { background: var(--mv-blue, #0088ff); color: #fff }
+.pill .cmd { height: 22px; padding: 0 9px; gap: 6px }
+.pill-x { width: 22px; height: 22px; margin-left: -4px; border: 0; border-radius: 999px; display: grid; place-items: center;
+  background: none; color: var(--glass-ink-3) }
+.pill-x:hover { color: var(--glass-ink) }
+.pill.files { color: var(--glass-warn) }
+
+/* Reduce Transparency and Increase Contrast: the tokens make the glass opaque; the borders go solid too */
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .tab.on, .home.on, .pill, .more { background: var(--solid); border-color: var(--node-brd) }
+  .tab.on::after, .home.on::after, .pill::after { display: none }
+}
+@media (prefers-contrast: more) { .tab, .home, .more, .pill { color: var(--glass-ink) } }

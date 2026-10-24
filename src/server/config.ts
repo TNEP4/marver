@@ -30,7 +30,8 @@ export interface ShConfig {
   zoomSpeed: number
   /** Publish options: branding=false removes the gate page footer.
    *  name/logo override the auto-detected gate identity (host package.json name;
-   *  design/logo.svg|png → public/logo.* → public/favicon.svg → the Marver mark). */
+   *  design/logo.svg|png → public/logo.* → public/favicon.svg|png|ico → the Marver mark; logo.ts checks
+   *  each: a regular file inside the repo whose bytes are a PNG, ICO or SVG). */
   share: {
     branding: boolean; name?: string; logo?: string
     /** false = the canvas never answers front-door summary probes (02-home §3). */

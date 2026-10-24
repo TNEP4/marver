@@ -4,17 +4,37 @@
  * with what came just before; the slowest frames to settle; one line per board load. Reads
  * design/.local/perf/reloads.jsonl, and page.jsonl for the loads (`--loads`: each load in full, spec 28 A1.8).
  */
-import { readPage, readReloads } from '../server/perf.ts'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { boardFields, checkBoardsDir, listBoardFiles } from '../server/boards.ts'
+import { readPage, readReloads, readRuns } from '../server/perf.ts'
 import { readJam } from '../server/perf-jam.ts'
-import { humanize } from '../shared/board-tree.ts'
+import { marverHome } from '../server/slots.ts'
+import { readDevInfo } from '../server/work.ts'
+import { isBoardName, labelOf } from '../shared/board-tree.ts'
+import type { RunLine, RunStreamLine } from '../shared/perf-run.ts'
+import { crashesSummary, flashesSummary, machineSummary, PRESSURE_FRESH_MS, readAppLog, repoWorkspaces, runsSummary, type PageMoment } from './perf-app.ts'
 
-export function perfCommand(root: string, opts: { minutes?: number; json?: boolean; jam?: boolean; loads?: boolean }): void {
+export interface PerfOptions {
+  minutes?: number; json?: boolean; jam?: boolean; loads?: boolean
+  /** the headless runs (spec 28 A3.4, the headless stream's `--runs`, `--against`) */
+  runs?: boolean; against?: string
+  /** the Mac app's records (spec 28 A3.5): 14 days by default (`days`, which `--runs` reads too) */
+  crashes?: boolean; flashes?: boolean; machine?: boolean; all?: boolean; days?: number | string
+}
+
+export function perfCommand(root: string, opts: PerfOptions): void {
   if (opts.jam) return jamPerf(root, opts)
   if (opts.loads) return loadsPerf(root, opts)
+  if (opts.runs) return runsPerf(root, opts)
+  if (opts.crashes) return crashesPerf(root, opts)
+  if (opts.flashes) return flashesPerf(root, opts)
+  if (opts.machine) return machinePerf(root, opts)
   const minutes = Number(opts.minutes) > 0 ? Number(opts.minutes) : 60
   const since = Date.now() - minutes * 60_000
   const log = readReloads(root, since)
-  const loads = loadsSummary(readPage(root, since))
+  const { records: pageRecords, runLoads } = ownLoads(readPage(root, since))
+  const loads = loadsSummary(pageRecords)
   const files = new Map<string, { edits: number; reload: Set<string>; inPlace: Set<string> }>()
   for (const e of log) if (e.kind === 'update') {
     const f = files.get(e.file ?? '(no file)') ?? { edits: 0, reload: new Set(), inPlace: new Set() }
@@ -31,7 +51,7 @@ export function perfCommand(root: string, opts: { minutes?: number; json?: boole
   const reloaded = by('job')
   if (opts.json) {
     console.log(JSON.stringify({ minutes, files: Object.fromEntries([...files].map(([k, v]) => [k, { edits: v.edits, reached: [...v.reload], inPlace: [...v.inPlace] }])), documents: { afterEdit: reloaded, byHand: by('manual'), retried: by('retry'), self: by('self'), first: by('first') }, reloads, boots, slow,
-      loads: loads.map((l) => ({ at: l.at, board: l.board, cause: l.cause, state: l.state, settledMs: l.settledMs, cut: l.cut, ...(l.mountedAfterCut ? { mountedAfterCut: true } : {}), moves: l.moves.count, late: l.moves.late.count, errors: l.errors.length, lateErrors: l.errors.filter((e) => e.late).length })) }, null, 2))
+      loads: loads.map((l) => ({ at: l.at, board: l.board, cause: l.cause, state: l.state, settledMs: l.settledMs, cut: l.cut, ...(l.mountedAfterCut ? { mountedAfterCut: true } : {}), moves: l.moves.count, late: l.moves.late.count, errors: l.errors.length, lateErrors: l.errors.filter((e) => e.late).length })), runLoads }, null, 2))
     return
   }
   const t = (ts: number) => new Date(ts).toLocaleTimeString()
@@ -48,16 +68,18 @@ export function perfCommand(root: string, opts: { minutes?: number; json?: boole
     console.log('\nslowest to settle')
     for (const s of slow) console.log(`  ${s.frame}  ${s.ms} ms`)
   }
+  if (loads.length || runLoads) console.log(`\nboard loads: ${loads.length}  (--loads: each in full)`)
+  if (runLoads) console.log(`(${runLoads} headless run load${runLoads === 1 ? '' : 's'} not shown: npx marver perf --runs)`)
   if (loads.length) {
-    console.log(`\nboard loads: ${loads.length}  (--loads: each in full)`)
-    const w = Math.max(...loads.map((l) => (l.board ?? '?').length))
+    const name = namer(root)
+    const w = Math.max(...loads.map((l) => name(l.board).length))
     for (const l of loads) {
       const bits = [
         endOf(l),
         ...(l.moves.count || l.moves.late.count ? [`${l.moves.count} move${l.moves.count === 1 ? '' : 's'}${l.moves.late.count ? ` (${l.moves.late.count} late)` : ''}`] : []),
         ...(l.errors.length ? [`${l.errors.length} error${l.errors.length === 1 ? '' : 's'}${lateErrors(l) ? ` (${lateErrors(l)} late)` : ''}`] : []),
       ]
-      console.log(`  ${t(l.at)}  ${(l.board ?? '?').padEnd(w)}  ${(l.cause ?? '').padEnd(11)} ${bits.join(' · ')}`)
+      console.log(`  ${t(l.at)}  ${name(l.board).padEnd(w)}  ${(l.cause ?? '').padEnd(11)} ${bits.join(' · ')}`)
     }
   }
 }
@@ -207,7 +229,16 @@ const ERRORS_SHOWN = 10
 const secs = (ms?: number) => (typeof ms === 'number' ? `${(ms / 1000).toFixed(1)} s` : '-')
 /** a wait or a frame's own time, often under a second: to the hundredth */
 const secs2 = (ms: number) => (ms >= 10_000 ? secs(ms) : `${(Math.max(0, ms) / 1000).toFixed(2)} s`)
-const boardName = (b?: string) => (b === '~unplaced' ? 'Not on a board' : b ? humanize(b) : 'a board (its request is older)')
+/** Each board by the name the sidebar shows it under - its title, else its name Title-Cased (board-tree's labelOf) - read
+ *  from design/boards/ now; `--json` keeps the board's id. */
+function namer(root: string): (board?: string) => string {
+  const titles = new Map<string, string>()
+  try {
+    const dir = join(root, 'design', 'boards')
+    if (!checkBoardsDir(root, dir)) for (const b of listBoardFiles(dir).boards) { const t = boardFields(b.json, isBoardName).title; if (t) titles.set(b.name, t) }
+  } catch { /* unreadable: the names alone */ }
+  return (b) => (b === '~unplaced' ? 'Not on a board' : b ? labelOf(b, titles.get(b)) : 'a board (its request is older)')
+}
 /** How a load ended, in a few words. */
 function endOf(l: LoadSummary): string {
   if (l.state === 'settled') return `settled ${secs(l.settledMs)}`
@@ -217,18 +248,28 @@ function endOf(l: LoadSummary): string {
   return 'not settled yet'
 }
 
+/** A page's records without a headless run's (spec 28 A3.8 #17: the server stamps them `run`; `--runs` is theirs),
+ *  and how many run loads that hid. */
+export function ownLoads(records: Record<string, any>[]): { records: Record<string, any>[]; runLoads: number } {
+  const loads = new Set<string>()
+  const own = records.filter((r) => { if (typeof r.run !== 'string') return true; if (r.kind === 'load') loads.add(`${r.ws}/${r.page}/${r.load}`); return false })
+  return { records: own, runLoads: loads.size }
+}
+
 /** `marver perf --loads` (spec 28 A1.8): each board load in full, from design/.local/perf/page.jsonl. */
 function loadsPerf(root: string, opts: { minutes?: number; json?: boolean }) {
   const minutes = Number(opts.minutes) > 0 ? Number(opts.minutes) : 60
-  const records = readPage(root, Date.now() - minutes * 60_000)
+  const { records, runLoads } = ownLoads(readPage(root, Date.now() - minutes * 60_000))
   const loads = loadsSummary(records)
   const dropped = droppedOf(records)
-  if (opts.json) { console.log(JSON.stringify({ minutes, loads, unowned: unownedOf(records), dropped }, null, 2)); return }
+  if (opts.json) { console.log(JSON.stringify({ minutes, loads, unowned: unownedOf(records), dropped, runLoads }, null, 2)); return }
   console.log(`board loads, last ${minutes} min - design/.local/perf/page.jsonl`)
-  if (!loads.length) { console.log('\nnothing yet - open a board in the canvas'); return }
+  const hidden = runLoads ? `${runLoads} headless run load${runLoads === 1 ? '' : 's'} not shown: npx marver perf --runs` : ''
+  if (!loads.length) { console.log(`\nnothing yet - open a board in the canvas${hidden ? `\n  ${hidden}` : ''}`); return }
   const t = (ts: number) => new Date(ts).toLocaleTimeString()
   const list = (r: Ranked) => r.map(([k, n]) => `${k} ${n}`).join(', ')
   const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
+  const boardName = namer(root)
   for (const l of loads) {
     const head = `${boardName(l.board)}${l.cause ? ` (${l.cause})` : ''}`
     console.log(`\n  ${t(l.at)}  ${head.padEnd(40)} ${endOf(l)}`)
@@ -240,17 +281,19 @@ function loadsPerf(root: string, opts: { minutes?: number; json?: boolean }) {
       ...(l.readyByCut !== undefined ? [`${l.readyByCut} of ${l.framesAtCut} ready`] : []),
       ...(l.visibleReadyMs !== undefined ? [`visible ready ${secs(l.visibleReadyMs)}${l.visible !== undefined ? ` (${plural(l.visible, 'frame')}${l.visibleAssumed ? ', no fit' : ''})` : ''}`] : []),
       ...(l.allReadyMs !== undefined ? [`all ready ${secs(l.allReadyMs)}`] : []),
-      ...(l.quietMs !== undefined ? [`quiet ${secs(l.quietMs)}`] : []),
-      ...(l.lastMoveMs !== undefined ? [`last move ${secs(l.lastMoveMs)}`] : []),
+      // settled: still from its last move (the commit, when nothing moved), and settled a second after that at the
+      // soonest; `quiet` - the first still second, which a later move can follow - is --json's alone
+      ...(l.state === 'settled' ? [`still from ${secs(l.lastMoveMs ?? l.commitMs)}`] : l.lastMoveMs !== undefined ? [`last move ${secs(l.lastMoveMs)}`] : []),
       ...(l.settledMs !== undefined ? [`settled ${secs(l.settledMs)}`] : []),
     ]
     if (times.length) console.log(`    ${times.join(' · ')}`)
     const m = l.moves
     console.log(`    ${plural(m.count, 'move')}${m.count ? `, ${m.distance} px: ${list(m.causes)}` : ''}${m.late.count ? ` · late, after it ${l.state === 'settled' ? 'settled' : l.state === 'cut' ? 'was cut' : 'ended'}: ${m.late.count} (${list(m.late.causes)})` : ''}`)
-    // the slowest of the frames that finished - how long each waited for its turn to start, then took once started;
-    // those a cut left on their way, counted apart
+    // the slowest of the frames that finished, by when each settled - its last height, or ready for a frame that does not
+    // measure: a later clock than "all ready", which is each frame's first render - how long each waited for its turn
+    // to start, then took once started; those a cut left on their way, counted apart
     const took = (f: LoadSummary['slowest'][number]) => `${f.frame ?? f.node} ${secs(f.ms)}${f.admittedMs !== undefined ? ` (waited ${secs2(f.admittedMs)}, then ${secs2(f.ms - f.admittedMs)})` : ''}`
-    const slow = [...(l.slowest.length ? [`slowest: ${l.slowest.map(took).join(', ')}`] : []), ...(l.unfinished ? [`${l.unfinished} never finished`] : [])]
+    const slow = [...(l.slowest.length ? [`slowest to settle: ${l.slowest.map(took).join(', ')}`] : []), ...(l.unfinished ? [`${l.unfinished} never finished`] : [])]
     if (slow.length) console.log(`    ${slow.join(' · ')}`)
     const gone = [...(l.neverReady.length ? [`never ready: ${l.neverReady.join(', ')}`] : []), ...(l.missing.length ? [`missing: ${l.missing.join(', ')}`] : [])]
     if (gone.length) console.log(`    ${gone.join(' · ')}`)
@@ -260,6 +303,7 @@ function loadsPerf(root: string, opts: { minutes?: number; json?: boolean }) {
     if (l.gestures) console.log(`    ${plural(l.gestures.n, 'gesture')} · worst p95 ${l.gestures.worstP95} ms · ${plural(l.gestures.over33ms, 'frame')} over 33 ms`)
   }
   if (dropped) console.log(`\n  ${plural(dropped, 'record')} never reached this log: a page's queue was full, or its sends failed`)
+  if (hidden) console.log(`\n  ${hidden}`)
 }
 
 /** Count, median, p90 and max of a list of ms. */
@@ -326,5 +370,261 @@ function jamPerf(root: string, opts: { minutes?: number; json?: boolean }) {
   if (sum.problems.length) {
     console.log('\nlately')
     for (const p of sum.problems) console.log(`  ${new Date(p.ts).toLocaleTimeString()}  ${p.what}`)
+  }
+}
+
+// ---- the Mac app's records (spec 28 A3.5, A3.8 #23) -------------------------------------------------------------
+
+/** What the app's half and the repo's page half read, over `--days` (14 by default). */
+function appInputs(root: string, opts: PerfOptions) {
+  const days = Number(opts.days) > 0 ? Math.min(90, Number(opts.days)) : 14
+  const since = Date.now() - days * 86_400_000
+  const home = marverHome()
+  const page = ownLoads(readPage(root, since)).records
+  return { days, since, home, page, app: readAppLog(home, since), workspaces: repoWorkspaces(root, page) }
+}
+const when = (ts: number) => new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+const LEVEL: Record<number, string> = { 1: 'normal', 2: 'warn', 4: 'critical' }
+const level = (n: unknown) => (typeof n === 'number' ? LEVEL[n] ?? String(n) : 'unknown')
+const tilde = (p: string) => { const h = homedir(); return p.startsWith(h + '/') ? `~${p.slice(h.length)}` : p }
+/** A long wait in words: seconds, then minutes, then hours. */
+const long = (ms: number): string => (ms < 120_000 ? `${Math.round(ms / 1000)} s` : ms < 7_200_000 ? `${Math.round(ms / 60_000)} min` : `${Math.round(ms / 3_600_000)} h`)
+/** An offset from a moment, signed (positive = before it), in words: never clamped. */
+const offset = (ms: number): string => (ms === 0 ? 'at it' : `${secs2(Math.abs(ms))} ${ms > 0 ? 'before' : 'after'}`)
+const gestureName = (t: string) => (t === 'layout' ? 'layout animation' : t)
+/** A gesture against the moment: the one it fell in, else the last before it (a flash's may end after it). */
+function gestureWords(g: NonNullable<PageMoment['gesture']>): string {
+  const n = gestureName(g.type)
+  if (g.during) return `during a ${n}${g.startedMsBefore !== undefined ? ` (started ${offset(g.startedMsBefore)}, ended ${offset(g.endedMsBefore)})` : ''}`
+  if (g.endedMsBefore < 0) return `a ${n} ${g.startedMsBefore !== undefined ? `started ${offset(g.startedMsBefore)}, ` : ''}ended ${offset(g.endedMsBefore)}`
+  return `last gesture a ${n}, ended ${offset(g.endedMsBefore)}`
+}
+/** The page half at a moment, in a few words, with how it was joined. `ended`: the moment is the document's end (a crash). */
+function momentWords(m: PageMoment, name: (b?: string) => string, o: { ended?: boolean } = {}): string {
+  if (m.join === 'none') return 'no page record of it (its canvas recorded nothing here)'
+  // its own page and nothing else: never the tab's earlier document (A3.8 #8)
+  if (m.join === 'page-unrecorded') return o.ended ? `its page ${m.page} recorded nothing before it ended (it ended before its first batch of records, 2 s?)` : `its page ${m.page} has no record in page.jsonl`
+  const bits = [name(m.board)]
+  if (m.load) bits.push(m.load.settled ? `its load settled${m.load.settledMs !== undefined ? ` in ${secs(m.load.settledMs)}` : ''}` : 'its load had not settled')
+  if (m.gesture) bits.push(gestureWords(m.gesture))
+  return bits.join(' · ') + (m.join === 'ws+time' ? ' (joined by workspace and time: the record has no page id)' : '')
+}
+
+/** `marver perf --crashes`: the app's canvas crashes and hangs for this repo, joined to the page half; the machine-wide ends by time. */
+function crashesPerf(root: string, opts: PerfOptions) {
+  const i = appInputs(root, opts)
+  const sum = crashesSummary(i.app, i.page, i.workspaces, i.home)
+  if (opts.json) { console.log(JSON.stringify({ days: i.days, workspaces: [...i.workspaces], ...sum }, null, 2)); return }
+  const name = namer(root)
+  console.log(`crashes, last ${i.days} days - ${tilde(join(i.home, 'perf'))}/app.jsonl and app-dev.jsonl, joined to design/.local/perf/page.jsonl by page`)
+  console.log(`\ncanvas crashes: ${sum.crashes.length}`)
+  for (const c of sum.crashes) {
+    console.log(`  ${when(c.at)}  ${c.reason}${typeof c.exitCode === 'number' ? ` (exit ${c.exitCode})` : ''} · pid ${c.pid} · pressure ${level(c.pressure)}${c.flavour === 'dev' ? ' · Marver Dev' : ''}`)
+    console.log(`    ${momentWords(c, name, { ended: true })}`)
+    const b = c.before
+    if (b) console.log(`    the minute before (by time, machine-wide): pressure ${level(b.pressure)}, thermal ${b.thermal}, canvases ${b.canvasMB != null ? Math.round(b.canvasMB) : '-'} MB, the GPU process ${b.gpuProcessRssMB != null ? Math.round(b.gpuProcessRssMB) : '-'} MB${b.procMB != null ? `, this renderer ${Math.round(b.procMB)} MB` : ''}`)
+  }
+  if (sum.hangs.length) {
+    console.log(`\nnot responding: ${sum.hangs.length}`)
+    for (const h of sum.hangs) console.log(`  ${when(h.at)}  pid ${h.pid}${h.respondedAfterMs !== undefined ? `, answered again after ${secs(h.respondedAfterMs)}` : ', never answered again'} · ${momentWords(h, name)}`)
+  }
+  console.log(`\nby time (machine-wide): ${sum.byTime.length}`)
+  for (const m of sum.byTime) console.log(`  ${when(m.at)}  ${m.text}${m.flavour === 'dev' ? ' (Marver Dev)' : ''}`)
+  console.log(`\ncrash reports: ${sum.dumps} in ${tilde(join(i.home, 'perf', 'crashpad', 'completed'))}`)
+}
+
+/** `marver perf --flashes`: the marks made on this repo's canvases (`--all`: every one), and the detector's candidates apart. */
+function flashesPerf(root: string, opts: PerfOptions) {
+  const i = appInputs(root, opts)
+  const sum = flashesSummary(i.app, i.page, i.workspaces, { all: !!opts.all, home: i.home })
+  if (opts.json) { console.log(JSON.stringify({ days: i.days, workspaces: [...i.workspaces], ...sum }, null, 2)); return }
+  const name = namer(root)
+  console.log(`flashes marked (⌃⌥F), last ${i.days} days - ${tilde(join(i.home, 'perf'))}, joined to design/.local/perf/page.jsonl by page`)
+  if (!sum.marks.length) console.log('\nnone on this repo\'s canvases')
+  for (const m of sum.marks) {
+    // where: from the mark's own tab and workspace, then its join - this repo's canvas with nothing near it says so
+    const where = !m.tab ? 'Home or Settings' : !m.ws ? 'a canvas (no workspace recorded)' : !m.mine ? 'a canvas of another repo'
+      : m.join === 'none' ? 'this repo\'s canvas (no page record near it)' : momentWords(m, name)
+    console.log(`\n  ${when(m.at)}  ${where}`)
+    const agx = m.agx as Record<string, unknown>
+    // the pressure at the mark: its reading's age said; a reading older than 10 s then is unknown
+    const age = m.pressureAgeMs
+    const pressure = m.pressure !== null ? `pressure ${level(m.pressure)}${age !== undefined ? ` (read ${offset(age)})` : ''}`
+      : age !== undefined && age > PRESSURE_FRESH_MS ? `pressure unknown (the last reading was ${long(age)} old at the mark)` : 'pressure unknown'
+    console.log(`    ${pressure} · thermal ${m.thermal} · the GPU process ${m.gpuProcessRssMB !== null ? `${Math.round(m.gpuProcessRssMB)} MB` : 'unknown'} · GPU in use ${agx.gpuSystemMemoryMB ?? 'unknown'} MB, ${agx.utilPct ?? 'unknown'} % (machine-wide)`)
+    if (m.gpuEvents.length) console.log(`    GPU process events within 1 s: ${m.gpuEvents.map((e) => `${e.kind} ${e.ts >= m.at ? '+' : '-'}${secs2(Math.abs(e.ts - m.at))}`).join(', ')}`)
+    if (!m.recorder) console.log('    the recorder was off: no samples before it')
+    console.log(`    ${m.picturePruned ? 'no picture: pruned since (at most 50 are kept, none older than keepPerfDays)' : m.picture ? `picture (the app's views, not the screen): ${m.picture}` : `no picture: ${m.pictureWhy ?? 'unknown'}`}`)
+  }
+  if (!opts.all && sum.others) console.log(`\n${sum.others} more mark${sum.others === 1 ? '' : 's'} on other canvases or on Home (--all shows them)`)
+  console.log(`\nwhite-out candidates (automatic, not verified): ${sum.candidates.length}`)
+  for (const c of sum.candidates) console.log(`  ${when(c.at)}  white at ${c.observedAt.length} samples ${c.rateHz ? `at ${c.rateHz} Hz ` : ''}(${c.observedAt.map((t) => secs2(t - c.at)).join(', ')}) · ${momentWords(c, name)}`)
+}
+
+/** `marver perf --machine`: the machine profiles, by host, which is current, and how many records and runs name each. */
+function machinePerf(root: string, opts: PerfOptions) {
+  const i = appInputs(root, opts)
+  const runs = readRuns(root, i.since) as RunLine[]
+  const sum = machineSummary(i.home, i.app, runs)
+  if (opts.json) { console.log(JSON.stringify({ days: i.days, ...sum }, null, 2)); return }
+  console.log(`machine profiles - ${tilde(join(i.home, 'perf', 'machine'))} (records of the last ${i.days} days)`)
+  if (!sum.profiles.length) { console.log('\nnone yet - the Mac app and `marver perf run` write them'); return }
+  const by = new Map(sum.profiles.map((p) => [p.hash, p]))
+  for (const g of sum.byHost) {
+    const first = by.get(g.profiles[0]!)!
+    console.log(`\nhost ${g.hostHash ?? 'unknown'}: ${[first.chip, first.model, first.os ? `macOS ${first.os}` : undefined].filter(Boolean).join(' · ')}`)
+    for (const h of g.profiles) {
+      const p = by.get(h)!
+      console.log(`  ${p.hash}  ${p.kind}${p.current ? ' (current)' : ''} · ${p.records} app record${p.records === 1 ? '' : 's'}, ${p.runs} run${p.runs === 1 ? '' : 's'}`)
+      const more = [p.electron, p.gpu, p.displays, p.power ? `power ${p.power}` : undefined].filter(Boolean)
+      if (more.length) console.log(`    ${more.join(' · ')}`)
+    }
+  }
+}
+
+// ---- headless perf runs (spec 28 A3.4, A3.8 #20-#22) ---------------------------------------------------------------
+
+const ms2 = (v: number | null | undefined) => (typeof v === 'number' ? (v >= 1000 ? `${(v / 1000).toFixed(2)} s` : `${Math.round(v)} ms`) : '-')
+const mms = (v: number | null | undefined) => (typeof v === 'number' ? `${v} ms` : '-')
+const why = (l: RunLine) => `invalid: ${l.invalidReason}${l.restarted ? ' (the dev server restarted)' : l.cut ? ` (${l.cut})` : ''}`
+const over33 = (n: number | null) => (n === null ? 'frames over 33 ms not measured' : `${n} frame${n === 1 ? '' : 's'} over 33 ms`)
+/** What a run asks of the agent, when its reason alone does not say it - an invalid run's, or a compile it left running. */
+const hint = (l: RunLine): string | null =>
+  l.restarted ? 'the dev server restarted during the run (an .env or config edit): its inputs changed - run it again'
+  : l.cut === 'unresponsive' ? 'the page stopped answering for 15 s: a frame\'s script that never returns (an endless loop) - open the board and see which frame hangs'
+  : l.invalidReason === 'gesture' && l.over33ms === null ? 'no frame was timed: requestAnimationFrame never ran in the gestures (the page read as hidden?)'
+  : l.invalidReason === 'gesture' && l.gestures < 3 ? `the canvas ended ${l.gestures} of the 3 gestures within 5 s: the camera kept moving (an animation that never ends?)`
+  : l.bakesPending ? 'a compile of this run was still running 50 s after it: the next run is overlapped'
+  : null
+/** One run, as `perf run` and `perf --runs` print it: three lines, and a fourth when it has a hint. */
+export function runBlock(l: RunLine, name: (b?: string) => string): string[] {
+  const h = hint(l)
+  return [
+    `run ${l.run} · ${name(l.board)} · Chrome ${l.chrome.split('.')[0]} · bakes ${l.bakes}${l.slow ? ' · --slow' : ''}${l.overlapped ? ' · overlapped' : ''}`,
+    `load to settled ${ms2(l.loadToSettledMs)} · ${l.moves} move${l.moves === 1 ? '' : 's'}${l.lateMoves ? ` (${l.lateMoves} late)` : ''} · p50 ${mms(l.p50)} p95 ${mms(l.p95)} · ${over33(l.over33ms)} · heap peak ${l.heapPeakMB ?? '-'} MB${l.postersMissing ? ` · ${l.postersMissing} without a poster` : ''}`,
+    `${l.valid ? 'valid' : why(l)} · inputs ${l.inputs ? `${l.inputs.hash.slice(0, 8)}… (${l.inputs.files.toLocaleString('en-US')} files)` : 'unknown'}${l.forbidden ? ` · ${l.forbidden} write${l.forbidden === 1 ? '' : 's'} refused` : ''}`,
+    ...(h ? [h] : []),
+  ]
+}
+
+/**
+ * The stream broke before its end with a run under way: the dev server restarted in place (an .env or config edit) or
+ * stopped. The run's line reaches runs.jsonl once its end has run - its pages closed, its compiles awaited, 50 s at
+ * most - so it is waited for, 90 s at most, and no longer once the dev server has not answered for 5 s (it stopped).
+ */
+async function lineAfterDrop(root: string, run: string, port: number): Promise<RunLine | null> {
+  const by = Date.now() + 90_000
+  let downSince: number | null = null
+  for (let n = 0; Date.now() < by; n++) {
+    const l = (readRuns(root, Date.now() - 3_600_000) as RunLine[]).find((x) => x.run === run)
+    if (l) return l
+    if (n % 4 === 0) {
+      const up = await fetch(`http://localhost:${port}/`, { signal: AbortSignal.timeout(1000) }).then(() => true, () => false)
+      if (up) downSince = null
+      else if ((downSince ??= Date.now()) < Date.now() - 5000) return null
+    }
+    await new Promise((r) => setTimeout(r, 250))
+  }
+  return null
+}
+
+/** The dev server's own `{ error }` stream line: the run failed there before it had a line (no Chrome, a launch that
+ *  failed) - the server said so and ended the stream, so no line will come and none is waited for (the review of
+ *  a3-runs' fixes, major #1). */
+class ServerSaid extends Error {}
+
+/**
+ * `marver perf run <board> [--slow] [--repeat n] [--json]`: the board's script in the canvas's own headless Chrome
+ * (`marver dev` must be running), read-only - one line per run in design/.local/perf/runs.jsonl. Ctrl-C closes the
+ * request, which cancels the run (its line says `cancelled`). A failure the server reports ends the command at once,
+ * with the lines of the runs before it (`--json`: `{ runs, error }`); only a stream that breaks, or ends before its
+ * `done`, under a run waits for that run's line.
+ */
+export async function perfRunCommand(root: string, board: string | undefined, opts: { slow?: boolean; repeat?: string | number; json?: boolean }): Promise<number> {
+  if (!board) throw new Error('name the board: marver perf run <board> [--slow] [--repeat 1-5] [--json]')
+  const info = readDevInfo(root)
+  if (!info) throw new Error('`marver dev` is not running in this repo (design/.local/dev.json not found) - start it first.')
+  const repeat = opts.repeat === undefined ? 1 : Number(opts.repeat)
+  if (!(Number.isInteger(repeat) && repeat >= 1 && repeat <= 5)) throw new Error('--repeat must be 1-5')
+  const ac = new AbortController()
+  const stop = () => ac.abort()
+  process.once('SIGINT', stop)
+  const name = namer(root)
+  const lines: RunLine[] = []
+  let under: string | null = null   // the run under way: its phases name it, its line ends it
+  try {
+    const res = await fetch(`http://localhost:${info.port}/__mv/api/perf/run`, {
+      method: 'POST', signal: ac.signal,
+      headers: { 'x-mv-work': info.token, 'content-type': 'application/json' },
+      body: JSON.stringify({ board, slow: !!opts.slow, repeat }),
+    })
+    if (!res.ok || !res.body) {
+      const b = await res.json().catch(() => ({})) as { error?: string }
+      throw new Error(b.error ?? `the run could not start (${res.status})`)
+    }
+    let buf = '', finished = false
+    const dec = new TextDecoder()
+    for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+      buf += dec.decode(chunk, { stream: true })
+      let nl: number
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const text = buf.slice(0, nl); buf = buf.slice(nl + 1)
+        let m: RunStreamLine
+        try { m = JSON.parse(text) } catch { continue }
+        // the server's own answer is final: the run under way ended without a line, and none will come
+        if ('error' in m) { under = null; throw new ServerSaid(`the run failed in the dev server: ${m.error}`) }
+        if ('phase' in m) { under = m.run; if (!opts.json) console.log(m.phase === 'warm' ? `run ${m.run}: warming up` : m.phase === 'measured' ? '  measuring' : '  closing') }
+        if ('line' in m) { under = null; lines.push(m.line); if (!opts.json) for (const l of runBlock(m.line, name)) console.log(`  ${l}`) }
+        if ('done' in m) finished = true
+      }
+    }
+    // a stream that ends quietly before its `done` broke too: under a run, that run's line is waited for below
+    if (!finished) throw new Error('the dev server ended the stream before the runs did')
+  } catch (err) {
+    if (ac.signal.aborted) { if (!opts.json) console.log('  cancelled - the run\'s line says so'); return 130 }
+    if (err instanceof ServerSaid) {
+      if (!opts.json) throw err
+      console.log(JSON.stringify({ runs: lines, error: err.message }, null, 2))
+      return 1
+    }
+    // the stream broke under a run: the dev server restarted (spec 28 A3.8 #22) or stopped - its line says which
+    if (!under) throw err
+    if (!opts.json) console.log('  the connection to the dev server dropped - waiting for the run\'s line')
+    const line = await lineAfterDrop(root, under, info.port)
+    if (!line) throw new Error(`the connection to the dev server dropped during run ${under}, and no line came for it - did \`marver dev\` stop? (${(err as Error).message})`)
+    lines.push(line)
+    if (!opts.json) for (const l of runBlock(line, name)) console.log(`  ${l}`)
+  } finally { process.off('SIGINT', stop) }
+  if (opts.json) console.log(JSON.stringify({ runs: lines }, null, 2))
+  else console.log(`\n  design/.local/perf/runs.jsonl · compare: npx marver perf --runs`)
+  return lines.length && lines.every((l) => l.valid) ? 0 : 1
+}
+
+/** `marver perf --runs [--against <run>] [--days n]`: the headless runs, compared inside their cohorts. */
+function runsPerf(root: string, opts: { days?: number | string; json?: boolean; against?: string }) {
+  const days = Number(opts.days) > 0 ? Number(opts.days) : 14
+  const lines = readRuns(root, Date.now() - days * 86_400_000) as RunLine[]
+  const sum = runsSummary(lines, { against: opts.against })
+  if (opts.json) { console.log(JSON.stringify({ days, runs: lines, ...sum }, null, 2)); return }
+  const name = namer(root)
+  console.log(`headless runs, last ${days} days - design/.local/perf/runs.jsonl`)
+  if (!lines.length) { console.log('\nnone yet - npx marver perf run <board>'); return }
+  const pct = (a: number | null, b: number | null) => (a && b !== null ? `${b >= a ? '+' : ''}${Math.round(((b - a) / a) * 100)} %` : '-')
+  for (const b of sum.boards) {
+    console.log(`\n  ${name(b.board)} · Chrome ${String(b.cohort.chrome).split('.')[0]} · bakes ${b.cohort.bakes}${b.cohort.slow ? ' · --slow' : ''} · ${b.runs} valid run${b.runs === 1 ? '' : 's'}`)
+    const d33 = b.afterChange?.deltas.over33ms ?? null
+    console.log(`    latest ${b.latest.run}: load to settled ${ms2(b.latest.loadToSettledMs)} · p95 ${mms(b.latest.p95)} · ${b.latest.over33ms ?? '-'} over 33 ms · inputs ${b.latest.inputs?.slice(0, 8) ?? 'unknown'}…`)
+    if (b.sameInputs) console.log(`    against ${b.sameInputs.from.run} (same inputs): ${b.sameInputs.within10 ? 'within 10 %' : 'NOT within 10 %'} - load ${pct(b.sameInputs.from.loadToSettledMs, b.latest.loadToSettledMs)}, p95 ${pct(b.sameInputs.from.p95, b.latest.p95)}`)
+    if (b.afterChange) console.log(`    after a change, against ${b.afterChange.from.run}: load ${pct(b.afterChange.from.loadToSettledMs, b.latest.loadToSettledMs)}, p95 ${pct(b.afterChange.from.p95, b.latest.p95)}, over 33 ms ${d33 === null ? '-' : `${d33 >= 0 ? '+' : ''}${d33}`}`)
+  }
+  if (sum.against) {
+    const a = sum.against
+    if ('error' in a) console.log(`\n  --against ${a.run}: ${a.error}`)
+    else console.log(`\n  --against ${a.run}: ${a.to.run} ${a.within10 ? 'within 10 %' : 'differs'} - load ${pct(a.from.loadToSettledMs, a.to.loadToSettledMs)}, p95 ${pct(a.from.p95, a.to.p95)}`)
+  }
+  if (sum.overlapped.length) console.log(`\n  ${sum.overlapped.length} overlapped (another run at the same time): never compared - ${sum.overlapped.map((r) => r.run).join(', ')}`)
+  if (sum.invalid.length) {
+    console.log(`\n  invalid (${sum.invalid.length})`)
+    for (const r of sum.invalid.slice(-10)) console.log(`    ${new Date(r.ts).toLocaleString()}  ${r.run}  ${name(r.board)}  ${why(r)}`)
   }
 }

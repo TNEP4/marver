@@ -8,6 +8,8 @@
  */
 import { create } from 'zustand'
 import { ROUTE } from '../const.ts'
+import { guardLeaving, leaveNow, unsavedWhen, workChanged } from './unsaved.ts'
+import { PERF_RUN, perfRunGate, RUN_HEADER, RUN_PARAM } from './perf-run.ts'
 // @ts-expect-error virtual module provided by the plugin
 import shConfig from 'virtual:sh-config'
 // @ts-expect-error virtual module: null in dev; a published build inlines manifest+boards
@@ -18,8 +20,15 @@ export const WS: string = shData === null && typeof shConfig?.workspace === 'str
 
 /** A per-viewer preference kept per canvas (A1.6): `<key>:<workspace>` in dev, the bare key when published. */
 export const scoped = (key: string) => (WS ? `${key}:${WS}` : key)
-/** A URL a document or an <img> loads, naming the workspace (frames, the stage, Jam pictures). */
-export const withWs = (url: string) => (WS ? `${url}${url.includes('?') ? '&' : '?'}ws=${WS}` : url)
+const param = (url: string, k: string, v: string) => `${url}${url.includes('?') ? '&' : '?'}${k}=${v}`
+/** A URL a document or an <img> loads, naming the workspace (frames, the stage, Jam pictures) - and, in a headless
+ *  perf run, the run (spec 28 A3.8 #17): a frame's own writes are refused by its Referer, its Video asks no poster. */
+export const withWs = (url: string) => {
+  const u = WS ? param(url, 'ws', WS) : url
+  return PERF_RUN ? param(u, RUN_PARAM, PERF_RUN.id) : u
+}
+/** The headers every request of this page carries: its workspace, and its perf run's id. */
+const named = (h: Record<string, string> | undefined): Record<string, string> => ({ ...h, ...(WS ? { 'x-mv-ws': WS } : {}), ...(PERF_RUN ? { [RUN_HEADER]: PERF_RUN.id } : {}) })
 
 /** live; checking (the live socket dropped, the first answer not in); down (nothing, or not this canvas,
  *  answers); elsewhere (another canvas answers here); resuming (this canvas answered: saving, then reload). */
@@ -41,10 +50,13 @@ const stoppedAnswer = () => new Response('{"error":"this canvas stopped"}', { st
 
 /** Any request to this page's dev server. `fetch` is looked up at call time (tests patch window.fetch)
  *  and called before any await, so a `keepalive` request made in `pagehide` still goes out. Callers pass
- *  plain-object headers; a GET keeps its init without a method. */
+ *  plain-object headers; a GET keeps its init without a method. In a headless perf run the barrier comes first
+ *  (perf-run.ts): a write the run may not make is answered 403 here, never sent, and never stops the page. */
 export function mvFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const refused = perfRunGate(url, init)
+  if (refused) return Promise.resolve(refused)
   if (WS && canvasStopped()) return Promise.resolve(stoppedAnswer())
-  const sent = fetch(url, WS ? { ...init, headers: { ...(init.headers as Record<string, string> | undefined), 'x-mv-ws': WS } } : init)
+  const sent = fetch(url, WS || PERF_RUN ? { ...init, headers: named(init.headers as Record<string, string> | undefined) } : init)
   if (!WS) return sent
   // the server's refusal is told apart here, before any caller's own 409 (a board conflict, a stale tree)
   return sent.then((r) => {
@@ -67,8 +79,8 @@ export const api = (path: string, init?: RequestInit) => mvFetch(`${ROUTE}/api/$
  *  nothing to do. */
 const flushers = new Set<() => Promise<boolean>>()
 export const beforeResume = (fn: () => Promise<boolean>) => { flushers.add(fn); return () => { flushers.delete(fn) } }
-/** What holds a reload while it answers true: an edit not saved, a capture recording, words typed and not
- *  sent. Synchronous, and asked right before the reload, after every flusher has finished - so what a person
+/** What holds a reload while it answers true: an edit not saved, heights not in the file yet, a capture recording,
+ *  words typed and not sent. Synchronous, and asked right before the reload, after every flusher has finished - so what a person
  *  does while the flushers wait on the server holds it as surely as what was there before they began. */
 const holds = new Set<() => boolean>()
 export const holdsReload = (fn: () => boolean) => { holds.add(fn); return () => { holds.delete(fn) } }
@@ -88,6 +100,7 @@ let hmrLost = false
 let probeTimer: ReturnType<typeof setTimeout> | null = null
 
 function lost(why: 'down' | 'elsewhere') {
+  owed = true
   noteUnsaved()
   if (why === 'elsewhere') useLink.setState({ link: 'elsewhere', shown: true })
   else if (!canvasStopped()) useLink.setState({ link: 'checking' })
@@ -98,7 +111,7 @@ function lost(why: 'down' | 'elsewhere') {
 async function probe() {
   let r: Response | null = null
   // a server that takes the connection and never answers (half up, hung, paused) is no answer: a miss
-  try { r = await fetch(`${ROUTE}/api/hello`, { headers: { 'x-mv-ws': WS }, cache: 'no-store', signal: AbortSignal.timeout(2000) }) } catch { r = null }
+  try { r = await fetch(`${ROUTE}/api/hello`, { headers: named({}), cache: 'no-store', signal: AbortSignal.timeout(2000) }) } catch { r = null }
   const ours = !!r?.ok && (await r.json().catch(() => null))?.ws === WS
   probeTimer = null
   if (ours) return void resume()
@@ -113,8 +126,7 @@ async function resume() {
   const back = useLink.getState().link !== 'live'      // from a stop; 'live' is a page that owes a reload
   if (back) useLink.setState({ link: 'resuming' })     // requests flow again: the flushers use them
   let ok = true
-  flushing = true
-  try { for (const fn of flushers) ok = (await fn().catch(() => false)) && ok } finally { flushing = false }
+  for (const fn of flushers) ok = (await fn().catch(() => false)) && ok
   const now = useLink.getState().link
   if (now !== 'resuming' && now !== 'live') return     // lost again while saving: the probe goes on
   // asked here, with nothing awaited between the answer and the reload: words typed or an edit made while a
@@ -122,10 +134,11 @@ async function resume() {
   if (ok && held()) ok = false
   // a fresh document on the canvas that answered: live updates again - and the next page says what the resumes came to,
   // this one's and those this reload waited after (a draft, a capture), whose toasts go with this page
-  if (hmrLost && ok) { keepOverReload(lostOnResume ?? (savedOnResume ? 'saved' : null)); return void location.reload() }
+  // its own guard lets this reload through: what it held is saved, and nothing holds it (A2.14 #17)
+  if (hmrLost && ok) { keepOverReload(lostOnResume ?? (savedOnResume ? 'saved' : null)); return void leaveNow(() => location.reload()) }
   if (back || useLink.getState().shown) useLink.setState({ link: 'live', shown: false })
   // no reload owed (Vite's socket held): the page goes on as it is, and what this resume came to was said on it
-  if (!hmrLost) { lostOnResume = null; savedOnResume = false; return }
+  if (!hmrLost) { owed = false; lostOnResume = null; savedOnResume = false; return }
   // Vite's socket never comes back (its client waits on the listener below), so this page owes a reload:
   // until nothing holds it (a capture recording, words not sent) it works as live, keeps asking - a stop
   // is seen again - and reloads the moment it may
@@ -150,18 +163,22 @@ export function stranded(f: HTMLIFrameElement | null): boolean {
  *  reached the disk; 'disk' - the board's file changed on disk meanwhile and won, the tab's board edits dropped; 'gone' - the board
  *  was renamed or removed meanwhile and is not created again; null - there was nothing to save. */
 export type ResumeOutcome = 'saved' | 'disk' | 'gone' | null
-let flushing = false
+/** A resume is owed from the stop until the page's own reload - or, Vite's socket held, until the resume that needs
+ *  none. Every board save that answers meanwhile is what the resumes came to: the resume's own, and as often the
+ *  ordinary autosave (store.ts, 500 ms after an edit), which can land before any flusher runs - a pass held by a
+ *  frame in the hand, then the drop's save - and leave the flushers nothing to save. */
+let owed = false
 /** What the resumes came to - the board save's own word, lost or saved - kept until the reload that carries it: a
  *  resume whose reload is held (a draft, a capture) is not the last one, and the one that reloads at last may have
- *  nothing left to save. Each later resume only adds to it - the first loss stays, and a loss outranks a save. A resume
+ *  nothing left to save. Each later save only adds to it - the first loss stays, and a loss outranks a save. A resume
  *  that owes no reload (Vite's socket held) ends it. */
 let lostOnResume: 'disk' | 'gone' | null = null
 let savedOnResume = false
-/** The board save, while the resume's flushers run: what this tab held did not reach the disk (store.ts) - the page
- *  after the reload says what happened instead, never that the edits were saved. */
-export function lostInResume(why: 'disk' | 'gone') { if (flushing) lostOnResume ??= why }
-/** The board save, while the resume's flushers run: what this tab held reached the disk (store.ts). */
-export function savedInResume() { if (flushing) savedOnResume = true }
+/** A board save, while a resume is owed: what this tab held did not reach the disk (store.ts) - the page after the
+ *  reload says what happened instead, never that the edits were saved. */
+export function lostInResume(why: 'disk' | 'gone') { if (owed) lostOnResume ??= why }
+/** A board save, while a resume is owed - the resume's or the autosave's: what this tab held reached the disk (store.ts). */
+export function savedInResume() { if (owed) savedOnResume = true }
 
 const RESUMED = 'mv-resumed'
 const keepers = new Set<() => Record<string, unknown>>()
@@ -191,9 +208,17 @@ export const resumed: { outcome: ResumeOutcome; board?: string; camera?: { x: nu
 const typed = new WeakSet<EventTarget>()
 const TEXT_FIELDS = 'textarea, input:not([type]), input[type=text], input[type=search], input[type=email], input[type=url], input[type=password]'
 if (WS) {
-  document.addEventListener('input', (e) => { if (e.target) typed.add(e.target); if (canvasStopped()) noteUnsaved() }, true)
-  holdsReload(() => [...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(TEXT_FIELDS)].some((el) => typed.has(el) && el.value.trim() !== ''))
+  document.addEventListener('input', (e) => { if (e.target) typed.add(e.target); if (canvasStopped()) noteUnsaved(); workChanged() }, true)
+  const typedWords = () => [...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(TEXT_FIELDS)].some((el) => typed.has(el) && el.value.trim() !== '')
+  holdsReload(typedWords)
+  // and leaving the page asks first (spec 28 A2.9): the words are only here
+  unsavedWhen('typing', typedWords)
 }
+
+// one question before this page goes, whatever it holds that the server does not have (unsaved.ts): a capture, a
+// board edit, heights, words - in every browser, and the Mac app reads the same reasons. Never in a headless perf run
+// (spec 28 A3.8 #17): its writes are refused, so `heights` would hold for good and block the context's end
+if (typeof window !== 'undefined' && !PERF_RUN) guardLeaving(window)
 
 // Vite's client awaits every `vite:ws:disconnect` listener before it pings the server and reloads the
 // page (vite/dist/client/client.mjs, Vite 8). This one never settles: the canvas page is never reloaded by
@@ -204,3 +229,5 @@ if (WS && import.meta.hot) import.meta.hot.on('vite:ws:disconnect', () => { hmrL
 
 // dev-only inspection hook for tests (never installed in published builds)
 if (WS && import.meta.env.DEV) (window as unknown as { __mvLink: unknown }).__mvLink = useLink
+// and, in a headless perf run only, the page's own way out: a test sends through the barrier as the shell does
+if (PERF_RUN && import.meta.env.DEV) (window as unknown as { __mvApi: unknown }).__mvApi = { api, withWs }

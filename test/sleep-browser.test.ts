@@ -406,7 +406,11 @@ describe('sleep in place, on a real dev canvas', () => {
 
   skippable('a board of many frames boots a few at a time, nearest the centre first, every frame navigating once', async () => {
     await onBoard()
-    await ev(`window.__mvAdmitted = []; location.hash = '#/b/many'`)
+    // each admission, with the camera's scale as it came (the grid's --sh-s: the first comes as the board's fit sets
+    // off) and how many frames were booting then (started, not ready yet)
+    const scale = `parseFloat(getComputedStyle(document.querySelector('.sh-app')).getPropertyValue('--sh-s'))`
+    const booting = `${ST}.nodes.filter((n) => n.status === 'loading' && document.querySelector('[data-node="' + n.key + '"] iframe.sh-live')?.getAttribute('src')).length`
+    await ev(`(() => { window.__mvScales = []; window.__mvBooting = []; window.__mvAdmitted = Object.assign([], { push(k) { window.__mvScales.push(${scale}); window.__mvBooting.push(${booting}); return Array.prototype.push.call(this, k) } }); window.__mvScale0 = ${scale}; location.hash = '#/b/many'; return 1 })()`)
     await until(`${ST}.nodes.length === 12`)
     // while loading, at most SLOTS iframes carry a src (the rest wait, silent by design)
     const withSrc = `[...document.querySelectorAll('iframe.sh-live')].filter((f) => f.getAttribute('src')).length`
@@ -421,7 +425,7 @@ describe('sleep in place, on a real dev canvas', () => {
       await wait(40)
     }
     if (process.env.MV_TEST_DUMP) console.log('CAM polls', polls, cam.join(' | '))
-    expect(polls, 'the load was observed while in progress').toBeGreaterThan(3)
+    expect(polls, 'the load was observed while in progress').toBeGreaterThan(0)
     expect(peak, 'frames booting at once').toBeLessThanOrEqual(4)
     await until(`${ST}.nodes.every((n) => n.status === 'ready')`, 60_000)
     expect(await ev(`${ST}.nodes.filter((n) => n.readyRetried).length`), 'a queued frame was mistaken for a stalled one').toBe(0)
@@ -429,11 +433,18 @@ describe('sleep in place, on a real dev canvas', () => {
     // the first frames admitted were the ones nearest the viewport centre (the fit view centres the board)
     const order = JSON.parse(await ev(`JSON.stringify(window.__mvAdmitted)`)) as string[]
     expect(order, 'admitted in order of distance to the centre: ' + order.join(' ')).toHaveLength(12)
-    // from the second admission on (the first is ranked while the board's fit still settles), frames
-    // went in by distance to the canvas centre, which has not moved since
+    // every frame went in by distance to the canvas centre as the fit left it - the first too, though it was ranked as
+    // the fit set off, the camera still far from there: on where each frame would be once the camera landed (the
+    // frames can all be ready before it has)
+    await until(`!window.__mvJamCanvas.cameraBusy()`, 5_000)
     const dist = JSON.parse(await ev(`(() => { const c = document.querySelector('.sh-canvas').getBoundingClientRect(); const st = ${ST}
       return JSON.stringify(Object.fromEntries([...document.querySelectorAll('.sh-node')].map((el, i) => { const r = el.getBoundingClientRect(); return [st.nodes[i].key, Math.hypot(r.x + r.width / 2 - c.x - c.width / 2, r.y + r.height / 2 - c.y - c.height / 2)] }))) })()`)) as Record<string, number>
-    const seq = order.slice(1).map((k) => dist[k])
+    const [s0, s1, first] = [await ev(`window.__mvScale0`), await ev(scale), (await ev(`window.__mvScales`))[0]] as number[]
+    expect(Math.abs(s1 - s0), 'the fit changes the scale').toBeGreaterThan(0.1)
+    expect(Math.abs(first - s1), `the first frame started with the fit on its way (scale ${first}, from ${s0} to ${s1})`).toBeGreaterThan(Math.abs(s1 - s0) / 2)
+    // never more than four at once: each started with at most three others booting
+    expect(Math.max(...(await ev(`window.__mvBooting`)) as number[]), 'frames booting as one more started').toBeLessThanOrEqual(3)
+    const seq = order.map((k) => dist[k])
     expect(seq.every((d, i) => i === 0 || d >= seq[i - 1] - 1), 'admitted by distance: ' + order.map((k) => k + ':' + Math.round(dist[k])).join(' ')).toBe(true)
     await onBoard()
   })

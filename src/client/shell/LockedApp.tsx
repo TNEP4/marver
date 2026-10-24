@@ -17,6 +17,9 @@ import { isLegacyLink, landLegacy } from './legacy-links.ts'
 import { useComments } from './comments-store.ts'
 import { isLatest, navigated, switchFor } from './goto.ts'
 
+/** App.tsx's headless-run probe (perf-run-probe.ts): a run's page is always a dev canvas, never a locked bundle. */
+export function startPerfRunProbe(): void {}
+
 export class ShellBoundary extends Component<{ children: ReactNode }, { err: Error | null }> {
   state = { err: null as Error | null }
   static getDerivedStateFromError(err: Error) { return { err } }

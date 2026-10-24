@@ -314,7 +314,8 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
   const fromConfig = opts.port === undefined && !opts.recover && config.port !== 5199 ? config.port : undefined
   const explicitPort = opts.port ?? fromConfig
   const placed = await place({
-    root: run.root, name: basename(run.root), version: installedVersion() ?? '0.0.0', id: run.id, ws: run.ws, instance,
+    // the name the shell shows (spec 28 A2.14 #23): the app's tab and Home card wear it, "TMS broker" not "tms-broker"
+    root: run.root, name: config.share.name || basename(run.root), version: installedVersion() ?? '0.0.0', id: run.id, ws: run.ws, instance,
     onHold: (release) => t.claim(release),
     ...(opts.recover ? { recover: { port: opts.recover.port } }
       : explicitPort !== undefined ? { explicit: { port: explicitPort, from: fromConfig !== undefined ? 'config' as const : 'flag' as const } } : {}),

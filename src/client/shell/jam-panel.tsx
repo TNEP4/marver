@@ -19,6 +19,7 @@ import { LANE_H } from './jam-lane.tsx'
 import { Tip } from './Tip.tsx'
 import { useJamQueue } from './jam-queue.ts'
 import { holdsReload } from './api.ts'
+import { unsavedWhen, workChanged } from './unsaved.ts'
 
 /** A heading cut short by its ellipsis: its tooltip shows it whole (one that fits shows none). */
 const cutShort = (el: HTMLElement) => el.scrollWidth > el.clientWidth + 1
@@ -55,11 +56,13 @@ export function FocusPanel({ children, left, width = 580, onClose }: { children:
 
 /** More work words not sent yet, by card - they survive the panel closing on a click elsewhere. */
 const moreDrafts = new Map<string, string>()
-export const clearMoreDraft = (id: string) => { moreDrafts.delete(id) }
+export const clearMoreDraft = (id: string) => { moreDrafts.delete(id); workChanged() }
 export const moreDraftOf = (id: string): string => moreDrafts.get(id) ?? ''
-export const setMoreDraft = (id: string, t: string) => { if (t) moreDrafts.set(id, t); else moreDrafts.delete(id) }
+export const setMoreDraft = (id: string, t: string) => { if (t) moreDrafts.set(id, t); else moreDrafts.delete(id); workChanged() }
 // spec 28 A1.11: a page whose canvas came back reloads only once no such words wait (a reload would drop them)
 holdsReload(() => moreDrafts.size > 0)
+// and leaving the page asks first (spec 28 A2.9)
+unsavedWhen('typing', () => moreDrafts.size > 0)
 
 const unquote = (s: string) => s.replace(/^"(.*)"$/s, '$1')
 const DEVICE: Record<string, string> = { phone: 'mobile', mobile: 'mobile', tablet: 'tablet', laptop: 'laptop', desktop: 'monitor', monitor: 'monitor', tv: 'tv' }
@@ -370,7 +373,7 @@ export function ReviewDetail({ title, head, of, onPrev, onNext, frames, active, 
   // the More work words outlive the panel: a click elsewhere closes it, and the words wait for its return -
   // they go only when sent, or when you leave the composer yourself (Esc)
   const [text, setTextState] = useState(() => (draftKey ? moreDrafts.get(draftKey) ?? '' : ''))
-  const setText = (t: string) => { setTextState(t); if (draftKey) { if (t) moreDrafts.set(draftKey, t); else moreDrafts.delete(draftKey) } }
+  const setText = (t: string) => { setTextState(t); if (draftKey) { if (t) moreDrafts.set(draftKey, t); else moreDrafts.delete(draftKey); workChanged() } }
   const field = useRef<HTMLTextAreaElement>(null)
   useEffect(() => { if (draftKey && moreDrafts.get(draftKey) && !more) onMoreOpen(true) }, [])   // back with words waiting: the composer is open
   // left on purpose (Esc cleared its words from the map): the composer's words go too; closed by a click

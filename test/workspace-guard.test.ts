@@ -159,6 +159,7 @@ describe('the workspace guard', () => {
       'shell/comments-store.ts': [/new EventSource\(`\$\{ROUTE\}\/api\/events`\)/],              // published only: never opened in dev
       'shell/jam-voice.ts': [/new WebSocket\(.*\/api\/jam\/audio\?ticket=/],                      // bound by its single-use ticket, asked through api()
       'content/video.tsx': [/\bfetch\(`\$\{ROUTE\}\/api\/(policy|poster)`, \{.*headers: named\(/],   // a frame: names the workspace from its URL
+      'shell/perf-run.ts': [/const base = `\$\{ROUTE\}\/api\/`/],                                  // the run's barrier reads the path of a URL mvFetch was given: it builds none
     }
     const dir = join(import.meta.dirname, '..', 'src', 'client')
     // comments blanked in place (offsets kept): a comment may name a route, and its parentheses are not code

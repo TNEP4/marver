@@ -1,0 +1,1488 @@
+/**
+ * The tab model (spec 28 A2.4, A2.14 #20, #23, v1.12 r1 #3, #5, v1.13 r2 #1-#3, v1.14 r3 #1-#3). Owner: the
+ * window stream.
+ *
+ * One field group per concern, one writer each; `displayState` and the tab page (`tabpage.ts` `pageFor`) are pure
+ * functions of the record. This file holds no Electron import: the model, its transitions, the order and keys,
+ * `tabs.json`, and the guard - every effect (a view, a load, an act on a page, a native sheet) goes through the
+ * ports `views.ts` installs, so all of it is unit-tested without Electron.
+ *
+ * The guard (A2.2, v1.12 r1 #3, v1.13 r2 #1-#4, v1.14 r3 #1, #2): every way the app replaces a canvas's live
+ * document is one operation of `guard(tab, action)` (`guardAll` for quit and update), one at a time per tab,
+ * bound to `{ tab, commit, doc, action }` at its start and read again after every wait, in the turn of its act:
+ * it goes on only when the tab's document is the one it bound and either its safety is fresh and clean now, or
+ * the person's consent names exactly that tab, document and action. A fresh `unsaved` refuses at once, asking
+ * nothing; a record not fresh (`unknown`, `stale`, or a canvas without the bridge) asks one native sheet first.
+ *
+ * A3 (app 0.2, A3.8 #24, #39-#44) adds two field groups and a guard action, frozen before its streams split:
+ * - `geo`, the tab's geometry, written only by layout.ts's `commitLayout` (the one-ground stream), from the events
+ *   this file and views.ts hand it; `compose()` stays the one writer of native bounds;
+ * - `{ kind: 'unload', reason }`, the same serialized operation as every other action with a silent refusal of its
+ *   own: any other action on that tab waits for the unload's `done`, and `guardAll` sweeps no unload in (`sweeping`)
+ *   and waits for those under way - `quitWaitMs` at most, then it answers 'stuck' (code review r2 #1). The
+ *   unload's admission (`unloadRefusal`), its op, `onUnloaded` and the reopen are the section at the end (the
+ *   unloading stream); memory.ts decides when.
+ */
+import type { DisplayState, TabPageProbe, TabView } from '../shared/channels.ts'
+import type { AppState, Busy, Hello, Inset, MenuItem, Theme, Why } from '../../../src/shared/app-api.ts'
+import { UNSAVED_WHY, WHY_WORDS } from '../../../src/shared/app-api.ts'
+import type { AppBody, AppKind, TabIdent, UnloadReason } from '../../../src/shared/app-perf.ts'
+import { commitLayout } from './layout.ts'
+import { bumpGen } from './present.ts'
+import { T } from './timings.ts'
+import type { FailWhy } from './nav.ts'
+import type { RegistryEntry, RegistryEvent } from './registry.ts'
+import { tilde } from '../shared/command.ts'
+import { hueOf } from '../shared/hue.ts'
+
+export type TabKind = 'local' | 'home' | 'settings'   // 'remote' from A4
+
+/** The registry's facts about the tab's canvas (writer: tabs.ts, from the registry's events). */
+export interface TabReg {
+  state: 'starting' | 'ready' | 'gone'
+  file: string
+  instance: string
+  ws: string
+  /** null while starting */
+  origin: string | null
+  port: number
+  slot: number | null
+  features: string[]
+  /** the canvas's Marver version (the slot file's) - added by the window stream */
+  version?: string
+}
+
+/** The view (writer: views.ts / tabs.ts). `unloaded`: A3's, an unload's close ended at `destroyed` (A3.8 #43). */
+export type TabViewState = 'none' | 'live' | 'crashed' | 'unloaded'
+
+/** The committed document and its trust (writer: tabs.ts, from the adapter's events, nav.ts). */
+export interface TabDoc {
+  gen: number
+  url: string
+  /** trusted at its commit, and its instance still the tab's current, live registry instance (A2.14 #8) */
+  trusted: boolean
+  /** minted at the trusted commit and sent as `mv:admit` (v1.12 r1 #1) */
+  doc?: string
+  /** commits of this tab, counted: bumped at every commit and failure main sees and when the renderer or the view goes (v1.13 r2 #2) */
+  commits: number
+  /** this document has been shown */
+  shown: boolean
+  /** the commit was attributed (trusted at its commit): the tab page lifted for it - added by the window stream */
+  lifted?: boolean
+}
+
+/** The current document's safety (v1.12 r1 #2, v1.13 r2 #1): unknown until its first report; stale once main can no longer hear it. */
+export type Safety = 'unknown' | 'fresh' | 'stale'
+
+/** The current document's last reports (writer: tabs.ts `onReport`, from the bridge). `hello`: its accepted `mv:hello` (A3: its inset, its page). */
+export interface TabReports { safety: Safety; busy?: Busy; theme?: Theme; menu?: MenuItem[]; hello?: Hello }
+
+/**
+ * The crash record (writer: tabpage.ts `recover`). `count`, `lastAuto` and `latched` are the frozen part; the
+ * rest is the window stream's bookkeeping of A2.11's rules.
+ */
+export interface TabCrash {
+  count: number
+  lastAuto?: number
+  latched: boolean
+  /** when each counted crash happened (Copy Details) */
+  times?: number[]
+  reason?: 'oom' | 'killed' | 'crashed'
+  exitCode?: number
+  /** the reload in flight after a crash, by whom - until its document commits or fails */
+  inFlight?: false | 'auto' | 'person' | 'force'
+  /** bumped at each reload started and each document lifted: one renderer's life, for counting a crash once */
+  epoch?: number
+  /** the epoch whose crash was counted: further events of it count nothing (A2.11) */
+  countedIn?: number
+  /** a hidden tab crashed: its one automatic attempt waits for it to be shown */
+  pendingShow?: boolean
+  /** when a person's reload lifted: the latch clears 60 s later without a crash */
+  personLiftAt?: number
+}
+
+/** The last load's failure, from the adapter (the tab page's state; cleared at an attributed commit or a rebind). */
+export interface TabFail { why: FailWhy; at: number; code?: number }
+
+/** Where a tab's view sits (A2.2, A3.8 #24): the full height under the transparent strip, or below it. */
+export type Layout = 'full' | 'below'
+
+/**
+ * The tab's geometry (writer: layout.ts `commitLayout`, alone; A3.8 #24). `compose()` places every view from
+ * `placed(tab)`: HTML fullscreen first, then `layout`. A shown or retained document's geometry changes only at its
+ * commit; a view holding no shown document takes `pending.layout` at its navigation's start (pre-sized).
+ */
+export interface Geometry {
+  /** the committed document's; 'below' for a view with no document */
+  layout: Layout
+  /** the next document's, from the main frame's navigation start (its generation and the instance it was meant for) */
+  pending?: { gen: number; instance: string; layout: Layout }
+  /** what the admitted document's hello said; undefined until it speaks */
+  inset?: Inset
+  /** enter-html-full-screen .. leave-html-full-screen */
+  htmlFullscreen: boolean
+}
+
+/**
+ * An unload of this tab (writer: tabs.ts's unload section and views.ts's act; A3.8 #39-#45). `closing` from the act
+ * until `destroyed` or the page's refusal; `unsure` once `unloadActMs` passed with neither (main then ends the close
+ * itself); `unloaded` from `destroyed`; `reopening` from the load that shows it again until that document lifts.
+ */
+export interface TabUnload {
+  phase: 'closing' | 'unsure' | 'unloaded' | 'reopening'
+  reason: UnloadReason
+  /** the act's start */
+  at: number
+  /** the document it closed (`doc.commits`) */
+  commit: number
+  /** the bound origin then: a reopen on another origin has no saved camera (camera storage is per origin) */
+  origin: string
+  /** `destroyed`: unloadedForMs runs from here to the activation (A3.8 #45) */
+  unloadedAt?: number
+  /** the activation that reopens it - one queued during the close keeps its own time (A3.8 r2 #4) */
+  activatedAt?: number
+  /**
+   * the close did not reach `destroyed` `unloadActMs` after main's own close: main closed it again until it went
+   * (unload-act.ts's retries), the tab held all the while - or found it destroyed with no event and took the view out
+   */
+  stuck?: boolean
+  /**
+   * Force Quit Tab on a quit's stuck sheet (code review r2 #1; unload-act.ts forceUnload): the view taken out by hand
+   * with its webContents alive - a separate outcome, recorded `forced`, never a completed unload
+   */
+  forced?: boolean
+}
+
+export interface Tab {
+  /** main's opaque id, `t` and a counter, stable for the tab's life (A2.14 #10); `home` and `settings` for those */
+  id: string
+  kind: TabKind
+  name: string
+  reg?: TabReg
+  view: TabViewState
+  doc?: TabDoc
+  reports: TabReports
+  crash: TabCrash
+  /** a document that was shown or admitted may hold the person's work, alive in the view (v1.13 r2 #3) */
+  retained: boolean
+  /** the replacement in flight, one per tab, with its action and any consent (v1.13 r2 #2, v1.14 r3 #1, #2) */
+  replacing?: GuardOperation
+  /** false: closed by the person for this canvas's run (Home still lists it) */
+  open: boolean
+  /** the shell's own document only: `/` or `/index.html`, its query and hash (v1.12 r1 #5) */
+  path: string
+  root?: string
+  shownAt?: number
+  hiddenAt?: number
+
+  // ---- added by the window stream (optional, so nothing that builds a Tab elsewhere breaks) ----
+  /** the last load's failure; the tab page shows it while no document is lifted */
+  fail?: TabFail
+  /** what the probe of a failed tab's address last found (v1.14 r3 #3) */
+  probe?: TabPageProbe
+  /** Chromium's hang monitor: `unresponsive` until `responsive` */
+  hung?: boolean
+  /** the guard refused for unsaved work: the strip's "Unsaved work here" pill (A2.2) */
+  held?: { at: number; action: GuardAction['kind'] }
+  /** the app is ending this renderer itself: its render-process-gone counts nothing (A2.11) */
+  appEnding?: boolean
+  /** the tab's look this run: its documents' last trusted `mv:theme`, kept through a crash or a stop (A2.14 #26) */
+  look?: boolean
+  /** a checked `data:` URL (A2.4); never shown for an unverified tab */
+  logo?: string
+  /** when the registry last changed the tab's state, the last load started, the canvas went */
+  regAt?: number
+  loadAt?: number
+  goneAt?: number
+  /** unattributed commits in a row: the first is reloaded at once, the next on A2.3's schedule (A2.14 #8) */
+  unattributed?: number
+  /** documentless, with a view that holds nothing worth keeping (a rebind): loads when next shown (v1.13 r2 #5) */
+  needsLoad?: boolean
+
+  // ---- A3 (app 0.2; A3.8 #24, #39-#44) ----
+  /** the tab's geometry (layout.ts alone) */
+  geo: Geometry
+  /** an unload under way or done (the unloading stream) */
+  unload?: TabUnload
+  /** the commit whose page refused an unload: that document is never asked again (A3.8 #42) */
+  unloadRefused?: number
+  /** `audio-state-changed`, `devtools-opened` / `-closed`, a main-frame navigation under way (views.ts): an unload's refusals (A3.8 #40) */
+  audible?: boolean
+  devtools?: boolean
+  loading?: boolean
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The guard's contract (frozen, v1.14 r3 #2)
+
+/**
+ * Every way the app replaces a canvas's live document (v1.12 r1 #3), as a value the caller builds once and the
+ * operation copies at its start (v1.14 r3 #2): nothing read later changes what it does. A3 adds `{ kind: 'unload' }`
+ * (A3.8 #39): the same one-at-a-time operation, its own admission and a silent refusal - no sheet, no pill, no tab
+ * brought forward, no window shown.
+ */
+export type GuardAction =
+  /** ⌘W, the strip's close, Close Tab: `close({ waitForBeforeUnload: true })` */
+  | { kind: 'close' }
+  /** ⌘Q, each tab under `guardAll`: a close */
+  | { kind: 'quit' }
+  /** A5's Restart to update, each tab under `guardAll`: a close */
+  | { kind: 'update' }
+  /** ⌘R, the menu: `reload()` */
+  | { kind: 'reload' }
+  /** ⇧⌘R: `reloadIgnoringCache()` */
+  | { kind: 'forceReload' }
+  /** a tab page's Try Again or Try Now: `loadURL` of the tab's path on its bound origin (a reload while it has not moved) */
+  | { kind: 'tryAgain' }
+  /** ⌘L or a same-origin `window.open`: `loadURL(url)`, the link already rebuilt on the bound origin and checked (A2.7) */
+  | { kind: 'load'; url: string }
+  /** A3: memory.ts under pressure (A3.8 #39, #41): `close({ waitForBeforeUnload: true })`, the tab kept, unloaded at `destroyed` */
+  | { kind: 'unload'; reason: UnloadReason }
+
+/** The two actions `guardAll` takes. */
+export type GuardAllAction = Extract<GuardAction, { kind: 'quit' | 'update' }>
+
+/**
+ * `guardAll`'s answer: the guard's, or `'stuck'` (code review r2 #1) - an unload's close in flight has not ended
+ * within `quitWaitMs`. Nothing was replaced, the quit's flags are cleared, and the unload still owns its tab:
+ * `stuckUnloads()` names the tabs for the person's sheet (Force Quit Tab / Keep Waiting).
+ */
+export type GuardAllAnswer = GuardAnswer | 'stuck'
+
+/**
+ * The person's answer on a sheet: exactly this tab, this document and this action (v1.14 r3 #1). Held by the one
+ * operation that asked; never another action, tab or document. A shared quit sheet makes one per tab it names.
+ */
+export interface GuardConsent { tab: string; commit: number; doc?: string; action: GuardAction }
+
+/**
+ * One replacement in flight: what it bound at its start (v1.13 r2 #2, v1.14 r3 #1, #2). `done` settles when the
+ * operation ends, after `Tab.replacing` is cleared (A3.8 #39): what waits on an unload is judged on what it left.
+ */
+export interface GuardOperation { commit: number; doc?: string; action: GuardAction; consent?: GuardConsent; done: Promise<void> }
+
+/** Why a sheet names a tab (A2.14 #15, v1.12 r1 #2, v1.13 r2 #1). */
+export type SheetWhy =
+  | { kind: 'no-bridge'; version?: string }
+  | { kind: 'unknown' }
+  | { kind: 'stale'; stopped: boolean; held: Why[] }
+  /** a quit's stuck sheet (code review r2 #1): the tab's unload close has not ended */
+  | { kind: 'stuck' }
+
+/** One native sheet the guard asks (Cancel the default). */
+export interface Sheet { action: GuardAction; tabs: { id: string; name: string; why: SheetWhy }[] }
+
+/** What the guard's caller sees: `'done'` the act happened, `'refused'` nothing was replaced. */
+export type GuardAnswer = 'done' | 'refused'
+
+/** The effects the model needs; `views.ts` installs the real ones, tests fakes. */
+export interface TabsPorts {
+  now(): number
+  /** the person's home folder, for `~` */
+  home: string
+  /** the app's own theme (theme.json `mode` through nativeTheme) - a tab with no look of its own wears it */
+  appDark(): boolean
+  /** compose(): the one writer of bounds and visibility, in this turn */
+  changed(o?: { focus?: 'shown' }): void
+  /** make the tab's view if needed and load its path on its bound origin: only ever a documentless tab (never guarded) */
+  load(t: Tab): void
+  /** `mv:app-state` to the tab's live document */
+  appState(t: Tab, s: AppState): void
+  /** the act on the page: Chromium runs its beforeunload first; 'refused' when the page refused */
+  act(t: Tab, a: GuardAction): Promise<GuardAnswer>
+  /** one native sheet; true when the person confirmed */
+  ask(s: Sheet): Promise<boolean>
+  /** close and drop a tab's view that holds nothing to guard (Settings; a documentless canvas) */
+  forget(t: Tab): void
+  /** tabs.json, soon (debounced) */
+  save(): void
+  /** the tab was just shown: its pending automatic crash reload starts now (tabpage.ts) */
+  shown(t: Tab): void
+  /** a failed tab's address looked at again now (tabpage.ts `scheduleRetry(t, { now: true })`): its canvas is ready again */
+  recheck?(t: Tab): void
+  /**
+   * the window shown and brought to the front: a refused quit or update, or a refusal for unsaved work, brings its
+   * tab forward - in a window the red button or ⇧⌘W may have hidden (A2.2)
+   */
+  forward?(): void
+  /**
+   * tabs.json's saved path for a canvas that was not running at launch (A2.14 #23): its `(ws, origin)` entry, else
+   * the latest shown entry of its `ws`; undefined with `restoreTabs` off or nothing saved
+   */
+  savedPath?(ws: string, origin: string | null): string | undefined
+  /** a journal line (test builds) */
+  log?(topic: string, data: unknown): void
+  /** A3: a record for the recorder (`recorder.event`; app.jsonl only with the recorder on) - the unload's and the reopen's (A3.8 #45) */
+  record?<K extends AppKind>(kind: K, who: Tab | TabIdent, body: Omit<AppBody<K>, keyof TabIdent>): void
+}
+
+let ports: TabsPorts | null = null
+export function setTabsPorts(p: TabsPorts): void { ports = p }
+const P = (): TabsPorts => {
+  if (!ports) throw new Error('tabs.ts: no ports (views.ts installs them at ready)')
+  return ports
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The store
+
+const tabs = new Map<string, Tab>()
+let activeId = 'home'
+let counter = 0
+/** A quit or an update has begun: no unload is admitted (cleared when it is refused; A3.8 #42) */
+let sweeping = false
+/** reopens lifted and waiting for their document's hello (the unload section's; A3.8 #45) */
+const reopened = new Map<Tab, Reopened>()
+/** a new instance of a grey tab's workspace, on another origin, waiting for that tab's unload to end its close (A3.8 #42) */
+const afterClose = new Map<Tab, RegistryEntry>()
+/** closes for a canvas's run, `ws|instance` (A2.14 #23), kept in tabs.json */
+const closed = new Set<string>()
+const closeKey = (ws: string, instance: string) => `${ws}|${instance}`
+
+export function blankTab(id: string, kind: TabKind, name: string, extra: Partial<Tab> = {}): Tab {
+  return { id, kind, name, view: 'none', reports: { safety: 'unknown' }, crash: { count: 0, latched: false }, retained: false, open: true, path: '/', geo: { layout: 'below', htmlFullscreen: false }, ...extra }
+}
+
+/** Test seam: an empty model with Home. */
+export function resetTabs(): void {
+  tabs.clear(); closed.clear(); counter = 0; activeId = 'home'; sweeping = false
+  for (const r of reopened.values()) clearTimeout(r.timer)
+  reopened.clear()
+  afterClose.clear()
+  tabs.set('home', blankTab('home', 'home', 'Home'))
+}
+resetTabs()
+
+export const allTabs = (): Tab[] => [...tabs.values()]
+export const getTab = (id: string): Tab | undefined => tabs.get(id)
+export const activeTab = (): Tab | undefined => tabs.get(activeId)
+export const isActive = (t: Tab): boolean => t.id === activeId
+export const closedRuns = (): { ws: string; instance: string }[] => [...closed].map((k) => { const [ws, instance] = k.split('|'); return { ws: ws!, instance: instance! } })
+
+export interface Tabs {
+  all(): Tab[]
+  active(): Tab | undefined
+}
+
+/** At ready, after the window: the model with Home (restore() fills it from tabs.json and the registry). */
+export function startTabs(): Tabs {
+  if (!tabs.has('home')) tabs.set('home', blankTab('home', 'home', 'Home'))
+  return { all: allTabs, active: activeTab }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Pure views of the record
+
+/** A live document the view still holds, which may hold the person's work (the guard's and the rebind's test). */
+export const liveDoc = (t: Tab): boolean => t.kind === 'local' && t.view === 'live' && t.retained
+/**
+ * A tab loads when shown (A2.4's lazy views, v1.13 r2 #5): ready, not latched, not crashed (tabpage.ts owns that
+ * reload), holding no live document, and with no view yet or a view a rebind left documentless.
+ */
+export const wantsLoad = (t: Tab): boolean => t.kind === 'local' && t.reg?.state === 'ready' && !!t.reg.origin && !t.crash.latched
+  && t.view !== 'crashed' && !liveDoc(t) && !t.crash.inFlight && (t.view === 'none' || t.view === 'unloaded' || !!t.needsLoad)
+
+/**
+ * wantsLoad, now: an unloaded tab stays unloaded while a quit or an update sweeps (A3.8 #42) - a new document would
+ * meet the quit's newcomer check; if the quit is refused, the active one reopens then (sweepRefused).
+ */
+const loadsNow = (t: Tab): boolean => wantsLoad(t) && !(t.view === 'unloaded' && sweeping)
+
+/** The current document's record is fresh: trusted now, and heard since its commit. */
+export const fresh = (t: Tab): boolean => t.reports.safety === 'fresh' && !!t.doc?.trusted
+export const freshUnsaved = (t: Tab): boolean => fresh(t) && t.reports.busy?.unsaved === true
+export const freshClean = (t: Tab): boolean => fresh(t) && t.reports.busy?.unsaved !== true
+export const hasBridge = (t: Tab): boolean => !!t.reg?.features.includes('bridge')
+
+/** The name the eye reads: an unverified tab is its address, never the slot file's name (frame 05, A2.13). */
+export function tabName(t: Tab): string {
+  if (t.kind === 'local' && t.fail?.why === 'unverified' && t.reg) return `localhost:${t.reg.port}`
+  return t.name
+}
+
+/** A2.4's state, a pure function of the record. */
+export function displayState(t: Tab, active: boolean): DisplayState {
+  if (t.kind !== 'local') return active ? 'live' : 'hidden'
+  const gone = !t.reg || t.reg.state === 'gone'
+  if (t.fail?.why === 'unverified' && !gone) return 'unverified'
+  if (gone) return 'gone'
+  if (t.reg!.state === 'starting') return 'starting'
+  if (t.view === 'crashed' || (t.crash.latched && !t.doc?.lifted)) return 'crashed'
+  if (t.fail) return t.fail.why === 'unreachable' ? 'unreachable' : 'gone'
+  if (t.view === 'unloaded') return 'unloaded'
+  if (t.view === 'none') return 'none'
+  return active ? 'live' : 'hidden'
+}
+
+/** Home, local canvases by slot then explicit ports by port (a grey tab after a live one on the same slot), Settings (A2.14 #23). */
+export function ordered(list: Tab[] = allTabs()): Tab[] {
+  const rank = (t: Tab) => t.reg?.slot != null ? t.reg.slot : 10_000 + (t.reg?.port ?? 0)
+  const num = (t: Tab) => Number.parseInt(t.id.slice(1), 36) || 0
+  const local = list.filter((t) => t.kind === 'local' && t.open).sort((a, b) =>
+    rank(a) - rank(b) || Number(a.reg?.state === 'gone') - Number(b.reg?.state === 'gone') || num(a) - num(b))
+  return [...list.filter((t) => t.kind === 'home'), ...local, ...list.filter((t) => t.kind === 'settings')]
+}
+
+/** The canvas tabs in strip order: ⌘1-⌘8 are the first eight, ⌘9 the last (A2.4, A2.14 #23). */
+export const canvasOrder = (list: Tab[] = allTabs()): Tab[] => ordered(list).filter((t) => t.kind === 'local')
+
+export function forDigit(d: number, list: Tab[] = allTabs()): Tab | undefined {
+  const c = canvasOrder(list)
+  return d === 9 ? c.at(-1) : c[d - 1]
+}
+
+/** The key a canvas tab shows: 1-8 by place, 9 for the last (when it is past the eighth or the ninth). */
+export function keyOf(t: Tab, list: Tab[] = allTabs()): number | undefined {
+  const c = canvasOrder(list)
+  const i = c.indexOf(t)
+  if (i < 0) return undefined
+  if (i < 8) return i + 1
+  return i === c.length - 1 ? 9 : undefined
+}
+
+/** ⌃Tab / ⌃⇧Tab / ⇧⌘] / ⇧⌘[: every open tab, Home and Settings included, wrapping. */
+export function cycleFrom(id: string, dir: 1 | -1, list: Tab[] = allTabs()): Tab | undefined {
+  const o = ordered(list)
+  if (!o.length) return undefined
+  const i = o.findIndex((t) => t.id === id)
+  return o[((i < 0 ? 0 : i + dir) + o.length) % o.length]
+}
+
+/** What the strip and Home get for one tab (A2.14 #19). No key, instance, ws or root unshortened. */
+export function viewOf(t: Tab, active: boolean, home: string, list: Tab[] = allTabs()): TabView {
+  const v: TabView = { id: t.id, kind: t.kind, name: tabName(t), state: displayState(t, active), verified: !!t.doc?.trusted, open: t.open }
+  if (t.kind !== 'local') return v
+  const key = keyOf(t, list)
+  if (key !== undefined) v.key = key
+  if (t.reg?.slot != null) v.slot = t.reg.slot
+  if (t.root) v.folder = tilde(t.root, home)
+  if (t.reg?.version) v.version = t.reg.version
+  if (t.reg) v.bridge = hasBridge(t)
+  if (t.reg) v.link = `http://localhost:${t.reg.port}${t.path}`
+  if (t.logo && t.fail?.why !== 'unverified') v.logo = t.logo
+  if (t.look !== undefined) v.dark = t.look
+  if (t.reg) v.hue = hueOf(t.reg.ws)   // the same initials hue as its Recently here card and its tab page
+  return v
+}
+
+/** The tab's look: its own last theme this run, else the app's (A2.14 #26). */
+export const darkOf = (t: Tab | undefined, appDark: boolean): boolean => t?.kind === 'local' && t.look !== undefined ? t.look : appDark
+
+// ---------------------------------------------------------------------------------------------------------------
+// tabs.json (v1.12 r1 #5)
+
+/** `<state>/tabs.json`. A file with another `v`, or a bad shape, goes aside as `tabs.json.bad`. */
+export interface TabsFile {
+  v: 1
+  active: { kind: 'home' } | { kind: 'settings' } | { kind: 'canvas'; ws: string; origin: string }
+  /** at most 20, newest shown first */
+  canvases: { ws: string; origin: string; path: string; shownAt: number }[]
+  settings: boolean
+  /** closes for that canvas's run (A2.14 #23) */
+  closed: { ws: string; instance: string }[]
+}
+
+const WS = /^[0-9a-f]{16}$/
+const isStr = (v: unknown, max: number): v is string => typeof v === 'string' && v.length > 0 && v.length <= max
+
+/** The shell's own document only - `/` or `/index.html`, its query and hash - under 2 KB, else `/`. */
+export function safePath(p: unknown): string {
+  if (typeof p !== 'string' || p.length > 2048 || /[\s\\]/.test(p)) return '/'
+  return /^\/(index\.html)?([?#].*)?$/.test(p) ? p : '/'
+}
+
+const loopbackOrigin = (o: unknown): o is string => typeof o === 'string' && o.length <= 64 && /^http:\/\/(localhost|127\.0\.0\.1|\[::1\]):\d{1,5}$/.test(o)
+
+/** The file's shape, checked; null when it does not hold (the caller sets it aside as `.bad`). */
+export function parseTabsFile(raw: unknown): TabsFile | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const r = raw as Record<string, unknown>
+  if (r.v !== 1) return null
+  const a = r.active as Record<string, unknown> | null
+  let active: TabsFile['active']
+  if (!a || typeof a !== 'object') return null
+  if (a.kind === 'home' || a.kind === 'settings') active = { kind: a.kind }
+  else if (a.kind === 'canvas' && typeof a.ws === 'string' && WS.test(a.ws) && loopbackOrigin(a.origin)) active = { kind: 'canvas', ws: a.ws, origin: a.origin }
+  else return null
+  if (!Array.isArray(r.canvases) || r.canvases.length > 20 || !Array.isArray(r.closed) || r.closed.length > 200 || typeof r.settings !== 'boolean') return null
+  const canvases: TabsFile['canvases'] = []
+  for (const c of r.canvases as unknown[]) {
+    const x = c as Record<string, unknown>
+    if (!x || typeof x !== 'object' || typeof x.ws !== 'string' || !WS.test(x.ws) || !loopbackOrigin(x.origin) || typeof x.path !== 'string' || typeof x.shownAt !== 'number' || !Number.isFinite(x.shownAt)) return null
+    canvases.push({ ws: x.ws, origin: x.origin, path: safePath(x.path), shownAt: x.shownAt })
+  }
+  const closedList: TabsFile['closed'] = []
+  for (const c of r.closed as unknown[]) {
+    const x = c as Record<string, unknown>
+    if (!x || typeof x !== 'object' || typeof x.ws !== 'string' || !WS.test(x.ws) || !isStr(x.instance, 64)) return null
+    closedList.push({ ws: x.ws, instance: x.instance })
+  }
+  return { v: 1, active, canvases, settings: r.settings, closed: closedList }
+}
+
+/** What restore does at launch (pure): the canvas tabs to make, which are open, their paths, and the active tab. */
+export interface RestorePlan {
+  canvases: { entry: RegistryEntry; path: string; open: boolean }[]
+  settings: boolean
+  active: { kind: 'home' } | { kind: 'settings' } | { kind: 'canvas'; instance: string }
+  closed: { ws: string; instance: string }[]
+}
+
+/**
+ * Restoring (v1.12 r1 #5, A2.14 #23, A2.12): with `restoreTabs` on, each running canvas whose tab is open (not
+ * closed for this run) takes the entry with its `(ws, origin)`, else the latest shown entry of its `ws` (a canvas
+ * that moved slot), and loads that path on its own bound origin; the active tab is the entry that names exactly a
+ * running canvas, Home or Settings, anything else Home. Off: every running canvas at `/`, a closed one included,
+ * Home active. The very first launch is Home. Grey tabs are never restored: a canvas not running gets no tab.
+ */
+export function restorePlan(file: TabsFile | null, entries: RegistryEntry[], o: { restore: boolean; firstLaunch: boolean }): RestorePlan {
+  const live = entries.filter((e) => e.state === 'ready' || e.state === 'starting')
+  if (!o.restore || !file) {
+    return { canvases: live.map((entry) => ({ entry, path: '/', open: true })), settings: false, active: { kind: 'home' }, closed: [] }
+  }
+  const isClosed = (e: RegistryEntry) => file.closed.some((c) => c.ws === e.ws && c.instance === e.instance)
+  const canvases = live.map((entry) => ({ entry, path: savedPathIn(file, entry.ws, entry.origin ?? null) ?? '/', open: !isClosed(entry) }))
+  let active: RestorePlan['active'] = { kind: 'home' }
+  if (!o.firstLaunch) {
+    const a = file.active
+    if (a.kind === 'settings') active = { kind: 'settings' }
+    else if (a.kind === 'canvas') {
+      const hit = canvases.find((c) => c.open && c.entry.state === 'ready' && c.entry.ws === a.ws && c.entry.origin === a.origin)
+      if (hit) active = { kind: 'canvas', instance: hit.entry.instance }
+    }
+  }
+  const closedKept = file.closed.filter((c) => live.some((e) => e.ws === c.ws && e.instance === c.instance))
+  return { canvases, settings: file.settings || active.kind === 'settings', active, closed: closedKept }
+}
+
+/**
+ * A canvas's saved path in the file (v1.12 r1 #5): the entry with its `(ws, origin)`, else the latest shown entry of
+ * its `ws` (a canvas that moved slot, or one still `starting`, with no origin yet); undefined when the file has none.
+ */
+export function savedPathIn(file: TabsFile | null, ws: string, origin: string | null): string | undefined {
+  if (!file) return undefined
+  const exact = origin ? file.canvases.find((c) => c.ws === ws && c.origin === origin) : undefined
+  const latest = [...file.canvases].filter((c) => c.ws === ws).sort((a, b) => b.shownAt - a.shownAt)[0]
+  const p = (exact ?? latest)?.path
+  return p === undefined ? undefined : safePath(p)
+}
+
+const noHash = (u: string): string => { const x = new URL(u); x.hash = ''; return x.href }
+
+/**
+ * A link that changes only the hash of the page's current document - its URL now, `replaceState` included - opens
+ * with no question (v1.12 r1 #3, A2.14 #4): the link must name a hash. Electron 45 loads a link with none as a new
+ * document even when nothing else differs (`/` into a page at `/#/b/x`), so that one goes through the guard.
+ */
+export function hashOnly(current: string, url: string): boolean {
+  try { return new URL(url).hash !== '' && noHash(current) === noHash(url) } catch { return false }
+}
+
+/** The file as the model stands (written debounced 1 s; A5's quit snapshot writes it at once). */
+export function snapshotFile(previous: TabsFile | null, now: number): TabsFile {
+  const a = activeTab()
+  const active: TabsFile['active'] = a?.kind === 'settings' ? { kind: 'settings' }
+    : a?.kind === 'local' && a.reg?.origin ? { kind: 'canvas', ws: a.reg.ws, origin: a.reg.origin } : { kind: 'home' }
+  const mine = allTabs().filter((t) => t.kind === 'local' && t.reg?.origin)
+    .map((t) => ({ ws: t.reg!.ws, origin: t.reg!.origin!, path: safePath(t.path), shownAt: t.shownAt ?? t.regAt ?? now }))
+  const kept = (previous?.canvases ?? []).filter((c) => !mine.some((m) => m.ws === c.ws && m.origin === c.origin))
+  const canvases = [...mine, ...kept].sort((x, y) => y.shownAt - x.shownAt).slice(0, 20)
+  // a close lasts for that canvas's run: kept while the model still knows that instance
+  const runs = closedRuns().filter((c) => allTabs().some((t) => t.reg?.ws === c.ws && t.reg.instance === c.instance))
+  return { v: 1, active, canvases, settings: tabs.has('settings'), closed: runs }
+}
+
+/** Apply a restore plan to an empty model (Home only). */
+export function applyRestore(plan: RestorePlan): void {
+  for (const c of plan.closed) closed.add(closeKey(c.ws, c.instance))
+  for (const c of plan.canvases) {
+    const t = createLocal(c.entry, c.open, false)
+    t.path = c.path
+    restoredPath.set(t, c.path)
+  }
+  if (plan.settings) openSettingsTab(false)
+  const a = plan.active
+  if (a.kind === 'settings') activeId = 'settings'
+  else if (a.kind === 'canvas') activeId = allTabs().find((t) => t.reg?.instance === a.instance)?.id ?? 'home'
+  else activeId = 'home'
+  const t = activeTab()
+  if (t) t.shownAt = P().now()
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Transitions: the registry (A2.3, A2.14 #10, v1.12 r1 #3, v1.13 r2 #5)
+
+function factsOf(e: RegistryEntry): TabReg {
+  return {
+    state: e.state === 'ready' ? 'ready' : e.state === 'starting' ? 'starting' : 'gone',
+    file: e.file, instance: e.instance, ws: e.ws, origin: e.origin ?? null, port: e.port, slot: e.slot,
+    features: [...e.features], version: e.version,
+  }
+}
+
+/**
+ * The path a tab took from tabs.json, until it loads or something else sets it: a canvas that was `starting` takes
+ * its workspace's latest entry, and its exact `(ws, origin)` entry at `ready` (A2.14 #23, v1.12 r1 #5).
+ */
+const restoredPath = new WeakMap<Tab, string>()
+
+/** A new canvas tab; one that starts after launch opens on its saved board (A2.14 #23), the file read with `restoreTabs` on. */
+function createLocal(e: RegistryEntry, open: boolean, saved = true): Tab {
+  const now = ports?.now() ?? Date.now()
+  const t = blankTab(`t${(++counter).toString(36)}`, 'local', e.name || `localhost:${e.port}`, { reg: factsOf(e), root: e.root, open, regAt: now })
+  const path = saved ? ports?.savedPath?.(e.ws, e.origin ?? null) : undefined
+  if (path !== undefined) { t.path = path; restoredPath.set(t, path) }
+  tabs.set(t.id, t)
+  return t
+}
+
+/** Trust goes from a live document (a stop, a rebind): its record is stale from now, and the page stops its microphone (A2.14 #13). */
+function revoke(t: Tab): void {
+  if (!t.doc) return
+  const had = t.doc.trusted
+  t.doc.trusted = false
+  t.reports.menu = undefined
+  if (t.view === 'live' && t.doc.lifted) {
+    t.reports.safety = 'stale'
+    if (had) P().appState(t, 'untrusted')
+  }
+}
+
+/** A registry event (A2.3). The tab's identity is its workspace and origin; a starting entry binds by workspace and port. */
+export function onRegistry(ev: RegistryEvent): void {
+  const p = P()
+  const now = p.now()
+  if (ev.kind === 'gone') {
+    // an instance waiting for a close went before it ended: nothing of it to bind
+    for (const [g, w] of afterClose) if (w.instance === ev.instance) { afterClose.delete(g); p.log?.('registry', { tab: g.id, waited: ev.instance, gone: ev.why }) }
+    const t = allTabs().find((x) => x.kind === 'local' && x.reg?.instance === ev.instance)
+    if (!t || t.reg!.state === 'gone') return
+    if (!t.open && !liveDoc(t)) { dropTab(t); return }
+    t.reg!.state = 'gone'
+    t.goneAt = now; t.regAt = now
+    revoke(t)
+    commitLayout(t, { kind: 'gone' })
+    p.log?.('registry', { tab: t.id, gone: ev.why })
+    p.changed(); p.save()
+    return
+  }
+  const e = ev.entry
+  const locals = allTabs().filter((x) => x.kind === 'local')
+  let t = locals.find((x) => x.reg?.instance === e.instance)
+  if (t) {
+    const was = t.reg!.state
+    const docOrigin = t.doc?.url ? originOf(t.doc.url) : null
+    if (e.state === 'ready' && e.origin && liveDoc(t) && docOrigin && docOrigin !== e.origin) {
+      // bound at starting by port; ready on another origin while a page is kept: that page stays grey, the entry gets its own tab (A2.14 #10)
+      t.reg = { ...t.reg!, state: 'gone', instance: `${t.reg!.instance}~split` }
+      t.goneAt = now
+      revoke(t)
+      t = undefined
+    } else {
+      t.reg = factsOf(e)
+      t.name = e.name || t.name
+      t.root = e.root
+      if (was !== t.reg.state) t.regAt = now
+      if (was === 'starting' && t.reg.state === 'ready' && !t.doc && restoredPath.get(t) === t.path) {
+        // bound at starting with its workspace's latest saved path: its own (ws, origin) entry now that it has one
+        const exact = p.savedPath?.(e.ws, e.origin ?? null)
+        if (exact !== undefined) { t.path = exact; restoredPath.set(t, exact) }
+      }
+      if (was === 'starting' && t.reg.state === 'ready') {
+        // what happened while it was starting - a reload that met nothing listening, a crash - holds no document
+        if (!liveDoc(t)) documentless(t)
+        atReady(t)
+      }
+      p.changed(); p.save()
+      return
+    }
+  }
+  const sameAddr = (x: Tab) => x.reg?.ws === e.ws && (e.state === 'ready' && e.origin ? x.reg.origin === e.origin : x.reg.port === e.port)
+  // across origins only a grey tab with no live document rebinds (A2.3, A2.14 #10): a running instance's tab is
+  // never taken by a second instance of its workspace (another slot, or --port) - that one gets its own tab
+  t = locals.find((x) => x.reg && sameAddr(x)) ?? locals.find((x) => x.reg?.ws === e.ws && x.reg.state === 'gone' && !liveDoc(x))
+  if (t) rebind(t, e)
+  else if (!waitForClose(locals, e)) createLocal(e, !closed.has(closeKey(e.ws, e.instance)))
+  p.changed(); p.save()
+}
+
+/**
+ * A grey tab of this workspace whose document an unload is closing (A3.8 #42) is about to hold none: the new instance
+ * waits for the close's end rather than getting a tab of its own beside it. At `destroyed` that tab rebinds, unloaded
+ * on the new instance (onUnloaded's task); if the page refuses, its kept page stays grey and the instance gets its
+ * own tab, as A2.14 #10 says. True when the entry waits (a later event of the same instance updates it).
+ */
+function waitForClose(locals: Tab[], e: RegistryEntry): boolean {
+  const g = locals.find((x) => x.reg?.ws === e.ws && x.reg.state === 'gone' && unloadClosing(x))
+  if (!g) return false
+  const w = afterClose.get(g)
+  if (w && w.instance !== e.instance) return false
+  afterClose.set(g, e)
+  P().log?.('registry', { tab: g.id, waits: e.instance, state: e.state })
+  return true
+}
+
+/**
+ * The close ended (destroyed: `bind` true; the page's refusal: false): the instance that waited for it binds now -
+ * to this tab if it is still here, grey and documentless, else to a tab of its own.
+ */
+function closeEnded(t: Tab, bind: boolean): void {
+  const e = afterClose.get(t)
+  if (!e) return
+  afterClose.delete(t)
+  const p = P()
+  if (bind && getTab(t.id) === t && t.reg?.state === 'gone' && !liveDoc(t)) rebind(t, e)
+  else createLocal(e, !closed.has(closeKey(e.ws, e.instance)))
+  p.changed(); p.save()
+}
+
+/** A new instance of the tab's canvas (A2.3, v1.12 r1 #3, v1.13 r2 #5): same tab, new facts, trust revoked; a live page reloads itself. */
+function rebind(t: Tab, e: RegistryEntry): void {
+  const p = P()
+  revoke(t)
+  if (t.doc) t.doc.trusted = false
+  t.reg = factsOf(e)
+  commitLayout(t, { kind: 'rebind' })
+  t.name = e.name || t.name
+  t.root = e.root
+  t.regAt = p.now()
+  t.open = true   // a new instance opens its tab by itself (A2.12)
+  if (!liveDoc(t)) documentless(t)
+  atReady(t)
+  p.log?.('registry', { tab: t.id, rebind: e.instance, live: liveDoc(t) })
+}
+
+/** No live document: nothing of it to keep. The last failure and its probe go; a view that holds one loads when shown. */
+function documentless(t: Tab): void {
+  t.fail = undefined
+  t.probe = undefined
+  if (t.view === 'live') t.needsLoad = true
+}
+
+/**
+ * The tab's canvas is ready on the tab's own instance - a starting entry that went ready, or a rebind to a ready
+ * one (A2.3, A2.11): what waited for it runs now, and nothing while it is not ready. A tab with no live document
+ * loads, at once when active, else when next shown (lazy, A2.4); a latched tab is rebound, never reloaded. The active
+ * tab's one automatic attempt after a crash that came while its canvas was away starts (tabpage.ts recover left it
+ * pending; a hidden tab's starts when shown). A page retained beneath a failure is only looked at again: the
+ * retries stopped while the canvas was away, and its Try Again stays the person's (v1.13 r2 #3).
+ */
+function atReady(t: Tab): void {
+  const p = P()
+  if (t.reg?.state !== 'ready') return
+  if (liveDoc(t)) { if (t.fail) p.recheck?.(t); return }
+  if (!isActive(t)) return
+  if (loadsNow(t)) p.load(t)
+  else if (t.crash.pendingShow && !t.crash.latched) p.shown(t)
+}
+
+const originOf = (u: string): string | null => { try { return new URL(u).origin } catch { return null } }
+
+function dropTab(t: Tab): void {
+  if (t.view !== 'none') P().forget(t)
+  tabs.delete(t.id)
+  if (activeId === t.id) activeId = 'home'
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Transitions: the document (from the adapter, nav.ts; A2.14 #8, v1.12 r1 #1, v1.13 r2 #3)
+
+function ensureDoc(t: Tab): TabDoc {
+  t.doc ??= { gen: 0, url: '', trusted: false, commits: 0, shown: false }
+  return t.doc
+}
+
+/**
+ * A main-frame commit of the current generation. `admitted` is the bridge's `doc` for an attributed commit. `url` is
+ * the adapter's, without its fragment (nav.ts compares it with the proved request); `href`, when given, is the same
+ * document's URL as Chromium committed it, hash included - the tab's path follows it, so a tab restored on
+ * `/#/b/board` keeps its board in tabs.json until the page itself moves.
+ */
+export function onCommit(t: Tab, c: { gen: number; url: string; href?: string; attributed: boolean; admitted: string | null; instance?: string }): void {
+  const p = P()
+  writeReopen(t, false)   // a reopened document that never said hello: its record now, with no page (A3.8 #45)
+  const d = ensureDoc(t)
+  d.commits += 1
+  d.gen = c.gen
+  d.url = c.url
+  // one source of truth: the bridge admits only what its isTrusted holds (v1.12 r1 #1) - an attributed commit it
+  // would not admit is shown nothing, its reports never accepted, and reloaded like any unattributed one
+  d.trusted = c.attributed && t.reg?.state === 'ready' && c.admitted !== null
+  d.doc = d.trusted ? (c.admitted ?? undefined) : undefined
+  d.lifted = d.trusted
+  d.shown = false
+  t.reports = { safety: 'unknown' }
+  t.view = 'live'
+  t.hung = false
+  if (d.trusted) {
+    // the lift (A2.11): the tab page goes, in the turn compose() shows the canvas view
+    t.fail = undefined
+    t.probe = undefined
+    t.unattributed = 0
+    t.retained = true
+    t.held = undefined
+    const path = pathOf(c.href !== undefined && noHashOf(c.href) === noHashOf(c.url) ? c.href : c.url)
+    if (path) t.path = path
+    // an unloaded tab's reopen lifted: the unload ends, its record waits for this document's hello (A3.8 #45)
+    const u = t.unload
+    if (u?.phase === 'reopening') { t.unload = undefined; reopenLifted(t, u, p.now()) }
+  } else {
+    // unattributed: untrusted, kept beneath its tab page, reloaded by main (views.ts) - never shown, it holds nothing of the person's
+    t.retained = false
+    t.unattributed = (t.unattributed ?? 0) + 1
+  }
+  commitLayout(t, { kind: 'commit', gen: c.gen, attributed: c.attributed, ...(c.instance ? { instance: c.instance } : {}) })
+  p.log?.('commit', { tab: t.id, gen: c.gen, trusted: d.trusted, commits: d.commits })
+}
+
+/** A failure of the current attempt (A2.14 #8): whatever is committed loses trust; the view goes beneath its tab page. */
+export function onFail(t: Tab, f: { why: FailWhy; code: number; errorPage: boolean; gen?: number }): void {
+  const p = P()
+  writeReopen(t, false)
+  // a reopen that fails is the tab page's failure (A2.11): it never lifted, so it writes no reopen (A3.8 #45)
+  if (t.unload?.phase === 'reopening') t.unload = undefined
+  const d = ensureDoc(t)
+  d.commits += 1
+  revoke(t)
+  t.fail = { why: f.why, at: p.now(), code: f.code }
+  t.probe = { state: 'none', lastAt: null }
+  // an error page committed proves the earlier document gone; in doubt it stays retained (v1.13 r2 #3)
+  if (f.errorPage) { t.retained = false; d.lifted = false; d.doc = undefined }
+  // the reload after a crash failed: the view has a renderer again, holding no document - the failure is what
+  // the tab shows now, not "Reloading after a crash" (its crash record stays: a latch still outranks it)
+  if (t.view === 'crashed' && t.crash.inFlight) t.view = 'live'
+  commitLayout(t, { kind: 'fail', gen: f.gen ?? d.gen, errorPage: f.errorPage })
+  p.log?.('fail', { tab: t.id, why: f.why, code: f.code, errorPage: f.errorPage, retained: t.retained })
+}
+
+/** The renderer went, or the view closed or unloaded: the document is gone. */
+export function onDocumentGone(t: Tab, view: TabViewState): void {
+  writeReopen(t, false)
+  // a reopen whose renderer crashed or whose view closed before it lifted ends there; a crash counts as any (A3.8 #44)
+  if (view !== 'unloaded' && t.unload?.phase === 'reopening') t.unload = undefined
+  const d = ensureDoc(t)
+  d.commits += 1
+  d.trusted = false
+  d.doc = undefined
+  d.lifted = false
+  d.url = ''
+  t.view = view
+  t.retained = false
+  t.hung = false
+  t.reports = { safety: 'unknown' }
+  commitLayout(t, { kind: view === 'crashed' ? 'renderer-gone' : 'view-gone' })
+}
+
+/** A hash or pushState navigation inside the trusted document: the path follows the page (a board change). */
+export function onInPage(t: Tab, url: string): void {
+  if (!t.doc?.trusted) return
+  const path = pathOf(url)
+  if (path) { t.path = path; P().save() }
+}
+
+const noHashOf = (url: string): string => { const i = url.indexOf('#'); return i < 0 ? url : url.slice(0, i) }
+
+function pathOf(url: string): string | null {
+  try {
+    const u = new URL(url)
+    const p = safePath(u.pathname + u.search + u.hash)
+    return p
+  } catch { return null }
+}
+
+/** A report from the admitted document (the bridge checked its `doc`, its trust and every field). */
+export function onReport(tabId: string, doc: string, r: { safety?: Safety; busy?: Busy; theme?: Theme; menu?: MenuItem[]; hello?: Hello }): void {
+  const t = tabs.get(tabId)
+  if (!t?.doc || !doc || t.doc.doc !== doc) return
+  const p = P()
+  // the bridge's own word on the document's safety: it goes stale when trust goes while the document lives, and
+  // with it the trust the tab's items are gated on (Open in Browser, Copy Local Link, its menus: A2.14 #24)
+  if (r.safety === 'stale' && (t.reports.safety !== 'stale' || t.doc.trusted)) {
+    t.reports.safety = 'stale'
+    t.reports.menu = undefined
+    t.doc.trusted = false
+    p.changed()
+  }
+  if (!t.doc.trusted) return
+  if (r.hello && !t.reports.hello) {
+    // this document's hello, accepted once (A3): its inset is the layout's (A3.8 #24), its page the recorder's identity
+    t.reports.hello = { ...r.hello }
+    commitLayout(t, { kind: 'hello', inset: r.hello.inset === 44 ? 44 : 0 })
+    // what was presented before this document spoke no longer counts (A3.8 #27: the accepted hello advances its view's gen)
+    bumpGen(t.id, 'hello')
+    onDocHello(t)
+  }
+  if (r.busy) {
+    // busy is any reason, unsaved any of the first five: a message where they disagree is refused (A2.14 #18)
+    if (r.busy.unsaved !== r.busy.why.some((w) => (UNSAVED_WHY as readonly string[]).includes(w)) || r.busy.busy !== r.busy.why.length > 0) return
+    t.reports.busy = { busy: r.busy.busy, unsaved: r.busy.unsaved, why: [...r.busy.why] }
+    t.reports.safety = 'fresh'
+    if (!r.busy.unsaved) t.held = undefined
+  }
+  if (r.theme) { t.reports.theme = { dark: r.theme.dark }; t.look = r.theme.dark }
+  if (r.menu) t.reports.menu = r.menu.map((m) => ({ ...m }))
+  p.changed()
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Switching, opening, closing (A2.4)
+
+/** Show a tab: its view (or tab page), focused, in one compose; the old one hidden after (A2.13). */
+export function activate(id: string): void {
+  const p = P()
+  const next = tabs.get(id)
+  if (!next) return
+  const prev = activeTab()
+  const now = p.now()
+  next.open = true
+  if (prev && prev !== next) {
+    prev.hiddenAt = now
+    prev.held = undefined   // the unsaved pill lasts while its tab is active (A2.14 #33)
+    if (prev.kind === 'local' && prev.doc?.trusted) p.appState(prev, 'hidden')
+  }
+  activeId = next.id
+  next.shownAt = now
+  if (next.kind === 'local') {
+    // an unloaded tab, or one whose unload's close is outstanding: the activation's time, kept for its reopen (A3.8 #45)
+    const u = next.unload
+    if (u && u.phase !== 'reopening') u.activatedAt = now
+    p.shown(next)
+    // lazy views: a documentless tab loads when shown (never a latched one: its Reload is the person's); an unloaded
+    // one reopens on its saved path - not while a quit or an update sweeps: it shows its reopening page until then
+    if (loadsNow(next)) p.load(next)
+    // an activation during an unload's close is queued under its tab page: no shown until the outcome (A3.8 #42)
+    const closing = u?.phase === 'closing' || u?.phase === 'unsure'
+    if (prev !== next && next.doc?.trusted && !closing) p.appState(next, 'shown')
+  }
+  p.changed({ focus: 'shown' })
+  p.save()
+}
+
+/** The Settings tab: opened or brought forward (⌘,). */
+export function openSettingsTab(show = true): Tab {
+  let t = tabs.get('settings')
+  if (!t) { t = blankTab('settings', 'settings', 'Settings'); tabs.set('settings', t) }
+  if (show) activate('settings')
+  return t
+}
+
+/** The neighbour a closed active tab hands over to: right, else left, else Home. */
+function neighbour(t: Tab): string {
+  const o = ordered()
+  const i = o.findIndex((x) => x.id === t.id)
+  return (o[i + 1] ?? o[i - 1] ?? tabs.get('home'))?.id ?? 'home'
+}
+
+/** ⌘W, the strip's close, Close Tab, Delete in the strip. The canvas keeps running; Home lists it. */
+export async function closeTab(id: string): Promise<'closed' | 'refused'> {
+  const t = tabs.get(id)
+  if (!t || t.kind === 'home') return 'refused'
+  const p = P()
+  if (t.kind === 'settings') {
+    const next = activeId === id ? neighbour(t) : null
+    p.forget(t)
+    tabs.delete(id)
+    if (next) activate(next)
+    p.changed(); p.save()
+    return 'closed'
+  }
+  if (t.view !== 'none') {
+    if ((await closeView(t)) === 'refused') return 'refused'
+  }
+  if (!tabs.has(id)) return 'closed'
+  const next = activeId === id ? neighbour(t) : null
+  if (t.reg && t.reg.state !== 'gone') {
+    t.open = false
+    closed.add(closeKey(t.reg.ws, t.reg.instance))
+  } else tabs.delete(id)
+  if (next) activate(next)
+  p.changed(); p.save()
+  return 'closed'
+}
+
+/** A canvas tab Home's card reopens: open for this run again. */
+export function reopenTab(id: string): void {
+  const t = tabs.get(id)
+  if (!t || t.kind !== 'local') return
+  if (t.reg) closed.delete(closeKey(t.reg.ws, t.reg.instance))
+  activate(id)
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The guard
+
+const sameAction = (a: GuardAction, b: GuardAction): boolean => a.kind === b.kind
+  && (a.kind !== 'load' || (b.kind === 'load' && a.url === b.url)) && (a.kind !== 'unload' || (b.kind === 'unload' && a.reason === b.reason))
+const copyAction = (a: GuardAction): GuardAction => a.kind === 'load' ? { kind: 'load', url: a.url } : a.kind === 'unload' ? { kind: 'unload', reason: a.reason } : { kind: a.kind }
+
+/** `done`'s resolvers, apart from the frozen record */
+const ends = new WeakMap<GuardOperation, () => void>()
+/** One operation, bound now: its document and action, and a `done` settled by `endOperation` (A3.8 #39). */
+function newOperation(t: Tab, action: GuardAction): GuardOperation {
+  let end!: () => void
+  const op: GuardOperation = { commit: t.doc?.commits ?? 0, doc: t.doc?.doc, action, done: new Promise<void>((r) => { end = r }) }
+  ends.set(op, end)
+  return op
+}
+/** The operation ended: `Tab.replacing` cleared, then `done` settled - a waiter judges what is left. */
+function endOperation(t: Tab, op: GuardOperation): void {
+  if (t.replacing === op) t.replacing = undefined
+  ends.get(op)?.()
+  ends.delete(op)
+}
+
+/** Whether the guard runs at all: a live document that was shown or admitted (v1.12 r1 #3's "not guarded" list). */
+export const guarded = (t: Tab): boolean => liveDoc(t)
+
+/** The document is the one the operation bound. */
+const sameDoc = (t: Tab, op: GuardOperation): boolean => (t.doc?.commits ?? 0) === op.commit && t.doc?.doc === op.doc
+
+const covers = (t: Tab, op: GuardOperation): boolean => {
+  const c = op.consent
+  return !!c && c.tab === t.id && c.commit === op.commit && c.doc === op.doc && sameAction(c.action, op.action)
+}
+
+/** The rule of r3 #1, read in the act's turn: the same document, and fresh and clean now or covered by exactly its consent. */
+export function mayGo(t: Tab, op: GuardOperation): boolean {
+  if (!sameDoc(t, op)) return false
+  if (freshUnsaved(t)) return false
+  return freshClean(t) || covers(t, op)
+}
+
+/** Why a sheet would name this tab. */
+export function sheetWhy(t: Tab): SheetWhy {
+  if (!hasBridge(t)) return { kind: 'no-bridge', version: t.reg?.version }
+  if (t.reports.safety === 'stale') {
+    const held = t.reports.busy?.unsaved ? t.reports.busy.why.filter((w) => (UNSAVED_WHY as readonly string[]).includes(w)) : []
+    return { kind: 'stale', stopped: t.reg?.state === 'gone', held }
+  }
+  return { kind: 'unknown' }
+}
+
+/** Step 1 refused (or the page did): the tab comes forward with the pill when the reason is unsaved work. */
+function refuse(t: Tab, a: GuardAction, unsaved: boolean): GuardAnswer {
+  const p = P()
+  if (unsaved) t.held = { at: p.now(), action: a.kind }
+  p.log?.('guard', { tab: t.id, action: a.kind, answer: 'refused', unsaved })
+  const forward = a.kind === 'quit' || a.kind === 'update' || unsaved
+  if (forward && !isActive(t)) activate(t.id)
+  else p.changed()
+  // the tab comes forward in a window the person can see: a quit from the Dock or a logout may start hidden
+  if (forward) p.forward?.()
+  return 'refused'
+}
+
+/** One serialized operation per tab: the guard and its act (v1.13 r2 #2, v1.14 r3 #1). */
+export async function guard(tab: Tab, action: GuardAction): Promise<GuardAnswer> {
+  const p = P()
+  // an unload under way is a close already asked of Chromium, which cannot be cancelled: any other action waits for
+  // its end (destroyed, or the page's refusal), then is judged on what is left (A3.8 #42, r1 #2)
+  while (action.kind !== 'unload' && tab.replacing?.action.kind === 'unload') await tab.replacing.done
+  if (tab.replacing) { p.log?.('guard', { tab: tab.id, action: action.kind, answer: 'refused', busy: true }); return 'refused' }
+  const a = copyAction(action)
+  const op = newOperation(tab, a)
+  tab.replacing = op
+  try {
+    if (a.kind === 'unload') return await unloadOp(tab, op, a)
+    if (!guarded(tab)) {
+      p.log?.('guard', { tab: tab.id, action: a.kind, unguarded: true })
+      return await p.act(tab, a)
+    }
+    if (freshUnsaved(tab)) return refuse(tab, a, true)
+    if (!fresh(tab)) {
+      const ok = await p.ask({ action: a, tabs: [{ id: tab.id, name: tabName(tab), why: sheetWhy(tab) }] })
+      if (!ok) { p.log?.('guard', { tab: tab.id, action: a.kind, answer: 'refused', sheet: 'cancel' }); return 'refused' }
+      op.consent = { tab: tab.id, commit: op.commit, doc: op.doc, action: a }
+    }
+    // after every wait, in the act's turn
+    if (!mayGo(tab, op)) return refuse(tab, a, freshUnsaved(tab))
+    const r = await p.act(tab, a)
+    p.log?.('guard', { tab: tab.id, action: a.kind, answer: r })
+    if (r === 'refused') return refuse(tab, a, true)
+    return r
+  } finally {
+    endOperation(tab, op)
+    p.changed()
+  }
+}
+
+/** The tabs whose unload's close is still outstanding: its operation in flight until `destroyed` or the page's refusal. */
+export const stuckUnloads = (): Tab[] => allTabs().filter((t) => t.replacing?.action.kind === 'unload')
+
+/**
+ * Every canvas tab, for a quit or an update: one operation each, one shared step 1 and sheet; one refusal stops the
+ * whole. From its start no unload is admitted (`sweeping`, cleared when it is refused); unloads already under way
+ * are closes the quit wanted - waited for (each ends within `unloadActMs` and a task), never a reason to refuse
+ * (A3.8 #42). That wait is bounded on its own (code review r2 #1): an unload owns its tab until `destroyed`, and a
+ * webContents that never goes would hold the quit forever, every later ⌘Q swallowed. Past `quitWaitMs` the answer
+ * is `'stuck'`: nothing replaced, `sweeping` cleared, the unload still owning its tab, its view and its operation,
+ * and nothing recorded done; the caller asks the person (Force Quit Tab / Keep Waiting) about `stuckUnloads()`.
+ */
+export async function guardAll(action: GuardAllAction): Promise<GuardAllAnswer> {
+  sweeping = true
+  let r: GuardAllAnswer = 'refused'
+  try {
+    const unloading = allTabs().flatMap((t) => (t.replacing?.action.kind === 'unload' ? [t.replacing.done] : []))
+    if (unloading.length) {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const ended = await Promise.race([
+        Promise.all(unloading).then(() => true),
+        new Promise<false>((r2) => { timer = setTimeout(() => r2(false), T.quitWaitMs) }),
+      ])
+      clearTimeout(timer)
+      if (!ended) {
+        P().log?.('guard', { all: action.kind, answer: 'stuck', tabs: stuckUnloads().map((t) => t.id) })
+        r = 'stuck'
+        return r
+      }
+      // what waited on those unloads (a close, a link) is judged first, on a tab with no document: their own
+      // operations end before the sweep reads who is in flight
+      await new Promise<void>((r2) => setImmediate(r2))
+    }
+    r = await sweep(action)
+    return r
+  } finally {
+    if (r !== 'done') { sweeping = false; sweepRefused() }
+  }
+}
+
+async function sweep(action: GuardAllAction): Promise<GuardAnswer> {
+  const p = P()
+  const a = copyAction(action) as GuardAllAction
+  const list = ordered(allTabs()).filter((t) => t.kind === 'local' && guarded(t))
+  const busy = allTabs().find((t) => t.replacing)
+  if (busy) { p.log?.('guard', { all: a.kind, answer: 'refused', busy: busy.id }); if (!isActive(busy)) activate(busy.id); p.forward?.(); return 'refused' }
+  const ops = new Map<Tab, GuardOperation>()
+  for (const t of list) { const op = newOperation(t, a); ops.set(t, op); t.replacing = op }
+  try {
+    const holder = list.find(freshUnsaved)
+    if (holder) return refuse(holder, a, true)
+    const ask = list.filter((t) => !fresh(t))
+    if (ask.length) {
+      const ok = await p.ask({ action: a, tabs: ask.map((t) => ({ id: t.id, name: tabName(t), why: sheetWhy(t) })) })
+      if (!ok) { p.log?.('guard', { all: a.kind, answer: 'refused', sheet: 'cancel' }); return 'refused' }
+      for (const t of ask) { const op = ops.get(t)!; op.consent = { tab: t.id, commit: op.commit, doc: op.doc, action: a } }
+    }
+    // a live document no step named stops the whole: a tab that came to hold one meanwhile, or a tab this quit
+    // already closed that the person reopened while a later close waited - its new document is not the one its
+    // operation bound. Every live document is read again before each act and once more before the answer, in
+    // the turn the caller quits in (views.ts quits in the answer's own microtask)
+    const newcomer = () => allTabs().find((t) => { const op = ops.get(t); return guarded(t) && (!op || !sameDoc(t, op)) })
+    // after the sheet, every tab in one turn before any closes
+    for (const t of list) if (!mayGo(t, ops.get(t)!)) return refuse(t, a, freshUnsaved(t))
+    for (const t of list) {
+      // each close is a wait: the next tab is read again just before its own act
+      const late = newcomer()
+      if (late) return refuse(late, a, freshUnsaved(late))
+      if (!mayGo(t, ops.get(t)!)) return refuse(t, a, freshUnsaved(t))
+      const r = await p.act(t, a)
+      if (r === 'refused') return refuse(t, a, true)
+    }
+    const late = newcomer()
+    if (late) return refuse(late, a, freshUnsaved(late))
+    p.log?.('guard', { all: a.kind, answer: 'done', tabs: list.map((t) => t.id) })
+    return 'done'
+  } finally {
+    for (const [t, op] of ops) endOperation(t, op)
+    p.changed()
+  }
+}
+
+/** The guard's close, `guard(tab, { kind: 'close' })`: the view removed only after the page actually closed. */
+export async function closeView(tab: Tab): Promise<'closed' | 'refused'> {
+  return (await guard(tab, { kind: 'close' })) === 'done' ? 'closed' : 'refused'
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The sheet's words (main's words only: the page's text never reaches a native sheet, A2.14 #18)
+
+const VERB: Record<GuardAction['kind'], string> = { close: 'Close', quit: 'Quit', update: 'Restart', reload: 'Reload', forceReload: 'Reload', tryAgain: 'Reload', load: 'Open', unload: 'Unload' }   // an unload never asks: its word is never shown
+
+function words(why: readonly Why[]): string {
+  const w = why.map((x) => WHY_WORDS[x]).filter((x): x is string => !!x)
+  if (!w.length) return 'work not yet saved'
+  return w.length === 1 ? w[0]! : `${w.slice(0, -1).join(', ')} and ${w.at(-1)}`
+}
+
+/** One tab's line on a sheet. */
+export function sheetLine(name: string, why: SheetWhy): string {
+  switch (why.kind) {
+    case 'no-bridge': return `${name} runs Marver ${why.version ?? '0.27.0'}, which can't tell the app about unsaved work.`
+    case 'unknown': return `${name} hasn't told the app yet whether it holds unsaved work.`
+    case 'stuck': return `${name} hasn't finished closing.`
+    case 'stale':
+      if (why.stopped) return why.held.length ? `When ${name} stopped, it held ${words(why.held)}.` : `${name} stopped, so the app can't hear it any more: it may hold work made since.`
+      return why.held.length ? `The app can't hear ${name} any more. When it last could, it held ${words(why.held)}.` : `The app can't hear ${name} any more: it may hold work made since.`
+  }
+}
+
+/**
+ * The native sheet's words: the question, what it costs, and its buttons - Cancel first (the default, `Esc`). A
+ * quit's stuck sheet (code review r2 #1) asks about closes that have not ended: Keep Waiting first, Force Quit Tab.
+ */
+export function sheetText(s: Sheet): { message: string; detail: string; buttons: [string, string] } {
+  const a = s.action
+  const one = s.tabs.length === 1 ? s.tabs[0]! : null
+  if (s.tabs.length && s.tabs.every((t) => t.why.kind === 'stuck')) {
+    const verb = a.kind === 'update' ? 'restart' : 'quit'
+    return {
+      message: one ? `${one.name} isn't closing` : `${s.tabs.length} canvases aren't closing`,
+      detail: `Marver closed ${one ? 'it' : 'them'} to free memory and can't ${verb} until ${one ? 'it has' : 'they have'} closed. Force Quit ${one ? 'Tab ends it' : 'Tabs ends them'} now; what ${one ? 'it hasn\'t' : 'they haven\'t'} saved is lost.`,
+      buttons: ['Keep Waiting', one ? 'Force Quit Tab' : 'Force Quit Tabs'],
+    }
+  }
+  const message = a.kind === 'quit' ? 'Quit Marver anyway?'
+    : a.kind === 'update' ? 'Restart to update anyway?'
+      : a.kind === 'load' ? `Open the link in ${one?.name ?? 'this canvas'} anyway?`
+        : `${VERB[a.kind]} ${one?.name ?? 'it'} anyway?`
+  const lines = s.tabs.map((t) => sheetLine(t.name, t.why))
+  const cost = s.tabs.length > 1 ? 'What they haven\'t saved is lost.' : 'What it hasn\'t saved is lost.'
+  return { message, detail: `${lines.join('\n')}\n\n${cost}`, buttons: ['Cancel', VERB[a.kind]] }
+}
+
+/**
+ * The native sheet as `dialog.showMessageBox` takes it (main's words, `sheetText` or tabpage.ts `hangSheetText`):
+ * the safe answer first - the default (Return) and `Esc` alike - and the act second.
+ */
+export function sheetBox(words: { message: string; detail: string; buttons: [string, string] }) {
+  return { type: 'warning' as const, message: words.message, detail: words.detail, buttons: [...words.buttons], defaultId: 0, cancelId: 0, noLink: true }
+}
+/** The person chose the act: its button, the second. Electron's `response` is the index into `buttons`, whatever order macOS draws them in. */
+export const sheetConfirmed = (response: number): boolean => response === 1
+
+/** The theme a tab and its page wear right now. */
+export const tabDark = (t: Tab | undefined): boolean => darkOf(t, P().appDark())
+
+// ---------------------------------------------------------------------------------------------------------------
+// Unloading (A2.6, A3.8 #39-#45): the unloading stream's section. memory.ts decides, under measured pressure, which
+// hidden tab goes; this is its admission, its one operation and what follows it. Nothing here asks, shows a pill,
+// brings a tab forward or shows the window: an unload's refusal is heard only by the journal and the recorder.
+
+/**
+ * Why a tab is not a candidate (A3.8 #40), the first that holds, in this order: `not-canvas` (Home, Settings, a
+ * remote tab), `active` (also with the window hidden or minimised), `no-document` (no live document that lifted, or
+ * an unload already), `replacing` (an operation in flight that is not `own`), `sweeping` (a quit or an update),
+ * `no-bridge` (0.27.0: never reports, never unloaded), `unknown` (not heard since its commit), `stale` (safety
+ * stale, untrusted, or its instance not `ready`), `unsaved`, `busy` (the last mv:busy is not exactly
+ * `{ busy: false, unsaved: false }`), `crash` (latched, a reload in flight or one waiting to be shown), `hung`,
+ * `audible`, `devtools`, `loading` (a navigation under way), `refused-before` (this commit refused once), `recent`
+ * (hidden less than `unloadMinHiddenMs`).
+ */
+export type UnloadRefusal = 'not-canvas' | 'active' | 'no-document' | 'replacing' | 'sweeping' | 'no-bridge' | 'unknown'
+  | 'stale' | 'unsaved' | 'busy' | 'crash' | 'hung' | 'audible' | 'devtools' | 'loading' | 'refused-before' | 'recent'
+
+/** A quit or an update has begun: no unload is admitted (cleared when it is refused; `sweeping` is with the store). */
+export const isSweeping = (): boolean => sweeping
+
+/**
+ * The unload's admission (A3.8 #40, r1 #1): null when `t` is a candidate now. `own` is the unload's own operation:
+ * the act's recheck passes it (the guard has already installed it as `Tab.replacing`), and also requires
+ * `sameDoc(t, own)`; the memory tick passes none, so a tab with any operation is never a candidate. Stricter than
+ * A2.6's words, never weaker: idle means the page said exactly `{ busy: false, unsaved: false }` - an agent at work,
+ * a Jam session or the microphone keep it, as unsaved work does.
+ */
+export function unloadRefusal(t: Tab, now: number, own?: GuardOperation): UnloadRefusal | null {
+  if (t.kind !== 'local') return 'not-canvas'
+  if (isActive(t)) return 'active'
+  if (!liveDoc(t) || !t.doc?.lifted || t.unload) return 'no-document'
+  if (t.replacing && t.replacing !== own) return 'replacing'
+  if (sweeping) return 'sweeping'
+  if (!hasBridge(t)) return 'no-bridge'
+  if (t.reports.safety === 'unknown') return 'unknown'
+  if (t.reports.safety === 'stale' || !t.doc.trusted || t.reg?.state !== 'ready') return 'stale'
+  const b = t.reports.busy
+  if (!b) return 'unknown'
+  if (b.unsaved) return 'unsaved'
+  if (b.busy || b.why.length > 0) return 'busy'
+  if (t.crash.latched || t.crash.inFlight || t.crash.pendingShow) return 'crash'
+  if (t.hung) return 'hung'
+  if (t.audible) return 'audible'
+  if (t.devtools) return 'devtools'
+  if (t.loading) return 'loading'
+  if (t.unloadRefused === t.doc.commits) return 'refused-before'
+  // never hidden yet counts as hidden just now: the safe side
+  if (t.hiddenAt === undefined || now - t.hiddenAt < T.unloadMinHiddenMs) return 'recent'
+  return null
+}
+
+/** A candidate now, or one once it has been hidden long enough: worth reading the pressure for (A3.8 #6). */
+export const couldUnload = (t: Tab, now: number): boolean => { const r = unloadRefusal(t, now); return r === null || r === 'recent' }
+
+/** A tab's identity now (A3.8 #8): recorder.ts's `identity`, kept here without Electron. */
+export function tabIdent(t: Tab): TabIdent {
+  return {
+    tab: t.id,
+    ...(t.reg?.ws ? { ws: t.reg.ws } : {}),
+    ...(t.doc ? { commit: t.doc.commits } : {}),
+    ...(t.reports.hello?.page ? { page: t.reports.hello.page } : {}),
+  }
+}
+
+/**
+ * The unload's operation (A3.8 #39): its admission read again in the act's own turn, then the act - `close({
+ * waitForBeforeUnload: true })` in views.ts, which answers only at `destroyed` ('done': onUnloaded has run) or at the
+ * page's refusal ('refused'). A refusal is silent, and per document: that commit is never asked again.
+ */
+async function unloadOp(tab: Tab, op: GuardOperation, a: Extract<GuardAction, { kind: 'unload' }>): Promise<GuardAnswer> {
+  const p = P()
+  const why = unloadRefusal(tab, p.now(), op) ?? (sameDoc(tab, op) ? null : 'no-document')
+  if (why) {
+    p.log?.('unload', { tab: tab.id, reason: a.reason, refused: why })
+    p.record?.('unload', tab, { phase: 'refused', reason: a.reason, why })
+    return 'refused'
+  }
+  tab.unload = { phase: 'closing', reason: a.reason, at: p.now(), commit: op.commit, origin: tab.reg!.origin! }
+  p.log?.('unload', { tab: tab.id, reason: a.reason, phase: 'closing', commit: op.commit })
+  const r = await p.act(tab, a)
+  if (r === 'done') return 'done'
+  // the page refused its beforeunload: kept as it was, and this document never asked again (A2.6, A3.8 #42)
+  if (tab.unload?.phase === 'closing') tab.unload = undefined
+  tab.unloadRefused = op.commit
+  p.log?.('unload', { tab: tab.id, reason: a.reason, refused: 'page', commit: op.commit })
+  p.record?.('unload', tab, { phase: 'refused', reason: a.reason, why: 'page' })
+  // a new instance that waited for this close: the kept page stays grey, the instance gets its own tab (A2.14 #10)
+  closeEnded(tab, false)
+  // activated while it closed: its tab page goes and the kept page shows, its shown sent now, as on any switch (r2 #4)
+  if (isActive(tab)) {
+    if (tab.doc?.trusted) p.appState(tab, 'shown')
+    p.changed({ focus: 'shown' })
+  }
+  return 'refused'
+}
+
+/**
+ * views.ts at `destroyed` of an unload's close (forgetCanvas): the tab unloaded, its view gone. It keeps its id, its
+ * path (the board and any selection), its look, its logo and its place; its crash record stays as it is (A3.8 #44).
+ * The reopen is the last thing decided, in a task after every action that waited on `done` has been judged (r3 #3).
+ */
+export function onUnloaded(t: Tab): void {
+  const p = P()
+  const u = t.unload
+  const who = tabIdent(t)   // the document it closed, before the reset
+  onDocumentGone(t, 'unloaded')
+  t.needsLoad = false
+  if (u) { u.phase = 'unloaded'; u.unloadedAt = p.now() }
+  p.log?.('unload', { tab: t.id, phase: 'unloaded', reason: u?.reason ?? null, ...(u?.stuck ? { stuck: true } : {}), ...(u?.forced ? { forced: true } : {}) })
+  // a close main ended by hand, its webContents perhaps alive still, says so in its record (unload-act.ts's backstop);
+  // one the person forced is its own outcome, never a completed unload (code review r2 #1)
+  if (u) p.record?.('unload', who, u.forced ? { phase: 'forced', reason: u.reason } : { phase: 'done', reason: u.reason, ...(u.stuck ? { why: 'stuck' } : {}) })
+  // in one task after every waiter: a new instance that waited for this close binds the tab (a queued close has
+  // dropped it, and the instance then gets a tab of its own), then the reopen is decided (r3 #3)
+  setImmediate(() => { closeEnded(t, true); reopenIfShown(t) })
+  p.changed(); p.save()
+}
+
+/** The camera the tab was left at is on its bound origin: the one it was unloaded on (A3.8 #43; camera storage is per origin). */
+export const cameraKept = (t: Tab): boolean => !!t.unload && t.unload.origin === t.reg?.origin
+
+/**
+ * views.ts load(): an unloaded tab's load is its reopen (A3.8 #43): its saved path, under the `reopening` tab page
+ * until that document lifts, its reopen record at the hello. `camera` on the origin it was unloaded on: views.ts then
+ * arms its `mv:doc` to answer `{ reopen: true }`, so the shell takes the saved camera even under a selection link.
+ * `board` on another origin (rebound while unloaded, or while it closed): no flag - the shell would take whatever
+ * camera that origin once stored over the selection the path names - so the saved path loads as any load does, and
+ * the page promises the board only. null: not a reopen.
+ */
+export function startReopen(t: Tab): 'camera' | 'board' | null {
+  const u = t.unload
+  if (u?.phase !== 'unloaded') return null
+  u.phase = 'reopening'
+  const kept = cameraKept(t) ? 'camera' : 'board'
+  P().log?.('unload', { tab: t.id, phase: 'reopening', path: t.path, camera: kept === 'camera' })
+  return kept
+}
+
+/** An unload's close is under way on the tab: from the act until `destroyed` or the page's refusal. */
+export const unloadClosing = (t: Tab): boolean => t.unload?.phase === 'closing' || t.unload?.phase === 'unsure'
+
+/**
+ * A link opened into a tab with no live document (views.ts openInTab: ⌘L, Home's link field, the links agents and
+ * `marver work done` hand back) opens on what it names, never as the reopen (A3.8 #42, r3 #3): an unloaded tab's
+ * unload ends here, so its load is a plain one - no `mv:doc` reopen, no reopening page, no reopen record. True when a
+ * reopen was already under way (its load sent, `mv:doc`'s one-shot flag armed); views.ts takes that flag back for
+ * every link either way. A tab whose close is still outstanding is not this: its link waits for the close through
+ * the guard. The tab is then documentless, no longer unloaded: never dimmed or named "unloaded" while it waits to
+ * load its link (its canvas starting, say).
+ */
+export function linkOpens(t: Tab): boolean {
+  const u = t.unload
+  if (!u || unloadClosing(t)) return false
+  dropUnload(t)
+  P().log?.('unload', { tab: t.id, link: true, was: u.phase })
+  return u.phase === 'reopening'
+}
+
+/** The unload ends with no reopen: an unloaded tab with no view is a documentless one (A2.4's `none`), which loads when shown. */
+function dropUnload(t: Tab): void {
+  t.unload = undefined
+  if (t.view === 'unloaded') t.view = 'none'
+}
+
+/**
+ * views.ts's act on a tab with no view (A3.8 #42), as the model takes it; true when the action loads the tab. An
+ * action that waited for an unload is judged on what is left: a close of an unloaded tab ends its unload (it closes
+ * as any documentless tab, and nothing reopens); a link takes the tab's path - it opens on what it names, never the
+ * reopen's saved path - and ends the unload; a reload, a force reload or Try Again is the reopen itself, one load.
+ */
+export function viewlessAct(t: Tab, a: GuardAction): boolean {
+  if (a.kind === 'unload') return false
+  if (a.kind === 'close' || a.kind === 'quit' || a.kind === 'update') {
+    if (t.view === 'unloaded') dropUnload(t)
+    return false
+  }
+  if (a.kind === 'load') {
+    const path = pathOf(a.url)
+    if (path) t.path = path
+    // its canvas not ready (gone, or a rebind waiting for this close), the link loads at ready: documentless till then
+    if (t.unload?.phase === 'unloaded') dropUnload(t)
+  }
+  return true
+}
+
+/**
+ * The reopen of an unloaded tab no activation started (A3.8 #42, r3 #3): one activated while it closed, or a refused
+ * quit's. Only for a tab still active, still unloaded with no view and no load under way, and no quit or update in
+ * progress: a queued `load` loaded its own URL instead, a queued close closed it, a queued reload was the reopen.
+ */
+function reopenIfShown(t: Tab): void {
+  if (getTab(t.id) !== t || !isActive(t) || sweeping || t.unload?.phase !== 'unloaded' || t.view !== 'unloaded' || !wantsLoad(t)) return
+  P().log?.('unload', { tab: t.id, reopen: 'queued' })
+  P().load(t)
+}
+
+/** A reopen lifted, waiting for its document's hello (A3.8 #45, r1 #9). */
+interface Reopened { activateToLiftMs: number; unloadedForMs: number; ident: TabIdent; timer: ReturnType<typeof setTimeout> }
+
+/** The reopened document lifted (its attributed commit): timed on main's clock from the activation (A3.8 #45). */
+function reopenLifted(t: Tab, u: TabUnload, now: number): void {
+  const activatedAt = u.activatedAt ?? t.loadAt ?? now
+  const unloadedAt = u.unloadedAt ?? u.at
+  const r: Reopened = {
+    // a queued activation keeps its own time: its wait for destroyed is in activateToLiftMs, and unloadedForMs is 0
+    activateToLiftMs: Math.max(0, now - activatedAt), unloadedForMs: Math.max(0, activatedAt - unloadedAt),
+    ident: tabIdent(t),   // no page yet: a document that never says hello joins by ws and time (A3.8 #23)
+    timer: setTimeout(() => writeReopen(t, false), T.reopenHelloMs),
+  }
+  ;(r.timer as { unref?: () => void }).unref?.()
+  reopened.set(t, r)
+}
+
+/** The reopen's record: at the reopened document's accepted hello, with its page; else at its next document or 30 s after its lift, with none. */
+function writeReopen(t: Tab, hello: boolean): void {
+  const r = reopened.get(t)
+  if (!r) return
+  reopened.delete(t)
+  clearTimeout(r.timer)
+  const p = P()
+  p.log?.('reopen', { tab: t.id, activateToLiftMs: r.activateToLiftMs, unloadedForMs: r.unloadedForMs, hello })
+  p.record?.('reopen', hello ? t : r.ident, { activateToLiftMs: r.activateToLiftMs, unloadedForMs: r.unloadedForMs })
+}
+
+/** The first accepted hello of a document: a reopened one writes its `reopen` record now (A3.8 #45). */
+function onDocHello(t: Tab): void { writeReopen(t, true) }
+
+/** A quit or an update was refused: the active unloaded tab reopens now (A3.8 #42). */
+function sweepRefused(): void {
+  const a = activeTab()
+  if (a) reopenIfShown(a)
+}

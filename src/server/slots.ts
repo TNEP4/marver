@@ -91,11 +91,11 @@ export interface SlotFile {
   origin: string | null
   /** `http://localhost:<port>/` - the link for people, and the browser's storage origin */
   url: string
-  /** the project's real path, and its folder name */
+  /** the project's real path, and its name as the shell shows it (`share.name`, else the folder name - A2.14 #23) */
   root: string
   name: string
   version: string
-  /** what this canvas's shell offers the app, by short name (0.27.0: none) */
+  /** what this canvas's shell offers the app, by short name (0.27.0: none; 0.27.1: `bridge`) */
   features: string[]
   /** the workspace this run serves under (A1.6) - a --recover run's is an earlier address's */
   ws: string
@@ -120,6 +120,14 @@ function asRecord(v: unknown): SlotFile | null {
 
 // ---- placing a canvas -------------------------------------------------------------------------
 
+/** What this version's shell offers the Mac app, written from the `starting` write on (spec 28 A2.14 #15): `bridge` -
+ *  its shell sends A2.9's hello, theme, menu and `mv:busy` with `unsaved`, so the app's guard can trust what the page
+ *  reports. A canvas without it (0.27.0) gets the app's degraded guard, which asks first. `inset` (0.27.2, A3.8 #31):
+ *  its shell takes the top inset under the app's transparent strip, keeps what it means to be read or clicked below
+ *  it and its scroll edge, and answers the app's presentation requests - so app 0.2 may run it at the window's full
+ *  height. A canvas without it stays below the strip. */
+export const FEATURES: readonly string[] = ['bridge', 'inset']
+
 export interface Claim {
   slot: number | null
   port: number
@@ -137,7 +145,7 @@ export interface Claim {
 }
 
 export interface PlaceInput {
-  /** the project's real path, and its folder name */
+  /** the project's real path, and its name as the shell shows it (`share.name`, else the folder name) */
   root: string
   name: string
   version: string
@@ -172,7 +180,7 @@ async function take(i: PlaceInput, slot: number | null, port: number): Promise<T
   const key = randomBytes(32)
   const rec: SlotFile = {
     v: 1, state: 'starting', pid: process.pid, instance: i.instance, slot, port, origin: null, url: `http://localhost:${port}/`,
-    root: i.root, name: i.name, version: i.version, features: [], ws: i.ws, startedAt: Date.now(), key: key.toString('base64url'),
+    root: i.root, name: i.name, version: i.version, features: [...FEATURES], ws: i.ws, startedAt: Date.now(), key: key.toString('base64url'),
   }
   const r = await takeExclusive(file, { pid: rec.pid, instance: rec.instance, at: rec.startedAt }, JSON.stringify(rec, null, 2) + '\n', { reclaimWaitMs: i.reclaimWaitMs })
   if (!r.ok) return r.why === 'held' ? { ok: false, why: 'held', holder: asRecord(readJson(file)), file } : { ok: false, why: r.why, file }

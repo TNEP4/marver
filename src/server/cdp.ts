@@ -51,6 +51,9 @@ export function containerFlags(platform: string, uid: number | undefined): strin
 // flags Puppeteer has always launched with keep every page running as if seen.
 const FOREGROUND = ['--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling']
 const FLAGS = [...(process.env.MV_CHROME_HEADED ? [] : ['--headless=new']), '--hide-scrollbars', '--no-first-run', '--no-default-browser-check', '--disable-extensions', ...FOREGROUND, ...containerFlags(process.platform, process.getuid?.()), ...(process.env.MV_CHROME_FLAGS?.split(' ').filter(Boolean) ?? [])]
+/** The flags every browser here launches with (a headless perf run's line says them: runs compare only with runs
+ *  that launched alike, spec 28 A3.8 #22). */
+export const launchFlags = (): string[] => [...FLAGS]
 const HANDSHAKE_MS = 15_000
 const MAX_MESSAGE = 1 << 30   // a screenshot answer is hundreds of MB of base64 at most; past this it is a runaway
 

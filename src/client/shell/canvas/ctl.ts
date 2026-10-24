@@ -31,4 +31,10 @@ export const canvasCtl = {
   cameraBusy(): boolean { return false },
   /** What the camera shows now, in world px (null with no canvas) - a load's visible cohort when no fit landed. */
   view(): { x: number; y: number; w: number; h: number } | null { return null },
+  /** Where a rect on screen now will be once the camera lands from the flight it is on (a fit, a zoom) - itself while
+   *  the camera rests: the boot queue ranks a board's first frame on the view the person will see (admission.ts). */
+  landing(r: DOMRect): DOMRect { return r },
+  /** The camera now, `{ x, y, s }` as the world is drawn (null with no canvas): the white-out probes' bracket (spec 28
+   *  A3.8 #16) and a hide mid-flight (A3.8 #43). Assigned by Canvas.tsx from its camera. */
+  transform(): { x: number; y: number; s: number } | null { return null },
 }

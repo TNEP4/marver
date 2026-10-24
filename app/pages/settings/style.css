@@ -1,0 +1,47 @@
+/* Settings, a view of the files (spec 28 A2.7; frame mac-app/06): each documented key with its value and a control,
+   the key's name under its label; a file that does not apply says so, with its text beside. */
+
+/* the window's full height under the transparent strip (A3.8 #32): the page never scrolls, its scroll area starts
+   44 px down */
+html, body { overflow: hidden }
+.settings { position: fixed; inset: 44px 0 0 0; overflow: auto; padding: 30px 48px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 380px); column-gap: 40px; align-items: start }
+/* the frame's left column at the window's default size (1280 - 96 - 40 - 380), and no wider in a wider window */
+.col { display: grid; align-content: start; max-width: 764px }
+.h1 { font: 600 20px/1.2 -apple-system, system-ui, sans-serif; letter-spacing: -.01em; margin-bottom: 6px }
+.h2 { font: 600 11px/1 -apple-system, system-ui, sans-serif; letter-spacing: .02em; color: var(--glass-ink-3); margin-top: 18px; margin-bottom: 2px }
+.warn { color: var(--glass-warn); margin: 6px 0 }
+
+.row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: .5px solid var(--glass-brd) }
+.row-txt { flex: 1; min-width: 0; display: grid; gap: 2px }
+.row-err { margin: 4px 0 0; font-size: 12px; color: var(--glass-warn) }
+.row-err:empty { display: none }
+
+/* a switch: the shell's accent when on */
+.switch { flex: none; position: relative; width: 30px; height: 18px; padding: 0; border: 0; border-radius: 9px;
+  background: var(--glass-hover); box-shadow: inset 0 0 0 .5px var(--glass-brd); transition: background-color .15s }
+.switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 7px; background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .25); transition: transform .15s }
+.switch[aria-checked="true"] { background: var(--accent) }
+.switch[aria-checked="true"]::after { transform: translateX(12px) }
+
+select, input[type="number"] { height: 26px; padding: 0 8px; border: 0; border-radius: 7px; background: var(--node-bg); color: var(--glass-ink);
+  box-shadow: inset 0 0 0 .5px var(--glass-brd), 0 1px 2px rgba(0, 0, 0, .04); font: 13px/1 -apple-system, system-ui, sans-serif }
+input[type="number"] { width: 72px }
+
+/* a file that did not apply: what is wrong, and the file as it is */
+.problem { margin: 8px 0 2px; padding: 10px 12px; border-radius: 10px; background: var(--card-warn-bg); color: var(--card-warn-ink); font-size: 12.5px }
+.problem b { font-weight: 600 }
+.problem ul { margin: 6px 0 0; padding-left: 18px }
+.side { display: grid; gap: 10px; align-content: start; padding-top: 44px }
+.file { border-radius: 12px; padding: 12px 14px; background: var(--glass); box-shadow: inset 0 0 0 .5px var(--glass-brd), 0 1px 3px rgba(0, 0, 0, .05) }
+.file small { display: block; color: var(--glass-ink-3); font-size: 11.5px; margin-bottom: 6px }
+.file pre { margin: 0; font-size: 11.5px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; max-height: 360px; overflow: auto;
+  -webkit-user-select: text; user-select: text; color: var(--glass-ink) }
+
+.foot { margin-top: 18px }
+
+@media (max-width: 860px) { .settings { grid-template-columns: minmax(0, 1fr) } .side { padding-top: 16px } }
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .switch { box-shadow: inset 0 0 0 1px var(--node-brd) }
+  .file { box-shadow: inset 0 0 0 1px var(--node-brd) }
+}

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { admissionIdle, admit, HEAD_MS, onAdmissionIdle, release, resetAdmission, SLOTS } from '../src/client/shell/canvas/admission.ts'
+import { admissionIdle, admit, aimed, HEAD_MS, onAdmissionIdle, release, resetAdmission, SLOTS } from '../src/client/shell/canvas/admission.ts'
 
 // Frame admission: a board's iframes boot on one main thread, so at most SLOTS boot at once, one
 // first, nearest the centre of the view first, and a slot goes back the moment its frame is done.
@@ -56,6 +56,31 @@ describe('admission', () => {
     expect(started).toEqual(['b'])
     ask('b', 1); await settle()
     expect(started).toEqual(['b'])
+  })
+  it('the camera aimed (a board\'s fit sets off): the first pick goes at once, not once the view has settled', async () => {
+    for (const [k, r] of [['far', 900], ['near', 10], ['mid', 300]] as const) ask(k, r)
+    await vi.advanceTimersByTimeAsync(20)
+    expect(started).toEqual([])           // no aim yet: it waits for the view to settle
+    aimed()
+    await vi.advanceTimersByTimeAsync(0)  // the next microtask: ranked now (the ranks read where the camera will land)
+    expect(started).toEqual(['near'])
+    await settle()
+    expect(started).toEqual(['near'])     // still one alone until it is done - and no second pump from the old wait
+    release('near')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(started).toEqual(['near', 'mid', 'far'])
+  })
+  it('an aim with nothing waiting does nothing; a batch after it waits for the view as before', async () => {
+    aimed()
+    ask('a', 1)
+    await vi.advanceTimersByTimeAsync(300)
+    expect(started).toEqual([])
+    await settle()
+    expect(started).toEqual(['a'])
+    aimed()                               // a pick already made: nothing more starts
+    ask('b', 2)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(started).toEqual(['a'])
   })
   it('says when it is idle - the last slot given back, or the last queued frame gone - and only then (spec 28 A1.7)', async () => {
     let heard = 0
