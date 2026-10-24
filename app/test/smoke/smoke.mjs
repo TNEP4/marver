@@ -7,7 +7,10 @@
  *
  * The default app is out/Marver-darwin-arm64/Marver.app. `--adhoc` expects an ad-hoc signature (no Developer ID,
  * no timestamp). `--keep` leaves the run's temporary folder. Every line is PASS, FAIL, WARN or SKIP; the exit code
- * is the number of FAILs; a JSON report goes beside the app's out/ folder (smoke-<time>.json), or into --report's.
+ * is the number of FAILs (at most 99) when the run ended normally, and 100 for an error of the harness's own -
+ * anything thrown outside a recorded check, its cleanup included, which no build option waives (report.mjs; code
+ * review r2 #2). A JSON report, written after the cleanup with `completed: true` only for a normal end, goes beside
+ * the app's out/ folder (smoke-<time>.json), or into --report's.
  *
  * Nothing on Nic's screen by default (spec 28 A2.8). The cases that crash the app on purpose - a byte changed in
  * app.asar (twice), and on a signed build the renamed copy the kernel kills - each make macOS show its "quit
@@ -43,6 +46,7 @@ import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { BUNDLE_ID, IDENTITY, MIC, MIN_MACOS, PRODUCT, TEAM, TEST_SENTINELS } from '../../scripts/build.mjs'
 import { bundleOf, checkTeams, machOParts } from '../../scripts/team-id.mjs'
+import { describeError, finalize, guardProcess, HARNESS_ERROR } from './report.mjs'
 
 const APP_DIR = resolve(import.meta.dirname, '..', '..')
 const require = createRequire(join(APP_DIR, 'package.json'))
@@ -68,6 +72,20 @@ const pass = (n, d) => log('PASS', n, d)
 const fail = (n, d) => log('FAIL', n, d)
 const warn = (n, d) => log('WARN', n, d)
 const skip = (n, d) => log('SKIP', n, d)
+const started = []   // every process group this smoke started
+let block = null     // the slot block, released by the run's end
+// an error of the harness's own (code review r2 #2): anything thrown outside a recorded check ends the run - the
+// processes it started ended, then the run's end (end()) with HARNESS_ERROR, never a failing check
+const harnessErrors = []
+let ending = false, ended = false
+guardProcess((m) => {
+  console.error(`smoke: HARNESS ERROR ${m}`)
+  harnessErrors.push(m)
+  if (ending) return   // finish() is under way: it ends the run, this error in its report
+  ending = true
+  for (const pid of started) { try { process.kill(-pid, 'SIGKILL') } catch { /* gone */ } }
+  end()
+}, () => ended)
 const TAMPER_SKIP = 'run with --tamper: it crashes the app on purpose, and macOS shows a dialog for it'
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const sh = (cmd, argv, opts = {}) => spawnSync(cmd, argv, { encoding: 'utf8', ...opts })
@@ -184,8 +202,6 @@ function plist(file) { return JSON.parse(sh('plutil', ['-convert', 'json', '-o',
 }
 
 // ---- one Team ID, or no launch at all ------------------------------------------------------------------
-const started = []   // every process group this smoke started
-let block = null
 const teamChecks = new Map()
 /** The bundle holding `bin` carries one Team ID (scripts/team-id.mjs); checked once per bundle. */
 function teamCheck(bin) {
@@ -707,7 +723,14 @@ await finish()
 // ---- after everything --------------------------------------------------------------------------------
 /** The closing checks, the report and the exit (also when the smoke refused to launch anything). */
 async function finish(stopped) {
+  ending = true
   if (stopped) console.log(`smoke: ${stopped}`)
+  try { await closing() } catch (err) { const m = `closing checks: ${describeError(err)}`; console.error(`smoke: HARNESS ERROR ${m}`); harnessErrors.push(m) }
+  end()
+}
+
+/** The closing checks: nothing left running, Nic's profiles and keychain untouched, no crash dialog. */
+async function closing() {
   await sleep(500)
   {
     const left = started.flatMap((pid) => sh('pgrep', ['-g', String(pid)]).stdout.trim().split('\n').filter(Boolean))
@@ -729,14 +752,29 @@ async function finish(stopped) {
     else reports.length ? fail('no-crash-dialogs', `${reports.length} crash report(s) during the run, each a macOS dialog: ${reports.slice(0, 4).join(', ')}`) : pass('no-crash-dialogs', 'no crash report of Marver\'s during the run: no macOS dialog')
   }
 
-  block?.release()
-  const count = (v) => results.filter((r) => r.verdict === v).length
-  const failures = count('FAIL')
-  const report = { app: appPath, adhoc, tamper, version: VERSION, at: new Date().toISOString(), seconds: (Date.now() - t0) / 1000, failures, results }
-  const reportDir = reportArg ? resolve(reportArg) : appPath.includes(`${join(APP_DIR, 'out')}/`) ? join(APP_DIR, 'out') : RUN
-  mkdirSync(reportDir, { recursive: true })
-  writeFileSync(join(reportDir, `smoke-${Date.now()}.json`), JSON.stringify(report, null, 2) + '\n')
-  if (!keep) rmSync(RUN, { recursive: true, force: true, maxRetries: 3 })
-  console.log(`FAILURES=${failures} (${count('PASS')} pass, ${count('WARN')} warn, ${count('SKIP')} skip) in ${report.seconds.toFixed(1)} s${keep ? `; run folder ${RUN}` : ''}`)
-  process.exit(failures)
+}
+
+/**
+ * The run's end, once (report.mjs finalize): the cleanup - the slot block released, the run folder removed - then the
+ * report, `completed: true` only when nothing threw outside a recorded check, then the exit: the FAIL count, or
+ * HARNESS_ERROR. The report goes beside out/ (or --report's folder); a run folder about to be removed never holds it.
+ */
+function end() {
+  if (ended) return
+  ended = true
+  let status = HARNESS_ERROR
+  try {
+    const count = (v) => results.filter((r) => r.verdict === v).length
+    const seconds = (Date.now() - t0) / 1000
+    const reportDir = reportArg ? resolve(reportArg) : appPath.includes(`${join(APP_DIR, 'out')}/`) ? join(APP_DIR, 'out') : keep ? RUN : dirname(RUN)
+    const r = finalize({
+      results, harnessErrors,
+      base: { app: appPath, adhoc, tamper, version: VERSION, at: new Date().toISOString(), seconds },
+      cleanup: () => { block?.release(); if (!keep) rmSync(RUN, { recursive: true, force: true, maxRetries: 3 }) },
+      write: (report) => { mkdirSync(reportDir, { recursive: true }); writeFileSync(join(reportDir, `smoke-${Date.now()}.json`), JSON.stringify(report, null, 2) + '\n') },
+    })
+    status = r.status
+    console.log(`FAILURES=${r.report.failures} (${count('PASS')} pass, ${count('WARN')} warn, ${count('SKIP')} skip) in ${seconds.toFixed(1)} s${keep ? `; run folder ${RUN}` : ''}`)
+    if (status === HARNESS_ERROR) console.error(`smoke: HARNESS ERROR - exit ${HARNESS_ERROR}, which no build option waives: ${r.errors.join('; ')}`)
+  } finally { process.exit(status) }
 }

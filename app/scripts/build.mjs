@@ -32,6 +32,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, r
 import { createRequire } from 'node:module'
 import { arch, platform, release } from 'node:os'
 import { join, resolve } from 'node:path'
+import { HARNESS_ERROR } from '../test/smoke/report.mjs'
 import { checkTeams } from './team-id.mjs'
 import { tokensFrom } from './tokens.mjs'
 
@@ -87,12 +88,27 @@ export function parseKnownFail(argv) {
 }
 
 /**
- * The smoke's verdict under the named known failures: ok only when every FAIL is a named, listed check failing at a
- * measured number, and the report adds up (its FAIL lines, its `failures` and the smoke's exit status agree). `known`
- * carries each one's number and its loud line; `other` the failures that are not known ones; `passed` the named
- * checks that passed this time.
+ * Whether the smoke ended normally (code review r2 #2): its report finalized after its cleanup with `completed: true`,
+ * and its exit status not HARNESS_ERROR (test/smoke/report.mjs) - an error of the harness's own, which no option
+ * waives. null when it did; else why not.
+ */
+export function smokeIncomplete(report, status) {
+  if (!report) return 'no smoke report to read'
+  if (status === HARNESS_ERROR || report.completed !== true) {
+    return `the smoke did not complete normally (exit status ${status}${status === HARNESS_ERROR ? ', its harness\'s own error' : ''}): ${report.harnessErrors?.join('; ') ?? 'its report has no completion marker'}`
+  }
+  return null
+}
+
+/**
+ * The smoke's verdict under the named known failures: ok only when the smoke completed normally (`smokeIncomplete`),
+ * every FAIL is a named, listed check failing at a measured number, and the report adds up (its FAIL lines, its
+ * `failures` and the smoke's exit status agree). `known` carries each one's number and its loud line; `other` the
+ * failures that are not known ones; `passed` the named checks that passed this time.
  */
 export function judgeSmoke(report, status, names) {
+  const incomplete = smokeIncomplete(report, status)
+  if (incomplete) return { ok: false, known: [], other: [], passed: [], why: incomplete }
   const fails = report?.results?.filter((r) => r.verdict === 'FAIL')
   if (!fails) return { ok: false, known: [], other: [], passed: [], why: 'no smoke report to read' }
   if (fails.length !== report.failures || fails.length !== status) return { ok: false, known: [], other: [], passed: [], why: `the smoke's report does not add up: ${fails.length} FAIL lines, failures ${report.failures}, exit status ${status}` }
@@ -302,6 +318,9 @@ async function buildRelease({ adhoc, smoke, tamper, knownFail }) {
       smokeReport = file
       try { report = JSON.parse(readFileSync(join(reports, file), 'utf8')) } catch { report = null }
     }
+    // a harness error, or a smoke that never said it completed, fails the build whatever the options (code review r2 #2)
+    const incomplete = smokeIncomplete(report, r.status)
+    if (incomplete) fail(`${incomplete}; out/ left as it was, the build in ${work}`)
     if (r.status !== 0 && !knownFail.length) fail(`the packaged smoke failed (${r.status} failing checks); out/ left as it was, the build in ${work}`)
     if (knownFail.length) {
       verdict = judgeSmoke(report, r.status, knownFail)
