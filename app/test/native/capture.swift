@@ -3,7 +3,7 @@
 // itself never asks for Screen Recording (A2.12).
 //
 //   capture check                                   {"access":…,"locked":…,"asleep":…}; exit 0, or 77 when blind
-//   capture window --window-id <CGWindowID> [--regions 'name:x,y,w,h;...'] [--grid <cols>x<rows>] [--fps <n>]
+//   capture window --window-id <CGWindowID> [--regions 'name:x,y,w,h;...'] [--grid <cols>x<rows>] [--fps <n>] [--ring x,y,w,h]
 //   capture window --pid <pid> [--title <title>]    the same, the window found by its owner (and title)
 //   capture display [--display-id <id>] --detect <rrggbb>:<minPx>[:<belowY>] [--heartbeat]
 //
@@ -15,7 +15,10 @@
 // display times more than 1.5 refresh intervals apart): a transition across a gap is inconclusive, never passed.
 // A region is sampled on a grid of cell centres, each sample "rrggbb" in sRGB; its coordinates are window points
 // from the window's top-left (titleBarStyle 'hidden': the content view is the whole window).
-// stdin: a line "png <path>" writes the last complete frame there (a failing case's evidence); EOF stops the stream.
+// stdin: a line "png <path>" writes the last complete frame there ({"png":"done"}); "png-at <id> <hostNs> <path>"
+// writes the frame displayed at that time from the ring ({"png":"done"|"missing","id":…}): `--ring x,y,w,h` (window
+// points) keeps that rect of the last 60 complete frames, so a case can keep the frames around its first bad one - the
+// strip, not the window (60 strips of 2560 x 88 px are 54 MB). EOF stops the stream.
 // `--heartbeat` (display mode): the helper keeps a 2 x 2 px window in the display's bottom-left corner changing at the
 // refresh rate, so every refresh has something to capture and a gap means a missed frame - a display stream skips
 // the refreshes in which nothing changed (on this Mac, 41 of 136 in 1.5 s, up to 58 ms apart, with no heartbeat).
@@ -99,12 +102,17 @@ func parseDetect(_ s: String?) -> Detect? {
   return Detect(r: (v >> 16) & 255, g: (v >> 8) & 255, b: v & 255, minPx: m, belowY: p.count > 2 ? Int(p[2]) ?? 0 : 0)
 }
 let detect = parseDetect(opt("--detect"))
+let ringRect: Region? = parseRegions(opt("--ring").map { "ring:" + $0 }).first
+let RING = 60
 
 // ---- the stream's output -----------------------------------------------------------------------------------------
 
 func hex(_ p: UnsafePointer<UInt8>) -> String {   // BGRA
   String(format: "%02x%02x%02x", p[2], p[1], p[0])
 }
+
+/// One frame of the ring: the `--ring` rect's pixels (BGRA), its display time.
+final class Kept { var ns: UInt64 = 0; var w = 0; var h = 0; var bytes: [UInt8] = [] }
 
 final class Output: NSObject, SCStreamOutput, SCStreamDelegate {
   let intervalNs: Double
@@ -114,6 +122,9 @@ final class Output: NSObject, SCStreamOutput, SCStreamDelegate {
   var lastBuffer: CVPixelBuffer?
   var lastInfo = ""
   let lock = NSLock()
+  /// the ring of the last RING complete frames' `--ring` rect, reused in place (no allocation a frame once full)
+  var ring: [Kept] = []
+  var ringNext = 0
 
   init(intervalNs: Double, sizePt: CGSize) { self.intervalNs = intervalNs; self.sizePt = sizePt }
 
@@ -174,6 +185,7 @@ final class Output: NSObject, SCStreamOutput, SCStreamDelegate {
           line += ",\"regions\":{\(parts.joined(separator: ","))}"
         }
         if let d = detect { line += ",\"detect\":" + find(d, base, w, h, row, sx, sy) }
+        if let rr = ringRect { ringKeep(rr, disp, base, w, h, row, ox, oy, sx, sy) }
       }
     }
     print(line + "}")
@@ -200,6 +212,42 @@ final class Output: NSObject, SCStreamOutput, SCStreamDelegate {
       y += step
     }
     return "{\"found\":false}"
+  }
+
+  /// The ring rect of this frame, copied row by row into the next slot of the ring.
+  func ringKeep(_ r: Region, _ ns: UInt64, _ base: UnsafePointer<UInt8>, _ w: Int, _ h: Int, _ row: Int, _ ox: Double, _ oy: Double, _ sx: Double, _ sy: Double) {
+    let x0 = max(0, Int(ox + r.x * sx)), y0 = max(0, Int(oy + r.y * sy))
+    let x1 = min(w, Int(ox + (r.x + r.w) * sx)), y1 = min(h, Int(oy + (r.y + r.h) * sy))
+    guard x1 > x0, y1 > y0 else { return }
+    let cw = x1 - x0, ch = y1 - y0
+    lock.lock(); defer { lock.unlock() }
+    let k: Kept
+    if ring.count < RING { k = Kept(); ring.append(k) } else { k = ring[ringNext] }
+    ringNext = (ringNext + 1) % RING
+    if k.bytes.count != cw * ch * 4 { k.bytes = [UInt8](repeating: 0, count: cw * ch * 4) }
+    k.ns = ns; k.w = cw; k.h = ch
+    k.bytes.withUnsafeMutableBytes { dst in
+      for yy in 0..<ch { memcpy(dst.baseAddress! + yy * cw * 4, base + (y0 + yy) * row + x0 * 4, cw * 4) }
+    }
+  }
+
+  /// The ring's frame displayed at `ns` (exact, else the last one before it, if the ring still reaches back that far).
+  func pngAt(_ ns: UInt64, _ path: String) -> Bool {
+    lock.lock()
+    let hit = ring.filter { $0.ns > 0 && $0.ns <= ns }.max { $0.ns < $1.ns }
+    let oldest = ring.filter { $0.ns > 0 }.map { $0.ns }.min() ?? UInt64.max
+    var copy: (w: Int, h: Int, bytes: [UInt8])?
+    if let k = hit, ns >= oldest { copy = (k.w, k.h, k.bytes) }
+    lock.unlock()
+    guard var c = copy else { return false }
+    return c.bytes.withUnsafeMutableBytes { buf -> Bool in
+      guard let ctx = CGContext(data: buf.baseAddress, width: c.w, height: c.h, bitsPerComponent: 8, bytesPerRow: c.w * 4,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue),
+        let img = ctx.makeImage(),
+        let dest = CGImageDestinationCreateWithURL(URL(fileURLWithPath: path) as CFURL, UTType.png.identifier as CFString, 1, nil) else { return false }
+      CGImageDestinationAddImage(dest, img, nil)
+      return CGImageDestinationFinalize(dest)
+    }
   }
 
   func stream(_ stream: SCStream, didStopWithError error: Error) {
@@ -304,7 +352,11 @@ signal(SIGTERM) { _ in exit(0) }
 signal(SIGINT) { _ in exit(0) }
 Thread.detachNewThread {
   while let l = readLine() {
-    if l.hasPrefix("png "), let k = keep { k.1.png(String(l.dropFirst(4))) ; print("{\"png\":\"done\"}") }
+    if l.hasPrefix("png-at ") {
+      let p = l.split(separator: " ", maxSplits: 3).map(String.init)
+      let ok = p.count == 4 && UInt64(p[2]) != nil && (keep?.1.pngAt(UInt64(p[2])!, p[3]) ?? false)
+      print("{\"png\":\"\(ok ? "done" : "missing")\",\"id\":\"\(p.count > 1 ? p[1] : "")\"}")
+    } else if l.hasPrefix("png "), let k = keep { k.1.png(String(l.dropFirst(4))) ; print("{\"png\":\"done\"}") }
   }
   if let k = keep { k.0.stopCapture { _ in exit(0) } } else { exit(0) }
 }

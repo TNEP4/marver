@@ -9,11 +9,12 @@
  * (the terminal or agent running the suite). The app itself never asks for Screen Recording (A2.12).
  *
  * The helper's stdout, one JSON line each (FROZEN, A3.8 #53): first `{ ready: { hostNs, refreshHz, scale } }`, then
- * per frame `{ hostNs, status: 'complete' | 'idle' | 'blank' | 'suspended' | 'started' | 'stopped', gap?, detect? }`.
- * Added by the native stream (optional, so the frozen reader is unchanged): `ready.window` (the stream's size in
- * points), a frame's `regions` (the samples of each named region, `--regions`) and its first `info`. A run is
- * conclusive only if every sample is `complete` or `idle` and display times stay within 1.5 refreshes; an
- * inconclusive transition is run again, and three fail the case.
+ * per frame `{ hostNs, status: 'complete' | 'idle' | 'blank' | 'suspended' | 'started' | 'stopped', gap?, detect? }`
+ * - and `CaptureSession.lines` yields exactly that, `{ ready }` first. Added by the native stream (optional, so the
+ * frozen reader is unchanged): `ready.window` (the stream's size in points), a frame's `regions` (the samples of each
+ * named region, `--regions`) and its first `info`; the helper's own `{ png }` answers are not lines. A run is
+ * conclusive only if every sample is `complete` or `idle` and display times stay within 1.5 refreshes, at both ends of
+ * each transition; an inconclusive transition is run again, and three fail the case (`retried`).
  */
 import { execFile, execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -41,6 +42,8 @@ export type CaptureLine = { ready: CaptureReady } | CaptureFrame
 
 /** A transition's verdict (A3.8 #36): `n` bad refreshes, `ms` from the first bad frame to the first verified good one. */
 export type TransitionVerdict = { kind: 'pass' | 'fail'; n: number; ms: number } | { kind: 'inconclusive'; why: string } | { kind: 'blind'; needs: string }
+  /** three runs of one transition, each inconclusive: it fails its case (A3.8 #37; `retried`) */
+  | { kind: 'unresolved'; why: string }
 
 // ---- the helpers, compiled once per source ---------------------------------------------------------------------
 
@@ -121,12 +124,25 @@ export const blindLine = (b: Blind) => blindSays(b)
 export interface CaptureSession {
   /** the helper's first line */
   ready: CaptureReady
-  /** every line after it, as it comes (frames and the helper's own) */
+  /**
+   * FROZEN: first `{ ready }`, then every frame line from the session's start, as it comes. It reads `frames` (an
+   * index into it), so nothing is queued a second time, and an iterator made late still starts at the session's first
+   * frame kept (frames `forget` dropped are skipped).
+   */
   lines: AsyncIterable<CaptureLine>
-  /** every frame so far, in arrival order */
+  /** the frames kept, in arrival order (`forget` drops older ones) */
   frames: CaptureFrame[]
-  /** write the last complete frame as a PNG (a failing case's evidence) */
+  /** called with every frame as it arrives; returns its unsubscribe */
+  onFrame(fn: (f: CaptureFrame) => void): () => void
+  /** drop the frames before `ns`, keeping the last complete one before it (a transition carries it) */
+  forget(ns: bigint): void
+  /** write the last complete frame as a PNG */
   png(path: string): Promise<void>
+  /**
+   * write the frame displayed at `hostNs` as a PNG - the strip of the window that holds the regions, from the helper's
+   * ring of the last 60 complete frames (window mode with regions only): false when it has left the ring
+   */
+  pngAt(hostNs: string, path: string): Promise<boolean>
   stop(): Promise<void>
 }
 
@@ -141,6 +157,8 @@ export async function startCapture(o: {
   fps?: number
   /** display mode: the helper's 2 px heartbeat window, so every refresh is captured and a gap is a missed frame */
   heartbeat?: boolean
+  /** window points kept for each of the last 60 complete frames, for `pngAt` (a failing transition's evidence) */
+  ring?: { x: number; y: number; w: number; h: number }
 }): Promise<CaptureSession> {
   const bin = nativeTool('capture')
   const args: string[] = [o.mode]
@@ -150,28 +168,32 @@ export async function startCapture(o: {
   if (o.grid) args.push('--grid', `${o.grid[0]}x${o.grid[1]}`)
   if (o.fps) args.push('--fps', String(o.fps))
   if (o.heartbeat) args.push('--heartbeat')
+  if (o.ring) args.push('--ring', `${o.ring.x},${o.ring.y},${o.ring.w},${o.ring.h}`)
   const child = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'] })
   let err = ''
   child.stderr.on('data', (c) => { err += c })
   const exited = new Promise<number | null>((r) => child.on('exit', (code) => r(code)))
   const frames: CaptureFrame[] = []
-  const waiting: ((l: CaptureLine | null) => void)[] = []
-  const queue: (CaptureLine | null)[] = []
+  /** frames forget() dropped: an iterator's index is absolute */
+  let dropped = 0
+  let ended = false
+  const wake: (() => void)[] = []
+  const listeners = new Set<(f: CaptureFrame) => void>()
   let ready: CaptureReady | undefined
   let onReady: ((r: CaptureReady) => void) | undefined
-  let pngDone: (() => void) | undefined
+  const pngWaits = new Map<string, (ok: boolean) => void>()
   const rl = createInterface({ input: child.stdout })
   rl.on('line', (l) => {
     let x: unknown
     try { x = JSON.parse(l) } catch { return }
-    const line = x as CaptureLine & { png?: string }
-    if (line.png) { pngDone?.(); return }
+    const line = x as CaptureLine & { png?: string; id?: string }
+    if (line.png) { const w = pngWaits.get(line.id ?? 'last'); pngWaits.delete(line.id ?? 'last'); w?.(line.png === 'done'); return }
     if ('ready' in line) { ready = line.ready; onReady?.(line.ready); return }
     frames.push(line)
-    const w = waiting.shift()
-    if (w) w(line); else queue.push(line)
+    for (const f of listeners) { try { f(line) } catch { /* a listener's own error */ } }
+    for (const w of wake.splice(0)) w()
   })
-  rl.on('close', () => { const w = waiting.shift(); if (w) w(null); else queue.push(null) })
+  rl.on('close', () => { ended = true; for (const w of wake.splice(0)) w(); for (const [, w] of pngWaits) w(false); pngWaits.clear() })
   const first = await Promise.race([
     new Promise<CaptureReady>((r) => { onReady = r }),
     exited.then((code) => code),
@@ -180,18 +202,44 @@ export async function startCapture(o: {
     if (first === CAPTURE_BLIND) throw new CaptureBlind(/locked|asleep/.test(err) ? 'the screen unlocked and the display awake' : responsibleApp(), /locked|asleep/.test(err) ? 'locked' : 'permission')
     throw new Error(`capture.swift exited ${first}: ${err.trim()}`)
   }
+  const readyLine = first
   const lines: AsyncIterable<CaptureLine> = {
-    [Symbol.asyncIterator]: () => ({
-      next: () => {
-        const q = queue.shift()
-        if (q !== undefined) return Promise.resolve(q ? { value: q, done: false } : { value: undefined, done: true })
-        return new Promise((r) => waiting.push((l) => r(l ? { value: l, done: false } : { value: undefined, done: true })))
-      },
-    }),
+    [Symbol.asyncIterator]: () => {
+      let gaveReady = false
+      let at = dropped
+      return {
+        next: async (): Promise<IteratorResult<CaptureLine>> => {
+          if (!gaveReady) { gaveReady = true; return { value: { ready: readyLine }, done: false } }
+          for (;;) {
+            if (at < dropped) at = dropped
+            const f = frames[at - dropped]
+            if (f) { at++; return { value: f, done: false } }
+            if (ended) return { value: undefined, done: true }
+            await new Promise<void>((r) => wake.push(r))
+          }
+        },
+      }
+    },
   }
+  let seq = 0
+  const ask = (id: string, cmd: string) => new Promise<boolean>((r) => {
+    const t = setTimeout(() => { pngWaits.delete(id); r(false) }, 3000)
+    pngWaits.set(id, (ok) => { clearTimeout(t); r(ok) })
+    try { child.stdin.write(cmd + '\n') } catch { pngWaits.delete(id); clearTimeout(t); r(false) }
+  })
   return {
-    ready: ready!, lines, frames,
-    png: (path) => new Promise<void>((r) => { pngDone = r; child.stdin.write(`png ${path}\n`); setTimeout(r, 3000) }),
+    ready: readyLine, lines, frames,
+    onFrame(fn) { listeners.add(fn); return () => { listeners.delete(fn) } },
+    forget(ns) {
+      let k = frames.findIndex((f) => BigInt(f.hostNs) >= ns)
+      if (k < 0) k = frames.length
+      // keep the last complete frame before ns, and everything after it
+      let keepFrom = k
+      for (let j = k - 1; j >= 0; j--) if (frames[j]!.status === 'complete') { keepFrom = j; break }
+      if (keepFrom > 0) { frames.splice(0, keepFrom); dropped += keepFrom }
+    },
+    png: async (path) => { await ask('last', `png ${path}`) },
+    pngAt: (hostNs, path) => { const id = `p${++seq}`; return ask(id, `png-at ${id} ${hostNs} ${path}`) },
     async stop() {
       child.stdin.end()
       const code = await Promise.race([exited, new Promise<'late'>((r) => setTimeout(() => r('late'), 3000))])
@@ -250,8 +298,12 @@ export type FrameVerdict = 'good' | 'bad'
  * One transition, from main's decision `t0` to `t1` (the window's end): `n` the refreshes showing a bad frame (an
  * `idle` sample repeats the frame before it), `ms` from the first bad frame's display time to that of the first
  * verified good frame after the last bad one (a `complete` sample that passes, A3.8 r1 #10). Inconclusive, never a
- * pass: a sample neither complete nor idle, display times more than 1.5 refreshes apart (the frame before `t0`
- * included), no frame at all, or a bad interval with no verified good frame after it.
+ * pass: a sample neither complete nor idle, display times more than 1.5 refreshes apart, no frame at all, or a bad
+ * interval with no verified good frame after it. **Both ends are covered** (A3.8 #36, #37: missing evidence is never
+ * a pass): the frame before `t0` (else the first frame inside) must be within 1.5 refreshes of the first one inside,
+ * and the first frame at or after `t1` must exist, carry no `gap` and be within 1.5 refreshes of the last frame
+ * inside - so a stream that skipped the window's tail, or has not delivered it yet, is inconclusive. That frame
+ * closes a bad interval when it is a complete good one; it is never counted as bad.
  */
 export function judgeTransition(frames: readonly CaptureFrame[], o: {
   t0: bigint
@@ -264,8 +316,12 @@ export function judgeTransition(frames: readonly CaptureFrame[], o: {
 }): TransitionVerdict {
   const refreshNs = 1e9 / o.refreshHz
   const ns = (f: CaptureFrame) => BigInt(f.hostNs)
+  const apart = (a: bigint, b: bigint) => Number(b - a) > refreshNs * 1.5
+  const msOf = (d: bigint) => (Number(d) / 1e6).toFixed(1)
   let i = frames.findIndex((f) => ns(f) >= o.t0)
   if (i < 0) return { kind: 'inconclusive', why: 'no frame after the decision' }
+  // the head: with no frame before t0, the first one inside must itself be within 1.5 refreshes of the decision
+  if (i === 0 && apart(o.t0, ns(frames[0]!))) return { kind: 'inconclusive', why: `no frame before the decision, the first ${msOf(ns(frames[0]!) - o.t0)} ms after it` }
   // the frame on screen at t0: the last complete one before it, carried by idle samples
   let carried: FrameVerdict | null = null
   for (let k = i - 1; k >= 0; k--) if (frames[k]!.status === 'complete') { carried = o.verdict(frames[k]!); break }
@@ -278,7 +334,7 @@ export function judgeTransition(frames: readonly CaptureFrame[], o: {
     const f = frames[i]!
     if (f.status !== 'complete' && f.status !== 'idle') return { kind: 'inconclusive', why: `a ${f.status} sample` }
     if (f.gap) return { kind: 'inconclusive', why: `a gap of ${f.gap} refreshes` }
-    if (prevNs !== null && Number(ns(f) - prevNs) > refreshNs * 1.5) return { kind: 'inconclusive', why: `display times ${(Number(ns(f) - prevNs) / 1e6).toFixed(1)} ms apart` }
+    if (prevNs !== null && apart(prevNs, ns(f))) return { kind: 'inconclusive', why: `display times ${msOf(ns(f) - prevNs)} ms apart` }
     prevNs = ns(f)
     seen++
     const v = f.status === 'complete' ? o.verdict(f) : carried
@@ -287,24 +343,31 @@ export function judgeTransition(frames: readonly CaptureFrame[], o: {
     if (v === 'bad') { n++; if (firstBad === null) firstBad = ns(f); goodAfterBad = null }
     else if (f.status === 'complete' && firstBad !== null && goodAfterBad === null) goodAfterBad = ns(f)
   }
-  if (!seen) return { kind: 'inconclusive', why: 'no frame inside the transition' }
-  if (prevNs !== null && Number(o.t1 - prevNs) > refreshNs * 1.5 && i >= frames.length) return { kind: 'inconclusive', why: 'the stream ended inside the transition' }
+  if (!seen || prevNs === null) return { kind: 'inconclusive', why: 'no frame inside the transition' }
+  const maxN = o.maxN ?? 2, maxMs = o.maxMs ?? 100
+  const round = (d: bigint) => Math.round(Number(d) / 1e5) / 10
+  // past the threshold on what was seen, contiguous from the decision: a fail whatever the tail (an interval still
+  // open at the last frame seen gives ms as a lower bound, to that frame)
+  if (n > maxN) return { kind: 'fail', n, ms: round((goodAfterBad ?? prevNs) - firstBad!) }
+  if (goodAfterBad !== null && Number(goodAfterBad - firstBad!) / 1e6 > maxMs) return { kind: 'fail', n, ms: round(goodAfterBad - firstBad!) }
+  // the tail: the first frame at or after t1 proves that no refresh between the last frame inside and t1 was missed
+  const after = i < frames.length ? frames[i]! : null
+  if (!after) return { kind: 'inconclusive', why: `no frame at or after the window's end (the last ${msOf(o.t1 - prevNs)} ms before it unseen)` }
+  if (after.gap) return { kind: 'inconclusive', why: `a gap of ${after.gap} refreshes at the window's end` }
+  if (apart(prevNs, ns(after))) return { kind: 'inconclusive', why: `display times ${msOf(ns(after) - prevNs)} ms apart at the window's end` }
+  // a bad interval still open at t1 is closed by that frame only when it is a complete good one
+  if (firstBad !== null && goodAfterBad === null && after.status === 'complete' && o.verdict(after) === 'good') goodAfterBad = ns(after)
   if (n === 0) return { kind: 'pass', n: 0, ms: 0 }
-  if (goodAfterBad === null) {
-    // still bad at the window's end, seen without a gap: more bad refreshes than allowed is a fail on what was seen
-    // (ms then a lower bound); fewer is missing evidence, never a pass
-    if (n > (o.maxN ?? 2)) return { kind: 'fail', n, ms: Math.round(Number(prevNs! - firstBad!) / 1e5) / 10 }
-    return { kind: 'inconclusive', why: 'no verified good frame after the bad interval' }
-  }
-  const ms = Number(goodAfterBad - firstBad!) / 1e6
-  const ok = n <= (o.maxN ?? 2) && ms <= (o.maxMs ?? 100)
-  return { kind: ok ? 'pass' : 'fail', n, ms: Math.round(ms * 10) / 10 }
+  if (goodAfterBad === null) return { kind: 'inconclusive', why: 'no verified good frame after the bad interval' }
+  return { kind: Number(goodAfterBad - firstBad!) / 1e6 <= maxMs ? 'pass' : 'fail', n, ms: round(goodAfterBad - firstBad!) }
 }
 
 export interface CaseVerdict {
   kind: 'pass' | 'fail' | 'inconclusive'
   transitions: number
+  /** transitions left inconclusive (fewer than three runs), and those three runs left inconclusive (they fail the case) */
   inconclusive: number
+  unresolved: number
   /** p95 of n over the conclusive transitions, and the largest ms */
   p95n: number
   maxMs: number
@@ -312,16 +375,34 @@ export interface CaseVerdict {
   ns: number[]
 }
 
+/** How many runs one transition gets before its inconclusive verdict fails the case (A3.8 #37). */
+export const TRIES = 3
+
 /**
- * A case over its transitions (A3.8 #36): the p95 of `n` at most 2 and every `ms` at most 100 (exact: every n 0).
- * Any inconclusive transition leaves the case inconclusive unless the caller re-ran it (three fail the case).
+ * One transition's verdict over its runs (A3.8 #37): the first conclusive one; three inconclusive ones are
+ * `unresolved`, which fails the case - a retry never turns missing evidence into a pass. Fewer than three, all
+ * inconclusive: still inconclusive (the caller runs it again).
+ */
+export function retried(tries: readonly TransitionVerdict[]): TransitionVerdict {
+  const done = tries.find((v) => v.kind !== 'inconclusive')
+  if (done) return done
+  if (tries.length >= TRIES) return { kind: 'unresolved', why: `${tries.length} inconclusive runs: ${tries.map((v) => (v as { why: string }).why).join('; ')}` }
+  return tries.at(-1) ?? { kind: 'inconclusive', why: 'not run' }
+}
+
+/**
+ * A case over its transitions (A3.8 #36, #37): the p95 of `n` at most 2 and every `ms` at most 100 (exact: every n
+ * 0). An `unresolved` transition (three inconclusive runs) fails the case; any transition still inconclusive (not
+ * yet run three times) leaves it inconclusive; a blind one too.
  */
 export function judgeCase(vs: readonly TransitionVerdict[], o: { exact?: boolean } = {}): CaseVerdict {
   const done = vs.filter((v): v is { kind: 'pass' | 'fail'; n: number; ms: number } => v.kind === 'pass' || v.kind === 'fail')
   const ns = done.map((v) => v.n).sort((a, b) => a - b)
   const p95n = ns.length ? ns[Math.min(ns.length - 1, Math.ceil(ns.length * 0.95) - 1)]! : 0
   const maxMs = done.reduce((m, v) => Math.max(m, v.ms), 0)
-  const inconclusive = vs.length - done.length
+  const unresolved = vs.filter((v) => v.kind === 'unresolved').length
+  const inconclusive = vs.length - done.length - unresolved
   const ok = o.exact ? ns.every((x) => x === 0) : p95n <= 2 && maxMs <= 100
-  return { kind: inconclusive || !done.length ? 'inconclusive' : ok ? 'pass' : 'fail', transitions: vs.length, inconclusive, p95n, maxMs, ns }
+  const kind = unresolved ? 'fail' : inconclusive || !done.length ? 'inconclusive' : ok ? 'pass' : 'fail'
+  return { kind, transitions: vs.length, inconclusive, unresolved, p95n, maxMs, ns }
 }

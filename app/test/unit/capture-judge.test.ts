@@ -3,7 +3,7 @@
  * the case's p95, and what makes a run inconclusive - never a pass.
  */
 import { describe, expect, it } from 'vitest'
-import { Palette, blindOf, judgeCase, judgeTransition, type CaptureFrame } from '../harness/capture.ts'
+import { Palette, blindOf, judgeCase, judgeTransition, retried, type CaptureFrame, type TransitionVerdict } from '../harness/capture.ts'
 
 const HZ = 120
 const R = 1e9 / HZ
@@ -62,6 +62,63 @@ describe('judgeTransition', () => {
 
   it('an exact case allows no bad refresh', () => {
     expect(judge(frames(T0, 'bgggggggggggggggggggggggggggggggg'), T0, T0 + 30 * R, { maxN: 0 }).kind).toBe('fail')
+  })
+})
+
+/** a frame `k` refreshes after T0, complete, good or bad, with an optional gap */
+const at = (k: number, c: 'g' | 'b', gap?: number): CaptureFrame => ({
+  hostNs: String(Math.round(T0 + k * R)), status: 'complete', regions: { r: [c === 'g' ? 'e7e9ef' : 'ff00ff'] }, ...(gap ? { gap } : {}),
+})
+
+describe('judgeTransition: the window\'s tail and head are evidence too (A3.8 #36, #37; review of a3-native, blocker)', () => {
+  it('six good frames, then nothing until a frame 40 refreshes later carrying gap 34, with the stream still running: inconclusive, never a pass', () => {
+    const fs = [...frames(T0 - R, 'ggggggg'), at(40, 'g', 34), at(41, 'g')]
+    expect(judge(fs, T0, T0 + 30 * R)).toMatchObject({ kind: 'inconclusive', why: expect.stringContaining('gap of 34') })
+  })
+
+  it('bad at 1-2, good at 3, then a 36-refresh hole before the window\'s end: inconclusive (the tail was never seen)', () => {
+    const fs = [...frames(T0, 'gbbg'), at(40, 'g', 36), at(41, 'g')]
+    expect(judge(fs, T0, T0 + 30 * R).kind).toBe('inconclusive')
+  })
+
+  it('the same hole with no gap flag is read from the display times', () => {
+    const fs = [...frames(T0, 'gggggg'), at(40, 'g'), at(41, 'g')]
+    expect(judge(fs, T0, T0 + 30 * R)).toMatchObject({ kind: 'inconclusive', why: expect.stringContaining('at the window\'s end') })
+  })
+
+  it('no frame yet at or after the window\'s end: inconclusive (its last refreshes unseen)', () => {
+    expect(judge(frames(T0, 'gggggggggg'), T0, T0 + 10 * R).kind).toBe('inconclusive')
+    expect(judge(frames(T0, 'gggggggggggg'), T0, T0 + 10 * R).kind).toBe('pass')
+  })
+
+  it('the head: no frame before the decision and the first one 5 refreshes after it is inconclusive', () => {
+    const fs = frames(T0 + 5 * R, 'gggggggggggggggggggggggggggggggg')
+    expect(judge(fs, T0, T0 + 30 * R)).toMatchObject({ kind: 'inconclusive', why: expect.stringContaining('no frame before the decision') })
+  })
+
+  it('a bad interval open at the window\'s end is closed by the first frame after it when that frame is complete and good', () => {
+    const v = judge(frames(T0, 'ggggggggbbg'), T0, T0 + 10 * R)
+    expect(v).toEqual({ kind: 'pass', n: 2, ms: Math.round((2 * R) / 1e5) / 10 })
+    // that frame idle: it repeats the bad one, so no verified good frame
+    const idle = frames(T0, 'ggggggggbbi')
+    expect(judge(idle, T0, T0 + 10 * R).kind).toBe('inconclusive')
+  })
+
+  it('past the threshold on what was seen is a fail even with the tail unseen', () => {
+    expect(judge(frames(T0, 'gbbbbg'), T0, T0 + 10 * R)).toMatchObject({ kind: 'fail', n: 4 })
+  })
+})
+
+describe('retried: three inconclusive runs fail the case (A3.8 #37)', () => {
+  const inc = (why: string): TransitionVerdict => ({ kind: 'inconclusive', why })
+  it('the first conclusive run is the verdict', () => {
+    expect(retried([inc('gap'), { kind: 'pass', n: 0, ms: 0 }])).toEqual({ kind: 'pass', n: 0, ms: 0 })
+  })
+  it('fewer than three inconclusive runs stay inconclusive; three are unresolved, which fails the case', () => {
+    expect(retried([inc('a'), inc('b')]).kind).toBe('inconclusive')
+    const u = retried([inc('a'), inc('b'), inc('c')])
+    expect(u).toMatchObject({ kind: 'unresolved', why: expect.stringContaining('a; b; c') })
+    expect(judgeCase([{ kind: 'pass', n: 0, ms: 0 }, u])).toMatchObject({ kind: 'fail', unresolved: 1, inconclusive: 0 })
   })
 })
 
