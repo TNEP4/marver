@@ -433,11 +433,13 @@ export async function captureWindow(): Promise<AppPicture> {
 async function composite(width?: number): Promise<AppPicture & { drew: boolean }> {
   const w0 = win!
   const { width: W, height: H } = w0.getContentBounds()
-  const sf = screen.getDisplayMatching(w0.getBounds()).scaleFactor || 1
-  // k: picture px per window point
-  const k = width && width > 0 ? width / Math.max(1, W) : sf
-  const PW = Math.max(1, Math.round(W * k))
-  const PH = Math.max(1, Math.round(H * k))
+  const dsf = screen.getDisplayMatching(w0.getBounds()).scaleFactor || 1
+  // sf: the picture's px per window point - the display's scale, or a picture of its own width (a flash's 480 px).
+  // Every layer is drawn at it, the cover's bitmap too (cover.ts `bitmap(w, h, sf)`): never the display's scale
+  // with a width at the picture's
+  const sf = width && width > 0 ? width / Math.max(1, W) : dsf
+  const PW = Math.max(1, Math.round(W * sf))
+  const PH = Math.max(1, Math.round(H * sf))
   const out = Buffer.alloc(PW * PH * 4)   // BGRA, premultiplied (Skia's N32 on this Mac)
   const fill = (x0: number, y0: number, w: number, h: number, hex: string) => {
     const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(hex)
@@ -470,17 +472,17 @@ async function composite(width?: number): Promise<AppPicture & { drew: boolean }
   for (const child of w0.contentView.children) {
     if (!child.getVisible()) continue
     const b = child.getBounds()
-    const x0 = Math.round(b.x * k)
-    const y0 = Math.round(b.y * k)
-    const bw = Math.round(b.width * k)
-    const bh = Math.round(b.height * k)
+    const x0 = Math.round(b.x * sf)
+    const y0 = Math.round(b.y * sf)
+    const bw = Math.round(b.width * sf)
+    const bh = Math.round(b.height * sf)
     if (bw <= 0 || bh <= 0) continue
     if (child instanceof WebContentsView) {
       if (child.webContents.isDestroyed()) continue
       let img = await child.webContents.capturePage()
       if (img.isEmpty()) { layers.push(`${child.webContents.getURL()} (empty)`); continue }
       // at the display's scale the capture is the layer as it is; a picture of another width scales it first
-      let bmp = width ? Buffer.alloc(0) : img.toBitmap({ scaleFactor: sf })
+      let bmp = width ? Buffer.alloc(0) : img.toBitmap({ scaleFactor: dsf })
       if (bmp.length !== bw * bh * 4) { img = img.resize({ width: bw, height: bh, quality: width ? 'good' : 'best' }); bmp = img.toBitmap() }
       if (bmp.length !== bw * bh * 4) { const z = img.getSize(); layers.push(`${child.webContents.getURL()} (size ${z.width}x${z.height})`); continue }
       blend(bmp, bw, bh, x0, y0)
@@ -492,7 +494,7 @@ async function composite(width?: number): Promise<AppPicture & { drew: boolean }
     }
   }
   const png = nativeImage.createFromBitmap(out, { width: PW, height: PH, scaleFactor: 1 }).toPNG()
-  return { png, width: PW, height: PH, scale: k, layers, drew }
+  return { png, width: PW, height: PH, scale: sf, layers, drew }
 }
 
 // ---------------------------------------------------------------------------------------------------------------

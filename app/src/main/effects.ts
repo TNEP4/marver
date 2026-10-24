@@ -11,6 +11,7 @@
 import { clipboard, shell } from 'electron'
 import { provide, testMode } from './testing/index.ts'
 
+/** what a test build recorded; `shown` is in the hook's answer only once a file was shown, so A2's `{ copies, opened }` answers keep their shape */
 const recorded = { copies: [] as string[], opened: [] as string[], shown: [] as string[] }
 const fake = (): boolean => __MV_TEST__ && testMode() && process.env.MARVER_APP_REAL_EFFECTS !== '1'
 
@@ -30,12 +31,11 @@ export const effects = {
   },
 }
 
-/**
- * Test builds: the `effects` hook returns (and with `{ clear: true }` empties) what was recorded. `shown` is there
- * only once a file was shown, so A2's `{ copies, opened }` answers keep their shape.
- */
+let effectHooks = false
+/** Test builds: the `effects` hook returns (and with `{ clear: true }` empties) what was recorded. Once, whoever calls first (views.ts and config.ts both do). */
 export function provideEffectHooks(): void {
-  if (!__MV_TEST__) return
+  if (!__MV_TEST__ || effectHooks) return
+  effectHooks = true
   provide('effects', (a) => {
     const out = { copies: [...recorded.copies], opened: [...recorded.opened], ...(recorded.shown.length ? { shown: [...recorded.shown] } : {}) }
     if ((a as { clear?: unknown } | null)?.clear === true) { recorded.copies.length = 0; recorded.opened.length = 0; recorded.shown.length = 0 }
