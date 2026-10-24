@@ -51,6 +51,13 @@
  *     - its background is the strip renderer's too. FAIL.
  * So variant 3 stays the choice, and cover.ts must keep every canvas below the strip (0.1's opaque layout) while the
  * cover's renderer has not presented, or has gone, until it presents again.
+ * **Run again on 24 Oct at 10:38** (the review's, `--dump`, variants 1-3; clocks 0.1 ms apart, the marker's changes
+ * 0.4-2.1 refreshes after main made them; no transition inconclusive): 1 FAIL (steady 50 of 50 bad; toggles p95 n 26,
+ * at most 220.1 ms; strip stalled p95 n 25); 2 FAIL (50 of 50; p95 n 25, at most 218.2 ms); 3 PASS (steady 0 of 49;
+ * toggles p95 n 1, at most 15.9 ms; strip stalled p95 n 1, at most 16.5 ms; its own stalled p95 n 1, at most 9.3 ms)
+ * and beyond the gate again never covering with its renderer crashed (p95 n 25, 220.9 ms) or before its first paint
+ * (p95 n 26, 219.7 ms). Both 24 Oct dumps judged again (`--rejudge`) with the judge that reads an idle frame at its
+ * own time and refuses a frame without its samples: the same verdicts.
  */
 import { spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -59,7 +66,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { readFileSync } from 'node:fs'
-import { CaptureBlind, Palette, TRIES, blindLine, captureAccess, clockControl, judgeCase, judgeTransition, retried, startCapture, type CaptureFrame, type CaseVerdict, type ClockControl, type TransitionVerdict } from '../../harness/capture.ts'
+import { CaptureBlind, Palette, TRIES, blindLine, captureAccess, clockControl, judgeCase, judgeTransition, retried, startCapture, type CaptureFrame, type CaseVerdict, type ClockControl, type FrameVerdict, type TransitionVerdict } from '../../harness/capture.ts'
 
 const APP = resolve(import.meta.dirname, '..', '..', '..')
 const ELECTRON = createRequire(join(APP, 'package.json'))('electron') as unknown as string
@@ -86,7 +93,11 @@ interface RunDump {
   transitions: { set: string; k: number; t0: string; t1: string }[]
 }
 const paletteOf = (c: RunDump['calibration']) => new Palette(20).add('ground', c.ground).add('a', c.a).add('b', c.b).between('ground', GROUND, DOT)
-const verdictOf = (pal: Palette) => (f: CaptureFrame) => (f.regions?.empty ?? []).every((s) => pal.classify(s) === 'ground') ? 'good' as const : 'bad' as const
+/** the strip's empty part all ground; `unread` when the frame carries none of its samples (never good: `[].every()` is true) */
+const verdictOf = (pal: Palette) => (f: CaptureFrame): FrameVerdict => {
+  const xs = (f.regions?.empty ?? []).filter(Boolean)
+  return !xs.length ? 'unread' : xs.every((s) => pal.classify(s) === 'ground') ? 'good' : 'bad'
+}
 
 interface Ev { ns: string; ev: string; [k: string]: unknown }
 
@@ -111,13 +122,16 @@ function bench(userData: string) {
   return { child, next, cmd, err: () => err }
 }
 
+/** the Electron the bench reported in its ready event (never a hard-coded version) */
+let electronSeen: string | null = null
+
 interface Result {
   variant: number
   name: string
   refreshHz: number
   clockSkewMs: number
   clock: ClockControl
-  steady: { frames: number; bad: number }
+  steady: { frames: number; bad: number; unread: number }
   toggles: CaseVerdict & { detail: TransitionVerdict[] }
   stalledStrip: CaseVerdict & { detail: TransitionVerdict[] }
   stalledCover?: CaseVerdict & { detail: TransitionVerdict[] }
@@ -134,7 +148,8 @@ async function runVariant(v: number): Promise<Result> {
   const ud = mkdtempSync(join(tmpdir(), 's15-ud-'))
   const b = bench(ud)
   try {
-    await b.next('ready')
+    const ready = await b.next('ready')
+    if (typeof ready.electron === 'string') electronSeen = ready.electron
     const win = await b.cmd({ op: 'setup', variant: v, coverFrom: COVER_FROM }, 'window')
     await sleep(400)
     const H = Number(win.h)
@@ -169,7 +184,7 @@ async function runVariant(v: number): Promise<Result> {
     const st = await b.cmd({ op: 'state', canvas: 'a', cover: true }, 'state')
     await sleep(600)
     const hold = cap.frames.filter((f) => BigInt(f.hostNs) >= BigInt(st.ns) + 150_000_000n && f.status === 'complete')
-    const steady = { frames: hold.length, bad: hold.filter((f) => verdict(f) === 'bad').length }
+    const steady = { frames: hold.length, bad: hold.filter((f) => verdict(f) === 'bad').length, unread: hold.filter((f) => verdict(f) === 'unread').length }
     await b.cmd({ op: 'state', cover: false }, 'state')
     await sleep(200)
 
@@ -235,6 +250,7 @@ async function runVariant(v: number): Promise<Result> {
     const why: string[] = []
     if (!clock.ok) why.push(`the clock control: ${clock.why} - the run is inconclusive`)
     if (!steady.frames) why.push('(a) no frame seen while covered')
+    else if (steady.unread) why.push(`(a) ${steady.unread} of ${steady.frames} frames carried none of the strip's samples - inconclusive`)
     else if (steady.bad) why.push(`(a) ${steady.bad} of ${steady.frames} frames showed the pattern while covered`)
     const say = (what: string, c: CaseVerdict) => `${what} ${c.kind}: p95 n ${c.p95n}, max ${c.maxMs} ms, ${c.inconclusive} inconclusive, ${c.unresolved} unresolved`
     if (t.kind !== 'pass') why.push(`(b) ${say('toggles', t)}`)
@@ -305,6 +321,6 @@ for (const v of VARIANTS) {
     results.push({ variant: v, name: NAMES[v]!, passes: false, why: [`error: ${(e as Error).message}`] } as Result)
   }
 }
-const report = { spike: 'S15', ran: true, at: new Date().toISOString(), electron: '45.0.0', coverFrom: COVER_FROM, chosen, results }
+const report = { spike: 'S15', ran: true, at: new Date().toISOString(), electron: electronSeen, coverFrom: COVER_FROM, chosen, results }
 writeFileSync(join(OUT, 's15.json'), JSON.stringify(report, null, 2))
 process.stdout.write(`S15: ${chosen === null ? 'NO cover passed - the opaque strip stays (A2.2\'s fallback); the numbers go to Nic' : `variant ${chosen} (${NAMES[chosen]}) is the first that passes`}\nreport: ${join(OUT, 's15.json')}\n`)

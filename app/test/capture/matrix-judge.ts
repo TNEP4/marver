@@ -46,8 +46,14 @@ export function shownAt(segs: readonly Segment[], ns: bigint): Shown | null {
  */
 export type Classify = (hex: string) => 'ground' | 'size' | 'band' | 'other' | `tag:${string}`
 
-/** One frame against what may show at its display time (`shown`): every sample of every region read. */
+/**
+ * One frame against what may show at its display time (`shown`): every sample of every judged region read. `unread`
+ * when a judged region is not in the frame, or none of its samples was read (all outside the window): a frame that
+ * carries nothing of what the case reads is never good (review of a3-native, minor #10). A single sample outside a
+ * window resized smaller reads nothing and says nothing.
+ */
 export function frameVerdict(f: CaptureFrame, o: { regions: Record<string, Rect>; grid: Grid; classify: Classify; shown: Shown | null }): FrameVerdict {
+  for (const name of Object.keys(o.regions)) if (!(f.regions?.[name] ?? []).some(Boolean)) return 'unread'
   for (const [name, samples] of Object.entries(f.regions ?? {})) {
     const r = o.regions[name]
     if (!r) continue

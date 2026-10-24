@@ -31,6 +31,21 @@
  * An inconclusive transition is run again; three inconclusive runs fail the case (`retried`, A3.8 #37). A failing
  * transition writes the frames around its first bad one (the helper's ring of the strip, two seconds deep).
  *
+ * The heartbeat (A3.8 #29, #37): in the one ground, the one-ground stream's `ground:heartbeat` - a compositor opacity
+ * animation main inserts into the strip, which keeps running with the strip's main thread stalled - and never a
+ * script in the strip, which a stalled strip stops (review of a3-native, major #5). Its own second is a gate: fewer
+ * complete frames than 90 % of the refresh rate, or a gap, and the run is inconclusive before any case. The opaque
+ * layout judges no case, so its clock control may use a script heartbeat in the strip. The clock marker is removed
+ * once calibrated: a test view on top of the stack moves where the app inserts a tab page (`length - 2`).
+ *
+ * Rapid switches with the strip stalled: each transition stalls the strip itself (3 s, its span recorded by the strip
+ * on its own clock), and is judged only when that span covers its window - else inconclusive; never a stall of fixed
+ * length that later transitions outlive. Every transition's documents before and after must show different tags,
+ * else it is inconclusive: the fixture gives each load a tag of its own (a reload included), and switch-see-through
+ * first moves A off B's tag (review of a3-native, major #6). The screen is checked before each case, and again when a
+ * transition saw a long run of idle samples: a locked screen or a sleeping display makes the run blind, never passed
+ * (the helper also holds the display awake while it streams).
+ *
  * Built here: reload, navigation, programmatic resize, a switch to a see-through tab, to a covered tab and to Home, a
  * canvas killed, rapid switches with the strip stalled, a stalled canvas. Not built (8 of 15; each needs the one
  * ground, Accessibility or another stream): steady panning on a real shell, the live resize (a CGEvent drag), a failed
@@ -46,7 +61,7 @@
  */
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { CaptureBlind, Palette, TRIES, blindLine, captureAccess, clockControl, judgeCase, judgeTransition, retried, startCapture, type CaptureFrame, type CaptureSession, type CaseVerdict, type ClockControl, type TransitionVerdict } from '../harness/capture.ts'
+import { CaptureBlind, CaptureNotReady, Palette, TRIES, blindLine, captureAccess, clockControl, judgeCase, judgeTransition, retried, screenState, startCapture, type CaptureFrame, type CaptureSession, type CaseVerdict, type ClockControl, type TransitionVerdict } from '../harness/capture.ts'
 import { DOC_TAGS, SIZE_TAG_X, startFakeCanvas, type FakeCanvas } from '../harness/fake-canvas.ts'
 import { launch, sleep, world, type Launch } from '../budgets/launcher.ts'
 import { clash, decisionOf, docTagRect, frameVerdict, mode, samplePoint, settleOf, shownAt, sizeTagRect, type Classify, type LogLine, type Rect, type Segment, type Shown } from './matrix-judge.ts'
@@ -74,6 +89,8 @@ type CaseReport = (CaseVerdict & { exact: boolean; detail: (TransitionVerdict & 
 class Done extends Error {}
 /** The calibration cannot tell the classes apart, or its source is not what it should be: no case is judged. */
 class CalibrationRefused extends Error {}
+/** The heartbeat does not hold the stream at the refresh rate: no case is judged (inconclusive). */
+class HeartbeatShort extends Error {}
 
 const access = await captureAccess()
 if (access !== true) {
@@ -86,8 +103,8 @@ const fakes: FakeCanvas[] = []
 let L: Launch | undefined
 let cap: CaptureSession | undefined
 const report: {
-  at: string; layout?: string; refreshHz?: number; clockSkewMs?: number; clock?: ClockControl; heartbeat?: { frames: number; complete: number; gaps: number[] }
-  calibration?: { ok: boolean; why?: string; colours?: Record<string, string> }; blind?: string; cases: Record<string, CaseReport>
+  at: string; layout?: string; refreshHz?: number; clockSkewMs?: number; clock?: ClockControl; heartbeat?: { source: string; frames: number; complete: number; gaps: number[] }
+  calibration?: { ok: boolean; why?: string; colours?: Record<string, string> }; blind?: string; harness?: string; cases: Record<string, CaseReport>
 } = { at: new Date().toISOString(), cases: {} }
 const NOT_BUILT = ['steady-pan (a real shell)', 'live-resize (CGEvent drag: Accessibility)', 'failed-proof and instance-mismatch from full height', 'error-page to trusted', 'tab-page lift', 'html-fullscreen', 'late-reply of an earlier epoch', 'under load (a second window)']
 const BUILT = ['reload', 'navigation', 'resize', 'switch-see-through', 'switch-covered', 'switch-home', 'canvas-killed', 'switches-strip-stalled', 'canvas-stalled']
@@ -127,16 +144,19 @@ try {
     marker: { x: marker.rect.x + 4, y: marker.rect.y + 4, w: marker.rect.width - 8, h: marker.rect.height - 8 },
   }
   const judged = Object.fromEntries(Object.entries(regions).filter(([n]) => n !== 'marker'))
-  // the heartbeat (A3.8 #29, #37): so every refresh has a frame and a gap is a missed one. On this Mac (24 Oct) a 1 px
-  // CSS opacity animation in the strip - the compositor's, the design's, and main's in the one-ground stream - did not
-  // keep a window stream at the refresh rate (30-60 frames a second, stalls up to a second); a 2 px block whose
-  // colour the strip's page changes at every animation frame did (about 110 a second at 120 Hz). It stops while the
-  // strip's main thread is stalled, so that case's transitions can be inconclusive on gaps: never passed
-  const HEARTBEAT = `(() => { if (document.getElementById('mv-hb')) return 1;
+  // the heartbeat (A3.8 #29, #37): so every refresh has a frame and a gap is a missed one. In the one ground it is the
+  // one-ground stream's compositor animation (`ground:heartbeat`, main's insertCSS), which a stalled strip does not
+  // stop; a script in the strip stops with it, so it is used only in the opaque layout, where no case is judged (on
+  // 24 Oct a 1 px opacity animation in the strip looked too slow here, while S15's 2 px ones held 111-112 frames a
+  // second the same day: the heartbeat's own second below decides, for whichever runs)
+  const hooks = await call<string[]>('hooks')
+  const SCRIPT_BEAT = `(() => { if (document.getElementById('mv-hb')) return 1;
     const d = document.createElement('div'); d.id = 'mv-hb'; d.style.cssText = 'position:fixed;right:2px;bottom:2px;width:2px;height:2px;pointer-events:none;z-index:2147483647';
     document.body.appendChild(d); let k = 0; const f = () => { k ^= 1; d.style.background = k ? '#000' : '#333'; requestAnimationFrame(f) }; requestAnimationFrame(f); return 1 })()`
-  const heartbeat = async () => { for (let i = 0; i < 40; i++) { if (await call('exec', { target: 'strip', js: HEARTBEAT }).catch(() => 0)) return; await sleep(100) } }
-  await heartbeat()
+  let beatSource: string
+  if (hooks.includes('ground:heartbeat')) { await call('ground:heartbeat', { on: true }); beatSource = 'ground:heartbeat (compositor)' }
+  else if (layout === 'one-ground') throw new Error('the one ground without its ground:heartbeat hook: no heartbeat survives a stalled strip, so no case can be judged')
+  else { for (let i = 0; i < 40; i++) { if (await call('exec', { target: 'strip', js: SCRIPT_BEAT }).catch(() => 0)) break; await sleep(100) } beatSource = 'a script in the strip (the opaque layout: no case judged)' }
   const winId = await call<number | null>('window:id')
   if (!winId) throw new Error('no window id')
   cap = await startCapture({ mode: 'window', windowId: winId, regions, grid: [...GRID], ring: { x: 0, y: 0, w: W, h: 44 }, ringFrames: 240 })
@@ -146,13 +166,15 @@ try {
   report.clockSkewMs = Math.round(Number(process.hrtime.bigint() - BigInt(c.ready.hostNs)) / 1e5) / 10
   if (Math.abs(report.clockSkewMs) > 5) throw new Error(`the clocks do not line up: ${report.clockSkewMs} ms`)
   // the heartbeat's own second: every refresh a frame, and complete ones among them. Only idle frames is a screen
-  // that composites nothing (locked, or the display asleep, after the check): blind, never a pass
+  // that composites nothing (locked, or the display asleep, after the check): blind, never a pass. Fewer than 90 %
+  // complete, or a gap: the stream does not see every refresh, so nothing it judged would be evidence
   {
     const h0 = c.frames.length
     await sleep(1000)
     const hb = c.frames.slice(h0)
-    report.heartbeat = { frames: hb.length, complete: hb.filter((f) => f.status === 'complete').length, gaps: hb.filter((f) => f.gap).map((f) => f.gap!) }
+    report.heartbeat = { source: beatSource, frames: hb.length, complete: hb.filter((f) => f.status === 'complete').length, gaps: hb.filter((f) => f.gap).map((f) => f.gap!) }
     if (!report.heartbeat.complete) throw new CaptureBlind('the screen unlocked and the display awake', 'locked')
+    if (report.heartbeat.complete < 0.9 * c.ready.refreshHz || report.heartbeat.gaps.length) throw new HeartbeatShort(`the heartbeat (${beatSource}) gave ${report.heartbeat.complete} complete frames in 1 s at ${c.ready.refreshHz} Hz, ${report.heartbeat.gaps.length} gaps: the stream does not see every refresh`)
   }
   const log = (o: { afterT: bigint }) => call<LogLine[]>('log', { afterT: String(o.afterT) })
 
@@ -202,7 +224,9 @@ try {
   let bandCal: string | null = null
   await call('activate', { id: A.id })
   await lifted(A.id)
-  for (const tag of DOC_TAGS) {
+  // starting after A's current tag, so no navigation asks for the tag it leaves (the fixture would take the next)
+  const at0 = DOC_TAGS.indexOf((A.fake.tags.at(-1)?.tag ?? '') as typeof DOC_TAGS[number])
+  for (const tag of DOC_TAGS.map((_, i) => DOC_TAGS[(at0 + 1 + i) % DOC_TAGS.length]!)) {
     const before = process.hrtime.bigint()
     const t0 = Date.now()
     await call('exec', { target: A.id, js: `location.href = '/?mvtag=${tag}'; 1` })
@@ -233,6 +257,8 @@ try {
   const clashed = clash(named, TOL)
   if (clashed) throw new CalibrationRefused(`two classes the run must tell apart look alike: ${clashed}`)
   report.calibration = { ok: true, colours: Object.fromEntries(named.map((x, i) => [`${x.name}${x.name === 'ground' ? (i ? '-dot' : '') : ''}`, x.hex])) }
+  // the marker's work is done: off the stack, so the app inserts its tab pages where it would without it
+  await call('clock:marker', { remove: true })
   const tagPal = new Palette(TOL).add('size', [sizeCal])
   if (!bandIsGround) tagPal.add('band', [bandCal])
   for (const [t, h] of tagCal) tagPal.add(`tag:${t}`, [h])
@@ -250,16 +276,20 @@ try {
   const evidenceDir = join(OUT, 'matrix-evidence')
   rmSync(evidenceDir, { recursive: true, force: true })
 
+  /** the tab whose document `prev` is (null when nothing was uncovered) */
+  let prevTab: string | null = null
   /** What shows under the tabs now, from the journal's last compose: the active canvas's document when uncovered. */
   async function nowShown(): Promise<Shown | null> {
+    prevTab = null
     const last = (await log({ afterT: process.hrtime.bigint() - 60_000n * MS })).filter((l) => l.topic === 'compose').at(-1)
     if (!last || (last.data.cover as { visible?: boolean } | undefined)?.visible !== false) return null
     const t = tabs.find((x) => x.id === last.data.active)
+    prevTab = t?.id ?? null
     const tag = t?.fake.tags.at(-1)?.tag
     return t && tag ? { tag, width: Number(last.data.w) } : null
   }
 
-  type Step = { target: Tab | 'home'; seeThrough: boolean; act: () => Promise<unknown>; fresh?: boolean }
+  type Step = { target: Tab | 'home'; seeThrough: boolean; act: () => Promise<unknown>; fresh?: boolean; stallsStrip?: boolean }
   type Case = { name: string; exact: boolean; setup?: () => Promise<void>; step: () => Step; each?: () => Promise<void>; teardown?: () => Promise<void> }
 
   /** One run of a transition: act, main's decision, the settle, the window, the judgement. */
@@ -282,12 +312,28 @@ try {
     }
     if (!settled) return { kind: 'inconclusive', why: `the state never settled within 6 s${st.seeThrough ? ' (no uncover of the target)' : ''}` }
     const t1 = settled.at + 100n * MS + BigInt(Math.round(4 * R))
+    // a new document - another tab's, or the same tab's next load - must be told apart from the one before it: one tag
+    // on both, and a held frame of the old one is good (a resize keeps its document: its size tag tells the frames apart)
+    const after = settled.segments.map((g) => g.shown?.tag).filter(Boolean).at(-1) ?? null
+    const newDoc = st.fresh || target !== prevTab
+    if (newDoc && prev && after && prev.tag === after) return { kind: 'inconclusive', why: `the documents before and after show the same tag (${after}): a held frame of the old one could not be told apart` }
+    // the strip stalled through the whole window, as its own clock says (the exec waits for the stall to end)
+    if (st.stallsStrip) {
+      const span = await call<{ from: number; to: number } | null>('exec', { target: 'strip', js: 'window.__mvStall ?? null' }).catch(() => null)
+      const wallOf = (ns: bigint) => wall + Number(ns - before) / 1e6
+      if (!span || span.from > wallOf(t0) || span.to < wallOf(t1)) return { kind: 'inconclusive', why: `the strip was not stalled through the window (${span ? `stalled ${Math.round(span.from - wallOf(t0))} to ${Math.round(span.to - wallOf(t1))} ms around it` : 'no stall recorded'})` }
+    }
     // the window's tail must have arrived before it is judged
     const tailEnd = Date.now() + 2000
     while (!c.frames.some((f) => BigInt(f.hostNs) >= t1) && Date.now() < tailEnd) await sleep(20)
     const segs: Segment[] = [{ from: 0n, shown: prev }, ...settled.segments]
     const verdict = (f: CaptureFrame) => frameVerdict(f, { regions: judged, grid: GRID, classify, shown: shownAt(segs, BigInt(f.hostNs)) })
     const v = judgeTransition(c.frames, { t0, t1, refreshHz: c.ready.refreshHz, verdict, ...(cs.exact ? { maxN: 0 } : {}) })
+    // a long run of idle samples: the screen may have locked or the display slept mid-run - blind, never a pass
+    if (v.kind === 'inconclusive' && /idle samples in a row|no complete frame/.test(v.why)) {
+      const sc = await screenState()
+      if (sc.locked || sc.asleep) throw new CaptureBlind('the screen unlocked and the display awake', sc.locked ? 'locked' : 'asleep')
+    }
     prev = shownAt(segs, t1)
     let evidence: string[] | undefined
     if (v.kind === 'fail') {
@@ -319,6 +365,14 @@ try {
       step: () => { flip = !flip; const size = flip ? { width: W - 120, height: H - 60 } : { width: W, height: H }; return { target: A, seeThrough: true, act: () => call('resize', size) } },
       teardown: async () => { await call('resize', { width: W, height: H }); await sleep(300) } },
     { name: 'switch-see-through', exact: false,
+      // A and B must show different tags: A moved off B's if the navigations brought it there
+      setup: async () => {
+        if (A.fake.tags.at(-1)?.tag !== B.fake.tags.at(-1)?.tag) return
+        await call('activate', { id: A.id }); await lifted(A.id)
+        const other = DOC_TAGS.find((x) => x !== B.fake.tags.at(-1)?.tag)!
+        await call('exec', { target: A.id, js: `location.href = '/?mvtag=${other}'; 1` })
+        await until((s) => !!s.tabs.find((x) => x.id === A.id)?.doc?.lifted && A.fake.tags.at(-1)?.tag === other, 15_000, 'A on another tag')
+      },
       step: () => { flip = !flip; const t = flip ? B : A; return { target: t, seeThrough: true, act: () => call('activate', { id: t.id }) } } },
     { name: 'switch-covered', exact: false,
       step: () => { flip = !flip; return flip ? { target: C, seeThrough: false, act: () => call('activate', { id: C.id }) } : toA() } },
@@ -328,9 +382,17 @@ try {
       // covered by the decision; the automatic reload that follows uncovers B's next document, which may then show
       step: () => ({ target: B, seeThrough: false, act: () => call('crash', { target: B.id }) }),
       each: async () => { await sleep(300); await lifted(B.id).catch(() => {}); await sleep(300) } },
-    { name: 'switches-strip-stalled', exact: false, setup: async () => { await call('exec', { target: 'strip', js: 'setTimeout(() => { const e = Date.now() + 120000; while (Date.now() < e) {} }, 0); 1' }) },
-      step: () => { flip = !flip; return flip ? { target: C, seeThrough: false, act: () => call('activate', { id: C.id }) } : toA() },
-      teardown: async () => { await call('crash', { target: 'strip' }); await sleep(1500); await heartbeat() } },
+    { name: 'switches-strip-stalled', exact: false,
+      // each transition stalls the strip itself, for 3 s from just before the switch, its span on the strip's clock
+      step: () => {
+        flip = !flip
+        const to = flip ? { target: C, seeThrough: false } : { target: A, seeThrough: true }
+        return { ...to, stallsStrip: true, act: async () => {
+          await call('exec', { target: 'strip', js: 'window.__mvStall = null; setTimeout(() => { const from = Date.now(), e = from + 3000; while (Date.now() < e) {} window.__mvStall = { from, to: Date.now() } }, 0); 1' })
+          await sleep(30)
+          return call('activate', { id: to.target.id })
+        } }
+      } },
     { name: 'canvas-stalled', exact: true, setup: async () => { await call('activate', { id: 'home' }); await sleep(300) },
       // a hidden tab stalled, resized, then shown: nothing of it under the tabs before its answer (exact)
       step: () => ({ target: B, seeThrough: true, act: async () => {
@@ -344,6 +406,8 @@ try {
   for (const cs of cases) {
     if (ONLY && !ONLY.includes(cs.name)) continue
     process.stdout.write(`capture matrix: ${cs.name}...\n`)
+    // the screen before each case: locked or asleep is blind for the rest of the run, never a pass
+    { const sc = await screenState(); if (sc.locked || sc.asleep) throw new CaptureBlind('the screen unlocked and the display awake', sc.locked ? 'locked' : 'asleep') }
     try {
       await cs.setup?.()
       await sleep(300)
@@ -359,6 +423,7 @@ try {
       report.cases[cs.name] = { ...j, exact: cs.exact, detail }
       process.stdout.write(`  ${j.kind.toUpperCase()} ${cs.exact ? 'exact' : 'threshold'}: p95 n ${j.p95n}, max ${j.maxMs} ms, ${j.inconclusive} inconclusive and ${j.unresolved} unresolved of ${j.transitions}\n`)
     } catch (e) {
+      if (e instanceof CaptureBlind) throw e
       report.cases[cs.name] = { kind: 'error', why: (e as Error).message }
       process.stdout.write(`  ERROR ${(e as Error).message}\n`)
     }
@@ -366,7 +431,9 @@ try {
 } catch (e) {
   if (e instanceof CaptureBlind) report.blind = e.message
   else if (e instanceof CalibrationRefused) report.calibration = { ok: false, why: e.message }
-  else if (!(e instanceof Done)) throw e
+  else if (e instanceof HeartbeatShort || e instanceof CaptureNotReady) report.harness = e.message
+  // anything else is the harness breaking: inconclusive (exit 3), never exit 1, which says a case failed
+  else if (!(e instanceof Done)) { report.harness = `the harness broke: ${(e as Error).message}`; process.stderr.write(`${(e as Error).stack ?? e}\n`) }
 } finally {
   for (const n of NOT_BUILT) report.cases[n] ??= { kind: 'not-built', why: 'needs the one ground, Accessibility or another stream before it can be staged here' }
   await cap?.stop()
@@ -381,13 +448,14 @@ if (report.blind) { process.stdout.write(`capture matrix: BLIND - not run. ${rep
 const hb = report.heartbeat
 const clock = report.clock ? (report.clock.ok ? `clock control ok (lags ${report.clock.lags.join(', ')} refreshes)` : `clock control ${report.clock.inconclusive ? 'INCONCLUSIVE' : 'FAILED'}: ${report.clock.why}`) : 'clock control not run'
 process.stdout.write(`capture matrix (${report.layout} layout, ${report.refreshHz} Hz, clocks ${report.clockSkewMs} ms, ${clock}, heartbeat ${hb?.complete}/${hb?.frames} complete in 1 s, ${hb?.gaps.length} gaps): report ${join(OUT, 'matrix.json')}\n`)
+if (report.harness) process.stdout.write(`capture matrix: INCONCLUSIVE - ${report.harness}; no case judged\n`)
 if (report.calibration && !report.calibration.ok) process.stdout.write(`capture matrix: CALIBRATION REFUSED - ${report.calibration.why}; no case judged\n`)
 if (report.layout === 'opaque') process.stdout.write('capture matrix: NOT APPLICABLE - the opaque layout: no canvas pixel can reach the strip\'s empty part, so every case would pass by construction; the matrix proves nothing until the one ground lands\n')
 const built = Object.values(report.cases).filter((x) => x.kind !== 'not-built')
 // --control: 0 when the clock control holds (a check of the harness, never an acceptance). Else 0 only when every
 // built case passed in the one ground with the clock control and the calibration good; 1 one failed; 3 anything
 // else - inconclusive, broke, refused or not applicable
-if (CONTROL_ONLY) process.exit(report.clock?.ok ? 0 : 3)
-const ok = report.layout === 'one-ground' && report.clock?.ok && report.calibration?.ok && built.length > 0 && built.every((x) => x.kind === 'pass')
+if (CONTROL_ONLY) process.exit(report.clock?.ok && !report.harness ? 0 : 3)
+const ok = report.layout === 'one-ground' && !report.harness && report.clock?.ok && report.calibration?.ok && built.length > 0 && built.every((x) => x.kind === 'pass')
 process.exit(built.some((x) => x.kind === 'fail') ? 1 : ok ? 0 : 3)
 

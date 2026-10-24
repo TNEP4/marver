@@ -3,7 +3,7 @@
  * the case's p95, and what makes a run inconclusive - never a pass.
  */
 import { describe, expect, it } from 'vitest'
-import { Palette, blindOf, judgeCase, judgeTransition, retried, type CaptureFrame, type TransitionVerdict } from '../harness/capture.ts'
+import { MAX_IDLE_RUN, Palette, blindOf, judgeCase, judgeTransition, retried, type CaptureFrame, type FrameVerdict, type TransitionVerdict } from '../harness/capture.ts'
 
 const HZ = 120
 const R = 1e9 / HZ
@@ -106,6 +106,73 @@ describe('judgeTransition: the window\'s tail and head are evidence too (A3.8 #3
 
   it('past the threshold on what was seen is a fail even with the tail unseen', () => {
     expect(judge(frames(T0, 'gbbbbg'), T0, T0 + 10 * R)).toMatchObject({ kind: 'fail', n: 4 })
+  })
+})
+
+describe('judgeTransition: an idle sample is the held frame judged at its own time, and a long idle run is not evidence (review of a3-native, blocker)', () => {
+  /** what may show changes at the decision: the old document (\'o\') is allowed before T0, only ground after it */
+  const old = (f: CaptureFrame): FrameVerdict => {
+    const x = f.regions?.r?.[0]
+    if (x === 'e7e9ef') return 'good'
+    if (x === 'aa00aa') return BigInt(f.hostNs) < BigInt(T0) ? 'good' : 'bad'
+    return 'bad'
+  }
+  const oldFrame = (k: number): CaptureFrame => ({ hostNs: String(Math.round(T0 + k * R)), status: 'complete', regions: { r: ['aa00aa'] } })
+  const idles = (from: number, n: number): CaptureFrame[] => Array.from({ length: n }, (_, i) => ({ hostNs: String(Math.round(T0 + (from + i) * R)), status: 'idle' as const }))
+  const j = (fs: CaptureFrame[], to = T0 + 30 * R, extra = {}) => judgeTransition(fs, { t0: BigInt(T0), t1: BigInt(Math.round(to)), refreshHz: HZ, verdict: old, ...extra })
+
+  it('one complete good frame, then 200 idle samples (the screen locked or the display asleep mid-run): inconclusive, never a pass', () => {
+    const fs = [...frames(T0 - R, 'g'), ...idles(0, 200)]
+    expect(j(fs)).toMatchObject({ kind: 'inconclusive', why: expect.stringContaining('idle samples in a row') })
+  })
+
+  it('the old document\'s frame just before the decision (allowed then), held by 11 idle samples after it: never a pass', () => {
+    const fs = [oldFrame(-1), ...idles(0, 11), ...frames(T0 + 11 * R, 'gggggggggggggggggggggggg')]
+    const v = j(fs)
+    expect(v.kind).not.toBe('pass')
+    expect(v).toMatchObject({ kind: 'inconclusive', why: expect.stringContaining('idle samples in a row') })
+  })
+
+  it('a few idle samples holding the old document after the decision are its refreshes, judged then: bad', () => {
+    // held 3 refreshes past the decision, then the cover: n 3, past A2.2's 2
+    const fs = [oldFrame(-1), ...idles(0, 3), ...frames(T0 + 3 * R, 'ggggggggggggggggggggggggggggggg')]
+    expect(j(fs)).toMatchObject({ kind: 'fail', n: 3 })
+    // the same held 2 refreshes: n 2, ended by the first complete good frame
+    const two = [oldFrame(-1), ...idles(0, 2), ...frames(T0 + 2 * R, 'gggggggggggggggggggggggggggggggg')]
+    expect(j(two)).toEqual({ kind: 'pass', n: 2, ms: Math.round((2 * R) / 1e5) / 10 })
+  })
+
+  it('exactly MAX_IDLE_RUN idle samples in a row are evidence; one more is not', () => {
+    const ok = [...frames(T0 - R, 'g'), ...idles(0, MAX_IDLE_RUN), ...frames(T0 + MAX_IDLE_RUN * R, 'ggggggggggggggggggggggggggggggggg')]
+    expect(j(ok)).toEqual({ kind: 'pass', n: 0, ms: 0 })
+    const over = [...frames(T0 - R, 'g'), ...idles(0, MAX_IDLE_RUN + 1), ...frames(T0 + (MAX_IDLE_RUN + 1) * R, 'gggggggggggggggggggggggggggggggg')]
+    expect(j(over).kind).toBe('inconclusive')
+  })
+
+  it('past the threshold on complete frames before a long idle run: a fail on what was seen', () => {
+    const fs = [...frames(T0, 'gbbbb'), ...idles(5, 20), ...frames(T0 + 25 * R, 'gggggggg')]
+    expect(j(fs)).toMatchObject({ kind: 'fail', n: 4 })
+  })
+
+  it('a window with no complete frame of its own is inconclusive, even when its idle samples are good', () => {
+    const fs = [...frames(T0 - R, 'g'), ...idles(0, 3), ...frames(T0 + 3 * R, 'g')]
+    expect(j(fs, T0 + 3 * R)).toMatchObject({ kind: 'inconclusive', why: expect.stringContaining('no complete frame inside') })
+  })
+
+  it('a frame with no display time is never evidence, inside the window or at its end (minor #19)', () => {
+    const fs = frames(T0 - R, 'gggggggggggggggggggggggggggggggggg')
+    fs[6] = { ...fs[6]!, untimed: true }
+    expect(j(fs)).toMatchObject({ kind: 'inconclusive', why: expect.stringContaining('no display time') })
+    const tail = frames(T0 - R, 'gggggggggggg')
+    tail[11] = { ...tail[11]!, untimed: true }
+    expect(j(tail, T0 + 10 * R)).toMatchObject({ kind: 'inconclusive', why: expect.stringContaining('no display time') })
+  })
+
+  it('a frame that does not carry what the case reads is never good (minor #10)', () => {
+    const fs = frames(T0 - R, 'gggggggggggggggggggggggggggggggggg')
+    fs[5] = { hostNs: fs[5]!.hostNs, status: 'complete' }
+    const unread = (f: CaptureFrame): FrameVerdict => (f.regions?.r?.length ? old(f) : 'unread')
+    expect(judgeTransition(fs, { t0: BigInt(T0), t1: BigInt(Math.round(T0 + 30 * R)), refreshHz: HZ, verdict: unread })).toMatchObject({ kind: 'inconclusive', why: expect.stringContaining('does not carry') })
   })
 })
 

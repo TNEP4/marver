@@ -12,7 +12,10 @@ const W = 1280
 const classify: Classify = (hex) => hex === 'e7e9ef' || hex === 'c9cbd5' ? 'ground' : hex === '202020' ? 'size' : hex === 'ff0080' || hex === '00c0ff' ? `tag:${hex}` : hex === 'aaaaaa' ? 'band' : 'other'
 /** a region of 12 x 2 samples, all ground but sample k */
 const one = (k: number, hex: string) => Array.from({ length: 24 }, (_, i) => (i === k ? hex : 'e7e9ef'))
-const frame = (regions: Record<string, string[]>): CaptureFrame => ({ hostNs: '1', status: 'complete', regions })
+/** a frame with every judged region read, all ground but what `regions` names */
+const ground24 = one(-1, '')
+const frame = (regions: Record<string, string[]>, judged: readonly string[] = ['strip', 'size@1280', 'size@1160']): CaptureFrame =>
+  ({ hostNs: '1', status: 'complete', regions: { ...Object.fromEntries(judged.map((n) => [n, ground24])), ...regions } })
 
 describe('samplePoint: capture.swift\'s grid, cell centres row by row', () => {
   it('maps a sample index to its window point', () => {
@@ -43,7 +46,7 @@ describe('frameVerdict: the size tag only where a view of the uncovered width dr
     expect(k).toBeUndefined()
     expect(frameVerdict(frame({ strip: one(9, '202020') }), { regions, grid: GRID, classify, shown })).toBe('bad')
     const wide = { strip: { x: 1020, y: 6, w: 12, h: 32 } }
-    expect(frameVerdict(frame({ strip: one(0, '202020') }), { regions: wide, grid: GRID, classify, shown })).toBe('good')
+    expect(frameVerdict(frame({ strip: one(0, '202020') }, ['strip']), { regions: wide, grid: GRID, classify, shown })).toBe('good')
   })
   it('a document\'s own tag and band are good only while it is shown; another\'s tag, white or anything else is bad', () => {
     expect(frameVerdict(frame({ strip: one(5, 'ff0080') }), { regions, grid: GRID, classify, shown })).toBe('good')
@@ -53,6 +56,13 @@ describe('frameVerdict: the size tag only where a view of the uncovered width dr
     expect(frameVerdict(frame({ strip: one(5, 'ff0080') }), { regions, grid: GRID, classify, shown: null })).toBe('bad')
     expect(frameVerdict(frame({ strip: one(5, 'aaaaaa') }), { regions, grid: GRID, classify, shown: null })).toBe('bad')
     expect(frameVerdict(frame({ strip: one(5, '') }), { regions, grid: GRID, classify, shown: null })).toBe('good')
+  })
+  it('a frame missing a judged region, or with none of its samples read, is unread - never good (review of a3-native, minor #10)', () => {
+    const f = frame({})
+    delete f.regions!['size@1160']
+    expect(frameVerdict(f, { regions, grid: GRID, classify, shown })).toBe('unread')
+    expect(frameVerdict(frame({ strip: Array(24).fill('') }), { regions, grid: GRID, classify, shown })).toBe('unread')
+    expect(frameVerdict({ hostNs: '1', status: 'complete' }, { regions, grid: GRID, classify, shown })).toBe('unread')
   })
 })
 

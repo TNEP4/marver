@@ -16,7 +16,7 @@
  * prints one line `{"ready":{...}}` on stdout, logs requests as JSON lines to `opts.log`, and removes its slot
  * file on SIGTERM or SIGINT - never on SIGKILL, which leaves the stale file a case may want.
  */
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import { createServer, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { appendFileSync, chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -93,7 +93,13 @@ export interface FakeCanvas {
   requests: LoggedRequest[]
   /** resolves once the slot file says `ready` */
   ready: Promise<void>
-  /** ground mode: each document load's tag, in order (a `?mvtag=<hex>` in the URL chooses it; else the next of DOC_TAGS) */
+  /**
+   * ground mode: each document load's tag, in order (a `?mvtag=<hex>` in the URL chooses it; else the next of
+   * DOC_TAGS). Every load gets a tag of its own: one equal to the load before it (a reload of a `?mvtag=` URL, or the
+   * cycle coming round) takes the next of DOC_TAGS. Only document loads count - a navigation (`sec-fetch-dest:
+   * document`) or a plain GET with no proof nonce; the app's proof probes (`x-mv-nonce`, no fetch metadata) never
+   * display and are not loads (review of a3-native, major #6)
+   */
   tags: { t: number; tag: string }[]
   close(): Promise<void>
 }
@@ -254,12 +260,17 @@ export async function startFakeCanvas(opts: FakeOptions): Promise<FakeCanvas> {
   writeWhole(slotFile, JSON.stringify(rec, null, 2) + '\n')
 
   const tags: { t: number; tag: string }[] = []
-  const html = (url: string) => {
+  const isLoad = (h: IncomingHttpHeaders) => { const dest = h['sec-fetch-dest']; return dest === 'document' || (dest === undefined && h['x-mv-nonce'] === undefined) }
+  const html = (url: string, load: boolean) => {
     let tag: string | undefined
     if (opts.ground) {
-      const asked = /[?&]mvtag=([0-9a-fA-F]{6})/.exec(url)?.[1]
-      tag = (asked ?? DOC_TAGS[tags.length % DOC_TAGS.length]).toLowerCase()
-      tags.push({ t: Date.now(), tag })
+      const was = tags.at(-1)?.tag
+      if (!load) tag = was ?? DOC_TAGS[0]   // a probe's body: never shown, never counted
+      else {
+        tag = (/[?&]mvtag=([0-9a-fA-F]{6})/.exec(url)?.[1] ?? DOC_TAGS[tags.length % DOC_TAGS.length]).toLowerCase()
+        if (tag === was) tag = DOC_TAGS[(DOC_TAGS.indexOf(was as typeof DOC_TAGS[number]) + 1) % DOC_TAGS.length]!
+        tags.push({ t: Date.now(), tag })
+      }
     }
     return pageHtml({ name, cookie: opts.cookie, script: opts.script, tag, ballastMB: opts.ballastMB, gpuBallast: opts.gpuBallast, cpuBallast: opts.cpuBallast, sentinel: opts.sentinel })
   }
@@ -286,7 +297,7 @@ export async function startFakeCanvas(opts: FakeOptions): Promise<FakeCanvas> {
       const signed = p === 'none' ? null : proofHeaders(p === 'valid' ? proof : wrong, req.headers['x-mv-nonce'])
       if (signed) Object.assign(headers, signed)
       res.writeHead(200, headers)
-      return res.end(req.method === 'HEAD' ? undefined : html(req.url ?? '/'))
+      return res.end(req.method === 'HEAD' ? undefined : html(req.url ?? '/', isLoad(req.headers)))
     }
     res.writeHead(404, { 'content-type': 'text/plain' })
     res.end('not found')

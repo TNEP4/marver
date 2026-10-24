@@ -5,14 +5,17 @@
 //   capture check                                   {"access":…,"locked":…,"asleep":…}; exit 0, or 77 when blind
 //   capture window --window-id <CGWindowID> [--regions 'name:x,y,w,h;...'] [--grid <cols>x<rows>] [--fps <n>] [--ring x,y,w,h]
 //   capture window --pid <pid> [--title <title>]    the same, the window found by its owner (and title)
-//   capture display [--display-id <id>] --detect <rrggbb>:<minPx>[:<belowY>] [--heartbeat]
+//   capture display [--display-id <id>] --detect <rrggbb>:<minPx>[:<belowY>] [--heartbeat] [--marker]
 //
 // stdout, one JSON object a line (app/test/harness/capture.ts reads it; the shape is frozen there):
 //   {"ready":{"hostNs":"…","refreshHz":120,"scale":2,"window":{"w":…,"h":…}}}   once the stream started
-//   {"hostNs":"…","status":"complete|idle|blank|suspended|started|stopped","gap":n?,"regions":{…}?,"detect":{…}?}
+//   {"hostNs":"…","status":"complete|idle|blank|suspended|started|stopped","gap":n?,"untimed":true?,"regions":{…}?,"detect":{…}?}
 // `hostNs` is the frame's display time (SCStreamFrameInfo.displayTime) in ns on mach_continuous_time - the clock main's
 // journal stamps with process.hrtime.bigint(). `gap` counts the refreshes missing before a frame (consecutive
 // display times more than 1.5 refresh intervals apart): a transition across a gap is inconclusive, never passed.
+// A frame whose attachments carry no display time is written `"untimed":true`, stamped when it was processed, and
+// is never evidence (the harness makes a transition holding one inconclusive); it moves no display time on, so the
+// next timed frame's `gap` still counts the refreshes missed.
 // A region is sampled on a grid of cell centres, each sample "rrggbb" in sRGB; its coordinates are window points
 // from the window's top-left (titleBarStyle 'hidden': the content view is the whole window).
 // stdin: a line "png <path>" writes the last complete frame there ({"png":"done"}); "png-at <id> <hostNs> <path>"
@@ -23,12 +26,23 @@
 // `--heartbeat` (display mode): the helper keeps a 2 x 2 px window in the display's bottom-left corner changing at the
 // refresh rate, so every refresh has something to capture and a gap means a missed frame - a display stream skips
 // the refreshes in which nothing changed (on this Mac, 41 of 136 in 1.5 s, up to 58 ms apart, with no heartbeat).
+// `--marker` (display mode): a clock control on display times (A3.8 #36). stdin "mark on" / "mark off" shows or hides
+// a 24 x 24 pt red window 40 pt from the display's bottom-left corner, and once the change is committed prints
+// {"mark":{"on":…,"ns":"…"}} on the continuous clock; every frame samples it as region `marker` (4 x 4).
+// stdin "detect-pid <pid>" (display mode, with --detect): from then on a sentinel counts only inside an on-screen
+// window of that process, at least 44 pt below its top (A3.8 #50: the canvas below the strip), the window's frame
+// read again from the window server at the detection; such a detection says `"pid":<pid>` and the window's rect.
+//
+// While it streams, the helper holds the display awake (an IOPMAssertion, PreventUserIdleDisplaySleep): a sleeping
+// display composites nothing, and an unattended run must not lose it half way. A screen someone locks still is lost:
+// the harness checks the screen again and reports blind.
 //
 // **Screen Recording is the runner's** (A3.8 #37): without it this exits 77 - "blind", reported as not run, never as
 // a pass. The process macOS asks about is the one that started this helper (the terminal or the agent's host). A
 // locked screen or a sleeping display is blind the same way (exit 77): WindowServer composites nothing to watch.
 import AppKit
 import CoreImage
+import IOKit.pwr_mgt
 import CoreMedia
 import CoreVideo
 import Foundation
@@ -90,7 +104,7 @@ func parseRegions(_ s: String?) -> [Region] {
     return Region(name: String(kv[0]), x: n[0], y: n[1], w: n[2], h: n[3])
   }
 }
-let regions = parseRegions(opt("--regions"))
+var regions = parseRegions(opt("--regions"))
 let gridSpec = (opt("--grid") ?? "4x4").split(separator: "x").compactMap { Int($0) }
 let gridCols = max(1, gridSpec.first ?? 4)
 let gridRows = max(1, gridSpec.count > 1 ? gridSpec[1] : gridCols)
@@ -103,6 +117,22 @@ func parseDetect(_ s: String?) -> Detect? {
   return Detect(r: (v >> 16) & 255, g: (v >> 8) & 255, b: v & 255, minPx: m, belowY: p.count > 2 ? Int(p[2]) ?? 0 : 0)
 }
 let detect = parseDetect(opt("--detect"))
+/// "detect-pid <pid>": the process whose windows a detection must lie in (0: anywhere, as before the spawn)
+var detectPid: Int32 = 0
+let detectLock = NSLock()
+/// the display the stream shows, for window rects in its own points
+var streamDisplay: CGDirectDisplayID = CGMainDisplayID()
+
+/// The on-screen windows of `pid` (layer 0), in the stream's display points, from the window server now.
+func windowsOf(_ pid: Int32) -> [CGRect] {
+  guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return [] }
+  let origin = CGDisplayBounds(streamDisplay).origin
+  return list.compactMap { w in
+    guard (w[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid, (w[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
+      let b = w[kCGWindowBounds as String], let r = CGRect(dictionaryRepresentation: b as! CFDictionary) else { return nil }
+    return r.offsetBy(dx: -origin.x, dy: -origin.y)
+  }
+}
 let ringRect: Region? = parseRegions(opt("--ring").map { "ring:" + $0 }).first
 let RING = max(1, min(600, opt("--ring-frames").flatMap { Int($0) } ?? 60))
 
@@ -145,13 +175,18 @@ final class Output: NSObject, SCStreamOutput, SCStreamDelegate {
     case .stopped: status = "stopped"
     default: status = "unknown"
     }
-    let disp = toNs(a[.displayTime] as? UInt64 ?? mach_absolute_time())
+    // no display time: stamped now, marked, and never moving the display clock on (the next frame's gap counts)
+    let shown = a[.displayTime] as? UInt64
+    let disp = toNs(shown ?? mach_absolute_time())
     var line = "{\"hostNs\":\"\(disp)\",\"status\":\"\(status)\""
-    if lastNs > 0 && disp > lastNs {
-      let d = Double(disp - lastNs)
-      if d > intervalNs * 1.5 { line += ",\"gap\":\(Int((d / intervalNs).rounded()) - 1)" }
+    if shown == nil { line += ",\"untimed\":true" }
+    else {
+      if lastNs > 0 && disp > lastNs {
+        let d = Double(disp - lastNs)
+        if d > intervalNs * 1.5 { line += ",\"gap\":\(Int((d / intervalNs).rounded()) - 1)" }
+      }
+      lastNs = max(lastNs, disp)
     }
-    lastNs = max(lastNs, disp)
     if st == .complete, let px = CMSampleBufferGetImageBuffer(sb) {
       lock.lock(); lastBuffer = px; lock.unlock()
       CVPixelBufferLockBaseAddress(px, .readOnly)
@@ -192,27 +227,54 @@ final class Output: NSObject, SCStreamOutput, SCStreamDelegate {
     print(line + "}")
   }
 
-  /// A solid block of the sentinel, at least minPx x minPx points, below belowY points: a lattice scan, then a block check.
+  /// the windows of the detect pid, kept 50 ms (the scan's areas); a detection reads them again
+  var pidRects: [CGRect] = []
+  var pidRectsAt: UInt64 = 0
+
+  /// A solid block of the sentinel, at least minPx x minPx points: a lattice scan, then a block check. Below belowY
+  /// points anywhere on the display; with a detect pid, only inside its windows, 44 pt below each one's top, the
+  /// window's frame read again from the window server before the detection is reported.
   func find(_ d: Detect, _ base: UnsafePointer<UInt8>, _ w: Int, _ h: Int, _ row: Int, _ sx: Double, _ sy: Double) -> String {
     let near = { (p: UnsafePointer<UInt8>) -> Bool in abs(Int(p[2]) - d.r) <= 24 && abs(Int(p[1]) - d.g) <= 24 && abs(Int(p[0]) - d.b) <= 24 }
     let bw = Int(Double(d.minPx) * sx), bh = Int(Double(d.minPx) * sy)
     let step = max(4, bw / 4)
-    var y = Int(Double(d.belowY) * sy)
-    while y + bh <= h {
-      var x = 0
-      while x + bw <= w {
-        if near(base + y * row + x * 4) {
-          var hits = 0
-          for j in 0..<8 { for i in 0..<8 { if near(base + (y + j * (bh - 1) / 7) * row + (x + i * (bw - 1) / 7) * 4) { hits += 1 } } }
-          if hits >= 62 {
-            return "{\"found\":true,\"rect\":{\"x\":\(Int(Double(x) / sx)),\"y\":\(Int(Double(y) / sy)),\"w\":\(d.minPx),\"h\":\(d.minPx)}}"
-          }
-        }
-        x += step
-      }
-      y += step
+    detectLock.lock(); let pid = detectPid; detectLock.unlock()
+    // the areas scanned, in points: the display below belowY, or each window of the pid below its top 44 pt
+    var areas: [CGRect]
+    if pid > 0 {
+      let now = mach_absolute_time()
+      if ticksToNs(now &- pidRectsAt) > 50_000_000 || pidRects.isEmpty { pidRects = windowsOf(pid); pidRectsAt = now }
+      areas = pidRects.map { CGRect(x: $0.minX, y: $0.minY + 44, width: $0.width, height: max(0, $0.height - 44)) }
+    } else {
+      areas = [CGRect(x: 0, y: Double(d.belowY), width: Double(w) / sx, height: max(0, Double(h) / sy - Double(d.belowY)))]
     }
-    return "{\"found\":false}"
+    for a in areas {
+      let x0 = max(0, Int((a.minX * sx).rounded(.up))), y0 = max(0, Int((a.minY * sy).rounded(.up)))
+      let x1 = min(w, Int(a.maxX * sx)), y1 = min(h, Int(a.maxY * sy))
+      var y = y0
+      while y + bh <= y1 {
+        var x = x0
+        while x + bw <= x1 {
+          if near(base + y * row + x * 4) {
+            var hits = 0
+            for j in 0..<8 { for i in 0..<8 { if near(base + (y + j * (bh - 1) / 7) * row + (x + i * (bw - 1) / 7) * 4) { hits += 1 } } }
+            if hits >= 62 {
+              let rx = Double(x) / sx, ry = Double(y) / sy
+              let rect = "\"rect\":{\"x\":\(Int(rx)),\"y\":\(Int(ry)),\"w\":\(d.minPx),\"h\":\(d.minPx)}"
+              if pid <= 0 { return "{\"found\":true,\(rect)}" }
+              // the window's frame now, from the window server: the block inside it, below its top 44 pt
+              let block = CGRect(x: rx, y: ry, width: Double(d.minPx), height: Double(d.minPx))
+              if let win = windowsOf(pid).first(where: { $0.insetBy(dx: -0.5, dy: -0.5).contains(block) && block.minY >= $0.minY + 44 - 0.5 }) {
+                return "{\"found\":true,\(rect),\"pid\":\(pid),\"window\":{\"x\":\(Int(win.minX)),\"y\":\(Int(win.minY)),\"w\":\(Int(win.width)),\"h\":\(Int(win.height))}}"
+              }
+            }
+          }
+          x += step
+        }
+        y += step
+      }
+    }
+    return "{\"found\":false\(pid > 0 ? ",\"pid\":\(pid)" : "")}"
   }
 
   /// The ring rect of this frame, copied row by row into the next slot of the ring.
@@ -314,6 +376,8 @@ func start() async throws {
     guard let d = content.displays.first(where: { id == nil ? $0.displayID == CGMainDisplayID() : $0.displayID == id }) else { fail(3, "no such display") }
     (hz, scale) = screenFor(d.frame)
     size = d.frame.size
+    streamDisplay = d.displayID
+    if args.contains("--marker") { regions.append(Region(name: "marker", x: MARKER.x + 4, y: Double(size.height) - MARKER.y - MARKER.s + 4, w: MARKER.s - 8, h: MARKER.s - 8)) }
     filter = SCContentFilter(display: d, excludingWindows: [])
     // one pixel a point: the sentinel block is large, and a 1x stream keeps the scan cheap
     cfg.width = Int(size.width)
@@ -325,6 +389,11 @@ func start() async throws {
     let hzNow = hz
     DispatchQueue.main.async { startHeartbeat(display: id, hz: hzNow) }
   }
+  if args.contains("--marker") {
+    let id = streamDisplay
+    DispatchQueue.main.async { makeMarker(display: id) }
+  }
+  holdDisplayAwake()
   cfg.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(hz))
   cfg.queueDepth = 8
   cfg.pixelFormat = kCVPixelFormatType_32BGRA
@@ -336,6 +405,39 @@ func start() async throws {
   try await stream.startCapture()
   keep = (stream, out)
   print("{\"ready\":{\"hostNs\":\"\(toNs(mach_absolute_time()))\",\"refreshHz\":\(hz),\"scale\":\(scale),\"window\":{\"w\":\(Int(size.width)),\"h\":\(Int(size.height))}}}")
+}
+
+/// The display held awake while the stream runs (released when the helper exits).
+var awake: IOPMAssertionID = 0
+func holdDisplayAwake() {
+  let r = IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn),
+    "Marver's capture harness is watching the screen" as CFString, &awake)
+  if r != kIOReturnSuccess { FileHandle.standardError.write("capture: could not hold the display awake (\(r))\n".data(using: .utf8)!) }
+}
+
+/// The clock control's marker (display mode, `--marker`): 24 x 24 pt, red, 40 pt from the bottom-left corner.
+let MARKER = (x: 40.0, y: 40.0, s: 24.0)
+var marker: NSWindow?
+func makeMarker(display: CGDirectDisplayID) {
+  let screen = NSScreen.screens.first { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == display } ?? NSScreen.main
+  guard let s = screen else { return }
+  let w = NSWindow(contentRect: NSRect(x: s.frame.minX + MARKER.x, y: s.frame.minY + MARKER.y, width: MARKER.s, height: MARKER.s), styleMask: .borderless, backing: .buffered, defer: false)
+  w.level = .screenSaver
+  w.ignoresMouseEvents = true
+  w.isOpaque = true
+  w.hasShadow = false
+  w.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+  w.backgroundColor = NSColor(srgbRed: 1, green: 0, blue: 0, alpha: 1)
+  marker = w
+}
+/// Show or hide the marker on the main thread, then say when the change was committed (continuous clock).
+func mark(_ on: Bool) {
+  DispatchQueue.main.async {
+    guard let w = marker else { print("{\"mark\":{\"on\":\(on),\"error\":\"no marker\"}}"); return }
+    if on { w.orderFrontRegardless() } else { w.orderOut(nil) }
+    CATransaction.flush()
+    print("{\"mark\":{\"on\":\(on),\"ns\":\"\(toNs(mach_absolute_time()))\"}}")
+  }
 }
 
 /// The heartbeat: a borderless 2 x 2 window above everything, ignoring the mouse, toggled at the refresh rate.
@@ -361,7 +463,9 @@ signal(SIGTERM) { _ in exit(0) }
 signal(SIGINT) { _ in exit(0) }
 Thread.detachNewThread {
   while let l = readLine() {
-    if l.hasPrefix("png-at ") {
+    if l == "mark on" || l == "mark off" { mark(l == "mark on") }
+    else if l.hasPrefix("detect-pid "), let pid = Int32(l.dropFirst(11)) { detectLock.lock(); detectPid = pid; detectLock.unlock() }
+    else if l.hasPrefix("png-at ") {
       let p = l.split(separator: " ", maxSplits: 3).map(String.init)
       let ok = p.count == 4 && UInt64(p[2]) != nil && (keep?.1.pngAt(UInt64(p[2])!, p[3]) ?? false)
       print("{\"png\":\"\(ok ? "done" : "missing")\",\"id\":\"\(p.count > 1 ? p[1] : "")\"}")
