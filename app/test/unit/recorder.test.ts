@@ -69,6 +69,7 @@ const win = {
 const machineFx = { displayChanged: 0 }
 vi.mock('../../src/main/window.ts', () => ({
   stripContents: () => strip,
+  coverContents: () => null,
   contentView: (id: string) => (views.has(id) ? { webContents: views.get(id) } : undefined),
   pageView: () => undefined,
   mainWindow: () => win,

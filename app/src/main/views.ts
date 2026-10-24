@@ -65,7 +65,7 @@ import { note, provide, testMode } from './testing/index.ts'
 import { T } from './timings.ts'
 import { commitLayout } from './layout.ts'
 import { answer as presentAnswer, forget as presentForget, gpuGone, noteGpu } from './present.ts'
-import { gpuIdentity, recorder, sampler } from './recorder.ts'
+import { appMetrics, gpuIdentity, recorder, sampler } from './recorder.ts'
 import { lastPressure } from './pressure.ts'
 import { actUnload as unloadAct, takeAct, unloadGone as actGone, zombieOf, type ActPorts } from './unload-act.ts'
 
@@ -475,7 +475,7 @@ const actPorts: ActPorts = {
 /** `act(t, { kind: 'unload' })` (unload-act.ts): its renderer read first, for the unload's own `gone`. */
 function actUnload(t: Tab, wc: WebContents, a: Extract<GuardAction, { kind: 'unload' }>): Promise<GuardAnswer> {
   const pid = safely(() => wc.getOSProcessId())
-  const born = pid ? safely(() => app.getAppMetrics().find((m) => m.pid === pid)?.creationTime) : undefined
+  const born = pid ? safely(() => appMetrics('identity').find((m) => m.pid === pid)?.creationTime) : undefined
   return unloadAct(t, wc, a, actPorts, { ...(pid ? { pid } : {}), ...(born !== undefined ? { born } : {}) })
 }
 

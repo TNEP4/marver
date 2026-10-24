@@ -46,8 +46,6 @@
  *   unknown, never hours stale.
  */
 import { app, powerMonitor, screen, webContents as allContents, type BaseWindow, type ProcessMetric, type RenderProcessGoneDetails, type WebContents } from 'electron'
-import { join } from 'node:path'
-import { mkdir } from 'node:fs/promises'
 import type { AppBody, AppKind, Flavour, GpuIdentity, PressureReading, ProcId, RingEvent, Role, Sample, Sampler, TabIdent, ThermalState } from '../../../src/shared/app-perf.ts'
 import type { Bridge } from './bridge.ts'
 import { kindOf, tabOf } from './bridge.ts'
@@ -56,11 +54,10 @@ import { allTabs, activeTab, displayState, getTab, isActive, type Tab } from './
 import { build, foldMinute, type Baseline, type Owner, type Owners } from './procs.ts'
 import { lastPressure, readPressure } from './pressure.ts'
 import { onProfile, readAgx, stampHash, startMachine, windowDisplayChanged } from './machine.ts'
-import { append, flushSync as flushLog, prunePictures, startPerflog } from './perflog.ts'
+import { append, flushSync as flushLog, startPerflog } from './perflog.ts'
 import { markFlash as flashTransaction, quitFlashes, type FlashPorts } from './flashes.ts'
-import { captureApp, contentView, mainWindow, pageView, stripContents, windowVisible } from './window.ts'
-import { confirm } from './pill.ts'
-import { writeWhole } from './fsx.ts'
+import { flashPorts as composeFlashPorts, perfDirOf } from './flash-ports.ts'
+import { contentView, coverContents, mainWindow, pageView, stripContents, windowVisible } from './window.ts'
 import { mainFrameOf, safely } from './frames.ts'
 import { note } from './testing/index.ts'
 import { T } from './timings.ts'
@@ -172,6 +169,8 @@ function pagesNow(): Page[] {
     out.push({ wc, role, ...(tab ? { tab } : {}) })
   }
   add(stripContents(), 'strip')
+  // the cover's renderer (S15's variant 3): an app page, counted in the app's own memory (A3.8 #48)
+  add(coverContents() ?? undefined, 'cover')
   for (const t of allTabs()) {
     const v = contentView(t.id)?.webContents
     if (v) add(v, t.kind === 'local' ? 'canvas' : t.kind === 'home' ? 'home' : 'settings', t.kind === 'local' ? t.id : undefined)
@@ -528,36 +527,24 @@ function checkWindowDisplay(): void {
 
 // ---- the flash's ports (flashes.ts, the flash stream's transaction) ------------------------------------------------
 
-const timeOf = (at: number) => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-
+/**
+ * The recorder's half of a mark's ports, joined by flash-ports.ts to the flash stream's half (the identity, the
+ * picture, its file and the pill with Show bound to it): the one composition a mark uses (flash-ports.ts's docblock).
+ */
 function flashPorts(): FlashPorts {
-  const home = P!.home
-  return {
-    now: () => Date.now(),
+  const p = P!
+  return composeFlashPorts({
     flavour: flavour(),
+    perfDir: perfDirOf(p.home.dir),
+    writable: () => p.home.writable,
     recorderOn,
-    identity: () => { const t = activeTab(); return t?.kind === 'local' ? identity(t) : null },
     ring: () => (recorderOn() ? { samples: samples.map((s) => ({ ...s })), events: events.filter((e) => e.ts >= Date.now() - RING_EVENTS_MS).map((e) => ({ ...e })) } : null),
     stateNow,
     gpuEvents,
-    thermal: thermalNow,
     pressure: () => freshPressure(),
-    featureStatus: () => (safely(() => app.getGPUFeatureStatus()) as unknown as Record<string, string> | undefined) ?? {},
     readAgx,
-    capture: (o) => captureApp(o),
-    async writePicture(name, png) {
-      if (!home.writable || !/^[0-9A-Za-z._-]{1,80}\.png$/.test(name)) return { why: 'write failed' }
-      const dir = join(home.dir, 'perf', 'flashes')
-      try {
-        await mkdir(dir, { recursive: true, mode: 0o700 })
-        await writeWhole(join(dir, name), png, 0o600)
-      } catch { return { why: 'write failed' } }
-      void prunePictures()
-      return { path: `flashes/${name}` }
-    },
-    confirm: (c) => confirm('flash', { lead: 'Flash marked', text: timeOf(c.at) + (c.recorder ? '' : ' · no samples before it: the recorder is off'), short: 'Flash marked' }),
     append: (body) => { record('flash', null, body as unknown as Record<string, unknown>, true) },
-  }
+  })
 }
 
 // ---- the ports ----------------------------------------------------------------------------------------------------
@@ -692,7 +679,7 @@ export const recorder = {
   },
   /** the ring's GPU process events (the GPU process's child-gone, gpu-restart, gpu) between two times: a flash's and a candidate's */
   gpuEvents,
-  /** runCommand('mark-flash'): flashes.ts's transaction, with this file's ports */
+  /** runCommand('mark-flash'): flashes.ts's transaction, with flash-ports.ts's composition of this file's half */
   markFlash(via: 'key' | 'menu'): void {
     if (!P) return
     void flashTransaction(via, flashPorts()).catch((err) => process.stderr.write(`marver-app: a flash mark failed (${(err as Error).message})\n`))

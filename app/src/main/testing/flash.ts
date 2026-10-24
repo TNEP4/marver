@@ -25,7 +25,7 @@ import { flashPorts, perfDirOf } from '../flash-ports.ts'
 import { markFlash, quitFlashes } from '../flashes.ts'
 import { readAgx } from '../machine.ts'
 import { lastPressure } from '../pressure.ts'
-import { recorder, sampler } from '../recorder.ts'
+import { appMetrics, recorder, sampler } from '../recorder.ts'
 import { allTabs } from '../tabs.ts'
 import { APP_ORIGIN, captureApp, contentView, mainWindow, pageView, stripContents } from '../window.ts'
 import { note, provide } from './index.ts'
@@ -38,7 +38,7 @@ const MARKER_AT = (h: number) => ({ x: 24, y: h - 48, width: 24, height: 24 })
 /** One getAppMetrics() as a Sample, for when the sampler has none yet (the recorder stream's is the real one). */
 function metricsNow(): Sample {
   const now = Date.now()
-  const m = app.getAppMetrics()
+  const m = appMetrics('test')
   const gpu = m.find((x) => x.type === 'GPU')
   return {
     ts: now, mono: performance.now(), dt: null,

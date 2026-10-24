@@ -50,7 +50,7 @@ export interface FlashPorts {
   ring(): { samples: Sample[]; events: RingEvent[] } | null
   /** one getAppMetrics() now, on the sampler's baselines (the GPU process's gpuProcessRssMB in it) */
   stateNow(): Sample
-  /** GPU process events of the ring between two times (gone, child-gone, gpu-restart, gpu), also those still to come */
+  /** the GPU process's own events of the ring between two times (its child-gone, gpu-restart, gpu), also those still to come */
   gpuEvents(from: number, to: number): RingEvent[]
   thermal(): ThermalState
   pressure(): PressureReading | null
