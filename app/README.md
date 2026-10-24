@@ -123,7 +123,11 @@ uncovered until a stream fills its own, so app 0.2's base behaves as app 0.1.
   process, or `procs`; `real: true` takes the sampler's own `requestSample()`), `memory:state` (each canvas tab's
   refusal, the cooldown, the last tick), `memory:totalmem { mb }` (null: `os.totalmem()` again) - and the window's
   `page:event` (Chromium's `audio-state-changed` and DevTools events emitted on a view's own webContents, so no case
-  plays a sound or opens a window). Every record the stream writes is a journal `record` line too.
+  plays a sound or opens a window). Every record the stream writes is a journal `record` line too. The fake trust
+  keeps `mv:doc`'s reopen flag as the bridge does: `fake-trust { doc, reopen }` is what each document on the tab's
+  origin took. `unload.test.ts`'s "Chromium's own end" case measures how long Chromium lets a page sit in its
+  beforeunload before it closes it anyway (1.0 s on Electron 45); `unload-shell.test.ts` keeps its window above
+  the others (`onTop`): an occluded window's page gets no animation frames.
 - **the packaged smoke** (`test/smoke/smoke.mjs`): S9's checks and X7's cases on the signed build; every launch on
   its own profile with `--use-mock-keychain`. Its clean launch loads a fake canvas as the active tab: the first frame
   callback, a canvas cookie read back encrypted (`v10`) after a SIGTERM to main alone (a group SIGTERM ends the network

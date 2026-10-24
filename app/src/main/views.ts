@@ -48,7 +48,7 @@ import { focusOwner, f6, track } from './focus.ts'
 import { buildNow, HELP_URL, invalidateMenu, startMenu, type MenuModel, type MenuToken } from './menu.ts'
 import { crashReloaded, currentPill, onPillAction, setCondition, setPillPorts } from './pill.ts'
 import {
-  activate, activeTab, allTabs, applyRestore, canvasOrder, closeTab, cycleFrom, displayState, forDigit, getTab, guard,
+  activate, activeTab, allTabs, applyRestore, cameraKept, canvasOrder, closeTab, cycleFrom, displayState, forDigit, getTab, guard,
   guardAll, hasBridge, hashOnly, isActive, keyOf, linkOpens, liveDoc, onCommit, onDocumentGone, onFail, onInPage, onRegistry, onReport, onUnloaded, openSettingsTab,
   ordered, parseTabsFile, reopenTab, restorePlan, safePath, savedPathIn, setTabsPorts, sheetBox, sheetConfirmed, sheetText, snapshotFile, startReopen, tabName,
   unloadClosing, viewlessAct, type GuardAction, type GuardAnswer, type Sheet, type Tab, type TabsFile,
@@ -67,7 +67,7 @@ import { commitLayout } from './layout.ts'
 import { answer as presentAnswer, forget as presentForget, gpuGone, noteGpu } from './present.ts'
 import { gpuIdentity, recorder, sampler } from './recorder.ts'
 import { lastPressure } from './pressure.ts'
-import { actUnload as unloadAct, takeAct, unloadGone as actGone, type ActPorts } from './unload-act.ts'
+import { actUnload as unloadAct, takeAct, unloadGone as actGone, zombieOf, type ActPorts } from './unload-act.ts'
 
 export const PRELOAD_CANVAS = join(__dirname, 'preload-canvas.cjs')
 
@@ -93,7 +93,7 @@ export interface TrustPort {
   menuClick(tabId: string, id: string): boolean
   /** the tab's next `mv:doc` answers `{ reopen: true }`, once (`recover`'s reload, A2.14 #9) */
   reopenNext(tabId: string): void
-  /** A3: that flag taken back, if no document has taken it yet: a link opened into a tab whose reopen was under way (A3.8 #42) */
+  /** A3: that flag taken back, if no document has taken it yet: a link opened into a tab with no live document (A3.8 #42) */
   reopenCancel?(tabId: string): void
   /** what answers on a failed tab's address (v1.14 r3 #4); views.ts probes by itself without it */
   probe?(t: Tab): Promise<'silent' | 'answers' | 'proved'>
@@ -183,6 +183,10 @@ async function ensureView(t: Tab): Promise<WebContentsView | null> {
   const pending = making.get(t.id)
   if (pending) return pending
   const p = (async () => {
+    // a webContents of this tab that an unload's backstop took out before its destroyed (unload-act.ts): the next
+    // view waits for it to go - it is closed again until then - so the tab never holds two live documents
+    const zombie = zombieOf(t.id)
+    if (zombie) { j('view', { tab: t.id, waits: 'stuck-close' }); await zombie }
     if (!t.reg) return null
     const ses = await trust.session(t.reg.ws)
     // closed (⌘W) or gone while its partition was prepared: no view - the close saw none to guard, so one made now
@@ -354,6 +358,9 @@ function scheduleUnattributed(t: Tab, wc: WebContents): void {
   const x = setTimeout(() => {
     unattributedTimers.delete(t.id)
     if (!getTab(t.id) || wc.isDestroyed() || t.doc?.lifted || t.doc?.commits !== commits || !t.reg?.origin || t.reg.state !== 'ready') return
+    // a reopen's: the unattributed document may have taken mv:doc's reopen flag (the bridge answers it trusted or
+    // not), so it is armed again for the reload that may lift - the page promised the camera (A3.8 #43)
+    if (t.unload?.phase === 'reopening' && cameraKept(t)) trust.reopenNext(t.id)
     j('load', { tab: t.id, unattributed: n })
     void wc.loadURL(t.reg.origin + safePath(t.path)).catch(() => {})
   }, delay)
@@ -487,12 +494,14 @@ function unloadGone(t: Tab, d: Electron.RenderProcessGoneDetails): boolean {
 }
 
 /**
- * load() of an unloaded tab: the reopen (A3.8 #43). Its saved path on its bound origin, `mv:doc` answering
- * `{ reopen: true }` so the shell takes its saved camera even under a selection link; the tab page says `reopening`
- * until that document lifts. A first load like any (A3.8 #24): its start reads the instance's features.
+ * load() of an unloaded tab: the reopen (A3.8 #43). Its saved path on its bound origin; the tab page says
+ * `reopening` until that document lifts. On the origin it was unloaded on, `mv:doc` answers `{ reopen: true }` so the
+ * shell takes its saved camera even under a selection link; on another origin (rebound while unloaded) it is armed
+ * for nothing - that origin's stored camera is not the one the tab was left at - and the path's selection holds. A
+ * first load like any (A3.8 #24): its start reads the instance's features.
  */
 function beginReopen(t: Tab): void {
-  if (startReopen(t)) trust.reopenNext(t.id)
+  if (startReopen(t) === 'camera') trust.reopenNext(t.id)
 }
 
 /** A record through the recorder (app.jsonl only with the recorder on), and the journal's `record` line in test builds (A3.8 #45). */
@@ -744,10 +753,13 @@ export async function openInTab(e: LinkTarget, url: string | null, rest: string)
   }
   if (!t.open) reopenTab(t.id)
   if (!url || !liveDoc(t)) {
-    // nothing to replace: the tab goes to the link's board when it loads (at ready for a starting canvas). An
-    // unloaded tab's load is then a plain one, not its reopen: the link opens on what it names, never under the
-    // saved camera (A3.8 #42); a reopen already sent has its mv:doc flag taken back
-    if (linkOpens(t)) trust.reopenCancel?.(t.id)
+    // nothing to replace: the tab goes to the link's board when it loads (at ready for a starting canvas). A link
+    // opens on what it names, never under a saved camera (A3.8 #42): an unloaded tab's unload ends here, so its load
+    // is a plain one, not its reopen; and mv:doc's one-shot reopen flag is taken back every time - a reopen's already
+    // sent, or one a reopen or a crash reload left armed when it failed or closed before a document took it (an
+    // error page never asks). Not while a crash reload is in flight: its document, not the link's, is the next one
+    linkOpens(t)
+    if (!t.crash.inFlight) trust.reopenCancel?.(t.id)
     t.path = path
     if (contentView(t.id)) t.needsLoad = true
     activate(t.id)

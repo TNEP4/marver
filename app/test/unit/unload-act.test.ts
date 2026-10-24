@@ -2,15 +2,15 @@
  * The unload's act on a webContents (spec 28 A3.8 #39, #44, r1 #2; unload-act.ts), on a fake webContents: Chromium's
  * events are emitted by the case, `destroyed` included, so each state of the close runs in order - the page's refusal,
  * `unsure` and main's own plain close, a refusal after it, a renderer gone while it closes, and the backstop when
- * `destroyed` never comes. views.ts's forgetCanvas is the case's own `destroyed` listener, registered before the act
- * as wireCanvas registers it.
+ * `destroyed` never comes - the webContents closed again until it goes, the tab's next view waiting for that.
+ * views.ts's forgetCanvas is the case's own `destroyed` listener, registered before the act as wireCanvas registers it.
  */
 import { EventEmitter } from 'node:events'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { guard, onUnloaded, startReopen, viewlessAct, type GuardAction, type GuardAnswer, type Tab } from '../../src/main/tabs.ts'
+import { guard, onUnloaded, viewlessAct, type GuardAction, type GuardAnswer, type Tab } from '../../src/main/tabs.ts'
 import { T } from '../../src/main/timings.ts'
-import { actUnload, resetActs, takeAct, unloadGone, type ActPorts, type UnloadActState } from '../../src/main/unload-act.ts'
-import { flush, liveTab, show, world, type World } from './window-fakes.ts'
+import { actUnload, resetActs, takeAct, unloadGone, zombieOf, type ActPorts, type UnloadActState } from '../../src/main/unload-act.ts'
+import { flush, liveTab, reopenOf, show, world, type World } from './window-fakes.ts'
 
 class FakeWc extends EventEmitter {
   destroyed = false
@@ -42,7 +42,7 @@ function forgetCanvas(t: Tab): void {
 /** views.ts's act: the unload's on this webContents; any other action on a tab with no view, as its no-view path. */
 function act(tab: Tab, a: GuardAction): Promise<GuardAnswer> | GuardAnswer {
   if (a.kind === 'unload') return actUnload(tab, wc, a, ports, { pid: 4242, born: 7 })
-  if (tab.view !== 'live' && viewlessAct(tab, a) && tab.reg?.origin) { w.loads.push(tab.id); if (startReopen(tab)) w.reopens.push(tab.id) }
+  if (tab.view !== 'live' && viewlessAct(tab, a) && tab.reg?.origin) { w.loads.push(tab.id); reopenOf(w, tab) }
   return 'done'
 }
 
@@ -149,7 +149,7 @@ describe('the act (A3.8 #39, r1 #2)', () => {
     expect(unloadGone(t)).toBe(false)
   })
 
-  it('destroyed never comes after main\'s own close: unloadActMs later it closes once more, takes the view out and ends unloaded - the queue, the soft unload and a quit go on', async () => {
+  it('destroyed never comes after main\'s own close: unloadActMs later it takes the view out and ends unloaded, its record stuck - the queue, the soft unload and a quit go on; the webContents is closed again until it goes', async () => {
     const { t, answer } = closing()
     const load = guard(t, { kind: 'load', url: `${t.reg!.origin}/#/b/next` })   // waits on the unload's done
     vi.advanceTimersByTime(T.unloadActMs)   // unsure: the plain close, which here destroys nothing
@@ -163,12 +163,30 @@ describe('the act (A3.8 #39, r1 #2)', () => {
     expect(await answer).toBe('done')
     expect(lines.find((l) => l.topic === 'act' && l.data.answer)?.data).toMatchObject({ answer: 'done', why: 'stuck' })
     expect(taken?.plain).toBe(true)
-    expect(t.view).toBe('unloaded')
+    // unloaded, its record saying the close was ended by hand; then the queued load took the tab, documentless
+    expect(w.records.filter((r) => r.kind === 'unload').map((r) => r.body)).toEqual([{ phase: 'done', reason: 'critical', why: 'stuck' }])
     expect(await load).toBe('done')
+    expect(t.view).toBe('none')
     expect(w.loads).toEqual([t.id])
+    // the webContents lives on: closed again every unloadActMs until its destroyed, and the tab's next view waits for it
+    const zombie = zombieOf(t.id)
+    expect(zombie).not.toBe(null)
+    let gone = false
+    void zombie!.then(() => { gone = true })
+    vi.advanceTimersByTime(T.unloadActMs)
+    expect(wc.closes).toHaveLength(4)
+    await flush()
+    expect(gone).toBe(false)
+    wc.destroy()
+    await flush()
+    expect(gone).toBe(true)
+    expect(zombieOf(t.id)).toBe(null)
+    vi.advanceTimersByTime(T.unloadActMs * 3)
+    expect(wc.closes).toHaveLength(4)   // never closed again once it has gone
+    expect(lines.find((l) => l.data.zombie === 'gone')?.data).toEqual({ tab: t.id, zombie: 'gone', closes: 2 })
   })
 
-  it('a renderer gone and then no destroyed: the backstop runs from main\'s close, the same way', async () => {
+  it('a renderer gone and then no destroyed: the backstop runs from main\'s close, the same way - and never unsure', async () => {
     const { t, answer } = closing()
     unloadGone(t)
     await new Promise((r) => setImmediate(r))
@@ -177,5 +195,9 @@ describe('the act (A3.8 #39, r1 #2)', () => {
     expect(await answer).toBe('done')
     expect(t.view).toBe('unloaded')
     expect(taken).toMatchObject({ gone: true, plain: true })
+    // its end was its renderer's gone: the act's unloadActMs passing after it is no unsure, in the records or the journal
+    expect(unsure).toEqual([])
+    expect(lines.filter((l) => l.topic === 'unload' && (l.data.phase === 'unsure' || l.data.endClose === 'unsure'))).toEqual([])
+    wc.destroy()
   })
 })

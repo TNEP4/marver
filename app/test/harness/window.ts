@@ -18,7 +18,7 @@ export interface TabDump {
   hung: boolean; held: { at: number; action: string } | null; replacing: boolean; key?: number
   hasView: boolean; wcId: number | null; pageView: boolean; logo: string | null
   /** A3's unloading (A3.8 #39-#45) */
-  unload?: { phase: 'closing' | 'unsure' | 'unloaded' | 'reopening'; reason: string; at: number; commit: number; origin: string; unloadedAt?: number; activatedAt?: number } | null
+  unload?: { phase: 'closing' | 'unsure' | 'unloaded' | 'reopening'; reason: string; at: number; commit: number; origin: string; unloadedAt?: number; activatedAt?: number; stuck?: boolean } | null
   unloadRefused?: number | null; hiddenAt?: number | null; audible?: boolean; devtools?: boolean; loading?: boolean
 }
 export interface State { active: string; tabs: TabDump[]; order: string[]; canvases: string[]; pill: { rev: number; kind: string; short: string; tab?: string } | null; focus: unknown; quitting: boolean }

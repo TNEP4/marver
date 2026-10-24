@@ -7,11 +7,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   activate, activeTab, allTabs, closeTab, closeView, displayState, guard, guardAll, isActive, linkOpens, onCommit, onFail, onRegistry, onReport, onUnloaded, ordered,
-  snapshotFile, startReopen, unloadRefusal, viewlessAct, wantsLoad, type GuardAction, type GuardAnswer, type Tab,
+  snapshotFile, unloadRefusal, viewlessAct, wantsLoad, type GuardAction, type GuardAnswer, type Tab,
 } from '../../src/main/tabs.ts'
 import { onLifted, pageFor, recover } from '../../src/main/tabpage.ts'
 import { T } from '../../src/main/timings.ts'
-import { deferred, entry, flush, liveTab, report, show, world, type Deferred, type World } from './window-fakes.ts'
+import { deferred, entry, flush, liveTab, reopenOf, report, show, world, type Deferred, type World } from './window-fakes.ts'
 
 let w: World
 beforeEach(() => { w = world() })
@@ -34,7 +34,7 @@ function closer(): { gate: () => Deferred<GuardAnswer> | undefined; destroyed(t:
   w.actWith = (t, a) => {
     if (a.kind === 'unload') { gate = deferred<GuardAnswer>(); return gate.promise }
     if (t.view !== 'live') {
-      if (viewlessAct(t, a) && t.reg?.origin) { w.loads.push(t.id); if (startReopen(t)) w.reopens.push(t.id) }
+      if (viewlessAct(t, a) && t.reg?.origin) { w.loads.push(t.id); reopenOf(w, t) }
       return 'done'
     }
     return 'done'
@@ -234,8 +234,9 @@ describe('what else happens to a tab while it unloads (A3.8 #42, r1 #2, r3 #3)',
     expect(w.loads).toEqual([])
     c.destroyed(t)
     expect(await u).toBe('done')
-    expect(t.view).toBe('unloaded')
+    expect(recs('unload').map((r) => r.body.phase)).toEqual(['done'])   // unloaded at destroyed
     expect(await l).toBe('done')
+    expect(t.view).toBe('none')   // then the link's load took the tab: documentless, loading its own URL
     expect(w.loads).toEqual([t.id])
   })
 
@@ -404,6 +405,7 @@ describe('the reopen keeps board and camera (A3.8 #43, #45)', () => {
     activate(t.id)
     expect(w.loads).toEqual([t.id])
     expect(w.reopens).toEqual([t.id])
+    expect(w.cameras).toEqual([t.id])   // on the origin it was unloaded on: mv:doc's reopen armed
     expect(t.path).toBe('/#/b/b?n=k')
     expect(pageFor(t, w.clock.now)).toMatchObject({ page: 'reopening', since: w.clock.now, unloadedAt: gone, cameraKept: true })
     // an unattributed commit leaves it reopening
@@ -464,7 +466,13 @@ describe('the reopen keeps board and camera (A3.8 #43, #45)', () => {
     onRegistry({ kind: 'entry', entry: { file: '/h/running/slot-9.json', key: Buffer.alloc(32), state: 'ready', pid: 9, instance: 'inst-new', slot: 9, port: 40999, origin: 'http://[::1]:40999', url: 'http://localhost:40999/', root: t.root!, name: t.name, version: '0.27.2', features: ['bridge'], ws: t.reg!.ws, startedAt: 2 } })
     expect(t.reg!.origin).toBe('http://[::1]:40999')
     expect(w.reopens).toEqual([t.id])   // the active tab, at ready
+    // camera storage is per origin: no mv:doc reopen, which would hand the shell that origin's camera over the path
+    expect(w.cameras).toEqual([])
     expect(pageFor(t, w.clock.now)).toMatchObject({ page: 'reopening', cameraKept: false })
+    expect(t.unload?.phase).toBe('reopening')   // still the reopen: its page, and its record at the hello
+    lift(t)
+    onReport(t.id, t.doc!.doc!, { hello: { version: '0.27.2', board: 'b', page: 'PAGE_moved00001' } })
+    expect(recs('reopen')).toHaveLength(1)
   })
 
   it('closed while unloaded: it closes as a documentless tab, and opened from Home again it is a plain open', async () => {
@@ -598,6 +606,9 @@ describe('a link into an unloaded tab opens on what it names, never as the reope
     expect(t.reg!.instance).toBe('inst-later')
     expect(openLink(t, '/#/b/a?n=f2')).toBe(false)
     expect(w.loads).toEqual([])
+    // its unload dropped: documentless while it waits for ready - never dimmed or named "unloaded"
+    expect(t.view).toBe('none')
+    expect(displayState(t, true)).not.toBe('unloaded')
     onRegistry({ kind: 'entry', entry: { ...e, state: 'ready', origin: 'http://[::1]:40777' } })
     expect(w.loads).toEqual([t.id])
     expect(w.reopens).toEqual([])
@@ -612,6 +623,28 @@ describe('a link into an unloaded tab opens on what it names, never as the reope
     expect(openLink(t, '/#/b/a?n=f3')).toBe(true)
     expect(t.unload).toBeUndefined()
     expect(pageFor(t, w.clock.now)?.page).not.toBe('reopening')
+  })
+
+  it('a load queued while it closes, its canvas gone meanwhile: the unload dropped, documentless till ready - never dimmed as unloaded', async () => {
+    const t = candidate()
+    const c = closer()
+    const u = guard(t, warn)
+    const l = guard(t, { kind: 'load', url: `${t.reg!.origin}/#/b/a?n=f4` })
+    onRegistry({ kind: 'gone', file: t.reg!.file, instance: t.reg!.instance, why: 'pid' })
+    c.destroyed(t)
+    await u
+    expect(await l).toBe('done')
+    await flush()
+    expect(t.unload).toBeUndefined()
+    expect(t.view).toBe('none')
+    expect(displayState(t, false)).not.toBe('unloaded')
+    expect(t.path).toBe('/#/b/a?n=f4')
+    onRegistry({ kind: 'entry', entry: entry({ ws: t.reg!.ws, port: t.reg!.port, origin: t.reg!.origin!, instance: 'inst-back' }) })
+    w.loads.length = 0
+    activate(t.id)
+    expect(w.loads).toEqual([t.id])
+    expect(w.reopens).toEqual([])   // the link's load, plain
+    expect(pageFor(t, w.clock.now)?.page).toBe('starting')
   })
 
   it('while its close is outstanding the link is not this: the unload stays, and the link waits through the guard', async () => {
@@ -692,6 +725,7 @@ describe('a new instance of its canvas on another origin while it closes (A2.14 
     expect(allTabs().filter((x) => x.kind === 'local' && x.reg?.ws === t.reg!.ws)).toEqual([t])
     activate(t.id)
     expect(w.reopens).toEqual([t.id])
+    expect(w.cameras).toEqual([])
     expect(pageFor(t, w.clock.now)).toMatchObject({ page: 'reopening', cameraKept: false })
   })
 

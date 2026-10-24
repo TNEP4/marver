@@ -12,7 +12,7 @@ import { startCommandShown, tilde } from '../shared/command.ts'
 import { hueOf } from '../shared/hue.ts'
 import { WHY_WORDS } from '../../../src/shared/app-api.ts'
 import { T } from './timings.ts'
-import { liveDoc, onDocumentGone, tabName, type Tab } from './tabs.ts'
+import { cameraKept, liveDoc, onDocumentGone, tabName, type Tab } from './tabs.ts'
 
 /**
  * Why a renderer went, as `recover` records it. The app's own endings (a confirmed force reload) count nothing; an
@@ -84,7 +84,7 @@ export function pageFor(t: Tab, now: number, home: string = homedir()): PageBody
   // the view whatever the canvas does meanwhile (stopped: its stopped page, nothing kept), so the page being closed
   // never shows or takes a key; once unloaded, a stopped canvas shows stopped ("comes back by itself")
   const u = t.unload
-  const reopening = (): PageBody => ({ ...base, page: 'reopening', since: u!.activatedAt ?? t.loadAt ?? now, unloadedAt: u!.unloadedAt ?? u!.at, cameraKept: u!.origin === t.reg?.origin })
+  const reopening = (): PageBody => ({ ...base, page: 'reopening', since: u!.activatedAt ?? t.loadAt ?? now, unloadedAt: u!.unloadedAt ?? u!.at, cameraKept: cameraKept(t) })
   if (u && (u.phase === 'closing' || u.phase === 'unsure')) return gone ? stopped(false, NO_PROBE) : reopening()
   if (u && !gone && t.reg!.state === 'ready' && (u.phase !== 'reopening' || !t.doc?.lifted)) return reopening()
   if (liveDoc(t)) return null                       // a page that is kept gets no tab page (A2.11): the pill speaks

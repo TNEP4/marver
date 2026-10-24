@@ -38,8 +38,10 @@ export interface World {
   records: { kind: string; tab: string; who: unknown; body: Record<string, unknown> }[]
   /** journal lines (TabsPorts.log) */
   logs: { topic: string; data: Record<string, unknown> }[]
-  /** load(): the tabs whose load was the reopen of an unloaded tab (views.ts arms reopenNext then) */
+  /** load(): the tabs whose load was the reopen of an unloaded tab */
   reopens: string[]
+  /** of those, the reopens on the origin that kept the camera: views.ts arms mv:doc's reopen for these alone */
+  cameras: string[]
   /** how the next act answers: a value, or a deferred the case resolves */
   actWith: (t: Tab, a: GuardAction) => Promise<GuardAnswer> | GuardAnswer
   askWith: (s: Sheet) => Promise<boolean> | boolean
@@ -50,7 +52,7 @@ export interface World {
 export function world(): World {
   const w: World = {
     clock: { now: 1_000_000 }, acts: [], sheets: [], loads: [], reloads: [], states: [], forgets: [], pills: [], copies: [], confirmed: [], probes: [],
-    forwards: 0, shown: [], saved: null, records: [], logs: [], reopens: [],
+    forwards: 0, shown: [], saved: null, records: [], logs: [], reopens: [], cameras: [],
     actWith: () => 'done', askWith: () => false, probeWith: () => 'silent', visible: true,
   }
   resetTabs()
@@ -58,7 +60,7 @@ export function world(): World {
   setTabsPorts({
     now: () => w.clock.now, home: '/Users/nic', appDark: () => false,
     // as views.ts's load(): an unloaded tab's load is its reopen (A3.8 #43)
-    changed: () => recompute(), load: (t) => { w.loads.push(t.id); if (startReopen(t)) w.reopens.push(t.id) }, appState: (t, s) => { w.states.push({ tab: t.id, s }) },
+    changed: () => recompute(), load: (t) => { w.loads.push(t.id); reopenOf(w, t) }, appState: (t, s) => { w.states.push({ tab: t.id, s }) },
     act: async (t, a) => { w.acts.push({ tab: t.id, action: a }); return w.actWith(t, a) },
     ask: async (s) => { w.sheets.push(s); return w.askWith(s) },
     forget: (t) => { w.forgets.push(t.id) }, save: () => {}, shown: (t) => { w.shown.push(t.id) },
@@ -78,6 +80,13 @@ export function world(): World {
     copyStart: (t) => { w.copies.push(t.id) }, notResponding: () => {},
   })
   return w
+}
+
+/** views.ts's beginReopen, as the model sees it: an unloaded tab's load is its reopen, `camera` arming mv:doc's reopen (A3.8 #43). */
+export function reopenOf(w: World, t: Tab): void {
+  const r = startReopen(t)
+  if (r) w.reopens.push(t.id)
+  if (r === 'camera') w.cameras.push(t.id)
 }
 
 /** activate() through the model */

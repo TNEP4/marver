@@ -10,6 +10,10 @@
  * `prove`, `unattributed`, `unverified` - a failure as the proof's cancel would make it), `fake:report` (a canvas
  * report from the admitted document, as the bridge would hand it on), `fake:admits`, `fake:session` (`{ hold }`:
  * every partition's preparation waits until released, as the real one awaits its service-worker sweep).
+ *
+ * `mv:doc`'s one-shot reopen flag is kept as the bridge keeps it (`reopenNext` arms it, `reopenCancel` takes it back)
+ * and taken by the next document committed on the tab's own origin, trusted or not - an error page never commits
+ * here: journaled `fake-trust { doc, reopen }`, the answer that document's `mv:doc` would have had.
  */
 import { randomBytes } from 'node:crypto'
 import { session, type WebContents } from 'electron'
@@ -29,6 +33,7 @@ export function fakeTrust(): TrustPort {
   const reportFns = new Set<(tabId: string, doc: string, r: CanvasReports) => void>()
   const modes = new Map<string, Mode>()
   const admits: { tab: string; doc: string }[] = []
+  const reopen = new Set<string>()
   const emit = (e: RegistryEvent) => { for (const f of regFns) f(e) }
   // the canvases already running at launch (restore's cases): MARVER_APP_FAKE_ENTRIES, a JSON array of slot records
   try {
@@ -53,6 +58,7 @@ export function fakeTrust(): TrustPort {
       try { origin = new URL(url).origin } catch { /* not a URL */ }
       const own = !!tab.reg?.origin && origin === tab.reg.origin
       committed = gen
+      if (own) note('fake-trust', { doc: tab.id, reopen: reopen.delete(tab.id) })
       fire({ kind: 'commit', gen, url, attributed: own && mode === 'prove', instance: tab.reg?.instance })
     }
     const onFail = (_e: unknown, code: number, _d: string, url: string, isMain: boolean) => {
@@ -150,8 +156,8 @@ export function fakeTrust(): TrustPort {
     onReport(fn) { reportFns.add(fn); return () => reportFns.delete(fn) },
     appState(tabId, s) { note('fake-trust', { appState: s, tab: tabId }); return true },
     menuClick(tabId, id) { note('fake-trust', { menuClick: id, tab: tabId }); return true },
-    reopenNext(tabId) { note('fake-trust', { reopenNext: tabId }) },
-    reopenCancel(tabId) { note('fake-trust', { reopenCancel: tabId }) },
+    reopenNext(tabId) { reopen.add(tabId); note('fake-trust', { reopenNext: tabId }) },
+    reopenCancel(tabId) { reopen.delete(tabId); note('fake-trust', { reopenCancel: tabId }) },
     fetchLogo(t, signal) { return logo.on ? fetchLogo(t, signal) : Promise.resolve(null) },
   }
 }

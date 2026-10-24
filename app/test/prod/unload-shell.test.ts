@@ -52,6 +52,9 @@ beforeAll(async () => {
   const b = spawnSync(process.execPath, [tsdown], { cwd: ROOT, encoding: 'utf8', timeout: 180_000 })
   if (b.status !== 0) throw new Error(`the package build failed: ${b.stderr || b.stdout}`)
   w = await launchWindow('prod', { extraEnv: { MARVER_APP_FAKE_TRUST: '0', MARVER_APP_TIMINGS: JSON.stringify(TIMINGS) } })
+  // above other windows, never taking the keyboard: an occluded window's page gets no animation frames, so a zoom
+  // would never land and the shell's frames never say ready (as hang.test.ts keeps its window)
+  await w.run.call('onTop', { on: true })
   root = fixtureRoot('mv-app-unload-', {
     'design/config.ts': `export default { share: { name: 'Unload canvas' } }\n`,
     'design/scenes/demo/one.tsx': FRAME('One'),

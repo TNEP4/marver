@@ -6,7 +6,8 @@
  * (A2.14 #27): 300 ms hidden, a 2 s cooldown, a 1.5 s act.
  *
  * A page playing sound and DevTools opened are Chromium's events emitted on the view's own webContents
- * (`page:event`): a case never plays a sound or opens a window on the Mac it runs on.
+ * (`page:event`): a case never plays a sound or opens a window on the Mac it runs on. `mv:doc`'s reopen flag is the
+ * fake trust's model of the bridge's: `fake-trust { doc, reopen }` is what each document on the tab's origin took.
  */
 import { renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -58,6 +59,9 @@ const since = (n: number, topic?: string, run = w): Promise<LogLine[]> => run.lo
 const records = async (n: number, kind: string, tabId?: string) => (await since(n, 'record')).filter((l) => l.data.kind === kind && (!tabId || l.data.tab === tabId)).map((l) => l.data)
 const unloaded = (id: string, run = w) => run.until((s) => tab(s, id).view === 'unloaded' && !tab(s, id).hasView, 10_000, `${id} unloaded`)
 const why = async (id: string) => (await w.run.call<{ tabs: { id: string; why: string | null }[] }>('memory:state')).tabs.find((t) => t.id === id)?.why
+/** what each document committed on the tab's origin since `n` took of mv:doc's reopen flag, in order (the fake trust's model) */
+const docReopens = async (n: number, id: string, run = w) => (await since(n, 'fake-trust', run)).filter((l) => l.data.doc === id).map((l) => l.data.reopen)
+const flags = async (n: number, id: string, key: 'reopenNext' | 'reopenCancel') => (await since(n, 'fake-trust')).filter((l) => l.data[key] === id)
 
 /** What the person would see move: nothing may, from an unload (A3.8 #39). */
 async function still() {
@@ -109,14 +113,16 @@ describe('the policy on a real window (A3.8 #41)', () => {
     expect(acts.map((l) => [l.data.action, l.data.answer, l.data.why])).toEqual([['unload', 'done', 'destroyed']])
   })
 
-  it('critical: every hidden tab but the active one, in one tick - and the active one kept with the window hidden too', async () => {
+  it('critical: every hidden tab but the active one, in one tick - nothing asks and nothing moves - and the active one kept with the window hidden too', async () => {
     const a = await shown(w)
     const b = await shown(w)
     const c = await shown(w)
     await sleep(HIDDEN)
+    const before = await still()
     expect((await tick({ level: 4 })).unload.map((u) => u.id)).toEqual([a.id, b.id])
     await unloaded(a.id)
     await unloaded(b.id)
+    expect(await still()).toEqual(before)
     await w.run.call('hide')
     try {
       await sleep(HIDDEN)
@@ -159,6 +165,7 @@ describe('who is never unloaded (A3.8 #40)', () => {
     await shown(w)
     await sleep(HIDDEN)
     const n = await mark()
+    const before = await still()
     for (const x of ['jam-session', 'microphone', 'agent']) {
       await w.report(b.id, { unsaved: false, why: [x] })
       expect((await tick({ level: 4 })).unload).toEqual([])
@@ -171,6 +178,7 @@ describe('who is never unloaded (A3.8 #40)', () => {
     expect((await w.tab(b.id)).view).toBe('live')
     expect((await records(n, 'unload-skip', b.id)).map((r) => [r.reason, r.why])).toEqual([['critical', 'busy'], ['critical', 'unsaved']])
     expect((await since(n, 'act')).filter((l) => l.data.tab === b.id)).toEqual([])
+    expect(await still()).toEqual(before)
   })
 
   it('an unknown or a stale one: a page that never reports, a 0.27.0 canvas, a canvas stopped with its page kept', async () => {
@@ -293,6 +301,7 @@ describe('while it closes, and after (A3.8 #42-#44, r1 #2, r2 #4, r3 #3)', () =>
     const log = await since(n)
     expect(log.filter((l) => l.topic === 'load' && l.data.tab === a.id).map((l) => l.data.url)).toEqual([`${a.fake.origin}/#/b/x`])
     expect(log.some((l) => l.topic === 'fake-trust' && l.data.reopenNext === a.id)).toBe(true)
+    expect(await docReopens(n, a.id)).toEqual([true])   // the reopened document took the camera
     await w.report(a.id, null, { hello: { version: '0.27.2', board: 'x', page: 'PAGE_reopen0002' } })
     const [rec] = await records(n, 'reopen', a.id)
     expect(rec!.activateToLiftMs as number).toBeGreaterThanOrEqual(400)
@@ -376,6 +385,9 @@ describe('while it closes, and after (A3.8 #42-#44, r1 #2, r2 #4, r3 #3)', () =>
       expect((await w.run.call<{ body: { page: string; cameraKept: boolean } }>('page', { tab: a.id })).body).toMatchObject({ page: 'reopening', cameraKept: false })
     } finally { await w.run.call('fake:session', { hold: false }) }
     await w.until((x) => !!tab(x, a.id).doc?.lifted && tab(x, a.id).reg?.origin === again!.fake.origin, 10_000, 'reopened on the new origin')
+    // camera storage is per origin: no mv:doc reopen there, so no camera that origin once kept overrides the path
+    expect(await flags(n, a.id, 'reopenNext')).toEqual([])
+    expect(await docReopens(n, a.id)).toEqual([false])
   })
 
   it('a new instance of its canvas elsewhere while it closes: no tab beside it - at destroyed the same tab is unloaded on the new instance, and reopens there, board only', async () => {
@@ -406,6 +418,11 @@ describe('while it closes, and after (A3.8 #42-#44, r1 #2, r2 #4, r3 #3)', () =>
       expect((await w.run.call<{ body: { page: string; cameraKept: boolean } }>('page', { tab: a.id })).body).toMatchObject({ page: 'reopening', cameraKept: false })
     } finally { await w.run.call('fake:session', { hold: false }) }
     await w.until((x) => !!tab(x, a.id).doc?.lifted && tab(x, a.id).path === '/#/b/x', 10_000, 'reopened on the new origin on its board')
+    expect(await flags(n, a.id, 'reopenNext')).toEqual([])
+    expect(await docReopens(n, a.id)).toEqual([false])
+    // still the reopen: its record at the hello
+    await w.report(a.id, null, { hello: { version: '0.27.2', board: 'x', page: 'PAGE_moved00002' } })
+    expect(await records(n, 'reopen', a.id)).toHaveLength(1)
   })
 })
 
@@ -431,8 +448,57 @@ describe('a link into an unloaded tab (A3.8 #42, r3 #3)', () => {
     await w.report(a.id, null, { hello: { version: '0.27.2', board: 'y', page: 'PAGE_link000001' } })
     const log = await since(n)
     expect(log.filter((l) => l.topic === 'load' && l.data.tab === a.id).map((l) => l.data.url)).toEqual([`${a.fake.origin}/#/b/y?n=f1`])
-    expect(log.filter((l) => l.topic === 'fake-trust' && (l.data.reopenNext === a.id || l.data.reopenCancel === a.id))).toEqual([])
+    expect(await flags(n, a.id, 'reopenNext')).toEqual([])
+    expect(await docReopens(n, a.id)).toEqual([false])
     expect(await records(n, 'reopen', a.id)).toEqual([])
+  })
+
+  it('a reopen that failed leaves mv:doc\'s flag armed (an error page never asks); a link then takes it back - its document gets no reopen', async () => {
+    const down = { on: false }
+    // unreachable on demand: the shell document's request dropped, as a canvas that stopped answering
+    const a = await shown(w, { onRequest: (req) => { if (!down.on || !/^\/(index\.html)?(\?|$)/.test(req.url ?? '/')) return false; req.socket.destroy(); return true } })
+    await shown(w)
+    await sleep(HIDDEN)
+    await tick({ level: 4 })
+    await unloaded(a.id)
+    const n = await mark()
+    down.on = true
+    try {
+      await w.run.call('activate', { id: a.id })
+      await w.until((s) => tab(s, a.id).fail?.why === 'unreachable', 10_000, 'the reopen failed')
+      expect((await w.tab(a.id)).unload).toBe(null)   // a reopen that fails ends there, writing no reopen
+      expect(await flags(n, a.id, 'reopenNext')).toHaveLength(1)
+      // the link, its canvas still not answering: the flag goes with it, whatever loads next
+      expect(await openLink(a.fake, '/#/b/y?n=f9')).toEqual({ ok: true })
+    } finally { down.on = false }
+    await w.until((s) => !!tab(s, a.id).doc?.lifted && tab(s, a.id).path === '/#/b/y?n=f9', 20_000, 'the link loaded')
+    expect(await flags(n, a.id, 'reopenCancel')).toHaveLength(1)
+    const docs = await docReopens(n, a.id)
+    expect(docs.length).toBeGreaterThan(0)
+    expect(docs.every((r) => r === false)).toBe(true)   // never the saved camera over the frame the link names
+    expect(await records(n, 'reopen', a.id)).toEqual([])
+  })
+
+  it('a reopen whose first document is unattributed: mv:doc\'s flag is armed again for the reload, so the document that lifts has the camera', async () => {
+    const a = await shown(w)
+    await shown(w)
+    await sleep(HIDDEN)
+    await tick({ level: 4 })
+    await unloaded(a.id)
+    const n = await mark()
+    await w.run.call('fake:mode', { tab: a.id, mode: 'unattributed' })
+    try {
+      await w.run.call('activate', { id: a.id })
+      const end = Date.now() + 10_000
+      while (!(await since(n, 'commit')).some((l) => l.data.tab === a.id && l.data.trusted === false)) {
+        if (Date.now() > end) throw new Error('no unattributed commit')
+        await sleep(50)
+      }
+    } finally { await w.run.call('fake:mode', { tab: a.id, mode: 'prove' }) }
+    await w.until((s) => !!tab(s, a.id).doc?.lifted && tab(s, a.id).unload == null, 15_000, 'the reopen lifted')
+    const docs = await docReopens(n, a.id)
+    expect(docs.length).toBeGreaterThan(1)
+    expect(docs.every((r) => r === true)).toBe(true)   // the unattributed one took the first; each reload had it again
   })
 
   it('a hash-only link while its close is outstanding waits for the close: never sent to the page being closed, loaded on its own URL after destroyed', async () => {
@@ -460,10 +526,10 @@ describe('a link into an unloaded tab (A3.8 #42, r3 #3)', () => {
 })
 
 describe('a close that outlives unloadActMs (A3.8 #39, r1 #2)', () => {
-  // unloadActMs under Chromium's own beforeunload timeout (about 1 s here, which ends such a close by itself - A3.8
-  // #40's veto, said plainly), so main's own end is what this case sees
+  // unloadActMs (200 ms here) well under Chromium's own end of such a close (1.0 s after the act, measured by the
+  // case below: A3.8 #40's veto), so main's own end is what this case sees, with room either side
   it('unsure: main ends it itself, the tab unloaded; a load queued behind it runs only after destroyed, on its own URL', async () => {
-    const u = await launchWindow('prod', { extraEnv: { MARVER_APP_TIMINGS: JSON.stringify({ ...TIMINGS, unloadActMs: 300 }) } })
+    const u = await launchWindow('prod', { extraEnv: { MARVER_APP_TIMINGS: JSON.stringify({ ...TIMINGS, unloadActMs: 200 }) } })
     try {
       const s = await shown(u, { script: SLOW_UNLOAD(5000) })
       await shown(u)
@@ -478,11 +544,11 @@ describe('a close that outlives unloadActMs (A3.8 #39, r1 #2)', () => {
       const lines = (await since(n, 'record', u)).filter((l) => l.data.kind === 'unload' && l.data.tab === s.id)
       expect(lines.map((l) => l.data.phase)).toEqual(['start', 'unsure', 'done'])
       const [start, unsure, done] = lines as [LogLine, LogLine, LogLine]
-      expect(msBetween(start, unsure)).toBeGreaterThanOrEqual(250)   // unsure at unloadActMs from the act
-      // main's own end, not Chromium's: destroyed follows main's plain close within a few tasks, long before
-      // Chromium's own beforeunload timeout (about 1 s) would have ended the close
-      expect(msBetween(unsure, done)).toBeLessThan(150)
-      expect(msBetween(start, done)).toBeLessThan(500)
+      expect(msBetween(start, unsure)).toBeGreaterThanOrEqual(150)   // unsure at unloadActMs from the act
+      // main's own end, not Chromium's: destroyed follows main's plain close within a few tasks (about 210 ms from
+      // the act), long before Chromium's own end at 1.0 s would have come - 400 ms of room either side of the bound
+      expect(msBetween(unsure, done)).toBeLessThan(300)
+      expect(msBetween(start, done)).toBeLessThan(600)
       const log = await since(n, undefined, u)
       const end = log.findIndex((l) => l.topic === 'unload' && l.data.tab === s.id && l.data.endClose === 'unsure')
       const destroyed = log.findIndex((l) => l.topic === 'act' && l.data.tab === s.id && l.data.action === 'unload' && l.data.why === 'destroyed')
@@ -496,6 +562,34 @@ describe('a close that outlives unloadActMs (A3.8 #39, r1 #2)', () => {
       await u.until((x) => !!tab(x, s.id).doc?.lifted && tab(x, s.id).path === '/#/b/q', 10_000, 'the link loaded')
       expect((await u.tab(s.id)).unload).toBe(null)   // a link, not the reopen
     } finally { await u.close() }
+  })
+})
+
+describe('Chromium\'s own end of a close (A3.8 #40\'s veto)', () => {
+  // the figure for "A3 as built": Chromium ends a close whose page has not answered its beforeunload 1.0 s after the
+  // act (1002-1005 ms over six closes in two runs, 24 Oct, Electron 45) - a hidden page busy that long in its beforeunload is
+  // closed without asking. With the shipped unloadActMs of 10 s, main's unsure only comes if Chromium never does
+  it('main\'s unsure far off: a page busy in its beforeunload is closed by Chromium itself, asking nothing, within its own timeout', async () => {
+    const c = await launchWindow('prod', { extraEnv: { MARVER_APP_TIMINGS: JSON.stringify({ ...TIMINGS, unloadActMs: 60_000 }) } })
+    try {
+      const ms: number[] = []
+      for (let i = 0; i < 3; i++) {
+        const s = await shown(c, { script: SLOW_UNLOAD(5000) })
+        await c.run.call('activate', { id: 'home' })
+        await sleep(HIDDEN)
+        const n = await mark(c)
+        expect((await tick({ level: 4 }, c)).unload.map((u) => u.id)).toEqual([s.id])
+        await unloaded(s.id, c)
+        const lines = (await since(n, 'record', c)).filter((l) => l.data.kind === 'unload' && l.data.tab === s.id)
+        expect(lines.map((l) => l.data.phase)).toEqual(['start', 'done'])
+        expect((await since(n, 'unload', c)).filter((l) => l.data.tab === s.id && (l.data.endClose || l.data.phase === 'unsure'))).toEqual([])
+        expect(hits(s.fake, '/__mv/test/bu')).toBe(1)   // its beforeunload ran: Chromium asked, then ended the close itself
+        ms.push(Math.round(msBetween(lines[0]!, lines[1]!)))
+      }
+      console.log(`Chromium ended each close ${ms.join(', ')} ms after the act`)
+      // past the unsure case's 600 ms bound, so that case sees main's end and never this one
+      for (const x of ms) { expect(x).toBeGreaterThanOrEqual(700); expect(x).toBeLessThan(3000) }
+    } finally { await c.close() }
   })
 })
 

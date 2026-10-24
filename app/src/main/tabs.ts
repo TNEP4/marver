@@ -139,6 +139,11 @@ export interface TabUnload {
   unloadedAt?: number
   /** the activation that reopens it - one queued during the close keeps its own time (A3.8 r2 #4) */
   activatedAt?: number
+  /**
+   * the close never reached `destroyed`: main took the view out itself (unload-act.ts's backstop). Its webContents
+   * may live on, closed again until it goes, and the tab's next view waits for that (views.ts ensureView)
+   */
+  stuck?: boolean
 }
 
 export interface Tab {
@@ -1311,24 +1316,33 @@ export function onUnloaded(t: Tab): void {
   onDocumentGone(t, 'unloaded')
   t.needsLoad = false
   if (u) { u.phase = 'unloaded'; u.unloadedAt = p.now() }
-  p.log?.('unload', { tab: t.id, phase: 'unloaded', reason: u?.reason ?? null })
-  if (u) p.record?.('unload', who, { phase: 'done', reason: u.reason })
+  p.log?.('unload', { tab: t.id, phase: 'unloaded', reason: u?.reason ?? null, ...(u?.stuck ? { stuck: true } : {}) })
+  // a close main ended by hand, its webContents perhaps alive still, says so in its record (unload-act.ts's backstop)
+  if (u) p.record?.('unload', who, { phase: 'done', reason: u.reason, ...(u.stuck ? { why: 'stuck' } : {}) })
   // in one task after every waiter: a new instance that waited for this close binds the tab (a queued close has
   // dropped it, and the instance then gets a tab of its own), then the reopen is decided (r3 #3)
   setImmediate(() => { closeEnded(t, true); reopenIfShown(t) })
   p.changed(); p.save()
 }
 
+/** The camera the tab was left at is on its bound origin: the one it was unloaded on (A3.8 #43; camera storage is per origin). */
+export const cameraKept = (t: Tab): boolean => !!t.unload && t.unload.origin === t.reg?.origin
+
 /**
- * views.ts load(): an unloaded tab's load is its reopen (A3.8 #43) - true when it is, and views.ts then arms its
- * `mv:doc` to answer `{ reopen: true }`. Its saved path, under the `reopening` tab page until that document lifts.
+ * views.ts load(): an unloaded tab's load is its reopen (A3.8 #43): its saved path, under the `reopening` tab page
+ * until that document lifts, its reopen record at the hello. `camera` on the origin it was unloaded on: views.ts then
+ * arms its `mv:doc` to answer `{ reopen: true }`, so the shell takes the saved camera even under a selection link.
+ * `board` on another origin (rebound while unloaded, or while it closed): no flag - the shell would take whatever
+ * camera that origin once stored over the selection the path names - so the saved path loads as any load does, and
+ * the page promises the board only. null: not a reopen.
  */
-export function startReopen(t: Tab): boolean {
+export function startReopen(t: Tab): 'camera' | 'board' | null {
   const u = t.unload
-  if (u?.phase !== 'unloaded') return false
+  if (u?.phase !== 'unloaded') return null
   u.phase = 'reopening'
-  P().log?.('unload', { tab: t.id, phase: 'reopening', path: t.path })
-  return true
+  const kept = cameraKept(t) ? 'camera' : 'board'
+  P().log?.('unload', { tab: t.id, phase: 'reopening', path: t.path, camera: kept === 'camera' })
+  return kept
 }
 
 /** An unload's close is under way on the tab: from the act until `destroyed` or the page's refusal. */
@@ -1338,15 +1352,23 @@ export const unloadClosing = (t: Tab): boolean => t.unload?.phase === 'closing' 
  * A link opened into a tab with no live document (views.ts openInTab: ⌘L, Home's link field, the links agents and
  * `marver work done` hand back) opens on what it names, never as the reopen (A3.8 #42, r3 #3): an unloaded tab's
  * unload ends here, so its load is a plain one - no `mv:doc` reopen, no reopening page, no reopen record. True when a
- * reopen was already under way (its load sent, `mv:doc`'s one-shot flag armed): the caller disarms that flag. A tab
- * whose close is still outstanding is not this: its link waits for the close through the guard.
+ * reopen was already under way (its load sent, `mv:doc`'s one-shot flag armed); views.ts takes that flag back for
+ * every link either way. A tab whose close is still outstanding is not this: its link waits for the close through
+ * the guard. The tab is then documentless, no longer unloaded: never dimmed or named "unloaded" while it waits to
+ * load its link (its canvas starting, say).
  */
 export function linkOpens(t: Tab): boolean {
   const u = t.unload
   if (!u || unloadClosing(t)) return false
-  t.unload = undefined
+  dropUnload(t)
   P().log?.('unload', { tab: t.id, link: true, was: u.phase })
   return u.phase === 'reopening'
+}
+
+/** The unload ends with no reopen: an unloaded tab with no view is a documentless one (A2.4's `none`), which loads when shown. */
+function dropUnload(t: Tab): void {
+  t.unload = undefined
+  if (t.view === 'unloaded') t.view = 'none'
 }
 
 /**
@@ -1358,13 +1380,14 @@ export function linkOpens(t: Tab): boolean {
 export function viewlessAct(t: Tab, a: GuardAction): boolean {
   if (a.kind === 'unload') return false
   if (a.kind === 'close' || a.kind === 'quit' || a.kind === 'update') {
-    if (t.view === 'unloaded') { t.unload = undefined; t.view = 'none' }
+    if (t.view === 'unloaded') dropUnload(t)
     return false
   }
   if (a.kind === 'load') {
     const path = pathOf(a.url)
     if (path) t.path = path
-    if (t.unload?.phase === 'unloaded') t.unload = undefined
+    // its canvas not ready (gone, or a rebind waiting for this close), the link loads at ready: documentless till then
+    if (t.unload?.phase === 'unloaded') dropUnload(t)
   }
   return true
 }

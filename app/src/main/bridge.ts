@@ -87,7 +87,7 @@ export interface Bridge {
   menuClick(tabId: string, id: string): boolean
   /** the next `mv:doc` from this tab's main frame, of a document on the tab's canvas origin, answers `reopen: true`, once (A2.11's crash reload) */
   reopenNext(tabId: string): void
-  /** that flag taken back, if no `mv:doc` has taken it yet (A3: a link opened into a tab whose reopen was under way, A3.8 #42) */
+  /** that flag taken back, if no `mv:doc` has taken it yet (A3: a link opened into a tab with no live document, A3.8 #42) */
   reopenCancel(tabId: string): void
   /** a tab's binding changed outside a registry event: every admitted document's trust is looked at again (the
    *  bridge already does it on each registry event, and at each failed load) */

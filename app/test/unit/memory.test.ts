@@ -287,15 +287,16 @@ describe('the tick, on the one sampler (A3.8 #6, #41, #45)', () => {
     expect(w.acts.map((x) => x.tab)).toEqual([a.id, b.id, c.id])
   })
 
-  it('half of RAM, measured on footprint first: one half-ram unload; an unknown level alone never', () => {
-    const a = candidate()
+  it('half of RAM, measured on footprint first: one half-ram unload with the level unknown; an unknown level with canvas memory at half or below, or none read, never', () => {
     total = 1000
-    emit(sample({ level: null, procs: [proc({ tabs: [a.id], rssMB: 100, footprintMB: 501 })] }))
-    expect(w.acts.map((x) => x.action)).toEqual([{ kind: 'unload', reason: 'half-ram' }])
-    w = world(); resetMemory()
+    // the level unknown each time: canvas memory alone decides
     const b = candidate()
-    emit(sample({ level: null, procs: [proc({ tabs: [b.id], rssMB: 499 })] }))
+    emit(sample({ level: null, procs: [proc({ tabs: [b.id], rssMB: 900, footprintMB: 500 })] }))   // footprint at half: not past it
+    emit(sample({ level: null, procs: [] }))                                                      // no canvas process read
+    emit(sample({ level: null }))
     expect(w.acts).toEqual([])
+    emit(sample({ level: null, procs: [proc({ tabs: [b.id], rssMB: 100, footprintMB: 501 })] }))   // footprint past half, RSS not
+    expect(w.acts.map((x) => x.action)).toEqual([{ kind: 'unload', reason: 'half-ram' }])
   })
 
   it('unload-skip: once per tab and reason in an episode, said again in the next', () => {
