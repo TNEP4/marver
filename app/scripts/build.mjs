@@ -104,7 +104,7 @@ export function judgeSmoke(report, status, names) {
     const budget = k.budget(r)
     known.push({
       name: r.name, measured, unit: k.unit, budget, detail: r.detail, decision: k.decision,
-      line: `KNOWN FAILURE ${r.name}: ${measured} ${k.unit} measured against the ${budget} ${k.unit} budget - let through by --known-fail=${r.name} (${k.decision})`,
+      line: `KNOWN FAILURE ${r.name}: ${measured.toFixed(1)} ${k.unit} measured against the ${budget} ${k.unit} budget - let through by --known-fail=${r.name} (${k.decision})`,
     })
   }
   const passed = names.filter((n) => report.results.some((r) => r.name === n && r.verdict === 'PASS'))
@@ -334,7 +334,7 @@ async function buildRelease({ adhoc, smoke, tamper, knownFail }) {
     ...(knownFail.length ? { knownFailNamed: knownFail } : {}),
     seconds: (Date.now() - t0) / 1000 }
   writeFileSync(join(out, 'build.json'), JSON.stringify(report, null, 2) + '\n')
-  step(`built ${final}${known.length ? ` WITH ${known.length} KNOWN FAILURE${known.length > 1 ? 'S' : ''}: ${known.map((k) => `${k.name} ${k.measured} ${k.unit} (budget ${k.budget})`).join(', ')}` : ''}`)
+  step(`built ${final}${known.length ? ` WITH ${known.length} KNOWN FAILURE${known.length > 1 ? 'S' : ''}: ${known.map((k) => `${k.name} ${k.measured.toFixed(1)} ${k.unit} (budget ${k.budget})`).join(', ')}` : ''}`)
   for (const k of known) console.error(`build: ${k.line}`)
   console.log(`APP=${final}`)
 }
