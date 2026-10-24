@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { findChrome } from '../src/server/cdp.ts'
-import { bakeBatch, bakeKey, bakeSeams, bakesEnded, COMPILING, endRunBakes, jobsIdle, jobsOf, NORMAL_OWNER, RUN_ENDED, type BakeAnswer } from '../src/server/bake.ts'
+import { bakeBatch, bakeKey, bakeSeams, bakesEnded, COMPILING, endRunBakes, jobsIdle, jobsOf, NORMAL_OWNER, RUN_ENDED, TIMED_OUT, type BakeAnswer } from '../src/server/bake.ts'
 import { PAGES, PILL } from './fixtures/glass-pages.ts'
 
 /**
@@ -12,7 +12,9 @@ import { PAGES, PILL } from './fixtures/glass-pages.ts'
  * caller's - in flight, failed or remembered - a compile whose document skipped a missing poster never fills the
  * shared cache, a run's jobs are counted (`jobsOf`) and awaited (`jobsIdle`), and a run that ends answers its queued
  * compiles "the run ended" without rendering. On synthetic glass pages served from memory, in a real headless
- * Chrome; skips without one.
+ * Chrome; skips without one. Added by the review of a3-runs' fixes: a compile past its deadline answers "the bake timed
+ * out" - the failure cache keeps it, for its owner alone - and a run's end settles its compiles waiting for the lane at
+ * once, never when the lane frees.
  */
 
 const RUN = '0123456789abcdef', OTHER = 'fedcba9876543210'
@@ -43,7 +45,7 @@ beforeAll(async () => {
   root = mkdtempSync(join(tmpdir(), 'mv-bake-owner-'))
 })
 afterAll(() => { http?.close(); rmSync(root, { recursive: true, force: true }) })
-afterEach(() => { bakeSeams.holdMs = undefined; delete process.env.MARVER_SHOT_CONCURRENCY })
+afterEach(() => { bakeSeams.holdMs = undefined; bakeSeams.deadlineMs = undefined; delete process.env.MARVER_SHOT_CONCURRENCY })
 
 const ask = (frame: string) => ({ frame, theme: 'light', w: 600, h: 400 })
 const batch = (frames: string[], gen: number, o: { owner?: string; waitMs?: number } = {}) =>
@@ -86,6 +88,49 @@ describe('bakes owned per run', () => {
     const n = await one('restless', 2)
     expect(n.ok).toBe(false)
     expect(hits.restless - before, 'the normal caller compiled it').toBe(2)
+  })
+
+  skippable('a run\'s compile that timed out (a forced deadline) is the run\'s failure, kept as such: a normal request for the frame compiles it', async () => {
+    const id = '00000000000000cc'
+    bakeSeams.deadlineMs = 150
+    const r = await one('second', 6, { owner: id })
+    expect(r, 'the bare reason, not "Runtime.evaluate: the bake timed out"').toMatchObject({ ok: false, error: TIMED_OUT })
+    const before = hits.second ?? 0
+    bakeSeams.deadlineMs = undefined
+    expect(await one('second', 6, { owner: id }), 'the run asks again: its own timeout, from memory').toMatchObject({ ok: false, error: TIMED_OUT })
+    expect((hits.second ?? 0) - before).toBe(0)
+    const n = await one('second', 6)
+    expect(n.ok, 'a normal caller is never answered with the run\'s timeout').toBe(true)
+    expect((hits.second ?? 0) - before).toBe(1)
+    // and a normal caller's own timeout is kept for normal callers: asked again, nothing compiles
+    bakeSeams.deadlineMs = 150
+    expect(await one('third', 6)).toMatchObject({ ok: false, error: TIMED_OUT })
+    const third = hits.third ?? 0
+    bakeSeams.deadlineMs = undefined
+    expect(await one('third', 6)).toMatchObject({ ok: false, error: TIMED_OUT })
+    expect((hits.third ?? 0) - third).toBe(0)
+  })
+
+  skippable('a run that ends while its batch waits for the lane behind a normal compile: its compiles answer at once, never on their turn, and it is idle at once', async () => {
+    bakeSeams.holdMs = 3000
+    const id = '00000000000000dd'
+    const normal = one('plain', 8)
+    for (const by = Date.now() + 15_000; jobsOf(NORMAL_OWNER).running === 0 && Date.now() < by;) await new Promise((r) => setTimeout(r, 20))
+    const before = hits.fourth ?? 0
+    let answeredAt = 0
+    const mine = one('fourth', 8, { owner: id }).then((a) => { answeredAt = Date.now(); return a })
+    await new Promise((r) => setTimeout(r, 200))
+    expect(jobsOf(id), 'waiting for the lane').toEqual({ queued: 1, running: 0 })
+    const endedAt = Date.now()
+    endRunBakes(id)
+    expect(jobsOf(id)).toEqual({ queued: 0, running: 0 })
+    expect(await jobsIdle(id, 10)).toBe(true)
+    expect(await mine).toMatchObject({ ok: false, error: RUN_ENDED })
+    expect(answeredAt - endedAt, 'answered before the lane freed').toBeLessThan(500)
+    expect(jobsOf(NORMAL_OWNER).running, 'the normal compile still holds the lane').toBe(1)
+    expect((await normal).ok).toBe(true)
+    await new Promise((r) => setTimeout(r, 300))   // the run's batch has its turn now: it launches nothing
+    expect((hits.fourth ?? 0) - before, 'never rendered').toBe(0)
   })
 
   skippable('a compile whose document skipped a poster never fills the shared cache: the run keeps it, nobody else sees it', async () => {

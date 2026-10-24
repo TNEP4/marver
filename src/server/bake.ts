@@ -57,6 +57,8 @@ const DSF = 2
  *  (29 px > 8 of 5.18 M, none > 32) at a quarter of the memory; 0.5x fails on 30 px pills. */
 const TEXTURE_DSF = 1
 const DEADLINE_MS = 45_000
+/** What a compile past its deadline answers. */
+export const TIMED_OUT = 'the bake timed out'
 /** The refusal for a frame with a looping animation: it rests paused, never compiled. */
 export const LOOPING = 'a looping animation - the frame rests paused, uncompiled'
 /** The largest frame an ask may name, in CSS px: the shot pipeline's bitmap budget at DPR 2. */
@@ -271,7 +273,10 @@ export async function bakeIn(b: Browser, opts: { url: string; width: number; hei
   const t0 = Date.now()
   const me = {}
   let targetId: string | undefined
-  const deadline = setTimeout(() => b.abort(me, 'the bake timed out'), DEADLINE_MS)
+  // a deadline's abort settles the call under way as `<method>: <why>`: the answer says the bare reason, so the
+  // failure cache knows it for a timeout (the review of a3-runs' fixes, minor #7)
+  let timedOut = false
+  const deadline = setTimeout(() => { timedOut = true; b.abort(me, TIMED_OUT) }, bakeSeams.deadlineMs ?? DEADLINE_MS)
   // a close that cannot hang the operation: bounded, outside the abort owner
   const closeTarget = async (id: string) => { let t: ReturnType<typeof setTimeout> | undefined; await Promise.race([b.send('Target.closeTarget', { targetId: id }).catch(() => {}), new Promise((r) => { t = setTimeout(r, 2000) })]); clearTimeout(t) }
   try {
@@ -403,7 +408,7 @@ export async function bakeIn(b: Browser, opts: { url: string; width: number; hei
     const out = [...done.values()]
     return { ok: true, targets: out, levels, rejected: out.filter((t) => !t.verified).length, ms: Date.now() - t0, outside, effects, ...posterSkipped }
   } catch (err) {
-    return { ok: false, error: (err as Error).message }
+    return { ok: false, error: timedOut ? TIMED_OUT : (err as Error).message }
   } finally {
     clearTimeout(deadline)
     b.abort(me, 'the bake finished')
@@ -542,10 +547,14 @@ const ended = new Set<BakeOwner>()
 const runAnswers = new Map<BakeOwner, Map<string, BakeAnswer>>()
 /** Has this run ended (its compiles answer RUN_ENDED)? */
 export const bakesEnded = (owner: BakeOwner): boolean => owner !== NORMAL_OWNER && ended.has(owner)
+/** Each run's compiles not started yet - waiting for the lane or for the pool - by the function that ends one: a run's
+ *  end settles them at once, never on their turn (the review of a3-runs' fixes, minor #3). */
+const queuedJobs = new Map<BakeOwner, Set<() => void>>()
 /**
- * A run ends (A3.8 #19, #20): its compiles not started answer RUN_ENDED without rendering; one already rendering
- * finishes (its frame URL names the run, so it asks for no poster) and keeps nothing for the run; its answers and
- * its failures go. The driver then waits for its running jobs (`jobsIdle`).
+ * A run ends (A3.8 #19, #20): its compiles not started answer RUN_ENDED at once, without rendering - those waiting for
+ * the lane behind another batch and those waiting for the pool alike; one already rendering finishes (its frame URL
+ * names the run, so it asks for no poster) and keeps nothing for the run; its answers and its failures go. The driver
+ * then waits for its running jobs (`jobsIdle`).
  */
 export function endRunBakes(owner: BakeOwner): void {
   if (owner === NORMAL_OWNER) return
@@ -553,14 +562,16 @@ export function endRunBakes(owner: BakeOwner): void {
   if (ended.size > 256) ended.delete(ended.values().next().value!)
   runAnswers.delete(owner)
   for (const k of [...failed.keys()]) if (k.endsWith(`|${owner}`)) failed.delete(k)
+  for (const end of [...(queuedJobs.get(owner) ?? [])]) end()
 }
 
 /** Test seams - the environment's read only with MARVER_SLOT_BASE set (the suite's marker, as RUN_T's):
  *  MV_BAKE_HOLD_MS holds each compile that long before it renders, so a test can find one still compiling.
+ *  `deadlineMs` (in-process only) shortens a compile's 45 s deadline, so a test can force "the bake timed out".
  *  MV_BAKE_STOP_ASKING=1 answers a caller who stops waiting STOP_ASKING instead of COMPILING: the page takes it for a
  *  failed compile, retries once and asks no more, so it goes idle while the server still compiles - the page's own 15
  *  looks at a COMPILING outlast any held compile (A3.8 r1 #4's case, added by the review of a3-runs). */
-export const bakeSeams: { holdMs?: number; stopAsking?: boolean } = {}
+export const bakeSeams: { holdMs?: number; stopAsking?: boolean; deadlineMs?: number } = {}
 const holdMs = (): number => {
   if (bakeSeams.holdMs !== undefined) return bakeSeams.holdMs
   const v = process.env.MARVER_SLOT_BASE ? Number(process.env.MV_BAKE_HOLD_MS) : NaN
@@ -581,7 +592,7 @@ const inflight = new Map<string, Promise<BakeAnswer>>()
  *  a cache write failed) says nothing about the frame and is tried again. */
 const failed = new Map<string, string>()
 const FAILED_MAX = 2000
-export const ofTheFrame = (error: string): boolean => error === LOOPING || /^the frame (never stopped changing|did not settle|never rendered|rendered an error)|^the bake timed out$|^too many effects|^an effect larger than/.test(error)
+export const ofTheFrame = (error: string): boolean => error === LOOPING || /^the frame (never stopped changing|did not settle|never rendered|rendered an error)|(^|: )the bake timed out$|^too many effects|^an effect larger than/.test(error)
 
 /** The answer for a compile still running when a request stops waiting (`waitMs`): the frame stays
  *  live for now, and its next ask finds the result in the cache. */
@@ -606,26 +617,40 @@ export async function bakeBatch(opts: { root: string; gen: number; asks: BakeAsk
   const protect = new Set(asks.map(bakeKey))   // keys this response names: never evicted under it
   const misses = new Map<string, { ask: BakeAsk; at: number[] }>()
   asks.forEach((ask, i) => { if (answers[i]) return; const k = key(ask); const m = misses.get(k); if (m) m.at.push(i); else misses.set(k, { ask, at: [i] }) })
-  const mine: { ask: BakeAsk; resolve: (a: BakeAnswer) => void; state: JobState }[] = []
+  type Job = { ask: BakeAsk; resolve: (a: BakeAnswer) => void; state: JobState; end?: () => void }
+  const mine: Job[] = []
+  // a run's job leaves the queue its end reads when it starts rendering or settles
+  const unqueue = (job: Job) => {
+    if (!job.end) return
+    const s = queuedJobs.get(owner)
+    s?.delete(job.end)
+    if (s && !s.size) queuedJobs.delete(owner)
+    job.end = undefined
+  }
+  const settle = (job: Job, a: BakeAnswer) => { if (job.state === 'done') return; unqueue(job); move(owner, job.state, 'done'); job.state = 'done'; job.resolve(a) }
+  const runEnded = (job: Job) => settle(job, { ...job.ask, ok: false, error: RUN_ENDED })
   const waits = [...misses.entries()].map(([k, m]) => {
     let p = inflight.get(k)
     if (!p) {
-      p = new Promise<BakeAnswer>((resolve) => { mine.push({ ask: m.ask, resolve, state: 'queued' }); move(owner, null, 'queued') })
+      p = new Promise<BakeAnswer>((resolve) => {
+        const job: Job = { ask: m.ask, resolve, state: 'queued' }
+        mine.push(job); move(owner, null, 'queued')
+        if (owner !== NORMAL_OWNER) { job.end = () => runEnded(job); let s = queuedJobs.get(owner); if (!s) queuedJobs.set(owner, s = new Set()); s.add(job.end) }
+      })
       inflight.set(k, p)
       void p.then(() => inflight.delete(k))
     }
     return p.then((a) => { for (const i of m.at) answers[i] = { ...a, ...m.ask } })
   })
   async function compile(): Promise<void> {
-    const settle = (job: typeof mine[number], a: BakeAnswer) => { if (job.state === 'done') return; move(owner, job.state, 'done'); job.state = 'done'; job.resolve(a) }
-    const runEnded = (job: typeof mine[number]) => settle(job, { ...job.ask, ok: false, error: RUN_ENDED })
     try {
       // a run that ended while its batch waited for the lane launches no browser for it
       await withBrowser('shot', (b) => pool(shotConcurrency(), mine, async (job) => {
+        if (job.state !== 'queued') return   // ended while it waited (endRunBakes)
         if (bakesEnded(owner)) return runEnded(job)
         const cached = readCached(root, gen, job.ask, urlBase)   // another request may have filled it since we looked
         if (cached) return settle(job, cached)
-        move(owner, 'queued', 'running'); job.state = 'running'
+        unqueue(job); move(owner, 'queued', 'running'); job.state = 'running'
         const hold = holdMs()
         if (hold) await new Promise((r) => setTimeout(r, hold))
         const r: BakeResult = await bakeIn(b, { url: urlFor(job.ask), width: Math.round(job.ask.w), height: Math.round(job.ask.h) }).catch((e) => ({ ok: false as const, error: (e as Error).message }))
@@ -653,7 +678,9 @@ export async function bakeBatch(opts: { root: string; gen: number; asks: BakeAsk
   // The compile runs on its own; a caller with `waitMs` (the page, whose few connections must never
   // be held for minutes - issue #23) gets what is ready by then and COMPILING for the rest.
   const work = mine.length ? compile() : Promise.resolve()
-  const all = work.then(() => Promise.all(waits))
+  // a run's caller is answered once its jobs settled - at once when the run ends while they wait for the lane (the
+  // review of a3-runs' fixes); a normal caller once the batch is over, its browser closed
+  const all = owner === NORMAL_OWNER ? work.then(() => Promise.all(waits)) : Promise.all(waits)
   if (waitMs === undefined) { await all; return answers as BakeAnswer[] }
   let timer: ReturnType<typeof setTimeout> | undefined
   await Promise.race([all, new Promise((r) => { timer = setTimeout(r, waitMs) })])
