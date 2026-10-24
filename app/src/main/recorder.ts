@@ -5,7 +5,10 @@
  * **One sampler, two consumers** (A3.8 #4): this file owns the only `getAppMetrics()` loop, every 5 s, while
  * recording or while `memory.ts`'s `wantPressure()` says an unload is possible; nothing else samples. With the
  * recorder off it runs only for memory.ts and writes nothing; with nothing that could be unloaded either, a tick
- * calls neither `getAppMetrics()` nor `sysctl`. The tick stops at `suspend` and starts again at `resume`.
+ * calls neither `getAppMetrics()` nor `sysctl`. The tick stops at `suspend` and starts again at `resume`. Every
+ * `getAppMetrics()` the app makes goes through `appMetrics(why)`, counted by why: the tick's; a flash's state at its
+ * mark; and identity reads made in an event's turn - a renderer the samples have not met yet when the tabs change, the
+ * GPU process's at `gpu-info-update` and at a presentation's answer (views.ts) - which are reads, not samples.
  *
  * **Identity is taken in the event's turn** (A3.8 #8): `identity(tab)` before any await - `page` the one its
  * admitted document's accepted hello sent (tabs.ts keeps it in `reports.hello`), none before it says hello.
@@ -23,12 +26,20 @@
  *   pressure read; the sample is published when that read ends. A sampler that stops (nothing needs it) forgets its
  *   baselines: its next sample is a first one, CPU null.
  * - The ring holds the last 12 samples and 60 s of events at full resolution, whatever `recorder` says (memory.ts and
- *   a flash read it; a flash quotes the samples only with the recorder on). Disk gets one `sample` line a minute
+ *   a flash read it; a flash quotes the samples only with the recorder on). A flash and a white-out candidate are held
+ *   in it as their kind, time and identity only: each quotes the ring, so a whole one in it would carry the one
+ *   before it, and a minute of marks would grow each line with every mark. Disk gets one `sample` line a minute
  *   (procs.ts `foldMinute`) and every event, only with the recorder on; a flash and main's errors are written whatever
  *   it says. The `start` line is the first line of a launch that records.
+ * - `shown.ms` is main's show to main's receipt of the preload's answer from its second animation-frame callback: the
+ *   answer's way back to main is in it (a busy main makes it longer).
+ * - `Sample.visible` is the visible tab's last `mem` answer while that tab and its document are still the visible
+ *   ones; after a switch it is null until the new one answers.
+ * - The display's rate goes again to the canvases when the window moves to a display of another rate (no display
+ *   event says so), and the machine profile is collected again (its tile budget is the window's display's).
  * - A process's `born` that the recorder never saw (a renderer that went before any sample read it) is 0.
  */
-import { app, powerMonitor, screen, webContents as allContents, type RenderProcessGoneDetails, type WebContents } from 'electron'
+import { app, powerMonitor, screen, webContents as allContents, type BaseWindow, type ProcessMetric, type RenderProcessGoneDetails, type WebContents } from 'electron'
 import { join } from 'node:path'
 import { mkdir } from 'node:fs/promises'
 import type { AppBody, AppKind, Flavour, GpuIdentity, PressureReading, ProcId, RingEvent, Role, Sample, Sampler, TabIdent, ThermalState } from '../../../src/shared/app-perf.ts'
@@ -38,7 +49,7 @@ import type { Config, Home } from './config.ts'
 import { allTabs, activeTab, displayState, getTab, isActive, type Tab } from './tabs.ts'
 import { build, foldMinute, type Baseline, type Owner, type Owners } from './procs.ts'
 import { lastPressure, readPressure } from './pressure.ts'
-import { currentHash, onProfile, readAgx, startMachine } from './machine.ts'
+import { onProfile, readAgx, stampHash, startMachine, windowDisplayChanged } from './machine.ts'
 import { append, flushSync as flushLog, prunePictures, startPerflog } from './perflog.ts'
 import { markFlash as flashTransaction, quitFlashes, type FlashPorts } from './flashes.ts'
 import { captureApp, contentView, mainWindow, pageView, stripContents, windowVisible } from './window.ts'
@@ -61,12 +72,20 @@ export function identity(t: Tab): TabIdent {
   }
 }
 
+/** Why the app called `getAppMetrics()`: the sampler's tick, a flash's state at its mark, an identity read in an event's turn, a test hook. */
+export type MetricsWhy = 'tick' | 'mark' | 'identity' | 'test'
+const metricsBy: Record<MetricsWhy, number> = { tick: 0, mark: 0, identity: 0, test: 0 }
+
+/** Every `getAppMetrics()` the app makes, counted by why (A3.8 #4: only the tick samples; test builds read the counts). */
+export function appMetrics(why: MetricsWhy): ProcessMetric[] {
+  metricsBy[why] += 1
+  return safely(() => app.getAppMetrics()) ?? []
+}
+
 /** The GPU process's identity now (A3.8 #27, r3 #1): `getAppMetrics()`'s GPU entry, or null when there is none. */
 export function gpuIdentity(): GpuIdentity | null {
-  try {
-    const m = app.getAppMetrics().find((x) => x.type === 'GPU')
-    return m ? { pid: m.pid, born: m.creationTime } : null
-  } catch { return null }
+  const m = appMetrics('identity').find((x) => x.type === 'GPU')
+  return m ? { pid: m.pid, born: m.creationTime } : null
 }
 
 // ---- state ------------------------------------------------------------------------------------------------------
@@ -95,8 +114,6 @@ let spawnMs = 0
 let startWritten = false
 let tickTimer: NodeJS.Timeout | null = null
 let agxTimer: NodeJS.Timeout | null = null
-/** how many getAppMetrics() the sampler made (test builds read it: "the sampler stopped") */
-let metricsCalls = 0
 let ticksRun = 0
 /** a pid's creation time, from the samples (a process gone before any read it has none: 0) */
 const bornOf = new Map<number, number>()
@@ -105,6 +122,8 @@ const wcPid = new Map<number, number>()
 /** the preload's `mem` answers: a process's footprint (MB) and when */
 const footprints = new Map<number, { mb: number; at: number }>()
 let visibleAnswer: (TabIdent & { privateMB: number; heapMB: number; at: number }) | null = null
+/** the document the visible answer is about */
+let visibleDoc = ''
 interface MemAsk { tick: number; tabId: string; doc: string; pid: number | undefined; ident: TabIdent; at: number; visible: boolean }
 const memAsks = new Map<string, MemAsk>()
 interface ShownAsk { tabId: string; doc: string; ident: TabIdent; mono: number }
@@ -186,7 +205,12 @@ const footprintsNow = (now = Date.now()): Map<number, number> => {
   for (const [pid, f] of footprints) { if (now - f.at <= T.memServesMs) out.set(pid, f.mb); else footprints.delete(pid) }
   return out
 }
-const visibleNow = (now = Date.now()): Sample['visible'] => (visibleAnswer && now - visibleAnswer.at <= T.memServesMs ? { ...visibleAnswer } : null)
+/** The visible tab's last answer, at most 10 s old, while that tab and its document are still the visible ones. */
+function visibleNow(now = Date.now()): Sample['visible'] {
+  if (!visibleAnswer || now - visibleAnswer.at > T.memServesMs) return null
+  const t = visibleTab()
+  return t && t.id === visibleAnswer.tab && t.doc?.doc === visibleDoc ? { ...visibleAnswer } : null
+}
 
 /** The active local tab with its document shown and the window visible, or undefined. */
 function visibleTab(): Tab | undefined {
@@ -230,8 +254,7 @@ function askMem(k: number, recording: boolean, unloadable: boolean): void {
 async function sampleNow(): Promise<Sample> {
   const ts = Date.now()
   const mono = performance.now()
-  metricsCalls += 1
-  const metrics = safely(() => app.getAppMetrics()) ?? []
+  const metrics = appMetrics('tick')
   const owners = ownersNow()
   const b = build(metrics, owners, baselines, mono, footprintsNow(ts))
   baselines = b.baselines
@@ -301,7 +324,7 @@ function requestSample(): Promise<Sample> {
 function stateNow(): Sample {
   const ts = Date.now()
   const mono = performance.now()
-  const b = build(safely(() => app.getAppMetrics()) ?? [], ownersNow(), baselines, mono, footprintsNow(ts))
+  const b = build(appMetrics('mark'), ownersNow(), baselines, mono, footprintsNow(ts))
   return { ts, mono, dt: lastMono !== null && mono > lastMono ? (mono - lastMono) / 1000 : null, procs: b.procs, gpu: b.gpu, pressure: lastPressure(), thermal: thermalNow(), sys: sysNow(), visible: visibleNow() }
 }
 
@@ -315,12 +338,22 @@ export const sampler: Sampler = {
 
 // ---- records ------------------------------------------------------------------------------------------------------
 
+/** The kinds that quote the ring (a flash, a candidate): held in it by kind, time and identity only. */
+const QUOTING = new Set<AppKind>(['flash', 'whiteout-candidate'])
+/** What the ring holds of a record: the record, or for a kind that quotes the ring its scalars that name it. */
+function ringOf(kind: AppKind, ts: number, full: Record<string, unknown>): RingEvent {
+  if (!QUOTING.has(kind)) return { kind, ts, ...full }
+  const e: RingEvent = { kind, ts }
+  for (const k of ['tab', 'ws', 'commit', 'page', 'id', 'via', 'gesture'] as const) if (k in full && (typeof full[k] === 'string' || typeof full[k] === 'number')) e[k] = full[k]
+  return e
+}
+
 /** A record: in the ring (always), the journal (test builds), app.jsonl with the recorder on (or `always`). */
 function record<K extends AppKind>(kind: K, ident: TabIdent | null, body: Record<string, unknown>, always = false): void {
   const ts = Date.now()
   const full = { ...(ident ?? {}), ...body }
   if (kind !== 'sample') {
-    events.push({ kind, ts, ...full })
+    events.push(ringOf(kind, ts, full))
     const old = ts - RING_EVENTS_MS
     let drop = 0
     while (drop < events.length && events[drop]!.ts < old) drop++
@@ -398,13 +431,14 @@ function onPerf(tabId: string, doc: string, msg: PerfMsg): void {
       if (!a || a.doc !== doc || performance.now() - a.at > T.memAnswerMs) return
       const mb = msg.privateKB / 1024
       if (a.pid !== undefined) footprints.set(a.pid, { mb, at: now })
-      if (a.visible) visibleAnswer = { ...a.ident, privateMB: round1(mb), heapMB: round1(msg.heapUsedKB / 1024), at: now }
+      if (a.visible) { visibleAnswer = { ...a.ident, privateMB: round1(mb), heapMB: round1(msg.heapUsedKB / 1024), at: now }; visibleDoc = a.doc }
       return
     }
     case 'shown': {
       const a = shownAsks.get(msg.tick)
       if (!a || a.tabId !== tabId || a.doc !== doc) return
       shownAsks.delete(msg.tick)
+      // to main's receipt of the answer: the answer's IPC back to main is in it
       const ms = performance.now() - a.mono
       if (ms > T.shownAnswerMs) return
       record('shown', a.ident, { ms: Math.round(ms * 10) / 10 })
@@ -436,6 +470,30 @@ function sendDisplayAll(): void {
   if (hz === null || hz === hzSent) return
   hzSent = hz
   for (const t of allTabs()) if (t.kind === 'local' && t.doc?.doc) sendDisplay(t.id)
+}
+
+/**
+ * The window's display (A3.8 #9, #11): moving the window to another display sends no display event, so its move (and
+ * every compose: a resize, full screen) is checked here - a display of another rate goes to the canvases, and the
+ * profile is collected again for that display's tile budget.
+ */
+let windowWatched: BaseWindow | null = null
+let displayWas: number | null = null
+function watchWindowDisplay(): void {
+  const win = mainWindow()
+  if (!win || win === windowWatched || safely(() => win.isDestroyed()) !== false) return
+  windowWatched = win
+  win.on('moved', () => checkWindowDisplay())
+}
+function checkWindowDisplay(): void {
+  const win = mainWindow()
+  const id = safely(() => (win && !win.isDestroyed() ? screen.getDisplayMatching(win.getBounds()).id : undefined))
+  if (typeof id !== 'number' || id === displayWas) return
+  const first = displayWas === null
+  displayWas = id
+  if (first) return
+  sendDisplayAll()
+  windowDisplayChanged()
 }
 
 // ---- the flash's ports (flashes.ts, the flash stream's transaction) ------------------------------------------------
@@ -488,7 +546,8 @@ export const recorder = {
   start(p: RecorderStart): void {
     if (P) return
     P = p
-    startPerflog({ home: p.home, flavour: p.flavour, config: p.config, machine: currentHash })
+    // lines are stamped with a profile's hash once its file is on disk (or its write failed and said so)
+    startPerflog({ home: p.home, flavour: p.flavour, config: p.config, machine: stampHash })
     startMachine({ home: p.home, window: mainWindow })
     if (recorderOn()) writeStart()
     // a new profile is the stamp from then on; the displays' rate goes to the canvases when it changes
@@ -563,8 +622,10 @@ export const recorder = {
     const c = setTimeout(() => shownAsks.delete(k), T.shownAnswerMs + 100)
     c.unref?.()
   },
-  /** after each compose: `tab` lines for what changed (A3.8 #9, r4 #1) */
+  /** after each compose: `tab` lines for what changed (A3.8 #9, r4 #1); the window's display checked */
   tabsChanged(): void {
+    watchWindowDisplay()
+    checkWindowDisplay()
     const live = new Set<string>()
     for (const t of allTabs()) {
       live.add(t.id)
@@ -579,7 +640,7 @@ export const recorder = {
       if (typeof pid === 'number' && pid > 0) {
         let born = bornOf.get(pid)
         // a renderer no sample has read yet: its creation time read now (an identity read, as gpuIdentity's)
-        if (born === undefined) { const m = safely(() => app.getAppMetrics().find((x) => x.pid === pid)); if (m) { born = m.creationTime; bornOf.set(pid, born) } }
+        if (born === undefined) { const m = appMetrics('identity').find((x) => x.pid === pid); if (m) { born = m.creationTime; bornOf.set(pid, born) } }
         main = { pid, born: born ?? 0 }
       }
       record('tab', identity(t), { state, active, view: t.view, main })
@@ -619,7 +680,14 @@ export const recorder = {
 /** The recorder's state for its test hooks (testing/recorder.ts). */
 export const recorderTesting = {
   ring: () => ({ samples: samples.map((s) => ({ ...s })), events: events.map((e) => ({ ...e })) }),
-  stats: () => ({ metricsCalls, ticks: ticksRun, minute: minute.length, startWritten, recorder: recorderOn(), need: need(), suspended }),
+  /** `metricsCalls`: every getAppMetrics() the app made (the test hooks' own apart, in `metrics.test`) */
+  stats: () => ({ metricsCalls: metricsBy.tick + metricsBy.mark + metricsBy.identity, metrics: { ...metricsBy }, ticks: ticksRun, minute: minute.length, startWritten, recorder: recorderOn(), need: need(), suspended }),
+  /** getAppMetrics() and build() of that same call, side by side (the RSS case compares them exactly) */
+  raw: () => {
+    const metrics = appMetrics('test')
+    const b = build(metrics, ownersNow(), baselines, performance.now(), footprintsNow())
+    return { metrics: metrics.map((m) => ({ pid: m.pid, born: m.creationTime, type: m.type, workingSetKB: m.memory.workingSetSize })), procs: b.procs }
+  },
   /** one tick now, as the timer would run it (null when nothing needs the sampler) */
   tick: async () => (await tick()) ?? null,
   /** the unwritten minute written now (with the recorder on) */
@@ -630,7 +698,7 @@ export const recorderTesting = {
   event: (kind: AppKind, ident: TabIdent | null, body: Record<string, unknown>) => record(kind, ident, body),
   reset: () => {
     samples = []; events = []; baselines = new Map(); lastMono = null; lastSample = null; minute = []; spawnMs = 0
-    footprints.clear(); memAsks.clear(); shownAsks.clear(); visibleAnswer = null
+    footprints.clear(); memAsks.clear(); shownAsks.clear(); visibleAnswer = null; visibleDoc = ''
   },
 }
 

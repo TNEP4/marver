@@ -129,6 +129,21 @@ describe('the minute on disk (A3.8 #7)', () => {
     expect(body.procs[0]!.footprintMB).toEqual({ mean: 350, max: 350, last: 350 })
   })
 
+  it('a tab whose renderer another tab shared says so on disk (byTab is never added up); a tab of its own does not', () => {
+    const s = (mono: number, dt: number): Sample => ({
+      ...sample(mono, dt, 0, 50),
+      procs: [
+        { pid: 20, born: 20, type: 'renderer', role: 'canvas', tabs: ['t1', 't2'], cpu: 0.1, rssMB: 300, footprintMB: 300 },
+        { pid: 21, born: 21, type: 'renderer', role: 'canvas', tabs: ['t3'], cpu: 0.1, rssMB: 100, footprintMB: 100 },
+      ],
+    })
+    const body = foldMinute([s(0, 5), s(5000, 5)], 0)!
+    expect(body.canvases.memMB.mean).toBe(400)
+    expect(body.canvases.byTab.t1).toMatchObject({ memMB: { mean: 300 }, shared: true })
+    expect(body.canvases.byTab.t2).toMatchObject({ memMB: { mean: 300 }, shared: true })
+    expect(body.canvases.byTab.t3!.shared).toBeUndefined()
+  })
+
   it('a baseline map survives a round trip: Baseline keeps cum undefined when the metric had none', () => {
     const b: Baseline = build([metric(1, 'Browser', undefined)], new Map(), new Map(), 5, new Map()).baselines.get(procKey(1, 1_000_001))!
     expect(b).toEqual({ mono: 5, cum: undefined })

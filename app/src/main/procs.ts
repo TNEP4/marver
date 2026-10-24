@@ -139,7 +139,7 @@ export function foldMinute(samples: readonly Sample[], spawnMs: number): SampleB
   const procs = new Map<string, P>()
   const gpus = new Map<string, { pid: number; born: number; cpu: Fold; gpuProcessRssMB: Fold }>()
   const canvas = new Fold()
-  const byTab = new Map<string, { memMB: Fold; cpu: Fold }>()
+  const byTab = new Map<string, { memMB: Fold; cpu: Fold; shared: boolean }>()
   let lastLevel: PressureLevel | null = null
   let maxLevel: PressureLevel | null = null
   let span = 0
@@ -174,7 +174,8 @@ export function foldMinute(samples: readonly Sample[], spawnMs: number): SampleB
       canvas.add(c.memMB)
       for (const [tab, v] of Object.entries(c.byTab)) {
         let b = byTab.get(tab)
-        if (!b) byTab.set(tab, b = { memMB: new Fold(), cpu: new Fold() })
+        if (!b) byTab.set(tab, b = { memMB: new Fold(), cpu: new Fold(), shared: false })
+        if (v.shared) b.shared = true
         b.memMB.add(v.memMB)
         b.cpu.add(v.cpu, v.cpu !== null && dt !== null ? dt : 0)
       }
@@ -192,7 +193,9 @@ export function foldMinute(samples: readonly Sample[], spawnMs: number): SampleB
       ...(p.cpu.weight > 0 ? { cpuTime: { s: round(p.cpu.total), ms: Math.round(p.cpuMs) } } : {}),
     })),
     gpu: g ? { pid: g.pid, born: g.born, cpu: g.cpu.agg(), gpuProcessRssMB: g.gpuProcessRssMB.agg() } : null,
-    canvases: { memMB: canvas.agg(), byTab: Object.fromEntries([...byTab].map(([t, b]) => [t, { memMB: b.memMB.agg(), cpu: b.cpu.agg() }])) },
+    // a tab whose renderer another tab shared (any sample of the minute) says so: that renderer is whole in each tab's
+    // figure, and `memMB` above counts it once - never add byTab up
+    canvases: { memMB: canvas.agg(), byTab: Object.fromEntries([...byTab].map(([t, b]) => [t, { memMB: b.memMB.agg(), cpu: b.cpu.agg(), ...(b.shared ? { shared: true as const } : {}) }])) },
     visible: last.visible,
     sys: last.sys,
     spawnMs: Math.round(spawnMs),

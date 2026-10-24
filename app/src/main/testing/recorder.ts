@@ -8,7 +8,8 @@
  *
  * The recorder stream's, as built:
  * - `recorder:samples` -> `{ samples, last, stats, perf }`: the ring's samples, the last one published, the sampler's
- *   counts (getAppMetrics calls, ticks, the minute so far, whether anything needs it) and the bridge's `mv:perf` counts;
+ *   counts (every getAppMetrics() call the app made, `metricsCalls`, and by why: tick, mark, identity - the hooks' own
+ *   apart as `test`; ticks, the minute so far, whether anything needs it) and the bridge's `mv:perf` counts;
  * - `recorder:events` -> the ring's events (60 s);
  * - `recorder:tick` -> one tick now, as the timer runs it (null when nothing needs the sampler);
  * - `recorder:flush` `{ minute? }` -> the unwritten minute written (with `minute: true`) and the writer flushed now:
@@ -19,15 +20,15 @@
  * - `recorder:prune` -> retention now (its report);
  * - `recorder:process` `{ pid }` and `recorder:metrics` -> what `getAppMetrics()` says now (pid, creation time, type,
  *   working set in KB, cumulative CPU), for a case that compares the samples with Electron's own figures;
+ *   `recorder:raw` -> one `getAppMetrics()` and the sampler's `build()` of that same call, side by side;
  * - `pressure:inject` `{ level, availablePct? } | null` -> every read gives that until cleared; `pressure:spawns`.
  */
-import { app } from 'electron'
 import type { AppKind, Sample, TabIdent } from '../../../../src/shared/app-perf.ts'
 import { installBridge } from '../bridge.ts'
 import { currentFile, currentProfile, machineStats } from '../machine.ts'
 import { appLogFile, flushNow, prune } from '../perflog.ts'
 import { injectPressure, pressureSpawns, type PressureLevel } from '../pressure.ts'
-import { recorderTesting, sampler } from '../recorder.ts'
+import { appMetrics, recorderTesting, sampler } from '../recorder.ts'
 import { currentHome } from '../config.ts'
 import { provide } from './index.ts'
 
@@ -53,10 +54,11 @@ export function provideRecorderHooks(): void {
   provide('recorder:prune', () => prune())
   provide('recorder:process', (a) => {
     const pid = arg<{ pid?: number }>(a).pid
-    const m = app.getAppMetrics().find((x) => x.pid === pid)
+    const m = appMetrics('test').find((x) => x.pid === pid)
     return m ? { pid: m.pid, born: m.creationTime, type: m.type, workingSetKB: m.memory.workingSetSize } : null
   })
-  provide('recorder:metrics', () => app.getAppMetrics().map((m) => ({ pid: m.pid, born: m.creationTime, type: m.type, workingSetKB: m.memory.workingSetSize, cum: m.cpu.cumulativeCPUUsage ?? null })))
+  provide('recorder:metrics', () => appMetrics('test').map((m) => ({ pid: m.pid, born: m.creationTime, type: m.type, workingSetKB: m.memory.workingSetSize, cum: m.cpu.cumulativeCPUUsage ?? null })))
+  provide('recorder:raw', () => recorderTesting.raw())
   provide('pressure:inject', (a) => {
     const x = a as { level: PressureLevel | null; availablePct?: number } | null
     injectPressure(x && typeof x === 'object' && 'level' in x ? x : null)

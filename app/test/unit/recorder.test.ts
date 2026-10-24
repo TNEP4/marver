@@ -3,9 +3,11 @@
  * the one sampler stops (no getAppMetrics, no sysctl) while nothing needs it and writes nothing with the recorder off;
  * a minute on disk from its samples; identity taken in the event's turn (no hello, no page); a `mem` answer counts
  * only for its tick and document within 1 s; `shown`'s time; `gone` with its identity and `ours`; a `tab` line for a
- * new commit and for a new main-frame process with nothing else changed; gpu-restart only without a child-gone.
+ * new commit and for a new main-frame process with nothing else changed; gpu-restart only without a child-gone; a
+ * flash held in the ring by its kind, time and identity only; the visible tab's answer only while it is visible; the
+ * window moved to a display of another rate; every getAppMetrics() through the one counted wrapper.
  */
-import { mkdtempSync, readFileSync, realpathSync, rmSync, existsSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -31,7 +33,8 @@ vi.mock('electron', () => {
       getGPUFeatureStatus: () => ({ ...fx.feature }),
     },
     powerMonitor: { on: () => {}, getCurrentThermalState: () => 'nominal' },
-    screen: { on: () => {}, getDisplayMatching: () => ({ displayFrequency: 120 }), getPrimaryDisplay: () => ({ displayFrequency: 120 }) },
+    // a window right of x 2000 is on the second display, at 60 Hz
+    screen: { on: () => {}, getDisplayMatching: (b: { x: number }) => (b.x >= 2000 ? { id: 2, displayFrequency: 60 } : { id: 1, displayFrequency: 120 }), getPrimaryDisplay: () => ({ id: 1, displayFrequency: 120 }) },
     webContents: { getAllWebContents: () => [] },
   }
 })
@@ -54,17 +57,26 @@ class FakeWc {
 }
 const views = new Map<string, FakeWc>()
 const strip = new FakeWc(50)
+const win = {
+  bounds: { x: 0, y: 0, width: 1280, height: 820 },
+  handlers: new Map<string, Listener[]>(),
+  isDestroyed: () => false,
+  getBounds() { return { ...this.bounds } },
+  on(ev: string, f: Listener) { this.handlers.set(ev, [...(this.handlers.get(ev) ?? []), f]); return this },
+}
+const machineFx = { displayChanged: 0 }
 vi.mock('../../src/main/window.ts', () => ({
   stripContents: () => strip,
   contentView: (id: string) => (views.has(id) ? { webContents: views.get(id) } : undefined),
   pageView: () => undefined,
-  mainWindow: () => null,
+  mainWindow: () => win,
   windowVisible: () => true,
   captureApp: async () => { throw new Error('no window') },
 }))
 vi.mock('../../src/main/bridge.ts', () => ({ kindOf: () => undefined, tabOf: () => undefined }))
 vi.mock('../../src/main/machine.ts', () => ({
-  currentHash: () => H, onProfile: () => () => {}, startMachine: () => {},
+  currentHash: () => H, stampHash: () => H, onProfile: () => () => {}, startMachine: () => {},
+  windowDisplayChanged: () => { machineFx.displayChanged++ },
   readAgx: async () => ({ gpuSystemMemoryMB: 1, allocMB: 2, utilPct: 3, rendererPct: 4, tilerPct: 5, recoveryCount: 0, machineWide: true }),
 }))
 
@@ -330,5 +342,76 @@ describe('events (A3.8 #9, r4 #1)', () => {
     const n = lines().filter((l) => l.kind === 'sample').length
     recorder.flushSync()
     expect(lines().filter((l) => l.kind === 'sample').length).toBe(n + 1)
+  })
+})
+
+describe('the review of a3-recorder', () => {
+  it('a flash is held in the ring by its kind, time and identity only: marks a minute apart never carry the one before', () => {
+    const w = world()
+    const t = canvas(w, 320)
+    const ident = identity(t)
+    const big = { samples: Array.from({ length: 12 }, () => ({ procs: Array.from({ length: 10 }, (_, i) => ({ pid: i, pad: 'x'.repeat(200) })) })), events: [] }
+    for (let i = 0; i < 8; i++) {
+      // each mark quotes the ring as it is (the flash stream's body), and is then recorded
+      const quoted = { samples: big.samples, events: recorderTesting.ring().events }
+      recorderTesting.event('flash', ident, { id: `m${i}`, via: 'key', recorder: true, ring: quoted, now: { ts: Date.now(), procs: big.samples[0]!.procs }, gpuEvents: [], picture: null })
+    }
+    const flashes = recorderTesting.ring().events.filter((e) => e.kind === 'flash')
+    expect(flashes).toHaveLength(8)
+    expect(flashes.at(-1)).toEqual({ kind: 'flash', ts: expect.any(Number), tab: t.id, ws: t.reg!.ws, commit: 1, id: 'm7', via: 'key' })
+    // the ring a ninth mark would quote stays small: no earlier mark's ring or state in it (with them, each mark's line
+    // held every earlier one's, nested: this ring was megabytes)
+    expect(JSON.stringify(recorderTesting.ring().events).length).toBeLessThan(5000)
+    recorderTesting.event('whiteout-candidate', ident, { gesture: 7, observedAt: [1, 2], rateHz: 4, samples: 6, skipped: 0, inconclusive: 0, gpuEvents: [{ kind: 'gone', ts: 1 }], agx: {} })
+    expect(recorderTesting.ring().events.at(-1)).toEqual({ kind: 'whiteout-candidate', ts: expect.any(Number), tab: t.id, ws: t.reg!.ws, commit: 1, gesture: 7 })
+    // other kinds keep their body
+    recorderTesting.event('unload', ident, { phase: 'start', reason: 'warn' })
+    expect(recorderTesting.ring().events.at(-1)).toMatchObject({ kind: 'unload', phase: 'start', reason: 'warn' })
+  })
+
+  it('the visible tab\'s answer serves only while that tab is still the visible one', async () => {
+    const w = world()
+    const a = canvas(w, 321)
+    recording = true
+    await recorderTesting.tick()
+    const ask = asks.filter((x) => x.tab === a.id && x.ask.kind === 'mem').at(-1)!.ask as { tick: number }
+    perfFn!(a.id, a.doc!.doc!, { kind: 'mem', tick: ask.tick, privateKB: 300 * 1024, heapUsedKB: 10 * 1024, heapTotalKB: 20 * 1024 })
+    expect(sampler.last()).not.toBe(null)
+    const s1 = (await recorderTesting.tick())!
+    expect(s1.visible).toMatchObject({ tab: a.id, privateMB: 300 })
+    // another tab shown: the answer about the first is no longer the visible tab's, though it is under 10 s old
+    const b = canvas(w, 322)
+    expect(tabsMod.activeTab()?.id).toBe(b.id)
+    const s2 = (await recorderTesting.tick())!
+    expect(s2.visible).toBe(null)
+  })
+
+  it('the window moved to a display of another rate: the canvases hear the rate, the profile is collected again', () => {
+    const w = world()
+    const t = canvas(w, 323)
+    recorder.tabsChanged()   // the window watched; its display read
+    const before = machineFx.displayChanged
+    asks.length = 0
+    win.bounds = { ...win.bounds, x: 2500 }
+    for (const f of win.handlers.get('moved') ?? []) f()
+    expect(asks).toEqual(expect.arrayContaining([{ tab: t.id, ask: { kind: 'display', hz: 60 } }]))
+    expect(machineFx.displayChanged).toBe(before + 1)
+    // moved within that display: nothing again
+    win.bounds = { ...win.bounds, x: 2600 }
+    for (const f of win.handlers.get('moved') ?? []) f()
+    expect(machineFx.displayChanged).toBe(before + 1)
+    win.bounds = { ...win.bounds, x: 0 }
+    recorder.tabsChanged()
+    expect(machineFx.displayChanged).toBe(before + 2)
+  })
+
+  it('every getAppMetrics() in main goes through the one counted wrapper', () => {
+    const src = join(import.meta.dirname, '..', '..', 'src')
+    const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith('.ts') ? [join(d, e.name)] : []))
+    const calls = walk(src).flatMap((f) => readFileSync(f, 'utf8').split('\n').map((l, i) => ({ f, i, l })))
+      .filter(({ l }) => /\.getAppMetrics\(/.test(l) && !/^\s*(\*|\/\/)/.test(l))
+    expect(calls.map(({ f, l }) => `${f.slice(src.length)}: ${l.trim()}`)).toEqual(['/main/recorder.ts: return safely(() => app.getAppMetrics()) ?? []'])
+    const n = recorderTesting.stats()
+    expect(n.metricsCalls).toBe(n.metrics.tick + n.metrics.mark + n.metrics.identity)
   })
 })

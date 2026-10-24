@@ -149,8 +149,12 @@ export interface SampleBody {
     cpuTime?: { s: number; ms: number }
   }[]
   gpu: { pid: number; born: number; cpu: Agg; gpuProcessRssMB: Agg } | null
-  /** canvas memory (A3.8 #41): Σ over unique canvas processes of footprintMB, else rssMB */
-  canvases: { memMB: Agg; byTab: Record<string, { memMB: Agg; cpu: Agg }> }
+  /**
+   * canvas memory (A3.8 #41): Σ over unique canvas processes of footprintMB, else rssMB. `byTab` is each tab's own
+   * processes; `shared` (added by the recorder stream, optional) marks a tab whose renderer another tab shared in the
+   * minute - that renderer is whole in both tabs' entries, so byTab is never added up (`memMB` counts it once)
+   */
+  canvases: { memMB: Agg; byTab: Record<string, { memMB: Agg; cpu: Agg; shared?: true }> }
   visible: Sample['visible']
   sys: Sample['sys']
   /** wall ms of this minute's sysctl / ioreg spawns: the recorder's own cost */
@@ -206,7 +210,10 @@ export interface AppBodies {
    * r4 #1), diffed after each compose. `state` is tabs.ts's DisplayState, `view` its TabViewState.
    */
   tab: TabIdent & { state: string; active: boolean; view: string; main: ProcId | null }
-  /** main's show to the preload's second animation-frame callback, on tab switches only (A3.8 #9) */
+  /**
+   * main's show to main's receipt of the preload's answer from its second animation-frame callback, on tab switches
+   * only (A3.8 #9): the answer's IPC back to main is in it
+   */
   shown: TabIdent & { ms: number }
   /** memory.ts: a change of level (A3.8 #45) */
   pressure: { level: PressureLevel | null; availablePct: number | null; was: PressureLevel | null }
