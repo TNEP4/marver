@@ -7,7 +7,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { commitLayout, docInset, onLayoutChange, placed, rectFor, seeThrough, setGround, setInsetOff, type LayoutEvent } from '../../src/main/layout.ts'
 import {
-  answer, bumpAll, bumpGen, epochOf, flush, forget, genOf, gpuGone, liftAt, noteGpu, observe, onCoverRecord, resetPresent, uncovered, type PresentKey,
+  answer, bumpAll, bumpGen, epochOf, flush, forget, genOf, gpuGone, liftAt, noteGpu, observe, onCoverRecord, quitting, resetPresent, showing, uncovered,
+  windowHidden, type PresentKey,
 } from '../../src/main/present.ts'
 import { GROUND, plan, type PlanTab } from '../../src/main/plan.ts'
 import { allTabs, blankTab, onCommit, onDocumentGone, onFail, onRegistry, onReport, type Tab } from '../../src/main/tabs.ts'
@@ -339,8 +340,8 @@ describe('present.ts: epochs (A3.8 #27, #28, r2 #2, r3 #1)', () => {
     expect(observe('t1', K({ doc: 't1' }), 1)).toBe(true)
     const before = epochOf('t1')!
     gpuGone()
-    expect(observe('t1', K({ doc: 't1', gen: genOf('t1') }), 2)).toBe(false)
     expect(observe('t2', K({ doc: 't2', gen: genOf('t2') }), 2)).toBe(false)
+    expect(observe('t1', K({ doc: 't1', gen: genOf('t1') }), 2)).toBe(false)
     expect(answer('t1', 't1', { epoch: before, w: 1280, h: 820 }, 3, { pid: 11, born: 200 })).toBe('stale')
     flush('t1', send(), 2)
     expect(answer('t1', 't1', { epoch: epochOf('t1')!, w: 1280, h: 820 }, 4, { pid: 11, born: 200 })).toBe('ok')   // the replacement is a fresh baseline
@@ -354,6 +355,26 @@ describe('present.ts: epochs (A3.8 #27, #28, r2 #2, r3 #1)', () => {
     expect(noteGpu({ pid: 10, born: 101 })).toBe(true)   // a reused pid is another process
     expect(observe('t1', K({ gen: genOf('t1') }), 2)).toBe(false)
     expect(noteGpu(null)).toBe(true)                      // missing is a loss too
+  })
+
+  it('A3.8 #27: only the active, shown view\'s reply counts - one from a tab switched away before it answered is refused, and lifts nothing when shown again', () => {
+    observe('t1', K(), 0)
+    flush('t1', send(), 2)
+    const e = epochOf('t1')!
+    observe('t2', K({ doc: 'd2' }), 10)                    // switched to t2 before t1 answered
+    expect(answer('t1', 'd1', { epoch: e, w: 1280, h: 820 }, 20, GPU)).toBe('refused')
+    showing(null, 30)                                     // Home: no view shown
+    expect(answer('t2', 'd2', { epoch: epochOf('t2')!, w: 1280, h: 820 }, 40, GPU)).toBe('refused')
+    // shown again with the gen window.ts bumps at a show after hidden: a fresh epoch; the old acceptance never existed
+    bumpGen('t1')
+    expect(observe('t1', K({ gen: genOf('t1') }), 50)).toBe(false)
+    expect(epochOf('t1')).not.toBe(e)
+    expect(answer('t1', 'd1', { epoch: e, w: 1280, h: 820 }, 60, GPU)).toBe('stale')
+    flush('t1', send(), 2)
+    expect(answer('t1', 'd1', { epoch: epochOf('t1')!, w: 1280, h: 820 }, 70, GPU)).toBe('ok')
+    // forgotten while shown: nothing is shown, so a reply is refused
+    forget('t1')
+    expect(answer('t1', 'd1', { epoch: 1, w: 1280, h: 820 }, 80, GPU)).toBe('refused')
   })
 
   it('r3 #1: a reply that arrives after a replacement main has not yet read is refused - the identity is read in the turn of acceptance', () => {
@@ -399,6 +420,43 @@ describe('present.ts: the cover record, one per sent epoch (A3.8 #27; app-perf.t
     expect(recs[2]!.r).toMatchObject({ answeredMs: 100 })
     forget('t1', 9000)                                      // already recorded: nothing more
     expect(recs).toHaveLength(3)
+  })
+
+  it('a tab switched away before it answered: superseded at the hide, with hiddenMs - never "never" for time it spent hidden', () => {
+    observe('t1', K(), 0)
+    flush('t1', send, 2, 0)                                 // sent at 0
+    observe('t2', K({ doc: 'd2' }), 50)                      // hidden at +50 ms
+    bumpGen('t1')
+    observe('t1', K({ gen: genOf('t1') }), 5050)             // shown again 5 s later: a fresh epoch
+    expect(recs).toEqual([{ tab: 't1', epoch: 1, r: { epoch: 1, cause: 'doc', outcome: 'superseded', sentMs: 0, hiddenMs: 50, frames: 2, uncoverDelayMs: 0 } }])
+    // shown a second and more with no answer before it was hidden: never, with the time it was hidden
+    flush('t1', send, 2, 5050)
+    showing(null, 6200)
+    expect(recs.at(-1)!.r).toMatchObject({ cause: 'show', outcome: 'never', sentMs: 0, hiddenMs: 1150 })
+    // a reply that comes back after it is refused, and records nothing more
+    expect(answer('t1', 'd1', { epoch: epochOf('t1')!, w: 1280, h: 820 }, 6300, GPU)).toBe('refused')
+    expect(recs).toHaveLength(2)
+  })
+
+  it('the window hidden (⇧⌘W): the open epoch\'s record ends at the hide; its reply after the window shows still lifts the cover, recording nothing more', () => {
+    observe('t1', K(), 0)
+    flush('t1', send, 2, 10)
+    windowHidden(40)
+    expect(recs.map((x) => x.r)).toEqual([{ epoch: 1, cause: 'doc', outcome: 'superseded', sentMs: 10, hiddenMs: 40, frames: 2, uncoverDelayMs: 0 }])
+    // shown again an hour later: the same key (A3.8 #27's residual), the same epoch; its answer is accepted
+    expect(observe('t1', K(), 3_600_000)).toBe(false)
+    expect(answer('t1', 'd1', { epoch: 1, w: 1280, h: 820 }, 3_600_020, GPU)).toBe('ok')
+    expect(observe('t1', K(), 3_600_020)).toBe(true)
+    uncovered('t1', 3_600_020)
+    expect(recs).toHaveLength(1)
+  })
+
+  it('quitting: every sent epoch still open is recorded at the quit; one recorded already, or never sent, is not', () => {
+    observe('t1', K(), 0); flush('t1', send, 2, 0)
+    observe('t2', K({ doc: 'd2' }), 100); flush('t2', send, 2, 100)   // t1 hidden at 100: recorded then
+    observe('t3', K({ doc: 'd3' }), 200)                              // t2 hidden at 200; t3 never sent
+    quitting(300)
+    expect(recs.map((x) => [x.tab, x.r.outcome, x.r.hiddenMs])).toEqual([['t1', 'superseded', 100], ['t2', 'superseded', 100]])
   })
 
   it('each gen event names itself: shown, hello, a live resize\'s end, the GPU process; HTML fullscreen and a new document too', () => {

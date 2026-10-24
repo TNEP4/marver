@@ -11,14 +11,19 @@
  *   changed or missing: Electron 45 sends no event for a clean exit).
  * - Main sends `mv:present { doc, epoch, w, h, frames }` once per epoch, after the turn's view changes, never during a
  *   live resize (the caller's rule); a send that fails is retried by the next compose, covered meanwhile.
- * - Main accepts a reply only for the tab's current epoch, from its admitted, trusted document (the bridge's check;
- *   `doc` here), at that size within 1 px, with the GPU identity read in the turn of acceptance unchanged. Anything
- *   else is journaled and changes nothing. The cover lifts at the first compose after acceptance plus
+ * - Main accepts a reply only for the current epoch of the active view - the tab compose observed last, shown now
+ *   (`showing`) - from its admitted, trusted document (the bridge's check; `doc` here), at that size within 1 px, with
+ *   the GPU identity read in the turn of acceptance unchanged. Anything else is journaled and changes nothing: a reply
+ *   from a tab switched away before it answered is `refused`, so no path that shows a view again can lift the cover on
+ *   an acceptance made while it was hidden. The cover lifts at the first compose after acceptance plus
  *   `T.uncoverDelayMs` (0 to start; "the wait grows" is `presentFrames`, then that delay - main's numbers).
  * - Every epoch that was sent ends in one `cover` record (app-perf.ts, the recorder's): what made it (`cause`: a new
  *   document, a size, HTML fullscreen, or the gen event - shown, hello, a live resize's end, the GPU process lost),
- *   how it ended (`uncovered`, `mismatch`, `superseded` by a newer key, or `never` - superseded or forgotten a second
- *   or more after it was sent with no answer) and its times from its start: sent, answered, uncovered. They are what
+ *   how it ended (`uncovered`, `mismatch`, `superseded` by a newer key or by its view no longer shown, or `never` -
+ *   superseded or forgotten after it was shown a second or more since its send with no answer) and its times from its
+ *   start: sent, answered, uncovered, and `hiddenMs` when it ended because its view stopped showing (another tab, an
+ *   app page or a tab page over it, its document no longer presentable, the window hidden, the app quitting). A hidden
+ *   view's animation frames stop, so its silence is never counted as the page's: these records are what
  *   `presentFrames` and `uncoverDelayMs` are tuned from (A3.8 #27). An epoch never sent records nothing.
  *
  * FROZEN (A3.8 #53): `PresentKey`, `observe`, `flush`, `answer`, `forget`, `bumpGen`, `noteGpu`, `gpuGone`.
@@ -52,6 +57,8 @@ const genCause = new Map<string, GenCause>()
 let epochs = 0
 /** the GPU process's identity as last read; undefined until the first read (a baseline, not a loss) */
 let gpu: GpuIdentity | null | undefined
+/** the tab compose observed last: the active view, shown, with a presentable document - the only one whose reply counts */
+let current: string | null = null
 
 export type PresentLog = (d: { tab: string; op: 'ask' | 'answer' | 'stale' | 'mismatch' | 'refused' | 'lost'; epoch: number; doc?: string; w?: number; h?: number; gen?: number }) => void
 let log: PresentLog | null = null
@@ -63,19 +70,52 @@ let record: RecordPort | null = null
 /** Where each sent epoch's `cover` record goes (window.ts: recorder.event). */
 export function onCoverRecord(fn: RecordPort | null): void { record = fn }
 
-/** An epoch ends: its record, once, if it was ever sent. */
-function end(tab: string, s: Slot, now: number, outcome: CoverRecord['outcome'], uncoveredAt?: number): void {
+/**
+ * An epoch ends: its record, once, if it was ever sent. `hidden`: it ended because its view stopped showing, at `now`
+ * - `never` then means it showed a second or more after its send with no answer, never that its tab was switched away.
+ */
+function end(tab: string, s: Slot, now: number, outcome: CoverRecord['outcome'], uncoveredAt?: number, hidden = false): void {
   if (s.recorded || s.sentAt === undefined) return
   s.recorded = true
   const out = outcome === 'superseded' && s.answeredAt === undefined && now - s.sentAt >= 1000 ? 'never' : outcome
+  const ms = (t: number) => Math.max(0, Math.round(t - s.at))
   record?.(tab, s.epoch, {
     epoch: s.epoch, cause: s.cause, outcome: out,
-    sentMs: Math.max(0, Math.round(s.sentAt - s.at)),
-    ...(s.answeredAt !== undefined ? { answeredMs: Math.max(0, Math.round(s.answeredAt - s.at)) } : {}),
-    ...(uncoveredAt !== undefined ? { uncoveredMs: Math.max(0, Math.round(uncoveredAt - s.at)) } : {}),
+    sentMs: ms(s.sentAt),
+    ...(s.answeredAt !== undefined ? { answeredMs: ms(s.answeredAt) } : {}),
+    ...(uncoveredAt !== undefined ? { uncoveredMs: ms(uncoveredAt) } : {}),
+    ...(hidden ? { hiddenMs: ms(now) } : {}),
     frames: s.frames, uncoverDelayMs: Math.max(0, T.uncoverDelayMs),
   })
 }
+
+/** The tab's sent epoch ends now because its view stopped showing; the slot stays (a reply to it while shown again still counts). */
+function left(tab: string, now: number): void {
+  const s = slots.get(tab)
+  if (s) end(tab, s, now, 'superseded', undefined, true)
+}
+
+/**
+ * compose, every turn, before `observe`: the tab whose view it observes this turn (the active canvas, shown, with a
+ * presentable document), or null. A tab that stops being it ends its sent epoch's record now, as hidden (A3.8 #27:
+ * the record must not call a switch-away the page's failure), and its replies are refused from now on. Its slot stays:
+ * shown again, its gen has moved (window.ts bumps it), so the next observe makes a fresh epoch.
+ */
+export function showing(tab: string | null, now: number): void {
+  if (current !== null && current !== tab) left(current, now)
+  current = tab
+}
+
+/**
+ * The window hidden or minimised (⇧⌘W, the red button, the Dock): the shown view's sent epoch ends its record now, as
+ * hidden - its page's frames stop until the window shows again, so the times after would be the window's, not the
+ * page's. It stays the shown view: not in the key (A3.8 #27's residual), its reply after the window shows still lifts
+ * the cover.
+ */
+export function windowHidden(now: number): void { if (current !== null) left(current, now) }
+
+/** The app quitting (will-quit, before the recorder's last write): every sent epoch still open ends its record now. */
+export function quitting(now: number): void { for (const tab of slots.keys()) left(tab, now) }
 
 const keyOf = (k: PresentKey) => `${k.doc}|${k.w}x${k.h}|${k.fs ? 'fs' : '-'}|${k.gen}`
 
@@ -85,8 +125,9 @@ export const genOf = (tab: string): number => gens.get(tab) ?? 0
 /** The tab's current epoch, or null when it has none. */
 export const epochOf = (tab: string): number | null => slots.get(tab)?.epoch ?? null
 
-/** compose, before plan(): the active, eligible view's key now; true when its current epoch is accepted (and its delay passed). */
+/** compose, before plan(): the active, eligible view's key now; true when its current epoch is accepted (and its delay passed). The tab is the shown one from now (`showing`). */
 export function observe(tab: string, k: PresentKey, now: number): boolean {
+  showing(tab, now)
   const key = keyOf(k)
   let s = slots.get(tab)
   if (!s || s.key !== key) {
@@ -123,7 +164,8 @@ export function answer(tab: string, doc: string, r: Presented, now: number, gpuN
   // the GPU process replaced since the request: what the page drew may never reach the screen (A3.8 r3 #1)
   if (noteGpu(gpuNow)) { log?.({ tab, op: 'lost', epoch: r.epoch, doc }); return 'lost' }
   const s = slots.get(tab)
-  if (!s) { log?.({ tab, op: 'refused', epoch: r.epoch, doc }); return 'refused' }
+  // only the active, shown view's reply counts (A3.8 #27): one from a tab switched away before it answered is refused
+  if (!s || tab !== current) { log?.({ tab, op: 'refused', epoch: r.epoch, doc }); return 'refused' }
   if (doc !== s.doc || r.epoch !== s.epoch || !s.sent) { log?.({ tab, op: 'stale', epoch: r.epoch, doc, w: r.w, h: r.h }); return 'stale' }
   if (Math.abs(r.w - s.w) > 1 || Math.abs(r.h - s.h) > 1) {
     log?.({ tab, op: 'mismatch', epoch: r.epoch, doc, w: r.w, h: r.h })
@@ -147,6 +189,7 @@ export function forget(tab: string, now: number = Date.now()): void {
   const s = slots.get(tab)
   if (s) end(tab, s, now, 'superseded')
   slots.delete(tab); gens.delete(tab); genCause.delete(tab)
+  if (current === tab) current = null
 }
 
 /** One of the four events for one view: what was presented no longer counts. `cause` names it for the record. */
@@ -177,4 +220,4 @@ export function gpuGone(): void {
 }
 
 /** Test seam: nothing asked, nothing read. */
-export function resetPresent(): void { slots.clear(); gens.clear(); genCause.clear(); epochs = 0; gpu = undefined }
+export function resetPresent(): void { slots.clear(); gens.clear(); genCause.clear(); epochs = 0; gpu = undefined; current = null }

@@ -45,7 +45,7 @@ import { invalidateMenu } from './menu.ts'
 import { note, noteTopic, provide, testMode } from './testing/index.ts'
 import { T } from './timings.ts'
 import { groundOn, onLayoutChange, placed, rectFor, seeThrough, setGround, setInsetOff } from './layout.ts'
-import { bumpAll, bumpGen, epochOf, flush as presentFlush, genOf, gpuGone, liftAt, noteGpu, observe, onCoverRecord, onPresentLog, uncovered } from './present.ts'
+import { bumpAll, bumpGen, epochOf, flush as presentFlush, genOf, gpuGone, liftAt, noteGpu, observe, onCoverRecord, onPresentLog, quitting as presentQuitting, showing, uncovered, windowHidden } from './present.ts'
 import { identity, recorder } from './recorder.ts'
 import type { TabIdent } from '../../../src/shared/app-perf.ts'
 import { makeCover, type Cover } from './cover.ts'
@@ -391,10 +391,12 @@ function composeOnce(o: { focus?: 'shown' }): void {
   // fullscreen, or a hello, is a fresh epoch); only a see-through one asks and may lift the cover
   let presented = false
   let eligible = false
+  let observed = false
   if (a?.kind === 'local' && content.has(a.id) && !pageShows(a)) {
     if (!applied.get(`${a.id}:view`)?.vis) bumpGen(a.id)
     const doc = a.doc?.trusted && a.doc.lifted ? a.doc.doc : undefined
     if (doc) {
+      observed = true
       const r = rectFor(a, w, h)
       presented = observe(a.id, { doc, w: r.width, h: r.height, fs: a.geo.htmlFullscreen, gen: genOf(a.id) }, now)
       const e = epochOf(a.id)
@@ -405,6 +407,10 @@ function composeOnce(o: { focus?: 'shown' }): void {
       if (eligible && !presented && at !== null && at > now) { clearTimeout(liftTimer); liftTimer = setTimeout(() => compose(), at - now + 1) }
     }
   }
+  // no view observed this turn (Home, Settings, a tab page, a document not presentable): the one shown before ends
+  // its sent epoch's record as hidden, and its replies are refused from now (A3.8 #27)
+  if (!observed) showing(null, now)
+  for (const id of epochIdent.keys()) if (epochOf(id) === null) epochIdent.delete(id)   // its view forgotten
   const p: Plan = plan({ tabs: allTabs().map((t) => planTab(t, appDark, t === a && eligible && presented)), active: a?.id ?? 'home', w, h, appDark, resizing })
   lastPlan = p
   const changes: unknown[] = []
@@ -636,6 +642,11 @@ export function openWindow(d?: WindowDeps): BaseWindow {
   win.on('focus', () => feedWindow())
   win.on('blur', () => feedWindow())
   for (const ev of ['show', 'hide', 'minimize', 'restore'] as const) win.on(ev as 'show', () => { onVisibility(); feedWindow() })
+  // the window hidden: the shown view's open epoch ends its record now, its page drawing nothing until it shows (A3.8 #27)
+  win.on('hide', () => windowHidden(Date.now()))
+  win.on('minimize', () => windowHidden(Date.now()))
+  // quitting: every open epoch's record, before the recorder's last write (main.ts's will-quit flushSync)
+  app.prependListener('will-quit', () => presentQuitting(Date.now()))
   win.on('close', (e) => {
     // ⇧⌘W and the red button hide the window: the views stay as they are (A2.2)
     if (deps?.quitting()) return

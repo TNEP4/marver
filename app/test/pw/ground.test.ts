@@ -297,6 +297,13 @@ describe('the one ground through navigation, fullscreen, switching and the GPU p
       if (x.changes.some((ch) => (ch.key === `${a}:view` || ch.key === `${b}:view`) && ch.op === 'visible' && ch.visible === true)) expect(x.cover).toBe(true)
       if (x.changes.some((ch) => ch.key === 'cover' && ch.visible === false)) expect(ok.has(x.turn)).toBe(true)
     }
+    // the records (A3.8 #27): an epoch whose tab was switched away before it answered ended at the hide, superseded -
+    // never "never", which is a page that showed a second with no answer; and no reply from a hidden tab was taken
+    const recs = (await lines('cover-record', since)).map((l) => l.data as { tab: string; outcome: string; sentMs: number; hiddenMs?: number })
+    expect(recs.filter((r) => r.hiddenMs !== undefined).length).toBeGreaterThan(5)
+    for (const r of recs) if (r.outcome === 'never') expect(r.hiddenMs! - r.sentMs).toBeGreaterThanOrEqual(1000)
+    const refused = (await presents(since)).filter((p) => p.op === 'refused')
+    for (const p of refused) expect(ok.has(p.turn)).toBe(false)
   })
 
   it('the GPU process lost, or replaced with no event: every view covered until a newer epoch is answered', async () => {
