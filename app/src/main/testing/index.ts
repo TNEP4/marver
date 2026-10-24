@@ -20,6 +20,9 @@ export const SENTINEL = 'mv-test-hook'
 export type Hook = (args: unknown) => unknown
 
 const hooks = new Map<string, Hook>()
+/** where each hook was provided (its caller's stack line), and the names provided more than once with every place */
+const where = new Map<string, string>()
+const twice = new Map<string, string[]>()
 const journal: { topic: string; turn: number; t: string; data: unknown }[] = []
 let turn = 0
 let turnQueued = false
@@ -29,14 +32,29 @@ export function testMode(): boolean {
   return __MV_TEST__ && !__MARVER_RELEASE__ && process.env.MARVER_APP_TEST === '1'
 }
 
+/** The caller of provide(), as its stack names it: the function and file that provided a hook. */
+function caller(): string {
+  const lines = (new Error().stack ?? '').split('\n').map((l) => l.trim()).filter((l) => l.startsWith('at '))
+  return lines[2]?.slice(3) ?? 'unknown'
+}
+
 /**
- * Register a hook (dev builds in test mode only). A name is registered once: a second registration throws, so two
- * streams that both provide a name (memory's and the recorder's, say) find out at the first launch of a case rather
- * than one quietly replacing the other.
+ * Register a hook (dev builds in test mode only). A name is provided once. A second registration never replaces the
+ * first: the name is kept as provided twice, and calling it then fails naming every place that provided it - so two
+ * streams that both provide a name (memory's and the recorder's, say) find out at the first case that calls it,
+ * which says which; every other hook and the launch itself work on (a throw in main at launch would end every case
+ * of the build with Electron's error box). The `hooks` hook lists such names too, as `name (provided twice)`.
  */
 export function provide(name: string, fn: Hook): void {
   if (!(__MV_TEST__ && testMode())) return
-  if (hooks.has(name)) throw new Error(`${SENTINEL}: the hook ${name} is provided twice`)
+  const at = caller()
+  const first = where.get(name)
+  if (first !== undefined) {
+    twice.set(name, [...(twice.get(name) ?? [first]), at])
+    process.stderr.write(`${SENTINEL}: the hook ${name} is provided twice: ${twice.get(name)!.join('; ')}\n`)
+    return
+  }
+  where.set(name, at)
   hooks.set(name, fn)
 }
 
@@ -65,6 +83,8 @@ export function note(topic: string, data: unknown): void {
 }
 
 export async function callHook(name: string, args: unknown): Promise<unknown> {
+  const both = twice.get(name)
+  if (both) throw new Error(`${SENTINEL}: the hook ${name} is provided twice, so neither is called: ${both.join('; ')}`)
   const h = hooks.get(name)
   if (!h) throw new Error(`${SENTINEL}: no hook named ${name}`)
   return await h(args)
@@ -91,7 +111,7 @@ export function startTesting(): void {
     const since = typeof (a as { since?: unknown })?.since === 'number' ? (a as { since: number }).since : 0
     return journal.slice(since)
   })
-  provide('hooks', () => [...hooks.keys()].sort())
+  provide('hooks', () => [...hooks.keys()].map((n) => (twice.has(n) ? `${n} (provided twice)` : n)).sort())
   provide('exit', (a) => {
     const code = typeof (a as { code?: unknown })?.code === 'number' ? (a as { code: number }).code : 0
     setImmediate(() => app.exit(code))

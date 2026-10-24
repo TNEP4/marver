@@ -19,7 +19,10 @@
  *
  * Test builds (`MARVER_APP_TEST=1`): `memory:tick` (one tick now on a sample the case describes - a pressure level,
  * canvas memory, processes - or, with `real`, the sampler's own `requestSample()`), `memory:state`,
- * `memory:totalmem { mb }` (null restores `os.totalmem()`).
+ * `memory:totalmem { mb }` (null restores `os.totalmem()`). startMemory provides them, not testing/recorder.ts's
+ * provideRecorderHooks, whose frozen comment names them; `pressure:inject` (named there too) is not built on this
+ * stream - it sets pressure.ts's reading, which the recorder stream builds. A hook provided twice is said by the
+ * first case that calls it, naming both places (testing/index.ts `provide`).
  *
  * FROZEN (A3.8 #53): `Candidate`, `DecideInput`, `Decision`, `decide`, `canvasMemory`, `MemoryDeps`, `startMemory`.
  */
