@@ -13,7 +13,8 @@
  * document's hello sent, and page.jsonl has that page), `ws+time` (no page: a 0.27.0 canvas, or none said hello yet -
  * the page of that workspace whose records were the latest before it, within 2 minutes) or `none`. What is
  * machine-wide (the GPU process, a utility process, an app page, the minute before a crash) is joined by time alone
- * and is labelled so. Records of one launch are deduplicated by `flavour/app/seq`.
+ * and is labelled so. Records of one launch are deduplicated by `flavour/app/seq`. A flash is dated by its mark
+ * (`now.ts`, `markTime`), not by its line's `ts`, which is when it was written, about mark + 2 s (A3.8 #13).
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
@@ -65,8 +66,8 @@ export interface PageMoment {
 
 const WS_TIME_MS = 120_000
 
-/** The page records of the moment's page: by its id, else (no page) the workspace's page latest before it. */
-function pageOf(rec: Rec, page: Rec[]): { join: Join; records: Rec[]; page?: string } {
+/** The page records of the moment's page: by its id, else (no page) the workspace's page latest before `ts`. */
+function pageOf(rec: Rec, page: Rec[], ts: number): { join: Join; records: Rec[]; page?: string } {
   if (typeof rec.page === 'string') {
     const records = page.filter((r) => r.page === rec.page)
     if (records.length) return { join: 'page', records, page: rec.page }
@@ -74,7 +75,7 @@ function pageOf(rec: Rec, page: Rec[]): { join: Join; records: Rec[]; page?: str
   if (typeof rec.ws === 'string') {
     let best: { page: string; ts: number } | null = null
     for (const r of page) {
-      if (r.ws !== rec.ws || typeof r.ts !== 'number' || r.ts > rec.ts || rec.ts - r.ts > WS_TIME_MS) continue
+      if (r.ws !== rec.ws || typeof r.ts !== 'number' || r.ts > ts || ts - r.ts > WS_TIME_MS) continue
       if (!best || r.ts > best.ts) best = { page: r.page, ts: r.ts }
     }
     if (best) return { join: 'ws+time', records: page.filter((r) => r.page === best!.page), page: best.page }
@@ -82,9 +83,19 @@ function pageOf(rec: Rec, page: Rec[]): { join: Join; records: Rec[]; page?: str
   return { join: 'none', records: [] }
 }
 
+/**
+ * When a flash was marked: its `now` sample's `ts`, taken in the mark's turn (A3.8 #13 step 2). The line's own `ts`
+ * is when it was written - after the +1 s GPU window, the AGX read and the picture, so about mark + 2 s - and is
+ * used only for a record with no `now`.
+ */
+export function markTime(x: Rec): number {
+  const t = x.now?.ts
+  return typeof t === 'number' && Number.isFinite(t) && t > 0 ? t : x.ts
+}
+
 /** The page half at `ts`: the load whose commit came last before it (it owned the geometry), settled or not then; the last gesture that ended before it. */
 export function momentOf(rec: Rec, page: Rec[], ts = rec.ts as number): PageMoment {
-  const { join, records, page: id } = pageOf(rec, page)
+  const { join, records, page: id } = pageOf(rec, page, ts)
   if (join === 'none') return { join }
   const out: PageMoment = { join, ...(id ? { page: id } : {}) }
   const commits = records.filter((r) => r.kind === 'commit' && r.ts <= ts).sort((a, b) => a.ts - b.ts)
@@ -193,14 +204,16 @@ export function flashesSummary(app: AppRecord[], page: Record<string, any>[], wo
     if (r.kind === 'flash') {
       const mine = ofWs(x, workspaces)
       if (!mine) { others++; if (!o.all) continue }
-      const m = momentOf(x, page)
+      // every figure is measured from the mark, never from when its line was written (about mark + 2 s)
+      const at = markTime(x)
+      const m = momentOf(x, page, at)
       // a gesture joins a mark when it ended within 2 s of it, before or after (the page writes the record at its end)
-      const pg = m.page ? page.filter((p) => p.page === m.page && p.kind === 'gesture' && Math.abs(p.ts - r.ts) <= 2000).sort((a, b) => Math.abs(a.ts - r.ts) - Math.abs(b.ts - r.ts))[0] : undefined
-      const gesture = pg ? { type: pg.type, ...(typeof pg.ms === 'number' ? { ms: pg.ms } : {}), ...(typeof pg.p95 === 'number' ? { p95: pg.p95 } : {}), endedMsBefore: r.ts - pg.ts } : undefined
+      const pg = m.page ? page.filter((p) => p.page === m.page && p.kind === 'gesture' && Math.abs(p.ts - at) <= 2000).sort((a, b) => Math.abs(a.ts - at) - Math.abs(b.ts - at))[0] : undefined
+      const gesture = pg ? { type: pg.type, ...(typeof pg.ms === 'number' ? { ms: pg.ms } : {}), ...(typeof pg.p95 === 'number' ? { p95: pg.p95 } : {}), endedMsBefore: at - pg.ts } : undefined
       const { gesture: _g, ...rest } = m
       void _g
       marks.push({
-        at: r.ts, id: x.id, via: x.via, flavour: r.flavour, ...(x.tab ? { tab: x.tab } : {}), ...(x.ws ? { ws: x.ws } : {}),
+        at, id: x.id, via: x.via, flavour: r.flavour, ...(x.tab ? { tab: x.tab } : {}), ...(x.ws ? { ws: x.ws } : {}),
         recorder: !!x.recorder,
         gpuEvents: Array.isArray(x.gpuEvents) ? x.gpuEvents.map((e: Rec) => ({ kind: e.kind, ts: e.ts })) : [],
         pressure: x.pressure?.level ?? null, thermal: x.thermal ?? 'unknown',

@@ -59,8 +59,9 @@ function appFixture(): string[] {
     line('child-gone', 11_000, { type: 'GPU', reason: 'crashed', exitCode: 11, ours: false, machineWide: false }),
     line('gpu-restart', 5_000, { pid: 10, born: 5, was: { pid: 9, born: 1 } }),
     line('gone', 4_000, { role: 'strip', pid: 50, born: 1, reason: 'crashed', exitCode: 11, ours: false, pressure: 1 }),
-    // a mark on P1, 0.4 s after a zoom ended; one on Home; one on another repo
-    line('flash', 10_000, { id: 'm1', via: 'key', tab: 't1', ws: WS, commit: 3, page: P1, recorder: true, ring: null, now: { gpu: { pid: 9, born: 1, cpu: 0.1, gpuProcessRssMB: 160 } }, gpuEvents: [{ kind: 'child-gone', ts: NOW - 10_600 }], thermal: 'fair', pressure: { level: 2, availablePct: 20, at: 0 }, featureStatus: {}, agx: { gpuSystemMemoryMB: 1154.5, utilPct: 13, machineWide: true }, picture: 'flashes/m1.png' }),
+    // a mark on P1, 0.4 s after a zoom ended; one on Home; one on another repo. A flash's line is written once its
+    // +1 s GPU window, AGX read and picture have ended (A3.8 #13): its envelope ts is mark + 1.8 s, its `now` the mark
+    line('flash', 8_200, { id: 'm1', via: 'key', tab: 't1', ws: WS, commit: 3, page: P1, recorder: true, ring: null, now: { ts: NOW - 10_000, gpu: { pid: 9, born: 1, cpu: 0.1, gpuProcessRssMB: 160 } }, gpuEvents: [{ kind: 'child-gone', ts: NOW - 10_600 }], thermal: 'fair', pressure: { level: 2, availablePct: 20, at: 0 }, featureStatus: {}, agx: { gpuSystemMemoryMB: 1154.5, utilPct: 13, machineWide: true }, picture: 'flashes/m1.png' }),
     line('flash', 3_000, { id: 'm2', via: 'menu', recorder: false, ring: null, now: {}, gpuEvents: [], thermal: 'nominal', pressure: null, featureStatus: {}, agx: {}, picture: null, pictureWhy: 'window hidden' }, { app: DEV, flavour: 'dev' }),
     line('flash', 2_000, { id: 'm3', via: 'key', tab: 't3', ws: OTHER, page: 'p00000000009', recorder: true, ring: null, now: {}, gpuEvents: [], thermal: 'nominal', pressure: null, featureStatus: {}, agx: {}, picture: null, pictureWhy: 'timeout' }),
     line('whiteout-candidate', 9_500, { tab: 't1', ws: WS, commit: 3, page: P1, gesture: 7, observedAt: [NOW - 9_500, NOW - 9_250], rateHz: 4, samples: 6, skipped: 0, inconclusive: 1, gpuEvents: [], agx: {} }),
@@ -144,7 +145,8 @@ describe('--flashes (A3.8 #23)', () => {
     const ws = repoWorkspaces(root, page())
     const s = flashesSummary(app, page(), ws, { home })
     expect(s.marks).toHaveLength(1)
-    expect(s.marks[0]).toMatchObject({ id: 'm1', join: 'page', board: 'tidewell', gesture: { type: 'zoom', endedMsBefore: 400, p95: 12.1 }, pressure: 2, thermal: 'fair', gpuProcessRssMB: 160, picture: join(home, 'perf', 'flashes', 'm1.png') })
+    // dated by the mark, not by its line: the zoom that ended 0.4 s before the mark joins (2.2 s before the line)
+    expect(s.marks[0]).toMatchObject({ id: 'm1', at: NOW - 10_000, join: 'page', board: 'tidewell', gesture: { type: 'zoom', endedMsBefore: 400, p95: 12.1 }, pressure: 2, thermal: 'fair', gpuProcessRssMB: 160, picture: join(home, 'perf', 'flashes', 'm1.png') })
     expect(s.marks[0]!.gpuEvents).toEqual([{ kind: 'child-gone', ts: NOW - 10_600 }])
     expect(s.others).toBe(2)
     expect(s.candidates).toEqual([expect.objectContaining({ gestureSeq: 7, rateHz: 4, observedAt: [NOW - 9_500, NOW - 9_250], join: 'page', board: 'tidewell' })])
@@ -162,6 +164,8 @@ describe('--flashes (A3.8 #23)', () => {
     const text = out.join('\n')
     expect(text).toMatch(/Tidewell · its load settled in 3\.0 s · last gesture zoom 0\.40 s before/)
     expect(text).toContain(join(home, 'perf', 'flashes', 'm1.png'))
+    // the GPU process's end 0.6 s before the mark, signed from the mark
+    expect(text).toMatch(/GPU process events within 1 s: child-gone -0\.60 s/)
     expect(text).toMatch(/2 more marks on other canvases or on Home \(--all shows them\)/)
     expect(text).toMatch(/white-out candidates \(automatic, not verified\): 1/)
   })
@@ -207,6 +211,14 @@ describe('the page half beside the app\'s', () => {
     out.length = 0
     perfCommand(root, { loads: true })
     expect(out.join('\n')).toMatch(/1 headless run load not shown: marver perf --runs/)
+    // plain perf hides them too, and says so (its --json counts them)
+    out.length = 0
+    perfCommand(root, {})
+    expect(out.join('\n')).toMatch(/board loads: 2 .*\n\(1 headless run load not shown: marver perf --runs\)/)
+    out.length = 0
+    perfCommand(root, { json: true })
+    const plain = JSON.parse(out.join('\n'))
+    expect([plain.runLoads, plain.loads.length]).toEqual([1, 2])
   })
 
   it('a moment with no page and no workspace record near it joins nothing, and says so', () => {

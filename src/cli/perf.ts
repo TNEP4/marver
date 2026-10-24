@@ -29,7 +29,8 @@ export function perfCommand(root: string, opts: PerfOptions): void {
   const minutes = Number(opts.minutes) > 0 ? Number(opts.minutes) : 60
   const since = Date.now() - minutes * 60_000
   const log = readReloads(root, since)
-  const loads = loadsSummary(withoutRuns(readPage(root, since)).records)
+  const { records: pageRecords, runLoads } = withoutRuns(readPage(root, since))
+  const loads = loadsSummary(pageRecords)
   const files = new Map<string, { edits: number; reload: Set<string>; inPlace: Set<string> }>()
   for (const e of log) if (e.kind === 'update') {
     const f = files.get(e.file ?? '(no file)') ?? { edits: 0, reload: new Set(), inPlace: new Set() }
@@ -46,7 +47,7 @@ export function perfCommand(root: string, opts: PerfOptions): void {
   const reloaded = by('job')
   if (opts.json) {
     console.log(JSON.stringify({ minutes, files: Object.fromEntries([...files].map(([k, v]) => [k, { edits: v.edits, reached: [...v.reload], inPlace: [...v.inPlace] }])), documents: { afterEdit: reloaded, byHand: by('manual'), retried: by('retry'), self: by('self'), first: by('first') }, reloads, boots, slow,
-      loads: loads.map((l) => ({ at: l.at, board: l.board, cause: l.cause, state: l.state, settledMs: l.settledMs, cut: l.cut, ...(l.mountedAfterCut ? { mountedAfterCut: true } : {}), moves: l.moves.count, late: l.moves.late.count, errors: l.errors.length, lateErrors: l.errors.filter((e) => e.late).length })) }, null, 2))
+      loads: loads.map((l) => ({ at: l.at, board: l.board, cause: l.cause, state: l.state, settledMs: l.settledMs, cut: l.cut, ...(l.mountedAfterCut ? { mountedAfterCut: true } : {}), moves: l.moves.count, late: l.moves.late.count, errors: l.errors.length, lateErrors: l.errors.filter((e) => e.late).length })), runLoads }, null, 2))
     return
   }
   const t = (ts: number) => new Date(ts).toLocaleTimeString()
@@ -63,8 +64,9 @@ export function perfCommand(root: string, opts: PerfOptions): void {
     console.log('\nslowest to settle')
     for (const s of slow) console.log(`  ${s.frame}  ${s.ms} ms`)
   }
+  if (loads.length || runLoads) console.log(`\nboard loads: ${loads.length}  (--loads: each in full)`)
+  if (runLoads) console.log(`(${runLoads} headless run load${runLoads === 1 ? '' : 's'} not shown: marver perf --runs)`)
   if (loads.length) {
-    console.log(`\nboard loads: ${loads.length}  (--loads: each in full)`)
     const name = namer(root)
     const w = Math.max(...loads.map((l) => name(l.board).length))
     for (const l of loads) {
@@ -427,7 +429,7 @@ function flashesPerf(root: string, opts: PerfOptions) {
     console.log(`\n  ${when(m.at)}  ${m.join === 'none' ? (m.tab ? 'a canvas of another repo' : 'Home or Settings') : momentWords(m, name)}`)
     const agx = m.agx as Record<string, unknown>
     console.log(`    pressure ${level(m.pressure)} · thermal ${m.thermal} · the GPU process ${m.gpuProcessRssMB !== null ? `${Math.round(m.gpuProcessRssMB)} MB` : 'unknown'} · GPU in use ${agx.gpuSystemMemoryMB ?? 'unknown'} MB, ${agx.utilPct ?? 'unknown'} % (machine-wide)`)
-    if (m.gpuEvents.length) console.log(`    GPU process events within 1 s: ${m.gpuEvents.map((e) => `${e.kind} ${e.ts >= m.at ? '+' : ''}${secs2(e.ts - m.at)}`).join(', ')}`)
+    if (m.gpuEvents.length) console.log(`    GPU process events within 1 s: ${m.gpuEvents.map((e) => `${e.kind} ${e.ts >= m.at ? '+' : '-'}${secs2(Math.abs(e.ts - m.at))}`).join(', ')}`)
     if (!m.recorder) console.log('    the recorder was off: no samples before it')
     console.log(`    ${m.picture ? `picture (the app's views, not the screen): ${m.picture}` : `no picture: ${m.pictureWhy ?? 'unknown'}`}`)
   }

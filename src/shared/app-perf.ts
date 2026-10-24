@@ -236,7 +236,7 @@ export interface AppBodies {
     recorder: boolean
     /** the ring, only with the recorder on: the last 12 samples and 60 s of events */
     ring: { samples: Sample[]; events: RingEvent[] } | null
-    /** the state at the mark: one getAppMetrics() */
+    /** the state at the mark: one getAppMetrics(), in the mark's turn - its `ts` is the mark's time, which the CLI dates the mark by (the line's own `ts` is when it was written, about mark + 2 s) */
     now: Sample
     /** GPU process events from 1 s before the mark to 1 s after it */
     gpuEvents: RingEvent[]

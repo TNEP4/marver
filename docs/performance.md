@@ -311,7 +311,8 @@ footprint from its page, the memory pressure level), keeps the last minute in me
 minute; and it records renderer and GPU process ends, hangs, GPU changes, power and thermal events, each tab's state
 and document, and the time a tab switch takes to its second frame (`shown`). A line about a tab carries its `tab`,
 `ws`, `commit` and `page` - the page id the shell's hello sent, which is the `page` of its records in
-`page.jsonl`. With Settings' recorder off, nothing of this is written (a flash you mark still is).
+`page.jsonl`. With Settings' recorder off, nothing of this is written (a flash you mark still is, and so is an
+error main did not catch: a `main-error` line).
 `machine/<hash>.json` holds one profile per distinct machine state (the chip, the displays and their rates, the
 GPU's renderer, power): a display change or a GPU fallback makes a new one, and old lines keep theirs. The app keeps
 14 days of it (`keepPerfDays`), at most 5 MB a file, 50 flash pictures and 10 crash reports.
@@ -324,7 +325,8 @@ GPU's renderer, power): a display change or a GPU fallback makes a new one, and 
   replaced silently (`gpu-restart`); and how many crash reports `crashpad/completed` holds.
 - `--flashes`: each flash you marked with `⌃⌥F` on this repo's canvases, with its board, the gesture that ended
   within 2 s of it, the GPU process's events within a second, pressure, thermal state, the GPU figures (machine-wide)
-  and the picture's path. The picture is the app's views as the app stacks them, not the screen: it holds no traffic
+  and the picture's path. A mark is dated by the moment you pressed it (the state the app took then), not by its
+  line, which is written a second or two later, once the picture and the GPU figures are in. The picture is the app's views as the app stacks them, not the screen: it holds no traffic
   lights and may miss a flash that happens in the compositor. Marks on Home or other canvases are counted (`--all`
   shows them). White-out candidates, found automatically during gestures, are listed apart: automatic, not verified.
 - `--machine`: the profiles, grouped by host (the app and a headless run of one Mac share its `hostHash`), which is
