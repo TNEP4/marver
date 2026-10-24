@@ -653,7 +653,8 @@ describe('navigation outcomes from a full, uncovered page (A2.10\'s (A3) cases, 
     } finally { await w.run.call('trust:hold-proved', { on: false }) }
     // the commit under the instance that left: unattributed (nav.ts), so below; the tab reloads it at once (A2.3)
     await waitFor('the unattributed commit', async () => (await navOf(id, since)).includes('adapter:commit'))
-    const commit = (await lines('nav', since)).find((l) => l.data.event === 'adapter:commit' && l.data.wc === (0 as unknown) || (l.data.event === 'adapter:commit'))!
+    const wc = (await w.tab(id)).wcId
+    const commit = (await lines('nav', since)).find((l) => l.data.event === 'adapter:commit' && l.data.wc === wc)!
     expect(commit.data.attributed).toBe(false)
     const lay = (await layoutOf(id, since)).find((l) => l.event === 'commit')!
     expect(lay.to.layout).toBe('below')

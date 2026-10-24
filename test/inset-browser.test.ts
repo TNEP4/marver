@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { inflateSync } from 'node:zlib'
 import { Browser } from './browser.ts'
@@ -14,8 +14,12 @@ import { fixtureRoot, startDev, type Dev } from './dev-server.ts'
  * tooltip and a context menu near the top stay at or below it; the scroll edge is opaque ground through 44 px and
  * clear from 60 px, a frame panned under it shown nowhere there; a frame under it is not in Jam's view, and not
  * seen; `mv:hello` says 44; a request is answered after its frames, only at its size, a newer one cancelling an older,
- * and after 500 ms at the size the page has. With `topInset: 0`, with 44 but half the contract (no `onPresent`), and
- * with no bridge at all (Chrome): no band, nothing moves, hello says 0. Skips without Chrome.
+ * and after 500 ms at the size the page has. The other screens (#31's "every screen"): play's stage centred below the
+ * strip, its toolbar and brand pills and its chip at 54 px, its ground under the strip, Fill window filling the view
+ * below it and the thread card docked no higher than TOP + 12; a Jam session's edge ring below the strip and the focus
+ * panel's and the sheet's rules; the stopped banner on the toolbar's line; the identity modal's veil from 44 px. With
+ * `topInset: 0`, with 44 but half the contract (no `onPresent`), and with no bridge at all (Chrome): no band, nothing
+ * moves, hello says 0. Skips without Chrome.
  */
 
 const FRAME = (t: string, bg: string) => `export const meta = { title: '${t}', viewport: 'mobile' }\nexport default () => <main style={{ background: '${bg}', width: '100%', height: '100vh', margin: 0 }} />\n`
@@ -273,6 +277,101 @@ describe('with the whole contract: topInset 44, onPresent and presented (A3.8 #3
   })
 })
 
+/** a layer's own rule at this TOP, without its component: an element of that class where the shell mounts it */
+const probeTop = (s: string, cls: string, parent = '.sh-app') => ev(s, `(() => { const d = document.createElement('div'); d.className = ${JSON.stringify(cls)}; document.querySelector(${JSON.stringify(parent)}).appendChild(d); const t = getComputedStyle(d).top; d.remove(); return t })()`)
+const dark = ([r, g, b]: [number, number, number]) => r < 30 && g < 30 && b < 30
+
+/** play mode on the red frame, opened from its URL; the fade-in waited for */
+async function openPlay(cfg: Fake): Promise<string> {
+  const s = await browser!.tab({ width: W, height: H })
+  tabs.push(s)
+  await browser!.send('Page.addScriptToEvaluateOnNewDocument', { source: FAKE(cfg) }, s)
+  await browser!.go(s, `${dev!.origin}/#/p/main?at=demo/red`)
+  await browser!.until(s, `!!window.__mvStore && !!__mvStore.getState().play && !!document.querySelector('.sh-play-stage .dev iframe')`, 30_000)
+  await browser!.send('Page.bringToFront', {}, s)
+  await wait(600)   // its fade-in
+  return s
+}
+
+describe('every other screen of the shell at TOP 44 (A3.8 #31: "the builder checks every screen of the shell")', () => {
+  it('play: the stage centred below the strip; the toolbar pill, the brand pill and the collapsed chip at 54 px; the play ground under the strip', { timeout: 45_000 }, async (ctx) => {
+    skip(ctx)
+    const s = await openPlay({ on: true, inset: 44, present: true })
+    const st = (await rect(s, '.sh-play-stage'))!
+    expect(st.top).toBeGreaterThanOrEqual(44)
+    expect(Math.abs((st.top + st.bottom) / 2 - (44 + (H - 44) / 2))).toBeLessThanOrEqual(2)
+    // play's chrome is the shared pill (Play.tsx: nav.sh-pill.sh-play-pill, the brand one on the left; .sh-pill-fab)
+    expect((await rect(s, '.sh-play > nav.sh-play-pill:not(.sh-play-brand)'))!.top).toBe(54)
+    expect((await rect(s, '.sh-play > nav.sh-play-brand'))!.top).toBe(54)
+    expect(await ev(s, `getComputedStyle(document.querySelector('.sh-play > .sh-pill-fab')).top`)).toBe('54px')
+    const p = await pixels(s)
+    for (const y of [2, 20, 40, 43]) expect(Array.from({ length: 40 }, (_, i) => p.at(100 + i * 30, y)).every(dark), `y ${y}`).toBe(true)
+  })
+
+  it('play filling the window fills the view below the strip; its thread card docks below the strip, clamped at TOP + 12 px for a pin at the stage\'s top', { timeout: 45_000 }, async (ctx) => {
+    skip(ctx)
+    const log = join(root, 'design', 'comments', 'main.jsonl')
+    mkdirSync(join(root, 'design', 'comments'), { recursive: true })
+    const anchor = { el: { semantics: { tag: 'main' }, cssPath: 'main', hue: 200 }, pos: { fx: 0.5, fy: 0 } }
+    writeFileSync(log, JSON.stringify({ id: 'inset-e1', ts: Date.now(), type: 'create', commentId: 'inset-c1', board: 'main', frame: 'demo/red', author: { email: 'nic@example.com', name: 'Nic' }, body: 'at the top', anchor }) + '\n')
+    try {
+      const s = await openPlay({ on: true, inset: 44, present: true })
+      // Fill window (the device preset 'fill'): the stage is the view below the strip, edge to edge
+      await ev(s, `__mvStore.getState().setPlay({ ...__mvStore.getState().play, device: 'fill' }), 1`)
+      await until(s, `!!document.querySelector('.sh-play.fill')`, 5000)
+      await wait(300)
+      const stage = (await rect(s, '.sh-play-stage'))!
+      expect([stage.top, stage.bottom, stage.left, stage.right]).toEqual([44, H, 0, W])
+      await until(s, `!!document.querySelector('.sh-play-comments [data-thread="inset-c1"]')`, 20_000)
+      await ev(s, `__mvComments.getState().setActive('inset-c1'), 1`)
+      await until(s, `!!document.querySelector('.cm-card.stage-dock')`, 5000)
+      await wait(100)
+      const card = (await rect(s, '.cm-card.stage-dock'))!
+      // its top is clamp(the stage's top + the pin's y - 36, TOP + 12, ...): for a pin at the stage's top that is TOP + 12
+      // (with no inset it would be 12 px, on the strip's controls)
+      expect(Math.abs(card.top - (44 + 12))).toBeLessThanOrEqual(1)
+      expect(card.bottom).toBeLessThanOrEqual(H - 12 + 1)
+      await ev(s, `__mvComments.getState().setActive(null), 1`)
+    } finally { rmSync(log, { force: true }) }
+  })
+
+  it('a Jam session\'s edge ring starts below the strip; the focus panel at 54 px; the sheet at 108 px', async (ctx) => {
+    skip(ctx)
+    const s = await open({ on: true, inset: 44, present: true })
+    await ev(s, `__mvJamQueue.setState({ session: { id: 'ses-inset', since: Date.now() } }), 1`)
+    await until(s, `!!document.querySelector('.jm-edge')`)
+    expect(await rect(s, '.jm-edge')).toMatchObject({ top: 44, bottom: H })
+    await ev(s, `__mvJamQueue.setState({ session: null }), 1`)
+    // the focus panel and the sheet's anchor, as their rules place them inside the app (each needs a Jam with
+    // frames to render; the rule is what the inset changes)
+    expect(await probeTop(s, 'jm-focus')).toBe('54px')
+    expect(await probeTop(s, 'jm-sheet-at')).toBe('108px')
+  })
+
+  it('the stopped banner sits on the toolbar\'s line below the strip, and its fallback before it measures does too', { timeout: 30_000 }, async (ctx) => {
+    skip(ctx)
+    const s = await open({ on: true, inset: 44, present: true })
+    expect(await probeTop(s, 'sh-banner sh-stopped')).toBe('60px')   // the fallback: the edge and 6 px below the strip
+    await ev(s, `__mvLink.setState({ link: 'down', shown: true }), 1`)
+    await until(s, `!!document.querySelector('.sh-stopped')`, 5000)
+    await wait(200)
+    const b = (await rect(s, '.sh-stopped'))!
+    const t = (await rect(s, '.sh-app > nav.sh-pill'))!
+    expect(b.top).toBeGreaterThanOrEqual(44)
+    expect(Math.abs((b.top + b.bottom) / 2 - (t.top + t.bottom) / 2)).toBeLessThanOrEqual(1)
+    await ev(s, `__mvLink.setState({ link: 'live', shown: false }), 1`)
+  })
+
+  it('the identity modal\'s veil starts below the strip, leaving the strip\'s controls to it', { timeout: 30_000 }, async (ctx) => {
+    skip(ctx)
+    const s = await open({ on: true, inset: 44, present: true })
+    await ev(s, `__mvComments.setState({ needsIdentity: true }), 1`)
+    await until(s, `!!document.querySelector('.cm-modal-wrap')`, 5000)
+    expect(await rect(s, '.cm-modal-wrap')).toMatchObject({ top: 44, bottom: H })
+    await ev(s, `__mvComments.getState().dismissIdentity(), 1`)
+  })
+})
+
 describe('half a contract, or none: nothing moves (A3.8 #31)', () => {
   for (const [name, cfg] of [
     ['topInset 0 (app 0.2 placing it below)', { on: true, inset: 0, present: true }],
@@ -290,6 +389,9 @@ describe('half a contract, or none: nothing moves (A3.8 #31)', () => {
         expect((await ev(s, `__fake.last('hello')`)).inset).toBe(0)
         expect(await ev(s, `__fake.listeners()`)).toBe(0)   // not listening for requests it would never get
       }
+      // and every other screen's layer where 0.27.1 had it
+      expect([await probeTop(s, 'jm-focus'), await probeTop(s, 'jm-sheet-at'), await probeTop(s, 'sh-banner sh-stopped'), await probeTop(s, 'cm-modal-wrap', 'body')]).toEqual(['10px', '64px', '16px', '0px'])
+      expect(await ev(s, `[__mvInset.usable().top, __mvInset.usable().height]`)).toEqual([0, H])
     })
   }
 })

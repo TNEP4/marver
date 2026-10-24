@@ -802,13 +802,16 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-play.fill .dev { border-radius: 0; box-shadow: none; transition: none }
 .sh-play.fill .dev::after { display: none }
 
-/* the two floating chrome pieces share one glass language and one idle behavior */
+/* the two floating chrome pieces share one glass language and one idle behavior. Of them only .sh-play-nav is still
+   rendered: play's top chrome is the shared pill (Play.tsx: nav.sh-pill.sh-play-pill, .sh-pill-fab), which takes the
+   Mac app's inset through .sh-pill's own rule - .sh-play-bar, its menu and .sh-play-chip below are unused, left as
+   they were */
 .sh-play-bar, .sh-play-nav { position: absolute; display: flex; align-items: center; gap: 1px;
   padding: 4px; border-radius: 999px;
   background: rgba(18, 18, 24, .82); border: 1px solid rgba(255, 255, 255, .12);
   backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
   transition: opacity .35s ease; font: 500 12px -apple-system, system-ui, sans-serif; color: #f5f5f7 }
-.sh-play-bar { top: calc(var(--mv-top, 0px) + 14px); right: 16px }
+.sh-play-bar { top: 14px; right: 16px }
 .sh-play-nav { bottom: 16px; left: 16px }
 .sh-play-bar.idle, .sh-play-nav.idle { opacity: 0; pointer-events: none }
 .sh-play-bar .sep, .sh-play-nav .sep { width: 1px; height: 16px; background: rgba(255, 255, 255, .14); margin: 0 4px }
@@ -837,7 +840,7 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-play-nav .pos em { font-style: normal; opacity: .45; margin: 0 2px }
 
 /* collapsed chip - the bar's fab. Always mounted so collapse/expand crossfades. */
-.sh-play-chip { position: absolute; top: calc(var(--mv-top, 0px) + 14px); right: 16px; width: 38px; height: 38px;
+.sh-play-chip { position: absolute; top: 14px; right: 16px; width: 38px; height: 38px;
   display: grid; place-items: center; border-radius: 999px;
   background: rgba(18, 18, 24, .82); border: 1px solid rgba(255, 255, 255, .12);
   backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
