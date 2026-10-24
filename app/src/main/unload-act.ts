@@ -14,14 +14,16 @@
  * beforeunload is closed all the same - #40's veto. So at the shipped `unloadActMs` of 10 s, `unsure` and its record
  * come only if Chromium never ends the close: in practice never; the cases that reach it run at 200 ms.
  *
- * The backstop: Electron 45's plain `close()` destroys the webContents on a posted task, so `destroyed` follows it.
- * If it has not come `unloadActMs` after main's own close, the unload is stuck: main takes the view out itself
- * (views.ts's forgetCanvas, as `destroyed` would), so the tab ends unloaded and every waiter - the tab's queued
- * actions, memory.ts's soft unload, a quit's `guardAll` - goes on; its `done` record says `why: 'stuck'`. The
- * webContents may live on: it is closed again every `unloadActMs` until its `destroyed` (`haunt`), and the tab's
- * next view - its reopen, a link - is made only once it has gone (`zombieOf`, views.ts ensureView), so the tab never
- * holds two live documents. Never `forcefullyCrashRenderer()`: a renderer shared with another tab lives on, and a
- * close ends only this tab's frames.
+ * Past main's own close, the retries (code review r1 #1): Electron 45's plain `close()` destroys the webContents on a
+ * posted task, so `destroyed` follows it. If it has not come `unloadActMs` after main's close, main closes it again,
+ * every `unloadActMs`, journaled once (`unload { stuck: true }`), and the unload still owns the tab: its view stays,
+ * its operation stays `Tab.replacing`, and every waiter - the tab's queued actions, memory.ts's soft unload, a quit's
+ * `guardAll` - waits on for `destroyed`. No retry and no timer releases them while the webContents lives: a view
+ * forgotten alive would let a queued load make a second document beside the closing one, and record an unload that
+ * had not happened. Only a webContents found already destroyed whose `destroyed` never reached us is taken out by
+ * hand (views.ts's forgetCanvas, as `destroyed` would), its `done` record saying `why: 'stuck'`; one that needed the
+ * retries says the same once its `destroyed` comes. Never `forcefullyCrashRenderer()`: a renderer shared with another
+ * tab lives on, and a close ends only this tab's frames.
  */
 import type { GuardAction, GuardAnswer, Tab } from './tabs.ts'
 import { T } from './timings.ts'
@@ -43,7 +45,7 @@ export interface ActPorts {
   log(topic: string, data: Record<string, unknown>): void
   /** the unload is unsure: its `unload { phase: 'unsure' }` record */
   unsure(t: Tab, a: UnloadAction): void
-  /** stuck: the view taken out and the tab unloaded as at `destroyed` (views.ts's forgetCanvas); its webContents may live on (`zombieOf`) */
+  /** a webContents found destroyed whose `destroyed` never came: the view taken out and the tab unloaded as at that event (views.ts's forgetCanvas) */
   forget(t: Tab): void
 }
 
@@ -58,7 +60,7 @@ export interface UnloadActState {
   gone: boolean
 }
 
-interface Act extends UnloadActState { tab: Tab; wc: ActWc; ports: ActPorts; stuck?: ReturnType<typeof setTimeout>; onStuck(): void }
+interface Act extends UnloadActState { tab: Tab; wc: ActWc; ports: ActPorts; stuck?: ReturnType<typeof setTimeout>; retries: number; onStuck(): void }
 
 const acts = new Map<string, Act>()
 
@@ -70,55 +72,13 @@ export function takeAct(tabId: string): UnloadActState | undefined {
   return st ? { plain: st.plain, gone: st.gone, ...(st.pid ? { pid: st.pid } : {}), ...(st.born !== undefined ? { born: st.born } : {}) } : undefined
 }
 
-/** Test seam: every act and every stuck webContents forgotten. */
+/** Test seam: every act forgotten, its retries stopped. */
 export function resetActs(): void {
   for (const st of acts.values()) if (st.stuck) clearTimeout(st.stuck)
   acts.clear()
-  for (const z of [...zombies.values()]) z.end()
-  zombies.clear()
 }
 
-/** A webContents an unload's backstop took out before its `destroyed` (onStuck): closed again until it goes. */
-interface Zombie { gone: Promise<void>; closes: number; timer?: ReturnType<typeof setTimeout>; end(): void }
-const zombies = new Map<string, Zombie>()
-
-/**
- * The tab's webContents a stuck unload left alive, until its `destroyed` (null when none): views.ts makes the tab's
- * next view only once it has gone, so one tab never holds two live documents. Its adapter is disposed with the view
- * (forgetCanvas), so the bridge holds it untrusted meanwhile: its reports refused, nothing sent to it.
- */
-export function zombieOf(tabId: string): Promise<void> | null { return zombies.get(tabId)?.gone ?? null }
-
-/** `close()` again every `unloadActMs` until `destroyed`, journaled at its end with how many closes it took. */
-function haunt(tabId: string, wc: ActWc, ports: ActPorts): void {
-  let release!: () => void
-  let ended = false
-  const z: Zombie = {
-    gone: new Promise<void>((r) => { release = r }), closes: 0,
-    end: () => {
-      if (ended) return
-      ended = true
-      clearTimeout(z.timer)
-      if (!wc.isDestroyed()) wc.off('destroyed', z.end)
-      if (zombies.get(tabId) === z) zombies.delete(tabId)
-      ports.log('unload', { tab: tabId, zombie: 'gone', closes: z.closes })
-      release()
-    },
-  }
-  zombies.set(tabId, z)
-  wc.once('destroyed', z.end)
-  const again = () => {
-    if (ended) return
-    if (wc.isDestroyed()) { z.end(); return }
-    z.closes += 1
-    wc.close()
-    z.timer = setTimeout(again, T.unloadActMs)
-    ;(z.timer as { unref?: () => void }).unref?.()
-  }
-  again()
-}
-
-/** `act(t, { kind: 'unload' })`: answers 'done' at `destroyed` (or the backstop), 'refused' at the page's refusal. */
+/** `act(t, { kind: 'unload' })`: answers 'done' at `destroyed`, 'refused' at the page's refusal - nothing else ends it. */
 export function actUnload(t: Tab, wc: ActWc, a: UnloadAction, ports: ActPorts, proc: { pid?: number; born?: number } = {}): Promise<GuardAnswer> {
   ports.log('act', { tab: t.id, action: a.kind, reason: a.reason, pid: proc.pid ?? null })
   return new Promise<GuardAnswer>((resolve) => {
@@ -136,18 +96,24 @@ export function actUnload(t: Tab, wc: ActWc, a: UnloadAction, ports: ActPorts, p
       resolve(r)
     }
     const st: Act = {
-      tab: t, wc, ports, plain: false, gone: false,
+      tab: t, wc, ports, plain: false, gone: false, retries: 0,
       ...(proc.pid ? { pid: proc.pid } : {}), ...(proc.born !== undefined ? { born: proc.born } : {}),
-      // destroyed never came after main's own close: the view out by hand, as destroyed would, the webContents
-      // closed again until it goes (haunt), and the unload's done record says `stuck`
+      // destroyed has not come after main's own close: closed again, the tab still owned (code review r1 #1); a
+      // webContents already destroyed whose event never reached us is the one case taken out by hand
       onStuck: () => {
+        st.stuck = undefined
         if (settled) return
-        const alive = !wc.isDestroyed()
-        ports.log('unload', { tab: t.id, stuck: true, destroyed: !alive })
         if (t.unload) t.unload.stuck = true
-        if (alive) haunt(t.id, wc, ports)
-        ports.forget(t)
-        done('done', 'stuck')
+        if (wc.isDestroyed()) {
+          ports.log('unload', { tab: t.id, stuck: true, destroyed: true })
+          ports.forget(t)
+          done('done', 'stuck')
+          return
+        }
+        if (st.retries++ === 0) ports.log('unload', { tab: t.id, stuck: true, destroyed: false })
+        wc.close()
+        st.stuck = setTimeout(() => st.onStuck(), T.unloadActMs)
+        ;(st.stuck as { unref?: () => void }).unref?.()
       },
     }
     acts.set(t.id, st)
@@ -174,7 +140,7 @@ export function actUnload(t: Tab, wc: ActWc, a: UnloadAction, ports: ActPorts, p
 /**
  * Main ends an unload's close itself, asking nothing (unsure, or its renderer gone): Electron 45's plain `close()`
  * destroys the webContents on a posted task. Journaled (`unload { endClose }`) before the close, so a case reads its
- * order against `destroyed`; the backstop starts here.
+ * order against `destroyed`; the retries start here.
  */
 function endClose(tabId: string, why: 'unsure' | 'gone'): void {
   const st = acts.get(tabId)

@@ -141,8 +141,8 @@ export interface TabUnload {
   /** the activation that reopens it - one queued during the close keeps its own time (A3.8 r2 #4) */
   activatedAt?: number
   /**
-   * the close never reached `destroyed`: main took the view out itself (unload-act.ts's backstop). Its webContents
-   * may live on, closed again until it goes, and the tab's next view waits for that (views.ts ensureView)
+   * the close did not reach `destroyed` `unloadActMs` after main's own close: main closed it again until it went
+   * (unload-act.ts's retries), the tab held all the while - or found it destroyed with no event and took the view out
    */
   stuck?: boolean
 }

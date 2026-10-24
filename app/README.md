@@ -158,8 +158,8 @@ binary.
   moves the window, and a click there reaches no page; a click on a tab activates it. And a switch Home ↔ canvas,
   watched for a frame of plain ground or doubled dots under the tabs.
 - **unloading** (A3.8 #39-#45; `test/unit/unload.test.ts`, `memory.test.ts`, `unload-act.test.ts` - the act on a fake
-  webContents: refusal, `unsure`, a renderer gone mid-close, the backstop - `test/prod/unload.test.ts`,
-  `unload-shell.test.ts`): memory.ts's
+  webContents: refusal, `unsure`, a renderer gone mid-close, the retries that hold the tab until `destroyed` -
+  `test/prod/unload.test.ts`, `unload-shell.test.ts`): memory.ts's
   hooks - `memory:tick` (one tick now, on a sample the case describes: a pressure `level`, `canvasMB` as one canvas
   process, or `procs`; `real: true` takes the sampler's own `requestSample()`), `memory:state` (each canvas tab's
   refusal, the cooldown, the last tick), `memory:totalmem { mb }` (null: `os.totalmem()` again) - and the window's

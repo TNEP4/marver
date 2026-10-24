@@ -67,7 +67,7 @@ import { commitLayout } from './layout.ts'
 import { answer as presentAnswer, forget as presentForget, gpuGone, noteGpu } from './present.ts'
 import { appMetrics, gpuIdentity, recorder, sampler } from './recorder.ts'
 import { lastPressure } from './pressure.ts'
-import { actUnload as unloadAct, takeAct, unloadGone as actGone, zombieOf, type ActPorts } from './unload-act.ts'
+import { actUnload as unloadAct, takeAct, unloadGone as actGone, type ActPorts } from './unload-act.ts'
 
 export const PRELOAD_CANVAS = join(__dirname, 'preload-canvas.cjs')
 
@@ -183,10 +183,6 @@ async function ensureView(t: Tab): Promise<WebContentsView | null> {
   const pending = making.get(t.id)
   if (pending) return pending
   const p = (async () => {
-    // a webContents of this tab that an unload's backstop took out before its destroyed (unload-act.ts): the next
-    // view waits for it to go - it is closed again until then - so the tab never holds two live documents
-    const zombie = zombieOf(t.id)
-    if (zombie) { j('view', { tab: t.id, waits: 'stuck-close' }); await zombie }
     if (!t.reg) return null
     const ses = await trust.session(t.reg.ws)
     // closed (⌘W) or gone while its partition was prepared: no view - the close saw none to guard, so one made now
