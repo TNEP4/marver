@@ -54,7 +54,7 @@ const possessive = (name: string) => (name.endsWith('s') ? `${name}'` : `${name}
 
 /**
  * A canvas with no bridge gets the degraded guard (A2.14 #15): main's `bridge`, read from the slot file's features as
- * the guard reads it. Only a TabView from before `bridge` existed falls back to the version (before 0.27.1).
+ * the guard reads it. Only a TabView from before `bridge` existed falls back to the version (before 0.27.2: 0.27.1 was never published).
  */
 function noBridge(t: TabView): boolean {
   if (t.bridge !== undefined) return !t.bridge
@@ -82,7 +82,7 @@ function card(t: TabView): HTMLElement {
   t.folder ? h('small', {}, t.folder) : null,
   host || t.version ? h('small', {}, [host, t.version && `Marver ${t.version}`].filter(Boolean).join(' · ')) : null,
   h('span', { class: 'state' }, t.state === 'starting' ? h('i', { class: 'spin', 'aria-hidden': 'true' }) : null, word, t.open === false ? ' · tab closed' : null),
-  noBridge(t) ? h('span', { class: 'note' }, 'Update to Marver 0.27.1 for the full unsaved-work guard') : null)
+  noBridge(t) ? h('span', { class: 'note' }, 'Update to Marver 0.27.2 for the full unsaved-work guard') : null)
 }
 
 function recentCard(r: RecentView): HTMLElement {
