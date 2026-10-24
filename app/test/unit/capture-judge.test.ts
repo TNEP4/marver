@@ -55,9 +55,9 @@ describe('judgeTransition', () => {
     expect(judge(frames(T0, 'ggggbb'), T0, T0 + 6 * R).kind).toBe('inconclusive')
   })
 
-  it('still bad at the end without a gap, past the threshold, is a fail on what was seen', () => {
+  it('still bad at the window\'s end with no good frame after it, past the threshold: inconclusive - how long it lasted is not known (code review r1 #2)', () => {
     const v = judge(frames(T0, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'), T0, T0 + 30 * R)
-    expect(v.kind).toBe('fail')
+    expect(v).toMatchObject({ kind: 'inconclusive', why: expect.stringContaining('no verified good frame') })
   })
 
   it('an exact case allows no bad refresh', () => {
@@ -104,8 +104,23 @@ describe('judgeTransition: the window\'s tail and head are evidence too (A3.8 #3
     expect(judge(idle, T0, T0 + 10 * R).kind).toBe('inconclusive')
   })
 
-  it('past the threshold on what was seen is a fail even with the tail unseen', () => {
-    expect(judge(frames(T0, 'gbbbbg'), T0, T0 + 10 * R)).toMatchObject({ kind: 'fail', n: 4 })
+  it('past the threshold on what was seen, with the tail unseen: inconclusive - more bad refreshes may be in it (code review r1 #2)', () => {
+    expect(judge(frames(T0, 'gbbbbg'), T0, T0 + 10 * R).kind).toBe('inconclusive')
+  })
+
+  it('three bad frames and then the stream stops: inconclusive, never a fail on a lower bound that 39 good transitions pool into a pass (code review r1 #2)', () => {
+    const v = judge(frames(T0 - R, 'gggbbb'), T0, T0 + 30 * R)
+    expect(v).toMatchObject({ kind: 'inconclusive', why: expect.stringContaining('3 bad refreshes') })
+    const good = Array.from({ length: 39 }, () => judge(frames(T0 - R, 'g'.repeat(34))))
+    expect(good.every((g) => g.kind === 'pass')).toBe(true)
+    expect(judgeCase([...good, v]).kind).toBe('inconclusive')
+    // three such runs leave the transition unresolved, which fails the case: never a pass
+    expect(judgeCase([...good, retried([v, v, v])]).kind).toBe('fail')
+  })
+
+  it('a bad interval closed by a verified good frame and already past maxMs fails whatever follows: it can only grow', () => {
+    const v = judge(frames(T0, 'gbbbbbbbbbbbbbg'), T0, T0 + 30 * R)   // 13 bad refreshes, about 108 ms, then nothing
+    expect(v).toMatchObject({ kind: 'fail', n: 13 })
   })
 })
 
@@ -149,9 +164,15 @@ describe('judgeTransition: an idle sample is the held frame judged at its own ti
     expect(j(over).kind).toBe('inconclusive')
   })
 
-  it('past the threshold on complete frames before a long idle run: a fail on what was seen', () => {
+  it('past the threshold on complete frames before a long idle run, the interval open: inconclusive, never a fail on a lower bound (code review r1 #2)', () => {
     const fs = [...frames(T0, 'gbbbb'), ...idles(5, 20), ...frames(T0 + 25 * R, 'gggggggg')]
-    expect(j(fs)).toMatchObject({ kind: 'fail', n: 4 })
+    expect(j(fs)).toMatchObject({ kind: 'inconclusive', why: expect.stringContaining('idle samples in a row') })
+    // closed by a verified good frame and already past 100 ms before the run: a fail, the run can only lengthen it
+    const long = [...frames(T0, 'gbbbbbbbbbbbbbg'), ...idles(15, 20), ...frames(T0 + 35 * R, 'gggggggg')]
+    expect(j(long, T0 + 40 * R)).toMatchObject({ kind: 'fail', n: 13 })
+    // closed but short, past the threshold in n only: the run may hide more, so inconclusive
+    const short = [...frames(T0, 'gbbbbg'), ...idles(6, 20), ...frames(T0 + 26 * R, 'gggggggg')]
+    expect(j(short)).toMatchObject({ kind: 'inconclusive' })
   })
 
   it('a window with no complete frame of its own is inconclusive, even when its idle samples are good', () => {

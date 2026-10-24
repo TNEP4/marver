@@ -400,13 +400,18 @@ export const MAX_IDLE_RUN = 4
  * cover), so a frame allowed before `t0` and held after it is bad after it. Inconclusive, never a pass: a sample
  * neither complete nor idle, a frame with no display time (`untimed`), display times more than 1.5 refreshes apart, no
  * frame at all, a frame `unread`, no
- * complete frame inside the window, more than `MAX_IDLE_RUN` idle samples in a row (the bad refreshes counted before
- * that run still fail the transition when they are past the threshold), or a bad interval with no verified good frame
- * after it. **Both ends are covered** (A3.8 #36, #37: missing evidence is never a pass): the frame before `t0` (else
- * the first frame inside) must be within 1.5 refreshes of the first one inside, and the first frame at or after `t1`
- * must exist, carry no `gap` and be within 1.5 refreshes of the last frame inside - so a stream that skipped the
- * window's tail, or has not delivered it yet, is inconclusive. That frame closes a bad interval when it is a complete
- * good one; it is never counted as bad.
+ * complete frame inside the window, more than `MAX_IDLE_RUN` idle samples in a row, or a bad interval with no verified
+ * good frame after it. **Both ends are covered** (A3.8 #36, #37: missing evidence is never a pass): the frame before
+ * `t0` (else the first frame inside) must be within 1.5 refreshes of the first one inside, and the first frame at or
+ * after `t1` must exist, carry no `gap` and be within 1.5 refreshes of the last frame inside - so a stream that
+ * skipped the window's tail, or has not delivered it yet, is inconclusive. That frame closes a bad interval when it is
+ * a complete good one; it is never counted as bad.
+ *
+ * **A transition counts only with its whole window seen and a verified closing good frame** (code review r1 #2):
+ * what was seen before missing evidence is a lower bound - more bad refreshes may lie in the part not seen - and a
+ * case pools its transitions' `n` into a p95, so a `fail` on a lower bound beside 39 good transitions would pass the
+ * case. The one verdict made before the tail is a bad interval already closed by a verified good frame and longer
+ * than `maxMs`: later bad refreshes can only lengthen it, and every `ms` past 100 fails the case.
  */
 export function judgeTransition(frames: readonly CaptureFrame[], o: {
   t0: bigint
@@ -438,7 +443,7 @@ export function judgeTransition(frames: readonly CaptureFrame[], o: {
   let seen = 0
   let complete = 0
   /** the count as it stood before the idle run now going on: what was seen, if the run proves too long */
-  let trusted: { n: number; firstBad: bigint | null; goodAfterBad: bigint | null; lastNs: bigint | null } = { n, firstBad, goodAfterBad, lastNs: prevNs }
+  let trusted: { n: number; firstBad: bigint | null; goodAfterBad: bigint | null } = { n, firstBad, goodAfterBad }
   for (; i < frames.length && ns(frames[i]!) < o.t1; i++) {
     const f = frames[i]!
     if (f.status !== 'complete' && f.status !== 'idle') return { kind: 'inconclusive', why: `a ${f.status} sample` }
@@ -453,13 +458,12 @@ export function judgeTransition(frames: readonly CaptureFrame[], o: {
       v = o.verdict(f)
     } else {
       if (!held) return { kind: 'inconclusive', why: 'an idle sample with no complete frame before it' }
-      if (idleRun === 0) trusted = { n, firstBad, goodAfterBad, lastNs: prevNs }
+      if (idleRun === 0) trusted = { n, firstBad, goodAfterBad }
       idleRun++
       if (idleRun > MAX_IDLE_RUN) {
-        // nothing composited for that long: the run's own refreshes are not evidence. What was seen before it fails
-        // the transition when it is past the threshold; else it says nothing
-        const why = `${idleRun} idle samples in a row from ${msOf(ns(f) - o.t0)} ms after the decision: nothing composited (the screen locked, the display asleep, or the heartbeat stopped)`
-        if (trusted.n > maxN && trusted.firstBad !== null) return { kind: 'fail', n: trusted.n, ms: round((trusted.goodAfterBad ?? trusted.lastNs ?? trusted.firstBad) - trusted.firstBad) }
+        // nothing composited for that long: the run's own refreshes are not evidence, and what was seen before it is a
+        // lower bound. Only a closed interval already past maxMs fails (it can only grow); else it says nothing
+        const why = `${idleRun} idle samples in a row from ${msOf(ns(f) - o.t0)} ms after the decision: nothing composited (the screen locked, the display asleep, or the heartbeat stopped)${trusted.n ? `; ${trusted.n} bad refreshes before it` : ''}`
         if (trusted.goodAfterBad !== null && trusted.firstBad !== null && Number(trusted.goodAfterBad - trusted.firstBad) / 1e6 > maxMs) return { kind: 'fail', n: trusted.n, ms: round(trusted.goodAfterBad - trusted.firstBad) }
         return { kind: 'inconclusive', why }
       }
@@ -473,23 +477,24 @@ export function judgeTransition(frames: readonly CaptureFrame[], o: {
     else if (f.status === 'complete' && firstBad !== null && goodAfterBad === null) goodAfterBad = ns(f)
   }
   if (!seen || prevNs === null) return { kind: 'inconclusive', why: 'no frame inside the transition' }
-  // past the threshold on what was seen, contiguous from the decision: a fail whatever the tail (an interval still
-  // open at the last frame seen gives ms as a lower bound, to that frame)
-  if (n > maxN) return { kind: 'fail', n, ms: round((goodAfterBad ?? prevNs) - firstBad!) }
+  // a bad interval closed by a verified good frame and already past maxMs: a fail whatever the tail holds, since
+  // later bad refreshes only lengthen it. Anything else past the threshold waits for the tail (a lower bound)
   if (goodAfterBad !== null && Number(goodAfterBad - firstBad!) / 1e6 > maxMs) return { kind: 'fail', n, ms: round(goodAfterBad - firstBad!) }
+  const seenBad = n ? `; ${n} bad refreshes seen before it` : ''
   // a window with no complete frame of its own saw nothing new: only the frame held from before the decision
   if (!complete) return { kind: 'inconclusive', why: 'no complete frame inside the window: only idle samples of a frame from before the decision' }
   // the tail: the first frame at or after t1 proves that no refresh between the last frame inside and t1 was missed
   const after = i < frames.length ? frames[i]! : null
-  if (!after) return { kind: 'inconclusive', why: `no frame at or after the window's end (the last ${msOf(o.t1 - prevNs)} ms before it unseen)` }
-  if (after.gap) return { kind: 'inconclusive', why: `a gap of ${after.gap} refreshes at the window's end` }
-  if (after.untimed) return { kind: 'inconclusive', why: 'a frame with no display time at the window\'s end' }
-  if (apart(prevNs, ns(after))) return { kind: 'inconclusive', why: `display times ${msOf(ns(after) - prevNs)} ms apart at the window's end` }
+  if (!after) return { kind: 'inconclusive', why: `no frame at or after the window's end (the last ${msOf(o.t1 - prevNs)} ms before it unseen)${seenBad}` }
+  if (after.gap) return { kind: 'inconclusive', why: `a gap of ${after.gap} refreshes at the window's end${seenBad}` }
+  if (after.untimed) return { kind: 'inconclusive', why: `a frame with no display time at the window's end${seenBad}` }
+  if (apart(prevNs, ns(after))) return { kind: 'inconclusive', why: `display times ${msOf(ns(after) - prevNs)} ms apart at the window's end${seenBad}` }
   // a bad interval still open at t1 is closed by that frame only when it is a complete good one
   if (firstBad !== null && goodAfterBad === null && after.status === 'complete' && o.verdict(after) === 'good') goodAfterBad = ns(after)
   if (n === 0) return { kind: 'pass', n: 0, ms: 0 }
-  if (goodAfterBad === null) return { kind: 'inconclusive', why: 'no verified good frame after the bad interval' }
-  return { kind: Number(goodAfterBad - firstBad!) / 1e6 <= maxMs ? 'pass' : 'fail', n, ms: round(goodAfterBad - firstBad!) }
+  if (goodAfterBad === null) return { kind: 'inconclusive', why: `no verified good frame after the bad interval (${n} bad refreshes, ${msOf(prevNs - firstBad!)} ms or more)` }
+  const ms = round(goodAfterBad - firstBad!)
+  return { kind: n <= maxN && ms <= maxMs ? 'pass' : 'fail', n, ms }
 }
 
 export interface CaseVerdict {
