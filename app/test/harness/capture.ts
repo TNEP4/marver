@@ -292,11 +292,19 @@ export interface ClockControl { ok: boolean; lags: (number | null)[]; why?: stri
  * refreshes after the stamp, and none before it. This is what proves main's journal and the helper's display times
  * share a clock - the ready line's comparison checks only the helper's "now" against the runner's.
  */
-export function clockControl(frames: readonly CaptureFrame[], marks: readonly { ns: bigint; on: boolean }[], hz: number, isOn: (f: CaptureFrame) => boolean | null): ClockControl {
+export function clockControl(frames: readonly CaptureFrame[], marks: readonly { ns: bigint; on: boolean }[], hz: number, isOn: (f: CaptureFrame) => boolean | null, o: {
+  /**
+   * a display stream skips a refresh now and then even with a heartbeat: with this set, a change whose frames have a
+   * hole is skipped rather than inconclusive, as long as at least this many changes were measured on contiguous
+   * frames - and every measured one is 0 to 3 refreshes late, none early or never
+   */
+  minMeasured?: number
+} = {}): ClockControl {
   const R = 1e9 / hz
   const lags: (number | null)[] = []
   let why: string | undefined
   let inconclusive = false
+  let holes = 0
   for (const [k, m] of marks.entries()) {
     const next = marks[k + 1]?.ns
     const early = frames.find((f) => f.status === 'complete' && !f.untimed && BigInt(f.hostNs) < m.ns - 500_000n && (k === 0 || BigInt(f.hostNs) > marks[k - 1]!.ns + BigInt(Math.round(4 * R))) && isOn(f) === m.on)
@@ -309,11 +317,20 @@ export function clockControl(frames: readonly CaptureFrame[], marks: readonly { 
     for (let i = 0; i < frames.length && BigInt(frames[i]!.hostNs) <= m.ns; i++) i0 = i
     const span = i0 < 0 ? [] : frames.slice(i0).filter((f) => BigInt(f.hostNs) <= upTo)
     const holed = span.length < 2 || span.some((f, i) => f.untimed || (i > 0 && (f.gap || Number(BigInt(f.hostNs) - BigInt(span[i - 1]!.hostNs)) > 1.5 * R)))
-    if (holed) { inconclusive = true; why ??= `frames missing around change ${k}: the stream skipped refreshes, so the clocks were not checked`; lags.push(null); continue }
+    if (holed) {
+      holes++
+      if (o.minMeasured === undefined) { inconclusive = true; why ??= `frames missing around change ${k}: the stream skipped refreshes, so the clocks were not checked` }
+      lags.push(null)
+      continue
+    }
     if (!hit) { why ??= `change ${k} never reached the screen before the next`; lags.push(null); continue }
     const lag = Number(BigInt(hit.hostNs) - m.ns) / R
     lags.push(Math.round(lag * 100) / 100)
     if (lag > 3) why ??= `change ${k} reached the screen ${lag.toFixed(1)} refreshes after main made it`
+  }
+  if (o.minMeasured !== undefined && !why) {
+    const measured = lags.filter((x) => x !== null).length
+    if (measured < o.minMeasured) { inconclusive = true; why = `only ${measured} of ${marks.length} changes on contiguous frames (${holes} with frames missing), fewer than ${o.minMeasured}: the clocks were not checked` }
   }
   return { ok: !why, lags, ...(why ? { why } : {}), ...(inconclusive ? { inconclusive } : {}) }
 }

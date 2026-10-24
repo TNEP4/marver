@@ -6,6 +6,9 @@
  * completed and clear; at 2 Hz an overlay held 1.5 s is a candidate at 2 Hz; and the detector's cost - the same
  * animated page measured with the detector on and off, five runs each, the median rAF interval p95 within 1 ms (a
  * fixture page standing for a heavy board: the real board needs the shell's gestures, which the recorder stream wires).
+ * If 4 Hz misses the 1 ms margin (that case fails: the app ships at 4 Hz), the 2 Hz fallback runs (A3.8 #15, r1 #5):
+ * the cost case and the white frame on purpose again at 2 Hz, each saying its rate; if 2 Hz misses too, the numbers
+ * go to Nic. Each cost report names its rate.
  * The white frame on purpose must take the probe path - the journal says each sample's whole-view share and whether
  * the probes ran - so a frame that missed the 85 % threshold cannot pass it by the whole-view test alone. Not built
  * here, the integration's once the shell's gestures are wired: A3.7's staged white overlay held 1 s during a
@@ -116,27 +119,62 @@ describe.skipIf(!!DARK)('at 2 Hz (the detector\'s fallback, A3.8 #15, r1 #5)', (
   }, 60_000)
 })
 
+type Cost = { rate: string; onP95: number[]; offP95: number[]; medianOn: number; medianOff: number; over33On: number; over33Off: number; frames: number[]; clear: number }
+/** The detector's cost at a rate: the same animated page, on and off, five runs each; its report names the rate. */
+async function cost(rate: '4 Hz' | '2 Hz'): Promise<Cost> {
+  const r = await open(rate === '2 Hz' ? { MARVER_APP_TIMINGS: JSON.stringify({ whiteoutTickMs: 500 }) } : {}, HEAVY)
+  try {
+    const on: { p95: number; p50: number; n: number; over33: number }[] = []
+    const off: typeof on = []
+    for (let i = 0; i < 5; i++) {
+      off.push(await exec(r.w, r.id, `__mvMeasure(3000)`))
+      await sleep(300)
+      await exec(r.w, r.id, `__mvGesture(true); 1`)
+      on.push(await exec(r.w, r.id, `__mvMeasure(3000)`))
+      await exec(r.w, r.id, `__mvGesture(false); 1`)
+      await sleep(800)
+    }
+    const med = (xs: number[]) => [...xs].sort((a, b) => a - b)[2]!
+    const ls = await whiteout(r.w, 0)
+    const report: Cost = { rate, onP95: on.map((x) => +x.p95.toFixed(2)), offP95: off.map((x) => +x.p95.toFixed(2)), medianOn: +med(on.map((x) => x.p95)).toFixed(2), medianOff: +med(off.map((x) => x.p95)).toFixed(2),
+      over33On: on.reduce((s, x) => s + x.over33, 0), over33Off: off.reduce((s, x) => s + x.over33, 0), frames: on.map((x) => x.n), clear: count(ls, (d) => d.verdict === 'clear') }
+    process.stdout.write(`whiteout cost (${rate}): ${JSON.stringify(report)}\n`)
+    return report
+  } finally { await r.w.close(); await r.fake.close() }
+}
+const within = (c: Cost) => Math.abs(c.medianOn - c.medianOff) <= 1
+
 describe.skipIf(!!DARK)('the detector\'s cost (A3.8 #15)', () => {
-  it('the same animated page, detector on and off, five runs each: the median rAF interval p95 within 1 ms', async () => {
-    const r = await open({}, HEAVY)
-    try {
-      const on: { p95: number; p50: number; n: number; over33: number }[] = []
-      const off: typeof on = []
-      for (let i = 0; i < 5; i++) {
-        off.push(await exec(r.w, r.id, `__mvMeasure(3000)`))
-        await sleep(300)
-        await exec(r.w, r.id, `__mvGesture(true); 1`)
-        on.push(await exec(r.w, r.id, `__mvMeasure(3000)`))
-        await exec(r.w, r.id, `__mvGesture(false); 1`)
-        await sleep(800)
-      }
-      const med = (xs: number[]) => [...xs].sort((a, b) => a - b)[2]!
-      const report = { rate: '4 Hz', onP95: on.map((x) => +x.p95.toFixed(2)), offP95: off.map((x) => +x.p95.toFixed(2)), medianOn: +med(on.map((x) => x.p95)).toFixed(2), medianOff: +med(off.map((x) => x.p95)).toFixed(2),
-        over33On: on.reduce((s, x) => s + x.over33, 0), over33Off: off.reduce((s, x) => s + x.over33, 0), frames: on.map((x) => x.n) }
-      process.stdout.write(`whiteout cost: ${JSON.stringify(report)}\n`)
-      const ls = await whiteout(r.w, 0)
-      expect(count(ls, (d) => d.verdict === 'clear')).toBeGreaterThan(20)   // the detector did run
-      expect(Math.abs(report.medianOn - report.medianOff), 'past 1 ms: the detector drops to 2 Hz (T.whiteoutTickMs 500) and the detection cases run again at 2 Hz').toBeLessThanOrEqual(1)
-    } finally { await r.w.close(); await r.fake.close() }
+  /** the 4 Hz run's report: the 2 Hz fallback runs only when it missed */
+  let at4: Cost | null = null
+
+  it('at 4 Hz, the same animated page, detector on and off, five runs each: the median rAF interval p95 within 1 ms', async () => {
+    at4 = await cost('4 Hz')
+    expect(at4.clear).toBeGreaterThan(20)   // the detector did run
+    expect(within(at4), `4 Hz: on ${at4.medianOn} ms against off ${at4.medianOff} ms, past 1 ms - the detector drops to 2 Hz (T.whiteoutTickMs 500); the 2 Hz case below says whether that holds`).toBe(true)
   }, 120_000)
+
+  it('the 2 Hz fallback, only when 4 Hz missed: the cost and a white frame on purpose again at 2 Hz, else the numbers go to Nic', async (ctx) => {
+    if (!at4) ctx.skip('the 4 Hz case did not run')
+    if (at4 && within(at4)) ctx.skip(`4 Hz held (on ${at4.medianOn} ms, off ${at4.medianOff} ms): no fallback`)
+    const at2 = await cost('2 Hz')
+    expect(at2.clear).toBeGreaterThan(10)   // the detector did run, at its slower rate
+    expect(within(at2), `both rates miss the 1 ms margin - 4 Hz: on ${at4!.medianOn} against ${at4!.medianOff} ms; 2 Hz: on ${at2.medianOn} against ${at2.medianOff} ms. The numbers go to Nic (A3.8 #15)`).toBe(true)
+    // the detection cases at 2 Hz: the overlay is the case above; the white frame on purpose here, still none
+    const r = await open({ MARVER_APP_TIMINGS: JSON.stringify({ whiteoutTickMs: 500 }) })
+    try {
+      await exec(r.w, r.id, `__mvWhiteFrame(true)`)
+      await sleep(300)
+      const since = (await r.w.log()).length
+      await exec(r.w, r.id, `__mvGesture(true); 1`)
+      await sleep(2000)
+      await exec(r.w, r.id, `__mvGesture(false); 1`)
+      await sleep(1500)
+      const ls = await whiteout(r.w, since)
+      process.stdout.write(`whiteout white frame on purpose (2 Hz): ${count(ls, (d) => d.verdict === 'clear')} clear, ${count(ls, (d) => d.verdict === 'white')} white\n`)
+      expect(count(ls, (d) => typeof d.candidate === 'number')).toBe(0)
+      expect(count(ls, (d) => d.verdict === 'white')).toBe(0)
+      expect(count(ls, (d) => d.verdict === 'clear' && d.probed === true)).toBeGreaterThanOrEqual(2)
+    } finally { await r.w.close(); await r.fake.close() }
+  }, 240_000)
 })

@@ -11,9 +11,10 @@
  * window server at the detection (capture.swift `detect-pid`). A block of the colour anywhere else on the display -
  * another app, a notification, a web page - is not the app's first paint.
  *
- * **The clocks**: once per run, before the first launch, a clock control on display times - the helper shows and
- * hides its own marker, stamps each change once committed, and each change's first frame must be displayed 0 to 3
- * refreshes later (clockControl, as S15 and the matrix do with main's marker) - else the run is inconclusive. The
+ * **The clocks**: once per run, before the first launch, a clock control on display times - the helper paints its own
+ * marker red and grey twelve times, stamps each change once committed, and each change's first frame must be
+ * displayed 0 to 3 refreshes later (clockControl, as S15 and the matrix do with main's marker); a change whose frames
+ * have a hole is skipped, and six measured on contiguous frames are needed - else the run is inconclusive. The
  * ready line's comparison (the helper's "now" against this process's, within 5 ms) is kept as a sanity check only.
  *
  * A launch is conclusive only if no frame before the spawn already shows the sentinel, the frame before the
@@ -77,10 +78,11 @@ async function displayClock() {
   try {
     await sleep(300)
     const marks = []
-    for (let i = 0; i < 8; i++) { const on = i % 2 === 0; marks.push({ ns: await cap.mark(on), on }); await sleep(150) }
+    for (let i = 0; i < 12; i++) { const on = i % 2 === 0; marks.push({ ns: await cap.mark(on), on }); await sleep(150) }
     await sleep(150)
     const red = new Palette(60).add('on', ['ff0000'])
-    return clockControl(cap.frames, marks, cap.ready.refreshHz, (f) => { const xs = f.regions?.marker?.filter(Boolean) ?? []; return xs.length ? xs.every((x) => red.classify(x) === 'on') : null })
+    // a display stream skips a refresh now and then: a change on a hole is skipped, six measured cleanly are needed
+    return clockControl(cap.frames, marks, cap.ready.refreshHz, (f) => { const xs = f.regions?.marker?.filter(Boolean) ?? []; return xs.length ? xs.every((x) => red.classify(x) === 'on') : null }, { minMeasured: 6 })
   } finally { await cap.stop() }
 }
 

@@ -140,4 +140,14 @@ describe('the clock control (A3.8 #36; review of a3-native, minor #16)', () => {
     const holed = run([[11, 31]]).filter((_, i) => i < 9 || i > 20)
     expect(clockControl(holed, [{ ns: ns(10), on: true }], 120, isOn)).toMatchObject({ ok: false, inconclusive: true, lags: [null] })
   })
+  it('with minMeasured (a display stream): a change on a hole is skipped, enough clean ones are ok, too few are inconclusive, a late one still fails', () => {
+    const marks = [{ ns: ns(10), on: true }, { ns: ns(30), on: false }, { ns: ns(50), on: true }, { ns: ns(70), on: false }]
+    // the frames around change 1 missing
+    const holed = run([[11, 31], [51, 71]]).filter((_, i) => i < 28 || i > 33)
+    expect(clockControl(holed, marks, 120, isOn, { minMeasured: 3 })).toEqual({ ok: true, lags: [1, null, 1, 1] })
+    expect(clockControl(holed, marks, 120, isOn, { minMeasured: 4 })).toMatchObject({ ok: false, inconclusive: true, why: expect.stringContaining('only 3 of 4') })
+    // change 2 five refreshes late: a fail whatever the holes
+    const late = run([[11, 31], [55, 71]]).filter((_, i) => i < 28 || i > 33)
+    expect(clockControl(late, marks, 120, isOn, { minMeasured: 2 })).toMatchObject({ ok: false, why: expect.stringContaining('5.0 refreshes') })
+  })
 })

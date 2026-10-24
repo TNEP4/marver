@@ -26,9 +26,11 @@
 // `--heartbeat` (display mode): the helper keeps a 2 x 2 px window in the display's bottom-left corner changing at the
 // refresh rate, so every refresh has something to capture and a gap means a missed frame - a display stream skips
 // the refreshes in which nothing changed (on this Mac, 41 of 136 in 1.5 s, up to 58 ms apart, with no heartbeat).
-// `--marker` (display mode): a clock control on display times (A3.8 #36). stdin "mark on" / "mark off" shows or hides
-// a 24 x 24 pt red window 40 pt from the display's bottom-left corner, and once the change is committed prints
-// {"mark":{"on":…,"ns":"…"}} on the continuous clock; every frame samples it as region `marker` (4 x 4).
+// `--marker` (display mode): a clock control on display times (A3.8 #36). A 24 x 24 pt window 40 pt from the
+// display's bottom-left corner, shown for the whole stream, dark grey; stdin "mark on" / "mark off" paints it red or
+// grey again - a colour change, as the heartbeat makes, since ordering a window in or out reached the screen up to 14
+// refreshes late here - and once the change is committed prints {"mark":{"on":…,"ns":"…"}} on the continuous clock;
+// every frame samples it as region `marker`.
 // stdin "detect-pid <pid>" (display mode, with --detect): from then on a sentinel counts only inside an on-screen
 // window of that process, at least 44 pt below its top (A3.8 #50: the canvas below the strip), the window's frame
 // read again from the window server at the detection; such a detection says `"pid":<pid>` and the window's rect.
@@ -415,8 +417,10 @@ func holdDisplayAwake() {
   if r != kIOReturnSuccess { FileHandle.standardError.write("capture: could not hold the display awake (\(r))\n".data(using: .utf8)!) }
 }
 
-/// The clock control's marker (display mode, `--marker`): 24 x 24 pt, red, 40 pt from the bottom-left corner.
+/// The clock control's marker (display mode, `--marker`): 24 x 24 pt, 40 pt from the bottom-left corner, grey or red.
 let MARKER = (x: 40.0, y: 40.0, s: 24.0)
+let MARKER_OFF = NSColor(srgbRed: 0.2, green: 0.2, blue: 0.2, alpha: 1)
+let MARKER_ON = NSColor(srgbRed: 1, green: 0, blue: 0, alpha: 1)
 var marker: NSWindow?
 func makeMarker(display: CGDirectDisplayID) {
   let screen = NSScreen.screens.first { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == display } ?? NSScreen.main
@@ -427,14 +431,16 @@ func makeMarker(display: CGDirectDisplayID) {
   w.isOpaque = true
   w.hasShadow = false
   w.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-  w.backgroundColor = NSColor(srgbRed: 1, green: 0, blue: 0, alpha: 1)
+  w.backgroundColor = MARKER_OFF
+  w.orderFrontRegardless()
   marker = w
 }
-/// Show or hide the marker on the main thread, then say when the change was committed (continuous clock).
+/// Paint the marker red or grey on the main thread, then say when the change was committed (continuous clock).
 func mark(_ on: Bool) {
   DispatchQueue.main.async {
     guard let w = marker else { print("{\"mark\":{\"on\":\(on),\"error\":\"no marker\"}}"); return }
-    if on { w.orderFrontRegardless() } else { w.orderOut(nil) }
+    w.backgroundColor = on ? MARKER_ON : MARKER_OFF
+    w.displayIfNeeded()
     CATransaction.flush()
     print("{\"mark\":{\"on\":\(on),\"ns\":\"\(toNs(mach_absolute_time()))\"}}")
   }
