@@ -28,6 +28,7 @@
 import { ROUTE } from '../../const.ts'
 import { BAKES, PUBLISHED } from '../store.ts'
 import { api } from '../api.ts'
+import { PERF_RUN } from '../perf-run.ts'
 import { readOwn, sleepRule } from '../../../shared/sleep-rule.ts'
 import type { BakeWork } from '../../../shared/perf-run.ts'
 
@@ -75,7 +76,9 @@ export function scheduleSleep(fn: () => void, ms: number): () => void {
 /** The node's current request, so a stale answer (a newer sleep, a wake in between) is dropped. */
 const pending = new Map<string, number>()
 let seq = 0
-/** Nodes with one retry of a failed compile in flight. */
+/** Nodes with a retry of a failed compile in flight - or, in a headless perf run, spent: a run's frame retries once
+ *  until it wakes, so the run can reach bake-idle; every other canvas retries every 4 s for as long as the frame
+ *  rests, as before 0.27.2, so a frame recovers when the server does. */
 const retried = new Set<string>()
 const RETRY_MS = 4000
 /** The server's answer for a compile still running (src/server/bake.ts COMPILING), and how many times a
@@ -189,11 +192,13 @@ async function sleepNow(nodeKey: string, iframe: HTMLIFrameElement, key: SleepKe
   if (PUBLISHED && targets.length && doc.querySelector('meta[name="mv-bakes"]')?.getAttribute('content') !== String(BAKES)) targets = []
   if (!install(doc, targets)) return 'live'
   // a certified sleep is remembered; the pause-only fallback is not, so the next lifecycle event
-  // asks again (a compile the source outran, a server hiccup), and one retry is scheduled now - one until the
-  // node wakes: a retry that fails again asks nothing more (it asked every 4 s for as long as the frame rested)
+  // asks again (a compile the source outran, a server hiccup), and a retry is scheduled now. A canvas retries
+  // every 4 s while the frame rests: the retry clears its own mark, so a failure after a failure asks again and
+  // the glass sleeps once the server recovers. A headless perf run's retry keeps its mark until the node wakes -
+  // one retry, then nothing more, or a frame the compiler refuses would keep the run from ever being bake-idle
   if (targets.length) { asleep.set(nodeKey, { key: k, doc }); compiling.delete(nodeKey); retried.delete(nodeKey) }
   else if (answer.ok === false && answer.error === COMPILING) { /* out of looks: the pause alone, final */ }
-  else if (!PUBLISHED && !retried.has(nodeKey)) { retried.add(nodeKey); scheduleSleep(() => { if (current()) void sleep(nodeKey, iframe, key) }, RETRY_MS) }   // a static miss is final
+  else if (!PUBLISHED && !retried.has(nodeKey)) { retried.add(nodeKey); scheduleSleep(() => { if (!PERF_RUN) retried.delete(nodeKey); if (current()) void sleep(nodeKey, iframe, key) }, RETRY_MS) }   // a static miss is final
   return 'asleep'
 }
 

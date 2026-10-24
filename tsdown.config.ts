@@ -9,4 +9,7 @@ export default defineConfig({
   clean: true,
   dts: false,
   external: ['vite', '@vitejs/plugin-react', 'cac', 'ws', 'sherpa-onnx-node'],
+  // the suite's seams (src/server/test-build.ts) are built in only for the suite: test/global-setup.ts sets
+  // MV_TEST_BUILD=1; the npm build - the one CI publishes, after the suite - carries none
+  define: { __MV_TEST__: JSON.stringify(process.env.MV_TEST_BUILD === '1') },
 })

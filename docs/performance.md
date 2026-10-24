@@ -301,9 +301,10 @@ run 3f1c9a20b7d4e815: warming up
 ```
 
 **The script** (version 1). One warm-up load, not measured: Vite's transforms and the dependency cache warm up,
-and the frames' sleep bakes compile. It waits until the board settled and nothing is still compiling, 60 s at
-most; past that the run goes on and its line says `bakes: 'cold'`. Then a fresh browser context, the cache off,
-1440 x 900 at scale 2: the board loads, settles (120 s at most), waits again until nothing is compiling (30 s),
+and the frames' sleep bakes compile. It waits until the board's load has ended - settled, or cut: a cut warm-up
+still counts as warm - and nothing is still compiling, 60 s at most; past that the run goes on and its line says
+`bakes: 'cold'`. Then a fresh browser context, the cache off, 1440 x 900 at scale 2: the board loads, settles
+(120 s at most), waits again until nothing is compiling (30 s),
 fits, and runs three gestures with the pointer at the canvas's centre - 40 ctrl-wheel steps in, 40 out, then a
 pan of 60 steps right and 60 back - each ended by the canvas itself. `--slow` throttles the CPU 4x before the
 load: a stand-in for a slower Mac's CPU, not for its GPU or its memory. `--repeat <n>` runs it up to 5 times,
@@ -322,9 +323,10 @@ not.
 
 **Valid or not.** A run is valid when none of these held, and its line names the first that did:
 `cancelled`, `crash` (the page or the browser crashed), `inputs` (a watched file changed during the run, even if it
-was put back, or the dev server restarted), `writes` (a write was refused), `cut` (the load never settled - its
-`cut` says why: `unresponsive` when the page stopped answering, `driver: ...` when the run failed for another
-reason, such as a page script that threw), `frames` (a frame missing or never ready), `errors`, `bakes` (still
+was put back, or the dev server restarted), `writes` (the dev server refused a write: one that got past the page,
+or a frame's own - a write the page refuses before sending is only counted, as `refusedInPage`), `cut` (the load
+never settled - its `cut` says why: `unresponsive` when the page stopped answering, `driver: ...` when the run
+failed for another reason, such as a page script that threw), `frames` (a frame missing or never ready), `errors`, `bakes` (still
 compiling 30 s after the load), `gesture` (the camera never came to rest after the fit, a gesture the canvas never
 ended within 5 s, or one in which no frame was timed - then `over33ms` is `null`, never 0), `records` (the page's
 records did not all land, or some were lost to a bound on the way). `gestures` counts the run's own three that the

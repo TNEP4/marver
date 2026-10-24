@@ -43,7 +43,8 @@ const SUITES = ['startup', 'slots', 'slotsDev', 'recover'] as const
 
 export default async function setup(project: TestProject) {
   const root = join(import.meta.dirname, '..')
-  execFileSync('npm', ['run', 'build'], { cwd: root, stdio: 'ignore', timeout: 180_000 })
+  // the suite's build: its seams in (src/server/test-build.ts) - the npm build drops them
+  execFileSync('npm', ['run', 'build'], { cwd: root, stdio: 'ignore', timeout: 180_000, env: { ...process.env, MV_TEST_BUILD: '1' } })
   if (!existsSync(join(root, 'dist', 'cli.mjs'))) {
     throw new Error('build produced no dist/cli.mjs - the gate tests cannot verify anything')
   }
