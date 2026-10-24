@@ -1,17 +1,24 @@
 /**
  * This Mac's profile (spec 28 A3.2, A3.8 #11) and the machine-wide GPU figures (A3.1). Owner: the recorder stream.
  *
- * At launch and on display, power or GPU feature changes (debounced 1 s), the app's profile is collected - under
- * 50 ms of main-thread work (a test), every spawn `execFile` with an absolute path - and written to
- * `<MARVER_HOME>/perf/machine/<hash>.json` (700/600, a `wx` temp file renamed; an existing one only touched).
+ * At launch and on display, power or GPU feature changes (debounced 1 s) - and when the window moves to another
+ * display (its tile budget is that display's) - the app's profile is collected - under 50 ms of main-thread work (a
+ * test), every spawn `execFile` with an absolute path - and written to `<MARVER_HOME>/perf/machine/<hash>.json`
+ * (700/600, a `wx` temp file renamed; an existing one only touched, and written again if it went meanwhile).
  * `getGPUInfo('complete')` is waited for 2 s at most, then the profile is written with 'unknown' where it lacks; a
  * late answer makes a new profile and hash, the stamp from then on. Lines at launch wait for the first hash 3 s at
- * most, then say `machine: null`. The host part and its hash are the headless run's too (src/shared/machine.ts).
+ * most, then say `machine: null`; a hash stamps lines (`stampHash`) only once its file is written, or its write
+ * failed and said so, so no line names a file that is not there. The host part and its hash are the headless run's
+ * too (src/shared/machine.ts).
  *
- * The host's spawns (`sysctl -n hw.perflevel0.physicalcpu hw.perflevel1.physicalcpu hw.model`, `sw_vers
- * -productVersion`) and its floor (`basicHost()`, os.cpus() and os.totalmem()) are read exactly as a headless run
- * reads them (machine-host.ts, `withHostSpawns`), so the two meet by `hostHash`: the model is `hw.model`, not
+ * The host is read through `readHost` (src/shared/machine.ts), the one function a headless run reads it with
+ * (machine-host.ts `hostProfile`): its floor (`basicHost()`, os.cpus() and os.totalmem()) and its two spawns
+ * (`sysctl -n hw.perflevel0.physicalcpu hw.perflevel1.physicalcpu hw.model`, `sw_vers -productVersion`), each tried
+ * once more when it fails, so the two meet by `hostHash` (test/unit/host-meets.test.ts): the model is `hw.model`, not
  * Electron's machineModelName (design §3.3 had it the other way round; one source keeps the hashes equal).
+ *
+ * "Under 50 ms of main-thread work" counts every step a collection runs on main, not the profile's build alone: the
+ * host's floor, each spawn's start and its answer's callback, the GPU asks and the build (`machineStats().parts`).
  *
  * FROZEN signatures (A3.8 #53).
  */
@@ -23,7 +30,7 @@ import { totalmem } from 'node:os'
 import { join } from 'node:path'
 import { app, powerMonitor, screen, type BaseWindow, type Display } from 'electron'
 import type { AgxReading } from '../../../src/shared/app-perf.ts'
-import { canonical, HOST_SYSCTL, PROFILE_HASH_HEX, withHostSpawns, type AppProfile, type DisplayProfile, type HostProfile } from '../../../src/shared/machine.ts'
+import { canonical, PROFILE_HASH_HEX, readHost, type AppProfile, type DisplayProfile, type HostProfile } from '../../../src/shared/machine.ts'
 import { basicHost } from '../../../src/server/machine-host.ts'
 import type { Home } from './config.ts'
 import { writeWhole } from './fsx.ts'
@@ -38,8 +45,6 @@ export const AGX_UNKNOWN: AgxReading = { gpuSystemMemoryMB: 'unknown', allocMB: 
 
 export const IOREG = '/usr/sbin/ioreg'
 export const IOREG_ARGS = ['-rc', 'AGXAccelerator', '-d1'] as const
-const SYSCTL = '/usr/sbin/sysctl'
-const SW_VERS = '/usr/bin/sw_vers'
 
 // ---- the parsers (pure) -----------------------------------------------------------------------------------------
 
@@ -143,25 +148,45 @@ export function makeProfile(i: ProfileInputs): AppProfile {
   }
 }
 
+// ---- main-thread work, counted (A3.8 #11) ---------------------------------------------------------------------
+
+/** The main-thread ms of the collection under way, by part, since the last one ended. */
+let work: Record<string, number> = {}
+/** Runs `f` on main and counts its time against the collection under way. */
+function onMain<T>(part: string, f: () => T): T {
+  const t0 = performance.now()
+  try { return f() } finally { work[part] = (work[part] ?? 0) + performance.now() - t0 }
+}
+
 // ---- the spawns ---------------------------------------------------------------------------------------------------
 
-function run(file: string, args: readonly string[], timeoutMs: number, maxBuffer = 64 * 1024): Promise<string | null> {
+/** One spawn's stdout, or null. With `part`, its start and its answer's callback count as the collection's work. */
+function run(file: string, args: readonly string[], timeoutMs: number, maxBuffer = 64 * 1024, part?: string): Promise<string | null> {
+  const timed = <T>(f: () => T): T => (part ? onMain(part, f) : f())
   return new Promise((resolve) => {
     try {
-      execFile(file, [...args], { timeout: timeoutMs, encoding: 'utf8', maxBuffer }, (err, stdout) => resolve(err ? null : String(stdout)))
+      timed(() => execFile(file, [...args], { timeout: timeoutMs, encoding: 'utf8', maxBuffer }, (err, stdout) => timed(() => resolve(err ? null : String(stdout)))))
     } catch { resolve(null) }
   })
 }
 
 let gpuCores: number | 'unknown' = 'unknown'
 
-/** One ioreg read, `timeoutMs` at most; best effort. */
-export async function readAgx(timeoutMs: number): Promise<AgxReading> {
-  const text = await run(IOREG, IOREG_ARGS, timeoutMs, 4 * 1024 * 1024)
+/** One ioreg read, `timeoutMs` at most; best effort. With `part`, counted as the collection's work. */
+export async function readAgx(timeoutMs: number, part?: string): Promise<AgxReading> {
+  const text = await run(IOREG, IOREG_ARGS, timeoutMs, 4 * 1024 * 1024, part)
   if (text === null) return { ...AGX_UNKNOWN }
-  const cores = parseGpuCores(text)
-  if (cores !== 'unknown') gpuCores = cores
-  return parseAgx(text)
+  const parse = () => {
+    const cores = parseGpuCores(text)
+    if (cores !== 'unknown') gpuCores = cores
+    return parseAgx(text)
+  }
+  return part ? onMain(part, parse) : parse()
+}
+
+/** The host as the app reads it: `readHost` - a headless run's own function - with this file's spawns (counted). */
+export function readAppHost(): Promise<HostProfile> {
+  return readHost(onMain('host', () => basicHost()), (file, args) => run(file, args, T.spawnTimeoutMs, 64 * 1024, 'spawns'))
 }
 
 // ---- the profile in force -----------------------------------------------------------------------------------------
@@ -174,7 +199,12 @@ let complete = false
 let started = false
 let timer: NodeJS.Timeout | null = null
 let windowOf: () => BaseWindow | null = () => null
-let lastCollectMs = 0
+/** the collections so far: why, main-thread ms in all, by part */
+let collections: { why: string; ms: number; parts: Record<string, number> }[] = []
+/** the hash lines are stamped with, and the collection it came from */
+let stamp: string | null = null
+let stampGen = 0
+let collectGen = 0
 const firstWaiters = new Set<(h: string) => void>()
 const profileFns = new Set<(hash: string, p: AppProfile) => void>()
 
@@ -202,24 +232,55 @@ export function firstHash(ms: number): Promise<string | null> {
 /** A new profile in force (the recorder's start line waits for the first). */
 export function onProfile(fn: (hash: string, p: AppProfile) => void): () => void { profileFns.add(fn); return () => { profileFns.delete(fn) } }
 
-/** Test builds: the main-thread ms of the last collection (A3.8 #11: under 50 ms). */
-export function machineStats(): { collectMs: number; complete: boolean; hash: string | null } { return { collectMs: lastCollectMs, complete, hash: currentHash() } }
+/**
+ * The hash lines are stamped with (perflog.ts's hold at launch waits for it): the newest profile whose file is written,
+ * or whose write failed and said so on stderr - never one whose file is still being written. Null before the first.
+ */
+export function stampHash(): string | null { return stamp }
 
-/** The profile file: written whole (a temp file, then renamed) when new, else touched - content-addressed, so the two flavours and headless runs may all write it. */
+/**
+ * Test builds (A3.8 #11: under 50 ms): every collection's main-thread ms - the last (`collectMs`), the launch's
+ * (`launchMs`, the host's floor, the spawns' starts and callbacks, the GPU asks and the build), the most any took -
+ * and the last one's parts.
+ */
+export function machineStats(): { collectMs: number; launchMs: number | null; maxMs: number; parts: Record<string, number>; collections: number; complete: boolean; hash: string | null; stamp: string | null } {
+  const last = collections.at(-1)
+  return {
+    collectMs: last?.ms ?? 0,
+    launchMs: collections.find((c) => c.why === 'launch')?.ms ?? null,
+    maxMs: collections.reduce((n, c) => Math.max(n, c.ms), 0),
+    parts: { ...(last?.parts ?? {}) },
+    collections: collections.length,
+    complete, hash: currentHash(), stamp,
+  }
+}
+
+/**
+ * The profile file: written whole (a temp file, then renamed) when new, else touched - content-addressed, so the two
+ * flavours and headless runs may all write it. One that went between the check and the touch (a prune) is written.
+ */
 export async function writeProfile(machineDir: string, hash: string, profile: unknown): Promise<string> {
   await mkdir(machineDir, { recursive: true, mode: 0o700 })
   if (((await stat(machineDir)).mode & 0o777) !== 0o700) await chmod(machineDir, 0o700)
   const file = join(machineDir, `${hash}.json`)
+  const write = () => writeWhole(file, JSON.stringify(profile, null, 2) + '\n', 0o600)
   if (existsSync(file)) {
     const now = new Date()
-    await utimes(file, now, now)
+    await utimes(file, now, now).catch((err: NodeJS.ErrnoException) => { if (err.code === 'ENOENT') return write(); throw err })
   } else {
-    await writeWhole(file, JSON.stringify(profile, null, 2) + '\n', 0o600)
+    await write()
   }
   return file
 }
 
-/** One collection: the main-thread part timed, the profile in force if its hash is new. */
+/** A collection's hash stamps lines once its file has settled (written, or failed and said); a newer one wins. */
+function settle(gen: number, hash: string): void {
+  if (gen <= stampGen) return
+  stampGen = gen
+  stamp = hash
+}
+
+/** One collection: its main-thread work counted, the profile in force if its hash is new. */
 function collect(why: string): void {
   const t0 = performance.now()
   let profile: AppProfile
@@ -243,11 +304,22 @@ function collect(why: string): void {
     return
   }
   const hash = profileHash(profile)
-  lastCollectMs = performance.now() - t0
-  if (__MV_TEST__) note('machine', { why, hash, collectMs: lastCollectMs, complete })
+  work.build = (work.build ?? 0) + performance.now() - t0
+  const parts = work
+  work = {}
+  const ms = Object.values(parts).reduce((n, v) => n + v, 0)
+  collections.push({ why, ms, parts })
+  if (collections.length > 50) collections.splice(1, 1)   // the launch's stays first
+  if (__MV_TEST__) note('machine', { why, hash, collectMs: ms, parts, complete })
   if (current?.hash === hash) return
   current = { hash, profile }
-  if (dir) void writeProfile(dir, hash, profile).catch((err) => process.stderr.write(`marver-app: the machine profile was not written (${(err as Error).message})\n`))
+  const gen = ++collectGen
+  if (dir) {
+    void writeProfile(dir, hash, profile).then(() => settle(gen, hash), (err) => {
+      process.stderr.write(`marver-app: the machine profile was not written (${(err as Error).message})\n`)
+      settle(gen, hash)
+    })
+  } else settle(gen, hash)
   for (const fn of [...firstWaiters]) fn(hash)
   for (const fn of [...profileFns]) { try { fn(hash, profile) } catch { /* a listener's own */ } }
 }
@@ -261,12 +333,12 @@ const soon = (why: string) => {
 /** getGPUInfo('complete'), and the profile again once it answers. */
 function askGpu(): Promise<boolean> {
   let answered = false
-  const p = app.getGPUInfo('complete').then((info) => {
+  const p = onMain('gpu', () => app.getGPUInfo('complete')).then((info) => onMain('gpu', () => {
     gpuInfo = info
     complete = true
     answered = true
     return true
-  }, () => false)
+  }), () => false)
   return Promise.race([p, new Promise<boolean>((r) => { const t = setTimeout(() => r(answered), T.profileGpuWaitMs); t.unref?.() })]).then((inTime) => {
     // a late answer makes a new profile and hash, the stamp from then on (A3.8 #11)
     if (!inTime) void p.then((ok) => { if (ok) collect('gpu-late') })
@@ -280,14 +352,10 @@ export function startMachine(o: { home: Home; window(): BaseWindow | null }): vo
   started = true
   windowOf = o.window
   dir = o.home.writable ? join(o.home.dir, 'perf', 'machine') : null
-  // the floor first (main thread), then the spawns and the GPU's answer off it
-  host = basicHost()
-  void app.getGPUInfo('basic').then((i) => { if (!complete) gpuInfo = i }, () => {})
-  const spawns = Promise.all([
-    run(SYSCTL, ['-n', ...HOST_SYSCTL], T.spawnTimeoutMs),
-    run(SW_VERS, ['-productVersion'], T.spawnTimeoutMs),
-    readAgx(T.spawnTimeoutMs),
-  ]).then(([sys, sw]) => { host = withHostSpawns(basicHost(), sys, sw) })
+  // the floor first (main thread), then the spawns and the GPU's answer off it - each step's main-thread part counted
+  host = onMain('host', () => basicHost())
+  void onMain('gpu', () => app.getGPUInfo('basic')).then((i) => { if (!complete) gpuInfo = i }, () => {})
+  const spawns = Promise.all([readAppHost(), readAgx(T.spawnTimeoutMs, 'spawns')]).then(([h]) => { host = h })
   void Promise.all([spawns, askGpu()]).then(() => collect('launch'), () => collect('launch'))
 
   screen.on('display-added', () => soon('display-added'))
@@ -307,9 +375,13 @@ export function startMachine(o: { home: Home; window(): BaseWindow | null }): vo
   })
 }
 
+/** The window went to another display (recorder.ts, at its move): a new profile, its tile budget that display's. */
+export function windowDisplayChanged(): void { if (started) soon('window-display') }
+
 /** Unit tests: forget the state. */
 export function resetMachine(): void {
-  current = null; dir = null; host = null; gpuInfo = null; complete = false; started = false; lastCollectMs = 0; gpuCores = 'unknown'
+  current = null; dir = null; host = null; gpuInfo = null; complete = false; started = false; gpuCores = 'unknown'
+  collections = []; work = {}; stamp = null; stampGen = 0; collectGen = 0
   if (timer) clearTimeout(timer)
   timer = null
   firstWaiters.clear(); profileFns.clear()

@@ -8,9 +8,10 @@
  * FROZEN signatures (A3.8 #53). Every spawn is `execFile` with an absolute path and a 2 s timeout; a failure is
  * 'unknown'; off macOS every field is 'unknown' but `arch`, `memGB` and `chip`.
  */
+import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { arch, cpus, totalmem } from 'node:os'
-import { canonical, PROFILE_HASH_HEX, type HeadlessProfile, type HostProfile } from '../shared/machine.ts'
+import { canonical, PROFILE_HASH_HEX, readHost, type HeadlessProfile, type HostProfile } from '../shared/machine.ts'
 
 /** The profile's hash: the same function the app uses for its own (A3.8 #11). */
 export const profileHash = (p: unknown): string => createHash('sha256').update(canonical(p)).digest('hex').slice(0, PROFILE_HASH_HEX)
@@ -21,9 +22,18 @@ export function basicHost(): HostProfile {
   return { chip: c[0]?.model?.trim() || 'unknown', cores: { total: c.length, p: 'unknown', e: 'unknown' }, model: 'unknown', memGB: Math.round(totalmem() / 2 ** 30), os: 'unknown', arch: arch() }
 }
 
-/** The host, read: `sysctl -n hw.perflevel0.physicalcpu hw.perflevel1.physicalcpu hw.model`, `sw_vers -productVersion`. */
+/** One host spawn's stdout, or null (it could not start, exited non-zero or ran past 2 s). */
+const hostSpawn = (file: string, args: readonly string[]): Promise<string | null> => new Promise((resolve) => {
+  try { execFile(file, [...args], { timeout: 2000, encoding: 'utf8', maxBuffer: 64 * 1024 }, (err, out) => resolve(err ? null : String(out))) } catch { resolve(null) }
+})
+
+/**
+ * The host, read: `sysctl -n hw.perflevel0.physicalcpu hw.perflevel1.physicalcpu hw.model`, `sw_vers -productVersion`
+ * - through `readHost`, the function the app reads its own host with, so the two meet by `hostHash` (the recorder
+ * stream's test/unit/host-meets.test.ts in the app's suite feeds both the same spawn answers).
+ */
 export async function hostProfile(): Promise<HostProfile> {
-  return basicHost()   // A3 headless stream: the spawns
+  return process.platform === 'darwin' ? readHost(basicHost(), hostSpawn) : basicHost()
 }
 
 /** The run's profile, written to `<MARVER_HOME>/perf/machine/<hash>.json` (or touched when it exists): its hash. */
