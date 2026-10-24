@@ -17,10 +17,11 @@
  * Navigation outcomes from a full, uncovered page, through the real event order of views.ts and the nav adapter: a
  * stop, a superseded navigation and a refused reload change no geometry and keep trust and the cover; a redirect
  * lands full at a fresh epoch; a new instance after the commit (with and without inset) covers in the registry's
- * turn and keeps the layout until the page's own reload; one before the commit drops the pending, so the document
- * lands below, told 0; one after the proof's headers commits unattributed, below, beneath its tab page; a failed
- * proof and an instance mismatch show the tab page in the failure's turn, below only with an error page. HTML
- * fullscreen in play mode (an element), with a resize and a switch during it; the window's own full screen in and
+ * turn and keeps the layout until the page's own reload; one before the commit turns the pending below, so the
+ * document lands below, told 0, after a same-process reload and a cross-process load alike; one after the proof's
+ * headers commits unattributed, below, beneath its tab page; a failed proof and an instance mismatch show the tab
+ * page in the failure's turn, below only with an error page. HTML fullscreen in play mode (an element), with a
+ * resize, a switch and a reload during it, and Electron's enter with no leave ending with its document; the window's own full screen in and
  * out, with HTML fullscreen inside it (a launch of its own). The GPU process killed for real. And with the gate shut
  * (no cover chosen, as in a release before S15): an inset canvas stays below, told 0, under 0.1's still dots.
  */
@@ -746,6 +747,44 @@ describe('HTML fullscreen in play mode (A2.10\'s (A3) cases, design-ground §6.3
     await uncovered(a)
     expect((await winNow()).bounds.width).toBe(win0.bounds.width)
   })
+
+  /** the page's reload, waited for: committed, lifted, said hello */
+  const reloadA = async () => {
+    const before = (await w.tab(a)).doc!.commits
+    const since = await mark()
+    await w.run.call('reloadPage', { target: a })
+    await w.until((x) => { const t = x.tabs.find((q) => q.id === a)!; return (t.doc?.commits ?? 0) > before && !!t.doc?.lifted }, 10_000, 'the reload')
+    await waitFor('its hello', async () => (await geoOf(a)).geo.inset !== undefined)
+    return since
+  }
+
+  it('a reload while in fullscreen: the new document holds no fullscreen element - full again at its commit, uncovered on its answer', async () => {
+    await exec(a, `(() => { const d = document.createElement('div'); d.id = 'stage'; document.body.append(d); return d.requestFullscreen().then(() => true) })()`, true)
+    await waitFor('fullscreen', async () => (await geoOf(a)).geo.htmlFullscreen)
+    expect((await bounds(`${a}:view`))!.bounds).toEqual(BELOW(await content()))
+    const since = await reloadA()
+    const commit = (await layoutOf(a, since)).find((l) => l.event === 'commit')!
+    expect(commit.to).toEqual({ layout: 'full', htmlFullscreen: false })
+    await uncovered(a)
+    expect(await fsElement()).toBe(null)
+    expect((await bounds(`${a}:view`))!.bounds).toEqual(FULL(await content()))
+  })
+
+  it('Electron\'s enter-html-full-screen with no fullscreen and no leave (seen under Playwright): below and covered until the document goes - its reload lands full and uncovers', async () => {
+    const wc = (await w.tab(a)).wcId!
+    // as Electron sent it for a requestFullscreen() that never settled: the event, the page not in fullscreen
+    await w.run.pw!.evaluate(({ webContents }, id) => { webContents.fromId(id)!.emit('enter-html-full-screen') }, wc)
+    await waitFor('held below', async () => (await geoOf(a)).geo.htmlFullscreen)
+    expect(await fsElement()).toBe(null)
+    expect((await bounds(`${a}:view`))!.bounds).toEqual(BELOW(await content()))
+    expect((await ground()).cover.visible).toBe(true)
+    await sleep(300)
+    expect((await geoOf(a)).geo.htmlFullscreen).toBe(true)   // nothing else ever clears it but its document going
+    await reloadA()
+    await uncovered(a)
+    expect((await geoOf(a)).geo).toEqual({ layout: 'full', htmlFullscreen: false, inset: 44 })
+    expect((await bounds(`${a}:view`))!.bounds).toEqual(FULL(await content()))
+  })
 })
 
 describe('stalled renderers: covering never waits on one, uncovering waits for the canvas (A2.10\'s stalled cases, A3.8 #30)', () => {
@@ -1005,7 +1044,9 @@ describe('the window\'s own full screen, and HTML fullscreen inside it (A2.10\'s
   // full-screen window never settled under this launch: Electron still sends enter-html-full-screen, so main keeps
   // the view below and covered (the safe side), but the page is never fullscreen, exitFullscreen() rejects
   // "Document not active", and no leave-html-full-screen comes. Seen on 24 Oct under Playwright's launch only; not
-  // narrowed further, nor tried under the production switches.
+  // narrowed further, nor tried under the production switches. What main does about that state is the play-mode
+  // block's last case: it lasts only as long as the document - its reload or navigation commits with HTML fullscreen
+  // cleared (layout.ts).
   let main: WindowRun
   let a = ''
   beforeAll(async () => {

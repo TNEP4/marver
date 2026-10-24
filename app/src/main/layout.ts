@@ -10,9 +10,13 @@
  *   `inset` (and only while the window has a cover that can cover a full-height view: `setGround`, below); a view
  *   holding no shown document takes `pending.layout` at once (pre-sized, so its first layout has its final size);
  * - commit: `full` only for the pending generation, attributed, on the instance it was meant for and still the
- *   tab's; `pending` and `inset` cleared (the new document has not spoken);
- * - fail: `pending` dropped; `below` only when main positively knows an error page committed (`errorPage`);
- *   otherwise the committed geometry stays (A3.8 #25: a failure alone proves no error page);
+ *   tab's; `pending` and `inset` cleared (the new document has not spoken), and `htmlFullscreen` too: a document
+ *   just committed holds no fullscreen element, and Electron can send `enter-html-full-screen` for a request that
+ *   never became fullscreen and no leave after it - kept, it held the view below and covered through every reload
+ *   until a crash or a close (a late leave event clears nothing more);
+ * - fail: `pending` dropped; `below` only when main positively knows an error page committed (`errorPage`), which
+ *   clears `inset` and `htmlFullscreen` as a commit does; otherwise the committed geometry stays (A3.8 #25: a
+ *   failure alone proves no error page);
  * - abort: that generation's `pending` dropped, nothing else;
  * - rebind, gone: the pending generation kept, but `below` (a documentless view pre-sized to it), the committed layout
  *   of a shown or retained document kept (trust is revoked elsewhere, so the page is covered). Kept, not dropped:
@@ -104,10 +108,10 @@ function next(t: Tab, e: LayoutEvent): Geometry {
       const p = g.pending
       const ok = !!p && p.gen === e.gen && p.layout === 'full' && e.attributed && !!e.instance
         && e.instance === p.instance && e.instance === t.reg?.instance
-      return { ...without(g, 'pending', 'inset'), layout: ok ? 'full' : 'below' }
+      return { ...without(g, 'pending', 'inset'), layout: ok ? 'full' : 'below', htmlFullscreen: false }
     }
     case 'fail': {
-      return e.errorPage ? { ...without(g, 'pending', 'inset'), layout: 'below' } : without(g, 'pending')
+      return e.errorPage ? { ...without(g, 'pending', 'inset'), layout: 'below', htmlFullscreen: false } : without(g, 'pending')
     }
     case 'abort': {
       return g.pending?.gen === e.gen ? without(g, 'pending') : g

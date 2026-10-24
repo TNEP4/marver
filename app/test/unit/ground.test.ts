@@ -162,6 +162,28 @@ describe('layout.ts: the rules (A3.8 #24-#26)', () => {
     expect([placed(t), seeThrough(t)]).toEqual(['full', true])
   })
 
+  it('8b. HTML fullscreen ends with its document: a commit clears it (Electron\'s enter with no leave), and so does an error page; a failure alone does not', () => {
+    const t = canvas({ retained: true, geo: { layout: 'full', htmlFullscreen: false, inset: 44 } })
+    trusted(t)
+    run(t, { kind: 'html-fullscreen', on: true })          // enter-html-full-screen; the page never became fullscreen, no leave follows
+    expect(placed(t)).toBe('below')
+    run(t, { kind: 'start', gen: 2 })
+    expect(placed(t)).toBe('below')                         // until its commit, the document that asked is still the one shown
+    run(t, { kind: 'commit', gen: 2, attributed: true, instance: 'i1' })
+    expect(t.geo).toEqual({ layout: 'full', htmlFullscreen: false })
+    expect(placed(t)).toBe('full')                          // placed() follows the layout again
+    expect(run(t, { kind: 'html-fullscreen', on: false })).toEqual([false])   // a late leave changes nothing
+    // a commit that lands below clears it too
+    run(t, { kind: 'html-fullscreen', on: true }, { kind: 'commit', gen: 9, attributed: false })
+    expect(t.geo).toEqual({ layout: 'below', htmlFullscreen: false })
+    // a failure: kept unless an error page committed
+    const f = canvas({ retained: true, geo: { layout: 'full', htmlFullscreen: true, inset: 44 } })
+    run(f, { kind: 'fail', gen: 1, errorPage: false })
+    expect(f.geo.htmlFullscreen).toBe(true)
+    run(f, { kind: 'fail', gen: 1, errorPage: true })
+    expect(f.geo).toEqual({ layout: 'below', htmlFullscreen: false })
+  })
+
   it('9. a renderer gone and a view gone reset everything to below', () => {
     for (const kind of ['renderer-gone', 'view-gone'] as const) {
       const t = canvas({ geo: { layout: 'full', htmlFullscreen: true, inset: 44, pending: { gen: 3, instance: 'i1', layout: 'full' } } })
