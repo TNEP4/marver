@@ -133,6 +133,11 @@ uncovered until a stream fills its own, so app 0.2's base behaves as app 0.1.
   decisions, from the journal's `compose`, `layout`, `present` and `resize` topics, never its pixels.
   `test/harness/ground-shell.ts` is a fake 0.27.2 shell for a fake canvas's `script` (the inset, hello, the answers,
   and their failure modes).
+- **by hand on the first 0.2 build** (no harness reaches them yet; #38's `clickpost.swift` is the native acceptance
+  stream's): over Home and over Settings - which run at the full height under the transparent strip in every 0.2
+  build, S15's gate open or shut - a drag in the strip's empty part moves the window, and a click there reaches
+  neither page (nothing on Home or Settings reacts); a click on a tab activates it. Then the same over a canvas once
+  S15 opens the gate. And a switch Home ↔ canvas, watched for a frame of plain ground or doubled dots under the tabs.
 - **the packaged smoke** (`test/smoke/smoke.mjs`): S9's checks and X7's cases on the signed build; every launch on
   its own profile with `--use-mock-keychain`. Its clean launch loads a fake canvas as the active tab: the first frame
   callback, a canvas cookie read back encrypted (`v10`) after a SIGTERM to main alone (a group SIGTERM ends the network

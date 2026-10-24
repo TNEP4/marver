@@ -4,9 +4,14 @@
  *
  * One `BaseWindow` named `main` (window place: `windowStatePersistence` does nothing without a name). Its stack,
  * bottom to top: the content views (canvases, Home, Settings), the tab pages, the cover, the strip. The strip is
- * transparent and paints controls only (A3.8 #29) - and the still dots while app 0.1's plain cover covers (the window
- * snapshot's `dots`), so a canvas keeps 0.1's look until S15 chooses a cover. Home, Settings and every tab page run the window's full height
- * and paint the ground and still dots under the strip themselves; a canvas runs full height only when its layout
+ * transparent and paints controls only (A3.8 #29) - and the still dots while a cover that has it draw them covers
+ * (the window snapshot's `dots`, from cover.ts's `stripDraws`: app 0.1's plain view until S15, variant 4 after), so a
+ * canvas keeps 0.1's look until S15 chooses a cover. Home, Settings and every tab page run the window's full height
+ * and paint the ground and still dots under the strip themselves - in every build, the gate open or shut (A3.8 #32
+ * is built ungated: if S15 fails, #3's fallback is the opaque strip, and whether these pages stay at the full height
+ * then is Nic's call). So in every 0.2 build a web view lies under the strip's transparent drag region over them,
+ * and the strip's dots switch on and off through its renderer at each switch between them and a canvas (a frame of
+ * plain ground or doubled dots, longer while the strip is stalled). A canvas runs full height only when its layout
  * says so (layout.ts), else below the strip; the cover - cover.ts's, in the ground of the active tab's look - is
  * shown whenever the active view may not be seen through (plan.ts).
  *
