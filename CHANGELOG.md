@@ -63,6 +63,10 @@ The canvas's side of the Mac app (app 0.1), and what it brings to every browser.
   ordinary autosave had already saved it - a frame still in your hand when the canvas answered, then dropped - and
   the reloaded page said nothing, though the edit was on disk. Now every board save between the stop and the tab's
   reload counts, and a lost one too: the reloaded page then says the file won, or that the board is gone.
+- **A tab whose canvas came back reloads only once its heights are saved.** It saved its board edit first, but went
+  whether or not the frame heights it had measured were in `_sizes.json`: a heights write the canvas failed on the way
+  back went back in the queue, and the reload dropped it. Now the tab reloads once every height has reached the file;
+  until then it works as live and sends them again, as it does while a capture records or words wait to be sent.
 
 ## 0.27.0 - 2026-10-23
 
