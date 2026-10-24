@@ -10,13 +10,24 @@
  * and how many others (`--all` adds them); automatic candidates are their own section, "automatic, not verified".
  *
  * As built: every joined item says how it was joined (`join`): `page` (the app record carries the page id its
- * document's hello sent, and page.jsonl has that page), `ws+time` (no page: a 0.27.0 canvas, or none said hello yet -
- * the page of that workspace whose records were the latest before it, within 2 minutes) or `none`. What is
- * machine-wide (the GPU process, a utility process, an app page, the minute before a crash) is joined by time alone
- * and is labelled so. Records of one launch are deduplicated by `flavour/app/seq`. A flash is dated by its mark
- * (`now.ts`, `markTime`), not by its line's `ts`, which is when it was written, about mark + 2 s (A3.8 #13).
+ * document's hello sent, and page.jsonl has that page), `page-unrecorded` (it carries a page id and page.jsonl has
+ * nothing of that page - a renderer that ended before its first 2 s batch: never another document's page, A3.8 #8),
+ * `ws+time` (no page id at all: a 0.27.0 canvas, or none said hello yet - the page of that workspace whose records
+ * were the latest before it, within 2 minutes) or `none`. What is machine-wide (the GPU process, a utility process,
+ * an app page, the minute before a crash) is joined by time alone and is labelled so. Records of one launch are
+ * deduplicated by `flavour/app/seq`. A flash is dated by its mark (`now.ts`, `markTime`), not by its line's `ts`,
+ * which is when it was written, about mark + 2 s (A3.8 #13).
+ *
+ * A gesture record is written at the gesture's end, `ms` long: it spans `[ts - ms, ts]`. A moment inside that span
+ * was *during* the gesture (a flash during a zoom, a white-out candidate, a hang); else the gesture is the last one
+ * that ended before the moment (a flash: the nearest end within 2 s, before or after it). Every offset is signed,
+ * never clamped.
+ *
+ * The flashes' and candidates' "GPU process events" are the GPU process's alone (`child-gone` of type GPU,
+ * `gpu-restart`, `gpu`), whatever a line holds: a renderer's end or a utility process's is not one. A flash's pressure
+ * is the reading at the mark only when it was at most 10 s old then (two samples); older, it is unknown.
  */
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { APP_LOG, parseAppLine, type AppRecord, type Flavour } from '../shared/app-perf.ts'
 import type { RunLine } from '../shared/perf-run.ts'
@@ -52,25 +63,46 @@ export function repoWorkspaces(root: string, page: Record<string, any>[]): Set<s
 // ---- the joins ------------------------------------------------------------------------------------------------------
 
 type Rec = Record<string, any>
-/** How an app record met the page half. */
-export type Join = 'page' | 'ws+time' | 'none'
-/** What the page half says about the moment: the load that owned the board then, and the last gesture before it. */
+/** How an app record met the page half: by its page id; its page id with nothing of that page recorded; by workspace and time (no page id); none. */
+export type Join = 'page' | 'page-unrecorded' | 'ws+time' | 'none'
+/**
+ * A gesture against a moment. The page writes a gesture's record at its end (`ts`), `ms` long, so it spans
+ * `[ts - ms, ts]`. Both offsets are signed: positive = before the moment, negative = after it.
+ */
+export interface GestureAt {
+  type: string; ms?: number; p95?: number
+  /** the moment fell inside the gesture */
+  during: boolean
+  /** from the gesture's start to the moment (when its `ms` is known) */
+  startedMsBefore?: number
+  /** from the gesture's end to the moment: negative when it ended after the moment */
+  endedMsBefore: number
+}
+/** What the page half says about the moment: the load that owned the board then, and the gesture it fell in or the last one before it. */
 export interface PageMoment {
   join: Join
   page?: string
   board?: string
   load?: { id: string; cause?: string; settled: boolean; settledMs?: number; state: LoadSummary['state'] }
-  /** the page's last gesture record before the moment (its end), how long before */
-  gesture?: { type: string; ms?: number; p95?: number; endedMsBefore: number }
+  gesture?: GestureAt
 }
 
 const WS_TIME_MS = 120_000
+/** A flash joins the gesture it fell in, else the one whose end is nearest within this, before or after (A3.3). */
+export const FLASH_GESTURE_MS = 2000
+/** A pressure reading older than this at the mark (two 5 s samples) is unknown there (A3.8 #13). */
+export const PRESSURE_FRESH_MS = 10_000
 
-/** The page records of the moment's page: by its id, else (no page) the workspace's page latest before `ts`. */
+/**
+ * The page records of the moment's page. A record with a page id joins that page or nothing: a document never gets
+ * another document's records (A3.8 #8) - with none of its own (it ended before its first batch) it is
+ * `page-unrecorded`. Only a record with no page id joins by workspace and time: that workspace's page whose records
+ * were the latest before `ts`, within 2 minutes.
+ */
 function pageOf(rec: Rec, page: Rec[], ts: number): { join: Join; records: Rec[]; page?: string } {
   if (typeof rec.page === 'string') {
     const records = page.filter((r) => r.page === rec.page)
-    if (records.length) return { join: 'page', records, page: rec.page }
+    return { join: records.length ? 'page' : 'page-unrecorded', records, page: rec.page }
   }
   if (typeof rec.ws === 'string') {
     let best: { page: string; ts: number } | null = null
@@ -93,10 +125,30 @@ export function markTime(x: Rec): number {
   return typeof t === 'number' && Number.isFinite(t) && t > 0 ? t : x.ts
 }
 
-/** The page half at `ts`: the load whose commit came last before it (it owned the geometry), settled or not then; the last gesture that ended before it. */
-export function momentOf(rec: Rec, page: Rec[], ts = rec.ts as number): PageMoment {
+/**
+ * The gesture a moment fell in - the latest to start, should two hold it - else the last that ended before it, or
+ * with `withinMs` the one whose end is nearest the moment within that, before or after.
+ */
+export function gestureAt(records: Rec[], ts: number, withinMs?: number): GestureAt | undefined {
+  const gs = records.filter((r) => r.kind === 'gesture' && typeof r.ts === 'number')
+  const start = (g: Rec): number => (typeof g.ms === 'number' && g.ms >= 0 ? g.ts - g.ms : g.ts)
+  const inside = gs.filter((g) => start(g) <= ts && ts <= g.ts).sort((a, b) => start(a) - start(b)).at(-1)
+  const near = (withinMs === undefined ? gs.filter((g) => g.ts <= ts) : gs.filter((g) => Math.abs(g.ts - ts) <= withinMs))
+    .sort((a, b) => Math.abs(a.ts - ts) - Math.abs(b.ts - ts))[0]
+  const g = inside ?? near
+  if (!g) return undefined
+  return {
+    type: g.type, ...(typeof g.ms === 'number' ? { ms: g.ms } : {}), ...(typeof g.p95 === 'number' ? { p95: g.p95 } : {}),
+    during: g === inside,
+    ...(typeof g.ms === 'number' && g.ms >= 0 ? { startedMsBefore: ts - start(g) } : {}),
+    endedMsBefore: ts - g.ts,
+  }
+}
+
+/** The page half at `ts`: the load whose commit came last before it (it owned the geometry), settled or not then; the gesture it fell in, or the last before it (`gestureWithinMs`: the nearest end within that, either side). */
+export function momentOf(rec: Rec, page: Rec[], ts = rec.ts as number, o: { gestureWithinMs?: number } = {}): PageMoment {
   const { join, records, page: id } = pageOf(rec, page, ts)
-  if (join === 'none') return { join }
+  if (join === 'none' || join === 'page-unrecorded') return { join, ...(id ? { page: id } : {}) }
   const out: PageMoment = { join, ...(id ? { page: id } : {}) }
   const commits = records.filter((r) => r.kind === 'commit' && r.ts <= ts).sort((a, b) => a.ts - b.ts)
   const owning = commits.at(-1)
@@ -106,10 +158,13 @@ export function momentOf(rec: Rec, page: Rec[], ts = rec.ts as number): PageMome
     if (l) out.load = { id: l.load, ...(l.cause ? { cause: l.cause } : {}), settled: !!settled, ...(settled ? { settledMs: settled.ms } : {}), state: l.state }
     if (l?.board) out.board = l.board
   }
-  const g = records.filter((r) => r.kind === 'gesture' && r.ts <= ts).sort((a, b) => a.ts - b.ts).at(-1)
-  if (g) out.gesture = { type: g.type, ...(typeof g.ms === 'number' ? { ms: g.ms } : {}), ...(typeof g.p95 === 'number' ? { p95: g.p95 } : {}), endedMsBefore: ts - g.ts }
+  const g = gestureAt(records, ts, o.gestureWithinMs)
+  if (g) out.gesture = g
   return out
 }
+
+/** The GPU process's own events (A3.3, A3.8 #13): its end, its silent replacement, a feature change - never a renderer's or a utility process's. */
+export const isGpuProcessEvent = (e: Rec): boolean => e?.kind === 'gpu-restart' || e?.kind === 'gpu' || (e?.kind === 'child-gone' && e.type === 'GPU')
 
 /** The minute before a moment, from the same launch (by time: machine-wide). */
 function minuteBefore(app: AppRecord[], rec: AppRecord, pid?: number) {
@@ -139,13 +194,18 @@ export interface MachineWideItem { at: number; flavour: Flavour; join: 'time'; w
 export interface CrashesSummary { crashes: CrashItem[]; hangs: HangItem[]; byTime: MachineWideItem[]; dumps: number }
 export interface FlashItem extends PageMoment {
   at: number; id: string; via: string; flavour: Flavour; tab?: string; ws?: string
+  /** on one of this repo's canvases (its workspace one of the repo's) */
+  mine: boolean
   recorder: boolean
+  /** the GPU process's events from 1 s before the mark to 1 s after it */
   gpuEvents: { kind: string; ts: number }[]
-  pressure: number | null; thermal: string
+  /** the level at the mark: null when unknown, or when the reading was older than 10 s then (`pressureAgeMs` says how old) */
+  pressure: number | null; pressureAgeMs?: number
+  thermal: string
   gpuProcessRssMB: number | null
   agx: Rec
-  /** the picture's absolute path, or null with why */
-  picture: string | null; pictureWhy?: string
+  /** the picture's absolute path, or null with why; `picturePruned` when the file is gone since (50 are kept) */
+  picture: string | null; pictureWhy?: string; picturePruned?: true
 }
 export interface CandidateItem extends PageMoment { at: number; flavour: Flavour; tab?: string; ws?: string; gestureSeq?: number; observedAt: number[]; rateHz?: number; samples?: number; skipped?: number; inconclusive?: number; gpuEvents: number }
 export interface FlashesSummary { marks: FlashItem[]; others: number; candidates: CandidateItem[] }
@@ -194,7 +254,7 @@ export function crashesSummary(app: AppRecord[], page: Record<string, any>[], wo
 
 // ---- --flashes -----------------------------------------------------------------------------------------------------
 
-/** `--flashes`: marks on this repo's canvases (all with `all`), joined by page to the board and a gesture within 2 s; candidates apart. */
+/** `--flashes`: marks on this repo's canvases (all with `all`), joined by page to the board and the gesture the mark fell in or ended within 2 s of it; candidates apart. */
 export function flashesSummary(app: AppRecord[], page: Record<string, any>[], workspaces: Set<string>, o: { all?: boolean; home?: string } = {}): FlashesSummary {
   const marks: FlashItem[] = []
   const candidates: CandidateItem[] = []
@@ -206,22 +266,23 @@ export function flashesSummary(app: AppRecord[], page: Record<string, any>[], wo
       if (!mine) { others++; if (!o.all) continue }
       // every figure is measured from the mark, never from when its line was written (about mark + 2 s)
       const at = markTime(x)
-      const m = momentOf(x, page, at)
-      // a gesture joins a mark when it ended within 2 s of it, before or after (the page writes the record at its end)
-      const pg = m.page ? page.filter((p) => p.page === m.page && p.kind === 'gesture' && Math.abs(p.ts - at) <= 2000).sort((a, b) => Math.abs(a.ts - at) - Math.abs(b.ts - at))[0] : undefined
-      const gesture = pg ? { type: pg.type, ...(typeof pg.ms === 'number' ? { ms: pg.ms } : {}), ...(typeof pg.p95 === 'number' ? { p95: pg.p95 } : {}), endedMsBefore: at - pg.ts } : undefined
-      const { gesture: _g, ...rest } = m
-      void _g
+      const p = x.pressure as Rec | null | undefined
+      const age = typeof p?.at === 'number' && p.at > 0 ? at - p.at : undefined
+      const fresh = age === undefined || age <= PRESSURE_FRESH_MS
+      const picture = typeof x.picture === 'string' ? (o.home ? join(o.home, 'perf', x.picture) : x.picture) : null
       marks.push({
         at, id: x.id, via: x.via, flavour: r.flavour, ...(x.tab ? { tab: x.tab } : {}), ...(x.ws ? { ws: x.ws } : {}),
-        recorder: !!x.recorder,
-        gpuEvents: Array.isArray(x.gpuEvents) ? x.gpuEvents.map((e: Rec) => ({ kind: e.kind, ts: e.ts })) : [],
-        pressure: x.pressure?.level ?? null, thermal: x.thermal ?? 'unknown',
+        mine, recorder: !!x.recorder,
+        gpuEvents: Array.isArray(x.gpuEvents) ? x.gpuEvents.filter(isGpuProcessEvent).map((e: Rec) => ({ kind: e.kind, ts: e.ts })) : [],
+        pressure: fresh ? p?.level ?? null : null, ...(age !== undefined ? { pressureAgeMs: age } : {}),
+        thermal: x.thermal ?? 'unknown',
         gpuProcessRssMB: x.now?.gpu?.gpuProcessRssMB ?? null,
         agx: x.agx ?? {},
-        picture: typeof x.picture === 'string' && o.home ? join(o.home, 'perf', x.picture) : (typeof x.picture === 'string' ? x.picture : null),
+        picture,
         ...(x.pictureWhy ? { pictureWhy: x.pictureWhy } : {}),
-        ...rest, ...(gesture ? { gesture } : {}),
+        ...(picture && o.home && !existsSync(picture) ? { picturePruned: true as const } : {}),
+        // the gesture the mark fell in, else the one whose end is nearest within 2 s, either side
+        ...momentOf(x, page, at, { gestureWithinMs: FLASH_GESTURE_MS }),
       })
     } else if (r.kind === 'whiteout-candidate') {
       if (!ofWs(x, workspaces) && !o.all) continue
@@ -230,7 +291,7 @@ export function flashesSummary(app: AppRecord[], page: Record<string, any>[], wo
         at: observedAt[0] ?? r.ts, flavour: r.flavour, ...(x.tab ? { tab: x.tab } : {}), ...(x.ws ? { ws: x.ws } : {}),
         ...(typeof x.gesture === 'number' ? { gestureSeq: x.gesture } : {}),
         observedAt, rateHz: x.rateHz, samples: x.samples, skipped: x.skipped, inconclusive: x.inconclusive,
-        gpuEvents: Array.isArray(x.gpuEvents) ? x.gpuEvents.length : 0,
+        gpuEvents: Array.isArray(x.gpuEvents) ? x.gpuEvents.filter(isGpuProcessEvent).length : 0,
         ...momentOf(x, page, observedAt[0] ?? r.ts),
       })
     }

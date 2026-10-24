@@ -12,7 +12,7 @@ import { readJam } from '../server/perf-jam.ts'
 import { marverHome } from '../server/slots.ts'
 import { isBoardName, labelOf } from '../shared/board-tree.ts'
 import type { RunLine } from '../shared/perf-run.ts'
-import { crashesSummary, flashesSummary, machineSummary, readAppLog, repoWorkspaces, type PageMoment } from './perf-app.ts'
+import { crashesSummary, flashesSummary, machineSummary, PRESSURE_FRESH_MS, readAppLog, repoWorkspaces, type PageMoment } from './perf-app.ts'
 
 export interface PerfOptions {
   minutes?: number; json?: boolean; jam?: boolean; loads?: boolean
@@ -385,13 +385,27 @@ const when = (ts: number) => new Date(ts).toLocaleString([], { month: 'short', d
 const LEVEL: Record<number, string> = { 1: 'normal', 2: 'warn', 4: 'critical' }
 const level = (n: unknown) => (typeof n === 'number' ? LEVEL[n] ?? String(n) : 'unknown')
 const tilde = (p: string) => { const h = homedir(); return p.startsWith(h + '/') ? `~${p.slice(h.length)}` : p }
-/** The page half at a moment, in a few words, with how it was joined. */
-function momentWords(m: PageMoment, name: (b?: string) => string): string {
+/** A long wait in words: seconds, then minutes, then hours. */
+const long = (ms: number): string => (ms < 120_000 ? `${Math.round(ms / 1000)} s` : ms < 7_200_000 ? `${Math.round(ms / 60_000)} min` : `${Math.round(ms / 3_600_000)} h`)
+/** An offset from a moment, signed (positive = before it), in words: never clamped. */
+const offset = (ms: number): string => (ms === 0 ? 'at it' : `${secs2(Math.abs(ms))} ${ms > 0 ? 'before' : 'after'}`)
+const gestureName = (t: string) => (t === 'layout' ? 'layout animation' : t)
+/** A gesture against the moment: the one it fell in, else the last before it (a flash's may end after it). */
+function gestureWords(g: NonNullable<PageMoment['gesture']>): string {
+  const n = gestureName(g.type)
+  if (g.during) return `during a ${n}${g.startedMsBefore !== undefined ? ` (started ${offset(g.startedMsBefore)}, ended ${offset(g.endedMsBefore)})` : ''}`
+  if (g.endedMsBefore < 0) return `a ${n} ${g.startedMsBefore !== undefined ? `started ${offset(g.startedMsBefore)}, ` : ''}ended ${offset(g.endedMsBefore)}`
+  return `last gesture a ${n}, ended ${offset(g.endedMsBefore)}`
+}
+/** The page half at a moment, in a few words, with how it was joined. `ended`: the moment is the document's end (a crash). */
+function momentWords(m: PageMoment, name: (b?: string) => string, o: { ended?: boolean } = {}): string {
   if (m.join === 'none') return 'no page record of it (its canvas recorded nothing here)'
+  // its own page and nothing else: never the tab's earlier document (A3.8 #8)
+  if (m.join === 'page-unrecorded') return o.ended ? `its page ${m.page} recorded nothing before it ended (it ended before its first batch of records, 2 s?)` : `its page ${m.page} has no record in page.jsonl`
   const bits = [name(m.board)]
   if (m.load) bits.push(m.load.settled ? `its load settled${m.load.settledMs !== undefined ? ` in ${secs(m.load.settledMs)}` : ''}` : 'its load had not settled')
-  if (m.gesture) bits.push(`last gesture ${m.gesture.type} ${secs2(m.gesture.endedMsBefore)} before`)
-  return bits.join(' · ') + (m.join === 'ws+time' ? ' (joined by workspace and time: no page id)' : '')
+  if (m.gesture) bits.push(gestureWords(m.gesture))
+  return bits.join(' · ') + (m.join === 'ws+time' ? ' (joined by workspace and time: the record has no page id)' : '')
 }
 
 /** `marver perf --crashes`: the app's canvas crashes and hangs for this repo, joined to the page half; the machine-wide ends by time. */
@@ -404,7 +418,7 @@ function crashesPerf(root: string, opts: PerfOptions) {
   console.log(`\ncanvas crashes: ${sum.crashes.length}`)
   for (const c of sum.crashes) {
     console.log(`  ${when(c.at)}  ${c.reason}${typeof c.exitCode === 'number' ? ` (exit ${c.exitCode})` : ''} · pid ${c.pid} · pressure ${level(c.pressure)}${c.flavour === 'dev' ? ' · Marver Dev' : ''}`)
-    console.log(`    ${momentWords(c, name)}`)
+    console.log(`    ${momentWords(c, name, { ended: true })}`)
     const b = c.before
     if (b) console.log(`    the minute before (by time, machine-wide): pressure ${level(b.pressure)}, thermal ${b.thermal}, canvases ${b.canvasMB ?? '-'} MB, the GPU process ${b.gpuProcessRssMB ?? '-'} MB${b.procMB != null ? `, this renderer ${Math.round(b.procMB)} MB` : ''}`)
   }
@@ -426,12 +440,19 @@ function flashesPerf(root: string, opts: PerfOptions) {
   console.log(`flashes marked (⌃⌥F), last ${i.days} days - ${tilde(join(i.home, 'perf'))}, joined to design/.local/perf/page.jsonl by page`)
   if (!sum.marks.length) console.log('\nnone on this repo\'s canvases')
   for (const m of sum.marks) {
-    console.log(`\n  ${when(m.at)}  ${m.join === 'none' ? (m.tab ? 'a canvas of another repo' : 'Home or Settings') : momentWords(m, name)}`)
+    // where: from the mark's own tab and workspace, then its join - this repo's canvas with nothing near it says so
+    const where = !m.tab ? 'Home or Settings' : !m.ws ? 'a canvas (no workspace recorded)' : !m.mine ? 'a canvas of another repo'
+      : m.join === 'none' ? 'this repo\'s canvas (no page record near it)' : momentWords(m, name)
+    console.log(`\n  ${when(m.at)}  ${where}`)
     const agx = m.agx as Record<string, unknown>
-    console.log(`    pressure ${level(m.pressure)} · thermal ${m.thermal} · the GPU process ${m.gpuProcessRssMB !== null ? `${Math.round(m.gpuProcessRssMB)} MB` : 'unknown'} · GPU in use ${agx.gpuSystemMemoryMB ?? 'unknown'} MB, ${agx.utilPct ?? 'unknown'} % (machine-wide)`)
+    // the pressure at the mark: its reading's age said; a reading older than 10 s then is unknown
+    const age = m.pressureAgeMs
+    const pressure = m.pressure !== null ? `pressure ${level(m.pressure)}${age !== undefined ? ` (read ${offset(age)})` : ''}`
+      : age !== undefined && age > PRESSURE_FRESH_MS ? `pressure unknown (the last reading was ${long(age)} old at the mark)` : 'pressure unknown'
+    console.log(`    ${pressure} · thermal ${m.thermal} · the GPU process ${m.gpuProcessRssMB !== null ? `${Math.round(m.gpuProcessRssMB)} MB` : 'unknown'} · GPU in use ${agx.gpuSystemMemoryMB ?? 'unknown'} MB, ${agx.utilPct ?? 'unknown'} % (machine-wide)`)
     if (m.gpuEvents.length) console.log(`    GPU process events within 1 s: ${m.gpuEvents.map((e) => `${e.kind} ${e.ts >= m.at ? '+' : '-'}${secs2(Math.abs(e.ts - m.at))}`).join(', ')}`)
     if (!m.recorder) console.log('    the recorder was off: no samples before it')
-    console.log(`    ${m.picture ? `picture (the app's views, not the screen): ${m.picture}` : `no picture: ${m.pictureWhy ?? 'unknown'}`}`)
+    console.log(`    ${m.picturePruned ? 'no picture: pruned since (at most 50 are kept, none older than keepPerfDays)' : m.picture ? `picture (the app's views, not the screen): ${m.picture}` : `no picture: ${m.pictureWhy ?? 'unknown'}`}`)
   }
   if (!opts.all && sum.others) console.log(`\n${sum.others} more mark${sum.others === 1 ? '' : 's'} on other canvases or on Home (--all shows them)`)
   console.log(`\nwhite-out candidates (automatic, not verified): ${sum.candidates.length}`)

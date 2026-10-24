@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { crashesSummary, flashesSummary, machineSummary, momentOf, readAppLog, repoWorkspaces } from '../src/cli/perf-app.ts'
+import { crashesSummary, flashesSummary, gestureAt, machineSummary, momentOf, readAppLog, repoWorkspaces } from '../src/cli/perf-app.ts'
 import { perfCommand } from '../src/cli/perf.ts'
 import { pageLog, perfDir, runsLog } from '../src/server/perf.ts'
 import { workspaceId } from '../src/server/workspace.ts'
@@ -61,7 +61,9 @@ function appFixture(): string[] {
     line('gone', 4_000, { role: 'strip', pid: 50, born: 1, reason: 'crashed', exitCode: 11, ours: false, pressure: 1 }),
     // a mark on P1, 0.4 s after a zoom ended; one on Home; one on another repo. A flash's line is written once its
     // +1 s GPU window, AGX read and picture have ended (A3.8 #13): its envelope ts is mark + 1.8 s, its `now` the mark
-    line('flash', 8_200, { id: 'm1', via: 'key', tab: 't1', ws: WS, commit: 3, page: P1, recorder: true, ring: null, now: { ts: NOW - 10_000, gpu: { pid: 9, born: 1, cpu: 0.1, gpuProcessRssMB: 160 } }, gpuEvents: [{ kind: 'child-gone', ts: NOW - 10_600 }], thermal: 'fair', pressure: { level: 2, availablePct: 20, at: 0 }, featureStatus: {}, agx: { gpuSystemMemoryMB: 1154.5, utilPct: 13, machineWide: true }, picture: 'flashes/m1.png' }),
+    // its GPU process events: the GPU process's end only - a renderer's gone (an unload's) and a utility process's end
+    // near the mark are not GPU process events, whatever a line holds; its pressure read 2 s before the mark
+    line('flash', 8_200, { id: 'm1', via: 'key', tab: 't1', ws: WS, commit: 3, page: P1, recorder: true, ring: null, now: { ts: NOW - 10_000, gpu: { pid: 9, born: 1, cpu: 0.1, gpuProcessRssMB: 160 } }, gpuEvents: [{ kind: 'child-gone', type: 'GPU', ts: NOW - 10_600 }, { kind: 'gone', role: 'canvas', source: 'unload', ours: true, ts: NOW - 10_200 }, { kind: 'child-gone', type: 'Utility', name: 'Network Service', ts: NOW - 9_800 }], thermal: 'fair', pressure: { level: 2, availablePct: 20, at: NOW - 12_000 }, featureStatus: {}, agx: { gpuSystemMemoryMB: 1154.5, utilPct: 13, machineWide: true }, picture: 'flashes/m1.png' }),
     line('flash', 3_000, { id: 'm2', via: 'menu', recorder: false, ring: null, now: {}, gpuEvents: [], thermal: 'nominal', pressure: null, featureStatus: {}, agx: {}, picture: null, pictureWhy: 'window hidden' }, { app: DEV, flavour: 'dev' }),
     line('flash', 2_000, { id: 'm3', via: 'key', tab: 't3', ws: OTHER, page: 'p00000000009', recorder: true, ring: null, now: {}, gpuEvents: [], thermal: 'nominal', pressure: null, featureStatus: {}, agx: {}, picture: null, pictureWhy: 'timeout' }),
     line('whiteout-candidate', 9_500, { tab: 't1', ws: WS, commit: 3, page: P1, gesture: 7, observedAt: [NOW - 9_500, NOW - 9_250], rateHz: 4, samples: 6, skipped: 0, inconclusive: 1, gpuEvents: [], agx: {} }),
@@ -77,6 +79,8 @@ beforeEach(() => {
   mkdirSync(join(home, 'perf', 'machine'), { recursive: true })
   mkdirSync(join(home, 'perf', 'crashpad', 'completed'), { recursive: true })
   writeFileSync(join(home, 'perf', 'crashpad', 'completed', 'aaaaaaaa-1111-2222-3333-444444444444.dmp'), 'x')
+  mkdirSync(join(home, 'perf', 'flashes'), { recursive: true })
+  writeFileSync(join(home, 'perf', 'flashes', 'm1.png'), 'x')
   const lines = appFixture()
   // the dev launch's line goes to app-dev.jsonl; a line repeated (a quit's flush of a batch already written) counts once
   writeFileSync(join(home, 'perf', 'app.jsonl'), lines.filter((l) => !l.includes(`"app":"${DEV}"`)).join('\n') + '\n' + lines[2] + '\n{"v":1,"ts":1,"kind":"main-error"}\n')
@@ -104,7 +108,7 @@ describe('--crashes (A3.8 #23)', () => {
     expect(s.crashes.map((c) => c.pid)).toEqual([779, 777])   // in time order, both flavours together
     const c = s.crashes.find((x) => x.pid === 777)!
     expect(c).toMatchObject({ join: 'page', page: P1, board: 'tidewell', reason: 'oom', exitCode: 9, pressure: 2, load: { id: L1, cause: 'boot', settled: true, settledMs: 3000 } })
-    expect(c.gesture).toMatchObject({ type: 'zoom', endedMsBefore: 400 })
+    expect(c.gesture).toMatchObject({ type: 'zoom', during: false, endedMsBefore: 400, startedMsBefore: 1200 })
     // the minute before it: by time, from the same launch
     expect(c.before).toMatchObject({ join: 'time', pressure: 2, thermal: 'fair', canvasMB: 420, gpuProcessRssMB: 150, procMB: 420, msBefore: 5000 })
     const noPage = s.crashes.find((x) => x.pid === 779)!
@@ -126,8 +130,8 @@ describe('--crashes (A3.8 #23)', () => {
     const text = out.join('\n')
     expect(text).toMatch(/canvas crashes: 2/)
     expect(text).toMatch(/oom \(exit 9\) · pid 777 · pressure warn/)
-    expect(text).toMatch(/Tidewell · its load settled in 3\.0 s · last gesture zoom 0\.40 s before/)
-    expect(text).toMatch(/joined by workspace and time: no page id/)
+    expect(text).toMatch(/Tidewell · its load settled in 3\.0 s · last gesture a zoom, ended 0\.40 s before/)
+    expect(text).toMatch(/joined by workspace and time: the record has no page id/)
     expect(text).toMatch(/the minute before \(by time, machine-wide\): pressure warn, thermal fair, canvases 420 MB, the GPU process 150 MB, this renderer 420 MB/)
     expect(text).toMatch(/by time \(machine-wide\): 3/)
     expect(text).toMatch(/the GPU process ended: crashed \(exit 11\)/)
@@ -146,12 +150,14 @@ describe('--flashes (A3.8 #23)', () => {
     const s = flashesSummary(app, page(), ws, { home })
     expect(s.marks).toHaveLength(1)
     // dated by the mark, not by its line: the zoom that ended 0.4 s before the mark joins (2.2 s before the line)
-    expect(s.marks[0]).toMatchObject({ id: 'm1', at: NOW - 10_000, join: 'page', board: 'tidewell', gesture: { type: 'zoom', endedMsBefore: 400, p95: 12.1 }, pressure: 2, thermal: 'fair', gpuProcessRssMB: 160, picture: join(home, 'perf', 'flashes', 'm1.png') })
+    expect(s.marks[0]).toMatchObject({ id: 'm1', at: NOW - 10_000, join: 'page', board: 'tidewell', gesture: { type: 'zoom', during: false, endedMsBefore: 400, p95: 12.1 }, pressure: 2, pressureAgeMs: 2000, thermal: 'fair', gpuProcessRssMB: 160, picture: join(home, 'perf', 'flashes', 'm1.png'), mine: true })
+    expect(s.marks[0]!.picturePruned).toBeUndefined()
     expect(s.marks[0]!.gpuEvents).toEqual([{ kind: 'child-gone', ts: NOW - 10_600 }])
     expect(s.others).toBe(2)
     expect(s.candidates).toEqual([expect.objectContaining({ gestureSeq: 7, rateHz: 4, observedAt: [NOW - 9_500, NOW - 9_250], join: 'page', board: 'tidewell' })])
     const all = flashesSummary(app, page(), ws, { all: true, home })
-    expect(all.marks.map((m) => [m.id, m.join])).toEqual([['m1', 'page'], ['m2', 'none'], ['m3', 'none']])
+    // another repo's mark names a page that recorded nothing here: joined to nothing, never by workspace and time
+    expect(all.marks.map((m) => [m.id, m.join, m.mine])).toEqual([['m1', 'page', true], ['m2', 'none', false], ['m3', 'page-unrecorded', false]])
     expect(all.marks.find((m) => m.id === 'm2')).toMatchObject({ picture: null, pictureWhy: 'window hidden', recorder: false, flavour: 'dev' })
   })
 
@@ -162,10 +168,11 @@ describe('--flashes (A3.8 #23)', () => {
     process.env.MARVER_HOME = home
     try { perfCommand(root, { flashes: true }) } finally { process.env.MARVER_HOME = was }
     const text = out.join('\n')
-    expect(text).toMatch(/Tidewell · its load settled in 3\.0 s · last gesture zoom 0\.40 s before/)
+    expect(text).toMatch(/Tidewell · its load settled in 3\.0 s · last gesture a zoom, ended 0\.40 s before/)
+    expect(text).toMatch(/pressure warn \(read 2\.00 s before\) · thermal fair/)
     expect(text).toContain(join(home, 'perf', 'flashes', 'm1.png'))
     // the GPU process's end 0.6 s before the mark, signed from the mark
-    expect(text).toMatch(/GPU process events within 1 s: child-gone -0\.60 s/)
+    expect(text).toMatch(/GPU process events within 1 s: child-gone -0\.60 s\n/)
     expect(text).toMatch(/2 more marks on other canvases or on Home \(--all shows them\)/)
     expect(text).toMatch(/white-out candidates \(automatic, not verified\): 1/)
   })
@@ -223,5 +230,101 @@ describe('the page half beside the app\'s', () => {
 
   it('a moment with no page and no workspace record near it joins nothing, and says so', () => {
     expect(momentOf({ ts: NOW, ws: OTHER } as AppRecord & Record<string, unknown>, page())).toEqual({ join: 'none' })
+  })
+})
+
+describe('the review of a3-recorder: a moment joins its own page, and the gesture it fell in', () => {
+  const P3 = 'p00000000003', P4 = 'p00000000004', L4 = 'l00000000004'
+  /** a page with a settled load and three gestures: a 2.2 s zoom, a 10 s pan, a layout animation (ts is each one's end) */
+  const page4 = (): Record<string, any>[] => {
+    let seq = 0
+    const r = (kind: string, ago: number, body: Record<string, unknown> = {}) => ({ v: 1, ws: WS, page: P4, load: L4, seq: seq++, ts: NOW - ago, kind, ...body })
+    const g = (type: string, endAgo: number, ms: number) => r('gesture', endAgo, { type, ms, frames: 60, p50: 8.3, p95: 16.1, max: 30, over17ms: 2, over33ms: 0, longFrames: 0 })
+    return [
+      r('load', 90_000, { board: 'tidewell', cause: 'boot', request: L4 }), r('commit', 89_000, { request: L4, ms: 1000, frames: 12 }), r('settled', 87_000, { ms: 3000, moves: 0 }),
+      g('pan', 60_000, 10_000),     // -70.0 s to -60.0 s
+      g('zoom', 3_800, 2_200),      // -6.0 s to -3.8 s
+      g('layout', 38_800, 500),     // -39.3 s to -38.8 s
+    ]
+  }
+  let seq = 1000
+  const app = (kind: string, ts: number, body: Record<string, unknown>) => JSON.stringify({ v: 1, ts: ts + 1800, kind, app: APP, seq: seq++, flavour: 'release', machine: H_APP, ...body })
+  const flash = (id: string, at: number, body: Record<string, unknown> = {}) => app('flash', at, { id, via: 'key', tab: 't4', ws: WS, commit: 1, page: P4, recorder: true, ring: null, now: { ts: at }, gpuEvents: [], thermal: 'nominal', pressure: { level: 1, availablePct: 60, at: at - 1000 }, featureStatus: {}, agx: {}, picture: null, pictureWhy: 'timeout', ...body })
+  const print = (o: Parameters<typeof perfCommand>[1]): string[] => {
+    const out: string[] = []
+    const spy = vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => { out.push(a.join(' ')) })
+    const was = process.env.MARVER_HOME
+    process.env.MARVER_HOME = home
+    try { perfCommand(root, o) } finally { process.env.MARVER_HOME = was; spy.mockRestore() }
+    return out
+  }
+
+  it('a gone naming a page that recorded nothing (it crashed before its first batch) joins nothing: not the earlier document of its workspace, and says so', () => {
+    // the tab's earlier document P1 has a settled load and a zoom 1.4 s before: the crash must never be given them
+    const gone = { v: 1, ts: NOW - 9_000, kind: 'gone', app: APP, seq: 900, flavour: 'release', machine: H_APP, tab: 't1', ws: WS, commit: 5, page: P3, role: 'canvas', pid: 781, born: 6, reason: 'oom', exitCode: 9, ours: false, pressure: 2 }
+    expect(momentOf(gone, page())).toEqual({ join: 'page-unrecorded', page: P3 })
+    writeFileSync(join(home, 'perf', 'app.jsonl'), JSON.stringify(gone) + '\n')
+    const s = crashesSummary(readAppLog(home), page(), repoWorkspaces(root, page()), home)
+    expect(s.crashes).toEqual([expect.objectContaining({ pid: 781, join: 'page-unrecorded', page: P3 })])
+    expect(s.crashes[0]!.load).toBeUndefined()
+    expect(s.crashes[0]!.gesture).toBeUndefined()
+    const out = print({ crashes: true })
+    const at = out.findIndex((l) => l.includes('pid 781'))
+    expect(out[at + 1]).toBe(`    its page ${P3} recorded nothing before it ended (it ended before its first batch of records, 2 s?)`)
+    expect(out.join('\n')).not.toMatch(/Tidewell|joined by workspace/)
+  })
+
+  it('a mark during a 2.2 s zoom and during a 10 s pan is during it, with its start and end signed; a gesture after the mark is after it; never clamped to 0', () => {
+    const pg = page4()
+    // the finding's case: a mark 2.0 s before... inside a zoom from -6.0 s to -3.8 s
+    expect(gestureAt(pg, NOW - 5_000, 2000)).toEqual({ type: 'zoom', ms: 2200, p95: 16.1, during: true, startedMsBefore: 1000, endedMsBefore: -1200 })
+    // a long pan: its end 6 s after the mark, past any 2 s window - still the gesture the mark fell in
+    expect(gestureAt(pg, NOW - 66_000, 2000)).toMatchObject({ type: 'pan', during: true, startedMsBefore: 4000, endedMsBefore: -6000 })
+    // a gesture that started after the mark and ended within 2 s of it: after, signed
+    expect(gestureAt(pg, NOW - 40_000, 2000)).toMatchObject({ type: 'layout', during: false, startedMsBefore: -700, endedMsBefore: -1200 })
+    // a crash between gestures: the last that ended before it, however long ago
+    expect(gestureAt(pg, NOW - 20_000)).toMatchObject({ type: 'layout', during: false, endedMsBefore: 18_800 })
+    // nothing within 2 s for a flash
+    expect(gestureAt(pg, NOW - 50_000, 2000)).toBeUndefined()
+
+    writeFileSync(pageLog(root), [...page(), ...pg].map((r) => JSON.stringify(r)).join('\n') + '\n')
+    writeFileSync(join(home, 'perf', 'app.jsonl'), [
+      flash('z', NOW - 5_000), flash('p', NOW - 66_000), flash('l', NOW - 40_000),
+    ].join('\n') + '\n')
+    const s = flashesSummary(readAppLog(home), [...page(), ...pg], repoWorkspaces(root, [...page(), ...pg]), { home })
+    expect(s.marks.map((m) => [m.id, m.gesture?.type, m.gesture?.during])).toEqual([['p', 'pan', true], ['l', 'layout', false], ['z', 'zoom', true]])
+    const text = print({ flashes: true }).join('\n')
+    expect(text).toMatch(/during a zoom \(started 1\.00 s before, ended 1\.20 s after\)/)
+    expect(text).toMatch(/during a pan \(started 4\.00 s before, ended 6\.00 s after\)/)
+    expect(text).toMatch(/a layout animation started 0\.70 s after, ended 1\.20 s after/)
+    expect(text).not.toMatch(/0\.00 s/)
+  })
+
+  it('a white-out candidate observed during a gesture joins that gesture, not the one before it', () => {
+    const pg = page4()
+    const cand = { v: 1, ts: NOW - 4_500, kind: 'whiteout-candidate', app: APP, seq: 950, flavour: 'release', machine: H_APP, tab: 't4', ws: WS, commit: 1, page: P4, gesture: 3, observedAt: [NOW - 5_000, NOW - 4_750], rateHz: 4, samples: 6, skipped: 0, inconclusive: 0, gpuEvents: [{ kind: 'gone', ts: NOW - 5_000 }], agx: {} }
+    const s = flashesSummary([cand as unknown as AppRecord], pg, new Set([WS]))
+    expect(s.candidates[0]).toMatchObject({ join: 'page', gesture: { type: 'zoom', during: true }, gpuEvents: 0 })
+  })
+
+  it('the mark\'s place comes from its workspace, not its join; a stale pressure is unknown; a pruned picture says so', () => {
+    writeFileSync(pageLog(root), [...page(), ...page4()].map((r) => JSON.stringify(r)).join('\n') + '\n')
+    writeFileSync(join(home, 'perf', 'app.jsonl'), [
+      // this repo's canvas, no page (a 0.27.0 canvas) and nothing of its workspace in the 2 minutes before: no join
+      flash('n', NOW - 3 * 86_400_000, { page: undefined, tab: 't9', pressure: { level: 4, availablePct: 5, at: NOW - 3 * 86_400_000 - 600_000 } }),
+      // a picture written then pruned since (at most 50 are kept)
+      flash('q', NOW - 5_000, { picture: 'flashes/q.png', pictureWhy: undefined }),
+    ].join('\n') + '\n')
+    const s = flashesSummary(readAppLog(home), [...page(), ...page4()], repoWorkspaces(root, page()), { home })
+    const n = s.marks.find((m) => m.id === 'n')!
+    expect(n).toMatchObject({ join: 'none', mine: true, pressure: null, pressureAgeMs: 600_000 })
+    expect(s.marks.find((m) => m.id === 'q')).toMatchObject({ picturePruned: true, pressure: 1, pressureAgeMs: 1000 })
+    const text = print({ flashes: true }).join('\n')
+    expect(text).toMatch(/this repo's canvas \(no page record near it\)/)
+    expect(text).not.toMatch(/a canvas of another repo/)
+    expect(text).toMatch(/pressure unknown \(the last reading was 10 min old at the mark\)/)
+    expect(text).not.toMatch(/pressure critical/)
+    expect(text).toMatch(/no picture: pruned since/)
+    expect(text).not.toContain(join(home, 'perf', 'flashes', 'q.png'))
   })
 })

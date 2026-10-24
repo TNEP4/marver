@@ -323,20 +323,25 @@ daily), at most 5 MB a file, 50 flash pictures and 10 crash reports.
 `marver perf` joins the two halves by `page`, so each app event lands on the board load it happened in:
 
 - `--crashes`: each canvas crash of this repo (not one the app ended itself: an unload, Reload Page) with its board,
-  whether its load had settled, the last gesture before it, and the minute before it; hangs, and when the page
-  answered again; then, **by time (machine-wide)**, the GPU process's and utility processes' ends and a GPU process
+  whether its load had settled, the last gesture before it, and the minute before it - or, for a document that
+  ended before its first batch of records reached `page.jsonl`, that its page recorded nothing; hangs, and when the
+  page answered again; then, **by time (machine-wide)**, the GPU process's and utility processes' ends and a GPU process
   replaced silently (`gpu-restart`); and how many crash reports `crashpad/completed` holds.
-- `--flashes`: each flash you marked with `⌃⌥F` on this repo's canvases, with its board, the gesture that ended
-  within 2 s of it, the GPU process's events within a second, pressure, thermal state, the GPU figures (machine-wide)
-  and the picture's path. A mark is dated by the moment you pressed it (the state the app took then), not by its
+- `--flashes`: each flash you marked with `⌃⌥F` on this repo's canvases, with its board, the gesture you marked it
+  during (when it started and when it ended) or else the one that ended within 2 s of it, before or after; the GPU
+  process's own events within a second (its end, its replacement, a feature change - not a renderer's or a utility
+  process's), the pressure at the mark (unknown when the last reading was over 10 s old: with the recorder off and
+  nothing to unload the app reads none), thermal state, the GPU figures (machine-wide) and the picture's path, or
+  that it was pruned since. A mark is dated by the moment you pressed it (the state the app took then), not by its
   line, which is written a second or two later, once the picture and the GPU figures are in. The picture is the app's views as the app stacks them, not the screen: it holds no traffic
   lights and may miss a flash that happens in the compositor. Marks on Home or other canvases are counted (`--all`
   shows them). White-out candidates, found automatically during gestures, are listed apart: automatic, not verified.
 - `--machine`: the profiles, grouped by host (the app and a headless run of one Mac share its `hostHash`), which is
   current, and how many records and runs name each.
 
-A record that carries no page (a 0.27.0 canvas, or a document that has not said hello) is joined by workspace and
-time, and the output says so. The repo's workspaces are its own and every workspace in its `page.jsonl`, so a
+A record that carries a page joins that page and no other: when the page recorded nothing, the output says so
+rather than lending it the tab's earlier document. A record that carries no page (a 0.27.0 canvas, or a document that
+has not said hello) is joined by workspace and time, and the output says so. The repo's workspaces are its own and every workspace in its `page.jsonl`, so a
 `--recover` run's records join too.
 
 ## In the page
