@@ -46,11 +46,14 @@
  * transition saw a long run of idle samples: a locked screen or a sleeping display makes the run blind, never passed
  * (the helper also holds the display awake while it streams).
  *
- * Built here: reload, navigation, programmatic resize, a switch to a see-through tab, to a covered tab and to Home, a
- * canvas killed, rapid switches with the strip stalled, a stalled canvas. Not built (8 of 15; each needs the one
- * ground, Accessibility or another stream): steady panning on a real shell, the live resize (a CGEvent drag), a failed
- * proof and an instance mismatch from full height, an error page to a trusted page, a tab page's lift, HTML
- * fullscreen, a late reply of an earlier epoch, and the four under load.
+ * Of A3.8 #35's fifteen transitions, built here in full (seven, as nine cases): a reload, a navigation, a
+ * programmatic resize, a switch to a see-through tab, a switch to a covered tab or an app page (two cases: a covered
+ * tab, Home), rapid switches with the strip stalled, a stalled canvas (exact). In part (one): of "a canvas killed, a
+ * failed proof and an instance mismatch, each from full height" only the canvas killed. Not built (seven, and that
+ * one's other two; NOT_BUILT lists eight entries; each needs a real shell, Accessibility, the one ground or another
+ * stream): steady panning (exact, a real shell), the live resize (a CGEvent drag), a failed proof and an instance
+ * mismatch from full height, an error page to a trusted page, a tab page's lift, HTML fullscreen in and out, a late
+ * reply of an earlier epoch (exact), and the four under load.
  *
  *   node app/test/capture/matrix.ts [--n 40] [--cases reload,switch-covered,...] [--control] [--dump] [--out <dir>]
  * `--control`: only the heartbeat's second and the clock control, in whatever layout - the harness checking itself,
