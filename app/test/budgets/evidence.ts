@@ -156,3 +156,35 @@ export function cpuGate(o: { ev: Evidence | null; win?: CpuWindow | null; cross?
   if (o.cross.kind === 'disagree') return { kind: 'harness-error', why: `the recorder's figure ${o.cross.recorderCores.toFixed(5)} and the outside one ${o.cross.outsideCores.toFixed(5)} for the same ${o.cross.joined} processes disagree: the recorder is broken (it cannot pass itself)` }
   return { kind: o.win.cores < o.budget ? 'pass' : 'fail' }
 }
+
+/** The launch whose `start` line names `pid` (the recorder writes it at ready): the last such line, or none yet. */
+const startOf = (lines: readonly Line[], pid: number, flavour: 'release' | 'dev') =>
+  [...lines].reverse().find((l) => l.kind === 'start' && l.pid === pid && l.flavour === flavour)
+
+/** The signed build's startup, read from outside (code review r1 #4): this launch's `start` line is in its log. */
+export function launchStarted(lines: readonly Line[], pid: number, flavour: 'release' | 'dev' = 'release'): boolean {
+  return !!startOf(lines, pid, flavour)
+}
+
+/**
+ * The memory gates' roles on the signed build (A3.8 #48; code review r1 #4), which has no hook: the latest `sample`
+ * line of the launch whose `start` names `pid`, written at or after `after` (the moment every canvas had loaded) and
+ * naming at least `tabs` canvas tabs - its canvas renderers and the cover's. null while there is none: the recorder
+ * writes a sample a minute, so a fresh launch has none and one written before the loads names no canvas; the gate
+ * waits for it before it resolves the roles and measures, never reading whatever line is last.
+ */
+export function rolesSample(lines: readonly Line[], o: { pid: number; after: number; tabs: number; flavour?: 'release' | 'dev' }): { ts: number; canvas: number[]; cover: number[] } | null {
+  const flavour = o.flavour ?? 'release'
+  const start = startOf(lines, o.pid, flavour)
+  if (!start) return null
+  let found: { ts: number; canvas: number[]; cover: number[] } | null = null
+  for (const l of lines) {
+    if (l.kind !== 'sample' || l.app !== start.app || l.flavour !== flavour || l.ts < o.after) continue
+    const procs = (l.procs ?? []) as { pid: number; role: string; tabs?: string[] }[]
+    const tabs = new Set(procs.filter((p) => p.role === 'canvas').flatMap((p) => p.tabs ?? []))
+    if (tabs.size < o.tabs) continue
+    const pids = (role: string) => [...new Set(procs.filter((p) => p.role === role).map((p) => p.pid))]
+    if (!found || l.ts >= found.ts) found = { ts: l.ts, canvas: pids('canvas'), cover: pids('cover') }
+  }
+  return found
+}

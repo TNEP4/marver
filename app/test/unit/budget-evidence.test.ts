@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest'
 import type { CpuPass } from '../harness/outside.ts'
 import { cpuWindow } from '../harness/outside.ts'
-import { churn, cpuGate, crossCheck, releaseEvidence } from '../budgets/evidence.ts'
+import { churn, cpuGate, crossCheck, launchStarted, releaseEvidence, rolesSample } from '../budgets/evidence.ts'
 
 const APP = 'a1b2c3d4e5f6'
 const MIN = 60_000
@@ -180,5 +180,43 @@ describe('the gate\'s verdict: the recorder\'s log and its agreement, or no verd
     expect(cpuGate({ ev: e, win, cross: agree, budget: 0.0001 }).kind).toBe('fail')
     expect(cpuGate({ ev: e, win, cross: { ...agree, kind: 'disagree' }, budget: 0.01 }).kind).toBe('harness-error')
     expect(cpuGate({ ev: e, win: { ...win, kind: 'inconclusive', why: 'the browser changed' }, cross: agree, budget: 0.01 })).toMatchObject({ kind: 'inconclusive', why: 'the browser changed' })
+  })
+})
+
+describe('the signed memory gates\' roles: after startup, the loads and a qualifying sample (code review r1 #4)', () => {
+  const start = (seq: number, ts: number, pid: number, app = APP) => ({ ...env(seq, ts, 'start', { version: '0.2.0', electron: '45.0.0', chrome: '0', recorder: true, pid }), app })
+  const S = (seq: number, ts: number, canvas: { pid: number; tab: string }[], cover = true, app = APP) => ({
+    ...env(seq, ts, 'sample', { span: MIN, n: 12, procs: [
+      { pid: 100, born: 1, type: 'browser', role: 'none', tabs: [] },
+      ...(cover ? [{ pid: 150, born: 2, type: 'renderer', role: 'cover', tabs: [] }] : []),
+      ...canvas.map((c) => ({ pid: c.pid, born: 5, type: 'renderer', role: 'canvas', tabs: [c.tab] })),
+    ] }), app,
+  })
+  const three = [{ pid: 201, tab: 't1' }, { pid: 202, tab: 't2' }, { pid: 203, tab: 't3' }]
+  const LOADED = T + 20_000
+
+  it('startup is this launch\'s start line: an earlier launch\'s is not it', () => {
+    expect(launchStarted([] as never, 100)).toBe(false)
+    expect(launchStarted([start(1, T, 99, 'ffffffffffff')] as never, 100)).toBe(false)
+    expect(launchStarted([start(1, T, 99, 'ffffffffffff'), start(1, T + 5, 100)] as never, 100)).toBe(true)
+  })
+
+  it('a fresh launch with no sample line yet has no roles - the gate waits, never resolves them six seconds in', () => {
+    expect(rolesSample([start(1, T, 100)] as never, { pid: 100, after: LOADED, tabs: 3 })).toBeNull()
+  })
+
+  it('a sample written before the canvases loaded, or naming fewer canvas tabs than were loaded, does not qualify', () => {
+    const early = [start(1, T, 100), S(2, LOADED - 1000, [])]
+    expect(rolesSample(early as never, { pid: 100, after: LOADED, tabs: 3 })).toBeNull()
+    const partial = [...early, S(3, LOADED + MIN, three.slice(0, 2))]
+    expect(rolesSample(partial as never, { pid: 100, after: LOADED, tabs: 3 })).toBeNull()
+  })
+
+  it('the first sample after the loads naming every canvas tab gives the canvas and cover renderers; another launch\'s lines never do', () => {
+    const lines = [S(9, LOADED + MIN, three, true, 'ffffffffffff'), start(1, T, 100), S(2, LOADED - 1000, []), S(3, LOADED + MIN, three)]
+    expect(rolesSample(lines as never, { pid: 100, after: LOADED, tabs: 3 })).toEqual({ ts: LOADED + MIN, canvas: [201, 202, 203], cover: [150] })
+    // the no-canvas gate: any sample of this launch, none of its tabs a canvas
+    expect(rolesSample([start(1, T, 100), S(2, T + MIN, [])] as never, { pid: 100, after: T, tabs: 0 })).toEqual({ ts: T + MIN, canvas: [], cover: [150] })
+    expect(rolesSample([start(1, T, 100, 'ffffffffffff'), S(2, T + MIN, [], true, 'ffffffffffff'), start(1, T + 2 * MIN, 100)] as never, { pid: 100, after: T, tabs: 0 })).toBeNull()
   })
 })

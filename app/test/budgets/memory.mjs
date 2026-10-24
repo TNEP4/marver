@@ -26,8 +26,10 @@
  *
  * The dev build (default) runs under the production switches in test mode (its control socket switches tabs and
  * names the canvas renderers; its window shows inactive, so a run never takes the person's focus). The signed build
- * (`--app`) has no hook: its tabs are switched with keypost (Accessibility) and its canvas renderers named by the
- * recorder's own `sample` lines in perf/app.jsonl; without either the canvas-open gate is inconclusive.
+ * (`--app`) has no hook: it is driven only once its recorder's `start` line shows it ready, its tabs are switched
+ * with keypost (Accessibility), and after every canvas loaded and the 60 s settle its canvas renderers are named by
+ * a recorder `sample` line written after the loads that names all three (a sample a minute: waited for,
+ * 70 s at most; code review r1 #4); without either the canvas-open gate is inconclusive.
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -36,6 +38,8 @@ import { launch, mb, sleep, world } from './launcher.ts'
 import { startFakeCanvas } from '../harness/fake-canvas.ts'
 import { appProcesses, footprintMB, rssMB } from '../harness/outside.ts'
 import { nativeTool, responsibleApp } from '../harness/capture.ts'
+import { launchStarted, rolesSample } from './evidence.ts'
+import { parseAppLine } from '../../../src/shared/app-perf.ts'
 
 const argv = process.argv.slice(2)
 const val = (n) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : undefined }
@@ -56,19 +60,32 @@ async function fakes(w) {
   return out
 }
 
-/** The canvas renderers' pids: the dev build's hook, else the recorder's last sample line naming roles. */
-async function canvasPids(L, w) {
-  if (L.control) return new Set((await L.call('procs:roles')).canvas)
+/** The signed build's log, parsed (perf/app.jsonl); [] when there is none yet. */
+function appLines(w) {
   const f = join(w.home, 'perf', 'app.jsonl')
-  if (!existsSync(f)) return null
-  const last = readFileSync(f, 'utf8').split('\n').filter((l) => l.includes('"kind":"sample"')).at(-1)
-  if (!last) return null
-  return new Set(JSON.parse(last).procs.filter((p) => p.role === 'canvas').map((p) => p.pid))
+  return existsSync(f) ? readFileSync(f, 'utf8').split('\n').map(parseAppLine).filter(Boolean) : []
+}
+
+/** Polls `f` every second until it gives something, `ms` at most: that, or null. */
+async function until(f, ms) {
+  const end = Date.now() + ms
+  for (;;) {
+    const v = await f()
+    if (v || Date.now() > end) return v || null
+    await sleep(1000)
+  }
 }
 
 /**
+ * The signed build's roles (code review r1 #4): the recorder's sample of this launch written at or after `after`
+ * naming `tabs` canvas tabs (evidence.ts rolesSample), waited for - a sample a minute, so 70 s at most.
+ */
+const signedRoles = (L, w, after, tabs) => until(() => rolesSample(appLines(w), { pid: L.pid, after, tabs }), 70_000)
+
+/**
  * Whether the no-canvas run holds the cover's renderer when the build has one: null when it does (or the build has no
- * S15 cover), else why the gate cannot be read. `cover` names the pids, for the report.
+ * S15 cover), else why the gate cannot be read. `cover` names the pids, for the report. The signed build waits for its
+ * recorder's first sample of this launch (code review r1 #4): a fresh launch has none for a minute.
  */
 async function coverHeld(L, w) {
   if (L.control) {
@@ -78,11 +95,9 @@ async function coverHeld(L, w) {
     return pids.length ? { why: null, cover: pids } : { why: 'S15\'s cover is built but its renderer is not running in the no-canvas run: the gate would leave out what #48 counts', cover: [] }
   }
   if (NO_COVER) return { why: null, cover: [], note: '--no-cover: a build without S15\'s cover' }
-  const f = join(w.home, 'perf', 'app.jsonl')
-  const last = existsSync(f) ? readFileSync(f, 'utf8').split('\n').filter((l) => l.includes('"kind":"sample"')).at(-1) : undefined
-  if (!last) return { why: 'the cover\'s renderer could not be told apart: no recorder sample line (pass --no-cover for a build without S15\'s cover)', cover: [] }
-  const pids = JSON.parse(last).procs.filter((p) => p.role === 'cover').map((p) => p.pid)
-  return pids.length ? { why: null, cover: pids } : { why: 'no process with the role cover in the recorder\'s last sample: the cover\'s renderer is not running in the no-canvas run', cover: [] }
+  const s = await signedRoles(L, w, 0, 0)
+  if (!s) return { why: 'the cover\'s renderer could not be told apart: no recorder sample line of this launch within 70 s (pass --no-cover for a build without S15\'s cover)', cover: [] }
+  return s.cover.length ? { why: null, cover: s.cover } : { why: 'no process with the role cover in the recorder\'s sample: the cover\'s renderer is not running in the no-canvas run', cover: [] }
 }
 
 /** One gate: `settleMs`, then three reads 10 s apart; the mean of the counted footprints. */
@@ -144,7 +159,9 @@ const drive = !APP
   } finally { await L.stop(); for (const f of fs) await f.close(); w.release() }
 }
 
-// 2. canvases open: the three loaded, one shown and two hidden
+// 2. canvases open: the three loaded, one shown and two hidden. In order (code review r1 #4): the app started, every
+// canvas loaded, the 60 s settle, and only then the roles - the dev build's hook, or the signed build's recorder
+// sample written after the loads naming all three - and the reads
 {
   const w = await world()
   const fs = await fakes(w)
@@ -162,18 +179,34 @@ const drive = !APP
         const end2 = Date.now() + 15_000
         while (!(await st()).tabs.find((t) => t.id === id)?.doc?.lifted) { if (Date.now() > end2) { why = `the canvas ${id} never lifted`; break } await sleep(100) }
       }
+    } else if (!(await until(() => launchStarted(appLines(w), L.pid), 30_000))) {
+      // the signed build's startup: its recorder's start line, written at ready - keys sent before it are lost
+      why = 'the app never reached ready: no start line of this launch in perf/app.jsonl within 30 s'
     } else {
-      // the signed build: ⌘1, ⌘2, ⌘3 with keypost (Accessibility)
+      // ⌘1, ⌘2, ⌘3 with keypost (Accessibility)
       const kp = nativeTool('keypost')
       if (!/access: true/.test(execFileSync(kp, ['check'], { encoding: 'utf8' }))) why = `blind: ${responsibleApp()} may not post key events (Accessibility)`
       else for (const code of [18, 19, 20]) { execFileSync(kp, [String(L.pid), String(code), 'cmd']); await sleep(2000) }
     }
-    const canvas = why ? new Set() : await canvasPids(L, w)
-    if (!why && (!canvas || !canvas.size)) why = 'the canvas renderers could not be told apart (no hook, no recorder sample line)'
+    // every canvas's document requested (both builds)
+    const loaded = () => fs.every((f) => f.requests.some((q) => q.path === '/' && q.method === 'GET'))
+    if (!why && !(await until(loaded, 15_000))) why = 'a canvas was never loaded'
+    const loadedAt = Date.now()
+    if (!why) await sleep(60_000)
+    let canvas = null
+    if (!why) {
+      if (drive) canvas = new Set((await L.call('procs:roles')).canvas)
+      else {
+        const r = await signedRoles(L, w, loadedAt, fs.length)
+        if (r) canvas = new Set(r.canvas)
+        else why = `the canvas renderers could not be told apart: no recorder sample of this launch after the canvases loaded naming all ${fs.length} within 70 s`
+      }
+    }
+    if (!why && !canvas?.size) why = 'the canvas renderers could not be told apart (no canvas renderer named)'
     const r = why ? { name: 'memory-canvas-open', kind: 'inconclusive', why }
       : await gate('memory-canvas-open', L, w, {
-        countGpu: false, canvas, settleMs: 60_000,
-        check: async () => fs.some((f) => !f.requests.some((q) => q.path === '/' && q.method === 'GET')) ? 'a canvas was never loaded' : null,
+        countGpu: false, canvas, settleMs: 0,
+        check: async () => loaded() ? null : 'a canvas was never loaded',
       })
     report.gates.push(r)
   } finally { await L.stop(); for (const f of fs) await f.close(); w.release() }
