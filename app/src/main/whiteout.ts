@@ -18,7 +18,7 @@
  */
 import type { NativeImage, WebContents } from 'electron'
 import type { AgxReading, AppBody, RingEvent, TabIdent } from '../../../src/shared/app-perf.ts'
-import type { PerfMsg, PerfProbeAsk } from '../../../src/shared/app-api.ts'
+import { PERF_BOUNDS, type PerfMsg, type PerfProbeAsk } from '../../../src/shared/app-api.ts'
 import { note } from './testing/index.ts'
 import { T } from './timings.ts'
 
@@ -80,9 +80,17 @@ type After = Extract<PerfMsg, { kind: 'probes'; at: 'after' }>
 /** What one tick found: its verdict, when its capture started, and the document it read. */
 interface Done { tick: number; verdict: Verdict | 'skipped'; at: number; ident?: TabIdent; doc?: string }
 
+/**
+ * Tick numbers, never reset between gesture windows (review of a3-native, minor #14): main's waits are keyed
+ * `tab:tick:at` and the shell keeps each tick's points by number, so a late answer from one window's tick k could
+ * otherwise meet the next window's tick k and pair one window's "before" with the other's "after".
+ */
+let nextTick = 0
+const takeTick = (): number => { const k = nextTick; nextTick = (nextTick + 1) % PERF_BOUNDS.counter; return k }
+
 /** Counters, for the cost case and the journal. */
-export interface WhiteoutStats { windows: number; ticks: number; captures: number; skipped: number; abandoned: number; inconclusive: number; white: number; clear: number; candidates: number }
-const zero = (): WhiteoutStats => ({ windows: 0, ticks: 0, captures: 0, skipped: 0, abandoned: 0, inconclusive: 0, white: 0, clear: 0, candidates: 0 })
+export interface WhiteoutStats { windows: number; ticks: number; captures: number; skipped: number; abandoned: number; inconclusive: number; white: number; clear: number; candidates: number; probed: number }
+const zero = (): WhiteoutStats => ({ windows: 0, ticks: 0, captures: 0, skipped: 0, abandoned: 0, inconclusive: 0, white: 0, clear: 0, candidates: 0, probed: 0 })
 let stats = zero()
 export const whiteoutStats = (): WhiteoutStats => ({ ...stats })
 
@@ -97,7 +105,7 @@ export function startWhiteout(p: WhiteoutPorts): void {
   stats = zero()
   const waiting = new Map<string, { resolve(m: Before | After, doc: string): void }>()
   /** the gesture window: its tab, the gesture's seq, when it ends (Infinity while the gesture is on), its hard end */
-  let win: { tabId: string; seq: number; until: number; hardEnd: number; k: number; timer?: ReturnType<typeof setTimeout>; counts: { samples: number; skipped: number; inconclusive: number } } | null = null
+  let win: { tabId: string; seq: number; until: number; hardEnd: number; timer?: ReturnType<typeof setTimeout>; counts: { samples: number; skipped: number; inconclusive: number } } | null = null
   /** one sample at a time, and at most one capture outstanding (A3.8 #15): an abandoned capture keeps the slot until
    *  its promise settles (r1 #5), so captures never pile up */
   let sampling = false
@@ -122,7 +130,7 @@ export function startWhiteout(p: WhiteoutPorts): void {
       if (!t || t.tabId !== tabId) return
       if (win && win.tabId === tabId) { win.seq = msg.seq; win.until = Infinity; return }
       endWindow()
-      win = { tabId, seq: msg.seq, until: Infinity, hardEnd: now + T.whiteoutMaxMs, k: 0, counts: { samples: 0, skipped: 0, inconclusive: 0 } }
+      win = { tabId, seq: msg.seq, until: Infinity, hardEnd: now + T.whiteoutMaxMs, counts: { samples: 0, skipped: 0, inconclusive: 0 } }
       stats.windows++
       j({ window: 'open', tab: tabId, seq: msg.seq })
       schedule(0)
@@ -151,7 +159,7 @@ export function startWhiteout(p: WhiteoutPorts): void {
     if (!w) return
     const now = p.now()
     if (now >= w.until || now >= w.hardEnd || !p.recorderOn()) { endWindow(); return }
-    const k = w.k++
+    const k = takeTick()
     stats.ticks++
     schedule(tickMs())
     if (sampling || capturing) {
@@ -194,7 +202,10 @@ export function startWhiteout(p: WhiteoutPorts): void {
     // the whole view, scaled to 64 px: no probe work when it is not white
     let thumb: Uint8Array
     try { thumb = img.resize({ width: 64, quality: 'good' }).toBitmap() } catch { inconclusive(w, k, capAt, 'resize'); return }
-    if (wholeWhite(thumb) < WHOLE_WHITE) { complete(w, { tick: k, verdict: 'clear', at: capAt, ident, doc: before.doc }); return }
+    // the whole view's share, journaled with the path the sample took, so a case can tell a clear sample that never
+    // reached the probes from one the probes cleared (a white frame on purpose must take the probe path)
+    const whole = wholeWhite(thumb)
+    if (whole < WHOLE_WHITE) { complete(w, { tick: k, verdict: 'clear', at: capAt, ident, doc: before.doc }, { probed: false, whole }); return }
     const after = await ask(t.tabId, k, 'after') as { msg: After; doc: string } | null
     const now = p.target()
     if (!after || after.msg.at !== 'after' || after.doc !== before.doc || !now || now.tabId !== w.tabId || !sameIdent(now.ident, ident)
@@ -210,7 +221,7 @@ export function startWhiteout(p: WhiteoutPorts): void {
     const reads = before.msg.points.map(([x, y], i) => after.msg.valid[i] ? probeWhite(bmp, pw, ph, x * s, y * s) : null)
     const v = classify(reads)
     if (v === 'inconclusive') { inconclusive(w, k, capAt, 'probes'); return }
-    complete(w, { tick: k, verdict: v, at: capAt, ident, doc: before.doc })
+    complete(w, { tick: k, verdict: v, at: capAt, ident, doc: before.doc }, { probed: true, whole, valid: reads.filter((x) => x !== null).length })
   }
 
   function inconclusive(w: NonNullable<typeof win>, k: number, at: number, why: string) {
@@ -220,10 +231,11 @@ export function startWhiteout(p: WhiteoutPorts): void {
     settle(w, { tick: k, verdict: 'inconclusive', at })
   }
 
-  function complete(w: NonNullable<typeof win>, d: Done) {
+  function complete(w: NonNullable<typeof win>, d: Done, path: { probed: boolean; whole: number; valid?: number }) {
     w.counts.samples++
     if (d.verdict === 'white') stats.white++; else stats.clear++
-    j({ tick: d.tick, verdict: d.verdict })
+    if (path.probed) stats.probed++
+    j({ tick: d.tick, verdict: d.verdict, probed: path.probed, whole: Math.round(path.whole * 1000) / 1000, ...(path.valid !== undefined ? { valid: path.valid } : {}) })
     settle(w, d)
   }
 

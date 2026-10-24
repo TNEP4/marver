@@ -184,10 +184,34 @@ describe('the detector, at 4 Hz', () => {
 
   it('a frame white on purpose: the view is white but the probes are not, so no candidate', async () => {
     const r = rig()
-    r.looks = Array(6).fill('purpose')
+    r.looks = Array(12).fill('purpose')
     await gesture(r, 1200)
     expect(r.records).toEqual([])
     expect(whiteoutStats().clear).toBeGreaterThan(1)
+    // cleared by the probes, not by the whole-view test: every clear sample took the probe path
+    expect(whiteoutStats().probed).toBe(whiteoutStats().clear)
+  })
+
+  it('a grey board is cleared by the whole-view test and never asks after', async () => {
+    const r = rig()
+    r.looks = Array(6).fill('clear')
+    await gesture(r, 600)
+    expect(whiteoutStats().clear).toBeGreaterThan(1)
+    expect(whiteoutStats().probed).toBe(0)
+    expect(r.asks.filter((a) => a.at === 'after')).toEqual([])
+  })
+
+  it('tick numbers are never reused across gesture windows, so a late answer of one window cannot meet the next (review of a3-native, minor #14)', async () => {
+    const r = rig()
+    r.looks = Array(20).fill('clear')
+    await gesture(r, 600)
+    const first = r.asks.map((a) => a.tick)
+    // a late "before" for the first window's first tick, while the second window runs: no tick of the second has it
+    await gesture(r, 600)
+    const second = r.asks.slice(first.length).map((a) => a.tick)
+    expect(first.length).toBeGreaterThan(1)
+    expect(second.length).toBeGreaterThan(1)
+    expect(Math.min(...second)).toBeGreaterThan(Math.max(...first))
   })
 
   it('only with the recorder on, and only from a gesture until 500 ms after it ends', async () => {

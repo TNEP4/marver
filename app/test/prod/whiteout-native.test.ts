@@ -6,6 +6,11 @@
  * completed and clear; at 2 Hz an overlay held 1.5 s is a candidate at 2 Hz; and the detector's cost - the same
  * animated page measured with the detector on and off, five runs each, the median rAF interval p95 within 1 ms (a
  * fixture page standing for a heavy board: the real board needs the shell's gestures, which the recorder stream wires).
+ * The white frame on purpose must take the probe path - the journal says each sample's whole-view share and whether
+ * the probes ran - so a frame that missed the 85 % threshold cannot pass it by the whole-view test alone. Not built
+ * here, the integration's once the shell's gestures are wired: A3.7's staged white overlay held 1 s during a
+ * synthetic zoom on a real shell (these cases stage it on the fixture, whose camera never moves; the probes under a
+ * moving camera are test/whiteout-probes-browser.test.ts's, a real Chrome on a real marver dev, pan and zoom).
  * The window is kept on top (an occluded view gives capturePage nothing).
  */
 import { execFileSync } from 'node:child_process'
@@ -89,6 +94,10 @@ describe.skipIf(!!DARK)('a staged white-out and a white frame on purpose, at 4 H
     expect(count(ls, (d) => typeof d.candidate === 'number')).toBe(0)
     expect(count(ls, (d) => d.verdict === 'clear'), JSON.stringify(ls.slice(0, 8))).toBeGreaterThanOrEqual(3)
     expect(count(ls, (d) => d.verdict === 'white')).toBe(0)
+    // the view did cross the whole-view threshold: each clear sample was cleared by the probes, never by the 64 px
+    // test alone (a frame under 85 % white would pass this case without the probe path running)
+    expect(count(ls, (d) => d.verdict === 'clear' && d.probed === true), JSON.stringify(ls.filter((l) => l.data.verdict).slice(0, 4))).toBe(count(ls, (d) => d.verdict === 'clear'))
+    expect(Math.min(...ls.filter((l) => l.data.verdict === 'clear').map((l) => Number(l.data.whole)))).toBeGreaterThanOrEqual(0.85)
   })
 })
 

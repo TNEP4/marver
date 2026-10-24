@@ -12,10 +12,15 @@
  * FROZEN signatures (A3.8 #53). The geometry: a 12 x 8 grid of cell centres over the usable rectangle, below the
  * scroll edge; a point's clearance is its distance to the nearest node's rect (`getBoundingClientRect`: transforms and
  * animation included); the 16 with the most clearance that have the canvas surface under them are kept, with the
- * camera (`canvasCtl.transform()`) for the bracket. `verify` maps each point through the two cameras - the world
- * point under it, where it is drawn now - and a point is valid when that move is less than its clearance (no node
- * can have reached it), no node covers it now, and the surface is still under it. With no camera (no canvas) every
- * point is invalid: the sample is inconclusive.
+ * camera (`canvasCtl.transform()`) for the bracket. `verify` maps each point through the two cameras, both ways: the
+ * world point under it before, drawn now, and the world point under it now, drawn as the camera was before. The
+ * second is the one that matters under a zoom - the world points the probe's screen point passed over lie between the
+ * two, so if the one under it now was, at the first camera, closer than the clearance, no node (each at least the
+ * clearance away then) can have covered it in between; under a zoom out a node's edge moves further than the probe's
+ * own world point, so the first alone does not say that. A point is valid when both moves are under its clearance, it
+ * is still `VERIFY_MARGIN` (8 px) clear of every node now, and the surface is still under it. With no camera (no
+ * canvas) every point is invalid: the sample is inconclusive. Nodes that move on the board themselves (a drag, a
+ * layout animation) are not the camera's and not covered by this.
  */
 import { PERF_BOUNDS, type PerfCam, type PerfMsg } from '../../shared/app-api.ts'
 import { canvasCtl } from './canvas/ctl.ts'
@@ -27,6 +32,8 @@ export const MAX_PROBES = Math.min(16, PERF_BOUNDS.points)
 export const PROBE_CLEARANCE = 48
 /** The candidate grid over the usable rectangle. */
 export const PROBE_GRID: readonly [number, number] = [12, 8]
+/** At `verify`, each kept point still this far from every node's rect, px (the design's margin). */
+export const VERIFY_MARGIN = 8
 
 const view = () => ({ w: innerWidth, h: innerHeight })
 type Rect = { left: number; top: number; right: number; bottom: number }
@@ -97,8 +104,9 @@ export function verify(tick: number): Extract<PerfMsg, { kind: 'probes'; at: 'af
   const o = origin()
   const valid = k.pts.map(([x, y], i) => {
     if (!k.cam || !cam) return false
-    if (moved(x, y, k.cam, cam, o) >= k.clear[i]!) return false
-    if (clearance(x, y, rects) === 0) return false
+    const c = k.clear[i]!
+    if (moved(x, y, k.cam, cam, o) >= c || moved(x, y, cam, k.cam, o) >= c) return false
+    if (clearance(x, y, rects) < VERIFY_MARGIN) return false
     return isSurface(document.elementFromPoint(x, y))
   })
   return { kind: 'probes', tick, at: 'after', valid, cam, view: view() }

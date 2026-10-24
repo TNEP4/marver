@@ -9,9 +9,10 @@ import { fixtureRoot, startDev, type Dev } from './dev-server.ts'
  * `marver dev`: `pick` takes grid points of empty canvas background - at least 48 px from every frame's screen rect,
  * the canvas surface under them - and `verify` keeps only those the camera moved by less than their clearance. Run
  * on the shell's own module instance (the page imports whiteout-probes.ts by its dev URL, so canvasCtl is the
- * canvas's). Checked at rest, over a board with a frame that is white on purpose, and while the camera pans fast:
- * no accepted probe ever lies inside a frame at either side of its bracket. In Chrome there is no inset: the whole
- * canvas is usable. Skips without Chrome.
+ * canvas's). Checked at rest, over a board with a frame that is white on purpose, and while the camera pans fast and
+ * zooms in and out (A3.7's staged white-out runs during a synthetic zoom): no accepted probe ever lies inside a frame
+ * at any animation frame of its bracket - at pick, at each frame between and at verify. In Chrome there is no inset:
+ * the whole canvas is usable. Skips without Chrome.
  */
 
 const FRAME = (t: string, bg: string) => `export const meta = { title: '${t}', viewport: 'mobile' }\nexport default () => <main style={{ padding: 24, background: '${bg}', minHeight: '100vh' }}><h1 style={{ margin: 0, color: '${bg}' }}>${t}</h1></main>\n`
@@ -94,33 +95,52 @@ describe('the probes (A3.8 #16)', () => {
     expect(r.inside).toBe(0)
   })
 
-  it('while the camera pans fast, no accepted probe lies inside a frame at either side of its bracket', async (ctx) => {
-    skip(ctx)
-    // the probe loop runs in the page while real wheel events pan the canvas
-    await ev(`window.__run = (async () => {
-      const raf = () => new Promise((r) => requestAnimationFrame(() => r()))
-      const out = { ticks: 0, points: 0, valid: 0, bad: [], maxMove: 0, cam0: __mvJamCanvas.transform(), cam1: null }
-      const end = performance.now() + 1800
-      for (let k = 100; performance.now() < end; k++) {
-        const b = __probes.pick(k)
-        const r0 = __rects()
-        await raf(); await raf()
-        const a = __probes.verify(k)
+  /**
+   * The probe loop, in the page, while the test moves the camera: for each tick, pick, then 2 to 6 animation frames
+   * (a capture and two asks take 15-50 ms) with every node's rect recorded at each of them, then verify. A point the
+   * verify accepted must lie outside every node's rect at every frame of its bracket - at pick, at each frame between
+   * and at verify - since the capture reads whichever of them was on the screen.
+   */
+  const LOOP = `window.__loop = async (ms) => {
+    const raf = () => new Promise((r) => requestAnimationFrame(() => r()))
+    const out = { ticks: 0, points: 0, valid: 0, frames: 0, bad: [], maxMove: 0, maxRatio: 1, s: [] }
+    const end = performance.now() + ms
+    for (let k = 1000 + Math.floor(Math.random() * 1e6); performance.now() < end; k++) {
+      const b = __probes.pick(k)
+      const seen = [__rects()]
+      const n = 2 + (k % 5)
+      for (let i = 0; i < n; i++) { await raf(); seen.push(__rects()); out.frames++ }
+      const a = __probes.verify(k)
+      seen.push(__rects())
+      if (a.cam && b.cam) {
         out.maxMove = Math.max(out.maxMove, Math.hypot(a.cam.x - b.cam.x, a.cam.y - b.cam.y))
-        const r1 = __rects()
-        out.ticks++
-        out.points += b.points.length
-        b.points.forEach(([x, y], i) => {
-          if (!a.valid[i]) return
-          out.valid++
-          const d0 = __dist(x, y, r0), d1 = __dist(x, y, r1)
-          if (d0 <= 0 || d1 <= 0) out.bad.push({ k, x, y, d0, d1 })
-        })
-        await new Promise((r) => setTimeout(r, 30))
+        out.maxRatio = Math.max(out.maxRatio, a.cam.s / b.cam.s, b.cam.s / a.cam.s)
+        out.s.push(a.cam.s)
       }
-      out.cam1 = __mvJamCanvas.transform()
-      return out
-    })(); 1`)
+      out.ticks++
+      out.points += b.points.length
+      b.points.forEach(([x, y], i) => {
+        if (!a.valid[i]) return
+        out.valid++
+        seen.forEach((rs, f) => { const d = __dist(x, y, rs); if (d <= 0) out.bad.push({ k, x, y, frame: f, of: seen.length, d }) })
+      })
+      await new Promise((r) => setTimeout(r, 10))
+    }
+    out.sMin = Math.min(...out.s); out.sMax = Math.max(...out.s); delete out.s
+    return out
+  }; 1`
+
+  it('while the camera pans fast, no accepted probe lies inside a frame at any frame of its bracket', async (ctx) => {
+    skip(ctx)
+    await ev(HELPERS)
+    await ev(LOOP)
+    // close in on one frame, so its edges sweep across the probes beside it as the camera pans
+    await ev(`__mvJamCanvas.fitNode('n-grey'); 1`)
+    await browser!.until(s, `!__mvJamCanvas.cameraBusy()`, 5000)
+    await ev(`__mvJamCanvas.zoomTo(0.7); 1`)
+    await browser!.until(s, `!__mvJamCanvas.cameraBusy()`, 5000)
+    await new Promise((r) => setTimeout(r, 300))
+    await ev(`window.__run = __loop(1800); 1`)
     const t0 = Date.now()
     let dx = 240
     while (Date.now() - t0 < 1700) {
@@ -129,11 +149,41 @@ describe('the probes (A3.8 #16)', () => {
       await new Promise((r) => setTimeout(r, 16))
     }
     const r = await ev(`window.__run`)
-    process.stdout.write(`probes-pan: ${JSON.stringify({ ticks: r.ticks, points: r.points, valid: r.valid, maxMove: r.maxMove })}\n`)
+    process.stdout.write(`probes-pan: ${JSON.stringify({ ticks: r.ticks, frames: r.frames, points: r.points, valid: r.valid, bad: r.bad.length, maxMove: r.maxMove })}\n`)
     expect(r.ticks).toBeGreaterThan(10)
     expect(r.maxMove).toBeGreaterThan(48)   // inside some brackets the camera moved more than a probe's least clearance
     expect(r.valid).toBeGreaterThan(0)
     expect(r.valid).toBeLessThan(r.points)   // the bracket dropped the points the camera moved too far
+    expect(r.bad).toEqual([])
+  })
+
+  it('while the camera zooms in and out about a point near a probe (ctrl-wheel), no accepted probe lies inside a frame at any frame of its bracket', async (ctx) => {
+    skip(ctx)
+    await ev(HELPERS)
+    await ev(LOOP)
+    // close in on one frame, so a zoom about a point beside it sweeps its edges across the probes around it
+    await ev(`__mvJamCanvas.fitNode('n-grey'); 1`)
+    await browser!.until(s, `!__mvJamCanvas.cameraBusy()`, 5000)
+    await ev(`__mvJamCanvas.zoomTo(0.7); 1`)
+    await browser!.until(s, `!__mvJamCanvas.cameraBusy()`, 5000)
+    await new Promise((r) => setTimeout(r, 300))
+    // the anchor: just beside a probe the shell picks at rest, so its world point barely moves while node edges do
+    const p = await ev(`(() => { const b = __probes.pick(7); __probes.verify(7); return b.points[0] })()`) as [number, number]
+    expect(p).toBeTruthy()
+    await ev(`window.__run = __loop(2200); 1`)
+    const t0 = Date.now()
+    let dy = -30
+    while (Date.now() - t0 < 2100) {
+      void browser!.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: p[0] + 24, y: p[1] + 12, deltaX: 0, deltaY: dy, modifiers: 2 }, s)
+      if (Date.now() - t0 > 1050) dy = 30
+      await new Promise((r) => setTimeout(r, 16))
+    }
+    const r = await ev(`window.__run`)
+    process.stdout.write(`probes-zoom: ${JSON.stringify({ ticks: r.ticks, frames: r.frames, points: r.points, valid: r.valid, bad: r.bad.length, maxRatio: r.maxRatio, sMin: r.sMin, sMax: r.sMax })}\n`)
+    expect(r.ticks).toBeGreaterThan(10)
+    expect(r.sMax / r.sMin).toBeGreaterThan(1.5)   // the camera did zoom, in and out
+    expect(r.maxRatio).toBeGreaterThan(1.02)        // and moved inside brackets
+    expect(r.valid).toBeGreaterThan(0)
     expect(r.bad).toEqual([])
   })
 })
