@@ -465,9 +465,12 @@ describe('the camera over a reload (A2.9)', () => {
     await ev(s, `localStorage.removeItem('${key}'), 1`)
     await ev(s, HIDE)
     expect(await stored()).toBe(null)
-    // pagehide: a move, then the page leaves 150 ms later - the next load opens there
+    // pagehide alone: a move, then the page leaves 150 ms later - the next load opens there. Chrome fires
+    // visibilitychange to hidden as a page leaves too: stopped here before the shell hears it (a capturing listener on
+    // window comes first), so it is the pagehide listener that writes the camera
     await ev(s, `__mvJamCanvas.zoomTo(1.21), 1`)
     await wait(400)
+    await ev(s, `addEventListener('visibilitychange', (e) => e.stopImmediatePropagation(), true), 1`)
     await browser!.go(s, 'about:blank')
     await load(s, '#/b/main')
     await wait(300)
