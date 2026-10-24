@@ -683,7 +683,12 @@ function plainCover(): Cover {
   }
 }
 
-/** The one ground's test hooks (dev builds, MARVER_APP_TEST=1): a live resize's events, the GPU process lost or replaced, the strip's heartbeat. */
+/**
+ * The one ground's test hooks (dev builds, MARVER_APP_TEST=1): a live resize's events, the GPU process lost, replaced
+ * or killed, the scroll edge's cost switch, the strip's heartbeat and its empty regions (the capture matrix's, A3.8
+ * #34: read from the strip itself, never guessed). The matrix's case 15 load - a heavy board panning in a second
+ * window on the same GPU process (`loadWindow`) - is the native acceptance stream's, with its heavy board.
+ */
 function groundHooks(): void {
   const arg = <A>(a: unknown) => (a ?? {}) as A
   // will-resize / resized / resize as macOS sends them for a person's drag (a test cannot drag the window's corner)
@@ -693,10 +698,21 @@ function groundHooks(): void {
     win.emit(ev as 'resize', { preventDefault() {}, defaultPrevented: false }, win.getBounds(), { edge: 'bottom-right' })
     return true
   })
-  // the scroll edge's cost (A3.8 #51): every document told 0 from now on (its next load), so the same board pans without the inset
+  // the scroll edge's cost (A3.8 #51): every document told 0 from now on (its next load), so the same board pans
+  // without the inset. Its confound, for whoever reads the numbers: a document told 0 applies no inset and its hello
+  // moves it below the strip (layout.ts), so the run without the band also paints a viewport 44 px shorter - the A/B
+  // is TOP 44 at the full height against TOP 0 at h - 44, which can only make the band look dearer than it is
   provide('ground:inset-off', (a) => { setInsetOff(!!arg<{ on?: boolean }>(a).on); return true })
   // child-process-gone with type GPU, as views.ts hears it - no process is killed
   provide('ground:gpu-lost', () => { gpuGone(); compose(); return true })
+  // the GPU process killed for real (SIGKILL: no crash report, no dialog): Electron's child-process-gone and the
+  // replacement's gpu-info-update reach views.ts's own handlers. Its identity before, or null with none
+  provide('ground:gpu-kill', () => {
+    const m = app.getAppMetrics().find((x) => x.type === 'GPU')
+    if (!m) return null
+    process.kill(m.pid, 'SIGKILL')
+    return { pid: m.pid, born: m.creationTime }
+  })
   // an identity read (a sample, a gpu-info-update): a replacement with no child-process-gone
   provide('ground:gpu', (a) => { const id = arg<{ id?: { pid: number; born: number } | null }>(a).id ?? null; const changed = noteGpu(id); if (changed) compose(); return changed })
   provide('ground:state', () => ({
@@ -714,6 +730,33 @@ function groundHooks(): void {
     if (beat) { await s.removeInsertedCSS(beat).catch(() => {}); beat = null }
     if (on) beat = await s.insertCSS('html::after { content: ""; position: fixed; right: 0; bottom: 0; width: 1px; height: 1px; background: #808080; will-change: opacity; animation: mv-beat 1s linear infinite alternate; pointer-events: none } @keyframes mv-beat { from { opacity: 1 } to { opacity: .4 } }')   // the author origin: removeInsertedCSS takes only that one back
     return true
+  })
+  // the heartbeat's corner as the strip's compositor last drew it (capturePage, browser-side: it needs nothing of the
+  // strip's main thread): the bottom-right device pixel, BGRA
+  provide('ground:beat-pixel', async () => {
+    const s = stripContents()
+    if (!s || !strip) return null
+    const b = strip.getBounds()
+    const img = await s.capturePage({ x: b.width - 2, y: b.height - 2, width: 2, height: 2 })
+    const bmp = img.toBitmap()
+    return bmp.length >= 4 ? [...bmp.subarray(bmp.length - 4)] : null
+  })
+  // the strip's empty part, from the strip itself (A3.8 #34): right of the last tab (and `»`), left of the pill (or
+  // the strip's right padding); the heartbeat's corner. In the strip's CSS px, which are the window's content coordinates
+  provide('ground:strip-regions', async () => {
+    const s = stripContents()
+    if (!s) return null
+    return s.executeJavaScript(`(() => {
+      const W = innerWidth, H = innerHeight, cs = getComputedStyle(document.getElementById('strip'))
+      const shown = (e) => e && !e.hidden && e.getClientRects().length > 0
+      const rights = [...document.querySelectorAll('#tabs > *')].filter(shown).map((e) => e.getBoundingClientRect().right)
+      const more = document.getElementById('more'), pill = document.getElementById('pill')
+      if (shown(more)) rights.push(more.getBoundingClientRect().right)
+      const tabsRight = Math.ceil(Math.max(parseFloat(cs.paddingLeft), ...rights))
+      const pillLeft = Math.floor(shown(pill) ? pill.getBoundingClientRect().left : W - parseFloat(cs.paddingRight))
+      const x = tabsRight + 8, r = pillLeft - 8
+      return { width: W, height: H, tabsRight, pillLeft, empty: r > x ? [{ x, y: 0, width: r - x, height: H }] : [], heartbeat: { x: W - 1, y: H - 1, width: 1, height: 1 } }
+    })()`)
   })
 }
 

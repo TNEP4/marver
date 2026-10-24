@@ -377,15 +377,47 @@ describe('stalled renderers: covering never waits on one, uncovering waits for t
     await waitFor('the strip back', async () => (await w.log('page', s2)).some((l) => l.data.ready === 'strip'))
   })
 
-  it('the capture matrix\'s heartbeat: a 1 px compositor animation in the strip\'s corner, on and off by its hook', async () => {
+  it('the capture matrix\'s heartbeat: a 1 px animation in the strip\'s corner that keeps changing with the strip\'s main thread stalled (its compositor\'s), on and off by its hook', async () => {
     const anim = () => exec<string>('strip', `getComputedStyle(document.documentElement, '::after').animationName`)
     expect(await anim()).toBe('none')
     expect(await w.run.call('ground:heartbeat', { on: true })).toBe(true)
     expect(await anim()).toBe('mv-beat')
     expect(await exec<string>('strip', `(() => { const s = getComputedStyle(document.documentElement, '::after'); return [s.width, s.height, s.position, s.animationTimingFunction].join(' ') })()`)).toBe('1px 1px fixed linear')
+    // three reads of the corner as the strip's compositor drew it, 150 ms apart: at least two differ (an alternating
+    // ramp can meet itself once across a turn, never three times)
+    const beats = async () => { const px: string[] = []; for (let i = 0; i < 3; i++) { px.push(JSON.stringify(await w.run.call('ground:beat-pixel'))); if (i < 2) await sleep(150) } return px }
+    const running = await beats()
+    expect(new Set(running).size, running.join(' ')).toBeGreaterThan(1)
+    // the strip's main thread busy for good: the corner still changes - the animation is the compositor's (A3.8 #29)
+    await exec('strip', `setTimeout(() => { for (;;) {} }, 0); 1`)
+    await sleep(200)
+    const stalled = await beats()
+    expect(new Set(stalled).size, stalled.join(' ')).toBeGreaterThan(1)
+    expect(await w.run.call('silent', { target: 'strip', ms: 300 })).toBe(true)   // and it was stalled throughout
+    // the strip comes back (window.ts reloads it) with no heartbeat: the inserted sheet went with its document
+    const s2 = await mark()
+    await w.run.call('crash', { target: 'strip' })
+    await waitFor('the strip back', async () => (await w.log('page', s2)).some((l) => l.data.ready === 'strip'))
+    expect(await anim()).toBe('none')
+    expect(await w.run.call('ground:heartbeat', { on: true })).toBe(true)
+    expect(await anim()).toBe('mv-beat')
     await w.run.call('ground:heartbeat', { on: false })
     // the sheet goes on the renderer's own time (removeInsertedCSS answers before it is applied)
     await waitFor('the heartbeat gone', async () => (await anim()) === 'none', 3000)
+  })
+
+  it('the strip\'s empty part, read from the strip itself (A3.8 #34): right of the tabs, left of the pill, the heartbeat\'s corner', async () => {
+    const r = await w.run.call<{ width: number; height: number; tabsRight: number; pillLeft: number; empty: { x: number; y: number; width: number; height: number }[]; heartbeat: { x: number; y: number } }>('ground:strip-regions')
+    const c = await content()
+    expect([r.width, r.height]).toEqual([c.width, 44])
+    const tabs = JSON.parse(await exec<string>('strip', `JSON.stringify([...document.querySelectorAll('#tabs > *')].map((e) => e.getBoundingClientRect().right))`)) as number[]
+    expect(tabs.length).toBeGreaterThan(2)
+    expect(r.tabsRight).toBeGreaterThanOrEqual(Math.max(...tabs))
+    expect(r.empty).toHaveLength(1)
+    expect(r.empty[0]).toMatchObject({ y: 0, height: 44 })
+    expect(r.empty[0]!.x).toBeGreaterThan(Math.max(...tabs))
+    expect(r.empty[0]!.x + r.empty[0]!.width).toBeLessThanOrEqual(r.pillLeft)
+    expect(r.heartbeat).toEqual({ x: c.width - 1, y: 43, width: 1, height: 1 })
   })
 
   it('the canvas stalled: a resize covers at once, and no answer lifts it until the page runs again; shown while stalled, the same', async () => {
@@ -495,6 +527,32 @@ describe('the app\'s own pages at the full height (A3.8 #32)', () => {
     await waitFor('the cover hidden', async () => !(await ground()).cover.visible)
     expect((await bounds(`${id}:page`))!.bounds).toEqual(FULL(await content()))
     expect(await exec<number>(`${id}:page`, `document.querySelector('.tp').getBoundingClientRect().top`)).toBe(44)
+  })
+})
+
+describe('the GPU process killed (A2.10, A3.8 #27, r2 #2)', () => {
+  it('once, for real: Electron\'s child-process-gone covers every view in its turn, and a newer epoch answered after the replacement lifts it', { timeout: 60_000 }, async () => {
+    const { id } = await canvas(17, 'GPU')
+    await w.run.call('activate', { id })
+    await lifted(id)
+    const g0 = await uncovered(id)
+    const e0 = g0.tabs.find((t) => t.id === id)!.epoch!
+    const since = await mark()
+    const was = await w.run.call<{ pid: number; born: number } | null>('ground:gpu-kill')
+    expect(was).not.toBeNull()
+    // views.ts heard it from Electron (no hook called gpuGone), and covered in that turn
+    const gone = await waitFor('child-process-gone', async () => (await lines('gpu', since)).find((l) => 'gone' in l.data))
+    expect(gone.data.gone).toBe('killed')
+    const cov = (await coverChanges(since)).find((x) => x.changes.some((ch) => ch.key === 'cover' && ch.visible === true))!
+    expect(cov.turn).toBe(gone.turn)
+    // a replacement GPU process, then the page answers a newer epoch - made after the loss - and the cover lifts
+    const g = await uncovered(id, 30_000)
+    const e = g.tabs.find((t) => t.id === id)!.epoch!
+    expect(e).toBeGreaterThan(e0)
+    const rec = (await lines('cover-record', since)).map((l) => l.data).find((d) => d.tab === id && d.epoch === e)
+    expect(rec).toMatchObject({ cause: 'gpu', outcome: 'uncovered' })
+    // the replacement's first identity read is the loss already counted, not a second one (A3.8 r3 #1)
+    expect((await lines('gpu', since)).filter((l) => 'changed' in l.data)).toEqual([])
   })
 })
 

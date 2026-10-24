@@ -1091,8 +1091,8 @@ export function startViews(i: StartInput): void {
   // the presentation (A3.8 #27): an accepted answer, judged with the GPU identity read in its turn; the GPU
   // process gone or replaced covers every view until each presents again
   trust.onPresented?.((tabId, doc, r) => { const v = presentAnswer(tabId, doc, r, Date.now(), gpuIdentity()); if (v === 'ok' || v === 'lost') compose() })
-  app.on('child-process-gone', (_e, d) => { if (d.type === 'GPU') { gpuGone(); compose() } })
-  app.on('gpu-info-update', () => { if (noteGpu(gpuIdentity())) compose() })
+  app.on('child-process-gone', (_e, d) => { if (d.type === 'GPU') { j('gpu', { gone: d.reason }); gpuGone(); compose() } })
+  app.on('gpu-info-update', () => { const id = gpuIdentity(); if (noteGpu(id)) { j('gpu', { changed: id }); compose() } })
   sampler.onSample((x) => { if (noteGpu(x.gpu ? { pid: x.gpu.pid, born: x.gpu.born } : null)) compose() })
   if (trust.pages) mountPages(trust.pages)
 

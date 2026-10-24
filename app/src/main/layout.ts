@@ -56,8 +56,13 @@ export function setGround(on: boolean): void { ground = on }
 export const groundOn = (): boolean => ground
 
 let insetOff = false
-/** A test build's switch (A3.8 #51, the scroll edge's cost): `mv:doc` answers 0 to every document, so the same board pans
- *  with the inset and without it. Never set in a release (window.ts's `ground:inset-off` hook, test mode only). */
+/**
+ * A test build's switch (A3.8 #51, the scroll edge's cost): `mv:doc` answers 0 to every document, so the same board pans
+ * with the inset and without it. Never set in a release (window.ts's `ground:inset-off` hook, test mode only). A
+ * confound for the recorder stream: a document told 0 says hello 0 and is moved below, so the run without the band
+ * also paints a viewport 44 px shorter - the A/B compares TOP 44 at full height with TOP 0 at h - 44, a bias that can
+ * only make the band look dearer than it is.
+ */
 export function setInsetOff(on: boolean): void { insetOff = on }
 
 type LayoutLog = (d: { tab: string; event: string; from: Geometry; to: Geometry }) => void

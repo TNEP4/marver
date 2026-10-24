@@ -120,7 +120,13 @@ uncovered until a stream fills its own, so app 0.2's base behaves as app 0.1.
 - **the one ground's hooks** (`src/main/window.ts` `groundHooks`; A3.8 #24-#33): `ground:state` (the gate, the live
   resize, the cover, each tab's geometry, epoch and gen), `ground:emit` (`will-resize`, `resized`, `resize` as macOS
   sends them for a person's drag), `ground:gpu-lost` and `ground:gpu` (the GPU process gone, or its identity read
-  changed, with nothing killed), `ground:heartbeat` (the capture matrix's 1 px compositor animation in the strip).
+  changed, with nothing killed), `ground:gpu-kill` (the GPU process killed with SIGKILL: Electron's own events reach
+  views.ts, journaled as `gpu`), `ground:heartbeat` (the capture matrix's 1 px compositor animation in the strip) and
+  `ground:beat-pixel` (its corner as the strip's compositor drew it, through `capturePage`), `ground:strip-regions`
+  (the strip's empty part and the heartbeat's corner, measured in the strip: A3.8 #34's regions), `ground:inset-off`
+  (A3.8 #51's switch: every next document told 0 - which also moves it below the strip, so its run paints a viewport
+  44 px shorter; the band's cost read from it is an upper bound). The matrix's case 15 load (`loadWindow`, a heavy
+  board panning in a second window) is the native acceptance stream's.
   `MARVER_APP_GROUND=1` opens layout.ts's gate in a test build, so main's half runs over app 0.1's plain cover - its
   decisions, from the journal's `compose`, `layout`, `present` and `resize` topics, never its pixels.
   `test/harness/ground-shell.ts` is a fake 0.27.2 shell for a fake canvas's `script` (the inset, hello, the answers,
