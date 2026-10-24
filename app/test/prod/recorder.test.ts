@@ -5,15 +5,16 @@
  * test here; the 5 s and 60 s run in the release).
  *
  * - retention at launch: a home seeded with a 20-day-old line, 51 pictures and 11 completed Crashpad reports is
- *   pruned before the first sample line;
+ *   pruned before the first sample line (which must exist);
  * - the start line names the machine profile, whose file has every field filled or 'unknown', collected in under
- *   50 ms of main-thread work;
- * - samples: each `(pid, born)` once, RSS what getAppMetrics says (KB / 1024, within 5 %), the canvas renderer named
- *   for its tab, the app pages by role, the GPU process apart; the visible tab's preload answers its memory;
+ *   50 ms of main-thread work - every step of the launch's collection counted, the spawns' too;
+ * - samples: each `(pid, born)` once, RSS what getAppMetrics says (KB / 1024, within 1 %, both from one call), the
+ *   canvas renderer named for its tab, the app pages by role, the GPU process apart; the visible tab's preload
+ *   answers its memory;
  * - a tab switch writes `shown` with its time;
  * - a killed renderer writes `gone` with `tab`, `ws`, `commit` and the page its hello sent, not ours;
- * - `recorder: false` set live: no sample line, getAppMetrics no longer called; memory.ts wanting it: called again,
- *   still nothing on disk;
+ * - `recorder: false` set live: no sample line, getAppMetrics no longer called by anything (every call is counted
+ *   through one wrapper); memory.ts wanting it: called again, still nothing on disk;
  * - the GPU process killed: `child-gone { type: 'GPU', reason: 'killed' }`, then a sample with a new GPU process.
  * Needs the trust stream's bridge and preload built in (on a branch without them the cases that need a document
  * are skipped and say so).
@@ -27,7 +28,7 @@ import { startFakeCanvas, type FakeCanvas } from '../harness/fake-canvas.ts'
 import { parseAppLine, type AppRecord, type Sample } from '../../../src/shared/app-perf.ts'
 
 const DAY = 86_400_000
-const TIMINGS = { sampleMs: 500, sampleDiskMs: 3000, writeBatchMs: 250, agxMs: 1500, memServesMs: 3000 }
+const TIMINGS = { sampleMs: 500, sampleDiskMs: 3000, writeBatchMs: 250, agxMs: 1500, memServesMs: 3000, retentionDelayMs: 200 }
 const PAGE1 = 'rec0page0001', PAGE2 = 'rec0page0002'
 const HELLO = (page: string) => `var ma = window.marverApp; if (ma) { ma.hello({ version: '0.27.2', board: 'main', page: '${page}' }); ma.busy({ busy: false, unsaved: false, why: [] }) } say('script');`
 
@@ -75,7 +76,7 @@ async function until<T>(what: string, f: () => Promise<T | null | undefined | fa
     await sleep(100)
   }
 }
-type Ring = { samples: Sample[]; last: Sample | null; stats: { metricsCalls: number; ticks: number; need: boolean; recorder: boolean } }
+type Ring = { samples: Sample[]; last: Sample | null; stats: { metricsCalls: number; metrics: Record<string, number>; ticks: number; need: boolean; recorder: boolean } }
 const ring = () => w.run.call<Ring>('recorder:samples')
 
 async function canvas(slot: number, page: string): Promise<string> {
@@ -96,20 +97,24 @@ describe('the recorder on the real binary (A3.7)', () => {
     expect(readdirSync(join(perf, 'flashes'))).not.toContain('seed-00.png')
     expect(readdirSync(join(perf, 'crashpad', 'completed')).filter((n) => n.endsWith('.dmp') && n.includes('-1111-'))).toHaveLength(10)
     expect(statMode(join(perf, 'flashes'))).toBe(0o700)
-    // the journal: the prune ended before the first sample line was written
+    // the journal: the prune ended before the first sample line was written - which must exist to say so
+    const firstSample = await until('the first sample line', async () => (await w.log('recorder')).find((l) => l.data.kind === 'sample'), 15_000)
     const log = await w.log('perflog')
     const pruned = log.findIndex((l) => 'pruned' in l.data)
-    const firstSample = (await w.log('recorder')).find((l) => l.data.kind === 'sample')
     expect(pruned).toBeGreaterThanOrEqual(0)
-    if (firstSample) expect(BigInt(log[pruned]!.t) < BigInt(firstSample.t)).toBe(true)
+    expect(BigInt(log[pruned]!.t) < BigInt(firstSample.t)).toBe(true)
   })
 
   it('the start line names a machine profile whose every field is filled or unknown, collected in under 50 ms', async () => {
     const start = await until('the start line', async () => (await of('start'))[0])
     expect(start).toMatchObject({ flavour: 'dev', recorder: true, pid: w.run.pid })
     expect(start.machine).toMatch(/^[0-9a-f]{16}$/)
-    const m = await w.run.call<{ collectMs: number; hash: string; file: string }>('recorder:machine')
-    expect(m.collectMs).toBeLessThan(50)
+    const m = await w.run.call<{ collectMs: number; launchMs: number | null; maxMs: number; parts: Record<string, number>; hash: string; file: string }>('recorder:machine')
+    // every main-thread step of the launch's collection: the host's floor, the spawns' starts and answers, the GPU asks, the build
+    expect(m.launchMs).not.toBe(null)
+    expect(m.launchMs!).toBeLessThan(50)
+    expect(m.maxMs).toBeLessThan(50)
+    process.stdout.write(`recorder: the launch's profile collection ${m.launchMs!.toFixed(2)} ms of main-thread work (the last: ${JSON.stringify(Object.fromEntries(Object.entries(m.parts).map(([k, v]) => [k, Math.round(v * 100) / 100])))})\n`)
     const profile = JSON.parse(readFileSync(join(w.env.home, 'perf', 'machine', `${start.machine}.json`), 'utf8'))
     expect(profile).toMatchObject({ v: 1, kind: 'app', electron: '45.0.0', hostHash: expect.stringMatching(/^[0-9a-f]{16}$/) })
     const walk = (v: unknown, path: string): void => {
@@ -138,11 +143,13 @@ describe('the recorder on the real binary (A3.7)', () => {
     expect(s.procs.filter((p) => p.type === 'browser')).toHaveLength(1)
     expect(s.gpu).not.toBe(null)
     expect(s.procs.find((p) => p.role === 'strip')).toBeDefined()
-    const metrics = await w.run.call<{ pid: number; born: number; workingSetKB: number }[]>('recorder:metrics')
-    for (const p of s.procs) {
-      const m = metrics.find((x) => x.pid === p.pid && x.born === p.born)
-      if (!m) continue   // gone since
-      expect(Math.abs(p.rssMB - m.workingSetKB / 1024) / Math.max(1, m.workingSetKB / 1024)).toBeLessThan(0.25)   // memory moves between the two reads
+    // RSS is getAppMetrics' working set in KB / 1024, once per process: both from one call, so within 1 %
+    const raw = await w.run.call<{ metrics: { pid: number; born: number; workingSetKB: number }[]; procs: Sample['procs'] }>('recorder:raw')
+    expect(raw.procs.length).toBe(raw.metrics.length)
+    for (const p of raw.procs) {
+      const m = raw.metrics.find((x) => x.pid === p.pid && x.born === p.born)!
+      expect(m).toBeDefined()
+      expect(Math.abs(p.rssMB - m.workingSetKB / 1024) / Math.max(1, m.workingSetKB / 1024)).toBeLessThan(0.01)
     }
     expect(s.visible).toMatchObject({ tab: id, page: PAGE1, commit: tab.doc!.commits })
     expect(s.visible!.ws).toMatch(/^[0-9a-f]{16}$/)
@@ -194,13 +201,16 @@ describe('the recorder on the real binary (A3.7)', () => {
     await until('the recorder off', async () => !(await ring()).stats.recorder)
     await sleep(TIMINGS.sampleMs * 2)
     const n = (await of('sample')).length
-    const calls = (await ring()).stats.metricsCalls
+    const before = (await ring()).stats
     await sleep(TIMINGS.sampleDiskMs * 2)
     expect((await of('sample')).length).toBe(n)
-    expect((await ring()).stats.metricsCalls).toBe(calls)
+    // no getAppMetrics() at all, from anything in the app (the tick's, a mark's, an identity read's: one counted wrapper)
+    const after = (await ring()).stats
+    expect(after.metrics).toEqual(before.metrics)
+    expect(after.metricsCalls).toBe(before.metricsCalls)
     await w.run.call('recorder:need', { on: true })
     await sleep(TIMINGS.sampleMs * 4)
-    expect((await ring()).stats.metricsCalls).toBeGreaterThan(calls)
+    expect((await ring()).stats.metrics.tick).toBeGreaterThan(after.metrics.tick!)
     await sleep(TIMINGS.sampleDiskMs)
     expect((await of('sample')).length).toBe(n)
     await w.run.call('recorder:need', { on: false })

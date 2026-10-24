@@ -74,11 +74,15 @@ modules - `procs`, `recorder`, `pressure`, `machine`, `perflog`, `flashes`, `whi
 uncovered until a stream fills its own, so app 0.2's base behaves as app 0.1.
 
 The recorder (A3.1, A3.2, A3.6; `procs`, `recorder`, `pressure`, `machine`, `perflog`): one `getAppMetrics()` tick
-every 5 s while the recorder is on or memory.ts wants it (nothing at all otherwise), its samples in a 60 s ring and
-one `sample` line a minute; the events; the machine profile under `perf/machine/`; one writer per file
-(`app.jsonl`, Marver Dev `app-dev.jsonl`) with retention at launch and daily. Its test hooks are
-`testing/recorder.ts`'s (`recorder:samples`, `:events`, `:tick`, `:flush`, `:need`, `:inject`, `:machine`,
-`:prune`, `:metrics`, `pressure:inject`); `test/prod/recorder.test.ts` runs it on the real binary.
+every 5 s while the recorder is on or memory.ts wants it - otherwise the tick calls neither `getAppMetrics()` nor
+`sysctl`, and the app calls `getAppMetrics()` only to read an identity in an event's turn (a renderer the samples have
+not met when the tabs change, the GPU process at `gpu-info-update` and at a presentation's answer) or for a flash's
+state at its mark, every call through `recorder.ts` `appMetrics(why)`, counted; its samples in a 60 s ring and one
+`sample` line a minute; the events; the machine profile under `perf/machine/`; one writer per file (`app.jsonl`,
+Marver Dev `app-dev.jsonl`; main's errors written in their own turn) with retention a few seconds after launch and
+daily, its whole rewrites written off the main thread. Its test hooks are `testing/recorder.ts`'s
+(`recorder:samples`, `:events`, `:tick`, `:flush`, `:need`, `:inject`, `:machine`, `:prune`, `:metrics`, `:raw`,
+`pressure:inject`); `test/prod/recorder.test.ts` runs it on the real binary.
 
 ## Tests (A2.10, A2.14 #27)
 

@@ -309,13 +309,16 @@ names the launch, `seq` counts its lines, `machine` the profile the line was wri
 processes (`getAppMetrics()`: CPU from cumulative time, memory as each process's working set, a canvas renderer's own
 footprint from its page, the memory pressure level), keeps the last minute in memory and writes one `sample` line a
 minute; and it records renderer and GPU process ends, hangs, GPU changes, power and thermal events, each tab's state
-and document, and the time a tab switch takes to its second frame (`shown`). A line about a tab carries its `tab`,
-`ws`, `commit` and `page` - the page id the shell's hello sent, which is the `page` of its records in
+and document, and the time a tab switch takes to its second frame (`shown`: until the app hears back from that
+frame, so the reply's own way back is in it). A minute's canvas memory per tab (`canvases.byTab`) counts a renderer
+two tabs share in each of them and says `shared`; add up `canvases.memMB`, never `byTab`. A line about a tab carries
+its `tab`, `ws`, `commit` and `page` - the page id the shell's hello sent, which is the `page` of its records in
 `page.jsonl`. With Settings' recorder off, nothing of this is written (a flash you mark still is, and so is an
-error main did not catch: a `main-error` line).
+error main did not catch: a `main-error` line, in `app-dev.jsonl` for Marver Dev, written the moment it happens).
 `machine/<hash>.json` holds one profile per distinct machine state (the chip, the displays and their rates, the
-GPU's renderer, power): a display change or a GPU fallback makes a new one, and old lines keep theirs. The app keeps
-14 days of it (`keepPerfDays`), at most 5 MB a file, 50 flash pictures and 10 crash reports.
+GPU's renderer, power): a display change, the window moved to another display, or a GPU fallback makes a new one, and
+old lines keep theirs. The app keeps 14 days of it (`keepPerfDays`, pruned a few seconds after launch and then
+daily), at most 5 MB a file, 50 flash pictures and 10 crash reports.
 
 `marver perf` joins the two halves by `page`, so each app event lands on the board load it happened in:
 

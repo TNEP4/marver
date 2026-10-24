@@ -52,7 +52,7 @@ README at every launch: edits here are lost.** \`MARVER_HOME\` moves the whole f
 | \`schemas/\` | the app | JSON Schemas of \`config.json\` and \`theme.json\`, for editors. |
 | \`state/\` | the app | \`status.json\` (what applied, what failed), \`tabs.json\`, \`window.json\`, \`recent.json\`, \`launched\`; a file that failed its check is kept as \`<name>.bad\`. |
 | \`state-dev/\` | the app | The same, for the app's development build. |
-| \`perf/\` | the app | Crash reports (\`perf/crashpad/\`); from app 0.2 the recorder's \`app.jsonl\` (the development build's: \`app-dev.jsonl\`), the machine profiles (\`machine/\`) and the flashes' pictures (\`flashes/\`: the app's views, not the screen). Read them with \`npx marver perf --crashes\`, \`--flashes\`, \`--machine\`; kept \`keepPerfDays\`. |
+| \`perf/\` | the app | Crash reports (\`perf/crashpad/\`); from app 0.2 the recorder's \`app.jsonl\` (the development build's: \`app-dev.jsonl\`; main's uncaught errors go there too, as \`main-error\` lines, whatever the recorder setting), the machine profiles (\`machine/\`) and the flashes' pictures (\`flashes/\`: the app's views, not the screen). Read them with \`npx marver perf --crashes\`, \`--flashes\`, \`--machine\`; kept \`keepPerfDays\`. |
 | \`running/\`, \`prefer/\` | \`marver dev\` | The canvases running now, and the address each prefers. |
 | \`canvases/\`, \`models/\` | \`marver\` | Collaboration credentials and local models. Never read, print or copy them. |
 
