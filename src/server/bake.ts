@@ -556,13 +556,19 @@ export function endRunBakes(owner: BakeOwner): void {
 }
 
 /** Test seams - the environment's read only with MARVER_SLOT_BASE set (the suite's marker, as RUN_T's):
- *  MV_BAKE_HOLD_MS holds each compile that long before it renders, so a test can find one still compiling. */
-export const bakeSeams: { holdMs?: number } = {}
+ *  MV_BAKE_HOLD_MS holds each compile that long before it renders, so a test can find one still compiling.
+ *  MV_BAKE_STOP_ASKING=1 answers a caller who stops waiting STOP_ASKING instead of COMPILING: the page takes it for a
+ *  failed compile, retries once and asks no more, so it goes idle while the server still compiles - the page's own 15
+ *  looks at a COMPILING outlast any held compile (A3.8 r1 #4's case, added by the review of a3-runs). */
+export const bakeSeams: { holdMs?: number; stopAsking?: boolean } = {}
 const holdMs = (): number => {
   if (bakeSeams.holdMs !== undefined) return bakeSeams.holdMs
   const v = process.env.MARVER_SLOT_BASE ? Number(process.env.MV_BAKE_HOLD_MS) : NaN
   return Number.isFinite(v) && v > 0 ? Math.min(v, 60_000) : 0
 }
+/** The suite's answer for a compile still running, under MV_BAKE_STOP_ASKING (above). */
+export const STOP_ASKING = 'still compiling - the suite asks the page to stop asking'
+const stillCompiling = (): string => ((bakeSeams.stopAsking ?? (!!process.env.MARVER_SLOT_BASE && process.env.MV_BAKE_STOP_ASKING === '1')) ? STOP_ASKING : COMPILING)
 
 /** Compiles in flight, by generation and key: identical asks - inside one request or across
  *  concurrent ones - share one compile. */
@@ -652,5 +658,6 @@ export async function bakeBatch(opts: { root: string; gen: number; asks: BakeAsk
   let timer: ReturnType<typeof setTimeout> | undefined
   await Promise.race([all, new Promise((r) => { timer = setTimeout(r, waitMs) })])
   clearTimeout(timer)
-  return answers.map((a, i) => a ?? { ...asks[i], ok: false as const, error: COMPILING })
+  const still = stillCompiling()
+  return answers.map((a, i) => a ?? { ...asks[i], ok: false as const, error: still })
 }

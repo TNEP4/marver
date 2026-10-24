@@ -3,10 +3,10 @@ import { createServer, request, type Server } from 'node:http'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { closePage, openPage, readRunRequest, runLine, runs, runSeams, runT, RUN_T, serveRun, type RunBrowser, type RunOptions } from '../src/server/perf-run.ts'
-import { boardInputs, fingerprint, type InputsWatch } from '../src/server/perf-inputs.ts'
-import { basicHost, parseHostSysctl, parseOs, parsePower, profileHash, writeHeadlessProfile } from '../src/server/machine-host.ts'
-import { canonical } from '../src/shared/machine.ts'
+import { closePage, Halt, openPage, readRunRequest, REPORT_FRAMES_MAX, runLine, runs, runSeams, runT, RUN_T, serveRun, timedGesture, type RunBrowser, type RunOptions } from '../src/server/perf-run.ts'
+import { boardInputs, fingerprint, hashInputs, inputPaths, type InputsWatch } from '../src/server/perf-inputs.ts'
+import { basicHost, hostProfile, parseHostSysctl, parseOs, parsePower, profileHash, spawnOut, writeHeadlessProfile } from '../src/server/machine-host.ts'
+import { canonical, readHost, type HostProfile } from '../src/shared/machine.ts'
 import { INVALID_REASONS, type RunLine, type RunStreamLine } from '../src/shared/perf-run.ts'
 import { cohortOf, runsSummary, within } from '../src/cli/perf-app.ts'
 import { ownLoads } from '../src/cli/perf.ts'
@@ -146,7 +146,7 @@ describe('a run\'s page', () => {
       on: () => () => {},
       abort: () => {},
     } as unknown as RunBrowser
-    const p = await openPage(b, {}, { cache: false, slow: true })
+    const p = await openPage(b, { cache: false, slow: true })
     await p.send('Page.navigate', { url: 'http://x/' })
     await closePage(b, p)
     const at = (m: string) => calls.indexOf(m)
@@ -158,8 +158,70 @@ describe('a run\'s page', () => {
     expect(calls).toContain('Network.setCacheDisabled')
     // without --slow nothing is throttled, and nothing reset
     calls.length = 0
-    await closePage(b, await openPage(b, {}, { cache: true, slow: false }))
+    await closePage(b, await openPage(b, { cache: true, slow: false }))
     expect(calls.filter((c) => c.startsWith('Emulation.setCPUThrottlingRate'))).toEqual([])
+  })
+
+  /** A browser as cdp.ts's: calls settle with their answer, or never - and `abort(owner)` settles that owner's calls
+   *  waiting and every later one. `hang(method)` decides which never answer. */
+  function fakeBrowser(hang: (method: string) => boolean) {
+    const pending = new Map<number, { owner?: object; reject: (e: Error) => void }>()
+    const aborted = new WeakMap<object, string>()
+    let seq = 0
+    const b = {
+      send: (method: string, _params: Record<string, unknown> = {}, _sid?: string, owner?: object) => new Promise<any>((resolve, reject) => {
+        const gone = owner && aborted.get(owner)
+        if (gone) return reject(new Error(`${method}: ${gone}`))
+        if (method === 'Target.createBrowserContext') return resolve({ browserContextId: 'ctx' })
+        if (method === 'Target.createTarget') return resolve({ targetId: 't' })
+        if (method === 'Target.attachToTarget') return resolve({ sessionId: 's' })
+        if (!hang(method)) return resolve(method === 'Runtime.evaluate' ? { result: { value: 'answered' } } : {})
+        pending.set(++seq, { owner, reject })
+      }),
+      on: () => () => {},
+      abort: (owner: object, why: string) => { aborted.set(owner, why); for (const [k, p] of pending) if (p.owner === owner) { pending.delete(k); p.reject(new Error(why)) } },
+    }
+    return { b: b as unknown as RunBrowser, waiting: () => pending.size }
+  }
+
+  it('a call the page never answers settles at callMs: the page is stalled, its calls waiting settle, and every later one at once', async () => {
+    process.env.MARVER_SLOT_BASE ??= '1'
+    runSeams.t = { callMs: 150 }
+    let hung = false
+    const { b, waiting } = fakeBrowser((m) => hung && m !== 'Target.disposeBrowserContext' && m !== 'Emulation.setCPUThrottlingRate')
+    const p = await openPage(b, { cache: false, slow: false })
+    expect(await p.eval('1')).toBe('answered')
+    // the main thread stops (a frame's endless loop): a status read, three wheel events and a heap sample wait
+    hung = true
+    const t0 = Date.now()
+    const status = p.eval('status()').then(() => 'answered', (e) => e)
+    const others = [p.send('Input.dispatchMouseEvent'), p.send('Input.dispatchMouseEvent'), p.send('Runtime.getHeapUsage')].map((x) => x.then(() => 'answered', (e: Error) => e.message))
+    const e = await status
+    expect(e).toBeInstanceOf(Halt)
+    expect((e as Halt).why).toBe('unresponsive')
+    expect(Date.now() - t0).toBeLessThan(1000)
+    expect(p.stalled).toBe(true)
+    expect((await Promise.all(others)).every((m) => m !== 'answered')).toBe(true)
+    expect(waiting()).toBe(0)
+    // a later call does not wait for its own callMs
+    const t1 = Date.now()
+    await expect(p.send('Runtime.getHeapUsage')).rejects.toThrow(/stopped answering/)
+    expect(Date.now() - t1).toBeLessThan(50)
+    await closePage(b, p)   // bounded, never throws
+  })
+
+  it('the run halting (a cancel, its cap) settles every call of its pages at once - a page being opened too', async () => {
+    const { b } = fakeBrowser((m) => m === 'Runtime.evaluate')
+    const halt = new AbortController()
+    const p = await openPage(b, { cache: true, slow: false, halt: halt.signal })
+    const t0 = Date.now()
+    const waiting = p.eval('status()').then(() => 'answered', (e: Error) => e.message)
+    halt.abort('cancelled')
+    expect(await waiting).toBe('cancelled')
+    expect(Date.now() - t0).toBeLessThan(100)
+    expect(p.stalled).toBe(false)
+    // a page opened after the halt: its first call settles at once
+    await expect(openPage(b, { cache: true, slow: false, halt: halt.signal })).rejects.toThrow(/cancelled/)
   })
 })
 
@@ -205,6 +267,37 @@ describe('the run line', () => {
     expect(runLine(reg({ records: good() }), seen({ inputs: null })).invalidReason).toBe('inputs'); runs.end('abcdefabcdefabcd')
     expect(runLine(reg({ records: good().slice(0, 4) }), seen()).invalidReason).toBe('records')
   })
+  it('a run without frame times is no measurement: invalid (gesture), its over33ms null - never "no slow frames"', () => {
+    const l = runLine(reg({ records: good() }), seen({ stats: null }))
+    expect(l).toMatchObject({ valid: false, invalidReason: 'gesture', p50: null, p95: null, over33ms: null })
+    runs.end('abcdefabcdefabcd')
+    expect(runLine(reg({ records: good() }), seen()).over33ms).toBe(0)
+    runs.end('abcdefabcdefabcd')
+    // a gesture is timed with two intervals or more (perf.ts's own rule for a gesture it records)
+    expect(timedGesture(10, 11)).toBe(false)
+    expect(timedGesture(10, 12)).toBe(true)
+    expect(timedGesture(0, 0)).toBe(false)
+    expect(timedGesture(REPORT_FRAMES_MAX, REPORT_FRAMES_MAX)).toBe(true)   // a full report: rAF ran plenty
+  })
+  it('records the page lost (its queue\'s bound, a send that never landed) make it invalid (records); the errors past 50 are errors\'', () => {
+    expect(runLine(reg({ records: [...good(), rec('dropped', { n: 3 })] }), seen())).toMatchObject({ valid: false, invalidReason: 'records' })
+    runs.end('abcdefabcdefabcd')
+    expect(runLine(reg({ records: [...good(), rec('dropped', { n: 1, reason: 'errors' })] }), seen()).valid).toBe(true)
+    runs.end('abcdefabcdefabcd')
+  })
+  it('a run the dev server\'s in-place restart ended says inputs, never cancelled, and says it restarted', () => {
+    const r = runs.register('main', 'abcdefabcdefabcd')   // the registered object itself: the restart marks it
+    r.records.push(...good())
+    runs.restarted()
+    expect(r.restarted).toBe(true)
+    expect(r.inputsChanged).toBe('(the dev server restarted)')
+    const l = runLine(r, seen({ cancelled: true, inputsEnd: 'other' }))
+    expect(l).toMatchObject({ valid: false, invalidReason: 'inputs', restarted: true })
+    runs.end('abcdefabcdefabcd')
+    // a client that went away is still a cancel
+    expect(runLine(reg({ records: good() }), seen({ cancelled: true }))).toMatchObject({ invalidReason: 'cancelled' })
+    expect(runLine(reg({ records: good() }), seen({ cancelled: true })).restarted).toBeUndefined()
+  })
 })
 
 // ---- the inputs --------------------------------------------------------------------------------------------------
@@ -238,13 +331,34 @@ describe('the inputs\' fingerprint', () => {
     const st = statSync(p)
     await step(() => { writeFileSync(p, 'a'); utimesSync(p, st.atime, new Date(st.mtimeMs + 5000)) })
   })
-  it('is null before the watcher is ready, and never reads outside the root', async () => {
+  it('is null before the watcher is ready; reads a watched file outside the root (a sibling package a frame imports) by its path from the root', async () => {
     const root = temp('mv-inputs-'), other = temp('mv-elsewhere-')
     put(root, 'a.ts', 'a')
     put(other, 'b.ts', 'b')
     expect(await fingerprint(root, watchOf(root, ['a.ts'], false))).toBeNull()
+    expect(await inputPaths(root, watchOf(root, ['a.ts'], false))).toBeNull()
     const w: InputsWatch = { ready: async () => true, watched: () => ({ [root]: ['a.ts'], [other]: ['b.ts'] }) }
-    expect((await fingerprint(root, w))?.files).toBe(1)
+    const a = (await fingerprint(root, w))!
+    expect(a.files).toBe(2)
+    // an edit there changes it, as the sticky flag hears it (the same watcher)
+    put(other, 'b.ts', 'bb')
+    expect((await fingerprint(root, w))!.hash).not.toBe(a.hash)
+  })
+  it('a run hashes its own set again at its end: a file the watcher adds later (a frame\'s import loaded) changes nothing; an edit, or a file gone, does', async () => {
+    const root = temp('mv-inputs-'), other = temp('mv-elsewhere-')
+    put(root, 'a.ts', 'a')
+    put(other, 'b.ts', 'b')
+    const watched: Record<string, string[]> = { [root]: ['a.ts'] }
+    const w: InputsWatch = { ready: async () => true, watched: () => watched }
+    const set = (await inputPaths(root, w))!
+    const start = await hashInputs(root, set)
+    watched[other] = ['b.ts']   // the page loaded it: the watcher watches it from now on
+    expect((await hashInputs(root, set)).hash).toBe(start.hash)
+    expect((await fingerprint(root, w))!.hash).not.toBe(start.hash)   // the next run's set has it
+    put(root, 'a.ts', 'aa')
+    expect((await hashInputs(root, set)).hash).not.toBe(start.hash)
+    rmSync(join(root, 'a.ts'))
+    expect(await hashInputs(root, set)).toMatchObject({ files: 0 })
   })
 })
 
@@ -260,6 +374,19 @@ describe('the host profile', () => {
     expect(parsePower("Now drawing from 'AC Power'\n -InternalBattery-0 (id=1)\t100%; charged")).toBe('ac')
     expect(parsePower("Now drawing from 'Battery Power'")).toBe('battery')
     expect(parsePower('something else')).toBe('unknown')
+  })
+  it('reads a host through the one reader the app reads its own with (src/shared/machine.ts readHost): one vector both suites can check', async () => {
+    const base: HostProfile = { chip: 'Apple M5 Pro', cores: { total: 18, p: 'unknown', e: 'unknown' }, model: 'unknown', memGB: 48, os: 'unknown', arch: 'arm64' }
+    const answers: Record<string, (string | null)[]> = { '/usr/sbin/sysctl': [null, '6\n12\nMac17,8\n'], '/usr/bin/sw_vers': ['26.6.2\n'] }
+    const asked: string[] = []
+    const host = await readHost(base, async (file, args) => { asked.push(`${file} ${args.join(' ')}`); const a = answers[file]; return a.length > 1 ? a.shift()! : a[0] })
+    expect(host).toEqual({ ...base, cores: { total: 18, p: 6, e: 12 }, model: 'Mac17,8', os: '26.6.2' })
+    // sha256 of the canonical JSON, computed apart from this code: {"arch":"arm64","chip":"Apple M5 Pro","cores":{"e":12,"p":6,"total":18},"memGB":48,"model":"Mac17,8","os":"26.6.2"}
+    expect(profileHash(host)).toBe('b86295f46845ddd3')
+    // the sysctl that failed once was asked again: one busy moment never gives a host a hash of its own
+    expect(asked.filter((a) => a.startsWith('/usr/sbin/sysctl -n hw.perflevel0.physicalcpu hw.perflevel1.physicalcpu hw.model'))).toHaveLength(2)
+    // and this Mac's host, read by a run, is that reader's with this module's spawns
+    if (process.platform === 'darwin') expect(await hostProfile()).toEqual(await readHost(basicHost(), (f, a) => spawnOut(f, a)))
   })
   it('is written once per distinct profile, 700/600, under the hash the app computes alike; written again it is touched', async () => {
     const home = temp('mv-home-')
@@ -312,6 +439,9 @@ describe('marver perf --runs', () => {
     expect(runsSummary(runs, { against: 'zz' }).against).toMatchObject({ error: 'no such run in the window' })
     expect(within(L('x', 1, { loadToSettledMs: 1000, p95: 16 }), L('y', 2, { loadToSettledMs: 1100, p95: 17.5 }))).toBe(true)
     expect(within(L('x', 1, { loadToSettledMs: 1000, p95: 16 }), L('y', 2, { loadToSettledMs: 1101, p95: 16 }))).toBe(false)
+    // an over33ms not measured (an older invalid line) compares as unknown, never as 0
+    const nulls = runsSummary([L('a', 1, { inputs: { hash: 'h1', files: 1 }, over33ms: null }), L('b', 2, { inputs: { hash: 'h2', files: 1 }, over33ms: 2 })])
+    expect(nulls.boards[0].afterChange?.deltas.over33ms).toBeNull()
   })
   it('--loads keeps a run\'s records out of a person\'s loads, and says how many', () => {
     const r = (o: Record<string, unknown>) => ({ v: 1, ws: 'w', seq: 1, ts: 1, ...o })

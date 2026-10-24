@@ -307,7 +307,10 @@ most; past that the run goes on and its line says `bakes: 'cold'`. Then a fresh 
 fits, and runs three gestures with the pointer at the canvas's centre - 40 ctrl-wheel steps in, 40 out, then a
 pan of 60 steps right and 60 back - each ended by the canvas itself. `--slow` throttles the CPU 4x before the
 load: a stand-in for a slower Mac's CPU, not for its GPU or its memory. `--repeat <n>` runs it up to 5 times,
-one after another. Ctrl-C cancels: the line says `cancelled`.
+one after another. Ctrl-C cancels: the line says `cancelled`. Every call to the page has 15 s to answer: a
+frame whose script never returns stops the canvas's page with it, and the run ends `cut` (`unresponsive`) instead
+of waiting for ever. If the dev server restarts in place during a run (an `.env` or config edit), the run's line
+says `inputs` - never `cancelled` - and `perf run` says the dev server restarted.
 
 **Read-only.** The run's page refuses every write before it is sent - board saves, heights, the seen marks,
 comments, captures, Jam, work - and the dev server refuses and counts any that gets through, from the page or
@@ -318,14 +321,19 @@ run's alone, never the shared cache. A frame's own code can still write: runs ar
 not.
 
 **Valid or not.** A run is valid when none of these held, and its line names the first that did:
-`cancelled`, `crash`, `inputs` (a watched file changed during the run, even if it was put back), `writes` (a
-write was refused), `cut` (the load never settled), `frames` (a frame missing or never ready), `errors`, `bakes`
-(still compiling 30 s after the load), `gesture` (a gesture the canvas never ended, 5 s), `records` (the page's
-records did not all land). Headless numbers are intervals in headless Chrome - not what a display shows.
+`cancelled`, `crash`, `inputs` (a watched file changed during the run, even if it was put back, or the dev server
+restarted), `writes` (a write was refused), `cut` (the load never settled - its `cut` says why, `unresponsive`
+when the page stopped answering), `frames` (a frame missing or never ready), `errors`, `bakes` (still compiling 30 s
+after the load), `gesture` (a gesture the canvas never ended within 5 s, or one in which no frame was timed - then
+`over33ms` is `null`, never 0), `records` (the page's records did not all land, or the page lost some to its
+queue's bound). Headless numbers are intervals in headless Chrome - not what a display shows.
 
 **The inputs.** `inputs` fingerprints every file the dev server watches (git status plays no part, so an
-ignored file a frame imports counts) plus the board files and `_sizes.json`. `GET /__mv/api/perf/inputs` reads
-it alone. A frame importing from a folder the dev server ignores (a sibling package's `dist/`) is not in it.
+ignored file a frame imports counts) plus the board files and `_sizes.json`. A file outside the project that a
+frame imports - a sibling package's source in a monorepo - counts too, once a page has loaded it: the dev server
+watches it from then on, so a run takes its fingerprint after its warm-up has loaded the board, and hashes the
+same files again at its end. `GET /__mv/api/perf/inputs` reads it alone. A frame importing from a folder the dev
+server ignores (a sibling package's `dist/`) is not in it.
 
 **Comparing.** `npx marver perf --runs` compares runs only inside a cohort - the same script, board, Chrome,
 flags, Mac (`machine`, a profile of its own in `~/.marver/perf/machine/`), power source, `--slow` and warm or

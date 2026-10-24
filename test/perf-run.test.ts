@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { cpus, loadavg } from 'node:os'
 import { dirname, join } from 'node:path'
 import { CLI, fixtureRoot, startDev, type Dev } from './dev-server.ts'
@@ -15,7 +15,11 @@ import type { RunLine, RunStreamLine } from '../src/shared/perf-run.ts'
  * repo changes, no write reaches the server), repeatable on an idle Mac on power, its inputs fingerprinted and watched,
  * its bakes its own (a video missing its poster runs without one; a cancel leaves no poster, and a normal tab's poster
  * still works), and concurrent runs keep their own counts. A second canvas holds each compile 5 s with a 3 s warm-up,
- * for the cold and the cancelled runs. Skips, never fails, without Chrome.
+ * for the cold and the cancelled runs. Added by the review of a3-runs: a frame that hangs the page ends its run cut
+ * `unresponsive` within the deadlines; an edit put back with its mtime, in a source file or in `_sizes.json`, is caught
+ * by the sticky flag alone; the dev server restarting in place mid-run (an .env edit) gives `inputs`, and the CLI says
+ * so; and a third canvas - one compile held 25 s, the page told to stop asking - proves the gestures and the line wait
+ * for the server's jobs once the page is idle. Skips, never fails, without Chrome.
  */
 
 const CHROME = !!findChrome()
@@ -50,6 +54,13 @@ export default () => (
   </Doc>
 )
 `
+/** A frame whose script never returns, 2.5 s after it mounts: a same-origin frame stops the shell's main thread with it. */
+const HANG = `import { useEffect } from 'react'
+export default () => {
+  useEffect(() => { const t = setTimeout(() => { for (;;) { /* never returns */ } }, 2500); return () => clearTimeout(t) }, [])
+  return <main style={{ padding: 24, font: '16px system-ui' }}>this frame hangs its page</main>
+}
+`
 const HTML = (n: number) => `<!doctype html><html><body style="margin:0;font:16px system-ui"><h1>page ${n}</h1><img src="/design/assets/dot.png" width="32" height="32"></body></html>\n`
 
 /** The fixture board: 12 frames - 2 hi-fi with glass (an imported component, a git-ignored import), 4 plain hi-fi,
@@ -66,6 +77,7 @@ const MAIN = [
 interface Canvas { root: string; dev: Dev }
 let A: Canvas | null = null   // the canvas most cases run on
 let B: Canvas | null = null   // each compile held 5 s, a 3 s warm-up: cold bakes and the cancel
+let C: Canvas | null = null   // each compile held 25 s, a 3 s warm-up, the page told to stop asking: the server's half of bake-idle
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const sha = (p: string) => { try { return createHash('sha256').update(readFileSync(p)).digest('hex') } catch { return 'absent' } }
 const put = (root: string, rel: string, body: string | Buffer) => { const p = join(root, rel); mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, body) }
@@ -123,6 +135,7 @@ function fixture(prefix: string): string {
   const root = fixtureRoot(prefix)
   const p = (rel: string, body: string | Buffer) => put(root, rel, body)
   p('.gitignore', 'src/generated/\n')
+  p('.env', 'FOO=1\n')
   p('design/config.ts', 'export default { jam: false }\n')
   p('design/components/Card.tsx', CARD(18))
   p('src/generated/tone.ts', `export const tone = '#19c2a0'\n`)
@@ -134,6 +147,7 @@ function fixture(prefix: string): string {
   p('design/scenes/pages/p2.html', HTML(2))
   p('design/scenes/media/clip.tsx', VIDEO('A clip'))
   p('design/scenes/media/again.tsx', VIDEO('The clip again'))
+  p('design/scenes/app/hang.tsx', HANG)
   p('design/assets/dot.png', PNG)
   copyFileSync(join(import.meta.dirname, 'fixtures', 'clip.webm'), join(root, 'design', 'assets', 'clip.webm'))
   const board = (name: string, order: number, nodes: object[]) => p(`design/boards/${name}.json`, JSON.stringify({ version: 1, name, order, auto: false, nodes }, null, 2) + '\n')
@@ -141,24 +155,28 @@ function fixture(prefix: string): string {
   board('video', 1, [{ key: 'v1', frame: 'media/clip', x: 0, y: 0 }])
   board('videos', 2, [{ key: 'v1', frame: 'media/clip', x: 0, y: 0 }, { key: 'v2', frame: 'media/again', x: 900, y: 0 }])
   board('broken', 3, [{ key: 'ok', frame: 'app/plain1', x: 0, y: 0, w: 400, h: 300 }, { key: 'gone', frame: 'app/nope', x: 500, y: 0, w: 400, h: 300 }])
+  board('hang', 4, [{ key: 'ok', frame: 'app/plain1', x: 0, y: 0, w: 400, h: 300 }, { key: 'h', frame: 'app/hang', x: 500, y: 0, w: 400, h: 300 }])
+  board('glass', 5, [{ key: 'g1', frame: 'app/glass1', x: 0, y: 0, w: 800, h: 500 }])
   p('design/boards/_sizes.json', JSON.stringify({ about: 'fixture', heights: { 'docs/a@760': 900 } }, null, 2) + '\n')
   return root
 }
 
 beforeAll(async () => {
   if (!CHROME) return
-  const ra = fixture('mv-perfrun-a-'), rb = fixture('mv-perfrun-b-')
-  const [da, db] = await Promise.all([
+  const ra = fixture('mv-perfrun-a-'), rb = fixture('mv-perfrun-b-'), rc = fixture('mv-perfrun-c-')
+  const [da, db, dc] = await Promise.all([
     startDev(ra),
     startDev(rb, { env: { MV_BAKE_HOLD_MS: '5000', MV_PERF_RUN_T: JSON.stringify({ warmMs: 3000 }), MARVER_SHOT_CONCURRENCY: '1' } }),
+    startDev(rc, { env: { MV_BAKE_HOLD_MS: '25000', MV_BAKE_STOP_ASKING: '1', MV_PERF_RUN_T: JSON.stringify({ warmMs: 3000, bakeIdleMs: 60_000 }) } }),
   ])
   A = { root: ra, dev: da }
   B = { root: rb, dev: db }
+  C = { root: rc, dev: dc }
 }, 120_000)
 
 afterAll(async () => {
-  await Promise.all([A?.dev.stop(), B?.dev.stop()])
-  for (const c of [A, B]) if (c) rmSync(c.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  await Promise.all([A?.dev.stop(), B?.dev.stop(), C?.dev.stop()])
+  for (const c of [A, B, C]) if (c) rmSync(c.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
 })
 
 const need = (ctx: { skip: () => void }, c: Canvas | null): Canvas => { if (!c) ctx.skip(); return c! }
@@ -255,14 +273,53 @@ describe('a headless run', () => {
     await wait(1500)
   }, 240_000)
 
-  it('an edit made and undone during the run makes it invalid (inputs)', async (ctx) => {
-    const c = need(ctx, A)
-    const file = join(c.root, 'design', 'scenes', 'app', 'plain3.tsx')
+  /** An edit made during the measured load and put back 300 ms later - its content, its size and its mtime, as `cp -p`
+   *  or `rsync -t` would - so the end fingerprint matches the start's and only the sticky flag can say it. */
+  async function undoneDuring(c: Canvas, board: string, file: string, edit: string): Promise<RunLine> {
     const was = readFileSync(file, 'utf8')
-    const { lines } = await run(c, 'main', { onLine: (l) => { if ('phase' in l && l.phase === 'measured') { writeFileSync(file, PLAIN(33)); setTimeout(() => writeFileSync(file, was), 300) } } })
-    expect(lines[0], JSON.stringify(lines[0])).toMatchObject({ valid: false, invalidReason: 'inputs' })
+    const t = new Date(Math.floor(Date.now() / 1000) * 1000 - 60_000)   // a whole second: put back exactly
+    utimesSync(file, t, t)
+    await wait(1500)   // that touch's own event lands before the run registers
+    const { lines } = await run(c, board, { onLine: (l) => {
+      if (!('phase' in l) || l.phase !== 'measured') return
+      writeFileSync(file, edit)
+      setTimeout(() => { writeFileSync(file, was); utimesSync(file, t, t) }, 300)
+    } })
     expect(readFileSync(file, 'utf8')).toBe(was)
+    expect(statSync(file).mtimeMs).toBe(t.getTime())
     await wait(1500)
+    return lines[0]
+  }
+
+  it('an edit made and undone during the run - its mtime put back - makes it invalid (inputs), by the watcher\'s event alone', async (ctx) => {
+    const c = need(ctx, A)
+    const l = await undoneDuring(c, 'main', join(c.root, 'design', 'scenes', 'app', 'plain3.tsx'), PLAIN(33))
+    expect(l, JSON.stringify(l)).toMatchObject({ valid: false, invalidReason: 'inputs' })
+    // the same files, the same sizes and mtimes at the end: the fingerprints agree, so the sticky flag decided
+    expect(l.inputsEnd).toBe(l.inputs?.hash)
+  }, 240_000)
+
+  it('heights changed and put back during the run - their mtime too - make it invalid (inputs), by the boards watcher', async (ctx) => {
+    const c = need(ctx, A)
+    const file = join(c.root, 'design', 'boards', '_sizes.json')
+    const l = await undoneDuring(c, 'main', file, readFileSync(file, 'utf8').replace(/\d+(\s*\})/, '999$1'))
+    expect(l, JSON.stringify(l)).toMatchObject({ valid: false, invalidReason: 'inputs' })
+    expect(l.inputsEnd).toBe(l.inputs?.hash)
+  }, 240_000)
+
+  it('a frame whose script never returns ends its run within the deadlines: invalid, cut unresponsive', async (ctx) => {
+    const c = need(ctx, A)
+    const t0 = Date.now()
+    const { stream, lines } = await run(c, 'hang')
+    const took = Date.now() - t0
+    expect(stream.at(-1)).toEqual({ done: true })
+    expect(lines[0], JSON.stringify(lines[0])).toMatchObject({ valid: false, invalidReason: 'cut', cut: 'unresponsive', over33ms: null })
+    // the hang starts 2.5 s in, a call has 15 s to answer, then the page, the browser and the run's end - never the
+    // heartbeats for ever
+    expect(took, `${took} ms`).toBeLessThan(60_000)
+    // and nothing stays registered: the next run is no overlap
+    const { lines: next } = await run(c, 'video')
+    expect(next[0], JSON.stringify(next[0])).toMatchObject({ overlapped: false })
   }, 240_000)
 
   it('a board with a frame that is gone is invalid (frames)', async (ctx) => {
@@ -309,6 +366,29 @@ describe('a headless run', () => {
     const text = await new Promise<string>((resolve, reject) => execFile(process.execPath, [CLI, 'perf', '--loads', '--root', c.root], { timeout: 30_000 }, (e, so) => (e ? reject(e) : resolve(so))))
     expect(text).toMatch(/headless run loads? not shown: npx marver perf --runs/)
   }, 60_000)
+
+  // last on this canvas: the dev server restarts under it
+  it('the dev server restarting in place during a run (an .env edit) gives inputs, never cancelled - and `perf run` says so', async (ctx) => {
+    const c = need(ctx, A)
+    let out = ''
+    const proc = spawn(process.execPath, [CLI, 'perf', 'run', 'main', '--root', c.root], { stdio: ['ignore', 'pipe', 'pipe'] })
+    proc.stdout!.on('data', (d) => {
+      out += d
+      if (/measuring/.test(out) && !/FOO=2/.test(readFileSync(join(c.root, '.env'), 'utf8'))) writeFileSync(join(c.root, '.env'), 'FOO=2\n')
+    })
+    proc.stderr!.on('data', (d) => { out += d })
+    const code = await new Promise<number | null>((r) => proc.once('exit', r))
+    expect(out).toMatch(/the dev server restarted during the run/)
+    expect(code, out).toBe(1)
+    const id = /run ([0-9a-f]{16}): warming up/.exec(out)?.[1]
+    const line = runsLog(c).find((x) => x.run === id)
+    expect(line, out).toMatchObject({ valid: false, invalidReason: 'inputs', restarted: true })
+    // the restarted server reads its inputs from its own watcher, and runs on
+    for (const by = Date.now() + 30_000; Date.now() < by && !(await fetch(`${c.dev.origin}/`).then((r) => r.ok, () => false));) await wait(200)
+    expect(await inputsNow(c)).not.toBeNull()
+    const { lines } = await run(c, 'video')
+    expect(lines[0], JSON.stringify(lines[0])).toMatchObject({ valid: true, overlapped: false })
+  }, 240_000)
 })
 
 describe('a run\'s bakes, compiled slowly', () => {
@@ -342,5 +422,30 @@ describe('a run\'s bakes, compiled slowly', () => {
     expect(r.status, await r.clone().text()).toBe(200)
     expect(await r.json()).toMatchObject({ generated: true })
     expect(existsSync(join(c.root, 'design', 'assets', 'clip.webm.poster.png'))).toBe(true)
+  }, 240_000)
+})
+
+describe('a run\'s bakes, the page idle before the server', () => {
+  it('a page idle while the run\'s compile still runs is not bake-idle: the gestures, and the line, wait for the server\'s job', async (ctx) => {
+    const c = need(ctx, C)
+    // the warm-up asks for glass1's compile (held 25 s) and is cut at 3 s; the measured page joins it, is answered
+    // "stop asking" at 2.5 s, retries once 4 s later and asks no more - idle some 10 s after its load, while the
+    // server compiles on for another 10 s or more. Only jobsOf(run) keeps the gestures waiting.
+    const logged: number[] = []
+    const poll = setInterval(() => { while (logged.length < (c.dev.out().match(/bake: app\/glass1/g) ?? []).length) logged.push(Date.now()) }, 20)
+    let measuredAt = 0, lineAt = 0
+    const { lines } = await run(c, 'glass', { onLine: (l) => { if ('phase' in l && l.phase === 'measured') measuredAt = Date.now(); if ('line' in l) lineAt = Date.now() } })
+    clearInterval(poll)
+    const l = lines[0]
+    expect(l, JSON.stringify(l)).toMatchObject({ bakes: 'cold', gestures: 3 })
+    expect(l.invalidReason, JSON.stringify(l)).not.toBe('bakes')
+    expect(logged, 'one compile, the run\'s').toHaveLength(1)
+    const compiled = logged[0]
+    expect(compiled - measuredAt, 'the compile outlasted the page\'s asks').toBeGreaterThan(12_000)
+    const gestures = pageLog(c).filter((r) => r.run === l.run && r.kind === 'gesture').slice(-3)
+    expect(gestures).toHaveLength(3)
+    // the first of the three ended after the compile's log line: none started while the server still compiled
+    expect(Math.min(...gestures.map((g) => g.ts as number))).toBeGreaterThan(compiled)
+    expect(lineAt).toBeGreaterThan(compiled)
   }, 240_000)
 })

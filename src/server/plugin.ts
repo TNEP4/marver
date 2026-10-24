@@ -64,6 +64,17 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
   let manifest: Manifest = scanFrames(root, projectInfo())
   let devServer: ViteDevServer | null = null
   let served = 0   // servers configured: more than one is a Vite restart
+  // a headless run's inputs (spec 28 A3.8 #21) read the watcher of the server serving NOW: a Vite restart closes the
+  // one a run began with, and its end and the next runs read the new one. Its 'ready' waited for, 30 s at most
+  const watching: { watcher: ViteDevServer['watcher'] | null; ready: boolean; waiters: Set<() => void> } = { watcher: null, ready: false, waiters: new Set() }
+  const inputs: InputsWatch = {
+    ready: () => (watching.ready ? Promise.resolve(true) : new Promise((resolve) => {
+      const done = () => { clearTimeout(t); resolve(true) }
+      const t = setTimeout(() => { watching.waiters.delete(done); resolve(watching.ready) }, runT().watcherReadyMs)
+      watching.waiters.add(done)
+    })),
+    watched: () => watching.watcher?.getWatched() ?? {},
+  }
   const bootId = String(process.hrtime.bigint())   // opaque, boot-scoped: a restart never mints a "lower" rev
   let invRev = 0
   const pendingInv = new Set<string>()
@@ -245,28 +256,27 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       // a restart: Vite runs this for the new server, then closes the old one, cancelling its pending rescan and
       // its look at the marks - both are taken up here
       // a restart is an input changed (an .env edit): a headless run under way says so (spec 28 A3.8 #22) - the registry
-      // is module state, kept across it
-      if (served++) { manifest = scanFrames(root, projectInfo()); observeLater(); runs.changed('(the dev server restarted)') }
+      // is module state, kept across it - and is marked restarted, since the old server's close is about to end its
+      // stream: its line says `inputs`, never `cancelled`, and the CLI says the dev server restarted
+      if (served++) { manifest = scanFrames(root, projectInfo()); observeLater(); runs.restarted() }
       // spec 28 A1.11: the first middleware - a request naming another workspace, or a service worker's
       // script, is answered before anything of this project is read, written or served (guard.ts).
       // Must stay first: ahead of /api/update, the API, the frame-host route and Vite's own.
       server.middlewares.use(guardMiddleware(ws))
       // spec 28 A3.8 #17: right after it, a headless run's writes - any it may not make - refused and counted per run
       server.middlewares.use(perfRunBarrier())
-      // a run's inputs (A3.8 #21): the files this watcher watches - its 'ready' waited for, 30 s at most - and every
-      // event it fires marks the runs under way, even an edit undone before they end
-      let watcherReady = (server.watcher as unknown as { _readyEmitted?: boolean })._readyEmitted === true
-      const readyWaiters = new Set<() => void>()
-      server.watcher.once('ready', () => { watcherReady = true; for (const w of readyWaiters) w(); readyWaiters.clear() })
-      server.watcher.on('all', (_event, file) => runs.changed(file))
-      const inputs: InputsWatch = {
-        ready: () => (watcherReady ? Promise.resolve(true) : new Promise((resolve) => {
-          const done = () => { clearTimeout(t); resolve(true) }
-          const t = setTimeout(() => { readyWaiters.delete(done); resolve(watcherReady) }, runT().watcherReadyMs)
-          readyWaiters.add(done)
-        })),
-        watched: () => server.watcher.getWatched(),
-      }
+      // a run's inputs (A3.8 #21): the files this watcher watches - this server's from now on - and every event it fires
+      // marks the runs under way, even an edit undone before they end
+      const viteWatcher = server.watcher
+      watching.watcher = viteWatcher
+      watching.ready = (viteWatcher as unknown as { _readyEmitted?: boolean })._readyEmitted === true
+      viteWatcher.once('ready', () => {
+        if (watching.watcher !== viteWatcher) return
+        watching.ready = true
+        for (const w of watching.waiters) w()
+        watching.waiters.clear()
+      })
+      viteWatcher.on('all', (_event, file) => runs.changed(file))
       let bakeGen = Date.now()   // the source generation (see bumpGen): unique per server start
       // THE #20 FIX. registry.ts lives in node_modules, so Vite stamps its import URL
       // with ?v=<hash> and serves it `max-age=31536000,immutable` - correct for static

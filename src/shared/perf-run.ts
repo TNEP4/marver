@@ -99,9 +99,10 @@ export interface RunLine {
   where: 'headless' | 'app'
   ts: number
   board: string
-  /** the fingerprint at the start (A3.8 #21): null when the watcher was not ready - the run is invalid 'inputs' */
+  /** the fingerprint at the start (A3.8 #21) - once the warm-up has loaded the board, so the files outside the root the
+   *  watcher adds as a frame's imports load are in it: null when the watcher was not ready - the run is invalid 'inputs' */
   inputs: { hash: string; files: number } | null
-  /** the fingerprint after the end and the 300 ms wait */
+  /** the same files' fingerprint after the end and the 300 ms wait */
   inputsEnd: string | null
   frames: number | null
   marver: string
@@ -128,7 +129,9 @@ export interface RunLine {
   gestures: number
   p50: number | null
   p95: number | null
-  over33ms: number
+  /** null when no frame was timed (the review of a3-runs: widened from `number` - "not measured" is not "no slow
+   *  frames"); a valid run always has it */
+  over33ms: number | null
   /** Runtime.getHeapUsage at 1 Hz */
   heapPeakMB: number | null
   errors: number
@@ -139,8 +142,13 @@ export interface RunLine {
   overlapped: boolean
   valid: boolean
   invalidReason?: InvalidReason
-  /** the cut's reason, when the load was cut */
+  /** the cut's reason, when the load was cut - the recorder's (`timeout`, `hidden`, ...), or the driver's: `unresponsive`
+   *  (a call to the page went unanswered for 15 s: its main thread stopped, a frame's script that never returns) and
+   *  `overrun` (the run drove past its 7 minutes) */
   cut?: string
+  /** the dev server restarted in place during the run (an .env or config edit): its inputs changed, and its stream
+   *  ended - invalid `inputs`, never `cancelled` (A3.8 #22; added by the review of a3-runs) */
+  restarted?: true
 }
 
 /**

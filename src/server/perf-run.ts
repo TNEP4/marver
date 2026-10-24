@@ -19,6 +19,12 @@
  * gestures only once it is bake-idle (30 s, else invalid `bakes`). In `finally` the throttling reset and the context
  * disposed, the browser closed, the run's queued compiles ended and its running ones awaited, 300 ms for a change
  * event on its way: only then the line (runs.jsonl), and the next repeat.
+ *
+ * Nothing waits on the page for ever (the review of a3-runs, major #1): a same-origin frame's script that never
+ * returns stops the shell's main thread with it, and the page then answers no CDP call. Every call to a page has
+ * `callMs` (15 s) to answer; one that does not marks the page `stalled`, settles all of its calls at once (and every
+ * later one), and the run ends cut `unresponsive`, its heap sampling stopped. A run that drives past `runMs` (7 min)
+ * ends cut `overrun`.
  */
 import { randomBytes } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -27,7 +33,7 @@ import { allowedInRun, RUN_HEADER, RUN_ID, RUN_PARAM, RUN_SCRIPT, WARM_PARAM, ty
 import type { HostProfile } from '../shared/machine.ts'
 import { Browser, launchFlags } from './cdp.ts'
 import { endRunBakes, jobsIdle, jobsOf } from './bake.ts'
-import { fingerprint, type Inputs, type InputsWatch } from './perf-inputs.ts'
+import { hashInputs, inputPaths, type Inputs, type InputsWatch } from './perf-inputs.ts'
 import { basicHost, writeHeadlessProfile } from './machine-host.ts'
 import { marverHome } from './slots.ts'
 import { appendRun } from './perf.ts'
@@ -35,7 +41,9 @@ import { installedVersion } from './update.ts'
 
 export * from '../shared/perf-run.ts'
 
-/** The driver's durations (A3.4, A3.8 #20, #22); overridable only when `MARVER_SLOT_BASE` is set (the tests' marker). */
+/** The driver's durations (A3.4, A3.8 #20, #22); overridable only when `MARVER_SLOT_BASE` is set (the tests' marker).
+ *  `callMs` and `runMs` were added by the review of a3-runs: a call to a page unanswered for `callMs` ends the run cut
+ *  `unresponsive`; a run that drives past `runMs` - more than every deadline above it added up - ends cut `overrun`. */
 export const RUN_T = {
   warmMs: 60_000,
   settleMs: 120_000,
@@ -49,7 +57,11 @@ export const RUN_T = {
   watcherLagMs: 300,
   watcherReadyMs: 30_000,
   heartbeatMs: 10_000,
+  callMs: 15_000,
+  runMs: 420_000,
 } as const
+/** The page's own bound on `flush()` (recorder.ts): the driver waits that long, and `callMs` more. */
+const FLUSH_MS = 15_000
 
 /** A run while it is registered. */
 export interface RunReg {
@@ -66,6 +78,9 @@ export interface RunReg {
   records: Record<string, unknown>[]
   /** another run was registered at some moment of this one */
   overlapped: boolean
+  /** the dev server restarted in place while this run was registered (added by the review of a3-runs): its inputs
+   *  changed, and the restart closed its stream - the line says `inputs`, never `cancelled` */
+  restarted?: true
 }
 
 const RECORDS_MAX = 20_000
@@ -93,6 +108,9 @@ export const runs = {
   },
   /** a watched file changed: every registered run's sticky flag */
   changed(file: string): void { for (const r of live.values()) r.inputsChanged ??= file },
+  /** Vite restarted in place (an .env or config edit, A3.8 #22): every registered run's inputs changed, and the old
+   *  server's close is about to end its stream - which must not read as the client going away */
+  restarted(): void { for (const r of live.values()) { r.restarted = true; r.inputsChanged ??= '(the dev server restarted)' } },
   /** a run's cleaned records (perf.ts logPage's `kept`) */
   records(id: string, recs: Record<string, unknown>[]): void {
     const r = live.get(id)
@@ -170,7 +188,15 @@ export const runUrl = (origin: string, board: string, id: string, warm: boolean)
   `${origin}/?${RUN_PARAM}=${id}${warm ? `&${WARM_PARAM}=1` : ''}#/b/${encodeURIComponent(board)}`
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
-class Cancelled extends Error { constructor() { super('cancelled') } }
+/** Why the driver stops before its script's end: the client went away (the one cancel), the page stopped answering,
+ *  or the run drove past `runMs`. */
+export type HaltWhy = 'cancelled' | 'unresponsive' | 'overrun'
+export class Halt extends Error { constructor(readonly why: HaltWhy) { super(why) } }
+/** A promise given `ms` to settle, else rejected with `what` (a browser-level call: one that never answers is a crash). */
+function within<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  let t: ReturnType<typeof setTimeout> | undefined
+  return Promise.race([p, new Promise<never>((_, reject) => { t = setTimeout(() => reject(new Error(`${what}: no answer in ${ms} ms`)), ms) })]).finally(() => clearTimeout(t))
+}
 
 /** One page of a run: a browser context of its own (A3.8 #20), its target and session. */
 export interface RunPage {
@@ -178,38 +204,71 @@ export interface RunPage {
   session: string
   slow: boolean
   crashed: boolean
-  send(method: string, params?: Record<string, unknown>): Promise<any>
-  eval<T = unknown>(expression: string, awaitPromise?: boolean): Promise<T>
+  /** a call went unanswered for `callMs`: the page's main thread stopped. Every call of the page has settled since, and
+   *  every later one settles at once (the review of a3-runs, major #1). */
+  stalled: boolean
+  /** `ms`: how long the call may take to answer (`callMs` by default) */
+  send(method: string, params?: Record<string, unknown>, ms?: number): Promise<any>
+  eval<T = unknown>(expression: string, awaitPromise?: boolean, ms?: number): Promise<T>
   stop(): void
 }
 /** What the driver needs of cdp.ts's Browser (a fake in the unit tests). */
 export type RunBrowser = Pick<Browser, 'send' | 'on' | 'abort'>
 
-/** A fresh context: 1440 x 900 at scale 2, the cache on or off, and with `slow` the CPU throttled 4x before anything loads. */
-export async function openPage(b: RunBrowser, me: object, o: { cache: boolean; slow: boolean }): Promise<RunPage> {
-  const call = (m: string, p: Record<string, unknown> = {}, sid?: string) => { runSeams.cdp?.(m, p); return b.send(m, p, sid, me) }
-  const { browserContextId } = await call('Target.createBrowserContext', { disposeOnDetach: true })
-  const { targetId } = await call('Target.createTarget', { url: 'about:blank', browserContextId, newWindow: true, width: 1440, height: 900 })
-  const { sessionId } = await call('Target.attachToTarget', { targetId, flatten: true })
+/**
+ * A fresh context: 1440 x 900 at scale 2, the cache on or off, and with `slow` the CPU throttled 4x before anything
+ * loads. Its calls are its own (one owner, cdp.ts `abort`): each has `callMs` to answer, else the page is `stalled`
+ * and every call of it settles; `halt` (the run stopping: cancelled, or past its cap) settles them all too.
+ */
+export async function openPage(b: RunBrowser, o: { cache: boolean; slow: boolean; halt?: AbortSignal }): Promise<RunPage> {
+  const T = runT()
+  const own = {}
+  const offs: (() => void)[] = []
   const page: RunPage = {
-    context: browserContextId, session: sessionId, slow: o.slow, crashed: false,
-    send: (m, p = {}) => call(m, p, sessionId),
-    async eval<T>(expression: string, awaitPromise = false): Promise<T> {
-      const r = await call('Runtime.evaluate', { expression, returnByValue: true, awaitPromise }, sessionId)
+    context: '', session: '', slow: o.slow, crashed: false, stalled: false,
+    send: (m, p = {}, ms) => call(m, p, page.session, ms),
+    async eval<T>(expression: string, awaitPromise = false, ms?: number): Promise<T> {
+      const r = await call('Runtime.evaluate', { expression, returnByValue: true, awaitPromise }, page.session, ms)
       if (r?.exceptionDetails) throw new Error(`the page threw: ${r.exceptionDetails.exception?.description ?? r.exceptionDetails.text ?? 'an error'}`)
       return r?.result?.value as T
     },
-    stop: () => {},
+    stop: () => { for (const off of offs.splice(0)) off() },
   }
-  const off = b.on((m) => { if (m.sessionId === sessionId && (m.method === 'Inspector.targetCrashed' || m.method === 'Target.targetCrashed')) page.crashed = true })
-  page.stop = off
-  await page.send('Inspector.enable').catch(() => {})
-  await page.send('Page.enable')
-  await page.send('Runtime.enable')
-  await page.send('Network.enable')
-  await page.send('Network.setCacheDisabled', { cacheDisabled: !o.cache })
-  await page.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 2, mobile: false })
-  if (o.slow) await page.send('Emulation.setCPUThrottlingRate', { rate: 4 })
+  function call(m: string, p: Record<string, unknown> = {}, sid?: string, ms = T.callMs): Promise<any> {
+    runSeams.cdp?.(m, p)
+    const sent = b.send(m, p, sid, own)
+    let t: ReturnType<typeof setTimeout> | undefined
+    const late = new Promise<never>((_, reject) => {
+      t = setTimeout(() => {
+        // the race takes this reason first; then every call still waiting on the page settles, and every later one
+        reject(new Halt('unresponsive'))
+        page.stalled = true
+        b.abort(own, `the page stopped answering (${m}, ${ms} ms)`)
+      }, ms)
+    })
+    return Promise.race([sent, late]).finally(() => clearTimeout(t))
+  }
+  const halt = o.halt
+  if (halt) {
+    const onHalt = () => b.abort(own, String(halt.reason ?? 'halted'))
+    if (halt.aborted) onHalt()
+    else { halt.addEventListener('abort', onHalt, { once: true }); offs.push(() => halt.removeEventListener('abort', onHalt)) }
+  }
+  try {
+    const { browserContextId } = await call('Target.createBrowserContext', { disposeOnDetach: true })
+    page.context = browserContextId
+    const { targetId } = await call('Target.createTarget', { url: 'about:blank', browserContextId, newWindow: true, width: 1440, height: 900 })
+    const { sessionId } = await call('Target.attachToTarget', { targetId, flatten: true })
+    page.session = sessionId
+    offs.push(b.on((m) => { if (m.sessionId === sessionId && (m.method === 'Inspector.targetCrashed' || m.method === 'Target.targetCrashed')) page.crashed = true }))
+    await page.send('Inspector.enable').catch((e) => { if (page.stalled) throw e })
+    await page.send('Page.enable')
+    await page.send('Runtime.enable')
+    await page.send('Network.enable')
+    await page.send('Network.setCacheDisabled', { cacheDisabled: !o.cache })
+    await page.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 2, mobile: false })
+    if (o.slow) await page.send('Emulation.setCPUThrottlingRate', { rate: 4 })
+  } catch (e) { page.stop(); throw e }   // a context made goes with the browser, at the run's end
   return page
 }
 
@@ -227,14 +286,18 @@ export async function closePage(b: RunBrowser, page: RunPage): Promise<void> {
   await bounded('Target.disposeBrowserContext', { browserContextId: page.context })
 }
 
-const status = (p: RunPage): Promise<PerfRunStatus | null> => p.eval<PerfRunStatus | null>('window.__mvPerfRun ? window.__mvPerfRun.status() : null').catch(() => null)
-/** The status until `pred` holds (every `statusMs`), or `ms` passed: which, and the last status read. */
-async function until(p: RunPage, pred: (s: PerfRunStatus) => boolean, ms: number, signal: AbortSignal): Promise<{ ok: boolean; status: PerfRunStatus | null }> {
+/** The page's status, or null while it has none (a navigation under way, the probe not installed yet). A page that
+ *  stopped answering is no null: the run halts. */
+const status = (p: RunPage): Promise<PerfRunStatus | null> => p.eval<PerfRunStatus | null>('window.__mvPerfRun ? window.__mvPerfRun.status() : null')
+  .catch((e) => { if (p.stalled) throw e instanceof Halt ? e : new Halt('unresponsive'); return null })
+/** The status until `pred` holds (every `statusMs`), or `ms` passed: which, and the last status read. `halt` throws
+ *  when the run must stop - checked before every read; each read itself has `callMs` to answer. */
+async function until(p: RunPage, pred: (s: PerfRunStatus) => boolean, ms: number, halt: () => void): Promise<{ ok: boolean; status: PerfRunStatus | null }> {
   const T = runT()
   const by = Date.now() + ms
   let s: PerfRunStatus | null = null
   for (;;) {
-    if (signal.aborted) throw new Cancelled()
+    halt()
     s = await status(p)
     if (s && pred(s)) return { ok: true, status: s }
     if (Date.now() >= by || p.crashed) return { ok: false, status: s }
@@ -245,22 +308,36 @@ async function until(p: RunPage, pred: (s: PerfRunStatus) => boolean, ms: number
 const bakeIdle = (id: string) => (s: PerfRunStatus) => s.bakeIdle && jobsOf(id).queued === 0 && jobsOf(id).running === 0
 const loadEnded = (s: PerfRunStatus) => s.load?.state === 'settled' || s.load?.state === 'cut'
 
-/** Wheel events on an absolute schedule (`eventMs` apart, A3.8 #20): never awaiting an ack, at most 8 outstanding. */
-async function wheels(p: RunPage, at: { x: number; y: number }, series: { n: number; deltaX?: number; deltaY?: number; ctrl?: boolean }[], signal: AbortSignal): Promise<void> {
+/** Wheel events on an absolute schedule (`eventMs` apart, A3.8 #20): never awaiting an ack, at most 8 outstanding.
+ *  An event the page never acks settles at `callMs` (the page then stalled), so the window always drains. */
+async function wheels(p: RunPage, at: { x: number; y: number }, series: { n: number; deltaX?: number; deltaY?: number; ctrl?: boolean }[], halt: () => void): Promise<void> {
   const T = runT()
   const t0 = performance.now()
   let i = 0, outstanding = 0
   const sent: Promise<unknown>[] = []
   for (const s of series) for (let k = 0; k < s.n; k++) {
-    if (signal.aborted) throw new Cancelled()
+    halt()
     const wait = t0 + i++ * T.eventMs - performance.now()
     if (wait > 0) await sleep(wait)
-    while (outstanding >= 8) await sleep(1)
+    while (outstanding >= 8) { halt(); await sleep(1) }
     outstanding++
     sent.push(p.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: at.x, y: at.y, deltaX: s.deltaX ?? 0, deltaY: s.deltaY ?? 0, modifiers: s.ctrl ? 2 : 0 }).catch(() => {}).finally(() => { outstanding-- }))
   }
   await Promise.all(sent)
+  halt()
 }
+
+/** `__mvPerf.report()`'s fields the driver reads. */
+interface Report { frameP50?: number; frameP95?: number; over33ms?: number; gestureFrames?: number }
+/** The intervals `__mvPerf.report()` keeps, the newest (perf.ts MAX). */
+export const REPORT_FRAMES_MAX = 1200
+/**
+ * Did a gesture time its frames (the review of a3-runs, major #2)? rAF ticked in it: two intervals or more, perf.ts's
+ * own rule for a gesture it records - `before` and `after` are `report().gestureFrames` around it. A page that reads as
+ * hidden while its timers run (Chrome 156's occluded windows, 0.27.0) ends every gesture with none. A report already
+ * full counts as timed.
+ */
+export const timedGesture = (before: number, after: number): boolean => after - before >= 2 || after >= REPORT_FRAMES_MAX
 
 /** What a run saw, for its line. */
 export interface RunSeen {
@@ -270,8 +347,10 @@ export interface RunSeen {
   machine: string; host: HostProfile; power: RunLine['power']
   bakes: 'warm' | 'cold'
   cancelled: boolean; crashed: boolean
-  /** the measured load: never settled or cut in time (its reason), its bake-idle missed, its gestures' ends */
+  /** the measured load: never settled or cut in time (its reason - or the driver's, `unresponsive` or `overrun`), its
+   *  bake-idle missed, its gestures each ended by the shell in time and timed */
   cut?: string; bakesMissed: boolean; gestures: number; gesturesOk: boolean
+  /** the gestures' frame times: null when none was timed */
   stats: { p50: number | null; p95: number | null; over33ms: number } | null
   heapPeakMB: number | null
   landed: boolean
@@ -279,7 +358,8 @@ export interface RunSeen {
 }
 
 /** The run line (A3.8 #22): what the page's records (the run's collector) and the driver saw; validity the first
- *  reason that holds, in INVALID_REASONS' order. */
+ *  reason that holds, in INVALID_REASONS' order - but a run the dev server's in-place restart ended is `inputs`
+ *  whatever else held: its stream closed with the old server, which is no client going away. */
 export function runLine(reg: RunReg, s: RunSeen): RunLine {
   // each record once (a send retried after its first attempt landed repeats its records)
   const seen = new Set<string>()
@@ -290,6 +370,9 @@ export function runLine(reg: RunReg, s: RunSeen): RunLine {
   const moves = own.filter((r) => r.kind === 'move')
   const errors = recs.filter((r) => r.kind === 'error').length
   const badFrames = settled ? (settled.missing ?? 0) + (settled.neverReady ?? 0) : 0
+  // records the page lost on its side - its queue's bound, a send that never landed - said by a `dropped` record (the
+  // errors past a load's 50 are `errors`' own); the count may undercount moves, frames or errors (review of a3-runs)
+  const lost = recs.filter((r) => r.kind === 'dropped' && r.reason !== 'errors').reduce((n, r) => n + (typeof r.n === 'number' && r.n > 0 ? r.n : 1), 0)
   const reasons: [InvalidReason, boolean][] = [
     ['cancelled', s.cancelled],
     ['crash', s.crashed],
@@ -299,10 +382,11 @@ export function runLine(reg: RunReg, s: RunSeen): RunLine {
     ['frames', badFrames > 0],
     ['errors', errors > 0],
     ['bakes', s.bakesMissed],
-    ['gesture', !s.gesturesOk],
-    ['records', !s.landed || !settled],
+    // each gesture ended by the shell in time and timed, and the frame times read: no timing is no measurement
+    ['gesture', !s.gesturesOk || !s.stats],
+    ['records', !s.landed || !settled || lost > 0],
   ]
-  const invalid = reasons.find(([, holds]) => holds)?.[0]
+  const invalid: InvalidReason | undefined = reg.restarted ? 'inputs' : reasons.find(([, holds]) => holds)?.[0]
   return {
     v: 1, script: RUN_SCRIPT, run: s.id, where: 'headless', ts: s.startedAt, board: s.board,
     inputs: s.inputs, inputsEnd: s.inputsEnd,
@@ -313,12 +397,13 @@ export function runLine(reg: RunReg, s: RunSeen): RunLine {
     loadToSettledMs: load && settled && typeof load.sinceNav === 'number' && typeof settled.ms === 'number' ? load.sinceNav + settled.ms : null,
     settledMs: typeof settled?.ms === 'number' ? settled.ms : null,
     moves: moves.filter((m) => !m.late).length, lateMoves: moves.filter((m) => m.late).length,
-    gestures: s.gestures, p50: s.stats?.p50 ?? null, p95: s.stats?.p95 ?? null, over33ms: s.stats?.over33ms ?? 0,
+    gestures: s.gestures, p50: s.stats?.p50 ?? null, p95: s.stats?.p95 ?? null, over33ms: s.stats ? s.stats.over33ms : null,
     heapPeakMB: s.heapPeakMB, errors,
     forbidden: reg.forbidden, refusedInPage: s.refusedInPage, overlapped: reg.overlapped,
     valid: !invalid,
     ...(invalid ? { invalidReason: invalid } : {}),
     ...(s.cut !== undefined ? { cut: s.cut } : {}),
+    ...(reg.restarted ? { restarted: true as const } : {}),
   }
 }
 
@@ -333,63 +418,93 @@ export async function runOnce(o: RunOptions): Promise<RunLine> {
     machine: 'unknown', host: basicHost(), power: 'unknown', bakes: 'cold', cancelled: false, crashed: false,
     bakesMissed: false, gestures: 0, gesturesOk: false, stats: null, heapPeakMB: null, landed: false, postersSkipped: 0, refusedInPage: 0,
   }
-  const fp = () => (o.watch ? fingerprint(o.root, o.watch) : Promise.resolve(null))
+  // the inputs (A3.8 #21): taken at the start, and again once the warm-up has loaded the board - the watcher watches a
+  // frame's imports from outside the root only once a page loaded them - and that second set, hashed again at the end,
+  // is the run's; a file the watcher adds later is the sticky flag's
+  const set: { paths: string[] | null } = { paths: null }
+  const fp = async (): Promise<void> => {
+    const paths = o.watch ? await inputPaths(o.root, o.watch) : null
+    if (!paths) return
+    set.paths = paths
+    seen.inputs = await hashInputs(o.root, paths)
+  }
   let b: Browser | null = null
   let page: RunPage | null = null
-  const onAbort = () => { b?.abort(me, 'cancelled') }
-  o.signal.addEventListener('abort', onAbort, { once: true })
-  const check = () => { if (o.signal.aborted) throw new Cancelled() }
+  // the run stops before its script's end: its client went away ('cancelled', the one cancel), or it drove past its
+  // cap ('overrun') - every call of the browser and of its pages settles at once
+  const stop = new AbortController()
+  const onAbort = () => stop.abort('cancelled')
+  if (o.signal.aborted) onAbort(); else o.signal.addEventListener('abort', onAbort, { once: true })
+  const cap = setTimeout(() => stop.abort('overrun'), T.runMs)
+  stop.signal.addEventListener('abort', () => b?.abort(me, String(stop.signal.reason)), { once: true })
+  /** Throws when the run must stop: halted, or (with a page) that page stalled. */
+  const halt = (p?: RunPage) => () => {
+    if (stop.signal.aborted) throw new Halt(stop.signal.reason as HaltWhy)
+    if (p?.stalled) throw new Halt('unresponsive')
+  }
+  const check = halt()
   try {
     o.progress({ phase: 'warm', run: id })
-    const [inputs, profile] = await Promise.all([fp(), writeHeadlessProfile(marverHome())])
-    seen.inputs = inputs
+    const [, profile] = await Promise.all([fp(), writeHeadlessProfile(marverHome())])
     seen.machine = profile.hash; seen.host = profile.profile.host; seen.power = profile.profile.power
     check()
     b = await Browser.launch()
+    if (stop.signal.aborted) b.abort(me, String(stop.signal.reason))
     check()
-    const version = await b.send('Browser.getVersion', {}, undefined, me)
+    const version = await within(b.send('Browser.getVersion', {}, undefined, me), T.callMs, 'Browser.getVersion')
     seen.chrome = String(version?.product ?? 'unknown').replace(/^[^/]*\//, '')
-    const sys = await b.send('SystemInfo.getInfo', {}, undefined, me).catch(() => null)
+    const sys = await within(b.send('SystemInfo.getInfo', {}, undefined, me), T.callMs, 'SystemInfo.getInfo').catch(() => null)
     const fs = sys?.gpu?.featureStatus as Record<string, string> | undefined, dev = sys?.gpu?.devices?.[0] as { vendorString?: string; deviceString?: string } | undefined
     seen.renderer = sys ? { gpuCompositing: fs?.gpu_compositing, rasterization: fs?.rasterization, vendor: dev?.vendorString, device: dev?.deviceString } : null
 
     // 1. the warm-up: its own context, cache on, unthrottled - Vite's transforms and the dependency cache warm, and the
     //    bakes compile; the recorder posts nothing
-    page = await openPage(b, me, { cache: true, slow: false })
+    page = await openPage(b, { cache: true, slow: false, halt: stop.signal })
     await page.send('Page.navigate', { url: runUrl(o.origin, o.board, id, true) })
-    const warm = await until(page, (s) => loadEnded(s) && bakeIdle(id)(s), T.warmMs, o.signal)
+    const warm = await until(page, (s) => loadEnded(s) && bakeIdle(id)(s), T.warmMs, halt(page))
     seen.bakes = warm.ok ? 'warm' : 'cold'
     seen.refusedInPage += warm.status?.refused ?? 0
     seen.crashed ||= page.crashed
     await closePage(b, page); page = null
     check()
+    await fp()
+    check()
 
     // 2. the measured load: a fresh context, the cache off, 1440 x 900 at 2, throttled before it loads with --slow
     reg.phase = 'measured'; o.progress({ phase: 'measured', run: id })
-    page = await openPage(b, me, { cache: false, slow: o.slow })
+    page = await openPage(b, { cache: false, slow: o.slow, halt: stop.signal })
     const p = page
-    let heap = 0
-    const sampleHeap = () => { void p.send('Runtime.getHeapUsage').then((h) => { if (typeof h?.usedSize === 'number') heap = Math.max(heap, h.usedSize) }, () => {}) }
+    const hp = halt(p)
+    // one sample at a time, none once the page stopped answering or the run halted
+    let heap = 0, sampling = false
+    const sampleHeap = () => {
+      if (sampling || p.stalled || stop.signal.aborted) return
+      sampling = true
+      void p.send('Runtime.getHeapUsage').then((h) => { if (typeof h?.usedSize === 'number') heap = Math.max(heap, h.usedSize) }, () => {}).finally(() => { sampling = false })
+    }
     const heapTimer = setInterval(sampleHeap, T.heapMs)
     try {
       await p.send('Page.navigate', { url: runUrl(o.origin, o.board, id, false) })
       sampleHeap()
-      const loaded = await until(p, loadEnded, T.settleMs, o.signal)
+      const loaded = await until(p, loadEnded, T.settleMs, hp)
       if (!loaded.ok || loaded.status?.load?.state === 'cut') seen.cut = loaded.status?.load?.reason ?? (p.crashed ? 'crash' : 'timeout')
       else {
         // its gestures start only once it is bake-idle - the warm-up's leftover server jobs included
-        const idle = await until(p, bakeIdle(id), T.bakeIdleMs, o.signal)
+        const idle = await until(p, bakeIdle(id), T.bakeIdleMs, hp)
         seen.bakesMissed = !idle.ok
         if (idle.ok) {
-          await p.eval('window.__mvPerfRun.fit()', true)
+          await p.eval('window.__mvPerfRun.fit()', true, T.fitIdleMs + T.callMs)
           const c = await p.eval<{ x: number; y: number }>('window.__mvPerfRun.centre()')
           await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: c.x, y: c.y })
           await p.eval('window.__mvPerf && window.__mvPerf.reset()')
-          // three gestures: zoom in, zoom out, one pan that turns back - each ended by the shell, 5 s at most
+          const report = () => p.eval<Report | null>('window.__mvPerf ? window.__mvPerf.report() : null')
+          // three gestures: zoom in, zoom out, one pan that turns back - each ended by the shell, 5 s at most, and timed
           const gesture = async (series: Parameters<typeof wheels>[2]) => {
             const before = (await status(p))?.gestures ?? 0
-            await wheels(p, c, series, o.signal)
-            return (await until(p, (s) => s.gestures > before && !s.moving, T.gestureEndMs, o.signal)).ok
+            const sampled = (await report())?.gestureFrames ?? 0
+            await wheels(p, c, series, hp)
+            const ended = (await until(p, (s) => s.gestures > before && !s.moving, T.gestureEndMs, hp)).ok
+            return ended && timedGesture(sampled, (await report())?.gestureFrames ?? 0)
           }
           const ok: boolean[] = []
           ok.push(await gesture([{ n: 40, deltaY: -100, ctrl: true }]))
@@ -398,12 +513,12 @@ export async function runOnce(o: RunOptions): Promise<RunLine> {
           await sleep(T.pauseMs)
           ok.push(await gesture([{ n: 60, deltaX: 50 }, { n: 60, deltaX: -50 }]))
           seen.gesturesOk = ok.every(Boolean)
-          const r = await p.eval<{ frameP50?: number; frameP95?: number; over33ms?: number; gestureFrames?: number } | null>('window.__mvPerf ? window.__mvPerf.report() : null')
+          const r = await report()
           seen.stats = r && r.gestureFrames ? { p50: r.frameP50 ?? null, p95: r.frameP95 ?? null, over33ms: r.over33ms ?? 0 } : null
         }
       }
       // the records landed before the context goes (an error late in the load is the line's too)
-      seen.landed = (await p.eval<boolean>('window.__mvPerfRun ? window.__mvPerfRun.flush() : false', true).catch(() => false)) === true
+      seen.landed = (await p.eval<boolean>('window.__mvPerfRun ? window.__mvPerfRun.flush() : false', true, FLUSH_MS + T.callMs).catch((e) => { if (p.stalled) throw e; return false })) === true
       const last = await status(p)
       seen.gestures = last?.gestures ?? 0
       seen.postersSkipped = last?.postersSkipped ?? 0
@@ -413,10 +528,17 @@ export async function runOnce(o: RunOptions): Promise<RunLine> {
       seen.heapPeakMB = heap ? Math.round((heap / 1_048_576) * 10) / 10 : null
     }
   } catch (e) {
-    if (o.signal.aborted || e instanceof Cancelled) seen.cancelled = true
-    else if (!b) { runs.end(id); throw e }   // no browser at all: no run happened, and no line says one did
+    const why: HaltWhy | null = o.signal.aborted ? 'cancelled'
+      : e instanceof Halt ? e.why
+      : page?.stalled ? 'unresponsive'
+      : stop.signal.aborted ? (stop.signal.reason as HaltWhy)
+      : null
+    if (why === 'cancelled') seen.cancelled = true
+    else if (why) seen.cut ??= why   // the page stopped answering, or the run drove past its cap: never settled in time
+    else if (!b) { clearTimeout(cap); runs.end(id); throw e }   // no browser at all: no run happened, and no line says one did
     else seen.crashed = true
   } finally {
+    clearTimeout(cap)
     o.signal.removeEventListener('abort', onAbort)
     reg.phase = 'closing'
     try { o.progress({ phase: 'closing', run: id }) } catch { /* the stream is gone */ }
@@ -424,11 +546,12 @@ export async function runOnce(o: RunOptions): Promise<RunLine> {
     if (b) await b.close()
   }
   // the run's work outlives its pages: its queued compiles end now, its running ones are waited for (45 s each at most),
-  // and a change event already on its way still lands - only then is the line written, and the next repeat started
+  // and a change event already on its way still lands - only then is the line written, and the next repeat started.
+  // The end fingerprint reads the run's own set again, with no watcher (a restart closed the one it began with)
   endRunBakes(id)
   await jobsIdle(id, 50_000)
   await sleep(T.watcherLagMs)
-  seen.inputsEnd = (await fp())?.hash ?? null
+  seen.inputsEnd = set.paths ? (await hashInputs(o.root, set.paths)).hash : null
   const done = runs.end(id) ?? reg
   seen.cancelled ||= o.signal.aborted
   const line = runLine(done, seen)

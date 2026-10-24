@@ -7,13 +7,18 @@
  *
  * FROZEN signatures (A3.8 #53). Every spawn is `execFile` with an absolute path and a 2 s timeout; a failure is
  * 'unknown'; off macOS every field is 'unknown' but `arch`, `memGB` and `chip`.
+ *
+ * One reader for both writers (the review of a3-runs, minor #8): the host is `readHost(basicHost(), spawn)` from
+ * src/shared/machine.ts - the floor here, the two spawns and their rules there (`withHostSpawns`) - which the app's
+ * machine.ts reads its host with too, so the two hash a host alike by construction, not by two copies kept equal.
+ * `parseHostSysctl` and `parseOs` read through `withHostSpawns`.
  */
 import { execFile } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { arch, cpus, totalmem } from 'node:os'
 import { join } from 'node:path'
-import { canonical, PROFILE_HASH_HEX, type HeadlessProfile, type HostProfile } from '../shared/machine.ts'
+import { canonical, PROFILE_HASH_HEX, readHost, withHostSpawns, type HeadlessProfile, type HostProfile } from '../shared/machine.ts'
 
 /** The profile's hash: the same function the app uses for its own (A3.8 #11). */
 export const profileHash = (p: unknown): string => createHash('sha256').update(canonical(p)).digest('hex').slice(0, PROFILE_HASH_HEX)
@@ -24,38 +29,35 @@ export function basicHost(): HostProfile {
   return { chip: c[0]?.model?.trim() || 'unknown', cores: { total: c.length, p: 'unknown', e: 'unknown' }, model: 'unknown', memGB: Math.round(totalmem() / 2 ** 30), os: 'unknown', arch: arch() }
 }
 
-const SYSCTL = '/usr/sbin/sysctl', SW_VERS = '/usr/bin/sw_vers', PMSET = '/usr/bin/pmset'
+const PMSET = '/usr/bin/pmset'
 const SPAWN_MS = 2000
 /** One spawn's standard output, or null: it could not start, exited non-zero or ran past 2 s. */
-export const spawnOut = (bin: string, args: string[], ms = SPAWN_MS): Promise<string | null> => new Promise((resolve) => {
-  try { execFile(bin, args, { timeout: ms, encoding: 'utf8', maxBuffer: 64 * 1024 }, (err, out) => resolve(err ? null : String(out))) } catch { resolve(null) }
+export const spawnOut = (bin: string, args: readonly string[], ms = SPAWN_MS): Promise<string | null> => new Promise((resolve) => {
+  try { execFile(bin, [...args], { timeout: ms, encoding: 'utf8', maxBuffer: 64 * 1024 }, (err, out) => resolve(err ? null : String(out))) } catch { resolve(null) }
 })
 
-/** `sysctl -n hw.perflevel0.physicalcpu hw.perflevel1.physicalcpu hw.model`'s three lines: performance cores,
- *  efficiency cores, the model. Anything else - an Intel Mac with no perflevels, an error - is unknown, all three:
- *  a missing oid shifts the lines, so none of them can be trusted. */
+/** A host with nothing known: what the two parsers below read against. */
+const NOTHING: HostProfile = { chip: 'unknown', cores: { total: 0, p: 'unknown', e: 'unknown' }, model: 'unknown', memGB: 0, os: 'unknown', arch: 'unknown' }
+/** `sysctl -n hw.perflevel0.physicalcpu hw.perflevel1.physicalcpu hw.model`'s three lines, as `withHostSpawns` reads
+ *  them: performance cores, efficiency cores, the model - or unknown, all three (an Intel Mac has no perflevels: a
+ *  missing oid shifts the lines, so none of them can be trusted). */
 export function parseHostSysctl(out: string | null): { p: number | 'unknown'; e: number | 'unknown'; model: string | 'unknown' } {
-  const lines = (out ?? '').trim().split('\n').map((l) => l.trim())
-  const n = (s: string) => (/^\d{1,4}$/.test(s) ? Number(s) : null)
-  if (lines.length !== 3) return { p: 'unknown', e: 'unknown', model: 'unknown' }
-  const p = n(lines[0]), e = n(lines[1]), model = /^[\w,. -]{1,64}$/.test(lines[2]) ? lines[2] : null
-  return p === null || e === null || model === null ? { p: 'unknown', e: 'unknown', model: 'unknown' } : { p, e, model }
+  const h = withHostSpawns(NOTHING, out, null)
+  return { p: h.cores.p, e: h.cores.e, model: h.model }
 }
-/** `sw_vers -productVersion`: "26.6.2", else unknown. */
-export const parseOs = (out: string | null): string | 'unknown' => { const v = (out ?? '').trim(); return /^\d+(\.\d+){0,3}$/.test(v) ? v : 'unknown' }
+/** `sw_vers -productVersion`, as `withHostSpawns` reads it: "26.6.2", else unknown. */
+export const parseOs = (out: string | null): string | 'unknown' => withHostSpawns(NOTHING, null, out).os
 /** `pmset -g ps`'s first line names the source: "Now drawing from 'AC Power'" or "'Battery Power'". */
 export function parsePower(out: string | null): 'ac' | 'battery' | 'unknown' {
   const m = /drawing from '([^']+)'/.exec(out ?? '')
   return m?.[1] === 'AC Power' ? 'ac' : m?.[1] === 'Battery Power' ? 'battery' : 'unknown'
 }
 
-/** The host, read: `sysctl -n hw.perflevel0.physicalcpu hw.perflevel1.physicalcpu hw.model`, `sw_vers -productVersion`. */
+/** The host, read as the app reads its own (`readHost`, src/shared/machine.ts): this floor, then `sysctl -n
+ *  hw.perflevel0.physicalcpu hw.perflevel1.physicalcpu hw.model` and `sw_vers -productVersion`, each tried once more
+ *  when it fails. */
 export async function hostProfile(): Promise<HostProfile> {
-  const base = basicHost()
-  if (process.platform !== 'darwin') return base
-  const [sys, os] = await Promise.all([spawnOut(SYSCTL, ['-n', 'hw.perflevel0.physicalcpu', 'hw.perflevel1.physicalcpu', 'hw.model']), spawnOut(SW_VERS, ['-productVersion'])])
-  const s = parseHostSysctl(sys)
-  return { ...base, cores: { total: base.cores.total, p: s.p, e: s.e }, model: s.model, os: parseOs(os) }
+  return process.platform === 'darwin' ? readHost(basicHost(), (file, args) => spawnOut(file, args)) : basicHost()
 }
 
 /** Where the power comes from now (`pmset -g ps`); unknown off macOS. */

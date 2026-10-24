@@ -362,14 +362,44 @@ function jamPerf(root: string, opts: { minutes?: number; json?: boolean }) {
 
 const ms2 = (v: number | null | undefined) => (typeof v === 'number' ? (v >= 1000 ? `${(v / 1000).toFixed(2)} s` : `${Math.round(v)} ms`) : '-')
 const mms = (v: number | null | undefined) => (typeof v === 'number' ? `${v} ms` : '-')
-const why = (l: RunLine) => `invalid: ${l.invalidReason}${l.cut ? ` (${l.cut})` : ''}`
-/** One run, as `perf run` and `perf --runs` print it: three lines. */
+const why = (l: RunLine) => `invalid: ${l.invalidReason}${l.restarted ? ' (the dev server restarted)' : l.cut ? ` (${l.cut})` : ''}`
+const over33 = (n: number | null) => (n === null ? 'frames over 33 ms not measured' : `${n} frame${n === 1 ? '' : 's'} over 33 ms`)
+/** What an invalid run asks of the agent, when its reason alone does not say it. */
+const hint = (l: RunLine): string | null =>
+  l.restarted ? 'the dev server restarted during the run (an .env or config edit): its inputs changed - run it again'
+  : l.cut === 'unresponsive' ? 'the page stopped answering for 15 s: a frame\'s script that never returns (an endless loop) - open the board and see which frame hangs'
+  : l.invalidReason === 'gesture' && l.over33ms === null ? 'no frame was timed: requestAnimationFrame never ran in the gestures (the page read as hidden?)'
+  : null
+/** One run, as `perf run` and `perf --runs` print it: three lines, and a fourth when an invalid run has a hint. */
 export function runBlock(l: RunLine, name: (b?: string) => string): string[] {
+  const h = l.valid ? null : hint(l)
   return [
     `run ${l.run} · ${name(l.board)} · Chrome ${l.chrome.split('.')[0]} · bakes ${l.bakes}${l.slow ? ' · --slow' : ''}${l.overlapped ? ' · overlapped' : ''}`,
-    `load to settled ${ms2(l.loadToSettledMs)} · ${l.moves} move${l.moves === 1 ? '' : 's'}${l.lateMoves ? ` (${l.lateMoves} late)` : ''} · p50 ${mms(l.p50)} p95 ${mms(l.p95)} · ${l.over33ms} frame${l.over33ms === 1 ? '' : 's'} over 33 ms · heap peak ${l.heapPeakMB ?? '-'} MB${l.postersMissing ? ` · ${l.postersMissing} without a poster` : ''}`,
+    `load to settled ${ms2(l.loadToSettledMs)} · ${l.moves} move${l.moves === 1 ? '' : 's'}${l.lateMoves ? ` (${l.lateMoves} late)` : ''} · p50 ${mms(l.p50)} p95 ${mms(l.p95)} · ${over33(l.over33ms)} · heap peak ${l.heapPeakMB ?? '-'} MB${l.postersMissing ? ` · ${l.postersMissing} without a poster` : ''}`,
     `${l.valid ? 'valid' : why(l)} · inputs ${l.inputs ? `${l.inputs.hash.slice(0, 8)}… (${l.inputs.files.toLocaleString('en-US')} files)` : 'unknown'}${l.forbidden ? ` · ${l.forbidden} write${l.forbidden === 1 ? '' : 's'} refused` : ''}`,
+    ...(h ? [h] : []),
   ]
+}
+
+/**
+ * The stream broke before its end with a run under way: the dev server restarted in place (an .env or config edit) or
+ * stopped. The run's line reaches runs.jsonl once its end has run - its pages closed, its compiles awaited, 50 s at
+ * most - so it is waited for, 90 s at most, and no longer once the dev server has not answered for 5 s (it stopped).
+ */
+async function lineAfterDrop(root: string, run: string, port: number): Promise<RunLine | null> {
+  const by = Date.now() + 90_000
+  let downSince: number | null = null
+  for (let n = 0; Date.now() < by; n++) {
+    const l = (readRuns(root, Date.now() - 3_600_000) as RunLine[]).find((x) => x.run === run)
+    if (l) return l
+    if (n % 4 === 0) {
+      const up = await fetch(`http://localhost:${port}/`, { signal: AbortSignal.timeout(1000) }).then(() => true, () => false)
+      if (up) downSince = null
+      else if ((downSince ??= Date.now()) < Date.now() - 5000) return null
+    }
+    await new Promise((r) => setTimeout(r, 250))
+  }
+  return null
 }
 
 /**
@@ -388,6 +418,7 @@ export async function perfRunCommand(root: string, board: string | undefined, op
   process.once('SIGINT', stop)
   const name = namer(root)
   const lines: RunLine[] = []
+  let under: string | null = null   // the run under way: its phases name it, its line ends it
   try {
     const res = await fetch(`http://localhost:${info.port}/__mv/api/perf/run`, {
       method: 'POST', signal: ac.signal,
@@ -408,13 +439,19 @@ export async function perfRunCommand(root: string, board: string | undefined, op
         let m: RunStreamLine
         try { m = JSON.parse(text) } catch { continue }
         if ('error' in m) throw new Error(m.error)
-        if ('phase' in m && !opts.json) console.log(m.phase === 'warm' ? `run ${m.run}: warming up` : m.phase === 'measured' ? '  measuring' : '  closing')
-        if ('line' in m) { lines.push(m.line); if (!opts.json) for (const l of runBlock(m.line, name)) console.log(`  ${l}`) }
+        if ('phase' in m) { under = m.run; if (!opts.json) console.log(m.phase === 'warm' ? `run ${m.run}: warming up` : m.phase === 'measured' ? '  measuring' : '  closing') }
+        if ('line' in m) { under = null; lines.push(m.line); if (!opts.json) for (const l of runBlock(m.line, name)) console.log(`  ${l}`) }
       }
     }
   } catch (err) {
     if (ac.signal.aborted) { if (!opts.json) console.log('  cancelled - the run\'s line says so'); return 130 }
-    throw err
+    // the stream broke under a run: the dev server restarted (spec 28 A3.8 #22) or stopped - its line says which
+    if (!under) throw err
+    if (!opts.json) console.log('  the connection to the dev server dropped - waiting for the run\'s line')
+    const line = await lineAfterDrop(root, under, info.port)
+    if (!line) throw new Error(`the connection to the dev server dropped during run ${under}, and no line came for it - did \`marver dev\` stop? (${(err as Error).message})`)
+    lines.push(line)
+    if (!opts.json) for (const l of runBlock(line, name)) console.log(`  ${l}`)
   } finally { process.off('SIGINT', stop) }
   if (opts.json) console.log(JSON.stringify({ runs: lines }, null, 2))
   else console.log(`\n  design/.local/perf/runs.jsonl · compare: npx marver perf --runs`)
@@ -433,9 +470,10 @@ function runsPerf(root: string, opts: { days?: number | string; json?: boolean; 
   const pct = (a: number | null, b: number | null) => (a && b !== null ? `${b >= a ? '+' : ''}${Math.round(((b - a) / a) * 100)} %` : '-')
   for (const b of sum.boards) {
     console.log(`\n  ${name(b.board)} · Chrome ${String(b.cohort.chrome).split('.')[0]} · bakes ${b.cohort.bakes}${b.cohort.slow ? ' · --slow' : ''} · ${b.runs} valid run${b.runs === 1 ? '' : 's'}`)
-    console.log(`    latest ${b.latest.run}: load to settled ${ms2(b.latest.loadToSettledMs)} · p95 ${mms(b.latest.p95)} · ${b.latest.over33ms} over 33 ms · inputs ${b.latest.inputs?.slice(0, 8) ?? 'unknown'}…`)
+    const d33 = b.afterChange?.deltas.over33ms ?? null
+    console.log(`    latest ${b.latest.run}: load to settled ${ms2(b.latest.loadToSettledMs)} · p95 ${mms(b.latest.p95)} · ${b.latest.over33ms ?? '-'} over 33 ms · inputs ${b.latest.inputs?.slice(0, 8) ?? 'unknown'}…`)
     if (b.sameInputs) console.log(`    against ${b.sameInputs.from.run} (same inputs): ${b.sameInputs.within10 ? 'within 10 %' : 'NOT within 10 %'} - load ${pct(b.sameInputs.from.loadToSettledMs, b.latest.loadToSettledMs)}, p95 ${pct(b.sameInputs.from.p95, b.latest.p95)}`)
-    if (b.afterChange) console.log(`    after a change, against ${b.afterChange.from.run}: load ${pct(b.afterChange.from.loadToSettledMs, b.latest.loadToSettledMs)}, p95 ${pct(b.afterChange.from.p95, b.latest.p95)}, over 33 ms ${b.afterChange.deltas.over33ms >= 0 ? '+' : ''}${b.afterChange.deltas.over33ms}`)
+    if (b.afterChange) console.log(`    after a change, against ${b.afterChange.from.run}: load ${pct(b.afterChange.from.loadToSettledMs, b.latest.loadToSettledMs)}, p95 ${pct(b.afterChange.from.p95, b.latest.p95)}, over 33 ms ${d33 === null ? '-' : `${d33 >= 0 ? '+' : ''}${d33}`}`)
   }
   if (sum.against) {
     const a = sum.against

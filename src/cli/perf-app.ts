@@ -89,8 +89,8 @@ export interface RunBoard {
   sameInputs?: RunCompare & { within10: boolean }
   afterChange?: RunCompare
 }
-export interface RunBrief { run: string; ts: number; inputs: string | null; loadToSettledMs: number | null; p50: number | null; p95: number | null; over33ms: number; heapPeakMB: number | null; moves: number }
-export interface RunCompare { from: RunBrief; to: RunBrief; deltas: { loadToSettledMs: number | null; p95: number | null; over33ms: number; heapPeakMB: number | null } }
+export interface RunBrief { run: string; ts: number; inputs: string | null; loadToSettledMs: number | null; p50: number | null; p95: number | null; over33ms: number | null; heapPeakMB: number | null; moves: number }
+export interface RunCompare { from: RunBrief; to: RunBrief; deltas: { loadToSettledMs: number | null; p95: number | null; over33ms: number | null; heapPeakMB: number | null } }
 
 /** Runs compare only inside one cohort (A3.8 #22). */
 export const cohortOf = (r: RunLine) => ({ script: r.script, board: r.board, chrome: r.chrome, flags: r.flags, machine: r.machine, power: r.power, slow: r.slow, bakes: r.bakes })
@@ -98,7 +98,7 @@ const cohortKey = (r: RunLine) => JSON.stringify(cohortOf(r))
 const brief = (r: RunLine): RunBrief => ({ run: r.run, ts: r.ts, inputs: r.inputs?.hash ?? null, loadToSettledMs: r.loadToSettledMs, p50: r.p50, p95: r.p95, over33ms: r.over33ms, heapPeakMB: r.heapPeakMB, moves: r.moves })
 const diff = (a: number | null, b: number | null) => (a === null || b === null ? null : Math.round((b - a) * 10) / 10)
 function compare(a: RunLine, b: RunLine): RunCompare {
-  return { from: brief(a), to: brief(b), deltas: { loadToSettledMs: diff(a.loadToSettledMs, b.loadToSettledMs), p95: diff(a.p95, b.p95), over33ms: b.over33ms - a.over33ms, heapPeakMB: diff(a.heapPeakMB, b.heapPeakMB) } }
+  return { from: brief(a), to: brief(b), deltas: { loadToSettledMs: diff(a.loadToSettledMs, b.loadToSettledMs), p95: diff(a.p95, b.p95), over33ms: diff(a.over33ms, b.over33ms), heapPeakMB: diff(a.heapPeakMB, b.heapPeakMB) } }
 }
 /** Two runs agree: `loadToSettledMs` and `p95` each within 10 % of the earlier one's (A3.7). */
 export function within(a: RunLine, b: RunLine, pct = 10): boolean {

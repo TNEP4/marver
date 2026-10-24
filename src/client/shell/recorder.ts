@@ -72,6 +72,9 @@ let sendTimer: ReturnType<typeof setTimeout> | undefined
 let sending = false
 /** sends whose records never landed, since the page loaded (a headless perf run's `flush()` answers with it) */
 let failedSends = 0
+/** records lost on this page's side since it loaded - the queue's bound, a send that never landed - however many
+ *  `dropped` records said so: the count each one carries starts over, this one never does (`flush()`) */
+let lostEver = 0
 /** The warm-up load of a headless perf run (spec 28 A3.8 #17): the recorder runs - the driver reads `settled` from
  *  it - and posts nothing. */
 const WARM = PERF_RUN?.warm === true
@@ -450,6 +453,7 @@ const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 const droppedNow = (more = 0): PerfRecord[] => {
   const n = outbox.dropped + more
   outbox.dropped = 0
+  lostEver += n
   return n ? [env('dropped', ownerId(), { n })] : []
 }
 
@@ -515,7 +519,8 @@ export function currentLoad(): PerfRunStatus['load'] {
 }
 
 /** Everything recorded so far sent now, until nothing waits and nothing is on its way (15 s at most): whether every
- *  batch this page ever sent landed. The driver awaits it before it ends the page. A warm-up posts nothing: true. */
+ *  batch this page ever sent landed, and no record was ever lost to the queue's bound. The driver awaits it before it
+ *  ends the page. A warm-up posts nothing: true. */
 export async function flush(): Promise<boolean> {
   if (!on) return false
   if (WARM) return true
@@ -524,7 +529,7 @@ export async function flush(): Promise<boolean> {
     if (!sending) await send()
     else await wait(25)
   }
-  return !sending && !outbox.size && !outbox.dropped && failedSends === 0
+  return !sending && !outbox.size && !outbox.dropped && failedSends === 0 && lostEver === 0
 }
 
 // ---- for tests --------------------------------------------------------------------------------------------------
