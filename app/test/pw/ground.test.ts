@@ -96,8 +96,9 @@ async function reloadInto(id: string, cfg: Record<string, unknown> | null): Prom
 /**
  * A fake canvas whose identity and answers a case changes while it runs (A2.10's navigation outcomes): it serves the
  * shell's document itself - signed with the identity it holds now, or with a wrong key (a failed proof), or naming an
- * instance the registry never held (an instance mismatch); `/?redirect` is a 302 to `/index.html`; `?coop` adds
- * `Cross-Origin-Opener-Policy: same-origin` (a browsing-instance swap, so a new renderer with the old one alive);
+ * instance the registry never held (an instance mismatch); `/?redirect` is a 302 to `/index.html`; `?coop` makes it
+ * cross-origin isolated (COOP same-origin, COEP require-corp: a browsing-instance swap into a renderer of its own,
+ * the old one alive);
  * `?slow`, or every document while `hold` is on, waits until `release()`. `rebind(features)` is a new instance
  * taking the slot: the same server, a new slot file - new instance, new key, its features - as a restarted
  * `marver dev` writes.
@@ -123,7 +124,9 @@ async function mutable(slot: number, name: string, features: string[] = ['bridge
     const answer = () => {
       const p = mode.proof === 'wrong-key' ? { ...ident, key: randomBytes(32) } : mode.proof === 'other-instance' ? { ...ident, instance: randomUUID() } : ident
       const h: Record<string, string> = { 'content-type': 'text/html', 'cache-control': 'no-store', ...proofHeaders(p, req.headers['x-mv-nonce']) }
-      if (u.searchParams.has('coop')) h['cross-origin-opener-policy'] = 'same-origin'
+      // cross-origin isolated: its own browsing instance and a process of its own (a same-site COOP swap alone may
+      // keep the renderer)
+      if (u.searchParams.has('coop')) { h['cross-origin-opener-policy'] = 'same-origin'; h['cross-origin-embedder-policy'] = 'require-corp' }
       res.writeHead(200, h)
       res.end(html)
     }
@@ -844,35 +847,48 @@ describe('the scroll edge\'s cost switch (A3.8 #51)', () => {
 })
 
 describe('the mv:doc trace (A3.8 #26)', () => {
-  it('100 loads - reloads, navigations the page starts, crash reloads in a new renderer - and every document is told 44', { timeout: 240_000 }, async () => {
-    const { fake, id } = await canvas(12, 'Trace')
+  it('100 loads - same-process reloads, cross-process loads with the old frame alive, crash reloads - and every document is told 44', { timeout: 240_000 }, async () => {
+    // the navigations alternate Cross-Origin-Opener-Policy: same-origin, so each swaps browsing instance: a new
+    // renderer process commits while the old frame is still current - the frame swap #26's sender rule is for
+    const m = await mutable(12, 'Trace')
+    const id = m.id
     await w.run.call('activate', { id })
     await lifted(id)
     await uncovered(id)
-    const told: { i: number; kind: string; inset: number; pid: number }[] = []
+    const mainPid = async () => (await w.run.call<{ pid: number; main: boolean }[]>('frames', { target: id })).find((f) => f.main)!.pid
+    const told: { i: number; kind: string; inset: number; pid: number; was: number; crashes: number }[] = []
+    let navs = 0
     for (let i = 0; i < 100; i++) {
       const kind = i % 5 === 4 ? 'crash' : i % 5 === 2 ? 'navigate' : 'reload'
-      const before = (await w.tab(id)).doc?.commits ?? 0
+      const t0 = await w.tab(id)
+      const before = t0.doc?.commits ?? 0
+      const was = await mainPid()
       if (kind === 'reload') await w.run.call('reloadPage', { target: id })
-      else if (kind === 'navigate') await exec(id, `location.href = '/?n=${i}'; 1`)
+      else if (kind === 'navigate') await execNow(id, `location.href = '/?n=${i}${navs++ % 2 === 0 ? '&coop=1' : ''}'; 1`)
       else {
         await w.run.call('crash', { target: id })
-        // the first crash in a minute reloads by itself; a later one latches, and the person's reload brings it back
-        const t = await w.until((x) => { const q = x.tabs.find((y) => y.id === id)!; return q.crash.latched || ((q.doc?.commits ?? 0) > before + 1 && !!q.doc?.lifted) }, 10_000, 'the crash reload')
-        if (t.tabs.find((y) => y.id === id)!.crash.latched) await w.run.call('command', { cmd: 'reload' })
+        // counted first (a latch from an earlier crash is still on), then: the first crash in a minute reloads by
+        // itself; a later one latches, and the person's reload brings it back
+        await w.until((x) => x.tabs.find((y) => y.id === id)!.crash.count > t0.crash.count, 10_000, 'the crash counted')
+        const t = await w.until((x) => { const q = x.tabs.find((y) => y.id === id)!; return (q.crash.latched && q.view === 'crashed') || ((q.doc?.commits ?? 0) > before + 1 && !!q.doc?.lifted) }, 10_000, 'the crash reload')
+        if (t.tabs.find((y) => y.id === id)!.view === 'crashed') await w.run.call('command', { cmd: 'reload' })
       }
       await w.until((x) => { const q = x.tabs.find((y) => y.id === id)!; return (q.doc?.commits ?? 0) > before && !!q.doc?.lifted && !!q.doc.trusted }, 10_000, `load ${i} (${kind})`)
       await waitFor(`load ${i}'s script`, async () => (await exec<boolean>(id, '!!window.__ground')))
       const inset = await exec<number>(id, 'window.marverApp.topInset')
-      const frames = await w.run.call<{ pid: number; main: boolean }[]>('frames', { target: id })
-      told.push({ i, kind, inset, pid: frames.find((f) => f.main)!.pid })
+      told.push({ i, kind, inset, pid: await mainPid(), was, crashes: (await w.tab(id)).crash.count })
     }
     const wrong = told.filter((x) => x.inset !== 44)
     const pids = new Set(told.map((x) => x.pid))
-    process.stdout.write(`mv:doc trace: ${told.length} loads (${told.filter((x) => x.kind === 'reload').length} reloads, ${told.filter((x) => x.kind === 'navigate').length} page navigations, ${told.filter((x) => x.kind === 'crash').length} crash reloads) in ${pids.size} renderer processes; told 44: ${told.length - wrong.length}\n`)
+    const navigations = told.filter((x) => x.kind === 'navigate')
+    const swapped = navigations.filter((x) => x.pid !== x.was && x.crashes === told[told.indexOf(x) - 1]!.crashes)
+    process.stdout.write(`mv:doc trace: ${told.length} loads (${told.filter((x) => x.kind === 'reload').length} reloads, ${navigations.length} cross-process navigations - ${swapped.length} to a new renderer with no crash -, ${told.filter((x) => x.kind === 'crash').length} crash reloads) in ${pids.size} renderer processes; told 44: ${told.length - wrong.length}\n`)
     expect(wrong).toEqual([])
-    expect(pids.size).toBeGreaterThan(10)   // the crash reloads each came up in a renderer of their own
-    await fake.close()
+    // every navigation committed in a renderer other than the one it left, with no crash: the old frame was alive
+    expect(swapped).toHaveLength(20)
+    // the reloads stayed in their renderer
+    for (const x of told.filter((y) => y.kind === 'reload')) expect(x.pid, `reload ${x.i}`).toBe(x.was)
+    await m.close()
   })
 })
 
