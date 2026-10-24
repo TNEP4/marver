@@ -5,58 +5,61 @@
  * recorded instead, and the app goes on. Ending the app would end every canvas page in it, and with them what they
  * hold that is not yet saved, which is what the guard exists to keep.
  *
- * - one line in `<MARVER_HOME>/perf/app.jsonl` (mode 600): `{ v: 1, ts, kind: 'main-error', what, name, message,
- *   stack }` - A3's recorder file (A3.1), its `machine` A3's to add. The message and the first stack lines can hold
- *   paths, so like the page half's (A1.7) they stay on the Mac. At most 20 lines a run, each under 2 KB;
+ * - one `main-error` line through the recorder's writer (perflog.ts, A3): `perf/app.jsonl` for the release,
+ *   `perf/app-dev.jsonl` for Marver Dev (one writer per file, A3.8 #12), with the envelope `{ v: 1, ts, kind, app,
+ *   seq, flavour, machine }` and `what, name, message, stack` (mode 600). The message and the first stack lines can
+ *   hold paths, so like the page half's (A1.7) they stay on the Mac. At most 20 lines a run, each under 2 KB; written
+ *   whatever `recorder` says (an error is not a sample). Each is written in its own turn (`appendNow`: the hold at
+ *   launch ends for it, `machine: null` if no profile hash exists yet), as app 0.1 wrote it, since what follows may be
+ *   the process's end. App 0.1 appended them itself, to app.jsonl, in Marver Dev too;
  * - a line on stderr; in a test build, the journal (`main-error`), so a case sees it.
  *
  * Installed by main.ts once the window and its pages exist: from then on an error has pages to keep alive. Before
  * that - a startup that failed - Electron's own box stays: no page holds anything yet, and a box says the app did
  * not start, where a recorded error would leave an app with no window. (Electron shows its box only while the app
  * has no `uncaughtException` listener of its own; Node turns an unhandled rejection into one only while there is
- * no `unhandledRejection` listener.) Pure but for `process` and the file.
+ * no `unhandledRejection` listener.) Pure but for `process` and the writer.
  */
-import { appendFileSync, chmodSync, mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { appendNow, writing } from './perflog.ts'
 import { note } from './testing/index.ts'
 
 export const MAX_RECORDS = 20
 const MAX_LINE = 2048
 
-/** One record, as written (a pure function, for tests). */
-export function errorRecord(what: 'exception' | 'rejection', err: unknown, now: number): string {
+/** One record's body (a pure function, for tests): `what, name, message, stack`, bounded so its line stays under 2 KB. */
+export function errorBody(what: 'exception' | 'rejection', err: unknown): { what: 'exception' | 'rejection'; name: string; message: string; stack: string[] } {
   const e = err instanceof Error ? err : null
   const message = (e ? e.message : (() => { try { return String(err) } catch { return 'unprintable' } })()).slice(0, 500)
   const stack = (e?.stack ?? '').split('\n').slice(1, 6).map((l) => l.trim().slice(0, 200))
-  const rec = { v: 1, ts: now, kind: 'main-error', what, name: e?.name ?? typeof err, message, stack }
-  let line = JSON.stringify(rec)
-  if (line.length > MAX_LINE) line = JSON.stringify({ ...rec, stack: [] }).slice(0, MAX_LINE)
-  return line
+  const body = { what, name: (e?.name ?? typeof err).slice(0, 100), message, stack }
+  // the envelope takes about 140 bytes: the body keeps the rest
+  return JSON.stringify(body).length > MAX_LINE - 200 ? { ...body, stack: [] } : body
 }
 
-let perfDir: string | null = null
+/** One record as a line, its envelope's `v`, `ts` and `kind` (a pure function, for tests and stderr). */
+export function errorRecord(what: 'exception' | 'rejection', err: unknown, now: number): string {
+  const line = JSON.stringify({ v: 1, ts: now, kind: 'main-error', ...errorBody(what, err) })
+  return line.length > MAX_LINE ? line.slice(0, MAX_LINE) : line
+}
+
 let written = 0
 let installed = false
+let writable = false
 
-/** Where the records go, once ensureHome made `perf/` (700); until then, stderr alone. */
-export function setErrorHome(home: { dir: string; writable: boolean }): void {
-  perfDir = home.writable ? join(home.dir, 'perf') : null
-}
+/** Whether the home can be written (ensureHome's answer); the writer itself is perflog.ts's, started by the recorder. */
+export function setErrorHome(home: { dir: string; writable: boolean }): void { writable = home.writable }
 
 /** Record one error. Never throws: it runs where nothing else would catch. */
 export function recordError(what: 'exception' | 'rejection', err: unknown): void {
   let line = ''
-  try { line = errorRecord(what, err, Date.now()) } catch { line = '{"v":1,"kind":"main-error","message":"unrecordable"}' }
+  let body: ReturnType<typeof errorBody> | null = null
+  try { body = errorBody(what, err); line = errorRecord(what, err, Date.now()) } catch { line = '{"v":1,"kind":"main-error","message":"unrecordable"}' }
   try { process.stderr.write(`marver-app: uncaught ${what} in main (recorded, the app goes on): ${line}\n`) } catch { /* no stderr */ }
   try { if (__MV_TEST__) note('main-error', { what, line }) } catch { /* the journal went */ }
-  if (!perfDir || written >= MAX_RECORDS) return
+  if (!body || !writable || !writing() || written >= MAX_RECORDS) return
   written += 1
-  try {
-    mkdirSync(perfDir, { recursive: true, mode: 0o700 })
-    const file = join(perfDir, 'app.jsonl')
-    appendFileSync(file, line + '\n', { mode: 0o600 })
-    chmodSync(file, 0o600)
-  } catch { /* an unwritable home: stderr has it */ }
+  // written in this turn, not left in the writer's 2 s queue: what follows an uncaught error may be the process's end
+  try { appendNow('main-error', body) } catch { /* stderr has it */ }
 }
 
 /** The listeners, once. */
@@ -68,4 +71,4 @@ export function installErrorPolicy(): void {
 }
 
 /** Test seam. */
-export function resetErrorPolicy(): void { written = 0; perfDir = null }
+export function resetErrorPolicy(): void { written = 0; writable = false }

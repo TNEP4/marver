@@ -12,6 +12,7 @@
  * perfMark(name) + counters are the plug points later stages use (blank-frame / warm-latency).
  */
 import { onMotion, type Motion } from './canvas/camera-broadcast.ts'
+import { gestureOff, gestureOn } from './app-perf.ts'
 import { recorder } from './recorder.ts'
 import { gestureStats } from './recorder-core.ts'
 
@@ -45,6 +46,8 @@ function begin(m: Motion) {
   const run: Run = { t0: performance.now(), last: 0, dts: [], pan: false, zoom: false, layout: false, longs: [], raf: 0 }
   g = run
   note(m)
+  // the Mac app's recorder hears it start (the white-out detector's window, spec 28 A3.8 #15); nothing elsewhere
+  gestureOn(run.pan ? 'pan' : run.zoom ? 'zoom' : run.layout ? 'layout' : undefined)
   try {
     run.obs = new PerformanceObserver((l) => { for (const e of l.getEntries()) if (e.startTime >= run.t0) run.longs.push(e.duration) })
     run.obs.observe({ type: LOAF ? 'long-animation-frame' : 'longtask', buffered: false })
@@ -66,6 +69,7 @@ function end() {
   const t1 = performance.now()
   for (const e of run.obs?.takeRecords() ?? []) if (e.startTime >= run.t0 && e.startTime <= t1) run.longs.push(e.duration)
   run.obs?.disconnect()
+  gestureOff()
   for (const d of run.dts) { frames.push(d); if (frames.length > MAX) frames.shift() }
   for (const d of run.longs) { longs.push(d); if (longs.length > MAX) longs.shift() }
   if (run.dts.length < 2) return   // a press that never moved the camera

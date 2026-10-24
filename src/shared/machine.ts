@@ -4,7 +4,8 @@
  * share one host part and its hash: the app's (`app/src/main/machine.ts`, the recorder stream) and a headless
  * run's (`src/server/machine-host.ts`, the headless stream), so runs and app records of one Mac meet by `hostHash`.
  *
- * FROZEN before the A3 streams split (A3.8 #53). Types and the canonical form only - no imports: each writer hashes
+ * FROZEN before the A3 streams split (A3.8 #53). Types, the canonical form and the host's read (`withHostSpawns`,
+ * `readHost`, added by the recorder stream: each side passes its own spawn) only - no imports: each writer hashes
  * with its own `node:crypto` as `sha256(canonical(profile)).slice(0, 16)` (16 hex). Profiles are immutable,
  * content-addressed (a temp file written with `wx`, then renamed; an existing one only touched). Thermal state and
  * the speed limit are not in a profile (they go in samples); `lowPowerMode` is 'unknown' until spike S2.2.
@@ -71,6 +72,49 @@ export type MachineProfile = AppProfile | HeadlessProfile
 
 /** The hash's length in hex. */
 export const PROFILE_HASH_HEX = 16
+
+/** The host's one sysctl read: `sysctl -n` of these, in this order (P cores, E cores, the model). */
+export const HOST_SYSCTL = ['hw.perflevel0.physicalcpu', 'hw.perflevel1.physicalcpu', 'hw.model'] as const
+
+/** The host's two spawns, by absolute path (A3.2: every spawn `execFile` with an absolute path). */
+export const HOST_SPAWNS = {
+  sysctl: { file: '/usr/sbin/sysctl', args: ['-n', ...HOST_SYSCTL] },
+  swVers: { file: '/usr/bin/sw_vers', args: ['-productVersion'] },
+} as const
+
+/**
+ * The host with its two spawns read (added by the recorder stream, so the app and a headless run parse them alike and
+ * their `hostHash` meets): `sysctl`'s stdout for HOST_SYSCTL - null when it exited non-zero - and `sw_vers
+ * -productVersion`'s, null when it failed. `sysctl` gives all three of P cores, E cores and the model, or none: an
+ * unknown oid shifts the lines (an Intel Mac has no perflevels), so anything but three lines that each parse leaves all
+ * three as `base` has them ('unknown'). The rules are machine-host.ts's own (`parseHostSysctl`, `parseOs`), so a host
+ * hashes alike whichever side parsed it.
+ */
+export function withHostSpawns(base: HostProfile, sysctl: string | null, swVers: string | null): HostProfile {
+  const out: HostProfile = { ...base, cores: { ...base.cores } }
+  const l = typeof sysctl === 'string' ? sysctl.trim().split('\n').map((x) => x.trim()) : []
+  const n = (x: string | undefined) => (x !== undefined && /^\d{1,4}$/.test(x) ? Number(x) : null)
+  const p = n(l[0]), e = n(l[1]), model = l.length === 3 && /^[\w,. -]{1,64}$/.test(l[2]!) ? l[2]! : null
+  if (p !== null && e !== null && model !== null) { out.cores.p = p; out.cores.e = e; out.model = model }
+  const v = typeof swVers === 'string' ? swVers.trim() : ''
+  if (/^\d+(\.\d+){0,3}$/.test(v)) out.os = v
+  return out
+}
+
+/** One spawn's stdout, or null: it could not start, exited non-zero or ran past its timeout (the caller's execFile). */
+export type HostSpawn = (file: string, args: readonly string[]) => Promise<string | null>
+
+/**
+ * The host read the one way the app (machine.ts) and a headless run (machine-host.ts `hostProfile`) both read it:
+ * `base` (machine-host.ts `basicHost()`), then the two spawns through the caller's own `run`, each tried once more
+ * when it fails - one busy moment at a launch would otherwise give that launch a `hostHash` of its own - then
+ * `withHostSpawns`.
+ */
+export async function readHost(base: HostProfile, run: HostSpawn): Promise<HostProfile> {
+  const twice = async (s: { file: string; args: readonly string[] }) => (await run(s.file, s.args)) ?? (await run(s.file, s.args))
+  const [sys, sw] = await Promise.all([twice(HOST_SPAWNS.sysctl), twice(HOST_SPAWNS.swVers)])
+  return withHostSpawns(base, sys, sw)
+}
 
 /**
  * Canonical JSON: object keys sorted at every depth, arrays in order, no whitespace; `undefined` members dropped as

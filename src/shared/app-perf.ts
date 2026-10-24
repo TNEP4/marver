@@ -143,10 +143,18 @@ export interface SampleBody {
   pressure: { last: PressureLevel | null; max: PressureLevel | null }
   thermal: ThermalState
   /** every unique process seen in the minute (the CPU budget joins by pid and a start time within 1 s of `born`, A3.8 #49) */
-  procs: { pid: number; born: number; type: ProcType; role: Role; name?: string; tabs: string[]; cpu: Agg; rssMB: Agg; footprintMB: Agg }[]
+  procs: {
+    pid: number; born: number; type: ProcType; role: Role; name?: string; tabs: string[]; cpu: Agg; rssMB: Agg; footprintMB: Agg
+    /** the core-seconds the process used in the minute (Δ cumulative) and the monotonic ms they cover: `cpu.mean` is s / (ms / 1000); absent with no CPU interval (added by the recorder stream, optional) */
+    cpuTime?: { s: number; ms: number }
+  }[]
   gpu: { pid: number; born: number; cpu: Agg; gpuProcessRssMB: Agg } | null
-  /** canvas memory (A3.8 #41): Σ over unique canvas processes of footprintMB, else rssMB */
-  canvases: { memMB: Agg; byTab: Record<string, { memMB: Agg; cpu: Agg }> }
+  /**
+   * canvas memory (A3.8 #41): Σ over unique canvas processes of footprintMB, else rssMB. `byTab` is each tab's own
+   * processes; `shared` (added by the recorder stream, optional) marks a tab whose renderer another tab shared in the
+   * minute - that renderer is whole in both tabs' entries, so byTab is never added up (`memMB` counts it once)
+   */
+  canvases: { memMB: Agg; byTab: Record<string, { memMB: Agg; cpu: Agg; shared?: true }> }
   visible: Sample['visible']
   sys: Sample['sys']
   /** wall ms of this minute's sysctl / ioreg spawns: the recorder's own cost */
@@ -202,7 +210,10 @@ export interface AppBodies {
    * r4 #1), diffed after each compose. `state` is tabs.ts's DisplayState, `view` its TabViewState.
    */
   tab: TabIdent & { state: string; active: boolean; view: string; main: ProcId | null }
-  /** main's show to the preload's second animation-frame callback, on tab switches only (A3.8 #9) */
+  /**
+   * main's show to main's receipt of the preload's answer from its second animation-frame callback, on tab switches
+   * only (A3.8 #9): the answer's IPC back to main is in it
+   */
   shown: TabIdent & { ms: number }
   /** memory.ts: a change of level (A3.8 #45) */
   pressure: { level: PressureLevel | null; availablePct: number | null; was: PressureLevel | null }
@@ -232,7 +243,7 @@ export interface AppBodies {
     recorder: boolean
     /** the ring, only with the recorder on: the last 12 samples and 60 s of events */
     ring: { samples: Sample[]; events: RingEvent[] } | null
-    /** the state at the mark: one getAppMetrics() */
+    /** the state at the mark: one getAppMetrics(), in the mark's turn - its `ts` is the mark's time, which the CLI dates the mark by (the line's own `ts` is when it was written, about mark + 2 s) */
     now: Sample
     /** GPU process events from 1 s before the mark to 1 s after it */
     gpuEvents: RingEvent[]
