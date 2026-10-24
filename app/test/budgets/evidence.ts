@@ -6,8 +6,11 @@
  * `gone` or `unload`, or a `tab` line whose `commit` or main frame `(pid, born)` differs from the tab's last line
  * before the window (a reload, a navigation, a cross-process navigation) - a `tab` line is written only on a change,
  * so the comparison is with what the tab was before, never only between two lines inside. A canvas tab line inside
- * the window with no line before it to compare with is inconclusive too. Also the recorder's own figure, for the
- * cross-check against the outside one (`crossCheck`).
+ * the window with no line before it to compare with is inconclusive too. A canvas renderer is a `(pid, born)` the
+ * samples name `canvas` in every one of the window's samples (A3.8 #49; code review r2 #3): one named so in some and
+ * missing from others started or ended inside it (inconclusive), one named so in some and another role in others is
+ * contested - never taken out, it stays the app's in the window's figure and the recorder's alike, so it can fail a
+ * run, never pass one. Also the recorder's own figure, for the cross-check against the outside one (`crossCheck`).
  */
 import type { AppRecord } from '../../../src/shared/app-perf.ts'
 import type { CpuPass, CpuRead, CpuWindow } from '../harness/outside.ts'
@@ -20,7 +23,10 @@ export interface RecorderProc { pid: number; born: number; seconds: number; span
 export type Evidence =
   | { why: string; canvas?: undefined }
   | {
+    /** each `(pid, born)` named `canvas` in every sample of the window, once: the only renderers taken out */
     canvas: { pid: number; born: number }[]
+    /** named `canvas` in some samples and another role in others: counted as the app's, on both sides of the cross-check */
+    contested: { pid: number; born: number; roles: string[] }[]
     /** the recorder's processes that are not canvases, the GPU process once (it is in `procs`; `gpu` repeats it) */
     recorder: RecorderProc[]
     /** the minute lines whose minute lies inside the window */
@@ -59,15 +65,38 @@ export function releaseEvidence(lines: readonly Line[], from: number, to: number
       was.set(l.tab as string, { commit: l.commit as number | undefined, main: (l.main ?? null) as { pid: number; born: number } | null })
     }
   }
-  const canvas = span.filter((l) => l.kind === 'sample').flatMap((l) => (l.procs as { pid: number; born: number; role: string }[]).filter((p) => p.role === 'canvas').map((p) => ({ pid: p.pid, born: p.born })))
+  // the canvas renderers (code review r2 #3): a union of labels would take out a renderer named canvas once and
+  // unknown after it for the whole window - only a (pid, born) named canvas in every sample of the window is one
+  const sampled = span.filter((l) => l.kind === 'sample')
+  const ids = new Map<string, { pid: number; born: number; roles: Set<string>; in: Set<number> }>()
+  sampled.forEach((l, i) => {
+    for (const p of l.procs as { pid: number; born: number; role: string }[]) {
+      const k = `${p.pid}@${p.born}`
+      const id = ids.get(k) ?? { pid: p.pid, born: p.born, roles: new Set<string>(), in: new Set<number>() }
+      id.roles.add(p.role)
+      id.in.add(i)
+      ids.set(k, id)
+    }
+  })
+  const canvas: { pid: number; born: number }[] = []
+  const contested: { pid: number; born: number; roles: string[] }[] = []
+  for (const id of ids.values()) {
+    if (!id.roles.has('canvas')) continue
+    if (id.roles.size > 1) { contested.push({ pid: id.pid, born: id.born, roles: [...id.roles].sort() }); continue }
+    // its exit, or its start, lands unattributed in the reaped total (r3 #2)
+    if (id.in.size !== sampled.length) return { why: `a canvas renderer (pid ${id.pid}) is missing from ${sampled.length - id.in.size} of the window's ${sampled.length} samples: it started or ended inside it` }
+    canvas.push({ pid: id.pid, born: id.born })
+  }
+  const isCanvas = (p: { pid: number; born: number }) => canvas.some((c) => c.pid === p.pid && c.born === p.born)
   // the recorder's own figure (review of a3-native, minor #9): only the minute lines whose minute lies inside the
-  // window (each covers the `span` ms before its ts), per process, the processes it does not call canvas - the GPU
-  // process among them once: `procs` holds it, and `gpu` repeats it
+  // window (each covers the `span` ms before its ts), per process, every process but the canvas renderers above -
+  // by the same rule as the window's figure, so a contested one is counted on both sides - the GPU process among
+  // them once: `procs` holds it, and `gpu` repeats it
   const minutes = span.filter((l) => l.kind === 'sample' && l.ts - (l.span as number) >= from && l.ts <= to)
   const per = new Map<string, RecorderProc>()
   for (const l of minutes) {
     for (const p of l.procs as { pid: number; born: number; role: string; cpu: { mean: number | null } }[]) {
-      if (p.role === 'canvas' || p.cpu.mean === null) continue
+      if (isCanvas(p) || p.cpu.mean === null) continue
       const k = `${p.pid}@${p.born}`
       const r = per.get(k) ?? { pid: p.pid, born: p.born, seconds: 0, spanS: 0 }
       r.seconds += p.cpu.mean * (l.span as number) / 1000
@@ -78,7 +107,7 @@ export function releaseEvidence(lines: readonly Line[], from: number, to: number
   const recorder = [...per.values()]
   const spanS = minutes.reduce((s, l) => s + (l.span as number) / 1000, 0)
   return {
-    canvas, recorder, minutes: minutes.length, recorderCores: spanS ? recorder.reduce((s, r) => s + r.seconds, 0) / spanS : null,
+    canvas, contested, recorder, minutes: minutes.length, recorderCores: spanS ? recorder.reduce((s, r) => s + r.seconds, 0) / spanS : null,
     spawnMs: minutes.reduce((s, l) => s + ((l.spawnMs as number | undefined) ?? 0), 0), lines: span.length,
   }
 }

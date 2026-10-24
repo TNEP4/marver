@@ -15,7 +15,10 @@
  * measured launch's lines from the last `sample` before the window to the first after it (waited for, 70 s at most),
  * whole: `seq` contiguous, no `dropped` line, both bounding samples present; a canvas tab's `gone` or `unload`, or a
  * `tab` line whose commit or main frame differs from the tab's last line before the window (a reload, a navigation,
- * a cross-process navigation), makes the run inconclusive. Then the recorder's own figure must agree with the outside
+ * a cross-process navigation), makes the run inconclusive. A canvas renderer is a `(pid, born)` named `canvas` in
+ * every sample of the window (code review r2 #3): one missing from some makes the run inconclusive, one named another
+ * role in some is contested - counted as the app's, in the window and the cross-check alike, and reported. Then the
+ * recorder's own figure must agree with the outside
  * one within 0.001 cores or 20 %, else the harness fails as its own error - compared like with like (evidence.ts
  * `crossCheck`): the processes alive at both outside passes, joined by pid and start time, each one's own CPU (no
  * reaped children, no Crashpad handler), against the recorder's minute lines that lie inside the window, the GPU
@@ -110,7 +113,7 @@ async function once(attempt) {
     const rolesFrom = APP ? 'app.jsonl' : 'app-dev.jsonl'
     const win = cpuWindow(a, b, canvasOf)
     const { started, ended } = churn(seen)
-    const base = { ...res, rolesFrom, minutes: MINUTES, cores: Math.round(win.cores * 1e5) / 1e5, seconds: Math.round(win.seconds * 1000) / 1000, canvases: win.canvases, helpersStarted: started, helpersEnded: ended, passes: { start: a, end: b }, spawnMs: ev.spawnMs }
+    const base = { ...res, rolesFrom, minutes: MINUTES, cores: Math.round(win.cores * 1e5) / 1e5, seconds: Math.round(win.seconds * 1000) / 1000, canvases: win.canvases, contested: ev.contested, helpersStarted: started, helpersEnded: ended, passes: { start: a, end: b }, spawnMs: ev.spawnMs }
     if (win.kind === 'inconclusive') return { ...base, ...cpuGate({ ev, win, budget: BUDGET }) }
     if (BALLAST) {
       // the burning canvas must be one of those taken out, and burning: else the check checked nothing
@@ -137,6 +140,6 @@ for (let attempt = 1; attempt <= 3; attempt++) {
 mkdirSync(OUT, { recursive: true })
 writeFileSync(join(OUT, `hidden-cpu-${SCENE}${BALLAST ? '-ballast' : ''}.json`), JSON.stringify(r, null, 2))
 process.stdout.write(r.kind === 'inconclusive' || r.kind === 'harness-error' ? `hidden-cpu (${SCENE}${BALLAST ? ', ballast' : ''}): ${r.kind.toUpperCase()} - ${r.why}\n`
-  : `hidden-cpu (${SCENE}${BALLAST ? ', ballast' : ''}): ${SCENE === 'hidden' ? r.kind.toUpperCase() : `REPORTED (${r.kind} against the gate)`} - the app's own CPU ${r.cores} cores over ${r.minutes} min (budget ${BUDGET}; ${r.seconds} s); canvases taken out: ${r.canvases.map((c) => `${c.pid} ${c.seconds.toFixed(3)} s`).join(', ') || 'none'}; helpers started ${r.helpersStarted.length}, ended ${r.helpersEnded.length}; roles from ${r.rolesFrom}; the recorder ${r.recorderCheck?.kind}${r.recorderCheck?.kind === 'unchecked' ? ` (${r.recorderCheck.why})` : ` (${r.recorderCheck?.recorderCores} against ${r.recorderCheck?.outsideCores} cores over ${r.recorderCheck?.joined} processes)`}\n`)
+  : `hidden-cpu (${SCENE}${BALLAST ? ', ballast' : ''}): ${SCENE === 'hidden' ? r.kind.toUpperCase() : `REPORTED (${r.kind} against the gate)`} - the app's own CPU ${r.cores} cores over ${r.minutes} min (budget ${BUDGET}; ${r.seconds} s); canvases taken out: ${r.canvases.map((c) => `${c.pid} ${c.seconds.toFixed(3)} s`).join(', ') || 'none'}${r.contested?.length ? `; contested, counted as the app's: ${r.contested.map((c) => `${c.pid} (${c.roles.join(', ')})`).join('; ')}` : ''}; helpers started ${r.helpersStarted.length}, ended ${r.helpersEnded.length}; roles from ${r.rolesFrom}; the recorder ${r.recorderCheck?.kind}${r.recorderCheck?.kind === 'unchecked' ? ` (${r.recorderCheck.why})` : ` (${r.recorderCheck?.recorderCores} against ${r.recorderCheck?.outsideCores} cores over ${r.recorderCheck?.joined} processes)`}\n`)
 process.stdout.write(`report: ${join(OUT, `hidden-cpu-${SCENE}${BALLAST ? '-ballast' : ''}.json`)}\n`)
 process.exit(r.kind === 'pass' ? 0 : r.kind === 'fail' || r.kind === 'harness-error' ? 1 : 3)

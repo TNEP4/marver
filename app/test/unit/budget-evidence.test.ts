@@ -220,3 +220,56 @@ describe('the signed memory gates\' roles: after startup, the loads and a qualif
     expect(rolesSample([start(1, T, 100, 'ffffffffffff'), S(2, T + MIN, [], true, 'ffffffffffff'), start(1, T + 2 * MIN, 100)] as never, { pid: 100, after: T, tabs: 0 })).toBeNull()
   })
 })
+
+describe('a canvas renderer is one the recorder names canvas in every sample of the window (code review r2 #3; A3.8 #49)', () => {
+  // the renderer 200 burns a third of a core all through the window; from `fromTs` on, its samples give it `role` -
+  // or, with `drop`, leave it out - with no document change: no tab line, no gone, no unload
+  type P = { pid: number; born: number; role: string; tabs: string[]; cpu: { mean: number; max: number; last: number } }
+  const relabel = (fromTs: number, role: string, drop = false) => log().map((l) => l.kind !== 'sample' ? l : {
+    ...l, procs: (l.procs as P[]).flatMap((p) => {
+      if (p.pid !== 200) return [{ ...p }]
+      const burning = { ...p, cpu: { mean: 1 / 3, max: 0, last: 0 } }
+      return (l.ts as number) < fromTs ? [burning] : drop ? [] : [{ ...burning, role, tabs: [] }]
+    }),
+  })
+  // as hidden-cpu.mjs makes it from the evidence: the canvas renderers by pid and a start time within 1 s of born
+  const canvasOf = (e: { canvas: { pid: number; born: number }[] }) => (pid: number, startedAt: number) => e.canvas.some((c) => c.pid === pid && Math.abs(c.born - startedAt) <= 1000)
+  // the passes: the browser 0.0005 cores, the canvas 200 (born 5 ms) burning 100 s in 300 s
+  const a = pass(0, 1.0, [[200, 0.005, 10]])
+  const b = pass(300_000, 1.15, [[200, 0.005, 110]])
+
+  it('labelled canvas, then unknown: never taken out - counted in the window and in the recorder\'s figure alike, it fails the gate, never passes it', () => {
+    const e = ev(relabel(T + 4 * MIN, 'unknown'))
+    if (e.why !== undefined) throw new Error(e.why)
+    expect(e.canvas).toEqual([])
+    expect(e.contested).toEqual([{ pid: 200, born: 5, roles: ['canvas', 'unknown'] }])
+    // the recorder's figure counts it in each of the window's four minutes, the ones labelled canvas included
+    expect(e.recorder.find((r) => r.pid === 200)?.seconds).toBeCloseTo(4 * 60 / 3, 6)
+    const win = cpuWindow(a, b, canvasOf(e))
+    expect(win.canvases).toEqual([])
+    expect(win.cores).toBeGreaterThan(0.3)
+    // the cross-check by the same rule: both sides count it, and they agree
+    const x = crossCheck(a, b, e.recorder, canvasOf(e))
+    expect(x).toMatchObject({ kind: 'agree', joined: 2 })
+    expect(cpuGate({ ev: e, win, cross: x, budget: 0.01 }).kind).toBe('fail')
+  })
+
+  it('labelled canvas, then missing from the samples: a canvas renderer that ended inside the window - inconclusive', () => {
+    const e = ev(relabel(T + 4 * MIN, '', true))
+    expect(e.why).toMatch(/canvas renderer \(pid 200\) is missing from 4 of the window's 7 samples/)
+    expect(cpuGate({ ev: e, budget: 0.01 }).kind).toBe('inconclusive')
+  })
+
+  it('named canvas in every sample: taken out once, from the window and the recorder\'s figure both', () => {
+    const e = ev(relabel(T + 4 * MIN, 'canvas'))
+    if (e.why !== undefined) throw new Error(e.why)
+    expect(e.canvas).toEqual([{ pid: 200, born: 5 }])
+    expect(e.contested).toEqual([])
+    expect(e.recorder.map((r) => r.pid)).toEqual([100])
+    const win = cpuWindow(a, b, canvasOf(e))
+    expect(win.canvases).toEqual([{ pid: 200, seconds: 100 }])
+    const x = crossCheck(a, b, e.recorder, canvasOf(e))
+    expect(x).toMatchObject({ kind: 'agree', joined: 1 })
+    expect(cpuGate({ ev: e, win, cross: x, budget: 0.01 }).kind).toBe('pass')
+  })
+})
