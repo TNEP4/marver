@@ -201,6 +201,9 @@ describe('retention at launch (A3.6, A3.8 #12, r1 #7)', () => {
     writeFileSync(join(perf(), 'app-dev.jsonl'), devText, { mode: 0o600 })
     for (let i = 0; i < 51; i++) touch(join(perf(), 'flashes', `20261020-0000${String(i).padStart(2, '0')}-ab12.png`), (60 - i) * 60_000)
     touch(join(perf(), 'flashes', 'very-old.png'), 20 * DAY)
+    // a picture's temporary file a quit abandoned mid-write (code review r1 #5), and one being written now
+    touch(join(perf(), 'flashes', '20261020-000100-ab12.png.0123456789ab.tmp'), 10 * 60_000)
+    touch(join(perf(), 'flashes', '20261020-000101-ab12.png.abcdefabcdef.tmp'), 0)
     for (let i = 0; i < 11; i++) {
       touch(join(perf(), 'crashpad', 'completed', `${uuid(i + 1)}.dmp`), (20 - i) * 3600_000)
       mkdirSync(join(perf(), 'crashpad', 'attachments', uuid(i + 1)), { recursive: true })
@@ -220,7 +223,8 @@ describe('retention at launch (A3.6, A3.8 #12, r1 #7)', () => {
     expect(mode(join(perf(), 'app.jsonl'))).toBe(0o600)
     expect(readFileSync(join(perf(), 'app-dev.jsonl'), 'utf8')).toBe(devText)
     // pictures: the newest 50, the oldest and the 20-day-old one gone; the folder 700, the files 600
-    const pics = readdirSync(join(perf(), 'flashes')).sort()
+    const pics = readdirSync(join(perf(), 'flashes')).filter((n) => n.endsWith('.png')).sort()
+    expect(readdirSync(join(perf(), 'flashes')).filter((n) => n.endsWith('.tmp'))).toEqual(['20261020-000101-ab12.png.abcdefabcdef.tmp'])
     expect(pics).toHaveLength(50)
     expect(pics).not.toContain('20261020-000000-ab12.png')
     expect(pics).not.toContain('very-old.png')

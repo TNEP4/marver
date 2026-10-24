@@ -10,7 +10,10 @@
  *    (mode 600) to `perf/flashes/<id>.png` (at most 50 kept);
  * 4. only then the pill "Flash marked", its Show bound to that picture (`showItemInFolder`); no picture, no button;
  * 5. the record, once the picture settled, the AGX read ended and the GPU-event window closed at mark + 1 s. At a
- *    quit an unfinished mark is written at once with what it has (`pictureWhy: 'quit'`, AGX 'unknown').
+ *    quit an unfinished mark is written at once with what it has (`pictureWhy: 'quit'`, AGX 'unknown'), and a
+ *    picture not yet settled is cancelled (code review r1 #5): the writer's signal aborts, its temporary file is
+ *    removed in the quit's own turn and the rename never comes, so no file lands that its record does not name. A
+ *    temporary file left by a process that ended mid-write is removed by retention once it is a minute old.
  * With the recorder off the mark carries no history, and the pill adds "no samples before it: the recorder is off".
  *
  * **The mark's time is in its id** (`flashTime(id)`, UTC to the ms): the record's envelope `ts` is when the record was
@@ -25,10 +28,11 @@
  * `append`). Pure but for node:fs in `pictureWriter`: unit-tested through fake ports.
  */
 import { randomBytes } from 'node:crypto'
-import { chmodSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs'
+import { chmodSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync } from 'node:fs'
+import { open } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { AgxReading, AppBody, Flavour, PictureWhy, PressureReading, RingEvent, Sample, TabIdent, ThermalState } from '../../../src/shared/app-perf.ts'
-import { writeWhole } from './fsx.ts'
+import { faults, sweepTemps } from './fsx.ts'
 import { AGX_UNKNOWN } from './machine.ts'
 import { T } from './timings.ts'
 import type { AppPicture } from './window.ts'
@@ -58,8 +62,11 @@ export interface FlashPorts {
   readAgx(timeoutMs: number): Promise<AgxReading>
   /** window.ts captureApp */
   capture(o: { width: number }): Promise<AppPicture>
-  /** written whole, mode 600, under perf/flashes: the path relative to perf/, or why not */
-  writePicture(name: string, png: Buffer): Promise<{ path: string } | { why: PictureWhy }>
+  /**
+   * written whole, mode 600, under perf/flashes: the path relative to perf/, or why not. `signal` aborts at a quit:
+   * nothing is published after it (`why: 'quit'`) and its temporary file goes (additive, optional)
+   */
+  writePicture(name: string, png: Buffer, signal?: AbortSignal): Promise<{ path: string } | { why: PictureWhy }>
   /** the strip's pill (pill.ts confirm 'flash'), with Show only for a picture */
   confirm(c: { at: number; recorder: boolean; picture: string | null }): void
   /** perflog.ts append */
@@ -135,6 +142,8 @@ export async function markFlash(via: 'key' | 'menu', p: FlashPorts): Promise<voi
 
   let quitNow!: () => void
   const quitting = new Promise<'quit'>((r) => { quitNow = () => r('quit') })
+  // the picture's publication, cancelled at a quit before it settled (code review r1 #5)
+  const publish = new AbortController()
   const m: Mark = {
     done: false,
     quit: () => quitNow(),
@@ -142,7 +151,7 @@ export async function markFlash(via: 'key' | 'menu', p: FlashPorts): Promise<voi
       if (m.done) return
       m.done = true
       marks.delete(m)
-      if (o.quit && !pictureSettled) { picture = null; pictureWhy = 'quit' }
+      if (o.quit && !pictureSettled) { picture = null; pictureWhy = 'quit'; publish.abort() }
       p.append({
         ...(ident ?? {}), id, via, recorder, ring, now,
         gpuEvents: safe(() => p.gpuEvents(at - T.flashGpuWindowMs, at + T.flashGpuWindowMs), [] as RingEvent[]),
@@ -163,8 +172,8 @@ export async function markFlash(via: 'key' | 'menu', p: FlashPorts): Promise<voi
   if ('why' in shot) pictureWhy = shot.why
   else if (!shot.pic.png?.length) pictureWhy = 'empty'
   else {
-    const wrote = await Promise.race([Promise.resolve().then(() => p.writePicture(`${id}.png`, shot.pic.png)).catch((): { why: PictureWhy } => ({ why: 'write failed' })), quitting])
-    // a quit while the file was written: the record names no picture (a file that landed is pruned later)
+    const wrote = await Promise.race([Promise.resolve().then(() => p.writePicture(`${id}.png`, shot.pic.png, publish.signal)).catch((): { why: PictureWhy } => ({ why: 'write failed' })), quitting])
+    // a quit while the file was written: the record names no picture, and the write was cancelled with it
     if (wrote === 'quit' || m.done) { m.write({ quit: true }); return }
     if ('path' in wrote) picture = wrote.path
     else pictureWhy = wrote.why
@@ -200,32 +209,62 @@ function emptySample(at: number): Sample {
 /**
  * The `writePicture` port over `<perfDir>/flashes`. Never throws: a failure is `write failed`. `writable` is the
  * home's own guard (config.ts `Home.writable`, which the recorder keeps): false, and nothing is written.
+ *
+ * Written whole as fsx.ts writes (a temporary `<name>.<12 hex>.tmp` in the same folder, fsync, rename; each name is a
+ * mark's own, so no queue), with the cancellation `writeWhole` has not (code review r1 #5): at `signal`'s abort the
+ * temporary file is removed at once, and the check and the rename run in one synchronous turn, so an aborted write
+ * never publishes - `why: 'quit'`. The test builds' injected faults apply as to any whole write.
  */
 export function pictureWriter(perfDir: string, writable: () => boolean = () => true): FlashPorts['writePicture'] {
-  return async (name, png) => {
+  return async (name, png, signal) => {
     if (!/^[0-9a-z-]+\.png$/.test(name)) return { why: 'write failed' }
     if (!writable()) return { why: 'write failed' }
+    if (signal?.aborted) return { why: 'quit' }
     const dir = join(perfDir, 'flashes')
+    const file = join(dir, name)
+    const tmp = `${file}.${randomBytes(6).toString('hex')}.tmp`
+    const drop = () => { try { unlinkSync(tmp) } catch { /* never made, or gone */ } }
+    signal?.addEventListener('abort', drop, { once: true })
+    let fh: Awaited<ReturnType<typeof open>> | undefined
     try {
       mkdirSync(dir, { recursive: true, mode: 0o700 })
       chmodSync(dir, 0o700)
-      await writeWhole(join(dir, name), png, 0o600)
-    } catch { return { why: 'write failed' } }
+      if (__MV_TEST__) faults.check(file, 'open')
+      fh = await open(tmp, 'wx', 0o600)
+      if (__MV_TEST__) faults.check(file, 'write')
+      await fh.writeFile(png)
+      await fh.sync()
+      await fh.close()
+      fh = undefined
+      if (__MV_TEST__) faults.check(file, 'rename')
+      // the check and the rename in one synchronous turn: a quit before it publishes nothing
+      if (signal?.aborted) { drop(); return { why: 'quit' } }
+      renameSync(tmp, file)
+    } catch {
+      if (fh) await fh.close().catch(() => {})
+      drop()
+      return signal?.aborted ? { why: 'quit' } : { why: 'write failed' }
+    } finally { signal?.removeEventListener('abort', drop) }
     prunePictures(dir, name)
     return { path: `flashes/${name}` }
   }
 }
 
-/** Keep the newest FLASH_PICTURES_KEPT pictures, never the one just written; a file already gone is no error. */
+/**
+ * Keep the newest FLASH_PICTURES_KEPT pictures, never the one just written, and remove our temporary files there
+ * over a minute old (`fsx.ts` `sweepTemps`: a write a quit or a crash abandoned; code review r1 #5); a file already
+ * gone is no error. The names removed.
+ */
 export function prunePictures(dir: string, keep?: string, max = FLASH_PICTURES_KEPT): string[] {
+  const swept = sweepTemps(dir)
   let files: { name: string; t: number }[]
   try {
     files = readdirSync(dir).filter((n) => n.endsWith('.png')).map((name) => {
       try { return { name, t: statSync(join(dir, name)).mtimeMs } } catch { return { name, t: -1 } }
     }).filter((f) => f.t >= 0)
-  } catch { return [] }
+  } catch { return swept }
   files.sort((a, b) => b.t - a.t || (a.name < b.name ? 1 : -1))
-  const gone: string[] = []
+  const gone: string[] = [...swept]
   for (const f of files.slice(max)) {
     if (f.name === keep) continue
     try { unlinkSync(join(dir, f.name)); gone.push(f.name) } catch { /* gone already */ }

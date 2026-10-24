@@ -3,7 +3,7 @@
  * order (capture, written, pill, record), the record's two deadlines, the debounce from the last mark, a quit
  * mid-picture, a failed picture, the recorder off; and the pictures' folder.
  */
-import { mkdtempSync, readdirSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -27,10 +27,13 @@ interface Rig {
   capture: { resolve(p: AppPicture): void; reject(e: unknown): void } | null
   agx: { resolve(a: AgxReading): void } | null
   recorder: boolean
+  /** each writePicture's signal, and how to end a write held with writeMs 'never' */
+  signals: (AbortSignal | undefined)[]
+  finishWrite: (() => void) | null
 }
 
-function rig(o: { captureMs?: number | 'never' | 'fail'; agxMs?: number; writeFails?: boolean; recorder?: boolean } = {}): Rig {
-  const r: Rig = { calls: [], records: [], pills: [], events: [], writes: [], capture: null, agx: null, recorder: o.recorder ?? true } as unknown as Rig
+function rig(o: { captureMs?: number | 'never' | 'fail'; agxMs?: number; writeFails?: boolean; writeMs?: 'never'; recorder?: boolean } = {}): Rig {
+  const r: Rig = { calls: [], records: [], pills: [], events: [], writes: [], capture: null, agx: null, recorder: o.recorder ?? true, signals: [], finishWrite: null } as unknown as Rig
   r.p = {
     now: () => Date.now(),
     flavour: 'release',
@@ -54,9 +57,11 @@ function rig(o: { captureMs?: number | 'never' | 'fail'; agxMs?: number; writeFa
       if (o.captureMs === 'fail') setTimeout(() => rej(new PictureRefused('window hidden')), 50)
       else if (o.captureMs !== 'never') setTimeout(() => { r.calls.push('captured'); res(pic) }, o.captureMs ?? 100)
     }),
-    writePicture: async (name) => {
+    writePicture: async (name, _png, signal) => {
       r.calls.push('write')
       r.writes.push(name)
+      r.signals.push(signal)
+      if (o.writeMs === 'never') await new Promise<void>((res) => { r.finishWrite = res })
       return o.writeFails ? { why: 'write failed' } : { path: `flashes/${name}` }
     },
     confirm: (c) => { r.calls.push('pill'); r.pills.push(c) },
@@ -191,6 +196,33 @@ describe('a quit, a failed picture, the recorder off', () => {
     expect(r.records).toHaveLength(1)
   })
 
+  it('a quit while the picture is written cancels its publication: the writer\'s signal aborted, the record naming no picture, no pill (code review r1 #5)', async () => {
+    const r = rig({ writeMs: 'never', agxMs: 5000 })
+    const done = markFlash('key', r.p)
+    await vi.advanceTimersByTimeAsync(150)   // captured at 100 ms: the write under way
+    expect(r.calls).toContain('write')
+    expect(r.signals[0]).toBeInstanceOf(AbortSignal)
+    expect(r.signals[0]!.aborted).toBe(false)
+    quitFlashes()
+    expect(r.signals[0]!.aborted).toBe(true)
+    expect(r.records).toHaveLength(1)
+    expect(r.records[0]).toMatchObject({ picture: null, pictureWhy: 'quit' })
+    r.finishWrite!()   // the writer answers late: nothing more
+    await vi.advanceTimersByTimeAsync(5000)
+    await done
+    expect(r.pills).toHaveLength(0)
+    expect(r.records).toHaveLength(1)
+  })
+
+  it('a mark that ends without a quit never aborts its writer', async () => {
+    const r = rig()
+    const done = markFlash('key', r.p)
+    await vi.advanceTimersByTimeAsync(1100)
+    await done
+    quitFlashes()
+    expect(r.signals[0]!.aborted).toBe(false)
+  })
+
   it('a quit after the picture keeps it, with the GPU events so far', async () => {
     const r = rig({ agxMs: 5000 })
     const done = markFlash('key', r.p)
@@ -278,5 +310,42 @@ describe('the ids and the pictures\' folder', () => {
     expect(gone).toHaveLength(6)
     expect(readdirSync(dir)).toContain('20261023-205103-412-ab12.png')
     expect(gone).toContain('old-00.png')
+  })
+
+  it('pictureWriter: a quit while the file is written publishes nothing and leaves no temporary file (code review r1 #5)', async () => {
+    vi.useRealTimers()
+    const perf = mkdtempSync(join(tmpdir(), 'mvflash-quit-'))
+    const ac = new AbortController()
+    const big = Buffer.alloc(64 << 20, 7)   // long enough to be caught writing
+    const w = pictureWriter(perf)('20261023-205103-412-ab12.png', big, ac.signal)
+    const dir = join(perf, 'flashes')
+    const until = Date.now() + 5000
+    while (!(existsSync(dir) && readdirSync(dir).some((n) => n.endsWith('.tmp'))) && Date.now() < until) await new Promise((r) => setImmediate(r))
+    expect(readdirSync(dir).some((n) => n.endsWith('.tmp'))).toBe(true)   // writing
+    ac.abort()
+    expect(readdirSync(dir).filter((n) => n.endsWith('.tmp'))).toEqual([])   // removed in the quit's own turn
+    expect(await w).toEqual({ why: 'quit' })
+    expect(readdirSync(dir)).toEqual([])
+    // aborted before it began: nothing made at all
+    const ac2 = new AbortController(); ac2.abort()
+    expect(await pictureWriter(perf)('20261023-205103-412-cd34.png', PNG, ac2.signal)).toEqual({ why: 'quit' })
+    expect(readdirSync(dir)).toEqual([])
+  })
+
+  it('retention removes a temporary picture abandoned over a minute ago (a quit that ended the process mid-write), never a fresh one (code review r1 #5)', () => {
+    vi.useRealTimers()
+    const dir = join(mkdtempSync(join(tmpdir(), 'mvflash-tmp-')), 'flashes')
+    mkdirSync(dir)
+    const stale = '20261023-205103-412-ab12.png.0123456789ab.tmp'
+    const fresh = '20261023-205104-412-cd34.png.abcdefabcdef.tmp'
+    writeFileSync(join(dir, stale), PNG)
+    writeFileSync(join(dir, fresh), PNG)
+    writeFileSync(join(dir, 'notes.tmp'), 'not ours')
+    const t = new Date(Date.now() - 120_000)
+    utimesSync(join(dir, stale), t, t)
+    utimesSync(join(dir, 'notes.tmp'), t, t)
+    const gone = prunePictures(dir)
+    expect(gone).toContain(stale)
+    expect(readdirSync(dir).sort()).toEqual([fresh, 'notes.tmp'].sort())
   })
 })

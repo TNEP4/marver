@@ -58,7 +58,7 @@ export function flashPorts(r: RecorderFlashParts): FlashPorts {
       j({ step: 'capture' })
       try { const p = await captureApp(o); j({ step: 'captured', width: p.width, height: p.height }); return p } catch (e) { j({ step: 'captured', why: (e as { why?: string }).why ?? String(e) }); throw e }
     },
-    writePicture: async (name, png) => { const w = await write(name, png); j({ step: 'written', ...w }); return w },
+    writePicture: async (name, png, signal) => { const w = await write(name, png, signal); j({ step: 'written', ...w }); return w },
     confirm: (c) => { j({ step: 'pill', picture: c.picture }); flashMarked(c) },
     append: (b) => { j({ step: 'record', id: b.id, picture: b.picture, ...(b.pictureWhy ? { pictureWhy: b.pictureWhy } : {}) }); r.append(b) },
   }

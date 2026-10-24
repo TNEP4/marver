@@ -44,7 +44,7 @@ import { open, readdir, readFile, rm, stat, unlink, chmod, utimes } from 'node:f
 import { join } from 'node:path'
 import { APP_LOG, type AppBody, type AppKind, type Flavour } from '../../../src/shared/app-perf.ts'
 import type { Config, Home } from './config.ts'
-import { faults, writeWhole, writeWholeSync } from './fsx.ts'
+import { faults, sweepTemps, writeWhole, writeWholeSync } from './fsx.ts'
 import { note } from './testing/index.ts'
 import { T } from './timings.ts'
 
@@ -445,11 +445,14 @@ export async function deleteReport(crashpad: string, path: string, uuid: string)
   } catch { return false } finally { await fh.close().catch(() => {}) }
 }
 
-/** Flash pictures: the newest 50, none older than keepPerfDays (both flavours'; one already gone is no error). How many went. */
+/**
+ * Flash pictures: the newest 50, none older than keepPerfDays (both flavours'; one already gone is no error), and a
+ * picture's temporary file over a minute old - a write a quit or a crash abandoned (code review r1 #5). How many went.
+ */
 async function picturesPass(cutoff: number): Promise<number> {
   const flashes = join(perfDir, 'flashes')
   if (!(await mode700(flashes))) return 0
-  let n = 0
+  let n = sweepTemps(flashes).length
   const pics = (await listed(flashes)).filter((f) => f.name.endsWith('.png'))
   for (const [i, f] of pics.entries()) {
     if (i < PICTURES_KEPT && f.mtime >= cutoff) { await mode600(f.path); continue }
