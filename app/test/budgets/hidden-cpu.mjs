@@ -11,19 +11,22 @@
  * both ends is subtracted, and one that starts or ends inside the window makes the run inconclusive - run again, up
  * to three times, never passed. Anything else unattributed stays the app's: it can fail a run, never pass one.
  *
- * Which processes are canvases: on the signed build, only the release's own `app.jsonl` (r4 #1) - the measured
- * launch's lines from the last `sample` before the window to the first after it (waited for, 70 s at most), whole:
- * `seq` contiguous, no `dropped` line, both bounding samples present; a canvas tab's `gone`, `unload` or `tab` line
- * with a new commit inside makes the run inconclusive. Then the recorder's own figure for the processes alive
+ * Which processes are canvases: on the signed build, only the release's own `app.jsonl` (r4 #1; evidence.ts) - the
+ * measured launch's lines from the last `sample` before the window to the first after it (waited for, 70 s at most),
+ * whole: `seq` contiguous, no `dropped` line, both bounding samples present; a canvas tab's `gone` or `unload`, or a
+ * `tab` line whose commit or main frame differs from the tab's last line before the window (a reload, a navigation,
+ * a cross-process navigation), makes the run inconclusive. Then the recorder's own figure for the processes alive
  * through the window must agree with the outside one within 0.001 cores or 20 %, else the harness fails as its own
  * error. The dev build (default; test mode over its control socket, production switches) names the canvases with
  * its procs:roles hook when the recorder has written no sample line - labelled, since a test hook is not the
- * release's evidence.
+ * release's evidence; what that hook cannot place is `unknown` and stays the app's.
  *
- * Reported, not gated: helpers seen to start or end at the 5 s reads, each canvas renderer's CPU, the probes'
- * spawn time, and (with --scene) Home active with every canvas hidden, or the window minimised.
+ * Reported, not gated: helpers seen to start or end between any two of the 5 s reads, each canvas renderer's CPU,
+ * the probes' spawn time, and (with --scene) Home active with every canvas hidden, or the window minimised.
+ * `--ballast`: the first canvas burns a third of a core while hidden (the fake's cpuBallast, A3.8 r3): the app's own
+ * figure must stay under the gate and that renderer's CPU be reported apart - the check that canvases are taken out.
  *
- *   node app/test/budgets/hidden-cpu.mjs [--app <Marver.app>] [--minutes 5] [--settle 60] [--scene hidden|home|minimised] [--out <dir>]
+ *   node app/test/budgets/hidden-cpu.mjs [--app <Marver.app>] [--minutes 5] [--settle 60] [--scene hidden|home|minimised] [--ballast] [--out <dir>]
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -31,6 +34,7 @@ import { join, resolve } from 'node:path'
 import { launch, sleep, world } from './launcher.ts'
 import { startFakeCanvas } from '../harness/fake-canvas.ts'
 import { appProcesses, cpuPass, cpuWindow, crashpadOf } from '../harness/outside.ts'
+import { churn, releaseEvidence } from './evidence.ts'
 import { nativeTool, responsibleApp } from '../harness/capture.ts'
 import { parseAppLine } from '../../../src/shared/app-perf.ts'
 
@@ -41,6 +45,7 @@ const OUT = resolve(val('--out') ?? '.')
 const MINUTES = Number(val('--minutes') ?? 5)
 const SETTLE = Number(val('--settle') ?? 60)
 const SCENE = val('--scene') ?? 'hidden'
+const BALLAST = argv.includes('--ballast')
 const BUDGET = 0.01
 const SAY = "if (window.marverApp) { marverApp.hello({ version: '0.27.1', board: null, page: 'cpu-' + Math.random().toString(36).slice(2, 10) }); marverApp.busy({ busy: false, unsaved: false, why: [] }) }"
 
@@ -51,45 +56,16 @@ function appLines(home) {
   return readFileSync(f, 'utf8').split('\n').map(parseAppLine).filter(Boolean)
 }
 
-/**
- * The release log's evidence for a window (r4 #1): the lines from the last sample before `from` to the first after
- * `to`, whole, and the canvas pids they name. null with a reason when it cannot prove the roles.
- */
-function evidence(lines, from, to) {
-  const start = lines.find((l) => l.kind === 'start')
-  if (!start) return { why: 'no start line' }
-  const mine = lines.filter((l) => l.app === start.app && l.flavour === (APP ? 'release' : 'dev'))
-  const samples = mine.filter((l) => l.kind === 'sample')
-  const before = samples.filter((l) => l.ts <= from).at(-1)
-  const after = samples.find((l) => l.ts >= to)
-  if (!before || !after) return { why: `no sample line ${!before ? 'before the window' : 'after it'}` }
-  const span = mine.filter((l) => l.seq >= before.seq && l.seq <= after.seq)
-  for (let i = 1; i < span.length; i++) if (span[i].seq !== span[i - 1].seq + 1) return { why: `a seq gap at ${span[i - 1].seq}` }
-  if (span.some((l) => l.kind === 'dropped')) return { why: 'a dropped line' }
-  const canvasTabs = new Set(span.filter((l) => l.kind === 'sample').flatMap((l) => l.procs.filter((p) => p.role === 'canvas').flatMap((p) => p.tabs)))
-  const commits = new Map()
-  for (const l of span) {
-    if ((l.kind === 'gone' || l.kind === 'unload') && canvasTabs.has(l.tab)) return { why: `a canvas tab's ${l.kind} line inside the window` }
-    if (l.kind === 'tab' && canvasTabs.has(l.tab)) {
-      if (commits.has(l.tab) && commits.get(l.tab) !== l.commit) return { why: 'a canvas tab committed a new document inside the window' }
-      commits.set(l.tab, l.commit)
-    }
-  }
-  const canvas = span.filter((l) => l.kind === 'sample').flatMap((l) => l.procs.filter((p) => p.role === 'canvas').map((p) => ({ pid: p.pid, born: p.born })))
-  // the recorder's own figure: its minute lines' CPU over the processes it does not call canvas
-  const minutes = span.filter((l) => l.kind === 'sample' && l.ts > from && l.ts <= to + 60_000)
-  const secs = minutes.reduce((s, l) => s + l.procs.filter((p) => p.role !== 'canvas').reduce((a, p) => a + (p.cpu.mean ?? 0) * l.span / 1000, 0) + (l.gpu?.cpu.mean ?? 0) * l.span / 1000, 0)
-  const spanS = minutes.reduce((s, l) => s + l.span / 1000, 0)
-  return { canvas, recorderCores: spanS ? secs / spanS : null, spawnMs: minutes.reduce((s, l) => s + (l.spawnMs ?? 0), 0), lines: span.length }
-}
+/** The release log's evidence for a window (r4 #1): evidence.ts's, for the flavour measured. */
+const evidence = (lines, from, to) => releaseEvidence(lines, from, to, APP ? 'release' : 'dev')
 
 async function once(attempt) {
   const w = await world()
   const fs = []
-  for (const slot of [1, 2, 3]) { const f = await startFakeCanvas({ home: w.home, slotBase: w.slotBase, slot, name: `Idle ${slot}`, script: SAY, root: join(w.dir, `repo-${slot}`) }); await f.ready; fs.push(f) }
+  for (const slot of [1, 2, 3]) { const f = await startFakeCanvas({ home: w.home, slotBase: w.slotBase, slot, name: `Idle ${slot}`, script: SAY, root: join(w.dir, `repo-${slot}`), cpuBallast: BALLAST && slot === 1 }); await f.ready; fs.push(f) }
   const drive = !APP
   const L = await launch(w, { app: APP, drive, env: { MARVER_APP_HEARTBEAT: '0' } })
-  const res = { attempt, scene: SCENE, build: APP ?? 'dev (app/dist, production switches, test mode)' }
+  const res = { attempt, scene: SCENE, build: APP ?? 'dev (app/dist, production switches, test mode)', ...(BALLAST ? { ballast: 'the first canvas burns a third of a core while hidden' } : {}) }
   try {
     // each canvas loaded once, then every tab hidden
     if (drive) {
@@ -114,13 +90,13 @@ async function once(attempt) {
     }
     if (fs.some((f) => !f.requests.some((q) => q.path === '/' && q.method === 'GET'))) return { ...res, kind: 'inconclusive', why: 'a canvas was never loaded' }
     await sleep(SETTLE * 1000)
-    const handler = await crashpadOf({ bundle: APP, database: join(w.home, 'perf', 'crashpad') })
+    const handler = await crashpadOf({ database: join(w.home, 'perf', 'crashpad') })
     const rolesA = drive ? await L.call('procs:roles') : null
     const a = await cpuPass(L.pid, handler, 'start')
     // the 5 s reads: helpers seen to start or end (an idle app should have none)
-    const seen = [new Set((await appProcesses(L.pid, { bundle: APP, database: join(w.home, 'perf', 'crashpad') })).map((p) => p.pid))]
+    const seen = [new Set((await appProcesses(L.pid, { database: join(w.home, 'perf', 'crashpad') })).map((p) => p.pid))]
     const end = Date.now() + MINUTES * 60_000
-    while (Date.now() < end) { await sleep(Math.min(5000, end - Date.now())); seen.push(new Set((await appProcesses(L.pid, { bundle: APP, database: join(w.home, 'perf', 'crashpad') })).map((p) => p.pid))) }
+    while (Date.now() < end) { await sleep(Math.min(5000, end - Date.now())); seen.push(new Set((await appProcesses(L.pid, { database: join(w.home, 'perf', 'crashpad') })).map((p) => p.pid))) }
     const b = await cpuPass(L.pid, handler, 'end')
     const rolesB = drive ? await L.call('procs:roles') : null
     // the canvases: the release log, else (dev only) the hook, labelled
@@ -136,10 +112,15 @@ async function once(attempt) {
     else if (APP) return { ...res, kind: 'inconclusive', why: `the release's log does not prove the roles: ${ev?.why ?? 'no sample line (the recorder wrote none)'}` }
     else { const c = new Set([...rolesA.canvas, ...rolesB.canvas]); canvasOf = (pid) => c.has(pid); rolesFrom = `the dev build's procs:roles hook (no recorder sample line${ev?.why ? `: ${ev.why}` : ''})` }
     const win = cpuWindow(a, b, canvasOf)
-    const started = [...seen.at(-1)].filter((p) => !seen[0].has(p))
-    const ended = [...seen[0]].filter((p) => !seen.at(-1).has(p))
+    const { started, ended } = churn(seen)
     const base = { ...res, rolesFrom, minutes: MINUTES, cores: Math.round(win.cores * 1e5) / 1e5, seconds: Math.round(win.seconds * 1000) / 1000, canvases: win.canvases, helpersStarted: started, helpersEnded: ended, passes: { start: a, end: b }, spawnMs: ev?.spawnMs ?? null }
     if (win.kind === 'inconclusive') return { ...base, kind: 'inconclusive', why: win.why }
+    if (BALLAST) {
+      // the burning canvas must be one of those taken out, and burning: else the check checked nothing
+      const burned = Math.max(0, ...win.canvases.map((c) => c.seconds))
+      base.ballastSeconds = Math.round(burned * 1000) / 1000
+      if (burned < 0.1 * MINUTES * 60) return { ...base, kind: 'inconclusive', why: `the ballast canvas burned ${burned.toFixed(2)} s, not a third of a core: it was not taken out, or did not burn` }
+    }
     if (ev?.recorderCores != null) {
       const diff = Math.abs(ev.recorderCores - win.cores)
       base.recorderCores = Math.round(ev.recorderCores * 1e5) / 1e5
@@ -156,8 +137,8 @@ for (let attempt = 1; attempt <= 3; attempt++) {
   process.stdout.write(`hidden-cpu: attempt ${attempt} inconclusive (${r.why}); again\n`)
 }
 mkdirSync(OUT, { recursive: true })
-writeFileSync(join(OUT, `hidden-cpu-${SCENE}.json`), JSON.stringify(r, null, 2))
-process.stdout.write(r.kind === 'inconclusive' || r.kind === 'harness-error' ? `hidden-cpu (${SCENE}): ${r.kind.toUpperCase()} - ${r.why}\n`
-  : `hidden-cpu (${SCENE}): ${SCENE === 'hidden' ? r.kind.toUpperCase() : `REPORTED (${r.kind} against the gate)`} - the app's own CPU ${r.cores} cores over ${r.minutes} min (budget ${BUDGET}; ${r.seconds} s); canvases taken out: ${r.canvases.map((c) => `${c.pid} ${c.seconds.toFixed(3)} s`).join(', ') || 'none'}; helpers started ${r.helpersStarted.length}, ended ${r.helpersEnded.length}; roles from ${r.rolesFrom}; the recorder's figure ${r.recorderCores}\n`)
-process.stdout.write(`report: ${join(OUT, `hidden-cpu-${SCENE}.json`)}\n`)
+writeFileSync(join(OUT, `hidden-cpu-${SCENE}${BALLAST ? '-ballast' : ''}.json`), JSON.stringify(r, null, 2))
+process.stdout.write(r.kind === 'inconclusive' || r.kind === 'harness-error' ? `hidden-cpu (${SCENE}${BALLAST ? ', ballast' : ''}): ${r.kind.toUpperCase()} - ${r.why}\n`
+  : `hidden-cpu (${SCENE}${BALLAST ? ', ballast' : ''}): ${SCENE === 'hidden' ? r.kind.toUpperCase() : `REPORTED (${r.kind} against the gate)`} - the app's own CPU ${r.cores} cores over ${r.minutes} min (budget ${BUDGET}; ${r.seconds} s); canvases taken out: ${r.canvases.map((c) => `${c.pid} ${c.seconds.toFixed(3)} s`).join(', ') || 'none'}; helpers started ${r.helpersStarted.length}, ended ${r.helpersEnded.length}; roles from ${r.rolesFrom}; the recorder's figure ${r.recorderCores}\n`)
+process.stdout.write(`report: ${join(OUT, `hidden-cpu-${SCENE}${BALLAST ? '-ballast' : ''}.json`)}\n`)
 process.exit(r.kind === 'pass' ? 0 : r.kind === 'fail' || r.kind === 'harness-error' ? 1 : 3)

@@ -171,12 +171,16 @@ uncovered until a stream fills its own, so app 0.2's base behaves as app 0.1.
   a block its page recolours at every animation frame - a CSS opacity animation did not keep this Mac's window stream
   at its rate. Main's clock is checked against the helper's display times with a marker it shows and hides (`--control`
   runs only that). `--n 40` is the acceptance count; exit 0 pass, 1 fail, 3 inconclusive or not applicable, 77 blind.
-- **A3's budgets** (`test/budgets/`, every launch on a temporary world with the production switches; `--app
-  <Marver.app>` for the signed build): `memory.mjs` (two footprint gates, A3.8 #48), `hidden-cpu.mjs` (the window
-  hidden, the app's own CPU counted from outside with canvases taken out, A3.8 #49), `launch-painted.mjs` (spawn to
-  the first painted sentinel frame, A3.8 #50), `scroll-edge.mjs` (the band's cost, A3.8 #51: a real board panned in
-  the real window with `TOP` 44 and with 0 - `MARVER_APP_INSET0=1`, a test build's `insetFor` answering 0; the 44 run
-  needs the one ground).
+- **A3's budgets** (`test/budgets/`, every launch on a temporary world with the production switches and Chromium's
+  mock keychain; `--app <Marver.app>` for the signed build): `memory.mjs` (two footprint gates, A3.8 #48),
+  `hidden-cpu.mjs` (the window hidden, the app's own CPU counted from outside with canvases taken out, A3.8 #49; the
+  release's evidence in `evidence.ts`; `--ballast` makes one hidden canvas burn a third of a core, which must be taken
+  out), `launch-painted.mjs` (spawn to the first painted sentinel frame, A3.8 #50: any launch with a frame past 1.5 s
+  and no sentinel fails the gate, conclusive or not; the mock keychain skips the real Safe Storage read, a narrowing
+  the report states - `--real-keychain` only on a Mac with no Marver of the person's own), `scroll-edge.mjs` (the
+  band's cost, A3.8 #51: a real board panned in the real window with `TOP` 44 and with 0 - the one-ground stream's
+  `ground:inset-off` hook; until the one ground is merged the 0 run needs no switch and the 44 run is not run). The
+  handler of Crashpad counted is the one with this run's `--database`, never one found by the bundle's path.
 
 ## The icon
 

@@ -5,11 +5,13 @@
  * then 60 of -50, 16 ms apart on an absolute schedule) in the real window, with `TOP` 44 and with 0. The rAF interval
  * p95 within 5 %, and no more intervals over 33 ms.
  *
- * `TOP` 0 is a test-build switch that answers `inset: 0` (`MARVER_APP_INSET0=1`: main's `insetFor` answers 0 whatever
- * the layout); `TOP` 44 needs the one ground built. Until then the 44 run says the canvas said `inset: 0` and the case
- * is not run - the 0 run's numbers are the baseline. The window is kept on top for the runs (an occluded page gets no
- * animation frames, so a locked screen or a sleeping display is not run, exit 77); each run is three pans, the
- * median of their p95s compared. A pan whose frames stop is reported stalled, and the run is inconclusive.
+ * `TOP` 0 is the one-ground stream's test-build switch, its `ground:inset-off` hook (layout.ts `setInsetOff`: every
+ * document told `inset: 0` from its next load), the one switch for #51 - this branch's own env switch is gone. Until
+ * the one ground is merged neither exists: every canvas is told 0 anyway, so the 0 run measures without a switch and
+ * the 44 run says the canvas said `inset: 0` and is not run - the 0 run's numbers are the baseline. The window is
+ * kept on top for the runs (an occluded page gets no animation frames, so a locked screen or a sleeping display is
+ * not run, exit 77); each run is three pans, the median of their p95s compared. A pan whose frames stop is reported
+ * stalled, and the run is inconclusive.
  *
  *   node app/test/budgets/scroll-edge.mjs [--runs 3] [--out <dir>]
  * Needs the package built (dist/cli.mjs: `pnpm build`) and the app's dev build (node app/scripts/build.mjs --js).
@@ -55,9 +57,13 @@ const dev = await startDev(root, { env: { MARVER_HOME: w.home, MARVER_SLOT_BASE:
 const report = { budget: 'scroll-edge', at: new Date().toISOString(), runs: {} }
 try {
   for (const top of [44, 0]) {
-    const L = await launch(w, { drive: true, env: top === 0 ? { MARVER_APP_INSET0: '1' } : {} })
+    const L = await launch(w, { drive: true })
     try {
       await L.call('onTop', { on: true })
+      // TOP 0: the one-ground stream's switch, before the board's first load (it answers the next document)
+      const hooks = await L.call('hooks')
+      if (top === 0 && hooks.includes('ground:inset-off')) await L.call('ground:inset-off', { on: true })
+      const switched = top === 0 ? (hooks.includes('ground:inset-off') ? 'ground:inset-off' : 'none: no one ground, every canvas told 0') : null
       let s = await L.call('state')
       const end = Date.now() + 20_000
       while (!s.tabs.some((t) => t.reg?.port === dev.port && t.reg.state === 'ready') && Date.now() < end) { await sleep(100); s = await L.call('state') }
@@ -87,7 +93,8 @@ try {
       }
       if (pans.some((p) => p.stalled || !p.n)) { report.runs[top] = { kind: 'inconclusive', why: 'a pan got no animation frames to its end (occluded, locked or asleep)', pans }; continue }
       const p95s = pans.map((p) => p.p95).sort((a, b) => a - b)
-      report.runs[top] = { kind: 'measured', said, pans, medianP95: p95s[Math.floor(p95s.length / 2)], over33: pans.reduce((s2, p) => s2 + p.over33, 0) }
+      if (top === 0 && said !== 0) { report.runs[top] = { kind: 'inconclusive', why: `the TOP 0 run's canvas said inset: ${said} - the switch did not hold`, switched }; continue }
+      report.runs[top] = { kind: 'measured', said, switched, pans, medianP95: p95s[Math.floor(p95s.length / 2)], over33: pans.reduce((s2, p) => s2 + p.over33, 0) }
     } finally { await L.stop() }
   }
 } finally { await dev.stop(); w.release(); rmSync(root, { recursive: true, force: true }) }

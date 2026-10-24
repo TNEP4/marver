@@ -88,13 +88,17 @@ export async function rssMB(pids: readonly number[]): Promise<Map<number, number
 export type OutsideRole = 'browser' | 'gpu' | 'utility' | 'renderer' | 'crashpad' | 'other'
 export interface OutsideProc { pid: number; role: OutsideRole; sub?: string; command: string }
 
-/** Crashpad's handler for a launch: launchd adopts it, so it is found by its path inside the bundle (or its database). */
+/**
+ * Crashpad's handler for a launch: launchd adopts it, so it is found by this run's own crash database - the
+ * `--database=<path>` on its command line, a path under the run's temporary MARVER_HOME - and never by the bundle's
+ * path, which another instance of the same bundle shares (review of a3-native, minor #9: Nic's daily app's handler
+ * would be summed in, and its exit subtracted). `bundle` is accepted and ignored, so callers keep their shape.
+ */
 export async function crashpadOf(o: { bundle?: string; database?: string }): Promise<number[]> {
-  const pids = new Set<number>()
-  if (o.bundle) for (const p of (JSON.parse(await out(nativeTool('procusage'), ['find', o.bundle])) as { pids: number[] }).pids) pids.add(p)
-  if (o.database) for (const p of (await out('/usr/bin/pgrep', ['-f', o.database])).split('\n')) if (Number(p) > 0) pids.add(Number(p))
-  const procs = await commandsOf([...pids])
-  return [...procs.entries()].filter(([, c]) => /crashpad/i.test(c)).map(([p]) => p)
+  if (!o.database) return []
+  const pids = (await out('/usr/bin/pgrep', ['-f', o.database])).split('\n').map(Number).filter((p) => p > 0)
+  const procs = await commandsOf(pids)
+  return [...procs.entries()].filter(([, c]) => /crashpad/i.test(c) && c.includes(`--database=${o.database}`)).map(([p]) => p)
 }
 
 async function commandsOf(pids: number[]): Promise<Map<number, string>> {
@@ -168,6 +172,10 @@ export function cpuWindow(a: CpuPass, b: CpuPass, canvas: (pid: number, startedA
   if (!a.browser || !b.browser) return none('the browser could not be read')
   if (a.browser.pid !== b.browser.pid || Math.abs(a.browser.startedAt - b.browser.startedAt) > 1000) return none('the browser changed')
   if (!a.handler.length || !b.handler.length) return none('Crashpad\'s handler could not be read')
+  // the handler is launchd's child, not the browser's: its CPU is counted as a pid with a start time, so the same
+  // handler must be read at both ends - a new one, or one gone, would add or subtract a process the window never saw
+  const hk = (rs: CpuRead[]) => rs.map((r) => `${r.pid}@${Math.round(r.startedAt / 1000)}`).sort().join(',')
+  if (hk(a.handler) !== hk(b.handler)) return none(`Crashpad's handler changed inside the window (${hk(a.handler)} -> ${hk(b.handler)})`)
   const tot = (r: CpuRead) => r.ownS + r.childrenS
   const sum = (p: CpuPass) => tot(p.browser!) + p.children.reduce((s, r) => s + tot(r), 0) + p.handler.reduce((s, r) => s + tot(r), 0)
   const key = (r: CpuRead) => `${r.pid}@${Math.round(r.startedAt / 1000)}`
@@ -183,6 +191,9 @@ export function cpuWindow(a: CpuPass, b: CpuPass, canvas: (pid: number, startedA
   for (const [k, r] of endK) if (!startK.has(k) && canvas(r.pid, r.startedAt)) return none(`the canvas renderer ${r.pid} started inside the window`)
   const seconds = sum(b) - sum(a) - canvases.reduce((s, c) => s + c.seconds, 0)
   const span = (b.at - a.at) / 1000
+  // a figure that went down cannot be the app's CPU: something was subtracted that was never added (a process the
+  // reads did not join) - it could pass a run, so it is inconclusive
+  if (!(seconds >= 0) || !(span > 0) || canvases.some((c) => c.seconds < 0)) return none(`the figure is not a CPU time (${seconds.toFixed(3)} s over ${span.toFixed(1)} s): a process the reads did not join`)
   return {
     kind: 'measured', cores: span > 0 ? seconds / span : 0, seconds, canvases,
     started: [...endK.keys()].filter((k) => !startK.has(k)).map((k) => Number(k.split('@')[0])),

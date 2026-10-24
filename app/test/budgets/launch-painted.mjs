@@ -9,12 +9,20 @@
  * A run is conclusive only if the two clocks agree within 5 ms (the helper's ready line against this process), no
  * frame before the spawn already shows the sentinel, the frame before the detection is at most three refreshes
  * earlier (the time is then exact within that: a display stream on this Mac skips a refresh now and then even with
- * a heartbeat - narrowed from "no gap at all before detection", stated), and the page had focus at its first frame
- * (`document.hasFocus()`). Gate: five conclusive warm launches, the median under 1 s, every one reported and any over
- * 1.5 s failing; an inconclusive one is run again, three times at most. A2's proxy (spawn to the page's first
- * animation-frame request) is recorded beside each.
+ * a heartbeat - narrowed from "no gap at all before detection", stated; A3.8 #50 to be amended), and the page had
+ * focus at its first frame (`document.hasFocus()`). Gate: five conclusive warm launches with the median under 1 s,
+ * every launch reported, and **any launch whose evidence shows more than 1.5 s fails the gate, conclusive or not**
+ * (review of a3-native, major #7): a complete frame displayed more than 1.5 s after the spawn that does not show the
+ * sentinel, before its first frame that does - a launch that never painted within 5 s with frames arriving is one.
+ * A launch whose stream delivered nothing past the spawn is a setup error, reported, never retried into silence.
+ * Inconclusive launches are run again, eight launches at most. A2's proxy (spawn to the page's first animation-frame
+ * request) is recorded beside each.
  *
- *   node app/test/budgets/launch-painted.mjs [--app <Marver.app>] [--out <dir>]
+ * Every launch uses Chromium's mock keychain (launcher.ts says why): the warm launches do not do the real Safe
+ * Storage read, a narrowing of #50 stated in the report. `--real-keychain` drops it, for a Mac set up for acceptance
+ * only: on a Mac with the person's own Marver it would read that app's keychain item.
+ *
+ *   node app/test/budgets/launch-painted.mjs [--app <Marver.app>] [--real-keychain] [--out <dir>]
  *
  * Each launch takes the focus for about a second (the page must have it): the windows appear on the screen. Exit 77
  * when Screen Recording is not granted to the process running it (blind: not run).
@@ -29,6 +37,8 @@ const argv = process.argv.slice(2)
 const val = (n) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : undefined }
 const APP = val('--app') ? resolve(val('--app')) : undefined
 const OUT = resolve(val('--out') ?? '.')
+const REAL_KEYCHAIN = argv.includes('--real-keychain')
+const GATE_MS = 1500
 const SENTINEL = '00c853'
 const SAY = "if (window.marverApp) { marverApp.hello({ version: '0.27.1', board: null, page: 'painted-' + Math.random().toString(36).slice(2, 10) }); marverApp.busy({ busy: false, unsaved: false, why: [] }) }\n"
   + "requestAnimationFrame(function () { navigator.sendBeacon('/__mv/test/focus-' + document.hasFocus()) });"
@@ -56,13 +66,18 @@ async function painted(label) {
   const refreshNs = 1e9 / cap.ready.refreshHz
   await sleep(300)
   const since = fake.requests.length
-  const L = await launch(w, { app: APP })
+  const L = await launch(w, { app: APP, realKeychain: REAL_KEYCHAIN })
   let hit = null
   const end = Date.now() + 5000
   while (!hit && Date.now() < end) {
     hit = cap.frames.find((f) => f.detect?.found && BigInt(f.hostNs) >= L.spawnNs) ?? null
     if (!hit) await sleep(20)
   }
+  // the gate's evidence, conclusive or not: a complete frame past spawn + 1.5 s with no sentinel, before the first
+  // that has it, says this launch took more than 1.5 s
+  const gateNs = L.spawnNs + BigInt(GATE_MS) * 1_000_000n
+  const late = cap.frames.find((f) => f.status === 'complete' && BigInt(f.hostNs) > gateNs && !f.detect?.found && (!hit || BigInt(f.hostNs) < BigInt(hit.hostNs)))
+  const delivered = cap.frames.some((f) => f.status === 'complete' && BigInt(f.hostNs) > L.spawnNs)
   await sleep(400)
   const reqs = fake.requests.slice(since)
   const raf = reqs.find((r) => r.path.startsWith('/__mv/test/focus-'))
@@ -83,10 +98,18 @@ async function painted(label) {
   else if (raf.path !== '/__mv/test/focus-true') why.push('the page did not have focus')
   const ms = hit ? Number(BigInt(hit.hostNs) - L.spawnNs) / 1e6 : null
   const proxyMs = raf ? raf.t - L.t0 : null
-  return { label, ms: ms === null ? null : Math.round(ms), proxyMs, skewMs: Math.round(skewMs * 10) / 10, gapMs: gapMs === null ? null : Math.round(gapMs * 10) / 10, refreshHz: cap.ready.refreshHz, conclusive: !why.length, why }
+  // over the gate: the evidence above, or a detection itself past 1.5 s; no frame at all past the spawn: setup
+  const overMs = late ? Math.round(Number(BigInt(late.hostNs) - L.spawnNs) / 1e6) : ms !== null && ms > GATE_MS ? Math.round(ms) : null
+  return {
+    label, ms: ms === null ? null : Math.round(ms), proxyMs, skewMs: Math.round(skewMs * 10) / 10, gapMs: gapMs === null ? null : Math.round(gapMs * 10) / 10, refreshHz: cap.ready.refreshHz,
+    conclusive: !why.length, why, over: overMs !== null ? { atLeastMs: overMs, painted: !!hit } : null, setup: !delivered ? 'the display stream delivered no frame after the spawn' : null,
+  }
 }
 
-const report = { budget: 'launch-painted', at: new Date().toISOString(), build: APP ?? 'dev (app/dist, production switches, no test hook)', first: null, warm: [] }
+const report = {
+  budget: 'launch-painted', at: new Date().toISOString(), build: APP ?? 'dev (app/dist, production switches, no test hook)',
+  keychain: REAL_KEYCHAIN ? 'real' : 'mock: no real Safe Storage read (a narrowing of A3.8 #50, stated)', first: null, warm: [],
+}
 try {
   report.first = await painted('first')
   // a first launch that shows nothing is a broken setup: no warm launch is worth the screen time
@@ -95,7 +118,10 @@ try {
   let tries = 0
   while (report.warm.filter((r) => r.conclusive).length < 5 && tries < 8) {
     tries++
-    report.warm.push(await painted(`warm-${tries}`))
+    const r = await painted(`warm-${tries}`)
+    report.warm.push(r)
+    // a launch over the gate fails it whatever else: no more screen time
+    if (r.over) break
     await sleep(500)
   }
 } catch (e) { if (!e.setup) throw e; report.setup = e.message } finally { await fake.close(); w.release() }
@@ -103,10 +129,13 @@ try {
 const ok = report.warm.filter((r) => r.conclusive)
 const sorted = ok.map((r) => r.ms).sort((a, b) => a - b)
 report.medianMs = sorted.length ? sorted[Math.floor(sorted.length / 2)] : null
-report.kind = ok.length < 5 ? 'inconclusive' : report.medianMs < 1000 && sorted.every((x) => x <= 1500) ? 'pass' : 'fail'
+report.over = report.warm.filter((r) => r.over).map((r) => ({ label: r.label, ...r.over, conclusive: r.conclusive }))
+report.setupErrors = report.warm.filter((r) => r.setup).map((r) => ({ label: r.label, why: r.setup }))
+// any warm launch over 1.5 s fails the gate, conclusive or not; else five conclusive ones with the median under 1 s
+report.kind = report.over.length ? 'fail' : report.setup || report.setupErrors.length || ok.length < 5 ? 'inconclusive' : report.medianMs < 1000 && sorted.every((x) => x <= GATE_MS) ? 'pass' : 'fail'
 mkdirSync(OUT, { recursive: true })
 writeFileSync(join(OUT, 'launch-painted.json'), JSON.stringify(report, null, 2))
-const line = (r) => `${r.label}: ${r.ms ?? '-'} ms painted (A2's proxy ${r.proxyMs ?? '-'} ms), clocks ${r.skewMs} ms, frame before ${r.gapMs ?? '-'} ms at ${r.refreshHz} Hz${r.conclusive ? '' : ` - inconclusive: ${r.why.join('; ')}`}`
+const line = (r) => `${r.label}: ${r.ms ?? '-'} ms painted (A2's proxy ${r.proxyMs ?? '-'} ms), clocks ${r.skewMs} ms, frame before ${r.gapMs ?? '-'} ms at ${r.refreshHz} Hz${r.over ? ` - OVER 1.5 s: not painted ${r.over.atLeastMs} ms after the spawn` : ''}${r.setup ? ` - SETUP: ${r.setup}` : ''}${r.conclusive ? '' : ` - inconclusive: ${r.why.join('; ')}`}`
 process.stdout.write([line(report.first) + ' (first launch: reported, not gated)', ...report.warm.map(line),
-  `launch-painted: ${report.kind.toUpperCase()} - median of ${ok.length} conclusive warm launches ${report.medianMs ?? '-'} ms (under 1000, none over 1500)`, `report: ${join(OUT, 'launch-painted.json')}`].join('\n') + '\n')
+  `launch-painted: ${report.kind.toUpperCase()} - median of ${ok.length} conclusive warm launches ${report.medianMs ?? '-'} ms (under 1000), ${report.over.length} over 1.5 s (any fails), keychain ${REAL_KEYCHAIN ? 'real' : 'mock (narrowed)'}`, `report: ${join(OUT, 'launch-painted.json')}`].join('\n') + '\n')
 process.exit(report.kind === 'pass' ? 0 : report.kind === 'fail' ? 1 : 3)

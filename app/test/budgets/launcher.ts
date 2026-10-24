@@ -2,7 +2,11 @@
  * The budgets' launches (spec 28 A3.8 #47): every one on temporary `MARVER_HOME`, `MARVER_SLOT_BASE` and
  * `MARVER_APP_USER_DATA`, with the production switches (never Playwright's loader, which changes backgrounding, paint
  * holding and `beforeunload`), and Chromium's mock keychain so no launch touches the login keychain (as the packaged
- * smoke does). Two kinds:
+ * smoke does). **A narrowing, stated** (A3.8 #50): with the mock keychain a launch never does the real "<name> Safe
+ * Storage" read, which #50's "one first launch makes the keychain item" counts on. A real-keychain launch of a bundle
+ * named Marver would read, or make, "Marver Safe Storage" in the login keychain - the item of the person's own app on
+ * that Mac - and a separate default keychain can only be set for the whole user. So `realKeychain` exists for a Mac
+ * set up for acceptance (no Marver of the person's own on it), never by default. Two kinds:
  *
  * - `--app <Marver.app>`: the signed bundle's own binary, spawned directly, no test hook - the acceptance run, last,
  *   on the signed build. It is driven with keypost (⌘1-⌘3, ⇧⌘W), which needs Accessibility;
@@ -47,12 +51,12 @@ export interface Launch {
 
 export const MOCK_KEYCHAIN = '--use-mock-keychain'
 
-export async function launch(w: World, o: { app?: string; drive?: boolean; env?: Record<string, string> } = {}): Promise<Launch> {
+export async function launch(w: World, o: { app?: string; drive?: boolean; env?: Record<string, string>; realKeychain?: boolean } = {}): Promise<Launch> {
   const bin = o.app ? join(o.app, 'Contents', 'MacOS', 'Marver') : ELECTRON_BIN
   if (o.app && !existsSync(bin)) throw new Error(`no binary at ${bin}`)
   if (o.app && o.drive) throw new Error('the signed build has no test hook: it is driven with keypost')
   if (!o.app && !existsSync(join(APP_DIR, 'dist', 'main.cjs'))) throw new Error('no dist/main.cjs: node scripts/build.mjs --js')
-  const args = [...(o.app ? [] : [APP_DIR]), MOCK_KEYCHAIN]
+  const args = [...(o.app ? [] : [APP_DIR]), ...(o.realKeychain ? [] : [MOCK_KEYCHAIN])]
   const env: Record<string, string> = {
     ...process.env as Record<string, string>,
     MARVER_HOME: w.home, MARVER_APP_USER_DATA: w.ud, MARVER_SLOT_BASE: String(w.slotBase),
