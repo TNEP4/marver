@@ -463,8 +463,10 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-ibtn:hover { background: var(--glass-hover); color: var(--glass-ink) }
 
 /* floating glass panel; collapses into the fab with a scale-fade morph */
-.sh-panel { position: absolute; left: var(--edge); top: calc(var(--mv-top, 0px) + var(--edge)); width: 236px;
-  max-height: calc(100% - 2 * var(--edge) - var(--mv-top, 0px)); z-index: 10;
+/* The floating chrome sits at the larger of the edge and the app's top inset (Nic, 26 Oct): in the Mac app the strip's own
+   padding is the gap, so nothing stacks the edge under it; in a browser --mv-top is 0 and the edge holds, as before. */
+.sh-panel { position: absolute; left: var(--edge); top: max(var(--edge), var(--mv-top, 0px)); width: 236px;
+  max-height: calc(100% - var(--edge) - max(var(--edge), var(--mv-top, 0px))); z-index: 10;
   border-radius: var(--r-panel); padding: 10px; display: flex; flex-direction: column;
   font-size: 13px; color: var(--glass-ink);
   transform-origin: 22px 22px; transition: transform var(--morph), opacity .2s ease }
@@ -588,7 +590,7 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-panel .sub.dim:hover { background: none; color: var(--glass-ink-3) }
 
 /* collapsed panel: a round glass button; morphs against the panel */
-.sh-fab { position: absolute; left: var(--edge); top: calc(var(--mv-top, 0px) + var(--edge)); z-index: 11; width: 44px; height: 44px;
+.sh-fab { position: absolute; left: var(--edge); top: max(var(--edge), var(--mv-top, 0px)); z-index: 11; width: 44px; height: 44px;
   display: grid; place-items: center; border-radius: 999px;
   color: var(--glass-ink-2); cursor: pointer;
   transition: transform var(--morph), opacity .2s ease }
@@ -597,13 +599,13 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 
 /* pill nav */
 /* uniform 5px inset on every side: 34px buttons + 2*5px = 44px, same as the fab */
-.sh-pill { position: absolute; right: var(--edge); top: calc(var(--mv-top, 0px) + var(--edge)); z-index: 10; display: flex; align-items: center; gap: 1px;
+.sh-pill { position: absolute; right: var(--edge); top: max(var(--edge), var(--mv-top, 0px)); z-index: 10; display: flex; align-items: center; gap: 1px;
   border-radius: 999px; padding: 5px;
   transform-origin: calc(100% - 22px) 22px; transition: transform var(--morph), opacity .2s ease }
 .sh-pill.closed { transform: scale(.16); opacity: 0; pointer-events: none }
 /* the pill's expand chip - the sidebar fab, mirrored top-right: same glass (shared
    surface rule above), same morph, the bar shrinking into the chip's spot */
-.sh-pill-fab { position: absolute; right: var(--edge); top: calc(var(--mv-top, 0px) + var(--edge)); z-index: 11; width: 44px; height: 44px;
+.sh-pill-fab { position: absolute; right: var(--edge); top: max(var(--edge), var(--mv-top, 0px)); z-index: 11; width: 44px; height: 44px;
   display: grid; place-items: center; border-radius: 999px;
   color: var(--glass-ink-2); cursor: pointer;
   transition: transform var(--morph), opacity .2s ease }
@@ -1842,7 +1844,7 @@ body.sh-commenting .sh-sticky-body { cursor: crosshair }
 .jm-notefield .caret { display: inline-block; width: 1px; height: 15px; background: var(--accent); vertical-align: -3px; margin-left: 1px }
 .jm-notes .foot { display: flex; gap: 12px; justify-content: flex-end; font: 500 11px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3) }
 /* the focus panel: top edge to just above the lane; the panel inside fills it and its middle scrolls */
-.jm-focus { position: absolute; top: calc(var(--mv-top, 0px) + var(--edge)); bottom: calc(var(--edge) + var(--jm-lane) + 2px); z-index: 31; display: flex }
+.jm-focus { position: absolute; top: max(var(--edge), var(--mv-top, 0px)); bottom: calc(var(--edge) + var(--jm-lane) + 2px); z-index: 31; display: flex }
 .jm-focus > .jm-panel { width: 100%; height: 100%; min-height: 0 }
 /* one big picture at a time: the frame tabs and a Before | After switch above it (B flips) */
 .jm-fbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap }   /* a narrow window wraps the switch under the tabs */
@@ -1916,14 +1918,14 @@ button.jm-link { padding: 0; border: 0; background: none; text-align: left; widt
 
 /* Jam V2: while the lane shows, the sidebar stops above it and the bottom edge rises one lane - the
    Update pill, toasts and notices (LANE_H, jam-lane.tsx) */
-.sh-app.jm-lane-on .sh-panel { max-height: calc(100% - 2 * var(--edge) - 56px - var(--mv-top, 0px)); bottom: auto }
+.sh-app.jm-lane-on .sh-panel { max-height: calc(100% - var(--edge) - 56px - max(var(--edge), var(--mv-top, 0px))); bottom: auto }
 .sh-app.jm-lane-on .sh-update { bottom: calc(var(--edge) + 56px) }
 .sh-app.jm-lane-on .sh-toasts { bottom: calc(var(--edge) + 56px) }
 .sh-app.jm-lane-on .sh-banner { bottom: calc(var(--edge) + 56px) }
 /* the canvas stopped (spec 28 A1.11): on the toolbar's centre line in the gap between the sidebar and the
    toolbar, or just below the toolbar row - placed by the shell (App.tsx placeBanner), which measures both; above
    play and focus. The fallback before it measures: top centre, on the line (34px tall, the row 46px) */
-.sh-app .sh-banner.sh-stopped { top: calc(var(--mv-top, 0px) + var(--edge) + 6px); bottom: auto; left: 50%; right: auto; transform: translateX(-50%);
+.sh-app .sh-banner.sh-stopped { top: calc(max(var(--edge), var(--mv-top, 0px)) + 6px); bottom: auto; left: 50%; right: auto; transform: translateX(-50%);
   z-index: 40; width: max-content; max-width: none; white-space: nowrap; text-align: center; text-wrap: balance; pointer-events: auto }
 .sh-banner.sh-stopped code { font: 500 11.5px/14px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 1px 5px; border-radius: 5px;
   background: color-mix(in srgb, currentColor 11%, transparent); white-space: nowrap }
@@ -2033,7 +2035,7 @@ button.jm-link { padding: 0; border: 0; background: none; text-align: left; widt
 .jm-panel button.row:hover { background: var(--glass-hover) }
 textarea.jm-field { width: 100%; resize: none; outline: none; overflow: hidden; display: block }
 textarea.jm-field:focus { border-color: transparent; box-shadow: 0 0 0 1px var(--accent), 0 0 0 4px var(--accent-ring) }
-.jm-sheet-at { position: absolute; right: var(--edge); top: calc(var(--mv-top, 0px) + 64px); z-index: 42 }
+.jm-sheet-at { position: absolute; right: var(--edge); top: calc(max(var(--edge), var(--mv-top, 0px)) + 54px); z-index: 42 }
 .jm-sheet .rows, .jm-wrapup .rows { margin: 0 -8px }
 .jm-sc-row { position: relative; cursor: default; outline: none }
 .jm-record-panel .jm-body { overflow: auto }

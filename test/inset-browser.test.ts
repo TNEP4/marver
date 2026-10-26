@@ -9,13 +9,13 @@ import { fixtureRoot, startDev, type Dev } from './dev-server.ts'
  * The shell under the Mac app's transparent strip (marver 0.27.2; spec 28 A2.9, A3.8 #27, #31), against a REAL
  * `marver dev` and a REAL Chrome whose page gets a fake `window.marverApp` before any script runs - the canvas
  * preload's contract as app 0.2 gives it: `topInset: 44` with `onPresent` and `presented`. Checked: `--mv-top` is
- * 44 px on :root; the sidebar and the toolbar sit at 54 px; a fit leaves the top clear with the toolbar shown and
+ * 44 px on :root; the sidebar and the toolbar sit at 44 px; a fit leaves the top clear with the toolbar shown and
  * with Hide UI; focus centres a small frame in the view below the strip; the selection bar clamps at 52 px, and a
  * tooltip and a context menu near the top stay at or below it; the scroll edge is opaque ground through 44 px and
  * clear from 60 px, a frame panned under it shown nowhere there; a frame under it is not in Jam's view, and not
  * seen; `mv:hello` says 44; a request is answered after its frames, only at its size, a newer one cancelling an older,
  * and after 500 ms at the size the page has. The other screens (#31's "every screen"): play's stage centred below the
- * strip, its toolbar and brand pills and its chip at 54 px, its ground under the strip, Fill window filling the view
+ * strip, its toolbar and brand pills and its chip at 44 px, its ground under the strip, Fill window filling the view
  * below it and the thread card docked no higher than TOP + 12; a Jam session's edge ring below the strip and the focus
  * panel's and the sheet's rules; the stopped banner on the toolbar's line; the identity modal's veil from 44 px. With
  * `topInset: 0`, with 44 but half the contract (no `onPresent`), and with no bridge at all (Chrome): no band, nothing
@@ -140,18 +140,18 @@ async function pixels(s: string): Promise<{ w: number; h: number; at(x: number, 
 const red = ([r, g, b]: [number, number, number]) => r > 200 && g < 80 && b < 80
 
 describe('with the whole contract: topInset 44, onPresent and presented (A3.8 #31)', () => {
-  it('--mv-top is 44 px on :root; hello says 44; the sidebar and the toolbar sit at 54 px; the scroll edge is there', async (ctx) => {
+  it('--mv-top is 44 px on :root; hello says 44; the sidebar and the toolbar sit at 44 px; the scroll edge is there', async (ctx) => {
     skip(ctx)
     const s = await open({ on: true, inset: 44, present: true })
     expect(await ev(s, `[document.documentElement.style.getPropertyValue('--mv-top'), document.documentElement.classList.contains('mv-inset')]`)).toEqual(['44px', true])
     expect((await ev(s, `__fake.last('hello')`)).inset).toBe(44)
-    expect((await rect(s, '.sh-panel'))!.top).toBe(54)
-    expect((await rect(s, 'nav.sh-pill'))!.top).toBe(54)
+    expect((await rect(s, '.sh-panel'))!.top).toBe(44)
+    expect((await rect(s, 'nav.sh-pill'))!.top).toBe(44)
     expect(await rect(s, '.sh-edge')).toMatchObject({ top: 0, height: 60 })
     // collapsed, their buttons too
     await ev(s, `window.dispatchEvent(new KeyboardEvent('keydown', { key: '\\\\', code: 'Backslash', metaKey: true, bubbles: true })), 1`)
     await until(s, `!!document.querySelector('.sh-panel.closed')`)
-    expect(await ev(s, `getComputedStyle(document.querySelector('.sh-fab')).top`)).toBe('54px')   // (its rect morphs as it grows in)
+    expect(await ev(s, `getComputedStyle(document.querySelector('.sh-fab')).top`)).toBe('44px')   // (its rect morphs as it grows in)
   })
 
   it('a fit leaves the top clear with the toolbar shown and with Hide UI; focus centres a small frame below the strip', async (ctx) => {
@@ -161,7 +161,7 @@ describe('with the whole contract: topInset 44, onPresent and presented (A3.8 #3
     await ev(s, `__mvJamCanvas.fitAll(), 1`)
     await until(s, `!__mvJamCanvas.cameraBusy()`)
     await wait(100)
-    expect(await top()).toBeGreaterThanOrEqual(54 + 44 + 12)        // the toolbar's foot, then the gap and the bar's room
+    expect(await top()).toBeGreaterThanOrEqual(44 + 44 + 12)        // the toolbar's foot, then the gap and the bar's room
     await ev(s, `window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', code: 'KeyH', bubbles: true })), 1`)
     await until(s, `document.body.classList.contains('sh-hide-ui')`)
     await ev(s, `__mvJamCanvas.fitAll(), 1`)
@@ -294,16 +294,16 @@ async function openPlay(cfg: Fake): Promise<string> {
 }
 
 describe('every other screen of the shell at TOP 44 (A3.8 #31: "the builder checks every screen of the shell")', () => {
-  it('play: the stage centred below the strip; the toolbar pill, the brand pill and the collapsed chip at 54 px; the play ground under the strip', { timeout: 45_000 }, async (ctx) => {
+  it('play: the stage centred below the strip; the toolbar pill, the brand pill and the collapsed chip at 44 px; the play ground under the strip', { timeout: 45_000 }, async (ctx) => {
     skip(ctx)
     const s = await openPlay({ on: true, inset: 44, present: true })
     const st = (await rect(s, '.sh-play-stage'))!
     expect(st.top).toBeGreaterThanOrEqual(44)
     expect(Math.abs((st.top + st.bottom) / 2 - (44 + (H - 44) / 2))).toBeLessThanOrEqual(2)
     // play's chrome is the shared pill (Play.tsx: nav.sh-pill.sh-play-pill, the brand one on the left; .sh-pill-fab)
-    expect((await rect(s, '.sh-play > nav.sh-play-pill:not(.sh-play-brand)'))!.top).toBe(54)
-    expect((await rect(s, '.sh-play > nav.sh-play-brand'))!.top).toBe(54)
-    expect(await ev(s, `getComputedStyle(document.querySelector('.sh-play > .sh-pill-fab')).top`)).toBe('54px')
+    expect((await rect(s, '.sh-play > nav.sh-play-pill:not(.sh-play-brand)'))!.top).toBe(44)
+    expect((await rect(s, '.sh-play > nav.sh-play-brand'))!.top).toBe(44)
+    expect(await ev(s, `getComputedStyle(document.querySelector('.sh-play > .sh-pill-fab')).top`)).toBe('44px')
     const p = await pixels(s)
     for (const y of [2, 20, 40, 43]) expect(Array.from({ length: 40 }, (_, i) => p.at(100 + i * 30, y)).every(dark), `y ${y}`).toBe(true)
   })
@@ -335,7 +335,7 @@ describe('every other screen of the shell at TOP 44 (A3.8 #31: "the builder chec
     } finally { rmSync(log, { force: true }) }
   })
 
-  it('a Jam session\'s edge ring starts below the strip; the focus panel at 54 px; the sheet at 108 px', async (ctx) => {
+  it('a Jam session\'s edge ring starts below the strip; the focus panel at 44 px; the sheet at 98 px', async (ctx) => {
     skip(ctx)
     const s = await open({ on: true, inset: 44, present: true })
     await ev(s, `__mvJamQueue.setState({ session: { id: 'ses-inset', since: Date.now() } }), 1`)
@@ -344,14 +344,14 @@ describe('every other screen of the shell at TOP 44 (A3.8 #31: "the builder chec
     await ev(s, `__mvJamQueue.setState({ session: null }), 1`)
     // the focus panel and the sheet's anchor, as their rules place them inside the app (each needs a Jam with
     // frames to render; the rule is what the inset changes)
-    expect(await probeTop(s, 'jm-focus')).toBe('54px')
-    expect(await probeTop(s, 'jm-sheet-at')).toBe('108px')
+    expect(await probeTop(s, 'jm-focus')).toBe('44px')
+    expect(await probeTop(s, 'jm-sheet-at')).toBe('98px')
   })
 
   it('the stopped banner sits on the toolbar\'s line below the strip, and its fallback before it measures does too', { timeout: 30_000 }, async (ctx) => {
     skip(ctx)
     const s = await open({ on: true, inset: 44, present: true })
-    expect(await probeTop(s, 'sh-banner sh-stopped')).toBe('60px')   // the fallback: the edge and 6 px below the strip
+    expect(await probeTop(s, 'sh-banner sh-stopped')).toBe('50px')   // the fallback: 6 px below the strip (the strip's padding is the gap, not the edge)
     await ev(s, `__mvLink.setState({ link: 'down', shown: true }), 1`)
     await until(s, `!!document.querySelector('.sh-stopped')`, 5000)
     await wait(200)
