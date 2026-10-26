@@ -1,7 +1,7 @@
 {
   "name": "marver-app",
   "productName": "Marver Dev",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "description": "The Marver Mac app (spec 28). Never published to npm: scripts/build.mjs builds, signs and smokes it.",

@@ -123,9 +123,19 @@ describe('the writer (A3.8 #12)', () => {
     expect(all.map((l) => (parseAppLine(l) as unknown as { n?: number } | null)?.n ?? 'torn')).toEqual([1, 'torn', 2, 3])
   })
 
-  it('past 5 MB the file keeps its newest half, whole lines only', async () => {
+  it('the size a log may reach follows the days kept: 2 MB a day, never under 5 MB', () => {
+    let days = 1
+    L.startPerflog({ home, flavour: 'release', config: () => config({ keepPerfDays: days }), machine: () => H1 })
+    expect(L.rotateBytes()).toBe(5 * 1024 * 1024)
+    days = 14
+    expect(L.rotateBytes()).toBe(28 * 1024 * 1024)
+    days = 90
+    expect(L.rotateBytes()).toBe(180 * 1024 * 1024)
+  })
+
+  it('past its size (5 MB at one day kept) the file keeps its newest half, whole lines only', async () => {
     mkdirSync(join(home.dir, 'perf'), { mode: 0o700 })
-    L.startPerflog({ home, flavour: 'release', config: () => config(), machine: () => H1 })
+    L.startPerflog({ home, flavour: 'release', config: () => config({ keepPerfDays: 1 }), machine: () => H1 })
     await L.idle()
     const f = join(home.dir, 'perf', 'app.jsonl')
     const now = Date.now()

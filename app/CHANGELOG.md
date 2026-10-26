@@ -1,5 +1,12 @@
 # Changelog - the Marver Mac app
 
+## 0.2.1 - 2026-10-26
+
+- **The performance record keeps the days you set.** The app's log kept its newest half past 5 MB, about 2 to 4 days of
+  daily use. It now grows to 2 MB for every day kept (`keepPerfDays`, 14 by default, up to 90), so the days are the limit.
+- **The canvas's floating chrome sits right under the tab strip** (with marver 0.27.3): the sidebar and the toolbar no
+  longer add the browser's edge below the strip's own padding.
+
 ## 0.2.0 - unreleased (spec 28 A3)
 
 - **A canvas runs under the tabs** (the one ground, A3.8 #24-#33). A canvas whose shell offers `inset` (Marver

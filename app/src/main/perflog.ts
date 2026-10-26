@@ -63,6 +63,9 @@ export interface PerflogStart {
 export const QUEUE_MAX = 2000
 /** Past this a file keeps its newest half, whole lines (A3.6). */
 export const ROTATE_BYTES = 5 * 1024 * 1024
+/** The size a log may reach before it keeps its newest half: 2 MB for every day kept, never under ROTATE_BYTES - so the
+ *  days kept are the real limit (about 1.3 MB a day on Nic's Mac, 26 Oct: 5 MB alone held only 2-4 days). */
+export const rotateBytes = (): number => Math.max(ROTATE_BYTES, days() * 2 * 1024 * 1024)
 /** Flash pictures kept, both flavours (A3.3). */
 export const PICTURES_KEPT = 50
 /** Completed Crashpad reports kept (A3.6). */
@@ -246,7 +249,7 @@ function flush(force = false): boolean {
     if (__MV_TEST__) note('perflog', { error: (err as NodeJS.ErrnoException).code ?? String(err), landed })
     return false
   }
-  try { if (statSync(file).size > ROTATE_BYTES) { rotateWanted = true; void rotate() } } catch { /* gone */ }
+  try { if (statSync(file).size > rotateBytes()) { rotateWanted = true; void rotate() } } catch { /* gone */ }
   return true
 }
 
@@ -376,7 +379,7 @@ export function newestHalf(lines: string[]): string[] {
 function rotate(): Promise<void> {
   if (!rotateWanted) return Promise.resolve()
   rotateWanted = false
-  return rewrite((lines) => (lines.reduce((n, l) => n + Buffer.byteLength(l) + 1, 0) > ROTATE_BYTES ? newestHalf(lines) : lines))
+  return rewrite((lines) => (lines.reduce((n, l) => n + Buffer.byteLength(l) + 1, 0) > rotateBytes() ? newestHalf(lines) : lines))
 }
 
 const TS = /^\{"v":1,"ts":(\d{10,16})[,}]/
