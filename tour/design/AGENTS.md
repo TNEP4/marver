@@ -1,4 +1,4 @@
-<!-- marver:managed bbc617bce88e071c0da98baf67672f351ffea4807ef0faa59c0d41b226b7c9c3 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 597838542f3821e069b59f60f68db2d7c9a332d9cfd324174aec5800a2aee85b - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Design canvas - agent contract
 
 You design by writing files. The canvas at the printed localhost URL reflects them live.
@@ -240,6 +240,9 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
   settled, how many moves and why, the slowest frames, errors. To make a board faster, name
   the lever, change it, compare the next load. A slow frame's `admittedMs` is when its turn to
   start came: a long wait is the queue, not the frame (`ms - admittedMs` is the frame's own).
+  To compare before and after a change, `npx marver perf run <board> --json` measures the board
+  the same way each time, read-only, in the canvas's own headless Chrome; `npx marver perf --runs
+  --json` compares the runs with the same inputs, and those after a change.
 - **Names vs titles.** A board's file name, a folder's `name`, a scene's directory are
   IDENTITIES: slugs you address, that publish.json, URLs and comment threads hold, and
   that never move on a rename. `title` is what humans see - free text (casing,
