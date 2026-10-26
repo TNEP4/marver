@@ -1,5 +1,11 @@
 # Changelog - the Marver Mac app
 
+## 0.2.2 - 2026-10-26
+
+- **The icon has room at its sides.** The mark filled 83% of the icon's width, 9.5% from the left edge and 7.2% from
+  the right, so it looked crowded beside other apps, most of all in the Dock. It now fills 70%, centred, with its
+  slant eased from 23 to 13 degrees, so it sits square in the tile (Nic's pick of three, 26 Oct).
+
 ## 0.2.1 - 2026-10-26
 
 - **The performance record keeps the days you set.** The app's log kept its newest half past 5 MB, about 2 to 4 days of

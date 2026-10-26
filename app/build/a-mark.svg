@@ -1,4 +1,5 @@
 <!-- Marver app icon option, drawn with Quiver Arrow 2 Telos on 22 Oct 2026 (spec 28 gap 3); viewBox normalised to the macOS 824/1024 body -->
+<!-- a-mark-straighter: a-mark.svg with more room at its sides (balance.py: narrow 0, skew 0.2, 70% of the tile wide) -->
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="-13.0 -13.5 1050.1 1050.1" width="1024" height="1024">
 <!-- SVG created with Arrow, by QuiverAI (https://quiver.ai) -->
   <defs>
@@ -93,6 +94,7 @@
     </g>
     <use xlink:href="#tile-shape" fill="none" stroke="url(#tile-edge-light)" stroke-width="1.8"/>
   </g>
+  <g id="mark-balanced" transform="matrix(0.93 0 0.19 0.93 -69.42 33.18)">
   <g id="offset-translucent-back-layer">
     <path d="M683 312C694 302 707 295 727 295H820C858 295 878 323 868 360C866 369 862 379 858 389L716 741C705 770 686 787 655 787H296C257 787 233 765 238 731H554C587 731 615 711 628 680L764 357C770 342 777 325 782 311Z" fill="url(#rear-glass)" stroke="url(#rear-edge)" stroke-width="1.5"/>
     <g clip-path="url(#rear-glass-clip)">
@@ -112,5 +114,6 @@
       <path d="M201 724C211 729 219 731 231 731H553C579 731 601 718 616 698" fill="none" stroke="#efffff" stroke-width="14" opacity=".56" filter="url(#edge-softening)"/>
     </g>
     <use xlink:href="#front-ring-shape" fill="none" stroke="url(#front-edge)" stroke-width="1.8"/>
+  </g>
   </g>
 </svg>

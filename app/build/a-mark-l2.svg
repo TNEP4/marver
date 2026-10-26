@@ -1,4 +1,5 @@
 <!-- Marver app icon option, drawn with Quiver Arrow 2 Telos on 22 Oct 2026 (spec 28 gap 3); viewBox normalised to the macOS 824/1024 body -->
+<!-- a-mark-straighter: a-mark.svg with more room at its sides (balance.py: narrow 0, skew 0.2, 70% of the tile wide) -->
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="-13.0 -13.5 1050.1 1050.1" width="1024" height="1024">
 <!-- SVG created with Arrow, by QuiverAI (https://quiver.ai) -->
   <defs>
@@ -85,6 +86,7 @@
     </clipPath>
   </defs>
   
+  <g id="mark-balanced" transform="matrix(0.93 0 0.19 0.93 -69.42 33.18)">
   
   <g id="front-frosted-parallelogram">
     <use xlink:href="#front-ring-shape" fill="#c8edff" opacity=".25" filter="url(#glass-halo)"/>
@@ -98,5 +100,6 @@
       <path d="M201 724C211 729 219 731 231 731H553C579 731 601 718 616 698" fill="none" stroke="#efffff" stroke-width="14" opacity=".56" filter="url(#edge-softening)"/>
     </g>
     <use xlink:href="#front-ring-shape" fill="none" stroke="url(#front-edge)" stroke-width="1.8"/>
+  </g>
   </g>
 </svg>

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The app icon for macOS 13-15 (spec 28 A2.8, A2.14 #29; option A, frame mac-app/12-icon-a):
+ * The app icon for macOS 13-15 (spec 28 A2.8, A2.14 #29; option A balanced, frame mac-app-icon/04-straighter):
  * build/a-mark.svg (the whole tile, its viewBox already the macOS 824/1024 body) -> build/Marver.icns.
  * Run by hand when the icon changes (`pnpm --filter marver-app icon`); the result is committed.
  *
