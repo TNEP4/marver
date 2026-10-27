@@ -96,9 +96,19 @@ and left the one you pointed at unchanged, the capture's thread moves onto the n
 
 ## A session: `J`
 
-`J` (or the Jam button in the toolbar) opens the start sheet: what Marver listens to, the
-agent the session hands work to, and the keyboard shortcuts. **Start** (`⏎`) begins the
-session and its first capture at once.
+`J` (or the Jam button in the toolbar) opens the start sheet: what Marver listens to, who
+works, three switches, and the keyboard shortcuts. **Start** (`⏎`) begins the session and its
+first capture at once.
+
+**Who works** (0.28): while the session runs, your tags and captures go to the coding-agent
+session you already have open in the repo - "Your Claude Code session", with everything it
+has. With several open, the newest takes the work; click the row for the next one. With none
+open, a copy of your last session does the run. Starting the session connects every Claude
+Code, Codex and Cursor session in the repo - nothing else to set up ([Live Jam](live-jam.md#your-own-session-takes-the-work-028)).
+The three switches cover the runs Marver spawns: **MCP servers and skills** (on), **your
+session's context** (on - off means no session and no copy take work, only fresh agents), and
+**collaborators' comments** (off - only your own words reach the agent). They are kept for this
+machine in `design/.local/jam/prefs.json`.
 
 While a session runs, the canvas keeps its glowing edge and the Jam button its dot and
 clock - seconds the first minute, then minutes - and the lane shows **Jam on**, listening
