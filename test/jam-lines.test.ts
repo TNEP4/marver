@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { laneLine, lineText, timelineLines, type LaneCard } from '../src/client/shell/jam-lines.ts'
+import { laneLine, lineText, runnerLine, timelineLines, type LaneCard } from '../src/client/shell/jam-lines.ts'
 import type { CaptureRecord } from '../src/server/jam/types.ts'
 
 const card = (o: Partial<LaneCard>): LaneCard => ({ id: 'cap-1', kind: 'capture', board: 'home', frames: [], events: [], state: 'queued', rev: 1, made: 0, order: 0, at: 0, ...o })
@@ -70,5 +70,22 @@ describe('the read-back: a capture\'s merged timeline', () => {
     expect(lines.filter((l) => l.kind === 'note')).toHaveLength(0)
     expect(timelineLines(rec, '')[0].text).toMatch(/no words/)
     expect(lines.find((l) => l.kind === 'pick')?.source).toBe('design/scenes/pricing/checkout.tsx:48')
+  })
+})
+
+describe('who runs it, in words (spec 29b)', () => {
+  const base = { id: 'c1', kind: 'comment' as const, board: 'b', frames: ['s/f'], events: ['e'], state: 'working' as const, rev: 1, made: 0, order: 0, at: Date.now() - 41_000 }
+  const name = (a: string) => ({ claude: 'Claude Code', codex: 'Codex' } as Record<string, string>)[a] ?? a
+  it('your session: offered, on it, stalled, stopping; a copy; a fresh agent', () => {
+    const run = (r: object) => ({ ...base, runner: { batch: 'x', agent: 'claude', kind: 'session' as const, ...r } })
+    expect(runnerLine(run({ state: 'offered' }), name)?.head).toMatch(/^Waiting for your Claude Code session · 0:4\d$/)
+    expect(runnerLine(run({ state: 'claimed', gen: 1 }), name)?.head).toMatch(/^Your Claude Code session is on it · 0:4\d$/)
+    expect(runnerLine(run({ state: 'stalled', gen: 1 }), name)?.detail).toBe('Give it back, run it in the background, or drop it')
+    expect(runnerLine(run({ state: 'stopping', gen: 1 }), name)?.head).toContain('waiting for your Claude Code session to let go')
+    expect(runnerLine({ ...base, runner: { batch: 'x', agent: 'codex', kind: 'fork' } }, name)?.head).toMatch(/^A copy of your Codex session is on it/)
+    expect(runnerLine({ ...base, runner: { batch: 'x', agent: 'claude', kind: 'fresh', why: 'your session is too long to copy - a fresh agent took it' } }, name)?.detail).toContain('too long to copy')
+    expect(runnerLine({ ...base, state: 'queued' }, name)).toBeNull()
+    expect(laneLine({ ...base, runner: { batch: 'x', agent: 'claude', kind: 'session', state: 'stalled', gen: 1 } })).toBe('Stalled · choose')
+    expect(laneLine({ ...base, runner: { batch: 'x', agent: 'claude', kind: 'fork' } })).toMatch(/^A copy of your session · /)
   })
 })
