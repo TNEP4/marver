@@ -824,10 +824,14 @@ export const capturesPending = (): boolean => { const s = useJamCapture.getState
 const keepSealed = (r: CaptureRecord) => { try { const all = JSON.parse(localStorage.getItem(KEPT) ?? '{}'); all[r.id] = r; localStorage.setItem(KEPT, JSON.stringify(all)) } catch { /* memory only */ } pendingUploads.set(r.id, r); syncUnsent() }
 const forgetKept = (id: string) => { try { const all = JSON.parse(localStorage.getItem(KEPT) ?? '{}'); delete all[id]; localStorage.setItem(KEPT, JSON.stringify(all)) } catch { /* memory only */ } }
 const pendingUploads = new Map<string, CaptureRecord>()
+/** taken by the server, waiting only for its card on the page's queue: never posted again (a retry for another capture,
+ *  a page shown again) - its one wait goes on, and its Sending tile with it */
+const acked = new Set<string>()
 let retryTimer: ReturnType<typeof setTimeout> | null = null
 /** Post a sealed record - the same id, idempotent on the server - until it takes. A refusal about the
  *  record itself (not the network) is final and said once; a dev server that is away is waited for. */
 async function upload(record: CaptureRecord, leaving = false): Promise<void> {
+  if (acked.has(record.id)) return
   type Verdict = { ok?: boolean; card?: { id: string; rev: number }; error?: string; outside?: boolean; held?: string }
   let r: Verdict | null = null
   try {
@@ -859,7 +863,7 @@ async function upload(record: CaptureRecord, leaving = false): Promise<void> {
   // what stands for it here - its Sending tile, a resumed draft kept off the lane - stays until the queue holds its
   // card: the answer comes before the push that carries it, and in between the lane showed the old draft's To confirm
   // in its place, or (nothing else on it) folded away and came back. A refresh that fails is not the end of the wait
-  if (r.ok) await untilQueued(record.id)
+  if (r.ok) { acked.add(record.id); try { await untilQueued(record.id) } finally { acked.delete(record.id) } }
   pendingUploads.delete(record.id); syncUnsent()
   // the resumed draft it replaced was dropped on the server - it leaves the lane for good; refused, it shows again
   const was = record.context.resumes?.id

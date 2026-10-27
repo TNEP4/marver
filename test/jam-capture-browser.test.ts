@@ -1558,6 +1558,50 @@ describe('captures in the browser: the first trial', () => {
     await decide(b, 'good')
   }, 180_000)
 
+  skippable('a capture the canvas took is never sent again while it waits for its card - a retry for another capture leaves it alone', async () => {
+    agentMode({})
+    await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
+    // pushes held back, queue refreshes hang (until cancelled); capture posts are counted, and B's are refused for now
+    await browser!.eval(s, `(() => {
+      const q = window.__mvJamQueue, real = q.getState().apply
+      const w = window.__qDup = { real, on: true, last: null, posts: {}, failB: null }
+      q.setState({ apply: (v) => { if (w.on) w.last = v; else real(v) } })
+      const f = window.fetch
+      window.fetch = (u, init) => {
+        const url = String(u), get = !(init && init.method && init.method !== 'GET')
+        if (w.on && url.includes('/api/jam/queue') && get) return new Promise((_, rej) => init?.signal?.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError'))))
+        if (url.includes('/api/jam/capture') && init?.body) {
+          const id = JSON.parse(init.body).record?.id
+          w.posts[id] = (w.posts[id] ?? 0) + 1
+          if (w.on && id && id === w.failB) return Promise.resolve(new Response('{}', { status: 503 }))
+        }
+        return f(u, init)
+      }
+      return 1 })()`)
+    let a = '', b = ''
+    try {
+      await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+      a = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+      await browser!.eval(s, `window.__mvJamCapture.getState().note('taken, waiting for its card'), 1`)
+      await key('e')
+      await until(`!!window.__mvJamCapture.getState().sealed.find((x) => x.id === ${JSON.stringify(a)})?.card`, 40_000)
+      await key('s'); await until(`!!window.__mvJamCapture.getState().current && window.__mvJamCapture.getState().current !== ${JSON.stringify(a)}`, 5_000)
+      b = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+      await browser!.eval(s, `(window.__qDup.failB = ${JSON.stringify(b)}, window.__mvJamCapture.getState().note('its posts fail for now'), 1)`)
+      await key('e')
+      // two rounds of the 5 s retry for B: A was taken - it is not posted again
+      await until(`(window.__qDup.posts[${JSON.stringify(b)}] ?? 0) >= 3`, 30_000)
+      expect(await browser!.eval(s, `window.__qDup.posts[${JSON.stringify(a)}]`)).toBe(1)
+    } finally {
+      await browser!.eval(s, `(() => { const w = window.__qDup; w.on = false; window.__mvJamQueue.setState({ apply: w.real }); if (w.last) w.real(w.last); void window.__mvJamQueue.getState().load(); return 1 })()`)
+    }
+    await until(`!window.__mvJamCapture.getState().unsent.length`, 30_000)
+    for (const id of [a, b]) {
+      await until(`(window.__mvJamQueue.getState().cards ?? []).some((x) => x.id === ${JSON.stringify(id)} && x.state === 'review')`, 120_000)
+      await decide(id, 'good')
+    }
+  }, 300_000)
+
   skippable('the canvas\'s stand-in answer while its queue is not up is never applied: the lane and the session stay as the last view left them', async () => {
     await until(`Array.isArray(window.__mvJamQueue.getState().cards)`, 10_000)
     // what a push just brought: a card on the lane and a session under way

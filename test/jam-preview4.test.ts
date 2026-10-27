@@ -47,6 +47,12 @@ describe('the brief of a run (jam next)', () => {
     expect(tb.indexOf('m2 on d/a')).toBeLessThan(tb.indexOf('m1 on d/a'))
     expect(tb).toContain('```marver-reply m1')
     expect(tb).toContain('```marver-reply m2')
+    // a correction that joins the older request (A) after B was tagged: A, added to last, leads
+    const three: any = { batchId: 'b-10', frames: ['d/a'], members: [
+      { id: 'm1', kind: 'comment', frames: ['d/a'], brief: { asks: [{ id: 'e-1', body: '@marver make it red', ts: 1000 }, { id: 'e-3', body: '@marver Correction: use green', ts: 3000 }], history: [] } },
+      { id: 'm2', kind: 'comment', frames: ['d/a'], brief: { asks: [{ id: 'e-2', body: '@marver make it blue', ts: 2000 }], history: [] } }] }
+    const t3 = sessionBrief(three, 'r-10.1')
+    expect(t3.indexOf('Correction: use green')).toBeLessThan(t3.indexOf('make it blue'))
   })
   it('a long first request never pushes a correction out: the newest leads whole, an earlier one is clipped', () => {
     const said = `Make the background red, ${'and tighten the spacing between every card of the pricing grid, '.repeat(8)}`
