@@ -102,6 +102,14 @@ export function upsertConn(root: string, agent: ConnAgent, session: string, patc
   return c
 }
 
+/** Change a live registration in place - that incarnation only, never one that ended, never a new one. */
+export function patchConn(root: string, id: string, inc: string, patch: Partial<Pick<Conn, 'muted' | 'busy' | 'acted'>>): boolean {
+  const c = readConn(root, id)
+  if (!c || c.ended || c.inc !== inc) return false
+  writeAtomic(connFile(root, id), JSON.stringify({ ...c, ...patch, seen: Date.now() }))
+  return true
+}
+
 /** A session ended (its end hook, its listener exiting): marked, not removed - a run it held is reconciled first;
  *  the daemon removes it once nothing depends on it. `inc`: only that incarnation (a resumed one stays). */
 export function endConn(root: string, id: string, inc?: string): void {

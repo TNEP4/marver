@@ -24,6 +24,8 @@ export interface SpawnOpts {
   fork?: string
   /** how to run this marver (`jam permit`, Claude Code's permission tool): a command and its first args */
   marver?: { cmd: string; args: string[] }
+  /** can the tool's sandbox run here (default: detected - macOS, Linux with its prerequisites) */
+  sandbox?: boolean
 }
 
 /** One agent CLI the daemon can spawn. The full set lives in adapter/index.ts. */

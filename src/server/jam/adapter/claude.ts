@@ -39,7 +39,7 @@ export const claudeAdapter: JamAdapter = {
     if (!o) return { cmd: 'claude', args: ['-p', goal, '--permission-mode', 'acceptEdits', '--allowedTools', 'Read,Edit,Write,Glob,Grep,WebSearch,WebFetch', '--disallowedTools', 'Bash', '--output-format', 'stream-json', '--verbose'] }
     // the shell only where Claude Code's sandbox can hold it (macOS's own; Linux with bubblewrap) - anywhere else
     // there is no shell at all: the boundary is never promised and missing (fail closed)
-    const sandboxed = sandboxReady()
+    const sandboxed = o.sandbox ?? sandboxReady()
     // (a sandbox that cannot start fails the command - never runs it open; protected paths in the repo are denied as
     // rules, which bound the Write tool and the sandbox's writes alike: edits in the repo never reach the permit tool)
     const root = o.root.replace(/\/+$/, '')

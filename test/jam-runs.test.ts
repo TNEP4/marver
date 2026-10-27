@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { appendEvents, readLog, replay, type CommentEvent } from '../src/server/comments.ts'
 import { createJam } from '../src/server/jam/daemon.ts'
-import { claudeAdapter } from '../src/server/jam/adapter/claude.ts'
+import { claudeAdapter, sandboxReady } from '../src/server/jam/adapter/claude.ts'
 import { record } from '../src/server/jam/ledger.ts'
 import { connId, endConn, listConns, readConn, readOffers, upsertConn, writePrefs } from '../src/server/jam/conn.ts'
 import { ensureConnectors, OURS } from '../src/server/jam/connectors.ts'
@@ -635,7 +635,7 @@ describe('review 3', { timeout: 30_000 }, () => {
   })
 
   it('Claude Code\'s background runs: protected paths denied as rules, the sandbox fails closed', () => {
-    const { args } = claudeAdapter.spawnArgs('goal', { root: '/r/repo', mcp: true, skills: true })
+    const { args } = claudeAdapter.spawnArgs('goal', { root: '/r/repo', mcp: true, skills: true, sandbox: true })
     const settings = JSON.parse(args[args.indexOf('--settings') + 1])
     expect(settings.sandbox).toMatchObject({ enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false })
     for (const g of ['design/.local/**', '.claude/**', '.codex/**', 'node_modules/**', '**/node_modules/**', '.git/**']) expect(settings.permissions.deny).toContain(`Edit(//r/repo/${g})`)
@@ -645,10 +645,38 @@ describe('review 3', { timeout: 30_000 }, () => {
   })
 
   it('where no sandbox can run, Claude Code starts with none and no shell - never a sandbox that stops it', () => {
-    const { args } = claudeAdapter.spawnArgs('goal', { root: '/r/repo', mcp: true, skills: true })
-    const settings = JSON.parse(args[args.indexOf('--settings') + 1])
-    if (process.platform === 'darwin') expect(settings.sandbox.enabled).toBe(true)
-    else if (!settings.sandbox.enabled) expect(settings.permissions.deny).toContain('Bash')
+    const off = JSON.parse((({ args }) => args[args.indexOf('--settings') + 1])(claudeAdapter.spawnArgs('goal', { root: '/r/repo', mcp: true, skills: true, sandbox: false })))
+    expect(off.sandbox).toEqual({ enabled: false })
+    expect(off.permissions.deny).toContain('Bash')
+    const on = JSON.parse((({ args }) => args[args.indexOf('--settings') + 1])(claudeAdapter.spawnArgs('goal', { root: '/r/repo', mcp: true, skills: true, sandbox: true })))
+    expect(on.sandbox).toMatchObject({ enabled: true, failIfUnavailable: true })
+    expect(on.permissions.deny).not.toContain('Bash')
+    expect(sandboxReady('darwin')).toBe(true)
+    expect(sandboxReady('linux', { PATH: '' })).toBe(false)
+    expect(sandboxReady('win32')).toBe(false)
+  })
+
+  it('a mute sent again after its session ended never brings the registration back', async () => {
+    const s = await setup()
+    await s.jam.tick()
+    const c = readConn(s.root, s.conn.id)!
+    const body = { v: 1 as const, id: randomUUID(), conn: c.id, op: 'mute' as const, args: {}, ts: Date.now() }
+    const req = { ...body, mac: macOf(c.key, body) }
+    const send = async () => {
+      mkdirSync(reqDir(s.root), { recursive: true })
+      writeFileSync(join(reqDir(s.root), `${req.id}.json`), JSON.stringify(req))
+      const res = join(s.root, 'design', '.local', 'jam', 'res', `${req.id}.json`)
+      await until(() => existsSync(res), 8_000, () => s.jam.runs.tick())
+      const out = JSON.parse(readFileSync(res, 'utf8')); rmSync(res)
+      return out
+    }
+    expect((await send()).ok).toBe(true)
+    endConn(s.root, c.id)
+    await send()
+    const after = readConn(s.root, c.id)!
+    expect(after.ended).toBe(true)
+    expect(after.inc).toBe(c.inc)
+    s.jam.stop(); s.done()
   })
 })
 

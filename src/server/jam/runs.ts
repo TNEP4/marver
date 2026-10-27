@@ -14,7 +14,7 @@
  * the lock is a guess.
  */
 import type { JamConfig } from '../config.ts'
-import { alive, closeConn, eligible, listConns, pidAlive, readConn, readOffers, readPrefs, upsertConn, writeOffers, type Conn, type ConnAgent } from './conn.ts'
+import { alive, closeConn, eligible, listConns, patchConn, pidAlive, readConn, readOffers, readPrefs, upsertConn, writeOffers, type Conn, type ConnAgent } from './conn.ts'
 import { forkable, newestAny, transcriptOf, type ForkAgent } from './fork.ts'
 import { parseAgentText } from './packet.ts'
 import type { Queue } from './queue.ts'
@@ -285,7 +285,7 @@ export function createRuns(d: RunsDeps): Runs {
 
   /** A `done` or `say` sent again: where its run stands now, not what was hoped when it was taken. */
   const replay = (r: NonNullable<NonNullable<typeof q.j.receipts>[string]>, conn: Conn): Out | Promise<Out> => {
-    if (r.op === 'mute') { try { upsertConn(root, conn.agent, conn.session, { muted: true }) } catch { /* said as taken */ } return r.out }
+    if (r.op === 'mute') { try { patchConn(root, conn.id, conn.inc, { muted: true }) } catch { /* said as taken */ } return r.out }
     if (r.op === 'done' && r.batch) return deliveryOf(r.batch) ?? waitDelivery(r.batch)
     if (r.op === 'say' && r.batch) {
       const b = q.j.batches.find((x) => x.batchId === r.batch)
@@ -329,7 +329,7 @@ export function createRuns(d: RunsDeps): Runs {
       // journaled first; a restart between the two finds the receipt and mutes it then (replay)
       const out = { ok: true, text: 'Muted: this session takes no Jam work until it ends.' }
       await q.lock(() => { keep(req, out); q.persist() })
-      upsertConn(root, conn.agent, conn.session, { muted: true })
+      patchConn(root, conn.id, conn.inc, { muted: true })
       for (const b of open().filter((x) => x.offer?.conn === conn.id)) await withdraw(b.batchId, 'muted')
       return out
     }
@@ -436,7 +436,7 @@ export function createRuns(d: RunsDeps): Runs {
       if (kept) { const r = replay(kept, v.conn); if (r instanceof Promise) void r.then((o) => answer(root, v.req.id, o)); else answer(root, v.req.id, r); continue }
       let out: Out | { later: Promise<Out> }
       try { out = await ops(v.req, v.conn) } catch (e) { out = { ok: false, error: (e as Error).message } }
-      try { if (alive(v.conn)) upsertConn(root, v.conn.agent, v.conn.session, {}) } catch { /* it answered; seen is a nicety */ }
+      try { patchConn(root, v.conn.id, v.conn.inc, {}) } catch { /* it answered; seen is a nicety */ }
       if ('later' in out && out.later instanceof Promise) { const id = v.req.id; void out.later.then((o) => answer(root, id, o)) }
       else answer(root, v.req.id, out as Out)
     }
