@@ -198,7 +198,7 @@ export async function listenCommand(rootOpt?: string): Promise<void> {
   const session = String(input.session_id)
   const root = hookRoot(input, rootOpt)
   if (!root || await sessionsOff(root, env) || readPrefs(root).off?.claude) return
-  const { claimListener, readListener, writeListener, releaseListener } = await import('../server/jam/listener.ts')
+  const { claimListener, handOver, readListener, writeListener, releaseListener } = await import('../server/jam/listener.ts')
   const mode = typeof input.permission_mode === 'string' ? input.permission_mode : undefined
   // another listener already serves this Claude Code process: hand it this session id, and go
   const held = readListener(root, claudePid)
@@ -245,9 +245,10 @@ export async function listenCommand(rootOpt?: string): Promise<void> {
   process.on('SIGTERM', () => quit(!pidAlive(claudePid))); process.on('SIGINT', () => quit(!pidAlive(claudePid))); process.on('SIGHUP', () => quit(!pidAlive(claudePid)))
   /** Hand over to a fresh listener, and go only once it holds the lock (it read its whole input and started: a pipe
    *  takes 64 KB at once, and a new build can fail as it starts - a file it imports not there yet). One that dies, or
-   *  holds nothing in 30 s, never leaves the session with no listener: this one takes the lock back, keeps listening and
-   *  settles (to try again later). The look that calls it holds `busy` meanwhile, so no tick starts a second successor. */
-  const relisten = () => new Promise<void>((settle) => {
+   *  holds nothing in 30 s (stopped, and waited for until it is gone), never leaves the session with no listener: this
+   *  one takes the lock back, keeps listening and settles (to try again later). The look that calls it holds `busy`
+   *  meanwhile, so no tick starts a second successor. */
+  const relisten = async () => {
     releaseListener(root, claudePid, process.pid)
     let gone = false
     let child: ReturnType<typeof spawn> | null = null
@@ -258,18 +259,9 @@ export async function listenCommand(rootOpt?: string): Promise<void> {
       child.stdin!.on('error', () => { /* it died: seen as its exit */ })
       child.stdin!.end(JSON.stringify({ ...input, session_id: current, ...(conn.mode ? { permission_mode: conn.mode } : {}) }))
     } catch { gone = true }
-    const deadline = Date.now() + 30_000
-    const wait = setInterval(() => {
-      // the successor holds it (or a listener a hook started meanwhile): this one goes
-      const l = readListener(root, claudePid)
-      if (l && l.pid !== process.pid && pidAlive(l.pid)) process.exit(0)
-      if (!gone && Date.now() < deadline) return
-      clearInterval(wait)
-      if (!gone) try { child?.kill() } catch { /* gone */ }
-      if (!claimListener(root, claudePid, { pid: process.pid, session: current, ...(conn.mode ? { mode: conn.mode } : {}) })) process.exit(0)
-      settle()
-    }, 100)
-  })
+    const next = { pid: child?.pid, gone: () => gone, kill: (signal?: NodeJS.Signals) => { child?.kill(signal) } }
+    if (await handOver(root, claudePid, { pid: process.pid, session: current, ...(conn.mode ? { mode: conn.mode } : {}) }, next, 30_000)) process.exit(0)
+  }
   const look = async () => {
     // it ends with its Claude Code process (S29-5: an orphan would outlive the session)
     if (!pidAlive(claudePid) || (parent !== null && process.ppid !== parent) || !existsSync(join(root, 'design')) || readPrefs(root).off?.claude) return quit(!pidAlive(claudePid) || !!readPrefs(root).off?.claude)

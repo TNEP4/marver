@@ -34,6 +34,18 @@ describe('a More-work note that only approves', () => {
     // a skin tone or a variation selector on an approving emoji is not a word
     for (const t of ['👍🏽', 'looks good 👌🏻', 'great, thanks!', '"looks good" - thanks', 'Looks good :)']) expect(isApproval(t, 'Done'), t).toBe(true)
   })
+  it('the whole note must only approve - approval\'s own words can still ask for work or ask a question', () => {
+    // "look again" is a request made of approval's words: settled, it was lost
+    for (const t of ['Looks good, look again', 'looks good look again', 'Great, again', 'perfect, now this', 'Looks good, what is this', 'looks good is it done', 'good, is that all', 'looks good, like this'])
+      expect(isApproval(t, 'Done'), t).toBe(false)
+  })
+  it('a reply asks with a question mark of any script, or a question or offer left unpunctuated', () => {
+    for (const reply of ['Done - the header is blue. Want me to apply this to the footer？', 'Done - the header is blue. ¿Quieres el pie también', 'Done - the header is blue. Would you like me to apply this to the footer',
+      'Done - the header is blue. Should I do the footer too', 'Done - the header is blue. I can also do the footer if you’d like.', 'Done - the header is blue. Which shade for the footer'])
+      for (const t of ['yes, thanks', 'looks good', 'perfect']) expect(isApproval(t, reply), `${t} | ${reply}`).toBe(false)
+    expect(isApproval('yes, thanks', 'Done - the header is blue.')).toBe(true)
+    expect(isApproval('looks good', 'Done - the header is blue, the footer was already blue and I left it.')).toBe(true)
+  })
 })
 
 describe('the brief of a capture sent back', () => {
@@ -77,10 +89,21 @@ describe('the brief of a tag', () => {
     const p: any = { batchId: 'b-8', frames: ['d/a'], members: [{ id: 'm1', kind: 'comment', frames: ['d/a'], brief: { asks: [{ id: 'e-1', body: '@marver the title smaller' }], history: [] } }] }
     expect(sessionBrief(p, 'r-8.1')).toContain('- a tag on d/a: "the title smaller"')
   })
-  it('a capture\'s notes added in its read-back are the owner\'s words too - after what was said, or alone', () => {
+  it('a capture\'s notes added in its read-back are the owner\'s newest words - they lead, what was said after them; or alone', () => {
     const cap = (timeline: unknown[]) => ({ batchId: 'b-2', frames: ['d/a'], members: [{ id: 'm1', frames: ['d/a'], brief: { asks: [], capture: { record: { timeline }, added: [{ at: 9, text: 'and use the brand blue for the headline' }] } } }] }) as any
-    expect(sessionBrief(cap([{ at: 0, event: 'words', text: 'Make the intro slide calmer' }]), 'r-2.1')).toContain('a voice capture on d/a: "Make the intro slide calmer / and use the brand blue for the headline"')
+    const t = sessionBrief(cap([{ at: 0, event: 'words', text: 'Make the intro slide calmer' }]), 'r-2.1')
+    expect(t).toContain('a voice capture on d/a, the owner\'s newest words: "and use the brand blue for the headline"')
+    expect(t).toContain('(what they said before it: "Make the intro slide calmer")')
     expect(sessionBrief(cap([]), 'r-2.1')).toContain('a voice capture on d/a: "and use the brand blue for the headline"')
+  })
+  it('a correction added in the read-back is never clipped away behind long words said before it', () => {
+    // ⇧E, then 'Correction: use blue, not red' added: the brief led with red and cut blue off
+    const said = `Make the background red, ${'and tighten the spacing between every card of the pricing grid, '.repeat(5)}`
+    const p: any = { batchId: 'b-9', frames: ['d/a'], members: [{ id: 'm1', kind: 'capture', frames: ['d/a'], brief: { asks: [], history: [], capture: { record: { timeline: [{ at: 0, event: 'words', text: said }] }, added: [{ at: 9, text: 'Correction: use blue, not red' }] } } }] }
+    const t = sessionBrief(p, 'r-9.1')
+    expect(t).toMatch(/a voice capture on d\/a, the owner's newest words: "Correction: use blue, not red"/)
+    expect(t).toContain('Make the background red')
+    expect(t.indexOf('use blue')).toBeLessThan(t.indexOf('background red'))
   })
 })
 

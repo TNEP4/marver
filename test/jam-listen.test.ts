@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { connId, writeOffers } from '../src/server/jam/conn.ts'
-import { readListener } from '../src/server/jam/listener.ts'
+import { claimListener, handOver, readListener, releaseListener } from '../src/server/jam/listener.ts'
 import { installedBuild, packageOf } from '../src/cli/jam.ts'
 
 const CLI = join(__dirname, '..', 'src', 'cli', 'index.ts')
@@ -211,6 +211,31 @@ describe('jam listen', { timeout: 40_000 }, () => {
       rmSync(root, { recursive: true, force: true })
     }
   }, 90_000)
+})
+
+describe('a handover at its deadline', () => {
+  it('a successor that takes the lock just as it is stopped never leaves the session with no listener: the old one waits for it to be gone, then takes the lock back', async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'mv-jam-listen-')))
+    mkdirSync(join(root, 'design', '.local'), { recursive: true })
+    // a successor slow to start: it claims the lock between the old one's last look and its stop - the signal lands
+    // later (SIGTERM is asynchronous), and it lets the lock go as it dies
+    const slow = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+    let gone = false
+    slow.on('exit', () => { gone = true })
+    const next = { pid: slow.pid, gone: () => gone, kill: (signal?: NodeJS.Signals) => {
+      claimListener(root, process.pid, { pid: slow.pid!, session: 's' })
+      setTimeout(() => { releaseListener(root, process.pid, slow.pid!); slow.kill(signal) }, 300)
+    } }
+    try {
+      // it held nothing in time: stopped - and the old one listens on, holding the lock
+      expect(await handOver(root, process.pid, { pid: process.pid, session: 's' }, next, 300)).toBe(false)
+      expect(gone).toBe(true)
+      expect(readListener(root, process.pid)?.pid).toBe(process.pid)
+    } finally {
+      try { slow.kill('SIGKILL') } catch { /* gone */ }
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('the build a listener runs', () => {

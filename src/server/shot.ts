@@ -118,11 +118,13 @@ export async function shootFrame(opts: {
   // unsuffixed name whatever scale the capture settled on, so nothing an agent reads moves; an
   // explicit 2x that lands at 2x is the same picture, same name. Any other EXPLICIT scale gets its
   // own file (`@4x`), so it never overwrites the agent's default shot; when
-  // the capture had to step down, the name says both (`@4x-as-2x`) so `@4x` never lies.
+  // the capture had to step down, the name says both (`@4x-as-2x`) so `@4x` never lies. A capture's picture (its own
+  // lane, at the size the frame was seen) has a file of its own: a batch shooting the same frame on the shot lane
+  // meanwhile would otherwise report its size over the picture's pixels.
   const explicit = opts.scale !== undefined
   const relFor = (used: number) => {
     const tag = !explicit || (scale === 2 && used === 2) ? '' : used === scale ? `@${scale}x` : `@${scale}x-as-${used}x`
-    return `design/.local/shots/${slug(frameId)}--${theme}${tag}.png`
+    return `design/.local/shots/${slug(frameId)}--${theme}${tag}${opts.lane === 'picture' ? '.picture' : ''}.png`
   }
   const tmp = join(shotsDir, `.${slug(frameId)}--${theme}.${randomBytes(6).toString('hex')}.tmp.png`)
   const req: ShotRequest = { url: frameUrl(origin, frame, theme), width: plan.width, height: plan.initialHeight, out: tmp, fullHeight: plan.fullHeight, scale }

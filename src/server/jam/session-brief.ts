@@ -4,7 +4,7 @@
  * already knows the contract (design/AGENTS.md, which its CLAUDE.md or AGENTS.md brings in); the full rules -
  * captures, re-pins, shared files - stay in design/instructions/jam.md for when a run needs them.
  */
-import { requestWords } from './capture.ts'
+import { captureWords } from './capture.ts'
 import { packetPath, sanitize } from './packet.ts'
 import type { JobPacket, Msg } from './types.ts'
 
@@ -37,13 +37,21 @@ export function sessionBrief(packet: JobPacket, handle: string, as?: string): st
       const [lead, ...rest] = newest(own)
       return [`- ${head}a tag on ${where}, ${lead}`, ...rest]
     }
-    // what was said and noted, then the notes added in its read-back (⇧E's pause to add context)
-    const said = requestWords(m.brief.capture, ' / ')
-    if (!own.length) return [`- ${head}a voice capture on ${where}: ${quote(said)}`]
+    // the notes added in its read-back (⇧E's pause to add context) are its newest words: they come first, newest first,
+    // then what was said and noted - a correction is never clipped away behind long words said before it
+    const spoken = captureWords(m.brief.capture.record, m.brief.capture.edited)
+    const notes = (m.brief.capture.added ?? []).map((a) => ({ body: a.text.trim() }) as Msg).filter((a) => a.body)
+    const said = [...notes].reverse().map((a) => a.body).concat(spoken).filter(Boolean).join(' / ')
+    if (!own.length) {
+      if (!notes.length || !spoken) return [`- ${head}a voice capture on ${where}: ${quote(said)}`]
+      const [lead, ...rest] = newest(notes)
+      return [`- ${head}a voice capture on ${where}, ${lead}`, ...rest, `  (what they said before it: ${quote(spoken)})`]
+    }
     // the capture ran only if it was sent back with More work (its `mw-` note); a tag that joined it while it waited
     // (its frame reserved) is a clarification of a capture that never ran. A tag card on a capture's thread follows
-    // one that ran - unless that capture was kept or dropped (its note says so), or no run of it came back (failed)
-    const ran = m.kind === 'capture' ? own.some((a) => a.id?.startsWith('mw-')) : !m.brief.capture.note && !m.brief.capture.failed
+    // one that ran - unless that capture was kept or dropped (its note says so), no run of it came back (failed), or
+    // its runs only asked the owner a question (asked: the tag is the answer)
+    const ran = m.kind === 'capture' ? own.some((a) => a.id?.startsWith('mw-')) : !m.brief.capture.note && !m.brief.capture.failed && !m.brief.capture.asked
     // sent back again: the notes its last run already had are not asked again
     const before = new Set(ran ? (m.brief.follows?.asks ?? []).map((a) => a.id) : [])
     const fresh = own.filter((a) => !before.has(a.id))
@@ -51,7 +59,7 @@ export function sessionBrief(packet: JobPacket, handle: string, as?: string): st
     // a capture sent back with More work: the owner's newest words lead; what was first said is context
     if (ran) return [`- ${head}more work on ${where}, ${lead}`, ...rest, `  (the capture it follows, done before: ${quote(said, 160)})`]
     if (m.brief.capture.note) return [`- ${head}a tag on ${where}, ${lead}`, ...rest, `  (the capture on its thread, ${m.brief.capture.note}: ${quote(said, 160)})`]
-    return [`- ${head}a voice capture on ${where}, ${lead}`, ...rest, `  The capture they add to - ${m.brief.capture.failed ? 'its run failed, not done' : 'not run yet'}, do it too: ${quote(said)}`]
+    return [`- ${head}a voice capture on ${where}, ${lead}`, ...rest, `  The capture they add to - ${m.brief.capture.failed ? 'its run failed, not done' : m.brief.capture.asked ? 'its run only asked them first, not done' : 'not run yet'}, do it too: ${quote(said)}`]
   })
   if (record) return [
     `Live Jam run ${handle} - the owner's request from the canvas.`,

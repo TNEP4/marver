@@ -404,6 +404,28 @@ describe('captures: review', () => {
     done()
   })
 
+  it('a tag answering a capture whose run only asked a question: its brief never calls the capture done - it is still to do', async () => {
+    const { root, dir, done } = setup()
+    const r = rec({ words: 'Redo the intro slide' })
+    // the capture's run changes nothing and asks; the answer's own run does the work
+    const jam = createJam(root, CFG, agent({ [r.id]: 'ask' }))
+    const a = await jam.capture(r)
+    await jam.act(r.id, a.card!.rev, 'confirm')
+    await jam.tick()
+    expect(card(jam, r.id).state).toBe('asks')
+    const id = `t-${Math.random().toString(36).slice(2)}`
+    appendEvents(dir, 'home', [{ id, ts: Date.now(), type: 'reply', commentId: `c-${id}`, parentId: `cap-${r.id}`, board: 'home', author: OWNER, body: '@marver yes, use blue' }])
+    record(root, 'home', id)
+    await jam.tick(); jam.stop()
+    const p = packets(root).at(-1)
+    expect([p.members[0].kind, p.members[0].brief.capture.record.id]).toEqual(['comment', r.id])
+    const t = sessionBrief(p, 'r-1.1')
+    expect(t).not.toMatch(/done before|more work on|failed/)
+    expect(t).toMatch(/the owner's newest words: "yes, use blue"/)
+    expect(t).toMatch(/asked[^\n]*not done[^\n]*do it too[^\n]*Redo the intro slide/)
+    done()
+  })
+
   it('the lane\'s run starts with the first capture and ends once every one is done, kept or dropped', async () => {
     const { root, done } = setup()
     const jam = createJam(root, CFG, agent())
