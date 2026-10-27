@@ -199,7 +199,8 @@ function WhoWorks({ fallback }: { fallback: string }) {
     : { line: forks ? 'A copy of your last session' : `A background agent - ${name(agent ?? '')}`, small: 'Open your agent here and it joins' }
   // several sessions: the next one takes the work (one click), until it ends
   const next = sessions.length > 1 ? sessions[(sessions.findIndex((x) => x.selected) + 1) % sessions.length] : undefined
-  const trust = info?.connectors?.some((c) => c.agent === 'codex' && c.state === 'installed') && !sessions.some((x) => x.agent === 'codex')
+  // the Codex hint only for someone who is not working in another session now: it is noise to a Claude Code user
+  const trust = !sel && info?.connectors?.some((c) => c.agent === 'codex' && c.state === 'installed') && !sessions.some((x) => x.agent === 'codex')
   const set = useJamQueue.getState().setPrefs
   const sw = (on: boolean) => <span className="v">{on ? 'On' : 'Off'}<i className={`jm-switch${on ? ' on' : ''}`} /></span>
   return (<>
