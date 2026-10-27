@@ -161,6 +161,15 @@ const READY_LINE = (n: number, as?: string, latest?: Offers['latest']) => `Live 
 export const offersText = (o: Offers, as?: string): string =>
   [o.n > 0 ? READY_LINE(o.n, as, o.latest) : '', o.stop?.length ? STOP_LINE(o.stop, as) : '', o.resume?.length ? RESUME_LINE(o.resume, as) : ''].filter(Boolean).join(' ')
 
+/** `text`, unless it is the line posted before it - then that line's "(again)" count, one more. Claude Code drops a
+ *  message identical to the one before it from the same sender, so the listener checks what it actually posted. */
+export function unlike(text: string, prev?: string): string {
+  if (!text || text !== prev) return text
+  const m = /^(.*) \(again(?: ×(\d+))?\)$/s.exec(text)
+  const times = m ? Number(m[2] ?? 1) + 1 : 1
+  return `${m ? m[1] : text} (again${times > 1 ? ` ×${times}` : ''})`
+}
+
 /** The listener's line for a new gen: `offersText`, ending "(again)" when it reads as the line before it did (a run
  *  offered back, a second "give it back") - Claude Code drops a message identical to the one before it. */
 export function pingLine(o: Offers, prev?: string): string {

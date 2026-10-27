@@ -93,7 +93,8 @@ export const useJamQueue = create<QueueState>((set, get) => {
         if (!res.ok) return false
         const v = await res.json()
         get().apply(v)
-        return Array.isArray((v as { cards?: unknown } | null)?.cards)
+        // the canvas's stand-in while its queue is not up (a restart) is not a view of it - nothing to go by
+        return Array.isArray((v as { cards?: unknown } | null)?.cards) && !(v as { unavailable?: unknown }).unavailable
       } catch { return false /* no queue: no icons */ }
     },
     apply(view) {

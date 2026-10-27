@@ -14,7 +14,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync, statSync, watch } from 'node:fs'
 import { createConnection } from 'node:net'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
-import { connId, endConn, listConns, offersFile, offersText, pidAlive, readConn, readOffers, readPrefs, upsertConn, type Conn, type ConnAgent } from '../server/jam/conn.ts'
+import { connId, endConn, listConns, offersFile, offersText, pidAlive, unlike, readConn, readOffers, readPrefs, upsertConn, type Conn, type ConnAgent } from '../server/jam/conn.ts'
 import { request, type Op } from '../server/jam/transport.ts'
 import { NAME } from './name.ts'
 
@@ -198,6 +198,7 @@ export async function listenCommand(rootOpt?: string): Promise<void> {
   // that is merely stopped (a signal, another one taking over) leaves it, so the runs it holds keep their key
   const quit = (over: boolean) => { if (over) endConn(root, conn.id, conn.inc); releaseListener(root, claudePid, process.pid); process.exit(0) }
   process.on('SIGTERM', () => quit(!pidAlive(claudePid))); process.on('SIGINT', () => quit(!pidAlive(claudePid))); process.on('SIGHUP', () => quit(!pidAlive(claudePid)))
+  let delivered = ''   // the last line that reached the inbox
   const look = async () => {
     // it ends with its Claude Code process (S29-5: an orphan would outlive the session)
     if (!pidAlive(claudePid) || process.ppid !== parent || !existsSync(join(root, 'design')) || readPrefs(root).off?.claude) return quit(!pidAlive(claudePid) || !!readPrefs(root).off?.claude)
@@ -212,9 +213,10 @@ export async function listenCommand(rootOpt?: string): Promise<void> {
     const o = readOffers(root, conn.id)
     if (!o || o.gen <= posted) return
     // the canvas's line as it wrote it (a canvas before 0.28 wrote none: put together here), while anything waits
-    const text = o.n || o.stop?.length || o.resume?.length ? o.line ?? offersText(o) : ''
+    // never the line it posted last (the canvas's "(again)" counts what it wrote; gens it skipped are not what it posted)
+    const text = unlike(o.n || o.stop?.length || o.resume?.length ? o.line ?? offersText(o) : '', delivered)
     // marked said only once it reached the inbox: a failed post is tried again at the next look
-    if (!text || await post(text)) posted = o.gen
+    if (!text || await post(text)) { posted = o.gen; if (text) delivered = text }
   }
   let busy = false
   const tick = () => { if (busy) return; busy = true; look().catch(() => {}).finally(() => { busy = false }) }

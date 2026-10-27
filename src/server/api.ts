@@ -1036,7 +1036,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         // the cards, for the status icons by a tag's time (and, with captures, the lane) - owner only
         if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
         const { jamLive } = await import('./jam/live.ts')
-        return json(res, 200, jamLive.view?.() ?? { agent: null, cards: [] })
+        return json(res, 200, jamLive.view?.() ?? { agent: null, cards: [], unavailable: true })   // not a view: a page waiting on a card asks again
       }
       if (path === 'jam/card' && req.method === 'POST') {
         // one move on one card: { id, rev, action } - applied only at that rev; anything else is refused

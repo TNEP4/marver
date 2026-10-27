@@ -1461,6 +1461,36 @@ describe('captures in the browser: the first trial', () => {
     await decide(b, 'good')
   }, 180_000)
 
+  skippable('an E capture whose queue refresh hangs: a push that brings its card ends the wait - Sending never outlives it', async () => {
+    agentMode({})
+    await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const b = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('a refresh that never answers'), 1`)
+    // the page's queue refreshes hang (never answered); the pushes are held back, the last one kept
+    await browser!.eval(s, `(() => {
+      const q = window.__mvJamQueue, real = q.getState().apply
+      const w = window.__qHang = { real, hold: true, last: null }
+      q.setState({ apply: (v) => { if (w.hold) w.last = v; else real(v) } })
+      const f = window.fetch
+      window.fetch = (u, init) => (w.hold && String(u).includes('/api/jam/queue') && !(init && init.method && init.method !== 'GET') ? new Promise(() => {}) : f(u, init))
+      return 1 })()`)
+    try {
+      await key('e')
+      await until(`!!window.__mvJamCapture.getState().sealed.find((x) => x.id === ${JSON.stringify(b)})?.card`, 40_000)
+      await until(`!!window.__qHang.last?.cards?.some((c) => c.id === ${JSON.stringify(b)})`, 10_000)
+      await sleep(1_000)
+      expect(await browser!.eval(s, `window.__mvJamCapture.getState().unsent`)).toContain(b)
+      // the push that carries the card lands while the refresh still hangs: the wait ends on it
+      await browser!.eval(s, `(() => { const w = window.__qHang; w.hold = false; window.__mvJamQueue.setState({ apply: w.real }); w.real(w.last); return 1 })()`)
+      await until(`!window.__mvJamCapture.getState().unsent.length && document.querySelector('.jm-lane [data-tile="${b}"] .m')?.textContent !== 'Sending'`, 5_000)
+    } finally {
+      await browser!.eval(s, `(() => { const w = window.__qHang; w.hold = false; window.__mvJamQueue.setState({ apply: w.real }); void window.__mvJamQueue.getState().load(); return 1 })()`)
+    }
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((x) => x.id === ${JSON.stringify(b)} && x.state === 'review')`, 90_000)
+    await decide(b, 'good')
+  }, 150_000)
+
   skippable('a More-work note always goes to the canvas as More work: "yes, thanks" after a reply that asked runs again - never settled as Looks good', async () => {
     agentMode({ question: 'Want me to apply this to the footer?' })
     await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)

@@ -881,14 +881,17 @@ async function upload(record: CaptureRecord, leaving = false): Promise<void> {
 async function untilQueued(id: string): Promise<void> {
   const q = (await import('./jam-queue.ts')).useJamQueue
   const held = () => !!q.getState().cards?.some((c) => c.id === id)
-  for (let wait = 2_000; !held(); wait = Math.min(wait * 2, 10_000)) {
-    if (await q.getState().load()) return
-    await new Promise<void>((res) => {
-      const done = () => { clearTimeout(t); un(); res() }
-      const t = setTimeout(done, wait)
-      const un = q.subscribe(() => { if (held()) done() })
-    })
-  }
+  if (held()) return
+  // a push that brings the card ends the wait at any moment - a load that hangs never holds it up
+  let pushed = (): void => {}
+  const push = new Promise<true>((res) => { pushed = () => res(true) })
+  const un = q.subscribe(() => { if (held()) pushed() })
+  try {
+    for (let wait = 2_000; !held(); wait = Math.min(wait * 2, 10_000)) {
+      if (await Promise.race([q.getState().load(), push])) return
+      await Promise.race([push, new Promise<void>((res) => setTimeout(res, wait))])
+    }
+  } finally { un() }
 }
 
 /** Was this capture (recording, sealing or not sent yet) stopped to review (⇧E, J)? E's never was. */

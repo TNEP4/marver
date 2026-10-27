@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
-import { connId, pingLine, writeOffers } from '../src/server/jam/conn.ts'
+import { connId, pingLine, unlike, writeOffers } from '../src/server/jam/conn.ts'
 import { readListener } from '../src/server/jam/listener.ts'
 
 const CLI = join(__dirname, '..', 'src', 'cli', 'index.ts')
@@ -71,7 +71,12 @@ describe('jam listen', { timeout: 40_000 }, () => {
       writeOffers(root, id, { n: 1, gen: 14, line: 'Live Jam: new request from your Marver canvas - "Session record" (bbbb2222) - run `npx marver jam next`.' })
       expect(await until(() => got.length === 4)).toBe(true)
       expect(got[3]).toContain('"Session record" (bbbb2222)')
-      expect(got.length).toBe(4)
+      // the canvas wrote a stop between (the listener never read it), then the same line it posted last: it is
+      // never posted as it was - Claude Code would drop it
+      writeOffers(root, id, { n: 1, gen: 16, line: 'Live Jam: new request from your Marver canvas - "Session record" (bbbb2222) - run `npx marver jam next`.' })
+      expect(await until(() => got.length === 5)).toBe(true)
+      expect(got[4]).toBe(`${got[3]} (again)`)
+      expect(got.length).toBe(5)
     } finally {
       try { p.kill() } catch { /* gone */ }
       server.close()
@@ -92,6 +97,11 @@ describe('the line the canvas writes', () => {
     const back = pingLine({ n: 0, gen: 2, resume: ['r-aaaa1111.1'] })
     expect(back).toBe('Live Jam: the owner gave r-aaaa1111.1 back to you - carry on, and run `npx marver jam progress r-aaaa1111.1`.')
     expect(pingLine({ n: 0, gen: 3, resume: ['r-aaaa1111.1'] }, back)).toBe(`${back} (again)`)
+    // the listener's own check, against what it posted: the same line again, counted
+    expect(unlike(a, a)).toBe(`${a} (again)`)
+    expect(unlike(`${a} (again)`, `${a} (again)`)).toBe(`${a} (again ×2)`)
+    expect(unlike(a, `${a} (again)`)).toBe(a)
+    expect(unlike('', '')).toBe('')
     expect(pingLine({ ...one, stop: ['r-cccc3333.2'] })).toBe(`${a} Live Jam: the owner moved r-cccc3333.2 elsewhere - stop working on it and run \`npx marver jam release r-cccc3333.2\`.`)
   })
 })
