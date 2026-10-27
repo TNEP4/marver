@@ -163,7 +163,10 @@ describe('the Jam session in the browser', () => {
     expect(await browser!.eval(s, `document.querySelector('[data-jam-button]')?.getAttribute('data-jam-button')`)).toBe('idle')
     await key('j')
     await until(`!!document.querySelector('[data-jam-sheet="start"]')`, 5000)
-    expect(await browser!.eval(s, `document.querySelector('[data-jam-sheet="start"]').textContent`)).toMatch(/Hands work to.*Claude Code/)
+    // who works (spec 29b): no session open here - a copy of your last one, or a background agent; and the three switches
+    const sheet = await browser!.eval(s, `document.querySelector('[data-jam-sheet="start"]').textContent`) as string
+    expect(sheet).toMatch(/A copy of your last session|A background agent - Claude Code/)
+    expect(sheet).toMatch(/MCP servers and skills.*Your session's context.*Collaborators' comments/)
     await hover('[data-jam-shortcuts]')
     await until(`/End the session\\s*J/.test(document.querySelector('.jm-sctip')?.textContent ?? '')`, 3000)
     await pic('1-start')
