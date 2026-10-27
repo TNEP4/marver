@@ -92,9 +92,11 @@ export const useJamQueue = create<QueueState>((set, get) => {
         const res = await api('jam/queue', { headers: { 'x-mv-c': csrf() } })
         if (!res.ok) return false
         const v = await res.json()
+        // the canvas's stand-in while its queue is not up (a restart) is not a view of it: never applied - it would
+        // empty the lane and end the session here (its microphone too) over what a push just brought
+        if ((v as { unavailable?: unknown } | null)?.unavailable) return false
         get().apply(v)
-        // the canvas's stand-in while its queue is not up (a restart) is not a view of it - nothing to go by
-        return Array.isArray((v as { cards?: unknown } | null)?.cards) && !(v as { unavailable?: unknown }).unavailable
+        return Array.isArray((v as { cards?: unknown } | null)?.cards)
       } catch { return false /* no queue: no icons */ }
     },
     apply(view) {

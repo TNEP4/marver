@@ -873,7 +873,7 @@ async function upload(record: CaptureRecord, leaving = false): Promise<void> {
   }
 }
 
-/** Until the page's queue holds this card: loaded now, then again after 2, 4, 8 s and every 10 s on, unless a push
+/** Until the page's queue holds this card: loaded now (a load that hangs is given 10 s), then again after 2, 4, 8 s and every 10 s on, unless a push
  *  brings it first - never given up on, so what stands for it never leaves the lane before its card is there. Any
  *  answer to a load ends it too: built after the canvas took the card, a view shows it (every card waiting or under way
  *  is shown, any other for a minute after it last changed) - unless it was finished elsewhere and has left the lane
@@ -887,9 +887,11 @@ async function untilQueued(id: string): Promise<void> {
   const push = new Promise<true>((res) => { pushed = () => res(true) })
   const un = q.subscribe(() => { if (held()) pushed() })
   try {
+    const after = <T,>(ms: number, v: T) => new Promise<T>((res) => setTimeout(() => res(v), ms))
     for (let wait = 2_000; !held(); wait = Math.min(wait * 2, 10_000)) {
-      if (await Promise.race([q.getState().load(), push])) return
-      await Promise.race([push, new Promise<void>((res) => setTimeout(res, wait))])
+      // a refresh that hangs is given 10 s, then the next one is asked - it never stops the retries
+      if (await Promise.race([q.getState().load(), push, after(10_000, false)])) return
+      await Promise.race([push, after(wait, undefined)])
     }
   } finally { un() }
 }
