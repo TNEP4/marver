@@ -874,13 +874,15 @@ async function upload(record: CaptureRecord, leaving = false): Promise<void> {
 }
 
 /** Until the page's queue holds this card: loaded now, then again after 2, 4, 8 s and every 10 s on, unless a push
- *  brings it first - never given up on, so what stands for it never leaves the lane before its card is there. */
+ *  brings it first - never given up on, so what stands for it never leaves the lane before its card is there. Any
+ *  answer to a load ends it too: built after the canvas took the card, a view shows it (every card waiting or under way
+ *  is shown, any other for a minute after it last changed) - unless it was finished elsewhere and has left the lane
+ *  (another tab reviewed it while this page's refreshes failed), and then there is nothing left to wait for. */
 async function untilQueued(id: string): Promise<void> {
   const q = (await import('./jam-queue.ts')).useJamQueue
   const held = () => !!q.getState().cards?.some((c) => c.id === id)
   for (let wait = 2_000; !held(); wait = Math.min(wait * 2, 10_000)) {
-    await q.getState().load()
-    if (held()) return
+    if (await q.getState().load()) return
     await new Promise<void>((res) => {
       const done = () => { clearTimeout(t); un(); res() }
       const t = setTimeout(done, wait)

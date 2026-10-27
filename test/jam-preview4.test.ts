@@ -48,6 +48,22 @@ describe('the brief of a run (jam next)', () => {
     const long = sessionBrief(capture([{ id: 'mw-cap-1-4', body: said }], [{ at: 0, event: 'words', text: 'Redo the intro slide' }]), 'r-9.2')
     expect(long).toContain(said.trim())
   })
+  it('a capture resumed after its read-back: what was said after the pause is newer than the notes written in it', () => {
+    // ⇧E on a long capture, 'make it blue' written in its read-back, Resume, 'Correction: use green', E. The resume began
+    // at T (the new capture's id); the carried steps sit before `resumes.at` on the record's clock, the new ones after
+    const T = 1_761_600_000_000, said = `Make the hero bigger, ${'and tighten the spacing between every card of the pricing grid, '.repeat(30)}`
+    const resumed = (added: { at: number; text: string }[], edited?: string): any => ({ batchId: 'b-1', frames: ['d/a'], members: [{ id: 'm1', kind: 'capture', frames: ['d/a'], brief: { asks: [], history: [],
+      capture: { record: { id: `cap-${T}-abcd`, context: { resumes: { id: 'cap-1-prev', at: 5000 } }, timeline: [{ at: 1000, event: 'words', text: said }, { at: 6000, event: 'words', text: 'Correction: use green' }] }, added, ...(edited !== undefined ? { edited } : {}) } } }] })
+    const t = sessionBrief(resumed([{ at: T - 60_000, text: 'make it blue' }]), 'r-9.3')
+    expect(t).toMatch(/newest first:\n {2}the capture, resumed: "Correction: use green"\n {2}a read-back note: "make it blue"\n {2}the capture: "Make the hero bigger, /)
+    // a note written in the resumed capture's own read-back (⇧E again) is newer still
+    expect(sessionBrief(resumed([{ at: T - 60_000, text: 'make it blue' }, { at: T + 90_000, text: 'and the footer' }]), 'r-9.4'))
+      .toMatch(/newest first:\n {2}a read-back note: "and the footer"\n {2}the capture, resumed: "Correction: use green"\n {2}a read-back note: "make it blue"\n/)
+    // an edit stands for the capture's words whole: newer than the notes written before the resume
+    expect(sessionBrief(resumed([{ at: T - 60_000, text: 'make it blue' }], 'Make the hero bigger\nCorrection: use green'), 'r-9.5'))
+      .toMatch(/newest first:\n {2}the capture: "Make the hero bigger Correction: use green"\n {2}a read-back note: "make it blue"$/m)
+    expect(t).not.toMatch(LABELS)
+  })
 })
 
 describe('the brief of a session record', () => {

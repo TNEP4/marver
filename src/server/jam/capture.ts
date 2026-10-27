@@ -165,6 +165,10 @@ export function requestWords(p: { record: CaptureRecord; edited?: string; added?
 export function wordsSince(r: CaptureRecord, since: number): string {
   return speechLines(r.timeline.filter((s) => s.at > since).flatMap((s) => (s.event === 'words' || s.event === 'note' ? [{ kind: s.event, text: s.text }] : [])))
 }
+/** The words and notes up to `until` - a resumed capture's carried part (what `wordsSince` leaves out), in time order. */
+export function wordsUntil(r: CaptureRecord, until: number): string {
+  return speechLines(r.timeline.filter((s) => s.at <= until).flatMap((s) => (s.event === 'words' || s.event === 'note' ? [{ kind: s.event, text: s.text }] : [])))
+}
 
 /** Does `next` continue `prev` (Resume)? Every step of `prev`, in order, moved by one offset, comes
  *  first, all before `at`; then only steps after `at`; and every picture of `prev` is kept. */

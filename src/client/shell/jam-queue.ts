@@ -48,7 +48,8 @@ interface QueueState {
   /** the coding-agent sessions connected to this repo, and Jam's settings here (spec 29b) */
   sessions: JamSession[]
   settings: JamSettings | null
-  load(): Promise<void>
+  /** resolves true once the canvas answered with a view (applied, or overtaken by a newer one) - one built after the call */
+  load(): Promise<boolean>
   apply(view: unknown): void
   /** A session this page ended (the server said so): gone at once, and no view shows it again */
   forget(session: string): void
@@ -86,11 +87,14 @@ export const useJamQueue = create<QueueState>((set, get) => {
     sessions: [],
     settings: null,
     async load() {
-      if (PUBLISHED) return
+      if (PUBLISHED) return false
       try {
         const res = await api('jam/queue', { headers: { 'x-mv-c': csrf() } })
-        if (res.ok) get().apply(await res.json())
-      } catch { /* no queue: no icons */ }
+        if (!res.ok) return false
+        const v = await res.json()
+        get().apply(v)
+        return Array.isArray((v as { cards?: unknown } | null)?.cards)
+      } catch { return false /* no queue: no icons */ }
     },
     apply(view) {
       const v = (view && typeof view === 'object' ? view : {}) as { cards?: unknown; agent?: unknown }

@@ -21,7 +21,8 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 - **Two ways to stop a capture.** `E` stops it and queues it - the agent starts on it, nothing to confirm: its tile
   goes from Capturing to Sending to Queued or working, and nothing opens, flashes "To confirm" or moves the canvas (the
   canvas makes its card queued in one step - a first build showed it as a draft for a moment and opened its read-back;
-  the Sending tile now stays until the queued card is on the lane, and a review it was made over closes).
+  the Sending tile now stays until the queued card is on the lane - or the canvas answers without it, finished in
+  another tab - and a review it was made over closes).
   `⇧E` (Stop to review) opens its read-back to check it and add notes first, as before. Both are on the capture bar; `J`
   during a capture still stops it to review. A capture the queue cannot take stays on the lane as a draft and one line
   says why. `jam.capture` is no longer used.
@@ -39,7 +40,8 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   again (a run offered back, a second "give it back") now ends "(again)". The canvas writes the whole line and Claude
   Code's listener posts it as written: an upgrade changes the words at once, and the listener never restarts. `jam next` lists
   your words for the run newest first - the newest whole, each earlier one short, each named (a tag, a read-back note,
-  a More-work note, the capture) - and points at the packet for the thread and what earlier runs did; a session
+  a More-work note, the capture; a capture resumed after its read-back is two parts, what you said after the pause
+  above the notes written in it) - and points at the packet for the thread and what earlier runs did; a session
   record's brief names its file and your instructions.
 - **The session record goes to your session too**, like any request, instead of straight to a copy (nothing else does
   once the session ended); and a copy that runs what your session did not take says so: "Yours was busy · a copy is

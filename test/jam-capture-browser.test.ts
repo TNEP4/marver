@@ -1422,6 +1422,45 @@ describe('captures in the browser: the first trial', () => {
     await decide(b, 'good')
   }, 180_000)
 
+  skippable('an E capture the canvas took whose card this page never saw (another tab finished it while the refreshes failed, and it left the lane): its Sending tile goes at the first answer - it never stays for good', async () => {
+    agentMode({})
+    await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const b = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('finished in another tab'), 1`)
+    // down: the refreshes answer 500 and no push is applied. gone: they answer, without this card - as the canvas shows
+    // the queue a minute after another tab settled it. live: as it is
+    await browser!.eval(s, `(() => {
+      const b = ${JSON.stringify(b)}
+      const q = window.__mvJamQueue, real = q.getState().apply
+      const w = window.__qGone = { real, mode: 'down' }
+      const strip = (v) => (v && Array.isArray(v.cards) ? { ...v, cards: v.cards.filter((c) => c.id !== b) } : v)
+      q.setState({ apply: (v) => { if (w.mode !== 'down') real(w.mode === 'gone' ? strip(v) : v) } })
+      const f = window.fetch
+      window.fetch = async (u, init) => {
+        if (w.mode === 'live' || !String(u).includes('/api/jam/queue') || (init && init.method && init.method !== 'GET')) return f(u, init)
+        if (w.mode === 'down') return new Response('{}', { status: 500 })
+        const res = await f(u, init)
+        return new Response(JSON.stringify(strip(await res.json())), { status: res.status, headers: { 'content-type': 'application/json' } })
+      }
+      return 1 })()`)
+    try {
+      await key('e')
+      await until(`!!window.__mvJamCapture.getState().sealed.find((x) => x.id === ${JSON.stringify(b)})?.card`, 40_000)
+      await sleep(3_000)
+      expect(await browser!.eval(s, `({ unsent: window.__mvJamCapture.getState().unsent, m: document.querySelector('.jm-lane [data-tile="${b}"] .m')?.textContent ?? null })`))
+        .toEqual({ unsent: [b], m: 'Sending' })
+      await browser!.eval(s, `window.__qGone.mode = 'gone', 1`)
+      // the next refresh answers (10 s at most): nothing holds the card any more, so nothing waits for it
+      await until(`!window.__mvJamCapture.getState().unsent.length && !document.querySelector('.jm-lane [data-tile="${b}"]')`, 15_000)
+    } finally {
+      // live again, and loaded once: its run may have reached review while the views left it out (no push follows)
+      await browser!.eval(s, `(() => { const w = window.__qGone; w.mode = 'live'; window.__mvJamQueue.setState({ apply: w.real }); void window.__mvJamQueue.getState().load(); return 1 })()`)
+    }
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((x) => x.id === ${JSON.stringify(b)} && x.state === 'review')`, 90_000)
+    await decide(b, 'good')
+  }, 180_000)
+
   skippable('a More-work note always goes to the canvas as More work: "yes, thanks" after a reply that asked runs again - never settled as Looks good', async () => {
     agentMode({ question: 'Want me to apply this to the footer?' })
     await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)

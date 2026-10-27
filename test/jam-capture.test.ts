@@ -864,6 +864,24 @@ describe('captures: the first trial (Resume, Rename, the words)', () => {
     done()
   })
 
+  it('a correction said after a resume leads jam next\'s brief, before the read-back note written in the pause (never clipped behind it)', async () => {
+    const { root, done } = setup()
+    const jam = createJam(root, { ...CFG, concurrency: 1 }, agent())
+    const a = rec({ words: `Make the hero bigger, ${'and tighten the spacing between every card of the pricing grid, '.repeat(6)}` })
+    const ca = await jam.capture(a)
+    // ⇧E, then 'make it blue' written in its read-back (the page's clock), then Resume - a new id, made after the note
+    await jam.act(a.id, ca.card!.rev, 'note', JSON.stringify({ id: 'n-blue01', text: 'make it blue', order: Date.now() - 5000 }))
+    const at = a.timeline[a.timeline.length - 1].at + 1
+    const b = rec({ context: { canvas: 'test', board: 'home', resumes: { id: a.id, at } } as any, timeline: [...a.timeline, { at: at + 5, event: 'words', text: 'Correction: use green' }] })
+    const cb = await jam.capture(b)
+    expect(card(jam, b.id).payload.added.map((x: any) => x.text)).toEqual(['make it blue'])
+    await jam.act(b.id, cb.card!.rev, 'confirm')
+    await jam.tick(); jam.stop()
+    const t = sessionBrief(packets(root).at(-1), 'r-1.1')
+    expect(t).toMatch(/newest first:\n {2}the capture, resumed: "Correction: use green"\n {2}a read-back note: "make it blue"\n {2}the capture: "Make the hero bigger, /)
+    done()
+  })
+
   it('Resume carries a phrase\'s words moved with it (each word by the same offset, to fractions of a millisecond)', async () => {
     const { root, done } = setup()
     const jam = createJam(root, CFG, agent())

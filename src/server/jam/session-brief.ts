@@ -4,20 +4,31 @@
  * already knows the contract (design/AGENTS.md, which its CLAUDE.md or AGENTS.md brings in); the full rules -
  * captures, re-pins, shared files - stay in design/instructions/jam.md for when a run needs them.
  */
-import { captureWords } from './capture.ts'
+import { captureWords, madeOf, wordsSince, wordsUntil } from './capture.ts'
 import { packetPath, sanitize } from './packet.ts'
 import type { JobPacket, PacketMember } from './types.ts'
 
 const clip = (s: string, n: number) => { const t = sanitize(s, 4096).replace(/^\s*@marver\b\s*/i, '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t }
 
 /** The owner's words for a run, newest first, each with its kind - never what became of them (whether an earlier run
- *  did them is in the packet). Oldest to newest they come as the capture, its read-back notes, then tags and More-work
- *  notes in their order. */
-const wordsOf = (m: PacketMember): { kind: string; text: string }[] => [
-  ...(m.brief.capture ? [{ kind: 'the capture', text: captureWords(m.brief.capture.record, m.brief.capture.edited) }] : []),
-  ...(m.brief.capture?.added ?? []).map((a) => ({ kind: 'a read-back note', text: a.text })),
-  ...m.brief.asks.map((a) => ({ kind: a.id?.startsWith('mw-') ? 'a More-work note' : 'a tag', text: a.body })),
-].filter((w) => clip(w.text, Infinity)).reverse()
+ *  did them is in the packet). Oldest to newest they come in the order they were said: the capture, its read-back
+ *  notes, then tags and More-work notes in their order. A capture resumed after its read-back (⇧E, a note, Resume) is
+ *  two parts - what was said before the pause, the notes written in it, then what was said after - so a correction
+ *  spoken after the resume leads; edited, its edit stands for both parts, after those notes. A note is before the
+ *  resume when its time is before the resumed capture's id (both the page's wall clock; the record's steps run on
+ *  another, so they are split by `resumes.at` alone). */
+const wordsOf = (m: PacketMember): { kind: string; text: string }[] => {
+  const c = m.brief.capture
+  const rs = c?.record.context?.resumes
+  const from = c && rs ? madeOf(c.record.id) : 0
+  const notes = (c?.added ?? []).map((a) => ({ kind: 'a read-back note', text: a.text, early: a.at < from }))
+  const early = notes.filter((n) => n.early), late = notes.filter((n) => !n.early)
+  const said = !c ? [] : rs && c.edited === undefined
+    ? [{ kind: 'the capture', text: wordsUntil(c.record, rs.at) }, ...early, { kind: 'the capture, resumed', text: wordsSince(c.record, rs.at) }]
+    : [...early, { kind: 'the capture', text: captureWords(c.record, c.edited) }]
+  return [...said, ...late, ...m.brief.asks.map((a) => ({ kind: a.id?.startsWith('mw-') ? 'a More-work note' : 'a tag', text: a.body }))]
+    .filter((w) => clip(w.text, Infinity)).reverse()
+}
 
 export function sessionBrief(packet: JobPacket, handle: string, as?: string): string {
   const jam = (op: string, rest = '') => `npx marver jam ${op} ${handle}${as ? ` --as ${as}` : ''}${rest}`
