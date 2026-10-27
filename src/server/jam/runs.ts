@@ -13,6 +13,7 @@
  * Every transition looks the batch up and checks it again under the queue's lock: a check made before
  * the lock is a guess.
  */
+import { captureWords } from './capture.ts'
 import type { JamConfig } from '../config.ts'
 import { alive, closeConn, eligible, listConns, patchConn, pidAlive, readConn, readOffers, readPrefs, upsertConn, writeOffers, type Conn, type ConnAgent } from './conn.ts'
 import { forkable, newestAny, transcriptOf, type ForkAgent } from './fork.ts'
@@ -170,10 +171,10 @@ export function createRuns(d: RunsDeps): Runs {
 
   /** Write every connection's offers file: how many runs wait for it, the runs it must let go or carry on with, and
    *  a new generation when any of that is new. */
-  /** What a run is called in a ping: its card's name, else the owner's words, clipped. */
+  /** What a run is called in a ping: its card's name, else the owner's words (a capture's first words - its name comes later), clipped. */
   const titleOf = (b: Batch): string => {
     const c = q.j.cards.find((x) => x.id === b.members[0]?.card)
-    const words = c?.name ?? c?.autoName ?? b.members[0]?.brief?.asks?.[0]?.body ?? (c?.kind === 'wrapup' ? 'Session record' : 'a request')
+    const words = c?.name ?? c?.autoName ?? b.members[0]?.brief?.asks?.[0]?.body ?? (b.members[0]?.brief?.capture ? captureWords(b.members[0].brief.capture.record, b.members[0].brief.capture.edited) || undefined : undefined) ?? (c?.kind === 'wrapup' ? 'Session record' : 'a request')
     const t = String(words).replace(/@marver\b/gi, '').replace(/\s+/g, ' ').trim() || 'a request'
     return t.length > 60 ? `${t.slice(0, 59)}…` : t
   }
