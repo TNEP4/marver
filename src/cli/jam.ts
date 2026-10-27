@@ -64,10 +64,12 @@ function ancestor(name: RegExp, from = process.ppid): number | undefined {
   return undefined
 }
 
-const STOP_LINE = (handles: string[], as?: string) => `Marver Jam: the owner moved ${handles.join(', ')} to another runner - stop working on ${handles.length === 1 ? 'it' : 'them'} and run ${handles.map((h) => `\`npx ${NAME} jam release ${h}${as ? ` --as ${as}` : ''}\``).join(', ')}.`
-const RESUME_LINE = (handles: string[], as?: string) => `Marver Jam: the owner gave ${handles.join(', ')} back to you - carry on, and run ${handles.map((h) => `\`npx ${NAME} jam progress ${h}${as ? ` --as ${as}` : ''}\``).join(', ')} to say you are on it.`
-const READY_LINE = (n: number, as?: string) => `Marver Jam: ${n} run${n === 1 ? '' : 's'} ready on the canvas - run \`npx ${NAME} jam next${as ? ` --as ${as}` : ''}\` to take ${n === 1 ? 'it' : 'the next one'}.`
-const CONNECTED_LINE = (as?: string) => `Marver Jam is connected to this session: the owner's @marver tags and voice captures on the design canvas can come to you. When you are told runs are ready, run \`npx ${NAME} jam next${as ? ` --as ${as}` : ''}\` - it prints the run and how to hand it back (design/instructions/jam.md, "Runs from the canvas").`
+// What a session is told - short, and named for what it is: Live Jam relaying the owner's requests from the canvas.
+// (design/AGENTS.md says what Live Jam is; in Claude Code the inbox shows these as sent by another session.)
+const STOP_LINE = (handles: string[], as?: string) => `Live Jam: the owner moved ${handles.join(', ')} elsewhere - stop working on ${handles.length === 1 ? 'it' : 'them'} and run ${handles.map((h) => `\`npx ${NAME} jam release ${h}${as ? ` --as ${as}` : ''}\``).join(', ')}.`
+const RESUME_LINE = (handles: string[], as?: string) => `Live Jam: the owner gave ${handles.join(', ')} back to you - carry on, and run ${handles.map((h) => `\`npx ${NAME} jam progress ${h}${as ? ` --as ${as}` : ''}\``).join(', ')}.`
+const READY_LINE = (n: number, as?: string) => `Live Jam: ${n === 1 ? '1 new request' : `${n} new requests`} from your Marver canvas - run \`npx ${NAME} jam next${as ? ` --as ${as}` : ''}\`${n === 1 ? '' : ' for each'}.`
+const CONNECTED_LINE = (as?: string) => `This session is connected to Marver's Live Jam: the owner's requests from the design canvas (their @marver tags and voice captures) come to you as "Live Jam: ... new request" - take each with \`npx ${NAME} jam next${as ? ` --as ${as}` : ''}\` (design/AGENTS.md, "Live Jam").`
 
 // ---- the hooks ---------------------------------------------------------------------------------------
 
@@ -241,7 +243,7 @@ export function ownConn(root: string, env: NodeJS.ProcessEnv, as?: string): Conn
   }
   if (env.CLAUDE_CODE_SESSION_ID || env.CODEX_THREAD_ID) throw new Error('this session is not connected to the canvas yet - it connects at its next message (or start a Jam session on the canvas)')
   const cursor = listConns(root).filter((c) => c.agent === 'cursor')
-  throw new Error(cursor.length ? 'name your connection: --as <id>, as the message from Marver Jam said' : 'run this from the coding-agent session Marver Jam woke')
+  throw new Error(cursor.length ? 'name your connection: --as <id>, as the Live Jam message said' : 'run this from the coding-agent session Live Jam woke')
 }
 
 interface JamOpts { as?: string; file?: string; json?: boolean }

@@ -355,7 +355,7 @@ export function createRuns(d: RunsDeps): Runs {
         b.runner = { kind: 'session', agent: conn.agent, conn: conn.id }
         b.claim = { conn: conn.id, inc: conn.inc, ...(conn.pid ? { pid: conn.pid } : {}), gen, at: Date.now(), progress: Date.now() }
         const handle = handleOf(b, gen)
-        const o = { ok: true, handle, frames: b.frames, text: [`Run ${handle} - frames ${b.frames.join(', ') || '(the whole canvas)'}.`, '', d.goal(b, handle, conn.agent === 'cursor' ? conn.id : undefined)].join('\n') }
+        const o = { ok: true, handle, frames: b.frames, text: d.goal(b, handle, conn.agent === 'cursor' ? conn.id : undefined) }
         keep(req, o, b)
         q.persist()
         return o

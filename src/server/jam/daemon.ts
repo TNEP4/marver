@@ -40,6 +40,7 @@ import { fileURLToPath } from 'node:url'
 import { logJam } from '../perf-jam.ts'
 import { has as ledgerHas, record as ledgerRecord } from './ledger.ts'
 import { buildWrapup, moreOf, readWrapup, recordFile, recordPathProblem, SESSION_ID, storeWrapup } from './session.ts'
+import { sessionBrief } from './session-brief.ts'
 import { createRuns, handleOf, type AgentRun, type Choice, type Runs } from './runs.ts'
 import { connDir, readConn } from './conn.ts'
 import { reqDir } from './transport.ts'
@@ -343,7 +344,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     goal: (b, handle, as) => {
       let packet: JobPacket | null = null
       try { packet = JSON.parse(readFileSync(join(root, packetPath(b.batchId)), 'utf8')) as JobPacket } catch { packet = null }
-      return packet ? goalText(packet, cfg.subagents, { kind: 'session', handle, ...(as ? { as } : {}) }) : `The packet of this run is missing (${packetPath(b.batchId)}) - release it: \`npx marver jam release ${handle}${as ? ` --as ${as}` : ''}\`.`
+      return packet ? sessionBrief(packet, handle, as) : `The packet of this run is missing (${packetPath(b.batchId)}) - release it: \`npx marver jam release ${handle}${as ? ` --as ${as}` : ''}\`.`
     },
     say: (b) => ensureEarly(b),
     ready: () => ready,

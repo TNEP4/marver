@@ -155,7 +155,7 @@ describe('hooks: the right host, the right answer', () => {
     writeFileSync(join(root, 'design', '.local', 'jam', 'conn', `${id}.offers`), JSON.stringify({ n: 1, gen: 5 }))
     const stop = await hook('codex', 'stop', { ...base, hook_event_name: 'Stop' }, {}) as any
     expect(stop.decision).toBe('block')
-    expect(stop.reason).toContain('1 run ready')
+    expect(stop.reason).toContain('1 new request')
     expect(await hook('codex', 'stop', { ...base, hook_event_name: 'Stop', stop_hook_active: true }, {})).toBeNull()   // once per offer
     // a run Marver spawned never connects, whatever hook it carries
     expect(await hook('codex', 'start', { ...base, session_id: randomUUID(), hook_event_name: 'SessionStart' }, { MARVER_JAM_BACKGROUND: '1' })).toBeNull()
@@ -174,7 +174,7 @@ describe('hooks: the right host, the right answer', () => {
     writeFileSync(join(root, 'design', '.local', 'jam', 'conn', `${id}.offers`), JSON.stringify({ n: 2, gen: 9 }))
     const stop = await hook('cursor', 'stop', { ...base, hook_event_name: 'stop', status: 'completed', loop_count: 0 }, {}) as any
     expect(stop.followup_message).toContain(`jam next --as ${id}`)
-    expect(stop.followup_message).toContain('2 runs ready')
+    expect(stop.followup_message).toContain('2 new requests')
     expect(await hook('cursor', 'stop', { ...base, hook_event_name: 'stop' }, {})).toBeNull()
     done()
   })
@@ -265,6 +265,10 @@ describe('session runs in the daemon', { timeout: 30_000 }, () => {
     const handle = String(n.handle)
     expect(handle).toMatch(/^r-[0-9a-f]{8}\.1$/)
     expect(String(n.text)).toContain(`npx marver jam done ${handle}`)
+    // the brief, not the spawned agent's prompt: the ask in the owner's words, a dozen lines
+    expect(String(n.text)).toContain('make it say Hello')
+    expect(String(n.text).split('\n').length).toBeLessThan(20)
+    expect(String(n.text)).not.toContain('You are the owner')
     expect((await s.ask('say', { handle, text: 'On it - saying Hello.' })).ok).toBe(true)
     expect((await s.ask('say', { handle, text: 'again' })).ok).toBe(false)   // once
     const d = await s.ask('done', { handle, text: REPLY('Done - it says Hello.') })

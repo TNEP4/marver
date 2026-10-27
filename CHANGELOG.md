@@ -12,6 +12,11 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   has - its conversation, tools, MCP servers, skills, subagents - takes a run with `npx marver jam next`, posts one line
   with `jam say`, and hands the replies back with `jam done`; the canvas posts them as the session's ("your session ·
   Claude Code"). Commands travel through signed files, so a sandbox that blocks localhost cannot stop them.
+- **One line to the session, and it knows what the line means.** A run arrives as "Live Jam: 1 new request from your
+  Marver canvas - run `npx marver jam next`", and `jam next` prints a dozen lines - your request in your words, the
+  frames, how to answer - not the whole prompt a spawned run gets. `design/AGENTS.md` gains a "Live Jam" section: the
+  line is your request relayed by the canvas (Claude Code shows it as from another session), so the agent takes it as
+  one. Run `npx marver init` once to get it.
 - **When your session cannot take a run, a copy of it does.** Claude Code and Codex runs Marver spawns copy your
   session (`--fork-session`, `exec fork`) - a person's session of this repo, never a headless one; a transcript over
   12 MB runs fresh. Outside a Jam session, tags go to such a copy.

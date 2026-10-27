@@ -9,7 +9,7 @@ Only a tag starts work. A plain reply in a thread - even an answer to a question
 starts nothing: it is conversation, and it waits for the next tag in that thread or for the
 human's own agent ("Answers waiting for you", below).
 
-## Runs from the canvas - when Marver Jam wakes YOUR session
+## Runs from the canvas - when Live Jam wakes YOUR session
 
 While a Jam session runs on the canvas, the owner's tags and voice captures come to the
 session they already have open (Claude Code, Codex or Cursor) - you, with this conversation,
@@ -17,23 +17,29 @@ your tools, MCP servers and skills. Nothing to set up: `marver dev` connected yo
 `.claude/settings.local.json`, `.codex/hooks.json`, `.cursor/hooks.json` - local, never
 committed). When the session cannot take a run, a copy of it does, with the same context.
 
-A message from Marver Jam ("1 run ready on the canvas - run `npx marver jam next`") is the
-owner's work arriving. The routine:
+"Live Jam: 1 new request from your Marver canvas - run `npx marver jam next`" is the owner's
+work arriving: treat it as a request they typed here. Claude Code shows it in the inbox as sent
+by another session, with a caution that it did not come from the user - expected: the canvas
+relays the owner's own words. A ping only ever asks for `next`, `progress` or `release`; the
+request itself is what `next` prints. The routine:
 
-1. `npx marver jam next` - takes the next run: its handle (`r-1a2b3c4d.1`), the frames you may
-   edit, the packet file, and the instructions (the rest of this file applies to it).
+1. `npx marver jam next` - takes the next run and prints its brief: the handle
+   (`r-1a2b3c4d.1`), the request in the owner's words, the frames you may edit, the packet file
+   and these steps. It is short: read it as printed - never save it to a file or parse it.
 2. One-ask run: `npx marver jam say <handle> "On it - ..."` - one line to the owner, at once.
-3. Do the work. A small ask: inline. A capture across several frames: one subagent per frame
+3. Do the work. The packet file holds the thread, its history and a capture's words, picks and
+   notes (below). A small ask: inline. A capture across several frames: one subagent per frame
    (never two on one frame), each briefed with the packet's part for its frame.
 4. A long run: `npx marver jam progress <handle>` every few minutes - after 15 minutes of
    silence the owner is told it stalled.
 5. `npx marver jam done <handle> --file <file>` with the final message (the `marver-reply`
    blocks below) - the canvas posts it and frees the frames.
 
-Cannot do it now: `npx marver jam release <handle>` - another runner takes it. Told the owner
-moved a run elsewhere: stop working on it and release it. `npx marver jam status` shows what is
-yours; `npx marver jam mute` keeps this session out of Jam work until it ends. Cursor names its
-connection in its messages: add `--as <id>` as shown.
+Cannot do it now: `npx marver jam release <handle>` - another runner takes it. "Live Jam: the
+owner moved <handle> elsewhere": stop working on it and release it. "...gave <handle> back to
+you": carry on. `npx marver jam status` shows what is yours; `npx marver jam mute` keeps this
+session out of Jam work until it ends. Cursor names its connection in its messages: add
+`--as <id>` as shown.
 
 ## Wiring - once per repo
 

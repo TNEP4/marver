@@ -42,7 +42,7 @@ mkdirSync(join(root, 'node_modules', '.bin'), { recursive: true })
 const bin = join(root, 'node_modules', '.bin', 'marver')
 writeFileSync(bin, `#!/bin/sh\nexec "${process.execPath}" "${join(repo, 'src', 'cli', 'index.ts')}" "$@"\n`)
 chmodSync(bin, 0o755)
-writeFileSync(join(root, 'CLAUDE.md'), 'A throwaway design canvas for a Marver Jam check. When a message from Marver Jam says runs are ready, follow it.\n')
+writeFileSync(join(root, 'CLAUDE.md'), 'A throwaway design canvas for a Marver Jam check. When a "Live Jam: ... new request" message arrives, follow it.\n')
 
 const connectors = ensureConnectors(root, { agents: ['claude'], bin })
 say(`connectors: ${connectors.map((c) => `${c.agent} ${c.state}`).join(', ')}`)

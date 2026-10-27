@@ -62,8 +62,11 @@ never changed; one you removed by hand is not written back until you turn that t
 
 - **Codex asks you to trust new hooks once** - type `/hooks` in Codex. The start sheet says so until a Codex session
   connects.
+- **What the session is told**: one line - "Live Jam: 1 new request from your Marver canvas - run `npx marver jam
+  next`". Claude Code shows it in the inbox as a message from another session, with a caution that it did not come
+  from you; `design/AGENTS.md` ("Live Jam") tells the agent to expect it and take it as your request.
 - **What the session does** (design/instructions/jam.md, "Runs from the canvas"): `npx marver jam next` takes the run
-  (its handle, its frames, the packet, the instructions); `jam say <handle> "On it - ..."` posts one line at once; the
+  and prints a short brief - your request in your words, the frames, how to answer; `jam say <handle> "On it - ..."` posts one line at once; the
   work, with subagents for a capture across frames; `jam progress <handle>` on a long run; `jam done <handle> --file
   <f>` hands back the replies, and the canvas posts them and frees the frames. `jam release` gives a run back,
   `jam status` and `jam mute` are there too. The commands travel through files under `design/.local/jam/`, signed

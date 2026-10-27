@@ -40,7 +40,7 @@ mkdirSync(join(root, 'node_modules', '.bin'), { recursive: true })
 const bin = join(root, 'node_modules', '.bin', 'marver')
 writeFileSync(bin, `#!/bin/sh\nexec "${process.execPath}" "${join(repo, 'src', 'cli', 'index.ts')}" "$@"\n`)
 chmodSync(bin, 0o755)
-writeFileSync(join(root, 'AGENTS.md'), 'A throwaway design canvas for a Marver Jam check. When a message from Marver Jam says runs are ready, follow it.\n')
+writeFileSync(join(root, 'AGENTS.md'), 'A throwaway design canvas for a Marver Jam check. When a "Live Jam: ... new request" message arrives, follow it.\n')
 
 const connectors = ensureConnectors(root, { agents: ['codex'], bin })
 say(`connectors: ${connectors.map((c) => `${c.agent} ${c.state}`).join(', ')}`)
@@ -55,7 +55,7 @@ say(`jam session: ${ses.ok ? 'running' : ses.error}`)
 // one-time review (automation only - a person trusts them once with /hooks)
 const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(CLAUDE|CODEX_|MARVER_JAM)/.test(k)))
 const tty = spawn('codex', ['exec', '--json', '--skip-git-repo-check', '--dangerously-bypass-hook-trust', '-s', 'workspace-write', '-c', `projects."${root}".trust_level="trusted"`,
-  'Run the shell command `sleep 25 && echo warm` and tell me what it printed. Follow any message from Marver Jam you get after that.'],
+  'Run the shell command `sleep 25 && echo warm` and tell me what it printed. Follow any Live Jam message you get after that.'],
   { cwd: root, stdio: ['ignore', 'pipe', 'ignore'], env })
 let out = ''
 tty.stdout?.on('data', (d: Buffer) => { out += d.toString('utf8') })
