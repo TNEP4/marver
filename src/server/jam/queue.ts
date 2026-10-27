@@ -349,7 +349,14 @@ export function freezeBrief(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[
  *  own messages and Marver's own replies stay; everyone else's, and anything whose author is not known, go. */
 export function ownerOnly(brief: Brief, me: { name: string }): Brief {
   const keep = (m: Msg) => !!m.owner || (!!m.agent && m.author === me.name)
-  return { ...brief, history: brief.history.filter(keep), asks: brief.asks.filter((m) => !!m.owner) }
+  const asks = (l: Msg[]) => l.filter((m) => !!m.owner)
+  const cap = brief.capture
+  return {
+    ...brief, history: brief.history.filter(keep), asks: asks(brief.asks),
+    // every place a message can hide: the ask this one follows, and the run a capture reviewed
+    ...(brief.follows ? { follows: { ...brief.follows, asks: asks(brief.follows.asks) } } : {}),
+    ...(cap?.reviewed ? { capture: { ...cap, reviewed: { ...cap.reviewed, asks: asks(cap.reviewed.asks) } } } : {}),
+  }
 }
 
 /** Are a card's asks still the owner's? Each must be in its board's log and ledgered; the ones that

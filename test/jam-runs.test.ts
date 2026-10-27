@@ -118,8 +118,10 @@ describe('connectors: one shape of hook for Claude Code, Codex and Cursor', () =
     expect(ensureConnectors(root, { agents: ['claude'], bin })[0].state).toMatch(/present|installed/)
     // (ignored one way or another: this machine's global ignore may already cover it)
     expect(() => execFileSync('git', ['check-ignore', '-q', '--', '.claude/settings.local.json'], { cwd: root })).not.toThrow()
+    // the whole file deleted: removed too, remembered - until it is turned on again
     rmSync(join(root, '.cursor'), { recursive: true })
-    ensureConnectors(root, { agents: ['cursor'], bin })
+    expect(ensureConnectors(root, { agents: ['cursor'], bin })[0].state).toBe('removed')
+    expect(ensureConnectors(root, { agents: ['cursor'], bin, force: ['cursor'] })[0].state).toBe('installed')
     expect(() => execFileSync('git', ['check-ignore', '-q', '--', '.cursor/hooks.json'], { cwd: root })).not.toThrow()
     done()
   })
@@ -441,4 +443,129 @@ describe('session runs in the daemon', { timeout: 30_000 }, () => {
     expect(finals(s.dir)[0].agentMeta?.runner).toBe('fresh')
     s.jam.stop(); s.done()
   })
+
+  it('review 2: a `next` resent after a restart gets the handle it got - its receipt is in the journal', async () => {
+    const s = await setup()
+    tag(s.root, s.dir)
+    const t = s.jam.tick()
+    await until(() => (readOffers(s.root, s.conn.id)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())
+    const c = readConn(s.root, s.conn.id)!
+    const body = { v: 1 as const, id: randomUUID(), conn: c.id, op: 'next' as const, args: {}, ts: Date.now() }
+    const req = { ...body, mac: macOf(c.key, body) }
+    const send = async (jam: typeof s.jam) => {
+      mkdirSync(reqDir(s.root), { recursive: true })
+      writeFileSync(join(reqDir(s.root), `${req.id}.json`), JSON.stringify(req))
+      const res = join(s.root, 'design', '.local', 'jam', 'res', `${req.id}.json`)
+      await until(() => existsSync(res), 8_000, () => jam.runs.tick())
+      const out = JSON.parse(readFileSync(res, 'utf8')); rmSync(res)
+      return out
+    }
+    const a = await send(s.jam)
+    s.jam.stop(); await t
+    const jam2 = createJam(s.root, CFG, spawned)
+    const t2 = jam2.tick()
+    const b = await send(jam2)
+    expect(a.handle).toBeTruthy()
+    expect(b.handle).toBe(a.handle)
+    jam2.stop(); await t2; s.done()
+  })
+
+  it('review 2: a `done` waiting for its delivery never holds up another session\'s request', async () => {
+    const s = await setup()
+    tag(s.root, s.dir)
+    const t = s.jam.tick()
+    await until(() => (readOffers(s.root, s.conn.id)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())
+    const handle = String((await s.ask('next')).handle)
+    const other = upsertConn(s.root, 'codex', randomUUID(), { pid: process.pid, busy: true }, Date.now(), true)
+    const done = s.ask('done', { handle, text: REPLY('Done.') })
+    const status = await s.ask('status', {}, other)
+    expect(status.ok).toBe(true)
+    expect((await done).ok).toBe(true)
+    await t
+    s.jam.stop(); s.done()
+  })
+
+  it('review 2: a drop survives a restart - the run fails, never runs elsewhere', async () => {
+    const s = await setup()
+    tag(s.root, s.dir)
+    const t = s.jam.tick()
+    await until(() => (readOffers(s.root, s.conn.id)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())
+    const handle = String((await s.ask('next')).handle)
+    const r = s.jam.view().cards.find((c) => c.state === 'working')!.runner!
+    expect((await s.jam.runs.act(r.batch, r.gen!, 'drop')).ok).toBe(true)
+    expect((await s.ask('release', { handle })).ok).toBe(true)
+    await t
+    expect(existsSync(join(s.root, 'spawned.marker'))).toBe(false)
+    expect(s.jam.snapshot().cards[0].state).toBe('failed')
+    s.jam.stop(); s.done()
+  })
+
+  it('review 2: `next` is refused to a session that is not the selected one, once Jam ends, or with its tool turned off', async () => {
+    const s = await setup()
+    tag(s.root, s.dir)
+    const t = s.jam.tick()
+    await until(() => (readOffers(s.root, s.conn.id)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())
+    writePrefs(s.root, { off: { claude: true } })
+    expect(String((await s.ask('next')).text ?? (await s.ask('next')).error)).toMatch(/cannot take|Nothing waits/)
+    await t   // the offer went to a background agent
+    expect(existsSync(join(s.root, 'spawned.marker'))).toBe(true)
+    s.jam.stop(); s.done()
+  })
+
+  it('review 2: a claim belongs to the incarnation that took it - a new one of the same session cannot finish it', async () => {
+    const s = await setup()
+    tag(s.root, s.dir)
+    const t = s.jam.tick()
+    await until(() => (readOffers(s.root, s.conn.id)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())
+    const handle = String((await s.ask('next')).handle)
+    const again = upsertConn(s.root, 'claude', s.conn.session, { pid: process.pid }, Date.now(), true)
+    expect((await s.ask('done', { handle, text: REPLY('from the new one') }, again)).ok).toBe(false)
+    // the run is still held; the owner moves it, and the old writer (this process) is still alive: it waits
+    const r = s.jam.view().cards.find((c) => c.state === 'working')!.runner!
+    await s.jam.runs.act(r.batch, r.gen!, 'background')
+    expect(s.jam.view().cards.find((c) => c.state === 'working')!.runner!.state).toBe('stopping')
+    s.jam.stop(); await t; s.done()
+  })
+
+  it('review 2: "give it back" tells the session to carry on - with the same handle', async () => {
+    const s = await setup()
+    tag(s.root, s.dir)
+    const t = s.jam.tick()
+    await until(() => (readOffers(s.root, s.conn.id)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())
+    const handle = String((await s.ask('next')).handle)
+    await s.jam.runs.tick(Date.now() + STALL_MS + 1_000)
+    const r = s.jam.view().cards.find((c) => c.state === 'working')!.runner!
+    expect(r.state).toBe('stalled')
+    expect((await s.jam.runs.act(r.batch, r.gen!, 'again')).ok).toBe(true)
+    expect(readOffers(s.root, s.conn.id)?.resume).toEqual([handle])
+    expect((await s.ask('progress', { handle })).ok).toBe(true)
+    expect(readOffers(s.root, s.conn.id)?.resume).toBeUndefined()
+    expect((await s.ask('done', { handle, text: REPLY('carried on') })).ok).toBe(true)
+    await t
+    s.jam.stop(); s.done()
+  })
 })
+
+describe('review 2: the boundaries', () => {
+  it('a background run never edits what would let it out: hooks, tool settings, MCP config, packages, Marver\'s own state', () => {
+    const { root, done } = workspace()
+    const on = { root, mcp: true, skills: true }
+    for (const f of ['.claude/settings.local.json', '.codex/hooks.json', '.cursor/hooks.json', '.mcp.json', 'node_modules/.bin/marver', 'design/.local/jam/conn/x.json', '.env', '.git/hooks/pre-commit', '.CLAUDE/settings.json'])
+      expect(decide(on, 'Write', { file_path: join(root, f) }).behavior, f).toBe('deny')
+    expect(decide(on, 'Write', { file_path: join(root, 'design', 'scenes', 'demo', 'x.tsx') }).behavior).toBe('allow')
+    done()
+  })
+
+  it('a Codex subagent\'s or exec run\'s transcript is never copied - only a person\'s session', () => {
+    const { root, done } = workspace()
+    const home = mkdtempSync(join(tmpdir(), 'mv-codex-home-'))
+    const d = new Date()
+    const dir = join(home, 'sessions', String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0'))
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, `rollout-a-${randomUUID()}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id: randomUUID(), cwd: root, source: { subagent: { other: 'guardian' } } } }) + '\n')
+    expect(newestCodex(root, { CODEX_HOME: home })).toBeNull()
+    rmSync(home, { recursive: true, force: true })
+    done()
+  })
+})
+

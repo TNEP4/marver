@@ -222,7 +222,7 @@ function WhoWorks({ fallback }: { fallback: string }) {
     <button className="row jm-two" data-jam-switch="others" onClick={() => void set({ others: !settings.others })}>
       <CommentIcon size={15} /><span>Collaborators' comments<br /><small>Their words reach the agent</small></span>{sw(settings.others)}
     </button>
-    {trust && <div className="note-line" style={{ margin: '4px 8px' }}><WarningIcon size={14} /><span>Codex: trust Marver's hooks once - type <code style={{ color: 'inherit' }}>/hooks</code> in Codex.</span></div>}
+    {trust && <div className="note-line" style={{ margin: '4px 8px' }}><WarningIcon size={14} /><span>Codex runs go to a copy of your session. To let your open Codex session take them itself, type <code style={{ color: 'inherit' }}>/hooks</code> in Codex once and trust Marver's.</span></div>}
   </>)
 }
 

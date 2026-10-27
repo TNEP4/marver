@@ -9,21 +9,24 @@
  */
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { parseAgentText } from '../packet.ts'
 import type { JamAdapter } from '../types.ts'
 
-/** The MCP servers Codex would start here (`codex mcp list --json`: your config, the project's and plugins'), else
- *  the ones your config file names - so a run with MCP off can turn each one off. */
-export function codexMcpServers(env: NodeJS.ProcessEnv = process.env): string[] {
+/** The MCP servers Codex would start for a run in `cwd` (`codex mcp list --json`: your config, the project's,
+ *  plugins'), or null when it cannot say - then a run with MCP off leaves your config out entirely. */
+export function codexMcpServers(cwd: string, env: NodeJS.ProcessEnv = process.env): string[] | null {
   try {
-    const out = execFileSync('codex', ['mcp', 'list', '--json'], { encoding: 'utf8', timeout: 15_000, stdio: ['ignore', 'pipe', 'ignore'], env })
+    const out = execFileSync('codex', ['mcp', 'list', '--json'], { cwd, encoding: 'utf8', timeout: 15_000, stdio: ['ignore', 'pipe', 'ignore'], env })
     const list = JSON.parse(out)
     if (Array.isArray(list)) return [...new Set(list.map((x: { name?: unknown }) => x?.name).filter((n): n is string => typeof n === 'string' && /^[A-Za-z0-9_-]+$/.test(n)))]
-  } catch { /* an older codex: the config file */ }
+  } catch { /* said below */ }
+  return null
+}
+/** The servers a project's own .codex/config.toml names. */
+const projectServers = (root: string): string[] => {
   let text = ''
-  try { text = readFileSync(join(env.CODEX_HOME || join(homedir(), '.codex'), 'config.toml'), 'utf8') } catch { return [] }
+  try { text = readFileSync(join(root, '.codex', 'config.toml'), 'utf8') } catch { return [] }
   return [...new Set([...text.matchAll(/^\s*\[mcp_servers\.("?)([A-Za-z0-9_-]+)\1\]\s*$/gm)].map((m) => m[2]))]
 }
 
@@ -38,7 +41,11 @@ export const codexAdapter: JamAdapter = {
     // meets - an MCP call included, which `approval_policy = never` refuses - inside workspace-write.
     // `--approve-for-me` is those three settings; `exec fork` takes them as config.
     const review = ['-c', 'approvals_reviewer="auto_review"', '-c', 'approval_policy="on-request"', '-c', 'sandbox_mode="workspace-write"']
-    const mcpOff = o.mcp ? [] : codexMcpServers().flatMap((n) => ['-c', `mcp_servers.${n}.enabled=false`])
+    // MCP off: each server Codex would start here turned off; when it cannot list them, your config is left out
+    // altogether (auth stays) and the project's own servers are turned off by name
+    const listed = o.mcp ? [] : codexMcpServers(o.root)
+    const mcpOff = o.mcp ? [] : listed ? listed.flatMap((n) => ['-c', `mcp_servers.${n}.enabled=false`])
+      : ['--ignore-user-config', ...projectServers(o.root).flatMap((n) => ['-c', `mcp_servers.${n}.enabled=false`])]
     return o.fork
       ? { cmd: 'codex', args: ['exec', 'fork', o.fork, '--json', '--skip-git-repo-check', ...review, ...mcpOff, goal] }
       : { cmd: 'codex', args: ['exec', '--json', '--skip-git-repo-check', ...review, ...mcpOff, goal] }

@@ -108,6 +108,13 @@ export interface JamHooks {
   anchor?(frame: string, target: AnchorTarget, others: { key: string; anchor: unknown }[], look?: AnchorLook): Promise<AnchorCheck>
 }
 
+/** What each tool's sandbox holds, as a spawned run is told it - only what it really does (spec 29b v2, 24). */
+const SANDBOX_SAYS: Partial<Record<string, string>> = {
+  claude: 'the repo is writable, keys are not readable, no network',
+  codex: 'the repo is writable, no network; Codex\'s reviewer judges anything more',
+  cursor: 'the repo is writable, no network',
+}
+
 /** Kill a whole process group (the child is detached, so pid === pgid). Best-effort. */
 const fenceGroup = (pid?: number) => { try { if (pid) process.kill(-pid, 'SIGKILL') } catch { /* already gone */ } }
 
@@ -333,10 +340,10 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   const runs: Runs = createRuns({
     root, cfg, q, log,
     changed: () => queueChanged(),
-    goal: (b, handle) => {
+    goal: (b, handle, as) => {
       let packet: JobPacket | null = null
       try { packet = JSON.parse(readFileSync(join(root, packetPath(b.batchId)), 'utf8')) as JobPacket } catch { packet = null }
-      return packet ? goalText(packet, cfg.subagents, { kind: 'session', handle }) : `The packet of this run is missing (${packetPath(b.batchId)}) - release it: \`npx marver jam release ${handle}\`.`
+      return packet ? goalText(packet, cfg.subagents, { kind: 'session', handle, ...(as ? { as } : {}) }) : `The packet of this run is missing (${packetPath(b.batchId)}) - release it: \`npx marver jam release ${handle}${as ? ` --as ${as}` : ''}\`.`
     },
     say: (b) => ensureEarly(b),
     ready: () => ready,
@@ -533,6 +540,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
    *  one would have. */
   const deliver = async (b: Batch) => {
     if (stopped) return
+    // a session's early line is journaled before it is posted: it must be in the thread before the final reply is
+    // matched against it - else a reply with the same words would never be posted at all
+    if (b.early && b.claim && !ensureEarly(b)) throw new Error('its early line could not be posted')
     const cards = b.members.map((m) => q.j.cards.find((c) => c.id === m.card)).filter((c): c is Card => !!c)
     const early = b.early
     const posted: Record<string, { reply?: string; answered?: boolean; asked?: number }> = {}
@@ -640,8 +650,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         if (!w || !wrapupIntact(q.ctx(), c) || recordPathProblem(root, w.wrapup.file)) { bad.push(m.card); continue }
         brief = { ...brief, wrapup: { content: w.wrapup, hash: w.hash } }
       } else if (brief.wrapup) { const { wrapup: _w, ...rest } = brief; brief = rest }   // only a record carries one
-      // owner-only now (spec 29b v2, 7): a brief frozen with other people's words is cleaned before any runner reads it
-      if (b.others !== false && !runs.settings().others) brief = ownerOnly(brief, me())
+      // owner-only (spec 29b v2, 7): a brief frozen with other people's words - before 0.28, when it carries no policy
+      // of its own - is cleaned before any runner reads it, and kept cleaned
+      if (b.others === undefined || (b.others && !runs.settings().others)) { brief = ownerOnly(brief, me()); m.brief = brief }
       const t = c.thread ? threadsOf(m.board).find((x) => x.id === c.thread) : undefined
       members.push({ id: m.id, card: c.id, kind: c.kind, board: m.board, ...(c.thread ? { thread: c.thread } : {}), frames: c.frames,
         ...(t?.anchor !== undefined ? { anchor: t.anchor } : {}), brief })
@@ -716,17 +727,23 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       // session's run its own) - else a copy of that session, else a fresh agent; every one with full power.
       // What a spawned run may use is fixed with the batch the first time it runs (a restart runs it the same way).
       if (!b.power) { const s0 = runs.settings(); await q.lock(() => { b.power = { mcp: s0.mcp, skills: s0.skills }; q.persist() }) }
+      // dropped by the owner while a session held it (a restart in between too): it fails, never runs elsewhere
+      if (b.dropped) {
+        await q.lock((j) => { settled(fail(j, b, 'you dropped it while your session had it')); q.persist() })
+        runs.delivered(b.batchId, false, 'the owner dropped it')
+        queueChanged(); timeRun('agent'); return
+      }
       let sessionRan = false
-      const sessionHeld = !!b.claim || !!b.offer || (b.runner?.kind === 'session' && !b.results)
       const spawnedBefore = b.runner && b.runner.kind !== 'session' ? b.runner : undefined
-      let first: Choice = sessionHeld ? { kind: 'wait' } : spawnedBefore ? { kind: 'fresh', agent: '' } : runs.choose(b)
+      const sessionHeld = !spawnedBefore && !b.handoff && (!!b.claim || !!b.offer || b.runner?.kind === 'session')
+      let first: Choice = sessionHeld ? { kind: 'wait' } : spawnedBefore || b.handoff ? { kind: 'fresh', agent: '' } : runs.choose(b)
       if (b.early && b.claim) ensureEarly(b)   // a session's early line journaled before a restart: posted now if it was not
-      while (!spawnedBefore && (sessionHeld || first.kind === 'session' || first.kind === 'wait')) {
+      while (!spawnedBefore && !b.handoff && (sessionHeld || first.kind === 'session' || first.kind === 'wait')) {
         const beat = setInterval(followWork, 2_000)
         beat.unref?.()
         const tAgent = performance.now()
         let r: AgentRun | null
-        try { r = await runs.run(b, first.kind === 'session' ? first.conn : b.offer ? readConn(root, b.offer.conn) ?? undefined : undefined) }
+        try { r = await runs.run(b, first.kind === 'session' ? first.conn : undefined) }
         finally { clearInterval(beat); timing.agentMs.push(performance.now() - tAgent) }
         if (stopped) return
         if (b.dropped) {
@@ -735,10 +752,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           queueChanged(); timeRun('agent'); return
         }
         if (r) { run = r; sessionRan = true; break }
-        // released or withdrawn: `jam.runner: 'session'` waits for a session again; anything else goes on below
-        if (runs.settings().runner !== 'session') break
+        // released, withdrawn or moved by the owner: `handoff` says it runs spawned; with none (released under
+        // `jam.runner: 'session'`) it waits for a session again
         first = { kind: 'wait' }
-        await q.lock(() => { b.runner = { kind: 'session', agent: '' }; q.persist() })
       }
       if (!sessionRan) {
         const ch: { kind: 'fork' | 'fresh'; agent: string; session?: string; why?: string } = spawnedBefore
@@ -749,7 +765,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         const s = { mcp: b.power?.mcp ?? true, skills: b.power?.skills ?? true }
         const full = agent === 'claude' || agent === 'codex' || agent === 'cursor'
         const opts: SpawnOpts | undefined = full ? { root, mcp: s.mcp, skills: s.skills, ...(ch.kind === 'fork' && ch.session ? { fork: ch.session } : {}), marver: marverCmd() } : undefined
-        await q.lock(() => { b.runner = { kind: ch.kind, agent, ...(ch.kind === 'fork' && ch.session ? { session: ch.session } : {}), ...(ch.why ? { why: ch.why } : {}) }; q.persist() })
+        // the runner is the decision now: saved before it runs, and the handoff it came from is spent
+        await q.lock(() => { b.runner = { kind: ch.kind, agent, ...(ch.kind === 'fork' && ch.session ? { session: ch.session } : {}), ...(ch.why ? { why: ch.why } : {}) }; delete b.handoff; q.persist() })
         queueChanged()
         while (!stopped && b.attempts < MAX_ATTEMPTS) {
           await q.lock(() => { b.attempts += 1; b.leaseUntil = Date.now() + LEASE_MS; q.persist() })
@@ -767,8 +784,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           try {
             const one = b.members.length === 1 ? cards()[0] : undefined
             // a copy that fails is tried once more fresh (the session it copied may be gone, or too long since)
-            const forked = b.attempts === 1 ? opts?.fork : undefined
-            const goal = goalText(packet, cfg.subagents && ad.supportsSubagents, full ? { kind: forked ? 'fork' : 'fresh', shell: true, mcp: s.mcp, skills: s.skills } : undefined)
+            // (from the saved runner, a restart included; it turns fresh only after a copy was tried and failed, below)
+            const forked = b.runner?.kind === 'fork' ? b.runner.session : undefined
+            const goal = goalText(packet, cfg.subagents && ad.supportsSubagents, full ? { kind: forked ? 'fork' : 'fresh', shell: true, mcp: s.mcp, skills: s.skills, sandbox: SANDBOX_SAYS[agent] } : undefined)
             run = await runAgent(ad, opts && { ...opts, fork: forked }, goal, (pid) => { b.pgid = pid; q.persist() },
               one?.thread && !b.early ? (text, asks, model) => {
                 if (stopped) return   // output buffered past stop(): a successor owns the log
@@ -1086,6 +1104,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       for (const b of j.batches) {
         if (b.state !== 'claimed') continue
         if (b.results) { out.push({ b, results: true }); continue }
+        // a run a session holds (claimed, completing, stopping): kept exactly as the session saw it - its members,
+        // their ids, its frames reserved - and waited on again; the session's handle still works (spec 29b v2, 5)
+        if (b.claim) { out.push({ b, results: false }); continue }
         fenceGroup(b.pgid)   // an orphan may still be editing
         // Nothing reaches the agent that is not still the owner's: an ask stands only if its event is
         // in the log, ledgered, and its frozen revision is the event itself or a ledgered edit of it.

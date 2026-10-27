@@ -121,4 +121,4 @@ export function newestAny(root: string, can: (a: ForkAgent) => boolean, env: Nod
   const t = (x: ForkSource) => { try { return statSync(x.file).mtimeMs } catch { return 0 } }
   return all.sort((a, b) => t(b) - t(a))[0] ?? null
 }
-export const forkable = (s: ForkSource | null): s is ForkSource => !!s && existsSync(s.file) && s.bytes <= FORK_MAX_BYTES
+export const forkable = (s: ForkSource | null): boolean => !!s && existsSync(s.file) && s.bytes <= FORK_MAX_BYTES

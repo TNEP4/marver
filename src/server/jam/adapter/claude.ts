@@ -4,12 +4,17 @@
  * message the moment it exists (the real quick ack / clarifying question - not a canned fake),
  * and the final `result` event as the completion reply.
  */
+import { onPath } from '../agent.ts'
 import { parseAgentText } from '../packet.ts'
 import type { JamAdapter } from '../types.ts'
 
 /** First key of an object, or undefined. */
 const firstKey = (o: unknown): string | undefined =>
   o && typeof o === 'object' ? Object.keys(o as object)[0] : undefined
+
+/** Can Claude Code's sandbox run here? macOS has it built in; Linux needs bubblewrap. */
+export const sandboxReady = (platform = process.platform, env: NodeJS.ProcessEnv = process.env): boolean =>
+  platform === 'darwin' || (platform === 'linux' && onPath('bwrap', env))
 
 /** What no Jam run reads, whoever asks: keys and credentials. */
 export const SECRETS = ['~/.ssh/**', '~/.aws/**', '~/.gnupg/**', '~/.config/gcloud/**', '~/.netrc', '~/.npmrc', '~/Library/Keychains/**']
@@ -30,9 +35,12 @@ export const claudeAdapter: JamAdapter = {
     // servers work here at all.
     // stream-json (requires --verbose) lets the daemon deliver the agent's first line live.
     if (!o) return { cmd: 'claude', args: ['-p', goal, '--permission-mode', 'acceptEdits', '--allowedTools', 'Read,Edit,Write,Glob,Grep,WebSearch,WebFetch', '--disallowedTools', 'Bash', '--output-format', 'stream-json', '--verbose'] }
+    // the shell only where Claude Code's sandbox can hold it (macOS's own; Linux with bubblewrap) - anywhere else
+    // there is no shell at all: the boundary is never promised and missing (fail closed)
+    const sandboxed = sandboxReady()
     const settings = {
-      sandbox: { enabled: true, autoAllowBashIfSandboxed: true, allowUnsandboxedCommands: false },
-      permissions: { deny: [...SECRETS.map((p) => `Read(${p})`), ...(o.skills ? [] : ['Skill'])] },
+      sandbox: { enabled: true, autoAllowBashIfSandboxed: true, allowUnsandboxedCommands: false, excludedCommands: [] },
+      permissions: { deny: [...SECRETS.map((p) => `Read(${p})`), ...(o.skills ? [] : ['Skill']), ...(sandboxed ? [] : ['Bash'])] },
     }
     const permit = { mcpServers: { 'marver-jam': { command: o.marver?.cmd ?? 'npx', args: [...(o.marver?.args ?? ['marver']), 'jam', 'permit'], env: { MARVER_JAM_PERMIT: JSON.stringify({ root: o.root, mcp: o.mcp, skills: o.skills }) } } } }
     return {

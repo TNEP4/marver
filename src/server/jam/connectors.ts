@@ -154,8 +154,9 @@ export function ensureConnectors(root: string, opts: { agents?: ConnAgent[]; for
         if (!cur || typeof cur !== 'object' || Array.isArray(cur)) { res('unreadable', `${rel} is not a JSON object - left as it is`); continue }
       }
       if (tracked(root, rel)) { res('tracked', `${rel} is committed to git - Marver never changes a committed file`); continue }
-      // ours were here and are gone: you removed them - not written again until you turn this tool back on
-      if (installed[agent] && existsSync(file) && !hasOurs(cur) && !opts.force?.includes(agent)) { res('removed'); continue }
+      // ours were here and are gone - the entries, or the whole file: you removed them - not written again until you
+      // turn this tool back on in the start sheet
+      if (installed[agent] && (!existsSync(file) || !hasOurs(cur)) && !opts.force?.includes(agent)) { res('removed'); continue }
       const w = wanted(agent, bin, root)
       const next = w.nested ? mergeNested(cur, w.nested) : mergeFlat(cur, w.flat!)
       if (JSON.stringify(next) === JSON.stringify(cur)) { exclude(root, rel); res('present'); continue }

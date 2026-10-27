@@ -192,12 +192,18 @@ export interface Batch {
   model?: string
   /** who runs it (spec 29b): the owner's session, a copy of it, or a fresh agent - and why, when it is not the obvious one */
   runner?: { kind: 'session' | 'fork' | 'fresh'; agent: string; conn?: string; session?: string; why?: string }
-  /** offered to a session, not taken yet */
-  offer?: { conn: string; at: number }
-  /** taken by a session (`marver jam next`): its handle's generation, and its last word (say, progress) */
-  claim?: { conn: string; gen: number; at: number; progress: number; stalled?: boolean; stopping?: 'background' | 'drop'
+  /** offered to a session (that incarnation of its connection), not taken yet */
+  offer?: { conn: string; inc: string; at: number }
+  /** taken by a session (`marver jam next`): which incarnation and process took it, its handle's generation, and its
+   *  last word (say, progress) */
+  claim?: { conn: string; inc: string; pid?: number; gen: number; at: number; progress: number; stalled?: boolean; stopping?: 'background' | 'drop'
     /** its final message, stored at `done` under the lock: the completion boundary (a restart delivers it from here) */
-    result?: string }
+    result?: string
+    /** the owner gave it back after it stalled: the session is told to carry on, until its next word */
+    resumed?: boolean }
+  /** the decision taken when a session let it go (released, withdrawn, stopped for the background): it runs spawned,
+   *  whatever routing says after - a restart in between honours it */
+  handoff?: 'spawn'
   /** what its spawned runs may use, fixed when it was first run (a restart runs it the same way) */
   power?: { mcp: boolean; skills: boolean }
   /** other people's words reached it (`jam.others` when it was formed) */
@@ -227,7 +233,7 @@ export interface Journal {
   run?: { since: number }    // the lane's run: captures made since then (queue.ts touchRun)
   session?: { id: string; since: number }   // the Jam session running now (Part 5): its id and when it began
   /** a session's requests that changed something, with the answer each got (spec 29b): the same request again gets it again */
-  receipts?: Record<string, { at: number; out: Record<string, unknown> }>
+  receipts?: Record<string, { at: number; out: Record<string, unknown>; op?: string; batch?: string }>
 }
 
 /** The 0.25 journal, read once by the upgrade. */

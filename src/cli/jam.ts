@@ -14,7 +14,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync, statSync, watch } from 'node:fs'
 import { createConnection } from 'node:net'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
-import { connId, endConn, listConns, offersFile, pidAlive, readConn, readOffers, upsertConn, type Conn, type ConnAgent } from '../server/jam/conn.ts'
+import { connId, endConn, listConns, offersFile, pidAlive, readConn, readOffers, readPrefs, upsertConn, type Conn, type ConnAgent } from '../server/jam/conn.ts'
 import { request, type Op } from '../server/jam/transport.ts'
 import { NAME } from './name.ts'
 
@@ -42,8 +42,11 @@ async function sessionsOff(root: string, env: NodeJS.ProcessEnv): Promise<boolea
 const readStdin = async (): Promise<Record<string, any>> => {
   if (process.stdin.isTTY) return {}
   const chunks: Buffer[] = []
+  let to: ReturnType<typeof setTimeout> | undefined
   const done = new Promise<void>((res) => { process.stdin.on('data', (c: Buffer) => chunks.push(c)); process.stdin.on('end', () => res()); process.stdin.on('error', () => res()) })
-  await Promise.race([done, new Promise((r) => setTimeout(r, 2_000))])
+  // (the timer is cleared at the end of the input: a hook that is not ours exits at once, never 2 s later)
+  await Promise.race([done, new Promise<void>((r) => { to = setTimeout(r, 2_000) })])
+  clearTimeout(to)
   try { const o = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); return o && typeof o === 'object' ? o : {} } catch { return {} }
 }
 
@@ -62,6 +65,7 @@ function ancestor(name: RegExp, from = process.ppid): number | undefined {
 }
 
 const STOP_LINE = (handles: string[], as?: string) => `Marver Jam: the owner moved ${handles.join(', ')} to another runner - stop working on ${handles.length === 1 ? 'it' : 'them'} and run ${handles.map((h) => `\`npx ${NAME} jam release ${h}${as ? ` --as ${as}` : ''}\``).join(', ')}.`
+const RESUME_LINE = (handles: string[], as?: string) => `Marver Jam: the owner gave ${handles.join(', ')} back to you - carry on, and run ${handles.map((h) => `\`npx ${NAME} jam progress ${h}${as ? ` --as ${as}` : ''}\``).join(', ')} to say you are on it.`
 const READY_LINE = (n: number, as?: string) => `Marver Jam: ${n} run${n === 1 ? '' : 's'} ready on the canvas - run \`npx ${NAME} jam next${as ? ` --as ${as}` : ''}\` to take ${n === 1 ? 'it' : 'the next one'}.`
 const CONNECTED_LINE = (as?: string) => `Marver Jam is connected to this session: the owner's @marver tags and voice captures on the design canvas can come to you. When you are told runs are ready, run \`npx ${NAME} jam next${as ? ` --as ${as}` : ''}\` - it prints the run and how to hand it back (design/instructions/jam.md, "Runs from the canvas").`
 
@@ -71,6 +75,8 @@ const CONNECTED_LINE = (as?: string) => `Marver Jam is connected to this session
  *  nothing and exits 0 on anything unexpected - a hook must never break its host. */
 export async function hookCommand(agent: string, event: string, rootOpt?: string): Promise<void> {
   try {
+    // what the environment alone rules out goes before reading anything
+    if (process.env.MARVER_JAM_BACKGROUND === '1' || process.env.GROK_HOOK_EVENT) return
     const input = await readStdin()
     const out = await hook(agent, event, input, process.env, Date.now(), rootOpt)
     if (out) process.stdout.write(JSON.stringify(out))
@@ -107,17 +113,21 @@ export async function hook(agent: string, event: string, input: Record<string, a
   if (!session || !root) return null
   const id = connId(agent as ConnAgent, session)
   if (event === 'end') { endConn(root, id); return null }
-  if (await sessionsOff(root, env)) { endConn(root, id); return null }
+  // sessions off for the repo, or this tool turned off in the start sheet: quiet, and its connection ended
+  if (await sessionsOff(root, env) || readPrefs(root).off?.[agent as ConnAgent]) { endConn(root, id); return null }
 
   if (agent === 'codex') {
     const start = event === 'start'
-    const pid = start ? ancestor(/^codex/) : readConn(root, id)?.pid
-    const c = upsertConn(root, 'codex', session, { pid, cwd: root, mode: typeof input.permission_mode === 'string' ? input.permission_mode : undefined, busy: event === 'prompt' }, now, start && input.source !== 'compact')
+    // its process, found whenever it is not known yet - a session open before its hooks were trusted registers
+    // from its next prompt, and is alive from then on
+    const was = readConn(root, id)
+    const pid = start || !was?.pid || was.ended ? ancestor(/^codex/) : was.pid
+    const c = upsertConn(root, 'codex', session, { pid, cwd: root, mode: typeof input.permission_mode === 'string' ? input.permission_mode : undefined, busy: event === 'prompt' }, now, (start && input.source !== 'compact') || !!was?.ended)
     const offers = readOffers(root, id)
-    const stops = offers?.stop?.length ? ` ${STOP_LINE(offers.stop)}` : ''
+    const stops = `${offers?.stop?.length ? ` ${STOP_LINE(offers.stop)}` : ''}${offers?.resume?.length ? ` ${RESUME_LINE(offers.resume)}` : ''}`
     if (start) return { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: CONNECTED_LINE() } }
     if (event === 'prompt') return offers?.n || stops ? { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: `${offers?.n ? READY_LINE(offers.n) : ''}${stops}`.trim() } } : null
-    if (event === 'stop' && offers && (offers.n || offers.stop?.length) && offers.gen > (c.acted ?? 0)) {
+    if (event === 'stop' && offers && (offers.n || offers.stop?.length || offers.resume?.length) && offers.gen > (c.acted ?? 0)) {
       upsertConn(root, 'codex', session, { acted: offers.gen, busy: true }, now)
       return { decision: 'block', reason: `${offers.n ? READY_LINE(offers.n) : ''}${stops}`.trim() }
     }
@@ -127,12 +137,12 @@ export async function hook(agent: string, event: string, input: Record<string, a
   // Cursor: its shell gives no session id, so its messages name the connection
   if (input.is_background_agent === true) return null
   const composer = typeof input.composer_mode === 'string' ? input.composer_mode : undefined
-  const c = upsertConn(root, 'cursor', session, { cwd: root, busy: event === 'prompt', ...(composer ? { composer } : {}) }, now, event === 'start')
+  const c = upsertConn(root, 'cursor', session, { cwd: root, busy: event === 'prompt', ...(composer ? { composer } : {}) }, now, event === 'start' || !!readConn(root, id)?.ended)
   const offers = readOffers(root, id)
-  const stops = offers?.stop?.length ? ` ${STOP_LINE(offers.stop, c.id)}` : ''
+  const stops = `${offers?.stop?.length ? ` ${STOP_LINE(offers.stop, c.id)}` : ''}${offers?.resume?.length ? ` ${RESUME_LINE(offers.resume, c.id)}` : ''}`
   if (event === 'start') return { additional_context: CONNECTED_LINE(c.id) }
   if (event === 'prompt') return { continue: true }
-  if (event === 'stop' && offers && (offers.n || offers.stop?.length) && offers.gen > (c.acted ?? 0)) {
+  if (event === 'stop' && offers && (offers.n || offers.stop?.length || offers.resume?.length) && offers.gen > (c.acted ?? 0)) {
     upsertConn(root, 'cursor', session, { acted: offers.gen, busy: true }, now)
     return { followup_message: `${offers.n ? READY_LINE(offers.n, c.id) : ''}${stops}`.trim() }
   }
@@ -146,14 +156,15 @@ export async function hook(agent: string, event: string, input: Record<string, a
  *  over the current session id and exits. */
 export async function listenCommand(rootOpt?: string): Promise<void> {
   const env = process.env
-  if (env.MARVER_JAM_BACKGROUND === '1') return
+  // never in a run Marver spawned, a Grok session, or a headless Claude Code run (`-p`, the SDK): only a person's session
+  if (env.MARVER_JAM_BACKGROUND === '1' || env.GROK_HOOK_EVENT || (env.CLAUDE_CODE_ENTRYPOINT && env.CLAUDE_CODE_ENTRYPOINT !== 'cli')) return
   const input = await readStdin().catch(() => ({} as Record<string, any>))
   if (!ownHost('claude', input, env)) return
   const sock = env.CLAUDE_CODE_MESSAGING_SOCKET!, token = env.CLAUDE_CODE_MESSAGING_TOKEN, claudePid = Number(env.CLAUDE_PID)
   if (!token || !Number.isInteger(claudePid) || claudePid <= 1) return
   const session = String(input.session_id)
   const root = hookRoot(input, rootOpt)
-  if (!root || await sessionsOff(root, env)) return
+  if (!root || await sessionsOff(root, env) || readPrefs(root).off?.claude) return
   const { claimListener, readListener, writeListener, releaseListener } = await import('../server/jam/listener.ts')
   const mode = typeof input.permission_mode === 'string' ? input.permission_mode : undefined
   // another listener already serves this Claude Code process: hand it this session id, and go
@@ -167,15 +178,17 @@ export async function listenCommand(rootOpt?: string): Promise<void> {
   let current = session
   // a listener starting is a new incarnation: a new key, nothing the last one held still signs
   let conn: Conn = upsertConn(root, 'claude', current, { pid: claudePid, cwd: root, mode, busy: false }, Date.now(), true)
-  const was = readOffers(root, conn.id)
-  let posted = was?.gen ?? 0
-  let stopsSaid = JSON.stringify(was?.stop ?? [])
-  const post = (text: string) => new Promise<void>((res) => {
+  // nothing posted yet: offers that wait for this session already are said at once
+  let posted = 0
+  let said = '[[],[]]'
+  /** Post one message to the session's inbox: true once it is written (a failure is tried again next look). */
+  const post = (text: string) => new Promise<boolean>((res) => {
     const c = createConnection(sock)
-    const end = () => { try { c.destroy() } catch { /* gone */ } res() }
+    let ok = false
+    const end = () => { try { c.destroy() } catch { /* gone */ } res(ok) }
     c.on('connect', () => {
       c.write(JSON.stringify({ type: 'auth', token }) + '\n')
-      c.write(JSON.stringify({ type: 'user', message: { role: 'user', content: text } }) + '\n', () => setTimeout(end, 500))
+      c.write(JSON.stringify({ type: 'user', message: { role: 'user', content: text } }) + '\n', (err) => { ok = !err; setTimeout(end, 500) })
     })
     c.on('error', end)
     setTimeout(end, 5_000)
@@ -184,24 +197,21 @@ export async function listenCommand(rootOpt?: string): Promise<void> {
   process.on('SIGTERM', quit); process.on('SIGINT', quit); process.on('SIGHUP', quit)
   const look = async () => {
     // it ends with its Claude Code process (S29-5: an orphan would outlive the session)
-    if (!pidAlive(claudePid) || process.ppid !== parent || !existsSync(join(root, 'design'))) return quit()
+    if (!pidAlive(claudePid) || process.ppid !== parent || !existsSync(join(root, 'design')) || readPrefs(root).off?.claude) return quit()
     const l = readListener(root, claudePid)
     if (l && l.pid !== process.pid) return quit()   // another took over (a stale lock, cleared): never two
     if (l && (l.session !== current || l.mode !== conn.mode)) {
-      if (l.session !== current) { endConn(root, conn.id, conn.inc); current = l.session; posted = 0; stopsSaid = '[]' }
+      if (l.session !== current) { endConn(root, conn.id, conn.inc); current = l.session; posted = 0; said = '[[],[]]' }
       conn = upsertConn(root, 'claude', current, { pid: claudePid, cwd: root, mode: l.mode, busy: false }, Date.now(), l.session !== conn.session)
     }
     const now = readConn(root, conn.id)
     if (!now || now.inc !== conn.inc) conn = upsertConn(root, 'claude', current, { pid: claudePid, cwd: root, mode: conn.mode, busy: false }, Date.now(), true)   // swept, or ended
     const o = readOffers(root, conn.id)
-    if (!o) return
-    const stops = JSON.stringify(o.stop ?? [])
-    if (o.gen > posted) {
-      posted = o.gen
-      const lines = [o.n > 0 ? READY_LINE(o.n) : '', stops !== stopsSaid && o.stop?.length ? STOP_LINE(o.stop) : ''].filter(Boolean)
-      stopsSaid = stops
-      if (lines.length) await post(lines.join(' '))
-    }
+    if (!o || o.gen <= posted) return
+    const words = JSON.stringify([o.stop ?? [], o.resume ?? []])
+    const lines = [o.n > 0 ? READY_LINE(o.n) : '', words !== said && o.stop?.length ? STOP_LINE(o.stop) : '', words !== said && o.resume?.length ? RESUME_LINE(o.resume) : ''].filter(Boolean)
+    // marked said only once it reached the inbox: a failed post is tried again at the next look
+    if (!lines.length || await post(lines.join(' '))) { posted = o.gen; said = words }
   }
   let busy = false
   const tick = () => { if (busy) return; busy = true; look().catch(() => {}).finally(() => { busy = false }) }

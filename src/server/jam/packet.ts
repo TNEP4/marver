@@ -49,12 +49,17 @@ export interface Runner {
   skills?: boolean
   /** the session's claim handle - its say/done name it */
   handle?: string
+  /** the connection a Cursor session names in every command (`--as`) */
+  as?: string
+  /** what the sandbox around a spawned run's shell holds (said as it is, per tool) */
+  sandbox?: string
 }
 
 export function goalText(packet: JobPacket, subagents = true, runner?: Runner): string {
   const many = packet.members.length > 1
   const ids = packet.members.map((m) => m.id).join(', ')
   const session = runner?.kind === 'session'
+  const as = runner?.as ? ` --as ${runner.as}` : ''
   const opening = session
     ? [`You are the owner's own coding-agent session, and the owner just sent you a Marver Jam run from the design canvas (${runner!.handle}).`,
       'Do it as a part of this conversation, with everything you have - what you and the owner said here, the shell, your MCP servers and',
@@ -114,7 +119,7 @@ export function goalText(packet: JobPacket, subagents = true, runner?: Runner): 
     '- Use REAL brand logos and icons, never approximations: fetch the official SVG and inline its',
     '  paths directly in the frame. Never invent a lookalike mark.',
     ...(runner && (session || runner.shell || runner.mcp || runner.skills) ? [
-      `USE WHAT YOU HAVE: ${[session || runner.shell ? `the shell${session ? '' : ' (inside a sandbox: the repo is writable, keys are not readable)'} - run the project's checks, \`npx marver shot <scene/frame>\` to see a frame` : '', session || runner.mcp ? 'your MCP servers (design files, brand assets, docs)' : '', session || runner.skills ? 'your skills' : ''].filter(Boolean).join('; ')}.`,
+      `USE WHAT YOU HAVE: ${[session || runner.shell ? `the shell${session ? '' : ` (inside a sandbox: ${runner.sandbox ?? 'the repo is writable'})`} - run the project's checks, \`npx marver shot <scene/frame>\` to see a frame` : '', session || runner.mcp ? 'your MCP servers (design files, brand assets, docs)' : '', session || runner.skills ? 'your skills' : ''].filter(Boolean).join('; ')}.`,
     ] : []),
     '',
     subagents
@@ -135,7 +140,7 @@ export function goalText(packet: JobPacket, subagents = true, runner?: Runner): 
     'Omit the block entirely if the element\'s identity is unchanged.',
     '',
     ...(many ? [] : session ? [
-      `YOUR FIRST LINE TO THE OWNER: \`npx marver jam say ${runner!.handle} "On it - ..."\` posts ONE short line to the thread at once -`,
+      `YOUR FIRST LINE TO THE OWNER: \`npx marver jam say ${runner!.handle}${as} "On it - ..."\` posts ONE short line to the thread at once -`,
       'a message TO the owner, never narration. If the ask is genuinely unclear, make that line ONE clarifying question and',
       'hand the run back with that question in an asks block (below) without editing.',
       '',
@@ -149,9 +154,9 @@ export function goalText(packet: JobPacket, subagents = true, runner?: Runner): 
       '',
     ]),
     ...(session ? [
-      `HANDING IT BACK: write your final message to a file, then run \`npx marver jam done ${runner!.handle} --file <that file>\` -`,
-      `the canvas posts it and frees the frames. On a long run, \`npx marver jam progress ${runner!.handle}\` every few minutes says you`,
-      `are still on it (15 minutes of silence and the owner is told it stalled). Cannot do it now: \`npx marver jam release ${runner!.handle}\`.`,
+      `HANDING IT BACK: write your final message to a file, then run \`npx marver jam done ${runner!.handle}${as} --file <that file>\` -`,
+      `the canvas posts it and frees the frames. On a long run, \`npx marver jam progress ${runner!.handle}${as}\` every few minutes says you`,
+      `are still on it (15 minutes of silence and the owner is told it stalled). Cannot do it now: \`npx marver jam release ${runner!.handle}${as}\`.`,
       'The final message holds ONE block PER MEMBER - the system posts ONLY what is inside each block,',
       'in that member\'s thread, and DISCARDS everything else in it:',
     ] : [
