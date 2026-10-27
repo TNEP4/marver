@@ -211,7 +211,7 @@ export function act(j: Journal, id: string, rev: number, action: string, now = D
     return { ok: true, card: c }
   }
   if (action === 'edit' && capture && c.state === 'draft' && typeof body === 'string') {
-    c.payload = { ...c.payload!, edited: body.slice(0, 20_000) }; c.rev += 1; c.at = now
+    c.payload = { ...c.payload!, edited: body.slice(0, 20_000), editedAt: now }; c.rev += 1; c.at = now
     return { ok: true, card: c }
   }
   // a note written in its read-back after it ended: added under what it recorded (before it is sent)
@@ -319,7 +319,7 @@ export function freezeBrief(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[
     const cap = readCapture(ctx.root, c.capture)
     if (cap && capCard?.payload) {
       const note = capCard !== c && capCard.state === 'kept' ? 'kept - not an ask' : capCard !== c && capCard.state === 'dropped' ? 'dropped - not an ask' : undefined
-      brief.capture = { record: cap.record, recordHash: cap.hash, ...(capCard.payload.edited !== undefined ? { edited: capCard.payload.edited } : {}), ...(capCard.payload.added?.length ? { added: capCard.payload.added } : {}),
+      brief.capture = { record: cap.record, recordHash: cap.hash, ...(capCard.payload.edited !== undefined ? { edited: capCard.payload.edited, ...(capCard.payload.editedAt ? { editedAt: capCard.payload.editedAt } : {}) } : {}), ...(capCard.payload.added?.length ? { added: capCard.payload.added } : {}),
         ...(capCard.payload.reviewed ? { reviewed: capCard.payload.reviewed } : {}), ...(note ? { note } : {}) }
     }
   }

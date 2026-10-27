@@ -21,14 +21,17 @@ const wordsOf = (m: PacketMember): { kind: string; text: string }[] => {
   const c = m.brief.capture
   const rs = c?.record.context?.resumes
   const from = c && rs ? madeOf(c.record.id) : 0
-  const notes = (c?.added ?? []).map((a) => ({ kind: 'a read-back note', text: a.text, early: a.at < from }))
-  const early = notes.filter((n) => n.early), late = notes.filter((n) => !n.early)
-  const said = !c ? [] : rs && c.edited === undefined
-    ? [{ kind: 'the capture', text: wordsUntil(c.record, rs.at) }, ...early, { kind: 'the capture, resumed', text: wordsSince(c.record, rs.at) }]
-    : [...early, { kind: 'the capture', text: captureWords(c.record, c.edited) }]
+  const notes = (c?.added ?? []).map((a) => ({ kind: 'a read-back note', text: a.text, at: a.at }))
+  const before = (t: number) => notes.filter((n) => n.at <= t), after = (t: number) => notes.filter((n) => n.at > t)
+  const said = !c ? []
+    // edited in the read-back: as new as the edit among its notes (a note written after it is newer, one before older)
+    : c.edited !== undefined && c.editedAt ? [...before(c.editedAt), { kind: 'the capture (your edit)', text: captureWords(c.record, c.edited) }, ...after(c.editedAt)]
+    : rs && c.edited === undefined
+      ? [{ kind: 'the capture', text: wordsUntil(c.record, rs.at) }, ...before(from - 1), { kind: 'the capture, resumed', text: wordsSince(c.record, rs.at) }, ...after(from - 1)]
+      : [...before(from - 1), { kind: 'the capture', text: captureWords(c.record, c.edited) }, ...after(from - 1)]
   // tags and More-work notes in the order they were written - an edit makes one as new as the edit
   const asks = m.brief.asks.map((a, i) => ({ a, i, t: a.edited ?? a.ts ?? 0 })).sort((x, y) => x.t - y.t || x.i - y.i).map((x) => x.a)
-  return [...said, ...late, ...asks.map((a) => ({ kind: a.id?.startsWith('mw-') ? 'a More-work note' : 'a tag', text: a.body }))]
+  return [...said, ...asks.map((a) => ({ kind: a.id?.startsWith('mw-') ? 'a More-work note' : 'a tag', text: a.body }))]
     .filter((w) => clip(w.text, Infinity)).reverse()
 }
 

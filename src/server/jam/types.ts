@@ -115,6 +115,8 @@ export interface CaptureRecord {
 }
 /** What a capture card's brief carries, frozen at confirm. `note` marks a capture that is context, not an ask. */
 export interface Payload { record: CaptureRecord; recordHash: string; edited?: string; reviewed?: Reviewed; note?: string
+  /** when `edited` was last set (an edit made in the read-back is as new as itself among its notes) */
+  editedAt?: number
   /** notes written in its read-back after it ended, in order */
   added?: { at: number; text: string; id?: string }[] }
 /** The run a capture was made while reviewing: its ask (and, for a capture, its own record and edit) and the result. */
@@ -145,7 +147,7 @@ export interface Card {
   verdict?: 'looks good' | 'more work'   // your verdict on its review (the session record copies it)
   /** a capture card: the sealed record's hash, your edit (with its hash, ledgered at confirm) and the
    *  reviewed run it followed - what every brief on its thread carries */
-  payload?: { recordHash: string; edited?: string; editedHash?: string; reviewed?: Reviewed; added?: { at: number; text: string; id?: string }[] }
+  payload?: { recordHash: string; edited?: string; editedAt?: number; editedHash?: string; reviewed?: Reviewed; added?: { at: number; text: string; id?: string }[] }
   /** the run on screen when this capture started (a capture made during a review) */
   reviewing?: { card: string; batch: string; rev: number }
   /** a recoverable step in flight - confirm (or keep from the read-back) and More work: the exact
