@@ -2039,6 +2039,9 @@ textarea.jm-field { width: 100%; resize: none; outline: none; overflow: hidden; 
 textarea.jm-field:focus { border-color: transparent; box-shadow: 0 0 0 1px var(--accent), 0 0 0 4px var(--accent-ring) }
 .jm-sheet-at { position: absolute; right: var(--edge); top: calc(max(var(--edge), var(--mv-top, 0px)) + 54px); z-index: 42 }
 .jm-sheet .rows, .jm-wrapup .rows { margin: 0 -8px }
+/* a row with a second line (who works, the switches): air between rows, the line under the name kept to one line */
+.jm-sheet .rows .row:has(small) { padding-top: 5px; padding-bottom: 5px; line-height: 1.25 }
+.jm-sheet .rows .row.jm-two small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block; max-width: 200px; vertical-align: top }
 .jm-sc-row { position: relative; cursor: default; outline: none }
 .jm-record-panel .jm-body { overflow: auto }
 .jm-record-panel .jm-record { white-space: pre-wrap; overflow-wrap: anywhere }

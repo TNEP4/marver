@@ -1526,8 +1526,11 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
   let ticking = false
   const runTick = () => { if (ticking || stopped) return; ticking = true; core.runs.tick().catch((err) => log(`  jam: session tick error - ${(err as Error).message}`)).finally(() => { ticking = false }) }
   const sessionWatchers: FSWatcher[] = []
-  for (const dir of [reqDir(root), connDir(root)]) {
-    try { mkdirSync(dir, { recursive: true, mode: 0o700 }); const w = fsWatch(dir, { persistent: false }, runTick); w.on('error', () => {}); sessionWatchers.push(w) } catch { /* the interval is the backstop */ }
+  // (a session connecting or ending shows in the start sheet and the lane at once: the queue is pushed)
+  let pushDue: ReturnType<typeof setTimeout> | null = null
+  const connsChanged = () => { runTick(); pushDue ??= setTimeout(() => { pushDue = null; try { onQueue?.() } catch { /* advisory */ } }, 250) }
+  for (const [dir, on] of [[reqDir(root), runTick], [connDir(root), connsChanged]] as const) {
+    try { mkdirSync(dir, { recursive: true, mode: 0o700 }); const w = fsWatch(dir, { persistent: false }, on); w.on('error', () => {}); sessionWatchers.push(w) } catch { /* the interval is the backstop */ }
   }
   const sessionInterval = setInterval(runTick, 2_000)
   sessionInterval.unref?.()
@@ -1555,6 +1558,7 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
       if (scheduled) clearTimeout(scheduled)
       clearInterval(interval)
       clearInterval(sessionInterval)
+      if (pushDue) clearTimeout(pushDue)
       watcher?.close()
       for (const w of sessionWatchers) w.close()
       core.stop()

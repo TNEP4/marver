@@ -193,10 +193,10 @@ function WhoWorks({ fallback }: { fallback: string }) {
   const name = (a: string) => HARNESS[a] ?? a
   const forks = agent === 'claude' || agent === 'codex' || sel?.agent === 'claude' || sel?.agent === 'codex'
   const who = !settings.session || !context || settings.runner === 'background'
-    ? { line: `A background agent - ${name(agent ?? '')}`, small: context ? 'with your last session\'s context' : 'starting fresh' }
+    ? { line: `A background agent - ${name(agent ?? '')}`, small: context ? 'With your last session\'s context' : 'Starting fresh' }
     : sel
-    ? { line: `Your ${name(sel.agent)} session`, small: sel.agent === 'claude' ? 'with everything it has - its conversation, tools, MCP servers, skills' : 'while it works; idle, a copy of it does the run' }
-    : { line: forks ? 'A copy of your last session' : `A background agent - ${name(agent ?? '')}`, small: 'open Claude Code, Codex or Cursor here and it joins' }
+    ? { line: `Your ${name(sel.agent)} session`, small: sel.agent === 'claude' ? 'With everything it has' : 'While it works; idle, a copy of it' }
+    : { line: forks ? 'A copy of your last session' : `A background agent - ${name(agent ?? '')}`, small: 'Open your agent here and it joins' }
   // several sessions: the next one takes the work (one click), until it ends
   const next = sessions.length > 1 ? sessions[(sessions.findIndex((x) => x.selected) + 1) % sessions.length] : undefined
   const trust = info?.connectors?.some((c) => c.agent === 'codex' && c.state === 'installed') && !sessions.some((x) => x.agent === 'codex')
@@ -206,21 +206,21 @@ function WhoWorks({ fallback }: { fallback: string }) {
     {(() => {
       const body = (<>
         <UserIcon size={15} />
-        <span>{who.line}<br /><small>{who.small}{next ? ` · ${sessions.length} open - click for the next` : ''}</small></span>
+        <span>{who.line}<br /><small title={next ? `${sessions.length} sessions open - click for the next` : undefined}>{next ? `${sessions.length} open · click for the next` : who.small}</small></span>
         {sel && <span className="v"><span className="jm-agent"><i /></span></span>}
       </>)
       return next
-        ? <button className="row" data-jam-who={sel ? sel.agent : 'background'} onClick={() => void set({ pick: next.id })}>{body}</button>
-        : <div className="row" data-jam-who={sel ? sel.agent : 'background'}>{body}</div>
+        ? <button className="row jm-two" data-jam-who={sel ? sel.agent : 'background'} onClick={() => void set({ pick: next.id })}>{body}</button>
+        : <div className="row jm-two" data-jam-who={sel ? sel.agent : 'background'}>{body}</div>
     })()}
-    <button className="row" data-jam-switch="mcp" onClick={() => void set({ mcp: !settings.mcp, skills: !settings.mcp })}>
-      <LinkIcon size={15} /><span>MCP servers and skills<br /><small>Copies and background agents use yours</small></span>{sw(settings.mcp)}
+    <button className="row jm-two" data-jam-switch="mcp" onClick={() => void set({ mcp: !settings.mcp, skills: !settings.mcp })}>
+      <LinkIcon size={15} /><span>MCP servers and skills<br /><small>Background runs use yours</small></span>{sw(settings.mcp)}
     </button>
-    <button className="row" data-jam-switch="context" onClick={() => void set({ context: context ? 'fresh' : 'fork' })}>
-      <NotebookIcon size={15} /><span>Your session's context<br /><small>Your session, or a copy of it, does the work</small></span>{sw(context)}
+    <button className="row jm-two" data-jam-switch="context" onClick={() => void set({ context: context ? 'fresh' : 'fork' })}>
+      <NotebookIcon size={15} /><span>Your session's context<br /><small>Your session or a copy works</small></span>{sw(context)}
     </button>
-    <button className="row" data-jam-switch="others" onClick={() => void set({ others: !settings.others })}>
-      <CommentIcon size={15} /><span>Collaborators' comments<br /><small>Other people's words reach the agent</small></span>{sw(settings.others)}
+    <button className="row jm-two" data-jam-switch="others" onClick={() => void set({ others: !settings.others })}>
+      <CommentIcon size={15} /><span>Collaborators' comments<br /><small>Their words reach the agent</small></span>{sw(settings.others)}
     </button>
     {trust && <div className="note-line" style={{ margin: '4px 8px' }}><WarningIcon size={14} /><span>Codex: trust Marver's hooks once - type <code style={{ color: 'inherit' }}>/hooks</code> in Codex.</span></div>}
   </>)
