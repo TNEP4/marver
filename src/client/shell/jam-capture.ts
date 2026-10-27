@@ -889,8 +889,12 @@ async function untilQueued(id: string): Promise<void> {
   try {
     const after = <T,>(ms: number, v: T) => new Promise<T>((res) => setTimeout(() => res(v), ms))
     for (let wait = 2_000; !held(); wait = Math.min(wait * 2, 10_000)) {
-      // a refresh that hangs is given 10 s, then the next one is asked - it never stops the retries
-      if (await Promise.race([q.getState().load(), push, after(10_000, false)])) return
+      // a refresh that hangs is given 10 s, then cancelled and the next one asked - it never stops the retries, and
+      // abandoned requests never pile up on the browser's connections (a push that ends the wait cancels it too)
+      const ac = new AbortController()
+      const answered = await Promise.race([q.getState().load({ signal: ac.signal }), push, after(10_000, false)])
+      ac.abort()
+      if (answered) return
       await Promise.race([push, after(wait, undefined)])
     }
   } finally { un() }

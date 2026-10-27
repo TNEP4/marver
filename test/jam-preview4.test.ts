@@ -38,6 +38,15 @@ describe('the brief of a run (jam next)', () => {
     const p: any = { batchId: 'b-8', frames: ['d/a'], members: [{ id: 'm1', kind: 'comment', frames: ['d/a'], brief: { asks: [{ id: 'e-1', body: '@marver the title smaller' }], history: [] } }] }
     expect(sessionBrief(p, 'r-8.1')).toContain('- on d/a, a tag: "the title smaller"')
     expect(sessionBrief(capture([], [{ at: 0, event: 'words', text: 'Make it calmer' }]), 'r-2.1')).toContain('- on d/a, the capture: "Make it calmer"')
+    // two requests on one run (two tags on a held frame): the newest first, each still its own block
+    const two: any = { batchId: 'b-9', frames: ['d/a'], members: [
+      { id: 'm1', kind: 'comment', frames: ['d/a'], brief: { asks: [{ id: 'e-1', body: `@marver make the heading red ${'and bolder '.repeat(40)}` }], history: [] } },
+      { id: 'm2', kind: 'comment', frames: ['d/a'], brief: { asks: [{ id: 'e-2', body: '@marver Correction: use green' }], history: [] } }] }
+    const tb = sessionBrief(two, 'r-9.1')
+    expect(tb.indexOf('m2 on d/a, a tag: "Correction: use green"')).toBeGreaterThan(-1)
+    expect(tb.indexOf('m2 on d/a')).toBeLessThan(tb.indexOf('m1 on d/a'))
+    expect(tb).toContain('```marver-reply m1')
+    expect(tb).toContain('```marver-reply m2')
   })
   it('a long first request never pushes a correction out: the newest leads whole, an earlier one is clipped', () => {
     const said = `Make the background red, ${'and tighten the spacing between every card of the pricing grid, '.repeat(8)}`

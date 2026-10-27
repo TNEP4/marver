@@ -49,7 +49,8 @@ interface QueueState {
   sessions: JamSession[]
   settings: JamSettings | null
   /** resolves true once the canvas answered with a view (applied, or overtaken by a newer one) - one built after the call */
-  load(): Promise<boolean>
+  /** the view now; `signal` lets a caller that stopped waiting cancel the request */
+  load(opts?: { signal?: AbortSignal }): Promise<boolean>
   apply(view: unknown): void
   /** A session this page ended (the server said so): gone at once, and no view shows it again */
   forget(session: string): void
@@ -86,10 +87,10 @@ export const useJamQueue = create<QueueState>((set, get) => {
     session: null,
     sessions: [],
     settings: null,
-    async load() {
+    async load(opts) {
       if (PUBLISHED) return false
       try {
-        const res = await api('jam/queue', { headers: { 'x-mv-c': csrf() } })
+        const res = await api('jam/queue', { headers: { 'x-mv-c': csrf() }, ...(opts?.signal ? { signal: opts.signal } : {}) })
         if (!res.ok) return false
         const v = await res.json()
         // the canvas's stand-in while its queue is not up (a restart) is not a view of it: never applied - it would

@@ -1524,6 +1524,40 @@ describe('captures in the browser: the first trial', () => {
     await decide(b, 'good')
   }, 150_000)
 
+  skippable('refreshes that hang are cancelled when given up on - they never pile up on the browser\'s connections', async () => {
+    agentMode({})
+    await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const b = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('every refresh hangs'), 1`)
+    // pushes held back; every queue refresh hangs until it is cancelled
+    await browser!.eval(s, `(() => {
+      const q = window.__mvJamQueue, real = q.getState().apply
+      const w = window.__qPile = { real, hang: true, pending: 0, aborted: 0, last: null }
+      q.setState({ apply: (v) => { if (w.hang) w.last = v; else real(v) } })
+      const f = window.fetch
+      window.fetch = (u, init) => {
+        if (!w.hang || !String(u).includes('/api/jam/queue') || (init && init.method && init.method !== 'GET')) return f(u, init)
+        w.pending++
+        return new Promise((_, rej) => init?.signal?.addEventListener('abort', () => { w.pending--; w.aborted++; rej(new DOMException('aborted', 'AbortError')) }))
+      }
+      return 1 })()`)
+    try {
+      await key('e')
+      await until(`!!window.__mvJamCapture.getState().sealed.find((x) => x.id === ${JSON.stringify(b)})?.card`, 40_000)
+      // two refreshes given up on (10 s each): cancelled, one at most still out
+      await until(`window.__qPile.aborted >= 2`, 40_000)
+      expect(await browser!.eval(s, `window.__qPile.pending`)).toBeLessThanOrEqual(1)
+      expect(await browser!.eval(s, `window.__mvJamCapture.getState().unsent`)).toContain(b)
+    } finally {
+      await browser!.eval(s, `(() => { const w = window.__qPile; w.hang = false; window.__mvJamQueue.setState({ apply: w.real }); if (w.last) w.real(w.last); void window.__mvJamQueue.getState().load(); return 1 })()`)
+    }
+    await until(`!window.__mvJamCapture.getState().unsent.length`, 20_000)
+    expect(await browser!.eval(s, `window.__qPile.pending`)).toBe(0)
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((x) => x.id === ${JSON.stringify(b)} && x.state === 'review')`, 90_000)
+    await decide(b, 'good')
+  }, 180_000)
+
   skippable('the canvas\'s stand-in answer while its queue is not up is never applied: the lane and the session stay as the last view left them', async () => {
     await until(`Array.isArray(window.__mvJamQueue.getState().cards)`, 10_000)
     // what a push just brought: a card on the lane and a session under way

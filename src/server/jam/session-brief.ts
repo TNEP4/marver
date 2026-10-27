@@ -36,7 +36,8 @@ export function sessionBrief(packet: JobPacket, handle: string, as?: string): st
   // a session record: one file written from the packet - no thread to answer early in, no frame to edit
   const record = packet.members.every((m) => m.brief.wrapup)
   const files = packet.members.flatMap((m) => (m.brief.wrapup ? [m.brief.wrapup.content.file] : []))
-  const asks = packet.members.flatMap((m) => {
+  // several requests in one run: the newest first, as within each one (each still answered in its own block)
+  const asks = [...packet.members].reverse().flatMap((m) => {
     const at = `${one ? '' : `${m.id} `}on ${m.frames.join(', ') || 'the board'}`
     if (m.brief.wrapup) {
       const w = m.brief.wrapup.content
