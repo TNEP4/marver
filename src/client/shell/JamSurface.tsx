@@ -310,6 +310,12 @@ function tileMenu(c: JamCard): MenuItem[] {
     case 'review': return [open, ...reply, ...thread, rename]
     case 'asks': return [...reply, open, rename]
     case 'failed': return [item('Retry', <ReloadIcon size={14} />, () => act('retry')), open, ...thread, item('Drop', <XIcon size={14} />, () => act('drop'))]
+    case 'working': {
+      // a run your session went quiet on (spec 29b): give it back, run it in the background, or drop it
+      if (c.runner?.kind !== 'session' || c.runner.state !== 'stalled') return [open, ...reply, ...thread, rename]
+      const run = (a: 'again' | 'background' | 'drop') => () => { const fresh = useJamQueue.getState().cards?.find((x) => x.id === c.id); if (fresh) void useJamQueue.getState().runAct(fresh, a) }
+      return [item('Give it back to your session', <ReloadIcon size={14} />, run('again')), item('Run it in the background', <ArrowUpIcon size={14} />, run('background')), open, ...thread, item('Drop it', <XIcon size={14} />, run('drop'))]
+    }
     default: return [open, ...reply, ...thread, rename]
   }
 }

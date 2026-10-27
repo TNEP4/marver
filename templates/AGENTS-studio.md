@@ -46,7 +46,7 @@ file in design/instructions/ - they are short, strict, and part of this contract
 | Context | any question about what the product does or what is live; a behaviour change; a deploy; no `context/` yet | instructions/context.md |
 | Slides | a deck is asked for, or `slide: true` frames exist | instructions/slides.md + design/slides.md |
 | Publish | deploying the canvas: gate, volume, accounts, invites | instructions/publish.md |
-| Live Jam | responding to an `@marver` comment (a spawned job); on by default - confirm it names YOUR tool | instructions/jam.md |
+| Live Jam | responding to an `@marver` comment (a spawned job), or a message from Marver Jam that runs are ready - run `npx marver jam next`; on by default - confirm it names YOUR tool | instructions/jam.md |
 
 Refining an existing screen: Configure must hold, then Build + Review. New work runs
 the full ladder. Unsure which phase you are in? Ask the human - one question beats a

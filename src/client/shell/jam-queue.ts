@@ -25,7 +25,14 @@ export interface JamCard {
   session?: string
   /** a session record: the file it writes */
   file?: string
+  /** who runs it now (spec 29b): your session, a copy of it, or a fresh agent - and where it stands */
+  runner?: JamRunner
 }
+export interface JamRunner { kind: 'session' | 'fork' | 'fresh'; agent: string; state?: 'offered' | 'claimed' | 'stalled' | 'stopping' | 'waiting'; why?: string; batch: string; gen?: number }
+/** A coding-agent session connected to this repo (spec 29b): the selected one takes the work while a Jam session runs. */
+export interface JamSession { id: string; agent: 'claude' | 'codex' | 'cursor'; busy: boolean; selected: boolean; since: number; mode?: string }
+/** What Jam does on this machine: the config with the start sheet's switches over it. */
+export interface JamSettings { runner: 'auto' | 'session' | 'background'; session: boolean; context: 'fork' | 'fresh'; mcp: boolean; skills: boolean; others: boolean; sessionMax: number }
 /** The review's frames: the ones the run changed (all of them when none did - there is still a before
  *  and after to look at). */
 export const changedShots = (shots: JamCard['shots']) => { const all = shots ?? []; const changed = all.filter((x) => !x.same); return changed.length ? changed : all }
@@ -38,11 +45,18 @@ interface QueueState {
   run: { since: number } | null
   /** the Jam session running now (spec 27 Part 5) */
   session: { id: string; since: number } | null
+  /** the coding-agent sessions connected to this repo, and Jam's settings here (spec 29b) */
+  sessions: JamSession[]
+  settings: JamSettings | null
   load(): Promise<void>
   apply(view: unknown): void
   /** A session this page ended (the server said so): gone at once, and no view shows it again */
   forget(session: string): void
   act(card: JamCard, action: JamAction, body?: string): Promise<boolean>
+  /** a session run's choice (spec 29b): give it back, run it in the background, drop it - at its generation */
+  runAct(card: JamCard, action: 'again' | 'background' | 'drop'): Promise<boolean>
+  /** the start sheet's switches, and which session takes the work */
+  setPrefs(p: { mcp?: boolean; skills?: boolean; context?: 'fork' | 'fresh'; others?: boolean; pick?: string | null }): Promise<boolean>
 }
 
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
@@ -69,6 +83,8 @@ export const useJamQueue = create<QueueState>((set, get) => {
     agent: null,
     run: null,
     session: null,
+    sessions: [],
+    settings: null,
     async load() {
       if (PUBLISHED) return
       try {
@@ -90,8 +106,12 @@ export const useJamQueue = create<QueueState>((set, get) => {
       loaded = true
       const run = (v as { run?: { since?: unknown } }).run
       const ses = (v as { session?: { id?: unknown; since?: unknown } }).session
+      const sessions = (v as { sessions?: unknown }).sessions
+      const settings = (v as { settings?: unknown }).settings
       set({ cards: next, agent: typeof v.agent === 'string' ? v.agent : null, run: run && typeof run.since === 'number' ? { since: run.since } : null,
-        session: ses && typeof ses.id === 'string' && typeof ses.since === 'number' && !over.has(ses.id) ? { id: ses.id, since: ses.since } : null })
+        session: ses && typeof ses.id === 'string' && typeof ses.since === 'number' && !over.has(ses.id) ? { id: ses.id, since: ses.since } : null,
+        sessions: Array.isArray(sessions) ? sessions.filter((x): x is JamSession => !!x && typeof x === 'object' && typeof (x as JamSession).id === 'string') : [],
+        settings: settings && typeof settings === 'object' ? settings as JamSettings : null })
       if (first) return
       // something to review: a soft chime, once per batch that leaves a capture to review, if the page
       // has focus - never a notice (spec 27, Part 2)
@@ -118,6 +138,20 @@ export const useJamQueue = create<QueueState>((set, get) => {
         body: JSON.stringify({ id: card.id, rev: card.rev, action, ...(body !== undefined ? { body } : {}) }),
       }).catch(() => null)
       await get().load()   // the card as it is now (its new rev) before the caller acts again
+      return !!res?.ok
+    },
+    async runAct(card, action) {
+      if (!card.runner || card.runner.gen === undefined) return false
+      const res = await api('jam/run', {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() },
+        body: JSON.stringify({ batch: card.runner.batch, gen: card.runner.gen, action }),
+      }).catch(() => null)
+      await get().load()
+      return !!res?.ok
+    },
+    async setPrefs(p) {
+      const res = await api('jam/prefs', { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify(p) }).catch(() => null)
+      await get().load()
       return !!res?.ok
     },
   }

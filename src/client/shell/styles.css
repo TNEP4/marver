@@ -1155,6 +1155,8 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
 @keyframes sh-tstat-pop { from { opacity: 0; transform: translateY(-3px) } }
 .cm-tstat-pop { animation-name: sh-tstat-pop }
 .cm-tstat-pop .sh-tip-lines { display: flex; flex-direction: column; gap: 2px; white-space: normal; min-width: 0 }
+.cm-tstat-pop.many { flex-wrap: wrap; row-gap: 6px }             /* a stalled run's three choices wrap under its lines */
+.cm-tstat-pop.many .sh-tip-lines { flex-basis: 100% }
 .cm-tstat-pop .sh-tip-lines b { font-weight: 600; font-size: 12px; letter-spacing: 0; white-space: normal; overflow: visible; text-overflow: clip; max-width: none; color: inherit }
 .cm-tstat-pop .sh-tip-lines small { opacity: .62; font-size: 11px; line-height: 1.35 }
 .cm-tstat-act { flex: none; height: 24px; padding: 0 10px; border: 0; border-radius: 6px; cursor: pointer;

@@ -8,6 +8,23 @@ import type { Bundle, CaptureRecord } from '../../server/jam/types.ts'
 const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`
 const clock = (ms: number) => { const s = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` }
 
+/** Who runs a working card, in words (spec 29b): your session, a copy of it, or a background agent - and,
+ *  for your session, where the run stands. `name` is the agent's name ("Claude Code"). Null: today's words. */
+export function runnerLine(c: JamCard, name: (agent: string) => string, now = Date.now()): { head: string; detail?: string } | null {
+  const r = c.runner
+  if (c.state !== 'working' || !r) return null
+  const who = r.agent ? name(r.agent) : 'your session'
+  if (r.kind === 'session') {
+    if (r.state === 'offered') return { head: `Waiting for your ${who} session · ${clock(now - c.at)}`, detail: 'It takes the run when it is free' }
+    if (r.state === 'waiting') return { head: 'Waiting for your session', detail: 'Open Claude Code, Codex or Cursor in this repo - it takes the run' }
+    if (r.state === 'stalled') return { head: `No word from your ${who} session for a while`, detail: 'Give it back, run it in the background, or drop it' }
+    if (r.state === 'stopping') return { head: `Stopping - waiting for your ${who} session to let go`, detail: 'Its frames stay reserved until it does' }
+    return { head: `Your ${who} session is on it · ${clock(now - c.at)}` }
+  }
+  if (r.kind === 'fork') return { head: `A copy of your ${who} session is on it · ${clock(now - c.at)}`, detail: 'With your conversation, tools, MCP servers and skills' }
+  return { head: `Agent working · ${clock(now - c.at)} - ${who}`, ...(r.why ? { detail: r.why } : {}) }
+}
+
 /** What the icon's tooltip says: the state, then the detail - position, clock and agent, the reason
  *  a held card waits, why a card failed. */
 export function statusLines(c: JamCard, agent: string | null, harness: Record<string, string>, now = Date.now()): { head: string; detail?: string } {
@@ -16,7 +33,7 @@ export function statusLines(c: JamCard, agent: string | null, harness: Record<st
     const p = c.position ?? 1
     return { head: p <= 1 ? `Queued · next${tags}` : `Queued · ${ordinal(p)}${tags} - runs after ${p - 1} other${p - 1 === 1 ? '' : 's'}`, ...(c.waiting ? { detail: c.waiting } : {}) }
   }
-  if (c.state === 'working') return { head: `Agent working · ${clock(now - c.at)}${agent ? ` - ${harness[agent] ?? agent}` : ''}` }
+  if (c.state === 'working') return runnerLine(c, (a) => harness[a] ?? a, now) ?? { head: `Agent working · ${clock(now - c.at)}${agent ? ` - ${harness[agent] ?? agent}` : ''}` }
   if (c.state === 'asks') return { head: 'Asks you - see the question below' }
   if (c.state === 'failed') return { head: `Failed - ${c.note ?? 'the agent could not finish'}`, detail: 'Retry here, or tag @marver again' }
   return { head: c.state }
@@ -35,7 +52,13 @@ export function laneLine(c: LaneCard, now = Date.now()): string {
     case 'draft': return 'To confirm'
     case 'confirming': return 'Confirming'
     case 'queued': { const p = c.position ?? 1; return p <= 1 ? 'Queued · next' : `Queued · ${ordinal(p)}` }
-    case 'working': return `Agent working · ${clock(now - c.at)}`
+    case 'working': {
+      // who runs it (spec 29b), in a few words: a tile has one short line
+      const r = c.runner
+      if (r?.kind === 'session') return r.state === 'offered' ? 'Waiting for your session' : r.state === 'waiting' ? 'Waiting for a session' : r.state === 'stalled' ? 'Stalled · choose' : r.state === 'stopping' ? 'Stopping' : `Your session · ${clock(now - c.at)}`
+      if (r?.kind === 'fork') return `A copy of your session · ${clock(now - c.at)}`
+      return `Agent working · ${clock(now - c.at)}`
+    }
     case 'asks': return 'Asks you'
     case 'review': return 'Ready to review'
     case 'done': { const n = c.shots?.length ?? 0; return n ? `Done · ${n} frame${n === 1 ? '' : 's'}` : 'Done' }

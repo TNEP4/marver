@@ -3,6 +3,7 @@ import { basename, dirname, join, relative } from 'node:path'
 import { NAME } from './name.ts'
 import { detectHost, readJson, type HostInfo } from '../server/detect.ts'
 import { detectAgent } from '../server/jam/agent.ts'
+import { connectorLine, ensureConnectors } from '../server/jam/connectors.ts'
 import { scanFrames, writeManifest } from '../server/manifest.ts'
 import { MANAGED_PREFIX, LEGACY_PREFIX, hashBody, managedFile, pkgDir, enumerateInstructionTemplates } from '../server/managed.ts'
 import { writeManaged as writeManagedFile } from './managed-write.ts'
@@ -361,6 +362,14 @@ export function init(root: string, opts: InitOpts) {
   // prints the truth at boot in every case. The no-CLI note is machine truth, so it always holds.
   if (!jamAgent) console.log(`\n  note: Live Jam found no agent CLI on PATH (claude, codex, cursor, droid, opencode, grok, or pi) - install one and it arms itself on the next \`${NAME} dev\`.`)
   else if (created.includes('design/config.ts')) console.log(`\n  Live Jam is on (${jamAgent}): tag @${NAME} in a canvas comment and your agent does the work, then replies in the thread.`)
+  // connect this repo's Claude Code, Codex and Cursor sessions (spec 29b): while a Jam session runs on the canvas,
+  // tags and captures go to the session you have open - local hooks, never committed; `marver dev` checks them too
+  if (jamAgent) {
+    try {
+      const line = connectorLine(ensureConnectors(root))
+      if (line) console.log(`\n${line}`)
+    } catch { /* `marver dev` connects them at boot */ }
+  }
   console.log(`\n  next: npx ${NAME} dev   (or: npx ${NAME} canvas - same thing; it prints its link: a free slot, localhost:4805-4824, usually the same one next time)\n`)
   // the first-session hand-off belongs to a canvas this run created - an upgrade is not a first session
   if (!noApp(host) && created.includes('design/config.ts')) console.log(`  then, to your agent: "Read design/AGENTS.md. This is our first session - follow design/instructions/welcome.md."\n`)

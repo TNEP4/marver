@@ -63,8 +63,13 @@ function mergeFlat(file: Json, want: Record<string, Json[]>): Json {
   return { version: 1, ...file, hooks }
 }
 
-/** Is any entry of ours in this file? */
-const hasOurs = (file: Json): boolean => JSON.stringify(file.hooks ?? {}).match(OURS) !== null
+/** Is any entry of ours in this file? (Each command looked at as written - in JSON its quotes are escaped.) */
+const hasOurs = (file: Json): boolean => {
+  const cmds: string[] = []
+  const walk = (v: unknown) => { if (Array.isArray(v)) v.forEach(walk); else if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) { if (k === 'command' && typeof x === 'string') cmds.push(x); else walk(x) } }
+  walk(file.hooks)
+  return cmds.some((c) => OURS.test(c))
+}
 
 /** What each tool's file should hold, for this repo's marver. */
 export function wanted(agent: ConnAgent, bin: string, root: string): { nested?: Record<string, Handler[]>; flat?: Record<string, Json[]> } {
@@ -169,7 +174,7 @@ export function ensureConnectors(root: string, opts: { agents?: ConnAgent[]; for
 export function connectorLine(results: ConnectorResult[]): string | null {
   const name: Record<ConnAgent, string> = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' }
   const made = results.filter((r) => r.state === 'installed').map((r) => name[r.agent])
-  const skipped = results.filter((r) => ['tracked', 'unreadable', 'failed', 'no-bin'].includes(r.state))
+  const skipped = results.filter((r) => ['tracked', 'unreadable', 'failed'].includes(r.state))   // (no local marver: quiet - an npx run, a scratch folder)
   const parts: string[] = []
   if (made.length) parts.push(`jam: connected ${made.join(', ')} sessions in this repo - their hooks are in ${results.filter((r) => r.state === 'installed').map((r) => r.file).join(', ')} (local, never committed)${results.some((r) => r.state === 'installed' && r.agent === 'codex') ? '; Codex asks you to trust them once (/hooks)' : ''}`)
   for (const s of skipped) parts.push(`jam: ${name[s.agent]} not connected - ${s.note ?? s.state}`)

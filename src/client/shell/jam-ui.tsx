@@ -83,6 +83,8 @@ export function TagStatus({ board, eventId, harness }: { board?: string; eventId
   if (!card) return null
   const { head, detail } = statusLines(card, agent, harness)
   const move = card.state === 'queued' ? 'drop' : card.state === 'failed' ? 'retry' : null
+  // a run your session went quiet on (spec 29b): the owner's three choices, by the run and its generation
+  const stalled = card.state === 'working' && card.runner?.kind === 'session' && card.runner.state === 'stalled'
   const lines = <span className="sh-tip-lines"><b>{head}</b>{detail && <small>{detail}</small>}</span>
   return (
     <span className={`cm-tstat${open ? ' on' : ''}`} ref={ref} data-jam-card={card.id} data-jam-state={card.state}>
@@ -94,9 +96,12 @@ export function TagStatus({ board, eventId, harness }: { board?: string; eventId
         </Tip>
       )}
       {open && (
-        <span className="cm-tstat-pop" role="dialog" aria-label={head} ref={popRef}>
+        <span className={`cm-tstat-pop${stalled ? ' many' : ''}`} role="dialog" aria-label={head} ref={popRef}>
           {lines}
           {move && <button className="cm-tstat-act" onClick={() => { void useJamQueue.getState().act(card, move); setOpen(false) }}>{move === 'drop' ? 'Drop' : 'Retry'}</button>}
+          {stalled && ([['again', 'Give it back'], ['background', 'Run in the background'], ['drop', 'Drop it']] as const).map(([a, label]) => (
+            <button key={a} className="cm-tstat-act" data-jam-run-act={a} onClick={() => { void useJamQueue.getState().runAct(card, a); setOpen(false) }}>{label}</button>
+          ))}
         </span>
       )}
     </span>

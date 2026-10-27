@@ -9,6 +9,32 @@ Only a tag starts work. A plain reply in a thread - even an answer to a question
 starts nothing: it is conversation, and it waits for the next tag in that thread or for the
 human's own agent ("Answers waiting for you", below).
 
+## Runs from the canvas - when Marver Jam wakes YOUR session
+
+While a Jam session runs on the canvas, the owner's tags and voice captures come to the
+session they already have open (Claude Code, Codex or Cursor) - you, with this conversation,
+your tools, MCP servers and skills. Nothing to set up: `marver dev` connected you (hooks in
+`.claude/settings.local.json`, `.codex/hooks.json`, `.cursor/hooks.json` - local, never
+committed). When the session cannot take a run, a copy of it does, with the same context.
+
+A message from Marver Jam ("1 run ready on the canvas - run `npx marver jam next`") is the
+owner's work arriving. The routine:
+
+1. `npx marver jam next` - takes the next run: its handle (`r-1a2b3c4d.1`), the frames you may
+   edit, the packet file, and the instructions (the rest of this file applies to it).
+2. One-ask run: `npx marver jam say <handle> "On it - ..."` - one line to the owner, at once.
+3. Do the work. A small ask: inline. A capture across several frames: one subagent per frame
+   (never two on one frame), each briefed with the packet's part for its frame.
+4. A long run: `npx marver jam progress <handle>` every few minutes - after 15 minutes of
+   silence the owner is told it stalled.
+5. `npx marver jam done <handle> --file <file>` with the final message (the `marver-reply`
+   blocks below) - the canvas posts it and frees the frames.
+
+Cannot do it now: `npx marver jam release <handle>` - another runner takes it. Told the owner
+moved a run elsewhere: stop working on it and release it. `npx marver jam status` shows what is
+yours; `npx marver jam mute` keeps this session out of Jam work until it ends. Cursor names its
+connection in its messages: add `--as <id>` as shown.
+
 ## Wiring - once per repo
 
 Live Jam is ON by default: it arms itself with whatever agent CLI the machine has, and

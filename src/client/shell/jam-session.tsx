@@ -18,7 +18,7 @@ import { JamStateIcon } from './jam-ui.tsx'
 import { Marver, moreDraftOf, setMoreDraft } from './jam-panel.tsx'
 import { useJamVoice, voiceSession, voiceSessionEnd, voiceSessionId } from './jam-voice.ts'
 import { HARNESS } from './Comments.tsx'
-import { ArrowRightIcon, CaretIcon, KeyboardIcon, MicrophoneIcon, MicrophoneSlashIcon, WarningIcon, WaveformIcon } from './icons.tsx'
+import { ArrowRightIcon, CaretIcon, CommentIcon, KeyboardIcon, LinkIcon, MicrophoneIcon, MicrophoneSlashIcon, NotebookIcon, UserIcon, WarningIcon, WaveformIcon } from './icons.tsx'
 import { Tip } from './Tip.tsx'
 import { useSessionClock } from './jam-lane.tsx'
 import { CONFIG, stoppedFor, useStore } from './store.ts'
@@ -178,6 +178,54 @@ function ShortcutsRow() {
   )
 }
 
+/** Who does the work, and with what (spec 29b): your own coding-agent session while the Jam session runs, a copy of
+ *  it, or a background agent - and the three switches over what the runs Marver spawns may use. Starting the
+ *  session connects every Claude Code, Codex and Cursor session in the repo; nothing else to set up. */
+function WhoWorks({ fallback }: { fallback: string }) {
+  const sessions = useJamQueue((s) => s.sessions)
+  const settings = useJamQueue((s) => s.settings)
+  const agent = useJamQueue((s) => s.agent)
+  const [info, setInfo] = useState<{ connectors?: { agent: string; state: string; note?: string }[] } | null>(null)
+  useEffect(() => { api('jam/prefs', { headers: { 'x-mv-c': csrf() } }).then((r) => (r.ok ? r.json() : null)).then(setInfo, () => {}) }, [])
+  if (!settings) return <div className="row"><ArrowRightIcon size={15} /><span>Hands work to</span><span className="v"><span className="jm-agent"><i />{fallback}</span></span></div>
+  const sel = sessions.find((x) => x.selected)
+  const context = settings.context !== 'fresh'
+  const name = (a: string) => HARNESS[a] ?? a
+  const forks = agent === 'claude' || agent === 'codex' || sel?.agent === 'claude' || sel?.agent === 'codex'
+  const who = !settings.session || !context || settings.runner === 'background'
+    ? { line: `A background agent - ${name(agent ?? '')}`, small: context ? 'with your last session\'s context' : 'starting fresh' }
+    : sel
+    ? { line: `Your ${name(sel.agent)} session`, small: sel.agent === 'claude' ? 'with everything it has - its conversation, tools, MCP servers, skills' : 'while it works; idle, a copy of it does the run' }
+    : { line: forks ? 'A copy of your last session' : `A background agent - ${name(agent ?? '')}`, small: 'open Claude Code, Codex or Cursor here and it joins' }
+  // several sessions: the next one takes the work (one click), until it ends
+  const next = sessions.length > 1 ? sessions[(sessions.findIndex((x) => x.selected) + 1) % sessions.length] : undefined
+  const trust = info?.connectors?.some((c) => c.agent === 'codex' && c.state === 'installed') && !sessions.some((x) => x.agent === 'codex')
+  const set = useJamQueue.getState().setPrefs
+  const sw = (on: boolean) => <span className="v">{on ? 'On' : 'Off'}<i className={`jm-switch${on ? ' on' : ''}`} /></span>
+  return (<>
+    {(() => {
+      const body = (<>
+        <UserIcon size={15} />
+        <span>{who.line}<br /><small>{who.small}{next ? ` · ${sessions.length} open - click for the next` : ''}</small></span>
+        {sel && <span className="v"><span className="jm-agent"><i /></span></span>}
+      </>)
+      return next
+        ? <button className="row" data-jam-who={sel ? sel.agent : 'background'} onClick={() => void set({ pick: next.id })}>{body}</button>
+        : <div className="row" data-jam-who={sel ? sel.agent : 'background'}>{body}</div>
+    })()}
+    <button className="row" data-jam-switch="mcp" onClick={() => void set({ mcp: !settings.mcp, skills: !settings.mcp })}>
+      <LinkIcon size={15} /><span>MCP servers and skills<br /><small>Copies and background agents use yours</small></span>{sw(settings.mcp)}
+    </button>
+    <button className="row" data-jam-switch="context" onClick={() => void set({ context: context ? 'fresh' : 'fork' })}>
+      <NotebookIcon size={15} /><span>Your session's context<br /><small>Your session, or a copy of it, does the work</small></span>{sw(context)}
+    </button>
+    <button className="row" data-jam-switch="others" onClick={() => void set({ others: !settings.others })}>
+      <CommentIcon size={15} /><span>Collaborators' comments<br /><small>Other people's words reach the agent</small></span>{sw(settings.others)}
+    </button>
+    {trust && <div className="note-line" style={{ margin: '4px 8px' }}><WarningIcon size={14} /><span>Codex: trust Marver's hooks once - type <code style={{ color: 'inherit' }}>/hooks</code> in Codex.</span></div>}
+  </>)
+}
+
 export function StartSheet({ style }: { style?: CSSProperties }) {
   const agent = useJamQueue((s) => s.agent)
   const voice = useJamVoice()
@@ -196,7 +244,7 @@ export function StartSheet({ style }: { style?: CSSProperties }) {
           <span className="v">{mic ? 'On' : 'Off'}<i className={`jm-switch${mic ? ' on' : ''}`} /></span>
         </button>
         {name
-          ? <div className="row"><ArrowRightIcon size={15} /><span>Hands work to</span><span className="v"><span className="jm-agent"><i />{name}</span></span></div>
+          ? <WhoWorks fallback={name} />
           : <div className="note-line warn" style={{ margin: '4px 0' }}><WarningIcon size={14} /><span>No coding agent found - work waits in the queue.<br /><code style={{ color: 'inherit', opacity: .8 }}>npx marver init</code> sets one up.</span></div>}
       </div>
       <ShortcutsRow />
