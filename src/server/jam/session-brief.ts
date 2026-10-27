@@ -6,10 +6,18 @@
  */
 import { captureWords } from './capture.ts'
 import { packetPath, sanitize } from './packet.ts'
-import type { JobPacket, Msg } from './types.ts'
+import type { JobPacket, PacketMember } from './types.ts'
 
-const LINE = 280
-const clip = (s: string, n = LINE) => { const t = s.replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t }
+const clip = (s: string, n: number) => { const t = sanitize(s, 4096).replace(/^\s*@marver\b\s*/i, '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t }
+
+/** The owner's words for a run, newest first, each with its kind - never what became of them (whether an earlier run
+ *  did them is in the packet). Oldest to newest they come as the capture, its read-back notes, then tags and More-work
+ *  notes in their order. */
+const wordsOf = (m: PacketMember): { kind: string; text: string }[] => [
+  ...(m.brief.capture ? [{ kind: 'the capture', text: captureWords(m.brief.capture.record, m.brief.capture.edited) }] : []),
+  ...(m.brief.capture?.added ?? []).map((a) => ({ kind: 'a read-back note', text: a.text })),
+  ...m.brief.asks.map((a) => ({ kind: a.id?.startsWith('mw-') ? 'a More-work note' : 'a tag', text: a.body })),
+].filter((w) => clip(w.text, Infinity)).reverse()
 
 export function sessionBrief(packet: JobPacket, handle: string, as?: string): string {
   const jam = (op: string, rest = '') => `npx marver jam ${op} ${handle}${as ? ` --as ${as}` : ''}${rest}`
@@ -18,48 +26,17 @@ export function sessionBrief(packet: JobPacket, handle: string, as?: string): st
   const record = packet.members.every((m) => m.brief.wrapup)
   const files = packet.members.flatMap((m) => (m.brief.wrapup ? [m.brief.wrapup.content.file] : []))
   const asks = packet.members.flatMap((m) => {
-    const where = m.frames.join(', ') || 'the board'
-    const head = one ? '' : `${m.id}, `
-    const quote = (t: string, n?: number) => `"${clip(sanitize(t, 4096).replace(/^\s*@marver\b\s*/i, ''), n) || '(no words - see the packet)'}"`
-    // several asks (tags joined, notes): the newest leads whole, the earlier ones after it, newest first - a later
-    // correction is never clipped away behind a long first request
-    const newest = (l: Msg[]) => [`the owner's newest words: ${quote(l[l.length - 1]?.body ?? '')}`,
-      ...(l.length > 1 ? [`  (before that: ${quote(l.slice(0, -1).reverse().map((a) => a.body.replace(/^\s*@marver\b\s*/i, '')).join(' / '), 160)})`] : [])]
-    const own = m.brief.asks
+    const at = `${one ? '' : `${m.id} `}on ${m.frames.join(', ') || 'the board'}`
     if (m.brief.wrapup) {
       const w = m.brief.wrapup.content
-      return [`- ${head}the session record: write it to ${w.file} - that file only, no design work.`,
-        ...(w.instructions.trim() ? [`  The owner's instructions for it: ${quote(w.instructions)}`] : []),
-        ...(w.more?.trim() ? [`  Their note on the record before (improve it by this): ${quote(w.more)}`] : [])]
+      return [`- ${one ? '' : `${m.id}, `}the session record: write it to ${w.file} - that file only, no design work.`,
+        ...(w.instructions.trim() ? [`  The owner's instructions for it: "${clip(w.instructions, 1200)}"`] : []),
+        ...(w.more?.trim() ? [`  Their note on the record before (improve it by this): "${clip(w.more, 1200)}"`] : [])]
     }
-    if (!m.brief.capture) {
-      if (own.length < 2) return [`- ${head}a tag on ${where}: ${quote(own[0]?.body ?? '')}`]
-      const [lead, ...rest] = newest(own)
-      return [`- ${head}a tag on ${where}, ${lead}`, ...rest]
-    }
-    // the notes added in its read-back (⇧E's pause to add context) are its newest words: they come first, newest first,
-    // then what was said and noted - a correction is never clipped away behind long words said before it
-    const spoken = captureWords(m.brief.capture.record, m.brief.capture.edited)
-    const notes = (m.brief.capture.added ?? []).map((a) => ({ body: a.text.trim() }) as Msg).filter((a) => a.body)
-    const said = [...notes].reverse().map((a) => a.body).concat(spoken).filter(Boolean).join(' / ')
-    if (!own.length) {
-      if (!notes.length || !spoken) return [`- ${head}a voice capture on ${where}: ${quote(said)}`]
-      const [lead, ...rest] = newest(notes)
-      return [`- ${head}a voice capture on ${where}, ${lead}`, ...rest, `  (what they said before it: ${quote(spoken)})`]
-    }
-    // the capture ran only if it was sent back with More work (its `mw-` note); a tag that joined it while it waited
-    // (its frame reserved) is a clarification of a capture that never ran. A tag card on a capture's thread follows
-    // one that ran - unless that capture was kept or dropped (its note says so), no run of it came back (failed), or
-    // its runs only asked the owner a question (asked: the tag is the answer)
-    const ran = m.kind === 'capture' ? own.some((a) => a.id?.startsWith('mw-')) : !m.brief.capture.note && !m.brief.capture.failed && !m.brief.capture.asked
-    // sent back again: the notes its last run already had are not asked again
-    const before = new Set(ran ? (m.brief.follows?.asks ?? []).map((a) => a.id) : [])
-    const fresh = own.filter((a) => !before.has(a.id))
-    const [lead, ...rest] = newest(fresh.length ? fresh : own)
-    // a capture sent back with More work: the owner's newest words lead; what was first said is context
-    if (ran) return [`- ${head}more work on ${where}, ${lead}`, ...rest, `  (the capture it follows, done before: ${quote(said, 160)})`]
-    if (m.brief.capture.note) return [`- ${head}a tag on ${where}, ${lead}`, ...rest, `  (the capture on its thread, ${m.brief.capture.note}: ${quote(said, 160)})`]
-    return [`- ${head}a voice capture on ${where}, ${lead}`, ...rest, `  The capture they add to - ${m.brief.capture.failed ? 'its run failed, not done' : m.brief.capture.asked ? 'its run only asked them first, not done' : 'not run yet'}, do it too: ${quote(said)}`]
+    // the newest whole (past ~1200 characters clipped), each earlier one short: a correction always leads
+    const words = wordsOf(m).map((w, i) => `${w.kind}: "${clip(w.text, i ? 200 : 1200)}"`)
+    if (words.length < 2) return [`- ${at}, ${words[0] ?? '(no words - see the packet)'}`]
+    return [`- ${at}, the owner's words, newest first:`, ...words.map((w) => `  ${w}`)]
   })
   if (record) return [
     `Live Jam run ${handle} - the owner's request from the canvas.`,
@@ -77,7 +54,7 @@ export function sessionBrief(packet: JobPacket, handle: string, as?: string): st
     `Live Jam run ${handle} - the owner's request from the canvas.`,
     ...asks,
     `Frames you may edit: ${packet.frames.join(', ') || '(none)'}${packet.exclusive ? `; and these shared files: ${packet.exclusive.files.join(', ')}` : ''}.`,
-    `${packet.members.some((m) => m.brief.capture) ? 'The capture (words, picks, notes), thread and history' : 'The thread and its history'}: ${packetPath(packet.batchId)}`,
+    `The thread, ${packet.members.some((m) => m.brief.capture) ? 'the capture\'s picks and pictures, ' : ''}and what earlier runs did: ${packetPath(packet.batchId)}`,
     '',
     'Do it in this session, then:',
     ...(one ? [`1. One line to the owner now: ${jam('say', ' "On it - ..."')}`] : []),

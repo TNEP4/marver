@@ -858,15 +858,12 @@ async function upload(record: CaptureRecord, leaving = false): Promise<void> {
   useJamCapture.setState((st) => ({ sealed: st.sealed.map((x) => (x.id === record.id ? { ...x, ...(r!.card ? { card: r!.card } : {}) } : x)) }))
   // what stands for it here - its Sending tile, a resumed draft kept off the lane - stays until the queue holds its
   // card: the answer comes before the push that carries it, and in between the lane showed the old draft's To confirm
-  // in its place, or (nothing else on it) folded away and came back. A refresh that fails changes nothing on the lane,
-  // so it is not the end of the wait: the queue is asked again, or the push brings it
-  const queued = r.ok && await untilQueued(record.id)
+  // in its place, or (nothing else on it) folded away and came back. A refresh that fails is not the end of the wait
+  if (r.ok) await untilQueued(record.id)
   pendingUploads.delete(record.id); syncUnsent()
-  // the server holds it: the resumed draft it replaced was dropped there - it leaves the lane for good once the queue
-  // holds the new card; a queue that never answered still lists it as a draft, so it stays hidden (half a minute of
-  // failed refreshes brought it back as To confirm). Refused, it shows again
+  // the resumed draft it replaced was dropped on the server - it leaves the lane for good; refused, it shows again
   const was = record.context.resumes?.id
-  if (was && (!r.ok || queued)) useJamCapture.setState((st) => ({ resuming: st.resuming.filter((x) => x !== was) }))
+  if (was) useJamCapture.setState((st) => ({ resuming: st.resuming.filter((x) => x !== was) }))
   if (!r.ok) useStore.getState().toast(`the capture could not be kept: ${r.error ?? 'unknown error'}`)
   else {
     // stopped with E and the queue would not take it: it waits on the lane as a draft - said once, nothing opens
@@ -876,24 +873,20 @@ async function upload(record: CaptureRecord, leaving = false): Promise<void> {
   }
 }
 
-/** Until the page's queue holds this card: loaded now, then again every 2 s unless a push brings it first - half a
- *  minute at most (a queue that never answers leaves the lane stale anyway, and a page must not stay "unsent").
- *  True once it holds it. */
-async function untilQueued(id: string): Promise<boolean> {
-  let q: typeof import('./jam-queue.ts').useJamQueue
-  try { q = (await import('./jam-queue.ts')).useJamQueue } catch { return false }
+/** Until the page's queue holds this card: loaded now, then again after 2, 4, 8 s and every 10 s on, unless a push
+ *  brings it first - never given up on, so what stands for it never leaves the lane before its card is there. */
+async function untilQueued(id: string): Promise<void> {
+  const q = (await import('./jam-queue.ts')).useJamQueue
   const held = () => !!q.getState().cards?.some((c) => c.id === id)
-  const end = Date.now() + 30_000
-  while (!held() && Date.now() < end) {
+  for (let wait = 2_000; !held(); wait = Math.min(wait * 2, 10_000)) {
     await q.getState().load()
-    if (held()) return true
+    if (held()) return
     await new Promise<void>((res) => {
       const done = () => { clearTimeout(t); un(); res() }
-      const t = setTimeout(done, 2_000)
+      const t = setTimeout(done, wait)
       const un = q.subscribe(() => { if (held()) done() })
     })
   }
-  return held()
 }
 
 /** Was this capture (recording, sealing or not sent yet) stopped to review (⇧E, J)? E's never was. */

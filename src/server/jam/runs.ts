@@ -15,7 +15,7 @@
  */
 import { requestWords } from './capture.ts'
 import type { JamConfig } from '../config.ts'
-import { alive, closeConn, eligible, listConns, patchConn, pidAlive, readConn, readOffers, readPrefs, upsertConn, writeOffers, type Conn, type ConnAgent } from './conn.ts'
+import { alive, closeConn, eligible, listConns, patchConn, pidAlive, pingLine, readConn, readOffers, readPrefs, upsertConn, writeOffers, type Conn, type ConnAgent, type Offers } from './conn.ts'
 import { forkable, newestAny, transcriptOf, type ForkAgent } from './fork.ts'
 import { parseAgentText, sanitize } from './packet.ts'
 import type { Queue } from './queue.ts'
@@ -177,8 +177,6 @@ export function createRuns(d: RunsDeps): Runs {
     return { kind: 'fresh', agent: d.canSpawn(agent) ? agent : d.cfg.agent, ...(skipped ? { why: skipped } : {}) }
   }
 
-  /** Write every connection's offers file: how many runs wait for it, the runs it must let go or carry on with, and
-   *  a new generation when any of that is new. */
   /** What a run is called in a ping: its card's name, else the owner's words (a capture's first words - its name comes later), clipped. */
   const titleOf = (b: Batch): string => {
     const c = q.j.cards.find((x) => x.id === b.members[0]?.card)
@@ -189,6 +187,8 @@ export function createRuns(d: RunsDeps): Runs {
     const cps = [...t]
     return cps.length > 60 ? `${cps.slice(0, 59).join('')}…` : t
   }
+  /** Write every connection's offers file: how many runs wait for it, the runs it must let go or carry on with, a new
+   *  generation when any of that is new - and the words its listener posts for it. */
   const publish = () => {
     const by = new Map<string, string[]>()
     const stops = new Map<string, string[]>()
@@ -216,7 +216,10 @@ export function createRuns(d: RunsDeps): Runs {
       if (!newOffer && !newWord && prev?.n === now.size) continue
       // a generation never goes back, across restarts too: the listener posts once per generation it has not seen
       const gen = newOffer || (newWord && (stop.length || resume.length)) ? Math.max((prev?.gen ?? 0) + 1, Date.now()) : prev?.gen ?? 0
-      try { writeOffers(root, id, { n: now.size, gen, ...(stop.length ? { stop } : {}), ...(resume.length ? { resume } : {}), ...(latest ? { latest } : {}) }) } catch { /* its listener looks again */ }
+      const o: Offers = { n: now.size, gen, ...(stop.length ? { stop } : {}), ...(resume.length ? { resume } : {}), ...(latest ? { latest } : {}) }
+      // the line its listener posts for a new gen; kept as it was until the next one (its "(again)" reads it)
+      const line = gen > (prev?.gen ?? 0) ? pingLine(o, prev?.line) : prev?.line
+      try { writeOffers(root, id, { ...o, ...(line ? { line } : {}) }) } catch { /* its listener looks again */ }
     }
   }
 

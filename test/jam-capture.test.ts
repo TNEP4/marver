@@ -203,8 +203,8 @@ describe('captures: confirm, and the thread it becomes', () => {
 })
 
 describe('captures: review', () => {
-  const reviewed = async (root: string) => {
-    const jam = createJam(root, CFG, agent())
+  const reviewed = async (root: string, mode?: unknown) => {
+    const jam = createJam(root, CFG, agent(mode))
     const r = rec()
     const a = await jam.capture(r)
     await jam.act(r.id, a.card!.rev, 'confirm')
@@ -326,16 +326,29 @@ describe('captures: review', () => {
     done()
   })
 
-  it('"looks good" typed as More work settles the review - no reply, no second run', async () => {
+  it('"looks good" typed as More work settles the review - no reply, no second run - after a reply that offered more too', async () => {
     const { root, dir, done } = setup()
-    const { jam, r } = await reviewed(root)
+    const { jam, r } = await reviewed(root, 'offer')
+    expect(agentReplies(dir).at(-1)!.body).toContain('Want me to do the footer too?')
     const n = packets(root).length
-    expect((await jam.act(r.id, card(jam, r.id).rev, 'more', 'looks good')).ok).toBe(true)
+    expect((await jam.act(r.id, card(jam, r.id).rev, 'more', 'Looks good!')).ok).toBe(true)
     await jam.tick(); jam.stop()
     expect(card(jam, r.id).state).toBe('done')
     expect(card(jam, r.id).verdict).toBe('looks good')
-    expect(readLog(dir, 'home').some((e) => String(e.body ?? '').includes('@marver looks good'))).toBe(false)
+    expect(readLog(dir, 'home').some((e) => /@marver looks good/i.test(String(e.body ?? '')))).toBe(false)
     expect(packets(root).length).toBe(n)
+    done()
+  })
+
+  it('"yes, thanks" typed as More work is never approval: it goes to the agent and runs again', async () => {
+    const { root, done } = setup()
+    const { jam, r } = await reviewed(root, 'offer')
+    const n = packets(root).length
+    expect((await jam.act(r.id, card(jam, r.id).rev, 'more', 'yes, thanks')).ok).toBe(true)
+    await jam.tick(); jam.stop()
+    expect(card(jam, r.id).verdict).not.toBe('looks good')
+    expect(packets(root).length).toBe(n + 1)
+    expect(packets(root).at(-1).members[0].brief.asks.map((a: any) => a.body)).toContain('@marver yes, thanks')
     done()
   })
 
@@ -380,7 +393,7 @@ describe('captures: review', () => {
     done()
   })
 
-  it('a tag that retries a capture whose run failed: its brief never calls the capture done - its words are still to do', async () => {
+  it('a tag that retries a capture whose run failed: its brief leads with the tag and lists the capture\'s words - never labelling what became of them', async () => {
     const { root, dir, done } = setup()
     let failing = true
     const ad: JamAdapter = { ...agent(), spawnArgs: (goal, opts) => agent('ok', failing ? { fail: true } : {}).spawnArgs(goal, opts) }
@@ -398,31 +411,8 @@ describe('captures: review', () => {
     const p = packets(root).at(-1)
     expect([p.members[0].kind, p.members[0].brief.capture.record.id]).toEqual(['comment', r.id])
     const t = sessionBrief(p, 'r-1.1')
-    expect(t).not.toMatch(/done before|more work on/)
-    expect(t).toMatch(/failed[^\n]*do it too[^\n]*make the header blue/)
-    expect(t).toContain('try again')
-    done()
-  })
-
-  it('a tag answering a capture whose run only asked a question: its brief never calls the capture done - it is still to do', async () => {
-    const { root, dir, done } = setup()
-    const r = rec({ words: 'Redo the intro slide' })
-    // the capture's run changes nothing and asks; the answer's own run does the work
-    const jam = createJam(root, CFG, agent({ [r.id]: 'ask' }))
-    const a = await jam.capture(r)
-    await jam.act(r.id, a.card!.rev, 'confirm')
-    await jam.tick()
-    expect(card(jam, r.id).state).toBe('asks')
-    const id = `t-${Math.random().toString(36).slice(2)}`
-    appendEvents(dir, 'home', [{ id, ts: Date.now(), type: 'reply', commentId: `c-${id}`, parentId: `cap-${r.id}`, board: 'home', author: OWNER, body: '@marver yes, use blue' }])
-    record(root, 'home', id)
-    await jam.tick(); jam.stop()
-    const p = packets(root).at(-1)
-    expect([p.members[0].kind, p.members[0].brief.capture.record.id]).toEqual(['comment', r.id])
-    const t = sessionBrief(p, 'r-1.1')
-    expect(t).not.toMatch(/done before|more work on|failed/)
-    expect(t).toMatch(/the owner's newest words: "yes, use blue"/)
-    expect(t).toMatch(/asked[^\n]*not done[^\n]*do it too[^\n]*Redo the intro slide/)
+    expect(t).toContain(`newest first:\n  a tag: "try again"\n  the capture: "make the header blue the outline one"`)
+    expect(t).not.toMatch(/done before|not run yet|failed|only asked|do it too/)
     done()
   })
 

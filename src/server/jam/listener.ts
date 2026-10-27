@@ -58,32 +58,3 @@ export function releaseListener(root: string, claudePid: number, pid: number): v
   const l = readListener(root, claudePid)
   if (l?.pid === pid) rmSync(listenerFile(root, claudePid), { force: true })
 }
-
-/** A successor being started (`marver jam listen` again, on the upgraded build): its pid, whether it has exited, and
- *  how to stop it. */
-export interface Successor { pid?: number; gone(): boolean; kill(signal?: NodeJS.Signals): void }
-
-/** Wait for `next` to hold the lock (it read its whole input and started), up to `ms`: true once it - or a listener a
- *  hook started meanwhile - holds it (this one goes); false once `me` holds the lock again (`next` died, or held
- *  nothing in time and was stopped) and keeps listening. */
-export function handOver(root: string, claudePid: number, me: Listener, next: Successor, ms: number): Promise<boolean> {
-  return new Promise((done) => {
-    const deadline = Date.now() + ms
-    let stopped = 0, killed = false
-    const wait = setInterval(() => {
-      // the successor holds it (or a listener a hook started meanwhile): this one goes - never for the one it is stopping
-      const l = readListener(root, claudePid)
-      if (l && l.pid !== me.pid && pidAlive(l.pid) && !(stopped && l.pid === next.pid)) { clearInterval(wait); return done(true) }
-      if (!next.gone()) {
-        if (Date.now() < deadline) return
-        // too late: it is stopped, and the lock taken back only once it is gone - a signal lands later, and one that
-        // took the lock as it was stopped would still read alive here, then let it go as it died: no listener at all
-        if (!stopped) { stopped = Date.now(); try { next.kill() } catch { /* gone */ } }
-        else if (!killed && Date.now() - stopped > 5_000) { killed = true; try { next.kill('SIGKILL') } catch { /* gone */ } }
-        return
-      }
-      // a lock still being written, or being reclaimed by another start, is looked at again at the next tick
-      if (claimListener(root, claudePid, me)) { clearInterval(wait); done(false) }
-    }, 100)
-  })
-}

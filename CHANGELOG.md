@@ -29,18 +29,18 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   is still answering (a minute at most), so words still being transcribed - a long last phrase, the speech engine
   starting up, phrases ahead of it - reach its record instead of being dropped; a capture stopped with `E` goes to the
   agent with them. With the microphone on and nothing heard, the record says its words may be incomplete.
-- **"Looks good" is an answer, not more work.** Typed into More work, a note that only approves ("looks good", "perfect,
-  thanks", "looks good to me", "nice work", "that's exactly what I wanted") settles the review as Looks good - it no
-  longer sent the capture back for a second run. A question ("is it done?") is never taken as one, and when the reply
-  asked one, no note is: "yes, thanks" answers it - a request is never lost as approval.
+- **"Looks good" is an answer, not more work.** Typed into More work, a note that is only one of a short list of
+  approvals - "looks good", "looks good to me", "lgtm", "perfect", "great job", "nice work", "love it", "thanks", "👍"
+  and a few more, its case, trailing punctuation and emoji aside - settles the review as Looks good instead of sending
+  the capture back for a second run. Anything more - one extra word, another language, a number, "yes, thanks" - goes
+  to the agent as More work: a request is never lost as approval, at worst it runs once more.
 - **Every ping names its request** (above). Claude Code drops a message identical to the one before it from the same
   sender, so a second request at the same count was never seen and went to a copy after 2 minutes; the same line sent
-  again (a run offered back, a second "give it back") now ends "(again)". A listener whose package was upgraded under
-  it - a new version, or a preview repacked at the same one; pnpm's link too - hands over to a fresh one on the new
-  code, once the install is done, and goes only once the new one has its whole input. A capture sent back with More
-  work, or tags joined on one thread, lead the brief with your newest words (a capture not run yet is never "done"); the
-  notes added in a read-back are in the brief and the ping's title; a session record's brief names its file and your
-  instructions.
+  again (a run offered back, a second "give it back") now ends "(again)". The canvas writes the whole line and Claude
+  Code's listener posts it as written: an upgrade changes the words at once, and the listener never restarts. `jam next` lists
+  your words for the run newest first - the newest whole, each earlier one short, each named (a tag, a read-back note,
+  a More-work note, the capture) - and points at the packet for the thread and what earlier runs did; a session
+  record's brief names its file and your instructions.
 - **The session record goes to your session too**, like any request, instead of straight to a copy (nothing else does
   once the session ended); and a copy that runs what your session did not take says so: "Yours was busy · a copy is
   on it" (it held three runs, or did not take it in time), "Yours let it go", "Yours was idle" (Codex, Cursor),

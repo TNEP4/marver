@@ -280,7 +280,8 @@ describe('session runs in the daemon', { timeout: 30_000 }, () => {
     // record waits for it), and only the record is offered to your session
     expect((await s.jam.session({ action: 'wrapup', id, instructions: 'x', includeTalk: false, tags: 0, board: 'home' })).ok).toBe(true)
     const t2 = s.jam.tick()
-    expect(await until(() => existsSync(join(s.root, 'spawned.marker')), 15_000, () => s.jam.runs.tick())).toBe(true)
+    // the request ran spawned: its reply posted (the agent's marker comes before it - read then, it raced the post)
+    expect(await until(() => !!finals(s.dir)[0], 15_000, () => s.jam.runs.tick())).toBe(true)
     expect(finals(s.dir)[0]?.agentMeta?.runner).toMatch(/fresh|fork/)
     expect(await until(() => (readOffers(s.root, s.conn.id)?.latest?.title ?? '') === 'Session record', 15_000, () => s.jam.runs.tick())).toBe(true)
     expect(readOffers(s.root, s.conn.id)?.n).toBe(1)
@@ -313,12 +314,14 @@ describe('session runs in the daemon', { timeout: 30_000 }, () => {
     r.jam.stop(); await t3.catch(() => {}); r.done()
   })
 
-  it('a ping names its request in clean words: no escape or control character reaches the session\'s inbox', async () => {
+  it('a ping names its request in clean words, in the line the canvas writes: no escape or control character reaches the session\'s inbox', async () => {
     const s = await setup()
     tag(s.root, s.dir, '@marver \x1b[2Jmake it \x07red')
     const t = s.jam.tick()
     expect(await until(() => (readOffers(s.root, s.conn.id)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
     expect(readOffers(s.root, s.conn.id)?.latest?.title).toBe('make it red')
+    // the canvas writes the whole line its listener posts
+    expect(readOffers(s.root, s.conn.id)?.line).toMatch(/^Live Jam: new request from your Marver canvas - "make it red" \([0-9a-f]{8}\) - run `npx marver jam next`\.$/)
     s.jam.stop(); await t.catch(() => {}); s.done()
   })
 

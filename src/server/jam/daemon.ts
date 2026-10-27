@@ -1533,7 +1533,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       if (c?.kind === 'capture' && (action === 'confirm' || (action === 'keep' && (c.state === 'draft' || c.state === 'confirming')))) return confirm(id, rev, action === 'confirm' ? 'queued' : 'kept')
       if (action === 'good' && c && c.kind !== 'comment') return good(id, rev)
       // a More-work note that only approves ("looks good") settles the review - it never runs the work again
-      if (action === 'more' && c && c.kind !== 'comment' && c.state === 'review' && isApproval(body ?? '', resultFor(q.j, c))) return good(id, rev)
+      if (action === 'more' && c && c.kind !== 'comment' && c.state === 'review' && isApproval(body ?? '')) return good(id, rev)
       if (action === 'more' && c && c.kind !== 'comment') return moreWork(id, rev, body ?? '')
       // Retry on a card whose results are saved but were never posted posts them - it never reruns
       const saved = await q.lock((j) => {

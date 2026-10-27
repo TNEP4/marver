@@ -318,17 +318,8 @@ export function freezeBrief(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[
     const cap = readCapture(ctx.root, c.capture)
     if (cap && capCard?.payload) {
       const note = capCard !== c && capCard.state === 'kept' ? 'kept - not an ask' : capCard !== c && capCard.state === 'dropped' ? 'dropped - not an ask' : undefined
-      // a capture none of whose runs came back (it failed, before its agent started or after), or whose runs only
-      // asked the owner a question: a tag on its thread retries or answers it - its words are still to do, never "done before"
-      const replies = [...(capCard.ran ?? []), ...(capCard.batch ? [capCard.batch] : [])].flatMap((id) => {
-        const b = j.batches.find((x) => x.batchId === id), m = b?.members.find((x) => x.card === capCard.id)
-        const r = m && b?.results?.[m.id]
-        return r && 'body' in r ? [r] : []
-      })
-      const failed = capCard !== c && !note && !replies.length
-      const asked = capCard !== c && !note && !!replies.length && replies.every((r) => r.asks)
       brief.capture = { record: cap.record, recordHash: cap.hash, ...(capCard.payload.edited !== undefined ? { edited: capCard.payload.edited } : {}), ...(capCard.payload.added?.length ? { added: capCard.payload.added } : {}),
-        ...(capCard.payload.reviewed ? { reviewed: capCard.payload.reviewed } : {}), ...(note ? { note } : {}), ...(failed ? { failed: true as const } : {}), ...(asked ? { asked: true as const } : {}) }
+        ...(capCard.payload.reviewed ? { reviewed: capCard.payload.reviewed } : {}), ...(note ? { note } : {}) }
     }
   }
   if (c.kind === 'wrapup') {

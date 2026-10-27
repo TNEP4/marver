@@ -23,6 +23,7 @@ const out = p.members.map((m) => {
   if (how === 'missing') return ''
   if (how === 'shared') return F + 'marver-reply ' + m.id + ' shared design/scenes/demo/_kit.tsx\n' + F
   if (how === 'ask') return F + 'marver-reply ' + m.id + ' asks\nWhich one?\n' + F
+  if (how === 'offer') return F + 'marver-reply ' + m.id + '\nDone - the header is blue. Want me to do the footer too?\n' + F
   return F + 'marver-reply ' + m.id + '\nDone: ' + m.brief.asks.map((a) => a.body).join(' + ') + '\n' + F
 }).join('\n')
 if (!opts.hang) setTimeout(() => process.stdout.write(JSON.stringify({ result: out })), opts.delay || 0)

@@ -5,105 +5,48 @@ import { laneLine, runnerLine } from '../src/client/shell/jam-lines.ts'
 import { finalWait, FINAL_MAX, FINAL_MS, wordsWhole } from '../src/client/shell/jam-voice-wait.ts'
 
 describe('a More-work note that only approves', () => {
-  it('reads as Looks good; anything asking for a change does not', () => {
-    for (const t of ['looks good', 'Looks good!', 'LGTM', 'perfect, thanks', 'great', 'ok thanks', '@marver looks good', 'love it', 'nice work'.replace('work', '')]) expect(isApproval(t), t).toBe(true)
-    for (const t of ['looks good but make it bigger', 'not good', 'make it blue', 'good start, now the footer', '', 'ok']) expect(isApproval(t), t).toBe(t === 'ok')
+  it('is one phrase of the list, whole - its case, trailing punctuation and approving emoji aside', () => {
+    for (const t of ['looks good', 'Looks good!', 'LGTM', 'looks good to me.', 'Perfect', 'great job', 'nice work', 'love it', 'Thanks!', 'thank you',
+      'looks good thanks', 'Looks good, thanks!', 'approved', 'good', '👍', '👍🏽', '👌', '✅', 'looks good 👍', '  looks   good  '])
+      expect(isApproval(t), t).toBe(true)
   })
-  it('the common ways to say it settle too - contractions, "to me", "work", "job", emoji, a longer thanks', () => {
-    for (const t of ['looks good to me', 'Looks good to me', 'nice work', 'great work', 'good job', 'great job', "that's great", "that's perfect", 'That’s perfect',
-      "it's perfect", "it's great", "that's it, thanks", 'I love it', 'I like it', 'exactly', 'nailed it', 'good stuff', 'this is great work', '👍',
-      "Perfect, that's exactly what I wanted", 'that looks really good, thanks a lot', 'This looks really good now, thank you so much!']) expect(isApproval(t), t).toBe(true)
-  })
-  it('a question is never one; nor a bare yes or ok answering the reply\'s own question', () => {
-    for (const t of ['is this better?', 'is it done?', 'done?', 'it works?', 'really good?', 'is this done', 'looks like a lot', 'what I wanted', 'again']) expect(isApproval(t), t).toBe(false)
-    const asked = 'Done - the header is blue. Want me to apply the same to the footer?'
-    for (const t of ['yes', 'ok', 'yep']) { expect(isApproval(t, asked), t).toBe(false); expect(isApproval(t, 'Done - the header is blue.'), t).toBe(true) }
-  })
-  it('when the reply asked something, every note answers it - "yes, thanks" is the footer request, never a verdict', () => {
-    const asked = 'Done - the header is blue. Want me to apply this to the footer?'
-    for (const t of ['yes, thanks', 'yes please', 'ok thanks', 'perfect', 'great, thanks', 'looks good, thanks', 'love it']) expect(isApproval(t, asked), t).toBe(false)
-    expect(isApproval('yes, thanks', 'Done - the header is blue.')).toBe(true)
-  })
-  it('approval words joined by "and" still settle it', () => {
-    for (const t of ['Looks good and works well', 'great and thanks', 'perfect and thank you']) expect(isApproval(t), t).toBe(true)
-    for (const t of ['looks good and make the footer blue', 'good and now the footer']) expect(isApproval(t), t).toBe(false)
-  })
-  it('words it cannot read are never dropped to leave "looks good" behind - another script, a number, a symbol', () => {
-    // "改成蓝色" is "change it to blue": stripped away, the note read as approval and the request was lost
-    for (const t of ['Looks good, 改成蓝色', 'looks good, сделай синим', 'いいね、青にして', 'looks good, 24', 'looks good +10%', 'perfect 🔵']) expect(isApproval(t, 'Done'), t).toBe(false)
-    // a skin tone or a variation selector on an approving emoji is not a word
-    for (const t of ['👍🏽', 'looks good 👌🏻', 'great, thanks!', '"looks good" - thanks', 'Looks good :)']) expect(isApproval(t, 'Done'), t).toBe(true)
-  })
-  it('the whole note must only approve - approval\'s own words can still ask for work or ask a question', () => {
-    // "look again" is a request made of approval's words: settled, it was lost
-    for (const t of ['Looks good, look again', 'looks good look again', 'Great, again', 'perfect, now this', 'Looks good, what is this', 'looks good is it done', 'good, is that all', 'looks good, like this'])
-      expect(isApproval(t, 'Done'), t).toBe(false)
-  })
-  it('a reply asks with a question mark of any script, or a question or offer left unpunctuated', () => {
-    for (const reply of ['Done - the header is blue. Want me to apply this to the footer？', 'Done - the header is blue. ¿Quieres el pie también', 'Done - the header is blue. Would you like me to apply this to the footer',
-      'Done - the header is blue. Should I do the footer too', 'Done - the header is blue. I can also do the footer if you’d like.', 'Done - the header is blue. Which shade for the footer'])
-      for (const t of ['yes, thanks', 'looks good', 'perfect']) expect(isApproval(t, reply), `${t} | ${reply}`).toBe(false)
-    expect(isApproval('yes, thanks', 'Done - the header is blue.')).toBe(true)
-    expect(isApproval('looks good', 'Done - the header is blue, the footer was already blue and I left it.')).toBe(true)
+  it('anything more goes to the agent: an extra word, a question, another script, a digit, an answer to a question', () => {
+    for (const t of ['looks good but make it bigger', 'Looks good, look again', 'looks good, now the footer', 'looks good?', 'is it done?', 'not good',
+      'great, now this', 'Looks good, 改成蓝色', 'perfect 🔵', 'looks good +10%', 'looks good 2', '@marver looks good', 'yes', 'ok', 'sure', 'yes, thanks',
+      'yes please', 'ok thanks', '', '   ', '!!!'])
+      expect(isApproval(t), t).toBe(false)
   })
 })
 
-describe('the brief of a capture sent back', () => {
-  it('leads with the newest words; the capture is context', () => {
-    const p: any = { batchId: 'b-1', frames: ['d/a'], members: [{ id: 'm1', kind: 'capture', frames: ['d/a'], brief: { asks: [{ id: 'mw-cap-1-4', body: '@marver the title smaller' }], history: [], capture: { record: { timeline: [{ at: 0, event: 'words', text: 'Redo the intro slide' }] } } } }] }
-    const t = sessionBrief(p, 'r-1.1')
-    expect(t).toMatch(/more work on d\/a, the owner's newest words: "the title smaller"/)
-    expect(t.indexOf('the title smaller')).toBeLessThan(t.indexOf('the capture it follows'))
-    expect(t).toContain('(the capture it follows, done before: "Redo the intro slide")')
-  })
-  it('a capture that never ran, with tags joined while it waited, is never "done before" - and every tag is asked', () => {
-    // stopped while its frame was reserved, then two @marver clarifications in its thread joined the queued capture
-    const p: any = { batchId: 'b-4', frames: ['d/a'], members: [{ id: 'm1', kind: 'capture', frames: ['d/a'], brief: { asks: [{ id: 'e-1', body: '@marver use the brand blue' }, { id: 'e-2', body: '@marver and keep the icon' }], history: [], capture: { record: { timeline: [{ at: 0, event: 'words', text: 'Redo the intro slide' }] } } } }] }
-    const t = sessionBrief(p, 'r-4.1')
-    expect(t).not.toMatch(/done before|more work/)
-    expect(t).toMatch(/the owner's newest words: "and keep the icon"/)
-    expect(t).toContain('use the brand blue')
-    expect(t).toMatch(/not run yet[^\n]*"Redo the intro slide"/)
-  })
-  it('sent back again: only the note not run yet leads; the one already run is not asked again', () => {
-    const p: any = { batchId: 'b-5', frames: ['d/a'], members: [{ id: 'm1', kind: 'capture', frames: ['d/a'], brief: { asks: [{ id: 'mw-cap-1-4', body: '@marver the title smaller' }, { id: 'mw-cap-1-9', body: '@marver now the subtitle' }], history: [], follows: { asks: [{ id: 'mw-cap-1-4', body: '@marver the title smaller' }], result: 'Done' }, capture: { record: { timeline: [{ at: 0, event: 'words', text: 'Redo the intro slide' }] } } } }] }
-    const t = sessionBrief(p, 'r-5.1')
-    expect(t).toMatch(/more work on d\/a, the owner's newest words: "now the subtitle"/)
-    expect(t).not.toContain('the title smaller')
-  })
-  it('a tag on a capture that was kept, never run, says so', () => {
-    const p: any = { batchId: 'b-6', frames: ['d/a'], members: [{ id: 'm1', kind: 'comment', frames: ['d/a'], brief: { asks: [{ id: 'e-3', body: '@marver do it after all' }], history: [], capture: { note: 'kept - not an ask', record: { timeline: [{ at: 0, event: 'words', text: 'Redo the intro slide' }] } } } }] }
-    expect(sessionBrief(p, 'r-6.1')).not.toContain('done before')
-  })
-})
+describe('the brief of a run (jam next)', () => {
+  const capture = (asks: { id: string; body: string }[], timeline: unknown[], added?: { at: number; text: string }[]): any =>
+    ({ batchId: 'b-1', frames: ['d/a'], members: [{ id: 'm1', kind: 'capture', frames: ['d/a'], brief: { asks, history: [], capture: { record: { timeline }, ...(added ? { added } : {}) } } }] })
+  const LABELS = /done before|not run yet|run failed|only asked|not done|do it too|kept - not an ask/
 
-describe('the brief of a tag', () => {
-  it('a later correction leads - never clipped away behind a long first request', () => {
-    const long = `@marver ${'make the pricing table denser and align every column to the grid, '.repeat(6)}`
-    const p: any = { batchId: 'b-7', frames: ['d/a'], members: [{ id: 'm1', kind: 'comment', frames: ['d/a'], brief: { asks: [{ id: 'e-1', body: long }, { id: 'e-2', body: '@marver Correction: use blue instead' }], history: [] } }] }
-    const t = sessionBrief(p, 'r-7.1')
-    expect(t).toMatch(/a tag on d\/a, the owner's newest words: "Correction: use blue instead"/)
-    expect(t).toContain('make the pricing table denser')
+  it('lists the owner\'s words newest first, each by its kind, and never labels what became of them', () => {
+    const t = sessionBrief(capture([{ id: 'e-1', body: '@marver use the brand blue' }, { id: 'mw-cap-1-4', body: '@marver the title smaller' }],
+      [{ at: 0, event: 'words', text: 'Redo the intro slide' }], [{ at: 9, text: 'keep the icon' }]), 'r-1.1')
+    expect(t).toContain(`- on d/a, the owner's words, newest first:
+  a More-work note: "the title smaller"
+  a tag: "use the brand blue"
+  a read-back note: "keep the icon"
+  the capture: "Redo the intro slide"`)
+    expect(t).not.toMatch(LABELS)
+    expect(t).toContain('and what earlier runs did: ')
   })
-  it('one tag reads as before', () => {
+  it('one ask is one line', () => {
     const p: any = { batchId: 'b-8', frames: ['d/a'], members: [{ id: 'm1', kind: 'comment', frames: ['d/a'], brief: { asks: [{ id: 'e-1', body: '@marver the title smaller' }], history: [] } }] }
-    expect(sessionBrief(p, 'r-8.1')).toContain('- a tag on d/a: "the title smaller"')
+    expect(sessionBrief(p, 'r-8.1')).toContain('- on d/a, a tag: "the title smaller"')
+    expect(sessionBrief(capture([], [{ at: 0, event: 'words', text: 'Make it calmer' }]), 'r-2.1')).toContain('- on d/a, the capture: "Make it calmer"')
   })
-  it('a capture\'s notes added in its read-back are the owner\'s newest words - they lead, what was said after them; or alone', () => {
-    const cap = (timeline: unknown[]) => ({ batchId: 'b-2', frames: ['d/a'], members: [{ id: 'm1', frames: ['d/a'], brief: { asks: [], capture: { record: { timeline }, added: [{ at: 9, text: 'and use the brand blue for the headline' }] } } }] }) as any
-    const t = sessionBrief(cap([{ at: 0, event: 'words', text: 'Make the intro slide calmer' }]), 'r-2.1')
-    expect(t).toContain('a voice capture on d/a, the owner\'s newest words: "and use the brand blue for the headline"')
-    expect(t).toContain('(what they said before it: "Make the intro slide calmer")')
-    expect(sessionBrief(cap([]), 'r-2.1')).toContain('a voice capture on d/a: "and use the brand blue for the headline"')
-  })
-  it('a correction added in the read-back is never clipped away behind long words said before it', () => {
-    // ⇧E, then 'Correction: use blue, not red' added: the brief led with red and cut blue off
-    const said = `Make the background red, ${'and tighten the spacing between every card of the pricing grid, '.repeat(5)}`
-    const p: any = { batchId: 'b-9', frames: ['d/a'], members: [{ id: 'm1', kind: 'capture', frames: ['d/a'], brief: { asks: [], history: [], capture: { record: { timeline: [{ at: 0, event: 'words', text: said }] }, added: [{ at: 9, text: 'Correction: use blue, not red' }] } } }] }
-    const t = sessionBrief(p, 'r-9.1')
-    expect(t).toMatch(/a voice capture on d\/a, the owner's newest words: "Correction: use blue, not red"/)
-    expect(t).toContain('Make the background red')
-    expect(t.indexOf('use blue')).toBeLessThan(t.indexOf('background red'))
+  it('a long first request never pushes a correction out: the newest leads whole, an earlier one is clipped', () => {
+    const said = `Make the background red, ${'and tighten the spacing between every card of the pricing grid, '.repeat(8)}`
+    const t = sessionBrief(capture([], [{ at: 0, event: 'words', text: said }], [{ at: 9, text: 'Correction: use blue, not red' }]), 'r-9.1')
+    expect(t).toMatch(/newest first:\n  a read-back note: "Correction: use blue, not red"\n  the capture: "Make the background red, /)
+    expect(t.split('\n').find((l) => l.startsWith('  the capture'))!.length).toBeLessThan(230)
+    // the newest is whole up to ~1200 characters
+    const long = sessionBrief(capture([{ id: 'mw-cap-1-4', body: said }], [{ at: 0, event: 'words', text: 'Redo the intro slide' }]), 'r-9.2')
+    expect(long).toContain(said.trim())
   })
 })
 

@@ -379,9 +379,7 @@ export function ReviewDetail({ title, head, of, onPrev, onNext, frames, active, 
   // left on purpose (Esc cleared its words from the map): the composer's words go too; closed by a click
   // elsewhere, the map still holds them
   useEffect(() => { if (more) field.current?.focus(); else if (draftKey && !moreDrafts.has(draftKey)) setTextState('') }, [more])
-  // sent as More work, always: the canvas holds the reply this note follows and settles a note that only approves
-  // ("looks good") as Looks good - never this page, whose copy of the reply may not have loaded yet ("yes, thanks" read
-  // against no reply settled the review, and the footer the reply asked about was lost)
+  // sent as More work, always: the canvas settles a note that only approves ("looks good") as Looks good
   const send = () => { if (text.trim()) onMore(text.trim()) }
   return (
     <div className="jm-panel jm-review" data-jam-review="" style={style}>
