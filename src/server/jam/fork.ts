@@ -73,6 +73,9 @@ function codexMeta(file: string): { id: string; cwd: string; source?: string } |
     return p && typeof p.id === 'string' && typeof p.cwd === 'string' ? { id: p.id, cwd: p.cwd, source: typeof p.source === 'string' ? p.source : undefined } : null
   } catch { return null }
 }
+/** The sources a person's Codex session carries: its terminal app, its desktop and editor apps. Anything else - an
+ *  `exec` run (Marver's own, a review), a subagent, a source not known - is never copied. */
+const PERSON = new Set(['cli', 'vscode'])
 
 /** Codex rollouts, newest first, from the last few days' folders. */
 function codexRollouts(env: NodeJS.ProcessEnv, days = 14): { file: string; t: number; bytes: number }[] {
@@ -94,7 +97,7 @@ export function codexTranscript(root: string, thread: string, env: NodeJS.Proces
   for (const r of codexRollouts(env)) {
     if (!r.file.endsWith(`${thread}.jsonl`)) continue
     const m = codexMeta(r.file)
-    return m && m.id === thread && sameDir(m.cwd, root) && m.source !== 'exec' ? { agent: 'codex', session: thread, bytes: r.bytes, file: r.file } : null
+    return m && m.id === thread && sameDir(m.cwd, root) && PERSON.has(m.source ?? '') ? { agent: 'codex', session: thread, bytes: r.bytes, file: r.file } : null
   }
   return null
 }
@@ -103,7 +106,7 @@ export function codexTranscript(root: string, thread: string, env: NodeJS.Proces
 export function newestCodex(root: string, env: NodeJS.ProcessEnv = process.env): ForkSource | null {
   for (const r of codexRollouts(env).slice(0, 40)) {
     const m = codexMeta(r.file)
-    if (m && sameDir(m.cwd, root) && m.source !== 'exec') return { agent: 'codex', session: m.id, bytes: r.bytes, file: r.file }
+    if (m && sameDir(m.cwd, root) && PERSON.has(m.source ?? '')) return { agent: 'codex', session: m.id, bytes: r.bytes, file: r.file }
   }
   return null
 }
@@ -112,4 +115,10 @@ export const transcriptOf = (root: string, agent: ForkAgent, session: string, en
   agent === 'claude' ? claudeTranscript(root, session, env) : codexTranscript(root, session, env)
 export const newestOf = (root: string, agent: ForkAgent, env: NodeJS.ProcessEnv = process.env) =>
   agent === 'claude' ? newestClaude(root, env) : newestCodex(root, env)
+/** The newest person's session of this repo in either tool (by its transcript's last write). */
+export function newestAny(root: string, can: (a: ForkAgent) => boolean, env: NodeJS.ProcessEnv = process.env): ForkSource | null {
+  const all = (['claude', 'codex'] as ForkAgent[]).filter(can).map((a) => newestOf(root, a, env)).filter((x): x is ForkSource => !!x)
+  const t = (x: ForkSource) => { try { return statSync(x.file).mtimeMs } catch { return 0 } }
+  return all.sort((a, b) => t(b) - t(a))[0] ?? null
+}
 export const forkable = (s: ForkSource | null): s is ForkSource => !!s && existsSync(s.file) && s.bytes <= FORK_MAX_BYTES

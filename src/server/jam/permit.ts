@@ -38,8 +38,14 @@ function insideRoot(root: string, p: unknown): boolean {
   let base: string
   try { base = realpathSync(root) } catch { base = root }
   const rel = relative(base, join(at, ...tail))
-  return !!rel && !rel.startsWith('..') && !isAbsolute(rel) && !/^\.git(\/|$)/.test(rel)
+  return !!rel && !rel.startsWith('..') && !isAbsolute(rel) && !PROTECTED.some((r) => r.test(rel))
 }
+
+/** Inside the repo but never a Jam run's to edit: what runs commands outside its sandbox or speaks for the owner -
+ *  git, the tools' settings and hooks, MCP configuration, the installed packages, Marver's own Jam state (the
+ *  sessions' keys, the journal, the ledger). Matched on the resolved path, any case. */
+const PROTECTED = [/^\.git(\/|$)/i, /^\.(claude|codex|cursor|grok|opencode|vscode|idea|husky)(\/|$)/i, /^\.mcp\.json$/i, /(^|\/)node_modules(\/|$)/i,
+  /^design\/\.local(\/|$)/i, /^\.envrc$/i, /^\.env(\.|$)/i]
 
 export function decide(p: PermitPolicy, tool: string, input: Record<string, unknown>): { behavior: 'allow'; updatedInput: Record<string, unknown> } | { behavior: 'deny'; message: string } {
   const allow = () => ({ behavior: 'allow' as const, updatedInput: input })

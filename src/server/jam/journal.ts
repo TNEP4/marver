@@ -41,7 +41,9 @@ export function readRaw(root: string): { v2?: Journal; v1?: JournalV1 } {
       covered: j.covered && typeof j.covered === 'object' ? j.covered : {}, legacy: Array.isArray(j.legacy) ? j.legacy : [],
       ...(typeof j.upgraded === 'number' ? { upgraded: j.upgraded } : {}), ...(j.run && typeof j.run.since === 'number' ? { run: { since: j.run.since } } : {}),
       // the session running survives a restart of the dev server
-      ...(j.session && typeof j.session.id === 'string' && /^ses-\d{10,16}-[a-z0-9]{4,12}$/.test(j.session.id) && typeof j.session.since === 'number' ? { session: { id: j.session.id, since: j.session.since } } : {}) } }
+      ...(j.session && typeof j.session.id === 'string' && /^ses-\d{10,16}-[a-z0-9]{4,12}$/.test(j.session.id) && typeof j.session.since === 'number' ? { session: { id: j.session.id, since: j.session.since } } : {}),
+      // a session's requests and the answers they got (spec 29b): the same request after a restart gets the same answer
+      ...(j.receipts && typeof j.receipts === 'object' && !Array.isArray(j.receipts) ? { receipts: Object.fromEntries(Object.entries(j.receipts).filter(([k, r]: [string, any]) => /^[0-9a-f-]{36}$/.test(k) && r && typeof r.at === 'number' && r.out && typeof r.out === 'object')) as Journal['receipts'] } : {}) } }
   } catch { return {} }
 }
 
