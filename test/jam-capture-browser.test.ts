@@ -1376,4 +1376,47 @@ describe('captures in the browser: the first trial', () => {
     await until(`(window.__mvJamQueue.getState().cards ?? []).some((x) => x.id === ${JSON.stringify(d)} && x.state === 'review')`, 90_000)
     await decide(d, 'good')
   }, 300_000)
+
+  skippable('E on a resumed draft whose queue refresh fails: its Sending tile stays and the draft it continues never comes back as To confirm', async () => {
+    agentMode({})
+    await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const a = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('first part'), 1`)
+    await key('e', true)
+    await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(a)}`, 30_000)
+    await sleep(200)
+    await key('r')
+    await until(`!!window.__mvJamCapture.getState().current && window.__mvJamCapture.getState().current !== ${JSON.stringify(a)}`, 5000)
+    const b = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('second part'), 1`)
+    // from here the queue tells the page nothing: its refresh answers 500 and no push is applied
+    await browser!.eval(s, `(() => {
+      const a = ${JSON.stringify(a)}
+      const q = window.__mvJamQueue, real = q.getState().apply
+      const w = window.__qWatch = { real, block: true, aLines: [] }
+      q.setState({ apply: (v) => { if (!w.block) real(v) } })
+      const f = window.fetch
+      window.fetch = (u, init) => (w.block && String(u).includes('/api/jam/queue') && !(init && init.method && init.method !== 'GET') ? Promise.resolve(new Response('{}', { status: 500 })) : f(u, init))
+      w.mo = new MutationObserver(() => { const t = document.querySelector('.jm-lane [data-tile="' + a + '"] .m'); if (t) w.aLines.push(t.textContent) })
+      w.mo.observe(document.body, { subtree: true, childList: true, characterData: true })
+      return 1 })()`)
+    try {
+      await key('e')
+      // the canvas took it (its answer names the card); the page's refresh after it failed
+      await until(`!!window.__mvJamCapture.getState().sealed.find((x) => x.id === ${JSON.stringify(b)})?.card`, 40_000)
+      await sleep(1500)
+      const mid = await browser!.eval(s, `({ a: [...new Set(window.__qWatch.aLines)], b: document.querySelector('.jm-lane [data-tile="${b}"] .m')?.textContent ?? null })`)
+      expect(mid.a).toEqual([])                     // the resumed draft never came back (as To confirm)
+      expect(mid.b).toBe('Sending')                  // and the capture still reads Sending until its card is here
+    } finally {
+      await browser!.eval(s, `(() => { const w = window.__qWatch; w.block = false; window.__mvJamQueue.setState({ apply: w.real }); return 1 })()`)
+    }
+    // the queue answers again: the queued card takes the Sending tile's place; the draft it continued stays gone
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(b)} && c.state !== 'draft') && !window.__mvJamCapture.getState().unsent.length`, 15_000)
+    await sleep(500)
+    expect(await browser!.eval(s, `(() => { window.__qWatch.mo.disconnect(); return [...new Set(window.__qWatch.aLines)] })()`)).toEqual([])
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((x) => x.id === ${JSON.stringify(b)} && x.state === 'review')`, 90_000)
+    await decide(b, 'good')
+  }, 180_000)
 })

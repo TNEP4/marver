@@ -858,8 +858,9 @@ async function upload(record: CaptureRecord, leaving = false): Promise<void> {
   useJamCapture.setState((st) => ({ sealed: st.sealed.map((x) => (x.id === record.id ? { ...x, ...(r!.card ? { card: r!.card } : {}) } : x)) }))
   // what stands for it here - its Sending tile, a resumed draft kept off the lane - stays until the queue holds its
   // card: the answer comes before the push that carries it, and in between the lane showed the old draft's To confirm
-  // in its place, or (nothing else on it) folded away and came back
-  try { const { useJamQueue } = await import('./jam-queue.ts'); await useJamQueue.getState().load() } catch { /* the push brings it */ }
+  // in its place, or (nothing else on it) folded away and came back. A refresh that fails changes nothing on the lane,
+  // so it is not the end of the wait: the queue is asked again, or the push brings it
+  if (r.ok) await untilQueued(record.id)
   pendingUploads.delete(record.id); syncUnsent()
   // the server holds it: a resumed draft is replaced now (or, refused, shows again)
   const was = record.context.resumes?.id
@@ -870,6 +871,24 @@ async function upload(record: CaptureRecord, leaving = false): Promise<void> {
     if (r.held) useStore.getState().toast(`the capture was not queued - it waits on the lane as a draft: ${r.held}`)
     // it reached the server after its session ended (another tab wrote the record): on its own
     if (r.outside) leftOutOfSession(record.id)
+  }
+}
+
+/** Until the page's queue holds this card: loaded now, then again every 2 s unless a push brings it first - half a
+ *  minute at most (a queue that never answers leaves the lane stale anyway, and a page must not stay "unsent"). */
+async function untilQueued(id: string): Promise<void> {
+  let q: typeof import('./jam-queue.ts').useJamQueue
+  try { q = (await import('./jam-queue.ts')).useJamQueue } catch { return }
+  const held = () => !!q.getState().cards?.some((c) => c.id === id)
+  const end = Date.now() + 30_000
+  while (!held() && Date.now() < end) {
+    await q.getState().load()
+    if (held()) return
+    await new Promise<void>((res) => {
+      const done = () => { clearTimeout(t); un(); res() }
+      const t = setTimeout(done, 2_000)
+      const un = q.subscribe(() => { if (held()) done() })
+    })
   }
 }
 

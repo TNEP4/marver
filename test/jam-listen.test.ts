@@ -132,6 +132,34 @@ describe('jam listen', { timeout: 40_000 }, () => {
       rmSync(root, { recursive: true, force: true })
     }
   })
+
+  it('started by a prompt far past a pipe\'s 64 KB, it hands its successor the whole input before it goes', async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'mv-jam-listen-')))
+    mkdirSync(join(root, 'design', '.local'), { recursive: true })
+    const sock = join(root, 'inbox.sock')
+    const server = createServer(() => { /* the inbox: nothing posted in this test */ })
+    await new Promise<void>((r) => server.listen(sock, r))
+    const pkg = join(root, 'pkg.json')
+    writeFileSync(pkg, JSON.stringify({ version: '1.0.0' }))
+    const session = randomUUID()
+    const env = { ...process.env, CLAUDE_CODE_MESSAGING_SOCKET: sock, CLAUDE_CODE_MESSAGING_TOKEN: 't', CLAUDE_PID: String(process.pid), CLAUDE_CODE_ENTRYPOINT: 'cli', MARVER_JAM_PKG: pkg }
+    delete (env as any).MARVER_JAM_BACKGROUND; delete (env as any).MARVER_JAM
+    const p = spawn(process.execPath, [CLI, 'jam', 'listen', '--root', root], { env, stdio: ['pipe', 'ignore', 'inherit'] })
+    // UserPromptSubmit carries the prompt: half a megabyte of it
+    p.stdin.end(JSON.stringify({ session_id: session, hook_event_name: 'UserPromptSubmit', cwd: root, permission_mode: 'default', prompt: 'x'.repeat(512 * 1024) }))
+    try {
+      expect(await until(() => readListener(root, process.pid)?.pid === p.pid)).toBe(true)
+      writeFileSync(pkg, JSON.stringify({ version: '1.0.1' }))
+      // it goes only once its successor - a whole process starting - has read all of it: slow under a loaded suite
+      expect(await until(() => p.exitCode !== null, 40_000)).toBe(true)
+      expect(await until(() => { const l = readListener(root, process.pid); return !!l && l.pid !== p.pid && l.session === session }, 20_000)).toBe(true)
+    } finally {
+      try { p.kill() } catch { /* gone */ }
+      const l = readListener(root, process.pid); if (l) try { process.kill(l.pid, 'SIGTERM') } catch { /* gone */ }
+      server.close()
+      rmSync(root, { recursive: true, force: true })
+    }
+  }, 90_000)
 })
 
 describe('the build a listener runs', () => {

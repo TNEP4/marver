@@ -6,7 +6,7 @@
  */
 import { requestWords } from './capture.ts'
 import { packetPath, sanitize } from './packet.ts'
-import type { JobPacket } from './types.ts'
+import type { JobPacket, Msg } from './types.ts'
 
 const LINE = 280
 const clip = (s: string, n = LINE) => { const t = s.replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t }
@@ -21,19 +21,37 @@ export function sessionBrief(packet: JobPacket, handle: string, as?: string): st
     const where = m.frames.join(', ') || 'the board'
     const head = one ? '' : `${m.id}, `
     const quote = (t: string, n?: number) => `"${clip(sanitize(t, 4096).replace(/^\s*@marver\b\s*/i, ''), n) || '(no words - see the packet)'}"`
-    const asked = m.brief.asks.map((a) => a.body).join(' / ')
+    // several asks (tags joined, notes): the newest leads whole, the earlier ones after it, newest first - a later
+    // correction is never clipped away behind a long first request
+    const newest = (l: Msg[]) => [`the owner's newest words: ${quote(l[l.length - 1]?.body ?? '')}`,
+      ...(l.length > 1 ? [`  (before that: ${quote(l.slice(0, -1).reverse().map((a) => a.body.replace(/^\s*@marver\b\s*/i, '')).join(' / '), 160)})`] : [])]
+    const own = m.brief.asks
     if (m.brief.wrapup) {
       const w = m.brief.wrapup.content
       return [`- ${head}the session record: write it to ${w.file} - that file only, no design work.`,
         ...(w.instructions.trim() ? [`  The owner's instructions for it: ${quote(w.instructions)}`] : []),
         ...(w.more?.trim() ? [`  Their note on the record before (improve it by this): ${quote(w.more)}`] : [])]
     }
-    if (!m.brief.capture) return [`- ${head}a tag on ${where}: ${quote(asked)}`]
+    if (!m.brief.capture) {
+      if (own.length < 2) return [`- ${head}a tag on ${where}: ${quote(own[0]?.body ?? '')}`]
+      const [lead, ...rest] = newest(own)
+      return [`- ${head}a tag on ${where}, ${lead}`, ...rest]
+    }
     // what was said and noted, then the notes added in its read-back (⇧E's pause to add context)
     const said = requestWords(m.brief.capture, ' / ')
+    if (!own.length) return [`- ${head}a voice capture on ${where}: ${quote(said)}`]
+    // the capture ran only if it was sent back with More work (its `mw-` note); a tag that joined it while it waited
+    // (its frame reserved) is a clarification of a capture that never ran. A tag card on a capture's thread follows
+    // one that ran - unless that capture was kept or dropped (its note says so)
+    const ran = m.kind === 'capture' ? own.some((a) => a.id?.startsWith('mw-')) : !m.brief.capture.note
+    // sent back again: the notes its last run already had are not asked again
+    const before = new Set(ran ? (m.brief.follows?.asks ?? []).map((a) => a.id) : [])
+    const fresh = own.filter((a) => !before.has(a.id))
+    const [lead, ...rest] = newest(fresh.length ? fresh : own)
     // a capture sent back with More work: the owner's newest words lead; what was first said is context
-    if (asked) return [`- ${head}more work on ${where}, the owner's newest words: ${quote(m.brief.asks[m.brief.asks.length - 1]!.body)}`, `  (the capture it follows, done before: ${quote(said, 160)})`]
-    return [`- ${head}a voice capture on ${where}: ${quote(said)}`]
+    if (ran) return [`- ${head}more work on ${where}, ${lead}`, ...rest, `  (the capture it follows, done before: ${quote(said, 160)})`]
+    if (m.brief.capture.note) return [`- ${head}a tag on ${where}, ${lead}`, ...rest, `  (the capture on its thread, ${m.brief.capture.note}: ${quote(said, 160)})`]
+    return [`- ${head}a voice capture on ${where}, ${lead}`, ...rest, `  The capture they add to - not run yet, do it too: ${quote(said)}`]
   })
   if (record) return [
     `Live Jam run ${handle} - the owner's request from the canvas.`,

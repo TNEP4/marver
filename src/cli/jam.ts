@@ -243,15 +243,19 @@ export async function listenCommand(rootOpt?: string): Promise<void> {
   // that is merely stopped (a signal, another one taking over) leaves it, so the runs it holds keep their key
   const quit = (over: boolean) => { if (over) endConn(root, conn.id, conn.inc); releaseListener(root, claudePid, process.pid); process.exit(0) }
   process.on('SIGTERM', () => quit(!pidAlive(claudePid))); process.on('SIGINT', () => quit(!pidAlive(claudePid))); process.on('SIGHUP', () => quit(!pidAlive(claudePid)))
-  const relisten = () => {
+  /** Never settles: the look that calls it holds `busy` until this one has gone, so no tick starts a second successor. */
+  const relisten = () => new Promise<never>(() => {
     releaseListener(root, claudePid, process.pid)
     try {
       const child = spawn(process.execPath, [...process.execArgv, ...process.argv.slice(1)], { detached: true, stdio: ['pipe', 'ignore', 'ignore'], env: { ...env, MARVER_JAM_RELISTEN: '1', MARVER_JAM_POSTED: String(posted), MARVER_JAM_LAST: last, MARVER_JAM_REPEATS: String(repeats) } })
-      child.stdin!.end(JSON.stringify({ ...input, session_id: current, ...(conn.mode ? { permission_mode: conn.mode } : {}) }))
       child.unref()
-    } catch { /* the next hook starts one */ }
-    process.exit(0)
-  }
+      // it goes once the successor has its whole input: a pipe takes 64 KB at once and an exit drops the rest (a
+      // UserPromptSubmit carries the prompt - truncated JSON, and the successor never listened)
+      child.stdin!.on('error', () => process.exit(0))
+      child.stdin!.end(JSON.stringify({ ...input, session_id: current, ...(conn.mode ? { permission_mode: conn.mode } : {}) }), () => process.exit(0))
+      setTimeout(() => process.exit(0), 30_000)
+    } catch { process.exit(0) /* the next hook starts one */ }
+  })
   const look = async () => {
     // it ends with its Claude Code process (S29-5: an orphan would outlive the session)
     if (!pidAlive(claudePid) || (parent !== null && process.ppid !== parent) || !existsSync(join(root, 'design')) || readPrefs(root).off?.claude) return quit(!pidAlive(claudePid) || !!readPrefs(root).off?.claude)

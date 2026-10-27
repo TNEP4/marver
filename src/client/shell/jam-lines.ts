@@ -58,7 +58,13 @@ export function laneLine(c: LaneCard, now = Date.now()): string {
       // who runs it (spec 29b), in a few words: a tile has one short line
       const r = c.runner
       if (r?.kind === 'session') return r.state === 'offered' ? 'Waiting for your session' : r.state === 'waiting' ? 'Waiting for a session' : r.state === 'stalled' ? 'Stalled · choose' : r.state === 'stopping' ? 'Stopping' : `Your session · ${clock(now - c.at)}`
-      if (r?.kind === 'fork') return r.why?.startsWith('your session didn') ? `Yours was busy · a copy is on it · ${clock(now - c.at)}` : r.why?.startsWith('your session was idle') ? `Yours was idle · a copy is on it · ${clock(now - c.at)}` : `A copy of your session · ${clock(now - c.at)}`
+      if (r?.kind === 'fork') {
+        // why a copy runs it, by the reason the canvas gave (daemon.ts, runs.ts): the one that matches, never a near one
+        const w = r.why ?? ''
+        const lead = w.endsWith('it let it go') ? 'Yours let it go' : w.startsWith('your session didn') ? 'Yours was busy'
+          : w.startsWith('your session was idle') ? 'Yours was idle' : w.startsWith('the Jam session had ended') ? 'Jam session ended' : ''
+        return lead ? `${lead} · a copy is on it · ${clock(now - c.at)}` : `A copy of your session · ${clock(now - c.at)}`
+      }
       return `Agent working · ${clock(now - c.at)}`
     }
     case 'asks': return 'Asks you'

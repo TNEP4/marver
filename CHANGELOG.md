@@ -31,18 +31,20 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   agent with them. With the microphone on and nothing heard, the record says its words may be incomplete.
 - **"Looks good" is an answer, not more work.** Typed into More work, a note that only approves ("looks good", "perfect,
   thanks", "looks good to me", "nice work", "that's exactly what I wanted") settles the review as Looks good - it no
-  longer sent the capture back for a second run. A question ("is it done?") is never taken as one, nor a bare "yes"
-  answering the reply's own question.
+  longer sent the capture back for a second run. A question ("is it done?") is never taken as one, and when the reply
+  asked one, no note is: "yes, thanks" answers it - a request is never lost as approval.
 - **Every ping names its request** (above). Claude Code drops a message identical to the one before it from the same
   sender, so a second request at the same count was never seen and went to a copy after 2 minutes; the same line sent
   again (a run offered back, a second "give it back") now ends "(again)". A listener whose package was upgraded under
   it - a new version, or a preview repacked at the same one; pnpm's link too - hands over to a fresh one on the new
-  code, once the install is done. A capture sent back with More work leads its brief with your newest words; the
+  code, once the install is done, and goes only once the new one has its whole input. A capture sent back with More
+  work, or tags joined on one thread, lead the brief with your newest words (a capture not run yet is never "done"); the
   notes added in a read-back are in the brief and the ping's title; a session record's brief names its file and your
   instructions.
 - **The session record goes to your session too**, like any request, instead of straight to a copy (nothing else does
   once the session ended); and a copy that runs what your session did not take says so: "Yours was busy · a copy is
-  on it" (it held three runs, let it go, or did not take it in time), "Yours was idle" (Codex, Cursor).
+  on it" (it held three runs, or did not take it in time), "Yours let it go", "Yours was idle" (Codex, Cursor),
+  "Jam session ended".
 - **A capture's pictures no longer time out behind a bake pass.** They render on a lane of their own; a canvas that
   had just started (baking every frame) left captures with "no picture of ... - it took over 20 s".
 - **When your session cannot take a run, a copy of it does.** Claude Code and Codex runs Marver spawns copy your

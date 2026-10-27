@@ -18,17 +18,58 @@ describe('a More-work note that only approves', () => {
     for (const t of ['is this better?', 'is it done?', 'done?', 'it works?', 'really good?', 'is this done', 'looks like a lot', 'what I wanted', 'again']) expect(isApproval(t), t).toBe(false)
     const asked = 'Done - the header is blue. Want me to apply the same to the footer?'
     for (const t of ['yes', 'ok', 'yep']) { expect(isApproval(t, asked), t).toBe(false); expect(isApproval(t, 'Done - the header is blue.'), t).toBe(true) }
-    expect(isApproval('looks good, thanks', asked)).toBe(true)
+  })
+  it('when the reply asked something, every note answers it - "yes, thanks" is the footer request, never a verdict', () => {
+    const asked = 'Done - the header is blue. Want me to apply this to the footer?'
+    for (const t of ['yes, thanks', 'yes please', 'ok thanks', 'perfect', 'great, thanks', 'looks good, thanks', 'love it']) expect(isApproval(t, asked), t).toBe(false)
+    expect(isApproval('yes, thanks', 'Done - the header is blue.')).toBe(true)
+  })
+  it('approval words joined by "and" still settle it', () => {
+    for (const t of ['Looks good and works well', 'great and thanks', 'perfect and thank you']) expect(isApproval(t), t).toBe(true)
+    for (const t of ['looks good and make the footer blue', 'good and now the footer']) expect(isApproval(t), t).toBe(false)
   })
 })
 
 describe('the brief of a capture sent back', () => {
   it('leads with the newest words; the capture is context', () => {
-    const p: any = { batchId: 'b-1', frames: ['d/a'], members: [{ id: 'm1', frames: ['d/a'], brief: { asks: [{ body: '@marver the title smaller' }], capture: { record: { timeline: [{ at: 0, event: 'words', text: 'Redo the intro slide' }] } } } }] }
+    const p: any = { batchId: 'b-1', frames: ['d/a'], members: [{ id: 'm1', kind: 'capture', frames: ['d/a'], brief: { asks: [{ id: 'mw-cap-1-4', body: '@marver the title smaller' }], history: [], capture: { record: { timeline: [{ at: 0, event: 'words', text: 'Redo the intro slide' }] } } } }] }
     const t = sessionBrief(p, 'r-1.1')
     expect(t).toMatch(/more work on d\/a, the owner's newest words: "the title smaller"/)
     expect(t.indexOf('the title smaller')).toBeLessThan(t.indexOf('the capture it follows'))
     expect(t).toContain('(the capture it follows, done before: "Redo the intro slide")')
+  })
+  it('a capture that never ran, with tags joined while it waited, is never "done before" - and every tag is asked', () => {
+    // stopped while its frame was reserved, then two @marver clarifications in its thread joined the queued capture
+    const p: any = { batchId: 'b-4', frames: ['d/a'], members: [{ id: 'm1', kind: 'capture', frames: ['d/a'], brief: { asks: [{ id: 'e-1', body: '@marver use the brand blue' }, { id: 'e-2', body: '@marver and keep the icon' }], history: [], capture: { record: { timeline: [{ at: 0, event: 'words', text: 'Redo the intro slide' }] } } } }] }
+    const t = sessionBrief(p, 'r-4.1')
+    expect(t).not.toMatch(/done before|more work/)
+    expect(t).toMatch(/the owner's newest words: "and keep the icon"/)
+    expect(t).toContain('use the brand blue')
+    expect(t).toMatch(/not run yet[^\n]*"Redo the intro slide"/)
+  })
+  it('sent back again: only the note not run yet leads; the one already run is not asked again', () => {
+    const p: any = { batchId: 'b-5', frames: ['d/a'], members: [{ id: 'm1', kind: 'capture', frames: ['d/a'], brief: { asks: [{ id: 'mw-cap-1-4', body: '@marver the title smaller' }, { id: 'mw-cap-1-9', body: '@marver now the subtitle' }], history: [], follows: { asks: [{ id: 'mw-cap-1-4', body: '@marver the title smaller' }], result: 'Done' }, capture: { record: { timeline: [{ at: 0, event: 'words', text: 'Redo the intro slide' }] } } } }] }
+    const t = sessionBrief(p, 'r-5.1')
+    expect(t).toMatch(/more work on d\/a, the owner's newest words: "now the subtitle"/)
+    expect(t).not.toContain('the title smaller')
+  })
+  it('a tag on a capture that was kept, never run, says so', () => {
+    const p: any = { batchId: 'b-6', frames: ['d/a'], members: [{ id: 'm1', kind: 'comment', frames: ['d/a'], brief: { asks: [{ id: 'e-3', body: '@marver do it after all' }], history: [], capture: { note: 'kept - not an ask', record: { timeline: [{ at: 0, event: 'words', text: 'Redo the intro slide' }] } } } }] }
+    expect(sessionBrief(p, 'r-6.1')).not.toContain('done before')
+  })
+})
+
+describe('the brief of a tag', () => {
+  it('a later correction leads - never clipped away behind a long first request', () => {
+    const long = `@marver ${'make the pricing table denser and align every column to the grid, '.repeat(6)}`
+    const p: any = { batchId: 'b-7', frames: ['d/a'], members: [{ id: 'm1', kind: 'comment', frames: ['d/a'], brief: { asks: [{ id: 'e-1', body: long }, { id: 'e-2', body: '@marver Correction: use blue instead' }], history: [] } }] }
+    const t = sessionBrief(p, 'r-7.1')
+    expect(t).toMatch(/a tag on d\/a, the owner's newest words: "Correction: use blue instead"/)
+    expect(t).toContain('make the pricing table denser')
+  })
+  it('one tag reads as before', () => {
+    const p: any = { batchId: 'b-8', frames: ['d/a'], members: [{ id: 'm1', kind: 'comment', frames: ['d/a'], brief: { asks: [{ id: 'e-1', body: '@marver the title smaller' }], history: [] } }] }
+    expect(sessionBrief(p, 'r-8.1')).toContain('- a tag on d/a: "the title smaller"')
   })
   it('a capture\'s notes added in its read-back are the owner\'s words too - after what was said, or alone', () => {
     const cap = (timeline: unknown[]) => ({ batchId: 'b-2', frames: ['d/a'], members: [{ id: 'm1', frames: ['d/a'], brief: { asks: [], capture: { record: { timeline }, added: [{ at: 9, text: 'and use the brand blue for the headline' }] } } }] }) as any
@@ -82,5 +123,10 @@ describe('a copy that runs what your session did not take', () => {
     expect(laneLine({ ...c, runner: { kind: 'fork', agent: 'claude' } })).toMatch(/^A copy of your session/)
     expect(laneLine({ ...c, runner: { kind: 'fork', agent: 'claude', why: "your session didn't take it - it already holds 3 runs" } })).toMatch(/^Yours was busy · a copy is on it/)
     expect(laneLine({ ...c, runner: { kind: 'fork', agent: 'codex', why: 'your session was idle - Codex takes a run only while it works' } })).toMatch(/^Yours was idle · a copy is on it/)
+  })
+  it('a run your session let go, or one whose Jam session ended, says that - never "busy"', () => {
+    const c: any = { id: 'c', state: 'working', at: Date.now(), runner: { kind: 'fork', agent: 'claude', why: "your session didn't take it - it let it go" } }
+    expect(laneLine(c)).toMatch(/^Yours let it go · a copy is on it/)
+    expect(laneLine({ ...c, runner: { kind: 'fork', agent: 'claude', why: 'the Jam session had ended' } })).toMatch(/^Jam session ended · a copy is on it/)
   })
 })
