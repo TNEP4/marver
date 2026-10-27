@@ -196,13 +196,15 @@ export async function listenCommand(rootOpt?: string): Promise<void> {
     c.on('error', end)
     setTimeout(end, 5_000)
   })
-  const quit = () => { endConn(root, conn.id, conn.inc); releaseListener(root, claudePid, process.pid); process.exit(0) }
-  process.on('SIGTERM', quit); process.on('SIGINT', quit); process.on('SIGHUP', quit)
+  // the session ends its registration only when it is really over (its process gone, sessions turned off); a listener
+  // that is merely stopped (a signal, another one taking over) leaves it, so the runs it holds keep their key
+  const quit = (over: boolean) => { if (over) endConn(root, conn.id, conn.inc); releaseListener(root, claudePid, process.pid); process.exit(0) }
+  process.on('SIGTERM', () => quit(!pidAlive(claudePid))); process.on('SIGINT', () => quit(!pidAlive(claudePid))); process.on('SIGHUP', () => quit(!pidAlive(claudePid)))
   const look = async () => {
     // it ends with its Claude Code process (S29-5: an orphan would outlive the session)
-    if (!pidAlive(claudePid) || process.ppid !== parent || !existsSync(join(root, 'design')) || readPrefs(root).off?.claude) return quit()
+    if (!pidAlive(claudePid) || process.ppid !== parent || !existsSync(join(root, 'design')) || readPrefs(root).off?.claude) return quit(!pidAlive(claudePid) || !!readPrefs(root).off?.claude)
     const l = readListener(root, claudePid)
-    if (l && l.pid !== process.pid) return quit()   // another took over (a stale lock, cleared): never two
+    if (l && l.pid !== process.pid) return quit(false)   // another took over (a stale lock, cleared): never two
     if (l && (l.session !== current || l.mode !== conn.mode)) {
       if (l.session !== current) { endConn(root, conn.id, conn.inc); current = l.session; posted = 0; said = '[[],[]]' }
       conn = upsertConn(root, 'claude', current, { pid: claudePid, cwd: root, mode: l.mode, busy: false }, Date.now(), l.session !== conn.session)

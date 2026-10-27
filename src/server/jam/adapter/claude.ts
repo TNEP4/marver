@@ -44,7 +44,8 @@ export const claudeAdapter: JamAdapter = {
     // rules, which bound the Write tool and the sandbox's writes alike: edits in the repo never reach the permit tool)
     const root = o.root.replace(/\/+$/, '')
     const settings = {
-      sandbox: { enabled: true, autoAllowBashIfSandboxed: true, allowUnsandboxedCommands: false, failIfUnavailable: true, excludedCommands: [] },
+      // (no sandbox here: none is started - it would stop Claude Code at once - and Bash is denied instead)
+      sandbox: sandboxed ? { enabled: true, autoAllowBashIfSandboxed: true, allowUnsandboxedCommands: false, failIfUnavailable: true, excludedCommands: [] } : { enabled: false },
       permissions: { deny: [...SECRETS.map((p) => `Read(${p})`), ...PROTECTED_GLOBS.map((g) => `Edit(/${root}/${g})`), ...(o.skills ? [] : ['Skill']), ...(sandboxed ? [] : ['Bash'])] },
     }
     const permit = { mcpServers: { 'marver-jam': { command: o.marver?.cmd ?? 'npx', args: [...(o.marver?.args ?? ['marver']), 'jam', 'permit'], env: { MARVER_JAM_PERMIT: JSON.stringify({ root: o.root, mcp: o.mcp, skills: o.skills }) } } } }

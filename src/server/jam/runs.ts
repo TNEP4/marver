@@ -284,7 +284,8 @@ export function createRuns(d: RunsDeps): Runs {
   }
 
   /** A `done` or `say` sent again: where its run stands now, not what was hoped when it was taken. */
-  const replay = (r: NonNullable<NonNullable<typeof q.j.receipts>[string]>): Out | Promise<Out> => {
+  const replay = (r: NonNullable<NonNullable<typeof q.j.receipts>[string]>, conn: Conn): Out | Promise<Out> => {
+    if (r.op === 'mute') { try { upsertConn(root, conn.agent, conn.session, { muted: true }) } catch { /* said as taken */ } return r.out }
     if (r.op === 'done' && r.batch) return deliveryOf(r.batch) ?? waitDelivery(r.batch)
     if (r.op === 'say' && r.batch) {
       const b = q.j.batches.find((x) => x.batchId === r.batch)
@@ -325,9 +326,10 @@ export function createRuns(d: RunsDeps): Runs {
     }
     if (!usable(conn, now)) return { ok: false, error: conn.muted ? 'this session is muted for Jam until it ends' : 'this session cannot take Jam work now' }
     if (req.op === 'mute') {
+      // journaled first; a restart between the two finds the receipt and mutes it then (replay)
       const out = { ok: true, text: 'Muted: this session takes no Jam work until it ends.' }
-      upsertConn(root, conn.agent, conn.session, { muted: true })
       await q.lock(() => { keep(req, out); q.persist() })
+      upsertConn(root, conn.agent, conn.session, { muted: true })
       for (const b of open().filter((x) => x.offer?.conn === conn.id)) await withdraw(b.batchId, 'muted')
       return out
     }
@@ -431,7 +433,7 @@ export function createRuns(d: RunsDeps): Runs {
       const kept = typeof rid === 'string' ? q.j.receipts?.[rid] : undefined
       const v = verify(root, raw, kept ? new Set() : seenReqs)
       if (!v.ok) { if (v.id) answer(root, v.id, { ok: false, error: v.error }); continue }
-      if (kept) { const r = replay(kept); if (r instanceof Promise) void r.then((o) => answer(root, v.req.id, o)); else answer(root, v.req.id, r); continue }
+      if (kept) { const r = replay(kept, v.conn); if (r instanceof Promise) void r.then((o) => answer(root, v.req.id, o)); else answer(root, v.req.id, r); continue }
       let out: Out | { later: Promise<Out> }
       try { out = await ops(v.req, v.conn) } catch (e) { out = { ok: false, error: (e as Error).message } }
       try { if (alive(v.conn)) upsertConn(root, v.conn.agent, v.conn.session, {}) } catch { /* it answered; seen is a nicety */ }

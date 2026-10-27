@@ -638,7 +638,17 @@ describe('review 3', { timeout: 30_000 }, () => {
     const { args } = claudeAdapter.spawnArgs('goal', { root: '/r/repo', mcp: true, skills: true })
     const settings = JSON.parse(args[args.indexOf('--settings') + 1])
     expect(settings.sandbox).toMatchObject({ enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false })
-    for (const g of ['design/.local/**', '.claude/**', '.codex/**', 'node_modules/**', '.git/**']) expect(settings.permissions.deny).toContain(`Edit(//r/repo/${g})`)
+    for (const g of ['design/.local/**', '.claude/**', '.codex/**', 'node_modules/**', '**/node_modules/**', '.git/**']) expect(settings.permissions.deny).toContain(`Edit(//r/repo/${g})`)
+    // the rules and the permission tool protect the same paths (a nested package included)
+    for (const f of ['packages/ui/node_modules/x/index.js', 'design/.local/jam/conn/a.json', '.claude/settings.json', '.env.local'])
+      expect(decide({ root: '/r/repo', mcp: true, skills: true }, 'Write', { file_path: `/r/repo/${f}` }).behavior, f).toBe('deny')
+  })
+
+  it('where no sandbox can run, Claude Code starts with none and no shell - never a sandbox that stops it', () => {
+    const { args } = claudeAdapter.spawnArgs('goal', { root: '/r/repo', mcp: true, skills: true })
+    const settings = JSON.parse(args[args.indexOf('--settings') + 1])
+    if (process.platform === 'darwin') expect(settings.sandbox.enabled).toBe(true)
+    else if (!settings.sandbox.enabled) expect(settings.permissions.deny).toContain('Bash')
   })
 })
 
