@@ -122,7 +122,8 @@ export async function hook(agent: string, event: string, input: Record<string, a
     // from its next prompt, and is alive from then on
     const was = readConn(root, id)
     const pid = start || !was?.pid || was.ended ? ancestor(/^codex/) : was.pid
-    const c = upsertConn(root, 'codex', session, { pid, cwd: root, mode: typeof input.permission_mode === 'string' ? input.permission_mode : undefined, busy: event === 'prompt' }, now, (start && input.source !== 'compact') || !!was?.ended)
+    // a new incarnation only for a new Codex process (or one that ended); its own /clear, compaction or resume keeps it
+    const c = upsertConn(root, 'codex', session, { pid, cwd: root, mode: typeof input.permission_mode === 'string' ? input.permission_mode : undefined, busy: event === 'prompt' }, now, !was || !!was.ended || (!!pid && was.pid !== pid))
     const offers = readOffers(root, id)
     const stops = `${offers?.stop?.length ? ` ${STOP_LINE(offers.stop)}` : ''}${offers?.resume?.length ? ` ${RESUME_LINE(offers.resume)}` : ''}`
     if (start) return { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: CONNECTED_LINE() } }
@@ -176,8 +177,10 @@ export async function listenCommand(rootOpt?: string): Promise<void> {
   if (!claimListener(root, claudePid, { pid: process.pid, session, ...(mode ? { mode } : {}) })) return
   const parent = process.ppid
   let current = session
-  // a listener starting is a new incarnation: a new key, nothing the last one held still signs
-  let conn: Conn = upsertConn(root, 'claude', current, { pid: claudePid, cwd: root, mode, busy: false }, Date.now(), true)
+  // a new incarnation (a new key, nothing the last one held still signs) only for a new process, or one that ended: a
+  // listener restarted for the same Claude Code process keeps the registration, and the runs it holds
+  const prev = readConn(root, connId('claude', current))
+  let conn: Conn = upsertConn(root, 'claude', current, { pid: claudePid, cwd: root, mode, busy: false }, Date.now(), !prev || prev.pid !== claudePid || !!prev.ended)
   // nothing posted yet: offers that wait for this session already are said at once
   let posted = 0
   let said = '[[],[]]'

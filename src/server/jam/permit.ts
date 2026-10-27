@@ -41,6 +41,12 @@ function insideRoot(root: string, p: unknown): boolean {
   return !!rel && !rel.startsWith('..') && !isAbsolute(rel) && !PROTECTED.some((r) => r.test(rel))
 }
 
+/** The same protected paths as Claude Code permission globs, relative to the repo - installed as `Edit(...)` deny
+ *  rules, which also bound the sandbox's writes: an edit inside the repo is accepted before this tool is asked, so
+ *  the rules must hold on their own. */
+export const PROTECTED_GLOBS = ['.git/**', '.claude/**', '.codex/**', '.cursor/**', '.grok/**', '.opencode/**', '.vscode/**', '.idea/**', '.husky/**',
+  '.mcp.json', 'node_modules/**', 'design/.local/**', '.envrc', '.env', '.env.*']
+
 /** Inside the repo but never a Jam run's to edit: what runs commands outside its sandbox or speaks for the owner -
  *  git, the tools' settings and hooks, MCP configuration, the installed packages, Marver's own Jam state (the
  *  sessions' keys, the journal, the ledger). Matched on the resolved path, any case. */

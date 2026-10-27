@@ -81,7 +81,7 @@ try {
   jamLive.poke?.()
   say('tagged - waiting for the session to take it and hand it back')
   const replies = () => replay(readLog(join(root, 'design', 'comments'), 'home')).flatMap((t) => t.replies.filter((r) => r.agent))
-  const finals = () => replies().filter((r) => !/^jam-(c-)?e\d+-/.test(r.id ?? ''))
+  const finals = () => replies().filter((r) => !/^jam-(c-)?e\d+-[0-9a-f]{8}-[0-9a-f]{4}-/.test(r.id ?? ''))
   await until('the reply', () => finals().length > 0, 420_000)
   const edited = readFileSync(frame, 'utf8').includes('Your Codex session did this')
   for (const r of replies()) say(`reply [${r.agentMeta?.harness}/${r.agentMeta?.runner ?? '-'}] ${(r.body ?? '').slice(0, 160)}`)

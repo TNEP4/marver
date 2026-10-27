@@ -50,7 +50,9 @@ const tag = (root: string, dir: string, body = '@marver make it say Hello', auth
   return ev
 }
 const replies = (dir: string) => replay(readLog(dir, 'home')).flatMap((t) => t.replies.filter((r) => r.agent))
-const finals = (dir: string) => replies(dir).filter((r) => !/^jam-c-e\d+-/.test(r.id ?? ''))
+/** an early line's id: jam-c-e<attempt>-<batch uuid> (a final reply's is jam-c-<batch uuid>-<member>, and a uuid may start with e) */
+const EARLY = /^jam-c-e\d+-[0-9a-f]{8}-[0-9a-f]{4}-/
+const finals = (dir: string) => replies(dir).filter((r) => !EARLY.test(r.id ?? ''))
 const until = async (ok: () => boolean, ms = 8_000, step?: () => unknown) => {
   const end = Date.now() + ms
   while (Date.now() < end) { if (ok()) return true; await step?.(); await new Promise((r) => setTimeout(r, 25)) }
@@ -272,7 +274,7 @@ describe('session runs in the daemon', { timeout: 30_000 }, () => {
     expect(r.length).toBe(1)
     expect(r[0].body).toBe('Done - it says Hello.')
     expect(r[0].agentMeta).toMatchObject({ harness: 'claude', runner: 'session' })
-    expect(replies(s.dir).filter((x) => /^jam-c-e/.test(x.id ?? '')).length).toBe(1)
+    expect(replies(s.dir).filter((x) => EARLY.test(x.id ?? '')).length).toBe(1)
     expect(existsSync(join(s.root, 'spawned.marker'))).toBe(false)
     s.jam.stop(); s.done()
   })
@@ -394,7 +396,7 @@ describe('session runs in the daemon', { timeout: 30_000 }, () => {
     expect((await ask2('done', { handle, text: REPLY('Done after a restart.') })).ok).toBe(true)
     await t2
     expect(finals(s.dir).map((x) => x.body)).toEqual(['Done after a restart.'])
-    expect(replies(s.dir).filter((x) => /^jam-c-e/.test(x.id ?? '')).length).toBe(1)
+    expect(replies(s.dir).filter((x) => EARLY.test(x.id ?? '')).length).toBe(1)
     expect(existsSync(join(s.root, 'spawned.marker'))).toBe(false)
     jam2.stop(); s.done()
   })
@@ -566,6 +568,77 @@ describe('review 2: the boundaries', () => {
     expect(newestCodex(root, { CODEX_HOME: home })).toBeNull()
     rmSync(home, { recursive: true, force: true })
     done()
+  })
+})
+
+describe('review 3', { timeout: 30_000 }, () => {
+  it('a release while stopping is one transition: the owner\'s choice goes ahead, with its receipt', async () => {
+    const s = await setup()
+    tag(s.root, s.dir)
+    const t = s.jam.tick()
+    await until(() => (readOffers(s.root, s.conn.id)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())
+    const handle = String((await s.ask('next')).handle)
+    const r = s.jam.view().cards.find((c) => c.state === 'working')!.runner!
+    await s.jam.runs.act(r.batch, r.gen!, 'background')
+    const rel = await s.ask('release', { handle })
+    expect(rel).toMatchObject({ ok: true, text: expect.stringContaining('owner') })
+    expect(Object.values(s.jam.snapshot().receipts ?? {}).some((x) => x.op === 'release')).toBe(true)
+    await t
+    expect(existsSync(join(s.root, 'spawned.marker'))).toBe(true)
+    s.jam.stop(); s.done()
+  })
+
+  it('session-only: a session that ends lets its offer wait for the next session, never a background agent', async () => {
+    const s = await setup({ cfg: { runner: 'session' } })
+    tag(s.root, s.dir)
+    const t = s.jam.tick()
+    await until(() => (readOffers(s.root, s.conn.id)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())
+    endConn(s.root, s.conn.id)
+    await s.jam.runs.tick()
+    expect(s.jam.view().cards.find((c) => c.state === 'working')?.runner?.state).toBe('waiting')
+    expect(existsSync(join(s.root, 'spawned.marker'))).toBe(false)
+    // a new session opens: it is offered there
+    const next = upsertConn(s.root, 'claude', randomUUID(), { pid: process.pid }, Date.now(), true)
+    await until(() => (readOffers(s.root, next.id)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())
+    const handle = String((await s.ask('next', {}, next)).handle)
+    expect((await s.ask('done', { handle, text: REPLY('the next session did it') }, next)).ok).toBe(true)
+    await t
+    expect(finals(s.dir).map((x) => x.body)).toEqual(['the next session did it'])
+    s.jam.stop(); s.done()
+  })
+
+  it('a run waiting for a session goes to a background agent once your context is turned off', async () => {
+    const s = await setup({ cfg: { runner: 'session' } })
+    endConn(s.root, s.conn.id)
+    tag(s.root, s.dir)
+    const t = s.jam.tick()
+    await until(() => s.jam.view().cards.some((c) => c.runner?.state === 'waiting'), 8_000, () => s.jam.runs.tick())
+    writePrefs(s.root, { context: 'fresh' })
+    await until(() => existsSync(join(s.root, 'spawned.marker')), 8_000, () => s.jam.runs.tick())
+    await t
+    expect(finals(s.dir)[0].agentMeta?.runner).toBe('fresh')
+    s.jam.stop(); s.done()
+  })
+
+  it('Codex: its own resume keeps the registration (the key the runs it holds sign with); a new process makes a new one', async () => {
+    const { root, done } = workspace()
+    const sid = randomUUID()
+    const base = { session_id: sid, cwd: root, hook_event_name: 'SessionStart' }
+    await hook('codex', 'start', { ...base, source: 'startup' }, {})
+    const a = readConn(root, connId('codex', sid))!
+    await hook('codex', 'start', { ...base, source: 'resume' }, {})
+    expect(readConn(root, connId('codex', sid))!.inc).toBe(a.inc)
+    endConn(root, a.id)
+    await hook('codex', 'start', { ...base, source: 'resume' }, {})
+    expect(readConn(root, connId('codex', sid))!.inc).not.toBe(a.inc)
+    done()
+  })
+
+  it('Claude Code\'s background runs: protected paths denied as rules, the sandbox fails closed', () => {
+    const { args } = claudeAdapter.spawnArgs('goal', { root: '/r/repo', mcp: true, skills: true })
+    const settings = JSON.parse(args[args.indexOf('--settings') + 1])
+    expect(settings.sandbox).toMatchObject({ enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false })
+    for (const g of ['design/.local/**', '.claude/**', '.codex/**', 'node_modules/**', '.git/**']) expect(settings.permissions.deny).toContain(`Edit(//r/repo/${g})`)
   })
 })
 

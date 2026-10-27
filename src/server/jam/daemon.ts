@@ -542,7 +542,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     if (stopped) return
     // a session's early line is journaled before it is posted: it must be in the thread before the final reply is
     // matched against it - else a reply with the same words would never be posted at all
-    if (b.early && b.claim && !ensureEarly(b)) throw new Error('its early line could not be posted')
+    if (b.early && !ensureEarly(b)) throw new Error('its early line could not be posted')
     const cards = b.members.map((m) => q.j.cards.find((c) => c.id === m.card)).filter((c): c is Card => !!c)
     const early = b.early
     const posted: Record<string, { reply?: string; answered?: boolean; asked?: number }> = {}
@@ -859,7 +859,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         // its results are kept and posted again later (`redeliver`, which logs its own `redelivered` line)
         timing.deliverMs = performance.now() - tDeliver
         timeRun('delivery')
-        runs.delivered(b.batchId, true, 'its replies are saved and will be posted again')
+        runs.delivered(b.batchId, true, 'retrying')
         throw err
       }
       runs.delivered(b.batchId, true)

@@ -8,8 +8,6 @@
  * "you MAY", so an older codex without those tools simply works serially instead of failing.
  */
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { parseAgentText } from '../packet.ts'
 import type { JamAdapter } from '../types.ts'
 
@@ -23,13 +21,6 @@ export function codexMcpServers(cwd: string, env: NodeJS.ProcessEnv = process.en
   } catch { /* said below */ }
   return null
 }
-/** The servers a project's own .codex/config.toml names. */
-const projectServers = (root: string): string[] => {
-  let text = ''
-  try { text = readFileSync(join(root, '.codex', 'config.toml'), 'utf8') } catch { return [] }
-  return [...new Set([...text.matchAll(/^\s*\[mcp_servers\.("?)([A-Za-z0-9_-]+)\1\]\s*$/gm)].map((m) => m[2]))]
-}
-
 export const codexAdapter: JamAdapter = {
   name: 'codex',
   supportsSubagents: true,
@@ -41,11 +32,11 @@ export const codexAdapter: JamAdapter = {
     // meets - an MCP call included, which `approval_policy = never` refuses - inside workspace-write.
     // `--approve-for-me` is those three settings; `exec fork` takes them as config.
     const review = ['-c', 'approvals_reviewer="auto_review"', '-c', 'approval_policy="on-request"', '-c', 'sandbox_mode="workspace-write"']
-    // MCP off: each server Codex would start here turned off; when it cannot list them, your config is left out
-    // altogether (auth stays) and the project's own servers are turned off by name
+    // MCP off: each server Codex would start here turned off. When Codex cannot list them, the run is refused, not
+    // started with servers you turned off still on.
     const listed = o.mcp ? [] : codexMcpServers(o.root)
-    const mcpOff = o.mcp ? [] : listed ? listed.flatMap((n) => ['-c', `mcp_servers.${n}.enabled=false`])
-      : ['--ignore-user-config', ...projectServers(o.root).flatMap((n) => ['-c', `mcp_servers.${n}.enabled=false`])]
+    if (!listed) throw new Error('MCP servers are off for Jam runs, and Codex could not list them to turn them off - run `codex mcp list` here, or turn MCP back on in the start sheet')
+    const mcpOff = listed.flatMap((n) => ['-c', `mcp_servers.${n}.enabled=false`])
     return o.fork
       ? { cmd: 'codex', args: ['exec', 'fork', o.fork, '--json', '--skip-git-repo-check', ...review, ...mcpOff, goal] }
       : { cmd: 'codex', args: ['exec', '--json', '--skip-git-repo-check', ...review, ...mcpOff, goal] }

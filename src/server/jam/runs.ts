@@ -54,6 +54,8 @@ export type Choice =
   | { kind: 'wait' }
 
 export const handleOf = (b: Batch, gen: number) => `r-${b.batchId.slice(0, 8)}.${gen}`
+/** A session command as that session must type it - Cursor's names its connection (it has no session id in its shell). */
+const cmdFor = (conn: Conn | null | undefined, op: string, handle?: string) => `\`npx marver jam ${op}${handle ? ` ${handle}` : ''}${conn?.agent === 'cursor' ? ` --as ${conn.id}` : ''}\``
 const HANDLE = /^r-([0-9a-f]{8})\.(\d+)$/
 
 export interface RunsDeps {
@@ -209,31 +211,41 @@ export function createRuns(d: RunsDeps): Runs {
     }).then(() => { publish(); d.changed() }, () => settle(b.batchId, null))
   })
 
-  /** Take an offer back (not pulled in time, its session gone, Jam ended): it runs spawned - decided and saved in one write. */
+  /** Does a run a session let go of (not an explicit choice of the owner's) wait for a session again? Only under
+   *  `jam.runner: 'session'`, while sessions can take work at all. */
+  const waitsForSession = (s = settings()) => s.runner === 'session' && s.session && s.context === 'fork'
+  /** Where a run goes once its session lets go: back to waiting under session-only, else spawned. Call under the lock. */
+  const letGo = (b: Batch) => { if (waitsForSession()) { delete b.handoff; b.runner = { kind: 'session', agent: '' } } else b.handoff = 'spawn' }
+
+  /** Take an offer back (not pulled in time, its session gone, Jam ended): where it goes is decided and saved in one write. */
   const withdraw = async (id: string, why: string) => {
     const did = await q.lock(() => {
       const b = byId(id)
       if (!b?.offer) return false
-      delete b.offer; b.handoff = 'spawn'
+      delete b.offer; letGo(b)
       q.persist()
       return true
     })
     if (!did) return
     d.log(`  jam: a run offered to your session went another way (${why})`)
-    publish(); settle(id, null); d.changed()
+    publish(); if (byId(id)?.handoff) settle(id, null); d.changed()
   }
 
-  /** A stop the owner chose is confirmed (released, or its writer proven gone): it runs as they chose - saved first. */
-  const finishStop = async (id: string, receipt?: { req: Req; out: Out }): Promise<boolean> => {
+  /** The owner's stop, made final: dropped, or handed to a spawned runner (the owner's explicit choice wins over
+   *  session-only waiting). Call under the lock. */
+  const stopNow = (b: Batch) => {
+    const c = b.claim!
+    b.gen = Math.max(b.gen ?? 0, c.gen)
+    if (c.stopping === 'drop') b.dropped = true
+    else b.handoff = 'spawn'
+    delete b.claim
+  }
+  /** A stop the owner chose is confirmed by its writer proven gone: it runs as they chose - saved first. */
+  const finishStop = async (id: string): Promise<boolean> => {
     const did = await q.lock(() => {
       const b = byId(id)
-      const c = b?.claim
-      if (!b || !c?.stopping) return false
-      b.gen = Math.max(b.gen ?? 0, c.gen)
-      if (c.stopping === 'drop') b.dropped = true
-      else b.handoff = 'spawn'
-      delete b.claim
-      if (receipt) keep(receipt.req, receipt.out, b)
+      if (!b?.claim?.stopping || b.claim.result !== undefined) return false
+      stopNow(b)
       q.persist()
       return true
     })
@@ -258,15 +270,22 @@ export function createRuns(d: RunsDeps): Runs {
   /** A change's receipt, in the same journal write as the change. */
   const keep = (req: Req, out: Out, b?: Batch) => { (q.j.receipts ??= {})[req.id] = { at: Date.now(), out, op: req.op, ...(b ? { batch: b.batchId } : {}) } }
 
+  /** How a handed-back run's delivery stands, from the batch itself - what every answer about it says. Null: not
+   *  settled yet (being posted). */
+  const deliveryOf = (id: string): Out | null => {
+    const b = q.j.batches.find((x) => x.batchId === id)
+    if (!b) return { ok: false, error: 'that run is gone from the journal' }
+    if (b.posted || b.state === 'done') return { ok: true, text: 'Delivered - its replies are posted and the frames are free.' }
+    if (b.undelivered) return { ok: false, error: 'its replies are saved, but they could not be posted - Retry on the card posts them' }
+    if (b.state === 'failed') return { ok: false, error: `it could not be delivered: ${b.note ?? 'the run failed'}` }
+    if (b.results) { const o = outcome.get(id); return o && !o.ok ? { ok: false, error: `it could not be delivered: ${o.note ?? 'unknown'}` } : o?.note === 'retrying' ? { ok: true, text: 'Handed back - its replies are saved; posting them failed once and is being tried again.' } : null }
+    const o = outcome.get(id)
+    return o && !o.ok ? { ok: false, error: `it could not be delivered: ${o.note ?? 'unknown'}` } : null
+  }
+
   /** A `done` or `say` sent again: where its run stands now, not what was hoped when it was taken. */
   const replay = (r: NonNullable<NonNullable<typeof q.j.receipts>[string]>): Out | Promise<Out> => {
-    if (r.op === 'done' && r.batch) {
-      const o = outcome.get(r.batch)
-      if (o) return o.ok ? { ok: true, text: `Delivered${o.note ? ` (${o.note})` : ''} - the frames are free.` } : { ok: false, error: `it could not be delivered: ${o.note ?? 'unknown'}` }
-      const b = q.j.batches.find((x) => x.batchId === r.batch)
-      if (b?.posted) return { ok: true, text: 'Delivered - the frames are free.' }
-      return waitDelivery(r.batch)
-    }
+    if (r.op === 'done' && r.batch) return deliveryOf(r.batch) ?? waitDelivery(r.batch)
     if (r.op === 'say' && r.batch) {
       const b = q.j.batches.find((x) => x.batchId === r.batch)
       return b?.early && d.say(b) ? { ok: true, text: 'Posted.' } : { ok: true, text: 'Taken - it is posted before the run is delivered.' }
@@ -275,9 +294,9 @@ export function createRuns(d: RunsDeps): Runs {
   }
 
   const waitDelivery = (id: string): Promise<Out> => new Promise((res) => {
-    const to = setTimeout(() => res({ ok: true, text: 'Handed back - it is being posted; the canvas shows it in the thread.' }), 100_000)
+    const to = setTimeout(() => res(deliveryOf(id) ?? { ok: true, text: 'Handed back - it is being posted; the canvas shows it in the thread.' }), 100_000)
     to.unref?.()
-    deliveries.set(id, [...(deliveries.get(id) ?? []), (r) => { clearTimeout(to); res(r.ok ? { ok: true, text: `Delivered${r.note ? ` (${r.note})` : ''} - the frames are free.` } : { ok: false, error: `it could not be delivered: ${r.note ?? 'unknown'}` }) }])
+    deliveries.set(id, [...(deliveries.get(id) ?? []), () => { clearTimeout(to); res(deliveryOf(id) ?? { ok: true, text: 'Handed back - it is being posted; the canvas shows it in the thread.' }) }])
   })
 
   /** One request. Returns its answer, or a promise of it (a `done` answers once its replies are posted - and never
@@ -287,43 +306,43 @@ export function createRuns(d: RunsDeps): Runs {
     if (req.op === 'release') {
       let out: Out = { ok: false, error: 'that run is over' }
       let id = ''
-      let stop = false
       await q.lock(() => {
         const f = claimOf(conn, req.args.handle)
         if (typeof f === 'string') { out = { ok: false, error: f }; return }
         const b = f.b
         if (b.claim!.result !== undefined) { out = { ok: false, error: 'it is already handed back' }; return }
         id = b.batchId
-        if (b.claim!.stopping) { stop = true; return }
-        out = { ok: true, text: 'Released - another runner takes it.' }
-        b.gen = Math.max(b.gen ?? 0, b.claim!.gen); delete b.claim; b.handoff = settings().runner === 'session' ? undefined : 'spawn'
-        if (!b.handoff) b.runner = { kind: 'session', agent: '' }   // session-only: waits for a session again
+        if (b.claim!.stopping) { out = { ok: true, text: 'Released - the owner\'s choice goes ahead.' }; stopNow(b) }
+        else {
+          out = { ok: true, text: 'Released - another runner takes it.' }
+          b.gen = Math.max(b.gen ?? 0, b.claim!.gen); delete b.claim; letGo(b)
+        }
         keep(req, out, b)
         q.persist()
       })
-      if (stop) {
-        out = { ok: true, text: 'Released - the owner\'s choice goes ahead.' }
-        await finishStop(id, { req, out })
-        return out
-      }
-      if (id && out.ok) { publish(); settle(id, null); d.changed() }
+      if (id && out.ok) { publish(); if (byId(id)?.handoff || byId(id)?.dropped || !byId(id)) settle(id, null); d.changed() }
       return out
     }
     if (!usable(conn, now)) return { ok: false, error: conn.muted ? 'this session is muted for Jam until it ends' : 'this session cannot take Jam work now' }
     if (req.op === 'mute') {
+      const out = { ok: true, text: 'Muted: this session takes no Jam work until it ends.' }
       upsertConn(root, conn.agent, conn.session, { muted: true })
+      await q.lock(() => { keep(req, out); q.persist() })
       for (const b of open().filter((x) => x.offer?.conn === conn.id)) await withdraw(b.batchId, 'muted')
-      return { ok: true, text: 'Muted: this session takes no Jam work until it ends.' }
+      return out
     }
     if (req.op === 'status') {
       const mine = open().filter((b) => b.offer?.conn === conn.id || b.claim?.conn === conn.id)
-      const line = (b: Batch) => b.offer ? `offered: run ${b.batchId.slice(0, 8)} (${b.frames.join(', ')}) - take it with \`npx marver jam next\`` : `${b.claim!.stopping ? 'stopping - release it' : b.claim!.result !== undefined ? 'handed back' : b.claim!.stalled ? 'stalled' : 'yours'}: ${handleOf(b, b.claim!.gen)} (${b.frames.join(', ')})`
+      const line = (b: Batch) => b.offer ? `offered: run ${b.batchId.slice(0, 8)} (${b.frames.join(', ')}) - take it with ${cmdFor(conn, 'next')}` : `${b.claim!.stopping ? `stopping - release it: ${cmdFor(conn, 'release', handleOf(b, b.claim!.gen))}` : b.claim!.result !== undefined ? 'handed back' : b.claim!.stalled ? 'stalled' : 'yours'}: ${handleOf(b, b.claim!.gen)} (${b.frames.join(', ')})`
       return { ok: true, text: [`Connected: ${conn.agent} session ${conn.id}${selected(now)?.id === conn.id ? ' - it takes the work' : ''}${d.jamOn() ? '' : ' (no Jam session runs on the canvas now)'}.`, ...(mine.length ? mine.map(line) : ['No runs for it now.'])].join('\n') }
     }
     if (req.op === 'next') {
-      const s = settings()
       const out = await q.lock((): Out => {
-        // taken only by the session it was offered to, while sessions may take work, and it is still the selected one
+        // taken only by the session it was offered to, while sessions may take work, it is still the selected one,
+        // and the very registration that signed the request - all read again here, under the lock
+        const s = settings()
+        const cur = readConn(root, conn.id)
+        if (!cur || cur.inc !== conn.inc || !usable(cur)) return { ok: false, error: 'this session\'s connection changed - run the command again' }
         if (!sessionsOn(s)) return { ok: true, text: 'Nothing waits for this session now (no Jam session takes it).' }
         if (selected(now)?.id !== conn.id) return { ok: true, text: 'Nothing waits for this session now - another session takes the work.' }
         const b = open().filter((x) => x.offer?.conn === conn.id && x.offer.inc === conn.inc).sort((a, z) => a.offer!.at - z.offer!.at)[0]
@@ -348,8 +367,9 @@ export function createRuns(d: RunsDeps): Runs {
         const f = claimOf(conn, req.args.handle)
         if (typeof f === 'string') { out = { ok: false, error: f }; return }
         const c = f.b.claim!
-        if (c.stopping) { out = { ok: false, error: `the owner moved this run elsewhere - stop working on it and run \`npx marver jam release ${req.args.handle}\`` }; return }
+        if (c.stopping) { out = { ok: false, error: `the owner moved this run elsewhere - stop working on it and run ${cmdFor(conn, 'release', String(req.args.handle))}` }; return }
         c.progress = Date.now(); delete c.stalled; delete c.resumed
+        keep(req, out, f.b)
         q.persist()
       })
       if (out.ok) { publish(); d.changed() }
@@ -364,7 +384,7 @@ export function createRuns(d: RunsDeps): Runs {
         const f = claimOf(conn, req.args.handle)
         if (typeof f === 'string') { out = { ok: false, error: f }; return }
         const b = f.b, c = b.claim!
-        if (c.stopping) { out = { ok: false, error: `the owner moved this run elsewhere - stop working on it and run \`npx marver jam release ${req.args.handle}\`` }; return }
+        if (c.stopping) { out = { ok: false, error: `the owner moved this run elsewhere - stop working on it and run ${cmdFor(conn, 'release', String(req.args.handle))}` }; return }
         if (c.result !== undefined) { out = { ok: false, error: 'it is already handed back' }; return }
         if (b.members.length !== 1) { out = { ok: false, error: 'a run of several asks posts no early line - its replies come with done' }; return }
         if (b.early) { out = { ok: false, error: 'its early line is already posted' }; return }
@@ -390,7 +410,7 @@ export function createRuns(d: RunsDeps): Runs {
       const f = claimOf(conn, req.args.handle)
       if (typeof f === 'string') { err = f; return }
       const c = f.b.claim!
-      if (c.stopping) { err = `the owner moved this run elsewhere - stop working on it and run \`npx marver jam release ${req.args.handle}\``; return }
+      if (c.stopping) { err = `the owner moved this run elsewhere - stop working on it and run ${cmdFor(conn, 'release', String(req.args.handle))}`; return }
       if (c.result !== undefined) { err = 'it is already handed back'; return }
       c.result = text; c.progress = Date.now(); delete c.stalled; delete c.resumed
       id = f.b.batchId
@@ -446,7 +466,13 @@ export function createRuns(d: RunsDeps): Runs {
           d.changed()
         }
       } else if (b.runner?.kind === 'session' && !b.handoff && waiters.has(b.batchId)) {
-        // waiting for a session (`jam.runner: 'session'`, or released under it): offer it the moment there is one
+        // waiting for a session (`jam.runner: 'session'`, or released under it): offer it the moment there is one -
+        // or, once waiting is no longer the rule (sessions or your context turned off), it goes spawned
+        if (!waitsForSession(s) && !sel) {
+          await q.lock(() => { const x = byId(b.batchId); if (x && !x.offer && !x.claim) { x.handoff = 'spawn'; q.persist() } })
+          settle(b.batchId, null); d.changed()
+          continue
+        }
         if (sel && offerable(sel) && load(sel.id) < s.sessionMax) {
           await q.lock(() => { const x = byId(b.batchId); if (x && !x.offer && !x.claim && !x.handoff) { x.runner = { kind: 'session', agent: sel.agent, conn: sel.id }; x.offer = { conn: sel.id, inc: sel.inc, at: Date.now() }; q.persist() } })
           d.changed()

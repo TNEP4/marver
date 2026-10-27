@@ -5,6 +5,7 @@
  * and the final `result` event as the completion reply.
  */
 import { onPath } from '../agent.ts'
+import { PROTECTED_GLOBS } from '../permit.ts'
 import { parseAgentText } from '../packet.ts'
 import type { JamAdapter } from '../types.ts'
 
@@ -12,9 +13,10 @@ import type { JamAdapter } from '../types.ts'
 const firstKey = (o: unknown): string | undefined =>
   o && typeof o === 'object' ? Object.keys(o as object)[0] : undefined
 
-/** Can Claude Code's sandbox run here? macOS has it built in; Linux needs bubblewrap. */
+/** Can Claude Code's sandbox run here? macOS has it built in; Linux needs bubblewrap and socat. (It may still fail
+ *  to start: `failIfUnavailable` makes that a failed command, never an open one.) */
 export const sandboxReady = (platform = process.platform, env: NodeJS.ProcessEnv = process.env): boolean =>
-  platform === 'darwin' || (platform === 'linux' && onPath('bwrap', env))
+  platform === 'darwin' || (platform === 'linux' && onPath('bwrap', env) && onPath('socat', env))
 
 /** What no Jam run reads, whoever asks: keys and credentials. */
 export const SECRETS = ['~/.ssh/**', '~/.aws/**', '~/.gnupg/**', '~/.config/gcloud/**', '~/.netrc', '~/.npmrc', '~/Library/Keychains/**']
@@ -38,9 +40,12 @@ export const claudeAdapter: JamAdapter = {
     // the shell only where Claude Code's sandbox can hold it (macOS's own; Linux with bubblewrap) - anywhere else
     // there is no shell at all: the boundary is never promised and missing (fail closed)
     const sandboxed = sandboxReady()
+    // (a sandbox that cannot start fails the command - never runs it open; protected paths in the repo are denied as
+    // rules, which bound the Write tool and the sandbox's writes alike: edits in the repo never reach the permit tool)
+    const root = o.root.replace(/\/+$/, '')
     const settings = {
-      sandbox: { enabled: true, autoAllowBashIfSandboxed: true, allowUnsandboxedCommands: false, excludedCommands: [] },
-      permissions: { deny: [...SECRETS.map((p) => `Read(${p})`), ...(o.skills ? [] : ['Skill']), ...(sandboxed ? [] : ['Bash'])] },
+      sandbox: { enabled: true, autoAllowBashIfSandboxed: true, allowUnsandboxedCommands: false, failIfUnavailable: true, excludedCommands: [] },
+      permissions: { deny: [...SECRETS.map((p) => `Read(${p})`), ...PROTECTED_GLOBS.map((g) => `Edit(/${root}/${g})`), ...(o.skills ? [] : ['Skill']), ...(sandboxed ? [] : ['Bash'])] },
     }
     const permit = { mcpServers: { 'marver-jam': { command: o.marver?.cmd ?? 'npx', args: [...(o.marver?.args ?? ['marver']), 'jam', 'permit'], env: { MARVER_JAM_PERMIT: JSON.stringify({ root: o.root, mcp: o.mcp, skills: o.skills }) } } } }
     return {
