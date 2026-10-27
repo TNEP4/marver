@@ -92,7 +92,7 @@ try {
 } finally {
   try { tty.kill('SIGTERM') } catch { /* gone */ }
   jam.stop()
-  if (pass) rmSync(root, { recursive: true, force: true })
+  if (pass) rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })   // a session still writing its last file as it ends
   else say(`workspace kept: ${root} (the Codex run: .codex-run.jsonl)`)
   setTimeout(() => process.exit(pass ? 0 : 1), 500)
 }

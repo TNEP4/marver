@@ -6,66 +6,66 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 
 ### Highlights
 
-- **Jam feeds your own session.** Start a Jam session on the canvas - the one switch - and your @marver tags and voice
-  captures go to the coding-agent session you already have open in the repo: Claude Code (woken through its inbox,
-  idle or busy), Codex and Cursor (pulled at the end of their turn by their Stop hooks). It works with everything it
-  has - its conversation, tools, MCP servers, skills, subagents - takes a run with `npx marver jam next`, posts one line
-  with `jam say`, and hands the replies back with `jam done`; the canvas posts them as the session's ("your session ·
-  Claude Code"). Commands travel through signed files, so a sandbox that blocks localhost cannot stop them.
-- **One line to the session, and it knows what the line means.** A run arrives as one line naming it - "Live Jam: new
-  request from your Marver canvas - "Intro frame redesign" (1a2b3c4d) - run `npx marver jam next`" - and `jam next`
-  prints a dozen lines - your request in your words, the
-  frames, how to answer - not the whole prompt a spawned run gets. `design/AGENTS.md` gains a "Live Jam" section: the
-  line is your request relayed by the canvas (Claude Code shows it as from another session), so the agent takes it as
-  one. Run `npx marver init` once to get it.
-- **Two ways to stop a capture.** `E` stops it and queues it - the agent starts on it, nothing to confirm: its tile
-  goes from Capturing to Sending to Queued or working, and nothing opens, flashes "To confirm" or moves the canvas (the
-  canvas makes its card queued in one step - a first build showed it as a draft for a moment and opened its read-back;
-  the Sending tile now stays until the queued card is on the lane - or the canvas answers without it, finished in
-  another tab - and a review it was made over closes).
-  `⇧E` (Stop to review) opens its read-back to check it and add notes first, as before. Both are on the capture bar; `J`
-  during a capture still stops it to review. A capture the queue cannot take stays on the lane as a draft and one line
-  says why. `jam.capture` is no longer used.
-- **A capture waits longer for its last words**: 15 s after you stop (3 s before), and longer while the speech engine
-  is still answering (a minute at most), so words still being transcribed - a long last phrase, the speech engine
-  starting up, phrases ahead of it - reach its record instead of being dropped; a capture stopped with `E` goes to the
-  agent with them. With the microphone on and nothing heard, the record says its words may be incomplete.
-- **"Looks good" is an answer, not more work.** Typed into More work, a note that is only one of a short list of
-  approvals - "looks good", "looks good to me", "lgtm", "perfect", "great job", "nice work", "love it", "thanks", "👍"
-  and a few more, its case, trailing punctuation and emoji aside - settles the review as Looks good instead of sending
-  the capture back for a second run. Anything more - one extra word, another language, a number, "yes, thanks" - goes
-  to the agent as More work: a request is never lost as approval, at worst it runs once more.
-- **Every ping names its request** (above). Claude Code drops a message identical to the one before it from the same
-  sender, so a second request at the same count was never seen and went to a copy after 2 minutes; the same line sent
-  again (a run offered back, a second "give it back") now ends "(again)". The canvas writes the whole line and Claude
-  Code's listener posts it as written: an upgrade changes the words at once, and the listener never restarts. `jam next` lists
-  your words for the run newest first - the newest whole, each earlier one short, each named (a tag, a read-back note,
-  a More-work note, the capture; a capture resumed after its read-back is two parts, what you said after the pause
-  above the notes written in it) - and points at the packet for the thread and what earlier runs did; a session
-  record's brief names its file and your instructions.
-- **The session record goes to your session too**, like any request, instead of straight to a copy (nothing else does
-  once the session ended); and a copy that runs what your session did not take says so: "Yours was busy · a copy is
-  on it" (it held three runs, or did not take it in time), "Yours let it go", "Yours was idle" (Codex, Cursor),
-  "Jam session ended".
-- **A capture's pictures no longer time out behind a bake pass.** They render on a lane of their own; a canvas that
-  had just started (baking every frame) left captures with "no picture of ... - it took over 20 s".
-- **When your session cannot take a run, a copy of it does.** Claude Code and Codex runs Marver spawns copy your
-  session (`--fork-session`, `exec fork`) - a person's session of this repo, never a headless one; a transcript over
-  12 MB runs fresh. Outside a Jam session, tags go to such a copy.
-- **Full power by default.** Runs Marver spawns for Claude Code, Codex and Cursor have the shell inside the tool's own
-  sandbox, your MCP servers and skills: Claude Code through `marver jam permit` (its permission questions answered by a
-  policy - MCP, skills, web, subagents and edits in the repo allowed; keys unreadable; nothing asked), Codex through its
-  own automatic reviewer (`--approve-for-me`). The start sheet's switches turn MCP and skills, your session's context,
-  and collaborators' comments on or off.
-- **Only your own words reach any runner** by default: other people's comments are left out of the packet (`jam.others`
-  brings them back, labelled), including briefs frozen before this version.
-- **Zero setup.** `marver init`, `marver dev` and starting a Jam session write each tool's hooks once
-  (`.claude/settings.local.json`, `.codex/hooks.json`, `.cursor/hooks.json`) - only Marver's own entries, never a
-  committed file, kept out of git, and a removal by hand is remembered.
-- **Runs your session took and went quiet on** are stalled after 15 minutes: give it back, run it in the background,
-  or drop it - the last two wait for the session to let go. A restart of `marver dev` keeps every run a session holds.
-- **In the Mac app the floating chrome sits right under the strip** (0.27.3's fix): the sidebar, toolbar, play pills
-  and Jam panels take the larger of the edge and the top inset instead of their sum.
+- **Jam works in the coding-agent session you already have open.** Start a Jam session on the canvas and your @marver
+  tags and voice captures go to the Claude Code, Codex or Cursor session open in the repo, with its conversation,
+  tools, MCP servers, skills and subagents. Claude Code is woken through its inbox, idle or busy; Codex and Cursor take
+  the work at the end of their turn. The session takes a run with `npx marver jam next`, says one line with `jam say`
+  and hands its reply back with `jam done`, and the canvas posts it as your session's ("your session · Claude Code").
+  The commands travel through signed files, so a sandbox that blocks localhost does not stop them. Nothing to set up:
+  `marver init`, `marver dev` and starting a Jam session write each tool's hooks (`.claude/settings.local.json`,
+  `.codex/hooks.json`, `.cursor/hooks.json`) - only Marver's own entries, never in a committed file - and a hook you
+  remove by hand stays removed ([Jam session](docs/jam-session.md), [Live Jam](docs/live-jam.md)).
+- **One line per request, and the agent knows what it means.** A request arrives as one line that names it - "Live
+  Jam: new request from your Marver canvas - "Intro frame redesign" (1a2b3c4d) - run `npx marver jam next`" - and
+  `jam next` prints a short brief: your words, newest first, the frames it may edit and how to answer.
+  `design/AGENTS.md` gains a "Live Jam" section, so the agent expects these lines and takes them as your request
+  (Claude Code shows them as sent by another session). Two pings in a row are never the same - Claude Code drops a
+  message identical to the one before it - and the canvas writes the words, so an upgrade changes them at once.
+- **Two ways to stop a capture.** `E` stops it and queues it: its tile goes from Capturing to Sending to Queued or
+  working, and nothing opens, asks you to confirm or moves the canvas. `⇧E` (Stop to review) opens its read-back as
+  before, to check it and add notes first. Both are on the capture bar, Stop first. `J` during a capture stops it to
+  review.
+- **When your session cannot take a run, a copy of it does**, with the same context: runs Marver starts for Claude Code
+  and Codex copy your session (`--fork-session`, `exec fork`) - a person's session of this repo, never a headless one;
+  a transcript over 12 MB runs fresh. Its tile says why: "Yours was busy", "Yours let it go", "Yours was idle" (Codex,
+  Cursor), "Jam session ended". Outside a Jam session, tags go to such a copy.
+- **Full power by default.** Runs Marver starts for Claude Code, Codex and Cursor have the shell inside the tool's own
+  sandbox, your MCP servers and skills: Claude Code through `marver jam permit` (MCP, skills, web, subagents and edits
+  in the repo allowed; keys unreadable; nothing asked), Codex through its own automatic reviewer (`--approve-for-me`).
+  The start sheet's switches turn MCP and skills, your session's context and collaborators' comments on or off.
+- **Only your own words reach any runner** by default: other people's comments are left out of what it reads
+  (`jam.others: true` brings them back, labelled), also in briefs frozen before this version.
+
+### Changed
+
+- **"Looks good" typed as a note settles the review.** A More-work note that is only an approval - "looks good",
+  "looks good to me", "lgtm", "perfect", "great job", "nice work", "thanks", "👍" and a few more - counts as Looks good
+  instead of running the capture again. Anything longer, another language or "yes, thanks" goes to the agent as More
+  work: a request is never lost as approval.
+- **The session record goes to your session too**, like any request, instead of straight to a copy.
+- **A capture waits longer for your last words**: 15 s after you stop (3 s before), and longer while the speech engine
+  is still answering, a minute at most - a long last phrase, or the engine starting up, no longer drops them. With the
+  microphone on and nothing heard, the capture says its words may be incomplete.
+- **A capture's pictures no longer time out** on a canvas that has just started: they render on a lane of their own
+  instead of waiting behind the bake of every frame ("no picture of ... - it took over 20 s").
+- **The review's before and after sit on a dark stage**, as in play mode, with white captions and more room.
+- **Runs your session took and went quiet on** are marked stalled after 15 minutes: give it back, run it in the
+  background, or drop it. A restart of `marver dev` keeps every run a session holds.
+- **In the Mac app the floating chrome sits right under the strip**: the sidebar, toolbar, play pills and Jam panels
+  take the larger of the edge and the top inset instead of their sum.
+- `jam.capture` is no longer used: `E` queues a capture, `⇧E` reviews it.
+
+### Fixed
+
+- **A crash in the speech engine no longer takes the canvas down.** The engine runs in a process of its own, and a
+  stretch of audio with no samples is never handed to it ("Invalid input shape {0,128}" aborted a canvas mid-session).
+- The start sheet's Codex hint shows only when no session is connected.
+
+### Upgrading
+
+`npm install @marver-design/marver@latest`, then `npx marver init` to refresh the agent instructions (`design/AGENTS.md`
+gains the Live Jam section; `instructions/jam.md` the runs from the canvas). Restart each canvas; a coding-agent
+session already open connects at its next message.
 
 ## 0.27.2 - 2026-10-24
 
