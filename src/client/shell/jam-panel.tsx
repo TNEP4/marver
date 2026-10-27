@@ -6,7 +6,6 @@
  * Presentational only: every component takes what it shows and calls back what was chosen. The shell
  * (jam-capture.ts, App) owns state, keys and the API.
  */
-import { isApproval } from '../../shared/approval.ts'
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { JamStateIcon } from './jam-ui.tsx'
 import type { TimelineLine } from './jam-lines.ts'
@@ -380,8 +379,10 @@ export function ReviewDetail({ title, head, of, onPrev, onNext, frames, active, 
   // left on purpose (Esc cleared its words from the map): the composer's words go too; closed by a click
   // elsewhere, the map still holds them
   useEffect(() => { if (more) field.current?.focus(); else if (draftKey && !moreDrafts.has(draftKey)) setTextState('') }, [more])
-  // "looks good" typed here approves - it never sends the work back ("yes" answering the reply's question is work)
-  const send = () => { if (text.trim()) { if (isApproval(text, typeof reply === 'string' ? reply : undefined)) { setText(''); onGood() } else onMore(text.trim()) } }
+  // sent as More work, always: the canvas holds the reply this note follows and settles a note that only approves
+  // ("looks good") as Looks good - never this page, whose copy of the reply may not have loaded yet ("yes, thanks" read
+  // against no reply settled the review, and the footer the reply asked about was lost)
+  const send = () => { if (text.trim()) onMore(text.trim()) }
   return (
     <div className="jm-panel jm-review" data-jam-review="" style={style}>
       <div className="top">

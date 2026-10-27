@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { spawn } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -152,6 +152,57 @@ describe('jam listen', { timeout: 40_000 }, () => {
       writeFileSync(pkg, JSON.stringify({ version: '1.0.1' }))
       // it goes only once its successor - a whole process starting - has read all of it: slow under a loaded suite
       expect(await until(() => p.exitCode !== null, 40_000)).toBe(true)
+      expect(await until(() => { const l = readListener(root, process.pid); return !!l && l.pid !== p.pid && l.session === session }, 20_000)).toBe(true)
+    } finally {
+      try { p.kill() } catch { /* gone */ }
+      const l = readListener(root, process.pid); if (l) try { process.kill(l.pid, 'SIGTERM') } catch { /* gone */ }
+      server.close()
+      rmSync(root, { recursive: true, force: true })
+    }
+  }, 90_000)
+
+  it('a successor that fails as it starts never leaves the session with no listener: the old one holds on, and hands over once the new one starts', async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'mv-jam-listen-')))
+    mkdirSync(join(root, 'design', '.local'), { recursive: true })
+    const sock = join(root, 'inbox.sock')
+    const got: string[] = []
+    const server = createServer((c) => {
+      let buf = ''
+      c.on('data', (d) => {
+        buf += d
+        for (let i = buf.indexOf('\n'); i >= 0; i = buf.indexOf('\n')) {
+          const m = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1)
+          if (m.type === 'user') got.push(m.message.content)
+        }
+      })
+    })
+    await new Promise<void>((r) => server.listen(sock, r))
+    const pkg = join(root, 'pkg.json')
+    writeFileSync(pkg, JSON.stringify({ version: '1.0.0' }))
+    // the command the hook runs: a link to the CLI, so the build under it can break mid-install
+    const entry = join(root, 'cli.ts'), tried = join(root, 'tried.txt')
+    symlinkSync(CLI, entry)
+    const session = randomUUID()
+    const env = { ...process.env, CLAUDE_CODE_MESSAGING_SOCKET: sock, CLAUDE_CODE_MESSAGING_TOKEN: 't', CLAUDE_PID: String(process.pid), CLAUDE_CODE_ENTRYPOINT: 'cli', MARVER_JAM_PKG: pkg }
+    delete (env as any).MARVER_JAM_BACKGROUND; delete (env as any).MARVER_JAM
+    const p = spawn(process.execPath, [entry, 'jam', 'listen', '--root', root], { env, stdio: ['pipe', 'ignore', 'inherit'] })
+    p.stdin.end(JSON.stringify({ session_id: session, hook_event_name: 'SessionStart', cwd: root, permission_mode: 'default' }))
+    const id = connId('claude', session)
+    try {
+      expect(await until(() => readListener(root, process.pid)?.pid === p.pid)).toBe(true)
+      // an upgrade whose new build cannot start yet (a file it imports is not there): the successor dies at once
+      unlinkSync(entry)
+      writeFileSync(entry, `import { appendFileSync } from 'node:fs'\nappendFileSync(${JSON.stringify(tried)}, 'x')\nthrow new Error('a package file is missing mid-install')\n`)
+      writeFileSync(pkg, JSON.stringify({ version: '1.0.1' }))
+      expect(await until(() => existsSync(tried), 20_000)).toBe(true)
+      // the old listener still holds the session, and still pings it
+      expect(await until(() => readListener(root, process.pid)?.pid === p.pid, 5_000)).toBe(true)
+      expect(p.exitCode).toBeNull()
+      writeOffers(root, id, { n: 1, gen: 10, latest: { id: 'aaaa1111', title: 'Intro frame redesign' } })
+      expect(await until(() => got.length === 1)).toBe(true)
+      // the install done: the next try hands over
+      unlinkSync(entry); symlinkSync(CLI, entry)
+      expect(await until(() => p.exitCode !== null, 30_000)).toBe(true)
       expect(await until(() => { const l = readListener(root, process.pid); return !!l && l.pid !== p.pid && l.session === session }, 20_000)).toBe(true)
     } finally {
       try { p.kill() } catch { /* gone */ }

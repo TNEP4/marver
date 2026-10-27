@@ -318,8 +318,16 @@ export function freezeBrief(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[
     const cap = readCapture(ctx.root, c.capture)
     if (cap && capCard?.payload) {
       const note = capCard !== c && capCard.state === 'kept' ? 'kept - not an ask' : capCard !== c && capCard.state === 'dropped' ? 'dropped - not an ask' : undefined
+      // a capture none of whose runs came back (it failed, before its agent started or after): a tag on its thread
+      // retries it - its words are still to do, never "done before"
+      const replied = [...(capCard.ran ?? []), ...(capCard.batch ? [capCard.batch] : [])].some((id) => {
+        const b = j.batches.find((x) => x.batchId === id), m = b?.members.find((x) => x.card === capCard.id)
+        const r = m && b?.results?.[m.id]
+        return !!r && 'body' in r
+      })
+      const failed = capCard !== c && !note && !replied
       brief.capture = { record: cap.record, recordHash: cap.hash, ...(capCard.payload.edited !== undefined ? { edited: capCard.payload.edited } : {}), ...(capCard.payload.added?.length ? { added: capCard.payload.added } : {}),
-        ...(capCard.payload.reviewed ? { reviewed: capCard.payload.reviewed } : {}), ...(note ? { note } : {}) }
+        ...(capCard.payload.reviewed ? { reviewed: capCard.payload.reviewed } : {}), ...(note ? { note } : {}), ...(failed ? { failed: true as const } : {}) }
     }
   }
   if (c.kind === 'wrapup') {

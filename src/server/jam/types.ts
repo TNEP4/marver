@@ -112,8 +112,9 @@ export interface CaptureRecord {
    *  before and after at that size */
   sizes?: Record<string, { w: number; h: number; play?: true }>
 }
-/** What a capture card's brief carries, frozen at confirm. `note` marks a capture that is context, not an ask. */
-export interface Payload { record: CaptureRecord; recordHash: string; edited?: string; reviewed?: Reviewed; note?: string
+/** What a capture card's brief carries, frozen at confirm. `note` marks a capture that is context, not an ask; `failed`
+ *  (in a tag's brief) one none of whose runs came back - its words are still to do. */
+export interface Payload { record: CaptureRecord; recordHash: string; edited?: string; reviewed?: Reviewed; note?: string; failed?: true
   /** notes written in its read-back after it ended, in order */
   added?: { at: number; text: string; id?: string }[] }
 /** The run a capture was made while reviewing: its ask (and, for a capture, its own record and edit) and the result. */

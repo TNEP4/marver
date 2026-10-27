@@ -28,6 +28,12 @@ describe('a More-work note that only approves', () => {
     for (const t of ['Looks good and works well', 'great and thanks', 'perfect and thank you']) expect(isApproval(t), t).toBe(true)
     for (const t of ['looks good and make the footer blue', 'good and now the footer']) expect(isApproval(t), t).toBe(false)
   })
+  it('words it cannot read are never dropped to leave "looks good" behind - another script, a number, a symbol', () => {
+    // "改成蓝色" is "change it to blue": stripped away, the note read as approval and the request was lost
+    for (const t of ['Looks good, 改成蓝色', 'looks good, сделай синим', 'いいね、青にして', 'looks good, 24', 'looks good +10%', 'perfect 🔵']) expect(isApproval(t, 'Done'), t).toBe(false)
+    // a skin tone or a variation selector on an approving emoji is not a word
+    for (const t of ['👍🏽', 'looks good 👌🏻', 'great, thanks!', '"looks good" - thanks', 'Looks good :)']) expect(isApproval(t, 'Done'), t).toBe(true)
+  })
 })
 
 describe('the brief of a capture sent back', () => {

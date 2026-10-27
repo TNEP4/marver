@@ -17,7 +17,11 @@ const ASKING = new Set(['is', 'are', 'was', 'were', 'did', 'does', 'do', 'can', 
 export function isApproval(text: string, reply?: string): boolean {
   // the reply asked something: a note answers it - that is work, not a verdict
   if (text.includes('?') || reply?.includes('?')) return false
-  const words = text.toLowerCase().replace(/@marver/g, ' ').replace(/[👍✅🙌🔥👌💯🎉]/gu, ' good ').replace(/[’‘]/g, "'").replace(/[^a-z\s']/g, ' ').replace(/'/g, '').split(/\s+/).filter(Boolean)
+  const t = text.toLowerCase().replace(/@marver/g, ' ').replace(/[\u{1F3FB}-\u{1F3FF}\uFE0F]/gu, '').replace(/[👍✅🙌🔥👌💯🎉]/gu, ' good ').replace(/[’‘]/g, "'")
+  // anything but English words and punctuation (another script, a number, a symbol, any other emoji) may be the
+  // request itself - "Looks good, 改成蓝色" asks for blue: never stripped away to leave an approval behind
+  if (/[^a-z\s'".,!:;()\-–—…“”]/.test(t)) return false
+  const words = t.replace(/[^a-z\s']/g, ' ').replace(/'/g, '').split(/\s+/).filter(Boolean)
   if (!words.length || words.length > 10 || ASKING.has(words[0]!)) return false
   if (!words.every((w) => WORDS.has(w))) return false
   const core = words.filter((w) => CORE.has(w))

@@ -243,18 +243,32 @@ export async function listenCommand(rootOpt?: string): Promise<void> {
   // that is merely stopped (a signal, another one taking over) leaves it, so the runs it holds keep their key
   const quit = (over: boolean) => { if (over) endConn(root, conn.id, conn.inc); releaseListener(root, claudePid, process.pid); process.exit(0) }
   process.on('SIGTERM', () => quit(!pidAlive(claudePid))); process.on('SIGINT', () => quit(!pidAlive(claudePid))); process.on('SIGHUP', () => quit(!pidAlive(claudePid)))
-  /** Never settles: the look that calls it holds `busy` until this one has gone, so no tick starts a second successor. */
-  const relisten = () => new Promise<never>(() => {
+  /** Hand over to a fresh listener, and go only once it holds the lock (it read its whole input and started: a pipe
+   *  takes 64 KB at once, and a new build can fail as it starts - a file it imports not there yet). One that dies, or
+   *  holds nothing in 30 s, never leaves the session with no listener: this one takes the lock back, keeps listening and
+   *  settles (to try again later). The look that calls it holds `busy` meanwhile, so no tick starts a second successor. */
+  const relisten = () => new Promise<void>((settle) => {
     releaseListener(root, claudePid, process.pid)
+    let gone = false
+    let child: ReturnType<typeof spawn> | null = null
     try {
-      const child = spawn(process.execPath, [...process.execArgv, ...process.argv.slice(1)], { detached: true, stdio: ['pipe', 'ignore', 'ignore'], env: { ...env, MARVER_JAM_RELISTEN: '1', MARVER_JAM_POSTED: String(posted), MARVER_JAM_LAST: last, MARVER_JAM_REPEATS: String(repeats) } })
+      child = spawn(process.execPath, [...process.execArgv, ...process.argv.slice(1)], { detached: true, stdio: ['pipe', 'ignore', 'ignore'], env: { ...env, MARVER_JAM_RELISTEN: '1', MARVER_JAM_POSTED: String(posted), MARVER_JAM_LAST: last, MARVER_JAM_REPEATS: String(repeats) } })
       child.unref()
-      // it goes once the successor has its whole input: a pipe takes 64 KB at once and an exit drops the rest (a
-      // UserPromptSubmit carries the prompt - truncated JSON, and the successor never listened)
-      child.stdin!.on('error', () => process.exit(0))
-      child.stdin!.end(JSON.stringify({ ...input, session_id: current, ...(conn.mode ? { permission_mode: conn.mode } : {}) }), () => process.exit(0))
-      setTimeout(() => process.exit(0), 30_000)
-    } catch { process.exit(0) /* the next hook starts one */ }
+      child.on('exit', () => { gone = true }); child.on('error', () => { gone = true })
+      child.stdin!.on('error', () => { /* it died: seen as its exit */ })
+      child.stdin!.end(JSON.stringify({ ...input, session_id: current, ...(conn.mode ? { permission_mode: conn.mode } : {}) }))
+    } catch { gone = true }
+    const deadline = Date.now() + 30_000
+    const wait = setInterval(() => {
+      // the successor holds it (or a listener a hook started meanwhile): this one goes
+      const l = readListener(root, claudePid)
+      if (l && l.pid !== process.pid && pidAlive(l.pid)) process.exit(0)
+      if (!gone && Date.now() < deadline) return
+      clearInterval(wait)
+      if (!gone) try { child?.kill() } catch { /* gone */ }
+      if (!claimListener(root, claudePid, { pid: process.pid, session: current, ...(conn.mode ? { mode: conn.mode } : {}) })) process.exit(0)
+      settle()
+    }, 100)
   })
   const look = async () => {
     // it ends with its Claude Code process (S29-5: an orphan would outlive the session)
@@ -272,7 +286,8 @@ export async function listenCommand(rootOpt?: string): Promise<void> {
     const now0 = installedBuild(pkg)
     if (now0 && !build) build = now0
     else if (now0 && now0 !== build) {
-      if (coming?.build === now0 && Date.now() - coming.at >= 1_000 && existsSync(process.argv[1] ?? '')) return relisten()
+      // (a successor that could not start: this one listens on, and tries again 5 s later)
+      if (coming?.build === now0 && Date.now() - coming.at >= 1_000 && existsSync(process.argv[1] ?? '')) { await relisten(); coming = { build: now0, at: Date.now() + 4_000 }; return }
       if (coming?.build !== now0) coming = { build: now0, at: Date.now() }
     } else if (now0) coming = null
     const now = readConn(root, conn.id)

@@ -34,7 +34,7 @@ const frame = (name: string) => `export default () => <main><h1>${name}</h1></ma
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const until = (expr: string, ms = 20_000) => browser!.until(s, expr, ms)
 /** how the fake agent behaves next: { delay, fail } */
-const agentMode = (m: { delay?: number; fail?: boolean; create?: string }) => put('fake-agent.json', m)
+const agentMode = (m: { delay?: number; fail?: boolean; create?: string; question?: string }) => put('fake-agent.json', m)
 /** with MARVER_SHOT_DIR set, a picture of the open thread card (and what hangs off it) */
 const shot = async (name: string) => {
   if (!process.env.MARVER_SHOT_DIR) return
@@ -62,7 +62,7 @@ if (mode.create) {
   fs.writeFileSync('design/boards/main.json', JSON.stringify(b, null, 2))
 }
 const F = '\`\`\`'
-const out = p.members.map((m) => F + 'marver-reply ' + m.id + '\\nDone: ' + m.brief.asks.map((a) => a.body).join(' + ') + '\\n' + F).join('\\n')
+const out = p.members.map((m) => F + 'marver-reply ' + m.id + '\\nDone: ' + m.brief.asks.map((a) => a.body).join(' + ') + (mode.question ? ' ' + mode.question : '') + '\\n' + F).join('\\n')
 setTimeout(() => process.stdout.write(JSON.stringify({ type: 'result', result: out }) + '\\n'), mode.delay || 0)
 `
 
@@ -1419,4 +1419,82 @@ describe('captures in the browser: the first trial', () => {
     await until(`(window.__mvJamQueue.getState().cards ?? []).some((x) => x.id === ${JSON.stringify(b)} && x.state === 'review')`, 90_000)
     await decide(b, 'good')
   }, 180_000)
+
+  skippable('E on a resumed draft whose queue does not answer for over half a minute: the page stops waiting, and the draft it continues still never comes back as To confirm', async () => {
+    agentMode({})
+    await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const a = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('first part'), 1`)
+    await key('e', true)
+    await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(a)}`, 30_000)
+    await sleep(200)
+    await key('r')
+    await until(`!!window.__mvJamCapture.getState().current && window.__mvJamCapture.getState().current !== ${JSON.stringify(a)}`, 5000)
+    const b = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('second part'), 1`)
+    // from here the queue tells the page nothing: its refresh answers 500 and no push is applied
+    await browser!.eval(s, `(() => {
+      const a = ${JSON.stringify(a)}
+      const q = window.__mvJamQueue, real = q.getState().apply
+      const w = window.__qWatch = { real, block: true, aLines: [] }
+      q.setState({ apply: (v) => { if (!w.block) real(v) } })
+      const f = window.fetch
+      window.fetch = (u, init) => (w.block && String(u).includes('/api/jam/queue') && !(init && init.method && init.method !== 'GET') ? Promise.resolve(new Response('{}', { status: 500 })) : f(u, init))
+      w.mo = new MutationObserver(() => { const t = document.querySelector('.jm-lane [data-tile="' + a + '"] .m'); if (t) w.aLines.push(t.textContent) })
+      w.mo.observe(document.body, { subtree: true, childList: true, characterData: true })
+      return 1 })()`)
+    try {
+      await key('e')
+      await until(`!!window.__mvJamCapture.getState().sealed.find((x) => x.id === ${JSON.stringify(b)})?.card`, 40_000)
+      // half a minute of failed refreshes: the page stops waiting for the card (nothing stays unsent) ...
+      await until(`!window.__mvJamCapture.getState().unsent.includes(${JSON.stringify(b)})`, 45_000)
+      await sleep(1500)
+      // ... and the draft it continued, replaced on the canvas, never came back (as To confirm)
+      expect(await browser!.eval(s, `[...new Set(window.__qWatch.aLines)]`)).toEqual([])
+    } finally {
+      await browser!.eval(s, `(() => { const w = window.__qWatch; w.block = false; window.__mvJamQueue.setState({ apply: w.real }); return 1 })()`)
+    }
+    // the queue answers again: the capture's card is there, the draft it continued stays gone
+    await browser!.eval(s, `window.__mvJamQueue.getState().load().then(() => 1)`)
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(b)} && c.state !== 'draft')`, 15_000)
+    await sleep(500)
+    expect(await browser!.eval(s, `(() => { window.__qWatch.mo.disconnect(); return [...new Set(window.__qWatch.aLines)] })()`)).toEqual([])
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((x) => x.id === ${JSON.stringify(b)} && x.state === 'review')`, 90_000)
+    await decide(b, 'good')
+  }, 180_000)
+
+  skippable('a More-work note sent before the page has the reply goes to the canvas, which reads it: "yes, thanks" answering its question runs again - never settled as Looks good', async () => {
+    agentMode({ question: 'Want me to apply this to the footer?' })
+    await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const r = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('make the header blue'), 1`)
+    await key('e')
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(r)} && c.state === 'review' && c.reply)`, 60_000)
+    agentMode({})
+    const reply = await browser!.eval(s, `window.__mvJamQueue.getState().cards.find((c) => c.id === ${JSON.stringify(r)}).reply`)
+    await until(`window.__mvComments.getState().threads.some((t) => t.replies.some((x) => x.id === ${JSON.stringify(reply)}))`, 10_000)
+    await sleep(500)
+    // the page has the review but not its reply (the thread's fetch slow, or failed); the card actions are watched
+    await browser!.eval(s, `(() => {
+      const c = window.__mvComments
+      c.setState({ threads: c.getState().threads.map((t) => ({ ...t, replies: t.replies.filter((x) => x.id !== ${JSON.stringify(reply)}) })) })
+      const f = window.fetch; window.__acts = []
+      window.fetch = (u, init) => { if (String(u).includes('/api/jam/card') && init && init.body) window.__acts.push(JSON.parse(init.body).action); return f(u, init) }
+      return 1 })()`)
+    await browser!.eval(s, `window.__mvJamUi.getState().open({ kind: 'review', id: ${JSON.stringify(r)} }), 1`)
+    await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(r)} && !!document.querySelector('.jm-review')`, 5000)
+    await browser!.eval(s, `window.__mvJamUi.getState().setMoreOpen(true), 1`)
+    await until(`!!document.querySelector('.jm-more textarea')`, 3000)
+    expect(await browser!.eval(s, `document.querySelector('.jm-review .jm-reply p')?.textContent ?? null`)).toBe('')
+    await browser!.eval(s, `(() => { const t = document.querySelector('.jm-more textarea'); const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(t, 'yes, thanks'); t.dispatchEvent(new Event('input', { bubbles: true })); return 1 })()`)
+    await sleep(100)
+    await browser!.eval(s, `document.querySelector('.jm-send').click(), 1`)
+    await until(`window.__acts.length > 0`, 5000)
+    // sent as More work: the canvas holds the reply, saw its question, and runs the footer request
+    expect(await browser!.eval(s, `window.__acts`)).toEqual(['more'])
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(r)} && c.state === 'review' && c.reply && c.reply !== ${JSON.stringify(reply)})`, 60_000)
+    await decide(r, 'good')
+  }, 150_000)
 })

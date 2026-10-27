@@ -11,6 +11,7 @@ import { read as readJournal, write as writeJournal } from '../src/server/jam/jo
 import { addPicture, captureWords, checkRecord, factsOf, picturePath, readCapture } from '../src/server/jam/capture.ts'
 import { speechLines } from '../src/shared/speech.ts'
 import { addCapture, merge, payloadKey, prune, sameComment, touchRun } from '../src/server/jam/queue.ts'
+import { sessionBrief } from '../src/server/jam/session-brief.ts'
 import { captureFrames } from '../src/server/jam/capture.ts'
 import type { CaptureRecord, JamAdapter } from '../src/server/jam/types.ts'
 import type { JamConfig } from '../src/server/config.ts'
@@ -376,6 +377,30 @@ describe('captures: review', () => {
     expect(p.frames).toEqual(['demo/a', 'demo/b'])
     expect(p.members[0].brief.capture.note).toBe('kept - not an ask')
     expect(p.members[0].brief.capture.record.id).toBe(r.id)
+    done()
+  })
+
+  it('a tag that retries a capture whose run failed: its brief never calls the capture done - its words are still to do', async () => {
+    const { root, dir, done } = setup()
+    let failing = true
+    const ad: JamAdapter = { ...agent(), spawnArgs: (goal, opts) => agent('ok', failing ? { fail: true } : {}).spawnArgs(goal, opts) }
+    const jam = createJam(root, CFG, ad)
+    const r = rec({ words: 'make the header blue' })
+    const a = await jam.capture(r)
+    await jam.act(r.id, a.card!.rev, 'confirm')
+    await jam.tick()
+    expect(card(jam, r.id).state).toBe('failed')
+    failing = false
+    const id = `t-${Math.random().toString(36).slice(2)}`
+    appendEvents(dir, 'home', [{ id, ts: Date.now(), type: 'reply', commentId: `c-${id}`, parentId: `cap-${r.id}`, board: 'home', author: OWNER, body: '@marver try again' }])
+    record(root, 'home', id)
+    await jam.tick(); jam.stop()
+    const p = packets(root).at(-1)
+    expect([p.members[0].kind, p.members[0].brief.capture.record.id]).toEqual(['comment', r.id])
+    const t = sessionBrief(p, 'r-1.1')
+    expect(t).not.toMatch(/done before|more work on/)
+    expect(t).toMatch(/failed[^\n]*do it too[^\n]*make the header blue/)
+    expect(t).toContain('try again')
     done()
   })
 
