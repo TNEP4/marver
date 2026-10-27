@@ -436,7 +436,8 @@ export function createRuns(d: RunsDeps): Runs {
       if (kept) { const r = replay(kept, v.conn); if (r instanceof Promise) void r.then((o) => answer(root, v.req.id, o)); else answer(root, v.req.id, r); continue }
       let out: Out | { later: Promise<Out> }
       try { out = await ops(v.req, v.conn) } catch (e) { out = { ok: false, error: (e as Error).message } }
-      try { patchConn(root, v.conn.id, v.conn.inc, {}) } catch { /* it answered; seen is a nicety */ }
+      // (only a live one: a refused request from a registration that went silent must not make it eligible again)
+      try { if (alive(v.conn)) patchConn(root, v.conn.id, v.conn.inc, {}) } catch { /* it answered; seen is a nicety */ }
       if ('later' in out && out.later instanceof Promise) { const id = v.req.id; void out.later.then((o) => answer(root, id, o)) }
       else answer(root, v.req.id, out as Out)
     }
