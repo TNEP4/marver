@@ -306,7 +306,7 @@ describe('Live Jam: config.jam (on by default)', async () => {
   const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')
   const { loadConfig } = await import('../src/server/config.ts')
-  const ON = { agent: 'claude', concurrency: 6, subagents: true, proactive: false, chime: true, capture: 'confirm', loc: true, names: true }
+  const ON = { agent: 'claude', concurrency: 6, subagents: true, proactive: false, chime: true, capture: 'confirm', loc: true, names: true, runner: 'auto', session: true, context: 'fork', mcp: true, skills: true, others: false, sessionMax: 3 }
 
   // Pin what detection sees: a PATH with a fake `claude` and no agent env markers.
   const dirs: string[] = []
@@ -389,6 +389,12 @@ describe('Live Jam: config.jam (on by default)', async () => {
   it('0.26 fields: chime, capture and loc are kept when valid', async () => {
     expect((await load(`export default { jam: { chime: false, capture: 'at-once', loc: false, names: false } }\n`)).jam)
       .toEqual({ ...ON, chime: false, capture: 'at-once', loc: false, names: false })
+  })
+
+  it('0.28 fields (spec 29b): who runs a batch and with what - kept when valid; a bad value warns and takes the default', async () => {
+    expect((await load(`export default { jam: { runner: 'session', session: false, context: 'fresh', mcp: false, skills: false, others: true, sessionMax: 5 } }\n`)).jam)
+      .toEqual({ ...ON, runner: 'session', session: false, context: 'fresh', mcp: false, skills: false, others: true, sessionMax: 5 })
+    expect((await load(`export default { jam: { runner: 'never', context: 'copy', sessionMax: 99, mcp: 'yes' } }\n`)).jam).toEqual(ON)
   })
   it('0.26 fields: a bad value warns, takes the default, and never turns jam off', async () => {
     const warn = vi.mocked(console.warn)
