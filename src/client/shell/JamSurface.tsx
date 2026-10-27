@@ -81,6 +81,8 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
   useEffect(() => {
     if (cap.current) return
     const toReview = cap.sealed.filter((x) => x.review).reduce<(typeof cap.sealed)[number] | undefined>((a, x) => (!a || made(x.id) > made(a.id) ? x : a), undefined)
+    // one stopped to review after it that is still finishing is the one to open: wait for it, never open the older
+    if (Object.values(cap.caps).some((c) => c.review && c.id !== toReview?.id && made(c.id) > (toReview ? made(toReview.id) : 0))) return
     if (!toReview?.card || toReview.id === shownFor) return
     const draft = cards?.find((c) => c.id === toReview.card!.id && c.state === 'draft')
     if (!draft) return

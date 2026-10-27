@@ -827,11 +827,13 @@ const pendingUploads = new Map<string, CaptureRecord>()
 /** taken by the server, waiting only for its card on the page's queue: never posted again (a retry for another capture,
  *  a page shown again) - its one wait goes on, and its Sending tile with it */
 const acked = new Set<string>()
+/** posted, its answer not back yet: a retry round meanwhile leaves it alone (its answer starts the one wait) */
+const inflight = new Set<string>()
 let retryTimer: ReturnType<typeof setTimeout> | null = null
 /** Post a sealed record - the same id, idempotent on the server - until it takes. A refusal about the
  *  record itself (not the network) is final and said once; a dev server that is away is waited for. */
 async function upload(record: CaptureRecord, leaving = false): Promise<void> {
-  if (acked.has(record.id)) return
+  if (acked.has(record.id) || inflight.has(record.id)) return
   type Verdict = { ok?: boolean; card?: { id: string; rev: number }; error?: string; outside?: boolean; held?: string }
   let r: Verdict | null = null
   try {
@@ -841,8 +843,12 @@ async function upload(record: CaptureRecord, leaving = false): Promise<void> {
     const payload = JSON.stringify({ record, workspace: CONFIG.workspace })
     // a page that is going sends with keepalive (64 kB at most, counted in UTF-8 bytes as the body carries it - not
     // `.length`: notes in another script are wider) so the request outlives it; a bigger one, the next page
-    const res = await api('jam/capture', { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: payload, ...(leaving && bytesOf(payload) < 60_000 ? { keepalive: true } : {}) })
-    const body = (await res.json().catch(() => null)) as Verdict | null
+    inflight.add(record.id)
+    let res: Response, body: Verdict | null
+    try {
+      res = await api('jam/capture', { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: payload, ...(leaving && bytesOf(payload) < 60_000 ? { keepalive: true } : {}) })
+      body = (await res.json().catch(() => null)) as Verdict | null
+    } finally { inflight.delete(record.id) }
     // only an explicit verdict on THIS record is final: taken (200, naming its card) or refused as a
     // record (400, saying why). Anything else - jam not running yet, another workspace, an unreadable
     // answer, a gate, a server error - is the server being away: keep it and try again
@@ -863,7 +869,10 @@ async function upload(record: CaptureRecord, leaving = false): Promise<void> {
   // what stands for it here - its Sending tile, a resumed draft kept off the lane - stays until the queue holds its
   // card: the answer comes before the push that carries it, and in between the lane showed the old draft's To confirm
   // in its place, or (nothing else on it) folded away and came back. A refresh that fails is not the end of the wait
-  if (r.ok) { acked.add(record.id); try { await untilQueued(record.id) } finally { acked.delete(record.id) } }
+  if (r.ok) {
+    if (acked.has(record.id)) return   // another answer for it already started its wait
+    acked.add(record.id); try { await untilQueued(record.id) } finally { acked.delete(record.id) }
+  }
   pendingUploads.delete(record.id); syncUnsent()
   // the resumed draft it replaced was dropped on the server - it leaves the lane for good; refused, it shows again
   const was = record.context.resumes?.id

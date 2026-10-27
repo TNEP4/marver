@@ -305,7 +305,8 @@ export function freezeBrief(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[
       : owner && !asks.has(e.id) && dropped.has(e.id) ? 'dropped - not an ask' : undefined
     if (owner) j.covered[e.id] = rev
     return { id: e.id, ...(e.author?.name ? { author: sanitize(e.author.name, 80) } : {}), ...(e.agent ? { agent: true } : {}),
-      ...(owner ? { owner: true, rev } : {}), body: sanitize(body, Infinity), ts: e.ts, ...(note ? { note } : {}) }   // whole: the packet is a file, and a cut ask can lose its last constraint
+      ...(owner ? { owner: true, rev } : {}), ...(owner && rev !== e.id ? { edited: events.find((x) => x.id === rev)?.ts ?? e.ts } : {}),
+      body: sanitize(body, Infinity), ts: e.ts, ...(note ? { note } : {}) }   // whole: the packet is a file, and a cut ask can lose its last constraint
   }
   const brief: Brief = {
     asks: c.events.map((id) => msgs.find((e) => e.id === id) ?? events.find((e) => e.id === id)).filter((e): e is CommentEvent => !!e).map(toMsg),

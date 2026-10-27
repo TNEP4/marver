@@ -65,6 +65,7 @@ export interface Msg {
   body: string
   ts: number
   rev?: string
+  edited?: number            // when its text (rev) was last edited by the owner, if it was
   note?: string              // "dropped - not an ask", "someone else - context only"
 }
 

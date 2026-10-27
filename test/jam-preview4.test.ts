@@ -53,6 +53,20 @@ describe('the brief of a run (jam next)', () => {
       { id: 'm2', kind: 'comment', frames: ['d/a'], brief: { asks: [{ id: 'e-2', body: '@marver make it blue', ts: 2000 }], history: [] } }] }
     const t3 = sessionBrief(three, 'r-10.1')
     expect(t3.indexOf('Correction: use green')).toBeLessThan(t3.indexOf('make it blue'))
+    // the older tag edited after B was tagged: as new as its edit - it leads, whole
+    const edited: any = { batchId: 'b-11', frames: ['d/a'], members: [
+      { id: 'm1', kind: 'comment', frames: ['d/a'], brief: { asks: [{ id: 'e-1', body: `@marver make it red ${'and bolder '.repeat(30)}Correction: use green`, ts: 1000, edited: 3000 }], history: [] } },
+      { id: 'm2', kind: 'comment', frames: ['d/a'], brief: { asks: [{ id: 'e-2', body: '@marver make it blue', ts: 2000 }], history: [] } }] }
+    const te = sessionBrief(edited, 'r-11.1')
+    expect(te).toContain('Correction: use green')
+    expect(te.indexOf('m1 on d/a')).toBeLessThan(te.indexOf('m2 on d/a'))
+    // within one request too: an edited earlier tag comes after the later one it was edited past
+    const one: any = { batchId: 'b-12', frames: ['d/a'], members: [{ id: 'm1', kind: 'comment', frames: ['d/a'], brief: { history: [], asks: [
+      { id: 'e-1', body: `@marver make it red ${'and bolder '.repeat(30)}Correction: use green`, ts: 1000, edited: 3000 },
+      { id: 'e-2', body: '@marver and the title smaller', ts: 2000 }] } }] }
+    const t1 = sessionBrief(one, 'r-12.1')
+    expect(t1).toContain('Correction: use green')
+    expect(t1.indexOf('Correction: use green')).toBeLessThan(t1.indexOf('the title smaller'))
   })
   it('a long first request never pushes a correction out: the newest leads whole, an earlier one is clipped', () => {
     const said = `Make the background red, ${'and tighten the spacing between every card of the pricing grid, '.repeat(8)}`
