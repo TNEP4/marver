@@ -1801,6 +1801,9 @@ body.sh-commenting .sh-sticky-body { cursor: crosshair }
 .jm-chip .stop svg { display: none }
 .jm-chip .stop::before { content: ''; width: 8px; height: 8px; border-radius: 2px; background: var(--jm-rec); flex: none }
 .jm-chip .stop:disabled::before { background: var(--glass-ink-3) }
+.jm-chip .stop.review::before { display: none }
+.jm-chip .stop.review svg { display: block; color: var(--jm-rec) }
+.jm-chip .stop.review:disabled svg { color: var(--glass-ink-3) }
 .jm-stage .jm-chip { height: 40px; padding: 0 5px 0 14px; border-radius: 999px; background: rgba(18, 18, 24, .82);
   border: 1px solid rgba(255, 255, 255, .12); box-shadow: none; backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px) }
 .jm-stage .jm-chip .note, .jm-stage .jm-chip .stop { height: 30px; border-radius: 999px }

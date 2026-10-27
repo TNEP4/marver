@@ -13,7 +13,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { JamStateIcon, type JamGlyph } from './jam-ui.tsx'
 import { Tip } from './Tip.tsx'
 import { DONE_CLOSE, DONE_GROUP, doneFold, doneLine } from './jam-state.ts'
-import { ArrowsInLineHorizontalIcon, CursorClickIcon, FileCodeIcon, ImagesSquareIcon, LaserIcon, MicrophoneIcon, MicrophoneSlashIcon, PencilSimpleIcon } from './icons.tsx'
+import { ArrowsInLineHorizontalIcon, CursorClickIcon, FileCodeIcon, ImagesSquareIcon, LaserIcon, MicrophoneIcon, MicrophoneSlashIcon, PauseIcon, PencilSimpleIcon } from './icons.tsx'
 
 /** The lane's height with its air: the 44 px tile + 12 px. While the lane shows, the sidebar stops
  *  above it and everything else on the bottom edge (the Update pill, toasts, notices) rises this much. */
@@ -219,7 +219,7 @@ export function BetweenTile({ since, mic, onCapture }: LaneBetween) {
 }
 
 /** The capture recording now: a pulsing teal dot, "Capturing" and the timer over what it holds so far,
- *  then the Note button (N, with the count), Stop to review (⇧E: its read-back opens) and Stop (E: queued at once).
+ *  then the Note button (N, with the count), Stop (E: queued at once) and Stop to review (⇧E, a pause icon: its read-back opens).
  *  After either it reads "Finishing". */
 export function CaptureTile({ time, points, pictures = 0, picturesMax, steps, counts, notes, noteOn, finishing, mic, onMic, onNote, onStop, onStopReview }: LaneRecording) {
   return (
@@ -245,11 +245,11 @@ export function CaptureTile({ time, points, pictures = 0, picturesMax, steps, co
       <button className={`notebtn${noteOn ? ' on' : ''}`} onClick={onNote} disabled={finishing} aria-pressed={noteOn}>
         <PencilSimpleIcon size={13} />Note{notes ? <b>{notes}</b> : null}<kbd>N</kbd>
       </button>
-      <Tip label="Stop and look it over first - add notes, then queue it">
-        <button className="stop review" onClick={onStopReview} disabled={finishing}>Stop to review<kbd>⇧E</kbd></button>
-      </Tip>
       <Tip label="Stop and queue it - the agent starts on it">
         <button className="stop" onClick={onStop} disabled={finishing}>Stop<kbd>E</kbd></button>
+      </Tip>
+      <Tip label="Stop and look it over first - add notes, then queue it">
+        <button className="stop review" onClick={onStopReview} disabled={finishing}><PauseIcon size={12} />Stop to review<kbd>⇧E</kbd></button>
       </Tip>
     </div>
   )
