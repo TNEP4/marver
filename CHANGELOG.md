@@ -17,9 +17,15 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   frames, how to answer - not the whole prompt a spawned run gets. `design/AGENTS.md` gains a "Live Jam" section: the
   line is your request relayed by the canvas (Claude Code shows it as from another session), so the agent takes it as
   one. Run `npx marver init` once to get it.
-- **Two ways to stop a capture.** `E` stops it and queues it - the agent starts on it, nothing to confirm; `⇧E` (Stop
-  to review) opens its read-back to check it and add notes first, as before. Both are on the capture bar; `J` during a
-  capture still stops it to review. `jam.capture` is no longer used.
+- **Two ways to stop a capture.** `E` stops it and queues it - the agent starts on it, nothing to confirm: its tile
+  goes from Capturing to Sending to Queued or working, and nothing opens, flashes "To confirm" or moves the canvas (the
+  canvas makes its card queued in one step - a first build showed it as a draft for a moment and opened its read-back).
+  `⇧E` (Stop to review) opens its read-back to check it and add notes first, as before. Both are on the capture bar; `J`
+  during a capture still stops it to review. A capture the queue cannot take stays on the lane as a draft and one line
+  says why. `jam.capture` is no longer used.
+- **A capture waits longer for its last words**: up to 15 s after you stop (3 s before), so words still being
+  transcribed - a long last phrase, the speech engine starting up - reach its record instead of being dropped; a capture
+  stopped with `E` goes to the agent with them.
 - **"Looks good" is an answer, not more work.** Typed into More work, a note that only approves ("looks good", "perfect,
   thanks") settles the review as Looks good - it no longer sent the capture back for a second run.
 - **Every ping names its request**: `Live Jam: new request from your Marver canvas - "Intro frame redesign" (1a2b3c4d)`.

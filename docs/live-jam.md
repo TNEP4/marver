@@ -96,7 +96,7 @@ jam: { agent: "claude", concurrency: 6 },
 | `agent` | detected | The CLI the daemon spawns: `"claude"`, `"codex"`, `"cursor"`, `"droid"`, `"opencode"`, `"grok"`, or `"pi"` |
 | `concurrency` | `6` | Frames worked on at once (1-16). The same frame never gets two agents |
 | `subagents` | `true` | Inside one job, fan out one subagent per frame |
-| `capture` | `"confirm"` | A capture waits for its read-back, or `"at-once"` queues at `E` ([captures](jam-session.md#configuration)) |
+| `capture` | `"confirm"` | No longer used (0.28): `E` queues a capture, `⇧E` stops to review it ([captures](jam-session.md#configuration)) |
 | `chime` | `true` | A soft chime when a capture is ready to review |
 | `names` | `true` | Name each capture with Claude Haiku through Claude Code - its words go to Anthropic (Claude Code only) |
 | `loc` | `true` | Stamp design elements with `data-mv-loc` (file and line, dev only) so the agent goes straight to the source |

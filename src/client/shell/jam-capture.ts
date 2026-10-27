@@ -133,10 +133,13 @@ interface CaptureState {
   setNoteOpen(open: boolean): void
   setNoteDraft(text: string): void
   picture(frame?: string): void
-  /** the drafts sealed, in order - their read-backs open when capturing stops */
-  sealed: { id: string; card?: { id: string; rev: number } }[]
+  /** the captures sealed, in order, and the card the server made of each - the read-back of one stopped to review
+   *  (`review`: ⇧E, or J's wrap-up) opens when capturing stops; one stopped with E never opens anything */
+  sealed: { id: string; card?: { id: string; rev: number }; review?: true }[]
   /** sealed captures the server does not hold yet (kept, sent again until it takes them) */
   unsent: string[]
+  /** the server did not answer the last send: what is unsent waits for it (sent again every 5 s) */
+  away: boolean
   /** Continue a draft that ended too soon: its record is loaded and recording goes on from where it
    *  stopped, under a new id that takes the draft's place when it seals. Dropping it leaves the draft. */
   resume(draft: string, ready?: () => Promise<boolean>): Promise<boolean>
@@ -146,7 +149,8 @@ interface CaptureState {
    *  locked meanwhile, so nothing typed can race the start - set by the caller (resumeDraft) before its
    *  first wait, cleared when the Resume is over */
   settling: string | null
-  /** the capture ended last (E): its read-back is the one that opens, whatever seals first */
+  /** the capture ended last (E or ⇧E): if it was stopped to review, its read-back is the one that opens, whatever
+   *  seals first */
   lastEnded: string | null
 }
 
@@ -690,7 +694,8 @@ function drain(id: string) {
   const st = useStore.getState()
   if (st.play) { mutate((s) => { const x = s.caps[id]; if (x) x.endShot = true }); shoot(id, st.play.at, 'end') }
   broadcast({ type: 'sh:capture', id, on: false })
-  // the audio is cut at the key press, then its last words are awaited (3 s at most)
+  // the audio is cut at the key press, then its last words are awaited (15 s at most - E queues it only once they
+  // are in its record, as ⇧E's read-back shows them)
   mutate((st) => { const x = st.caps[id]; if (x) x.hearing = true })
   const tWords = performance.now()
   void voiceEnd(id).then((complete) => {
@@ -801,7 +806,7 @@ function trySeal(id: string) {
   const record = buildRecord(c2, c2.steps)
   timeCapture(c2, false)
   // sealed: drop everything for this id that arrives later
-  useJamCapture.setState((st) => { const caps = { ...st.caps }; delete caps[id]; return { caps, tick: st.tick + 1, sealed: [...st.sealed, { id }] } })
+  useJamCapture.setState((st) => { const caps = { ...st.caps }; delete caps[id]; return { caps, tick: st.tick + 1, sealed: [...st.sealed, { id, ...(c2.review ? { review: true as const } : {}) }] } })
   forgetHeard(id)
   keepSealed(record)
   void upload(record)
@@ -823,7 +828,7 @@ let retryTimer: ReturnType<typeof setTimeout> | null = null
 /** Post a sealed record - the same id, idempotent on the server - until it takes. A refusal about the
  *  record itself (not the network) is final and said once; a dev server that is away is waited for. */
 async function upload(record: CaptureRecord, leaving = false): Promise<void> {
-  type Verdict = { ok?: boolean; card?: { id: string; rev: number }; error?: string; outside?: boolean }
+  type Verdict = { ok?: boolean; card?: { id: string; rev: number }; error?: string; outside?: boolean; held?: string }
   let r: Verdict | null = null
   try {
     // the workspace it was made in travels with it: another project served on this port refuses it
@@ -844,8 +849,10 @@ async function upload(record: CaptureRecord, leaving = false): Promise<void> {
   if (!r) {
     if (!retryTimer) useStore.getState().toast('the capture is kept here and will be sent when marver dev answers')
     retryTimer ??= setTimeout(() => { retryTimer = null; for (const x of pendingUploads.values()) void upload(x) }, 5_000)
+    if (!useJamCapture.getState().away) useJamCapture.setState({ away: true })
     return
   }
+  if (useJamCapture.getState().away) useJamCapture.setState({ away: false })
   forgetSealed(record.id)
   releaseOpen(record.id, !r.ok)   // it landed (the server knows); refused, it is no longer open either
   // the server holds it: a resumed draft is replaced now (or, refused, shows again)
@@ -853,8 +860,18 @@ async function upload(record: CaptureRecord, leaving = false): Promise<void> {
   useJamCapture.setState((st) => ({ sealed: st.sealed.map((x) => (x.id === record.id ? { ...x, ...(r!.card ? { card: r!.card } : {}) } : x)), ...(was ? { resuming: st.resuming.filter((x) => x !== was) } : {}) }))
   void import('./jam-queue.ts').then(({ useJamQueue }) => useJamQueue.getState().load())
   if (!r.ok) useStore.getState().toast(`the capture could not be kept: ${r.error ?? 'unknown error'}`)
-  // it reached the server after its session ended (another tab wrote the record): on its own
-  else if (r.outside) leftOutOfSession(record.id)
+  else {
+    // stopped with E and the queue would not take it: it waits on the lane as a draft - said once, nothing opens
+    if (r.held) useStore.getState().toast(`the capture was not queued - it waits on the lane as a draft: ${r.held}`)
+    // it reached the server after its session ended (another tab wrote the record): on its own
+    if (r.outside) leftOutOfSession(record.id)
+  }
+}
+
+/** Was this capture (recording, sealing or not sent yet) stopped to review (⇧E, J)? E's never was. */
+export function endedToReview(id: string): boolean {
+  const s = useJamCapture.getState()
+  return !!(s.caps[id]?.review ?? s.sealed.find((x) => x.id === id)?.review ?? pendingUploads.get(id)?.context.review)
 }
 
 /** A capture still recording, or finishing (its pictures and last words coming in), lives only in this page until it
@@ -949,6 +966,7 @@ export const useJamCapture = create<CaptureState>((set, get) => ({
   tick: 0,
   sealed: [],
   unsent: [],
+  away: false,
   resuming: [],
   lastEnded: null,
   settling: null,
@@ -969,7 +987,8 @@ export const useJamCapture = create<CaptureState>((set, get) => ({
   end(review = false) {
     const id = get().current
     if (!id) return
-    // ⇧E: its record says so, and it waits for its read-back; E: the server queues it as soon as it is sealed
+    // ⇧E: its record says so, and it waits for its read-back; E: the server makes its card queued - no read-back,
+    // nothing opens or moves here
     if (review) mutate((st) => { const x = st.caps[id]; if (x) x.review = true })
     set({ current: null, lastEnded: id })
     cancelDwell()

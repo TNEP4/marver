@@ -1181,7 +1181,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         return r ? json(res, 200, r) : json(res, 404, { error: 'no such record' })
       }
       if (path === 'jam/capture' && req.method === 'POST') {
-        // the sealed capture at E: stored once, a draft card - owner only
+        // the sealed capture: stored once - its card queued (E) or a draft for its read-back (⇧E) - owner only
         if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
         const raw = await readBody(req, 4_000_000)
         if (raw == null) return json(res, 400, { error: 'body too large' })

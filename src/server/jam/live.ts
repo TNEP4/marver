@@ -42,7 +42,7 @@ export const jamLive: {
   poke?: () => void
   view?: () => QueueView
   act?: (id: string, rev: number, action: string, body?: string) => Promise<{ ok: boolean; card?: unknown; error?: string }>
-  capture?: (record: unknown) => Promise<{ ok: boolean; card?: unknown; error?: string }>
+  capture?: (record: unknown) => Promise<{ ok: boolean; card?: unknown; error?: string; held?: string }>
   sealed?: (id: string) => boolean
   session?: (op: any) => Promise<{ ok: boolean; session?: unknown; card?: unknown; error?: string }>
   record?: (id: string) => { file: string; text: string | null; reply?: string } | null

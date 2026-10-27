@@ -64,8 +64,9 @@ export interface JamCore {
   snapshot(): Journal
   view(): QueueView
   act(id: string, rev: number, action: string, body?: string): Promise<{ ok: boolean; card?: Card; error?: string }>
-  /** A sealed capture from the page (POST /jam/capture): stored once, a draft card (or queued at once). */
-  capture(record: unknown): Promise<{ ok: boolean; card?: Card; error?: string }>
+  /** A sealed capture from the page (POST /jam/capture): stored once - ended with E, its card made queued; with ⇧E, a
+   *  draft. `held`: an E capture the queue would not take, left a draft (why, in words). */
+  capture(record: unknown): Promise<{ ok: boolean; card?: Card; error?: string; held?: string }>
   /** Is this capture's record still the one sealed (its bytes hash to what its card holds)? Resume
    *  starts only from an intact record. */
   sealed(id: string): boolean
@@ -888,20 +889,39 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   // ---- captures: confirm, keep, Looks good, More work ------------------------------------------------
 
   /** Write a card's pending comment (once - an event already there must say the same, or the step
-   *  fails closed), ledger it, and end the step. Under the lock; resumable at any point. */
-  const finishStep = (id: string) => q.lock((j) => {
-    const c = j.cards.find((x) => x.id === id)
-    const p = c?.pending
-    if (!c || !p) return c ? structuredClone(c) : undefined
+   *  fails closed), ledger it, and end the step. Called under the lock, synchronously; resumable at any point. */
+  const finishIn = (j: Journal, c: Card) => {
+    const p = c.pending
+    if (!p) return
     const there = readLog(commentsDir, c.board).find((e) => e.id === p.event.id)
-    if (there && !sameComment(there, p.event)) { conflictStep(j, c); q.persist(); return structuredClone(c) }
+    if (there && !sameComment(there, p.event)) { conflictStep(j, c); q.persist(); return }
     if (!there) appendEvents(commentsDir, c.board, [p.event])
     ledgerRecord(root, c.board, p.event.id)
     if (p.op === 'confirm') ledgerRecord(root, c.board, payloadKey(c))
     settled(endStep(j, c))
     q.persist()
+  }
+  const finishStep = (id: string) => q.lock((j) => {
+    const c = j.cards.find((x) => x.id === id)
+    if (!c) return undefined
+    finishIn(j, c)
     return structuredClone(c)
   })
+
+  /** Where a capture's comment is pinned: on its first point (found in the rendered frame), else its first frame,
+   *  else the board. A render - so it is looked up before any lock is taken. */
+  const pinOf = async (record: import('./types.ts').CaptureRecord): Promise<{ frame?: string; anchor?: unknown }> => {
+    const point = firstPoint(record)
+    let at: { frame?: string; anchor?: unknown } = { frame: point?.frame ?? captureFrames(record)[0] }
+    if (point?.frame && hooks.anchor) {
+      const target = point.bundle.quote && point.bundle.quote !== '•••' ? { on: point.bundle.quote } : point.bundle.testId && point.bundle.testId !== '•••' ? { at: point.bundle.testId } : point.bundle.cssPath ? { at: point.bundle.cssPath } : null
+      if (target) {
+        const check = await hooks.anchor(point.frame, target, [], undefined).catch(() => null)
+        if (check?.ok) at = { frame: point.frame, anchor: check.anchor }
+      }
+    }
+    return at
+  }
 
   /** Confirm a draft (`end: queued`) or keep it from its read-back (`end: kept`): one recoverable step.
    *  A retried request after a lost answer finds the step done and answers with the card. */
@@ -913,16 +933,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     if (c0.state !== 'draft' || c0.rev !== rev) return { ok: false, card: structuredClone(c0), error: 'the card changed - look again' }
     const cap = readCapture(root, id)
     if (!cap || cap.hash !== c0.payload?.recordHash) return { ok: false, card: structuredClone(c0), error: 'the capture changed after it was sealed' }
-    // pinned on the first point (found in the rendered frame), else its first frame, else the board
-    const point = firstPoint(cap.record)
-    let at: { frame?: string; anchor?: unknown } = { frame: point?.frame ?? captureFrames(cap.record)[0] }
-    if (point?.frame && hooks.anchor) {
-      const target = point.bundle.quote && point.bundle.quote !== '•••' ? { on: point.bundle.quote } : point.bundle.testId && point.bundle.testId !== '•••' ? { at: point.bundle.testId } : point.bundle.cssPath ? { at: point.bundle.cssPath } : null
-      if (target) {
-        const check = await hooks.anchor(point.frame, target, [], undefined).catch(() => null)
-        if (check?.ok) at = { frame: point.frame, anchor: check.anchor }
-      }
-    }
+    const at = await pinOf(cap.record)
     const began = await q.lock((j) => {
       const c = j.cards.find((x) => x.id === id)
       if (!c || c.state !== 'draft' || c.rev !== rev) return null
@@ -1246,9 +1257,10 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   }
 
 
-  /** A sealed capture taken in: checked (and, resumed, as a continuation), stored, ledgered, a draft card -
-   *  or queued at once with `jam.capture: 'at-once'`. */
-  const landCapture = async (rec: import('./types.ts').CaptureRecord): Promise<{ ok: boolean; card?: Card; error?: string }> => {
+  /** A sealed capture taken in: checked (and, resumed, as a continuation), stored, ledgered - ended with E, a card
+   *  queued in the same step that makes it; ended with ⇧E (or sealed by its page leaving), a draft card. `held`: an
+   *  E capture the queue would not take - it stays a draft, and this says why (the page says so in one line). */
+  const landCapture = async (rec: import('./types.ts').CaptureRecord): Promise<{ ok: boolean; card?: Card; error?: string; held?: string }> => {
     // Resume: only from a record still as it was sealed, and only as its continuation - every step of
     // it, moved by one offset, ahead of the new ones, and its pictures kept
     const rs = rec.context.resumes
@@ -1260,11 +1272,34 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     const stored = storeCapture(root, rec)
     if (typeof stored === 'string') return { ok: false, error: stored }
     ledgerRecord(root, rec.context.board, `capture:${rec.id}:${stored.hash}`)
-    const card = await q.lock((j) => { const c = addCapture(j, rec, stored.hash); q.persist(); return structuredClone(c) })
-    queueChanged()
-    // ended with E: no read-back - queued as soon as it is sealed. Ended with ⇧E (Stop to review), or sealed by its
-    // page leaving (unfinished), it waits for its read-back as a draft
-    if (card.state === 'draft' && !rec.context.interrupted && !rec.context.review) return confirm(card.id, card.rev, 'queued')
+    // Ended with ⇧E (Stop to review), or sealed by its page leaving (unfinished): a draft that waits for its read-back.
+    // Ended with E: no read-back, nothing to confirm - its card is made queued. Made, its confirm begun (journaled: a
+    // crash resumes it), its comment written and the card queued, all in ONE synchronous turn under the lock, so no
+    // push, poll or answer ever carries it as a draft (27 Oct: the draft published first, then confirmed, flashed
+    // "To confirm" and opened the read-back on the canvas). Its pin is a render, so it is found before the lock.
+    const auto = !rec.context.interrupted && !rec.context.review
+    const at = auto && !storedOnce(rec) ? await pinOf(rec) : undefined
+    let card = await q.lock((j) => {
+      const fresh = !j.cards.some((c) => c.id === rec.id)
+      const c = addCapture(j, rec, stored.hash)
+      if (fresh && at) {
+        beginStep(j, c, 'confirm', captureComment(c, rec, at, me()), Date.now(), 'queued')
+        q.persist()
+        finishIn(j, c)
+      }
+      q.persist()
+      return structuredClone(c)
+    })
+    // a confirm an earlier landing of this record began and never finished (a write that threw): finished now
+    if (card.pending?.op === 'confirm') card = (await finishStep(card.id)) ?? card
+    // landed again (a retried upload) as a draft an earlier server made of an E capture: queued now, as then
+    if (auto && card.state === 'draft' && !card.note) {
+      const r = await confirm(card.id, card.rev, 'queued')
+      if ('card' in r && r.card) card = r.card
+    }
+    reserve(); queueChanged(); void pump()
+    // the queue would not take it (a conflicting comment under its id): it waits as a draft, never opened for you
+    if (auto && card.state === 'draft') return { ok: true, card, held: card.note ?? 'it could not be queued' }
     return { ok: true, card }
   }
 

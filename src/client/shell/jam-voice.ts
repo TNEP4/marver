@@ -21,7 +21,12 @@ import { CONFIG, useStore } from './store.ts'
 import { api } from './api.ts'
 
 export const RATE = 16_000
-const FINAL_MS = 3_000
+/** How long a segment's last words are waited for once it is cut. The final comes once the engine has transcribed
+ *  everything it was given - after a cold start of its process (the model loading) or behind other phrases that can
+ *  take several seconds; past this wait the capture seals without them and they are lost - and a capture stopped
+ *  with E goes straight to the agent (27 Oct: one reached it with no words; 3 s was the wait then). A lost engine or
+ *  connection answers at once, never this late. */
+const FINAL_MS = 15_000
 const CHUNK = 1_600   // 100 ms
 
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
@@ -469,7 +474,7 @@ export async function voiceBegin(id: string, t0: number) {
 }
 
 /** A capture ends: its audio cut at this instant (in a session the talk goes on from it), its words awaited
- *  (3 s at most). Resolves true when the words are complete, false when they may not be. */
+ *  (FINAL_MS at most). Resolves true when the words are complete, false when they may not be. */
 export async function voiceEnd(id: string): Promise<boolean> {
   if (capture?.id === id) capture = null
   useJamVoice.setState((st) => ({ asking: st.asking && st.choice === null && !session ? false : st.asking }))

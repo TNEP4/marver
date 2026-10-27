@@ -269,6 +269,62 @@ describe('captures: review', () => {
     done()
   })
 
+  it('an E capture is made queued in one step: no push, poll, pin lookup or answer ever carries it as a draft - ⇧E publishes its draft', async () => {
+    const { root, dir, done } = setup()
+    const seen: { at: string; state?: string }[] = []
+    let watching = ''
+    let jam: ReturnType<typeof createJam>
+    const look = (at: string) => { if (watching) seen.push({ at, state: jam.view().cards.find((c) => c.id === watching)?.state }) }
+    jam = createJam(root, { ...CFG, concurrency: 1 }, agent('ok', { hang: true }), () => {}, {
+      queue: () => look('push'),
+      // the pin is a render: a page may look at the queue the whole time it takes
+      anchor: async () => { look('pin'); await wait(40); look('pin'); return { ok: true, anchor: { on: 'Save 20%' } } as any },
+    })
+    const landing = async (r: CaptureRecord) => {
+      watching = r.id; seen.length = 0
+      let on = true
+      const poll = (async () => { while (on) { look('poll'); await new Promise((x) => setImmediate(x)) } })()
+      const a = await jam.capture(r)
+      on = false; await poll
+      look('answer')
+      return { a, states: seen.map((x) => x.state).filter(Boolean) as string[] }
+    }
+    const e = rec(); delete (e.context as any).review
+    const { a, states } = await landing(e)
+    expect([a.ok, (a as any).held]).toEqual([true, undefined])
+    expect(['queued', 'working']).toContain(a.card?.state)
+    expect(states.length).toBeGreaterThan(0)
+    expect(states.filter((x) => x === 'draft' || x === 'confirming')).toEqual([])
+    expect(seen.some((x) => x.at === 'push' && (x.state === 'queued' || x.state === 'working'))).toBe(true)
+    // confirmed as a read-back's ⏎ would: its comment written, pinned on its point, its thread on the card
+    expect(readLog(dir, 'home').find((x) => x.id === `cap-${e.id}-e`)).toMatchObject({ capture: e.id, frame: 'demo/a', anchor: { on: 'Save 20%' } })
+    expect(card(jam, e.id).thread).toBe(`cap-${e.id}`)
+    // the same post again (an answer lost): the one card, as it is
+    const again = await jam.capture(e)
+    expect([again.ok, again.card?.id, (again as any).held]).toEqual([true, e.id, undefined])
+    expect(jam.snapshot().cards.filter((c) => c.id === e.id).length).toBe(1)
+    // ⇧E: the same landing publishes a draft - its read-back's
+    const r = rec()
+    const shift = await landing(r)
+    expect(shift.a.card?.state).toBe('draft')
+    expect(seen.some((x) => x.at === 'push' && x.state === 'draft')).toBe(true)
+    jam.stop()
+    done()
+  })
+
+  it('an E capture the queue will not take (a conflicting comment under its id) stays a draft and the answer says why', async () => {
+    const { root, dir, done } = setup()
+    const jam = createJam(root, { ...CFG, concurrency: 1 }, agent('ok', { hang: true }))
+    const e = rec(); delete (e.context as any).review
+    appendEvents(dir, 'home', [{ id: `cap-${e.id}-e`, ts: Date.now(), type: 'create', commentId: `cap-${e.id}`, board: 'home', author: OWNER, body: 'not this capture' } as CommentEvent])
+    const a = await jam.capture(e) as any
+    expect([a.ok, a.card?.state]).toEqual([true, 'draft'])
+    expect(a.held).toMatch(/conflicting comment/)
+    expect(card(jam, e.id).state).toBe('draft')
+    jam.stop()
+    done()
+  })
+
   it('"looks good" typed as More work settles the review - no reply, no second run', async () => {
     const { root, dir, done } = setup()
     const { jam, r } = await reviewed(root)

@@ -29,6 +29,12 @@ Two ways to end it (0.28): `E` **stops and queues it** - the agent starts on it,
 **stops to review**: its read-back opens so you can check it and add to it first. Both are on the capture bar. `Esc`
 throws it away. One capture records at a time.
 
+After `E` the tile reads **Sending** while its last words and pictures come in, then Queued or the agent's state;
+nothing opens and the canvas stays where it is. If the queue cannot take it (rare: another comment already sits
+under its id), it stays on the lane as a draft and one line says why - open it to add it to the queue. After `⇧E`
+the tile reads **Finishing**, then **To confirm** as its read-back opens. Either way the capture waits up to 15 s for
+the words you said last.
+
 Closing or reloading the tab asks first while a capture is recording, finishing or not yet taken by the canvas (as it
 does for any unsaved work). If you leave anyway, the capture
 is kept as it stood - its words and notes so far, and a line saying the page closed before it finished - and comes
