@@ -82,9 +82,16 @@ describe('captures: the sealed record', () => {
     expect((await jam.capture(r)).card?.rev).toBe(a.card?.rev)                       // the same post twice: one card
     expect((await jam.capture({ ...r, timeline: [] })).error).toMatch(/different capture/)
     expect((await jam.act(r.id, a.card!.rev, 'edit', 'make the badge outlined')).ok).toBe(true)
+    // the same edit sent again (its answer lost) keeps the time it was made; a new text takes a new one
+    const at1 = card(jam, r.id).payload.editedAt
+    expect(typeof at1).toBe('number')
+    await new Promise((res) => setTimeout(res, 15))
+    expect((await jam.act(r.id, card(jam, r.id).rev, 'edit', 'make the badge outlined')).ok).toBe(true)
+    expect(card(jam, r.id).payload.editedAt).toBe(at1)
     jam.stop()
     const again = createJam(root, CFG, agent())
     expect(card(again, r.id).payload.edited).toBe('make the badge outlined')
+    expect(card(again, r.id).payload.editedAt).toBe(at1)
     expect(card(again, r.id).events).toEqual([])
     again.stop()
     done()

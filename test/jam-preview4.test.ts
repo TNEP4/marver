@@ -75,6 +75,11 @@ describe('the brief of a run (jam next)', () => {
     expect(after.indexOf('Correction: use green')).toBeLessThan(after.indexOf('make it blue'))
     const later = sessionBrief(ed(4000), 'r-13.1')
     expect(later.indexOf('make it blue')).toBeLessThan(later.indexOf('your edit'))
+    // two captures on one run, the older edited last: it leads
+    const capA: any = { id: 'm1', kind: 'capture', frames: ['d/a'], brief: { asks: [], history: [], capture: { record: { id: 'cap-1000-aaaaaa', timeline: [{ at: 0, event: 'words', text: 'make it red' }] }, edited: 'Correction: use green', editedAt: 5000 } } }
+    const capB: any = { id: 'm2', kind: 'capture', frames: ['d/a'], brief: { asks: [], history: [], capture: { record: { id: 'cap-2000-bbbbbb', timeline: [{ at: 0, event: 'words', text: 'make it blue' }] } } } }
+    const tAB = sessionBrief({ batchId: 'b-14', frames: ['d/a'], members: [capA, capB] } as any, 'r-14.1')
+    expect(tAB.indexOf('Correction: use green')).toBeLessThan(tAB.indexOf('make it blue'))
   })
   it('a long first request never pushes a correction out: the newest leads whole, an earlier one is clipped', () => {
     const said = `Make the background red, ${'and tighten the spacing between every card of the pricing grid, '.repeat(8)}`

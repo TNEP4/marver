@@ -43,7 +43,7 @@ export function sessionBrief(packet: JobPacket, handle: string, as?: string): st
   const files = packet.members.flatMap((m) => (m.brief.wrapup ? [m.brief.wrapup.content.file] : []))
   // several requests in one run: the one the owner added to last first, as the words within each (each still answered
   // in its own block) - a correction joins its request without moving it in the queue
-  const last = (m: PacketMember) => Math.max(0, ...m.brief.asks.map((a) => a.edited ?? a.ts ?? 0), ...(m.brief.capture?.added ?? []).map((a) => a.at), m.brief.capture ? madeOf(m.brief.capture.record.id) : 0)
+  const last = (m: PacketMember) => Math.max(0, ...m.brief.asks.map((a) => a.edited ?? a.ts ?? 0), ...(m.brief.capture?.added ?? []).map((a) => a.at), m.brief.capture?.editedAt ?? 0, m.brief.capture ? madeOf(m.brief.capture.record.id) : 0)
   const asks = packet.members.map((m, i) => ({ m, i, t: last(m) })).sort((a, b) => b.t - a.t || b.i - a.i).map((x) => x.m).flatMap((m) => {
     const at = `${one ? '' : `${m.id} `}on ${m.frames.join(', ') || 'the board'}`
     if (m.brief.wrapup) {

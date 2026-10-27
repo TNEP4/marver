@@ -211,7 +211,9 @@ export function act(j: Journal, id: string, rev: number, action: string, now = D
     return { ok: true, card: c }
   }
   if (action === 'edit' && capture && c.state === 'draft' && typeof body === 'string') {
-    c.payload = { ...c.payload!, edited: body.slice(0, 20_000), editedAt: now }; c.rev += 1; c.at = now
+    // the same text again (an edit whose answer was lost, sent again at confirm) keeps the time it was made
+    const text = body.slice(0, 20_000)
+    c.payload = { ...c.payload!, edited: text, editedAt: text === c.payload?.edited && c.payload.editedAt ? c.payload.editedAt : now }; c.rev += 1; c.at = now
     return { ok: true, card: c }
   }
   // a note written in its read-back after it ended: added under what it recorded (before it is sent)
