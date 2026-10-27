@@ -1870,7 +1870,13 @@ body.sh-commenting .sh-sticky-body { cursor: crosshair }
 .jm-ftabs button.on { background: var(--solid); color: var(--glass-ink); font-weight: 600; box-shadow: 0 1px 2px rgba(24, 24, 27, .12), 0 0 0 .5px var(--glass-brd) }
 .jm-focus > .jm-readback .jm-thumbs { gap: 12px }
 /* the review's big picture sits centred in a quiet well that takes the panel's spare height */
-.jm-focus .jm-big { align-items: center; padding: 10px; border-radius: 14px; background: var(--glass-hover) }
+.jm-focus .jm-big { align-items: center; padding: 14px 16px 16px; border-radius: 14px; background: #0a0a0b }
+/* the pictures sit on the play-mode stage (Nic, 27 Oct): dark in both themes, so the frames read apart from the panel */
+.jm-focus .jm-big.pair { gap: 16px }
+.jm-focus .jm-big.pair .jm-shot { gap: 8px }
+.jm-focus .jm-big.pair .jm-shot .cap { color: rgba(255, 255, 255, .86) }
+.jm-focus .jm-big .jm-shot .pic img { box-shadow: 0 0 0 1px rgba(255, 255, 255, .1), 0 6px 20px -8px rgba(0, 0, 0, .6) }
+.jm-focus .jm-big .jm-shot .pic.none { border-color: rgba(255, 255, 255, .28); color: rgba(255, 255, 255, .6) }
 /* in play the Note button is a pill like Stop beside it (the navigator material) */
 .jm-stage .jm-chip .notebtn { height: 30px; border-radius: 999px; padding: 0 11px }
 
