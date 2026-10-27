@@ -42,6 +42,45 @@ With no agent CLI installed, jam stays off and both `init` and `marver dev` say 
 of going quiet. Workspaces created before 0.9.0 need no re-init; they resolve the same way
 at every dev boot.
 
+## Your own session takes the work (0.28)
+
+Start a Jam session on the canvas (`J`, or the Jam button) - that is the one switch. While it runs, your tags and
+captures go to the coding-agent session you already have open in the repo, with its conversation, its tools, your MCP
+servers and skills. When it cannot take a run, a copy of it does; with nothing to copy, a fresh agent with the same
+power. Outside a Jam session, tags go to a background run (a copy of your last session, by default).
+
+Nothing to set up. `marver init`, `marver dev` and starting a Jam session write each tool's hooks once, locally -
+`.claude/settings.local.json`, `.codex/hooks.json`, `.cursor/hooks.json` - and keep them out of git (a committed file is
+never changed; one you removed by hand is not written back until you turn that tool on again in the start sheet).
+
+| Tool | An idle session | A session at work | A copy of it |
+|---|---|---|---|
+| **Claude Code** | woken through its inbox; it takes the run | reads it between tool calls | `claude -p --resume <id> --fork-session` |
+| **Codex** | a copy of it does the run | its `Stop` hook turns the end of the turn into "run `marver jam next`" | `codex exec fork <id>` |
+| **Cursor** | a full-power Cursor agent does the run | its `stop` hook auto-submits the follow-up | none (Cursor has no fork) |
+| opencode, Grok, droid, pi | background agents | - | - |
+
+- **Codex asks you to trust new hooks once** - type `/hooks` in Codex. The start sheet says so until a Codex session
+  connects.
+- **What the session does** (design/instructions/jam.md, "Runs from the canvas"): `npx marver jam next` takes the run
+  (its handle, its frames, the packet, the instructions); `jam say <handle> "On it - ..."` posts one line at once; the
+  work, with subagents for a capture across frames; `jam progress <handle>` on a long run; `jam done <handle> --file
+  <f>` hands back the replies, and the canvas posts them and frees the frames. `jam release` gives a run back,
+  `jam status` and `jam mute` are there too. The commands travel through files under `design/.local/jam/`, signed
+  with the session's own key, so a sandbox that blocks localhost cannot stop them.
+- **Who works** shows in the start sheet - with several sessions open, the newest takes the work and one click picks
+  another - and on every run: "Your Claude Code session is on it", "A copy of your Codex session is on it",
+  "Agent working".
+- **An offer not taken** - Claude Code not pulling it in 2 minutes, a Codex or Cursor turn ending without taking it -
+  goes to a copy or a fresh agent. **A run your session took and went quiet on** for 15 minutes is stalled: give it
+  back, run it in the background, or drop it (the tag's status, or the tile's menu). The last two wait for your session
+  to let go - it is told to stop, its late `done` is refused, and the frames stay reserved until it releases the run or
+  its process is gone.
+
+The start sheet's switches: **MCP servers and skills** (on) and **your session's context** (on) for the runs Marver
+spawns, and **collaborators' comments** (off: only your own words reach any runner). Your own session keeps the tools
+you gave it; with context off, no session and no copy take work - fresh agents only.
+
 ## The config block
 
 ```ts
@@ -58,6 +97,13 @@ jam: { agent: "claude", concurrency: 6 },
 | `chime` | `true` | A soft chime when a capture is ready to review |
 | `names` | `true` | Name each capture with Claude Haiku through Claude Code - its words go to Anthropic (Claude Code only) |
 | `loc` | `true` | Stamp design elements with `data-mv-loc` (file and line, dev only) so the agent goes straight to the source |
+| `runner` | `"auto"` | Who runs a batch: `"auto"` - your session during a Jam session, else a copy of it, else a fresh agent; `"session"` - wait for a session, never fall back; `"background"` - never a session |
+| `session` | `true` | Connect this repo's Claude Code, Codex and Cursor sessions (their hooks). `false`: none are written, and existing ones go quiet |
+| `context` | `"fork"` | Background runs copy your session; `"fresh"` starts them fresh (and no session takes work) |
+| `mcp` | `true` | Background runs use your MCP servers |
+| `skills` | `true` | Background runs use your skills |
+| `others` | `false` | Other people's words reach the agent, labelled; off: only yours |
+| `sessionMax` | `3` | Runs one session holds at once |
 
 Shorthands: `jam: "codex"` names the agent and takes the rest of the defaults, `jam: true`
 is the default block, and **`jam: false` is the off switch**.
@@ -71,18 +117,17 @@ that fails to parse also leaves jam off, since it may have been the file that sa
 ## What the agent may do
 
 Be clear-eyed about what this is. The real protection is not a sandbox - it is that the
-agent doing the work is **your own**, running on **your machine**, and **every change it
-makes is a diff you review** before anything is resolved. On top of that, marver removes the
-one tool that would turn a prompt-injected comment into silent damage: an unrestricted
-**shell**. Each CLI is spawned so the model can read and edit files but cannot open a shell
-(or, for Codex and Cursor, only a shell the OS sandbox contains and cuts off from the
-network):
+agent doing the work is **your own**, running on **your machine**, that **only your own words
+reach it** by default, and that **every change it makes is a diff you review** before anything
+is resolved. Since 0.28 a run Marver spawns for Claude Code, Codex or Cursor has full power -
+the shell inside the tool's own sandbox, your MCP servers and skills, a copy of your session -
+because a lesser agent was the wrong trade; the other CLIs keep their jails:
 
 | | How it is spawned |
 |---|---|
-| **Claude Code** | `claude -p --permission-mode acceptEdits` with an allowlist of Read, Edit, Write, Glob, Grep, WebSearch, WebFetch - and `--disallowedTools Bash`, so there is no shell |
-| **Codex** | `codex exec -s workspace-write`, its own OS sandbox, which bounds what commands touch and blocks network egress, but still lets the model run shell commands |
-| **Cursor** | `cursor-agent -p --sandbox enabled --trust` - cursor's print mode carries a shell, so like Codex it runs inside the OS sandbox (verified: network egress is blocked); `--trust` only answers the workspace-trust prompt for the repo you already run `marver dev` in, and `--force` is never passed |
+| **Claude Code** | `claude -p --permission-mode acceptEdits`; Bash runs in Claude Code's sandbox (writes in the repo, no network, `~/.ssh`, `~/.aws`, `~/.gnupg` and keychains unreadable - for the Read tool too - and no way out of the sandbox); every other permission question goes to `marver jam permit`, Marver's small MCP server named with `--permission-prompt-tool`: MCP tools and skills when on, the web, subagents and edits inside the repo are allowed, the rest refused, nobody is asked. A copy adds `--resume <id> --fork-session`; MCP off adds `--strict-mcp-config`, skills off `--disable-slash-commands` |
+| **Codex** | `codex exec --approve-for-me` (Codex's own automatic reviewer answers approvals - MCP calls included - inside `workspace-write`, no network for the shell); a copy is `codex exec fork <id>` with the same settings; MCP off turns each server `codex mcp list` names off. Codex's sandbox does not limit reads: the shell has no network, and the reviewer judges what leaves |
+| **Cursor** | `cursor-agent -p --sandbox enabled --trust`, plus `--approve-mcps` with MCP on - the shell runs inside the OS sandbox (network egress blocked); `--trust` only answers the workspace-trust prompt for the repo you already run `marver dev` in, and `--force` is never passed. Cursor's skills and already-approved MCP servers follow your own Cursor setup |
 | **droid** | `droid exec --auto low` for file edits, with `--disabled-tools` removing the shell (`Execute`), the delegation tools (`Task`, missions), and the Slack/connector tools |
 | **opencode** | `opencode run --pure` (no external plugins) with a per-run DEFAULT-DENY `OPENCODE_PERMISSION` grant - read/edit/search/web/task allowed by name, everything else (bash included) denied - never its all-approving `--auto` flag |
 | **grok** | `grok -p --tools read_file,search_replace,list_dir,grep,todo_write` - an ALLOWLIST of read/edit tools only, so the shell, web, and subagents are simply absent (a deny-list is a footgun: it can miss a tool's real name); `--permission-mode acceptEdits` auto-applies the edits |

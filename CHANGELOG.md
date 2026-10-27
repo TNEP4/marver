@@ -2,6 +2,34 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## 0.28.0 - unreleased
+
+### Highlights
+
+- **Jam feeds your own session.** Start a Jam session on the canvas - the one switch - and your @marver tags and voice
+  captures go to the coding-agent session you already have open in the repo: Claude Code (woken through its inbox,
+  idle or busy), Codex and Cursor (pulled at the end of their turn by their Stop hooks). It works with everything it
+  has - its conversation, tools, MCP servers, skills, subagents - takes a run with `npx marver jam next`, posts one line
+  with `jam say`, and hands the replies back with `jam done`; the canvas posts them as the session's ("your session ·
+  Claude Code"). Commands travel through signed files, so a sandbox that blocks localhost cannot stop them.
+- **When your session cannot take a run, a copy of it does.** Claude Code and Codex runs Marver spawns copy your
+  session (`--fork-session`, `exec fork`) - a person's session of this repo, never a headless one; a transcript over
+  12 MB runs fresh. Outside a Jam session, tags go to such a copy.
+- **Full power by default.** Runs Marver spawns for Claude Code, Codex and Cursor have the shell inside the tool's own
+  sandbox, your MCP servers and skills: Claude Code through `marver jam permit` (its permission questions answered by a
+  policy - MCP, skills, web, subagents and edits in the repo allowed; keys unreadable; nothing asked), Codex through its
+  own automatic reviewer (`--approve-for-me`). The start sheet's switches turn MCP and skills, your session's context,
+  and collaborators' comments on or off.
+- **Only your own words reach any runner** by default: other people's comments are left out of the packet (`jam.others`
+  brings them back, labelled), including briefs frozen before this version.
+- **Zero setup.** `marver init`, `marver dev` and starting a Jam session write each tool's hooks once
+  (`.claude/settings.local.json`, `.codex/hooks.json`, `.cursor/hooks.json`) - only Marver's own entries, never a
+  committed file, kept out of git, and a removal by hand is remembered.
+- **Runs your session took and went quiet on** are stalled after 15 minutes: give it back, run it in the background,
+  or drop it - the last two wait for the session to let go. A restart of `marver dev` keeps every run a session holds.
+- **In the Mac app the floating chrome sits right under the strip** (0.27.3's fix): the sidebar, toolbar, play pills
+  and Jam panels take the larger of the edge and the top inset instead of their sum.
+
 ## 0.27.2 - 2026-10-24
 
 0.27.1 was never published: its changes ship here, with 0.27.2's.
