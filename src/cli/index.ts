@@ -189,6 +189,28 @@ cli
   })
 
 cli
+  .command('jam <action> [...args]', 'Live Jam from your coding-agent session: next · say <handle> <words> · progress <handle> · done <handle> --file <f> · release <handle> · status · mute (hook, listen and permit are run by the tools themselves)')
+  .option('--root <dir>', 'Host repo root (default: the repo above this folder)')
+  .option('--as <connection>', 'the connection Marver Jam named (Cursor)')
+  .option('--file <file>', 'done: the final message (the marver-reply blocks)')
+  .option('--json', 'print the answer as JSON')
+  .action(async (action: string, args: string[], opts) => {
+    const jam = await import('./jam.ts')
+    // the tools' own entry points: they never fail their host, and say nothing on stdout but their answer
+    if (action === 'hook') return jam.hookCommand(args[0] ?? '', args[1] ?? '', opts.root)
+    if (action === 'listen') return jam.listenCommand(opts.root)
+    if (action === 'permit') return (await import('../server/jam/permit.ts')).permitCommand()
+    try {
+      const root = opts.root ? resolve(opts.root) : jam.marverRoot(process.cwd())
+      if (!root) throw new Error('not inside a repo with a design/ folder')
+      await jam.jamCommand(root, action, args ?? [], opts)
+    } catch (err) {
+      console.error(`[${NAME}] ${(err as Error).message}`)
+      process.exit(1)
+    }
+  })
+
+cli
   .command('link [...targets]', 'The canvas link that lands on frames: link <scene/frame | scene ...> - their board, in canvas mode, selected and fitted')
   .option('--root <dir>', 'Host repo root', { default: '.' })
   .option('--board <board>', 'The board to open (default: the first board that shows them all, else one link per board)')

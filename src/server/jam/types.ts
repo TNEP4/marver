@@ -14,6 +14,18 @@ import type { AnchorLook, AnchorTarget } from '../../shared/anchor.ts'
  *  element the way `comments move` does; the daemon turns that into the shared anchor. */
 export interface Reanchor { thread: string; target: AnchorTarget; look?: AnchorLook }
 
+/** What a spawned run may use (spec 29b, Part 1): full power by default - the shell inside the tool's
+ *  sandbox, your MCP servers and skills - and, for a fork, the session it copies. */
+export interface SpawnOpts {
+  root: string
+  mcp: boolean
+  skills: boolean
+  /** the tool's own session id to copy (`--resume --fork-session`, `exec fork`) */
+  fork?: string
+  /** how to run this marver (`jam permit`, Claude Code's permission tool): a command and its first args */
+  marver?: { cmd: string; args: string[] }
+}
+
 /** One agent CLI the daemon can spawn. The full set lives in adapter/index.ts. */
 export interface JamAdapter {
   name: JamAgent
@@ -23,7 +35,9 @@ export interface JamAdapter {
   /** argv for a goal-phrased, workspace-jailed run over `goal`. Never full-access, never prompts.
    *  `env` (rare) is merged over the daemon's env - a per-run knob for CLIs whose jail is
    *  configured that way (opencode's OPENCODE_PERMISSION), never a credential channel. */
-  spawnArgs(goal: string): { cmd: string; args: string[]; env?: Record<string, string> }
+  spawnArgs(goal: string, opts?: SpawnOpts): { cmd: string; args: string[]; env?: Record<string, string> }
+  /** Can it copy one of its own sessions (`opts.fork`)? */
+  forks?: boolean
   /** Parse the agent's stdout + exit code into the reply, whether it asks, best-effort model id,
    *  and any reanchors - through the one shared parser (packet.ts `parseAgentText`). `said` is
    *  the agent's whole final message, which the daemon splits by member. */
@@ -176,6 +190,22 @@ export interface Batch {
   /** before and after pictures of every reserved frame, for a batch that holds a capture (picture ids) */
   shots?: { frame: string; before?: string; after?: string; same?: boolean; new?: boolean }[]   // `same`: the run left it as it was; `new`: the run made it
   model?: string
+  /** who runs it (spec 29b): the owner's session, a copy of it, or a fresh agent - and why, when it is not the obvious one */
+  runner?: { kind: 'session' | 'fork' | 'fresh'; agent: string; conn?: string; session?: string; why?: string }
+  /** offered to a session, not taken yet */
+  offer?: { conn: string; at: number }
+  /** taken by a session (`marver jam next`): its handle's generation, and its last word (say, progress) */
+  claim?: { conn: string; gen: number; at: number; progress: number; stalled?: boolean; stopping?: 'background' | 'drop'
+    /** its final message, stored at `done` under the lock: the completion boundary (a restart delivers it from here) */
+    result?: string }
+  /** what its spawned runs may use, fixed when it was first run (a restart runs it the same way) */
+  power?: { mcp: boolean; skills: boolean }
+  /** other people's words reached it (`jam.others` when it was formed) */
+  others?: boolean
+  /** the last generation handed out - a release or a stop keeps it, so an old handle stays refused */
+  gen?: number
+  /** the owner dropped it while a session held it: it fails, never runs elsewhere */
+  dropped?: boolean
   at: number
 }
 
@@ -196,6 +226,8 @@ export interface Journal {
   upgraded?: number          // when a v1 journal became this one (the boot line says what changed)
   run?: { since: number }    // the lane's run: captures made since then (queue.ts touchRun)
   session?: { id: string; since: number }   // the Jam session running now (Part 5): its id and when it began
+  /** a session's requests that changed something, with the answer each got (spec 29b): the same request again gets it again */
+  receipts?: Record<string, { at: number; out: Record<string, unknown> }>
 }
 
 /** The 0.25 journal, read once by the upgrade. */

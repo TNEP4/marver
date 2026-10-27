@@ -15,6 +15,7 @@ import { mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs
 import { join } from 'node:path'
 import { listBoards, readLog, replay, type CommentEvent } from '../comments.ts'
 import { owned as ownedSet } from './ledger.ts'
+import { localProfile } from '../profile.ts'
 import { fresh, readRaw, write } from './journal.ts'
 import { buildPacket, packetPath, sanitize, threadId } from './packet.ts'
 import type { Batch, Brief, Card, CardState, CaptureRecord, Journal, JournalV1, Member, Msg, PacketMember, Payload, Result } from './types.ts'
@@ -188,8 +189,9 @@ export function requeue(j: Journal, c: Card, now: number, first = false): Card {
   return other ? merge(j, other, c, now) : c
 }
 
-export type Action = 'drop' | 'retry' | 'keep' | 'first' | 'confirm' | 'edit' | 'good' | 'more' | 'later' | 'rename' | 'note'
-export const ACTIONS: Action[] = ['drop', 'retry', 'keep', 'first', 'confirm', 'edit', 'good', 'more', 'later', 'rename', 'note']
+export type Action = 'drop' | 'retry' | 'keep' | 'first' | 'confirm' | 'edit' | 'good' | 'more' | 'later' | 'rename' | 'note' | 'session-again' | 'session-background' | 'session-drop'
+/** (the three `session-` actions are a stalled session run's choices - the daemon answers them, spec 29b Part 7) */
+export const ACTIONS: Action[] = ['drop', 'retry', 'keep', 'first', 'confirm', 'edit', 'good', 'more', 'later', 'rename', 'note', 'session-again', 'session-background', 'session-drop']
 
 /** One card action from the page (POST /jam/card). It applies only if the card is still at `rev`
  *  (two tabs cannot both decide); anything not allowed answers with the current card. */
@@ -284,8 +286,16 @@ const resultText = (j: Journal, batchId: string | undefined, card: string, fallb
 
 /** Freeze a card's brief as text, from the logs as they stand at claim. Covers every owner event it
  *  copies (the `covered` record that takes a plain reply off `marver marks`). */
-export function freezeBrief(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[]): Brief {
-  const msgs = c.thread ? events.filter((e) => (e.type === 'create' && e.commentId === c.thread) || (e.type === 'reply' && e.parentId === c.thread)) : []
+export function freezeBrief(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[], others = true): Brief {
+  const inThread = c.thread ? events.filter((e) => (e.type === 'create' && e.commentId === c.thread) || (e.type === 'reply' && e.parentId === c.thread)) : []
+  // owner-only (spec 29b, Part 8; `jam.others: false`): every runner has the shell, MCP servers and skills
+  // now, so only the owner's own words reach it - their ledgered messages and Marver's own replies (written
+  // as this machine's owner). Left out here, before anything is frozen, so nothing left out is ever marked
+  // read (`covered`).
+  const me = others ? undefined : localProfile(ctx.root)
+  // (Marver's replies carry this machine's profile - its email, or with none set, its name and no email)
+  const mine = (a: CommentEvent['author']) => !!me && (me.email ? a?.email === me.email : !a?.email && a?.name === me.name)
+  const msgs = others ? inThread : inThread.filter((e) => c.events.includes(e.id) || (!e.agent && isOwned(ctx, c.board, e.id)) || (!!e.agent && mine(e.author)))
   const dropped = new Set(j.cards.filter((x) => x.board === c.board && x.state === 'dropped').flatMap((x) => x.events))
   const asks = new Set(c.events)
   const toMsg = (e: CommentEvent): Msg => {
@@ -333,6 +343,13 @@ export function freezeBrief(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[
     brief.follows = { asks: keep(m?.brief?.asks), result: resultText(j, last, c.id, j.batches.find((b) => b.batchId === last)?.note ?? 'the run failed') }
   }
   return brief
+}
+
+/** A brief frozen with other people's words (before 0.28, or with `jam.others` on), made owner-only: the owner's
+ *  own messages and Marver's own replies stay; everyone else's, and anything whose author is not known, go. */
+export function ownerOnly(brief: Brief, me: { name: string }): Brief {
+  const keep = (m: Msg) => !!m.owner || (!!m.agent && m.author === me.name)
+  return { ...brief, history: brief.history.filter(keep), asks: brief.asks.filter((m) => !!m.owner) }
 }
 
 /** Are a card's asks still the owner's? Each must be in its board's log and ledgered; the ones that
@@ -390,6 +407,8 @@ export interface FormOpts {
   held(frame: string): boolean
   /** any `work start` hold at all (an exclusive job waits for every one) */
   anyHold(): boolean
+  /** other people's words reach the agent (`jam.others`; absent: they do, as context) */
+  others?: boolean
 }
 
 /** Claim what can run now: the queued cards of one board on one single frame join one batch, in
@@ -436,7 +455,7 @@ export function form(j: Journal, ctx: Ctx, o: FormOpts, now = Date.now()): { bat
     const packetMembers: PacketMember[] = []
     const threads = replay(log(f.board))
     for (const c of f.cards) {
-      const brief = freezeBrief(j, ctx, c, log(c.board))
+      const brief = freezeBrief(j, ctx, c, log(c.board), o.others !== false)
       const id = `m${members.length + 1}`
       c.brief = brief; c.batch = batchId
       set(c, 'working', now)
@@ -446,7 +465,7 @@ export function form(j: Journal, ctx: Ctx, o: FormOpts, now = Date.now()): { bat
         ...(t?.anchor !== undefined ? { anchor: t.anchor } : {}), brief })
     }
     const files = f.exclusive ? [...new Set(f.cards.flatMap((c) => c.exclusive ?? []))] : undefined
-    const b: Batch = { batchId, members, frames: f.frames, ...(f.exclusive ? { exclusive: true } : {}), state: 'claimed', leaseUntil: 0, attempts: 0, at: now }
+    const b: Batch = { batchId, members, frames: f.frames, ...(f.exclusive ? { exclusive: true } : {}), state: 'claimed', leaseUntil: 0, attempts: 0, at: now, others: o.others !== false }
     j.batches.push(b)
     writePacket(ctx.root, buildPacket(batchId, packetMembers, f.frames, f.exclusive ? files : undefined), new Set(j.batches.filter((x) => x.state === 'claimed').map((x) => x.batchId)))
     batches.push(b)

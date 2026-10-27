@@ -23,7 +23,13 @@ export interface QueueView {
     notes?: number
     session?: string     // the session it was made in, or whose record it writes
     file?: string        // a session record: the file it writes
+    /** who runs it now (spec 29b): the owner's session, a copy of it, or a fresh agent - and where it stands */
+    runner?: { kind: 'session' | 'fork' | 'fresh'; agent: string; state?: 'offered' | 'claimed' | 'stalled' | 'stopping' | 'waiting'; why?: string; batch: string; gen?: number }
   })[]
+  /** the sessions connected to this repo now, and the one that takes the work */
+  sessions?: { id: string; agent: 'claude' | 'codex' | 'cursor'; busy: boolean; selected: boolean; since: number; mode?: string }[]
+  /** what Jam does now on this machine: the config with the start sheet's switches over it */
+  settings?: { runner: 'auto' | 'session' | 'background'; session: boolean; context: 'fork' | 'fresh'; mcp: boolean; skills: boolean; others: boolean; sessionMax: number }
   /** the lane's run, while one lasts (captures made since then) */
   run?: { since: number }
   /** the Jam session running now */
@@ -43,4 +49,10 @@ export const jamLive: {
   canWrap?: (id: string) => string | null
   captureOpen?: (capture: string, session: string, on: boolean) => 'ok' | 'ended'
   tags?: (session: string) => number
+  /** a session run's choice (spec 29b): by batch and its claim's generation */
+  runAct?: (batch: string, gen: number, action: 'again' | 'background' | 'drop') => Promise<{ ok: boolean; error?: string }>
+  /** push the queue to pages now (a switch changed what it shows) */
+  refresh?: () => void
+  /** what the connectors did last (spec 29b): at boot, at a session's start, at a switch in the sheet */
+  connectors?: import('./connectors.ts').ConnectorResult[]
 } = {}

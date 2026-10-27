@@ -11,21 +11,36 @@ import type { JamAdapter } from '../types.ts'
 const firstKey = (o: unknown): string | undefined =>
   o && typeof o === 'object' ? Object.keys(o as object)[0] : undefined
 
+/** What no Jam run reads, whoever asks: keys and credentials. */
+export const SECRETS = ['~/.ssh/**', '~/.aws/**', '~/.gnupg/**', '~/.config/gcloud/**', '~/.netrc', '~/.npmrc', '~/Library/Keychains/**']
+
 const cleanModel = (raw: unknown): string | undefined =>
   typeof raw === 'string' ? raw.replace(/\[[^\]]*\]$/, '') || undefined : undefined   // drop the [1m] variant tag
 
 export const claudeAdapter: JamAdapter = {
   name: 'claude',
   supportsSubagents: true,
-  spawnArgs(goal) {
-    // No Bash AT ALL - not even Bash(curl:*): the packet carries untrusted text (incl. synced
-    // collaborators' comments), and curl -d is a one-line exfiltration channel for anything Read
-    // can see. WebSearch/WebFetch stay for craft (reference designs, brand
-    // SVG paths to inline); binary asset download is a P2 that needs a jailed fetch path.
+  forks: true,
+  spawnArgs(goal, o) {
+    // Full power (spec 29b, Part 1): Bash runs inside Claude Code's own sandbox (writes in the repo only, no
+    // network, keys unreadable, no way out of it), edits in the repo are accepted, and every other question
+    // the run would ask - an MCP tool, a skill, the web, an edit outside the repo - goes to `marver jam
+    // permit`, which allows what a Jam run may do and refuses the rest. A headless run can never ask anyone,
+    // and Claude Code takes no wildcard over every MCP server, so the permission tool is what lets your
+    // servers work here at all.
     // stream-json (requires --verbose) lets the daemon deliver the agent's first line live.
+    if (!o) return { cmd: 'claude', args: ['-p', goal, '--permission-mode', 'acceptEdits', '--allowedTools', 'Read,Edit,Write,Glob,Grep,WebSearch,WebFetch', '--disallowedTools', 'Bash', '--output-format', 'stream-json', '--verbose'] }
+    const settings = {
+      sandbox: { enabled: true, autoAllowBashIfSandboxed: true, allowUnsandboxedCommands: false },
+      permissions: { deny: [...SECRETS.map((p) => `Read(${p})`), ...(o.skills ? [] : ['Skill'])] },
+    }
+    const permit = { mcpServers: { 'marver-jam': { command: o.marver?.cmd ?? 'npx', args: [...(o.marver?.args ?? ['marver']), 'jam', 'permit'], env: { MARVER_JAM_PERMIT: JSON.stringify({ root: o.root, mcp: o.mcp, skills: o.skills }) } } } }
     return {
       cmd: 'claude',
-      args: ['-p', goal, '--permission-mode', 'acceptEdits', '--allowedTools', 'Read,Edit,Write,Glob,Grep,WebSearch,WebFetch', '--disallowedTools', 'Bash', '--output-format', 'stream-json', '--verbose'],
+      args: ['-p', goal, '--permission-mode', 'acceptEdits', '--settings', JSON.stringify(settings),
+        '--mcp-config', JSON.stringify(permit), ...(o.mcp ? [] : ['--strict-mcp-config']), ...(o.skills ? [] : ['--disable-slash-commands']), '--permission-prompt-tool', 'mcp__marver-jam__decide',
+        ...(o.fork ? ['--resume', o.fork, '--fork-session'] : []),
+        '--output-format', 'stream-json', '--verbose'],
     }
   },
   // a capture's short name: Haiku, no tools at all, no MCP servers, nothing kept - one answer in plain text

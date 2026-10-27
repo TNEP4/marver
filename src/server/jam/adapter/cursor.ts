@@ -26,11 +26,12 @@ const assistantText = (o: Record<string, any>): string | undefined => {
 export const cursorAdapter: JamAdapter = {
   name: 'cursor',
   supportsSubagents: false,
-  spawnArgs(goal) {
+  spawnArgs(goal, o) {
     // --trust answers the workspace-trust prompt for THIS directory only (a headless run
     // refuses untrusted dirs outright) - the human running `marver dev` in their own repo
     // IS that trust decision. It is not --force: command approval stays gated.
-    return { cmd: 'cursor-agent', args: ['-p', goal, '--output-format', 'stream-json', '--sandbox', 'enabled', '--trust'] }
+    // Full power (spec 29b, Part 1): your MCP servers, approved for this run. Cursor has no fork.
+    return { cmd: 'cursor-agent', args: ['-p', goal, '--output-format', 'stream-json', '--sandbox', 'enabled', '--trust', ...(o?.mcp ? ['--approve-mcps'] : [])] }
   },
   earlyText(line) {
     try {

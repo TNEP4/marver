@@ -30,7 +30,7 @@ import { workActivity } from '../work.ts'
 import { acquireLock, releaseLock } from './journal.ts'
 import { buildPacket, goalText, packetPath, parseAgentText, parseMembers, sharedFile } from './packet.ts'
 import { uncheckedAnchor, type AnchorCheck, type AnchorLook, type AnchorTarget } from '../../shared/anchor.ts'
-import { act, addCapture, addWrapup, endSession, moreWrapup, startSession, textOf, wrapupIntact, wrapupOf, answeredSince, captureIntact, beginStep, captureComment, conflictStep, createQueue, ctxFor, endStep, looksGood, payloadKey, redelivering, sameComment, stillOwned, undelivered, fail, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
+import { ownerOnly, act, addCapture, addWrapup, endSession, moreWrapup, startSession, textOf, wrapupIntact, wrapupOf, answeredSince, captureIntact, beginStep, captureComment, conflictStep, createQueue, ctxFor, endStep, looksGood, payloadKey, redelivering, sameComment, stillOwned, undelivered, fail, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
 import { jamReservations, restoreHolds } from './reserve.ts'
 import { jamLive, type QueueView } from './live.ts'
 import type { Batch, Brief, Card, JamAdapter, JobPacket, Journal, Msg, Reanchor, Result } from './types.ts'
@@ -39,6 +39,12 @@ import { createHash } from 'node:crypto'
 import { logJam } from '../perf-jam.ts'
 import { has as ledgerHas, record as ledgerRecord } from './ledger.ts'
 import { buildWrapup, moreOf, readWrapup, recordFile, recordPathProblem, SESSION_ID, storeWrapup } from './session.ts'
+import { createRuns, handleOf, type AgentRun, type Choice, type Runs } from './runs.ts'
+import { connDir, readConn } from './conn.ts'
+import { reqDir } from './transport.ts'
+import { hookBin } from './connectors.ts'
+import { onPath, AGENT_BIN, type JamAgent } from './agent.ts'
+import type { SpawnOpts } from './types.ts'
 
 const LEASE_MS = 12 * 60_000
 const JOB_TIMEOUT_MS = 10 * 60_000   // high-fi rebuilds legitimately run 5-8 min; 5 min was fencing good work
@@ -74,6 +80,8 @@ export interface JamCore {
    *  every 20 s by its page while it is; one not renewed for a minute (its tab gone) is forgotten. */
   /** 'ended': the session is over - the capture is not in it */
   captureOpen(capture: string, session: string, on: boolean): 'ok' | 'ended'
+  /** Session runs (spec 29b): the requests from sessions, the offers, the stalls - what `startJam` ticks. */
+  runs: Runs
 }
 /** Side-effect hooks the dev server wires up (presence glow, instant reply delivery).
  *  Optional, so tests stay pure. */
@@ -117,8 +125,11 @@ const fenceGroup = (pid?: number) => { try { if (pid) process.kill(-pid, 'SIGKIL
  * option that quietly grows back.
  */
 export function agentEnv(from: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const { MARVER_CLI_TOKEN: _withheld, ...rest } = from
-  return rest
+  // ...and a session's own handles (spec 29b): a `marver dev` started from inside Claude Code or Codex carries
+  // that session's inbox and ids, and a run Marver spawns must never post to that inbox, register as that
+  // session, or pass for it. MARVER_JAM_BACKGROUND keeps every hook of ours quiet inside it.
+  const { MARVER_CLI_TOKEN: _withheld, CLAUDE_CODE_MESSAGING_SOCKET: _s, CLAUDE_CODE_MESSAGING_TOKEN: _t, CLAUDE_CODE_SESSION_ID: _i, CLAUDE_PID: _p, CLAUDE_CODE_SESSION_ATTENDED: _a, CODEX_THREAD_ID: _ct, CODEX_SESSION_ID: _cs, ...rest } = from
+  return { ...rest, MARVER_JAM_BACKGROUND: '1' }
 }
 
 const FRAME_FILE = /\.(tsx|jsx|html)$/
@@ -210,11 +221,10 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   /** every run that starts, counted: a run knows whether another began while it ran */
   let batchStarts = 0
 
-  type AgentRun = { reply: string; asks: boolean; model?: string; ok: boolean; reanchors: Reanchor[]; said?: string; raw?: string }
-  type Env = NodeJS.ProcessEnv
-  const runAgent = (goal: string, onSpawn: (pid?: number) => void, onEarly?: (text: string, asks: boolean, model?: string) => void): Promise<AgentRun> =>
+  const runAgent = (ad: JamAdapter, opts: SpawnOpts | undefined, goal: string, onSpawn: (pid?: number) => void, onEarly?: (text: string, asks: boolean, model?: string) => void): Promise<AgentRun> =>
     new Promise((resolve) => {
-      const { cmd, args, env } = adapter.spawnArgs(goal)
+      const adapter = ad
+      const { cmd, args, env } = adapter.spawnArgs(goal, opts)
       let child: ChildProcess
       // stderr is discarded at the OS level: an undrained pipe would fill and block the child.
       // PWD is pinned to the workspace: spawn's cwd does not update the inherited env var, and
@@ -290,6 +300,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   const plainDashes = (s: string) => s.replace(/\s*[—–]\s*/g, ' - ')
 
   const me = () => localProfile(root)
+  /** The agent that ran a batch - its runner's, or the one Jam is set to. */
+  const harnessOf = (b: Batch) => b.runner?.agent || adapter.name
   /** Post one reply in a card's thread. Deterministic ids - `jam-<batch>-<member>` for the reply,
    *  `jam-e<attempt>-<batch>` for a one-member job's early ack - so posting twice is a no-op. */
   const postReply = (b: Batch, c: Card, member: string, body: string, asks: boolean, model?: string, kind: 'reply' | 'early' = 'reply', alsoChanged?: string[]): { commentId: string; ts: number } => {
@@ -300,10 +312,51 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       commentId: `jam-c-${suffix}`, parentId: c.thread,
       board: c.board, author: who, body: plainDashes(body), asks,
       ...(alsoChanged?.length ? { alsoChanged } : {}),
-      agent: true, agentMeta: { devUser: who.name, harness: adapter.name, model },
+      agent: true, agentMeta: { devUser: who.name, harness: harnessOf(b), model, ...(b.runner ? { runner: b.runner.kind } : {}) },
     }
     appendEvents(commentsDir, c.board, [reply])
     return { commentId: reply.commentId!, ts: reply.ts }
+  }
+
+  /** How a spawned run reaches this marver (`jam permit`): the repo's install, else the CLI running now. */
+  const marverCmd = (): { cmd: string; args: string[] } => {
+    const bin = hookBin(root)
+    if (bin) return { cmd: bin, args: [] }
+    const self = process.argv[1]
+    return self && /cli\.(mjs|ts)$/.test(self) ? { cmd: process.execPath, args: [self] } : { cmd: 'npx', args: ['--no-install', 'marver'] }
+  }
+
+  // Session runs (spec 29b): the owner's session takes a batch with `marver jam next` and hands it back with `done`
+  const runs: Runs = createRuns({
+    root, cfg, q, log,
+    changed: () => queueChanged(),
+    goal: (b, handle) => {
+      let packet: JobPacket | null = null
+      try { packet = JSON.parse(readFileSync(join(root, packetPath(b.batchId)), 'utf8')) as JobPacket } catch { packet = null }
+      return packet ? goalText(packet, cfg.subagents, { kind: 'session', handle }) : `The packet of this run is missing (${packetPath(b.batchId)}) - release it: \`npx marver jam release ${handle}\`.`
+    },
+    say: (b) => ensureEarly(b),
+    ready: () => ready,
+    jamOn: () => !!q.j.session,
+    canSpawn: (agent) => Object.hasOwn(AGENT_BIN, agent) && onPath(AGENT_BIN[agent as JamAgent]),
+  })
+
+  /** A session's early line (`marver jam say`), journaled on the batch before it is posted: posted with the id it
+   *  names, once - an id already in the log is not posted again (a restart between the two posts it then). */
+  const ensureEarly = (b: Batch): boolean => {
+    const e = b.early
+    const one = b.members.length === 1 ? q.j.cards.find((c) => c.id === b.members[0].card) : undefined
+    if (!e || !one?.thread || stopped) return false
+    const id = e.commentId.replace(/^jam-c-/, 'jam-')
+    try {
+      if (!readLog(commentsDir, one.board).some((x) => x.id === id)) {
+        const who = me()
+        appendEvents(commentsDir, one.board, [{ id, ts: e.ts, type: 'reply', commentId: e.commentId, parentId: one.thread, board: one.board, author: who, body: plainDashes(e.body), asks: false,
+          agent: true, agentMeta: { devUser: who.name, harness: harnessOf(b), ...(b.runner ? { runner: b.runner.kind } : {}) } }])
+      }
+      hooks.changed?.(one.board)
+      return true
+    } catch { return false }
   }
 
   /** Emit reanchor events for threads the agent re-pinned, in the shared anchor format: each
@@ -328,7 +381,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       appendEvents(commentsDir, board, [{
         id: `jam-${b.batchId}-${m.id}-r${k}`, ts: Date.now(), type: 'reanchor',
         commentId: t.id, anchor: check.ok ? check.anchor : uncheckedAnchor(r.target), board, author: who,
-        agent: true, agentMeta: { devUser: who.name, harness: adapter.name },
+        agent: true, agentMeta: { devUser: who.name, harness: harnessOf(b) },
       }])
       n++
     }
@@ -423,7 +476,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       const id = `jam-${b.batchId}-${h.member}-host`
       if (readLog(commentsDir, c.board).some((e) => e.id === id)) continue
       const who = me()
-      appendEvents(commentsDir, c.board, [{ id, ts: Date.now(), type: 'reanchor', commentId: c.thread, frame: h.frame, board: c.board, author: who, agent: true, agentMeta: { devUser: who.name, harness: adapter.name } }])
+      appendEvents(commentsDir, c.board, [{ id, ts: Date.now(), type: 'reanchor', commentId: c.thread, frame: h.frame, board: c.board, author: who, agent: true, agentMeta: { devUser: who.name, harness: harnessOf(b) } }])
     }
   }
   /** The frames a run made that still exist, on a board it works on (one made, then renamed or removed, is not). */
@@ -496,7 +549,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           const who = me()
           appendEvents(commentsDir, c.board, [{
             id: `jam-f-e${b.attempts}-${b.batchId}`, ts: Date.now(), type: 'edit', commentId: early!.commentId, asks: true, board: c.board,
-            author: who, agent: true, agentMeta: { devUser: who.name, harness: adapter.name },
+            author: who, agent: true, agentMeta: { devUser: who.name, harness: harnessOf(b) },
           }])
         }
         // the early ack is the reply: a shared file the job changed anyway is said on it
@@ -504,7 +557,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           const who = me()
           appendEvents(commentsDir, c.board, [{
             id: `jam-ac-${b.batchId}`, ts: Date.now(), type: 'edit', commentId: early!.commentId, alsoChanged: r.alsoChanged, board: c.board,
-            author: who, agent: true, agentMeta: { devUser: who.name, harness: adapter.name },
+            author: who, agent: true, agentMeta: { devUser: who.name, harness: harnessOf(b) },
           }])
         }
         posted[m.id] = { reply: early!.commentId, answered, asked: early!.ts }
@@ -584,6 +637,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         if (!w || !wrapupIntact(q.ctx(), c) || recordPathProblem(root, w.wrapup.file)) { bad.push(m.card); continue }
         brief = { ...brief, wrapup: { content: w.wrapup, hash: w.hash } }
       } else if (brief.wrapup) { const { wrapup: _w, ...rest } = brief; brief = rest }   // only a record carries one
+      // owner-only now (spec 29b v2, 7): a brief frozen with other people's words is cleaned before any runner reads it
+      if (b.others !== false && !runs.settings().others) brief = ownerOnly(brief, me())
       const t = c.thread ? threadsOf(m.board).find((x) => x.id === c.thread) : undefined
       members.push({ id: m.id, card: c.id, kind: c.kind, board: m.board, ...(c.thread ? { thread: c.thread } : {}), frames: c.frames,
         ...(t?.anchor !== undefined ? { anchor: t.anchor } : {}), brief })
@@ -654,39 +709,84 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     let early: { body: string; asks: boolean; commentId: string; ts: number } | undefined
     let run: Awaited<ReturnType<typeof runAgent>> = { reply: '', asks: false, ok: false, reanchors: [] }
     try {
-      while (!stopped && b.attempts < MAX_ATTEMPTS) {
-        await q.lock(() => { b.attempts += 1; b.leaseUntil = Date.now() + LEASE_MS; q.persist() })
-        // every spawn reads the packet the journal makes, written again now (a record's seal checked again)
-        for (const m of packet.members) if (m.kind === 'wrapup') {
-          const c = q.j.cards.find((x) => x.id === m.card)
-          const w = c && readWrapup(root, wrapupOf(c))
-          if (!c || !w || !wrapupIntact(q.ctx(), c) || recordPathProblem(root, w.wrapup.file)) throw new Error('the session record changed after it was written - write it again')
-          m.brief = { ...m.brief, wrapup: { content: w.wrapup, hash: w.hash } }
-        }
-        writeFileSync(join(root, packetPath(b.batchId)), JSON.stringify(packet, null, 1), { mode: 0o600 })
+      // Who runs it (spec 29b): the owner's session when it can take it - or already holds it (a restart keeps a
+      // session's run its own) - else a copy of that session, else a fresh agent; every one with full power.
+      // What a spawned run may use is fixed with the batch the first time it runs (a restart runs it the same way).
+      if (!b.power) { const s0 = runs.settings(); await q.lock(() => { b.power = { mcp: s0.mcp, skills: s0.skills }; q.persist() }) }
+      let sessionRan = false
+      const sessionHeld = !!b.claim || !!b.offer || (b.runner?.kind === 'session' && !b.results)
+      const spawnedBefore = b.runner && b.runner.kind !== 'session' ? b.runner : undefined
+      let first: Choice = sessionHeld ? { kind: 'wait' } : spawnedBefore ? { kind: 'fresh', agent: '' } : runs.choose(b)
+      if (b.early && b.claim) ensureEarly(b)   // a session's early line journaled before a restart: posted now if it was not
+      while (!spawnedBefore && (sessionHeld || first.kind === 'session' || first.kind === 'wait')) {
         const beat = setInterval(followWork, 2_000)
         beat.unref?.()
         const tAgent = performance.now()
-        try {
-          const one = b.members.length === 1 ? cards()[0] : undefined
-          run = await runAgent(goalText(packet, cfg.subagents && adapter.supportsSubagents), (pid) => { b.pgid = pid; q.persist() },
-            one?.thread ? (text, asks, model) => {
-              if (stopped) return   // output buffered past stop(): a successor owns the log
-              // write FIRST, remember after: if the append throws, the final must not be suppressed
-              // as a "duplicate" of an ack that never actually posted
-              const p = postReply(b, one, 'm1', text, asks, model, 'early')
-              early = { body: text, asks, commentId: p.commentId, ts: p.ts }
-              hooks.changed?.(one.board)
-            } : undefined)
-        } finally { clearInterval(beat); timing.agentMs.push(performance.now() - tAgent) }
-        logRun(b.batchId, run.raw)
-        if (run.ok) break
+        let r: AgentRun | null
+        try { r = await runs.run(b, first.kind === 'session' ? first.conn : b.offer ? readConn(root, b.offer.conn) ?? undefined : undefined) }
+        finally { clearInterval(beat); timing.agentMs.push(performance.now() - tAgent) }
+        if (stopped) return
+        if (b.dropped) {
+          await q.lock((j) => { settled(fail(j, b, 'you dropped it while your session had it')); q.persist() })
+          runs.delivered(b.batchId, false, 'the owner dropped it')
+          queueChanged(); timeRun('agent'); return
+        }
+        if (r) { run = r; sessionRan = true; break }
+        // released or withdrawn: `jam.runner: 'session'` waits for a session again; anything else goes on below
+        if (runs.settings().runner !== 'session') break
+        first = { kind: 'wait' }
+        await q.lock(() => { b.runner = { kind: 'session', agent: '' }; q.persist() })
+      }
+      if (!sessionRan) {
+        const ch: { kind: 'fork' | 'fresh'; agent: string; session?: string; why?: string } = spawnedBefore
+          ? { kind: spawnedBefore.kind as 'fork' | 'fresh', agent: spawnedBefore.agent, ...(spawnedBefore.session ? { session: spawnedBefore.session } : {}), ...(spawnedBefore.why ? { why: spawnedBefore.why } : {}) }
+          : (() => { const pick = runs.choose(b, Date.now(), true); return pick.kind === 'fork' || pick.kind === 'fresh' ? pick : { kind: 'fresh' as const, agent: cfg.agent } })()
+        const agent = (Object.hasOwn(adapters, ch.agent) ? ch.agent : cfg.agent) as JamAgent
+        const ad = agent === cfg.agent ? adapter : adapters[agent]
+        const s = { mcp: b.power?.mcp ?? true, skills: b.power?.skills ?? true }
+        const full = agent === 'claude' || agent === 'codex' || agent === 'cursor'
+        const opts: SpawnOpts | undefined = full ? { root, mcp: s.mcp, skills: s.skills, ...(ch.kind === 'fork' && ch.session ? { fork: ch.session } : {}), marver: marverCmd() } : undefined
+        await q.lock(() => { b.runner = { kind: ch.kind, agent, ...(ch.kind === 'fork' && ch.session ? { session: ch.session } : {}), ...(ch.why ? { why: ch.why } : {}) }; q.persist() })
+        queueChanged()
+        while (!stopped && b.attempts < MAX_ATTEMPTS) {
+          await q.lock(() => { b.attempts += 1; b.leaseUntil = Date.now() + LEASE_MS; q.persist() })
+          // every spawn reads the packet the journal makes, written again now (a record's seal checked again)
+          for (const m of packet.members) if (m.kind === 'wrapup') {
+            const c = q.j.cards.find((x) => x.id === m.card)
+            const w = c && readWrapup(root, wrapupOf(c))
+            if (!c || !w || !wrapupIntact(q.ctx(), c) || recordPathProblem(root, w.wrapup.file)) throw new Error('the session record changed after it was written - write it again')
+            m.brief = { ...m.brief, wrapup: { content: w.wrapup, hash: w.hash } }
+          }
+          writeFileSync(join(root, packetPath(b.batchId)), JSON.stringify(packet, null, 1), { mode: 0o600 })
+          const beat = setInterval(followWork, 2_000)
+          beat.unref?.()
+          const tAgent = performance.now()
+          try {
+            const one = b.members.length === 1 ? cards()[0] : undefined
+            // a copy that fails is tried once more fresh (the session it copied may be gone, or too long since)
+            const forked = b.attempts === 1 ? opts?.fork : undefined
+            const goal = goalText(packet, cfg.subagents && ad.supportsSubagents, full ? { kind: forked ? 'fork' : 'fresh', shell: true, mcp: s.mcp, skills: s.skills } : undefined)
+            run = await runAgent(ad, opts && { ...opts, fork: forked }, goal, (pid) => { b.pgid = pid; q.persist() },
+              one?.thread && !b.early ? (text, asks, model) => {
+                if (stopped) return   // output buffered past stop(): a successor owns the log
+                // write FIRST, remember after: if the append throws, the final must not be suppressed
+                // as a "duplicate" of an ack that never actually posted
+                const p = postReply(b, one, 'm1', text, asks, model, 'early')
+                early = { body: text, asks, commentId: p.commentId, ts: p.ts }
+                hooks.changed?.(one.board)
+              } : undefined)
+            if (!run.ok && forked) await q.lock(() => { b.runner = { kind: 'fresh', agent, why: 'the copy of your session could not run - a fresh agent took it' }; q.persist() })
+          } finally { clearInterval(beat); timing.agentMs.push(performance.now() - tAgent) }
+          logRun(b.batchId, run.raw)
+          if (run.ok) break
+        }
       }
       if (stopped) return
       if (!run.ok) {
         // what it made before it failed is still its own (a last look, then the card holds them)
         await discover()
         await q.lock((j) => { ownCreated(j, b); settled(fail(j, b, 'the agent could not finish - its run log is in design/.local/jam-logs')); q.persist() })
+        runs.delivered(b.batchId, false, 'the run failed')
         queueChanged()
         log(`  jam: gave up on a batch of ${b.members.length} after ${b.attempts} attempts`)
         timeRun('agent')
@@ -738,8 +838,10 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         // its results are kept and posted again later (`redeliver`, which logs its own `redelivered` line)
         timing.deliverMs = performance.now() - tDeliver
         timeRun('delivery')
+        runs.delivered(b.batchId, true, 'its replies are saved and will be posted again')
         throw err
       }
+      runs.delivered(b.batchId, true)
       timing.deliverMs = performance.now() - tDeliver
       timeRun()
     } finally {
@@ -887,6 +989,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         exclusiveRunning: [...runningBatches.values()].some((b) => b.exclusive),
         held: (f) => !!hooks.held?.(f),
         anyHold: () => !!hooks.anyHold?.(),
+        others: runs.settings().others,
       })
       prune(j)
       q.persist()
@@ -953,6 +1056,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         // a batch with results did its work: only posting broke - post again later, never rerun it
         if (b.results) redeliver(b, 1)
         else {
+          runs.delivered(b.batchId, false, (err as Error).message)
           try { await q.lock((j) => { settled(fail(j, b, `the job broke: ${(err as Error).message}`)); q.persist() }) } catch { /* the journal keeps it claimed; boot recovers it */ }
           queueChanged()
         }
@@ -1216,15 +1320,20 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           ...(c.follows ? { follows: c.follows } : {}), ...(c.reply ? { reply: c.reply } : {}), ...(c.batch ? { batch: c.batch } : {}),
           ...(position ? { position } : {}), ...(waiting ? { waiting } : {}), ...(c.exclusive ? { exclusive: true } : {}),
           ...(c.kind !== 'comment' ? captureView(c) : {}),
+          ...(c.state === 'working' ? (() => { const r = runs.runnerOf(j.batches.find((b) => b.batchId === c.batch)); return r ? { runner: r } : {} })() : {}),
         }
       }),
+      ...runs.view(),
+      settings: runs.settings(),
     }
   }
 
   return {
     tick,
+    runs,
     stop() {
       stopped = true; jamReservations.settling = false
+      runs.stop()
       if (recheck) clearTimeout(recheck)
       for (const t of timers) clearTimeout(t)
       timers.clear()
@@ -1338,6 +1447,16 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
 
     async act(id, rev, action, body) {
       const c = q.j.cards.find((x) => x.id === id)
+      // a run your session went quiet on (spec 29b, Part 7): give it back, run it in the background, or drop it -
+      // through its card, at the run's current generation (the run API names both)
+      if (action === 'session-again' || action === 'session-background' || action === 'session-drop') {
+        if (!c || c.rev !== rev) return { ok: false, ...(c ? { card: structuredClone(c) } : {}), error: 'the card changed - look again' }
+        const b = q.j.batches.find((x) => x.batchId === c.batch)
+        if (!b?.claim) return { ok: false, card: structuredClone(c), error: 'no session holds it now' }
+        const r = await runs.act(b.batchId, b.claim.gen, action === 'session-again' ? 'again' : action === 'session-background' ? 'background' : 'drop')
+        queueChanged()
+        return { ...r, card: structuredClone(c) }
+      }
       if (c?.kind === 'capture' && (action === 'confirm' || (action === 'keep' && (c.state === 'draft' || c.state === 'confirming')))) return confirm(id, rev, action === 'confirm' ? 'queued' : 'kept')
       if (action === 'good' && c && c.kind !== 'comment') return good(id, rev)
       if (action === 'more' && c && c.kind !== 'comment') return moreWork(id, rev, body ?? '')
@@ -1400,6 +1519,15 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
   try { watcher = fsWatch(commentsDir, { persistent: false }, schedule); watched?.(watcher) } catch { /* rescan is the backstop */ }
   const interval = setInterval(() => void core.poke(), RESCAN_MS)
   interval.unref?.()
+  // session runs (spec 29b): requests from sessions answered at once, offers and stalls looked at every 2 s
+  let ticking = false
+  const runTick = () => { if (ticking || stopped) return; ticking = true; core.runs.tick().catch((err) => log(`  jam: session tick error - ${(err as Error).message}`)).finally(() => { ticking = false }) }
+  const sessionWatchers: FSWatcher[] = []
+  for (const dir of [reqDir(root), connDir(root)]) {
+    try { mkdirSync(dir, { recursive: true, mode: 0o700 }); const w = fsWatch(dir, { persistent: false }, runTick); w.on('error', () => {}); sessionWatchers.push(w) } catch { /* the interval is the backstop */ }
+  }
+  const sessionInterval = setInterval(runTick, 2_000)
+  sessionInterval.unref?.()
   // stale-glow expiry (a dead job's lease) is swept by the dev server, which owns the shared set
   void core.tick()
   jamLive.poke = () => void core.poke()
@@ -1412,6 +1540,8 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
   jamLive.canWrap = (id) => core.canWrap(id)
   jamLive.captureOpen = (c, ses, on) => core.captureOpen(c, ses, on)
   jamLive.tags = (id) => core.tags(id)
+  jamLive.runAct = (batch, gen, action) => core.runs.act(batch, gen, action)
+  jamLive.refresh = () => { try { onQueue?.() } catch { /* a push is advisory */ } runTick() }
 
   // Jam arms itself, so this line is the only notice a workspace with no jam block gets -
   // it has to name the agent AND the way out.
@@ -1421,7 +1551,9 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
       stopped = true
       if (scheduled) clearTimeout(scheduled)
       clearInterval(interval)
+      clearInterval(sessionInterval)
       watcher?.close()
+      for (const w of sessionWatchers) w.close()
       core.stop()
       delete jamLive.poke; delete jamLive.view; delete jamLive.act; delete jamLive.capture
       jamReservations.frames.clear(); jamReservations.exclusive = null; jamReservations.settling = false

@@ -734,6 +734,18 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
       watch.add)
     if (jam) {
       t.defer(() => jam.stop())
+      // connect this repo's Claude Code, Codex and Cursor sessions (spec 29b, Part 2): their hooks, written once,
+      // locally - said in one line when something was written or could not be
+      if (config.jam.session !== false) {
+        try {
+          const { ensureConnectors, connectorLine } = await import('./jam/connectors.ts')
+          const { jamLive } = await import('./jam/live.ts')
+          const results = ensureConnectors(root)
+          jamLive.connectors = results
+          const line = connectorLine(results)
+          if (line) console.log(line)
+        } catch (err) { console.log(`  jam: could not connect sessions - ${(err as Error).message}`) }
+      }
       // words on this Mac (spec 27 Part 4): the audio socket beside the canvas; the model loads on first use
       const { createSpeech, speechLive } = await import('./jam/audio.ts')
       // a session's talk (what is said between its captures) goes to its transcript, on this Mac

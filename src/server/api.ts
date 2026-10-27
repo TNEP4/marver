@@ -1110,7 +1110,57 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const r = await jamLive.session(b.action === 'wrapup'
           ? { action: 'wrapup', id: b.id, instructions: b.instructions, includeTalk: b.includeTalk !== false, tags: Number(b.tags) || 0, board: b.board }
           : { action: b.action, id: b.id })
+        // starting a session is the one switch (spec 29b): every Claude Code, Codex and Cursor session in the repo
+        // is connected - their hooks written now if they are missing
+        if (r.ok && b.action === 'start') {
+          const { ensureConnectors } = await import('./jam/connectors.ts')
+          const connectors = ensureConnectors(root)
+          jamLive.connectors = connectors
+          return json(res, 200, { ...r, connectors })
+        }
         return json(res, r.ok ? 200 : 409, r)
+      }
+      if (path === 'jam/run' && req.method === 'POST') {
+        // a session run's choice (spec 29b, Part 7): { batch, gen, action: again | background | drop } - applied
+        // only at that generation of its claim, whatever card it is shown on - owner only
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        const raw = await readBody(req)
+        if (raw == null) return json(res, 400, { error: 'body too large' })
+        let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+        if (!b || typeof b.batch !== 'string' || !Number.isInteger(b.gen) || !['again', 'background', 'drop'].includes(b.action)) return json(res, 400, { error: 'expected { batch, gen, action }' })
+        const { jamLive } = await import('./jam/live.ts')
+        if (!jamLive.runAct) return json(res, 409, { error: 'jam is not running here' })
+        const r = await jamLive.runAct(b.batch, b.gen, b.action)
+        jamLive.refresh?.()
+        return json(res, r.ok ? 200 : 409, r)
+      }
+      if (path === 'jam/prefs' && (req.method === 'GET' || req.method === 'POST')) {
+        // the start sheet's switches (spec 29b, Part 9): MCP servers and skills, your session's context,
+        // collaborators' words, the session that takes the work, a tool's connector on or off - owner only
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        const { readPrefs, writePrefs, validConnId } = await import('./jam/conn.ts')
+        const { ensureConnectors, present } = await import('./jam/connectors.ts')
+        const { jamLive } = await import('./jam/live.ts')
+        const tools = (['claude', 'codex', 'cursor'] as const).filter((a) => present(a))
+        if (req.method === 'GET') return json(res, 200, { prefs: readPrefs(root), tools, connectors: jamLive.connectors ?? [] })
+        const raw = await readBody(req)
+        if (raw == null) return json(res, 400, { error: 'body too large' })
+        let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+        if (!b || typeof b !== 'object') return json(res, 400, { error: 'expected { mcp?, skills?, context?, others?, pick?, tool? }' })
+        const p = readPrefs(root)
+        for (const k of ['mcp', 'skills', 'others'] as const) if (typeof b[k] === 'boolean') p[k] = b[k]
+        if (b.context === 'fork' || b.context === 'fresh') p.context = b.context
+        if (b.pick === null) delete p.pick
+        else if (validConnId(b.pick)) p.pick = b.pick
+        let force: ('claude' | 'codex' | 'cursor')[] = []
+        if (b.tool && ['claude', 'codex', 'cursor'].includes(b.tool.agent) && typeof b.tool.on === 'boolean') {
+          p.off = { ...(p.off ?? {}), [b.tool.agent]: !b.tool.on }
+          if (b.tool.on) { delete p.off[b.tool.agent as 'claude']; force = [b.tool.agent] }
+        }
+        writePrefs(root, p)
+        if (force.length) jamLive.connectors = ensureConnectors(root, { force })
+        jamLive.refresh?.()
+        return json(res, 200, { prefs: p, tools, connectors: jamLive.connectors ?? [] })
       }
       if (path === 'jam/capture-open' && req.method === 'POST') {
         // a capture of a session is open on this page (or no longer) - the record waits for it - owner only

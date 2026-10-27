@@ -8,7 +8,7 @@
 export type EventType = 'create' | 'reply' | 'edit' | 'resolve' | 'reopen' | 'react' | 'profile' | 'reanchor'
 
 // Live Jam: provenance stamped by the daemon on agent-authored events (who orchestrated the change).
-export interface AgentMeta { devUser?: string; harness?: string; model?: string; effort?: string }
+export interface AgentMeta { devUser?: string; harness?: string; model?: string; effort?: string; /** who ran it (spec 29b): the owner's session, a copy of it, or a fresh agent */ runner?: 'session' | 'fork' | 'fresh' }
 
 /** A person named in a comment (sharing v1.1). Splits exactly like `author`:
  *  canonical logs carry `email`, browser transports carry `id` (the same

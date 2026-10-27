@@ -16,6 +16,14 @@ export interface JamConfig {
   capture: 'confirm' | 'at-once'   // a capture waits for its read-back, or queues at `E` (default 'confirm')
   names: boolean               // a small fast model names each capture from its words as it lands (default true; Claude Code only)
   loc: boolean                 // stamp host elements in design files with data-mv-loc = file:line:col (default true)
+  // spec 29b: who runs a batch, and with what
+  runner: 'auto' | 'session' | 'background'   // your session first, then a copy of it, then a fresh agent (default 'auto')
+  session: boolean             // connect this repo's Claude Code, Codex and Cursor sessions (default true)
+  context: 'fork' | 'fresh'    // a background run copies your session (default 'fork')
+  mcp: boolean                 // background runs use your MCP servers (default true)
+  skills: boolean              // ...and your skills (default true)
+  others: boolean              // other people's words reach the agent (default false: the owner's only)
+  sessionMax: number           // runs one session holds at once (default 3)
 }
 export interface ShConfig {
   mode: 'studio' | 'embedded'
@@ -183,6 +191,13 @@ function resolveJam(v: unknown): JamConfig | ShConfig['jamOff'] {
     capture: pick<JamConfig['capture']>('capture', j.capture, (v) => v === 'confirm' || v === 'at-once', 'confirm', `'confirm' or 'at-once'`),
     loc: pick('loc', j.loc, bool, true, 'true or false'),
     names: pick('names', j.names, bool, true, 'true or false'),
+    runner: pick<JamConfig['runner']>('runner', j.runner, (v) => v === 'auto' || v === 'session' || v === 'background', 'auto', `'auto', 'session' or 'background'`),
+    session: pick('session', j.session, bool, true, 'true or false'),
+    context: pick<JamConfig['context']>('context', j.context, (v) => v === 'fork' || v === 'fresh', 'fork', `'fork' or 'fresh'`),
+    mcp: pick('mcp', j.mcp, bool, true, 'true or false'),
+    skills: pick('skills', j.skills, bool, true, 'true or false'),
+    others: pick('others', j.others, bool, false, 'true or false'),
+    sessionMax: pick('sessionMax', j.sessionMax, (v) => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 8, 3, 'a whole number from 1 to 8'),
   }
 }
 

@@ -15,7 +15,7 @@ import { captureFrames } from '../src/server/jam/capture.ts'
 import type { CaptureRecord, JamAdapter } from '../src/server/jam/types.ts'
 import type { JamConfig } from '../src/server/config.ts'
 
-const CFG: JamConfig = { agent: 'claude', concurrency: 3, subagents: true, proactive: false, chime: true, capture: 'confirm', loc: true, names: false }
+const CFG: JamConfig = { agent: 'claude', concurrency: 3, subagents: true, proactive: false, chime: true, capture: 'confirm', loc: true, names: false, runner: 'background', session: false, context: 'fresh', mcp: true, skills: true, others: true, sessionMax: 3 }
 const AGENT = fileURLToPath(new URL('./fixtures/jam-agent.cjs', import.meta.url))
 const OWNER = { email: 'nic@local', name: 'Nic' }
 const agent = (mode: unknown = 'ok', opts: Record<string, unknown> = {}): JamAdapter => ({

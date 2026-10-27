@@ -37,7 +37,7 @@ const dir = join(root, 'design', 'comments')
 mkdirSync(join(root, 'design', '.local'), { recursive: true })
 writeFileSync(join(root, 'design', '.local', 'profile.json'), JSON.stringify({ name: 'Live check', email: 'live@local' }))
 
-const cfg: JamConfig = { agent: which, concurrency: 6, subagents: false, proactive: false, chime: true, capture: 'confirm', loc: true, names: true }
+const cfg: JamConfig = { agent: which, concurrency: 6, subagents: false, proactive: false, chime: true, capture: 'confirm', loc: true, names: true, runner: 'background', session: false, context: 'fresh', mcp: true, skills: true, others: true, sessionMax: 3 }
 const jam = createJam(root, cfg, adapters[which], (m) => console.log(' ', m.trim()))
 
 const frameFile = (i: number) => join(root, 'design', 'scenes', 'demo', `hero-${i}.tsx`)

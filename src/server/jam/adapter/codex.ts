@@ -7,15 +7,41 @@
  * so a multi-frame job fans out the same way Claude Code's does. The job prompt only ever says
  * "you MAY", so an older codex without those tools simply works serially instead of failing.
  */
+import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { parseAgentText } from '../packet.ts'
 import type { JamAdapter } from '../types.ts'
+
+/** The MCP servers Codex would start here (`codex mcp list --json`: your config, the project's and plugins'), else
+ *  the ones your config file names - so a run with MCP off can turn each one off. */
+export function codexMcpServers(env: NodeJS.ProcessEnv = process.env): string[] {
+  try {
+    const out = execFileSync('codex', ['mcp', 'list', '--json'], { encoding: 'utf8', timeout: 15_000, stdio: ['ignore', 'pipe', 'ignore'], env })
+    const list = JSON.parse(out)
+    if (Array.isArray(list)) return [...new Set(list.map((x: { name?: unknown }) => x?.name).filter((n): n is string => typeof n === 'string' && /^[A-Za-z0-9_-]+$/.test(n)))]
+  } catch { /* an older codex: the config file */ }
+  let text = ''
+  try { text = readFileSync(join(env.CODEX_HOME || join(homedir(), '.codex'), 'config.toml'), 'utf8') } catch { return [] }
+  return [...new Set([...text.matchAll(/^\s*\[mcp_servers\.("?)([A-Za-z0-9_-]+)\1\]\s*$/gm)].map((m) => m[2]))]
+}
 
 export const codexAdapter: JamAdapter = {
   name: 'codex',
   supportsSubagents: true,
-  spawnArgs(goal) {
+  forks: true,
+  spawnArgs(goal, o) {
     // --skip-git-repo-check: the workspace may not be a git root; workspace-write jails edits.
-    return { cmd: 'codex', args: ['exec', '--json', '-s', 'workspace-write', '--skip-git-repo-check', goal] }
+    if (!o) return { cmd: 'codex', args: ['exec', '--json', '-s', 'workspace-write', '--skip-git-repo-check', goal] }
+    // Full power (spec 29b, Part 1): Codex's own automatic reviewer answers the approvals a headless run
+    // meets - an MCP call included, which `approval_policy = never` refuses - inside workspace-write.
+    // `--approve-for-me` is those three settings; `exec fork` takes them as config.
+    const review = ['-c', 'approvals_reviewer="auto_review"', '-c', 'approval_policy="on-request"', '-c', 'sandbox_mode="workspace-write"']
+    const mcpOff = o.mcp ? [] : codexMcpServers().flatMap((n) => ['-c', `mcp_servers.${n}.enabled=false`])
+    return o.fork
+      ? { cmd: 'codex', args: ['exec', 'fork', o.fork, '--json', '--skip-git-repo-check', ...review, ...mcpOff, goal] }
+      : { cmd: 'codex', args: ['exec', '--json', '--skip-git-repo-check', ...review, ...mcpOff, goal] }
   },
   earlyText(line) {
     try {
