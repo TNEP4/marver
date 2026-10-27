@@ -127,6 +127,8 @@ export class Segmenter {
     while (!this.vad.isEmpty()) {
       const raw = this.vad.front()
       this.vad.pop()
+      // (a segment with no audio - the VAD's buffer can hand one over after a long run of speech - is nothing to transcribe)
+      if (!raw?.samples?.length) continue
       // the VAD counts only what it heard: a stepped-over gap is added back (none is open across one)
       const seg = { start: raw.start + this.skipped, samples: raw.samples }
       // never before the capture's start, never across a forced cut or a long gap, never older than the history holds

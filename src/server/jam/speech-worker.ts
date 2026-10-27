@@ -1,5 +1,7 @@
 /**
- * The speech worker (spec 27, Part 4): a worker thread, so decoding never blocks the dev server. It
+ * The speech worker (spec 27, Part 4): a process of its own, so decoding never blocks the dev server - and a
+ * native crash in the engine (an ONNX error is a C++ exception no thread can catch) ends transcription, never
+ * the canvas (27 Oct: one took a whole canvas down mid-session). It also still runs as a worker thread. It
  * loads `sherpa-onnx-node` (an optional dependency) and the checked model once, then runs one Segmenter
  * per capture - Silero VAD for phrases, Parakeet v3 for words.
  *
@@ -13,8 +15,17 @@ import { parentPort, workerData } from 'node:worker_threads'
 import { Segmenter, RATE, WINDOW, type Recognized, type VadLike } from './speech-cut.ts'
 import type { ModelPaths } from './speech-models.ts'
 
-const port = parentPort!
-const paths = (workerData as { paths: ModelPaths }).paths
+// a child process (the dev server forks it) or a worker thread: the same messages either way
+const port: { postMessage(m: unknown): void; on(ev: 'message', f: (m: any) => void): void } = parentPort ?? {
+  postMessage: (m) => { try { process.send?.(m) } catch { /* the server went: nothing to tell */ } },
+  on: (ev, f) => { process.on(ev, f) },
+}
+const paths: ModelPaths = parentPort ? (workerData as { paths: ModelPaths }).paths : JSON.parse(process.env.MARVER_SPEECH_PATHS ?? '{}')
+// a forked engine ends with the server that forked it
+if (!parentPort) process.on('disconnect', () => process.exit(0))
+
+/** Shorter than this is no phrase at all: the recognizer is never handed it (an empty one crashed it, 27 Oct). */
+const MIN_SAMPLES = RATE / 10
 
 let sherpa: any
 let recognizer: any
@@ -43,6 +54,7 @@ const vadFor = (): VadLike => new sherpa.Vad({
 const turn = () => new Promise<void>((r) => setImmediate(r))
 const recognize = async (samples: Float32Array): Promise<Recognized> => {
   await turn()
+  if (samples.length < MIN_SAMPLES) return { tokens: [], timestamps: [], ms: 0 }
   // timed after its turn: the wait for it is the phrase's wait, not its transcription
   const t0 = performance.now()
   const s = recognizer.createStream()

@@ -18,7 +18,8 @@ import { randomBytes } from 'node:crypto'
 import { createRequire } from 'node:module'
 import type { IncomingMessage, Server } from 'node:http'
 import type { Duplex } from 'node:stream'
-import { Worker } from 'node:worker_threads'
+import { fork } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { WebSocketServer, type WebSocket } from 'ws'
 import { modelPaths, modelsReady } from './speech-models.ts'
 
@@ -88,6 +89,33 @@ export interface Speech {
  *  (the next capture loads it again in under a second). */
 const IDLE_MS = 10 * 60_000
 
+/** The speech engine as the service talks to it: the worker's messages in, its exit out. */
+interface Worker {
+  on(ev: 'message', f: (m: any) => void): unknown
+  on(ev: 'error', f: (err: Error) => void): unknown
+  on(ev: 'exit', f: (code: number | null) => void): unknown
+  postMessage(m: unknown, transfer?: unknown[]): void
+  terminate(): Promise<unknown>
+  unref(): void
+}
+
+/** The engine runs in a process of its own (27 Oct): ONNX raises its errors as C++ exceptions, which no thread can
+ *  catch - in a worker thread one aborted the whole canvas mid-session. In its own process the same error ends only
+ *  transcription; the service sees it go (`exit`), tells its captures they may be incomplete, and starts a fresh one
+ *  for the next capture. Typed arrays cross as they are (`serialization: 'advanced'`). */
+function engine(url: URL, paths: unknown): Worker {
+  const child = fork(fileURLToPath(url), [], {
+    serialization: 'advanced', execArgv: [], stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
+    env: { ...process.env, MARVER_SPEECH_PATHS: JSON.stringify(paths) },
+  })
+  return {
+    on: (ev: string, f: (...a: any[]) => void) => child.on(ev, f),
+    postMessage: (m) => { try { if (child.connected) child.send(m as object) } catch { /* it went: its exit says so */ } },
+    terminate: async () => { child.kill() },
+    unref: () => { child.unref(); (child as unknown as { channel?: { unref?: () => void } }).channel?.unref?.() },
+  } as Worker
+}
+
 export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: (t: TalkWords) => void
   /** each phrase's timing, and the model's load time once a start - numbers only (spec 27a Part D) */
   onTiming?: (t: { audioMs?: number; waitMs?: number; decodeMs?: number; backlogMs?: number; modelLoadMs?: number }) => void
@@ -128,7 +156,7 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
       if (missing) { unavailable = missing; return null }
       if (!(await ready_())) return null
       const url = opts.workerUrl ?? new URL(import.meta.url.endsWith('.ts') ? './speech-worker.ts' : './speech-worker.mjs', import.meta.url)
-      const w = new Worker(url, { workerData: { paths: modelPaths() } })
+      const w = engine(url, modelPaths())
       w.unref()
       return new Promise<Worker | null>((resolve) => {
         let settled = false
@@ -214,7 +242,7 @@ export function createSpeech(opts: { workerUrl?: URL; idleMs?: number; onTalk?: 
         const offset = buf.readUInt32LE(1 + n)
         const pcm = new Int16Array(buf.buffer.slice(buf.byteOffset + 1 + n + 4, buf.byteOffset + buf.length))
         c.sent = Math.max(c.sent, offset + pcm.length)
-        then(c, (w) => { if (!c.dropped) w.postMessage({ type: 'audio', capture: id, offset, pcm }, [pcm.buffer as ArrayBuffer]) })
+        then(c, (w) => { if (!c.dropped) w.postMessage({ type: 'audio', capture: id, offset, pcm }) })
         return
       }
       let m: any

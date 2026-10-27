@@ -55,6 +55,16 @@ describe('words: cutting phrases (no model)', () => {
     expect(w).toEqual([{ w: 'This', at: 1000 }, { w: 'badge.', at: 1000 + Math.round(0.24 * RATE) }])
   })
 
+  it('a segment with no audio (the VAD\'s buffer can hand one over after long speech) is never given to the recognizer (27 Oct: one crashed the canvas)', async () => {
+    const lengths: number[] = []
+    class EmptyOnce extends FakeVad { private sent = false; isEmpty() { return this.sent && super.isEmpty() } front() { return this.sent ? super.front() : { start: 0, samples: new Float32Array(0) } } pop() { if (this.sent) super.pop(); else this.sent = true } }
+    const seg = new Segmenter(new EmptyOnce(), async (x) => { lengths.push(x.length); return { tokens: [' ok'], timestamps: [0] } }, () => {})
+    seg.push(0, speech(RATE)); seg.push(RATE, silence(RATE))
+    await seg.end(2 * RATE)
+    expect(lengths.length).toBeGreaterThan(0)
+    expect(lengths.every((n) => n > 0)).toBe(true)
+  })
+
   it('a 40-second monologue with no pause is cut at 15 s by Marver', async () => {
     const phrases: number[] = []
     const seg = new Segmenter(new FakeVad(), async (s) => { phrases.push(s.length); return { tokens: [], timestamps: [] } }, () => {})
@@ -224,7 +234,7 @@ describe('words: one audio connection, refereed (no model needed)', () => {
     // a stand-in engine that holds each final back for half a second
     const d = mkdtempSync(join(tmpdir(), 'mv-slowworker-'))
     const slow = join(d, 'w.mjs')
-    writeFileSync(slow, "import { parentPort } from 'node:worker_threads'\nparentPort.postMessage({ type: 'ready' })\nparentPort.on('message', (m) => { if (m.type === 'end') setTimeout(() => parentPort.postMessage({ type: 'final', capture: m.capture }), 500) })\n")
+    writeFileSync(slow, "const parentPort = { postMessage: (m) => process.send(m), on: (e, f) => process.on(e, f) }\nprocess.on('disconnect', () => process.exit(0))\nparentPort.postMessage({ type: 'ready' })\nparentPort.on('message', (m) => { if (m.type === 'end') setTimeout(() => parentPort.postMessage({ type: 'final', capture: m.capture }), 500) })\n")
     const server: Server = createServer((_q, r) => { r.statusCode = 404; r.end() })
     const svc = createSpeech({ workerUrl: new URL(`file://${slow}`), modelsReady: async () => true, engineMissing: () => undefined })
     svc.attach(server)
@@ -263,7 +273,7 @@ describe('words: a session ending waits for its last words (no model needed)', (
     // a stand-in engine that holds each final back for 1.2 s; the ending waits 400 ms here
     const d = mkdtempSync(join(tmpdir(), 'mv-slowtalk-'))
     const slow = join(d, 'w.mjs')
-    writeFileSync(slow, "import { parentPort } from 'node:worker_threads'\nparentPort.postMessage({ type: 'ready' })\nparentPort.on('message', (m) => { if (m.type === 'end') setTimeout(() => parentPort.postMessage({ type: 'final', capture: m.capture }), 1200) })\n")
+    writeFileSync(slow, "const parentPort = { postMessage: (m) => process.send(m), on: (e, f) => process.on(e, f) }\nprocess.on('disconnect', () => process.exit(0))\nparentPort.postMessage({ type: 'ready' })\nparentPort.on('message', (m) => { if (m.type === 'end') setTimeout(() => parentPort.postMessage({ type: 'final', capture: m.capture }), 1200) })\n")
     const server: Server = createServer((_q, r) => { r.statusCode = 404; r.end() })
     const svc = createSpeech({ workerUrl: new URL(`file://${slow}`), talkWaitMs: 400, modelsReady: async () => true, engineMissing: () => undefined })
     svc.attach(server)
@@ -288,7 +298,7 @@ describe('words: a session ending waits for its last words (no model needed)', (
     // a stand-in engine that dies when a segment ends
     const d = mkdtempSync(join(tmpdir(), 'mv-deadtalk-'))
     const dead = join(d, 'w.mjs')
-    writeFileSync(dead, "import { parentPort } from 'node:worker_threads'\nparentPort.postMessage({ type: 'ready' })\nparentPort.on('message', (m) => { if (m.type === 'end') process.exit(3) })\n")
+    writeFileSync(dead, "const parentPort = { postMessage: (m) => process.send(m), on: (e, f) => process.on(e, f) }\nprocess.on('disconnect', () => process.exit(0))\nparentPort.postMessage({ type: 'ready' })\nparentPort.on('message', (m) => { if (m.type === 'end') process.exit(3) })\n")
     const server: Server = createServer((_q, r) => { r.statusCode = 404; r.end() })
     const heard: { session: string; words: { w: string; lost?: true }[] }[] = []
     const svc = createSpeech({ workerUrl: new URL(`file://${dead}`), talkWaitMs: 2000, onTalk: (t) => heard.push(t), modelsReady: async () => true, engineMissing: () => undefined })
@@ -458,7 +468,7 @@ describe.skipIf(!haveModel)('words: the model, on this Mac', () => {
   it('an engine that fails to start says why, and a yes tries it again (only the engine missing stays)', async () => {
     const d = mkdtempSync(join(tmpdir(), 'mv-failworker-'))
     const bad = join(d, 'w.mjs')
-    writeFileSync(bad, "import { parentPort } from 'node:worker_threads'\nparentPort.postMessage({ type: 'unavailable', reason: 'native module failed' })\n")
+    writeFileSync(bad, "const parentPort = { postMessage: (m) => process.send(m), on: (e, f) => process.on(e, f) }\nprocess.on('disconnect', () => process.exit(0))\nparentPort.postMessage({ type: 'unavailable', reason: 'native module failed' })\n")
     const svc = createSpeech({ workerUrl: new URL(`file://${bad}`) })
     try {
       await svc.state()                                    // starts it
