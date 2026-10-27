@@ -19,7 +19,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { StringDecoder } from 'node:string_decoder'
 import { tmpdir } from 'node:os'
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, watch as fsWatch, writeFileSync, type FSWatcher } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, watch as fsWatch, writeFileSync, type FSWatcher } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { toFrameId } from '../manifest.ts'
 import { appendEvents, readLog, replay, type CommentEvent } from '../comments.ts'
@@ -36,6 +36,7 @@ import { jamLive, type QueueView } from './live.ts'
 import type { Batch, Brief, Card, JamAdapter, JobPacket, Journal, Msg, Reanchor, Result } from './types.ts'
 import { CAPTURE_ID, captureFrames, captureWords, checkRecord, continues, firstPoint, picturePath, readCapture, storeCapture } from './capture.ts'
 import { createHash } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 import { logJam } from '../perf-jam.ts'
 import { has as ledgerHas, record as ledgerRecord } from './ledger.ts'
 import { buildWrapup, moreOf, readWrapup, recordFile, recordPathProblem, SESSION_ID, storeWrapup } from './session.ts'
@@ -322,8 +323,10 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   const marverCmd = (): { cmd: string; args: string[] } => {
     const bin = hookBin(root)
     if (bin) return { cmd: bin, args: [] }
-    const self = process.argv[1]
-    return self && /cli\.(mjs|ts)$/.test(self) ? { cmd: process.execPath, args: [self] } : { cmd: 'npx', args: ['--no-install', 'marver'] }
+    // this very package: dist/cli.mjs beside the bundle, or src/cli/index.ts from the source (Node runs TypeScript)
+    const here = dirname(fileURLToPath(import.meta.url))
+    const self = [join(here, 'cli.mjs'), join(here, '..', 'cli.mjs'), join(here, '..', '..', 'cli', 'index.ts')].find((f) => existsSync(f))
+    return self ? { cmd: process.execPath, args: [self] } : { cmd: 'npx', args: ['--no-install', 'marver'] }
   }
 
   // Session runs (spec 29b): the owner's session takes a batch with `marver jam next` and hands it back with `done`
