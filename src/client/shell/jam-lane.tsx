@@ -56,6 +56,7 @@ export interface LaneRecording {
   onMic?(): void
   onNote(): void
   onStop(): void
+  onStopReview(): void
 }
 
 /**
@@ -218,8 +219,9 @@ export function BetweenTile({ since, mic, onCapture }: LaneBetween) {
 }
 
 /** The capture recording now: a pulsing teal dot, "Capturing" and the timer over what it holds so far,
- *  then the Note button (N, with the count) and Stop (E). After E it reads "Finishing". */
-export function CaptureTile({ time, points, pictures = 0, picturesMax, steps, counts, notes, noteOn, finishing, mic, onMic, onNote, onStop }: LaneRecording) {
+ *  then the Note button (N, with the count), Stop to review (⇧E: its read-back opens) and Stop (E: queued at once).
+ *  After either it reads "Finishing". */
+export function CaptureTile({ time, points, pictures = 0, picturesMax, steps, counts, notes, noteOn, finishing, mic, onMic, onNote, onStop, onStopReview }: LaneRecording) {
   return (
     <div className={`jm-chip${finishing ? ' finishing' : ''}`} data-tile="capturing">
       {finishing ? <JamStateIcon state="confirming" /> : <i className="jm-live-dot" />}
@@ -243,7 +245,12 @@ export function CaptureTile({ time, points, pictures = 0, picturesMax, steps, co
       <button className={`notebtn${noteOn ? ' on' : ''}`} onClick={onNote} disabled={finishing} aria-pressed={noteOn}>
         <PencilSimpleIcon size={13} />Note{notes ? <b>{notes}</b> : null}<kbd>N</kbd>
       </button>
-      <button className="stop" onClick={onStop} disabled={finishing}>Stop<kbd>E</kbd></button>
+      <Tip label="Stop and look it over first - add notes, then queue it">
+        <button className="stop review" onClick={onStopReview} disabled={finishing}>Stop to review<kbd>⇧E</kbd></button>
+      </Tip>
+      <Tip label="Stop and queue it - the agent starts on it">
+        <button className="stop" onClick={onStop} disabled={finishing}>Stop<kbd>E</kbd></button>
+      </Tip>
     </div>
   )
 }

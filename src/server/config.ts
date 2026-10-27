@@ -13,7 +13,7 @@ export interface JamConfig {
   subagents: boolean           // fan-out one subagent per frame (default true)
   proactive: boolean           // P2, inert in v1: act on the owner's untagged backlog (default false)
   chime: boolean               // a soft chime once per batch that leaves a capture to review (default true)
-  capture: 'confirm' | 'at-once'   // a capture waits for its read-back, or queues at `E` (default 'confirm')
+  capture: 'confirm' | 'at-once'   // no longer used (0.28): E queues a capture, ⇧E stops to review it - still accepted
   names: boolean               // a small fast model names each capture from its words as it lands (default true; Claude Code only)
   loc: boolean                 // stamp host elements in design files with data-mv-loc = file:line:col (default true)
   // spec 29b: who runs a batch, and with what

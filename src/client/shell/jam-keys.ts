@@ -5,7 +5,7 @@
  *
  *   a read-back open      ⏎ confirm · K keep · R resume (it ended too soon) · Esc drop
  *   the notes card open   Esc closes the card · N puts the focus back in its field
- *   a capture open        E end · S says to end it first · N notes card · I picture · Esc drop
+ *   a capture open        E end (queued at once) · ⇧E end to review · S says to end it first · N notes card · I picture · Esc drop
  *   a review open         ⏎ looks good · ⇧⏎ more work · → later / next · ← back · B before/after ·
  *                         ⌥← ⌥→ frame tabs · Esc leave
  *   the lane has the keys ← → move · ⏎ open · ⌘⏎ do next · K keep · ⌫ drop · Esc leave
@@ -273,7 +273,8 @@ const rows = (): Row[] => {
     { // a capture open
       on: () => !!cap.current,
       keys: {
-        e: () => cap.end(),
+        e: () => cap.end(),                  // straight to the queue
+        'Shift+e': () => cap.end(true),      // stop to review: its read-back opens
         s: () => cap.start(),                // one at a time: it says to end this one first
         // L: laser picks - a pick inside a capture is its pick (frames forward it while interacting)
         // L: the pointer laser; ⌥L: inspect - a laser click inside a capture is its pick either way

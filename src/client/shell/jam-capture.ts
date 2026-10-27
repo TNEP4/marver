@@ -97,6 +97,7 @@ interface Cap {
   /** its timing (spec 27a Part D): when E was pressed, the wait for its last words, each picture's time, the missing ones */
   timing?: { endAt?: number; wordsMs?: number; pics: number[]; late: number; failed: number }
   shotFrames: string[]                     // frames pictured (or being pictured) in it: an automatic picture is taken once per frame
+  review?: boolean                         // ended with ⇧E: it waits for its read-back (E: queued once sealed)
   endShot?: boolean                        // its end pictures were asked for (once its steps were all in)
   inherited?: string[]                     // Resume: the frames the capture it continues was about (its card's)
   endSizes?: Record<string, { w: number; h: number; play?: true }>   // the sizes as they were at E (what it was about, then)
@@ -125,7 +126,8 @@ interface CaptureState {
   /** Start one - never while one records (it says so instead) */
   /** `session`: the session it belongs to, when the caller knows it before the queue shows it (Start) */
   start(reviewing?: Cap['reviewing'], session?: string): void
-  end(): void
+  /** E: it goes straight to the queue once it seals; ⇧E (`review`): its read-back opens to check and add to first */
+  end(review?: boolean): void
   drop(): void
   note(text: string): void
   setNoteOpen(open: boolean): void
@@ -782,7 +784,7 @@ function buildRecord(c: Cap, steps: Cap['steps'], interrupted = false): CaptureR
   const timeline = [...steps].sort((a, b) => a.at - b.at || (a.seq ?? 0) - (b.seq ?? 0)).map(({ seq: _s, src: _k, ...step }) => step as Step)
   return {
     format: 'marver.jam.capture', v: 1, id: c.id,
-    context: { canvas: location.host, board: c.board, ...(c.session ? { session: c.session } : {}), ...(c.reviewing ? { reviewing: c.reviewing } : {}), ...(c.resumes ? { resumes: c.resumes } : {}), ...(interrupted ? { interrupted: true as const } : {}) },
+    context: { canvas: location.host, board: c.board, ...(c.session ? { session: c.session } : {}), ...(c.reviewing ? { reviewing: c.reviewing } : {}), ...(c.resumes ? { resumes: c.resumes } : {}), ...(interrupted ? { interrupted: true as const } : {}), ...(c.review ? { review: true as const } : {}) },
     view: (timeline.find((x) => x.event === 'view') as Extract<Step, { event: 'view' }> | undefined)?.view ?? {},
     timeline, pictures: c.pictures, ...(() => { const sizes = sealedSizes(c); return Object.keys(sizes).length ? { sizes } : {} })(),
   }
@@ -964,9 +966,11 @@ export const useJamCapture = create<CaptureState>((set, get) => ({
     if (sessionEnding) { useStore.getState().toast('the session is being wrapped up - a moment'); return }
     begin(reviewing, undefined, session)
   },
-  end() {
+  end(review = false) {
     const id = get().current
     if (!id) return
+    // ⇧E: its record says so, and it waits for its read-back; E: the server queues it as soon as it is sealed
+    if (review) mutate((st) => { const x = st.caps[id]; if (x) x.review = true })
     set({ current: null, lastEnded: id })
     cancelDwell()
     drain(id)

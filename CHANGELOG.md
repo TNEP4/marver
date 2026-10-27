@@ -17,6 +17,19 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   frames, how to answer - not the whole prompt a spawned run gets. `design/AGENTS.md` gains a "Live Jam" section: the
   line is your request relayed by the canvas (Claude Code shows it as from another session), so the agent takes it as
   one. Run `npx marver init` once to get it.
+- **Two ways to stop a capture.** `E` stops it and queues it - the agent starts on it, nothing to confirm; `⇧E` (Stop
+  to review) opens its read-back to check it and add notes first, as before. Both are on the capture bar; `J` during a
+  capture still stops it to review. `jam.capture` is no longer used.
+- **"Looks good" is an answer, not more work.** Typed into More work, a note that only approves ("looks good", "perfect,
+  thanks") settles the review as Looks good - it no longer sent the capture back for a second run.
+- **Every ping names its request**: `Live Jam: new request from your Marver canvas - "Intro frame redesign" (1a2b3c4d)`.
+  Claude Code drops a message identical to the one before it from the same sender, so a second request at the same
+  count was never seen and went to a copy after 2 minutes. A listener whose package was upgraded under it hands over
+  to a fresh one on the new code. A capture sent back with More work leads its brief with your newest words.
+- **The session record goes to your session too**, like any request, instead of straight to a copy; and a copy that
+  runs what your session did not take says so: "Yours was busy · a copy is on it".
+- **A capture's pictures no longer time out behind a bake pass.** They render on a lane of their own; a canvas that
+  had just started (baking every frame) left captures with "no picture of ... - it took over 20 s".
 - **When your session cannot take a run, a copy of it does.** Claude Code and Codex runs Marver spawns copy your
   session (`--fork-session`, `exec fork`) - a person's session of this repo, never a headless one; a transcript over
   12 MB runs fresh. Outside a Jam session, tags go to such a copy.

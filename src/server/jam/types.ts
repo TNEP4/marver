@@ -104,7 +104,9 @@ export interface CaptureRecord {
      *  (every step before it is the draft's, moved up to close the pause) */
     resumes?: { id: string; at: number }
     /** sealed by its page leaving (0.26.1): as it stood, with a missing step - always a draft, even with `jam.capture: 'at-once'` */
-    interrupted?: true }
+    interrupted?: true
+    /** ended with ⇧E (Stop to review): it waits for its read-back; ended with E it is queued as soon as it is sealed */
+    review?: true }
   view: View; timeline: Step[]; pictures: string[]
   /** each frame it is about, at the size it was on screen (a device, or a custom width): its run is pictured
    *  before and after at that size */
@@ -206,6 +208,8 @@ export interface Batch {
   /** the decision taken when a session let it go (released, withdrawn, stopped for the background): it runs spawned,
    *  whatever routing says after - a restart in between honours it */
   handoff?: 'spawn'
+  /** why an offer to your session was taken back - the copy that runs it says so */
+  handoffWhy?: string
   /** what its spawned runs may use, fixed when it was first run (a restart runs it the same way) */
   power?: { mcp: boolean; skills: boolean }
   /** other people's words reached it (`jam.others` when it was formed) */

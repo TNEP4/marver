@@ -366,7 +366,7 @@ describe('a canvas that stops, another project on its port, the canvas back', ()
     // words typed and not sent (a comment, a Jam edit - here a field of the page's own) hold the reload too
     await browser.eval(s, `(() => { const t = document.createElement('textarea'); t.id = 'typed'; document.body.appendChild(t); t.value = 'not sent yet'; t.dispatchEvent(new Event('input', { bubbles: true })); return 1 })()`)
     // the capture ends and seals: what still holds the page is the words
-    await browser.eval(s, `__mvJamCapture.getState().end()`)
+    await browser.eval(s, `__mvJamCapture.getState().end(true)`)
     await browser.until(s, `!Object.keys(__mvJamCapture.getState().caps).length`, 60_000)
     await wait(2500)
     expect(await browser.eval(s, `window.__mark`)).toBe(2)

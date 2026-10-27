@@ -119,7 +119,7 @@ async function reviewOf(frameId: string): Promise<string> {
   const at = await ev(`(() => { const st = window.__mvStore.getState(); const k = st.nodes.find((n) => n.frame === ${JSON.stringify(frameId)}).key; const r = document.querySelector('.sh-node[data-node="' + k + '"]').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + Math.min(r.height / 2, 120) } })()`)
   await mouse(at.x, at.y, true)
   await until(`(window.__mvJamCapture.getState().caps[${JSON.stringify(id)}]?.steps ?? []).some((x) => x.event === 'click' && x.frame === ${JSON.stringify(frameId)})`, 5000)
-  await key('e')
+  await key('e', { shift: true })
   await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'draft')`, 60_000)
   await ev(`(() => { const q = window.__mvJamQueue.getState(); return q.act(q.cards.find((c) => c.id === ${JSON.stringify(id)}), 'confirm') })()`)
   await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'review')`, 90_000)
@@ -246,7 +246,7 @@ describe('the lane is readable over whatever is under it (0.26.1)', () => {
     await browser!.send('Emulation.setDeviceMetricsOverride', { width: 760, height: 900, deviceScaleFactor: 1, mobile: false }, s)
     try {
     await sleep(300)
-    for (let i = 0; i < 4; i++) { await key('s'); await until(`!!window.__mvJamCapture.getState().current`); await key('e'); await until(`!window.__mvJamCapture.getState().current && Object.keys(window.__mvJamCapture.getState().caps).length === 0`, 60_000) }
+    for (let i = 0; i < 4; i++) { await key('s'); await until(`!!window.__mvJamCapture.getState().current`); await key('e', { shift: true }); await until(`!window.__mvJamCapture.getState().current && Object.keys(window.__mvJamCapture.getState().caps).length === 0`, 60_000) }
     await until(`document.querySelector('.jm-lane-in').scrollWidth > document.querySelector('.jm-lane-in').clientWidth + 10`, 10_000)
     // nothing above a tile carries a mask (a mask would make it the tiles' backdrop root: no blur)
     const masked = await ev(`(() => { let el = document.querySelector('.jm-lane .jm-card'); const out = []; while (el) { const c = getComputedStyle(el); if ((c.maskImage && c.maskImage !== 'none') || (c.webkitMaskImage && c.webkitMaskImage !== 'none')) out.push(el.className); el = el.parentElement } return out })()`)

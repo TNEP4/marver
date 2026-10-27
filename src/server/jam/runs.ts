@@ -170,6 +170,13 @@ export function createRuns(d: RunsDeps): Runs {
 
   /** Write every connection's offers file: how many runs wait for it, the runs it must let go or carry on with, and
    *  a new generation when any of that is new. */
+  /** What a run is called in a ping: its card's name, else the owner's words, clipped. */
+  const titleOf = (b: Batch): string => {
+    const c = q.j.cards.find((x) => x.id === b.members[0]?.card)
+    const words = c?.name ?? c?.autoName ?? b.members[0]?.brief?.asks?.[0]?.body ?? (c?.kind === 'wrapup' ? 'Session record' : 'a request')
+    const t = String(words).replace(/@marver\b/gi, '').replace(/\s+/g, ' ').trim() || 'a request'
+    return t.length > 60 ? `${t.slice(0, 59)}…` : t
+  }
   const publish = () => {
     const by = new Map<string, string[]>()
     const stops = new Map<string, string[]>()
@@ -192,7 +199,10 @@ export function createRuns(d: RunsDeps): Runs {
       if (!newOffer && !newWord && prev?.n === now.size) continue
       // a generation never goes back, across restarts too: the listener posts once per generation it has not seen
       const gen = newOffer || (newWord && (stop.length || resume.length)) ? Math.max((prev?.gen ?? 0) + 1, Date.now()) : prev?.gen ?? 0
-      try { writeOffers(root, id, { n: now.size, gen, ...(stop.length ? { stop } : {}), ...(resume.length ? { resume } : {}) }) } catch { /* its listener looks again */ }
+      // the newest offer named: the batch offered last
+      const newest = open().filter((b) => b.offer?.conn === id).sort((x, y) => (y.offer!.at - x.offer!.at))[0]
+      const latest = newest ? { id: newest.batchId.slice(0, 8), title: titleOf(newest) } : undefined
+      try { writeOffers(root, id, { n: now.size, gen, ...(stop.length ? { stop } : {}), ...(resume.length ? { resume } : {}), ...(latest ? { latest } : {}) }) } catch { /* its listener looks again */ }
     }
   }
 
@@ -223,6 +233,7 @@ export function createRuns(d: RunsDeps): Runs {
       const b = byId(id)
       if (!b?.offer) return false
       delete b.offer; letGo(b)
+      if (b.handoff) b.handoffWhy = why
       q.persist()
       return true
     })

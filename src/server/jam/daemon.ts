@@ -41,6 +41,7 @@ import { logJam } from '../perf-jam.ts'
 import { has as ledgerHas, record as ledgerRecord } from './ledger.ts'
 import { buildWrapup, moreOf, readWrapup, recordFile, recordPathProblem, SESSION_ID, storeWrapup } from './session.ts'
 import { sessionBrief } from './session-brief.ts'
+import { isApproval } from '../../shared/approval.ts'
 import { createRuns, handleOf, type AgentRun, type Choice, type Runs } from './runs.ts'
 import { connDir, readConn } from './conn.ts'
 import { reqDir } from './transport.ts'
@@ -348,7 +349,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     },
     say: (b) => ensureEarly(b),
     ready: () => ready,
-    jamOn: () => !!q.j.session,
+    // the session record a wrap-up queues belongs to the session it closes: it goes to your session too
+    jamOn: () => !!q.j.session || q.j.cards.some((c) => c.kind === 'wrapup' && (c.state === 'queued' || c.state === 'working')),
     canSpawn: (agent) => Object.hasOwn(AGENT_BIN, agent) && onPath(AGENT_BIN[agent as JamAgent]),
   })
 
@@ -760,7 +762,14 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       if (!sessionRan) {
         const ch: { kind: 'fork' | 'fresh'; agent: string; session?: string; why?: string } = spawnedBefore
           ? { kind: spawnedBefore.kind as 'fork' | 'fresh', agent: spawnedBefore.agent, ...(spawnedBefore.session ? { session: spawnedBefore.session } : {}), ...(spawnedBefore.why ? { why: spawnedBefore.why } : {}) }
-          : (() => { const pick = runs.choose(b, Date.now(), true); return pick.kind === 'fork' || pick.kind === 'fresh' ? pick : { kind: 'fresh' as const, agent: cfg.agent } })()
+          : (() => {
+            const pick = runs.choose(b, Date.now(), true)
+            const p = pick.kind === 'fork' || pick.kind === 'fresh' ? pick : { kind: 'fresh' as const, agent: cfg.agent }
+            // offered to your session first and taken back: the copy says why it, not your session, runs it
+            const why = b.handoffWhy === 'not taken in 2 minutes' || b.handoffWhy === 'its turn ended without taking it' ? "your session didn't take it - it was busy or away"
+              : b.handoffWhy === 'the Jam session ended' ? 'the Jam session had ended' : undefined
+            return why && !('why' in p && p.why) ? { ...p, why } : p
+          })()
         const agent = (Object.hasOwn(adapters, ch.agent) ? ch.agent : cfg.agent) as JamAgent
         const ad = agent === cfg.agent ? adapter : adapters[agent]
         const s = { mcp: b.power?.mcp ?? true, skills: b.power?.skills ?? true }
@@ -1253,9 +1262,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     ledgerRecord(root, rec.context.board, `capture:${rec.id}:${stored.hash}`)
     const card = await q.lock((j) => { const c = addCapture(j, rec, stored.hash); q.persist(); return structuredClone(c) })
     queueChanged()
-    // `jam.capture: 'at-once'`: no read-back - queued as soon as it is sealed; one its page sealed as it left is
-    // unfinished, and waits for its read-back like any draft
-    if (cfg.capture === 'at-once' && card.state === 'draft' && !rec.context.interrupted) return confirm(card.id, card.rev, 'queued')
+    // ended with E: no read-back - queued as soon as it is sealed. Ended with ⇧E (Stop to review), or sealed by its
+    // page leaving (unfinished), it waits for its read-back as a draft
+    if (card.state === 'draft' && !rec.context.interrupted && !rec.context.review) return confirm(card.id, card.rev, 'queued')
     return { ok: true, card }
   }
 
@@ -1484,6 +1493,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       }
       if (c?.kind === 'capture' && (action === 'confirm' || (action === 'keep' && (c.state === 'draft' || c.state === 'confirming')))) return confirm(id, rev, action === 'confirm' ? 'queued' : 'kept')
       if (action === 'good' && c && c.kind !== 'comment') return good(id, rev)
+      // a More-work note that only approves ("looks good") settles the review - it never runs the work again
+      if (action === 'more' && c && c.kind !== 'comment' && c.state === 'review' && isApproval(body ?? '')) return good(id, rev)
       if (action === 'more' && c && c.kind !== 'comment') return moreWork(id, rev, body ?? '')
       // Retry on a card whose results are saved but were never posted posts them - it never reruns
       const saved = await q.lock((j) => {

@@ -152,10 +152,10 @@ describe('hooks: the right host, the right answer', () => {
     expect(await hook('codex', 'prompt', { ...base, hook_event_name: 'UserPromptSubmit' }, {})).toBeNull()
     expect(readConn(root, id)?.busy).toBe(true)
     expect(await hook('codex', 'stop', { ...base, hook_event_name: 'Stop' }, {})).toBeNull()   // nothing offered
-    writeFileSync(join(root, 'design', '.local', 'jam', 'conn', `${id}.offers`), JSON.stringify({ n: 1, gen: 5 }))
+    writeFileSync(join(root, 'design', '.local', 'jam', 'conn', `${id}.offers`), JSON.stringify({ n: 1, gen: 5, latest: { id: 'ab12cd34', title: 'Intro frame redesign' } }))
     const stop = await hook('codex', 'stop', { ...base, hook_event_name: 'Stop' }, {}) as any
     expect(stop.decision).toBe('block')
-    expect(stop.reason).toContain('1 new request')
+    expect(stop.reason).toContain('new request from your Marver canvas - "Intro frame redesign" (ab12cd34)')
     expect(await hook('codex', 'stop', { ...base, hook_event_name: 'Stop', stop_hook_active: true }, {})).toBeNull()   // once per offer
     // a run Marver spawned never connects, whatever hook it carries
     expect(await hook('codex', 'start', { ...base, session_id: randomUUID(), hook_event_name: 'SessionStart' }, { MARVER_JAM_BACKGROUND: '1' })).toBeNull()
@@ -255,6 +255,19 @@ describe('which session a copy is made of', () => {
 })
 
 describe('session runs in the daemon', { timeout: 30_000 }, () => {
+  it('the session record a wrap-up queues goes to your session too, though the Jam session just ended', async () => {
+    const s = await setup({ jam: false })
+    const id = SESSION()
+    await s.jam.session({ action: 'start', id })
+    const w = await s.jam.session({ action: 'wrapup', id, instructions: 'x', includeTalk: false, tags: 0, board: 'home' })
+    expect(w.ok).toBe(true)
+    const t = s.jam.tick()
+    expect(await until(() => (readOffers(s.root, s.conn.id)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
+    expect(readOffers(s.root, s.conn.id)?.latest?.title).toBe('Session record')
+    s.jam.stop(); await t.catch(() => {})
+    s.done()
+  })
+
   it('a tag during a Jam session goes to the session: offered, next, say once, done - delivered as the session\'s', async () => {
     const s = await setup()
     tag(s.root, s.dir)

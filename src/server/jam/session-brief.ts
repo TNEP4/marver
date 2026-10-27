@@ -14,10 +14,17 @@ const clip = (s: string, n = LINE) => { const t = s.replace(/\s+/g, ' ').trim();
 export function sessionBrief(packet: JobPacket, handle: string, as?: string): string {
   const jam = (op: string, rest = '') => `npx marver jam ${op} ${handle}${as ? ` --as ${as}` : ''}${rest}`
   const one = packet.members.length === 1
-  const asks = packet.members.map((m) => {
-    const said = m.brief.capture ? captureWords(m.brief.capture.record, m.brief.capture.edited) : m.brief.asks.map((a) => a.body).join(' / ')
-    const what = m.brief.wrapup ? 'the session record' : m.brief.capture ? 'a voice capture' : 'a tag'
-    return `- ${one ? '' : `${m.id}, `}${what} on ${m.frames.join(', ') || 'the board'}: "${clip(sanitize(said, 4096)) || '(no words - see the packet)'}"`
+  const asks = packet.members.flatMap((m) => {
+    const where = m.frames.join(', ') || 'the board'
+    const head = one ? '' : `${m.id}, `
+    const quote = (t: string, n?: number) => `"${clip(sanitize(t, 4096), n) || '(no words - see the packet)'}"`
+    const asked = m.brief.asks.map((a) => a.body).join(' / ')
+    if (m.brief.wrapup) return [`- ${head}the session record: ${quote(asked || 'write the session record - the packet holds the captures')}`]
+    if (!m.brief.capture) return [`- ${head}a tag on ${where}: ${quote(asked)}`]
+    const said = captureWords(m.brief.capture.record, m.brief.capture.edited)
+    // a capture sent back with More work: the owner's newest words lead; what was first said is context
+    if (asked) return [`- ${head}more work on ${where}, the owner's newest words: ${quote(m.brief.asks[m.brief.asks.length - 1]!.body)}`, `  (the capture it follows, done before: ${quote(said, 160)})`]
+    return [`- ${head}a voice capture on ${where}: ${quote(said)}`]
   })
   return [
     `Live Jam run ${handle} - the owner's request from the canvas.`,

@@ -117,7 +117,7 @@ export function pressJ() {
   if (!ui.sheet && stoppedFor('Jam needs the canvas running')) return
   if (!useJamQueue.getState().session) { ui.setSheet(ui.sheet === 'start' ? null : 'start'); return }
   if (ui.sheet === 'wrap' || ui.sheet === 'wrap-pending') { ui.setSheet(null); return }
-  if (useJamCapture.getState().current) { useJamCapture.getState().end(); ui.setSheet('wrap-pending'); return }
+  if (useJamCapture.getState().current) { useJamCapture.getState().end(true); ui.setSheet('wrap-pending'); return }
   ui.setSheet('wrap')
 }
 

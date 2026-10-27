@@ -59,7 +59,7 @@ function Scene() {
   const [more, setMore] = useState(q.get('more') === '1')
   const [draft, setDraft] = useState(q.get('draft') ?? '')
   const recording = scene === 'lane' || scene === 'notes' || scene === 'marks'
-    ? { time: '0:14', points: 3, pictures: 1, steps: 5, notes: scene === 'notes' ? 2 : 1, noteOn: scene === 'notes', onNote() {}, onStop() {} } : undefined
+    ? { time: '0:14', points: 3, pictures: 1, steps: 5, notes: scene === 'notes' ? 2 : 1, noteOn: scene === 'notes', onNote() {}, onStop() {}, onStopReview() {} } : undefined
   const tiles = [...(many ? MORE : []), ...TILES]
   return (
     <>

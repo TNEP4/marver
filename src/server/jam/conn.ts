@@ -144,7 +144,9 @@ export const eligible = (c: Conn, now = Date.now()): boolean =>
 // ---- offers: what the daemon has for a connection -----------------------------------------------
 
 /** `n`: runs offered to it now; `gen`: grows with every new offer - a listener or a Stop hook acts once per gen. */
-export interface Offers { n: number; gen: number; stop?: string[]; resume?: string[] }
+/** `latest`: the newest run offered - its short id and what it is called, so every ping reads differently (Claude Code
+ *  drops a message identical to the one before it from the same sender) */
+export interface Offers { n: number; gen: number; stop?: string[]; resume?: string[]; latest?: { id: string; title: string } }
 
 export function writeOffers(root: string, id: string, o: Offers): void {
   if (!validConnId(id)) return

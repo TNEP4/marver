@@ -32,7 +32,7 @@ const put = (rel: string, body: string | object) => {
 }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const until = (expr: string, ms = 20_000) => browser!.until(s, expr, ms)
-const key = (k: string) => browser!.press(s, k)
+const key = (k: string, shift = false) => browser!.press(s, k, { shift })
 /** with MARVER_SHOT_DIR set, a picture of the page */
 const pic = async (name: string) => {
   if (!process.env.MARVER_SHOT_DIR) return
@@ -126,7 +126,7 @@ describe.skipIf(!haveModel)('words in the browser', () => {
     await until(`/plan badge/.test(document.querySelector('[data-jam-caption]')?.textContent ?? '')`, 30_000)
     await pic('2-caption')
     await sleep(1000)
-    await key('e')
+    await key('e', true)
     await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'draft')`, 30_000)
     const rec = await browser.eval(s, `fetch('/__mv/api/jam/capture?id=${id}', { headers: { 'x-mv-c': (/(?:^|;\\s*)mv_c=([\\w-]+)/.exec(document.cookie) || [])[1] || '' } }).then((r) => r.json())`)
     const words = rec.record.timeline.filter((x: any) => x.event === 'words')

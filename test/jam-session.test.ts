@@ -38,7 +38,7 @@ const SES = 'ses-1792399514739-abcd12'
 const capId = () => `cap-${Date.now() + n++}-${Math.random().toString(36).slice(2, 8)}`
 const rec = (words: string, session?: string): CaptureRecord => ({
   format: 'marver.jam.capture', v: 1, id: capId(),
-  context: { canvas: 'test', board: 'home', ...(session ? { session } : {}) },
+  context: { canvas: 'test', board: 'home', review: true, ...(session ? { session } : {}) },
   view: { board: 'home', frames: ['demo/a'], theme: 'light' },
   timeline: [{ at: 1_000_000, event: 'view', view: { frames: ['demo/a'] } }, { at: 1_001_000, event: 'note', text: words }],
   pictures: [],
@@ -47,7 +47,7 @@ const card = (jam: { snapshot(): any }, id: string) => jam.snapshot().cards.find
 const packets = (root: string) => existsSync(join(root, 'packets-seen.jsonl')) ? readFileSync(join(root, 'packets-seen.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : []
 
 describe('sessions: review fixes', () => {
-  it('a capture its page sealed as it left stays a draft, even with jam.capture at-once (0.26.1); a whole one is queued', async () => {
+  it('a capture its page sealed as it left stays a draft, even ended with E (0.26.1); a whole one ended with E is queued', async () => {
     const { root, done } = setup()
     const jam = createJam(root, { ...CFG, capture: 'at-once', concurrency: 1 }, agent('ok', { hang: true }))
     const cut = rec('the page closed on this one')
@@ -58,6 +58,7 @@ describe('sessions: review fixes', () => {
     // sent again (another page had it too): the same record, taken as landed
     expect((await jam.capture(structuredClone(cut)) as any).ok).toBe(true)
     const whole = rec('a whole one')
+    delete ((whole.context) as any).review   // ended with E: queued as it lands
     await jam.capture(whole)
     expect(card(jam, whole.id).state).not.toBe('draft')
     jam.stop()
@@ -241,6 +242,7 @@ describe('sessions: review fixes', () => {
     record(root, 'home', 'etag31')
     await jam.poke()
     const r = rec('queued behind it', SES)
+    delete ((r.context) as any).review   // ended with E: queued as it lands
     await jam.capture(r)
     expect(card(jam, r.id).state).toBe('queued')
     expect(jam.tags(SES)).toBe(1)
@@ -270,6 +272,7 @@ describe('sessions: review fixes', () => {
     })
     await jam.session({ action: 'start', id: SES })
     const r = rec('sent again after a reload', SES)
+    delete ((r.context) as any).review   // ended with E: queued as it lands
     r.timeline.push({ at: 1_002_000, frame: 'demo/a', event: 'click', point: 1, mode: 'canvas', bundle: { tag: 'button', quote: 'Save' } } as any)   // its pin is looked up
     const landing = jam.capture(r)                                     // no captureOpen from any page
     await new Promise((res) => setTimeout(res, 50))

@@ -1221,7 +1221,8 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const vp = typeof b.viewport === 'string' ? opts.viewports?.[b.viewport] : undefined
         const dim = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : undefined)
         const size = dim(b.w) ? { w: dim(b.w), h: dim(b.h) } : vp ? { w: vp.width, h: vp.height } : undefined
-        const r = await shootFrame({ root, viewports: opts.viewports ?? {}, frameId: b.frame, theme, origin, ...(size ? { size } : {}) })
+        // on a lane of its own: a bake pass on the shot lane would hold it past the capture's 20 s wait
+        const r = await shootFrame({ root, viewports: opts.viewports ?? {}, frameId: b.frame, theme, origin, lane: 'picture', ...(size ? { size } : {}) })
         if (!r.ok) return json(res, r.error.startsWith('unknown frame') ? 404 : 503, { error: r.error })
         sweepPictures(root)
         const unchecked = /not checked for a stale surface/.test(r.note ?? '')

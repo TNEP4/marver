@@ -10,12 +10,13 @@
  * The session's commands reach the daemon through files (transport.ts) - a sandbox that blocks
  * localhost cannot stop them. A hook never fails its host: an error prints nothing and exits 0.
  */
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync, statSync, watch } from 'node:fs'
 import { createConnection } from 'node:net'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
-import { connId, endConn, listConns, offersFile, pidAlive, readConn, readOffers, readPrefs, upsertConn, type Conn, type ConnAgent } from '../server/jam/conn.ts'
+import { connId, endConn, listConns, offersFile, pidAlive, readConn, readOffers, readPrefs, upsertConn, type Conn, type ConnAgent, type Offers } from '../server/jam/conn.ts'
 import { request, type Op } from '../server/jam/transport.ts'
+import { fileURLToPath } from 'node:url'
 import { NAME } from './name.ts'
 
 /** The repo a hook or a session works in: the nearest folder above `from` with a design/ that marver made. */
@@ -68,7 +69,8 @@ function ancestor(name: RegExp, from = process.ppid): number | undefined {
 // (design/AGENTS.md says what Live Jam is; in Claude Code the inbox shows these as sent by another session.)
 const STOP_LINE = (handles: string[], as?: string) => `Live Jam: the owner moved ${handles.join(', ')} elsewhere - stop working on ${handles.length === 1 ? 'it' : 'them'} and run ${handles.map((h) => `\`npx ${NAME} jam release ${h}${as ? ` --as ${as}` : ''}\``).join(', ')}.`
 const RESUME_LINE = (handles: string[], as?: string) => `Live Jam: the owner gave ${handles.join(', ')} back to you - carry on, and run ${handles.map((h) => `\`npx ${NAME} jam progress ${h}${as ? ` --as ${as}` : ''}\``).join(', ')}.`
-const READY_LINE = (n: number, as?: string) => `Live Jam: ${n === 1 ? '1 new request' : `${n} new requests`} from your Marver canvas - run \`npx ${NAME} jam next${as ? ` --as ${as}` : ''}\`${n === 1 ? '' : ' for each'}.`
+// named, so no two pings read the same: Claude Code drops a message identical to the one before it from the same sender
+const READY_LINE = (n: number, as?: string, latest?: Offers['latest']) => `Live Jam: ${n === 1 ? 'new request' : `${n} new requests`} from your Marver canvas${latest ? ` - ${n === 1 ? '' : 'newest '}"${latest.title}" (${latest.id})` : ''} - run \`npx ${NAME} jam next${as ? ` --as ${as}` : ''}\`${n === 1 ? '' : ' for each'}.`
 const CONNECTED_LINE = (as?: string) => `This session is connected to Marver's Live Jam: the owner's requests from the design canvas (their @marver tags and voice captures) come to you as "Live Jam: ... new request" - take each with \`npx ${NAME} jam next${as ? ` --as ${as}` : ''}\` (design/AGENTS.md, "Live Jam").`
 
 // ---- the hooks ---------------------------------------------------------------------------------------
@@ -129,10 +131,10 @@ export async function hook(agent: string, event: string, input: Record<string, a
     const offers = readOffers(root, id)
     const stops = `${offers?.stop?.length ? ` ${STOP_LINE(offers.stop)}` : ''}${offers?.resume?.length ? ` ${RESUME_LINE(offers.resume)}` : ''}`
     if (start) return { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: CONNECTED_LINE() } }
-    if (event === 'prompt') return offers?.n || stops ? { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: `${offers?.n ? READY_LINE(offers.n) : ''}${stops}`.trim() } } : null
+    if (event === 'prompt') return offers?.n || stops ? { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: `${offers?.n ? READY_LINE(offers.n, undefined, offers.latest) : ''}${stops}`.trim() } } : null
     if (event === 'stop' && offers && (offers.n || offers.stop?.length || offers.resume?.length) && offers.gen > (c.acted ?? 0)) {
       upsertConn(root, 'codex', session, { acted: offers.gen, busy: true }, now)
-      return { decision: 'block', reason: `${offers.n ? READY_LINE(offers.n) : ''}${stops}`.trim() }
+      return { decision: 'block', reason: `${offers.n ? READY_LINE(offers.n, undefined, offers.latest) : ''}${stops}`.trim() }
     }
     return null
   }
@@ -147,7 +149,7 @@ export async function hook(agent: string, event: string, input: Record<string, a
   if (event === 'prompt') return { continue: true }
   if (event === 'stop' && offers && (offers.n || offers.stop?.length || offers.resume?.length) && offers.gen > (c.acted ?? 0)) {
     upsertConn(root, 'cursor', session, { acted: offers.gen, busy: true }, now)
-    return { followup_message: `${offers.n ? READY_LINE(offers.n, c.id) : ''}${stops}`.trim() }
+    return { followup_message: `${offers.n ? READY_LINE(offers.n, c.id, offers.latest) : ''}${stops}`.trim() }
   }
   return null
 }
@@ -157,6 +159,16 @@ export async function hook(agent: string, event: string, input: Record<string, a
 /** One listener per Claude Code process (spec 29b, Part 5): registers the session, wakes it through
  *  its inbox when runs are offered, and exits with it. Started by both hooks; a second start hands
  *  over the current session id and exits. */
+/** The version of the package this code came from, read from disk now - the first package.json above this file. */
+export function installedVersion(from = dirname(fileURLToPath(import.meta.url))): string | null {
+  // tests point it at a package.json of their own
+  if (process.env.MARVER_JAM_PKG) { try { return String(JSON.parse(readFileSync(process.env.MARVER_JAM_PKG, 'utf8')).version ?? '') || null } catch { return null } }
+  for (let d = from; ; d = dirname(d)) {
+    try { return String(JSON.parse(readFileSync(join(d, 'package.json'), 'utf8')).version ?? '') || null } catch { /* go up */ }
+    if (dirname(d) === d) return null
+  }
+}
+
 export async function listenCommand(rootOpt?: string): Promise<void> {
   const env = process.env
   // never in a run Marver spawned, a Grok session, or a headless Claude Code run (`-p`, the SDK): only a person's session
@@ -177,14 +189,17 @@ export async function listenCommand(rootOpt?: string): Promise<void> {
     return
   }
   if (!claimListener(root, claudePid, { pid: process.pid, session, ...(mode ? { mode } : {}) })) return
-  const parent = process.ppid
+  // a listener started again by its predecessor after an upgrade has no hook for a parent: Claude Code alone holds it
+  const parent = env.MARVER_JAM_RELISTEN === '1' ? null : process.ppid
+  const version = installedVersion()
   let current = session
   // a new incarnation (a new key, nothing the last one held still signs) only for a new process, or one that ended: a
   // listener restarted for the same Claude Code process keeps the registration, and the runs it holds
   const prev = readConn(root, connId('claude', current))
   let conn: Conn = upsertConn(root, 'claude', current, { pid: claudePid, cwd: root, mode, busy: false }, Date.now(), !prev || prev.pid !== claudePid || !!prev.ended)
   // nothing posted yet: offers that wait for this session already are said at once
-  let posted = 0
+  // (a listener started again after an upgrade carries on from what its predecessor already said)
+  let posted = Number(env.MARVER_JAM_POSTED) || 0
   let said = '[[],[]]'
   /** Post one message to the session's inbox: true once it is written (a failure is tried again next look). */
   const post = (text: string) => new Promise<boolean>((res) => {
@@ -202,11 +217,22 @@ export async function listenCommand(rootOpt?: string): Promise<void> {
   // that is merely stopped (a signal, another one taking over) leaves it, so the runs it holds keep their key
   const quit = (over: boolean) => { if (over) endConn(root, conn.id, conn.inc); releaseListener(root, claudePid, process.pid); process.exit(0) }
   process.on('SIGTERM', () => quit(!pidAlive(claudePid))); process.on('SIGINT', () => quit(!pidAlive(claudePid))); process.on('SIGHUP', () => quit(!pidAlive(claudePid)))
+  const relisten = () => {
+    releaseListener(root, claudePid, process.pid)
+    try {
+      const child = spawn(process.execPath, [...process.execArgv, ...process.argv.slice(1)], { detached: true, stdio: ['pipe', 'ignore', 'ignore'], env: { ...env, MARVER_JAM_RELISTEN: '1', MARVER_JAM_POSTED: String(posted) } })
+      child.stdin!.end(JSON.stringify({ ...input, session_id: current, ...(conn.mode ? { permission_mode: conn.mode } : {}) }))
+      child.unref()
+    } catch { /* the next hook starts one */ }
+    process.exit(0)
+  }
   const look = async () => {
     // it ends with its Claude Code process (S29-5: an orphan would outlive the session)
-    if (!pidAlive(claudePid) || process.ppid !== parent || !existsSync(join(root, 'design')) || readPrefs(root).off?.claude) return quit(!pidAlive(claudePid) || !!readPrefs(root).off?.claude)
+    if (!pidAlive(claudePid) || (parent !== null && process.ppid !== parent) || !existsSync(join(root, 'design')) || readPrefs(root).off?.claude) return quit(!pidAlive(claudePid) || !!readPrefs(root).off?.claude)
     const l = readListener(root, claudePid)
     if (l && l.pid !== process.pid) return quit(false)   // another took over (a stale lock, cleared): never two
+    // the package was upgraded under it: a fresh listener on the new code takes over, with this session (the lock let go first)
+    if (version && installedVersion() !== version) return relisten()
     if (l && (l.session !== current || l.mode !== conn.mode)) {
       if (l.session !== current) { endConn(root, conn.id, conn.inc); current = l.session; posted = 0; said = '[[],[]]' }
       conn = upsertConn(root, 'claude', current, { pid: claudePid, cwd: root, mode: l.mode, busy: false }, Date.now(), l.session !== conn.session)
@@ -216,7 +242,7 @@ export async function listenCommand(rootOpt?: string): Promise<void> {
     const o = readOffers(root, conn.id)
     if (!o || o.gen <= posted) return
     const words = JSON.stringify([o.stop ?? [], o.resume ?? []])
-    const lines = [o.n > 0 ? READY_LINE(o.n) : '', words !== said && o.stop?.length ? STOP_LINE(o.stop) : '', words !== said && o.resume?.length ? RESUME_LINE(o.resume) : ''].filter(Boolean)
+    const lines = [o.n > 0 ? READY_LINE(o.n, undefined, o.latest) : '', words !== said && o.stop?.length ? STOP_LINE(o.stop) : '', words !== said && o.resume?.length ? RESUME_LINE(o.resume) : ''].filter(Boolean)
     // marked said only once it reached the inbox: a failed post is tried again at the next look
     if (!lines.length || await post(lines.join(' '))) { posted = o.gen; said = words }
   }

@@ -21,7 +21,7 @@ export function runnerLine(c: JamCard, name: (agent: string) => string, now = Da
     if (r.state === 'stopping') return { head: `Stopping - waiting for your ${who} session to let go`, detail: 'Its frames stay reserved until it does' }
     return { head: `Your ${who} session is on it · ${clock(now - c.at)}` }
   }
-  if (r.kind === 'fork') return { head: `A copy of your ${who} session is on it · ${clock(now - c.at)}`, detail: 'With your conversation, tools, MCP servers and skills' }
+  if (r.kind === 'fork') return { head: `A copy of your ${who} session is on it · ${clock(now - c.at)}`, detail: r.why ? `${r.why[0]!.toUpperCase()}${r.why.slice(1)} - a copy with your conversation, tools, MCP servers and skills took it` : 'With your conversation, tools, MCP servers and skills' }
   return { head: `Agent working · ${clock(now - c.at)} - ${who}`, ...(r.why ? { detail: r.why } : {}) }
 }
 
@@ -56,7 +56,7 @@ export function laneLine(c: LaneCard, now = Date.now()): string {
       // who runs it (spec 29b), in a few words: a tile has one short line
       const r = c.runner
       if (r?.kind === 'session') return r.state === 'offered' ? 'Waiting for your session' : r.state === 'waiting' ? 'Waiting for a session' : r.state === 'stalled' ? 'Stalled · choose' : r.state === 'stopping' ? 'Stopping' : `Your session · ${clock(now - c.at)}`
-      if (r?.kind === 'fork') return `A copy of your session · ${clock(now - c.at)}`
+      if (r?.kind === 'fork') return r.why?.startsWith('your session didn') ? `Yours was busy · a copy is on it · ${clock(now - c.at)}` : `A copy of your session · ${clock(now - c.at)}`
       return `Agent working · ${clock(now - c.at)}`
     }
     case 'asks': return 'Asks you'

@@ -93,6 +93,7 @@ export async function shootFrame(opts: {
   scale?: number          // 1-4, default 2; anything else is refused
   size?: SizeOverride     // the canvas node's size, when the caller wants "what the node shows"
   browser?: Browser       // a batch's browser: the frame renders in it instead of starting its own
+  lane?: 'shot' | 'picture'   // its own operation's lane (a capture's picture never waits behind bakes)
 }): Promise<FrameShot> {
   const { root, viewports, frameId, theme, origin, scale = 2, size, browser } = opts
   if (!/^[a-z0-9-]+$/i.test(theme)) return { ok: false, error: 'invalid theme' }
@@ -125,7 +126,7 @@ export async function shootFrame(opts: {
   }
   const tmp = join(shotsDir, `.${slug(frameId)}--${theme}.${randomBytes(6).toString('hex')}.tmp.png`)
   const req: ShotRequest = { url: frameUrl(origin, frame, theme), width: plan.width, height: plan.initialHeight, out: tmp, fullHeight: plan.fullHeight, scale }
-  const result = browser ? await captureIn(req, browser) : await capture(req)
+  const result = browser ? await captureIn(req, browser) : await capture(req, opts.lane ?? 'shot')
   // its timing, as a code and numbers (spec 27a Part D)
   logJam(root, shotEvent(frameId, scale, result))
   if (!result.ok) { rmSync(tmp, { force: true }); return { ok: false, error: result.error } }
@@ -301,10 +302,11 @@ function sweepTemps(dir: string) {
  *  write the same output at the same time. Posters have their own lane - a frame being shot
  *  may ask for its poster mid-render, and on the shot's lane that request would wait for the
  *  very shot that is waiting for it - and so do anchor checks, which have a deadline of their
- *  own and must not wait out a batch of shots. */
+ *  own and must not wait out a batch of shots, and a capture's pictures: a capture waits at most 20 s for each,
+ *  and a bake pass on the shot lane (a frame can take 20 s to settle) would outlast that. */
 const chains = new Map<string, Promise<unknown>>()
 
-export function withBrowser<T>(lane: 'shot' | 'poster' | 'check', fn: (b: Browser) => Promise<T>, o: { skip?: () => boolean; skipped?: T } = {}): Promise<T> {
+export function withBrowser<T>(lane: 'shot' | 'poster' | 'check' | 'picture', fn: (b: Browser) => Promise<T>, o: { skip?: () => boolean; skipped?: T } = {}): Promise<T> {
   const run = async () => {
     // asked once the lane is free: an operation nobody waits for any more (a perf run that ended) starts no browser
     if (o.skip?.()) return o.skipped as T
@@ -318,7 +320,7 @@ export function withBrowser<T>(lane: 'shot' | 'poster' | 'check', fn: (b: Browse
 }
 
 /** One frame as its own operation (a poster, the shell's copy-as-image, a single `shot`). */
-export function capture(req: ShotRequest, lane: 'shot' | 'poster' = 'shot'): Promise<ShotResult> {
+export function capture(req: ShotRequest, lane: 'shot' | 'poster' | 'picture' = 'shot'): Promise<ShotResult> {
   return withBrowser(lane, (b) => captureIn(req, b)).catch((e) => ({ ok: false as const, error: (e as Error).message }))
 }
 

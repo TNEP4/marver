@@ -25,7 +25,9 @@ dot. While it records, everything you do is part of it:
   pictured as the capture ends - three at most - at the size you were looking at them (a
   device, a width you dragged, the play stage). A capture holds twelve pictures in all.
 
-`E` ends it. `Esc` throws it away. One capture records at a time.
+Two ways to end it (0.28): `E` **stops and queues it** - the agent starts on it, nothing to confirm - and `⇧E`
+**stops to review**: its read-back opens so you can check it and add to it first. Both are on the capture bar. `Esc`
+throws it away. One capture records at a time.
 
 Closing or reloading the tab asks first while a capture is recording, finishing or not yet taken by the canvas (as it
 does for any unsaved work). If you leave anyway, the capture
@@ -42,7 +44,7 @@ are the frames its run may edit, and the frames pictured before and after it.
 
 ## The read-back
 
-When a capture ends, its **read-back** opens: the timeline of what you said and did, with its
+When a capture ends with `⇧E` (and when `J` ends one to wrap the session up), its **read-back** opens: the timeline of what you said and did, with its
 pictures, under a short name a small model gave it (see [Names](#names)). Read it, fix a
 mistranscribed word in place, and decide:
 
@@ -56,7 +58,6 @@ mistranscribed word in place, and decide:
 A draft's read-back also takes notes after the fact: type in **Add a note** and they are
 logged under "Added after", in the timeline's style, and go to the agent with the rest.
 
-`jam: { capture: "at-once" }` skips the read-back: a capture queues as soon as it ends.
 
 ## The lane
 
@@ -167,7 +168,7 @@ jam: { agent: "claude", concurrency: 6, capture: "confirm", chime: true, names: 
 
 | Key | Default | What it does |
 |---|---|---|
-| `capture` | `"confirm"` | `"confirm"`: a capture waits for its read-back. `"at-once"`: it queues at `E` |
+| `capture` | `"confirm"` | No longer used (0.28): `E` queues a capture, `⇧E` stops to review it |
 | `chime` | `true` | A soft chime when a capture is ready to review |
 | `names` | `true` | Name each capture with Claude Haiku (Claude Code only) |
 | `loc` | `true` | Stamp each element of your design files with `data-mv-loc` (dev only, never published) |

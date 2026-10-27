@@ -104,7 +104,7 @@ export function checkRecord(raw: unknown): CaptureRecord | string {
     .flatMap(([f, v]) => { const w = px(v?.w), h = px(v?.h); return /^[\w./-]{1,300}$/.test(f) && w && h ? [[f, { w, h, ...(v?.play === true ? { play: true as const } : {}) }]] : [] }))
   return {
     format: 'marver.jam.capture', v: 1, id: r.id,
-    context: { canvas: str(c.canvas, 300) ?? '', board: c.board, ...(str(c.session, 200) ? { session: str(c.session, 200) } : {}), ...(reviewing ? { reviewing } : {}), ...(resumes ? { resumes } : {}), ...(c.interrupted === true ? { interrupted: true as const } : {}) },
+    context: { canvas: str(c.canvas, 300) ?? '', board: c.board, ...(str(c.session, 200) ? { session: str(c.session, 200) } : {}), ...(reviewing ? { reviewing } : {}), ...(resumes ? { resumes } : {}), ...(c.interrupted === true ? { interrupted: true as const } : {}), ...(c.review === true ? { review: true as const } : {}) },
     view: viewOf(r.view), timeline, pictures, ...(Object.keys(sizes).length ? { sizes } : {}),
   }
 }

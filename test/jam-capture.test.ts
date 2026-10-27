@@ -40,7 +40,7 @@ const rec = (o: Partial<CaptureRecord> & { words?: string } = {}): CaptureRecord
   const t0 = 1_000_000
   return {
     format: 'marver.jam.capture', v: 1, id,
-    context: { canvas: 'test', board: 'home', ...(o.context ?? {}) },
+    context: { canvas: 'test', board: 'home', review: true, ...(o.context ?? {}) },   // ⇧E: the read-back path these tests walk
     view: { board: 'home', frames: ['demo/a'], theme: 'light' },
     timeline: o.timeline ?? [
       { at: t0, event: 'view', view: { frames: ['demo/a'] } },
@@ -253,6 +253,32 @@ describe('captures: review', () => {
     expect(p.brief.asks.map((x: any) => x.body)).toEqual(['@marver and the hover state'])
     expect(p.brief.follows.result).toContain('Done:')
     expect(p.brief.capture.record.id).toBe(r.id)
+    done()
+  })
+
+  it('a capture ended with E (no review mark) is queued as it lands - no read-back; ⇧E (review) stays a draft', async () => {
+    const { root, done } = setup()
+    const jam = createJam(root, { ...CFG, concurrency: 1 }, agent('ok', { hang: true }))
+    const e = rec(); delete (e.context as any).review
+    expect((await jam.capture(e) as any).ok).toBe(true)
+    expect(['queued', 'working']).toContain(card(jam, e.id).state)
+    const r = rec()
+    await jam.capture(r)
+    expect(card(jam, r.id).state).toBe('draft')
+    jam.stop()
+    done()
+  })
+
+  it('"looks good" typed as More work settles the review - no reply, no second run', async () => {
+    const { root, dir, done } = setup()
+    const { jam, r } = await reviewed(root)
+    const n = packets(root).length
+    expect((await jam.act(r.id, card(jam, r.id).rev, 'more', 'looks good')).ok).toBe(true)
+    await jam.tick(); jam.stop()
+    expect(card(jam, r.id).state).toBe('done')
+    expect(card(jam, r.id).verdict).toBe('looks good')
+    expect(readLog(dir, 'home').some((e) => String(e.body ?? '').includes('@marver looks good'))).toBe(false)
+    expect(packets(root).length).toBe(n)
     done()
   })
 

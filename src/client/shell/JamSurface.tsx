@@ -137,7 +137,7 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
     const counts = captureCounts(c)
     const steps = (c?.steps ?? []).filter((x) => ['select', 'device', 'theme', 'copied', 'interact'].includes(x.event)).length
     return { time: counts.time, points: c?.points.length ?? 0, pictures: c?.pictures.length ?? 0, picturesMax: (c?.pictures.length ?? 0) >= 12, steps,
-      notes: counts.notes, noteOn: cap.noteOpen, onNote: () => cap.setNoteOpen(!cap.noteOpen), onStop: () => cap.end(),
+      notes: counts.notes, noteOn: cap.noteOpen, onNote: () => cap.setNoteOpen(!cap.noteOpen), onStop: () => cap.end(), onStopReview: () => cap.end(true),
       // the microphone: on while it hears this capture; off once you were asked (a click asks again)
       ...(voice.hearing === cap.current ? { mic: 'on' as const } : voice.choice !== null || voice.denied ? { mic: 'off' as const, onMic: () => useJamVoice.setState({ asking: true, choice: null }) } : {}) }
   })() : undefined
