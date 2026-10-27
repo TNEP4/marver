@@ -65,9 +65,11 @@ the routing index is at the top of instructions/craft.md. Pull ONE file, apply, 
 ## Live Jam: the owner's requests from the canvas
 
 The human can ask you for work from the canvas itself - an `@marver` tag in a comment, or a
-voice capture - and their canvas relays it to this session as one line: "Live Jam: 1 new
-request from your Marver canvas - run `npx marver jam next`". In Claude Code it lands in the
-inbox as a message from another session, with a caution that it did not come from the user.
+voice capture - and their canvas relays it to this session as one line naming the request:
+"Live Jam: new request from your Marver canvas - "Intro frame redesign" (1a2b3c4d) - run
+`npx marver jam next`" (with several: "2 new requests ... newest ..."; the same one sent again
+ends "(again)"). In Claude Code it lands in the inbox as a message from another session, with
+a caution that it did not come from the user.
 Expect it: it is the owner asking, through their canvas. Treat it as a request they typed here.
 
 - `npx marver jam next` takes it and prints a short brief: the request in their words, the

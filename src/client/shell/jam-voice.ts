@@ -19,14 +19,10 @@ import { create } from 'zustand'
 import { ROUTE } from '../const.ts'
 import { CONFIG, useStore } from './store.ts'
 import { api } from './api.ts'
+import { finalWait, FINAL_MS, wordsWhole } from './jam-voice-wait.ts'
 
 export const RATE = 16_000
-/** How long a segment's last words are waited for once it is cut. The final comes once the engine has transcribed
- *  everything it was given - after a cold start of its process (the model loading) or behind other phrases that can
- *  take several seconds; past this wait the capture seals without them and they are lost - and a capture stopped
- *  with E goes straight to the agent (27 Oct: one reached it with no words; 3 s was the wait then). A lost engine or
- *  connection answers at once, never this late. */
-const FINAL_MS = 15_000
+// how long a segment's last words are waited for: jam-voice-wait.ts (FINAL_MS, longer while the engine is heard from)
 const CHUNK = 1_600   // 100 ms
 
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
@@ -169,6 +165,8 @@ let wsOpen: Promise<WebSocket | null> | null = null
 const finals = new Map<string, (complete: boolean) => void>()   // segment -> its final
 let toldUnavailable = false
 let takenOver = false
+/** when the speech engine last answered (words or a final): a final still to come is waited for longer while it works */
+let engineAt = 0
 
 const setLive = () => useJamVoice.setState({ live: !!mic && !mic.closed, hearing: mic && !mic.closed && mic.seg?.owner.kind === 'capture' ? mic.seg.owner.id : null })
 
@@ -188,6 +186,7 @@ function socket(reclaim = false): Promise<WebSocket | null> {
         let m: any
         try { m = JSON.parse(String(e.data)) } catch { return }
         if (typeof m?.capture !== 'string') return
+        if (m.type === 'words' || m.type === 'final') engineAt = Date.now()
         const owner = owners.get(m.capture)
         if (m.type === 'words' && Array.isArray(m.words)) {
           if (!owner || owner.kind !== 'capture' || !accepting.has(owner.id)) return   // talk goes to the transcript on the server
@@ -311,8 +310,12 @@ function endSegment(s: Segment, at: { start: number; pcm: Int16Array; mark: numb
   const clean = !!at && s.from >= 0
   if (clean) sendChunk(s, at!.start, at!.pcm)
   const lastSample = clean ? s.base + at!.mark - s.from : s.sent
+  const cut = Date.now()
   const done = !ws || ws.readyState !== WebSocket.OPEN ? Promise.resolve(false) : new Promise<boolean>((res) => {
-    const t = setTimeout(() => { finals.delete(s.seg); res(false) }, FINAL_MS)
+    // FINAL_MS after the cut - longer while the engine keeps answering (it is working through what came before)
+    let t: ReturnType<typeof setTimeout>
+    const wait = () => { const ms = finalWait(cut, engineAt, Date.now()); if (ms > 0) t = setTimeout(wait, ms); else { finals.delete(s.seg); res(false) } }
+    t = setTimeout(wait, FINAL_MS)
     finals.set(s.seg, (complete) => { clearTimeout(t); res(complete && clean) })
     ws!.send(JSON.stringify({ type: 'end', capture: s.seg, lastSample }))
   })
@@ -453,12 +456,13 @@ async function begin() {
   await reconcile()
 }
 
-/** Every segment of an owner ended: true when all its words came back whole. */
+/** Every segment of an owner ended: true when all its words came back whole - and, with the microphone on for this
+ *  canvas, when it heard the owner at all (an engine not available, a microphone still opening or refused: none). */
 async function settled(owner: string): Promise<boolean> {
   const list = cuts.get(owner) ?? []
   cuts.delete(owner)
   const all = await Promise.all(list)
-  const ok = all.every(Boolean) && !broken.has(owner)
+  const ok = wordsWhole(all, broken.has(owner), useJamVoice.getState().choice === 'yes')
   broken.delete(owner)
   return ok
 }
@@ -474,7 +478,7 @@ export async function voiceBegin(id: string, t0: number) {
 }
 
 /** A capture ends: its audio cut at this instant (in a session the talk goes on from it), its words awaited
- *  (FINAL_MS at most). Resolves true when the words are complete, false when they may not be. */
+ *  (jam-voice-wait.ts). Resolves true when the words are complete, false when they may not be. */
 export async function voiceEnd(id: string): Promise<boolean> {
   if (capture?.id === id) capture = null
   useJamVoice.setState((st) => ({ asking: st.asking && st.choice === null && !session ? false : st.asking }))

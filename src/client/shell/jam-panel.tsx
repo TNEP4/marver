@@ -380,8 +380,8 @@ export function ReviewDetail({ title, head, of, onPrev, onNext, frames, active, 
   // left on purpose (Esc cleared its words from the map): the composer's words go too; closed by a click
   // elsewhere, the map still holds them
   useEffect(() => { if (more) field.current?.focus(); else if (draftKey && !moreDrafts.has(draftKey)) setTextState('') }, [more])
-  // "looks good" typed here approves - it never sends the work back
-  const send = () => { if (text.trim()) { if (isApproval(text)) { setText(''); onGood() } else onMore(text.trim()) } }
+  // "looks good" typed here approves - it never sends the work back ("yes" answering the reply's question is work)
+  const send = () => { if (text.trim()) { if (isApproval(text, typeof reply === 'string' ? reply : undefined)) { setText(''); onGood() } else onMore(text.trim()) } }
   return (
     <div className="jm-panel jm-review" data-jam-review="" style={style}>
       <div className="top">

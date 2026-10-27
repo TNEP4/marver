@@ -12,28 +12,37 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   has - its conversation, tools, MCP servers, skills, subagents - takes a run with `npx marver jam next`, posts one line
   with `jam say`, and hands the replies back with `jam done`; the canvas posts them as the session's ("your session ·
   Claude Code"). Commands travel through signed files, so a sandbox that blocks localhost cannot stop them.
-- **One line to the session, and it knows what the line means.** A run arrives as "Live Jam: 1 new request from your
-  Marver canvas - run `npx marver jam next`", and `jam next` prints a dozen lines - your request in your words, the
+- **One line to the session, and it knows what the line means.** A run arrives as one line naming it - "Live Jam: new
+  request from your Marver canvas - "Intro frame redesign" (1a2b3c4d) - run `npx marver jam next`" - and `jam next`
+  prints a dozen lines - your request in your words, the
   frames, how to answer - not the whole prompt a spawned run gets. `design/AGENTS.md` gains a "Live Jam" section: the
   line is your request relayed by the canvas (Claude Code shows it as from another session), so the agent takes it as
   one. Run `npx marver init` once to get it.
 - **Two ways to stop a capture.** `E` stops it and queues it - the agent starts on it, nothing to confirm: its tile
   goes from Capturing to Sending to Queued or working, and nothing opens, flashes "To confirm" or moves the canvas (the
-  canvas makes its card queued in one step - a first build showed it as a draft for a moment and opened its read-back).
+  canvas makes its card queued in one step - a first build showed it as a draft for a moment and opened its read-back;
+  the Sending tile now stays until the queued card is on the lane, and a review it was made over closes).
   `⇧E` (Stop to review) opens its read-back to check it and add notes first, as before. Both are on the capture bar; `J`
   during a capture still stops it to review. A capture the queue cannot take stays on the lane as a draft and one line
   says why. `jam.capture` is no longer used.
-- **A capture waits longer for its last words**: up to 15 s after you stop (3 s before), so words still being
-  transcribed - a long last phrase, the speech engine starting up - reach its record instead of being dropped; a capture
-  stopped with `E` goes to the agent with them.
+- **A capture waits longer for its last words**: 15 s after you stop (3 s before), and longer while the speech engine
+  is still answering (a minute at most), so words still being transcribed - a long last phrase, the speech engine
+  starting up, phrases ahead of it - reach its record instead of being dropped; a capture stopped with `E` goes to the
+  agent with them. With the microphone on and nothing heard, the record says its words may be incomplete.
 - **"Looks good" is an answer, not more work.** Typed into More work, a note that only approves ("looks good", "perfect,
-  thanks") settles the review as Looks good - it no longer sent the capture back for a second run.
-- **Every ping names its request**: `Live Jam: new request from your Marver canvas - "Intro frame redesign" (1a2b3c4d)`.
-  Claude Code drops a message identical to the one before it from the same sender, so a second request at the same
-  count was never seen and went to a copy after 2 minutes. A listener whose package was upgraded under it hands over
-  to a fresh one on the new code. A capture sent back with More work leads its brief with your newest words.
-- **The session record goes to your session too**, like any request, instead of straight to a copy; and a copy that
-  runs what your session did not take says so: "Yours was busy · a copy is on it".
+  thanks", "looks good to me", "nice work", "that's exactly what I wanted") settles the review as Looks good - it no
+  longer sent the capture back for a second run. A question ("is it done?") is never taken as one, nor a bare "yes"
+  answering the reply's own question.
+- **Every ping names its request** (above). Claude Code drops a message identical to the one before it from the same
+  sender, so a second request at the same count was never seen and went to a copy after 2 minutes; the same line sent
+  again (a run offered back, a second "give it back") now ends "(again)". A listener whose package was upgraded under
+  it - a new version, or a preview repacked at the same one; pnpm's link too - hands over to a fresh one on the new
+  code, once the install is done. A capture sent back with More work leads its brief with your newest words; the
+  notes added in a read-back are in the brief and the ping's title; a session record's brief names its file and your
+  instructions.
+- **The session record goes to your session too**, like any request, instead of straight to a copy (nothing else does
+  once the session ended); and a copy that runs what your session did not take says so: "Yours was busy · a copy is
+  on it" (it held three runs, let it go, or did not take it in time), "Yours was idle" (Codex, Cursor).
 - **A capture's pictures no longer time out behind a bake pass.** They render on a lane of their own; a canvas that
   had just started (baking every frame) left captures with "no picture of ... - it took over 20 s".
 - **When your session cannot take a run, a copy of it does.** Claude Code and Codex runs Marver spawns copy your

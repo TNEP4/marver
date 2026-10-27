@@ -65,6 +65,28 @@ describe('sessions: review fixes', () => {
     done()
   })
 
+  it('a capture stopped with E in a session is queued at once, carries the session, and is sealed into the wrap-up with the confirmed ones', async () => {
+    const { root, done } = setup()
+    const jam = createJam(root, { ...CFG, concurrency: 1 }, agent('ok', { hang: true }))
+    await jam.session({ action: 'start', id: SES })
+    const e = rec('make the badge blue', SES)
+    delete ((e.context) as any).review   // ended with E
+    const a = await jam.capture(e) as any
+    expect([a.ok, a.held]).toEqual([true, undefined])
+    expect(['queued', 'working']).toContain(card(jam, e.id).state)
+    expect(card(jam, e.id).session).toBe(SES)
+    const r = rec('look first', SES)
+    await jam.capture(r)
+    await jam.act(r.id, card(jam, r.id).rev, 'confirm')
+    const w = await jam.session({ action: 'wrapup', id: SES, instructions: 'x', includeTalk: false, tags: 0, board: 'home' })
+    expect([w.ok, w.error]).toEqual([true, undefined])
+    const stored = JSON.parse(readFileSync(join(root, 'design', '.local', 'jam', 'wrapups', `${w.card!.id}.json`), 'utf8'))
+    expect(stored.captures.map((c: any) => c.id).sort()).toEqual([e.id, r.id].sort())
+    expect(stored.captures.find((c: any) => c.id === e.id).record.timeline.some((x: any) => x.text === 'make the badge blue')).toBe(true)
+    jam.stop()
+    done()
+  })
+
   it('a capture changed after it was confirmed is never sealed into a record: the wrap-up is refused, the session goes on', async () => {
     const { root, done } = setup()
     const jam = createJam(root, { ...CFG, concurrency: 1 }, agent('ok', { hang: true }))

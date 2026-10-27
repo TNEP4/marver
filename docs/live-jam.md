@@ -60,11 +60,12 @@ never changed; one you removed by hand is not written back until you turn that t
 | **Cursor** | a full-power Cursor agent does the run | its `stop` hook auto-submits the follow-up | none (Cursor has no fork) |
 | opencode, Grok, droid, pi | background agents | - | - |
 
-- **Codex asks you to trust new hooks once** - type `/hooks` in Codex. The start sheet says so until a Codex session
-  connects.
-- **What the session is told**: one line - "Live Jam: 1 new request from your Marver canvas - run `npx marver jam
-  next`". Claude Code shows it in the inbox as a message from another session, with a caution that it did not come
-  from you; `design/AGENTS.md` ("Live Jam") tells the agent to expect it and take it as your request.
+- **Codex asks you to trust new hooks once** - type `/hooks` in Codex. The start sheet says so while no session is
+  connected.
+- **What the session is told**: one line naming the request - "Live Jam: new request from your Marver canvas -
+  "Intro frame redesign" (1a2b3c4d) - run `npx marver jam next`" (the same line sent again ends "(again)": Claude
+  Code drops a message identical to the one before it). Claude Code shows it in the inbox as a message from another
+  session, with a caution that it did not come from you; `design/AGENTS.md` ("Live Jam") tells the agent to expect it and take it as your request.
 - **What the session does** (design/instructions/jam.md, "Runs from the canvas"): `npx marver jam next` takes the run
   and prints a short brief - your request in your words, the frames, how to answer; `jam say <handle> "On it - ..."` posts one line at once; the
   work, with subagents for a capture across frames; `jam progress <handle>` on a long run; `jam done <handle> --file

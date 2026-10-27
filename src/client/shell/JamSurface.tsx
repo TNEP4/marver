@@ -68,24 +68,36 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
   useEffect(() => { const t = setInterval(() => setTick((n) => n + 1), 1000); return () => clearInterval(t) }, [])
   // a new capture or a new draft brings the lane back to its right end
   useEffect(() => { ui.follow() }, [cap.current, cards?.filter((c) => c.kind === 'capture').length])
-  // the read-back of the capture just stopped TO REVIEW (⇧E, or J's wrap-up) opens when capturing stops - over a
+  const made = (id: string) => Number(/^cap-(\d+)-/.exec(id)?.[1] ?? 0)
+  // the read-back of the capture stopped TO REVIEW last (⇧E, or J's wrap-up) opens when capturing stops - over a
   // review too (a capture made during a review is confirmed in its read-back; the review it follows stays bound in
-  // its record). It waits for that capture's own card: a resumed one replaces its draft, which must not open instead
-  // the capture ENDED last, not the one that sealed last (pictures can keep an earlier one sealing longer).
-  // One stopped with E never opens, selects or moves anything - not even when the queue left it a draft (Nic,
-  // 27 Oct: "only when the user says Stop and Review should we have the To confirm state and open the capture card")
+  // its record). It waits for that capture's own card: a resumed one replaces its draft, which must not open instead.
+  // The one ENDED last among them, not the one that sealed last (pictures can keep an earlier one sealing longer) -
+  // one capture records at a time, so that is the one started last. A capture stopped with E after it, before it
+  // had finished, never takes its place; and one stopped with E never opens, selects or moves anything - not even
+  // when the queue left it a draft (Nic, 27 Oct: "only when the user says Stop and Review should we have the To
+  // confirm state and open the capture card")
   const [shownFor, setShownFor] = useState<string | null>(null)
   useEffect(() => {
-    if (cap.current || !cap.lastEnded || cap.lastEnded === shownFor) return
-    const sealed = cap.sealed.find((x) => x.id === cap.lastEnded)
-    if (!sealed?.review || !sealed.card) return
-    const draft = cards?.find((c) => c.id === sealed.card!.id && c.state === 'draft')
+    if (cap.current) return
+    const toReview = cap.sealed.filter((x) => x.review).reduce<(typeof cap.sealed)[number] | undefined>((a, x) => (!a || made(x.id) > made(a.id) ? x : a), undefined)
+    if (!toReview?.card || toReview.id === shownFor) return
+    const draft = cards?.find((c) => c.id === toReview.card!.id && c.state === 'draft')
     if (!draft) return
-    setShownFor(cap.lastEnded)
+    setShownFor(toReview.id)
     if (ui.panel?.kind === 'capture' && ui.panel.id === draft.id) return
     ui.open({ kind: 'capture', id: draft.id })
     reveal(draft)
-  }, [cap.current, cap.sealed, cap.lastEnded, cards])
+  }, [cap.current, cap.sealed, cards])
+
+  // a review whose card left review under it - a capture made over it and stopped with E took it as More work, or
+  // another tab decided it: its panel closes (its verdicts would only fail now); nothing else opens or moves
+  const reviewing = ui.panel?.kind === 'review' ? cards?.find((c) => c.id === ui.panel!.id)?.state : undefined
+  const wasReviewing = useRef(reviewing)
+  useEffect(() => {
+    if (wasReviewing.current === 'review' && reviewing && reviewing !== 'review' && useJamUi.getState().panel?.kind === 'review') ui.close()
+    wasReviewing.current = reviewing
+  }, [reviewing, ui.panel?.id])
 
   // the session as the server holds it: a page opened (or reloaded) during one hears its talk again; one
   // ended elsewhere (another tab) stops the talk here
@@ -121,7 +133,6 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
     const sel = useJamQueue.getState().cards?.find((c) => c.id === st.selected)
     if (sel?.thread === s.active) { if (st.panel) st.close() } else letGoOfTile()
   }), [])
-  const made = (id: string) => Number(/^cap-(\d+)-/.exec(id)?.[1] ?? 0)
   const withMade = list.map((c) => ({ made: c.made, tile: { id: c.id, state: c.state, title: c.title ?? 'Capture', line: laneLine(c), ...(c.exclusive ? { exclusive: true } : {}), ...(c.state === 'done' && c.shots?.some((x) => !x.same) ? { frames: c.shots.filter((x) => !x.same).map((x) => x.frame) } : {}), ...(c.kind === 'wrapup' ? { record: true } : {}) } as { id: string; state: JamCard['state']; title: string; line: string; exclusive?: boolean; frames?: string[]; record?: boolean } }))
   // captures the server does not hold yet: sealing (pictures and flushes still out) or waiting to send -
   // each in its place by when it started, so one sealing late never swaps with a newer one. Stopped with E it is
@@ -129,7 +140,7 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
   // (⇧E) it is finishing for its read-back
   const known = new Set(list.map((c) => c.id))
   for (const c of Object.values(cap.caps)) if (c.state === 'draining' && !known.has(c.id)) withMade.push({ made: made(c.id), tile: { id: c.id, state: 'confirming', title: 'Capture', line: c.review ? 'Finishing' : 'Sending' } })
-  for (const id of cap.unsent) if (!known.has(id) && !cap.caps[id]) withMade.push({ made: made(id), tile: { id, state: 'confirming', title: 'Capture', line: cap.away || endedToReview(id) ? 'Waiting to send' : 'Sending' } })
+  for (const id of cap.unsent) if (!known.has(id) && !cap.caps[id]) withMade.push({ made: made(id), tile: { id, state: 'confirming', title: 'Capture', line: cap.away ? 'Waiting to send' : endedToReview(id) ? 'Finishing' : 'Sending' } })
   const tiles = withMade.sort((a, b) => a.made - b.made).map((x) => x.tile)
   // a selected tile that became done while the Done group is folded: the group holds the selection now
   const doneNow = doneFold(tiles, ui.doneOpen)

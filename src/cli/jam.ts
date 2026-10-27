@@ -11,9 +11,9 @@
  * localhost cannot stop them. A hook never fails its host: an error prints nothing and exits 0.
  */
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync, readFileSync, realpathSync, statSync, watch } from 'node:fs'
+import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, statSync, watch } from 'node:fs'
 import { createConnection } from 'node:net'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { connId, endConn, listConns, offersFile, pidAlive, readConn, readOffers, readPrefs, upsertConn, type Conn, type ConnAgent, type Offers } from '../server/jam/conn.ts'
 import { request, type Op } from '../server/jam/transport.ts'
 import { fileURLToPath } from 'node:url'
@@ -159,14 +159,32 @@ export async function hook(agent: string, event: string, input: Record<string, a
 /** One listener per Claude Code process (spec 29b, Part 5): registers the session, wakes it through
  *  its inbox when runs are offered, and exits with it. Started by both hooks; a second start hands
  *  over the current session id and exits. */
-/** The version of the package this code came from, read from disk now - the first package.json above this file. */
-export function installedVersion(from = dirname(fileURLToPath(import.meta.url))): string | null {
-  // tests point it at a package.json of their own
-  if (process.env.MARVER_JAM_PKG) { try { return String(JSON.parse(readFileSync(process.env.MARVER_JAM_PKG, 'utf8')).version ?? '') || null } catch { return null } }
-  for (let d = from; ; d = dirname(d)) {
-    try { return String(JSON.parse(readFileSync(join(d, 'package.json'), 'utf8')).version ?? '') || null } catch { /* go up */ }
+/** Where the package this listener runs from is installed, and its entry in it - by the path it was STARTED through,
+ *  never its realpath: pnpm keeps an old version's folder after an upgrade, and only the link the command goes through
+ *  (node_modules/<package>) points at the new one; npm's .bin/<name> is a link to the entry, followed one hop. The
+ *  package is the first folder above the entry with a package.json - found once, so a read never walks past it. */
+export function packageOf(script = process.argv[1], fallback = fileURLToPath(import.meta.url)): { dir: string; main: string } | null {
+  let p = script ? resolve(script) : fallback
+  try { if (lstatSync(p).isSymbolicLink()) p = resolve(dirname(p), readlinkSync(p)) } catch { p = fallback }
+  for (let d = dirname(p); ; d = dirname(d)) {
+    if (existsSync(join(d, 'package.json'))) return { dir: d, main: relative(d, p) }
     if (dirname(d) === d) return null
   }
+}
+
+/** The build installed there now: its version and its entry file (a preview repacked at the same version is a new
+ *  file). Null when it cannot be read right now - an install under way: unknown, never "changed". */
+export function installedBuild(pkg = packageOf()): string | null {
+  // tests point it at a package.json of their own
+  const file = process.env.MARVER_JAM_PKG || (pkg ? join(pkg.dir, 'package.json') : null)
+  if (!file) return null
+  try {
+    const version = String(JSON.parse(readFileSync(file, 'utf8')).version ?? '')
+    if (!version) return null
+    if (process.env.MARVER_JAM_PKG || !pkg) return version
+    const st = statSync(join(pkg.dir, pkg.main))
+    return `${version}:${st.ino}:${st.size}:${Math.round(st.mtimeMs)}`
+  } catch { return null }
 }
 
 export async function listenCommand(rootOpt?: string): Promise<void> {
@@ -191,7 +209,11 @@ export async function listenCommand(rootOpt?: string): Promise<void> {
   if (!claimListener(root, claudePid, { pid: process.pid, session, ...(mode ? { mode } : {}) })) return
   // a listener started again by its predecessor after an upgrade has no hook for a parent: Claude Code alone holds it
   const parent = env.MARVER_JAM_RELISTEN === '1' ? null : process.ppid
-  const version = installedVersion()
+  // the build it runs: unknown until it reads (one started mid-install looks again at every tick)
+  let pkg = packageOf()
+  let build = installedBuild(pkg)
+  /** a new build read, and when first: it hands over only once it reads the same a second later (the install is done) */
+  let coming: { build: string; at: number } | null = null
   let current = session
   // a new incarnation (a new key, nothing the last one held still signs) only for a new process, or one that ended: a
   // listener restarted for the same Claude Code process keeps the registration, and the runs it holds
@@ -201,6 +223,10 @@ export async function listenCommand(rootOpt?: string): Promise<void> {
   // (a listener started again after an upgrade carries on from what its predecessor already said)
   let posted = Number(env.MARVER_JAM_POSTED) || 0
   let said = '[[],[]]'
+  // what it posted last, and how many times in a row: Claude Code drops a message identical to the one before it from
+  // the same sender, so the same words again (a run offered back, a second "give it back") say they are again
+  let last = env.MARVER_JAM_LAST ?? ''
+  let repeats = Number(env.MARVER_JAM_REPEATS) || 0
   /** Post one message to the session's inbox: true once it is written (a failure is tried again next look). */
   const post = (text: string) => new Promise<boolean>((res) => {
     const c = createConnection(sock)
@@ -220,7 +246,7 @@ export async function listenCommand(rootOpt?: string): Promise<void> {
   const relisten = () => {
     releaseListener(root, claudePid, process.pid)
     try {
-      const child = spawn(process.execPath, [...process.execArgv, ...process.argv.slice(1)], { detached: true, stdio: ['pipe', 'ignore', 'ignore'], env: { ...env, MARVER_JAM_RELISTEN: '1', MARVER_JAM_POSTED: String(posted) } })
+      const child = spawn(process.execPath, [...process.execArgv, ...process.argv.slice(1)], { detached: true, stdio: ['pipe', 'ignore', 'ignore'], env: { ...env, MARVER_JAM_RELISTEN: '1', MARVER_JAM_POSTED: String(posted), MARVER_JAM_LAST: last, MARVER_JAM_REPEATS: String(repeats) } })
       child.stdin!.end(JSON.stringify({ ...input, session_id: current, ...(conn.mode ? { permission_mode: conn.mode } : {}) }))
       child.unref()
     } catch { /* the next hook starts one */ }
@@ -231,20 +257,33 @@ export async function listenCommand(rootOpt?: string): Promise<void> {
     if (!pidAlive(claudePid) || (parent !== null && process.ppid !== parent) || !existsSync(join(root, 'design')) || readPrefs(root).off?.claude) return quit(!pidAlive(claudePid) || !!readPrefs(root).off?.claude)
     const l = readListener(root, claudePid)
     if (l && l.pid !== process.pid) return quit(false)   // another took over (a stale lock, cleared): never two
-    // the package was upgraded under it: a fresh listener on the new code takes over, with this session (the lock let go first)
-    if (version && installedVersion() !== version) return relisten()
+    // the session a hook handed it first: a handover below carries the newest one
     if (l && (l.session !== current || l.mode !== conn.mode)) {
       if (l.session !== current) { endConn(root, conn.id, conn.inc); current = l.session; posted = 0; said = '[[],[]]' }
       conn = upsertConn(root, 'claude', current, { pid: claudePid, cwd: root, mode: l.mode, busy: false }, Date.now(), l.session !== conn.session)
     }
+    // the package was upgraded under it: a fresh listener on the new code takes over, with this session (the lock let
+    // go first) - once the new build reads the same twice and its entry is there (mid-install it may be neither)
+    pkg ??= packageOf()
+    const now0 = installedBuild(pkg)
+    if (now0 && !build) build = now0
+    else if (now0 && now0 !== build) {
+      if (coming?.build === now0 && Date.now() - coming.at >= 1_000 && existsSync(process.argv[1] ?? '')) return relisten()
+      if (coming?.build !== now0) coming = { build: now0, at: Date.now() }
+    } else if (now0) coming = null
     const now = readConn(root, conn.id)
     if (!now || now.inc !== conn.inc) conn = upsertConn(root, 'claude', current, { pid: claudePid, cwd: root, mode: conn.mode, busy: false }, Date.now(), true)   // swept, or ended
     const o = readOffers(root, conn.id)
-    if (!o || o.gen <= posted) return
+    if (!o) return
     const words = JSON.stringify([o.stop ?? [], o.resume ?? []])
+    // nothing new: what the file says now is what was said (a stop or carry-on the session acted on clears from it,
+    // so the next one is told again)
+    if (o.gen <= posted) { said = words; return }
     const lines = [o.n > 0 ? READY_LINE(o.n, undefined, o.latest) : '', words !== said && o.stop?.length ? STOP_LINE(o.stop) : '', words !== said && o.resume?.length ? RESUME_LINE(o.resume) : ''].filter(Boolean)
+    const text = lines.join(' ')
+    const again = text === last ? repeats + 1 : 0
     // marked said only once it reached the inbox: a failed post is tried again at the next look
-    if (!lines.length || await post(lines.join(' '))) { posted = o.gen; said = words }
+    if (!lines.length || await post(again ? `${text} (again${again > 1 ? ` ×${again}` : ''})` : text)) { posted = o.gen; said = words; if (lines.length) { last = text; repeats = again } }
   }
   let busy = false
   const tick = () => { if (busy) return; busy = true; look().catch(() => {}).finally(() => { busy = false }) }

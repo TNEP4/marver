@@ -19,7 +19,7 @@ import { localProfile } from '../profile.ts'
 import { fresh, readRaw, write } from './journal.ts'
 import { buildPacket, packetPath, sanitize, threadId } from './packet.ts'
 import type { Batch, Brief, Card, CardState, CaptureRecord, Journal, JournalV1, Member, Msg, PacketMember, Payload, Result } from './types.ts'
-import { captureFrames, captureWords, factsOf, hashOf, madeOf, readCapture, wordsSince } from './capture.ts'
+import { captureFrames, factsOf, hashOf, madeOf, readCapture, requestWords, wordsSince } from './capture.ts'
 import { readWrapup, recordPathProblem, type Wrapup } from './session.ts'
 
 export const MENTION = /@marver\b/i
@@ -736,7 +736,7 @@ export function addCapture(j: Journal, record: CaptureRecord, hash: string, now 
  *  text stays in the record), its facts, the capture it stands for; pinned on the first point, else
  *  its first frame, else the board. Deterministic ids, so a resumed confirm writes it once. */
 export function captureComment(c: Card, record: CaptureRecord, at: { frame?: string; anchor?: unknown }, author: CommentEvent['author'], now = Date.now()): CommentEvent {
-  const words = [captureWords(record, c.payload?.edited), ...(c.payload?.added ?? []).map((a) => a.text)].filter(Boolean).join('\n')
+  const words = requestWords({ record, edited: c.payload?.edited, added: c.payload?.added })
   return {
     id: `cap-${c.id}-e`, ts: now, type: 'create', commentId: `cap-${c.id}`, board: c.board, author,
     body: (words.length > 600 ? words.slice(0, 599) + '…' : words) || '(a capture with no words)',

@@ -13,11 +13,11 @@
  * Every transition looks the batch up and checks it again under the queue's lock: a check made before
  * the lock is a guess.
  */
-import { captureWords } from './capture.ts'
+import { requestWords } from './capture.ts'
 import type { JamConfig } from '../config.ts'
 import { alive, closeConn, eligible, listConns, patchConn, pidAlive, readConn, readOffers, readPrefs, upsertConn, writeOffers, type Conn, type ConnAgent } from './conn.ts'
 import { forkable, newestAny, transcriptOf, type ForkAgent } from './fork.ts'
-import { parseAgentText } from './packet.ts'
+import { parseAgentText, sanitize } from './packet.ts'
 import type { Queue } from './queue.ts'
 import { answer, sweep, takeRequests, verify, type Req } from './transport.ts'
 import type { Batch } from './types.ts'
@@ -50,7 +50,7 @@ export function settingsOf(root: string, cfg: JamConfig): Settings {
 /** Who runs a batch. `wait`: `jam.runner: 'session'` with no session to take it yet. */
 export type Choice =
   | { kind: 'session'; conn: Conn }
-  | { kind: 'fork'; agent: ForkAgent; session: string }
+  | { kind: 'fork'; agent: ForkAgent; session: string; why?: string }
   | { kind: 'fresh'; agent: string; why?: string }
   | { kind: 'wait' }
 
@@ -118,6 +118,8 @@ export function createRuns(d: RunsDeps): Runs {
   const offered = new Map<string, Set<string>>()
   /** connections whose offers file last said a stop or a carry-on: looked at again until it says none */
   const worded = new Set<string>()
+  /** connections whose offers this daemon has written since it started */
+  const published = new Set<string>()
 
   const settings = () => settingsOf(root, d.cfg)
   /** may this session take Jam work now: alive, not muted or in plan mode, and its tool's connector not turned off */
@@ -135,8 +137,11 @@ export function createRuns(d: RunsDeps): Runs {
   }
   /** Can it take an offer now? Claude Code always (its inbox wakes it); Codex and Cursor while a turn runs. */
   const offerable = (c: Conn) => c.agent === 'claude' || c.busy
-  /** Does a session take work now? Sessions on, the owner's context allowed, not background-only, and a Jam session running. */
-  const sessionsOn = (s: Settings) => s.session && s.context === 'fork' && s.runner !== 'background' && d.jamOn()
+  /** Is it the record of a Jam session (a wrap-up)? Offered to your session though the session it records has ended. */
+  const recordRun = (b: Batch) => b.members.some((m) => q.j.cards.find((c) => c.id === m.card)?.kind === 'wrapup')
+  /** Does a session take work now - this run, when one is named? Sessions on, the owner's context allowed, not
+   *  background-only, and a Jam session running (or, for a session's own record, just ended: never any other run). */
+  const sessionsOn = (s: Settings, b?: Batch) => s.session && s.context === 'fork' && s.runner !== 'background' && (d.jamOn() || (!!b && recordRun(b)))
   /** Is the writer of a claim proven gone? Its process is (Claude Code, Codex), or - Cursor - that very incarnation
    *  said it ended. A connection file missing, or silence, is "unknown", never "gone". */
   const writerGone = (claim: NonNullable<Batch['claim']>): boolean => {
@@ -147,11 +152,14 @@ export function createRuns(d: RunsDeps): Runs {
 
   const choose = (b: Batch, now = Date.now(), spawnOnly = false): Choice => {
     const s = settings()
+    // your session would have taken it and did not: the copy says why (A8)
+    let skipped: string | undefined
     if (!spawnOnly && !b.handoff) {
-      const pick = sessionsOn(s) ? selected(now) : undefined
+      const pick = sessionsOn(s, b) ? selected(now) : undefined
       if (pick && offerable(pick) && load(pick.id) < s.sessionMax) return { kind: 'session', conn: pick }
       // session-only waits for one, as long as sessions can take work at all
       if (s.runner === 'session' && s.session && s.context === 'fork') return { kind: 'wait' }
+      if (pick) skipped = offerable(pick) ? `your session didn't take it - it already holds ${load(pick.id)} run${load(pick.id) === 1 ? '' : 's'}` : `your session was idle - ${pick.agent === 'codex' ? 'Codex' : 'Cursor'} takes a run only while it works`
     }
     // the agent of the session that would have taken it, else the one Jam is set to
     const pick = s.session ? selected(now) : undefined
@@ -163,10 +171,10 @@ export function createRuns(d: RunsDeps): Runs {
       const src = (pick && (pick.agent === 'claude' || pick.agent === 'codex') && can(pick.agent) ? transcriptOf(root, pick.agent, pick.session) : null)
         ?? conns.map((c) => transcriptOf(root, c.agent as ForkAgent, c.session)).find((t) => !!t)
         ?? newestAny(root, can)
-      if (src && forkable(src)) return { kind: 'fork', agent: src.agent, session: src.session }
+      if (src && forkable(src)) return { kind: 'fork', agent: src.agent, session: src.session, ...(skipped ? { why: skipped } : {}) }
       if (src) return { kind: 'fresh', agent: src.agent, why: 'your session is too long to copy - a fresh agent took it' }
     }
-    return { kind: 'fresh', agent: d.canSpawn(agent) ? agent : d.cfg.agent }
+    return { kind: 'fresh', agent: d.canSpawn(agent) ? agent : d.cfg.agent, ...(skipped ? { why: skipped } : {}) }
   }
 
   /** Write every connection's offers file: how many runs wait for it, the runs it must let go or carry on with, and
@@ -174,9 +182,12 @@ export function createRuns(d: RunsDeps): Runs {
   /** What a run is called in a ping: its card's name, else the owner's words (a capture's first words - its name comes later), clipped. */
   const titleOf = (b: Batch): string => {
     const c = q.j.cards.find((x) => x.id === b.members[0]?.card)
-    const words = c?.name ?? c?.autoName ?? b.members[0]?.brief?.asks?.[0]?.body ?? (b.members[0]?.brief?.capture ? captureWords(b.members[0].brief.capture.record, b.members[0].brief.capture.edited) || undefined : undefined) ?? (c?.kind === 'wrapup' ? 'Session record' : 'a request')
-    const t = String(words).replace(/@marver\b/gi, '').replace(/\s+/g, ' ').trim() || 'a request'
-    return t.length > 60 ? `${t.slice(0, 59)}…` : t
+    // a capture's words and the notes added in its read-back
+    const words = c?.name ?? c?.autoName ?? b.members[0]?.brief?.asks?.[0]?.body ?? (b.members[0]?.brief?.capture ? requestWords(b.members[0].brief.capture, ' ') || undefined : undefined) ?? (c?.kind === 'wrapup' ? 'Session record' : 'a request')
+    // as the brief cleans words: no escape or control character reaches the session's inbox
+    const t = sanitize(String(words), 400).replace(/@marver\b/gi, '').replace(/\s+/g, ' ').trim() || 'a request'
+    const cps = [...t]
+    return cps.length > 60 ? `${cps.slice(0, 59).join('')}…` : t
   }
   const publish = () => {
     const by = new Map<string, string[]>()
@@ -189,8 +200,13 @@ export function createRuns(d: RunsDeps): Runs {
     }
     for (const id of new Set([...by.keys(), ...offered.keys(), ...stops.keys(), ...resumes.keys(), ...worded])) {
       const now = new Set(by.get(id) ?? [])
-      const was = offered.get(id) ?? new Set()
       const prev = readOffers(root, id)
+      // the newest offer named: the batch offered last
+      const newest = open().filter((b) => b.offer?.conn === id).sort((x, y) => (y.offer!.at - x.offer!.at))[0]
+      const latest = newest ? { id: newest.batchId.slice(0, 8), title: titleOf(newest) } : undefined
+      // the first look after a restart: what its offers file already announced is not new - the session was told
+      const was = offered.get(id) ?? (!published.has(id) && prev && prev.n === now.size && prev.latest?.id === latest?.id ? now : new Set<string>())
+      published.add(id)
       const stop = stops.get(id) ?? []
       const resume = resumes.get(id) ?? []
       const newOffer = [...now].some((x) => !was.has(x))
@@ -200,9 +216,6 @@ export function createRuns(d: RunsDeps): Runs {
       if (!newOffer && !newWord && prev?.n === now.size) continue
       // a generation never goes back, across restarts too: the listener posts once per generation it has not seen
       const gen = newOffer || (newWord && (stop.length || resume.length)) ? Math.max((prev?.gen ?? 0) + 1, Date.now()) : prev?.gen ?? 0
-      // the newest offer named: the batch offered last
-      const newest = open().filter((b) => b.offer?.conn === id).sort((x, y) => (y.offer!.at - x.offer!.at))[0]
-      const latest = newest ? { id: newest.batchId.slice(0, 8), title: titleOf(newest) } : undefined
       try { writeOffers(root, id, { n: now.size, gen, ...(stop.length ? { stop } : {}), ...(resume.length ? { resume } : {}), ...(latest ? { latest } : {}) }) } catch { /* its listener looks again */ }
     }
   }
@@ -327,8 +340,10 @@ export function createRuns(d: RunsDeps): Runs {
         id = b.batchId
         if (b.claim!.stopping) { out = { ok: true, text: 'Released - the owner\'s choice goes ahead.' }; stopNow(b) }
         else {
-          out = { ok: true, text: 'Released - another runner takes it.' }
           b.gen = Math.max(b.gen ?? 0, b.claim!.gen); delete b.claim; letGo(b)
+          // the copy that takes it says why (A8); under session-only it waits for a session again
+          if (b.handoff) b.handoffWhy = 'your session let it go'
+          out = { ok: true, text: b.handoff ? 'Released - another runner takes it.' : 'Released - it waits for a session again.' }
         }
         keep(req, out, b)
         q.persist()
@@ -357,9 +372,10 @@ export function createRuns(d: RunsDeps): Runs {
         const s = settings()
         const cur = readConn(root, conn.id)
         if (!cur || cur.inc !== conn.inc || !usable(cur)) return { ok: false, error: 'this session\'s connection changed - run the command again' }
-        if (!sessionsOn(s)) return { ok: true, text: 'Nothing waits for this session now (no Jam session takes it).' }
+        const mine = open().filter((x) => x.offer?.conn === conn.id && x.offer.inc === conn.inc && sessionsOn(s, x)).sort((a, z) => a.offer!.at - z.offer!.at)
+        if (!sessionsOn(s) && !mine.length) return { ok: true, text: 'Nothing waits for this session now (no Jam session takes it).' }
         if (selected(now)?.id !== conn.id) return { ok: true, text: 'Nothing waits for this session now - another session takes the work.' }
-        const b = open().filter((x) => x.offer?.conn === conn.id && x.offer.inc === conn.inc).sort((a, z) => a.offer!.at - z.offer!.at)[0]
+        const b = mine[0]
         if (!b) return { ok: true, text: 'Nothing waits for this session now.' }
         const gen = Math.max(b.gen ?? 0, b.claim?.gen ?? 0) + 1
         delete b.offer; delete b.handoff
@@ -461,12 +477,14 @@ export function createRuns(d: RunsDeps): Runs {
     if (stopped || !d.ready()) return
     await answerAll()
     const s = settings()
-    const sel = sessionsOn(s) ? selected(now) : undefined
+    const chosen = selected(now)
     for (const b of open()) {
+      // the session that takes this run (a session's own record is offered once it has ended; nothing else is)
+      const sel = sessionsOn(s, b) ? chosen : undefined
       if (b.offer) {
         const c = readConn(root, b.offer.conn)
         if (!c || !usable(c, now) || c.inc !== b.offer.inc) { await withdraw(b.batchId, 'it ended or cannot take work now'); continue }
-        if (!sessionsOn(s)) { await withdraw(b.batchId, d.jamOn() ? 'sessions are off' : 'the Jam session ended'); continue }
+        if (!sessionsOn(s, b)) { await withdraw(b.batchId, d.jamOn() ? 'sessions are off' : 'the Jam session ended'); continue }
         if (sel?.id !== c.id) { await withdraw(b.batchId, 'another session takes the work now'); continue }
         if (s.runner === 'session') continue   // wait for it, however long
         if (c.agent === 'claude' ? now - b.offer.at > OFFER_MS : !c.busy && now - Math.max(b.offer.at, c.seen) > IDLE_OFFER_MS) await withdraw(b.batchId, c.agent === 'claude' ? 'not taken in 2 minutes' : 'its turn ended without taking it')

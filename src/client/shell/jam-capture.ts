@@ -822,7 +822,7 @@ const syncUnsent = () => useJamCapture.setState({ unsent: [...pendingUploads.key
  *  the pagehide listeners run in. */
 export const capturesPending = (): boolean => { const s = useJamCapture.getState(); return s.unsent.length > 0 || Object.keys(s.caps).length > 0 }
 const keepSealed = (r: CaptureRecord) => { try { const all = JSON.parse(localStorage.getItem(KEPT) ?? '{}'); all[r.id] = r; localStorage.setItem(KEPT, JSON.stringify(all)) } catch { /* memory only */ } pendingUploads.set(r.id, r); syncUnsent() }
-const forgetSealed = (id: string) => { pendingUploads.delete(id); syncUnsent(); try { const all = JSON.parse(localStorage.getItem(KEPT) ?? '{}'); delete all[id]; localStorage.setItem(KEPT, JSON.stringify(all)) } catch { /* memory only */ } }
+const forgetKept = (id: string) => { try { const all = JSON.parse(localStorage.getItem(KEPT) ?? '{}'); delete all[id]; localStorage.setItem(KEPT, JSON.stringify(all)) } catch { /* memory only */ } }
 const pendingUploads = new Map<string, CaptureRecord>()
 let retryTimer: ReturnType<typeof setTimeout> | null = null
 /** Post a sealed record - the same id, idempotent on the server - until it takes. A refusal about the
@@ -853,12 +853,17 @@ async function upload(record: CaptureRecord, leaving = false): Promise<void> {
     return
   }
   if (useJamCapture.getState().away) useJamCapture.setState({ away: false })
-  forgetSealed(record.id)
+  forgetKept(record.id)
   releaseOpen(record.id, !r.ok)   // it landed (the server knows); refused, it is no longer open either
+  useJamCapture.setState((st) => ({ sealed: st.sealed.map((x) => (x.id === record.id ? { ...x, ...(r!.card ? { card: r!.card } : {}) } : x)) }))
+  // what stands for it here - its Sending tile, a resumed draft kept off the lane - stays until the queue holds its
+  // card: the answer comes before the push that carries it, and in between the lane showed the old draft's To confirm
+  // in its place, or (nothing else on it) folded away and came back
+  try { const { useJamQueue } = await import('./jam-queue.ts'); await useJamQueue.getState().load() } catch { /* the push brings it */ }
+  pendingUploads.delete(record.id); syncUnsent()
   // the server holds it: a resumed draft is replaced now (or, refused, shows again)
   const was = record.context.resumes?.id
-  useJamCapture.setState((st) => ({ sealed: st.sealed.map((x) => (x.id === record.id ? { ...x, ...(r!.card ? { card: r!.card } : {}) } : x)), ...(was ? { resuming: st.resuming.filter((x) => x !== was) } : {}) }))
-  void import('./jam-queue.ts').then(({ useJamQueue }) => useJamQueue.getState().load())
+  if (was) useJamCapture.setState((st) => ({ resuming: st.resuming.filter((x) => x !== was) }))
   if (!r.ok) useStore.getState().toast(`the capture could not be kept: ${r.error ?? 'unknown error'}`)
   else {
     // stopped with E and the queue would not take it: it waits on the lane as a draft - said once, nothing opens
@@ -878,9 +883,9 @@ export function endedToReview(id: string): boolean {
  *  seals; a sealed one is kept in localStorage until it lands. Leaving the page asks first - unsaved.ts's one
  *  `beforeunload`, which hears this module's two reasons below - and if you leave anyway (`pagehide`: a close, a
  *  reload, a navigation, the back-forward cache alike), every capture not sealed yet is sealed at once, as it stood,
- *  for good: a missing step says so, the server keeps it as a draft, and it goes out like any sealed record not sent
- *  yet - from the next page, or this one if it comes back. Carrying on is Resume, with a new id. Best effort: a crash
- *  or a killed process fires nothing. */
+ *  for good: a missing step says so, the server keeps it as a draft (one already stopped with E is queued, as E does),
+ *  and it goes out like any sealed record not sent yet - from the next page, or this one if it comes back. Carrying on
+ *  is Resume, with a new id. Best effort: a crash or a killed process fires nothing. */
 let guarded = false
 function guardUnload() {
   if (guarded || typeof window === 'undefined') return
@@ -903,7 +908,10 @@ export function sealOnLeave() {
     // text written in the notes card and never added is the capture's last note, as at E
     if (c.id === s.current && draft) steps.push({ at, event: 'note', text: draft })
     steps.push({ at, event: 'missing', what: c.state === 'recording' ? 'the page closed while it recorded' : 'the page closed before it finished' })
-    records.push(buildRecord(c, steps, true))
+    // stopped with E and still finishing (its last words, its pictures): you sent it to work - it is queued as E does,
+    // the missing step saying what it lacks, never brought back as a draft to confirm. Recording, or stopped to
+    // review: a draft that waits for its read-back
+    records.push(buildRecord(c, steps, c.state === 'recording' || !!c.review))
     timeCapture(c, true)
     // its frames stop recording, its microphone is let go; a late picture or word finds nothing to change
     broadcast({ type: 'sh:capture', id: c.id, on: false })

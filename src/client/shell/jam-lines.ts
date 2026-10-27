@@ -49,14 +49,16 @@ export type LaneCard = JamCard & { shots?: { frame: string; before?: string; aft
  *  Retry". A queue position counts every queued card, tags included - they share one queue. */
 export function laneLine(c: LaneCard, now = Date.now()): string {
   switch (c.state) {
-    case 'draft': return 'To confirm'
+    // a draft the queue would not take (a conflicting comment under its id - an E capture, or a confirm): it says
+    // so, never "To confirm" - E's never asked you to confirm anything
+    case 'draft': return c.note ? 'Not queued' : 'To confirm'
     case 'confirming': return 'Confirming'
     case 'queued': { const p = c.position ?? 1; return p <= 1 ? 'Queued · next' : `Queued · ${ordinal(p)}` }
     case 'working': {
       // who runs it (spec 29b), in a few words: a tile has one short line
       const r = c.runner
       if (r?.kind === 'session') return r.state === 'offered' ? 'Waiting for your session' : r.state === 'waiting' ? 'Waiting for a session' : r.state === 'stalled' ? 'Stalled · choose' : r.state === 'stopping' ? 'Stopping' : `Your session · ${clock(now - c.at)}`
-      if (r?.kind === 'fork') return r.why?.startsWith('your session didn') ? `Yours was busy · a copy is on it · ${clock(now - c.at)}` : `A copy of your session · ${clock(now - c.at)}`
+      if (r?.kind === 'fork') return r.why?.startsWith('your session didn') ? `Yours was busy · a copy is on it · ${clock(now - c.at)}` : r.why?.startsWith('your session was idle') ? `Yours was idle · a copy is on it · ${clock(now - c.at)}` : `A copy of your session · ${clock(now - c.at)}`
       return `Agent working · ${clock(now - c.at)}`
     }
     case 'asks': return 'Asks you'

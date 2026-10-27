@@ -146,6 +146,25 @@ describe.skipIf(!haveModel)('words in the browser', () => {
     await browser.eval(s, `window.__mvJamUi.getState().close(), 1`)
   }, 120_000)
 
+  it('E with words: the capture goes to the queue with them - its record carries what was said, nothing opens', async (ctx) => {
+    if (!browser) return ctx.skip()
+    await browser.eval(s, `window.__mvJamUi.getState().close(), 1`)
+    await key('s')
+    await until(`!!window.__mvJamCapture.getState().current`)
+    const id = await browser.eval(s, `window.__mvJamCapture.getState().current`)
+    await until(`document.querySelector('[data-jam-mic]')?.getAttribute('data-jam-mic') === 'on'`, 20_000)
+    await until(`/plan badge/.test(document.querySelector('[data-jam-caption]')?.textContent ?? '')`, 30_000)
+    await sleep(1000)
+    await key('e')
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state !== 'draft' && c.state !== 'confirming')`, 40_000)
+    const rec = await browser.eval(s, `fetch('/__mv/api/jam/capture?id=${id}', { headers: { 'x-mv-c': (/(?:^|;\\s*)mv_c=([\\w-]+)/.exec(document.cookie) || [])[1] || '' } }).then((r) => r.json())`)
+    const text = rec.record.timeline.filter((x: any) => x.event === 'words').map((x: any) => x.text).join(' ')
+    expect(text).toMatch(/plan badge/)
+    expect(rec.record.timeline.some((x: any) => x.event === 'missing')).toBe(false)
+    expect(await browser.eval(s, `window.__mvJamUi.getState().panel`)).toBeNull()
+    await browser.eval(s, `(() => { const q = window.__mvJamQueue.getState(); const c = q.cards.find((c) => c.id === ${JSON.stringify(id)}); return c && c.state !== 'working' ? q.act(c, 'drop') : 1 })()`)
+  }, 120_000)
+
   it('asked once: the next S opens the microphone without asking; "Typed notes only" is remembered and the tile shows the microphone off - a click asks again', async (ctx) => {
     if (!browser) return ctx.skip()
     await key('s')

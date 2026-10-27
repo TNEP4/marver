@@ -154,6 +154,12 @@ export function captureWords(r: CaptureRecord, edited?: string): string {
 }
 
 
+/** The owner's request as a capture carries it: its words and notes (or their edit), then the notes added in its
+ *  read-back - what the comment, the ping's title and `jam next`'s brief all quote. */
+export function requestWords(p: { record: CaptureRecord; edited?: string; added?: { text: string }[] }, sep = '\n'): string {
+  return [captureWords(p.record, p.edited), ...(p.added ?? []).map((a) => a.text.trim())].filter(Boolean).join(sep)
+}
+
 /** The words and notes said or written after `since` (a resumed capture's new part - every step it
  *  carried over sits before that instant), in time order. */
 export function wordsSince(r: CaptureRecord, since: number): string {

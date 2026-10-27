@@ -42,13 +42,14 @@ const workspace = () => {
   writeFileSync(join(root, 'design', 'scenes', 'demo', 'hero.tsx'), 'export default () => <h1>Hi</h1>\n')
   return { root, dir: join(root, 'design', 'comments'), done: () => rmSync(root, { recursive: true, force: true }) }
 }
-const tag = (root: string, dir: string, body = '@marver make it say Hello', author = { email: 'nic@local', name: 'Nic' }) => {
+const tag = (root: string, dir: string, body = '@marver make it say Hello', author = { email: 'nic@local', name: 'Nic' }, frame = 'demo/hero') => {
   const id = randomUUID()
-  const ev: CommentEvent = { id, ts: Date.now(), type: 'create', commentId: id, frame: 'demo/hero', nodeKey: 'demo/hero', author, body }
+  const ev: CommentEvent = { id, ts: Date.now(), type: 'create', commentId: id, frame, nodeKey: frame, author, body }
   appendEvents(dir, 'home', [ev])
   record(root, 'home', id)
   return ev
 }
+const put = (root: string, rel: string, body = 'export default () => <h1>Other</h1>\n') => writeFileSync(join(root, rel), body)
 const replies = (dir: string) => replay(readLog(dir, 'home')).flatMap((t) => t.replies.filter((r) => r.agent))
 /** an early line's id: jam-c-e<attempt>-<batch uuid> (a final reply's is jam-c-<batch uuid>-<member>, and a uuid may start with e) */
 const EARLY = /^jam-c-e\d+-[0-9a-f]{8}-[0-9a-f]{4}-/
@@ -266,6 +267,73 @@ describe('session runs in the daemon', { timeout: 30_000 }, () => {
     expect(readOffers(s.root, s.conn.id)?.latest?.title).toBe('Session record')
     s.jam.stop(); await t.catch(() => {})
     s.done()
+  })
+
+  it('once the Jam session ended only its record goes to your session - a request offered before the end goes to a copy', async () => {
+    const s = await setup({ jam: false })
+    const id = SESSION()
+    await s.jam.session({ action: 'start', id })
+    tag(s.root, s.dir)
+    const t = s.jam.tick()
+    expect(await until(() => (readOffers(s.root, s.conn.id)?.latest?.title ?? '') === 'make it say Hello', 8_000, () => s.jam.runs.tick())).toBe(true)
+    // the session ends with its record while the request is still offered: the request is taken back at once (the
+    // record waits for it), and only the record is offered to your session
+    expect((await s.jam.session({ action: 'wrapup', id, instructions: 'x', includeTalk: false, tags: 0, board: 'home' })).ok).toBe(true)
+    const t2 = s.jam.tick()
+    expect(await until(() => existsSync(join(s.root, 'spawned.marker')), 15_000, () => s.jam.runs.tick())).toBe(true)
+    expect(finals(s.dir)[0]?.agentMeta?.runner).toMatch(/fresh|fork/)
+    expect(await until(() => (readOffers(s.root, s.conn.id)?.latest?.title ?? '') === 'Session record', 15_000, () => s.jam.runs.tick())).toBe(true)
+    expect(readOffers(s.root, s.conn.id)?.n).toBe(1)
+    s.jam.stop(); await Promise.allSettled([t, t2])
+    s.done()
+  })
+
+  it('a copy that runs because your session already holds its share says why; so does one that runs what your session let go', async () => {
+    const slow: JamAdapter = { ...spawned, spawnArgs() { return { cmd: process.execPath, args: ['-e', `require('fs').writeFileSync('spawned.marker','yes');setTimeout(()=>process.stdout.write(JSON.stringify({result:'A background agent did it.'})),2500)`] } } }
+    const s = await setup({ cfg: { sessionMax: 1 }, adapter: slow })
+    put(s.root, 'design/scenes/demo/other.tsx')
+    tag(s.root, s.dir)
+    const t = s.jam.tick()
+    expect(await until(() => (readOffers(s.root, s.conn.id)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
+    tag(s.root, s.dir, '@marver make the other one blue', undefined, 'demo/other')
+    const t2 = s.jam.tick()
+    expect(await until(() => s.jam.view().cards.some((c) => c.state === 'working' && c.runner?.kind !== 'session'), 15_000, () => s.jam.runs.tick())).toBe(true)
+    expect(s.jam.view().cards.find((c) => c.state === 'working' && c.runner?.kind !== 'session')!.runner!.why).toBe("your session didn't take it - it already holds 1 run")
+    s.jam.stop(); await Promise.allSettled([t, t2]); s.done()
+
+    const r = await setup({ adapter: slow })
+    tag(r.root, r.dir)
+    const t3 = r.jam.tick()
+    await until(() => (readOffers(r.root, r.conn.id)?.n ?? 0) === 1, 8_000, () => r.jam.runs.tick())
+    const handle = String((await r.ask('next')).handle)
+    const rel = await r.ask('release', { handle })
+    expect(rel).toMatchObject({ ok: true, text: 'Released - another runner takes it.' })
+    expect(await until(() => r.jam.view().cards.some((c) => c.state === 'working' && c.runner?.kind !== 'session'), 15_000, () => r.jam.runs.tick())).toBe(true)
+    expect(r.jam.view().cards.find((c) => c.state === 'working')!.runner!.why).toBe("your session didn't take it - it let it go")
+    r.jam.stop(); await t3.catch(() => {}); r.done()
+  })
+
+  it('a ping names its request in clean words: no escape or control character reaches the session\'s inbox', async () => {
+    const s = await setup()
+    tag(s.root, s.dir, '@marver \x1b[2Jmake it \x07red')
+    const t = s.jam.tick()
+    expect(await until(() => (readOffers(s.root, s.conn.id)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
+    expect(readOffers(s.root, s.conn.id)?.latest?.title).toBe('make it red')
+    s.jam.stop(); await t.catch(() => {}); s.done()
+  })
+
+  it('a restart never announces again an offer the session was already told of', async () => {
+    const s = await setup()
+    tag(s.root, s.dir)
+    const t = s.jam.tick()
+    expect(await until(() => (readOffers(s.root, s.conn.id)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
+    const before = readOffers(s.root, s.conn.id)!
+    s.jam.stop(); await t.catch(() => {})
+    const jam2 = createJam(s.root, CFG, spawned)
+    const t2 = jam2.tick()
+    for (let i = 0; i < 5; i++) { await jam2.runs.tick(); await new Promise((r) => setTimeout(r, 50)) }
+    expect(readOffers(s.root, s.conn.id)).toEqual(before)
+    jam2.stop(); await t2.catch(() => {}); s.done()
   })
 
   it('a tag during a Jam session goes to the session: offered, next, say once, done - delivered as the session\'s', async () => {

@@ -1276,8 +1276,9 @@ describe('captures in the browser: the first trial', () => {
     // everything a person would see from here: the tile's state and line, the queue's card, the panel, a fit, a thread
     await browser!.eval(s, `(() => {
       const id = ${JSON.stringify(id)}
-      const w = window.__eWatch = { tiles: [], lines: [], panels: [], cards: [], fits: 0, threads: [], cam: window.__mvJamCanvas.transform() }
-      const lane = () => { const t = document.querySelector('.jm-lane [data-tile="' + id + '"]'); if (t) { w.tiles.push(t.getAttribute('data-state')); w.lines.push(t.querySelector('.m')?.textContent ?? '') } }
+      const w = window.__eWatch = { tiles: [], lines: [], panels: [], cards: [], fits: 0, threads: [], cam: window.__mvJamCanvas.transform(), seen: false, gaps: 0 }
+      // once its tile is on the lane it never leaves it - not between the canvas's answer and the queued card arriving
+      const lane = () => { const t = document.querySelector('.jm-lane [data-tile="' + id + '"]'); if (t) { w.seen = true; w.tiles.push(t.getAttribute('data-state')); w.lines.push(t.querySelector('.m')?.textContent ?? '') } else if (w.seen && !window.__mvJamCapture.getState().current) w.gaps++ }
       w.mo = new MutationObserver(lane); w.mo.observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true })
       w.u1 = window.__mvJamUi.subscribe((st) => { if (st.panel) w.panels.push(st.panel.kind + ':' + st.panel.id) })
       w.u2 = window.__mvJamQueue.subscribe((st) => { const c = (st.cards ?? []).find((x) => x.id === id); if (c) w.cards.push(c.state) })
@@ -1288,12 +1289,13 @@ describe('captures in the browser: the first trial', () => {
     await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && (c.state === 'queued' || c.state === 'working' || c.state === 'review'))`, 40_000)
     await sleep(1500)   // past a late push, a load, an effect
     const w = await browser!.eval(s, `(() => { const w = window.__eWatch; w.mo.disconnect(); w.u1(); w.u2(); w.u3(); w.unfit(); const cam = window.__mvJamCanvas.transform()
-      return { tiles: [...new Set(w.tiles)], lines: [...new Set(w.lines)], panels: w.panels, cards: [...new Set(w.cards)], fits: w.fits, threads: w.threads, selected: window.__mvJamUi.getState().selected,
+      return { tiles: [...new Set(w.tiles)], lines: [...new Set(w.lines)], panels: w.panels, cards: [...new Set(w.cards)], fits: w.fits, threads: w.threads, selected: window.__mvJamUi.getState().selected, gaps: w.gaps,
         moved: !!(w.cam && cam) && (Math.abs(w.cam.x - cam.x) > 2 || Math.abs(w.cam.y - cam.y) > 2 || Math.abs(w.cam.s - cam.s) > 0.001) } })()`)
     expect(w.tiles).not.toContain('draft')
     expect(w.cards.filter((x: string) => x === 'draft' || x === 'confirming')).toEqual([])
     expect(w.lines.filter((x: string) => /confirm/i.test(x))).toEqual([])
     expect(w.lines).toContain('Sending')                        // the sealing tile, while it finishes and goes
+    expect(w.gaps).toBe(0)                                      // and it stays until its queued card takes its place
     expect(w.panels).toEqual([])                                // no read-back, no capture card
     expect([w.fits, w.moved, w.threads.length, w.selected === id]).toEqual([0, false, 0, false])   // the canvas never moved, nothing opened, its tile not selected
     await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(id)} && c.state === 'review')`, 90_000)
@@ -1311,6 +1313,7 @@ describe('captures in the browser: the first trial', () => {
     const lines2 = await browser!.eval(s, `(() => { window.__eWatch2.mo.disconnect(); return [...new Set(window.__eWatch2.lines)] })()`)
     expect(lines2).toContain('Finishing')
     expect(lines2).not.toContain('Sending')
+    expect(lines2).not.toContain('Waiting to send')             // the canvas answers: never the offline line
     expect(await browser!.eval(s, `document.querySelector('.jm-lane [data-tile="${id2}"] .m')?.textContent`)).toBe('To confirm')
     await decide(id2, 'drop')
   }, 180_000)
@@ -1331,4 +1334,46 @@ describe('captures in the browser: the first trial', () => {
     expect(await browser!.eval(s, `(() => { window.__eHeldU(); return window.__eHeld })()`)).toEqual([])
     await decide(id, 'drop')
   }, 120_000)
+
+  skippable('⇧E then a capture stopped with E before it finished: the ⇧E read-back still opens; E over a review closes the review; E finishing as the page goes is queued', async () => {
+    agentMode({})
+    await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
+    // ⇧E on A, and at once S - A still finishing - then E on B: A's read-back opens all the same
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const a = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('look at this one first'), 1`)
+    await key('e', true)
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current && window.__mvJamCapture.getState().current !== ${JSON.stringify(a)}`)
+    const b = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('this one straight on'), 1`)
+    await key('e')
+    await until(`window.__mvJamUi.getState().panel?.kind === 'capture' && window.__mvJamUi.getState().panel?.id === ${JSON.stringify(a)}`, 40_000)
+    await decide(a, 'drop')
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(b)} && c.state === 'review')`, 90_000)
+
+    // a review open on B, S, a note, E: B is sent back as more work - its panel closes, nothing else opens
+    await browser!.eval(s, `window.__mvJamUi.getState().open({ kind: 'review', id: ${JSON.stringify(b)} }), 1`)
+    await until(`window.__mvJamUi.getState().panel?.kind === 'review'`, 5000)
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const c = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    expect(await browser!.eval(s, `window.__mvJamCapture.getState().caps[${JSON.stringify(c)}].reviewing?.card ?? null`)).toBe(b)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('and the footer too'), 1`)
+    await browser!.eval(s, `(() => { window.__cPanels = []; window.__cU = window.__mvJamUi.subscribe((st) => window.__cPanels.push(st.panel ? st.panel.kind + ':' + st.panel.id : null)); return 1 })()`)
+    await key('e')
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((x) => x.id === ${JSON.stringify(b)} && x.state === 'done')`, 40_000)
+    await until(`window.__mvJamUi.getState().panel === null`, 5000)
+    expect(await browser!.eval(s, `(() => { window.__cU(); return window.__cPanels.filter((x) => x && !x.startsWith('review:')) })()`)).toEqual([])
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((x) => x.id === ${JSON.stringify(c)} && x.state === 'review')`, 90_000)
+    await decide(c, 'good')
+
+    // E, and the page goes while it is still finishing: it is queued, as E does - never a draft to confirm
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const d = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('sent as the page went'), 1`)
+    await browser!.eval(s, `(() => { window.__mvJamCapture.getState().end(); window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: false })); return 1 })()`)
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((x) => x.id === ${JSON.stringify(d)})`, 30_000)
+    expect(await browser!.eval(s, `(window.__mvJamQueue.getState().cards ?? []).find((x) => x.id === ${JSON.stringify(d)}).state`)).not.toBe('draft')
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((x) => x.id === ${JSON.stringify(d)} && x.state === 'review')`, 90_000)
+    await decide(d, 'good')
+  }, 300_000)
 })

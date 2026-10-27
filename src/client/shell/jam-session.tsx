@@ -156,7 +156,7 @@ export function JamButton({ inPlay }: { inPlay?: boolean }) {
 
 /** Jam's keys, one list: the shortcuts tooltip (the key table in jam-keys.ts is the source of truth). */
 export const JAM_KEYS: [string, string][] = [
-  ['Start a capture', 'S'], ['End it', 'E'], ['Drop it', 'esc'], ['Add a note', 'N'], ['Picture of the frame', 'I'],
+  ['Start a capture', 'S'], ['Stop and queue it', 'E'], ['Stop to review it', '⇧E'], ['Drop it', 'esc'], ['Add a note', 'N'], ['Picture of the frame', 'I'],
   ['Resume a capture', 'R'], ['The captures', 'Q'], ['Open a capture', '⏎'], ['Keep it, not sent', 'K'], ['Review the next', 'V'], ['End the session', 'J'],
 ]
 

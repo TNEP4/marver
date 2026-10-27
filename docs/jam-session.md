@@ -31,15 +31,18 @@ throws it away. One capture records at a time.
 
 After `E` the tile reads **Sending** while its last words and pictures come in, then Queued or the agent's state;
 nothing opens and the canvas stays where it is. If the queue cannot take it (rare: another comment already sits
-under its id), it stays on the lane as a draft and one line says why - open it to add it to the queue. After `⇧E`
-the tile reads **Finishing**, then **To confirm** as its read-back opens. Either way the capture waits up to 15 s for
-the words you said last.
+under its id), it stays on the lane as a draft reading **Not queued** and one line says why - open it to add it to
+the queue. After `⇧E` the tile reads **Finishing**, then **To confirm** as its read-back opens. Either way the capture
+waits for the words you said last: 15 s, longer while the speech engine is still working through them (a minute at
+most). With the microphone on and nothing heard (the speech engine not available, the microphone still opening),
+its record says the words may be incomplete.
 
 Closing or reloading the tab asks first while a capture is recording, finishing or not yet taken by the canvas (as it
 does for any unsaved work). If you leave anyway, the capture
 is kept as it stood - its words and notes so far, and a line saying the page closed before it finished - and comes
-back as a draft to read, resume or drop; it never goes to your agent on its own. (Best effort: a crash gives the page
-no chance to keep it.)
+back as a draft to read, resume or drop; it never goes to your agent on its own. One you had already stopped with `E`
+(its tile reading Sending) is queued as `E` does, with that line. (Best effort: a crash gives the page no chance to
+keep it.)
 
 A capture the page could not send waits in this browser, for this address, and sends itself the next time the canvas
 opens there - see [A capture left on an old address](#a-capture-left-on-an-old-address).
@@ -169,7 +172,7 @@ shows in the review, beside the before and after pictures. The managed instructi
 
 ```ts
 // design/config.ts
-jam: { agent: "claude", concurrency: 6, capture: "confirm", chime: true, names: true, loc: true },
+jam: { agent: "claude", concurrency: 6, chime: true, names: true, loc: true },
 ```
 
 | Key | Default | What it does |
@@ -187,7 +190,7 @@ A bad value says so at boot and takes the default; nothing here turns Jam off.
 | Where | Keys |
 |---|---|
 | Anywhere on the canvas | `S` capture · `J` session · `Q` the lane · `V` next to review |
-| A capture recording | `E` end · `N` note · `I` picture · `L` laser · `⌥L` inspect · `Esc` drop |
+| A capture recording | `E` stop and queue · `⇧E` stop to review · `N` note · `I` picture · `L` laser · `⌥L` inspect · `Esc` drop |
 | A read-back | `⏎` add to queue · `K` keep · `R` resume · `Esc` drop |
 | A review | `⏎` looks good · `⇧⏎` more work · `→` later · `←` back · `B` both/before/after · `⌥←` `⌥→` frames · `Esc` leave |
 | The lane (`Q`) | `←` `→` move · `⏎` open (or open/fold the Done tile) · `⌘⏎` do next · `K` keep · `⌫` drop · `Esc` leave |

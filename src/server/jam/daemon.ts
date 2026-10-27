@@ -351,7 +351,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     say: (b) => ensureEarly(b),
     ready: () => ready,
     // the session record a wrap-up queues belongs to the session it closes: it goes to your session too
-    jamOn: () => !!q.j.session || q.j.cards.some((c) => c.kind === 'wrapup' && (c.state === 'queued' || c.state === 'working')),
+    // a Jam session runs (its own record, written once it ended, is offered to your session by runs.ts - nothing else)
+    jamOn: () => !!q.j.session,
     canSpawn: (agent) => Object.hasOwn(AGENT_BIN, agent) && onPath(AGENT_BIN[agent as JamAgent]),
   })
 
@@ -741,6 +742,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       const spawnedBefore = b.runner && b.runner.kind !== 'session' ? b.runner : undefined
       const sessionHeld = !spawnedBefore && !b.handoff && (!!b.claim || !!b.offer || b.runner?.kind === 'session')
       let first: Choice = sessionHeld ? { kind: 'wait' } : spawnedBefore || b.handoff ? { kind: 'fresh', agent: '' } : runs.choose(b)
+      // your session was passed over at once (it holds sessionMax runs, or Codex or Cursor sat idle): the copy says so
+      const passedOver = !sessionHeld && !spawnedBefore && !b.handoff && (first.kind === 'fork' || first.kind === 'fresh') ? first.why : undefined
       if (b.early && b.claim) ensureEarly(b)   // a session's early line journaled before a restart: posted now if it was not
       while (!spawnedBefore && !b.handoff && (sessionHeld || first.kind === 'session' || first.kind === 'wait')) {
         const beat = setInterval(followWork, 2_000)
@@ -768,7 +771,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
             const p = pick.kind === 'fork' || pick.kind === 'fresh' ? pick : { kind: 'fresh' as const, agent: cfg.agent }
             // offered to your session first and taken back: the copy says why it, not your session, runs it
             const why = b.handoffWhy === 'not taken in 2 minutes' || b.handoffWhy === 'its turn ended without taking it' ? "your session didn't take it - it was busy or away"
-              : b.handoffWhy === 'the Jam session ended' ? 'the Jam session had ended' : undefined
+              : b.handoffWhy === 'your session let it go' ? "your session didn't take it - it let it go"
+              : b.handoffWhy === 'the Jam session ended' ? 'the Jam session had ended' : passedOver
             return why && !('why' in p && p.why) ? { ...p, why } : p
           })()
         const agent = (Object.hasOwn(adapters, ch.agent) ? ch.agent : cfg.agent) as JamAgent
@@ -1529,7 +1533,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       if (c?.kind === 'capture' && (action === 'confirm' || (action === 'keep' && (c.state === 'draft' || c.state === 'confirming')))) return confirm(id, rev, action === 'confirm' ? 'queued' : 'kept')
       if (action === 'good' && c && c.kind !== 'comment') return good(id, rev)
       // a More-work note that only approves ("looks good") settles the review - it never runs the work again
-      if (action === 'more' && c && c.kind !== 'comment' && c.state === 'review' && isApproval(body ?? '')) return good(id, rev)
+      if (action === 'more' && c && c.kind !== 'comment' && c.state === 'review' && isApproval(body ?? '', resultFor(q.j, c))) return good(id, rev)
       if (action === 'more' && c && c.kind !== 'comment') return moreWork(id, rev, body ?? '')
       // Retry on a card whose results are saved but were never posted posts them - it never reruns
       const saved = await q.lock((j) => {
