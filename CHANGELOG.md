@@ -36,8 +36,9 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 - **"Put this next to slide 01" just works.** `npx marver boards place <board> <scene/frame> --after|--before
   <scene/frame>` puts a frame next to another and moves the frames after it to make room; in a deck it plays right
   after it, and it stays there when the canvas lays the board out again. Jam runs use it, or `boards pin` on an empty
-  board (each with `--run <handle>`), instead of asking for the board file. Every board writer - `place`, `pin`, the canvas's own save, and the sidebar's
-  rename, status and drag - now takes the board's lock, so none overwrites another.
+  board (each with `--run <handle>`), instead of asking for the board file. Every board writer - `place`, `pin`, the
+  canvas's own save, and the sidebar's rename, status and drag - now takes the board's lock, so none overwrites
+  another.
 - **Two ways to stop a capture.** `E` stops it and queues it: its tile goes from Capturing to Sending to Queued or
   working, and nothing opens, asks you to confirm or moves the canvas. `⇧E` (Stop to review) opens its read-back as
   before, to check it and add notes first. Both are on the capture bar, Stop first. `J` during a capture stops it to

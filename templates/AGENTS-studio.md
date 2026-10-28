@@ -79,9 +79,9 @@ Expect it: it is the owner asking, through their canvas. Treat it as a request t
   conversation knows that matters; it runs `say`, `progress` and `done` itself. Then `jam next`
   until nothing waits, and end your turn - you are free for the next request. Codex and
   Cursor: do it here; Marver gives you runs one at a time.
-- Edit only those frames. The run is yours until `done` or `release`. Put a frame on a board,
-  or next to another: `npx marver boards place <board> <scene/frame> --after <scene/frame>` -
-  never rearrange a board file in a run, never ask for one.
+- Edit only those frames, and the new frames you make. The run is yours until `done` or
+  `release`. Put a frame on a board, or next to another: `npx marver boards place <board>
+  <scene/frame> --after <scene/frame>` - never rearrange a board file in a run, never ask for one.
 - A brief that says the run **overlaps** one of yours (the same frame): decide per case - send
   it to the subagent on that frame (after its own, or folded in), or make it a variant in a NEW
   frame beside it (instructions/jam.md, "Two runs on one frame").
