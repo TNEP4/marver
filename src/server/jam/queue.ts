@@ -502,11 +502,16 @@ export function form(j: Journal, ctx: Ctx, o: FormOpts, now = Date.now()): { bat
     // not picture is pictured after, as a retry pictures one whose before-picture failed)
     const back = f.cards.find((c) => c.alone?.spawn)?.alone
     const created = [...new Set(f.cards.flatMap((c) => c.alone?.created ?? []))].filter((x) => f.frames.includes(x))
-    const kept = new Map<string, string>()
-    for (const s of f.cards.flatMap((c) => c.alone?.shots ?? [])) if (f.frames.includes(s.frame) && !kept.has(s.frame)) kept.set(s.frame, s.before)
+    // (the earliest picture of a frame among the cards it forms from - each card's own already its earliest, joinAlone)
+    const kept = new Map<string, { before: string; at?: number }>()
+    for (const s of f.cards.flatMap((c) => c.alone?.shots ?? [])) {
+      if (!f.frames.includes(s.frame)) continue
+      const k = kept.get(s.frame)
+      if (!k || (s.at !== undefined && (k.at === undefined || s.at < k.at))) kept.set(s.frame, { before: s.before, ...(s.at !== undefined ? { at: s.at } : {}) })
+    }
     // (frames it made and no picture kept - its before-picture had failed: still listed, so the frames it made read as new,
     // never pictured as a "before")
-    const shots = kept.size || created.length ? f.frames.filter((x) => !created.includes(x)).map((x) => ({ frame: x, ...(kept.has(x) ? { before: kept.get(x)! } : {}) })) : undefined
+    const shots = kept.size || created.length ? f.frames.filter((x) => !created.includes(x)).map((x) => { const k = kept.get(x); return { frame: x, ...(k ? { before: k.before, ...(k.at !== undefined ? { beforeAt: k.at } : {}) } : {}) } }) : undefined
     for (const c of f.cards) delete c.alone
     const b: Batch = { batchId, members, frames: f.frames, ...(f.exclusive ? { exclusive: true } : {}), state: 'claimed', leaseUntil: 0, attempts: 0, at: now, others: o.others !== false,
       ...(f.overlaps?.length && o.sharer ? { overlaps: f.overlaps, share: { ...o.sharer } } : {}),
@@ -524,8 +529,15 @@ export function form(j: Journal, ctx: Ctx, o: FormOpts, now = Date.now()): { bat
  *  first one kept (Codex's review: the second requeue replaced the first's, and its review started from partial work). */
 export function joinAlone(was: Card['alone'], add: NonNullable<Card['alone']>): NonNullable<Card['alone']> {
   const created = [...new Set([...(was?.created ?? []), ...(add.created ?? [])])]
-  const shots = [...(was?.shots ?? [])]
-  for (const x of add.shots ?? []) if (!shots.some((y) => y.frame === x.frame)) shots.push({ ...x })
+  // a frame's picture from before any edit is the EARLIEST one taken - not the one let go first (Codex's review: a
+  // follow-up started after the capture's edits, let go first, kept a picture of partial work); one without a time
+  // (kept by an older version) loses to one with a time only when that one is earlier - else the first kept stays
+  const shots = [...(was?.shots ?? [])].map((x) => ({ ...x }))
+  for (const x of add.shots ?? []) {
+    const i = shots.findIndex((y) => y.frame === x.frame)
+    if (i < 0) shots.push({ ...x })
+    else if (x.at !== undefined && (shots[i].at === undefined || x.at < shots[i].at!)) shots[i] = { ...x }
+  }
   const why = was?.why ?? add.why
   return { ...(was?.spawn || add.spawn ? { spawn: true as const } : {}), ...(why ? { why } : {}), ...(created.length ? { created } : {}), ...(shots.length ? { shots } : {}) }
 }

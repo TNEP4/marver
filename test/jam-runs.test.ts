@@ -949,6 +949,11 @@ describe('F4: the same frame twice - offered to your session, which decides; run
     expect(kept.id).toBe('cap-1-abcdef')
     expect(kept.alone).toEqual({ created: ['demo/hero-b'], shots: [{ frame: 'demo/hero', before: 'p-1' }] })
     expect(joinAlone(kept.alone, { created: ['demo/hero-c'], shots: [{ frame: 'demo/hero', before: 'p-9' }] })).toEqual({ created: ['demo/hero-b', 'demo/hero-c'], shots: [{ frame: 'demo/hero', before: 'p-1' }] })
+    // the earliest picture wins, whoever was let go first: a follow-up pictured partial work later (p-late) and was let
+    // go first; its capture's picture from before any edit (p-early) replaces it
+    const late = joinAlone(undefined, { shots: [{ frame: 'demo/hero', before: 'p-late', at: 2000 }] })
+    expect(joinAlone(late, { shots: [{ frame: 'demo/hero', before: 'p-early', at: 1000 }] }).shots).toEqual([{ frame: 'demo/hero', before: 'p-early', at: 1000 }])
+    expect(joinAlone(joinAlone(undefined, { shots: [{ frame: 'demo/hero', before: 'p-early', at: 1000 }] }), { shots: [{ frame: 'demo/hero', before: 'p-late', at: 2000 }] }).shots).toEqual([{ frame: 'demo/hero', before: 'p-early', at: 1000 }])
   })
 
   it('a run that leaves your session while your other run holds its frame goes back to the queue with what it was given: the variant placed with --run and its pictures from before any edit (Codex review: the run that took it over held only the first frame and pictured the partial work as its before)', async () => {
@@ -970,7 +975,7 @@ describe('F4: the same frame twice - offered to your session, which decides; run
     expect(await until(() => (offered(s)?.n ?? 0) === 1 && (offered(s)?.line ?? '').includes('variant'), 8_000, () => s.jam.runs.tick())).toBe(true)
     const h2 = String((await s.ask('next')).handle)
     const first = s.jam.snapshot().batches.find((b) => b.batchId.startsWith(h2.slice(2, 10)))!
-    expect(first.shots).toEqual([{ frame: 'demo/hero', before: 'p-0000000000000001' }])
+    expect(first.shots).toMatchObject([{ frame: 'demo/hero', before: 'p-0000000000000001' }]); expect(typeof first.shots?.[0]?.beforeAt).toBe('number')
     // its subagent makes the variant and places it under the run, edits the frame a little - then the run is let go
     put(s.root, 'design/scenes/demo/hero-b.tsx')
     const { boardsPlace } = await import('../src/cli/boards.ts')

@@ -158,7 +158,7 @@ export interface Card {
    *  every frame to be free (never formed beside another run again), and runs spawned when `spawn` - the decision it had.
    *  What that run had goes to the run formed from it: the frames it made (`created`, a run of one) and its pictures
    *  from before its first edit (`shots`) - its frames given as it worked are in `frames` already */
-  alone?: { spawn?: true; why?: string; created?: string[]; shots?: { frame: string; before: string }[] }
+  alone?: { spawn?: true; why?: string; created?: string[]; shots?: { frame: string; before: string; at?: number }[] }
   made: number               // when it was made - the lane's order
   order: number              // run position: `made`, unless Do next put it first
   rev: number                // bumped on every change; actions compare it
@@ -200,7 +200,7 @@ export interface Batch {
   undelivered?: boolean      // its results are saved but could not be posted: Retry posts them, never reruns
   posted?: boolean           // every reply and reanchor of `results` is in the log
   /** before and after pictures of every reserved frame, for a batch that holds a capture (picture ids) */
-  shots?: { frame: string; before?: string; after?: string; same?: boolean; new?: boolean }[]   // `same`: the run left it as it was; `new`: the run made it
+  shots?: { frame: string; before?: string; beforeAt?: number; after?: string; same?: boolean; new?: boolean }[]   // `same`: the run left it as it was; `new`: the run made it; `beforeAt`: when its before was taken
   model?: string
   /** who runs it (spec 29b): the owner's session, a copy of it, or a fresh agent - and why, when it is not the obvious one */
   runner?: { kind: 'session' | 'fork' | 'fresh'; agent: string; conn?: string; session?: string; why?: string }

@@ -127,7 +127,7 @@ describe('captures: confirm, and the thread it becomes', () => {
     expect(p.members[0].brief.capture.record.id).toBe(r.id)
     expect(JSON.stringify(p)).not.toContain('"kind":"issue"')
     expect(shots).toEqual(['demo/a:light:batch', 'demo/a:light:batch'])         // before and after, while it held the frame
-    expect(jam.snapshot().batches[0].shots).toEqual([{ frame: 'demo/a', before: 'p-0000000000000001', after: 'p-0000000000000002' }])
+    expect(jam.snapshot().batches[0].shots).toMatchObject([{ frame: 'demo/a', before: 'p-0000000000000001', after: 'p-0000000000000002' }])
     expect(agentReplies(dir)[0].body).toContain('Done:')
     done()
   })

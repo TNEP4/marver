@@ -751,7 +751,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     const shoot = async (when: 'before' | 'after') => {
       if (!capturing || !hooks.shoot) return
       const shots: NonNullable<Batch['shots']> = b.shots ?? b.frames.map((frame) => ({ frame }))
-      for (const s of shots) { if (stopped) return; if (s.new) continue; const id = await hooks.shoot(s.frame, theme, { batch: b.batchId }, sizes[s.frame]).catch(() => null); if (id) s[when] = id }
+      for (const s of shots) { if (stopped) return; if (s.new) continue; const id = await hooks.shoot(s.frame, theme, { batch: b.batchId }, sizes[s.frame]).catch(() => null); if (id) { s[when] = id; if (when === 'before') s.beforeAt = Date.now() } }
       // a frame the run left exactly as it was (the same pixels) is marked: the review shows the frames
       // that changed, not every frame the capture named
       if (when === 'after') for (const s of shots) { if (s.before && s.after && samePicture(s.before, s.after)) s.same = true; else delete s.same }
@@ -817,7 +817,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           // `boards place --run`) join its card, so the run that takes it over holds them and may finish them; the frames
           // it made (a run of one: who made them is known) and its pictures from before any edit go to that run, so its
           // review starts from there - never from the partial work
-          const shots = (b.shots ?? []).flatMap((s) => (!s.new && s.before ? [{ frame: s.frame, before: s.before }] : []))
+          const shots = (b.shots ?? []).flatMap((s) => (!s.new && s.before ? [{ frame: s.frame, before: s.before, ...(s.beforeAt ? { at: s.beforeAt } : {}) }] : []))
           const created = b.members.length === 1 ? b.created ?? [] : []
           for (const m of b.members) {
             const c = j.cards.find((x) => x.id === m.card)
