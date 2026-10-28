@@ -1295,6 +1295,58 @@ describe('F5: a request with no frame runs beside the others for your session - 
     s.jam.stop(); s.done()
   })
 
+  /** a background agent whose first run fails (both its tries), then makes a second frame as `second` does */
+  const failsFirst: JamAdapter = { ...spawned, spawnArgs() { return { cmd: process.execPath, args: ['-e', `const fs=require('fs');const n=fs.existsSync('spawned.count')?fs.readFileSync('spawned.count','utf8').length:0;fs.writeFileSync('spawned.count','x'.repeat(n+1));if(n<2)process.exit(1);fs.writeFileSync('design/scenes/menu/second.tsx','export default () => <h1>Second</h1>\\n');const p='design/boards/volume-ui.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.nodes.push({frame:'menu/second'});fs.writeFileSync(p,JSON.stringify(j));process.stdout.write(JSON.stringify({result:'A background agent did it.'}))`] } } }
+  const spawns = (s: { root: string }) => (existsSync(join(s.root, 'spawned.count')) ? readFileSync(join(s.root, 'spawned.count'), 'utf8').length : 0)
+
+  it('its run alone fails and you Retry it: your session takes the Retry beside your other run, and let go of there it goes back and runs alone - never spawned beside it - the frame it makes then its own (Codex\'s review: the Retry was a request like any other, spawned beside a run)', async () => {
+    const s = await setup({ cfg: { sessionMax: undefined }, adapter: failsFirst })
+    empty(s.root)
+    tag(s.root, s.dir, '@marver icon labels')
+    const t = s.jam.tick()
+    expect(await until(() => (offered(s)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
+    const h1 = String((await s.ask('next')).handle)
+    const r = blank('two floating menus')
+    expect((await s.jam.capture(r)).ok).toBe(true)
+    const t2 = s.jam.tick()
+    expect(await until(() => (offered(s)?.n ?? 0) === 1 && (offered(s)?.line ?? '').includes('floating menus'), 8_000, () => s.jam.runs.tick())).toBe(true)
+    const h2 = String((await s.ask('next')).handle)
+    mkdirSync(join(s.root, 'design', 'scenes', 'menu'), { recursive: true })
+    put(s.root, 'design/scenes/menu/first.tsx')
+    const { boardsPinRun } = await import('../src/cli/boards.ts')
+    let pinned: unknown
+    void boardsPinRun(s.root, 'volume-ui', ['menu/first'], { run: h2, as: s.conn.id }).then((x) => { pinned = x }, (e) => { pinned = e })
+    expect(await until(() => pinned !== undefined, 15_000, () => s.jam.runs.tick())).toBe(true)
+    expect((await s.ask('release', { handle: h2 })).ok).toBe(true)
+    const card = () => s.jam.view().cards.find((c) => c.id === r.id)
+    expect(await until(() => card()?.state === 'queued' && card()?.waiting === 'alone', 8_000, () => s.jam.runs.tick())).toBe(true)
+    // the first handed back: it runs alone, spawned, and fails
+    expect((await s.ask('done', { handle: h1, text: REPLY('Labels done.') })).ok).toBe(true)
+    await Promise.all([t, t2])
+    expect(await until(() => card()?.state === 'failed', 15_000, () => s.jam.tick())).toBe(true)
+    expect([card()?.frames, spawns(s)]).toEqual([['menu/first'], 2])
+    // another run of your session, then Retry: offered to your session beside it, and let go of
+    tag(s.root, s.dir, '@marver icon labels again')
+    const t3 = s.jam.tick()
+    expect(await until(() => (offered(s)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
+    const h3 = String((await s.ask('next')).handle)
+    expect((await s.jam.act(r.id, card()!.rev, 'retry')).ok).toBe(true)
+    const t4 = s.jam.tick()
+    expect(await until(() => (offered(s)?.n ?? 0) === 1 && (offered(s)?.line ?? '').includes('floating menus'), 8_000, () => s.jam.runs.tick())).toBe(true)
+    const h4 = String((await s.ask('next')).handle)
+    expect((await s.ask('release', { handle: h4 })).ok).toBe(true)
+    expect(await until(() => card()?.state === 'queued' && card()?.waiting === 'alone', 8_000, () => s.jam.runs.tick())).toBe(true)
+    await new Promise((res) => setTimeout(res, 300))
+    expect(spawns(s)).toBe(2)
+    // your other run handed back: it runs alone, spawned - and the frame its run makes is found as its own
+    expect((await s.ask('done', { handle: h3, text: REPLY('Labels again.') })).ok).toBe(true)
+    await Promise.all([t3, t4])
+    const again = () => s.jam.snapshot().batches.find((x) => x.results && x.members.some((m) => m.card === r.id))
+    expect(await until(() => !!again(), 15_000, () => s.jam.tick())).toBe(true)
+    expect([again()!.exclusive, again()!.runner?.kind, again()!.crowded, again()!.created, spawns(s)]).toEqual([true, 'fresh', undefined, ['menu/second'], 3])
+    s.jam.stop(); s.done()
+  })
+
   it('one with no frame waiting on your full session is offered as soon as you switch to an idle one (Codex\'s review: nothing woke the queue - no run of the full session moved - and it waited on)', async () => {
     const s = await setup({ cfg: { sessionMax: 1 } })
     empty(s.root)

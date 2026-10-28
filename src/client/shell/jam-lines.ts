@@ -29,14 +29,16 @@ export function runnerLine(c: JamCard, name: (agent: string) => string, now = Da
  *  a held card waits, why a card failed. */
 export function statusLines(c: JamCard, agent: string | null, harness: Record<string, string>, now = Date.now()): { head: string; detail?: string } {
   const tags = c.events.length > 1 ? ` · ${c.events.length} tags` : ''
-  if (c.state === 'queued' && c.waitsFor) {
-    const w = c.waitsFor
+  // waiting for more than its place (one runs alone, your session is full): why, never a place in line it does not have -
+  // and before a frame another run holds, which it waits for too: that run ending is not enough (Codex's review)
+  const w = c.waitsFor
+  const also = w ? `; ${w.by === 'chat' ? 'your agent in chat' : w.by ? `"${w.by}"` : 'another run'} is working on ${w.frame}` : ''
+  if (c.state === 'queued' && c.waiting === 'alone') return { head: `Queued · waits to run alone${tags}`, detail: `It ${c.exclusive ? 'changes a shared file' : 'names no frame'} and runs on its own - it starts once the other work is done${also}` }
+  if (c.state === 'queued' && c.waiting === 'behind') return { head: `Queued · waits - a run goes alone first${tags}`, detail: `A request that runs on its own goes first - this one starts after it${also}` }
+  if (c.state === 'queued' && w) {
     return { head: `Queued · waits for ${w.frame}${tags}`, detail: w.by === 'chat' ? 'Your agent in chat is working on it - this one starts when it is done'
       : w.by ? `"${w.by}" is working on it - this one starts when it is done` : 'Another run is working on it - this one starts when it is done' }
   }
-  // waiting for more than its place (one runs alone, your session is full): why, never a place in line it does not have
-  if (c.state === 'queued' && c.waiting === 'alone') return { head: `Queued · waits to run alone${tags}`, detail: `It ${c.exclusive ? 'changes a shared file' : 'names no frame'} and runs on its own - it starts once the other work is done` }
-  if (c.state === 'queued' && c.waiting === 'behind') return { head: `Queued · waits - a run goes alone first${tags}`, detail: 'A request that runs on its own goes first - this one starts after it' }
   if (c.state === 'queued' && c.waiting === 'session') return { head: `Queued · waits - your session is full${tags}`, detail: 'Your session holds all the runs it can - this one goes to it when one of them ends' }
   if (c.state === 'queued') {
     const p = c.position ?? 1
@@ -62,10 +64,11 @@ export function laneLine(c: LaneCard, now = Date.now()): string {
     // so, never "To confirm" - E's never asked you to confirm anything
     case 'draft': return c.note ? 'Not queued' : 'To confirm'
     case 'confirming': return 'Confirming'
-    // waiting on a frame another run holds, or for one that runs alone: why, never a place in line it does not have
+    // waiting for one that runs alone, or on a frame another run holds: why, never a place in line it does not have (the
+    // run alone first - a frame's run ending is not enough while it waits for that too; Codex's review)
     case 'queued': {
-      if (c.waitsFor) return `Waits for ${c.waitsFor.frame.split('/').pop()}`
       if (c.waiting) return c.waiting === 'alone' ? 'Waits to run alone' : c.waiting === 'session' ? 'Waits · your session is full' : 'Waits · a run goes alone first'
+      if (c.waitsFor) return `Waits for ${c.waitsFor.frame.split('/').pop()}`
       const p = c.position ?? 1; return p <= 1 ? 'Queued · next' : `Queued · ${ordinal(p)}`
     }
     case 'working': {

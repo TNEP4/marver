@@ -826,13 +826,13 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         // or that run left first): it never runs beside it. It goes back to the queue - first in line among its frames'
         // requests, never shared again, spawned as it was going to be - and waits for its frames; a queued request holds
         // nothing, so two of them never wait on each other (Codex's review of the design: no waiting loop, no deadlock)
-        // F5: formed with no frame beside the others for your session, it is never spawned as it is - a spawned run's new
-        // frames are found only when nothing runs beside it, from start to end: it goes back too, and runs alone - exclusive,
-        // so nothing starts beside it after either (Codex's review: one spawned while nothing else ran was not exclusive, and
-        // a request after it ran beside it)
+        // F5: one that named no frame formed beside the others for your session (a Retry holding the frames its run made
+        // too) is never spawned as it is - a spawned run's new frames are found only when nothing runs beside it, from start
+        // to end: it goes back too, and runs alone - exclusive, so nothing starts beside it after either (Codex's review: one
+        // spawned while nothing else ran was not exclusive, and a request after it ran beside it)
         let loose = false
         const back = await q.lock((j) => {
-          loose = !b.exclusive && cards0(b).every((c) => !c.frames.length)
+          loose = !b.exclusive && cards0(b).some((c) => !c.frames.length || !!c.loose)
           // (`queue` - under session-only, crowded out of its session: back whatever holds its frames now, never spawned)
           if (b.handoff !== 'queue' && !loose && ![...runningBatches.values()].some((o) => o.batchId !== b.batchId && o.frames.some((f) => b.frames.includes(f)))) return false
           const spawn = b.handoff === 'spawn' || !!spawnedBefore
@@ -850,15 +850,15 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
             if (add.length) c.frames = [...c.frames, ...add]
             // (on the card that waits now - merged into one already queued on its thread, that one)
             const t = requeue(j, c, Date.now())
-            // (with no frame of its own: it runs alone with the frames it was given too - a restart included)
+            // (one that named no frame runs alone with the frames it was given too - its card says so, a restart included)
             t.alone = joinAlone(t.alone, { ...(spawn ? { spawn: true as const } : {}), ...(why ? { why } : {}),
-              ...(created.length ? { created: [...created] } : {}), ...(shots.length ? { shots: shots.map((s) => ({ ...s })) } : {}), ...(loose ? { loose: true as const } : {}) })
+              ...(created.length ? { created: [...created] } : {}), ...(shots.length ? { shots: shots.map((s) => ({ ...s })) } : {}) })
           }
-          b.state = 'done'; b.at = Date.now(); b.note = loose ? 'back in the queue - with no frame, it runs alone' : 'back in the queue - another runner holds one of its frames'
+          b.state = 'done'; b.at = Date.now(); b.note = loose ? 'back in the queue - it named no frame, so it runs alone' : 'back in the queue - another runner holds one of its frames'
           q.persist()
           return true
         })
-        if (back) { log(loose ? '  jam: a run with no frame went back to the queue - it runs alone once the other work is done' : '  jam: a run went back to the queue - another runner holds one of its frames; it starts when they are free'); queueChanged(); timeRun('other'); return }
+        if (back) { log(loose ? '  jam: a run that named no frame went back to the queue - it runs alone once the other work is done' : '  jam: a run went back to the queue - another runner holds one of its frames; it starts when they are free'); queueChanged(); timeRun('other'); return }
         const ch: { kind: 'fork' | 'fresh'; agent: string; session?: string; why?: string } = spawnedBefore
           ? { kind: spawnedBefore.kind as 'fork' | 'fresh', agent: spawnedBefore.agent, ...(spawnedBefore.session ? { session: spawnedBefore.session } : {}), ...(spawnedBefore.why ? { why: spawnedBefore.why } : {}) }
           : (() => {

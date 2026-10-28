@@ -10,7 +10,7 @@ import { claudeAdapter } from '../src/server/jam/adapter/claude.ts'
 import { record } from '../src/server/jam/ledger.ts'
 import { deviceId } from '../src/server/jam/device.ts'
 import { read as readJournal, write as writeJournal } from '../src/server/jam/journal.ts'
-import { act, addWrapup, answers, ctxFor, form, freezeBrief, ingest, joinAlone, merge, settle, writePacket } from '../src/server/jam/queue.ts'
+import { act, addWrapup, answers, ctxFor, fail, form, freezeBrief, ingest, joinAlone, merge, requeue, runsAlone, settle, writePacket } from '../src/server/jam/queue.ts'
 import { buildPacket, goalText, packetPath, parseMembers, refusedAsk, sharedFile, sharedWhy } from '../src/server/jam/packet.ts'
 import { sessionBrief } from '../src/server/jam/session-brief.ts'
 import { buildWrapup, storeWrapup, type Wrapup } from '../src/server/jam/session.ts'
@@ -1248,8 +1248,8 @@ describe('F5: form() - a request with no frame runs beside the others while a se
     const { root, done } = setup()
     const j = ready(root)
     const c = blank(j, 'cap-1700000000001-aaaaaa', 1000)
-    c.frames = ['menu/first']
-    c.alone = joinAlone(undefined, { spawn: true, why: 'your session let it go', created: ['menu/first'], loose: true })
+    c.frames = ['menu/first']; c.loose = true
+    c.alone = joinAlone(undefined, { spawn: true, why: 'your session let it go', created: ['menu/first'] })
     const ctx = ctxFor(root)
     expect(form(j, ctx, { ...base, running: new Set(['demo/a']), active: 1, ...taking() })).toEqual({ batches: [], exclusiveWaiting: true })
     // nothing runs: alone, spawned as it was going to be, the frame its run made still its own
@@ -1258,8 +1258,43 @@ describe('F5: form() - a request with no frame runs beside the others while a se
     // given no shared file: told to edit its frame (and make new ones beside it), never handed an empty list of shared files
     const p = JSON.parse(readFileSync(join(root, packetPath(r.batches[0].batchId)), 'utf8'))
     expect([goalText(p).includes('EDIT ONLY THE FRAMES THE PACKET RESERVES'), goalText(p).includes('RUNS ALONE'), sessionBrief(p, 'r-12345678.1').includes('Frames you may edit: menu/first.')]).toEqual([true, false, true])
-    // let go into a card already waiting on its thread: joined, it stays so
-    expect([joinAlone({ spawn: true }, { loose: true }).loose, joinAlone({ loose: true }, { created: ['menu/b'] }).loose]).toEqual([true, true])
+    // that run fails and you Retry it: with no session, it still runs alone - never beside another run, a second failure
+    // and Retry too (Codex's review: the Retry formed beside a run, and the frames it made after were no one's)
+    for (let i = 0; i < 2; i++) {
+      fail(j, j.batches.find((x) => x.state === 'claimed')!, 'the agent could not finish')
+      expect(act(j, c.id, c.rev, 'retry').ok).toBe(true)
+      expect(form(j, ctx, { ...base, running: new Set(['demo/other']), active: 1 })).toEqual({ batches: [], exclusiveWaiting: true })
+      expect(form(j, ctx, { ...base, running: new Set() }).batches.map((x) => [x.members[0].card, x.frames, x.exclusive])).toEqual([[c.id, ['menu/first'], true]])
+    }
+    // your session takes the work: its Retry runs beside the others, the frames it makes claimed with --run
+    fail(j, j.batches.find((x) => x.state === 'claimed')!, 'the agent could not finish')
+    act(j, c.id, c.rev, 'retry')
+    const s = form(j, ctx, { ...base, running: new Set(['demo/other']), active: 1, ...taking() })
+    expect(s.batches.map((x) => [x.members[0].card, x.frames, x.exclusive])).toEqual([[c.id, ['menu/first'], undefined]])
+    // its answer posted, it is a request on the frame it made: More work on it runs beside another run as any other does
+    s.batches[0].results = { m1: { body: 'A floating menu.', asks: false, reanchors: [] } }
+    settle(j, s.batches[0], { m1: { reply: 'r1' } })
+    requeue(j, c, Date.now(), true)
+    expect(form(j, ctx, { ...base, running: new Set(['demo/other']), active: 1 }).batches.map((x) => [x.members[0].card, x.exclusive])).toEqual([[c.id, undefined]])
+    // let go into a card already waiting on its thread: merged, it stays so, whichever card survives
+    const on = (id: string, kind: Card['kind'], loose?: true): Card => ({ id, kind, board: 'volume-ui', frames: ['menu/first'], thread: 't-menu', events: [], state: 'queued', made: 1, order: 1, rev: 1, at: 1, ...(loose ? { loose } : {}) })
+    expect([merge(j, on('a', 'capture'), on('b', 'comment', true), 1).loose, merge(j, on('c', 'comment', true), on('d', 'capture'), 1).loose]).toEqual([true, true])
+    done()
+  })
+
+  it('one with no frame whose run failed holding the frame it made, tagged again on its thread: the tag retries it, and runs alone with no session as its Retry would (Codex\'s review: the frame it made let a retry of it run beside another run)', () => {
+    const { root, dir, done } = setup()
+    const j = ready(root)
+    const c = blank(j, 'cap-1700000000001-aaaaaa', 1000)
+    const ctx = ctxFor(root)
+    const r = form(j, ctx, { ...base, running: new Set() })
+    // its run made menu/first and failed: the card holds it (daemon.ts ownCreated)
+    c.frames = ['menu/first']; c.capture = c.id; c.thread = 't-menu'
+    fail(j, r.batches[0], 'the agent could not finish')
+    say(root, dir, '@marver once more', { board: 'volume-ui', thread: 't-menu' })
+    ingest(j, ctxFor(root))
+    const t = j.cards.find((x) => x.state === 'queued')!
+    expect([c.state, t.frames, runsAlone(t, () => false), runsAlone(t, () => true)]).toEqual(['done', ['menu/first'], true, false])
     done()
   })
 })

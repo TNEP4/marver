@@ -30,6 +30,14 @@ describe('the lane: a tile\'s status line', () => {
     expect(statusLines(card({ state: 'queued', position: 1, waiting: 'behind' }), 'claude', {})).toEqual({ head: 'Queued · waits - a run goes alone first', detail: 'A request that runs on its own goes first - this one starts after it' })
   })
 
+  it('one that runs alone and holds a frame another run works on says it waits to run alone - that run ending is not enough - and names the frame\'s run after (Codex\'s review: it read "Waits for first", and the tooltip said it starts when that run is done)', () => {
+    const w = { frames: ['menu/first'], waitsFor: { frame: 'menu/first', by: 'Icon labels' } }
+    expect(laneLine(card({ state: 'queued', waiting: 'alone', ...w }))).toBe('Waits to run alone')
+    expect(statusLines(card({ state: 'queued', waiting: 'alone', ...w }), 'claude', {})).toEqual({ head: 'Queued · waits to run alone', detail: 'It names no frame and runs on its own - it starts once the other work is done; "Icon labels" is working on menu/first' })
+    expect(laneLine(card({ state: 'queued', waiting: 'behind', ...w, waitsFor: { frame: 'menu/first', by: 'chat' } }))).toBe('Waits · a run goes alone first')
+    expect(statusLines(card({ state: 'queued', waiting: 'behind', ...w, waitsFor: { frame: 'menu/first', by: 'chat' } }), 'claude', {}).detail).toBe('A request that runs on its own goes first - this one starts after it; your agent in chat is working on menu/first')
+  })
+
   it('one with no frame while your session holds all the runs it can says so - a request after it may start first (Codex\'s review: it read "Queued · next")', () => {
     expect(laneLine(card({ state: 'queued', waiting: 'session' }))).toBe('Waits · your session is full')
     expect(statusLines(card({ state: 'queued', waiting: 'session' }), 'claude', {})).toEqual({ head: 'Queued · waits - your session is full', detail: 'Your session holds all the runs it can - this one goes to it when one of them ends' })

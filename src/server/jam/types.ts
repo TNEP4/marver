@@ -141,6 +141,9 @@ export interface Card {
   note?: string              // why it is where it is
   resolved?: boolean         // the thread was resolved while the card was working
   exclusive?: string[]       // runs alone and may edit these shared files (a `shared` answer)
+  /** it named no frame: every frame it holds its own runs made - it runs alone unless a session takes it (F5), a Retry
+   *  too, until a run of it is answered */
+  loose?: true
   name?: string              // a capture's title as you named it (Rename) - in place of its first words
   autoName?: string          // a short name a small model gave it from its words, as it landed (yours wins)
   session?: string           // the session it was made in (a capture), or whose record it writes (a wrap-up)
@@ -154,13 +157,12 @@ export interface Card {
    *  comment it writes, so a crash resumes it and a retried request finds it done */
   pending?: { op: 'confirm' | 'more'; end?: 'queued' | 'kept'; event: import('../../shared/events.ts').CommentEvent }
   shared?: number            // how many times it answered `shared` (a second one fails it)
-  /** back in the queue from a run that left its session while another runner held one of its frames (F4), or - naming no
-   *  frame - while anything else ran (F5): it waits for every frame to be free, or with none to run alone (never formed
-   *  beside another run again), and runs spawned when `spawn` - the decision it had.
+  /** back in the queue from a run that left its session while another runner held one of its frames (F4), or - one that
+   *  named no frame (`loose`) - while anything else ran (F5): it waits for every frame to be free, or that one to run alone
+   *  (never formed beside another run again), and runs spawned when `spawn` - the decision it had.
    *  What that run had goes to the run formed from it: the frames it made (`created`, a run of one) and its pictures
-   *  from before its first edit (`shots`) - its frames given as it worked are in `frames` already. `loose`: it named no frame
-   *  when it went back (F5) - it runs alone whatever frames it was given as it worked */
-  alone?: { spawn?: true; why?: string; created?: string[]; shots?: { frame: string; before: string; at?: number }[]; loose?: true }
+   *  from before its first edit (`shots`) - its frames given as it worked are in `frames` already */
+  alone?: { spawn?: true; why?: string; created?: string[]; shots?: { frame: string; before: string; at?: number }[] }
   made: number               // when it was made - the lane's order
   order: number              // run position: `made`, unless Do next put it first
   rev: number                // bumped on every change; actions compare it
