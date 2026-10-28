@@ -105,7 +105,7 @@ run - "and this too".
 When a capture asked for something new beside a frame - "a laptop version of this, next to
 it" - the frame it pointed at was only where the new one goes. If the run made a new frame
 and left the one you pointed at unchanged, the capture's thread moves onto the new frame
-(when that capture ran alone, so the new frame is surely its own).
+(when that capture ran alone, or its run put the frame on the board with `--run`, so the new frame is surely its own).
 
 ## A session: `J`
 

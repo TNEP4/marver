@@ -90,6 +90,12 @@ never changed; one you removed by hand is not written back until you turn that t
   a variant in a new frame placed beside it (`boards place --run`). A run your session lets go of while another of its
   runs holds the frame goes back to the queue and waits for the frame; a frame any other runner holds - a copy, a fresh
   agent, your agent in chat - makes the request wait, and its tile says "Waits for <frame>".
+- **A request with no frame** - a capture made on an empty board, a comment on the board itself, the session record -
+  goes to your session beside your other runs. It reserves no frame: it makes what it asks for as new frames, each put
+  on the board with `--run <handle>` (`boards pin <board> <scene/frame> --run <handle>` on an empty board). With no
+  session taking the work it runs alone, as before - a run Marver starts finds the frames it made only when nothing ran
+  beside it - and so does one your session lets go of while other runs go. Its tile says "Waits to run alone", and the
+  requests behind it "Waits · a run goes alone first".
 - **Frames placed through Marver.** A run puts a frame next to another with `npx marver boards place <board>
   <scene/frame> --after|--before <scene/frame>` (`--run <handle>`: the new frame is that run's, and its review pictures
   it) - never by editing the board file. A request that still needs a file no run is given (a board file, the comment

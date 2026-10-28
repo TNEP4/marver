@@ -35,8 +35,8 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   over can finish it.
 - **"Put this next to slide 01" just works.** `npx marver boards place <board> <scene/frame> --after|--before
   <scene/frame>` puts a frame next to another and moves the frames after it to make room; in a deck it plays right
-  after it, and it stays there when the canvas lays the board out again. Jam runs use it (with `--run <handle>`)
-  instead of asking for the board file. Every board writer - `place`, `pin`, the canvas's own save, and the sidebar's
+  after it, and it stays there when the canvas lays the board out again. Jam runs use it, or `boards pin` on an empty
+  board (each with `--run <handle>`), instead of asking for the board file. Every board writer - `place`, `pin`, the canvas's own save, and the sidebar's
   rename, status and drag - now takes the board's lock, so none overwrites another.
 - **Two ways to stop a capture.** `E` stops it and queues it: its tile goes from Capturing to Sending to Queued or
   working, and nothing opens, asks you to confirm or moves the canvas. `⇧E` (Stop to review) opens its read-back as
@@ -75,6 +75,10 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   not answer" - "put this variant next to slide 01" once asked for the board file. Tag @marver in its thread to go on.
 - **A tile waiting on a busy frame says so**: "Waits for 01-slide", with the run that holds it in its tooltip, instead
   of "Queued · next" - "next" is now the next request that can start.
+- **A request with no frame no longer waits for everything else.** A capture made on an empty board, a comment on the
+  board itself and the session record go to your session beside your other runs; they used to wait until nothing else
+  ran, and hold back every request after them. With no session taking the work they still run alone, and the tile says
+  so: "Waits to run alone", and "Waits · a run goes alone first" on the requests behind one.
 
 ### Fixed
 
