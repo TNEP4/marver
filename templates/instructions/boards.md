@@ -51,8 +51,10 @@ is safe to resolve either way.
   frame that belongs to two goes on both.** `npx marver boards pin <board> <scene/frame ...>`
   appends them as nodes (or append a `{ "frame": ... }` node yourself). `npx marver boards
   place <board> <scene/frame> --after|--before <scene/frame>` puts one next to another, the
-  frames after it moved right to make room (it plays right after it, in a deck) - the way to
-  rearrange with the canvas open: it waits for the canvas's own save, and an edit you are
+  frames after it moved right to make room (it plays right after it, in a deck), and next to it
+  in the board's order and its scene's recipe, so it stays there when the canvas lays the board
+  out again (make the frame in the other's scene: on a board laid out scene by scene, one from
+  another scene is refused) - the way to rearrange with the canvas open: it waits for the canvas's own save, and an edit you are
   making on that board in the same second may be undone ("board changed on disk"). No board holds
   everything: a frame on no board is listed apart - `npx marver boards`, the dev log, the
   sidebar's Not on a board - and `work done` and `marver link` say where it belongs.

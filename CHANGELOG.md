@@ -33,10 +33,13 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   the session sends it to the subagent on that frame - to do after, or fold in now - or makes it a variant in a new
   frame beside it. Runs of different runners still never share a frame: a run your session lets go of while another of
   its runs holds the frame goes back to the queue and waits for it - with `jam.runner: 'session'` too, so two requests
-  on one frame follow you when you switch sessions instead of waiting on each other.
+  on one frame follow you when you switch sessions instead of waiting on each other (or, one still taking its
+  before-pictures as you switched, running in the background).
 - **"Put this next to slide 01" just works.** `npx marver boards place <board> <scene/frame> --after|--before
   <scene/frame>` puts a frame next to another and moves the frames after it right to make room - in a deck it plays
-  right after it - and a Jam run adds `--run <handle>`, so the new frame is its own until it is done. Jam runs use it
+  right after it, and it stays there when the canvas lays the board out again (a board with a layout recipe, or
+  `auto`: a Doc measuring no longer puts it back at the end; a frame of another scene is refused there, saying why) -
+  and a Jam run adds `--run <handle>`, so the new frame is its own until it is done. Jam runs use it
   instead of asking for the board file. Every board writer Marver has - `place`, `pin`, the canvas's own save, and the
   sidebar's rename, status and drag - now takes the board's lock, so none overwrites another; a layout edit you make on
   that board in the same second can still be undone ("board changed on disk").

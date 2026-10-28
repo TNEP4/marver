@@ -746,6 +746,56 @@ describe('boards place (F1): a frame next to another, through Marver - "put this
     expect(await place('fresh', 'deck/01b-variant', { after: 'deck/01-slide' })).toMatchObject({ already: true })
   })
 
+  /** The board as the canvas lays it out when it re-runs its layout (store.ts runTidy - a Doc measuring its height on a
+   *  board with a recipe, scene rows or auto does): its nodes in file order, each in its scene; its frames in reading order. */
+  const tidied = async (n: string) => {
+    const { tidy, parseLayout } = await import('../src/client/shell/tidy.ts')
+    const b = read(n)
+    const nodes = b.nodes.map((x: any, i: number) => ({ key: x.key ?? `${x.frame}#${i}`, frame: x.frame, scene: x.frame.split('/')[0], w: x.w ?? 760, h: x.h ?? 600 }))
+    const layout = parseLayout(b.layout, () => {}) ?? (b.sceneRows ? { rows: b.sceneRows } : undefined)
+    const at = new Map(tidy(nodes, layout).map((p) => [p.key, p]))
+    return nodes.map((x: any, i: number) => ({ f: x.frame, i, ...at.get(x.key)! })).sort((p: any, q: any) => p.y - q.y || p.x - q.x || p.i - q.i).map((p: any) => p.f)
+  }
+
+  it('on a board the canvas lays out itself (a recipe, scene rows, auto) the placement survives its layout - the node sits next to the anchor in the list, and in the scene\'s recipe when it has one (Codex review: a Doc measuring re-ran the layout and put the variant back at the end)', async () => {
+    // the scene laid out in list order (layout rows of scenes, no recipe for the scene): a Doc measuring re-runs it
+    await place('deck', 'deck/01b-variant', { after: 'deck/01-slide' })
+    expect(await tidied('deck')).toEqual(['deck/01-slide', 'deck/01b-variant', 'deck/02-slide', 'deck/03-slide', 'deck/09-later'])
+    // a move, before: the same
+    await place('deck', 'deck/03-slide', { before: 'deck/02-slide' })
+    expect(await tidied('deck')).toEqual(['deck/01-slide', 'deck/01b-variant', 'deck/03-slide', 'deck/02-slide', 'deck/09-later'])
+    // the scene's own recipe names its frames: the frame's name goes next to the anchor's there (and out of where it was)
+    w('recipe', { version: 1, name: 'recipe', layout: { rows: [['deck']], scenes: { deck: { rows: [['01-slide', '02-slide', '03-slide'], { space: 2 }, ['09-later']] } } },
+      nodes: [S(0, 'deck/01-slide'), S(1500, 'deck/02-slide'), S(3000, 'deck/03-slide'), S(0, 'deck/09-later', 2000)] })
+    await place('recipe', 'deck/01b-variant', { after: 'deck/01-slide' })
+    expect(read('recipe').layout.scenes.deck.rows).toEqual([['01-slide', '01b-variant', '02-slide', '03-slide'], { space: 2 }, ['09-later']])
+    expect(await tidied('recipe')).toEqual(['deck/01-slide', 'deck/01b-variant', 'deck/02-slide', 'deck/03-slide', 'deck/09-later'])
+    await place('recipe', 'deck/09-later', { before: 'deck/01-slide' })
+    expect(read('recipe').layout.scenes.deck.rows).toEqual([['09-later', '01-slide', '01b-variant', '02-slide', '03-slide']])
+    expect(await tidied('recipe')).toEqual(['deck/09-later', 'deck/01-slide', 'deck/01b-variant', 'deck/02-slide', 'deck/03-slide'])
+    // scene rows, and the auto board: the list order
+    w('rows', { version: 1, sceneRows: [['deck']], nodes: [S(0, 'deck/01-slide'), S(1500, 'deck/02-slide')] })
+    await place('rows', 'deck/01b-variant', { after: 'deck/01-slide' })
+    expect(await tidied('rows')).toEqual(['deck/01-slide', 'deck/01b-variant', 'deck/02-slide'])
+    w('auto', { version: 1, auto: true, nodes: [S(0, 'deck/01-slide'), S(1500, 'deck/02-slide')] })
+    await place('auto', 'deck/01b-variant', { after: 'deck/01-slide' })
+    expect(await tidied('auto')).toEqual(['deck/01-slide', 'deck/01b-variant', 'deck/02-slide'])
+    // asked again: nothing to change
+    const was = raw('recipe')
+    expect(await place('recipe', 'deck/01b-variant', { after: 'deck/01-slide' })).toMatchObject({ already: true })
+    expect(raw('recipe')).toBe(was)
+  })
+
+  it('refused rather than undone: on a board the canvas lays out scene by scene, a frame of another scene cannot stay beside the anchor - it says why and how, and writes nothing', async () => {
+    w('scenes', { version: 1, layout: { rows: [['deck', 'notes']] }, nodes: [S(0, 'deck/01-slide'), S(1500, 'deck/02-slide')] })
+    const was = raw('scenes')
+    await expect(place('scenes', 'notes/idea', { after: 'deck/01-slide' })).rejects.toThrow(/scenes lays its frames out itself, scene by scene - notes\/idea \(scene notes\) cannot stay after deck\/01-slide \(scene deck\): make the frame in deck\/ and place that/)
+    expect(raw('scenes')).toBe(was)
+    // a board you arrange by hand keeps it where it is put
+    w('free', { version: 1, nodes: [S(0, 'deck/01-slide'), S(1500, 'deck/02-slide')] })
+    expect(await place('free', 'notes/idea', { after: 'deck/01-slide' })).toMatchObject({ added: true, laidOut: true })
+  })
+
   it('refused, never guessed: the anchor not on the board, a frame on it twice, a device view, a scene, no side or both, the same frame twice', async () => {
     await expect(place('deck', 'deck/01b-variant', { after: 'notes/idea' })).rejects.toThrow(/notes\/idea is not on deck - put it there first: npx marver boards pin deck notes\/idea/)
     w('twice', { version: 1, nodes: [S(0, 'deck/01-slide', 0, 'a'), S(1500, 'deck/01-slide', 0, 'b')] })

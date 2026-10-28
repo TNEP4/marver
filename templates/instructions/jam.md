@@ -144,7 +144,8 @@ agent touches them while you work - and you touch nothing else:
   yours to create. An existing frame outside `frames` is not yours.
 - **Placing frames is Marver's job, through one command.** "Put it next to slide 01", "add it
   to the board": `npx marver boards place <board> <scene/frame> --after <scene/frame>` (or
-  `--before`) puts the frame there and makes room in its row, safe with the canvas open;
+  `--before`) puts the frame there and makes room in its row, safe with the canvas open, and it
+  stays there when the canvas lays the board out again (make it in the other frame's scene);
   `npx marver boards pin <board> <scene/frame>` adds it at the end. A run your session took
   adds `--run <handle>`: the new frame is that run's from then on (no other runner gets it,
   and its review pictures it as new). Never rearrange a board file by hand in a run, and never

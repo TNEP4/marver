@@ -22,8 +22,9 @@ export type Warn = (msg: string) => void
 
 const isSpace = (x: unknown): x is Space => !!x && typeof x === 'object' && !Array.isArray(x)
 /** Drop the items `isGone` names, each with the spacer that led into it (or, at the start, the
- *  one that followed it) - what is left reads as if the item was never there. */
-function dropGone<T>(items: T[], isGone: (x: T) => boolean): T[] {
+ *  one that followed it) - what is left reads as if the item was never there. (`boards place` takes a frame out of a
+ *  scene recipe the same way.) */
+export function dropGone<T>(items: T[], isGone: (x: T) => boolean): T[] {
   const out: T[] = []
   let skip = false
   for (const it of items) {

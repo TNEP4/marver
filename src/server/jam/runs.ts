@@ -176,12 +176,15 @@ export function createRuns(d: RunsDeps): Runs {
     const s = settings()
     // your session would have taken it and did not: the copy says why (A8)
     let skipped: string | undefined
-    // formed beside runs of one session incarnation (F4): that one runs it, or no session does (the daemon then puts it
-    // back in the queue while another runner holds its frames) - never another session, whatever its room
+    // formed beside runs of one session incarnation (F4): that one runs it while it takes the work (its slot kept, whatever
+    // its room). Once it does not (you chose another session, it restarted, Codex or Cursor sat idle) it is routed as any
+    // request is, below - never spawned just for that (Codex's review: under session-only the stale share skipped the
+    // wait and spawned it): an offer to another session is made only when it may hold it beside the runs on its frames
+    // (run(), next and the tick check mayHold, else it goes back to the queue), and a spawn that would run beside
+    // another runner goes back to the queue (the daemon)
     if (!spawnOnly && !b.handoff && b.share) {
       const pick = sessionsOn(s, b) ? selected(now) : undefined
       if (pick && pick.id === b.share.conn && pick.inc === b.share.inc && offerable(pick)) return { kind: 'session', conn: pick }
-      spawnOnly = true
     }
     if (!spawnOnly && !b.handoff) {
       const pick = sessionsOn(s, b) ? selected(now) : undefined

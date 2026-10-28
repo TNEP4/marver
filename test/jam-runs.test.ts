@@ -828,6 +828,44 @@ describe('F4: the same frame twice - offered to your session, which decides; run
     s.jam.stop(); s.done()
   })
 
+  it('session-only: a run formed beside yours whose session is switched while it takes its before-pictures, the first run done meanwhile, goes to the new session - never spawned (Codex review: the stale share skipped the session-only wait)', async () => {
+    let open!: () => void
+    const gate = new Promise<void>((r) => { open = r })
+    let shots = 0
+    const s = await setup({ cfg: { runner: 'session', sessionMax: undefined }, hooks: { shoot: async () => { shots += 1; await gate; return null } } })
+    tag(s.root, s.dir, '@marver icon labels')
+    const t = s.jam.tick()
+    expect(await until(() => (offered(s)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
+    const h1 = String((await s.ask('next')).handle)
+    // a capture on the same frame: formed beside your run (shared with this session), it takes its before-pictures
+    const id = `cap-${Date.now()}-abcdef`
+    const r: CaptureRecord = { format: 'marver.jam.capture', v: 1, id, context: { canvas: 'test', board: 'home' }, view: { board: 'home', frames: ['demo/hero'], theme: 'light' },
+      timeline: [{ at: 1_000, event: 'view', view: { frames: ['demo/hero'] } }, { at: 2_000, event: 'words', text: 'redesign the images' }, { at: 3_000, frame: 'demo/hero', event: 'pick', point: 1, mode: 'canvas', bundle: { tag: 'h1', quote: 'Hi' } }], pictures: [] }
+    expect((await s.jam.capture(r)).ok).toBe(true)
+    const t2 = s.jam.tick()
+    expect(await until(() => shots >= 1, 8_000)).toBe(true)
+    const shared = s.jam.snapshot().batches.find((b) => b.state === 'claimed' && !b.claim && b.share)
+    expect(shared?.share?.conn).toBe(s.conn.id)
+    // meanwhile another session is chosen, and your first run is handed back: nothing holds the frame now
+    const next = upsertConn(s.root, 'claude', randomUUID(), { pid: process.pid, cwd: s.root }, Date.now() + 1_000, true)
+    writePrefs(s.root, { pick: next.id })
+    expect((await s.ask('done', { handle: h1, text: REPLY('Labels done.') })).ok).toBe(true)
+    const first = h1.slice(2, 10)
+    expect(await until(() => s.jam.snapshot().batches.find((b) => b.batchId.startsWith(first))?.state === 'done', 8_000)).toBe(true)
+    open()
+    // the pictures taken: it goes to the session that takes the work now - under session-only never to a spawned agent
+    const mine = () => s.jam.snapshot().batches.find((b) => b.batchId === shared!.batchId)
+    expect(await until(() => !!mine()?.claim || existsSync(join(s.root, 'spawned.marker')), 15_000, async () => { await s.jam.runs.tick(); if ((readOffers(s.root, next.id)?.n ?? 0) > 0) await s.ask('next', {}, next) })).toBe(true)
+    expect(existsSync(join(s.root, 'spawned.marker'))).toBe(false)
+    expect(mine()?.claim?.conn).toBe(next.id)
+    const b = mine()!
+    const text = b.members.map((m) => `\`\`\`marver-reply ${m.id}\nImages done.\n\`\`\``).join('\n')
+    expect((await s.ask('done', { handle: `r-${b.batchId.slice(0, 8)}.${b.claim!.gen}`, text }, next)).ok).toBe(true)
+    await Promise.all([t, t2])
+    expect(existsSync(join(s.root, 'spawned.marker'))).toBe(false)
+    s.jam.stop(); s.done()
+  })
+
   it('a frame a spawned run holds is never shared: a request on it waits (and says so), and is never offered to your session beside it', async () => {
     const s = await setup({ jam: false, adapter: slow })
     tag(s.root, s.dir, '@marver icon labels')

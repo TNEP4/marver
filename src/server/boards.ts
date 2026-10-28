@@ -11,6 +11,7 @@ import { join, sep } from 'node:path'
 import { hash } from './hash.ts'   // not manifest.ts: manifest imports this module
 import { ALL_SCENES, archiveLast, buildTree, flatten, folderMap, FOLDERS_FILE, framesOn, isBoardFile, isBoardName, parseFolders, readDescription, readTitle, REGISTRY_VERSION_FLAT, REGISTRY_VERSION_NESTED, type FolderRow } from '../shared/board-tree.ts'
 import { readCapability, readReason, readStatusWord, readType, resolveType } from '../shared/board-types.ts'
+import { dropGone, parseLayout, tidy, type BoardLayout } from '../client/shell/tidy.ts'   // pure: the canvas's own layout
 
 /** Does realpath(dir) stay inside realpath(root)? A symlinked design/boards can't escape. */
 export function underRoot(root: string, dir: string): boolean {
@@ -290,8 +291,8 @@ function pinLocked(file: string, board: string, frames: readonly string[], live:
 
 // ---- boards place (F1): a frame next to another, through Marver ----------------------------------------
 
-/** A frame as `boards place` sizes it: the manifest's entry (what the canvas sizes it from). */
-export interface PlaceFrameInfo { id: string; slide?: boolean; viewport?: string; contentWidth?: number }
+/** A frame as `boards place` sizes and lays it out: the manifest's entry (what the canvas does it from). */
+export interface PlaceFrameInfo { id: string; scene?: string; variantGroup?: string; variant?: string; slide?: boolean; viewport?: string; contentWidth?: number }
 export interface Placed { board: string; frame: string; anchor: string; rel: 'after' | 'before'
   /** already where it was asked to be: nothing written */
   already?: boolean
@@ -317,13 +318,51 @@ function sizeOf(f: PlaceFrameInfo | undefined, viewports: Record<string, { width
   return { w: vp.width, h: vp.height, auto: false }
 }
 
+/** How the canvas lays a board out (store.ts): `composed` - it lays it out itself, re-running its layout whenever a Doc
+ *  measures, a note lands or the window resizes (a layout recipe, scene rows, or the auto board); `flow` - the recipe it
+ *  runs (the legacy scene rows as plain rows). */
+function boardLayoutOf(b: { layout?: unknown; sceneRows?: unknown; auto?: unknown }): { composed: boolean; flow?: BoardLayout } {
+  const layout = parseLayout(b.layout, () => {})
+  const rows = (Array.isArray(b.sceneRows) ? b.sceneRows : []).map((r: unknown) => (Array.isArray(r) ? r.filter((x): x is string => typeof x === 'string') : [])).filter((r) => r.length)
+  const flow = layout ?? (rows.length ? { rows } : undefined)
+  return { composed: !!flow || b.auto === true, ...(flow ? { flow } : {}) }
+}
+
+/** A scene's own recipe (`layout.scenes[scene]`) names its frames: the frame's name goes right next to the anchor's
+ *  there, out of wherever it was (with the spacer that led into it, as the canvas drops a name it cannot show). An
+ *  anchor the recipe does not name leaves the frame unnamed too: both follow the recipe in list order. */
+function placeInRecipe(layout: unknown, scene: string, frame: string, anchor: string, rel: 'after' | 'before'): void {
+  if (!layout || typeof layout !== 'object' || Array.isArray(layout)) return
+  const scenes = (layout as { scenes?: unknown }).scenes
+  const flow = scenes && typeof scenes === 'object' && !Array.isArray(scenes) ? (scenes as Record<string, unknown>)[scene] as Record<string, unknown> | undefined : undefined
+  if (!flow || typeof flow !== 'object' || Array.isArray(flow)) return
+  // rows AND columns: the canvas lays the scene out in list order (its one default lane)
+  const axis = Array.isArray(flow.rows) && !Array.isArray(flow.columns) ? 'rows' : Array.isArray(flow.columns) && !Array.isArray(flow.rows) ? 'columns' : null
+  if (!axis) return
+  const name = (id: string) => (id.startsWith(`${scene}/`) ? id.slice(scene.length + 1) : id)
+  const f = name(frame), a = name(anchor)
+  const isLane = (e: unknown): e is unknown[] => Array.isArray(e)
+  const src = flow[axis] as unknown[]
+  const lanes = src.map((e) => (isLane(e) && e.includes(f) ? dropGone(e, (x) => x === f) : e))
+  // a lane the frame was alone in goes too, with the spacer that led into it
+  const kept = dropGone(lanes, (e) => e !== src[lanes.indexOf(e)] && isLane(e) && !e.some((x) => typeof x === 'string'))
+  const home = kept.find((e): e is unknown[] => isLane(e) && e.includes(a))
+  if (home) home.splice(home.indexOf(a) + (rel === 'after' ? 1 : 0), 0, f)
+  flow[axis] = kept
+}
+
 /** `boards place <board> <frame> --after|--before <anchor>` (F1): put a frame right after (or before) another in its
  *  row, moving the frames after it right to make room - so it also plays right after it. Under the board's write lock,
  *  over the file as read. Its node is added, or moved when the frame is already on the board; a content (Doc) node is
- *  written with no size, as the canvas saves it. Refused, never guessed: the anchor not on the board, either frame on it
- *  more than once, a board in a device view. Asked again once it is there: nothing is written. A board not laid out
- *  yet (the anchor has no position) gets the node next to the anchor's in its list - the canvas lays it out when it
- *  opens it. `layout`, `sceneRows` and `laidOut` are kept as they are. */
+ *  written with no size, as the canvas saves it. Its node also goes next to the anchor's in the board's list, and its
+ *  name next to the anchor's in the scene's recipe when it has one: a board the canvas lays out itself (a recipe, scene
+ *  rows, the auto board) re-runs its layout whenever a Doc measures, and lays a scene out in that order - so the
+ *  placement survives it (Codex's review: it put the variant back at the end). Checked with the canvas's own layout
+ *  before it is written: a placement it would undo (a frame of another scene, a variant group or a recipe that keeps
+ *  its own order) is refused with why, never written. Refused, never guessed: the anchor not on the board, either
+ *  frame on it more than once, a board in a device view. Asked again once it is there: nothing is written. A board not
+ *  laid out yet (the anchor has no position) gets no positions - the canvas lays it out when it opens it. `layout`
+ *  (but for the scene recipe), `sceneRows` and `laidOut` are kept as they are. */
 export function placeFrame(root: string, board: string, frame: string, rel: 'after' | 'before', anchor: string,
   frames: readonly PlaceFrameInfo[], viewports: Record<string, { width: number; height: number }> = {}, heights: Record<string, number> = {}): Placed {
   if (!isBoardName(board) || board === ALL_SCENES) throw new Error(`"${board}" is not a board name - lowercase letters, numbers and dashes`)
@@ -337,7 +376,7 @@ export function placeFrame(root: string, board: string, frame: string, rel: 'aft
     const content = readFileSync(file, 'utf8')
     const { json, error } = parseBoard(content)
     if (error || !json || typeof json !== 'object' || Array.isArray(json)) throw new Error(`design/boards/${board}.json is not a board object - fix the file${error ? ` (${error})` : ''}`)
-    const b = json as { nodes?: unknown; deviceView?: unknown; auto?: unknown }
+    const b = json as { nodes?: unknown; deviceView?: unknown; auto?: unknown; layout?: unknown; sceneRows?: unknown }
     if (typeof b.deviceView === 'string') throw new Error(`${board} is in a device view (${b.deviceView}) - switch it back to Default on the canvas, then place the frame`)
     type N = { frame: string; key?: string; x?: number; y?: number; w?: number; h?: number; [k: string]: unknown }
     const nodes: N[] = (Array.isArray(b.nodes) ? b.nodes : []).filter((n): n is N => !!n && typeof (n as N).frame === 'string')
@@ -350,49 +389,61 @@ export function placeFrame(root: string, board: string, frame: string, rel: 'aft
     const A = anchors[0], M = mine[0] as N | undefined
     const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
     const info = (id: string) => frames.find((f) => f.id === id)
-    const write = (): void => {
-      const tmp = `${file}.${randomBytes(6).toString('hex')}.tmp`
-      writeFileSync(tmp, JSON.stringify(b, null, 2) + '\n', { flag: 'wx' })
-      // a writer that does not take the lock (git, an editor) wrote it meanwhile: never overwritten
-      if (readFileSync(file, 'utf8') !== content) { rmSync(tmp, { force: true }); throw new Error(`design/boards/${board}.json changed while placing - try again`) }
-      renameSync(tmp, file)
+    const sceneOf = (id: string) => info(id)?.scene ?? id.split('/')[0]
+    const was = JSON.stringify(b)
+    const size = (n: N) => { const d = sizeOf(info(n.frame), viewports, heights); return { w: num(n.w) ? n.w : d.w, h: num(n.h) ? n.h : d.h } }
+    const laidOut = num(A.x) && num(A.y)
+    const node: N = M ?? { frame }
+    let shifted = 0
+    if (laidOut) {
+      const a = size(A)
+      const f = M ? size(M) : sizeOf(info(frame), viewports, heights)
+      const gap = Math.max(140, Math.max(a.w, f.w) * 0.12)
+      // its row: every placed node beside the anchor (overlapping it top to bottom)
+      const inRow = (n: N) => num(n.x) && num(n.y) && n.y < A.y! + a.h && n.y + size(n).h > A.y!
+      const row = nodes.filter((n) => n !== M && inRow(n))
+      // already the anchor's neighbour on that side, in its row: it stays where it is
+      const there = !!M && inRow(M) && (() => {
+        const order = [...row, M].sort((p, q) => p.x! - q.x!)
+        return order.indexOf(M) === order.indexOf(A) + (rel === 'after' ? 1 : -1)
+      })()
+      if (!there) {
+        const X = rel === 'after' ? A.x! + a.w + gap : A.x!
+        const room = f.w + gap
+        for (const n of row) if (rel === 'after' ? n.x! > A.x! : n.x! >= A.x!) { n.x = Math.round(n.x! + room); shifted++ }
+        node.x = Math.round(X); node.y = Math.round(A.y!)
+        // a content (Doc) node saves no size - the canvas measures it, as it saves one
+        if (!M) { const fi = sizeOf(info(frame), viewports, heights); if (!fi.auto) { node.w = Math.round(f.w); node.h = Math.round(f.h) } }
+      }
+    }
+    // next to the anchor in the list (the order the canvas lays a scene out in), and in the scene's recipe
+    const rest = all.filter((n) => n !== M)
+    rest.splice(rest.indexOf(A) + (rel === 'after' ? 1 : 0), 0, node)
+    b.nodes = rest
+    if (sceneOf(frame) === sceneOf(anchor)) placeInRecipe(b.layout, sceneOf(anchor), frame, anchor, rel)
+    // a board the canvas lays out (itself, or when it opens one not laid out yet): its layout must keep it there
+    const { composed, flow } = boardLayoutOf(b)
+    if (composed || !laidOut) {
+      const placed = rest.filter((n): n is N => !!n && typeof (n as N).frame === 'string')
+      const tn = placed.map((n, i) => { const fi = info(n.frame); const s = size(n); return { key: String(i), frame: n.frame, scene: sceneOf(n.frame), group: fi?.variantGroup, variant: fi?.variant, w: s.w, h: s.h } })
+      const at = new Map(tidy(tn, flow).map((p) => [p.key, p]))
+      const pf = at.get(String(placed.indexOf(node))), pa = at.get(String(placed.indexOf(A)))
+      const beside = !!pf && !!pa && pf.y === pa.y && (rel === 'after' ? pf.x > pa.x : pf.x < pa.x)
+        && ![...at.values()].some((p) => p !== pf && p !== pa && p.y === pa.y && (p.x - pa.x) * (p.x - pf.x) < 0)
+      if (!beside) {
+        const how = composed ? `${board} lays its frames out itself` : `the canvas lays ${board} out when it opens it`
+        if (sceneOf(frame) !== sceneOf(anchor)) throw new Error(`${how}, scene by scene - ${frame} (scene ${sceneOf(frame)}) cannot stay ${rel} ${anchor} (scene ${sceneOf(anchor)}): make the frame in ${sceneOf(anchor)}/ and place that, or place it by hand on the canvas`)
+        throw new Error(`${how}, and its layout keeps ${sceneOf(anchor)} in an order of its own (a variant group, or the scene's recipe) - ${frame} cannot stay ${rel} ${anchor}: place it by hand on the canvas`)
+      }
     }
     const base = { board, frame, anchor, rel }
-    // not laid out yet: next to the anchor in the list - the canvas lays the board out when it opens it
-    if (!num(A.x) || !num(A.y)) {
-      const ai = all.indexOf(A), mi = M ? all.indexOf(M) : -1
-      if (M && mi === (rel === 'after' ? ai + 1 : ai - 1)) return { ...base, already: true, added: false, shifted: 0, laidOut: false }
-      const rest = all.filter((n) => n !== M)
-      rest.splice(rest.indexOf(A) + (rel === 'after' ? 1 : 0), 0, M ?? { frame })
-      b.nodes = rest
-      write()
-      return { ...base, added: !M, shifted: 0, laidOut: false }
-    }
-    const size = (n: N) => { const d = sizeOf(info(n.frame), viewports, heights); return { w: num(n.w) ? n.w : d.w, h: num(n.h) ? n.h : d.h } }
-    const a = size(A)
-    const f = M ? size(M) : sizeOf(info(frame), viewports, heights)
-    const gap = Math.max(140, Math.max(a.w, f.w) * 0.12)
-    // its row: every placed node beside the anchor (overlapping it top to bottom)
-    const inRow = (n: N) => num(n.x) && num(n.y) && n.y < A.y! + a.h && n.y + size(n).h > A.y!
-    const row = nodes.filter((n) => n !== M && inRow(n))
-    // asked again: already the anchor's neighbour on that side, in its row
-    if (M && inRow(M)) {
-      const order = [...row, M].sort((p, q) => p.x! - q.x!)
-      const ai = order.indexOf(A), mi = order.indexOf(M)
-      if (mi === (rel === 'after' ? ai + 1 : ai - 1)) return { ...base, already: true, added: false, shifted: 0, laidOut: true }
-    }
-    const X = rel === 'after' ? A.x! + a.w + gap : A.x!
-    const room = f.w + gap
-    let shifted = 0
-    for (const n of row) if (rel === 'after' ? n.x! > A.x! : n.x! >= A.x!) { n.x = Math.round(n.x! + room); shifted++ }
-    if (M) { M.x = Math.round(X); M.y = Math.round(A.y!) }
-    else {
-      const fi = sizeOf(info(frame), viewports, heights)
-      // a content (Doc) node saves no size - the canvas measures it, as it saves one
-      b.nodes = [...all, { frame, x: Math.round(X), y: Math.round(A.y!), ...(fi.auto ? {} : { w: Math.round(f.w), h: Math.round(f.h) }) }]
-    }
-    write()
-    return { ...base, added: !M, shifted, laidOut: true }
+    if (JSON.stringify(b) === was) return { ...base, already: true, added: false, shifted: 0, laidOut }
+    const tmp = `${file}.${randomBytes(6).toString('hex')}.tmp`
+    writeFileSync(tmp, JSON.stringify(b, null, 2) + '\n', { flag: 'wx' })
+    // a writer that does not take the lock (git, an editor) wrote it meanwhile: never overwritten
+    if (readFileSync(file, 'utf8') !== content) { rmSync(tmp, { force: true }); throw new Error(`design/boards/${board}.json changed while placing - try again`) }
+    renameSync(tmp, file)
+    return { ...base, added: !M, shifted, laidOut }
   })
   if (!out) throw new Error(`design/boards/${board}.json is being written by another writer - try again`)
   return out
