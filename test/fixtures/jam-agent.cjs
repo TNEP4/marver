@@ -7,7 +7,15 @@ const p = JSON.parse(fs.readFileSync(file, 'utf8'))
 const mode = JSON.parse(process.env.MODE || '"ok"')
 const opts = JSON.parse(process.env.OPTS || '{}')
 fs.appendFileSync('packets-seen.jsonl', JSON.stringify(p) + '\n')
-if (opts.orphan) { let alive = true; try { process.kill(opts.orphan, 0) } catch { alive = false } fs.writeFileSync('orphan.txt', alive ? 'alive' : 'dead') }
+// the orphan was killed before this run started; the system may take a moment to clear it (a killed child of the test
+// process stays a zombie until reaped): alive only if it is still there, and not a zombie, a second on
+if (opts.orphan) {
+  const there = () => { try { process.kill(opts.orphan, 0) } catch { return false } try { const st = require('child_process').execFileSync('ps', ['-o', 'stat=', '-p', String(opts.orphan)]).toString().trim(); return !!st && !st.startsWith('Z') } catch { return false } }
+  const until = Date.now() + 1000
+  let alive = there()
+  while (alive && Date.now() < until) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50); alive = there() }
+  fs.writeFileSync('orphan.txt', alive ? 'alive' : 'dead')
+}
 for (const t of [].concat(opts.touch || [])) { fs.mkdirSync(path.dirname(t), { recursive: true }); fs.writeFileSync(t, 'x' + Date.now() + Math.random()) }
 if (opts.fail) process.exit(1)
 if (opts.hang) setInterval(() => {}, 1000)

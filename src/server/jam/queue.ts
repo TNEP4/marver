@@ -168,6 +168,9 @@ export function merge(j: Journal, queued: Card, other: Card, now: number): Card 
   if (gone.exclusive || keep.exclusive) keep.exclusive = [...new Set([...(keep.exclusive ?? []), ...(gone.exclusive ?? [])])]
   keep.shared = Math.max(keep.shared ?? 0, gone.shared ?? 0) || undefined
   for (const f of gone.frames) if (!keep.frames.includes(f)) keep.frames.push(f)
+  // what a run let go into the card that goes left there (F4: the frames it made, its pictures from before any edit) is
+  // the survivor's - the one waiting already came first, so its pictures are the earlier (Codex's review)
+  if (gone.alone) { keep.alone = joinAlone(gone.alone, keep.alone ?? {}); delete gone.alone }
   // the card that ran and failed is what the survivor follows: its asks and what came of them
   if (gone.batch || gone.ran?.length) keep.follows ??= gone.id
   keep.state = 'queued'; keep.rev += 1; keep.at = now

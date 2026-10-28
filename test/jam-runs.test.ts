@@ -938,6 +938,17 @@ describe('F4: the same frame twice - offered to your session, which decides; run
     const b = joinAlone(a, { created: ['demo/hero-c'], shots: [{ frame: 'demo/hero', before: 'p-9' }, { frame: 'demo/about', before: 'p-2' }] })
     expect(b).toEqual({ spawn: true, why: 'your session let it go', created: ['demo/hero-b', 'demo/hero-c'], shots: [{ frame: 'demo/hero', before: 'p-1' }, { frame: 'demo/about', before: 'p-2' }] })
     expect(joinAlone(undefined, {})).toEqual({})
+    // a follow-up let go first, then its capture: the capture's card survives the merge and keeps the follow-up's part
+    const { merge } = await import('../src/server/jam/queue.ts')
+    const card = (id: string, kind: 'capture' | 'comment', extra: object = {}): any => ({ id, kind, board: 'home', frames: ['demo/hero'], events: [], state: 'queued', made: 1, order: 1, rev: 1, at: 1, thread: 't-1', ...extra })
+    const j: any = { cards: [], batches: [] }
+    const follow = card('c-follow', 'comment', { alone: { created: ['demo/hero-b'], shots: [{ frame: 'demo/hero', before: 'p-1' }] } })
+    const cap = card('cap-1-abcdef', 'capture')
+    j.cards.push(follow, cap)
+    const kept = merge(j, follow, cap, 2)
+    expect(kept.id).toBe('cap-1-abcdef')
+    expect(kept.alone).toEqual({ created: ['demo/hero-b'], shots: [{ frame: 'demo/hero', before: 'p-1' }] })
+    expect(joinAlone(kept.alone, { created: ['demo/hero-c'], shots: [{ frame: 'demo/hero', before: 'p-9' }] })).toEqual({ created: ['demo/hero-b', 'demo/hero-c'], shots: [{ frame: 'demo/hero', before: 'p-1' }] })
   })
 
   it('a run that leaves your session while your other run holds its frame goes back to the queue with what it was given: the variant placed with --run and its pictures from before any edit (Codex review: the run that took it over held only the first frame and pictured the partial work as its before)', async () => {
