@@ -67,6 +67,8 @@ export function FocusPanelView(p: {
   onPrev?: () => void; onNext?: () => void; pending?: string; onRetry?: () => void; locked?: boolean
   /** a note added in the read-back (a draft) */
   onAddNote?(text: string, id: string): Promise<boolean>
+  /** a card that asks, opened here (its thread cannot show on this board): its question and your answer */
+  asks?: { question: string; onAnswer(text: string): Promise<boolean> }
 }) {
   const c = p.card
   const title = c.title ?? 'Capture'
@@ -99,7 +101,7 @@ export function FocusPanelView(p: {
           readOnly={c.state !== 'draft'} locked={p.locked} agent={p.agent}
           follows={c.reviewing ? p.reviewedTitle ?? 'the review on screen' : undefined}
           onEdit={p.onEdit} onConfirm={p.onConfirm} onKeep={p.onKeep} onDrop={p.onDrop} onResume={c.state === 'draft' ? p.onResume : undefined} onOpenThread={c.thread ? p.onOpenThread : undefined}
-          onRetry={c.state === 'failed' ? p.onRetry : undefined} />
+          onRetry={c.state === 'failed' ? p.onRetry : undefined} asks={c.state === 'asks' ? p.asks : undefined} />
       )}
     </FocusPanel>
   )

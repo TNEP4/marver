@@ -169,7 +169,6 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
   const rec = useRecord(ui.panel?.kind === 'capture' || ui.panel?.kind === 'review' ? ui.panel.id : undefined)
   const agentName = agent ? HARNESS[agent] ?? agent : 'your agent'
   const act = (c: JamCard | undefined, action: Parameters<ReturnType<typeof useJamQueue.getState>['act']>[1], body?: string) => (c ? useJamQueue.getState().act(c, action, body) : Promise.resolve(false))
-  const openThread = (c?: JamCard) => { if (c?.thread) useComments.getState().setActive(c.thread) }
   /** The panel's arrows: the previous or next card of the same kind on the lane (reviews among reviews). */
   const step = (d: number) => {
     if (!ui.panel || !panelCard) return undefined
@@ -255,6 +254,12 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
           })()}
           onLater={() => { void act(panelCard, 'later'); ui.close() }}
           onOpenThread={() => openThread(panelCard)}
+          asks={panelCard.thread ? { question: replyText(panelCard), onAnswer: async (text) => {
+            const ok = await useComments.getState().replyOk(panelCard.thread!, /@marver\b/i.test(text) ? text : `@marver ${text}`)
+            if (!ok) useStore.getState().toast('your answer was not sent - try again')
+            else ui.close()
+            return ok
+          } } : undefined}
           onPrev={step(-1)} onNext={step(1)} pending={pendingEdit(panelCard.id)} locked={cap.settling === panelCard.id}
           onRetry={() => void (async () => { if (await act(useJamQueue.getState().cards?.find((x) => x.id === panelCard.id), 'retry')) ui.close(); else useStore.getState().toast('the capture could not be retried - look again') })()}
         />
@@ -300,7 +305,8 @@ function replyIn(c: JamCard) {
   // once the thread's card has drawn (on another board, once that board has loaded)
   const until = performance.now() + 3_000
   const focus = () => {
-    const el = useComments.getState().active === c.thread ? document.querySelector<HTMLTextAreaElement>('.cm-card textarea') : null
+    const el = useComments.getState().active === c.thread ? document.querySelector<HTMLTextAreaElement>('.cm-card textarea')
+      : useJamUi.getState().panel?.id === c.id ? document.querySelector<HTMLTextAreaElement>('.jm-asks textarea') : null
     if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length) } else if (performance.now() < until) requestAnimationFrame(focus)
   }
   requestAnimationFrame(focus)

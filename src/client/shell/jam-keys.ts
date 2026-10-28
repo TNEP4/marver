@@ -179,12 +179,30 @@ export function openTile(id: string) {
   reveal(c)
 }
 
-/** Open a card's thread - on another board, its link opens that board, then the thread (as a
- *  notification's does). */
+/** Open a card's thread where you can see it, as a notification does - on another board, its link opens that board,
+ *  then the thread; on this one, its frame is brought into view (Comments.revealThread: since `E` moves nothing, the
+ *  canvas is often far from it). The board's comments still loading: tried again for a few seconds. A thread this
+ *  board cannot show (its frame is on no node here): the capture's own panel opens instead - for a card that asks,
+ *  with its question and a field to answer it - so a click is never a no-op. */
 export function openThread(c: JamCard) {
   if (!c.thread) return
   if (c.board !== useStore.getState().board) { location.hash = `#/b/${encodeURIComponent(c.board)}?c=${encodeURIComponent(c.thread)}`; return }
-  void import('./comments-store.ts').then(({ useComments }) => useComments.getState().setActive(c.thread!))
+  const thread = c.thread
+  void Promise.all([import('./Comments.tsx'), import('./comments-store.ts')]).then(async ([{ revealThread }, { useComments }]) => {
+    const until = performance.now() + 3_000
+    for (;;) {
+      // another board opened meanwhile: this one's thread is not there to open
+      if (useStore.getState().board !== c.board) return
+      if (revealThread(thread)) return
+      // known, and still not shown: its frame is on no node of this board - no wait helps
+      if (useComments.getState().threads.some((t) => t.id === thread) || performance.now() > until) break
+      await new Promise((r) => setTimeout(r, 250))
+    }
+    if (useStore.getState().board !== c.board || c.kind !== 'capture') return
+    useJamUi.getState().select(c.id)
+    useJamUi.getState().open({ kind: 'capture', id: c.id })
+    reveal(c)
+  })
 }
 
 /** Bring a card's frames into view beside the panel - on its own board (a frame link lands there). */

@@ -34,7 +34,7 @@ const frame = (name: string) => `export default () => <main><h1>${name}</h1></ma
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const until = (expr: string, ms = 20_000) => browser!.until(s, expr, ms)
 /** how the fake agent behaves next: { delay, fail } */
-const agentMode = (m: { delay?: number; fail?: boolean; create?: string; question?: string }) => put('fake-agent.json', m)
+const agentMode = (m: { delay?: number; fail?: boolean; create?: string; question?: string; asks?: boolean }) => put('fake-agent.json', m)
 /** with MARVER_SHOT_DIR set, a picture of the open thread card (and what hangs off it) */
 const shot = async (name: string) => {
   if (!process.env.MARVER_SHOT_DIR) return
@@ -62,7 +62,7 @@ if (mode.create) {
   fs.writeFileSync('design/boards/main.json', JSON.stringify(b, null, 2))
 }
 const F = '\`\`\`'
-const out = p.members.map((m) => F + 'marver-reply ' + m.id + '\\nDone: ' + m.brief.asks.map((a) => a.body).join(' + ') + (mode.question ? ' ' + mode.question : '') + '\\n' + F).join('\\n')
+const out = p.members.map((m) => F + 'marver-reply ' + m.id + (mode.asks ? ' asks' : '') + '\\nDone: ' + m.brief.asks.map((a) => a.body).join(' + ') + (mode.question ? ' ' + mode.question : '') + '\\n' + F).join('\\n')
 setTimeout(() => process.stdout.write(JSON.stringify({ type: 'result', result: out }) + '\\n'), mode.delay || 0)
 `
 
@@ -1700,5 +1700,63 @@ describe('captures in the browser: the first trial', () => {
     expect(await browser!.eval(s, `window.__acts`)).toEqual(['more'])
     await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(r)} && c.state === 'review' && c.reply && c.reply !== ${JSON.stringify(reply)})`, 60_000)
     await decide(r, 'good')
+  }, 150_000)
+
+  /** S, a pick on bravo (the capture's comment is pinned there), a note, E - the fake agent asks back. */
+  const askingCapture = async () => {
+    agentMode({ asks: true, question: 'Navy or teal?' })
+    await browser!.eval(s, `window.__mvJamUi.getState().close(), window.__mvComments.getState().setActive(null), 1`)
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const r = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    const k = await browser!.eval(s, `window.__mvStore.getState().nodes.find((x) => x.frame === 'spec/bravo').key`)
+    await click(`.sh-node[data-node="${k}"] .sh-overlay`)
+    await sleep(300)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('make the header blue'), 1`)
+    await key('e')
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(r)} && c.state === 'asks')`, 60_000)
+    agentMode({})
+    const thread = await browser!.eval(s, `window.__mvJamQueue.getState().cards.find((c) => c.id === ${JSON.stringify(r)}).thread`)
+    await until(`window.__mvComments.getState().threads.some((t) => t.id === ${JSON.stringify(thread)} && t.replies.some((x) => x.agent))`, 15_000)
+    await until(`!!document.querySelector('.jm-lane [data-tile="${r}"]')`, 5000)
+    return { r, thread: thread as string }
+  }
+  /** the owner looked elsewhere since (another frame, zoomed in) - after E nothing brought the canvas to the capture */
+  const lookElsewhere = async () => {
+    await browser!.eval(s, `(() => { const k = window.__mvStore.getState().nodes.find((x) => x.frame === 'spec/clicky').key; window.__mvJamCanvas.fitNode(k); return 1 })()`)
+    await sleep(600)
+    await browser!.eval(s, `window.__mvJamCanvas.zoomTo(3), 1`)
+    await until(`!window.__mvJamCanvas.cameraBusy()`, 5000)
+    await sleep(300)
+  }
+  const cardOnScreen = `(() => { const c = document.querySelector('.cm-card'); if (!c) return false; const b = c.getBoundingClientRect(); return b.width > 0 && b.right > 0 && b.bottom > 0 && b.left < innerWidth && b.top < innerHeight })()`
+
+  skippable('an Asks you tile opens its thread where you can see it: the canvas comes to its frame (after E nothing moved it there)', async () => {
+    const { r, thread } = await askingCapture()
+    await lookElsewhere()
+    // the thread's card is not on screen now: opening it in place shows nothing (the 0.28 regression)
+    expect(await browser!.eval(s, `window.__mvComments.getState().active`)).toBe(null)
+    await click(`.jm-lane [data-tile="${r}"]`)
+    await until(`window.__mvComments.getState().active === ${JSON.stringify(thread)} && window.__mvJamUi.getState().selected === ${JSON.stringify(r)} && ${cardOnScreen}`, 8000)
+    // its question is there to read
+    expect(await browser!.eval(s, `document.querySelector('.cm-card')?.textContent ?? ''`)).toContain('Navy or teal?')
+    await browser!.eval(s, `window.__mvComments.getState().setActive(null), 1`)
+  }, 150_000)
+
+  skippable('an Asks you tile whose thread this board cannot show (its frame is on no node here) opens its panel: the question, and an answer sent with @marver to its thread', async () => {
+    const { r, thread } = await askingCapture()
+    // bravo leaves the board as the page holds it (the thread's frame is on no node here now)
+    await browser!.eval(s, `(() => { const st = window.__mvStore.getState(); window.__keptNodes = st.nodes; window.__mvStore.setState({ nodes: st.nodes.filter((n) => n.frame !== 'spec/bravo') }); return 1 })()`)
+    await click(`.jm-lane [data-tile="${r}"]`)
+    await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(r)} && !!document.querySelector('.jm-asks textarea')`, 8000)
+    expect(await browser!.eval(s, `document.querySelector('.jm-asks .jm-reply')?.textContent ?? ''`)).toContain('Navy or teal?')
+    await browser!.eval(s, `(() => { const t = document.querySelector('.jm-asks textarea'); const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(t, 'navy, please'); t.dispatchEvent(new Event('input', { bubbles: true })); return 1 })()`)
+    await sleep(100)
+    await browser!.eval(s, `document.querySelector('.jm-asks .jm-send').click(), 1`)
+    // the answer is in its thread, tagged: the agent goes on with it
+    await until(`window.__mvComments.getState().threads.some((t) => t.id === ${JSON.stringify(thread)} && t.replies.some((x) => !x.agent && x.body === '@marver navy, please'))`, 10_000)
+    await until(`!window.__mvJamUi.getState().panel`, 5000)
+    await browser!.eval(s, `(() => { window.__mvStore.setState({ nodes: window.__keptNodes }); return 1 })()`)
+    // the follow-up runs and settles before the next test
+    await until(`(window.__mvJamQueue.getState().cards ?? []).every((c) => c.state !== 'queued' && c.state !== 'working')`, 60_000)
   }, 150_000)
 })

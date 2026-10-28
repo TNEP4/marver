@@ -188,7 +188,7 @@ const Meta = ({ items }: { items: ReactNode[] }) => (
  * capture made during a review; `err` = a confirm that failed closed; `warn` = degraded content
  * ("words may be incomplete").
  */
-export function ReadBack({ title, head, of, onPrev, onNext, meta, lines, pictures, edited, pending, editing, onEdit, onRetry, onConfirm, onKeep, onDrop, onResume, agent, follows, readOnly, locked, onOpenThread, added, onAddNote, autoNamed, err, warn, style }: {
+export function ReadBack({ title, head, of, onPrev, onNext, meta, lines, pictures, edited, pending, editing, onEdit, onRetry, onConfirm, onKeep, onDrop, onResume, agent, follows, readOnly, locked, onOpenThread, added, onAddNote, autoNamed, err, warn, asks, style }: {
   title: string
   /** beside the title: the Review | Capture switch (a capture under review) */
   head?: ReactNode
@@ -224,6 +224,9 @@ export function ReadBack({ title, head, of, onPrev, onNext, meta, lines, picture
   onAddNote?: (text: string, id: string) => Promise<boolean>
   err?: ReactNode
   warn?: ReactNode
+  /** a capture whose run asks you something, opened here because its thread cannot show on this board: the question,
+   *  and a field whose answer goes to its thread with @marver (an answer with a tag is what carries the work on) */
+  asks?: { question: string; onAnswer(text: string): Promise<boolean> }
   style?: CSSProperties
 }) {
   const [open, setOpen] = useState(!!editing)
@@ -255,6 +258,7 @@ export function ReadBack({ title, head, of, onPrev, onNext, meta, lines, picture
       </div>
       <Meta items={meta} />
       <div className="jm-body">
+        {asks && <AsksAnswer question={asks.question} onAnswer={asks.onAnswer} />}
         {follows && <div className="note-line info"><ArrowBendUpLeftIcon size={14} /><span>Follows <b style={{ color: 'var(--glass-ink)' }}>{follows}</b> - confirming sends that review back as more work</span></div>}
         {err && <div className="note-line err"><WarningIcon size={14} /><span>{err}</span></div>}
         {warn && <div className="note-line warn"><WarningIcon size={14} /><span>{warn}</span></div>}
@@ -286,6 +290,36 @@ export function ReadBack({ title, head, of, onPrev, onNext, meta, lines, picture
             <button className="jm-btn primary" onClick={onConfirm}>Add to queue <kbd>⏎</kbd></button>
           </>
         )}
+      </div>
+    </div>
+  )
+}
+
+/** What a capture's run asked you, and your answer - for a thread this board cannot show (its frame is on no node
+ *  here). Sent with @marver in its thread: the answer goes back to the agent, as a tagged reply does. */
+function AsksAnswer({ question, onAnswer }: { question: string; onAnswer(text: string): Promise<boolean> }) {
+  const [text, setText] = useState('')
+  const [sending, setSending] = useState(false)
+  const send = () => {
+    if (!text.trim() || sending) return
+    setSending(true)
+    void onAnswer(text.trim()).then((ok) => { setSending(false); if (ok) setText('') })
+  }
+  return (
+    <div className="jm-asks" data-jam-asks="" style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+      <div className="jm-reply">
+        <Marver size={20} />
+        <p>{question || 'It asks you something - see its thread.'}</p>
+      </div>
+      <div className="jm-more">
+        <span className="at">@marver</span>
+        <textarea className="txt" rows={1} value={text} placeholder="Your answer" disabled={sending}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            e.stopPropagation()
+            if (e.key === 'Enter' && !e.shiftKey && !(e.nativeEvent as unknown as { isComposing?: boolean }).isComposing) { e.preventDefault(); send() }
+          }} />
+        <button className="jm-send" disabled={!text.trim() || sending} onClick={send}>Send <kbd>⏎</kbd></button>
       </div>
     </div>
   )
