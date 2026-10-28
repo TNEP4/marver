@@ -101,6 +101,12 @@ const until = async (what: string, ok: () => boolean, ms: number, step = 1_000) 
   say(`timed out waiting for ${what}`)
   return false
 }
+/** the processes working in the workspace - lsof exits 1 when a file under it is open by none, the pids printed all the same */
+const inWorkspace = (): number[] => {
+  let out = ''
+  try { out = execFileSync('lsof', ['-t', '-a', '-d', 'cwd', '+D', root], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }) } catch (e) { out = String((e as { stdout?: string }).stdout ?? '') }
+  return out.split('\n').map(Number).filter((p) => p && p !== process.pid)
+}
 const tag = (frame: string, body: string): string => {
   const id = randomUUID()
   const ev: CommentEvent = { id, ts: Date.now(), type: 'create', commentId: id, frame, nodeKey: frame, author: { email: 'live@local', name: 'Live check' }, body }
@@ -268,11 +274,13 @@ try {
   await sampler
   try { tty.kill('SIGTERM') } catch { /* gone */ }
   jam.stop()
-  // anything still running in the workspace (a `marver dev` a subagent started, the session itself)
+  // anything still running in the workspace (a `marver dev` a subagent started, the session itself) - stopped before
+  // the workspace goes: a dev server stopping writes design/.local again and would make it anew
   await sleep(1_000)
-  let left: number[] = []
-  try { left = execFileSync('lsof', ['-t', '-a', '-d', 'cwd', '+D', root], { encoding: 'utf8' }).split('\n').map(Number).filter((p) => p && p !== process.pid) } catch { /* none */ }
+  const left = inWorkspace()
   for (const p of left) { try { process.kill(p, 'SIGTERM') } catch { /* gone */ } }
+  for (let i = 0; i < 20 && inWorkspace().length; i++) await sleep(250)
+  for (const p of inWorkspace()) { try { process.kill(p, 'SIGKILL') } catch { /* gone */ } }
   if (left.length) say(`stopped ${left.length} process(es) left running in the workspace: ${left.join(', ')}`)
   if (ownHome) rmSync(ownHome, { recursive: true, force: true })
   if (pass) rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
