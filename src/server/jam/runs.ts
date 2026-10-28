@@ -559,6 +559,8 @@ export function createRuns(d: RunsDeps): Runs {
   }
 
   let lastSweep = 0
+  /** who takes the work and their room, as the last tick read it */
+  let routed = ''
   const tick = async (now = Date.now()) => {
     if (stopped || !d.ready()) return
     await answerAll()
@@ -610,6 +612,11 @@ export function createRuns(d: RunsDeps): Runs {
         }
       }
     }
+    // the session that takes the work changed, or its room (you chose another, one connected, ended or was muted): what
+    // waits for a session may start now - no run of it moved to say so (Codex's review: a request with no frame waited on
+    // a full session after you switched to an idle one)
+    const routing = [roomOf(now), roomOf(now, true)].map((r) => (r ? `${r.conn.id}.${r.conn.inc}.${r.room}` : '')).join('|')
+    if (routing !== routed) { routed = routing; d.changed() }
     publish()
     if (now - lastSweep > 60_000) {
       lastSweep = now

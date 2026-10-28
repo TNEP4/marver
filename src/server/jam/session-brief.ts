@@ -85,7 +85,7 @@ export function sessionBrief(packet: JobPacket, handle: string, as?: string, o: 
   const what = [
     ...asks,
     none ? 'It reserves no frame: make what it asks for as new frames, in a scene of their own if nothing on the board fits (a scene the run makes is its own, its _ files included).'
-      : `Frames you may edit: ${packet.frames.join(', ') || '(none)'}${packet.exclusive ? `; and these shared files: ${packet.exclusive.files.join(', ')}` : ''}.`,
+      : `Frames you may edit: ${packet.frames.join(', ') || '(none)'}${packet.exclusive?.files.length ? `; and these shared files: ${packet.exclusive.files.join(', ')}` : ''}.`,
     `The thread, ${packet.members.some((m) => m.brief.capture) ? 'the capture\'s picks and pictures, ' : ''}and what earlier runs did: ${packetPath(packet.batchId)}`,
   ]
   const reply = [

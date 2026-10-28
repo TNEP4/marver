@@ -10,7 +10,7 @@ import { claudeAdapter } from '../src/server/jam/adapter/claude.ts'
 import { record } from '../src/server/jam/ledger.ts'
 import { deviceId } from '../src/server/jam/device.ts'
 import { read as readJournal, write as writeJournal } from '../src/server/jam/journal.ts'
-import { act, addWrapup, answers, ctxFor, form, freezeBrief, ingest, merge, settle, writePacket } from '../src/server/jam/queue.ts'
+import { act, addWrapup, answers, ctxFor, form, freezeBrief, ingest, joinAlone, merge, settle, writePacket } from '../src/server/jam/queue.ts'
 import { buildPacket, goalText, packetPath, parseMembers, refusedAsk, sharedFile, sharedWhy } from '../src/server/jam/packet.ts'
 import { sessionBrief } from '../src/server/jam/session-brief.ts'
 import { buildWrapup, storeWrapup, type Wrapup } from '../src/server/jam/session.ts'
@@ -1222,6 +1222,44 @@ describe('F5: form() - a request with no frame runs beside the others while a se
     const r = form(j, ctx, { ...base, free: 0, running: new Set(['demo/a']), active: 1, session: (record) => (record ? { ...ses, room: 8 } : undefined) })
     expect(r.batches.map((x) => [x.members[0].card, x.share])).toEqual([[rec.id, ses]])
     expect(cardOf({ snapshot: () => j }, t)!.state).toBe('queued')
+    done()
+  })
+
+  it('once the Jam session ended, a request and the record each take their own room - the request a background slot, the record your session\'s - whichever comes first (Codex\'s review: a request ahead of the record took its room, and it waited)', () => {
+    for (const [recAt, tagAt] of [[2000, 1000], [1000, 2000]]) {
+      const { root, dir, done } = setup()
+      const j = ready(root)
+      const w = buildWrapup(j, root, { session: 'ses-1700000000000-abcdef', since: Date.now() - 60_000, instructions: 'lead with decisions', includeTalk: false, tags: 0 }) as Wrapup
+      const hash = storeWrapup(root, w)
+      record(root, 'home', `wrapup:${w.id}:${hash}`)
+      const rec = addWrapup(j, w, hash, 'home', recAt)
+      const t = say(root, dir, '@marver small fix', { frame: 'demo/free' })
+      const ctx = ctxFor(root); ingest(j, ctx)
+      cardOf({ snapshot: () => j }, t)!.order = tagAt
+      // one background slot, room for one in your session
+      const r = form(j, ctx, { ...base, free: 1, running: new Set(), session: (record) => (record ? { ...ses, room: 1 } : undefined) })
+      const both = [[`c-${t.id}`, undefined], [rec.id, ses]]
+      expect(r.batches.map((x) => [x.members[0].card, x.share])).toEqual(tagAt < recAt ? both : both.reverse())
+      done()
+    }
+  })
+
+  it('one with no frame your session let go of after its run was given a frame still runs alone - the frame it holds now never lets it form beside another run, a restart (the journal as it reads it) or a merge on its thread included (Codex\'s review: it formed beside a run, and the frames it made after were no one\'s)', () => {
+    const { root, done } = setup()
+    const j = ready(root)
+    const c = blank(j, 'cap-1700000000001-aaaaaa', 1000)
+    c.frames = ['menu/first']
+    c.alone = joinAlone(undefined, { spawn: true, why: 'your session let it go', created: ['menu/first'], loose: true })
+    const ctx = ctxFor(root)
+    expect(form(j, ctx, { ...base, running: new Set(['demo/a']), active: 1, ...taking() })).toEqual({ batches: [], exclusiveWaiting: true })
+    // nothing runs: alone, spawned as it was going to be, the frame its run made still its own
+    const r = form(j, ctx, { ...base, running: new Set(), ...taking() })
+    expect(r.batches.map((x) => [x.members[0].card, x.frames, x.exclusive, x.handoff, x.created])).toEqual([[c.id, ['menu/first'], true, 'spawn', ['menu/first']]])
+    // given no shared file: told to edit its frame (and make new ones beside it), never handed an empty list of shared files
+    const p = JSON.parse(readFileSync(join(root, packetPath(r.batches[0].batchId)), 'utf8'))
+    expect([goalText(p).includes('EDIT ONLY THE FRAMES THE PACKET RESERVES'), goalText(p).includes('RUNS ALONE'), sessionBrief(p, 'r-12345678.1').includes('Frames you may edit: menu/first.')]).toEqual([true, false, true])
+    // let go into a card already waiting on its thread: joined, it stays so
+    expect([joinAlone({ spawn: true }, { loose: true }).loose, joinAlone({ loose: true }, { created: ['menu/b'] }).loose]).toEqual([true, true])
     done()
   })
 })

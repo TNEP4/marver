@@ -92,11 +92,12 @@ never changed; one you removed by hand is not written back until you turn that t
   agent, your agent in chat - makes the request wait, and its tile says "Waits for <frame>".
 - **A request with no frame** - a capture made on an empty board, a comment on the board itself, the session record -
   goes to your session beside your other runs, in a slot of your session's: with your session full, its tile says
-  "Waits · your session is full". A capture or a comment reserves no frame: it makes what it asks for as new frames,
-  each put on the board with `--run <handle>` (`boards pin <board> <scene/frame> --run <handle>` on an empty board). The
-  session record writes its one file and nothing else. With no session taking the work it runs alone, as before - a run
-  Marver starts finds the frames it made only when nothing runs beside it - and so does one your session does not take
-  or lets go of. Its tile says "Waits to run alone", and the requests behind it "Waits · a run goes alone first".
+  "Waits · your session is full" until it has room or you choose another session. A capture or a comment reserves no
+  frame: it makes what it asks for as new frames, each put on the board with `--run <handle>` (`boards pin <board>
+  <scene/frame> --run <handle>` on an empty board). The session record writes its one file and nothing else. With no
+  session taking the work it runs alone, as before - a run Marver starts finds the frames it made only when nothing runs
+  beside it - and so does one your session does not take or lets go of, even after its run put a frame on the board.
+  Its tile says "Waits to run alone", and the requests behind it "Waits · a run goes alone first".
 - **Frames placed through Marver.** A run puts a frame next to another with `npx marver boards place <board>
   <scene/frame> --after|--before <scene/frame>` (`--run <handle>`: the new frame is that run's, and its review pictures
   it) - never by editing the board file. A request that still needs a file no run is given (a board file, the comment

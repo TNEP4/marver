@@ -158,8 +158,9 @@ export interface Card {
    *  frame - while anything else ran (F5): it waits for every frame to be free, or with none to run alone (never formed
    *  beside another run again), and runs spawned when `spawn` - the decision it had.
    *  What that run had goes to the run formed from it: the frames it made (`created`, a run of one) and its pictures
-   *  from before its first edit (`shots`) - its frames given as it worked are in `frames` already */
-  alone?: { spawn?: true; why?: string; created?: string[]; shots?: { frame: string; before: string; at?: number }[] }
+   *  from before its first edit (`shots`) - its frames given as it worked are in `frames` already. `loose`: it named no frame
+   *  when it went back (F5) - it runs alone whatever frames it was given as it worked */
+  alone?: { spawn?: true; why?: string; created?: string[]; shots?: { frame: string; before: string; at?: number }[]; loose?: true }
   made: number               // when it was made - the lane's order
   order: number              // run position: `made`, unless Do next put it first
   rev: number                // bumped on every change; actions compare it
@@ -197,6 +198,9 @@ export interface Batch {
   /** the scenes there were before its first attempt, a frame or a shared file in each (F5): one it made is its own whole -
    *  its `_` files are no shared file it changed, a rerun after a restart too */
   scenes?: string[]
+  /** the scenes its run made (F5): not there before its first attempt, and its first frame there given to this run (`--run`)
+   *  or found as its own - never one another run made first. Its whole: its `_` files are no shared file it changed */
+  madeScenes?: string[]
   /** something else ran beside it at some point (another job, a terminal hold): a frame that appeared is no one's */
   crowded?: boolean
   early?: { body: string; asks: boolean; commentId: string; ts: number }

@@ -373,12 +373,19 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       if (hooks.held?.(frame)) return `your agent in chat is working on ${frame}`
       b.frames = [...b.frames, frame]
       // a frame the run made (not there when it began): its review pictures it as new, and it can host the thread
-      if (!(b.before ?? []).includes(frame)) b.created = [...new Set([...(b.created ?? []), frame])]
+      if (!(b.before ?? []).includes(frame)) { b.created = [...new Set([...(b.created ?? []), frame])]; madeScene(b, frame) }
       reserve()
       return null
     },
     mayHold: (b, conn) => [...runningBatches.values()].every((x) => x.batchId === b.batchId || !x.frames.some((f) => b.frames.includes(f)) || heldBy(x, conn)),
   })
+  /** A frame a run made, given to it or found as its own, in a scene that was not there when it began and that no other run
+   *  made first: the scene is this run's (F5) - its `_` files are no shared file it changed. Under the lock. */
+  function madeScene(b: Batch, frame: string) {
+    const sc = frame.split('/')[0]
+    if (!b.scenes || b.scenes.includes(sc) || q.j.batches.some((x) => x.madeScenes?.includes(sc))) return
+    b.madeScenes = [...(b.madeScenes ?? []), sc]
+  }
   /** Is a running batch this session incarnation's (F4): offered to it, taken by it and not stopping, or formed for it -
    *  or done editing (its results saved, being posted)? Two such runs may share a frame: the session coordinates them. */
   function heldBy(x: Batch, c: { id: string; inc: string }): boolean {
@@ -748,7 +755,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       if (one0?.kind !== 'capture' || b.crowded || crowded || !aloneAtStart || batchStarts !== myStart || hooks.anyHold?.()) return
       const found = newFrames(new Set(b.before ?? []), b).filter((f) => !(b.created ?? []).includes(f))
       if (!found.length) return
-      await q.lock(() => { b.created = [...(b.created ?? []), ...found]; b.frames = [...new Set([...b.frames, ...b.created])]; q.persist() })
+      await q.lock(() => { b.created = [...(b.created ?? []), ...found]; b.frames = [...new Set([...b.frames, ...b.created])]; for (const f of found) madeScene(b, f); q.persist() })
       reserve()
     }
     const touched = new Set<string>()
@@ -843,8 +850,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
             if (add.length) c.frames = [...c.frames, ...add]
             // (on the card that waits now - merged into one already queued on its thread, that one)
             const t = requeue(j, c, Date.now())
+            // (with no frame of its own: it runs alone with the frames it was given too - a restart included)
             t.alone = joinAlone(t.alone, { ...(spawn ? { spawn: true as const } : {}), ...(why ? { why } : {}),
-              ...(created.length ? { created: [...created] } : {}), ...(shots.length ? { shots: shots.map((s) => ({ ...s })) } : {}) })
+              ...(created.length ? { created: [...created] } : {}), ...(shots.length ? { shots: shots.map((s) => ({ ...s })) } : {}), ...(loose ? { loose: true as const } : {}) })
           }
           b.state = 'done'; b.at = Date.now(); b.note = loose ? 'back in the queue - with no frame, it runs alone' : 'back in the queue - another runner holds one of its frames'
           q.persist()
@@ -946,10 +954,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       if (capturing) timing.afterMs = performance.now() - tAfter
       // results first: every member's result in ONE journal write, before anything is posted
       const split = parseMembers(run.said ?? run.reply, b.members.map((m) => m.id))
-      // (a scene the run made - nothing of it there before its first attempt, no frame of its own in it - is its own whole:
-      // its `_` files, a helper or a note, are not shared files it changed; F5)
-      const scenes0 = new Set([...(b.scenes ?? []), ...[...(b.before ?? []), ...b.frames.filter((f) => !b.created?.includes(f))].map((f) => f.split('/')[0])])
-      const changedShared = sharedBefore ? [...sharedMtimes(root)].filter(([f, mt]) => { const sc = sceneOf(f); return sharedBefore.get(f) !== mt && (!sc || scenes0.has(sc)) }).map(([f]) => f) : []
+      // (a scene this run made is its own whole: its `_` files, a helper or a note, are not shared files it changed - one
+      // another run made is not, though it was not there when this one began; F5, Codex's review)
+      const changedShared = sharedBefore ? [...sharedMtimes(root)].filter(([f, mt]) => { const sc = sceneOf(f); return sharedBefore.get(f) !== mt && !(sc && b.madeScenes?.includes(sc)) }).map(([f]) => f) : []
       const results: Record<string, Result> = {}
       for (const [id, r0] of Object.entries(split)) {
         let r = r0

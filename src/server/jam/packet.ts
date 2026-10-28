@@ -86,7 +86,8 @@ export function goalText(packet: JobPacket, subagents = true, runner?: Runner): 
       ? `THIS JOB WRITES ONE FILE AND NOTHING ELSE: ${packet.members.map((m) => m.brief.wrapup?.content.file).filter(Boolean).join(', ')}. Edit no frame, no shared file, no other file.`
       : none
       ? 'THIS JOB RESERVES NO FRAME: make what it asks for as NEW frames (below) - an existing frame is not yours. A scene you create for them is yours whole, its `_` files (a helper, a note) included; a shared file that exists (a file under design/ that is not a frame: a _kit, providers, a layout) is not: if the ask needs one, edit nothing and answer that member with `shared` (below) - the job comes back to you alone, allowed to edit it.'
-      : packet.exclusive
+      // (alone, no shared file given - one with no frame back from your session after it was given a frame: its frames only)
+      : packet.exclusive?.files.length
       ? `THIS JOB RUNS ALONE. It may edit the frames in \`frames\` and these shared files, for this ask only: ${packet.exclusive.files.join(', ')}.`
       : 'EDIT ONLY THE FRAMES THE PACKET RESERVES (`frames`). If the same fix belongs on a sibling frame, name it in your reply as a frame link instead - the owner tags there if they want it. NEVER edit a shared file (a file under design/ that is not one of those frames: a _kit, providers, a layout): if the ask needs one, edit nothing and answer that member with `shared` (below) - the job comes back to you alone, allowed to edit it.',
     ...(packet.members.some((m) => m.brief.wrapup) ? [] : [
