@@ -801,6 +801,33 @@ describe('F4: the same frame twice - offered to your session, which decides; run
     s.jam.stop(); s.done()
   })
 
+  it('session-only: two runs on one frame offered to your session, then another session is chosen - both reach it, never waiting on each other (Codex review: each kept the frame the other needed, forever)', async () => {
+    const s = await setup({ cfg: { runner: 'session', sessionMax: undefined } })
+    tag(s.root, s.dir, '@marver icon labels')
+    const t = s.jam.tick()
+    expect(await until(() => (offered(s)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
+    tag(s.root, s.dir, '@marver redesign the images')   // the same frame: offered beside it
+    const t2 = s.jam.tick()
+    expect(await until(() => (offered(s)?.n ?? 0) === 2, 8_000, () => s.jam.runs.tick())).toBe(true)
+    // another session is chosen: both offers are taken back - and both reach it
+    const next = upsertConn(s.root, 'claude', randomUUID(), { pid: process.pid, cwd: s.root }, Date.now() + 1_000, true)
+    writePrefs(s.root, { pick: next.id })
+    const taken = () => s.jam.snapshot().batches.filter((x) => x.state === 'claimed' && x.claim?.conn === next.id)
+    const cardsTaken = () => new Set(taken().flatMap((x) => x.members.map((m) => m.card))).size
+    expect(await until(() => cardsTaken() === 2, 15_000, async () => { await s.jam.runs.tick(); if ((readOffers(s.root, next.id)?.n ?? 0) > 0) await s.ask('next', {}, next) })).toBe(true)
+    expect(existsSync(join(s.root, 'spawned.marker'))).toBe(false)
+    // each run handed back with a reply for every request it carries
+    for (const b of taken()) {
+      const text = b.members.map((m) => `\`\`\`marver-reply ${m.id}\nDone ${m.id}.\n\`\`\``).join('\n')
+      expect((await s.ask('done', { handle: `r-${b.batchId.slice(0, 8)}.${b.claim!.gen}`, text }, next)).ok).toBe(true)
+    }
+    await Promise.all([t, t2])
+    await s.jam.tick()
+    expect(await until(() => finals(s.dir).length === 2, 15_000, () => s.jam.tick())).toBe(true)
+    expect(finals(s.dir).every((r) => r.agentMeta?.runner === 'session')).toBe(true)
+    s.jam.stop(); s.done()
+  })
+
   it('a frame a spawned run holds is never shared: a request on it waits (and says so), and is never offered to your session beside it', async () => {
     const s = await setup({ jam: false, adapter: slow })
     tag(s.root, s.dir, '@marver icon labels')

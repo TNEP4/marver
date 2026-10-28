@@ -271,8 +271,7 @@ export function createRuns(d: RunsDeps): Runs {
           if (b.handoff) { b.handoffWhy = `your session didn't take it - it already holds ${held} run${held === 1 ? '' : 's'}`; gone = true }
         } else if (conn && !d.mayHold(b, conn)) {
           // another runner holds one of its frames now (F4, Codex's review): never offered beside it
-          letGo(b)
-          if (b.handoff) { b.handoffWhy = 'another runner holds one of its frames'; gone = true }
+          crowdedOut(b); gone = true
         } else {
           b.runner = { kind: 'session', agent: conn?.agent ?? '' }
           if (conn) { b.runner.conn = conn.id; b.offer = { conn: conn.id, inc: conn.inc, at: Date.now() } }
@@ -287,6 +286,11 @@ export function createRuns(d: RunsDeps): Runs {
   const waitsForSession = (s = settings()) => s.runner === 'session' && s.session && s.context === 'fork'
   /** Where a run goes once its session lets go: back to waiting under session-only, else spawned. Call under the lock. */
   const letGo = (b: Batch) => { if (waitsForSession()) { delete b.handoff; b.runner = { kind: 'session', agent: '' } } else b.handoff = 'spawn' }
+  /** It may not be held beside a run on one of its frames (F4: another runner's, or another incarnation's): it leaves its
+   *  session - spawned as letGo says, or under session-only back to the queue, never waiting for a session with the frame
+   *  kept (Codex's review: two runs waiting on one frame for the session you switched to each kept the frame the other
+   *  needed, forever - a queued request holds nothing, so two never wait on each other). Call under the lock. */
+  const crowdedOut = (b: Batch) => { letGo(b); b.handoff ??= 'queue'; b.handoffWhy = 'another runner holds one of its frames' }
 
   /** Take an offer back (not pulled in time, its session gone, Jam ended): where it goes is decided and saved in one write. */
   const withdraw = async (id: string, why: string) => {
@@ -448,8 +452,7 @@ export function createRuns(d: RunsDeps): Runs {
         let b: Batch | undefined
         for (const x of mine) {
           if (d.mayHold(x, conn)) { b = x; break }
-          delete x.offer; letGo(x)
-          if (x.handoff) { x.handoffWhy = 'another runner holds one of its frames'; let_go.push(x.batchId) }
+          delete x.offer; crowdedOut(x); let_go.push(x.batchId)
         }
         if (!b) { if (let_go.length) q.persist(); return { ok: true, text: 'Nothing waits for this session now.' } }
         const gen = Math.max(b.gen ?? 0, b.claim?.gen ?? 0) + 1
@@ -585,7 +588,17 @@ export function createRuns(d: RunsDeps): Runs {
         // (its own kept slot aside: a run formed for this session is not in its own way)
         const fits = (x: Batch) => load(sel!.id) - (kept(x, sel!.id) ? 1 : 0) < maxOf(sel!)
         if (sel && offerable(sel) && fits(b)) {
-          await q.lock(() => { const x = byId(b.batchId); if (x && !x.offer && !x.claim && !x.handoff && fits(x) && d.mayHold(x, sel)) { x.runner = { kind: 'session', agent: sel.agent, conn: sel.id }; x.offer = { conn: sel.id, inc: sel.inc, at: Date.now() }; q.persist() } })
+          // the session could take it, but a run it may not be held beside is on one of its frames (another runner's, or
+          // one waiting too): it goes back to the queue rather than keep the frame and wait (Codex's review)
+          let out = false
+          await q.lock(() => {
+            const x = byId(b.batchId)
+            if (!x || x.offer || x.claim || x.handoff || !fits(x)) return
+            if (d.mayHold(x, sel)) { x.runner = { kind: 'session', agent: sel.agent, conn: sel.id }; x.offer = { conn: sel.id, inc: sel.inc, at: Date.now() } }
+            else { crowdedOut(x); out = true }
+            q.persist()
+          })
+          if (out) settle(b.batchId, null)
           d.changed()
         }
       }

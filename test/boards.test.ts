@@ -782,4 +782,52 @@ describe('boards place (F1): a frame next to another, through Marver - "put this
     expect((await drive(root, 'PUT', 'boards/deck', { board: { version: 1, nodes: [] }, baseHash: hash(current), mustExist: true })).status).toBe(200)
     expect(existsSync(join(dir(), '.deck.lock'))).toBe(false)
   }, 30_000)
+
+  it('the sidebar\'s writers take the board\'s lock too - a rename, a status and a drag never write a board under a placement, so the placed frame is never written away (Codex review: a rename that read the board before a placement committed erased the frame)', async () => {
+    const lock = join(dir(), '.deck.lock')
+    const frames = () => read('deck').nodes.map((n: any) => n.frame)
+    // a placement under way: it holds the lock (it has read the board), and commits its node before letting go
+    const placing = () => writeFileSync(lock, `${process.pid} ${Date.now()}\n`)
+    const commit = (frame: string, x: number) => { const b = read('deck'); b.nodes.push(S(x, frame)); w('deck', b); rmSync(lock) }
+    const during = async (send: () => Promise<{ status: number; json: any }>, frame: string, x: number) => {
+      placing()
+      const seen = raw('deck')
+      let out: { status: number; json: any } | undefined
+      const p = send().then((r) => { out = r })
+      await new Promise((r) => setTimeout(r, 300))
+      expect(out, 'it waits for the placement').toBeUndefined()
+      expect(raw('deck'), 'nothing written under the lock').toBe(seen)
+      commit(frame, x)
+      await p
+      expect(frames()).toContain(frame)
+      expect(existsSync(lock)).toBe(false)
+      return out!
+    }
+    // a rename against the board as the sidebar saw it: the placement landed since - 409, nothing lost
+    let seen = raw('deck')
+    expect((await during(() => drive(root, 'POST', 'boards/rename', { from: 'deck', title: 'Deck', baseHash: hash(seen) }, OWNER), 'deck/01b-variant', 4500)).status).toBe(409)
+    // one with no base: the title goes over what is on disk now - the placed frame with it
+    const r = await during(() => drive(root, 'POST', 'boards/rename', { from: 'deck', title: 'Deck' }, OWNER), 'notes/idea', 6000)
+    expect(r.status).toBe(200)
+    expect(read('deck').title).toBe('Deck')
+    expect(frames()).toEqual(expect.arrayContaining(['deck/01b-variant', 'notes/idea']))
+    // the status picker: the same
+    const b = read('deck'); b.type = 'feature'; w('deck', b)
+    expect((await during(() => drive(root, 'POST', 'boards/status', { name: 'deck', status: 'paused' }, OWNER), 'deck/09-later', 7500)).status).toBe(200)
+    expect(read('deck').status).toBe('paused')
+    // a drag in the sidebar (the board's order changes): refused while a placement holds the board - the shell
+    // reloads and replays a 409 - and nothing it would write is written
+    seen = raw('deck')
+    placing()
+    const drag = await drive(root, 'POST', 'boards/reorder', { tree: [{ folder: 'decks', items: ['deck'] }], base: { boards: { deck: hash(seen) }, folders: null }, protocol: 2 }, OWNER)
+    expect(drag.status).toBe(409)
+    expect(drag.json.stale).toEqual(['deck'])
+    expect(raw('deck')).toBe(seen)
+    expect(existsSync(join(dir(), '_folders.json'))).toBe(false)
+    rmSync(lock)
+    const again = await drive(root, 'POST', 'boards/reorder', { tree: [{ folder: 'decks', items: ['deck'] }], base: { boards: { deck: hash(seen) }, folders: null }, protocol: 2 }, OWNER)
+    expect(again.status, JSON.stringify(again.json)).toBe(200)
+    expect(read('deck').folder).toBe('decks')
+    expect(existsSync(lock)).toBe(false)
+  }, 30_000)
 })

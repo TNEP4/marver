@@ -6,7 +6,7 @@ import { ROUTE } from '../cli/name.ts'
 import { hash, scanFrames, setSceneTitle, type Manifest } from './manifest.ts'
 import { isConnected, localProfile } from './profile.ts'
 import { ALL_SCENES, BOARD_NAME, buildTree, folderMap, FOLDERS_FILE, readDescription, readTitle, REGISTRY_VERSION_FLAT, REGISTRY_VERSION_NESTED, TITLE_MAX, TREE_PROTOCOL, validateWire, wireKids, type WireItem } from '../shared/board-tree.ts'
-import { AUTHOR_FIELDS, boardFields, boardLock, checkBoardsDir, isRegularFile, listBoardFiles, parseBoard, nodeExists as nodeAt, pinFrames, readMembership, readRegistry, takeFileLock, withRegistryLock } from './boards.ts'
+import { AUTHOR_FIELDS, boardFields, boardLock, checkBoardsDir, isRegularFile, listBoardFiles, parseBoard, nodeExists as nodeAt, pinFrames, readMembership, readRegistry, takeFileLock, tryFileLock, withRegistryLock } from './boards.ts'
 import { HAS_STATUS, readCapability, readReason, readStatusWord, readType, resolveType, settableStatuses } from '../shared/board-types.ts'
 import { annotateBoards, planNames, planWithStage, readContextFacts } from './board-status.ts'
 import { autoWidthOf, keptSizes, measuringFrames, mergeSizes, readSizes, readSizesFile, serializeSizes, sizesPath, SIZES_BATCH_MAX } from './sizes.ts'
@@ -237,6 +237,15 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const file = boardPath(name)
         if (!file) return json(res, 400, { error: 'invalid board name' })
         if (!existsSync(file)) return json(res, 404, { error: `board "${name}" does not exist` })
+        // the board's write lock, as for a rename: no placement commits between this read and the write below. A folder
+        // no lock can be made in is one no writer can write either: the commit below fails there and puts back what it wrote
+        const unlock = await takeFileLock(boardLock(boardsDir, name), 2_000).catch((e: NodeJS.ErrnoException) => {
+          if (e.code === 'EACCES' || e.code === 'EPERM' || e.code === 'EROFS') return () => {}
+          throw e
+        })
+        if (!unlock) return json(res, 503, { error: 'the board is being written - try again' })
+        try {
+        if (!existsSync(file)) return json(res, 404, { error: `board "${name}" does not exist` })
         if (!notSymlink(file)) return json(res, 400, { error: 'refusing to write a symlinked board file' })
         const current = readFileSync(file, 'utf8')
         if (baseHash !== undefined && baseHash !== hash(current)) return json(res, 409, { error: 'board changed on disk', sha256: hash(current) })
@@ -337,6 +346,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           }
         }
         return json(res, 200, { name, sha256: hash(next) })
+        } finally { unlock() }
       }
 
       // Content-frame heights (sizes.ts): read before a board's first layout, written when the shell
@@ -508,6 +518,13 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const fromPath = boardPath(from), toPath = boardPath(to)
         if (!fromPath || !toPath) return json(res, 400, { error: 'invalid board name' })
         if (!existsSync(fromPath)) return json(res, 404, { error: `board "${from}" does not exist` })
+        // the board's write lock (`boards place`, `boards pin`, the canvas's save): the read below and the write (or the
+        // move) are one step among Marver's writers - a placement committed between them would be written away (Codex
+        // review). Waited for without blocking; still held after 2 s, a 503 (try again)
+        const unlock = await takeFileLock(boardLock(boardsDir, from), 2_000)
+        if (!unlock) return json(res, 503, { error: 'the board is being written - try again' })
+        try {
+        if (!existsSync(fromPath)) return json(res, 404, { error: `board "${from}" does not exist` })
         if (!notSymlink(fromPath)) return json(res, 400, { error: 'refusing to rename a symlinked board file' })
         const current = readFileSync(fromPath, 'utf8')
         if (baseHash !== undefined && baseHash !== hash(current)) return json(res, 409, { error: 'board changed on disk', sha256: hash(current) })
@@ -555,6 +572,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         }
         atomicWrite(toPath, next!)
         return json(res, 200, { name: to, sha256: hash(next!) })
+        } finally { unlock() }
       }
 
       // A scene's title - what humans see in the sidebar. Written into the YAML front matter of
@@ -665,9 +683,18 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           if (stale.length) return reply(409, { error: 'boards changed on disk', stale })
           // write: only the files whose fields actually change (an untouched board keeps its hash)
           const sha256: Record<string, string> = {}
-          for (const w of plan) {
-            const same = w.obj.order === w.order && (w.folder ? w.obj.folder === w.folder : w.obj.folder === undefined)
-            if (same) continue
+          const writes = plan.filter((w) => !(w.obj.order === w.order && (w.folder ? w.obj.folder === w.folder : w.obj.folder === undefined)))
+          // each under the board's write lock (`boards place`, `boards pin`, the canvas's save), every one taken before
+          // anything is written: one held now (a placement under way) is a 409 the shell answers by reloading and
+          // replaying - never a write under its feet (Codex review), and never part of a drag
+          const unlocks: (() => void)[] = []
+          try {
+          for (const w of writes) {
+            const u = tryFileLock(boardLock(boardsDir, w.name))
+            if (!u) return reply(409, { error: 'boards changed on disk', stale: [w.name] })
+            unlocks.push(u)
+          }
+          for (const w of writes) {
             // re-checked at the moment of writing, not only at preflight: an author's save landing
             // while an earlier board in this batch was written is never overwritten
             if (hash(readFileSync(w.path, 'utf8')) !== b.boards![w.name]) return reply(409, { error: 'boards changed on disk', stale: [w.name] })
@@ -691,6 +718,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           else rmSync(foldersPath, { force: true })                 // no folders = no registry file
 
           return reply(200, { ok: true, sha256: { boards: sha256, folders: foldersSha } })
+          } finally { for (const u of unlocks) u() }
         })
         if (!locked) return json(res, 409, { error: 'folders changed on disk', stale: [FOLDERS_FILE] })
         return json(res, locked.status, locked.body)

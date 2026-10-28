@@ -152,9 +152,22 @@ export async function takeFileLock(lock: string, wait: number): Promise<(() => v
     }
   }
 }
+/** The same lock, taken now or not at all - never waits, never blocks: the release, or null while another writer holds it. */
+export function tryFileLock(lock: string): (() => void) | null {
+  for (;;) {
+    try { writeFileSync(lock, `${process.pid} ${Date.now()}\n`, { flag: 'wx' }); return () => rmSync(lock, { force: true }) }
+    catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e
+      try { if (Date.now() - lstatSync(lock).mtimeMs > 10_000) { rmSync(lock, { force: true }); continue } } catch { continue }
+      return null
+    }
+  }
+}
 /** A board file's write lock (F1, Codex review 7): every board writer Marver has takes it - `boards place`, `boards pin`
- *  (CLI and the sidebar's route) and the canvas's save - so a read-modify-write of one board is atomic among them. A
- *  file, not a route: a spawned run's sandbox blocks localhost. `.<board>.lock` is no board (not `*.json`). */
+ *  (CLI and the sidebar's route), the canvas's save, and the sidebar's rename, status and drag (Codex review of 1e1fa0f:
+ *  a rename that read the board before a placement committed wrote the placed frame away) - so a read-modify-write of
+ *  one board is atomic among them. A file, not a route: a spawned run's sandbox blocks localhost. `.<board>.lock` is no
+ *  board (not `*.json`). */
 export const boardLock = (dir: string, board: string) => join(dir, `.${board}.lock`)
 
 /** Append typed folders to the registry (spec 20: `init --kind`, `folders add`). Never renames,

@@ -212,8 +212,9 @@ export interface Batch {
     /** the owner gave it back after it stalled: the session is told to carry on, until its next word */
     resumed?: boolean }
   /** the decision taken when a session let it go (released, withdrawn, stopped for the background): it runs spawned,
-   *  whatever routing says after - a restart in between honours it */
-  handoff?: 'spawn'
+   *  whatever routing says after - a restart in between honours it. `queue`: under `jam.runner: 'session'`, a run that
+   *  may not be held beside a run on one of its frames goes back to the queue (never spawned, never waiting with the frame) */
+  handoff?: 'spawn' | 'queue'
   /** why an offer to your session was taken back - the copy that runs it says so */
   handoffWhy?: string
   /** what its spawned runs may use, fixed when it was first run (a restart runs it the same way) */

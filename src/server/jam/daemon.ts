@@ -809,8 +809,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         // requests, never shared again, spawned as it was going to be - and waits for its frames; a queued request holds
         // nothing, so two of them never wait on each other (Codex's review of the design: no waiting loop, no deadlock)
         const back = await q.lock((j) => {
-          if (![...runningBatches.values()].some((o) => o.batchId !== b.batchId && o.frames.some((f) => b.frames.includes(f)))) return false
-          const spawn = !!b.handoff || !!spawnedBefore
+          // (`queue` - under session-only, crowded out of its session: back whatever holds its frames now, never spawned)
+          if (b.handoff !== 'queue' && ![...runningBatches.values()].some((o) => o.batchId !== b.batchId && o.frames.some((f) => b.frames.includes(f)))) return false
+          const spawn = b.handoff === 'spawn' || !!spawnedBefore
           const why = b.handoffWhy ?? spawnedBefore?.why
           for (const m of b.members) {
             const c = j.cards.find((x) => x.id === m.card)
@@ -1117,7 +1118,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       // runs a session holds (offered, taken, or waiting for one) count against its own limit, not jam.concurrency - which
       // caps what Marver spawns (F3: a Claude Code session dispatching holds up to 8): the slots are the spawned ones left,
       // and the session's room on top
-      const sessionSide = (x: Batch) => !x.handoff && (!!x.offer || !!x.claim || x.runner?.kind === 'session')
+      const sessionSide = (x: Batch) => x.handoff !== 'spawn' && (!!x.offer || !!x.claim || x.runner?.kind === 'session')
       const spawned = [...runningBatches.values()].filter((x) => !sessionSide(x)).length
       // F4: a request on a frame the session taking the work holds - every run on it that session's - is not held back:
       // it is offered to that session, which decides (hold it, fold it in, or a variant beside it)
