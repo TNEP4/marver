@@ -21,28 +21,23 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   `design/AGENTS.md` gains a "Live Jam" section, so the agent expects these lines and takes them as your request
   (Claude Code shows them as sent by another session). Two pings in a row are never the same - Claude Code drops a
   message identical to the one before it - and the canvas writes the words, so an upgrade changes them at once.
-- **Your Claude Code session dispatches, so it multitasks.** `jam next` now asks it to hand each run to a background
-  subagent of its own - with the request, and what your conversation knows that matters - which says "On it", does the
-  work and hands the run back itself, while the session is free again in seconds for the next request. So captures run
-  side by side: a Claude Code session holds up to 8 runs at once (`jam.sessionMax` caps it), and runs a session holds
-  no longer count against `jam.concurrency`, which now caps only the runs Marver starts itself. Codex and Cursor have
-  no background subagents: their session holds up to 3 runs and works them one after another. When you move a run elsewhere, the session is told to stop
-  the subagent on it before it lets go, so nothing edits those frames after.
-- **Two requests on one frame: your session decides.** A request on a frame your own session's run is working is no
-  longer held back: it is offered to that session at once, naming the run it overlaps ("overlaps your run r-..."), and
-  the session sends it to the subagent on that frame - to do after, or fold in now - or makes it a variant in a new
-  frame beside it. Runs of different runners still never share a frame: a run your session lets go of while another of
-  its runs holds the frame goes back to the queue and waits for it - keeping the variant it placed with `--run` and its
-  review's pictures from before any edit, so the run that takes it over can finish it. With `jam.runner: 'session'`, two
-  requests on one frame follow you when you switch sessions instead of waiting on each other.
+- **Your Claude Code session dispatches, so it multitasks.** For each request, your session hands the run to a
+  background subagent of its own, with the request and what your conversation knows that matters. The subagent says
+  "On it", does the work and hands the run back itself, while your session is free again in seconds for the next
+  request. So captures run side by side: a Claude Code session holds up to 8 runs at once (`jam.sessionMax` caps it),
+  and runs your session holds no longer count against `jam.concurrency`. Codex and Cursor have no background
+  subagents: their session holds up to 3 runs and works them one after another. When you move a run elsewhere, the
+  session stops the subagent on it first.
+- **Two requests on one frame: your session decides.** A request on a frame one of your session's runs is changing is
+  offered to your session at once, naming the run it overlaps. The session decides: send it to the subagent on that
+  frame - to do after, or fold in now - or make it a variant in a new frame beside it. Runs of different runners still
+  never share a frame; a run your session lets go of waits for the frame and keeps what it made, so whoever takes it
+  over can finish it.
 - **"Put this next to slide 01" just works.** `npx marver boards place <board> <scene/frame> --after|--before
-  <scene/frame>` puts a frame next to another and moves the frames after it right to make room - in a deck it plays
-  right after it, and it stays there when the canvas lays the board out again (a board with a layout recipe, or
-  `auto`: a Doc measuring no longer puts it back at the end; a frame of another scene is refused there, saying why) -
-  and a Jam run adds `--run <handle>`, so the new frame is its own until it is done. Jam runs use it
-  instead of asking for the board file. Every board writer Marver has - `place`, `pin`, the canvas's own save, and the
-  sidebar's rename, status and drag - now takes the board's lock, so none overwrites another; a layout edit you make on
-  that board in the same second can still be undone ("board changed on disk").
+  <scene/frame>` puts a frame next to another and moves the frames after it to make room; in a deck it plays right
+  after it, and it stays there when the canvas lays the board out again. Jam runs use it (with `--run <handle>`)
+  instead of asking for the board file. Every board writer - `place`, `pin`, the canvas's own save, and the sidebar's
+  rename, status and drag - now takes the board's lock, so none overwrites another.
 - **Two ways to stop a capture.** `E` stops it and queues it: its tile goes from Capturing to Sending to Queued or
   working, and nothing opens, asks you to confirm or moves the canvas. `⇧E` (Stop to review) opens its read-back as
   before, to check it and add notes first. Both are on the capture bar, Stop first. `J` during a capture stops it to
@@ -94,8 +89,8 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 
 `npm install @marver-design/marver@latest`, then `npx marver init` to refresh the agent instructions (`design/AGENTS.md`
 gains the Live Jam section; `instructions/jam.md` the runs from the canvas, the dispatch, two runs on one frame, and
-`boards place`). `jam.sessionMax` left unset now means 8 for Claude Code and 3 for Codex and Cursor. Restart each canvas; a coding-agent
-session already open connects at its next message.
+`boards place`). `jam.sessionMax` left unset now means 8 for Claude Code and 3 for Codex and Cursor. Restart each
+canvas; a coding-agent session already open connects at its next message.
 
 ## 0.27.2 - 2026-10-24
 
