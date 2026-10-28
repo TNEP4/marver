@@ -49,7 +49,11 @@ is safe to resolve either way.
   point they may adjust.
 - **Every frame goes on the board it belongs to - its feature, its spec, its flow - and a
   frame that belongs to two goes on both.** `npx marver boards pin <board> <scene/frame ...>`
-  appends them as nodes (or append a `{ "frame": ... }` node yourself). No board holds
+  appends them as nodes (or append a `{ "frame": ... }` node yourself). `npx marver boards
+  place <board> <scene/frame> --after|--before <scene/frame>` puts one next to another, the
+  frames after it moved right to make room (it plays right after it, in a deck) - the way to
+  rearrange with the canvas open: it waits for the canvas's own save, and an edit you are
+  making on that board in the same second may be undone ("board changed on disk"). No board holds
   everything: a frame on no board is listed apart - `npx marver boards`, the dev log, the
   sidebar's Not on a board - and `work done` and `marver link` say where it belongs.
   `all-scenes` is a reserved name, never a board.

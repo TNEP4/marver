@@ -20,8 +20,8 @@ export const REQ_MAX_AGE_MS = 60_000
 const KEEP_MS = 10 * 60_000
 const REQ_ID = /^[0-9a-f-]{36}$/
 
-export type Op = 'next' | 'say' | 'progress' | 'done' | 'release' | 'status' | 'mute'
-export const OPS: Op[] = ['next', 'say', 'progress', 'done', 'release', 'status', 'mute']
+export type Op = 'next' | 'say' | 'progress' | 'done' | 'release' | 'status' | 'mute' | 'own'
+export const OPS: Op[] = ['next', 'say', 'progress', 'done', 'release', 'status', 'mute', 'own']
 
 export interface Req { v: 1; id: string; conn: string; op: Op; args: Record<string, unknown>; ts: number; mac: string }
 

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -25,7 +26,7 @@ function drive(root: string, method: string, path: string, body?: unknown, heade
     void mw(req, res, () => { res.statusCode = 404; resolve({ status: 404, json: null }) })
   })
   // feed the POST body through the mocked stream after the handler subscribed
-  if (method === 'POST') {
+  if (method === 'POST' || (method === 'PUT' && body !== undefined)) {
     // preserve a literal `null` body (JSON.stringify(null) === "null") - only a MISSING body defaults to {}
     const raw = Buffer.from(JSON.stringify(body === undefined ? {} : body))
     queueMicrotask(() => { req._cbs.data?.(raw); req._cbs.end?.() })
@@ -671,4 +672,114 @@ describe('no more All Scenes (spec 26, Part 7) - one meaning of "on a board", bo
       rmSync(join(dir(), '_folders.json'), { force: true })
     }
   })
+})
+
+describe('boards place (F1): a frame next to another, through Marver - "put this variant next to slide 01"', () => {
+  let root = ''
+  const dir = () => join(root, 'design', 'boards')
+  const w = (n: string, o: unknown) => writeFileSync(join(dir(), `${n}.json`), typeof o === 'string' ? o : JSON.stringify(o, null, 2))
+  const raw = (n: string) => readFileSync(join(dir(), `${n}.json`), 'utf8')
+  const read = (n: string) => JSON.parse(raw(n))
+  const slide = (n: string) => `export const meta = { title: '${n}', slide: true }\nexport default () => <main>${n}</main>\n`
+  const doc = `import { Doc } from '@marver-design/marver/content'\nexport default () => <Doc><p>notes</p></Doc>\n`
+  const S = (x: number, frame: string, y = 0, key = frame.split('/')[1]) => ({ key, frame, x, y, w: 1280, h: 720 })
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'mv-place-'))
+    mkdirSync(dir(), { recursive: true })
+    mkdirSync(join(root, 'design', 'scenes', 'deck'), { recursive: true })
+    for (const f of ['01-slide', '02-slide', '03-slide', '01b-variant', '09-later']) writeFileSync(join(root, 'design', 'scenes', 'deck', `${f}.tsx`), slide(f))
+    mkdirSync(join(root, 'design', 'scenes', 'notes'), { recursive: true })
+    writeFileSync(join(root, 'design', 'scenes', 'notes', 'idea.tsx'), doc)
+    // a row of three slides, and one below it
+    w('deck', { version: 1, name: 'deck', auto: false, layout: { rows: [['deck']] }, laidOut: { k: '1x1' },
+      nodes: [S(0, 'deck/01-slide'), S(1500, 'deck/02-slide'), S(3000, 'deck/03-slide'), S(0, 'deck/09-later', 2000)] })
+  })
+  afterEach(() => { if (root) rmSync(root, { recursive: true, force: true }) })
+  const place = async (board: string, frame: string, o: { after?: string; before?: string }) => (await import('../src/cli/boards.ts')).boardsPlace(root, board, [frame], o)
+
+  it('after: the new frame goes right of the anchor in its row, the frames after it move right to make room - the row below and the board\'s own fields stay', async () => {
+    const p = await place('deck', 'deck/01b-variant', { after: 'deck/01-slide' })
+    expect(p).toMatchObject({ added: true, shifted: 2, laidOut: true })
+    const b = read('deck')
+    const at = (f: string) => b.nodes.find((n: any) => n.frame === f)
+    // the shell's sibling gap: max(140, 12% of the width) - a slide is 1280 wide
+    expect(at('deck/01b-variant')).toEqual({ frame: 'deck/01b-variant', x: 1434, y: 0, w: 1280, h: 720 })
+    expect([at('deck/01-slide').x, at('deck/02-slide').x, at('deck/03-slide').x]).toEqual([0, 2934, 4434])
+    expect(at('deck/09-later')).toEqual(S(0, 'deck/09-later', 2000))
+    expect(b.layout).toEqual({ rows: [['deck']] })
+    expect(b.laidOut).toEqual({ k: '1x1' })
+    // reading order is play order: it plays right after slide 01
+    const order = [...b.nodes].sort((p: any, q: any) => p.y - q.y || p.x - q.x).map((n: any) => n.frame)
+    expect(order.slice(0, 4)).toEqual(['deck/01-slide', 'deck/01b-variant', 'deck/02-slide', 'deck/03-slide'])
+    // asked again: already there, nothing written
+    const before = raw('deck')
+    expect(await place('deck', 'deck/01b-variant', { after: 'deck/01-slide' })).toMatchObject({ already: true, shifted: 0 })
+    expect(raw('deck')).toBe(before)
+  })
+
+  it('before, and a move: a frame already on the board keeps its node (key, size) and only moves', async () => {
+    expect(await place('deck', 'deck/03-slide', { before: 'deck/02-slide' })).toMatchObject({ added: false, shifted: 1 })
+    const at = (f: string) => read('deck').nodes.find((n: any) => n.frame === f)
+    expect(at('deck/03-slide')).toEqual(S(1500, 'deck/03-slide'))
+    expect(at('deck/02-slide').x).toBe(1500 + 1434)
+    expect(read('deck').nodes.length).toBe(4)
+  })
+
+  it('a content (Doc) frame is written with no size - the canvas measures it, as it saves one; an auto anchor is sized as the canvas sizes it', async () => {
+    w('mix', { version: 1, nodes: [{ key: 'n1', frame: 'notes/idea', x: 0, y: 0 }, S(2000, 'deck/02-slide')] })
+    await place('mix', 'deck/01b-variant', { after: 'notes/idea' })
+    const n = read('mix').nodes
+    // a document Doc is 760 wide: the slide goes 760 + 153.6 (its gap, from the wider of the two) to the right
+    expect(n.find((x: any) => x.frame === 'deck/01b-variant')).toMatchObject({ x: 914, y: 0 })
+    await place('mix', 'notes/idea', { after: 'deck/02-slide' })
+    // (02 moved right to 3434 to make room for the slide above): the Doc keeps its node and its no-size, and moves
+    expect(read('mix').nodes.find((x: any) => x.frame === 'notes/idea')).toEqual({ key: 'n1', frame: 'notes/idea', x: 3434 + 1434, y: 0 })
+    w('mix2', { version: 1, nodes: [S(0, 'deck/02-slide')] })
+    await place('mix2', 'notes/idea', { after: 'deck/02-slide' })
+    expect(read('mix2').nodes.find((x: any) => x.frame === 'notes/idea')).toEqual({ frame: 'notes/idea', x: 1434, y: 0 })
+  })
+
+  it('a board not laid out yet: the node goes next to the anchor in its list, no position - the canvas lays it out when it opens it', async () => {
+    w('fresh', { version: 1, nodes: [{ frame: 'deck/01-slide' }, { frame: 'deck/02-slide' }] })
+    expect(await place('fresh', 'deck/01b-variant', { after: 'deck/01-slide' })).toMatchObject({ laidOut: false, added: true })
+    expect(read('fresh').nodes).toEqual([{ frame: 'deck/01-slide' }, { frame: 'deck/01b-variant' }, { frame: 'deck/02-slide' }])
+    expect(await place('fresh', 'deck/01b-variant', { after: 'deck/01-slide' })).toMatchObject({ already: true })
+  })
+
+  it('refused, never guessed: the anchor not on the board, a frame on it twice, a device view, a scene, no side or both, the same frame twice', async () => {
+    await expect(place('deck', 'deck/01b-variant', { after: 'notes/idea' })).rejects.toThrow(/notes\/idea is not on deck - put it there first: npx marver boards pin deck notes\/idea/)
+    w('twice', { version: 1, nodes: [S(0, 'deck/01-slide', 0, 'a'), S(1500, 'deck/01-slide', 0, 'b')] })
+    await expect(place('twice', 'deck/01b-variant', { after: 'deck/01-slide' })).rejects.toThrow(/more than once - place deck\/01b-variant by hand/)
+    w('dup', { version: 1, nodes: [S(0, 'deck/01-slide'), S(1500, 'deck/02-slide', 0, 'x'), S(3000, 'deck/02-slide', 0, 'y')] })
+    await expect(place('dup', 'deck/02-slide', { after: 'deck/01-slide' })).rejects.toThrow(/more than once - move it by hand/)
+    w('device', { version: 1, deviceView: 'mobile', baseLayout: { a: { x: 0, y: 0 } }, nodes: [S(0, 'deck/01-slide')] })
+    await expect(place('device', 'deck/01b-variant', { after: 'deck/01-slide' })).rejects.toThrow(/device view \(mobile\) - switch it back to Default/)
+    expect(read('device').nodes.length).toBe(1)
+    await expect(place('deck', 'deck', { after: 'deck/01-slide' })).rejects.toThrow(/"deck" is not one frame/)
+    await expect(place('deck', 'deck/01b-variant', {})).rejects.toThrow(/--after <scene\/frame> or --before/)
+    await expect(place('deck', 'deck/01b-variant', { after: 'deck/01-slide', before: 'deck/02-slide' })).rejects.toThrow(/one of them/)
+    await expect(place('deck', 'deck/01-slide', { after: 'deck/01-slide' })).rejects.toThrow(/two different frames/)
+    await expect(place('nope', 'deck/01b-variant', { after: 'deck/01-slide' })).rejects.toThrow(/no board "nope"/)
+  })
+
+  it('one writer at a time: placements from two processes at once both land; the canvas\'s save waits for the board\'s lock (503 while it is held, never the 409 that reloads)', async () => {
+    const CLI = join(import.meta.dirname, '..', 'dist', 'cli.mjs')
+    for (const f of ['04-slide', '05-slide']) writeFileSync(join(root, 'design', 'scenes', 'deck', `${f}.tsx`), slide(f))
+    const run = (args: string[]) => new Promise<string>((res) => execFile(process.execPath, [CLI, 'boards', 'place', 'deck', ...args, '--root', root], (err, out, errOut) => res(err ? `ERR ${errOut}` : out)))
+    const outs = await Promise.all([run(['deck/04-slide', '--after', 'deck/02-slide']), run(['deck/05-slide', '--after', 'deck/03-slide']), run(['deck/01b-variant', '--before', 'deck/01-slide'])])
+    for (const o of outs) expect(o).not.toMatch(/^ERR/)
+    const frames = read('deck').nodes.map((n: any) => n.frame)
+    for (const f of ['deck/04-slide', 'deck/05-slide', 'deck/01b-variant']) expect(frames).toContain(f)
+    // the canvas's autosave while a writer holds the lock: it waits, then says try again (the shell retries a 503)
+    writeFileSync(join(dir(), '.deck.lock'), `${process.pid} ${Date.now()}\n`)
+    const current = raw('deck')
+    const t0 = Date.now()
+    const busy = await drive(root, 'PUT', 'boards/deck', { board: { version: 1, nodes: [] }, baseHash: hash(current), mustExist: true })
+    expect(busy.status).toBe(503)
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(1_900)
+    expect(raw('deck')).toBe(current)
+    rmSync(join(dir(), '.deck.lock'))
+    expect((await drive(root, 'PUT', 'boards/deck', { board: { version: 1, nodes: [] }, baseHash: hash(current), mustExist: true })).status).toBe(200)
+    expect(existsSync(join(dir(), '.deck.lock'))).toBe(false)
+  }, 30_000)
 })

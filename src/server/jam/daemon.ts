@@ -362,6 +362,18 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     // a Jam session runs (its own record, written once it ended, is offered to your session by runs.ts - nothing else)
     jamOn: () => !!q.j.session,
     canSpawn: (agent) => Object.hasOwn(AGENT_BIN, agent) && onPath(AGENT_BIN[agent as JamAgent]),
+    own: (b, frame) => {
+      if (!/^[\w.@+-]+(\/[\w.@+-]+)+$/.test(frame)) return 'name a frame: <scene>/<name>'
+      if (b.frames.includes(frame)) return null
+      const other = [...runningBatches.values()].find((x) => x.batchId !== b.batchId && x.frames.includes(frame))
+      if (other) return `another run is working on ${frame} - make the variant a frame of its own`
+      if (hooks.held?.(frame)) return `your agent in chat is working on ${frame}`
+      b.frames = [...b.frames, frame]
+      // a frame the run made (not there when it began): its review pictures it as new, and it can host the thread
+      if (!(b.before ?? []).includes(frame)) b.created = [...new Set([...(b.created ?? []), frame])]
+      reserve()
+      return null
+    },
   })
 
   /** A session's early line (`marver jam say`), journaled on the batch before it is posted: posted with the id it

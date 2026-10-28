@@ -76,6 +76,9 @@ export interface RunsDeps {
   say(b: Batch): boolean
   /** the agents this machine can spawn (on PATH) */
   canSpawn(agent: string): boolean
+  /** Give a frame to a run its session holds (`boards place --run`, F4): why not, or null once it is the run's - called
+   *  under the lock. Another runner's frame, or one your agent in chat holds, is refused. */
+  own(b: Batch, frame: string): string | null
 }
 
 export interface Runs {
@@ -369,6 +372,26 @@ export function createRuns(d: RunsDeps): Runs {
       const mine = open().filter((b) => b.offer?.conn === conn.id || b.claim?.conn === conn.id)
       const line = (b: Batch) => b.offer ? `offered: run ${b.batchId.slice(0, 8)} (${b.frames.join(', ')}) - take it with ${cmdFor(conn, 'next')}` : `${b.claim!.stopping ? `stopping - release it: ${cmdFor(conn, 'release', handleOf(b, b.claim!.gen))}` : b.claim!.result !== undefined ? 'handed back' : b.claim!.stalled ? 'stalled' : 'yours'}: ${handleOf(b, b.claim!.gen)} (${b.frames.join(', ')})`
       return { ok: true, text: [`Connected: ${conn.agent} session ${conn.id}${selected(now)?.id === conn.id ? ' - it takes the work' : ''}${d.jamOn() ? '' : ' (no Jam session runs on the canvas now)'}.`, ...(mine.length ? mine.map(line) : ['No runs for it now.'])].join('\n') }
+    }
+    if (req.op === 'own') {
+      // a run's new frame (a variant beside the frame it works on), given to it before it is placed: no other runner gets it
+      const frame = String(req.args.frame ?? '')
+      let out: Out = { ok: false, error: 'that run is over' }
+      await q.lock(() => {
+        const f = claimOf(conn, req.args.handle)
+        if (typeof f === 'string') { out = { ok: false, error: f }; return }
+        const c = f.b.claim!
+        if (c.stopping) { out = { ok: false, error: `the owner moved this run elsewhere - stop working on it and run ${cmdFor(conn, 'release', String(req.args.handle))}` }; return }
+        if (c.result !== undefined) { out = { ok: false, error: 'it is already handed back' }; return }
+        const why = d.own(f.b, frame)
+        if (why) { out = { ok: false, error: why }; return }
+        c.progress = Date.now(); delete c.stalled
+        out = { ok: true, text: `${frame} is this run's now - no other runner gets it until the run is handed back.` }
+        keep(req, out, f.b)
+        q.persist()
+      })
+      if (out.ok) { publish(); d.changed() }
+      return out
     }
     if (req.op === 'next') {
       const out = await q.lock((): Out => {

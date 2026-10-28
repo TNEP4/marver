@@ -7,7 +7,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { NAME } from './name.ts'
-import { addFolders, checkBoardsDir, checkRealDirs, boardFields, listBoardFiles, pinFrames, readMembership, readRegistry } from '../server/boards.ts'
+import { addFolders, checkBoardsDir, checkRealDirs, boardFields, listBoardFiles, pinFrames, placeFrame, readMembership, readRegistry, type Placed } from '../server/boards.ts'
 import { annotateBoards } from '../server/board-status.ts'
 import { scanFrames } from '../server/manifest.ts'
 import { resolveTargets } from './link.ts'
@@ -156,6 +156,35 @@ export function boardsPin(root: string, board: string, targets: string[]): { add
   if (!targets.length) throw new Error('name the frames: boards pin <board> <scene/frame | scene ...>')
   const live = scanFrames(root).frames.map((f) => f.id)
   return pinFrames(root, board, resolveTargets(live, targets).all, live)
+}
+
+/** `marver boards place <board> <scene/frame> --after|--before <scene/frame> [--run <handle>]` (F1): a frame next to
+ *  another, the frames after it moved right to make room - what "put this next to slide 01" needs, with no board file
+ *  edited by hand. `--run`: a Live Jam run's new frame (a variant) is given to that run first, so no other runner gets it
+ *  while it works (the canvas refuses when another run or your chat agent has it). */
+export async function boardsPlace(root: string, board: string, targets: string[], opts: { after?: unknown; before?: unknown; run?: unknown; as?: unknown }): Promise<Placed> {
+  const after = typeof opts.after === 'string' ? opts.after : undefined, before = typeof opts.before === 'string' ? opts.before : undefined
+  if (targets.length !== 1) throw new Error('name one frame to place: boards place <board> <scene/frame> --after <scene/frame>')
+  if (!!after === !!before) throw new Error('say where: --after <scene/frame> or --before <scene/frame> (one of them)')
+  const manifest = scanFrames(root)
+  const live = manifest.frames.map((f) => f.id)
+  const one = (raw: string) => {
+    const r = resolveTargets(live, [raw])
+    if (r.exact.length !== 1 || r.all.length !== 1) throw new Error(`"${raw}" is not one frame - name a frame (<scene>/<name>), not a scene`)
+    return r.exact[0]
+  }
+  const frame = one(targets[0]), anchor = one((after ?? before)!)
+  if (opts.run !== undefined) {
+    if (typeof opts.run !== 'string' || !opts.run) throw new Error('name the run: --run <handle> (r-xxxxxxxx.N, from jam next)')
+    const { ownConn } = await import('./jam.ts')
+    const { request } = await import('../server/jam/transport.ts')
+    const r = await request(root, ownConn(root, process.env, typeof opts.as === 'string' ? opts.as : undefined), 'own', { handle: opts.run, frame })
+    if (r.ok === false) throw new Error(String(r.error ?? 'the canvas did not give it to that run'))
+  }
+  const { loadConfig } = await import('../server/config.ts')
+  const viewports = await loadConfig(root).then((c) => c.viewports, () => ({}))
+  const { readSizes } = await import('../server/sizes.ts')
+  return placeFrame(root, board, frame, after ? 'after' : 'before', anchor, manifest.frames, viewports, readSizes(root))
 }
 
 /** `marver folders add <module...>` - the shared sidebar's typed folders (spec 20): start, features,

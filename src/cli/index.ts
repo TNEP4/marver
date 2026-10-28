@@ -224,7 +224,7 @@ cli
   })
 
 cli
-  .command('boards [action] [...args]', 'The sidebar as files: every folder and board in reading order, with types and statuses, and the frames on no board · new <name>: a board in its type\'s starting layout · pin <board> <scene/frame ...>: put frames on a board')
+  .command('boards [action] [...args]', 'The sidebar as files: every folder and board in reading order, with types and statuses, and the frames on no board · new <name>: a board in its type\'s starting layout · pin <board> <scene/frame ...>: put frames on a board · place <board> <scene/frame> --after|--before <scene/frame>: put a frame next to another, making room')
   .option('--root <dir>', 'Host repo root', { default: '.' })
   .option('--json', 'The tree as JSON ({ tree, boards, landing, unplaced, registry })')
   .option('--type <type>', 'new: start | feature | surface | project | feedback | context | deck | archive (default: the folder\'s)')
@@ -232,8 +232,12 @@ cli
   .option('--title <title>', 'new: what humans see')
   .option('--description <sentence>', 'new: what agents read')
   .option('--capability <slug>', 'new: the capability it shows, when not its own name')
+  .option('--after <frame>', 'place: right after this frame, in its row')
+  .option('--before <frame>', 'place: right before this frame, in its row')
+  .option('--run <handle>', 'place: a Live Jam run\'s new frame - given to that run first (r-xxxxxxxx.N)')
+  .option('--as <conn>', 'place --run: the session connection to speak for (as `jam` does)')
   .action(async (action: string | undefined, args: string[] | undefined, opts) => {
-    const { boardsCommand, boardsNew, boardsPin } = await import('./boards.ts')
+    const { boardsCommand, boardsNew, boardsPin, boardsPlace } = await import('./boards.ts')
     const [name, ...frames] = args ?? []
     try {
       if (action === undefined) boardsCommand(resolve(opts.root), opts)
@@ -242,6 +246,13 @@ cli
         const { added, already } = boardsPin(resolve(opts.root), name, frames)
         for (const f of added) console.log(`  + ${f} on ${name}`)
         if (already.length) console.log(`  already on ${name}: ${already.join(', ')}`)
+      } else if (action === 'place') {
+        if (!name) throw new Error('name the board: `boards place <board> <scene/frame> --after <scene/frame>`')
+        const p = await boardsPlace(resolve(opts.root), name, frames, opts)
+        const where = `${p.rel} ${p.anchor}`
+        if (p.already) console.log(`  already there: ${p.frame} is ${where} on ${name}`)
+        else if (!p.laidOut) console.log(`  + ${p.frame} on ${name}, ${where} in its list - the canvas lays the board out when it opens it`)
+        else console.log(`  ${p.added ? '+' : '~'} ${p.frame} on ${name}, ${where}${p.shifted ? ` (${p.shifted} moved right to make room)` : ''}`)
       } else if (action === 'new') {
         if (!name) throw new Error('name the board: `boards new <name>`')
         const made = boardsNew(resolve(opts.root), name, opts)
@@ -251,7 +262,7 @@ cli
           console.log(`\n  note: no context/ yet - this board's status reads Backlog until there is one. Agent: end your reply with the context line in design/AGENTS.md ("Before the method").`)
         if (made.some((c) => c.endsWith('/_brief.md')) && !made.some((c) => /\.(tsx|jsx|html)$/.test(c)))
           console.log(`\n  next: a frame you make in these scenes shows on the board once it is pinned - a node in\n  design/boards/${name}.json (an agent does this as it works: design/AGENTS.md)`)
-      } else throw new Error(`unknown action "${action}" - \`boards\` lists, \`boards new <name>\` creates, \`boards pin <board> <scene/frame ...>\` puts frames on a board`)
+      } else throw new Error(`unknown action "${action}" - \`boards\` lists, \`boards new <name>\` creates, \`boards pin <board> <scene/frame ...>\` puts frames on a board, \`boards place <board> <scene/frame> --after <scene/frame>\` puts one next to another`)
     } catch (err) {
       console.error(`[${NAME}] ${(err as Error).message}`)
       process.exit(1)

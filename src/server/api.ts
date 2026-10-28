@@ -6,7 +6,7 @@ import { ROUTE } from '../cli/name.ts'
 import { hash, scanFrames, setSceneTitle, type Manifest } from './manifest.ts'
 import { isConnected, localProfile } from './profile.ts'
 import { ALL_SCENES, BOARD_NAME, buildTree, folderMap, FOLDERS_FILE, readDescription, readTitle, REGISTRY_VERSION_FLAT, REGISTRY_VERSION_NESTED, TITLE_MAX, TREE_PROTOCOL, validateWire, wireKids, type WireItem } from '../shared/board-tree.ts'
-import { AUTHOR_FIELDS, boardFields, checkBoardsDir, isRegularFile, listBoardFiles, parseBoard, nodeExists as nodeAt, pinFrames, readMembership, readRegistry, withRegistryLock } from './boards.ts'
+import { AUTHOR_FIELDS, boardFields, boardLock, checkBoardsDir, isRegularFile, listBoardFiles, parseBoard, nodeExists as nodeAt, pinFrames, readMembership, readRegistry, takeFileLock, withRegistryLock } from './boards.ts'
 import { HAS_STATUS, readCapability, readReason, readStatusWord, readType, resolveType, settableStatuses } from '../shared/board-types.ts'
 import { annotateBoards, planNames, planWithStage, readContextFacts } from './board-status.ts'
 import { autoWidthOf, keptSizes, measuringFrames, mergeSizes, readSizes, readSizesFile, serializeSizes, sizesPath, SIZES_BATCH_MAX } from './sizes.ts'
@@ -721,6 +721,12 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           // was renamed or deleted out from under the shell (agent, git, another tab), reject
           // instead of creating a ghost. Genuine board creation comes without mustExist.
           if (body.mustExist && !existsSync(p)) return json(res, 409, { error: 'board no longer exists on disk', gone: true })
+          // the board's write lock (`boards place`, `boards pin`): its read-compare-write is one step among Marver's
+          // writers. Waited for without blocking; still held after 2 s, a 503 the shell retries (never the 409 that reloads)
+          mkdirSync(boardsDir, { recursive: true })
+          const unlock = await takeFileLock(boardLock(boardsDir, boardMatch[1]), 2_000)
+          if (!unlock) return json(res, 503, { error: 'the board is being written - try again' })
+          try {
           const current = existsSync(p) ? readFileSync(p, 'utf8') : ''
           if (current && body.baseHash !== hash(current)) {
             let disk: unknown = null
@@ -744,6 +750,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           const next2 = JSON.stringify(body.board, null, 2) + '\n'
           atomicWrite(p, next2)
           return json(res, 200, { sha256: hash(next2) })
+          } finally { unlock() }
         }
       }
 

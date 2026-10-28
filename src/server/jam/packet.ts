@@ -84,6 +84,9 @@ export function goalText(packet: JobPacket, subagents = true, runner?: Runner): 
       : packet.exclusive
       ? `THIS JOB RUNS ALONE. It may edit the frames in \`frames\` and these shared files, for this ask only: ${packet.exclusive.files.join(', ')}.`
       : 'EDIT ONLY THE FRAMES THE PACKET RESERVES (`frames`). If the same fix belongs on a sibling frame, name it in your reply as a frame link instead - the owner tags there if they want it. NEVER edit a shared file (a file under design/ that is not one of those frames: a _kit, providers, a layout): if the ask needs one, edit nothing and answer that member with `shared` (below) - the job comes back to you alone, allowed to edit it.',
+    ...(packet.members.some((m) => m.brief.wrapup) ? [] : [
+      `A NEW frame the ask calls for (a variant, a new screen) is yours to create. Put it on the board beside the frame it belongs next to with \`npx marver boards place <board> <scene/frame> --after <scene/frame>\`${session ? ` --run ${runner!.handle}${as}` : ''} (or --before; it makes room in that row, safe with the canvas open; \`npx marver boards pin <board> <scene/frame>\` adds it at the end)${session ? ' - with --run the new frame is this run\'s, so no other runner gets it' : ''}. Never rearrange a board file by hand, and never name one in a \`shared\` answer: no run is ever given a board file.`,
+    ]),
     ...(packet.members.some((m) => m.brief.capture) ? [
       'A member with `brief.capture` is a CAPTURE: what the owner said and did, recorded as they worked. Its',
       '`record.timeline` merges their words, the NOTES they wrote (`note` steps - their words to you, often naming',

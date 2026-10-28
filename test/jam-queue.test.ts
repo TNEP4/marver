@@ -317,6 +317,12 @@ describe('Jam V2: the brief is frozen at claim', () => {
     expect(g).toContain('do not read design/comments/')
     expect(g).not.toMatch(/Read design\/comments\/<board>\.jsonl/)
     expect(goalText({ ...packet, exclusive: { files: ['design/scenes/demo/_kit.tsx'] } })).toContain('RUNS ALONE')
+    // F1: a new frame goes on the board through Marver - never a board file by hand, never one asked for in `shared`
+    expect(g).toContain('`npx marver boards place <board> <scene/frame> --after <scene/frame>`')
+    expect(g).toContain('never name one in a `shared` answer: no run is ever given a board file')
+    expect(g).not.toContain('--run')
+    // a session's run: --run with its handle, so the new frame is the run's
+    expect(goalText(packet, true, { kind: 'session', handle: 'r-12345678.1' })).toContain('--after <scene/frame>` --run r-12345678.1')
   })
 
   it('a packet over 1 MB (8 members, long threads) reaches the agent through its file; the prompt stays small', async () => {

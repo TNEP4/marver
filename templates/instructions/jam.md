@@ -105,6 +105,15 @@ agent touches them while you work - and you touch nothing else:
 
 - **Edit only the reserved frames.** A new frame file the ask calls for (a new screen) is
   yours to create. An existing frame outside `frames` is not yours.
+- **Placing frames is Marver's job, through one command.** "Put it next to slide 01", "add it
+  to the board": `npx marver boards place <board> <scene/frame> --after <scene/frame>` (or
+  `--before`) puts the frame there and makes room in its row, safe with the canvas open;
+  `npx marver boards pin <board> <scene/frame>` adds it at the end. A run your session took
+  adds `--run <handle>`: the new frame is that run's from then on (no other runner gets it,
+  and its review pictures it as new). Never rearrange a board file by hand in a run, and never
+  name one in a `shared` answer - no run is ever given one; named anyway, the request comes
+  back to the owner as a question. A board in a device view, or showing either frame twice, is
+  refused: say so in your reply.
 - **Never edit a shared file in an ordinary job.** A file under `design/` that is not a frame -
   a `_kit`, a providers file, a `_layout`, a shared component - can change other frames. If an
   ask needs one, stop WITHOUT editing anything and answer that member with the files it needs,
