@@ -367,6 +367,25 @@ describe('session runs in the daemon', { timeout: 30_000 }, () => {
     s.jam.stop(); s.done()
   })
 
+  it('F1: a session that answers `shared design/boards/<board>.json` asks the owner which file and why - the card asks, never fails as "did not answer"', async () => {
+    const s = await setup()
+    tag(s.root, s.dir, '@marver put this variant next to slide 01')
+    const t = s.jam.tick()
+    await until(() => (readOffers(s.root, s.conn.id)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())
+    const handle = String((await s.ask('next')).handle)
+    expect((await s.ask('done', { handle, text: '```marver-reply m1 shared design/boards/test-deck.json\n```' })).ok).toBe(true)
+    await t
+    const card = s.jam.snapshot().cards.find((c) => c.kind === 'comment')!
+    expect([card.state, card.note]).toEqual(['asks', 'asks you'])
+    expect(card.shared).toBeUndefined()
+    const r = finals(s.dir)
+    expect(r.length).toBe(1)
+    expect(r[0].body).toContain('it needs design/boards/test-deck.json')
+    expect(r[0].body).toContain('npx marver boards place')
+    expect(r[0].asks).toBe(true)
+    s.jam.stop(); s.done()
+  })
+
   it('no Jam session running: the tag goes to a background agent, never the session', async () => {
     const s = await setup({ jam: false })
     tag(s.root, s.dir)

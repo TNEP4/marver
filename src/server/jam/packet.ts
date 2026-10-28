@@ -187,17 +187,39 @@ export function goalText(packet: JobPacket, subagents = true, runner?: Runner): 
 }
 
 const FRAME_FILE = /\.(tsx|jsx|html)$/
-/** A file a `shared` answer may name: a relative path under design/ that is design source and not a
- *  frame - never local state, the comment logs, the board files, the manifest, or a path that climbs
- *  out. Anything else is dropped (an exclusive job's grant names only what passes). */
-export function sharedFile(raw: string): string | null {
+/** Why a `shared` answer may not name this file - the one validator: a relative path under design/ that is design
+ *  source and not a frame passes (null); never local state, the comment logs, the board files, the manifest, a frame,
+ *  or a path that climbs out. In plain words: the owner reads it when a request needed only such files (F1). */
+export function sharedWhy(raw: string): string | null {
   const f = raw.replace(/\\/g, '/').replace(/^\.\//, '')
-  if (!/^design\/[\w./@+-]+$/.test(f) || f.split('/').some((p) => p === '..' || p === '.' || p === '')) return null
+  if (!/^design\/[\w./@+-]+$/.test(f) || f.split('/').some((p) => p === '..' || p === '.' || p === '')) return 'it is outside the design folder'
   const parts = f.split('/').slice(1)
-  if (['comments', 'boards'].includes(parts[0]) || parts[0].startsWith('.') || f === 'design/manifest.json') return null
+  if (parts[0] === 'boards') return 'the canvas lays out its boards itself - a run puts a frame on a board with npx marver boards place'
+  if (parts[0] === 'comments') return 'the comment logs are the canvas\'s own'
+  if (parts[0].startsWith('.')) return 'it is Marver\'s local state'
+  if (f === 'design/manifest.json') return 'the canvas writes it'
   const base = parts[parts.length - 1]
-  if (parts[0] === 'scenes' && FRAME_FILE.test(base) && !base.startsWith('_') && !parts.slice(1, -1).some((p) => p.startsWith('_'))) return null
-  return f
+  if (parts[0] === 'scenes' && FRAME_FILE.test(base) && !base.startsWith('_') && !parts.slice(1, -1).some((p) => p.startsWith('_'))) return 'it is a frame outside this run - tag @marver on that frame'
+  return null
+}
+/** A file a `shared` answer may name (`sharedWhy` found nothing against it), normalized; anything else is dropped (an
+ *  exclusive job's grant names only what passes). */
+export function sharedFile(raw: string): string | null {
+  return sharedWhy(raw) ? null : raw.replace(/\\/g, '/').replace(/^\.\//, '')
+}
+/** The question a member's reply becomes when its `shared` answer named only files no run is ever given (F1: "put this
+ *  variant next to slide 01" answered `shared design/boards/test-deck.json` and failed as "the agent did not answer"):
+ *  which files, and why - from the validator that refused each - and how to go on. Plain text, no em dash. */
+export function refusedAsk(refused: { file: string; why: string }[], said = ''): string {
+  const files = [...new Set(refused.map((r) => r.file))]
+  const why = [...new Set(refused.map((r) => r.why))].join('; ')
+  const board = refused.some((r) => /boards place/.test(r.why))
+  return [
+    `I could not do this one as it is: it needs ${files.join(', ')}, and a Jam run is never given ${files.length === 1 ? 'that file' : 'those files'} - ${why}.`,
+    ...(said.trim() ? ['', said.trim()] : []),
+    '',
+    board ? 'Tag @marver here and I will try again, placing the frame through Marver - or tell me how to go on.' : 'Tag @marver here with how to go on.',
+  ].join('\n')
 }
 
 /** Split the agent's final message into one reply per member. A block is
@@ -216,8 +238,10 @@ export function parseMembers(said: string, ids: string[]): Record<string, { body
     const id = words[0]
     if (!want.has(id) || out[id]) continue
     if (words[1] === 'shared') {
-      const files = words.slice(2).map(sharedFile).filter((f): f is string => !!f)
-      out[id] = files.length ? { shared: files } : { missing: true }
+      const named = words.slice(2)
+      const files = named.map(sharedFile).filter((f): f is string => !!f)
+      // named only files no run is ever given: never a silent failure - the owner is asked, told which and why (F1)
+      out[id] = files.length ? { shared: files } : named.length ? { body: refusedAsk(named.map((f) => ({ file: f, why: sharedWhy(f)! })), body), asks: true } : { missing: true }
     } else if (body) out[id] = { body, asks: /^asks?$/.test(words[1] ?? '') }
   }
   if (ids.length === 1 && !out[ids[0]]) {

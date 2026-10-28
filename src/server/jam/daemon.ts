@@ -28,7 +28,7 @@ import { localProfile } from '../profile.ts'
 import { adapters } from './adapter/index.ts'
 import { workActivity } from '../work.ts'
 import { acquireLock, releaseLock } from './journal.ts'
-import { buildPacket, goalText, packetPath, parseAgentText, parseMembers, sharedFile } from './packet.ts'
+import { buildPacket, goalText, packetPath, parseAgentText, parseMembers, refusedAsk, sharedWhy } from './packet.ts'
 import { uncheckedAnchor, type AnchorCheck, type AnchorLook, type AnchorTarget } from '../../shared/anchor.ts'
 import { ownerOnly, act, addCapture, addWrapup, endSession, moreWrapup, startSession, textOf, wrapupIntact, wrapupOf, answeredSince, captureIntact, beginStep, captureComment, conflictStep, createQueue, ctxFor, endStep, looksGood, payloadKey, redelivering, sameComment, stillOwned, undelivered, fail, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
 import { jamReservations, restoreHolds } from './reserve.ts'
@@ -189,11 +189,13 @@ const sharedMtimes = (root: string): Map<string, number> => {
   return out
 }
 
-/** A `shared` file as the disk sees it: past the lexical check (any case - this filesystem may not
- *  care), its nearest existing ancestor must resolve inside design/, and the resolved path must
- *  still be shared design source - a symlink cannot alias local state, a board file or the outside. */
-export function canonicalShared(root: string, f: string): string | null {
-  if (!sharedFile(f) || !sharedFile(f.toLowerCase())) return null
+/** Why a `shared` file is refused as the disk sees it, or null: past the lexical check (any case - this filesystem
+ *  may not care), its nearest existing ancestor must resolve inside design/, and the resolved path must still be
+ *  shared design source - a symlink cannot alias local state, a board file or the outside. The reason is the
+ *  validator's own (the owner reads it, F1). */
+export function canonicalSharedWhy(root: string, f: string): string | null {
+  const lexical = sharedWhy(f) ?? sharedWhy(f.toLowerCase())
+  if (lexical) return lexical
   try {
     const design = realpathSync(join(root, 'design'))
     let at = join(root, f)
@@ -202,9 +204,15 @@ export function canonicalShared(root: string, f: string): string | null {
     // realpath it, which throws on a dangling link, so a link to nowhere is refused
     for (;;) { try { lstatSync(at); break } catch { tail.unshift(basename(at)); at = dirname(at) } }
     const rel = relative(design, join(realpathSync(at), ...tail))
-    if (!rel || rel.startsWith('..') || isAbsolute(rel)) return null
-    return sharedFile(`design/${rel.split(sep).join('/')}`.toLowerCase()) ? f : null
-  } catch { return null }
+    if (!rel || rel.startsWith('..') || isAbsolute(rel)) return 'it is a link that leads outside the design folder'
+    const to = `design/${rel.split(sep).join('/')}`
+    const why = sharedWhy(to.toLowerCase())
+    return why ? `it is a link to ${to}, and ${why}` : null
+  } catch { return 'it is a link that leads nowhere' }
+}
+/** A `shared` file as the disk sees it (`canonicalSharedWhy` found nothing against it), else null. */
+export function canonicalShared(root: string, f: string): string | null {
+  return canonicalSharedWhy(root, f) ? null : f
 }
 
 /** The loop, without timers/watch/lock. Loads the queue (upgrading a v1 journal, baselining a
@@ -857,7 +865,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       const results: Record<string, Result> = {}
       for (const [id, r0] of Object.entries(split)) {
         let r = r0
-        if ('shared' in r) { const files = r.shared.map(realShared).filter((f): f is string => !!f); r = files.length ? { shared: files } : { missing: true } }
+        // what passed the words but not the disk (a case alias, a link elsewhere): none left, the owner is asked, told why
+        if ('shared' in r) { const files = r.shared.map(realShared).filter((f): f is string => !!f); r = files.length ? { shared: files } : { body: refusedAsk(r.shared.map((f) => ({ file: f, why: canonicalSharedWhy(root, f) ?? 'it could not be read' }))), asks: true } }
         results[id] = 'body' in r ? { body: r.body, asks: r.asks, ...(run.model ? { model: run.model } : {}), reanchors: [], ...(changedShared.length ? { alsoChanged: changedShared } : {}) } : r
       }
       await q.lock(() => {

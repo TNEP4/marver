@@ -5,13 +5,13 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { appendEvents, readLog, replay, type CommentEvent } from '../src/server/comments.ts'
 import { spawn } from 'node:child_process'
-import { canonicalShared, createJam } from '../src/server/jam/daemon.ts'
+import { canonicalShared, canonicalSharedWhy, createJam } from '../src/server/jam/daemon.ts'
 import { claudeAdapter } from '../src/server/jam/adapter/claude.ts'
 import { record } from '../src/server/jam/ledger.ts'
 import { deviceId } from '../src/server/jam/device.ts'
 import { read as readJournal, write as writeJournal } from '../src/server/jam/journal.ts'
 import { act, answers, ctxFor, form, freezeBrief, ingest, merge, settle, writePacket } from '../src/server/jam/queue.ts'
-import { buildPacket, goalText, packetPath, parseMembers, sharedFile } from '../src/server/jam/packet.ts'
+import { buildPacket, goalText, packetPath, parseMembers, refusedAsk, sharedFile, sharedWhy } from '../src/server/jam/packet.ts'
 import { jamReservations, refuseHold, restoreHolds, saveHolds } from '../src/server/jam/reserve.ts'
 import { createActivity } from '../src/server/jam/activity.ts'
 import type { Batch, Card, JamAdapter, Journal, JournalV1 } from '../src/server/jam/types.ts'
@@ -732,7 +732,26 @@ describe('Jam V2: review round 1 fixes', () => {
     for (const bad of ['design/.local/jam-ledger', '../../outside.txt', 'design/../x', 'design/comments/home.jsonl', 'design/boards/home.json',
       'design/manifest.json', 'design/scenes/pricing/hero.tsx', '/etc/passwd', 'src/app.ts', 'design//x'])
       expect(sharedFile(bad)).toBeNull()
-    expect(parseMembers('```marver-reply m1 shared design/.local/jam-ledger ../x\n```', ['m1'])).toEqual({ m1: { missing: true } })
+    // named only files no run is given: a question to the owner, never "did not answer" (F1)
+    expect(parseMembers('```marver-reply m1 shared design/.local/jam-ledger ../x\n```', ['m1'])).toEqual({ m1: { body: expect.stringContaining('design/.local/jam-ledger, ../x'), asks: true } })
+    expect(parseMembers('```marver-reply m1 shared\n```', ['m1'])).toEqual({ m1: { missing: true } })
+  })
+
+  it('F1: a `shared` answer naming only files no run is ever given becomes a question - which file, and why, from the validator itself; mixed answers keep the files that may be given', () => {
+    const board = parseMembers('```marver-reply m1 shared design/boards/test-deck.json\n```', ['m1']).m1 as { body: string; asks: boolean }
+    expect(board.asks).toBe(true)
+    expect(board.body).toContain('it needs design/boards/test-deck.json, and a Jam run is never given that file - the canvas lays out its boards itself - a run puts a frame on a board with npx marver boards place.')
+    expect(board.body).toMatch(/Tag @marver here and I will try again, placing the frame through Marver/)
+    expect(board.body).not.toMatch(/[—–`]/)
+    const logs = parseMembers('```marver-reply m1 shared design/comments/home.jsonl design/scenes/x/hero.tsx\nI need these.\n```', ['m1']).m1 as { body: string; asks: boolean }
+    expect(logs.body).toContain("the comment logs are the canvas's own; it is a frame outside this run - tag @marver on that frame.")
+    expect(logs.body).toContain('I need these.')
+    expect(logs.body).toMatch(/Tag @marver here with how to go on\.$/)
+    expect(parseMembers('```marver-reply m1 shared design/boards/x.json design/scenes/x/_kit.tsx\n```', ['m1'])).toEqual({ m1: { shared: ['design/scenes/x/_kit.tsx'] } })
+    for (const [f, why] of [['design/boards/x.json', /boards place/], ['design/comments/a.jsonl', /comment logs/], ['design/.local/x', /local state/], ['design/manifest.json', /canvas writes it/], ['design/scenes/a/b.tsx', /frame outside this run/], ['../x', /outside the design folder/]] as const)
+      expect(sharedWhy(f)).toMatch(why)
+    expect(sharedWhy('design/scenes/a/_kit.tsx')).toBeNull()
+    expect(refusedAsk([{ file: 'design/boards/a.json', why: sharedWhy('design/boards/a.json')! }])).not.toMatch(/[—–`]/)
   })
 
   it('a resumed delivery posts no second copy of an early question, keeps the re-pins, and finds an answer written before the restart', async () => {
@@ -886,6 +905,11 @@ describe('Jam V2: review round 2 fixes', () => {
     expect(canonicalShared(root, 'design/BOARDS/home.json')).toBeNull()
     expect(canonicalShared(root, 'design/scenes/demo/_link/jam-ledger')).toBeNull()
     expect(canonicalShared(root, 'design/_out/x.ts')).toBeNull()
+    // and why, in the validator's own words (F1: the owner is told - a case alias is the board it names)
+    expect(canonicalSharedWhy(root, 'design/BOARDS/home.json')).toMatch(/lays out its boards/)
+    expect(canonicalSharedWhy(root, 'design/scenes/demo/_link/jam-ledger')).toBe("it is a link to design/.local/jam-ledger, and it is Marver's local state")
+    expect(canonicalSharedWhy(root, 'design/_out/x.ts')).toBe('it is a link that leads outside the design folder')
+    expect(canonicalSharedWhy(root, 'design/scenes/demo/_kit.tsx')).toBeNull()
     done()
   })
 
