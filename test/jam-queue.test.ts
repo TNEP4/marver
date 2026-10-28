@@ -155,6 +155,29 @@ describe('Jam V2: a tag\'s card in its thread', () => {
     done()
   })
 
+  it('a request waiting on a frame another run holds says which and whose, and takes no place in line - the next free one is "next" (F2: "Redesign images" read Queued · next while "Icon labels" ran first)', async () => {
+    const { root, dir, done } = setup()
+    const jam = createJam(root, { ...CFG, concurrency: 2 }, agent('ok', { delay: 600 }))
+    const a = say(root, dir, '@marver icon labels', { frame: 'demo/a' })
+    const t = jam.tick()
+    await wait(150)
+    const b = say(root, dir, '@marver redesign the images', { frame: 'demo/a' })   // demo/a is a's run's
+    const c = say(root, dir, '@marver three', { frame: 'demo/c' })
+    const d = say(root, dir, '@marver four', { frame: 'demo/d' })
+    await jam.poke()
+    // c starts at once (a slot is free); b waits on a's frame; d waits behind nothing but the slots
+    const v = () => jam.view().cards
+    expect(v().find((x) => x.events.includes(a.id))?.state).toBe('working')
+    const wb = v().find((x) => x.events.includes(b.id))!
+    expect(wb.state).toBe('queued')
+    expect(wb.waitsFor).toEqual({ frame: 'demo/a', by: 'icon labels' })
+    expect(wb.position).toBeUndefined()
+    expect(v().find((x) => x.events.includes(d.id))?.position).toBe(1)
+    await t; jam.stop()
+    for (const e of [a, b, c, d]) expect(cardOf(jam, e)!.state).toBe('done')
+    done()
+  })
+
   it('drop on an unclaimed queued tag; refused on a working card, on a stale rev; keep, first and the verdicts are refused on a tag', async () => {
     const { root, dir, done } = setup()
     const jam = createJam(root, { ...CFG, concurrency: 1 }, agent('ok', { delay: 300 }))
@@ -350,7 +373,8 @@ describe('Jam V2: one job per frame', () => {
     const t = say(root, dir, '@marver go')
     await jam.tick()
     expect(cardOf(jam, t)!.state).toBe('queued')
-    expect(jam.view().cards[0].waiting).toMatch(/held by your agent/)
+    expect(jam.view().cards[0].waitsFor).toEqual({ frame: 'demo/hero', by: 'chat' })
+    expect(jam.view().cards[0].position).toBeUndefined()
     held = false
     await jam.tick(); jam.stop()
     expect(cardOf(jam, t)!.state).toBe('done')
@@ -688,7 +712,10 @@ describe('Jam V2: what the status icon says', () => {
     expect(statusLines({ ...base, state: 'queued', position: 1 }, 'claude', H).head).toBe('Queued · next')
     expect(statusLines({ ...base, state: 'queued', position: 4 }, 'claude', H).head).toBe('Queued · 4th - runs after 3 others')
     expect(statusLines({ ...base, state: 'queued', position: 2, events: ['e1', 'e2'] }, 'claude', H).head).toBe('Queued · 2nd · 2 tags - runs after 1 other')
-    expect(statusLines({ ...base, state: 'queued', position: 1, waiting: 'waiting - demo/a is held by your agent' }, 'claude', H).detail).toBe('waiting - demo/a is held by your agent')
+    expect(statusLines({ ...base, state: 'queued', position: 1, waiting: 'waiting - runs alone once the other work is done' }, 'claude', H).detail).toBe('waiting - runs alone once the other work is done')
+    // waiting on a frame another run holds (F2): which frame, and whose - never "next"
+    expect(statusLines({ ...base, state: 'queued', waitsFor: { frame: 'deck/01-slide', by: 'Icon labels' } }, 'claude', H)).toEqual({ head: 'Queued · waits for deck/01-slide', detail: '"Icon labels" is working on it - this one starts when it is done' })
+    expect(statusLines({ ...base, state: 'queued', waitsFor: { frame: 'deck/01-slide', by: 'chat' } }, 'claude', H).detail).toBe('Your agent in chat is working on it - this one starts when it is done')
   })
   it('working gives the clock and the agent; asks points at the question; failed gives why and the way back', () => {
     expect(statusLines({ ...base, state: 'working', at: 1000 }, 'claude', H, 42_000).head).toBe('Agent working · 0:41 - Claude Code')

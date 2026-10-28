@@ -29,6 +29,11 @@ export function runnerLine(c: JamCard, name: (agent: string) => string, now = Da
  *  a held card waits, why a card failed. */
 export function statusLines(c: JamCard, agent: string | null, harness: Record<string, string>, now = Date.now()): { head: string; detail?: string } {
   const tags = c.events.length > 1 ? ` · ${c.events.length} tags` : ''
+  if (c.state === 'queued' && c.waitsFor) {
+    const w = c.waitsFor
+    return { head: `Queued · waits for ${w.frame}${tags}`, detail: w.by === 'chat' ? 'Your agent in chat is working on it - this one starts when it is done'
+      : w.by ? `"${w.by}" is working on it - this one starts when it is done` : 'Another run is working on it - this one starts when it is done' }
+  }
   if (c.state === 'queued') {
     const p = c.position ?? 1
     return { head: p <= 1 ? `Queued · next${tags}` : `Queued · ${ordinal(p)}${tags} - runs after ${p - 1} other${p - 1 === 1 ? '' : 's'}`, ...(c.waiting ? { detail: c.waiting } : {}) }
@@ -53,7 +58,8 @@ export function laneLine(c: LaneCard, now = Date.now()): string {
     // so, never "To confirm" - E's never asked you to confirm anything
     case 'draft': return c.note ? 'Not queued' : 'To confirm'
     case 'confirming': return 'Confirming'
-    case 'queued': { const p = c.position ?? 1; return p <= 1 ? 'Queued · next' : `Queued · ${ordinal(p)}` }
+    // waiting on a frame another run holds: which one, never a place in line it does not have
+    case 'queued': { if (c.waitsFor) return `Waits for ${c.waitsFor.frame.split('/').pop()}`; const p = c.position ?? 1; return p <= 1 ? 'Queued · next' : `Queued · ${ordinal(p)}` }
     case 'working': {
       // who runs it (spec 29b), in a few words: a tile has one short line
       const r = c.runner

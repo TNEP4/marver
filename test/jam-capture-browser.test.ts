@@ -1759,4 +1759,30 @@ describe('captures in the browser: the first trial', () => {
     // the follow-up runs and settles before the next test
     await until(`(window.__mvJamQueue.getState().cards ?? []).every((c) => c.state !== 'queued' && c.state !== 'working')`, 60_000)
   }, 150_000)
+
+  skippable('a capture waiting on a frame another run holds says so on its tile - "Waits for bravo", never "Queued · next" (F2)', async () => {
+    // the first run lasts long enough for the second capture to seal and land beside it
+    agentMode({ delay: 25_000 })
+    await browser!.eval(s, `window.__mvJamUi.getState().close(), window.__mvComments.getState().setActive(null), 1`)
+    const capOn = async (frame: string, words: string) => {
+      await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+      const r = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+      const k = await browser!.eval(s, `window.__mvStore.getState().nodes.find((x) => x.frame === ${JSON.stringify(frame)}).key`)
+      await click(`.sh-node[data-node="${k}"] .sh-overlay`)
+      await sleep(300)
+      await browser!.eval(s, `window.__mvJamCapture.getState().note(${JSON.stringify(words)}), 1`)
+      await key('e')
+      return r as string
+    }
+    const one = await capOn('spec/bravo', 'icon labels')
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(one)} && c.state === 'working')`, 30_000)
+    const two = await capOn('spec/bravo', 'redesign the images')
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(two)} && c.state === 'queued')`, 30_000)
+    await until(`/Waits for bravo/.test(document.querySelector('.jm-lane [data-tile="${two}"]')?.textContent ?? '')`, 10_000)
+    expect(await browser!.eval(s, `document.querySelector('.jm-lane [data-tile="${two}"]')?.textContent ?? ''`)).not.toMatch(/Queued · next/)
+    agentMode({})
+    // once the first is done, it runs
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(two)} && c.state !== 'queued')`, 60_000)
+    await until(`(window.__mvJamQueue.getState().cards ?? []).every((c) => c.state !== 'queued' && c.state !== 'working')`, 60_000)
+  }, 180_000)
 })

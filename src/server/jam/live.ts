@@ -9,7 +9,10 @@ export interface QueueView {
   agent: string
   cards: (Pick<Card, 'id' | 'kind' | 'board' | 'thread' | 'frames' | 'events' | 'state' | 'note' | 'rev' | 'made' | 'order' | 'at' | 'follows' | 'reply'> & {
     position?: number    // 1 = next, counting every queued card - tags and captures share one queue
-    waiting?: string     // why a queued card is held
+    waiting?: string     // why a queued card is held (a job that runs alone)
+    /** a queued card whose frame another run (or your agent in chat) holds: that frame, and who holds it - the
+     *  holding run's title, or 'chat' for a `marver work` hold. It has no position: it starts when the frame is free */
+    waitsFor?: { frame: string; by?: string }
     exclusive?: boolean
     batch?: string       // the batch that ran it last - a page folds one batch's failures into one notice
     // captures (the lane, the review): its first words, the run it is in, the run's shots, its reply

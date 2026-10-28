@@ -9,6 +9,8 @@ describe('the lane: a tile\'s status line', () => {
     expect(laneLine(card({ state: 'draft' }))).toBe('To confirm')
     expect(laneLine(card({ state: 'confirming' }))).toBe('Confirming')
     expect(laneLine(card({ state: 'queued', position: 1 }))).toBe('Queued · next')
+    // waiting on a frame another run holds: which one (its name without its scene), never a place in line
+    expect(laneLine(card({ state: 'queued', waitsFor: { frame: 'test-deck/01-slide', by: 'Icon labels' } }))).toBe('Waits for 01-slide')
     expect(laneLine(card({ state: 'queued', position: 2 }))).toBe('Queued · 2nd')
     expect(laneLine(card({ state: 'queued', position: 13 }))).toBe('Queued · 13th')
     expect(laneLine(card({ state: 'working', at: 1000 }), 42_000)).toBe('Agent working · 0:41')

@@ -1374,7 +1374,10 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   let viewN = 0
   const view = (): QueueView => {
     const j = q.j
-    const queued = j.cards.filter((c) => c.state === 'queued').sort((a, b) => a.order - b.order || a.made - b.made)
+    // a queued card waits on a frame another run holds (one job per frame), or your agent in chat: it says which and
+    // whose, and counts no place in line - the places are of the requests that can start, first come first
+    const busyFrame = (c: Card) => c.frames.find((f) => jamReservations.frames.has(f) || !!hooks.held?.(f))
+    const queued = j.cards.filter((c) => c.state === 'queued' && !busyFrame(c)).sort((a, b) => a.order - b.order || a.made - b.made)
     const shown = j.cards.filter((c) => pending(c) || c.at > Date.now() - 60_000 || (!!j.run && c.kind !== 'comment' && c.made >= j.run.since))
     const exclusiveAhead = jamReservations.exclusive
     return {
@@ -1382,16 +1385,17 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       ...(q.j.run ? { run: q.j.run } : {}),
       ...(q.j.session ? { session: q.j.session } : {}),
       cards: shown.map((c) => {
-        const position = c.state === 'queued' ? queued.indexOf(c) + 1 : undefined
-        const held = c.state === 'queued' ? c.frames.find((f) => hooks.held?.(f)) : undefined
-        const waiting = held ? `waiting - ${held} is held by your agent`
-          : c.state === 'queued' && (c.exclusive || !c.frames.length) && exclusiveAhead === 'waiting' ? 'waiting - runs alone once the other work is done'
+        const busy = c.state === 'queued' ? busyFrame(c) : undefined
+        const holder = busy ? j.batches.find((b) => b.batchId === jamReservations.frames.get(busy)) : undefined
+        const waitsFor = busy ? { frame: busy, ...(holder ? { by: runs.title(holder) } : hooks.held?.(busy) ? { by: 'chat' } : {}) } : undefined
+        const position = c.state === 'queued' && !busy ? queued.indexOf(c) + 1 : undefined
+        const waiting = c.state === 'queued' && (c.exclusive || !c.frames.length) && exclusiveAhead === 'waiting' ? 'waiting - runs alone once the other work is done'
           : c.state === 'queued' && exclusiveAhead ? 'waiting - a job changing a shared file runs first' : undefined
         return {
           id: c.id, kind: c.kind, board: c.board, ...(c.thread ? { thread: c.thread } : {}), frames: c.frames, events: c.events,
           state: c.state, ...(c.note ? { note: c.note } : {}), rev: c.rev, made: c.made, order: c.order, at: c.at,
           ...(c.follows ? { follows: c.follows } : {}), ...(c.reply ? { reply: c.reply } : {}), ...(c.batch ? { batch: c.batch } : {}),
-          ...(position ? { position } : {}), ...(waiting ? { waiting } : {}), ...(c.exclusive ? { exclusive: true } : {}),
+          ...(position ? { position } : {}), ...(waitsFor ? { waitsFor } : {}), ...(waiting ? { waiting } : {}), ...(c.exclusive ? { exclusive: true } : {}),
           ...(c.kind !== 'comment' ? captureView(c) : {}),
           ...(c.state === 'working' ? (() => { const r = runs.runnerOf(j.batches.find((b) => b.batchId === c.batch)); return r ? { runner: r } : {} })() : {}),
         }

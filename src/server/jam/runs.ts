@@ -95,6 +95,8 @@ export interface Runs {
   /** a stalled or running session run's choices, from the lane or a thread: by batch and its claim's generation */
   act(batchId: string, gen: number, action: 'again' | 'background' | 'drop'): Promise<{ ok: boolean; error?: string }>
   view(now?: number): { sessions: { id: string; agent: ConnAgent; busy: boolean; selected: boolean; since: number; mode?: string }[] }
+  /** what a run is called (its first card's name, else the owner's words, clipped) - a ping, a tile waiting on it */
+  title(b: Batch): string
   /** a batch's runner, as the lane shows it */
   runnerOf(b: Batch | undefined): { kind: 'session' | 'fork' | 'fresh'; agent: string; state?: 'offered' | 'claimed' | 'stalled' | 'stopping' | 'waiting'; why?: string; batch: string; gen?: number } | undefined
   stop(): void
@@ -528,7 +530,7 @@ export function createRuns(d: RunsDeps): Runs {
   }
 
   return {
-    settings, selected, choose, run, tick,
+    settings, selected, choose, run, tick, title: titleOf,
     delivered(batchId, ok, note) {
       outcome.set(batchId, { ok, ...(note ? { note } : {}) })
       if (outcome.size > 200) outcome.delete(outcome.keys().next().value!)
