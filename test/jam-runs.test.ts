@@ -351,8 +351,10 @@ describe('session runs in the daemon', { timeout: 30_000 }, () => {
     expect(String(n.text)).toContain(`npx marver jam done ${handle}`)
     // the brief, not the spawned agent's prompt: the ask in the owner's words, a dozen lines
     expect(String(n.text)).toContain('make it say Hello')
-    expect(String(n.text).split('\n').length).toBeLessThan(20)
+    expect(String(n.text).split('\n').length).toBeLessThan(24)
     expect(String(n.text)).not.toContain('You are the owner')
+    // Claude Code dispatches it to a background subagent (F3)
+    expect(String(n.text)).toContain('run_in_background: true')
     expect((await s.ask('say', { handle, text: 'On it - saying Hello.' })).ok).toBe(true)
     expect((await s.ask('say', { handle, text: 'again' })).ok).toBe(false)   // once
     const d = await s.ask('done', { handle, text: REPLY('Done - it says Hello.') })
@@ -651,6 +653,70 @@ describe('session runs in the daemon', { timeout: 30_000 }, () => {
     expect(readOffers(s.root, s.conn.id)?.resume).toBeUndefined()
     expect((await s.ask('done', { handle, text: REPLY('carried on') })).ok).toBe(true)
     await t
+    s.jam.stop(); s.done()
+  })
+})
+
+describe('F3: a Claude Code session dispatches - it holds up to 8 runs, Codex and Cursor 3; jam.concurrency caps only what Marver spawns', { timeout: 60_000 }, () => {
+  const frames = (root: string, n: number) => { for (let i = 1; i <= n; i++) put(root, `design/scenes/demo/f${i}.tsx`) }
+  const spawnedWhy = (s: Awaited<ReturnType<typeof setup>>) => s.jam.view().cards.find((c) => c.state === 'working' && c.runner && c.runner.kind !== 'session')?.runner?.why
+
+  it('Claude Code: eight runs offered at once (jam.concurrency 2 does not cap them) - the ninth goes to a copy that says why, the room said again under the lock', async () => {
+    const s = await setup({ cfg: { sessionMax: undefined, concurrency: 2 } })
+    frames(s.root, 9)
+    for (let i = 1; i <= 9; i++) tag(s.root, s.dir, `@marver ask ${i}`, undefined, `demo/f${i}`)
+    const t = s.jam.tick()
+    expect(await until(() => (readOffers(s.root, s.conn.id)?.n ?? 0) === 8, 15_000, () => s.jam.runs.tick())).toBe(true)
+    expect(await until(() => !!spawnedWhy(s) || finals(s.dir).length > 0, 15_000, () => s.jam.runs.tick())).toBe(true)
+    expect(s.jam.snapshot().batches.find((b) => b.runner && b.runner.kind !== 'session')?.runner?.why).toBe("your session didn't take it - it already holds 8 runs")
+    expect(s.jam.runs.room()).toBe(0)
+    expect(s.jam.view().settings?.sessionMax).toBe(8)
+    s.jam.stop(); await t.catch(() => {}); s.done()
+  })
+
+  it('Codex: three by default; jam.sessionMax caps every session', async () => {
+    const s = await setup({ cfg: { sessionMax: undefined } })
+    frames(s.root, 4)
+    // a Codex session in a turn, newer than the Claude Code one: it takes the work
+    const cx = upsertConn(s.root, 'codex', randomUUID(), { pid: process.pid, cwd: s.root, busy: true }, Date.now() + 1_000, true)
+    for (let i = 1; i <= 4; i++) tag(s.root, s.dir, `@marver ask ${i}`, undefined, `demo/f${i}`)
+    const t = s.jam.tick()
+    expect(await until(() => (readOffers(s.root, cx.id)?.n ?? 0) === 3, 15_000, () => s.jam.runs.tick())).toBe(true)
+    expect(await until(() => s.jam.snapshot().batches.some((b) => b.runner && b.runner.kind !== 'session'), 15_000, () => s.jam.runs.tick())).toBe(true)
+    expect(s.jam.snapshot().batches.find((b) => b.runner && b.runner.kind !== 'session')?.runner?.why).toBe("your session didn't take it - it already holds 3 runs")
+    expect(s.jam.view().settings?.sessionMax).toBe(3)
+    s.jam.stop(); await t.catch(() => {}); s.done()
+
+    const r = await setup({ cfg: { sessionMax: 2 } })
+    frames(r.root, 3)
+    for (let i = 1; i <= 3; i++) tag(r.root, r.dir, `@marver ask ${i}`, undefined, `demo/f${i}`)
+    const t2 = r.jam.tick()
+    expect(await until(() => (readOffers(r.root, r.conn.id)?.n ?? 0) === 2, 15_000, () => r.jam.runs.tick())).toBe(true)
+    expect(await until(() => r.jam.snapshot().batches.some((b) => b.runner && b.runner.kind !== 'session'), 15_000, () => r.jam.runs.tick())).toBe(true)
+    expect(r.jam.runs.room()).toBe(0)
+    r.jam.stop(); await t2.catch(() => {}); r.done()
+
+    // no Jam session: no room - every run is spawned, as before
+    const n = await setup({ jam: false, cfg: { sessionMax: undefined } })
+    expect(n.jam.runs.room()).toBe(0)
+    n.jam.stop(); n.done()
+  })
+
+  it('runs that fall back from your session never spawn more than jam.concurrency at once - five offers withdrawn together, two processes at a time', async () => {
+    const slow: JamAdapter = { ...spawned, spawnArgs() { return { cmd: process.execPath, args: ['-e', `const fs=require('fs');fs.appendFileSync('spawns.log','s '+Date.now()+String.fromCharCode(10));setTimeout(()=>{fs.appendFileSync('spawns.log','e '+Date.now()+String.fromCharCode(10));process.stdout.write(JSON.stringify({result:'A background agent did it.'}))},700)`] } } }
+    const s = await setup({ cfg: { sessionMax: undefined, concurrency: 2 }, adapter: slow })
+    frames(s.root, 5)
+    for (let i = 1; i <= 5; i++) tag(s.root, s.dir, `@marver ask ${i}`, undefined, `demo/f${i}`)
+    const t = s.jam.tick()
+    expect(await until(() => (readOffers(s.root, s.conn.id)?.n ?? 0) === 5, 15_000, () => s.jam.runs.tick())).toBe(true)
+    await s.jam.runs.tick(Date.now() + OFFER_MS + 1_000)   // none taken in two minutes: all five go to copies at once
+    await t
+    expect(finals(s.dir).length).toBe(5)
+    const ev = readFileSync(join(s.root, 'spawns.log'), 'utf8').trim().split('\n').map((l) => { const [k, at] = l.split(' '); return { k, at: Number(at) } }).sort((a, b) => a.at - b.at || (a.k === 'e' ? -1 : 1))
+    let now = 0, most = 0
+    for (const e of ev) { now += e.k === 's' ? 1 : -1; most = Math.max(most, now) }
+    expect(ev.filter((e) => e.k === 's').length).toBe(5)
+    expect(most).toBeLessThanOrEqual(2)
     s.jam.stop(); s.done()
   })
 })

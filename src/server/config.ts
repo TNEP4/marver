@@ -23,7 +23,7 @@ export interface JamConfig {
   mcp: boolean                 // background runs use your MCP servers (default true)
   skills: boolean              // ...and your skills (default true)
   others: boolean              // other people's words reach the agent (default false: the owner's only)
-  sessionMax: number           // runs one session holds at once (default 3)
+  sessionMax?: number          // runs one session holds at once (unset: 8 for Claude Code, which dispatches each to a background subagent; 3 for Codex and Cursor)
 }
 export interface ShConfig {
   mode: 'studio' | 'embedded'
@@ -197,7 +197,8 @@ function resolveJam(v: unknown): JamConfig | ShConfig['jamOff'] {
     mcp: pick('mcp', j.mcp, bool, true, 'true or false'),
     skills: pick('skills', j.skills, bool, true, 'true or false'),
     others: pick('others', j.others, bool, false, 'true or false'),
-    sessionMax: pick('sessionMax', j.sessionMax, (v) => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 8, 3, 'a whole number from 1 to 8'),
+    // unset: each session's own default (runs.ts sessionMaxFor) - set, it caps every session
+    ...((sm) => (sm === undefined ? {} : { sessionMax: sm }))(pick<number | undefined>('sessionMax', j.sessionMax, (v) => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 8, undefined, 'a whole number from 1 to 8')),
   }
 }
 

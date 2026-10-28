@@ -35,7 +35,17 @@ const wordsOf = (m: PacketMember): { kind: string; text: string }[] => {
     .filter((w) => clip(w.text, Infinity)).reverse()
 }
 
-export function sessionBrief(packet: JobPacket, handle: string, as?: string): string {
+/** A run of the same session this one shares a frame with (F4): its handle, the frames they share, what it is called. */
+export interface Overlap { handle: string; frames: string[]; title: string }
+export interface BriefOpts {
+  /** the session's tool: Claude Code dispatches the run to a background subagent (F3); Codex and Cursor do it here */
+  agent?: 'claude' | 'codex' | 'cursor'
+  /** its connection id - what a command names (`--as`) when the session's id does not reach it */
+  conn?: string
+  overlaps?: Overlap[]
+}
+
+export function sessionBrief(packet: JobPacket, handle: string, as?: string, o: BriefOpts = {}): string {
   const jam = (op: string, rest = '') => `npx marver jam ${op} ${handle}${as ? ` --as ${as}` : ''}${rest}`
   const one = packet.members.length === 1
   // a session record: one file written from the packet - no thread to answer early in, no frame to edit
@@ -69,19 +79,52 @@ export function sessionBrief(packet: JobPacket, handle: string, as?: string): st
     `A long run: ${jam('progress')} every few minutes. Cannot do it now: ${jam('release')}.`,
     `Edit nothing but ${files.join(', ')}. The full rules: design/instructions/jam.md, "Runs from the canvas".`,
   ].join('\n')
-  return [
-    `Live Jam run ${handle} - the owner's request from the canvas.`,
+  const what = [
     ...asks,
     `Frames you may edit: ${packet.frames.join(', ') || '(none)'}${packet.exclusive ? `; and these shared files: ${packet.exclusive.files.join(', ')}` : ''}.`,
     `The thread, ${packet.members.some((m) => m.brief.capture) ? 'the capture\'s picks and pictures, ' : ''}and what earlier runs did: ${packetPath(packet.batchId)}`,
-    '',
-    'Do it in this session, then:',
-    ...(one ? [`1. One line to the owner now: ${jam('say', ' "On it - ..."')}`] : []),
-    `${one ? '2' : '1'}. Write your reply to a file, one block per request, plain text, about as long as the ask:`,
+  ]
+  const reply = [
+    `Write your reply to a file, one block per request, plain text, about as long as the ask:`,
     ...packet.members.map((m) => `   \`\`\`marver-reply ${m.id}\n   Done - ...\n   \`\`\``),
     `   Need an answer from the owner first? Open the block with \`\`\`marver-reply ${packet.members[0]?.id ?? 'm1'} asks instead.`,
+  ]
+  const newFrame = `a new frame goes on the board with npx marver boards place <board> <scene/frame> --after <scene/frame> --run ${handle}${as ? ` --as ${as}` : ''}`
+  // F4: a run of this same session holds a frame of this one - whoever does it decides how the two meet
+  const ov = o.overlaps ?? []
+  const overlapping = ov.length ? `It overlaps your run${ov.length === 1 ? '' : 's'} ${ov.map((x) => `${x.handle} ("${x.title}") on ${x.frames.join(', ')}`).join('; ')}.` : ''
+  if (o.agent === 'claude') {
+    // the dispatcher (F3): a few lines for the session itself, then the worker's own prompt below the line - the
+    // subagent it starts owns this handle, and never takes another run
+    const n = (i: number) => `${i}.`
+    return [
+      `Live Jam run ${handle} from the owner's canvas - dispatch it, so you are free for the next request:`,
+      'start ONE background subagent (Agent tool, run_in_background: true) whose prompt is everything below the line, plus what this conversation knows that matters for it.',
+      `Then run \`npx marver jam next\` again until nothing waits, and end your turn. A tiny ask you may do here yourself, by the same steps. Cannot take it: ${jam('release')}.`,
+      ...(overlapping ? [`${overlapping.slice(0, -1)} - a subagent of yours may be editing ${ov.length === 1 ? 'it' : 'them'}. Your call, for speed and quality:`,
+        'send this run to that subagent (SendMessage: do it after, or fold it in now - it answers both handles), or run it in parallel as a variant in a NEW frame placed beside it. Never two subagents on one frame.'] : []),
+      '----',
+      `You own Live Jam run ${handle} - the owner's request from their Marver canvas. Do it and hand it back yourself; never run \`jam next\` or take another run.`,
+      ...what,
+      ...(one ? [`${n(1)} One line to the owner now: ${jam('say', ' "On it - ..."')}`] : []),
+      `${n(one ? 2 : 1)} Do the work (design/AGENTS.md; design/instructions/jam.md, "Runs from the canvas"). ${jam('progress')} every few minutes.`,
+      `${n(one ? 3 : 2)} ${reply[0]}`, ...reply.slice(1),
+      `${n(one ? 4 : 3)} ${jam('done', ' --file <that file>')} - the canvas posts it and frees the frames.`,
+      `Edit only those frames; ${newFrame}. A command that answers "the owner moved this run elsewhere": stop editing at once and run ${jam('release')}.`,
+      ...(o.conn && !as ? [`A command that answers "this session is not connected": add --as ${o.conn}.`] : []),
+    ].join('\n')
+  }
+  const tool = o.agent === 'codex' ? 'Codex' : o.agent === 'cursor' ? 'Cursor' : ''
+  return [
+    `Live Jam run ${handle} - the owner's request from the canvas.`,
+    ...what,
+    ...(overlapping ? [`${overlapping} Do it after ${ov.length === 1 ? 'that one' : 'those'}, or together with ${ov.length === 1 ? 'it' : 'them'} (answer every handle).`] : []),
+    '',
+    tool ? `Do it in this session (Marver gives ${tool} runs to it one at a time), then:` : 'Do it in this session, then:',
+    ...(one ? [`1. One line to the owner now: ${jam('say', ' "On it - ..."')}`] : []),
+    `${one ? '2' : '1'}. ${reply[0]}`, ...reply.slice(1),
     `${one ? '3' : '2'}. ${jam('done', ' --file <that file>')} - the canvas posts it and frees the frames.`,
     `A long run: ${jam('progress')} every few minutes. Cannot do it now: ${jam('release')}.`,
-    'Edit only those frames. Captures, re-pins and shared files: design/instructions/jam.md, "Runs from the canvas".',
+    `Edit only those frames; ${newFrame}. Captures, re-pins and shared files: design/instructions/jam.md, "Runs from the canvas".`,
   ].join('\n')
 }

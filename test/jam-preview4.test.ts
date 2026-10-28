@@ -160,3 +160,44 @@ describe('a copy that runs what your session did not take', () => {
     expect(laneLine({ ...c, runner: { kind: 'fork', agent: 'claude', why: 'the Jam session had ended' } })).toMatch(/^Jam session ended · a copy is on it/)
   })
 })
+
+describe('F3: the brief splits the dispatcher\'s lines from the subagent\'s own prompt (Claude Code); Codex and Cursor do it here', () => {
+  const tag = (body: string): any => ({ batchId: '1a2b3c4d-0000', frames: ['deck/01-slide'], members: [{ id: 'm1', kind: 'comment', frames: ['deck/01-slide'], brief: { asks: [{ id: 'e-1', body, ts: 1 }], history: [] } }] })
+  it('Claude Code: a few lines to dispatch it - one background subagent, then jam next until nothing waits - and below the line a worker prompt that owns the handle and never takes another run', () => {
+    const t = sessionBrief(tag('@marver put this variant next to slide 01'), 'r-1a2b3c4d.1', undefined, { agent: 'claude', conn: 'claude-0123456789ab' })
+    const [dispatch, worker] = t.split('\n----\n')
+    expect(dispatch).toContain('start ONE background subagent (Agent tool, run_in_background: true) whose prompt is everything below the line, plus what this conversation knows that matters for it.')
+    expect(dispatch).toContain('Then run `npx marver jam next` again until nothing waits, and end your turn.')
+    expect(dispatch).toContain('Cannot take it: npx marver jam release r-1a2b3c4d.1')
+    // the worker's prompt is whole on its own: the request, the frames, the steps - and nothing that dispatches again
+    expect(worker).toMatch(/^You own Live Jam run r-1a2b3c4d\.1 .*never run `jam next` or take another run\./)
+    expect(worker).toContain('- on deck/01-slide, a tag: "put this variant next to slide 01"')
+    expect(worker).toContain('1. One line to the owner now: npx marver jam say r-1a2b3c4d.1 "On it - ..."')
+    expect(worker).toContain('npx marver jam progress r-1a2b3c4d.1 every few minutes')
+    expect(worker).toContain('4. npx marver jam done r-1a2b3c4d.1 --file <that file>')
+    expect(worker).toContain('stop editing at once and run npx marver jam release r-1a2b3c4d.1')
+    expect(worker).toContain('npx marver boards place <board> <scene/frame> --after <scene/frame> --run r-1a2b3c4d.1')
+    expect(worker).toContain('add --as claude-0123456789ab')
+    expect(worker).not.toMatch(/Agent tool|run_in_background|end your turn/)
+    expect(t.split('\n').length).toBeLessThan(24)
+  })
+  it('Codex and Cursor: done here, one at a time, said as what Marver does - not what the tool can', () => {
+    const c = sessionBrief(tag('@marver bigger'), 'r-1a2b3c4d.1', undefined, { agent: 'codex', conn: 'codex-0123456789ab' })
+    expect(c).toContain('Do it in this session (Marver gives Codex runs to it one at a time), then:')
+    expect(c).not.toMatch(/Agent tool|----|subagent/)
+    const u = sessionBrief(tag('@marver bigger'), 'r-1a2b3c4d.1', 'cursor-0123456789ab', { agent: 'cursor', conn: 'cursor-0123456789ab' })
+    expect(u).toContain('Marver gives Cursor runs to it one at a time')
+    expect(u).toContain('npx marver jam done r-1a2b3c4d.1 --as cursor-0123456789ab --file <that file>')
+    // with no agent named (an older caller), today's words
+    expect(sessionBrief(tag('@marver bigger'), 'r-1a2b3c4d.1')).toContain('Do it in this session, then:')
+  })
+  it('F4: a run that overlaps one of the same session names it - the dispatcher chooses, the one-at-a-time tools do it after or together', () => {
+    const ov = [{ handle: 'r-9f8e7d6c.2', frames: ['deck/01-slide'], title: 'Icon labels' }]
+    const t = sessionBrief(tag('@marver redesign the images'), 'r-1a2b3c4d.1', undefined, { agent: 'claude', overlaps: ov })
+    const [dispatch, worker] = t.split('\n----\n')
+    expect(dispatch).toContain('It overlaps your run r-9f8e7d6c.2 ("Icon labels") on deck/01-slide - a subagent of yours may be editing it. Your call, for speed and quality:')
+    expect(dispatch).toContain('send this run to that subagent (SendMessage: do it after, or fold it in now - it answers both handles), or run it in parallel as a variant in a NEW frame placed beside it. Never two subagents on one frame.')
+    expect(worker).not.toContain('overlaps')
+    expect(sessionBrief(tag('@marver x'), 'r-1a2b3c4d.1', undefined, { agent: 'codex', overlaps: ov })).toContain('It overlaps your run r-9f8e7d6c.2 ("Icon labels") on deck/01-slide. Do it after that one, or together with it (answer every handle).')
+  })
+})

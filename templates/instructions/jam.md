@@ -27,23 +27,37 @@ request itself is what `next` prints. The routine:
 
 1. `npx marver jam next` - takes the next run and prints its brief: the handle
    (`r-1a2b3c4d.1`), the request in the owner's words, the frames you may edit, the packet file
-   and these steps. It is short: read it as printed - never save it to a file or parse it.
-2. One-ask run: `npx marver jam say <handle> "On it - ..."` - one line to the owner, at once.
-3. Do the work. The packet file holds the thread, its history and a capture's words, picks and
-   notes (below). A small ask: inline. A capture across several frames: one subagent per frame
-   (never two on one frame), each briefed with the packet's part for its frame.
-4. A long run: `npx marver jam progress <handle>` every few minutes - after 15 minutes of
-   silence the owner is told it stalled.
-5. `npx marver jam done <handle> --file <file>` with the final message (the `marver-reply`
-   blocks below) - the canvas posts it and frees the frames.
+   and the steps. It is short: read it as printed - never save it to a file or parse it.
+2. **Claude Code: dispatch it.** The brief opens with a few lines for you, then a line `----`
+   and the run's own prompt. Start ONE background subagent (the Agent tool,
+   `run_in_background: true`) whose prompt is everything below that line, plus what this
+   conversation knows that matters for it - a decision, a file you just changed, the owner's
+   taste. Then `jam next` again until it says nothing waits, and end your turn: you are free for
+   the next request, and several runs go at once (up to 8 - `jam.sessionMax` caps it). The
+   subagent's commands speak for this session (they carry its id); it says "On it", works and
+   hands the run back itself, and its report needs nothing from you - unless it says it could
+   not finish: then release the run, or finish it here. A tiny ask (a word, a colour) you may do
+   here yourself, by the same steps. A background subagent's built-in tools can be fewer than
+   yours, and a permission it needs is asked here, in this session: answer it.
+   **Codex and Cursor: do it here** - Marver gives their runs to the session one at a time.
+3. Whoever does the run: a one-ask run starts with `npx marver jam say <handle> "On it - ..."`
+   (one line to the owner, at once); then the work - the packet file holds the thread, its
+   history and a capture's words, picks and notes (below); `npx marver jam progress <handle>`
+   every few minutes (after 15 minutes of silence the owner is told it stalled); and
+   `npx marver jam done <handle> --file <file>` with the final message (the `marver-reply`
+   blocks below) - the canvas posts it and frees the frames. A capture across several frames
+   may fan out one subagent per frame - never two on one frame.
 
 Cannot do it now: `npx marver jam release <handle>` - another runner takes it. A session record
 (a wrap-up) is one file: its brief names it and the owner's instructions for it - write that
-file only, no design work, and reply in one or two sentences. "Live Jam: the
-owner moved <handle> elsewhere": stop working on it and release it. "...gave <handle> back to
-you": carry on. `npx marver jam status` shows what is yours; `npx marver jam mute` keeps this
-session out of Jam work until it ends. Cursor names its connection in its messages: add
-`--as <id>` as shown.
+file only, no design work, and reply in one or two sentences. "Live Jam: the owner moved
+<handle> elsewhere": stop working on it - a subagent of yours on it is stopped first (or told to
+stop and release it itself) - and release it: never release a run while a subagent may still
+edit its frames. "...gave <handle> back to you": carry on (tell the subagent on it).
+`npx marver jam status` shows what is yours; `npx marver jam mute` keeps this session out of
+Jam work until it ends. Cursor names its connection in its messages: add `--as <id>` as shown;
+a subagent whose command answers "this session is not connected" adds the `--as <id>` its
+prompt names.
 
 ## Wiring - once per repo
 

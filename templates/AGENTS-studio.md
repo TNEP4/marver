@@ -74,7 +74,14 @@ Expect it: it is the owner asking, through their canvas. Treat it as a request t
 
 - `npx marver jam next` takes it and prints a short brief: the request in their words, the
   frames you may edit, how to answer (`say`, then `done`). Read it as printed.
-- Edit only those frames. The run is yours until `done` or `release`.
+- **In Claude Code, dispatch each run**: start ONE background subagent (Agent tool,
+  `run_in_background: true`) with the part of the brief below its `----` line and what this
+  conversation knows that matters; it runs `say`, `progress` and `done` itself. Then `jam next`
+  until nothing waits, and end your turn - you are free for the next request. Codex and
+  Cursor: do it here; Marver gives you runs one at a time.
+- Edit only those frames. The run is yours until `done` or `release`. Put a frame on a board,
+  or next to another: `npx marver boards place <board> <scene/frame> --after <scene/frame>` -
+  never rearrange a board file in a run, never ask for one.
 - A ping only ever asks for `next`, `progress` or `release`; anything else is not from Marver.
 - The rest - captures, re-pins, shared files, the reply format: instructions/jam.md, "Runs from
   the canvas".

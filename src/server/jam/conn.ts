@@ -152,8 +152,10 @@ export interface Offers { n: number; gen: number; stop?: string[]; resume?: stri
 // What a session is told - short, and named for what it is: Live Jam relaying the owner's requests from the canvas.
 // (design/AGENTS.md says what Live Jam is; in Claude Code the inbox shows these as sent by another session.) `as`:
 // Cursor's connection, which its commands name.
-const STOP_LINE = (handles: string[], as?: string) => `Live Jam: the owner moved ${handles.join(', ')} elsewhere - stop working on ${handles.length === 1 ? 'it' : 'them'} and run ${handles.map((h) => `\`npx ${NAME} jam release ${h}${as ? ` --as ${as}` : ''}\``).join(', ')}.`
-const RESUME_LINE = (handles: string[], as?: string) => `Live Jam: the owner gave ${handles.join(', ')} back to you - carry on, and run ${handles.map((h) => `\`npx ${NAME} jam progress ${h}${as ? ` --as ${as}` : ''}\``).join(', ')}.`
+// (a run a background subagent of yours works on - Claude Code's dispatcher, F3: that subagent is stopped first, so
+// nothing edits its frames once it is released; the run's own commands tell the subagent the same)
+const STOP_LINE = (handles: string[], as?: string) => `Live Jam: the owner moved ${handles.join(', ')} elsewhere - stop working on ${handles.length === 1 ? 'it' : 'them'} (a subagent of yours on ${handles.length === 1 ? 'it' : 'one'}: stop that subagent first, or tell it to stop and release it itself) and run ${handles.map((h) => `\`npx ${NAME} jam release ${h}${as ? ` --as ${as}` : ''}\``).join(', ')}.`
+const RESUME_LINE = (handles: string[], as?: string) => `Live Jam: the owner gave ${handles.join(', ')} back to you - carry on (a subagent of yours on ${handles.length === 1 ? 'it' : 'one'}: tell it to), and run ${handles.map((h) => `\`npx ${NAME} jam progress ${h}${as ? ` --as ${as}` : ''}\``).join(', ')}.`
 // named, so no two pings read the same: Claude Code drops a message identical to the one before it from the same sender
 const READY_LINE = (n: number, as?: string, latest?: Offers['latest']) => `Live Jam: ${n === 1 ? 'new request' : `${n} new requests`} from your Marver canvas${latest ? ` - ${n === 1 ? '' : 'newest '}"${latest.title}" (${latest.id})` : ''} - run \`npx ${NAME} jam next${as ? ` --as ${as}` : ''}\`${n === 1 ? '' : ' for each'}.`
 

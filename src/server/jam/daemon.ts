@@ -350,11 +350,14 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   // Session runs (spec 29b): the owner's session takes a batch with `marver jam next` and hands it back with `done`
   const runs: Runs = createRuns({
     root, cfg, q, log,
-    changed: () => queueChanged(),
-    goal: (b, handle, as) => {
+    // routing, ownership or room changed (an offer, a claim, a release, a stop): what waited may start now - a request on
+    // a frame your session's run just took, say (Codex's review of the F4 design)
+    changed: () => { queueChanged(); pumpSoon() },
+    goal: (b, handle, conn) => {
+      const as = conn.agent === 'cursor' ? conn.id : undefined
       let packet: JobPacket | null = null
       try { packet = JSON.parse(readFileSync(join(root, packetPath(b.batchId)), 'utf8')) as JobPacket } catch { packet = null }
-      return packet ? sessionBrief(packet, handle, as) : `The packet of this run is missing (${packetPath(b.batchId)}) - release it: \`npx marver jam release ${handle}${as ? ` --as ${as}` : ''}\`.`
+      return packet ? sessionBrief(packet, handle, as, { agent: conn.agent, conn: conn.id, overlaps: overlapsOf(b, conn) }) : `The packet of this run is missing (${packetPath(b.batchId)}) - release it: \`npx marver jam release ${handle}${as ? ` --as ${as}` : ''}\`.`
     },
     say: (b) => ensureEarly(b),
     ready: () => ready,
@@ -375,6 +378,13 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       return null
     },
   })
+
+  /** The runs of this same session incarnation that share a frame with `b` (F4) - named in its brief: their handle (or,
+   *  offered and not taken yet, their short id), the frames they share, their title. */
+  const overlapsOf = (b: Batch, conn: { id: string; inc: string }) => q.j.batches
+    .filter((x) => x.batchId !== b.batchId && x.state === 'claimed' && !x.results && x.frames.some((f) => b.frames.includes(f))
+      && ((x.claim && x.claim.conn === conn.id && x.claim.inc === conn.inc) || (x.offer && x.offer.conn === conn.id && x.offer.inc === conn.inc)))
+    .map((x) => ({ handle: x.claim ? handleOf(x, x.claim.gen) : `${x.batchId.slice(0, 8)} (offered, not taken yet)`, frames: x.frames.filter((f) => b.frames.includes(f)), title: runs.title(x) }))
 
   /** A session's early line (`marver jam say`), journaled on the batch before it is posted: posted with the id it
    *  names, once - an id already in the log is not posted again (a restart between the two posts it then). */
@@ -792,6 +802,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
             // offered to your session first and taken back: the copy says why it, not your session, runs it
             const why = b.handoffWhy === 'not taken in 2 minutes' || b.handoffWhy === 'its turn ended without taking it' ? "your session didn't take it - it was busy or away"
               : b.handoffWhy === 'your session let it go' ? "your session didn't take it - it let it go"
+              // full when its offer was to be made (two runs chose its last slot at once): the room said again, under the lock
+              : b.handoffWhy?.startsWith("your session didn't take it") ? b.handoffWhy
               : b.handoffWhy === 'the Jam session ended' ? 'the Jam session had ended' : passedOver
             return why && !('why' in p && p.why) ? { ...p, why } : p
           })()
@@ -803,6 +815,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         // the runner is the decision now: saved before it runs, and the handoff it came from is spent
         await q.lock(() => { b.runner = { kind: ch.kind, agent, ...(ch.kind === 'fork' && ch.session ? { session: ch.session } : {}), ...(ch.why ? { why: ch.why } : {}) }; delete b.handoff; q.persist() })
         queueChanged()
+        // a process slot of its own, whatever brought it here (jam.concurrency is the most Marver spawns at once)
+        const permit = await takePermit()
+        try {
         while (!stopped && b.attempts < MAX_ATTEMPTS) {
           await q.lock(() => { b.attempts += 1; b.leaseUntil = Date.now() + LEASE_MS; q.persist() })
           // every spawn reads the packet the journal makes, written again now (a record's seal checked again)
@@ -836,6 +851,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           logRun(b.batchId, run.raw)
           if (run.ok) break
         }
+        } finally { permit() }
       }
       if (stopped) return
       if (!run.ok) {
@@ -1027,6 +1043,25 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   }
 
   // ---- the scheduler --------------------------------------------------------------------------
+  /** A pump soon, once however often it is asked for, outside whatever lock asks for it. */
+  let pumpDue: ReturnType<typeof setTimeout> | null = null
+  const pumpSoon = () => {
+    if (pumpDue || stopped) return
+    pumpDue = setTimeout(() => { pumpDue = null; void pump().catch((err) => log(`  jam: pump error - ${(err as Error).message}`)) }, 0)
+    pumpDue.unref?.()
+  }
+  /** Spawned processes at once: never more than jam.concurrency, whatever routing decided - a run that falls back from
+   *  your session (released, withdrawn, moved by you, a restart) takes a permit before its first attempt and gives it
+   *  back after its last (Codex's review of the F3 design). First come, first served. */
+  const permits = { free: Math.max(1, cfg.concurrency), waiting: [] as (() => void)[] }
+  const takePermit = (): Promise<() => void> => new Promise((res) => {
+    const grant = () => {
+      permits.free -= 1
+      let back = false
+      res(() => { if (back) return; back = true; permits.free += 1; permits.waiting.shift()?.() })
+    }
+    if (permits.free > 0 && !permits.waiting.length) grant(); else permits.waiting.push(grant)
+  })
   let recheck: ReturnType<typeof setTimeout> | null = null
   const holdLater = () => {
     if (recheck || stopped) return
@@ -1050,8 +1085,13 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     const started = await q.lock((j, ctx) => {
       noteQueued()   // a card queued since the last change was seen: its wait starts no later than now
       const frames = new Set([...runningBatches.values()].flatMap((b) => b.frames))
+      // runs a session holds (offered, taken, or waiting for one) count against its own limit, not jam.concurrency - which
+      // caps what Marver spawns (F3: a Claude Code session dispatching holds up to 8): the slots are the spawned ones left,
+      // and the session's room on top
+      const sessionSide = (x: Batch) => !x.handoff && (!!x.offer || !!x.claim || x.runner?.kind === 'session')
+      const spawned = [...runningBatches.values()].filter((x) => !sessionSide(x)).length
       const { batches, exclusiveWaiting } = form(j, ctx, {
-        free: Math.max(1, cfg.concurrency) - runningBatches.size,
+        free: Math.max(1, cfg.concurrency) - spawned + runs.room(),
         running: frames,
         exclusiveRunning: [...runningBatches.values()].some((b) => b.exclusive),
         held: (f) => !!hooks.held?.(f),
@@ -1433,6 +1473,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       stopped = true; jamReservations.settling = false
       runs.stop()
       if (recheck) clearTimeout(recheck)
+      if (pumpDue) clearTimeout(pumpDue)
+      // a run waiting for a process slot ends (it looks at `stopped` first)
+      for (const w of permits.waiting.splice(0)) w()
       for (const t of timers) clearTimeout(t)
       timers.clear()
       for (const wake of naps) wake()

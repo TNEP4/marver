@@ -306,7 +306,7 @@ describe('Live Jam: config.jam (on by default)', async () => {
   const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')
   const { loadConfig } = await import('../src/server/config.ts')
-  const ON = { agent: 'claude', concurrency: 6, subagents: true, proactive: false, chime: true, capture: 'confirm', loc: true, names: true, runner: 'auto', session: true, context: 'fork', mcp: true, skills: true, others: false, sessionMax: 3 }
+  const ON = { agent: 'claude', concurrency: 6, subagents: true, proactive: false, chime: true, capture: 'confirm', loc: true, names: true, runner: 'auto', session: true, context: 'fork', mcp: true, skills: true, others: false }
 
   // Pin what detection sees: a PATH with a fake `claude` and no agent env markers.
   const dirs: string[] = []

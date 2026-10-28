@@ -35,13 +35,19 @@ export const DONE_MAX = 400_000
 
 export type AgentRun = { reply: string; asks: boolean; model?: string; ok: boolean; reanchors: import('./types.ts').Reanchor[]; said?: string; raw?: string }
 
-/** What this machine's Jam does now: design/config.ts, with the start sheet's switches over it. */
+/** Runs one session holds at once (F3). Claude Code dispatches each run to a background subagent of its own, so it can
+ *  hold several at once: 8. Marver gives Codex and Cursor runs one after another in their own thread: 3 (as before).
+ *  `jam.sessionMax` caps every session. */
+export const sessionMaxFor = (cfg: Pick<JamConfig, 'sessionMax'>, agent: ConnAgent): number => cfg.sessionMax ?? (agent === 'claude' ? 8 : 3)
+
+/** What this machine's Jam does now: design/config.ts, with the start sheet's switches over it. `sessionMax`: the
+ *  selected session's own limit (the config's when set). */
 export interface Settings { runner: JamConfig['runner']; session: boolean; context: 'fork' | 'fresh'; mcp: boolean; skills: boolean; others: boolean; sessionMax: number }
-export function settingsOf(root: string, cfg: JamConfig): Settings {
+export function settingsOf(root: string, cfg: JamConfig, agent?: ConnAgent): Settings {
   const p = readPrefs(root)
   const b = (v: unknown, d: boolean) => (typeof v === 'boolean' ? v : d)
   return {
-    runner: cfg.runner ?? 'auto', session: cfg.session !== false, sessionMax: cfg.sessionMax ?? 3,
+    runner: cfg.runner ?? 'auto', session: cfg.session !== false, sessionMax: agent ? sessionMaxFor(cfg, agent) : cfg.sessionMax ?? 3,
     context: p.context === 'fork' || p.context === 'fresh' ? p.context : cfg.context ?? 'fork',
     mcp: b(p.mcp, cfg.mcp ?? true), skills: b(p.skills, cfg.skills ?? true), others: b(p.others, cfg.others ?? false),
   }
@@ -70,8 +76,8 @@ export interface RunsDeps {
   ready(): boolean
   /** a Jam session runs - the only time a session takes work (spec 29b v2, 15) */
   jamOn(): boolean
-  /** the run's prompt for a session that took it (`as`: the connection a Cursor session names in its commands) */
-  goal(b: Batch, handle: string, as?: string): string
+  /** the run's prompt (its brief) for the session connection that took it */
+  goal(b: Batch, handle: string, conn: Conn): string
   /** post a session's early line on a one-member run, with its journaled id (once: an id already in the log is not posted again) */
   say(b: Batch): boolean
   /** the agents this machine can spawn (on PATH) */
@@ -83,6 +89,11 @@ export interface RunsDeps {
 
 export interface Runs {
   settings(): Settings
+  /** Runs the session that takes the work now can still take (its limit less what it holds); 0 when none can (F3: they
+   *  count against its own limit, not jam.concurrency) */
+  room(now?: number): number
+  /** that session, while it has room - the one a request on a frame its own runs hold may be offered to (F4) */
+  taker(now?: number): Conn | undefined
   /** the session that takes the work now, if any */
   selected(now?: number): Conn | undefined
   /** `spawnOnly`: a session cannot take it (released, withdrawn, the owner's choice) - a copy or a fresh agent */
@@ -127,6 +138,7 @@ export function createRuns(d: RunsDeps): Runs {
   const published = new Set<string>()
 
   const settings = () => settingsOf(root, d.cfg)
+  const maxOf = (c: Conn) => sessionMaxFor(d.cfg, c.agent)
   /** may this session take Jam work now: alive, not muted or in plan mode, and its tool's connector not turned off */
   const usable = (c: Conn | null | undefined, now = Date.now()): boolean => !!c && eligible(c, now) && !readPrefs(root).off?.[c.agent]
   const live = (now = Date.now()) => listConns(root).filter((c) => usable(c, now))
@@ -161,7 +173,7 @@ export function createRuns(d: RunsDeps): Runs {
     let skipped: string | undefined
     if (!spawnOnly && !b.handoff) {
       const pick = sessionsOn(s, b) ? selected(now) : undefined
-      if (pick && offerable(pick) && load(pick.id) < s.sessionMax) return { kind: 'session', conn: pick }
+      if (pick && offerable(pick) && load(pick.id) < maxOf(pick)) return { kind: 'session', conn: pick }
       // session-only waits for one, as long as sessions can take work at all
       if (s.runner === 'session' && s.session && s.context === 'fork') return { kind: 'wait' }
       if (pick) skipped = offerable(pick) ? `your session didn't take it - it already holds ${load(pick.id)} run${load(pick.id) === 1 ? '' : 's'}` : `your session was idle - ${pick.agent === 'codex' ? 'Codex' : 'Cursor'} takes a run only while it works`
@@ -234,13 +246,22 @@ export function createRuns(d: RunsDeps): Runs {
     // completed before a restart: its final message is on the batch
     if (b.claim?.result !== undefined) return resolve(parsedRun(b.claim.result))
     waiters.set(b.batchId, resolve)
+    let gone = false
     void q.lock(() => {
       if (!b.claim && !b.offer) {
-        b.runner = { kind: 'session', agent: conn?.agent ?? '' }
-        if (conn) { b.runner.conn = conn.id; b.offer = { conn: conn.id, inc: conn.inc, at: Date.now() } }
+        // its session's room checked again here, under the lock: two runs chosen at once never take one last slot
+        // (Codex's review of the F3 design) - the one that finds it full goes where a full session sends it
+        const held = conn ? load(conn.id) : 0
+        if (conn && held >= maxOf(conn)) {
+          letGo(b)
+          if (b.handoff) { b.handoffWhy = `your session didn't take it - it already holds ${held} run${held === 1 ? '' : 's'}`; gone = true }
+        } else {
+          b.runner = { kind: 'session', agent: conn?.agent ?? '' }
+          if (conn) { b.runner.conn = conn.id; b.offer = { conn: conn.id, inc: conn.inc, at: Date.now() } }
+        }
       }
       q.persist()
-    }).then(() => { publish(); d.changed() }, () => settle(b.batchId, null))
+    }).then(() => { publish(); d.changed(); if (gone) settle(b.batchId, null) }, () => settle(b.batchId, null))
   })
 
   /** Does a run a session let go of (not an explicit choice of the owner's) wait for a session again? Only under
@@ -411,7 +432,7 @@ export function createRuns(d: RunsDeps): Runs {
         b.runner = { kind: 'session', agent: conn.agent, conn: conn.id }
         b.claim = { conn: conn.id, inc: conn.inc, ...(conn.pid ? { pid: conn.pid } : {}), gen, at: Date.now(), progress: Date.now() }
         const handle = handleOf(b, gen)
-        const o = { ok: true, handle, frames: b.frames, text: d.goal(b, handle, conn.agent === 'cursor' ? conn.id : undefined) }
+        const o = { ok: true, handle, frames: b.frames, text: d.goal(b, handle, conn) }
         keep(req, o, b)
         q.persist()
         return o
@@ -534,7 +555,7 @@ export function createRuns(d: RunsDeps): Runs {
           settle(b.batchId, null); d.changed()
           continue
         }
-        if (sel && offerable(sel) && load(sel.id) < s.sessionMax) {
+        if (sel && offerable(sel) && load(sel.id) < maxOf(sel)) {
           await q.lock(() => { const x = byId(b.batchId); if (x && !x.offer && !x.claim && !x.handoff) { x.runner = { kind: 'session', agent: sel.agent, conn: sel.id }; x.offer = { conn: sel.id, inc: sel.inc, at: Date.now() }; q.persist() } })
           d.changed()
         }
@@ -552,8 +573,18 @@ export function createRuns(d: RunsDeps): Runs {
     }
   }
 
+  /** the session that takes new work now and its room for more (F3, F4) */
+  const roomOf = (now = Date.now()): { conn: Conn; room: number } | undefined => {
+    const s = settings()
+    const sel = sessionsOn(s) ? selected(now) : undefined
+    return sel && offerable(sel) ? { conn: sel, room: Math.max(0, maxOf(sel) - load(sel.id)) } : undefined
+  }
+
   return {
-    settings, selected, choose, run, tick, title: titleOf,
+    settings: () => { const sel = selected(); return settingsOf(root, d.cfg, sel?.agent) },
+    room: (now) => roomOf(now)?.room ?? 0,
+    taker: (now) => { const r = roomOf(now); return r && r.room > 0 ? r.conn : undefined },
+    selected, choose, run, tick, title: titleOf,
     delivered(batchId, ok, note) {
       outcome.set(batchId, { ok, ...(note ? { note } : {}) })
       if (outcome.size > 200) outcome.delete(outcome.keys().next().value!)
