@@ -1769,6 +1769,29 @@ describe('captures in the browser: the first trial', () => {
     await until(`(window.__mvJamQueue.getState().cards ?? []).every((c) => c.state !== 'queued' && c.state !== 'working')`, 60_000)
   }, 150_000)
 
+  skippable('an Asks you tile clicked from another board, its frame on no node of its own board: the first click lands there and opens its panel', async () => {
+    const { r } = await askingCapture()
+    const main = readFileSync(join(root, 'design', 'boards', 'main.json'), 'utf8')
+    try {
+      // its frame leaves its board (on disk - the board reloads), and the page is on another board
+      put('design/boards/other.json', { version: 1, name: 'other', auto: false, order: 1, nodes: [{ frame: 'spec/alpha' }] })
+      const b = JSON.parse(main); b.nodes = b.nodes.filter((n: { frame: string }) => n.frame !== 'spec/bravo'); put('design/boards/main.json', b)
+      await until(`!window.__mvStore.getState().nodes.some((n) => n.frame === 'spec/bravo')`, 10_000)
+      await browser!.eval(s, `(location.hash = '#/b/other', 1)`)
+      await until(`window.__mvStore.getState().board === 'other'`, 10_000)
+      await until(`!!document.querySelector('.jm-lane [data-tile="${r}"]')`, 10_000)
+      await click(`.jm-lane [data-tile="${r}"]`)
+      // one click: its own board, and - its thread having no frame there - the capture's panel with the question
+      await until(`window.__mvStore.getState().board === 'main' && window.__mvJamUi.getState().panel?.id === ${JSON.stringify(r)} && !!document.querySelector('.jm-asks textarea')`, 10_000)
+    } finally {
+      writeFileSync(join(root, 'design', 'boards', 'main.json'), main)
+      try { rmSync(join(root, 'design', 'boards', 'other.json')) } catch { /* gone */ }
+      await browser!.eval(s, `(window.__mvJamUi.getState().close(), location.hash = '#/b/main', 1)`)
+      await until(`window.__mvStore.getState().board === 'main' && window.__mvStore.getState().nodes.some((n) => n.frame === 'spec/bravo')`, 10_000)
+    }
+    await decide(r, 'drop').catch(() => {})
+  }, 150_000)
+
   skippable('a capture waiting on a frame another run holds says so on its tile - "Waits for bravo", never "Queued · next" (F2)', async () => {
     // the first run lasts long enough for the second capture to seal and land beside it
     agentMode({ delay: 25_000 })

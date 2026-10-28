@@ -25,17 +25,16 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   subagent of its own - with the request, and what your conversation knows that matters - which says "On it", does the
   work and hands the run back itself, while the session is free again in seconds for the next request. So captures run
   side by side: a Claude Code session holds up to 8 runs at once (`jam.sessionMax` caps it), and runs a session holds
-  no longer count against `jam.concurrency`, which now caps only the runs Marver starts itself. Marver gives Codex and
-  Cursor runs to their session one at a time, as before. When you move a run elsewhere, the session is told to stop
+  no longer count against `jam.concurrency`, which now caps only the runs Marver starts itself. Codex and Cursor have
+  no background subagents: their session holds up to 3 runs and works them one after another. When you move a run elsewhere, the session is told to stop
   the subagent on it before it lets go, so nothing edits those frames after.
 - **Two requests on one frame: your session decides.** A request on a frame your own session's run is working is no
   longer held back: it is offered to that session at once, naming the run it overlaps ("overlaps your run r-..."), and
   the session sends it to the subagent on that frame - to do after, or fold in now - or makes it a variant in a new
   frame beside it. Runs of different runners still never share a frame: a run your session lets go of while another of
   its runs holds the frame goes back to the queue and waits for it - keeping the variant it placed with `--run` and its
-  review's pictures from before any edit, so the run that takes it over can finish it - with `jam.runner: 'session'` too, so two requests
-  on one frame follow you when you switch sessions instead of waiting on each other (or, one still taking its
-  before-pictures as you switched, running in the background).
+  review's pictures from before any edit, so the run that takes it over can finish it. With `jam.runner: 'session'`, two
+  requests on one frame follow you when you switch sessions instead of waiting on each other.
 - **"Put this next to slide 01" just works.** `npx marver boards place <board> <scene/frame> --after|--before
   <scene/frame>` puts a frame next to another and moves the frames after it right to make room - in a deck it plays
   right after it, and it stays there when the canvas lays the board out again (a board with a layout recipe, or

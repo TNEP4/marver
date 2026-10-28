@@ -186,13 +186,20 @@ export function openTile(id: string) {
  *  with its question and a field to answer it - so a click is never a no-op. */
 export function openThread(c: JamCard) {
   if (!c.thread) return
-  if (c.board !== useStore.getState().board) { location.hash = `#/b/${encodeURIComponent(c.board)}?c=${encodeURIComponent(c.thread)}`; return }
+  // on another board: its link opens that board (and the thread, when its frame is there) - then the same as here, so
+  // a thread that board cannot show still opens the capture's panel on the first click
+  const away = c.board !== useStore.getState().board
+  if (away) location.hash = `#/b/${encodeURIComponent(c.board)}?c=${encodeURIComponent(c.thread)}`
   const thread = c.thread
   void Promise.all([import('./Comments.tsx'), import('./comments-store.ts')]).then(async ([{ revealThread }, { useComments }]) => {
-    const until = performance.now() + 3_000
+    const until = performance.now() + (away ? 6_000 : 3_000)
     for (;;) {
-      // another board opened meanwhile: this one's thread is not there to open
-      if (useStore.getState().board !== c.board) return
+      if (useStore.getState().board !== c.board) {
+        // still on its way there - or another board opened meanwhile: this one's thread is not there to open
+        if (!away || performance.now() > until) return
+        await new Promise((r) => setTimeout(r, 250))
+        continue
+      }
       if (revealThread(thread)) return
       // known, and still not shown: its frame is on no node of this board - no wait helps
       if (useComments.getState().threads.some((t) => t.id === thread) || performance.now() > until) break
