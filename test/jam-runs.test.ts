@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { appendEvents, readLog, replay, type CommentEvent } from '../src/server/comments.ts'
-import { createJam } from '../src/server/jam/daemon.ts'
+import { createJam, type JamHooks } from '../src/server/jam/daemon.ts'
 import { claudeAdapter, sandboxReady } from '../src/server/jam/adapter/claude.ts'
 import { record } from '../src/server/jam/ledger.ts'
 import { connId, endConn, listConns, readConn, readOffers, upsertConn, writePrefs } from '../src/server/jam/conn.ts'
@@ -15,7 +15,7 @@ import { decide } from '../src/server/jam/permit.ts'
 import { hook, ownHost } from '../src/cli/jam.ts'
 import { claudeSlug, newestClaude, newestCodex } from '../src/server/jam/fork.ts'
 import { STALL_MS, OFFER_MS } from '../src/server/jam/runs.ts'
-import type { JamAdapter } from '../src/server/jam/types.ts'
+import type { CaptureRecord, JamAdapter } from '../src/server/jam/types.ts'
 import type { JamConfig } from '../src/server/config.ts'
 
 /**
@@ -63,9 +63,9 @@ const SESSION = () => `ses-${Date.now()}-${Math.random().toString(36).slice(2, 8
 const REPLY = (text: string) => `\`\`\`marver-reply m1\n${text}\n\`\`\``
 
 /** A daemon with a Jam session running and one Claude Code session connected (this process). */
-async function setup(o: { jam?: boolean; cfg?: Partial<JamConfig>; adapter?: JamAdapter } = {}) {
+async function setup(o: { jam?: boolean; cfg?: Partial<JamConfig>; adapter?: JamAdapter; hooks?: JamHooks } = {}) {
   const w = workspace()
-  const jam = createJam(w.root, { ...CFG, ...o.cfg }, o.adapter ?? spawned)
+  const jam = createJam(w.root, { ...CFG, ...o.cfg }, o.adapter ?? spawned, undefined, o.hooks)
   const conn = upsertConn(w.root, 'claude', randomUUID(), { pid: process.pid, cwd: w.root }, Date.now(), true)
   if (o.jam !== false) await jam.session({ action: 'start', id: SESSION() })
   // what the session runs, through the files - the daemon's session tick answers
@@ -717,6 +717,126 @@ describe('F3: a Claude Code session dispatches - it holds up to 8 runs, Codex an
     for (const e of ev) { now += e.k === 's' ? 1 : -1; most = Math.max(most, now) }
     expect(ev.filter((e) => e.k === 's').length).toBe(5)
     expect(most).toBeLessThanOrEqual(2)
+    s.jam.stop(); s.done()
+  })
+})
+
+describe('F4: the same frame twice - offered to your session, which decides; runs of different runners never share a frame', { timeout: 60_000 }, () => {
+  const slow: JamAdapter = { ...spawned, spawnArgs() { return { cmd: process.execPath, args: ['-e', `require('fs').writeFileSync('spawned.marker','yes');setTimeout(()=>process.stdout.write(JSON.stringify({result:'A background agent did it.'})),1500)`] } } }
+  const offered = (s: { root: string; conn: { id: string } }) => readOffers(s.root, s.conn.id)
+  const cardFor = (s: Awaited<ReturnType<typeof setup>>, body: string) => s.jam.view().cards.find((c) => c.kind === 'comment' && s.jam.snapshot().cards.find((x) => x.id === c.id)?.events.some((e) => readLog(s.dir, 'home').find((ev) => ev.id === e)?.body === body))
+
+  it('a request on a frame your session\'s run is working is offered at once - the ping and the brief name the run it overlaps (Nic, 28 Oct)', async () => {
+    const s = await setup({ cfg: { sessionMax: undefined } })
+    tag(s.root, s.dir, '@marver icon labels')
+    const t = s.jam.tick()
+    expect(await until(() => (offered(s)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
+    const h1 = String((await s.ask('next')).handle)
+    tag(s.root, s.dir, '@marver redesign the images')   // the same frame, demo/hero
+    const t2 = s.jam.tick()
+    expect(await until(() => (offered(s)?.n ?? 0) === 1 && (offered(s)?.line ?? '').includes('redesign the images'), 8_000, () => s.jam.runs.tick())).toBe(true)
+    expect(offered(s)?.line).toMatch(new RegExp(`^Live Jam: new request from your Marver canvas - "redesign the images" \\([0-9a-f]{8}, overlaps your run ${h1.replace('.', '\\.')}\\) - run \`npx marver jam next\`\\.$`))
+    const n2 = await s.ask('next')
+    expect(String(n2.text)).toContain(`It overlaps your run ${h1} ("icon labels") on demo/hero - a subagent of yours may be editing it.`)
+    // both handed back: two replies, as the session's
+    expect((await s.ask('done', { handle: h1, text: REPLY('Labels done.') })).ok).toBe(true)
+    expect((await s.ask('done', { handle: String(n2.handle), text: REPLY('Images done.') })).ok).toBe(true)
+    await Promise.all([t, t2])
+    expect(finals(s.dir).map((r) => r.body).sort()).toEqual(['Images done.', 'Labels done.'])
+    expect(finals(s.dir).every((r) => r.agentMeta?.runner === 'session')).toBe(true)
+    expect(existsSync(join(s.root, 'spawned.marker'))).toBe(false)
+    s.jam.stop(); s.done()
+  })
+
+  it('released while your other run still holds the frame: it goes back to the queue - never spawned beside it - says what it waits for, and runs once the frame is free', async () => {
+    const s = await setup({ cfg: { sessionMax: undefined } })
+    tag(s.root, s.dir, '@marver icon labels')
+    const t = s.jam.tick()
+    await until(() => (offered(s)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())
+    const h1 = String((await s.ask('next')).handle)
+    tag(s.root, s.dir, '@marver redesign the images')
+    const t2 = s.jam.tick()
+    await until(() => (offered(s)?.n ?? 0) === 1 && (offered(s)?.line ?? '').includes('redesign'), 8_000, () => s.jam.runs.tick())
+    const h2 = String((await s.ask('next')).handle)
+    expect((await s.ask('release', { handle: h2 })).text).toBe('Released - another runner takes it.')
+    // back in the queue, waiting for the frame your first run holds - no copy runs beside it
+    expect(await until(() => cardFor(s, '@marver redesign the images')?.state === 'queued', 8_000, () => s.jam.runs.tick())).toBe(true)
+    expect(cardFor(s, '@marver redesign the images')?.waitsFor).toEqual({ frame: 'demo/hero', by: 'icon labels' })
+    await new Promise((r) => setTimeout(r, 300))
+    expect(existsSync(join(s.root, 'spawned.marker'))).toBe(false)
+    // the first is handed back: the frame is free, and the released one runs - spawned, as releasing it decided
+    expect((await s.ask('done', { handle: h1, text: REPLY('Labels done.') })).ok).toBe(true)
+    await Promise.all([t, t2])
+    await s.jam.tick()
+    expect(await until(() => finals(s.dir).length === 2, 15_000, () => s.jam.tick())).toBe(true)
+    expect(finals(s.dir).map((r) => r.body).sort()).toEqual(['A background agent did it.', 'Labels done.'])
+    expect(s.jam.snapshot().batches.find((b) => b.runner?.kind !== 'session' && b.state === 'done' && b.results)?.runner?.why).toBe("your session didn't take it - it let it go")
+    s.jam.stop(); s.done()
+  })
+
+  it('a frame a spawned run holds is never shared: a request on it waits (and says so), and is never offered to your session beside it', async () => {
+    const s = await setup({ jam: false, adapter: slow })
+    tag(s.root, s.dir, '@marver icon labels')
+    const t = s.jam.tick()
+    expect(await until(() => existsSync(join(s.root, 'spawned.marker')), 8_000)).toBe(true)
+    await s.jam.session({ action: 'start', id: SESSION() })
+    tag(s.root, s.dir, '@marver redesign the images')
+    await s.jam.poke()
+    for (let i = 0; i < 5; i++) { await s.jam.runs.tick(); await new Promise((r) => setTimeout(r, 50)) }
+    expect(cardFor(s, '@marver redesign the images')?.state).toBe('queued')
+    expect(cardFor(s, '@marver redesign the images')?.waitsFor).toEqual({ frame: 'demo/hero', by: 'icon labels' })
+    expect(offered(s)?.n ?? 0).toBe(0)
+    // the spawned run done: the frame is free, and the request goes to your session like any other
+    expect(await until(() => (offered(s)?.n ?? 0) === 1, 15_000, () => s.jam.runs.tick())).toBe(true)
+    s.jam.stop(); await t.catch(() => {}); s.done()
+  })
+
+  it('a request that lands while the first run takes its before-pictures is offered as soon as the first is (the queue is pumped when ownership changes)', async () => {
+    let open!: () => void
+    const gate = new Promise<void>((r) => { open = r })
+    let shots = 0
+    const s = await setup({ cfg: { sessionMax: undefined }, hooks: { shoot: async () => { shots += 1; await gate; return null } } })
+    const id = `cap-${Date.now()}-abcdef`
+    const r: CaptureRecord = { format: 'marver.jam.capture', v: 1, id, context: { canvas: 'test', board: 'home' }, view: { board: 'home', frames: ['demo/hero'], theme: 'light' },
+      timeline: [{ at: 1_000, event: 'view', view: { frames: ['demo/hero'] } }, { at: 2_000, event: 'words', text: 'icon labels' }, { at: 3_000, frame: 'demo/hero', event: 'pick', point: 1, mode: 'canvas', bundle: { tag: 'h1', quote: 'Hi' } }], pictures: [] }
+    expect((await s.jam.capture(r)).ok).toBe(true)
+    const t = s.jam.tick()
+    expect(await until(() => shots >= 1, 8_000)).toBe(true)   // the capture's run takes its before-picture: no one's run yet
+    tag(s.root, s.dir, '@marver redesign the images')
+    await s.jam.poke()
+    expect(cardFor(s, '@marver redesign the images')?.state).toBe('queued')
+    open()
+    // the capture's run is offered to your session - and the request on its frame with it, at once
+    expect(await until(() => (offered(s)?.n ?? 0) === 2, 8_000, () => s.jam.runs.tick())).toBe(true)
+    s.jam.stop(); await t.catch(() => {}); s.done()
+  })
+
+  it('boards place --run gives a new frame to the run first: it joins the run\'s frames (pictured as new), and is refused when your agent in chat holds it or the handle is not yours', async () => {
+    let chat = 'demo/held'
+    const s = await setup({ cfg: { sessionMax: undefined }, hooks: { held: (f) => f === chat } })
+    mkdirSync(join(s.root, 'design', 'boards'), { recursive: true })
+    writeFileSync(join(s.root, 'design', 'boards', 'home.json'), JSON.stringify({ version: 1, nodes: [{ frame: 'demo/hero', x: 0, y: 0, w: 390, h: 844 }] }))
+    tag(s.root, s.dir, '@marver a variant next to it')
+    const t = s.jam.tick()
+    await until(() => (offered(s)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())
+    const h = String((await s.ask('next')).handle)
+    put(s.root, 'design/scenes/demo/hero-b.tsx')
+    const { boardsPlace } = await import('../src/cli/boards.ts')
+    let placed: unknown
+    const p = boardsPlace(s.root, 'home', ['demo/hero-b'], { after: 'demo/hero', run: h, as: s.conn.id }).then((x) => { placed = x }, (e) => { placed = e })
+    expect(await until(() => placed !== undefined, 15_000, () => s.jam.runs.tick())).toBe(true)
+    await p
+    expect(placed).toMatchObject({ added: true, laidOut: true })
+    const b = s.jam.snapshot().batches.find((x) => x.claim)!
+    expect(b.frames).toEqual(['demo/hero', 'demo/hero-b'])
+    expect(b.created).toEqual(['demo/hero-b'])
+    expect(JSON.parse(readFileSync(join(s.root, 'design', 'boards', 'home.json'), 'utf8')).nodes.map((n: any) => n.frame)).toEqual(['demo/hero', 'demo/hero-b'])
+    put(s.root, 'design/scenes/demo/held.tsx')
+    expect(await s.ask('own', { handle: h, frame: 'demo/held' })).toMatchObject({ ok: false, error: 'your agent in chat is working on demo/held' })
+    chat = ''
+    expect(await s.ask('own', { handle: 'r-00000000.1', frame: 'demo/held' })).toMatchObject({ ok: false, error: 'that run is over' })
+    expect((await s.ask('done', { handle: h, text: REPLY('Variant beside it.') })).ok).toBe(true)
+    await t
     s.jam.stop(); s.done()
   })
 })

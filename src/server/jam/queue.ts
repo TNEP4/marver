@@ -419,6 +419,13 @@ export interface FormOpts {
   anyHold(): boolean
   /** other people's words reach the agent (`jam.others`; absent: they do, as context) */
   others?: boolean
+  /** F4: the runs holding `frame` when a new request may share it - every one of them held by the session that takes
+   *  the work now - else null: it waits for the frame. A request back from a run that left its session never shares */
+  share?(frame: string): string[] | null
+  /** how many runs that session can still take (a shared run must go to it) */
+  shareRoom?: number
+  /** that session's incarnation: what a shared run is formed for */
+  sharer?: { conn: string; inc: string }
 }
 
 /** Claim what can run now: the queued cards of one board on one single frame join one batch, in
@@ -433,7 +440,7 @@ export function form(j: Journal, ctx: Ctx, o: FormOpts, now = Date.now()): { bat
   for (const c of j.cards) if (c.state === 'queued' && (c.exclusive || !c.frames.length)) validate(ctx, c, log(c.board), now, j)
   const queued = j.cards.filter((c) => c.state === 'queued').sort((a, b) => a.order - b.order || a.made - b.made)
   const exclusive = queued.filter((c) => c.exclusive || !c.frames.length)
-  type Forming = { board: string; frames: string[]; cards: Card[]; exclusive?: boolean; single: boolean }
+  type Forming = { board: string; frames: string[]; cards: Card[]; exclusive?: boolean; single: boolean; overlaps?: string[] }
   const forming: Forming[] = []
   if (exclusive.length) {
     if (o.exclusiveRunning || o.running.size || o.anyHold() || o.free < 1) return { batches: [], exclusiveWaiting: !o.exclusiveRunning }
@@ -441,20 +448,31 @@ export function form(j: Journal, ctx: Ctx, o: FormOpts, now = Date.now()): { bat
     forming.push({ board: c.board, frames: [...c.frames], cards: [c], exclusive: true, single: false })
   } else if (!o.exclusiveRunning) {
     const reserved = new Set(o.running)
+    // frames a batch of this pass took: never shared within it (a second request on one joins it, or waits)
+    const formedNow = new Set<string>()
+    let room = o.shareRoom ?? 0
+    // F4: a frame a run of the session taking the work holds may be shared - offered to that session, which decides
+    const sharable = (c: Card, f: string) => !c.alone && !formedNow.has(f) && !!o.share?.(f)
     for (const c of queued) {
       if (c.frames.length === 1) {
         const f = c.frames[0]
-        const join = forming.find((b) => b.single && b.board === c.board && b.frames[0] === f && b.cards.length < MAX_MEMBERS)
+        // (one back from a run that left its session never joins a run formed beside another)
+        const join = forming.find((b) => b.single && b.board === c.board && b.frames[0] === f && b.cards.length < MAX_MEMBERS && !(c.alone && b.overlaps))
         if (join) { if (validate(ctx, c, log(c.board), now, j)) join.cards.push(c); continue }
-        if (reserved.has(f) || o.held(f) || forming.length >= o.free) continue
+        const shared = reserved.has(f) && room > 0 && sharable(c, f)
+        if ((reserved.has(f) && !shared) || o.held(f) || forming.length >= o.free) continue
         if (!validate(ctx, c, log(c.board), now, j)) continue
-        forming.push({ board: c.board, frames: [f], cards: [c], single: true })
-        reserved.add(f)
+        forming.push({ board: c.board, frames: [f], cards: [c], single: true, ...(shared ? { overlaps: o.share!(f)! } : {}) })
+        if (shared) room -= 1
+        reserved.add(f); formedNow.add(f)
       } else {
-        if (c.frames.some((f) => reserved.has(f) || o.held(f)) || forming.length >= o.free) continue
+        const busy = c.frames.filter((f) => reserved.has(f))
+        const shared = busy.length > 0 && room > 0 && busy.every((f) => sharable(c, f))
+        if ((busy.length && !shared) || c.frames.some((f) => o.held(f)) || forming.length >= o.free) continue
         if (!validate(ctx, c, log(c.board), now, j)) continue
-        forming.push({ board: c.board, frames: [...c.frames], cards: [c], single: false })
-        for (const f of c.frames) reserved.add(f)
+        forming.push({ board: c.board, frames: [...c.frames], cards: [c], single: false, ...(shared ? { overlaps: [...new Set(busy.flatMap((f) => o.share!(f)!))] } : {}) })
+        if (shared) room -= 1
+        for (const f of c.frames) { reserved.add(f); formedNow.add(f) }
       }
     }
   }
@@ -475,7 +493,12 @@ export function form(j: Journal, ctx: Ctx, o: FormOpts, now = Date.now()): { bat
         ...(t?.anchor !== undefined ? { anchor: t.anchor } : {}), brief })
     }
     const files = f.exclusive ? [...new Set(f.cards.flatMap((c) => c.exclusive ?? []))] : undefined
-    const b: Batch = { batchId, members, frames: f.frames, ...(f.exclusive ? { exclusive: true } : {}), state: 'claimed', leaseUntil: 0, attempts: 0, at: now, others: o.others !== false }
+    // back from a run that left its session (F4): it runs as it was going to - spawned, saying why
+    const back = f.cards.find((c) => c.alone?.spawn)?.alone
+    for (const c of f.cards) delete c.alone
+    const b: Batch = { batchId, members, frames: f.frames, ...(f.exclusive ? { exclusive: true } : {}), state: 'claimed', leaseUntil: 0, attempts: 0, at: now, others: o.others !== false,
+      ...(f.overlaps?.length && o.sharer ? { overlaps: f.overlaps, share: { ...o.sharer } } : {}),
+      ...(back ? { handoff: 'spawn' as const, ...(back.why ? { handoffWhy: back.why } : {}) } : {}) }
     j.batches.push(b)
     writePacket(ctx.root, buildPacket(batchId, packetMembers, f.frames, f.exclusive ? files : undefined), new Set(j.batches.filter((x) => x.state === 'claimed').map((x) => x.batchId)))
     batches.push(b)

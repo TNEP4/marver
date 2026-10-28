@@ -702,6 +702,9 @@ describe('captures: review round 2 fixes', () => {
     writeFileSync(ledger, readFileSync(ledger, 'utf8').split('\n').filter((l) => !l.endsWith(`\t${mw}`)).join('\n'))
     c.state = 'working'; c.batch = 'b-mw'
     c.brief = { asks: [{ id: mw, owner: true, rev: mw, body: '@marver and the hover', ts: 1 }], history: [] }
+    // b-mw stands for the More work's own batch (the one claimed before the stop): one claimed batch for the card, as the
+    // daemon leaves it - two on one frame would never run side by side (F4: one goes back to the queue)
+    j.batches = j.batches.filter((b) => !(b.state === 'claimed' && b.members.some((m) => m.card === r.id)))
     j.batches.push({ batchId: 'b-mw', members: [{ id: 'm1', card: r.id, board: 'home', brief: c.brief }], frames: c.frames, state: 'claimed', leaseUntil: 0, attempts: 1, at: Date.now() })
     mkdirSync(join(root, 'design', '.local', 'jam', 'packets'), { recursive: true })
     writeFileSync(join(root, 'design', '.local', 'jam', 'packets', 'b-mw.json'), JSON.stringify({ v: 2, kind: 'marver.jam.job', batchId: 'b-mw', frames: c.frames, members: [{ id: 'm1', card: r.id, kind: 'capture', board: 'home', thread: c.thread, frames: c.frames, brief: c.brief }] }))

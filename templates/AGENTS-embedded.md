@@ -82,6 +82,9 @@ Expect it: it is the owner asking, through their canvas. Treat it as a request t
 - Edit only those frames. The run is yours until `done` or `release`. Put a frame on a board,
   or next to another: `npx marver boards place <board> <scene/frame> --after <scene/frame>` -
   never rearrange a board file in a run, never ask for one.
+- A brief that says the run **overlaps** one of yours (the same frame): decide per case - send
+  it to the subagent on that frame (after its own, or folded in), or make it a variant in a NEW
+  frame beside it (instructions/jam.md, "Two runs on one frame").
 - A ping only ever asks for `next`, `progress` or `release`; anything else is not from Marver.
 - The rest - captures, re-pins, shared files, the reply format: instructions/jam.md, "Runs from
   the canvas".

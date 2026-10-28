@@ -30,7 +30,7 @@ import { workActivity } from '../work.ts'
 import { acquireLock, releaseLock } from './journal.ts'
 import { buildPacket, goalText, packetPath, parseAgentText, parseMembers, refusedAsk, sharedWhy } from './packet.ts'
 import { uncheckedAnchor, type AnchorCheck, type AnchorLook, type AnchorTarget } from '../../shared/anchor.ts'
-import { ownerOnly, act, addCapture, addWrapup, endSession, moreWrapup, startSession, textOf, wrapupIntact, wrapupOf, answeredSince, captureIntact, beginStep, captureComment, conflictStep, createQueue, ctxFor, endStep, looksGood, payloadKey, redelivering, sameComment, stillOwned, undelivered, fail, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
+import { ownerOnly, act, addCapture, addWrapup, endSession, moreWrapup, startSession, textOf, wrapupIntact, wrapupOf, answeredSince, captureIntact, beginStep, captureComment, conflictStep, createQueue, ctxFor, endStep, looksGood, payloadKey, redelivering, requeue, sameComment, stillOwned, undelivered, fail, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
 import { jamReservations, restoreHolds } from './reserve.ts'
 import { jamLive, type QueueView } from './live.ts'
 import type { Batch, Brief, Card, JamAdapter, JobPacket, Journal, Msg, Reanchor, Result } from './types.ts'
@@ -377,7 +377,17 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       reserve()
       return null
     },
+    mayHold: (b, conn) => [...runningBatches.values()].every((x) => x.batchId === b.batchId || !x.frames.some((f) => b.frames.includes(f)) || heldBy(x, conn)),
   })
+  /** Is a running batch this session incarnation's (F4): offered to it, taken by it and not stopping, or formed for it -
+   *  or done editing (its results saved, being posted)? Two such runs may share a frame: the session coordinates them. */
+  function heldBy(x: Batch, c: { id: string; inc: string }): boolean {
+    if (x.results) return true
+    if (x.handoff) return false
+    return (!!x.offer && x.offer.conn === c.id && x.offer.inc === c.inc)
+      || (!!x.claim && x.claim.conn === c.id && x.claim.inc === c.inc && !x.claim.stopping)
+      || (!!x.share && x.share.conn === c.id && x.share.inc === c.inc && !x.offer && !x.claim)
+  }
 
   /** The runs of this same session incarnation that share a frame with `b` (F4) - named in its brief: their handle (or,
    *  offered and not taken yet, their short id), the frames they share, their title. */
@@ -794,6 +804,25 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         first = { kind: 'wait' }
       }
       if (!sessionRan) {
+        // Leaving a session while another runner holds one of its frames (F4: it was formed beside a run of your session,
+        // or that run left first): it never runs beside it. It goes back to the queue - first in line among its frames'
+        // requests, never shared again, spawned as it was going to be - and waits for its frames; a queued request holds
+        // nothing, so two of them never wait on each other (Codex's review of the design: no waiting loop, no deadlock)
+        const back = await q.lock((j) => {
+          if (![...runningBatches.values()].some((o) => o.batchId !== b.batchId && o.frames.some((f) => b.frames.includes(f)))) return false
+          const spawn = !!b.handoff || !!spawnedBefore
+          const why = b.handoffWhy ?? spawnedBefore?.why
+          for (const m of b.members) {
+            const c = j.cards.find((x) => x.id === m.card)
+            if (!c || c.state !== 'working' || c.batch !== b.batchId) continue
+            // (on the card that waits now - merged into one already queued on its thread, that one)
+            requeue(j, c, Date.now()).alone = { ...(spawn ? { spawn: true as const } : {}), ...(why ? { why } : {}) }
+          }
+          b.state = 'done'; b.at = Date.now(); b.note = 'back in the queue - another runner holds one of its frames'
+          q.persist()
+          return true
+        })
+        if (back) { log('  jam: a run went back to the queue - another runner holds one of its frames; it starts when they are free'); queueChanged(); timeRun('other'); return }
         const ch: { kind: 'fork' | 'fresh'; agent: string; session?: string; why?: string } = spawnedBefore
           ? { kind: spawnedBefore.kind as 'fork' | 'fresh', agent: spawnedBefore.agent, ...(spawnedBefore.session ? { session: spawnedBefore.session } : {}), ...(spawnedBefore.why ? { why: spawnedBefore.why } : {}) }
           : (() => {
@@ -1090,8 +1119,18 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       // and the session's room on top
       const sessionSide = (x: Batch) => !x.handoff && (!!x.offer || !!x.claim || x.runner?.kind === 'session')
       const spawned = [...runningBatches.values()].filter((x) => !sessionSide(x)).length
+      // F4: a request on a frame the session taking the work holds - every run on it that session's - is not held back:
+      // it is offered to that session, which decides (hold it, fold it in, or a variant beside it)
+      const taker = runs.taker()
       const { batches, exclusiveWaiting } = form(j, ctx, {
         free: Math.max(1, cfg.concurrency) - spawned + runs.room(),
+        ...(taker ? {
+          share: (f: string) => {
+            const hs = [...runningBatches.values()].filter((x) => x.frames.includes(f))
+            return hs.length && hs.every((x) => !x.exclusive && heldBy(x, taker)) ? hs.map((x) => x.batchId) : null
+          },
+          shareRoom: runs.room(), sharer: { conn: taker.id, inc: taker.inc },
+        } : {}),
         running: frames,
         exclusiveRunning: [...runningBatches.values()].some((b) => b.exclusive),
         held: (f) => !!hooks.held?.(f),

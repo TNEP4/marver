@@ -85,6 +85,9 @@ export interface RunsDeps {
   /** Give a frame to a run its session holds (`boards place --run`, F4): why not, or null once it is the run's - called
    *  under the lock. Another runner's frame, or one your agent in chat holds, is refused. */
   own(b: Batch, frame: string): string | null
+  /** May this session incarnation hold `b` (F4)? Every other open run on one of its frames is held by it too (offered,
+   *  taken and not stopping, or formed for it) - else it is someone else's frame now. Called under the lock. */
+  mayHold(b: Batch, conn: Conn): boolean
 }
 
 export interface Runs {
@@ -144,8 +147,10 @@ export function createRuns(d: RunsDeps): Runs {
   const live = (now = Date.now()) => listConns(root).filter((c) => usable(c, now))
   const open = () => q.j.batches.filter((b) => b.state === 'claimed' && !b.results)
   const byId = (id: string) => open().find((b) => b.batchId === id)
-  /** runs a connection holds now: offered to it, or claimed by it and not stopping */
-  const load = (id: string) => open().filter((b) => b.offer?.conn === id || (b.claim?.conn === id && !b.claim.stopping)).length
+  /** a run formed beside this connection's runs (F4) and not offered yet: its slot is kept for it from the moment it is formed */
+  const kept = (b: Batch, id: string) => b.share?.conn === id && !b.offer && !b.claim && !b.handoff
+  /** runs a connection holds now: offered to it, claimed by it and not stopping, or kept for it */
+  const load = (id: string) => open().filter((b) => b.offer?.conn === id || (b.claim?.conn === id && !b.claim.stopping) || kept(b, id)).length
 
   const selected = (now = Date.now()): Conn | undefined => {
     const conns = live(now)
@@ -171,6 +176,13 @@ export function createRuns(d: RunsDeps): Runs {
     const s = settings()
     // your session would have taken it and did not: the copy says why (A8)
     let skipped: string | undefined
+    // formed beside runs of one session incarnation (F4): that one runs it, or no session does (the daemon then puts it
+    // back in the queue while another runner holds its frames) - never another session, whatever its room
+    if (!spawnOnly && !b.handoff && b.share) {
+      const pick = sessionsOn(s, b) ? selected(now) : undefined
+      if (pick && pick.id === b.share.conn && pick.inc === b.share.inc && offerable(pick)) return { kind: 'session', conn: pick }
+      spawnOnly = true
+    }
     if (!spawnOnly && !b.handoff) {
       const pick = sessionsOn(s, b) ? selected(now) : undefined
       if (pick && offerable(pick) && load(pick.id) < maxOf(pick)) return { kind: 'session', conn: pick }
@@ -220,7 +232,9 @@ export function createRuns(d: RunsDeps): Runs {
       const prev = readOffers(root, id)
       // the newest offer named: the batch offered last
       const newest = open().filter((b) => b.offer?.conn === id).sort((x, y) => (y.offer!.at - x.offer!.at))[0]
-      const latest = newest ? { id: newest.batchId.slice(0, 8), title: titleOf(newest) } : undefined
+      // (and the run of yours it overlaps, F4: its handle once taken, else its short id)
+      const over = newest?.overlaps?.map((x) => open().find((y) => y.batchId === x)).find((y) => !!y)
+      const latest = newest ? { id: newest.batchId.slice(0, 8), title: titleOf(newest), ...(over ? { overlaps: over.claim ? handleOf(over, over.claim.gen) : over.batchId.slice(0, 8) } : {}) } : undefined
       // the first look after a restart: what its offers file already announced is not new - the session was told
       const was = offered.get(id) ?? (!published.has(id) && prev && prev.n === now.size && prev.latest?.id === latest?.id ? now : new Set<string>())
       published.add(id)
@@ -251,10 +265,14 @@ export function createRuns(d: RunsDeps): Runs {
       if (!b.claim && !b.offer) {
         // its session's room checked again here, under the lock: two runs chosen at once never take one last slot
         // (Codex's review of the F3 design) - the one that finds it full goes where a full session sends it
-        const held = conn ? load(conn.id) : 0
+        const held = conn ? load(conn.id) - (kept(b, conn.id) ? 1 : 0) : 0
         if (conn && held >= maxOf(conn)) {
           letGo(b)
           if (b.handoff) { b.handoffWhy = `your session didn't take it - it already holds ${held} run${held === 1 ? '' : 's'}`; gone = true }
+        } else if (conn && !d.mayHold(b, conn)) {
+          // another runner holds one of its frames now (F4, Codex's review): never offered beside it
+          letGo(b)
+          if (b.handoff) { b.handoffWhy = 'another runner holds one of its frames'; gone = true }
         } else {
           b.runner = { kind: 'session', agent: conn?.agent ?? '' }
           if (conn) { b.runner.conn = conn.id; b.offer = { conn: conn.id, inc: conn.inc, at: Date.now() } }
@@ -415,6 +433,7 @@ export function createRuns(d: RunsDeps): Runs {
       return out
     }
     if (req.op === 'next') {
+      const let_go: string[] = []
       const out = await q.lock((): Out => {
         // taken only by the session it was offered to, while sessions may take work, it is still the selected one,
         // and the very registration that signed the request - all read again here, under the lock
@@ -424,8 +443,15 @@ export function createRuns(d: RunsDeps): Runs {
         const mine = open().filter((x) => x.offer?.conn === conn.id && x.offer.inc === conn.inc && sessionsOn(s, x)).sort((a, z) => a.offer!.at - z.offer!.at)
         if (!sessionsOn(s) && !mine.length) return { ok: true, text: 'Nothing waits for this session now (no Jam session takes it).' }
         if (selected(now)?.id !== conn.id) return { ok: true, text: 'Nothing waits for this session now - another session takes the work.' }
-        const b = mine[0]
-        if (!b) return { ok: true, text: 'Nothing waits for this session now.' }
+        // checked again as it is taken (F4, Codex's review): a run whose frame another runner holds now is not this
+        // session's to take - it goes back through the scheduler, and the next one is taken
+        let b: Batch | undefined
+        for (const x of mine) {
+          if (d.mayHold(x, conn)) { b = x; break }
+          delete x.offer; letGo(x)
+          if (x.handoff) { x.handoffWhy = 'another runner holds one of its frames'; let_go.push(x.batchId) }
+        }
+        if (!b) { if (let_go.length) q.persist(); return { ok: true, text: 'Nothing waits for this session now.' } }
         const gen = Math.max(b.gen ?? 0, b.claim?.gen ?? 0) + 1
         delete b.offer; delete b.handoff
         b.gen = gen
@@ -437,7 +463,8 @@ export function createRuns(d: RunsDeps): Runs {
         q.persist()
         return o
       })
-      if (out.handle) { publish(); d.changed() }
+      for (const id of let_go) settle(id, null)
+      if (out.handle || let_go.length) { publish(); d.changed() }
       return out
     }
     if (req.op === 'progress') {
@@ -556,7 +583,7 @@ export function createRuns(d: RunsDeps): Runs {
           continue
         }
         if (sel && offerable(sel) && load(sel.id) < maxOf(sel)) {
-          await q.lock(() => { const x = byId(b.batchId); if (x && !x.offer && !x.claim && !x.handoff) { x.runner = { kind: 'session', agent: sel.agent, conn: sel.id }; x.offer = { conn: sel.id, inc: sel.inc, at: Date.now() }; q.persist() } })
+          await q.lock(() => { const x = byId(b.batchId); if (x && !x.offer && !x.claim && !x.handoff && load(sel.id) < maxOf(sel) && d.mayHold(x, sel)) { x.runner = { kind: 'session', agent: sel.agent, conn: sel.id }; x.offer = { conn: sel.id, inc: sel.inc, at: Date.now() }; q.persist() } })
           d.changed()
         }
       }

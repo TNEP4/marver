@@ -147,7 +147,7 @@ export const eligible = (c: Conn, now = Date.now()): boolean =>
 /** `n`: runs offered to it now; `gen`: grows with every new offer - a listener or a Stop hook acts once per gen.
  *  `latest`: the newest run offered - its short id and what it is called. `line`: what Claude Code's listener posts
  *  for this gen, word for word - written by the canvas, so a listener started before an upgrade says today's words. */
-export interface Offers { n: number; gen: number; stop?: string[]; resume?: string[]; latest?: { id: string; title: string }; line?: string }
+export interface Offers { n: number; gen: number; stop?: string[]; resume?: string[]; latest?: { id: string; title: string; overlaps?: string }; line?: string }
 
 // What a session is told - short, and named for what it is: Live Jam relaying the owner's requests from the canvas.
 // (design/AGENTS.md says what Live Jam is; in Claude Code the inbox shows these as sent by another session.) `as`:
@@ -157,7 +157,8 @@ export interface Offers { n: number; gen: number; stop?: string[]; resume?: stri
 const STOP_LINE = (handles: string[], as?: string) => `Live Jam: the owner moved ${handles.join(', ')} elsewhere - stop working on ${handles.length === 1 ? 'it' : 'them'} (a subagent of yours on ${handles.length === 1 ? 'it' : 'one'}: stop that subagent first, or tell it to stop and release it itself) and run ${handles.map((h) => `\`npx ${NAME} jam release ${h}${as ? ` --as ${as}` : ''}\``).join(', ')}.`
 const RESUME_LINE = (handles: string[], as?: string) => `Live Jam: the owner gave ${handles.join(', ')} back to you - carry on (a subagent of yours on ${handles.length === 1 ? 'it' : 'one'}: tell it to), and run ${handles.map((h) => `\`npx ${NAME} jam progress ${h}${as ? ` --as ${as}` : ''}\``).join(', ')}.`
 // named, so no two pings read the same: Claude Code drops a message identical to the one before it from the same sender
-const READY_LINE = (n: number, as?: string, latest?: Offers['latest']) => `Live Jam: ${n === 1 ? 'new request' : `${n} new requests`} from your Marver canvas${latest ? ` - ${n === 1 ? '' : 'newest '}"${latest.title}" (${latest.id})` : ''} - run \`npx ${NAME} jam next${as ? ` --as ${as}` : ''}\`${n === 1 ? '' : ' for each'}.`
+// (a request on a frame one of your runs holds names that run, F4: the brief says how the two can meet)
+const READY_LINE = (n: number, as?: string, latest?: Offers['latest']) => `Live Jam: ${n === 1 ? 'new request' : `${n} new requests`} from your Marver canvas${latest ? ` - ${n === 1 ? '' : 'newest '}"${latest.title}" (${latest.id}${latest.overlaps ? `, overlaps your run ${latest.overlaps}` : ''})` : ''} - run \`npx ${NAME} jam next${as ? ` --as ${as}` : ''}\`${n === 1 ? '' : ' for each'}.`
 
 /** What a session is told of its offers: the ready line, then any run it must let go or may carry on with. */
 export const offersText = (o: Offers, as?: string): string =>

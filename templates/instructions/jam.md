@@ -59,6 +59,27 @@ Jam work until it ends. Cursor names its connection in its messages: add `--as <
 a subagent whose command answers "this session is not connected" adds the `--as <id>` its
 prompt names.
 
+### Two runs on one frame - your call
+
+The canvas never gives a frame to two runners - except two runs of YOUR session: a request on a
+frame one of your runs is working arrives anyway, its ping and brief naming the run it overlaps
+("overlaps your run r-..."). Decide what is best for speed and quality, case by case:
+
+- **After it, or folded in**: send the run to the subagent working that frame (Claude Code:
+  SendMessage, with the part of the brief below `----` - it gets it at its next step, or is
+  woken with it if it already finished). It does it after its own, or folds it in now
+  ("actually make it green"), keeps both handles alive with `progress`, and runs `say` and
+  `done` for each.
+- **In parallel, as a variant**: a new subagent makes a NEW frame and places it beside the
+  original with `npx marver boards place <board> <new> --after <frame> --run <its handle>` -
+  the new frame is that run's from then on, and its review pictures it; both show, the owner
+  keeps one.
+
+Never two subagents editing one frame file at once. Codex and Cursor: do it after the run it
+overlaps, or together with it (answer both handles). A run of yours you let go of while another
+of your runs holds its frame goes back to the queue and waits for the frame - it never runs
+beside it.
+
 ## Wiring - once per repo
 
 Live Jam is ON by default: it arms itself with whatever agent CLI the machine has, and

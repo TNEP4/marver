@@ -1038,6 +1038,58 @@ describe('Jam V2: review round 3 fixes', () => {
   }, 20_000)
 })
 
+describe('F4: form() - a frame the session taking the work holds may be shared with it; never in one pass, never another runner\'s', () => {
+  const sharer = { conn: 'claude-aaaaaaaaaaaa', inc: 'i1' }
+  const base = { free: 4, exclusiveRunning: false, held: () => false, anyHold: () => false }
+  const ready = (root: string) => { const j = readJournal(root); j.baselined = true; return j }
+
+  it('a request on a frame a run of that session holds forms at once, naming the overlap and the session it is for; with no share it waits', () => {
+    const { root, dir, done } = setup()
+    const j = ready(root)
+    const a = say(root, dir, '@marver redesign the images', { frame: 'demo/a' })
+    const ctx = ctxFor(root); ingest(j, ctx)
+    // (no share: it waits for the frame, as before)
+    expect(form(j, ctx, { ...base, running: new Set(['demo/a']) }).batches).toEqual([])
+    expect(form(j, ctx, { ...base, running: new Set(['demo/a']), share: () => null, shareRoom: 2, sharer }).batches).toEqual([])
+    // no room left in that session: it waits too
+    expect(form(j, ctx, { ...base, running: new Set(['demo/a']), share: () => ['b-1'], shareRoom: 0, sharer }).batches).toEqual([])
+    const { batches } = form(j, ctx, { ...base, running: new Set(['demo/a']), share: (f) => (f === 'demo/a' ? ['b-1'] : null), shareRoom: 2, sharer })
+    expect(batches).toHaveLength(1)
+    expect(batches[0]).toMatchObject({ frames: ['demo/a'], overlaps: ['b-1'], share: sharer })
+    expect(cardOf({ snapshot: () => j }, a)!.state).toBe('working')
+    done()
+  })
+
+  it('two requests on a shared frame in one pass join one run; a request on two frames shares only if both may be shared; one back from a run that left its session never shares, and runs spawned as it was going to', () => {
+    const { root, dir, done } = setup()
+    const j = ready(root)
+    const a = say(root, dir, '@marver one', { frame: 'demo/a' })
+    const b = say(root, dir, '@marver two', { frame: 'demo/a' })
+    const m = say(root, dir, '@marver across', { frame: 'demo/a' , board: 'other' })
+    const ctx = ctxFor(root); ingest(j, ctx)
+    const multi = cardOf({ snapshot: () => j }, m)!
+    multi.frames = ['demo/a', 'demo/c']
+    // demo/c is held by a spawned run: no share for it - the request on both frames waits
+    const r = form(j, ctx, { ...base, running: new Set(['demo/a', 'demo/c']), share: (f) => (f === 'demo/a' ? ['b-1'] : null), shareRoom: 3, sharer })
+    expect(r.batches).toHaveLength(1)
+    expect(r.batches[0].members.map((x) => x.card)).toEqual([`c-${a.id}`, `c-${b.id}`])
+    expect(multi.state).toBe('queued')
+    // back from a run that left its session: it never shares, and runs spawned, saying why
+    const { root: r2, dir: d2, done: done2 } = setup()
+    const j2 = ready(r2)
+    const t = say(r2, d2, '@marver back', { frame: 'demo/a' })
+    const ctx2 = ctxFor(r2); ingest(j2, ctx2)
+    const c = cardOf({ snapshot: () => j2 }, t)!
+    c.alone = { spawn: true, why: 'your session let it go' }
+    expect(form(j2, ctx2, { ...base, running: new Set(['demo/a']), share: () => ['b-1'], shareRoom: 2, sharer }).batches).toEqual([])
+    const { batches } = form(j2, ctx2, { ...base, running: new Set(), share: () => ['b-1'], shareRoom: 2, sharer })
+    expect(batches[0]).toMatchObject({ handoff: 'spawn', handoffWhy: 'your session let it go' })
+    expect(batches[0].share).toBeUndefined()
+    expect(c.alone).toBeUndefined()
+    done(); done2()
+  })
+})
+
 describe('Jam V2: review round 4 fixes', () => {
   it('an exclusive card that is no longer the owner\'s is dropped and does not hold the queue back - ordinary cards run in the same pass', () => {
     const { root, dir, done } = setup()
