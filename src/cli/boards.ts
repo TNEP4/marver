@@ -158,6 +158,26 @@ export function boardsPin(root: string, board: string, targets: string[]): { add
   return pinFrames(root, board, resolveTargets(live, targets).all, live)
 }
 
+/** `--run <handle>` (F1): a Live Jam run's new frames are given to that run first, so no other runner gets them while it
+ *  works (the canvas refuses when another run or your chat agent has one). */
+async function toRun(root: string, frames: string[], opts: { run?: unknown; as?: unknown }) {
+  if (typeof opts.run !== 'string' || !opts.run) throw new Error('name the run: --run <handle> (r-xxxxxxxx.N, from jam next)')
+  const { ownConn } = await import('./jam.ts')
+  const { request } = await import('../server/jam/transport.ts')
+  for (const frame of frames) {
+    const r = await request(root, ownConn(root, process.env, typeof opts.as === 'string' ? opts.as : undefined), 'own', { handle: opts.run, frame })
+    if (r.ok === false) throw new Error(String(r.error ?? 'the canvas did not give it to that run'))
+  }
+}
+
+/** `marver boards pin <board> <scene/frame ...> --run <handle>` (F5): pinned as `boards pin` does, each frame given to that
+ *  Live Jam run first - how a run that reserves no frame puts what it made on an empty board, where nothing is to place it beside. */
+export async function boardsPinRun(root: string, board: string, targets: string[], opts: { run?: unknown; as?: unknown }): Promise<{ added: string[]; already: string[] }> {
+  if (!targets.length) throw new Error('name the frames: boards pin <board> <scene/frame | scene ...>')
+  await toRun(root, resolveTargets(scanFrames(root).frames.map((f) => f.id), targets).all, opts)
+  return boardsPin(root, board, targets)
+}
+
 /** `marver boards place <board> <scene/frame> --after|--before <scene/frame> [--run <handle>]` (F1): a frame next to
  *  another, the frames after it moved right to make room - what "put this next to slide 01" needs, with no board file
  *  edited by hand. `--run`: a Live Jam run's new frame (a variant) is given to that run first, so no other runner gets it
@@ -174,13 +194,7 @@ export async function boardsPlace(root: string, board: string, targets: string[]
     return r.exact[0]
   }
   const frame = one(targets[0]), anchor = one((after ?? before)!)
-  if (opts.run !== undefined) {
-    if (typeof opts.run !== 'string' || !opts.run) throw new Error('name the run: --run <handle> (r-xxxxxxxx.N, from jam next)')
-    const { ownConn } = await import('./jam.ts')
-    const { request } = await import('../server/jam/transport.ts')
-    const r = await request(root, ownConn(root, process.env, typeof opts.as === 'string' ? opts.as : undefined), 'own', { handle: opts.run, frame })
-    if (r.ok === false) throw new Error(String(r.error ?? 'the canvas did not give it to that run'))
-  }
+  if (opts.run !== undefined) await toRun(root, [frame], opts)
   const { loadConfig } = await import('../server/config.ts')
   const viewports = await loadConfig(root).then((c) => c.viewports, () => ({}))
   const { readSizes } = await import('../server/sizes.ts')

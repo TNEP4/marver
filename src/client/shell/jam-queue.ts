@@ -13,7 +13,7 @@ export type JamCardState = 'draft' | 'confirming' | 'queued' | 'working' | 'asks
 export interface JamCard {
   id: string; kind: 'comment' | 'capture' | 'wrapup'; board: string; thread?: string; frames: string[]; events: string[]
   state: JamCardState; note?: string; rev: number; made: number; order: number; at: number
-  follows?: string; reply?: string; position?: number; waiting?: string; waitsFor?: { frame: string; by?: string }; exclusive?: boolean; batch?: string
+  follows?: string; reply?: string; position?: number; waiting?: 'alone' | 'behind'; waitsFor?: { frame: string; by?: string }; exclusive?: boolean; batch?: string
   // captures: the lane and the review
   title?: string; inRun?: boolean; shots?: { frame: string; before?: string; after?: string; same?: boolean; new?: boolean }[]
   reviewing?: { card: string; batch: string; rev: number }; edited?: string; added?: { at: number; text: string }[]; notes?: number; capture?: string

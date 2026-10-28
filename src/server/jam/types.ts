@@ -154,8 +154,9 @@ export interface Card {
    *  comment it writes, so a crash resumes it and a retried request finds it done */
   pending?: { op: 'confirm' | 'more'; end?: 'queued' | 'kept'; event: import('../../shared/events.ts').CommentEvent }
   shared?: number            // how many times it answered `shared` (a second one fails it)
-  /** back in the queue from a run that left its session while another runner held one of its frames (F4): it waits for
-   *  every frame to be free (never formed beside another run again), and runs spawned when `spawn` - the decision it had.
+  /** back in the queue from a run that left its session while another runner held one of its frames (F4), or - naming no
+   *  frame - while anything else ran (F5): it waits for every frame to be free, or with none to run alone (never formed
+   *  beside another run again), and runs spawned when `spawn` - the decision it had.
    *  What that run had goes to the run formed from it: the frames it made (`created`, a run of one) and its pictures
    *  from before its first edit (`shots`) - its frames given as it worked are in `frames` already */
   alone?: { spawn?: true; why?: string; created?: string[]; shots?: { frame: string; before: string; at?: number }[] }
@@ -227,8 +228,9 @@ export interface Batch {
   gen?: number
   /** the owner dropped it while a session held it: it fails, never runs elsewhere */
   dropped?: boolean
-  /** formed beside runs of this session incarnation, sharing a frame with them (F4): only it may run it - offered to it,
-   *  claimed by it, or back in the queue; a run of anyone else never shares a frame */
+  /** formed beside runs of this session incarnation, sharing a frame with them (F4) - or, naming no frame, beside whatever
+   *  runs (F5): only it may run it - offered to it, claimed by it, or back in the queue; a run of anyone else never shares a
+   *  frame, and one with no frame spawned runs alone */
   share?: { conn: string; inc: string }
   /** the runs it shared a frame with when it was formed (words only: the ping, the brief) */
   overlaps?: string[]

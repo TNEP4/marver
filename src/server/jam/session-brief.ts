@@ -55,7 +55,7 @@ export function sessionBrief(packet: JobPacket, handle: string, as?: string, o: 
   // in its own block) - a correction joins its request without moving it in the queue
   const last = (m: PacketMember) => Math.max(0, ...m.brief.asks.map((a) => a.edited ?? a.ts ?? 0), ...(m.brief.capture?.added ?? []).map((a) => a.at), m.brief.capture?.editedAt ?? 0, m.brief.capture ? madeOf(m.brief.capture.record.id) : 0)
   const asks = packet.members.map((m, i) => ({ m, i, t: last(m) })).sort((a, b) => b.t - a.t || b.i - a.i).map((x) => x.m).flatMap((m) => {
-    const at = `${one ? '' : `${m.id} `}on ${m.frames.join(', ') || 'the board'}`
+    const at = `${one ? '' : `${m.id} `}on ${m.frames.join(', ') || `board ${m.board}`}`
     if (m.brief.wrapup) {
       const w = m.brief.wrapup.content
       return [`- ${one ? '' : `${m.id}, `}the session record: write it to ${w.file} - that file only, no design work.`,
@@ -79,9 +79,13 @@ export function sessionBrief(packet: JobPacket, handle: string, as?: string, o: 
     `A long run: ${jam('progress')} every few minutes. Cannot do it now: ${jam('release')}.`,
     `Edit nothing but ${files.join(', ')}. The full rules: design/instructions/jam.md, "Runs from the canvas".`,
   ].join('\n')
+  // F5: a run that reserves no frame (a capture made on an empty board, a comment on the board itself) makes new ones
+  const none = !packet.frames.length && !packet.exclusive?.files.length
+  const board = packet.members[0]?.board ?? '<board>'
   const what = [
     ...asks,
-    `Frames you may edit: ${packet.frames.join(', ') || '(none)'}${packet.exclusive ? `; and these shared files: ${packet.exclusive.files.join(', ')}` : ''}.`,
+    none ? 'It reserves no frame: make what it asks for as new frames, in a scene of their own if nothing on the board fits (a scene the run makes is its own, its _ files included).'
+      : `Frames you may edit: ${packet.frames.join(', ') || '(none)'}${packet.exclusive ? `; and these shared files: ${packet.exclusive.files.join(', ')}` : ''}.`,
     `The thread, ${packet.members.some((m) => m.brief.capture) ? 'the capture\'s picks and pictures, ' : ''}and what earlier runs did: ${packetPath(packet.batchId)}`,
   ]
   const reply = [
@@ -89,7 +93,10 @@ export function sessionBrief(packet: JobPacket, handle: string, as?: string, o: 
     ...packet.members.map((m) => `   \`\`\`marver-reply ${m.id}\n   Done - ...\n   \`\`\``),
     `   Need an answer from the owner first? Open the block with \`\`\`marver-reply ${packet.members[0]?.id ?? 'm1'} asks instead.`,
   ]
-  const newFrame = `a new frame goes on the board with npx marver boards place <board> <scene/frame> --after <scene/frame> --run ${handle}${as ? ` --as ${as}` : ''}`
+  const run = ` --run ${handle}${as ? ` --as ${as}` : ''}`
+  const newFrame = none
+    ? `Edit no frame that exists; each new frame goes on board ${board} with npx marver boards place ${board} <scene/frame> --after <scene/frame>${run} (on an empty board: npx marver boards pin ${board} <scene/frame>${run})`
+    : `Edit only those frames; a new frame goes on the board with npx marver boards place <board> <scene/frame> --after <scene/frame>${run}`
   // F4: a run of this same session holds a frame of this one - whoever does it decides how the two meet
   const ov = o.overlaps ?? []
   const overlapping = ov.length ? `It overlaps your run${ov.length === 1 ? '' : 's'} ${ov.map((x) => `${x.handle} ("${x.title}") on ${x.frames.join(', ')}`).join('; ')}.` : ''
@@ -110,7 +117,7 @@ export function sessionBrief(packet: JobPacket, handle: string, as?: string, o: 
       `${n(one ? 2 : 1)} Do the work (design/AGENTS.md; design/instructions/jam.md, "Runs from the canvas"). ${jam('progress')} every few minutes.`,
       `${n(one ? 3 : 2)} ${reply[0]}`, ...reply.slice(1),
       `${n(one ? 4 : 3)} ${jam('done', ' --file <that file>')} - the canvas posts it and frees the frames.`,
-      `Edit only those frames; ${newFrame}. A command that answers "the owner moved this run elsewhere": stop editing at once and run ${jam('release')}.`,
+      `${newFrame}. A command that answers "the owner moved this run elsewhere": stop editing at once and run ${jam('release')}.`,
       ...(o.conn && !as ? [`A command that answers "this session is not connected": add --as ${o.conn}.`] : []),
     ].join('\n')
   }
@@ -125,6 +132,6 @@ export function sessionBrief(packet: JobPacket, handle: string, as?: string, o: 
     `${one ? '2' : '1'}. ${reply[0]}`, ...reply.slice(1),
     `${one ? '3' : '2'}. ${jam('done', ' --file <that file>')} - the canvas posts it and frees the frames.`,
     `A long run: ${jam('progress')} every few minutes. Cannot do it now: ${jam('release')}.`,
-    `Edit only those frames; ${newFrame}. Captures, re-pins and shared files: design/instructions/jam.md, "Runs from the canvas".`,
+    `${newFrame}. Captures, re-pins and shared files: design/instructions/jam.md, "Runs from the canvas".`,
   ].join('\n')
 }

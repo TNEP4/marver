@@ -234,16 +234,16 @@ cli
   .option('--capability <slug>', 'new: the capability it shows, when not its own name')
   .option('--after <frame>', 'place: right after this frame, in its row')
   .option('--before <frame>', 'place: right before this frame, in its row')
-  .option('--run <handle>', 'place: a Live Jam run\'s new frame - given to that run first (r-xxxxxxxx.N)')
-  .option('--as <conn>', 'place --run: the session connection to speak for (as `jam` does)')
+  .option('--run <handle>', 'place, pin: a Live Jam run\'s new frame - given to that run first (r-xxxxxxxx.N)')
+  .option('--as <conn>', 'place --run, pin --run: the session connection to speak for (as `jam` does)')
   .action(async (action: string | undefined, args: string[] | undefined, opts) => {
-    const { boardsCommand, boardsNew, boardsPin, boardsPlace } = await import('./boards.ts')
+    const { boardsCommand, boardsNew, boardsPin, boardsPinRun, boardsPlace } = await import('./boards.ts')
     const [name, ...frames] = args ?? []
     try {
       if (action === undefined) boardsCommand(resolve(opts.root), opts)
       else if (action === 'pin') {
         if (!name) throw new Error('name the board: `boards pin <board> <scene/frame ...>`')
-        const { added, already } = boardsPin(resolve(opts.root), name, frames)
+        const { added, already } = opts.run !== undefined ? await boardsPinRun(resolve(opts.root), name, frames, opts) : boardsPin(resolve(opts.root), name, frames)
         for (const f of added) console.log(`  + ${f} on ${name}`)
         if (already.length) console.log(`  already on ${name}: ${already.join(', ')}`)
       } else if (action === 'place') {

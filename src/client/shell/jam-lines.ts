@@ -34,9 +34,12 @@ export function statusLines(c: JamCard, agent: string | null, harness: Record<st
     return { head: `Queued · waits for ${w.frame}${tags}`, detail: w.by === 'chat' ? 'Your agent in chat is working on it - this one starts when it is done'
       : w.by ? `"${w.by}" is working on it - this one starts when it is done` : 'Another run is working on it - this one starts when it is done' }
   }
+  // waiting for more than its place (one runs alone): why, never a place in line it does not have
+  if (c.state === 'queued' && c.waiting === 'alone') return { head: `Queued · waits to run alone${tags}`, detail: `It ${c.exclusive ? 'changes a shared file' : 'names no frame'} and runs on its own - it starts once the other work is done` }
+  if (c.state === 'queued' && c.waiting === 'behind') return { head: `Queued · waits - a run goes alone first${tags}`, detail: 'A request that runs on its own goes first - this one starts after it' }
   if (c.state === 'queued') {
     const p = c.position ?? 1
-    return { head: p <= 1 ? `Queued · next${tags}` : `Queued · ${ordinal(p)}${tags} - runs after ${p - 1} other${p - 1 === 1 ? '' : 's'}`, ...(c.waiting ? { detail: c.waiting } : {}) }
+    return { head: p <= 1 ? `Queued · next${tags}` : `Queued · ${ordinal(p)}${tags} - runs after ${p - 1} other${p - 1 === 1 ? '' : 's'}` }
   }
   if (c.state === 'working') return runnerLine(c, (a) => harness[a] ?? a, now) ?? { head: `Agent working · ${clock(now - c.at)}${agent ? ` - ${harness[agent] ?? agent}` : ''}` }
   if (c.state === 'asks') return { head: 'Asks you - see the question below' }
@@ -58,8 +61,12 @@ export function laneLine(c: LaneCard, now = Date.now()): string {
     // so, never "To confirm" - E's never asked you to confirm anything
     case 'draft': return c.note ? 'Not queued' : 'To confirm'
     case 'confirming': return 'Confirming'
-    // waiting on a frame another run holds: which one, never a place in line it does not have
-    case 'queued': { if (c.waitsFor) return `Waits for ${c.waitsFor.frame.split('/').pop()}`; const p = c.position ?? 1; return p <= 1 ? 'Queued · next' : `Queued · ${ordinal(p)}` }
+    // waiting on a frame another run holds, or for one that runs alone: why, never a place in line it does not have
+    case 'queued': {
+      if (c.waitsFor) return `Waits for ${c.waitsFor.frame.split('/').pop()}`
+      if (c.waiting) return c.waiting === 'alone' ? 'Waits to run alone' : 'Waits · a run goes alone first'
+      const p = c.position ?? 1; return p <= 1 ? 'Queued · next' : `Queued · ${ordinal(p)}`
+    }
     case 'working': {
       // who runs it (spec 29b), in a few words: a tile has one short line
       const r = c.runner

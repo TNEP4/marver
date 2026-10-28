@@ -60,6 +60,9 @@ export function goalText(packet: JobPacket, subagents = true, runner?: Runner): 
   const ids = packet.members.map((m) => m.id).join(', ')
   const session = runner?.kind === 'session'
   const as = runner?.as ? ` --as ${runner.as}` : ''
+  // F5: no frame reserved and no shared file given (a capture made on an empty board, a comment on the board itself)
+  const none = !packet.frames.length && !packet.exclusive?.files.length
+  const run = session ? ` --run ${runner!.handle}${as}` : ''
   const opening = session
     ? [`You are the owner's own coding-agent session, and the owner just sent you a Marver Jam run from the design canvas (${runner!.handle}).`,
       'Do it as a part of this conversation, with everything you have - what you and the owner said here, the shell, your MCP servers and',
@@ -81,11 +84,13 @@ export function goalText(packet: JobPacket, subagents = true, runner?: Runner): 
     '',
     packet.members.some((m) => m.brief.wrapup)
       ? `THIS JOB WRITES ONE FILE AND NOTHING ELSE: ${packet.members.map((m) => m.brief.wrapup?.content.file).filter(Boolean).join(', ')}. Edit no frame, no shared file, no other file.`
+      : none
+      ? 'THIS JOB RESERVES NO FRAME: make what it asks for as NEW frames (below) - an existing frame is not yours. A scene you create for them is yours whole, its `_` files (a helper, a note) included; a shared file that exists (a file under design/ that is not a frame: a _kit, providers, a layout) is not: if the ask needs one, edit nothing and answer that member with `shared` (below) - the job comes back to you alone, allowed to edit it.'
       : packet.exclusive
       ? `THIS JOB RUNS ALONE. It may edit the frames in \`frames\` and these shared files, for this ask only: ${packet.exclusive.files.join(', ')}.`
       : 'EDIT ONLY THE FRAMES THE PACKET RESERVES (`frames`). If the same fix belongs on a sibling frame, name it in your reply as a frame link instead - the owner tags there if they want it. NEVER edit a shared file (a file under design/ that is not one of those frames: a _kit, providers, a layout): if the ask needs one, edit nothing and answer that member with `shared` (below) - the job comes back to you alone, allowed to edit it.',
     ...(packet.members.some((m) => m.brief.wrapup) ? [] : [
-      `A NEW frame the ask calls for (a variant, a new screen) is yours to create, in the scene of the frame it goes beside. Put it on the board beside the frame it belongs next to with \`npx marver boards place <board> <scene/frame> --after <scene/frame>\`${session ? ` --run ${runner!.handle}${as}` : ''} (or --before; it makes room in that row, safe with the canvas open; \`npx marver boards pin <board> <scene/frame>\` adds it at the end)${session ? ' - with --run the new frame is this run\'s, so no other runner gets it' : ''}. Never rearrange a board file by hand, and never name one in a \`shared\` answer: no run is ever given a board file.`,
+      `A NEW frame the ask calls for (a variant, a new screen) is yours to create, in the scene of the frame it goes beside${none ? ' (with none, a scene of its own)' : ''}. Put it on the board beside the frame it belongs next to with \`npx marver boards place <board> <scene/frame> --after <scene/frame>\`${run} (or --before; it makes room in that row, safe with the canvas open; \`npx marver boards pin <board> <scene/frame>\`${run} adds it at the end)${session ? ' - with --run the new frame is this run\'s, so no other runner gets it' : ''}. Never rearrange a board file by hand, and never name one in a \`shared\` answer: no run is ever given a board file.`,
     ]),
     ...(packet.members.some((m) => m.brief.capture) ? [
       'A member with `brief.capture` is a CAPTURE: what the owner said and did, recorded as they worked. Its',

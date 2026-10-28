@@ -97,6 +97,9 @@ export interface Runs {
   room(now?: number): number
   /** that session, while it has room - the one a request on a frame its own runs hold may be offered to (F4) */
   taker(now?: number): Conn | undefined
+  /** that session, full or not, and its room (F5: a request with no frame runs beside the others while one takes the work);
+   *  `record`: the one a session's record goes to, though the Jam session it closes has ended */
+  takes(now?: number, record?: boolean): { conn: Conn; room: number } | undefined
   /** the session that takes the work now, if any */
   selected(now?: number): Conn | undefined
   /** `spawnOnly`: a session cannot take it (released, withdrawn, the owner's choice) - a copy or a fresh agent */
@@ -161,9 +164,10 @@ export function createRuns(d: RunsDeps): Runs {
   const offerable = (c: Conn) => c.agent === 'claude' || c.busy
   /** Is it the record of a Jam session (a wrap-up)? Offered to your session though the session it records has ended. */
   const recordRun = (b: Batch) => b.members.some((m) => q.j.cards.find((c) => c.id === m.card)?.kind === 'wrapup')
-  /** Does a session take work now - this run, when one is named? Sessions on, the owner's context allowed, not
-   *  background-only, and a Jam session running (or, for a session's own record, just ended: never any other run). */
-  const sessionsOn = (s: Settings, b?: Batch) => s.session && s.context === 'fork' && s.runner !== 'background' && (d.jamOn() || (!!b && recordRun(b)))
+  /** Does a session take work now - this run, when one is named (`record`: a session's record)? Sessions on, the owner's
+   *  context allowed, not background-only, and a Jam session running (or, for a session's own record, just ended: never
+   *  any other run). */
+  const sessionsOn = (s: Settings, b?: Batch | 'record') => s.session && s.context === 'fork' && s.runner !== 'background' && (d.jamOn() || b === 'record' || (!!b && recordRun(b)))
   /** Is the writer of a claim proven gone? Its process is (Claude Code, Codex), or - Cursor - that very incarnation
    *  said it ended. A connection file missing, or silence, is "unknown", never "gone". */
   const writerGone = (claim: NonNullable<Batch['claim']>): boolean => {
@@ -618,10 +622,10 @@ export function createRuns(d: RunsDeps): Runs {
     }
   }
 
-  /** the session that takes new work now and its room for more (F3, F4) */
-  const roomOf = (now = Date.now()): { conn: Conn; room: number } | undefined => {
+  /** the session that takes new work now and its room for more (F3, F4) - `record`: a session's record (F5) */
+  const roomOf = (now = Date.now(), record = false): { conn: Conn; room: number } | undefined => {
     const s = settings()
-    const sel = sessionsOn(s) ? selected(now) : undefined
+    const sel = sessionsOn(s, record ? 'record' : undefined) ? selected(now) : undefined
     return sel && offerable(sel) ? { conn: sel, room: Math.max(0, maxOf(sel) - load(sel.id)) } : undefined
   }
 
@@ -629,6 +633,7 @@ export function createRuns(d: RunsDeps): Runs {
     settings: () => { const sel = selected(); return settingsOf(root, d.cfg, sel?.agent) },
     room: (now) => roomOf(now)?.room ?? 0,
     taker: (now) => { const r = roomOf(now); return r && r.room > 0 ? r.conn : undefined },
+    takes: roomOf,
     selected, choose, run, tick, title: titleOf,
     delivered(batchId, ok, note) {
       outcome.set(batchId, { ok, ...(note ? { note } : {}) })

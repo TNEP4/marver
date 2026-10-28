@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { laneLine, lineText, runnerLine, timelineLines, type LaneCard } from '../src/client/shell/jam-lines.ts'
+import { laneLine, lineText, runnerLine, statusLines, timelineLines, type LaneCard } from '../src/client/shell/jam-lines.ts'
 import type { CaptureRecord } from '../src/server/jam/types.ts'
 
 const card = (o: Partial<LaneCard>): LaneCard => ({ id: 'cap-1', kind: 'capture', board: 'home', frames: [], events: [], state: 'queued', rev: 1, made: 0, order: 0, at: 0, ...o })
@@ -20,6 +20,14 @@ describe('the lane: a tile\'s status line', () => {
     expect(laneLine(card({ state: 'done', shots: [{ frame: 'a' }, { frame: 'b' }] }))).toBe('Done · 2 frames')
     expect(laneLine(card({ state: 'kept' }))).toBe('Kept, not sent')
     expect(laneLine(card({ state: 'failed' }))).toBe('Failed · Retry')
+  })
+
+  it('a queued card that waits for more than its place says why, the tooltip too - never "Queued · next" (Nic, 28 Oct: a capture on an empty board sat "Queued · next" while it waited to run alone)', () => {
+    expect(laneLine(card({ state: 'queued', position: 1, waiting: 'alone' }))).toBe('Waits to run alone')
+    expect(laneLine(card({ state: 'queued', position: 1, waiting: 'behind', frames: ['deck/02-slide'] }))).toBe('Waits · a run goes alone first')
+    expect(statusLines(card({ state: 'queued', position: 1, waiting: 'alone' }), 'claude', {})).toEqual({ head: 'Queued · waits to run alone', detail: 'It names no frame and runs on its own - it starts once the other work is done' })
+    expect(statusLines(card({ state: 'queued', position: 1, waiting: 'alone', exclusive: true, frames: ['deck/01-slide'] }), 'claude', {}).detail).toBe('It changes a shared file and runs on its own - it starts once the other work is done')
+    expect(statusLines(card({ state: 'queued', position: 1, waiting: 'behind' }), 'claude', {})).toEqual({ head: 'Queued · waits - a run goes alone first', detail: 'A request that runs on its own goes first - this one starts after it' })
   })
 })
 

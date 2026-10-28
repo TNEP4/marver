@@ -1052,6 +1052,89 @@ describe('F4: the same frame twice - offered to your session, which decides; run
   })
 })
 
+describe('F5: a request with no frame runs beside the others for your session - spawned, only alone', { timeout: 60_000 }, () => {
+  const offered = (s: { root: string; conn: { id: string } }) => readOffers(s.root, s.conn.id)
+  /** an empty board, and a capture made on it: words, no frame */
+  const empty = (root: string, board = 'volume-ui') => { mkdirSync(join(root, 'design', 'boards'), { recursive: true }); writeFileSync(join(root, 'design', 'boards', `${board}.json`), JSON.stringify({ version: 1, name: board, auto: false, nodes: [] })) }
+  const blank = (words: string, board = 'volume-ui'): CaptureRecord => ({ format: 'marver.jam.capture', v: 1, id: `cap-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, context: { canvas: 'test', board }, view: { board, frames: [], theme: 'light' },
+    timeline: [{ at: 1_000, event: 'view', view: { board, frames: [] } }, { at: 2_000, event: 'words', text: words }], pictures: [] })
+
+  it('a capture on an empty board is offered to your session at once beside a run it holds, and a request after it is not held back (Nic, 28 Oct: it sat "Queued · next" until that run ended, then ran alone); the frame it pins with --run is its own, and its new scene\'s helper is no shared file it changed', async () => {
+    const s = await setup({ cfg: { sessionMax: undefined } })
+    empty(s.root)
+    put(s.root, 'design/scenes/demo/_kit.tsx', 'export const x = 1\n')   // a shared file that exists
+    tag(s.root, s.dir, '@marver icon labels')
+    const t = s.jam.tick()
+    expect(await until(() => (offered(s)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
+    const h1 = String((await s.ask('next')).handle)
+    const r = blank('try to come up with a new floating menu')
+    expect((await s.jam.capture(r)).ok).toBe(true)
+    put(s.root, 'design/scenes/demo/other.tsx')
+    tag(s.root, s.dir, '@marver make the other one blue', undefined, 'demo/other')
+    const t2 = s.jam.tick()
+    // both offered at once, beside your first run - neither waits for it
+    expect(await until(() => (offered(s)?.n ?? 0) === 2, 8_000, () => s.jam.runs.tick())).toBe(true)
+    const b = s.jam.snapshot().batches.find((x) => x.members.some((m) => m.card === r.id))!
+    expect([b.frames, b.exclusive, b.share?.conn]).toEqual([[], undefined, s.conn.id])
+    expect(s.jam.view().cards.find((c) => c.id === r.id)?.waiting).toBeUndefined()
+    const n = [await s.ask('next'), await s.ask('next')]
+    const cap = n.find((x) => String(x.text).includes('floating menu'))!, other = n.find((x) => x !== cap)!
+    const h2 = String(cap.handle)
+    expect(String(cap.text)).toContain('It reserves no frame: make what it asks for as new frames')
+    expect(String(cap.text)).toContain(`npx marver boards pin volume-ui <scene/frame> --run ${h2}`)
+    // its subagent makes a scene of its own - a frame and a helper - pins the frame on the empty board under the run, and
+    // touches a shared file that was there
+    mkdirSync(join(s.root, 'design', 'scenes', 'menu'), { recursive: true })
+    put(s.root, 'design/scenes/menu/_canvas.tsx', 'export const Canvas = () => null\n')
+    put(s.root, 'design/scenes/menu/floating.tsx')
+    put(s.root, 'design/scenes/demo/_kit.tsx', 'export const x = 2\n')
+    const { boardsPinRun } = await import('../src/cli/boards.ts')
+    let pinned: unknown
+    void boardsPinRun(s.root, 'volume-ui', ['menu/floating'], { run: h2, as: s.conn.id }).then((x) => { pinned = x }, (e) => { pinned = e })
+    expect(await until(() => pinned !== undefined, 15_000, () => s.jam.runs.tick())).toBe(true)
+    expect(pinned).toEqual({ added: ['menu/floating'], already: [] })
+    const mine = () => s.jam.snapshot().batches.find((x) => x.batchId === b.batchId)!
+    expect([mine().frames, mine().created]).toEqual([['menu/floating'], ['menu/floating']])
+    for (const [h, words] of [[h1, 'Labels done.'], [h2, 'A floating menu.'], [String(other.handle), 'Blue.']]) expect((await s.ask('done', { handle: h, text: REPLY(words) })).ok).toBe(true)
+    await Promise.all([t, t2])
+    expect(finals(s.dir).map((x) => x.body).sort()).toEqual(['Blue.', 'Labels done.'])
+    // the capture's reply is in its own board's thread
+    const mine2 = replay(readLog(s.dir, 'volume-ui')).flatMap((x) => x.replies.filter((y) => y.agent && y.body === 'A floating menu.'))
+    expect(mine2.map((x) => [x.agentMeta?.runner, x.alsoChanged])).toEqual([['session', ['design/scenes/demo/_kit.tsx']]])
+    expect(existsSync(join(s.root, 'spawned.marker'))).toBe(false)
+    s.jam.stop(); s.done()
+  })
+
+  it('not taken by your session while another run runs, it goes back to the queue - never spawned beside it - its tile says it waits to run alone, and it runs alone once the other is done', async () => {
+    const s = await setup({ cfg: { sessionMax: undefined } })
+    empty(s.root)
+    tag(s.root, s.dir, '@marver icon labels')
+    const t = s.jam.tick()
+    expect(await until(() => (offered(s)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
+    const h1 = String((await s.ask('next')).handle)
+    const r = blank('try to come up with a new floating menu')
+    expect((await s.jam.capture(r)).ok).toBe(true)
+    const t2 = s.jam.tick()
+    expect(await until(() => (offered(s)?.n ?? 0) === 1 && (offered(s)?.line ?? '').includes('floating menu'), 8_000, () => s.jam.runs.tick())).toBe(true)
+    await s.jam.runs.tick(Date.now() + OFFER_MS + 1_000)   // not taken in two minutes: it would be spawned
+    const card = () => s.jam.view().cards.find((c) => c.id === r.id)
+    expect(await until(() => card()?.state === 'queued' && card()?.waiting === 'alone', 8_000, () => s.jam.runs.tick())).toBe(true)
+    await new Promise((res) => setTimeout(res, 300))
+    expect(existsSync(join(s.root, 'spawned.marker'))).toBe(false)
+    // the first handed back: nothing else runs, and it runs alone - spawned, as the offer's end decided
+    expect((await s.ask('done', { handle: h1, text: REPLY('Labels done.') })).ok).toBe(true)
+    await Promise.all([t, t2])
+    await s.jam.tick()
+    const onBoard = () => replay(readLog(s.dir, 'volume-ui')).flatMap((x) => x.replies.filter((y) => y.agent && !EARLY.test(y.id ?? '')))
+    expect(await until(() => finals(s.dir).length === 1 && onBoard().length === 1, 15_000, () => s.jam.tick())).toBe(true)
+    expect(onBoard()[0].body).toBe('A background agent did it.')
+    const again = s.jam.snapshot().batches.find((x) => x.results && x.members.some((m) => m.card === r.id))!
+    expect([again.exclusive, again.runner?.kind, again.runner?.why]).toEqual([true, 'fresh', "your session didn't take it - it was busy or away"])
+    expect(existsSync(join(s.root, 'spawned.marker'))).toBe(true)
+    s.jam.stop(); s.done()
+  })
+})
+
 describe('review 2: the boundaries', () => {
   it('a background run never edits what would let it out: hooks, tool settings, MCP config, packages, Marver\'s own state', () => {
     const { root, done } = workspace()

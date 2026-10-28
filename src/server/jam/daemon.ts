@@ -30,7 +30,7 @@ import { workActivity } from '../work.ts'
 import { acquireLock, releaseLock } from './journal.ts'
 import { buildPacket, goalText, packetPath, parseAgentText, parseMembers, refusedAsk, sharedWhy } from './packet.ts'
 import { uncheckedAnchor, type AnchorCheck, type AnchorLook, type AnchorTarget } from '../../shared/anchor.ts'
-import { ownerOnly, act, addCapture, addWrapup, endSession, moreWrapup, startSession, textOf, wrapupIntact, wrapupOf, answeredSince, captureIntact, beginStep, captureComment, conflictStep, createQueue, ctxFor, endStep, looksGood, payloadKey, redelivering, requeue, joinAlone, sameComment, stillOwned, undelivered, fail, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
+import { ownerOnly, act, addCapture, addWrapup, endSession, moreWrapup, startSession, textOf, wrapupIntact, wrapupOf, answeredSince, captureIntact, beginStep, captureComment, conflictStep, createQueue, ctxFor, endStep, looksGood, payloadKey, redelivering, requeue, joinAlone, runsAlone, sameComment, stillOwned, undelivered, fail, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
 import { jamReservations, restoreHolds } from './reserve.ts'
 import { jamLive, type QueueView } from './live.ts'
 import type { Batch, Brief, Card, JamAdapter, JobPacket, Journal, Msg, Reanchor, Result } from './types.ts'
@@ -565,12 +565,18 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   const cards0 = (b: Batch) => b.members.map((m) => q.j.cards.find((c) => c.id === m.card)).filter((c): c is Card => !!c)
 
   const changedBoards = (b: Batch) => { for (const board of new Set(b.members.map((m) => m.board))) hooks.changed?.(board) }
+  /** Does a queued card run alone now (queue.ts runsAlone), with the session that takes the work as it is now (F5) */
+  const aloneNow = () => {
+    let on: [boolean, boolean] | undefined
+    return (c: Card) => runsAlone(c, (record) => (on ??= [!!runs.takes(), !!runs.takes(undefined, true)])[record ? 1 : 0])
+  }
   const reserve = (exclusiveWaiting?: boolean) => {
     if (stopped) return   // the table is the process's: a successor may own it now
     jamReservations.frames = new Map([...runningBatches.values()].flatMap((b) => b.frames.map((f) => [f, b.batchId] as [string, string])))
     const exclusiveRunning = [...runningBatches.values()].some((b) => b.exclusive)
+    const alone = aloneNow()
     jamReservations.exclusive = exclusiveRunning ? 'running'
-      : (exclusiveWaiting ?? q.j.cards.some((c) => c.state === 'queued' && (c.exclusive || !c.frames.length))) ? 'waiting' : null
+      : (exclusiveWaiting ?? q.j.cards.some((c) => c.state === 'queued' && alone(c))) ? 'waiting' : null
     // results still to be posted (the barrier, a retried delivery): no new hold until they settle
     jamReservations.settling = !ready || delivering.size > 0
   }
@@ -808,9 +814,14 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         // or that run left first): it never runs beside it. It goes back to the queue - first in line among its frames'
         // requests, never shared again, spawned as it was going to be - and waits for its frames; a queued request holds
         // nothing, so two of them never wait on each other (Codex's review of the design: no waiting loop, no deadlock)
+        // F5: formed with no frame beside the others for your session, it is spawned only alone - a spawned run's new frames
+        // are found only when nothing ran beside it: with anything run since it began, it goes back too, and runs alone
+        let loose = false
         const back = await q.lock((j) => {
+          loose = !b.exclusive && cards0(b).every((c) => !c.frames.length)
+            && (!!b.crowded || crowded || !aloneAtStart || batchStarts !== myStart || [...runningBatches.values()].some((o) => o.batchId !== b.batchId))
           // (`queue` - under session-only, crowded out of its session: back whatever holds its frames now, never spawned)
-          if (b.handoff !== 'queue' && ![...runningBatches.values()].some((o) => o.batchId !== b.batchId && o.frames.some((f) => b.frames.includes(f)))) return false
+          if (b.handoff !== 'queue' && !loose && ![...runningBatches.values()].some((o) => o.batchId !== b.batchId && o.frames.some((f) => b.frames.includes(f)))) return false
           const spawn = b.handoff === 'spawn' || !!spawnedBefore
           const why = b.handoffWhy ?? spawnedBefore?.why
           // what it had goes with it (Codex's review): the frames given to it as it worked (a variant placed with
@@ -829,11 +840,11 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
             t.alone = joinAlone(t.alone, { ...(spawn ? { spawn: true as const } : {}), ...(why ? { why } : {}),
               ...(created.length ? { created: [...created] } : {}), ...(shots.length ? { shots: shots.map((s) => ({ ...s })) } : {}) })
           }
-          b.state = 'done'; b.at = Date.now(); b.note = 'back in the queue - another runner holds one of its frames'
+          b.state = 'done'; b.at = Date.now(); b.note = loose ? 'back in the queue - with no frame, it runs alone' : 'back in the queue - another runner holds one of its frames'
           q.persist()
           return true
         })
-        if (back) { log('  jam: a run went back to the queue - another runner holds one of its frames; it starts when they are free'); queueChanged(); timeRun('other'); return }
+        if (back) { log(loose ? '  jam: a run with no frame went back to the queue - it runs alone once the other work is done' : '  jam: a run went back to the queue - another runner holds one of its frames; it starts when they are free'); queueChanged(); timeRun('other'); return }
         const ch: { kind: 'fork' | 'fresh'; agent: string; session?: string; why?: string } = spawnedBefore
           ? { kind: spawnedBefore.kind as 'fork' | 'fresh', agent: spawnedBefore.agent, ...(spawnedBefore.session ? { session: spawnedBefore.session } : {}), ...(spawnedBefore.why ? { why: spawnedBefore.why } : {}) }
           : (() => {
@@ -929,7 +940,11 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       if (capturing) timing.afterMs = performance.now() - tAfter
       // results first: every member's result in ONE journal write, before anything is posted
       const split = parseMembers(run.said ?? run.reply, b.members.map((m) => m.id))
-      const changedShared = sharedBefore ? [...sharedMtimes(root)].filter(([f, mt]) => sharedBefore.get(f) !== mt).map(([f]) => f) : []
+      // (a scene the run made - nothing of it there before, no frame of its own in it - is its own whole: its `_` files, a
+      // helper or a note, are not shared files it changed; F5)
+      const sceneOf = (f: string) => /^design\/scenes\/([^/]+)\//.exec(f)?.[1]
+      const scenes0 = new Set([...(sharedBefore?.keys() ?? [])].map(sceneOf).concat([...startMtimes.keys(), ...b.frames.filter((f) => !b.created?.includes(f))].map((f) => f.split('/')[0])))
+      const changedShared = sharedBefore ? [...sharedMtimes(root)].filter(([f, mt]) => sharedBefore.get(f) !== mt && (!sceneOf(f) || scenes0.has(sceneOf(f)))).map(([f]) => f) : []
       const results: Record<string, Result> = {}
       for (const [id, r0] of Object.entries(split)) {
         let r = r0
@@ -1133,7 +1148,11 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       // F4: a request on a frame the session taking the work holds - every run on it that session's - is not held back:
       // it is offered to that session, which decides (hold it, fold it in, or a variant beside it)
       const taker = runs.taker()
+      // F5: a request with no frame runs beside the others for the session that takes the work now, full or not (a
+      // session's record: the session it closes takes it though that has ended) - with none, alone
+      const takes = [runs.takes(), runs.takes(undefined, true)]
       const { batches, exclusiveWaiting } = form(j, ctx, {
+        session: (record) => { const t = takes[record ? 1 : 0]; return t && { conn: t.conn.id, inc: t.conn.inc, room: t.room } },
         free: Math.max(1, cfg.concurrency) - spawned + runs.room(),
         ...(taker ? {
           share: (f: string) => {
@@ -1156,10 +1175,11 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       for (const b of batches) batchWaits.set(b.batchId, new Map(b.members.flatMap((m) => { const t = queuedSince.get(m.card); return t !== undefined && !atBoot.has(m.card) ? [[m.card, now - t] as [string, number]] : [] })))
       reserve(exclusiveWaiting)
       // a queued card that waits on a chat agent's hold: say so once, look again soon
+      const alone = aloneNow()
       for (const c of j.cards) {
         if (c.state !== 'queued') continue
         const held = c.frames.find((f) => hooks.held?.(f))
-        if (held || (exclusiveWaiting && (c.exclusive || !c.frames.length))) {
+        if (held || (exclusiveWaiting && alone(c))) {
           holdLater()
           if (held && !waitingSaid.has(c.id)) { waitingSaid.add(c.id); log(`  jam: waiting - ${held} is being worked on in chat; the comment runs once it is done`) }
         } else waitingSaid.delete(c.id)
@@ -1491,6 +1511,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     const queued = j.cards.filter((c) => c.state === 'queued' && !busyFrame(c)).sort((a, b) => a.order - b.order || a.made - b.made)
     const shown = j.cards.filter((c) => pending(c) || c.at > Date.now() - 60_000 || (!!j.run && c.kind !== 'comment' && c.made >= j.run.since))
     const exclusiveAhead = jamReservations.exclusive
+    const alone = aloneNow()
     return {
       agent: adapter.name, seq: { boot, n: ++viewN },
       ...(q.j.run ? { run: q.j.run } : {}),
@@ -1500,8 +1521,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         const holder = busy ? j.batches.find((b) => b.batchId === jamReservations.frames.get(busy)) : undefined
         const waitsFor = busy ? { frame: busy, ...(holder ? { by: runs.title(holder) } : hooks.held?.(busy) ? { by: 'chat' } : {}) } : undefined
         const position = c.state === 'queued' && !busy ? queued.indexOf(c) + 1 : undefined
-        const waiting = c.state === 'queued' && (c.exclusive || !c.frames.length) && exclusiveAhead === 'waiting' ? 'waiting - runs alone once the other work is done'
-          : c.state === 'queued' && exclusiveAhead ? 'waiting - a job changing a shared file runs first' : undefined
+        // more than its place: it runs alone once the other work is done, or one that runs alone goes first
+        const waiting = c.state === 'queued' && exclusiveAhead === 'waiting' && alone(c) ? 'alone' as const
+          : c.state === 'queued' && exclusiveAhead ? 'behind' as const : undefined
         return {
           id: c.id, kind: c.kind, board: c.board, ...(c.thread ? { thread: c.thread } : {}), frames: c.frames, events: c.events,
           state: c.state, ...(c.note ? { note: c.note } : {}), rev: c.rev, made: c.made, order: c.order, at: c.at,

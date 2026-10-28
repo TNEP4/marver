@@ -142,6 +142,13 @@ agent touches them while you work - and you touch nothing else:
 
 - **Edit only the reserved frames.** A new frame file the ask calls for (a new screen) is
   yours to create. An existing frame outside `frames` is not yours.
+- **A run that reserves no frame** (`frames` is empty: a capture made on an empty board, a
+  comment on the board itself) makes what it asks for as NEW frames - beside a frame they
+  belong next to, in its scene, or in a scene of their own. A scene the run creates is its own
+  whole, its `_` files (a helper, a note) included; a frame or a shared file that exists is
+  still not yours. A run your session took puts each new frame on the board with
+  `--run <handle>` as it makes it - `npx marver boards pin <board> <scene/frame> --run <handle>`
+  on an empty board - so it is that run's.
 - **Placing frames is Marver's job, through one command.** "Put it next to slide 01", "add it
   to the board": `npx marver boards place <board> <scene/frame> --after <scene/frame>` (or
   `--before`) puts the frame there and makes room in its row, safe with the canvas open, and it

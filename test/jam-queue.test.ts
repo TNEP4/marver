@@ -10,8 +10,10 @@ import { claudeAdapter } from '../src/server/jam/adapter/claude.ts'
 import { record } from '../src/server/jam/ledger.ts'
 import { deviceId } from '../src/server/jam/device.ts'
 import { read as readJournal, write as writeJournal } from '../src/server/jam/journal.ts'
-import { act, answers, ctxFor, form, freezeBrief, ingest, merge, settle, writePacket } from '../src/server/jam/queue.ts'
+import { act, addWrapup, answers, ctxFor, form, freezeBrief, ingest, merge, settle, writePacket } from '../src/server/jam/queue.ts'
 import { buildPacket, goalText, packetPath, parseMembers, refusedAsk, sharedFile, sharedWhy } from '../src/server/jam/packet.ts'
+import { sessionBrief } from '../src/server/jam/session-brief.ts'
+import { buildWrapup, storeWrapup, type Wrapup } from '../src/server/jam/session.ts'
 import { jamReservations, refuseHold, restoreHolds, saveHolds } from '../src/server/jam/reserve.ts'
 import { createActivity } from '../src/server/jam/activity.ts'
 import type { Batch, Card, JamAdapter, Journal, JournalV1 } from '../src/server/jam/types.ts'
@@ -323,6 +325,26 @@ describe('Jam V2: the brief is frozen at claim', () => {
     expect(g).not.toContain('--run')
     // a session's run: --run with its handle, so the new frame is the run's
     expect(goalText(packet, true, { kind: 'session', handle: 'r-12345678.1' })).toContain('--after <scene/frame>` --run r-12345678.1')
+  })
+
+  it('F5: a run that reserves no frame makes what it asks for as new frames, in a scene of its own - never told it may edit nothing, never sent to a `shared` answer to make its own scene', () => {
+    const m = { id: 'm1', card: 'cap-1700000000000-abcdef', kind: 'capture' as const, board: 'volume-ui', frames: [] as string[], brief: { asks: [], history: [] } }
+    const packet = { v: 2 as const, kind: 'marver.jam.job' as const, batchId: 'b-1', frames: [] as string[], members: [m] }
+    const g = goalText(packet, true, { kind: 'session', handle: 'r-12345678.1' })
+    expect(g).toContain('THIS JOB RESERVES NO FRAME: make what it asks for as NEW frames')
+    expect(g).toContain('A scene you create for them is yours whole, its `_` files (a helper, a note) included')
+    expect(g).not.toContain('EDIT ONLY THE FRAMES')
+    expect(g).toContain('`npx marver boards pin <board> <scene/frame>` --run r-12345678.1 adds it at the end')
+    // spawned alone, with no frame and no shared file to edit: the same words, never "it may edit the frames in `frames`"
+    expect(goalText({ ...packet, exclusive: { files: [] } })).toContain('THIS JOB RESERVES NO FRAME')
+    expect(goalText({ ...packet, exclusive: { files: [] } })).not.toContain('RUNS ALONE')
+    const t = sessionBrief(packet, 'r-12345678.1', undefined, { agent: 'claude' })
+    expect(t).not.toContain('Frames you may edit')
+    expect(t).toContain('- on board volume-ui, ')
+    expect(t).toContain('It reserves no frame: make what it asks for as new frames, in a scene of their own if nothing on the board fits (a scene the run makes is its own, its _ files included).')
+    expect(t).toContain('Edit no frame that exists; each new frame goes on board volume-ui with npx marver boards place volume-ui <scene/frame> --after <scene/frame> --run r-12345678.1 (on an empty board: npx marver boards pin volume-ui <scene/frame> --run r-12345678.1).')
+    // with a frame, as before
+    expect(sessionBrief({ ...packet, frames: ['demo/a'], members: [{ ...m, frames: ['demo/a'] }] }, 'r-12345678.1')).toContain('Frames you may edit: demo/a.')
   })
 
   it('a packet over 1 MB (8 members, long threads) reaches the agent through its file; the prompt stays small', async () => {
@@ -718,7 +740,7 @@ describe('Jam V2: what the status icon says', () => {
     expect(statusLines({ ...base, state: 'queued', position: 1 }, 'claude', H).head).toBe('Queued · next')
     expect(statusLines({ ...base, state: 'queued', position: 4 }, 'claude', H).head).toBe('Queued · 4th - runs after 3 others')
     expect(statusLines({ ...base, state: 'queued', position: 2, events: ['e1', 'e2'] }, 'claude', H).head).toBe('Queued · 2nd · 2 tags - runs after 1 other')
-    expect(statusLines({ ...base, state: 'queued', position: 1, waiting: 'waiting - runs alone once the other work is done' }, 'claude', H).detail).toBe('waiting - runs alone once the other work is done')
+    expect(statusLines({ ...base, frames: [], state: 'queued', position: 1, waiting: 'alone' }, 'claude', H)).toEqual({ head: 'Queued · waits to run alone', detail: 'It names no frame and runs on its own - it starts once the other work is done' })
     // waiting on a frame another run holds (F2): which frame, and whose - never "next"
     expect(statusLines({ ...base, state: 'queued', waitsFor: { frame: 'deck/01-slide', by: 'Icon labels' } }, 'claude', H)).toEqual({ head: 'Queued · waits for deck/01-slide', detail: '"Icon labels" is working on it - this one starts when it is done' })
     expect(statusLines({ ...base, state: 'queued', waitsFor: { frame: 'deck/01-slide', by: 'chat' } }, 'claude', H).detail).toBe('Your agent in chat is working on it - this one starts when it is done')
@@ -1087,6 +1109,86 @@ describe('F4: form() - a frame the session taking the work holds may be shared w
     expect(batches[0].share).toBeUndefined()
     expect(c.alone).toBeUndefined()
     done(); done2()
+  })
+})
+
+describe('F5: form() - a request with no frame runs beside the others while a session takes the work, alone while none does', () => {
+  const ses = { conn: 'claude-aaaaaaaaaaaa', inc: 'i1' }
+  const base = { free: 4, exclusiveRunning: false, held: () => false, anyHold: () => false }
+  const ready = (root: string) => { const j = readJournal(root); j.baselined = true; return j }
+  /** a capture made on an empty board: confirmed, it names no frame */
+  const blank = (j: Journal, id: string, at: number, board = 'volume-ui') => { const c: Card = { id, kind: 'capture', board, frames: [], events: [], state: 'queued', made: at, order: at, rev: 1, at }; j.cards.push(c); return c }
+  const taking = (room = 8) => ({ session: () => ({ ...ses, room }) })
+
+  it('two captures on an empty board both run at once beside a run on another board, each a run of its own for your session (Nic, 28 Oct); with no session, as before: alone, once nothing runs', () => {
+    const { root, done } = setup()
+    const j = ready(root)
+    const a = blank(j, 'cap-1700000000001-aaaaaa', 1000), b = blank(j, 'cap-1700000000002-bbbbbb', 1001)
+    const ctx = ctxFor(root)
+    expect(form(j, ctx, { ...base, running: new Set(['demo/a']) })).toEqual({ batches: [], exclusiveWaiting: true })
+    const { batches, exclusiveWaiting } = form(j, ctx, { ...base, running: new Set(['demo/a']), ...taking() })
+    expect(exclusiveWaiting).toBe(false)
+    expect(batches.map((x) => [x.members.map((m) => m.card), x.frames, x.exclusive, x.share])).toEqual([[[a.id], [], undefined, ses], [[b.id], [], undefined, ses]])
+    expect([a.state, b.state]).toEqual(['working', 'working'])
+    // one back from a run that left its session (spawned while another ran): alone, a session or none
+    const c = blank(j, 'cap-1700000000003-cccccc', 1002)
+    c.alone = { spawn: true, why: 'not taken in 2 minutes' }
+    expect(form(j, ctx, { ...base, running: new Set(['demo/a']), ...taking() })).toEqual({ batches: [], exclusiveWaiting: true })
+    const r = form(j, ctx, { ...base, running: new Set(), ...taking() })
+    expect(r.batches.map((x) => [x.members[0].card, x.exclusive, x.handoff, x.share])).toEqual([[c.id, true, 'spawn', undefined]])
+    done()
+  })
+
+  it('they take your session\'s room like any request: with room for one, the second waits its turn without holding the queue back', () => {
+    const { root, dir, done } = setup()
+    const j = ready(root)
+    const a = blank(j, 'cap-1700000000001-aaaaaa', 1000), b = blank(j, 'cap-1700000000002-bbbbbb', 1001)
+    const t = say(root, dir, '@marver small fix', { frame: 'demo/free' })
+    const ctx = ctxFor(root); ingest(j, ctx)
+    cardOf({ snapshot: () => j }, t)!.order = 2000
+    const { batches, exclusiveWaiting } = form(j, ctx, { ...base, running: new Set(['demo/a']), ...taking(1) })
+    expect(batches.map((x) => x.members[0].card)).toEqual([a.id, `c-${t.id}`])
+    expect([b.state, exclusiveWaiting]).toEqual(['queued', false])
+    done()
+  })
+
+  it('the session record runs beside a capture your session is on, though the Jam session it closes has ended - and a request queued after it is not held back', () => {
+    const { root, dir, done } = setup()
+    const j = ready(root)
+    const w = buildWrapup(j, root, { session: 'ses-1700000000000-abcdef', since: Date.now() - 60_000, instructions: 'lead with decisions', includeTalk: false, tags: 0 }) as Wrapup
+    const hash = storeWrapup(root, w)
+    record(root, 'home', `wrapup:${w.id}:${hash}`)
+    const rec = addWrapup(j, w, hash, 'home', 1000)
+    const t = say(root, dir, '@marver small fix', { frame: 'demo/free' })
+    const ctx = ctxFor(root); ingest(j, ctx)
+    cardOf({ snapshot: () => j }, t)!.order = 2000
+    // the Jam session has ended: your session takes its record, nothing else
+    const { batches, exclusiveWaiting } = form(j, ctx, { ...base, running: new Set(['demo/a']), session: (record) => (record ? { ...ses, room: 7 } : undefined) })
+    expect(batches.map((x) => [x.members[0].card, x.exclusive, x.share])).toEqual([[rec.id, undefined, ses], [`c-${t.id}`, undefined, undefined]])
+    expect(exclusiveWaiting).toBe(false)
+    done()
+  })
+
+  it('a request that must edit a shared file still runs alone and holds the queue back, a session or none - and once it is done, one with no frame runs beside the next', () => {
+    const { root, dir, done } = setup()
+    const j = ready(root)
+    const s = say(root, dir, '@marver restyle every button', { frame: 'demo/b' })
+    const t = say(root, dir, '@marver small fix', { frame: 'demo/c' })
+    const ctx = ctxFor(root); ingest(j, ctx)
+    const x = cardOf({ snapshot: () => j }, s)!
+    x.exclusive = ['design/scenes/demo/_kit.tsx']; x.order = 1000
+    const a = blank(j, 'cap-1700000000001-aaaaaa', 2000)
+    cardOf({ snapshot: () => j }, t)!.order = 3000
+    for (const o of [{}, taking()]) expect(form(j, ctx, { ...base, running: new Set(['demo/a']), ...o })).toEqual({ batches: [], exclusiveWaiting: true })
+    // nothing runs: it runs, alone - the capture with no frame and the tag wait behind it, whoever takes the work
+    const r = form(j, ctx, { ...base, running: new Set(), ...taking() })
+    expect(r.batches.map((b) => [b.members[0].card, b.exclusive])).toEqual([[x.id, true]])
+    expect(form(j, ctx, { ...base, running: new Set(), exclusiveRunning: true, ...taking() }).batches).toEqual([])
+    expect([a.state, cardOf({ snapshot: () => j }, t)!.state]).toEqual(['queued', 'queued'])
+    // done: the capture runs beside the tag, in one pass
+    const n = form(j, ctx, { ...base, running: new Set(), ...taking() })
+    expect(n.batches.map((b) => [b.members[0].card, b.exclusive])).toEqual([[a.id, undefined], [`c-${t.id}`, undefined]])
+    done()
   })
 })
 
