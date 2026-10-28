@@ -414,6 +414,8 @@ export interface FormOpts {
   free: number
   /** frames the running batches hold */
   running: Set<string>
+  /** how many runs go now - one with no frame among them, though it holds none (F5): an exclusive job waits for every one */
+  active?: number
   /** does an exclusive batch run now? */
   exclusiveRunning: boolean
   /** a chat agent's `work start` holds this frame */
@@ -458,7 +460,7 @@ export function form(j: Journal, ctx: Ctx, o: FormOpts, now = Date.now()): { bat
   type Forming = { board: string; frames: string[]; cards: Card[]; exclusive?: boolean; single: boolean; overlaps?: string[]; for?: { conn: string; inc: string } }
   const forming: Forming[] = []
   if (exclusive.length) {
-    if (o.exclusiveRunning || o.running.size || o.anyHold() || o.free < 1) return { batches: [], exclusiveWaiting: !o.exclusiveRunning }
+    if (o.exclusiveRunning || o.running.size || o.active || o.anyHold() || o.free < 1) return { batches: [], exclusiveWaiting: !o.exclusiveRunning }
     const c = exclusive[0]
     forming.push({ board: c.board, frames: [...c.frames], cards: [c], exclusive: true, single: false })
   } else if (!o.exclusiveRunning) {
@@ -472,9 +474,10 @@ export function form(j: Journal, ctx: Ctx, o: FormOpts, now = Date.now()): { bat
     for (const c of queued) {
       if (!c.frames.length) {
         // F5: no frame - beside the others, for the session taking the work: it reserves none and waits for none, a run of
-        // its own (what it makes is claimed with --run as it is placed)
+        // its own (what it makes is claimed with --run as it is placed). Its slot is that session's: every run formed in
+        // this pass may take its room first - never `free`, which holds no room for a record once its Jam session ended
         const s = o.session!(c.kind === 'wrapup')!
-        if (s.room <= took || forming.length >= o.free) continue
+        if (forming.length >= s.room) continue
         if (!validate(ctx, c, log(c.board), now, j)) continue
         forming.push({ board: c.board, frames: [], cards: [c], single: false, for: { conn: s.conn, inc: s.inc } })
         took += 1

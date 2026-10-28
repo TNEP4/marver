@@ -1190,6 +1190,40 @@ describe('F5: form() - a request with no frame runs beside the others while a se
     expect(n.batches.map((b) => [b.members[0].card, b.exclusive])).toEqual([[a.id, undefined], [`c-${t.id}`, undefined]])
     done()
   })
+
+  it('a run that runs alone waits for a run with no frame too, though it holds none (Codex\'s review: it started beside it) - a shared-file job and one back from a run that left its session', () => {
+    const { root, dir, done } = setup()
+    const j = ready(root)
+    const s = say(root, dir, '@marver restyle every button', { frame: 'demo/b' })
+    const ctx = ctxFor(root); ingest(j, ctx)
+    const x = cardOf({ snapshot: () => j }, s)!
+    x.exclusive = ['design/scenes/demo/_kit.tsx']
+    // a capture on an empty board runs for your session: no frame held, one run going
+    for (const o of [{}, taking()]) expect(form(j, ctx, { ...base, running: new Set(), active: 1, ...o })).toEqual({ batches: [], exclusiveWaiting: true })
+    x.state = 'dropped'
+    const c = blank(j, 'cap-1700000000003-cccccc', 1002)
+    c.alone = { spawn: true, why: 'not taken in 2 minutes' }
+    expect(form(j, ctx, { ...base, running: new Set(), active: 1, ...taking() })).toEqual({ batches: [], exclusiveWaiting: true })
+    // that run done: it runs, alone
+    expect(form(j, ctx, { ...base, running: new Set(), active: 0, ...taking() }).batches.map((b) => [b.members[0].card, b.exclusive])).toEqual([[c.id, true]])
+    done()
+  })
+
+  it('the session record takes your session\'s room, not a background slot: with every slot taken once the Jam session ended, it still goes to your session (Codex\'s review: it waited) - and a request after it still waits for a slot', () => {
+    const { root, dir, done } = setup()
+    const j = ready(root)
+    const w = buildWrapup(j, root, { session: 'ses-1700000000000-abcdef', since: Date.now() - 60_000, instructions: 'lead with decisions', includeTalk: false, tags: 0 }) as Wrapup
+    const hash = storeWrapup(root, w)
+    record(root, 'home', `wrapup:${w.id}:${hash}`)
+    const rec = addWrapup(j, w, hash, 'home', 1000)
+    const t = say(root, dir, '@marver small fix', { frame: 'demo/free' })
+    const ctx = ctxFor(root); ingest(j, ctx)
+    cardOf({ snapshot: () => j }, t)!.order = 2000
+    const r = form(j, ctx, { ...base, free: 0, running: new Set(['demo/a']), active: 1, session: (record) => (record ? { ...ses, room: 8 } : undefined) })
+    expect(r.batches.map((x) => [x.members[0].card, x.share])).toEqual([[rec.id, ses]])
+    expect(cardOf({ snapshot: () => j }, t)!.state).toBe('queued')
+    done()
+  })
 })
 
 describe('Jam V2: review round 4 fixes', () => {

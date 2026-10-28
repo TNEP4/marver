@@ -78,7 +78,8 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 - **A request with no frame no longer waits for everything else.** A capture made on an empty board, a comment on the
   board itself and the session record go to your session beside your other runs; they used to wait until nothing else
   ran, and hold back every request after them. With no session taking the work they still run alone, and the tile says
-  so: "Waits to run alone", and "Waits · a run goes alone first" on the requests behind one.
+  so: "Waits to run alone", and "Waits · a run goes alone first" on the requests behind one. With your session full,
+  "Waits · your session is full".
 
 ### Fixed
 

@@ -194,6 +194,9 @@ export interface Batch {
   created?: string[]
   /** the frames there were before its first attempt (a rerun compares with these) */
   before?: string[]
+  /** the scenes there were before its first attempt, a frame or a shared file in each (F5): one it made is its own whole -
+   *  its `_` files are no shared file it changed, a rerun after a restart too */
+  scenes?: string[]
   /** something else ran beside it at some point (another job, a terminal hold): a frame that appeared is no one's */
   crowded?: boolean
   early?: { body: string; asks: boolean; commentId: string; ts: number }

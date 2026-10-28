@@ -565,11 +565,13 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   const cards0 = (b: Batch) => b.members.map((m) => q.j.cards.find((c) => c.id === m.card)).filter((c): c is Card => !!c)
 
   const changedBoards = (b: Batch) => { for (const board of new Set(b.members.map((m) => m.board))) hooks.changed?.(board) }
-  /** Does a queued card run alone now (queue.ts runsAlone), with the session that takes the work as it is now (F5) */
-  const aloneNow = () => {
-    let on: [boolean, boolean] | undefined
-    return (c: Card) => runsAlone(c, (record) => (on ??= [!!runs.takes(), !!runs.takes(undefined, true)])[record ? 1 : 0])
+  /** The session that takes the work now and its room - `record`: the one a session's record goes to (F5) - looked at once */
+  const takersNow = () => {
+    let on: ReturnType<Runs['takes']>[] | undefined
+    return (record: boolean) => (on ??= [runs.takes(), runs.takes(undefined, true)])[record ? 1 : 0]
   }
+  /** Does a queued card run alone now (queue.ts runsAlone), with the session that takes the work as it is now (F5) */
+  const aloneNow = (taking = takersNow()) => (c: Card) => runsAlone(c, (record) => !!taking(record))
   const reserve = (exclusiveWaiting?: boolean) => {
     if (stopped) return   // the table is the process's: a successor may own it now
     jamReservations.frames = new Map([...runningBatches.values()].flatMap((b) => b.frames.map((f) => [f, b.batchId] as [string, string])))
@@ -724,13 +726,17 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     const light = (f?: string) => { if (f && !lit.has(f)) { hooks.work?.(f, true); lit.add(f) } }
     const clearGlow = () => { for (const f of lit) hooks.work?.(f, false); lit.clear() }
     const startMtimes = sceneFrameMtimes(root)
+    const sharedBefore = b.exclusive ? null : sharedMtimes(root)
+    const sceneOf = (f: string) => /^design\/scenes\/([^/]+)\//.exec(f)?.[1]
     // the frames there were before its FIRST attempt, kept with the batch: a rerun after a crash still knows which
     // frames its run made (and whether anything else could have)
     // A rerun after a restart: a frame that appeared while nothing was watching (the daemon down) is no one's -
     // it joins `before`; only frames this run was seen to make (kept in `created`) stay its own
+    // (and the scenes there were: one it made is its own whole, a rerun too - F5, Codex's review)
     await q.lock(() => {
       const made = new Set(b.created ?? [])
       b.before = [...new Set([...(b.before ?? []), ...[...startMtimes.keys()].filter((f) => !made.has(f))])]
+      if (sharedBefore && !b.scenes) b.scenes = [...new Set([...[...sharedBefore.keys()].flatMap((f) => sceneOf(f) ?? []), ...[...startMtimes.keys()].map((f) => f.split('/')[0])])]
       q.persist()
     })
     if (crowded || !aloneAtStart) await q.lock(() => { b.crowded = true; q.persist() })
@@ -745,7 +751,6 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       await q.lock(() => { b.created = [...(b.created ?? []), ...found]; b.frames = [...new Set([...b.frames, ...b.created])]; q.persist() })
       reserve()
     }
-    const sharedBefore = b.exclusive ? null : sharedMtimes(root)
     const touched = new Set<string>()
     for (const f of b.frames) light(f)
     // a batch that holds a capture shoots its reserved frames before and after - both while it still
@@ -814,12 +819,13 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         // or that run left first): it never runs beside it. It goes back to the queue - first in line among its frames'
         // requests, never shared again, spawned as it was going to be - and waits for its frames; a queued request holds
         // nothing, so two of them never wait on each other (Codex's review of the design: no waiting loop, no deadlock)
-        // F5: formed with no frame beside the others for your session, it is spawned only alone - a spawned run's new frames
-        // are found only when nothing ran beside it: with anything run since it began, it goes back too, and runs alone
+        // F5: formed with no frame beside the others for your session, it is never spawned as it is - a spawned run's new
+        // frames are found only when nothing runs beside it, from start to end: it goes back too, and runs alone - exclusive,
+        // so nothing starts beside it after either (Codex's review: one spawned while nothing else ran was not exclusive, and
+        // a request after it ran beside it)
         let loose = false
         const back = await q.lock((j) => {
           loose = !b.exclusive && cards0(b).every((c) => !c.frames.length)
-            && (!!b.crowded || crowded || !aloneAtStart || batchStarts !== myStart || [...runningBatches.values()].some((o) => o.batchId !== b.batchId))
           // (`queue` - under session-only, crowded out of its session: back whatever holds its frames now, never spawned)
           if (b.handoff !== 'queue' && !loose && ![...runningBatches.values()].some((o) => o.batchId !== b.batchId && o.frames.some((f) => b.frames.includes(f)))) return false
           const spawn = b.handoff === 'spawn' || !!spawnedBefore
@@ -940,11 +946,10 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       if (capturing) timing.afterMs = performance.now() - tAfter
       // results first: every member's result in ONE journal write, before anything is posted
       const split = parseMembers(run.said ?? run.reply, b.members.map((m) => m.id))
-      // (a scene the run made - nothing of it there before, no frame of its own in it - is its own whole: its `_` files, a
-      // helper or a note, are not shared files it changed; F5)
-      const sceneOf = (f: string) => /^design\/scenes\/([^/]+)\//.exec(f)?.[1]
-      const scenes0 = new Set([...(sharedBefore?.keys() ?? [])].map(sceneOf).concat([...startMtimes.keys(), ...b.frames.filter((f) => !b.created?.includes(f))].map((f) => f.split('/')[0])))
-      const changedShared = sharedBefore ? [...sharedMtimes(root)].filter(([f, mt]) => sharedBefore.get(f) !== mt && (!sceneOf(f) || scenes0.has(sceneOf(f)))).map(([f]) => f) : []
+      // (a scene the run made - nothing of it there before its first attempt, no frame of its own in it - is its own whole:
+      // its `_` files, a helper or a note, are not shared files it changed; F5)
+      const scenes0 = new Set([...(b.scenes ?? []), ...[...(b.before ?? []), ...b.frames.filter((f) => !b.created?.includes(f))].map((f) => f.split('/')[0])])
+      const changedShared = sharedBefore ? [...sharedMtimes(root)].filter(([f, mt]) => { const sc = sceneOf(f); return sharedBefore.get(f) !== mt && (!sc || scenes0.has(sc)) }).map(([f]) => f) : []
       const results: Record<string, Result> = {}
       for (const [id, r0] of Object.entries(split)) {
         let r = r0
@@ -1150,9 +1155,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       const taker = runs.taker()
       // F5: a request with no frame runs beside the others for the session that takes the work now, full or not (a
       // session's record: the session it closes takes it though that has ended) - with none, alone
-      const takes = [runs.takes(), runs.takes(undefined, true)]
+      const taking = takersNow()
       const { batches, exclusiveWaiting } = form(j, ctx, {
-        session: (record) => { const t = takes[record ? 1 : 0]; return t && { conn: t.conn.id, inc: t.conn.inc, room: t.room } },
+        session: (record) => { const t = taking(record); return t && { conn: t.conn.id, inc: t.conn.inc, room: t.room } },
         free: Math.max(1, cfg.concurrency) - spawned + runs.room(),
         ...(taker ? {
           share: (f: string) => {
@@ -1162,6 +1167,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           shareRoom: runs.room(), sharer: { conn: taker.id, inc: taker.inc },
         } : {}),
         running: frames,
+        active: runningBatches.size,
         exclusiveRunning: [...runningBatches.values()].some((b) => b.exclusive),
         held: (f) => !!hooks.held?.(f),
         anyHold: () => !!hooks.anyHold?.(),
@@ -1508,10 +1514,14 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     // a queued card waits on a frame another run holds (one job per frame), or your agent in chat: it says which and
     // whose, and counts no place in line - the places are of the requests that can start, first come first
     const busyFrame = (c: Card) => c.frames.find((f) => jamReservations.frames.has(f) || !!hooks.held?.(f))
-    const queued = j.cards.filter((c) => c.state === 'queued' && !busyFrame(c)).sort((a, b) => a.order - b.order || a.made - b.made)
+    const taking = takersNow()
+    const alone = aloneNow(taking)
+    // one with no frame that goes to your session while it holds all the runs it can: it waits for the session, not its
+    // place - a request after it may start first (Codex's review: it read "Queued · next")
+    const full = (c: Card) => !c.frames.length && !alone(c) && (taking(c.kind === 'wrapup')?.room ?? 0) < 1
+    const queued = j.cards.filter((c) => c.state === 'queued' && !busyFrame(c) && !full(c)).sort((a, b) => a.order - b.order || a.made - b.made)
     const shown = j.cards.filter((c) => pending(c) || c.at > Date.now() - 60_000 || (!!j.run && c.kind !== 'comment' && c.made >= j.run.since))
     const exclusiveAhead = jamReservations.exclusive
-    const alone = aloneNow()
     return {
       agent: adapter.name, seq: { boot, n: ++viewN },
       ...(q.j.run ? { run: q.j.run } : {}),
@@ -1520,10 +1530,11 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         const busy = c.state === 'queued' ? busyFrame(c) : undefined
         const holder = busy ? j.batches.find((b) => b.batchId === jamReservations.frames.get(busy)) : undefined
         const waitsFor = busy ? { frame: busy, ...(holder ? { by: runs.title(holder) } : hooks.held?.(busy) ? { by: 'chat' } : {}) } : undefined
-        const position = c.state === 'queued' && !busy ? queued.indexOf(c) + 1 : undefined
-        // more than its place: it runs alone once the other work is done, or one that runs alone goes first
+        const position = c.state === 'queued' && !busy && !full(c) ? queued.indexOf(c) + 1 : undefined
+        // more than its place: it runs alone once the other work is done, one that runs alone goes first, or your session is full
         const waiting = c.state === 'queued' && exclusiveAhead === 'waiting' && alone(c) ? 'alone' as const
-          : c.state === 'queued' && exclusiveAhead ? 'behind' as const : undefined
+          : c.state === 'queued' && exclusiveAhead ? 'behind' as const
+          : c.state === 'queued' && full(c) ? 'session' as const : undefined
         return {
           id: c.id, kind: c.kind, board: c.board, ...(c.thread ? { thread: c.thread } : {}), frames: c.frames, events: c.events,
           state: c.state, ...(c.note ? { note: c.note } : {}), rev: c.rev, made: c.made, order: c.order, at: c.at,

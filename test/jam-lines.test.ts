@@ -29,6 +29,11 @@ describe('the lane: a tile\'s status line', () => {
     expect(statusLines(card({ state: 'queued', position: 1, waiting: 'alone', exclusive: true, frames: ['deck/01-slide'] }), 'claude', {}).detail).toBe('It changes a shared file and runs on its own - it starts once the other work is done')
     expect(statusLines(card({ state: 'queued', position: 1, waiting: 'behind' }), 'claude', {})).toEqual({ head: 'Queued · waits - a run goes alone first', detail: 'A request that runs on its own goes first - this one starts after it' })
   })
+
+  it('one with no frame while your session holds all the runs it can says so - a request after it may start first (Codex\'s review: it read "Queued · next")', () => {
+    expect(laneLine(card({ state: 'queued', waiting: 'session' }))).toBe('Waits · your session is full')
+    expect(statusLines(card({ state: 'queued', waiting: 'session' }), 'claude', {})).toEqual({ head: 'Queued · waits - your session is full', detail: 'Your session holds all the runs it can - this one goes to it when one of them ends' })
+  })
 })
 
 describe('the read-back: a capture\'s merged timeline', () => {

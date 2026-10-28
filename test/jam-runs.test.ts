@@ -1133,6 +1133,129 @@ describe('F5: a request with no frame runs beside the others for your session - 
     expect(existsSync(join(s.root, 'spawned.marker'))).toBe(true)
     s.jam.stop(); s.done()
   })
+
+  /** a background agent that takes a while: a marker as it starts, its answer `ms` later */
+  const slowly = (ms: number): JamAdapter => ({ ...spawned, spawnArgs() { return { cmd: process.execPath, args: ['-e', `require('fs').writeFileSync('spawned.marker','yes');setTimeout(()=>process.stdout.write(JSON.stringify({result:'A background agent did it.'})),${ms})`] } } })
+  const marker = (s: { root: string }) => existsSync(join(s.root, 'spawned.marker'))
+
+  it('not taken while nothing else runs, it goes back all the same and runs alone - exclusive, so a request after it waits instead of running beside it (Codex\'s review: spawned as it was, a tag after it ran beside it and the frames it made were no one\'s)', async () => {
+    const s = await setup({ cfg: { sessionMax: undefined }, adapter: slowly(3_000) })
+    empty(s.root)
+    const r = blank('try to come up with a new floating menu')
+    expect((await s.jam.capture(r)).ok).toBe(true)
+    const t = s.jam.tick()
+    expect(await until(() => (offered(s)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
+    await s.jam.runs.tick(Date.now() + OFFER_MS + 1_000)   // not taken in two minutes: spawned - with nothing beside it
+    expect(await until(() => marker(s), 15_000, () => s.jam.runs.tick())).toBe(true)
+    const alone = s.jam.snapshot().batches.find((x) => x.state === 'claimed' && x.members.some((m) => m.card === r.id))!
+    expect([alone.exclusive, alone.runner?.kind, alone.runner?.why]).toEqual([true, 'fresh', "your session didn't take it - it was busy or away"])
+    // a tag while it runs: it waits for it, never offered or spawned beside it
+    tag(s.root, s.dir, '@marver icon labels')
+    const t2 = s.jam.tick()
+    for (let i = 0; i < 5; i++) { await s.jam.runs.tick(); await new Promise((res) => setTimeout(res, 50)) }
+    expect(offered(s)?.n ?? 0).toBe(0)
+    expect(s.jam.view().cards.find((c) => c.kind === 'comment')).toMatchObject({ state: 'queued', waiting: 'behind' })
+    // the run alone is done: the tag goes to your session
+    expect(await until(() => (offered(s)?.n ?? 0) === 1, 15_000, () => s.jam.runs.tick())).toBe(true)
+    expect(replay(readLog(s.dir, 'volume-ui')).flatMap((x) => x.replies.filter((y) => y.agent && !EARLY.test(y.id ?? ''))).map((y) => y.body)).toEqual(['A background agent did it.'])
+    s.jam.stop(); await Promise.allSettled([t, t2]); s.done()
+  })
+
+  it('the session record goes to your session while every background slot is taken, once the Jam session ended (Codex\'s review: it waited for the background run, though your session had room)', async () => {
+    const s = await setup({ jam: false, cfg: { concurrency: 1 }, adapter: slowly(5_000) })
+    const id = SESSION()
+    await s.jam.session({ action: 'start', id })
+    tag(s.root, s.dir)
+    const t = s.jam.tick()
+    expect(await until(() => (offered(s)?.latest?.title ?? '') === 'make it say Hello', 8_000, () => s.jam.runs.tick())).toBe(true)
+    // not taken in two minutes: it runs in the background, in the one slot
+    await s.jam.runs.tick(Date.now() + OFFER_MS + 1_000)
+    expect(await until(() => marker(s), 15_000, () => s.jam.runs.tick())).toBe(true)
+    // the session ends while it runs: its record goes to your session at once, beside it
+    expect((await s.jam.session({ action: 'wrapup', id, instructions: 'x', includeTalk: false, tags: 0, board: 'home' })).ok).toBe(true)
+    const t2 = s.jam.tick()
+    expect(await until(() => (offered(s)?.latest?.title ?? '') === 'Session record', 8_000, () => s.jam.runs.tick())).toBe(true)
+    expect(finals(s.dir)).toEqual([])
+    s.jam.stop(); await Promise.allSettled([t, t2]); s.done()
+  })
+
+  it('boards pin --run with a scene pins the frames given to the run - never one made while the canvas answered (Codex\'s review: it read the scene again and pinned it)', async () => {
+    const s = await setup({ cfg: { sessionMax: undefined } })
+    empty(s.root)
+    const r = blank('two floating menus')
+    expect((await s.jam.capture(r)).ok).toBe(true)
+    const t = s.jam.tick()
+    expect(await until(() => (offered(s)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
+    const h = String((await s.ask('next')).handle)
+    mkdirSync(join(s.root, 'design', 'scenes', 'menu'), { recursive: true })
+    put(s.root, 'design/scenes/menu/a.tsx')
+    const { boardsPinRun } = await import('../src/cli/boards.ts')
+    let pinned: unknown
+    void boardsPinRun(s.root, 'volume-ui', ['menu'], { run: h, as: s.conn.id }).then((x) => { pinned = x }, (e) => { pinned = e })
+    // another frame in that scene while the canvas answers - never given to the run
+    put(s.root, 'design/scenes/menu/b.tsx')
+    expect(await until(() => pinned !== undefined, 15_000, () => s.jam.runs.tick())).toBe(true)
+    expect(pinned).toEqual({ added: ['menu/a'], already: [] })
+    expect(JSON.parse(readFileSync(join(s.root, 'design', 'boards', 'volume-ui.json'), 'utf8')).nodes).toEqual([{ frame: 'menu/a' }])
+    expect(s.jam.snapshot().batches.find((x) => x.members.some((m) => m.card === r.id))!.frames).toEqual(['menu/a'])
+    s.jam.stop(); await t.catch(() => {}); s.done()
+  })
+
+  it('with your session full, one with no frame says it waits for your session and holds no place - the request after it is next (Codex\'s review: it read "Queued · next", and that request started first)', async () => {
+    const s = await setup({ cfg: { sessionMax: 1, concurrency: 1 }, adapter: slowly(8_000) })
+    empty(s.root)
+    put(s.root, 'design/scenes/demo/other.tsx'); put(s.root, 'design/scenes/demo/third.tsx')
+    tag(s.root, s.dir)
+    const t = s.jam.tick()
+    expect(await until(() => (offered(s)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
+    await s.ask('next')
+    // your session holds its one run: the next request runs in the background, in the one slot
+    tag(s.root, s.dir, '@marver make the other one blue', undefined, 'demo/other')
+    const t2 = s.jam.tick()
+    expect(await until(() => marker(s), 15_000, () => s.jam.runs.tick())).toBe(true)
+    const r = blank('try to come up with a new floating menu')
+    expect((await s.jam.capture(r)).ok).toBe(true)
+    const third = tag(s.root, s.dir, '@marver and the third', undefined, 'demo/third')
+    const t3 = s.jam.tick()
+    const card = (id: string) => s.jam.view().cards.find((c) => c.id === id)
+    expect(await until(() => card(r.id)?.state === 'queued' && card(`c-${third.id}`)?.state === 'queued', 8_000, () => s.jam.runs.tick())).toBe(true)
+    expect([card(r.id)?.waiting, card(r.id)?.position]).toEqual(['session', undefined])
+    expect([card(`c-${third.id}`)?.waiting, card(`c-${third.id}`)?.position]).toEqual([undefined, 1])
+    s.jam.stop(); await Promise.allSettled([t, t2, t3]); s.done()
+  })
+
+  it('a restart keeps a scene the run made its own: its helper edited after it is still no shared file it changed (Codex\'s review: read again at the restart, the scene was "there before")', async () => {
+    const s = await setup({ cfg: { sessionMax: undefined } })
+    empty(s.root)
+    const r = blank('try to come up with a new floating menu')
+    expect((await s.jam.capture(r)).ok).toBe(true)
+    const t = s.jam.tick()
+    expect(await until(() => (offered(s)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
+    const h = String((await s.ask('next')).handle)
+    mkdirSync(join(s.root, 'design', 'scenes', 'menu'), { recursive: true })
+    put(s.root, 'design/scenes/menu/_canvas.tsx', 'export const Canvas = () => null\n')
+    put(s.root, 'design/scenes/menu/floating.tsx')
+    const { boardsPinRun } = await import('../src/cli/boards.ts')
+    let pinned: unknown
+    void boardsPinRun(s.root, 'volume-ui', ['menu/floating'], { run: h, as: s.conn.id }).then((x) => { pinned = x }, (e) => { pinned = e })
+    expect(await until(() => pinned !== undefined, 15_000, () => s.jam.runs.tick())).toBe(true)
+    expect(pinned).toEqual({ added: ['menu/floating'], already: [] })
+    s.jam.stop(); await t
+    // the next marver dev: the run goes on - and its subagent edits its helper again
+    let lit = false
+    const jam2 = createJam(s.root, { ...CFG, sessionMax: undefined }, spawned, undefined, { work: (f, on) => { if (on && f === 'menu/floating') lit = true } })
+    const t2 = jam2.tick()
+    expect(await until(() => lit, 8_000, () => jam2.runs.tick())).toBe(true)
+    put(s.root, 'design/scenes/menu/_canvas.tsx', 'export const Canvas = () => <nav />\n')
+    let out: Record<string, unknown> | undefined
+    void request(s.root, readConn(s.root, s.conn.id)!, 'done', { handle: h, text: REPLY('A floating menu.') }, 20_000).then((x) => { out = x })
+    expect(await until(() => !!out, 15_000, () => jam2.runs.tick())).toBe(true)
+    expect(out!.ok).toBe(true)
+    await t2
+    const mine = replay(readLog(s.dir, 'volume-ui')).flatMap((x) => x.replies.filter((y) => y.agent && y.body === 'A floating menu.'))
+    expect(mine.map((x) => [x.agentMeta?.runner, x.alsoChanged])).toEqual([['session', undefined]])
+    jam2.stop(); s.done()
+  })
 })
 
 describe('review 2: the boundaries', () => {

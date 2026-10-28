@@ -174,8 +174,12 @@ async function toRun(root: string, frames: string[], opts: { run?: unknown; as?:
  *  Live Jam run first - how a run that reserves no frame puts what it made on an empty board, where nothing is to place it beside. */
 export async function boardsPinRun(root: string, board: string, targets: string[], opts: { run?: unknown; as?: unknown }): Promise<{ added: string[]; already: string[] }> {
   if (!targets.length) throw new Error('name the frames: boards pin <board> <scene/frame | scene ...>')
-  await toRun(root, resolveTargets(scanFrames(root).frames.map((f) => f.id), targets).all, opts)
-  return boardsPin(root, board, targets)
+  const live = scanFrames(root).frames.map((f) => f.id)
+  // read once: the frames given to the run are the ones pinned (Codex's review: a scene read again after the canvas
+  // answered pinned a frame made meanwhile, never given to it)
+  const frames = resolveTargets(live, targets).all
+  await toRun(root, frames, opts)
+  return pinFrames(root, board, frames, live)
 }
 
 /** `marver boards place <board> <scene/frame> --after|--before <scene/frame> [--run <handle>]` (F1): a frame next to

@@ -34,9 +34,10 @@ export function statusLines(c: JamCard, agent: string | null, harness: Record<st
     return { head: `Queued · waits for ${w.frame}${tags}`, detail: w.by === 'chat' ? 'Your agent in chat is working on it - this one starts when it is done'
       : w.by ? `"${w.by}" is working on it - this one starts when it is done` : 'Another run is working on it - this one starts when it is done' }
   }
-  // waiting for more than its place (one runs alone): why, never a place in line it does not have
+  // waiting for more than its place (one runs alone, your session is full): why, never a place in line it does not have
   if (c.state === 'queued' && c.waiting === 'alone') return { head: `Queued · waits to run alone${tags}`, detail: `It ${c.exclusive ? 'changes a shared file' : 'names no frame'} and runs on its own - it starts once the other work is done` }
   if (c.state === 'queued' && c.waiting === 'behind') return { head: `Queued · waits - a run goes alone first${tags}`, detail: 'A request that runs on its own goes first - this one starts after it' }
+  if (c.state === 'queued' && c.waiting === 'session') return { head: `Queued · waits - your session is full${tags}`, detail: 'Your session holds all the runs it can - this one goes to it when one of them ends' }
   if (c.state === 'queued') {
     const p = c.position ?? 1
     return { head: p <= 1 ? `Queued · next${tags}` : `Queued · ${ordinal(p)}${tags} - runs after ${p - 1} other${p - 1 === 1 ? '' : 's'}` }
@@ -64,7 +65,7 @@ export function laneLine(c: LaneCard, now = Date.now()): string {
     // waiting on a frame another run holds, or for one that runs alone: why, never a place in line it does not have
     case 'queued': {
       if (c.waitsFor) return `Waits for ${c.waitsFor.frame.split('/').pop()}`
-      if (c.waiting) return c.waiting === 'alone' ? 'Waits to run alone' : 'Waits · a run goes alone first'
+      if (c.waiting) return c.waiting === 'alone' ? 'Waits to run alone' : c.waiting === 'session' ? 'Waits · your session is full' : 'Waits · a run goes alone first'
       const p = c.position ?? 1; return p <= 1 ? 'Queued · next' : `Queued · ${ordinal(p)}`
     }
     case 'working': {
