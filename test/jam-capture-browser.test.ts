@@ -1780,6 +1780,9 @@ describe('captures in the browser: the first trial', () => {
       await browser!.eval(s, `(location.hash = '#/b/other', 1)`)
       await until(`window.__mvStore.getState().board === 'other'`, 10_000)
       await until(`!!document.querySelector('.jm-lane [data-tile="${r}"]')`, 10_000)
+      // in view, as a tile you click is (a long lane scrolls)
+      await browser!.eval(s, `(document.querySelector('.jm-lane [data-tile="${r}"]').scrollIntoView({ inline: 'center', block: 'nearest' }), 1)`)
+      await sleep(300)
       await click(`.jm-lane [data-tile="${r}"]`)
       // one click: its own board, and - its thread having no frame there - the capture's panel with the question
       await until(`window.__mvStore.getState().board === 'main' && window.__mvJamUi.getState().panel?.id === ${JSON.stringify(r)} && !!document.querySelector('.jm-asks textarea')`, 10_000)
