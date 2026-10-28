@@ -236,7 +236,7 @@ export interface Batch {
   dropped?: boolean
   /** formed beside runs of this session incarnation, sharing a frame with them (F4) - or, naming no frame, beside whatever
    *  runs (F5): only it may run it - offered to it, claimed by it, or back in the queue; a run of anyone else never shares a
-   *  frame, and one with no frame spawned runs alone */
+   *  frame, and one with no frame spawned runs alone. Gone once Marver spawns it: then it is no session's */
   share?: { conn: string; inc: string }
   /** the runs it shared a frame with when it was formed (words only: the ping, the brief) */
   overlaps?: string[]

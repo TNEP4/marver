@@ -390,10 +390,13 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     b.madeScenes = [...(b.madeScenes ?? []), sc]
   }
   /** Is a running batch this session incarnation's (F4): offered to it, taken by it and not stopping, or formed for it -
-   *  or done editing (its results saved, being posted)? Two such runs may share a frame: the session coordinates them. */
+   *  or done editing (its results saved, being posted)? Two such runs may share a frame: the session coordinates them.
+   *  Who runs it now decides: one Marver spawned is never a session's, whatever it was formed for (Codex's review: let go
+   *  of and spawned, it kept `share`, and a request on its frame went to your session beside it - a journal from before
+   *  `share` was cleared on a spawn too) */
   function heldBy(x: Batch, c: { id: string; inc: string }): boolean {
     if (x.results) return true
-    if (x.handoff) return false
+    if (x.handoff || (x.runner && x.runner.kind !== 'session')) return false
     return (!!x.offer && x.offer.conn === c.id && x.offer.inc === c.inc)
       || (!!x.claim && x.claim.conn === c.id && x.claim.inc === c.inc && !x.claim.stopping)
       || (!!x.share && x.share.conn === c.id && x.share.inc === c.inc && !x.offer && !x.claim)
@@ -884,8 +887,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         const s = { mcp: b.power?.mcp ?? true, skills: b.power?.skills ?? true }
         const full = agent === 'claude' || agent === 'codex' || agent === 'cursor'
         const opts: SpawnOpts | undefined = full ? { root, mcp: s.mcp, skills: s.skills, ...(ch.kind === 'fork' && ch.session ? { fork: ch.session } : {}), marver: marverCmd() } : undefined
-        // the runner is the decision now: saved before it runs, and the handoff it came from is spent
-        await q.lock(() => { b.runner = { kind: ch.kind, agent, ...(ch.kind === 'fork' && ch.session ? { session: ch.session } : {}), ...(ch.why ? { why: ch.why } : {}) }; delete b.handoff; q.persist() })
+        // the runner is the decision now: saved before it runs, and the handoff it came from is spent - and what it was
+        // formed for: no session's run any more (heldBy, kept)
+        await q.lock(() => { b.runner = { kind: ch.kind, agent, ...(ch.kind === 'fork' && ch.session ? { session: ch.session } : {}), ...(ch.why ? { why: ch.why } : {}) }; delete b.handoff; delete b.share; q.persist() })
         queueChanged()
         // a process slot of its own, whatever brought it here (jam.concurrency is the most Marver spawns at once)
         const permit = await takePermit()

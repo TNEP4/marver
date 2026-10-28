@@ -1328,6 +1328,44 @@ describe('F5: a request with no frame runs beside the others for your session - 
     s.jam.stop(); s.done()
   })
 
+  it('let go of by your session after its run was given a frame and spawned, it is no longer your session\'s: a new tag on that frame waits for it, never offered to your session beside it, and it takes none of your session\'s room - a journal that kept its session mark too (Codex\'s review: spawned, it kept `share`, so a subagent of your session was handed the frame the spawned agent edited, and it counted as one of your session\'s runs)', async () => {
+    const s = await setup({ adapter: slowly(6_000) })
+    empty(s.root)
+    const r = blank('a floating menu')
+    expect((await s.jam.capture(r)).ok).toBe(true)
+    const t = s.jam.tick()
+    expect(await until(() => (offered(s)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
+    const h = String((await s.ask('next')).handle)
+    mkdirSync(join(s.root, 'design', 'scenes', 'menu'), { recursive: true })
+    put(s.root, 'design/scenes/menu/first.tsx')
+    const { boardsPinRun } = await import('../src/cli/boards.ts')
+    let pinned: unknown
+    void boardsPinRun(s.root, 'volume-ui', ['menu/first'], { run: h, as: s.conn.id }).then((x) => { pinned = x }, (e) => { pinned = e })
+    expect(await until(() => pinned !== undefined, 15_000, () => s.jam.runs.tick())).toBe(true)
+    expect((await s.ask('release', { handle: h })).ok).toBe(true)
+    // spawned on the frame it holds, and running a while
+    expect(await until(() => marker(s), 15_000, () => s.jam.runs.tick())).toBe(true)
+    const b = s.jam.snapshot().batches.find((x) => x.members.some((m) => m.card === r.id))!
+    expect([b.runner?.kind, b.frames, b.share, s.jam.runs.room()]).toEqual(['fresh', ['menu/first'], undefined, 3])
+    // (a journal written before it went - a restart keeps the run spawned: it still is no run of your session's)
+    b.share = { conn: s.conn.id, inc: readConn(s.root, s.conn.id)!.inc }
+    expect(s.jam.runs.room()).toBe(3)
+    const ev = tag(s.root, s.dir, '@marver make it blue', undefined, 'menu/first')
+    const t2 = s.jam.tick()
+    const card = () => s.jam.view().cards.find((c) => c.id === `c-${ev.id}`)
+    expect(await until(() => !!card(), 8_000, () => s.jam.runs.tick())).toBe(true)
+    for (let i = 0; i < 10; i++) { await s.jam.runs.tick(); await new Promise((res) => setTimeout(res, 50)) }
+    expect([card()?.state, offered(s)?.n ?? 0, s.jam.snapshot().batches.find((x) => x.results)]).toEqual(['queued', 0, undefined])
+    // the spawned run done, the tag goes to your session
+    expect(await until(() => (offered(s)?.n ?? 0) === 1, 15_000, () => s.jam.runs.tick())).toBe(true)
+    expect(s.jam.snapshot().batches.find((x) => x.batchId === b.batchId)?.results).toBeDefined()
+    const n = await s.ask('next')
+    expect(n.frames).toEqual(['menu/first'])
+    expect((await s.ask('done', { handle: n.handle, text: REPLY('Blue.') })).ok).toBe(true)
+    await Promise.allSettled([t, t2])
+    s.jam.stop(); s.done()
+  })
+
   it('one with no frame waiting on your full session is offered as soon as you switch to an idle one (Codex\'s review: nothing woke the queue - no run of the full session moved - and it waited on)', async () => {
     const s = await setup({ cfg: { sessionMax: 1 } })
     empty(s.root)

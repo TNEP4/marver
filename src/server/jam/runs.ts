@@ -150,8 +150,9 @@ export function createRuns(d: RunsDeps): Runs {
   const live = (now = Date.now()) => listConns(root).filter((c) => usable(c, now))
   const open = () => q.j.batches.filter((b) => b.state === 'claimed' && !b.results)
   const byId = (id: string) => open().find((b) => b.batchId === id)
-  /** a run formed beside this connection's runs (F4) and not offered yet: its slot is kept for it from the moment it is formed */
-  const kept = (b: Batch, id: string) => b.share?.conn === id && !b.offer && !b.claim && !b.handoff
+  /** a run formed beside this connection's runs (F4) and not offered yet: its slot is kept for it from the moment it is formed -
+   *  never once Marver spawned it (Codex's review: one let go of and spawned still took a place of your session's room) */
+  const kept = (b: Batch, id: string) => b.share?.conn === id && !b.offer && !b.claim && !b.handoff && (!b.runner || b.runner.kind === 'session')
   /** runs a connection holds now: offered to it, claimed by it and not stopping, or kept for it */
   const load = (id: string) => open().filter((b) => b.offer?.conn === id || (b.claim?.conn === id && !b.claim.stopping) || kept(b, id)).length
 
