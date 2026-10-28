@@ -72,6 +72,28 @@ never changed; one you removed by hand is not written back until you turn that t
   <f>` hands back the replies, and the canvas posts them and frees the frames. `jam release` gives a run back,
   `jam status` and `jam mute` are there too. The commands travel through files under `design/.local/jam/`, signed
   with the session's own key, so a sandbox that blocks localhost cannot stop them.
+- **Claude Code dispatches, so it multitasks.** Its brief opens with a few lines for the session - start ONE
+  background subagent (the Agent tool, `run_in_background: true`) with the part of the brief below its `----` line and
+  what the conversation knows that matters, then `jam next` until nothing waits, and end the turn - and below the line
+  the subagent's own prompt: it owns that run, never takes another, says "On it", works and hands it back itself. A
+  subagent's commands carry the session's id, so they speak for its connection; one that cannot reach it adds the
+  `--as <id>` its prompt names. Your session is free again in seconds, so several runs go at once: a Claude Code
+  session holds up to 8 (Codex and Cursor 3 - Marver gives them their runs one at a time; `jam.sessionMax` caps every
+  session), and runs a session holds do not count against `jam.concurrency`, which caps only the runs Marver starts. A
+  background subagent's built-in tools can be fewer than the session's, and a permission it needs is asked in the
+  session. When you move a run elsewhere, the session is told to stop the subagent on it first, so nothing edits its
+  frames once it is released.
+- **Two requests on one frame.** One frame never has two runners - except two runs of your own session: a request on a
+  frame your session's run is working is offered to it at once, its ping naming the run it overlaps ("overlaps your
+  run r-1a2b3c4d.1"). The session decides: send it to the subagent on that frame, to do after or fold in now, or make it
+  a variant in a new frame placed beside it (`boards place --run`). A run your session lets go of while another of its
+  runs holds the frame goes back to the queue and waits for the frame; a frame any other runner holds - a copy, a fresh
+  agent, your agent in chat - makes the request wait, and its tile says "Waits for <frame>".
+- **Frames placed through Marver.** A run puts a frame next to another with `npx marver boards place <board>
+  <scene/frame> --after|--before <scene/frame>` (`--run <handle>`: the new frame is that run's, and its review pictures
+  it) - never by editing the board file. A request that still needs a file no run is given (a board file, the comment
+  logs, local state, a frame outside its run) comes back to you as a question saying which and why, never as "the
+  agent did not answer".
 - **Who works** shows in the start sheet - with several sessions open, the newest takes the work and one click picks
   another - and on every run: "Your Claude Code session is on it", "A copy of your Codex session is on it",
   "Agent working".
@@ -107,7 +129,7 @@ jam: { agent: "claude", concurrency: 6 },
 | `mcp` | `true` | Background runs use your MCP servers |
 | `skills` | `true` | Background runs use your skills |
 | `others` | `false` | Other people's words reach the agent, labelled; off: only yours |
-| `sessionMax` | `3` | Runs one session holds at once |
+| `sessionMax` | unset | Runs one session holds at once - unset: 8 for Claude Code (it dispatches each to a background subagent), 3 for Codex and Cursor; set, it caps every session |
 
 Shorthands: `jam: "codex"` names the agent and takes the rest of the defaults, `jam: true`
 is the default block, and **`jam: false` is the off switch**.

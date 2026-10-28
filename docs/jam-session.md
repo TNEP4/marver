@@ -80,8 +80,11 @@ captures · 6 frames changed" - so the lane keeps its room for what still needs 
 (or `⏎` on it) to open them in place, behind a narrow collapse tile that folds them back.
 
 Your agent works on up to `jam.concurrency` captures at once (6 by default), each in its own
-run, but never two on the same frame: a capture about a frame another run holds waits for it
-("Queued · next").
+run - your Claude Code session up to 8 more, each in a background subagent of its own - but
+never two runners on the same frame: a capture about a frame another runner holds waits for it,
+and its tile says so ("Waits for 01-slide", the run holding it in its tooltip). One on a frame
+your own session's run is working goes to that session at once, which decides how the two meet
+- after, folded in, or a variant beside it ([Live Jam](live-jam.md#your-own-session-takes-the-work-028)).
 
 ## Review
 
@@ -113,7 +116,9 @@ first capture at once.
 **Who works** (0.28): while the session runs, your tags and captures go to the coding-agent
 session you already have open in the repo - "Your Claude Code session", with everything it
 has. With several open, the newest takes the work; click the row for the next one. With none
-open, a copy of your last session does the run. Starting the session connects every Claude
+open, a copy of your last session does the run. Claude Code hands each run to a background
+subagent and is free again in seconds, so your captures run side by side; Marver gives Codex
+and Cursor their runs one at a time. Starting the session connects every Claude
 Code, Codex and Cursor session in the repo - nothing else to set up ([Live Jam](live-jam.md#your-own-session-takes-the-work-028)).
 The three switches cover the runs Marver spawns: **MCP servers and skills** (on), **your
 session's context** (on - off means no session and no copy take work, only fresh agents), and

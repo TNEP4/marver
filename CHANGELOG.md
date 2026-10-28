@@ -21,6 +21,24 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   `design/AGENTS.md` gains a "Live Jam" section, so the agent expects these lines and takes them as your request
   (Claude Code shows them as sent by another session). Two pings in a row are never the same - Claude Code drops a
   message identical to the one before it - and the canvas writes the words, so an upgrade changes them at once.
+- **Your Claude Code session dispatches, so it multitasks.** `jam next` now asks it to hand each run to a background
+  subagent of its own - with the request, and what your conversation knows that matters - which says "On it", does the
+  work and hands the run back itself, while the session is free again in seconds for the next request. So captures run
+  side by side: a Claude Code session holds up to 8 runs at once (`jam.sessionMax` caps it), and runs a session holds
+  no longer count against `jam.concurrency`, which now caps only the runs Marver starts itself. Marver gives Codex and
+  Cursor runs to their session one at a time, as before. When you move a run elsewhere, the session is told to stop
+  the subagent on it before it lets go, so nothing edits those frames after.
+- **Two requests on one frame: your session decides.** A request on a frame your own session's run is working is no
+  longer held back: it is offered to that session at once, naming the run it overlaps ("overlaps your run r-..."), and
+  the session sends it to the subagent on that frame - to do after, or fold in now - or makes it a variant in a new
+  frame beside it. Runs of different runners still never share a frame: a run your session lets go of while another of
+  its runs holds the frame goes back to the queue and waits for it.
+- **"Put this next to slide 01" just works.** `npx marver boards place <board> <scene/frame> --after|--before
+  <scene/frame>` puts a frame next to another and moves the frames after it right to make room - in a deck it plays
+  right after it - and a Jam run adds `--run <handle>`, so the new frame is its own until it is done. Jam runs use it
+  instead of asking for the board file. Every board writer Marver has - `place`, `pin`, the canvas's own save - now
+  takes the board's lock, so none overwrites another; a layout edit you make on that board in the same second can
+  still be undone ("board changed on disk").
 - **Two ways to stop a capture.** `E` stops it and queues it: its tile goes from Capturing to Sending to Queued or
   working, and nothing opens, asks you to confirm or moves the canvas. `⇧E` (Stop to review) opens its read-back as
   before, to check it and add notes first. Both are on the capture bar, Stop first. `J` during a capture stops it to
@@ -54,9 +72,16 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 - **In the Mac app the floating chrome sits right under the strip**: the sidebar, toolbar, play pills and Jam panels
   take the larger of the edge and the top inset instead of their sum.
 - `jam.capture` is no longer used: `E` queues a capture, `⇧E` reviews it.
+- **A request that needs a file no run is given asks you** which file and why, instead of failing with "the agent did
+  not answer" - "put this variant next to slide 01" once asked for the board file. Tag @marver in its thread to go on.
+- **A tile waiting on a busy frame says so**: "Waits for 01-slide", with the run that holds it in its tooltip, instead
+  of "Queued · next" - "next" is now the next request that can start.
 
 ### Fixed
 
+- **Clicking an "Asks you" tile shows its question again.** Since `E` moves nothing, the canvas was often far from the
+  capture and its thread opened off screen; the canvas now comes to the thread, as a notification does, and a thread
+  this board cannot show opens the capture's panel with the question and a field to answer it.
 - **A crash in the speech engine no longer takes the canvas down.** The engine runs in a process of its own, and a
   stretch of audio with no samples is never handed to it ("Invalid input shape {0,128}" aborted a canvas mid-session).
 - The start sheet's Codex hint shows only when no session is connected.
@@ -64,7 +89,8 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 ### Upgrading
 
 `npm install @marver-design/marver@latest`, then `npx marver init` to refresh the agent instructions (`design/AGENTS.md`
-gains the Live Jam section; `instructions/jam.md` the runs from the canvas). Restart each canvas; a coding-agent
+gains the Live Jam section; `instructions/jam.md` the runs from the canvas, the dispatch, two runs on one frame, and
+`boards place`). `jam.sessionMax` left unset now means 8 for Claude Code and 3 for Codex and Cursor. Restart each canvas; a coding-agent
 session already open connects at its next message.
 
 ## 0.27.2 - 2026-10-24
