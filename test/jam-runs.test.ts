@@ -931,6 +931,54 @@ describe('F4: the same frame twice - offered to your session, which decides; run
     await t
     s.jam.stop(); s.done()
   })
+
+  it('a run that leaves your session while your other run holds its frame goes back to the queue with what it was given: the variant placed with --run and its pictures from before any edit (Codex review: the run that took it over held only the first frame and pictured the partial work as its before)', async () => {
+    let n = 0
+    const before: string[] = []
+    const s = await setup({ cfg: { sessionMax: undefined }, hooks: { shoot: async (frame) => { n += 1; before.push(frame); return `p-${String(n).padStart(16, '0')}` } } })
+    mkdirSync(join(s.root, 'design', 'boards'), { recursive: true })
+    writeFileSync(join(s.root, 'design', 'boards', 'home.json'), JSON.stringify({ version: 1, nodes: [{ frame: 'demo/hero', x: 0, y: 0, w: 390, h: 844 }] }))
+    tag(s.root, s.dir, '@marver icon labels')
+    const t = s.jam.tick()
+    expect(await until(() => (offered(s)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
+    const h1 = String((await s.ask('next')).handle)
+    // a capture on the same frame: formed beside your run, it takes its before-picture, and your session takes it
+    const id = `cap-${Date.now()}-abcdef`
+    const r: CaptureRecord = { format: 'marver.jam.capture', v: 1, id, context: { canvas: 'test', board: 'home' }, view: { board: 'home', frames: ['demo/hero'], theme: 'light' },
+      timeline: [{ at: 1_000, event: 'view', view: { frames: ['demo/hero'] } }, { at: 2_000, event: 'words', text: 'put a variant next to it' }, { at: 3_000, frame: 'demo/hero', event: 'pick', point: 1, mode: 'canvas', bundle: { tag: 'h1', quote: 'Hi' } }], pictures: [] }
+    expect((await s.jam.capture(r)).ok).toBe(true)
+    const t2 = s.jam.tick()
+    expect(await until(() => (offered(s)?.n ?? 0) === 1 && (offered(s)?.line ?? '').includes('variant'), 8_000, () => s.jam.runs.tick())).toBe(true)
+    const h2 = String((await s.ask('next')).handle)
+    const first = s.jam.snapshot().batches.find((b) => b.batchId.startsWith(h2.slice(2, 10)))!
+    expect(first.shots).toEqual([{ frame: 'demo/hero', before: 'p-0000000000000001' }])
+    // its subagent makes the variant and places it under the run, edits the frame a little - then the run is let go
+    put(s.root, 'design/scenes/demo/hero-b.tsx')
+    const { boardsPlace } = await import('../src/cli/boards.ts')
+    let placed: unknown
+    void boardsPlace(s.root, 'home', ['demo/hero-b'], { after: 'demo/hero', run: h2, as: s.conn.id }).then((x) => { placed = x }, (e) => { placed = e })
+    expect(await until(() => placed !== undefined, 15_000, () => s.jam.runs.tick())).toBe(true)
+    expect(placed).toMatchObject({ added: true })
+    put(s.root, 'design/scenes/demo/hero.tsx', 'export default () => <h1>Half done</h1>\n')
+    expect((await s.ask('release', { handle: h2 })).ok).toBe(true)
+    expect(await until(() => s.jam.snapshot().cards.find((c) => c.id === id)?.state === 'queued', 8_000, () => s.jam.runs.tick())).toBe(true)
+    // back in the queue it names the variant: it waits for both, and whoever takes it over may finish it
+    expect(s.jam.snapshot().cards.find((c) => c.id === id)?.frames).toEqual(['demo/hero', 'demo/hero-b'])
+    // your first run handed back: the frame is free, and a background agent takes it over
+    expect((await s.ask('done', { handle: h1, text: REPLY('Labels done.') })).ok).toBe(true)
+    await Promise.all([t, t2])
+    await s.jam.tick()
+    expect(await until(() => finals(s.dir).length === 2, 15_000, () => s.jam.tick())).toBe(true)
+    const next = s.jam.snapshot().batches.find((b) => b.batchId !== first.batchId && b.members.some((m) => m.card === id))!
+    expect(next.runner?.kind).toBe('fresh')
+    expect(next.frames).toEqual(['demo/hero', 'demo/hero-b'])
+    expect(next.created).toEqual(['demo/hero-b'])
+    // its review starts from the picture taken before any edit - never one of the half-done frame - and shows the variant as new
+    expect(next.shots?.find((x) => x.frame === 'demo/hero')?.before).toBe('p-0000000000000001')
+    expect(next.shots?.find((x) => x.frame === 'demo/hero-b')).toMatchObject({ new: true })
+    expect(before.filter((f) => f === 'demo/hero').length).toBe(2)   // its before, and its after - never a second before
+    s.jam.stop(); s.done()
+  })
 })
 
 describe('review 2: the boundaries', () => {

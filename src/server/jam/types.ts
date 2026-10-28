@@ -155,8 +155,10 @@ export interface Card {
   pending?: { op: 'confirm' | 'more'; end?: 'queued' | 'kept'; event: import('../../shared/events.ts').CommentEvent }
   shared?: number            // how many times it answered `shared` (a second one fails it)
   /** back in the queue from a run that left its session while another runner held one of its frames (F4): it waits for
-   *  every frame to be free (never formed beside another run again), and runs spawned when `spawn` - the decision it had */
-  alone?: { spawn?: true; why?: string }
+   *  every frame to be free (never formed beside another run again), and runs spawned when `spawn` - the decision it had.
+   *  What that run had goes to the run formed from it: the frames it made (`created`, a run of one) and its pictures
+   *  from before its first edit (`shots`) - its frames given as it worked are in `frames` already */
+  alone?: { spawn?: true; why?: string; created?: string[]; shots?: { frame: string; before: string }[] }
   made: number               // when it was made - the lane's order
   order: number              // run position: `made`, unless Do next put it first
   rev: number                // bumped on every change; actions compare it

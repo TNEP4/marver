@@ -32,7 +32,8 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   longer held back: it is offered to that session at once, naming the run it overlaps ("overlaps your run r-..."), and
   the session sends it to the subagent on that frame - to do after, or fold in now - or makes it a variant in a new
   frame beside it. Runs of different runners still never share a frame: a run your session lets go of while another of
-  its runs holds the frame goes back to the queue and waits for it - with `jam.runner: 'session'` too, so two requests
+  its runs holds the frame goes back to the queue and waits for it - keeping the variant it placed with `--run` and its
+  review's pictures from before any edit, so the run that takes it over can finish it - with `jam.runner: 'session'` too, so two requests
   on one frame follow you when you switch sessions instead of waiting on each other (or, one still taking its
   before-pictures as you switched, running in the background).
 - **"Put this next to slide 01" just works.** `npx marver boards place <board> <scene/frame> --after|--before

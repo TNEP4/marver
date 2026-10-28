@@ -493,12 +493,20 @@ export function form(j: Journal, ctx: Ctx, o: FormOpts, now = Date.now()): { bat
         ...(t?.anchor !== undefined ? { anchor: t.anchor } : {}), brief })
     }
     const files = f.exclusive ? [...new Set(f.cards.flatMap((c) => c.exclusive ?? []))] : undefined
-    // back from a run that left its session (F4): it runs as it was going to - spawned, saying why
+    // back from a run that left its session (F4): it runs as it was going to - spawned, saying why - and goes on from
+    // where that run was, as a retry of it would: the frames it made are this run's (pictured as new), and its review
+    // starts from that run's pictures from before any edit - never retaken after the partial work (a frame that run did
+    // not picture is pictured after, as a retry pictures one whose before-picture failed)
     const back = f.cards.find((c) => c.alone?.spawn)?.alone
+    const created = [...new Set(f.cards.flatMap((c) => c.alone?.created ?? []))].filter((x) => f.frames.includes(x))
+    const kept = new Map<string, string>()
+    for (const s of f.cards.flatMap((c) => c.alone?.shots ?? [])) if (f.frames.includes(s.frame) && !kept.has(s.frame)) kept.set(s.frame, s.before)
+    const shots = kept.size ? f.frames.filter((x) => !created.includes(x)).map((x) => ({ frame: x, ...(kept.has(x) ? { before: kept.get(x)! } : {}) })) : undefined
     for (const c of f.cards) delete c.alone
     const b: Batch = { batchId, members, frames: f.frames, ...(f.exclusive ? { exclusive: true } : {}), state: 'claimed', leaseUntil: 0, attempts: 0, at: now, others: o.others !== false,
       ...(f.overlaps?.length && o.sharer ? { overlaps: f.overlaps, share: { ...o.sharer } } : {}),
-      ...(back ? { handoff: 'spawn' as const, ...(back.why ? { handoffWhy: back.why } : {}) } : {}) }
+      ...(back ? { handoff: 'spawn' as const, ...(back.why ? { handoffWhy: back.why } : {}) } : {}),
+      ...(created.length ? { created } : {}), ...(shots ? { shots } : {}) }
     j.batches.push(b)
     writePacket(ctx.root, buildPacket(batchId, packetMembers, f.frames, f.exclusive ? files : undefined), new Set(j.batches.filter((x) => x.state === 'claimed').map((x) => x.batchId)))
     batches.push(b)

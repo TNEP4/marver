@@ -813,11 +813,20 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           if (b.handoff !== 'queue' && ![...runningBatches.values()].some((o) => o.batchId !== b.batchId && o.frames.some((f) => b.frames.includes(f)))) return false
           const spawn = b.handoff === 'spawn' || !!spawnedBefore
           const why = b.handoffWhy ?? spawnedBefore?.why
+          // what it had goes with it (Codex's review): the frames given to it as it worked (a variant placed with
+          // `boards place --run`) join its card, so the run that takes it over holds them and may finish them; the frames
+          // it made (a run of one: who made them is known) and its pictures from before any edit go to that run, so its
+          // review starts from there - never from the partial work
+          const shots = (b.shots ?? []).flatMap((s) => (!s.new && s.before ? [{ frame: s.frame, before: s.before }] : []))
+          const created = b.members.length === 1 ? b.created ?? [] : []
           for (const m of b.members) {
             const c = j.cards.find((x) => x.id === m.card)
             if (!c || c.state !== 'working' || c.batch !== b.batchId) continue
+            const add = b.frames.filter((f) => !c.frames.includes(f))
+            if (add.length) c.frames = [...c.frames, ...add]
             // (on the card that waits now - merged into one already queued on its thread, that one)
-            requeue(j, c, Date.now()).alone = { ...(spawn ? { spawn: true as const } : {}), ...(why ? { why } : {}) }
+            requeue(j, c, Date.now()).alone = { ...(spawn ? { spawn: true as const } : {}), ...(why ? { why } : {}),
+              ...(created.length ? { created: [...created] } : {}), ...(shots.length ? { shots: shots.map((s) => ({ ...s })) } : {}) }
           }
           b.state = 'done'; b.at = Date.now(); b.note = 'back in the queue - another runner holds one of its frames'
           q.persist()
