@@ -357,6 +357,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       const as = conn.agent === 'cursor' ? conn.id : undefined
       let packet: JobPacket | null = null
       try { packet = JSON.parse(readFileSync(join(root, packetPath(b.batchId)), 'utf8')) as JobPacket } catch { packet = null }
+      // the frames it holds now: one an earlier session run of it was given (`boards pin --run`) and let go of is its own to
+      // finish - the brief, and the packet its subagent reads, say so (Codex's review: they said it reserves no frame)
+      if (packet && packet.frames.join('\n') !== b.frames.join('\n')) { packet.frames = [...b.frames]; writeFileSync(join(root, packetPath(b.batchId)), JSON.stringify(packet, null, 1), { mode: 0o600 }) }
       return packet ? sessionBrief(packet, handle, as, { agent: conn.agent, conn: conn.id, overlaps: overlapsOf(b, conn) }) : `The packet of this run is missing (${packetPath(b.batchId)}) - release it: \`npx marver jam release ${handle}${as ? ` --as ${as}` : ''}\`.`
     },
     say: (b) => ensureEarly(b),
@@ -723,7 +726,11 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       if (!b.members.length) { await q.lock((j) => { const x = j.batches.find((y) => y.batchId === b.batchId); if (x) x.state = 'failed'; q.persist() }); queueChanged(); timeRun('changed'); return }
     }
     const packet = buildPacket(b.batchId, members, b.frames, b.exclusive ? [...new Set(cards0(b).flatMap((c) => c.exclusive ?? []))] : undefined)
-    writeFileSync(join(root, packetPath(b.batchId)), JSON.stringify(packet, null, 1), { mode: 0o600 })
+    // written again before every spawned attempt, with the frames the run holds then: one given to it as your session worked
+    // (`boards pin --run`) is its own, so the run spawned once your session let it go is told to finish it, never that the
+    // job reserves no frame (Codex's review: the packet stayed as it first ran; a session's brief reads them in goal())
+    const writePacket = () => { packet.frames = [...b.frames]; writeFileSync(join(root, packetPath(b.batchId)), JSON.stringify(packet, null, 1), { mode: 0o600 }) }
+    writePacket()
     const cards = () => b.members.map((m) => q.j.cards.find((c) => c.id === m.card)).filter((c): c is Card => !!c)
     // Presence glow that FOLLOWS the work. Jam agents have no shell to run `marver work`, so the
     // daemon moves the glow itself: the reserved frames light up at once ("I heard you"), then as
@@ -892,7 +899,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
             if (!c || !w || !wrapupIntact(q.ctx(), c) || recordPathProblem(root, w.wrapup.file)) throw new Error('the session record changed after it was written - write it again')
             m.brief = { ...m.brief, wrapup: { content: w.wrapup, hash: w.hash } }
           }
-          writeFileSync(join(root, packetPath(b.batchId)), JSON.stringify(packet, null, 1), { mode: 0o600 })
+          writePacket()
           const beat = setInterval(followWork, 2_000)
           beat.unref?.()
           const tAgent = performance.now()

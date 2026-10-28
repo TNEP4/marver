@@ -16,7 +16,8 @@ import { decide } from '../src/server/jam/permit.ts'
 import { hook, ownHost } from '../src/cli/jam.ts'
 import { claudeSlug, newestClaude, newestCodex } from '../src/server/jam/fork.ts'
 import { STALL_MS, OFFER_MS } from '../src/server/jam/runs.ts'
-import type { CaptureRecord, JamAdapter } from '../src/server/jam/types.ts'
+import type { CaptureRecord, JamAdapter, JobPacket } from '../src/server/jam/types.ts'
+import { packetPath } from '../src/server/jam/packet.ts'
 import type { JamConfig } from '../src/server/config.ts'
 
 /**
@@ -1260,8 +1261,12 @@ describe('F5: a request with no frame runs beside the others for your session - 
   /** a background agent that makes a second frame in the scene and puts it on the empty board */
   const second: JamAdapter = { ...spawned, spawnArgs() { return { cmd: process.execPath, args: ['-e', `const fs=require('fs');fs.writeFileSync('design/scenes/menu/second.tsx','export default () => <h1>Second</h1>\\n');const p='design/boards/volume-ui.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.nodes.push({frame:'menu/second'});fs.writeFileSync(p,JSON.stringify(j));fs.writeFileSync('spawned.marker','yes');process.stdout.write(JSON.stringify({result:'A background agent did it.'}))`] } } }
 
-  it('let go of by your session after its run was given a frame, it holds that frame and goes as a request on it like any other: spawned at once beside your other run, never back in the queue to run alone (accepted: the frame its run makes after is not found as its own, as for any run spawned beside others)', async () => {
-    const s = await setup({ cfg: { sessionMax: undefined }, adapter: second })
+  it('let go of by your session after its run was given a frame, it holds that frame and goes as a request on it like any other: spawned at once beside your other run, never back in the queue to run alone, told the frame is its own to finish (Codex\'s review: its packet was the one written as it first ran, reserving no frame - the run that took over was told to make new frames and leave that one); accepted: the frame its run makes after is not found as its own, as for any run spawned beside others', async () => {
+    // what the run that takes it over is handed: its prompt, and the packet on disk as it starts
+    let root = '', goal = '', packet: JobPacket | undefined
+    const seen: JamAdapter = { ...second, spawnArgs(g, o) { goal = g; packet = JSON.parse(readFileSync(join(root, /design\/\.local\/jam\/packets\/[\w-]+\.json/.exec(g)![0]), 'utf8')); return second.spawnArgs(g, o) } }
+    const s = await setup({ cfg: { sessionMax: undefined }, adapter: seen })
+    root = s.root
     empty(s.root)
     tag(s.root, s.dir, '@marver icon labels')
     const t = s.jam.tick()
@@ -1286,8 +1291,40 @@ describe('F5: a request with no frame runs beside the others for your session - 
     expect(await until(() => !!again(), 15_000, () => s.jam.runs.tick())).toBe(true)
     expect(s.jam.snapshot().batches.filter((x) => x.members.some((m) => m.card === r.id)).length).toBe(1)
     expect([again()!.exclusive, again()!.runner?.kind, again()!.crowded, again()!.frames, again()!.created]).toEqual([undefined, 'fresh', true, ['menu/first'], ['menu/first']])
+    // it is told the frame it holds is its own to finish, never that the job reserves no frame
+    expect(packet!.frames).toEqual(['menu/first'])
+    expect([goal.includes('EDIT ONLY THE FRAMES THE PACKET RESERVES'), goal.includes('RESERVES NO FRAME')]).toEqual([true, false])
     expect((await s.ask('done', { handle: h1, text: REPLY('Labels done.') })).ok).toBe(true)
     await Promise.all([t, t2])
+    s.jam.stop(); s.done()
+  })
+
+  it('session-only: let go of after its run was given a frame, it is offered to your session again holding that frame - its brief and its packet name it (Codex\'s review: the packet was the one written as it first ran, and the brief said it reserves no frame)', async () => {
+    const s = await setup({ cfg: { runner: 'session', sessionMax: undefined } })
+    empty(s.root)
+    const r = blank('a floating menu')
+    expect((await s.jam.capture(r)).ok).toBe(true)
+    const t = s.jam.tick()
+    expect(await until(() => (offered(s)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
+    const first = await s.ask('next')
+    expect(String(first.text)).toContain('It reserves no frame')
+    mkdirSync(join(s.root, 'design', 'scenes', 'menu'), { recursive: true })
+    put(s.root, 'design/scenes/menu/first.tsx')
+    const { boardsPinRun } = await import('../src/cli/boards.ts')
+    let pinned: unknown
+    void boardsPinRun(s.root, 'volume-ui', ['menu/first'], { run: String(first.handle), as: s.conn.id }).then((x) => { pinned = x }, (e) => { pinned = e })
+    expect(await until(() => pinned !== undefined, 15_000, () => s.jam.runs.tick())).toBe(true)
+    expect((await s.ask('release', { handle: first.handle })).ok).toBe(true)
+    // offered again: the frame it holds is the frame it may edit
+    expect(await until(() => (offered(s)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
+    const next = await s.ask('next')
+    expect(next.frames).toEqual(['menu/first'])
+    expect([String(next.text).includes('Frames you may edit: menu/first.'), String(next.text).includes('reserves no frame')]).toEqual([true, false])
+    const b = s.jam.snapshot().batches.find((x) => x.members.some((m) => m.card === r.id))!
+    expect((JSON.parse(readFileSync(join(s.root, packetPath(b.batchId)), 'utf8')) as JobPacket).frames).toEqual(['menu/first'])
+    expect((await s.ask('done', { handle: next.handle, text: REPLY('A floating menu.') })).ok).toBe(true)
+    await t
+    expect(existsSync(join(s.root, 'spawned.marker'))).toBe(false)
     s.jam.stop(); s.done()
   })
 
