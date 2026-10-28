@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 import { appendEvents, readLog, replay, type CommentEvent } from '../src/server/comments.ts'
 import { createJam, type JamHooks } from '../src/server/jam/daemon.ts'
 import { claudeAdapter, sandboxReady } from '../src/server/jam/adapter/claude.ts'
@@ -667,6 +668,8 @@ describe('F3: a Claude Code session dispatches - it holds up to 8 runs, Codex an
     for (let i = 1; i <= 9; i++) tag(s.root, s.dir, `@marver ask ${i}`, undefined, `demo/f${i}`)
     const t = s.jam.tick()
     expect(await until(() => (readOffers(s.root, s.conn.id)?.n ?? 0) === 8, 15_000, () => s.jam.runs.tick())).toBe(true)
+    // a burst is one line, naming the newest and asking for jam next for each (the dispatcher drains them)
+    expect(readOffers(s.root, s.conn.id)?.line).toMatch(/^Live Jam: 8 new requests from your Marver canvas - newest "ask \d" \([0-9a-f]{8}\) - run `npx marver jam next` for each\.$/)
     expect(await until(() => !!spawnedWhy(s) || finals(s.dir).length > 0, 15_000, () => s.jam.runs.tick())).toBe(true)
     expect(s.jam.snapshot().batches.find((b) => b.runner && b.runner.kind !== 'session')?.runner?.why).toBe("your session didn't take it - it already holds 8 runs")
     expect(s.jam.runs.room()).toBe(0)
@@ -771,6 +774,30 @@ describe('F4: the same frame twice - offered to your session, which decides; run
     expect(await until(() => finals(s.dir).length === 2, 15_000, () => s.jam.tick())).toBe(true)
     expect(finals(s.dir).map((r) => r.body).sort()).toEqual(['A background agent did it.', 'Labels done.'])
     expect(s.jam.snapshot().batches.find((b) => b.runner?.kind !== 'session' && b.state === 'done' && b.results)?.runner?.why).toBe("your session didn't take it - it let it go")
+    s.jam.stop(); s.done()
+  })
+
+  it('two runs beside yours let go at once (their offers expire together): both go back to the queue - neither waits on the other - and run once the frame is free', async () => {
+    const AGENT = fileURLToPath(new URL('./fixtures/jam-agent.cjs', import.meta.url))
+    const each: JamAdapter = { ...spawned, spawnArgs(goal) { return { cmd: process.execPath, args: [AGENT, /design\/\.local\/jam\/packets\/[\w-]+\.json/.exec(goal)![0]], env: { MODE: '"ok"', OPTS: '{}' } } } }
+    const s = await setup({ cfg: { sessionMax: undefined }, adapter: each })
+    tag(s.root, s.dir, '@marver icon labels')
+    const t = s.jam.tick()
+    await until(() => (offered(s)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())
+    const h1 = String((await s.ask('next')).handle)
+    tag(s.root, s.dir, '@marver two')
+    const t2 = s.jam.tick()
+    expect(await until(() => (offered(s)?.n ?? 0) === 1 && (offered(s)?.line ?? '').includes('"two"'), 8_000, () => s.jam.runs.tick())).toBe(true)
+    tag(s.root, s.dir, '@marver three')   // beside both of yours on demo/hero
+    const t3 = s.jam.tick()
+    expect(await until(() => (offered(s)?.n ?? 0) === 2, 8_000, () => s.jam.runs.tick())).toBe(true)
+    await s.jam.runs.tick(Date.now() + OFFER_MS + 1_000)   // neither taken in two minutes
+    expect(await until(() => ['@marver two', '@marver three'].every((b) => cardFor(s, b)?.state === 'queued'), 8_000, () => s.jam.runs.tick())).toBe(true)
+    expect(existsSync(join(s.root, 'packets-seen.jsonl'))).toBe(false)   // nothing spawned beside your run
+    expect((await s.ask('done', { handle: h1, text: REPLY('Labels done.') })).ok).toBe(true)
+    await Promise.all([t, t2, t3])
+    expect(await until(() => finals(s.dir).length === 3, 15_000, () => s.jam.tick())).toBe(true)
+    expect(finals(s.dir).map((r) => r.body).sort()).toEqual(['Done: @marver three', 'Done: @marver two', 'Labels done.'])
     s.jam.stop(); s.done()
   })
 

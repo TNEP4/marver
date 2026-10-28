@@ -582,8 +582,10 @@ export function createRuns(d: RunsDeps): Runs {
           settle(b.batchId, null); d.changed()
           continue
         }
-        if (sel && offerable(sel) && load(sel.id) < maxOf(sel)) {
-          await q.lock(() => { const x = byId(b.batchId); if (x && !x.offer && !x.claim && !x.handoff && load(sel.id) < maxOf(sel) && d.mayHold(x, sel)) { x.runner = { kind: 'session', agent: sel.agent, conn: sel.id }; x.offer = { conn: sel.id, inc: sel.inc, at: Date.now() }; q.persist() } })
+        // (its own kept slot aside: a run formed for this session is not in its own way)
+        const fits = (x: Batch) => load(sel!.id) - (kept(x, sel!.id) ? 1 : 0) < maxOf(sel!)
+        if (sel && offerable(sel) && fits(b)) {
+          await q.lock(() => { const x = byId(b.batchId); if (x && !x.offer && !x.claim && !x.handoff && fits(x) && d.mayHold(x, sel)) { x.runner = { kind: 'session', agent: sel.agent, conn: sel.id }; x.offer = { conn: sel.id, inc: sel.inc, at: Date.now() }; q.persist() } })
           d.changed()
         }
       }

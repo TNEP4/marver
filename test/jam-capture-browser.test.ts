@@ -1702,15 +1702,23 @@ describe('captures in the browser: the first trial', () => {
     await decide(r, 'good')
   }, 150_000)
 
+  /** A pick on a frame during a capture - the frame brought into view first, so the click lands on it whatever the
+   *  tests before left on screen. */
+  const pickOn = async (frame: string) => {
+    const k = await browser!.eval(s, `window.__mvStore.getState().nodes.find((x) => x.frame === ${JSON.stringify(frame)}).key`)
+    await browser!.eval(s, `window.__mvJamCanvas.fitNode(${JSON.stringify(k)}), 1`)
+    await until(`!window.__mvJamCanvas.cameraBusy()`, 5000)
+    await sleep(300)
+    await click(`.sh-node[data-node="${k}"] .sh-overlay`)
+    await sleep(300)
+  }
   /** S, a pick on bravo (the capture's comment is pinned there), a note, E - the fake agent asks back. */
   const askingCapture = async () => {
     agentMode({ asks: true, question: 'Navy or teal?' })
     await browser!.eval(s, `window.__mvJamUi.getState().close(), window.__mvComments.getState().setActive(null), 1`)
     await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
     const r = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
-    const k = await browser!.eval(s, `window.__mvStore.getState().nodes.find((x) => x.frame === 'spec/bravo').key`)
-    await click(`.sh-node[data-node="${k}"] .sh-overlay`)
-    await sleep(300)
+    await pickOn('spec/bravo')
     await browser!.eval(s, `window.__mvJamCapture.getState().note('make the header blue'), 1`)
     await key('e')
     await until(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(r)} && c.state === 'asks')`, 60_000)
@@ -1744,8 +1752,9 @@ describe('captures in the browser: the first trial', () => {
 
   skippable('an Asks you tile whose thread this board cannot show (its frame is on no node here) opens its panel: the question, and an answer sent with @marver to its thread', async () => {
     const { r, thread } = await askingCapture()
-    // bravo leaves the board as the page holds it (the thread's frame is on no node here now)
-    await browser!.eval(s, `(() => { const st = window.__mvStore.getState(); window.__keptNodes = st.nodes; window.__mvStore.setState({ nodes: st.nodes.filter((n) => n.frame !== 'spec/bravo') }); return 1 })()`)
+    // the thread's frame leaves the board as the page holds it (it is on no node here now)
+    await browser!.eval(s, `(() => { const st = window.__mvStore.getState(); const f = window.__mvComments.getState().threads.find((t) => t.id === ${JSON.stringify(thread)}).frame; window.__keptNodes = st.nodes; window.__mvStore.setState({ nodes: st.nodes.filter((n) => n.frame !== f) }); return 1 })()`)
+    try {
     await click(`.jm-lane [data-tile="${r}"]`)
     await until(`window.__mvJamUi.getState().panel?.id === ${JSON.stringify(r)} && !!document.querySelector('.jm-asks textarea')`, 8000)
     expect(await browser!.eval(s, `document.querySelector('.jm-asks .jm-reply')?.textContent ?? ''`)).toContain('Navy or teal?')
@@ -1755,7 +1764,7 @@ describe('captures in the browser: the first trial', () => {
     // the answer is in its thread, tagged: the agent goes on with it
     await until(`window.__mvComments.getState().threads.some((t) => t.id === ${JSON.stringify(thread)} && t.replies.some((x) => !x.agent && x.body === '@marver navy, please'))`, 10_000)
     await until(`!window.__mvJamUi.getState().panel`, 5000)
-    await browser!.eval(s, `(() => { window.__mvStore.setState({ nodes: window.__keptNodes }); return 1 })()`)
+    } finally { await browser!.eval(s, `(() => { if (window.__keptNodes) window.__mvStore.setState({ nodes: window.__keptNodes }); window.__keptNodes = null; return 1 })()`) }
     // the follow-up runs and settles before the next test
     await until(`(window.__mvJamQueue.getState().cards ?? []).every((c) => c.state !== 'queued' && c.state !== 'working')`, 60_000)
   }, 150_000)
@@ -1767,9 +1776,7 @@ describe('captures in the browser: the first trial', () => {
     const capOn = async (frame: string, words: string) => {
       await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
       const r = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
-      const k = await browser!.eval(s, `window.__mvStore.getState().nodes.find((x) => x.frame === ${JSON.stringify(frame)}).key`)
-      await click(`.sh-node[data-node="${k}"] .sh-overlay`)
-      await sleep(300)
+      await pickOn(frame)
       await browser!.eval(s, `window.__mvJamCapture.getState().note(${JSON.stringify(words)}), 1`)
       await key('e')
       return r as string
