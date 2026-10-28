@@ -98,11 +98,8 @@ function tagged(j: Journal, board: string, ev: CommentEvent, frame: string | und
   // a tag answers a card that asks and retries one that failed - also when it joins a queued card
   if (asking) set(asking, 'done', now, 'answered')
   if (failed && !asking) set(failed, 'done', now, 'retried by a new tag')
-  // (retrying one that named no frame: so does the card that retries it - F5)
-  const loose = !asking && !!failed?.loose
   if (queued) {
     queued.events.push(ev.id); queued.when = { ...queued.when, [ev.id]: ev.ts }
-    if (loose) queued.loose = true
     if (asking || failed) queued.follows ??= (asking ?? failed)!.id
     queued.rev += 1; queued.at = now
     return
@@ -117,7 +114,7 @@ function tagged(j: Journal, board: string, ev: CommentEvent, frame: string | und
   const frames = capCard ? [...capCard.frames] : frame ? [frame] : []
   j.cards.push({
     id: `c-${ev.id}`, kind: 'comment', board, frames, thread,
-    ...(capture ? { capture } : {}), events: [ev.id], when: { [ev.id]: ev.ts }, state: 'queued', ...(follows ? { follows } : {}), ...(loose ? { loose: true as const } : {}),
+    ...(capture ? { capture } : {}), events: [ev.id], when: { [ev.id]: ev.ts }, state: 'queued', ...(follows ? { follows } : {}),
     made: ev.ts, order: ev.ts, rev: 1, at: now,
   })
 }
@@ -174,7 +171,6 @@ export function merge(j: Journal, queued: Card, other: Card, now: number): Card 
   // what a run let go into the card that goes left there (F4: the frames it made, its pictures from before any edit) is
   // the survivor's - the one waiting already came first, so its pictures are the earlier (Codex's review)
   if (gone.alone) { keep.alone = joinAlone(gone.alone, keep.alone ?? {}); delete gone.alone }
-  if (gone.loose) keep.loose = true
   // the card that ran and failed is what the survivor follows: its asks and what came of them
   if (gone.batch || gone.ran?.length) keep.follows ??= gone.id
   keep.state = 'queued'; keep.rev += 1; keep.at = now
@@ -441,14 +437,13 @@ export interface FormOpts {
 }
 
 /** Does a queued card run alone - once nothing runs and no hold is left, and while it waits nothing new starts? One that
- *  must edit a shared file does. So does one that named no frame, unless a session takes the work now (F5): then it runs
- *  beside the others, each frame it makes claimed with `--run` - never one back from a run that left its session, as a run
- *  Marver spawns finds the frames it made only when nothing ran beside it. The frames its runs made, given as they worked
- *  or found, never make it a request like any other (`loose`, kept through a failure and its Retry; Codex's review: given
- *  one, it ran beside another run and the frames it made after were no one's). The one rule: the queue, the lane and the
- *  holds read it. */
+ *  must edit a shared file does. So does one with no frame, unless a session takes the work now (F5): then it runs beside
+ *  the others, each frame it makes claimed with `--run` - never one back from a run that left its session, as a run Marver
+ *  spawns finds the frames it made only when nothing ran beside it. A card that holds a frame - yours, or one an earlier
+ *  run of it made - is a request on that frame like any other: what it holds now decides, never what it held once. The
+ *  one rule: the queue, the lane and the holds read it. */
 export const runsAlone = (c: Card, session: (record: boolean) => boolean): boolean =>
-  !!c.exclusive || ((!c.frames.length || !!c.loose) && (!!c.alone || !session(c.kind === 'wrapup')))
+  !!c.exclusive || (!c.frames.length && (!!c.alone || !session(c.kind === 'wrapup')))
 
 /** Claim what can run now: the queued cards of one board on one single frame join one batch, in
  *  run order, up to 8; a card naming several frames runs alone and waits for all of them; a card
@@ -478,9 +473,12 @@ export function form(j: Journal, ctx: Ctx, o: FormOpts, now = Date.now()): { bat
     let took = 0
     // what the runs formed in this pass take: while your session takes the work, its room and the slots are one - each run
     // may take from both; once only a session's record goes to it (its Jam session ended), the records formed for it take
-    // its room and every other run a slot (Codex's review: a request ahead of the record took its room, and it waited)
+    // its room and every other run a slot (Codex's review: a request ahead of the record took its room, and it waited).
+    // A run bound to spawn (back from a run that left its session) never goes to your session: it takes a slot, never its
+    // room (Codex's review: one ahead took that room, and a request with no frame behind it waited though there was room)
     const one = !!o.session?.(false)
-    const taken = (session: boolean) => (one ? forming.length : forming.filter((b) => !!b.for === session).length)
+    const spawns = (b: Forming) => b.cards.some((c) => !!c.alone?.spawn)
+    const taken = (session: boolean) => forming.filter((b) => (!one ? !!b.for === session : !session || !spawns(b))).length
     // F4: a frame a run of the session taking the work holds may be shared - offered to that session, which decides
     const sharable = (c: Card, f: string) => !c.alone && !formedNow.has(f) && !!o.share?.(f)
     for (const c of queued) {
@@ -522,8 +520,6 @@ export function form(j: Journal, ctx: Ctx, o: FormOpts, now = Date.now()): { bat
     const packetMembers: PacketMember[] = []
     const threads = replay(log(f.board))
     for (const c of f.cards) {
-      // (named no frame: so it stays, whatever frames its runs make, until a run of it is answered)
-      if (!c.frames.length) c.loose = true
       const brief = freezeBrief(j, ctx, c, log(c.board), o.others !== false)
       const id = `m${members.length + 1}`
       c.brief = brief; c.batch = batchId
@@ -619,8 +615,6 @@ function settleOne(j: Journal, b: Batch, m: Member, p: { reply?: string; answere
   const r: Result | undefined = b.results?.[m.id]
   if (!c || c.state !== 'working' || c.batch !== b.batchId || !r) return
   if ('body' in r) {
-    // answered: a request on the frames its run made from now (More work on it is one like any other)
-    delete c.loose
     if (p.reply) c.reply = p.reply
     if (c.resolved) set(c, 'done', now, 'replied')
     else if (r.asks && p.answered) set(c, 'done', now, 'answered')

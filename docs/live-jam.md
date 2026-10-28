@@ -96,8 +96,9 @@ never changed; one you removed by hand is not written back until you turn that t
   frame: it makes what it asks for as new frames, each put on the board with `--run <handle>` (`boards pin <board>
   <scene/frame> --run <handle>` on an empty board). The session record writes its one file and nothing else. With no
   session taking the work it runs alone, as before - a run Marver starts finds the frames it made only when nothing runs
-  beside it - and so does one your session does not take or lets go of. A frame its run put on the board changes neither,
-  nor does a Retry. Its tile says "Waits to run alone", and the requests behind it "Waits · a run goes alone first".
+  beside it - and so does one your session does not take or lets go of. Its tile says "Waits to run alone", and the
+  requests behind it "Waits · a run goes alone first". Once its run has put a frame on the board it holds that frame, and
+  from then on - let go of by your session, retried or tagged again - it is a request on that frame like any other.
 - **Frames placed through Marver.** A run puts a frame next to another with `npx marver boards place <board>
   <scene/frame> --after|--before <scene/frame>` (`--run <handle>`: the new frame is that run's, and its review pictures
   it) - never by editing the board file. A request that still needs a file no run is given (a board file, the comment

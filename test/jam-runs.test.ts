@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -1260,7 +1260,7 @@ describe('F5: a request with no frame runs beside the others for your session - 
   /** a background agent that makes a second frame in the scene and puts it on the empty board */
   const second: JamAdapter = { ...spawned, spawnArgs() { return { cmd: process.execPath, args: ['-e', `const fs=require('fs');fs.writeFileSync('design/scenes/menu/second.tsx','export default () => <h1>Second</h1>\\n');const p='design/boards/volume-ui.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.nodes.push({frame:'menu/second'});fs.writeFileSync(p,JSON.stringify(j));fs.writeFileSync('spawned.marker','yes');process.stdout.write(JSON.stringify({result:'A background agent did it.'}))`] } } }
 
-  it('let go of by your session after its run was given a frame, it still goes back and runs alone - never spawned beside your other run - and the frame its run makes then is its own (Codex\'s review: the frame it held let it run beside a run, and the frames it made after were no one\'s)', async () => {
+  it('let go of by your session after its run was given a frame, it holds that frame and goes as a request on it like any other: spawned at once beside your other run, never back in the queue to run alone (accepted: the frame its run makes after is not found as its own, as for any run spawned beside others)', async () => {
     const s = await setup({ cfg: { sessionMax: undefined }, adapter: second })
     empty(s.root)
     tag(s.root, s.dir, '@marver icon labels')
@@ -1279,71 +1279,15 @@ describe('F5: a request with no frame runs beside the others for your session - 
     void boardsPinRun(s.root, 'volume-ui', ['menu/first'], { run: h2, as: s.conn.id }).then((x) => { pinned = x }, (e) => { pinned = e })
     expect(await until(() => pinned !== undefined, 15_000, () => s.jam.runs.tick())).toBe(true)
     expect(pinned).toEqual({ added: ['menu/first'], already: [] })
-    // your session lets it go while your first run still runs: back in the queue with its frame, waiting to run alone
+    // your session lets it go while your first run still runs: spawned beside it, on the frame it holds
     expect((await s.ask('release', { handle: h2 })).ok).toBe(true)
-    const card = () => s.jam.view().cards.find((c) => c.id === r.id)
-    expect(await until(() => card()?.state === 'queued' && card()?.waiting === 'alone', 8_000, () => s.jam.runs.tick())).toBe(true)
-    expect(card()?.frames).toEqual(['menu/first'])
-    await new Promise((res) => setTimeout(res, 300))
-    expect(marker(s)).toBe(false)
-    // the first handed back: it runs alone, spawned - and the frame its run makes is found as its own
+    expect(await until(() => marker(s), 15_000, () => s.jam.runs.tick())).toBe(true)
+    const again = () => s.jam.snapshot().batches.find((x) => x.results && x.members.some((m) => m.card === r.id))
+    expect(await until(() => !!again(), 15_000, () => s.jam.runs.tick())).toBe(true)
+    expect(s.jam.snapshot().batches.filter((x) => x.members.some((m) => m.card === r.id)).length).toBe(1)
+    expect([again()!.exclusive, again()!.runner?.kind, again()!.crowded, again()!.frames, again()!.created]).toEqual([undefined, 'fresh', true, ['menu/first'], ['menu/first']])
     expect((await s.ask('done', { handle: h1, text: REPLY('Labels done.') })).ok).toBe(true)
     await Promise.all([t, t2])
-    const again = () => s.jam.snapshot().batches.find((x) => x.results && x.members.some((m) => m.card === r.id))
-    expect(await until(() => !!again(), 15_000, () => s.jam.tick())).toBe(true)
-    expect([again()!.exclusive, again()!.handoff, again()!.runner?.kind, again()!.crowded, again()!.created]).toEqual([true, undefined, 'fresh', undefined, ['menu/first', 'menu/second']])
-    s.jam.stop(); s.done()
-  })
-
-  /** a background agent whose first run fails (both its tries), then makes a second frame as `second` does */
-  const failsFirst: JamAdapter = { ...spawned, spawnArgs() { return { cmd: process.execPath, args: ['-e', `const fs=require('fs');const n=fs.existsSync('spawned.count')?fs.readFileSync('spawned.count','utf8').length:0;fs.writeFileSync('spawned.count','x'.repeat(n+1));if(n<2)process.exit(1);fs.writeFileSync('design/scenes/menu/second.tsx','export default () => <h1>Second</h1>\\n');const p='design/boards/volume-ui.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.nodes.push({frame:'menu/second'});fs.writeFileSync(p,JSON.stringify(j));process.stdout.write(JSON.stringify({result:'A background agent did it.'}))`] } } }
-  const spawns = (s: { root: string }) => (existsSync(join(s.root, 'spawned.count')) ? readFileSync(join(s.root, 'spawned.count'), 'utf8').length : 0)
-
-  it('its run alone fails and you Retry it: your session takes the Retry beside your other run, and let go of there it goes back and runs alone - never spawned beside it - the frame it makes then its own (Codex\'s review: the Retry was a request like any other, spawned beside a run)', async () => {
-    const s = await setup({ cfg: { sessionMax: undefined }, adapter: failsFirst })
-    empty(s.root)
-    tag(s.root, s.dir, '@marver icon labels')
-    const t = s.jam.tick()
-    expect(await until(() => (offered(s)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
-    const h1 = String((await s.ask('next')).handle)
-    const r = blank('two floating menus')
-    expect((await s.jam.capture(r)).ok).toBe(true)
-    const t2 = s.jam.tick()
-    expect(await until(() => (offered(s)?.n ?? 0) === 1 && (offered(s)?.line ?? '').includes('floating menus'), 8_000, () => s.jam.runs.tick())).toBe(true)
-    const h2 = String((await s.ask('next')).handle)
-    mkdirSync(join(s.root, 'design', 'scenes', 'menu'), { recursive: true })
-    put(s.root, 'design/scenes/menu/first.tsx')
-    const { boardsPinRun } = await import('../src/cli/boards.ts')
-    let pinned: unknown
-    void boardsPinRun(s.root, 'volume-ui', ['menu/first'], { run: h2, as: s.conn.id }).then((x) => { pinned = x }, (e) => { pinned = e })
-    expect(await until(() => pinned !== undefined, 15_000, () => s.jam.runs.tick())).toBe(true)
-    expect((await s.ask('release', { handle: h2 })).ok).toBe(true)
-    const card = () => s.jam.view().cards.find((c) => c.id === r.id)
-    expect(await until(() => card()?.state === 'queued' && card()?.waiting === 'alone', 8_000, () => s.jam.runs.tick())).toBe(true)
-    // the first handed back: it runs alone, spawned, and fails
-    expect((await s.ask('done', { handle: h1, text: REPLY('Labels done.') })).ok).toBe(true)
-    await Promise.all([t, t2])
-    expect(await until(() => card()?.state === 'failed', 15_000, () => s.jam.tick())).toBe(true)
-    expect([card()?.frames, spawns(s)]).toEqual([['menu/first'], 2])
-    // another run of your session, then Retry: offered to your session beside it, and let go of
-    tag(s.root, s.dir, '@marver icon labels again')
-    const t3 = s.jam.tick()
-    expect(await until(() => (offered(s)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
-    const h3 = String((await s.ask('next')).handle)
-    expect((await s.jam.act(r.id, card()!.rev, 'retry')).ok).toBe(true)
-    const t4 = s.jam.tick()
-    expect(await until(() => (offered(s)?.n ?? 0) === 1 && (offered(s)?.line ?? '').includes('floating menus'), 8_000, () => s.jam.runs.tick())).toBe(true)
-    const h4 = String((await s.ask('next')).handle)
-    expect((await s.ask('release', { handle: h4 })).ok).toBe(true)
-    expect(await until(() => card()?.state === 'queued' && card()?.waiting === 'alone', 8_000, () => s.jam.runs.tick())).toBe(true)
-    await new Promise((res) => setTimeout(res, 300))
-    expect(spawns(s)).toBe(2)
-    // your other run handed back: it runs alone, spawned - and the frame its run makes is found as its own
-    expect((await s.ask('done', { handle: h3, text: REPLY('Labels again.') })).ok).toBe(true)
-    await Promise.all([t3, t4])
-    const again = () => s.jam.snapshot().batches.find((x) => x.results && x.members.some((m) => m.card === r.id))
-    expect(await until(() => !!again(), 15_000, () => s.jam.tick())).toBe(true)
-    expect([again()!.exclusive, again()!.runner?.kind, again()!.crowded, again()!.created, spawns(s)]).toEqual([true, 'fresh', undefined, ['menu/second'], 3])
     s.jam.stop(); s.done()
   })
 
@@ -1365,6 +1309,32 @@ describe('F5: a request with no frame runs beside the others for your session - 
     writePrefs(s.root, { pick: next.id })
     expect(await until(() => (readOffers(s.root, next.id)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
     expect(card()?.state).toBe('working')
+    s.jam.stop(); await Promise.allSettled([t]); s.done()
+  })
+
+  it('one passed over in a pass starts once it can, with nothing else to wake the queue - no tick, no comment, no run moving - and the looks while it waits write nothing and push nothing (Codex\'s review, twice: one that could start waited on, as nothing woke the queue)', async () => {
+    let pushes = 0
+    const s = await setup({ cfg: { sessionMax: 1 }, hooks: { queue: () => { pushes += 1 } } })
+    empty(s.root)
+    tag(s.root, s.dir)
+    const t = s.jam.tick()
+    expect(await until(() => (offered(s)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
+    await s.ask('next')
+    // your session is full: passed over as it lands
+    const r = blank('try to come up with a new floating menu')
+    expect((await s.jam.capture(r)).ok).toBe(true)
+    const card = () => s.jam.snapshot().cards.find((c) => c.id === r.id)
+    await new Promise((res) => setTimeout(res, 300))
+    const journal = join(s.root, 'design', '.local', 'jam-jobs.json')
+    const was = statSync(journal).mtimeMs
+    pushes = 0
+    // two looks and more while nothing changes: it waits, nothing written, nothing pushed
+    await new Promise((res) => setTimeout(res, 4_500))
+    expect([card()?.state, statSync(journal).mtimeMs, pushes]).toEqual(['queued', was, 0])
+    // you choose another session, idle - and nothing else happens: the queue looks again on its own
+    const next = upsertConn(s.root, 'claude', randomUUID(), { pid: process.pid, cwd: s.root }, Date.now() + 1_000, true)
+    writePrefs(s.root, { pick: next.id })
+    expect(await until(() => card()?.state === 'working', 6_000)).toBe(true)
     s.jam.stop(); await Promise.allSettled([t]); s.done()
   })
 

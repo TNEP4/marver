@@ -54,7 +54,7 @@ const JOB_TIMEOUT_MS = 10 * 60_000   // high-fi rebuilds legitimately run 5-8 mi
 const MAX_ATTEMPTS = 2
 const MAX_OUT = 2_000_000
 const RESCAN_MS = 5_000
-/** How often a card held by a chat agent's `work start` looks again. */
+/** How often the queue looks again while a card waits in it - held by a chat agent's `work start`, or by anything else. */
 const HOLD_RECHECK_MS = 2_000
 
 export interface JamDaemon { stop(): void }
@@ -826,15 +826,16 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         // or that run left first): it never runs beside it. It goes back to the queue - first in line among its frames'
         // requests, never shared again, spawned as it was going to be - and waits for its frames; a queued request holds
         // nothing, so two of them never wait on each other (Codex's review of the design: no waiting loop, no deadlock)
-        // F5: one that named no frame formed beside the others for your session (a Retry holding the frames its run made
-        // too) is never spawned as it is - a spawned run's new frames are found only when nothing runs beside it, from start
-        // to end: it goes back too, and runs alone - exclusive, so nothing starts beside it after either (Codex's review: one
-        // spawned while nothing else ran was not exclusive, and a request after it ran beside it)
-        let loose = false
+        // F5: formed with no frame beside the others for your session and holding none still, it is never spawned as it is -
+        // a spawned run's new frames are found only when nothing runs beside it, from start to end: it goes back too, and runs
+        // alone - exclusive, so nothing starts beside it after either (Codex's review: one spawned while nothing else ran was
+        // not exclusive, and a request after it ran beside it). One its run gave a frame (--run) holds that frame: it goes
+        // as a request on it, like any other - what it holds now decides, never what it held once
+        let none = false
         const back = await q.lock((j) => {
-          loose = !b.exclusive && cards0(b).some((c) => !c.frames.length || !!c.loose)
+          none = !b.exclusive && !b.frames.length
           // (`queue` - under session-only, crowded out of its session: back whatever holds its frames now, never spawned)
-          if (b.handoff !== 'queue' && !loose && ![...runningBatches.values()].some((o) => o.batchId !== b.batchId && o.frames.some((f) => b.frames.includes(f)))) return false
+          if (b.handoff !== 'queue' && !none && ![...runningBatches.values()].some((o) => o.batchId !== b.batchId && o.frames.some((f) => b.frames.includes(f)))) return false
           const spawn = b.handoff === 'spawn' || !!spawnedBefore
           const why = b.handoffWhy ?? spawnedBefore?.why
           // what it had goes with it (Codex's review): the frames given to it as it worked (a variant placed with
@@ -850,15 +851,14 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
             if (add.length) c.frames = [...c.frames, ...add]
             // (on the card that waits now - merged into one already queued on its thread, that one)
             const t = requeue(j, c, Date.now())
-            // (one that named no frame runs alone with the frames it was given too - its card says so, a restart included)
             t.alone = joinAlone(t.alone, { ...(spawn ? { spawn: true as const } : {}), ...(why ? { why } : {}),
               ...(created.length ? { created: [...created] } : {}), ...(shots.length ? { shots: shots.map((s) => ({ ...s })) } : {}) })
           }
-          b.state = 'done'; b.at = Date.now(); b.note = loose ? 'back in the queue - it named no frame, so it runs alone' : 'back in the queue - another runner holds one of its frames'
+          b.state = 'done'; b.at = Date.now(); b.note = none ? 'back in the queue - with no frame, it runs alone' : 'back in the queue - another runner holds one of its frames'
           q.persist()
           return true
         })
-        if (back) { log(loose ? '  jam: a run that named no frame went back to the queue - it runs alone once the other work is done' : '  jam: a run went back to the queue - another runner holds one of its frames; it starts when they are free'); queueChanged(); timeRun('other'); return }
+        if (back) { log(none ? '  jam: a run with no frame went back to the queue - it runs alone once the other work is done' : '  jam: a run went back to the queue - another runner holds one of its frames; it starts when they are free'); queueChanged(); timeRun('other'); return }
         const ch: { kind: 'fork' | 'fresh'; agent: string; session?: string; why?: string } = spawnedBefore
           ? { kind: spawnedBefore.kind as 'fork' | 'fresh', agent: spawnedBefore.agent, ...(spawnedBefore.session ? { session: spawnedBefore.session } : {}), ...(spawnedBefore.why ? { why: spawnedBefore.why } : {}) }
           : (() => {
@@ -1132,7 +1132,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   let recheck: ReturnType<typeof setTimeout> | null = null
   const holdLater = () => {
     if (recheck || stopped) return
-    recheck = setTimeout(() => { recheck = null; void pump() }, HOLD_RECHECK_MS)
+    recheck = setTimeout(() => { recheck = null; void pump().catch((err) => log(`  jam: pump error - ${(err as Error).message}`)) }, HOLD_RECHECK_MS)
     recheck.unref?.()
   }
   const waitingSaid = new Set<string>()
@@ -1151,6 +1151,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     }
     const started = await q.lock((j, ctx) => {
       noteQueued()   // a card queued since the last change was seen: its wait starts no later than now
+      // what the pass moved: one that starts nothing and moves no card writes nothing (the recheck below runs it often)
+      const moved = () => `${j.batches.length}|${j.cards.map((c) => `${c.id}:${c.rev}`).join()}`
+      const was = moved()
       const frames = new Set([...runningBatches.values()].flatMap((b) => b.frames))
       // runs a session holds (offered, taken, or waiting for one) count against its own limit, not jam.concurrency - which
       // caps what Marver spawns (F3: a Claude Code session dispatching holds up to 8): the slots are the spawned ones left,
@@ -1181,21 +1184,21 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         others: runs.settings().others,
       })
       prune(j)
-      q.persist()
+      if (moved() !== was) q.persist()
       for (const b of batches) runningBatches.set(b.batchId, b)
       // each member's wait, measured now (it leaves the queue as it is claimed)
       const now = performance.now()
       for (const b of batches) batchWaits.set(b.batchId, new Map(b.members.flatMap((m) => { const t = queuedSince.get(m.card); return t !== undefined && !atBoot.has(m.card) ? [[m.card, now - t] as [string, number]] : [] })))
       reserve(exclusiveWaiting)
-      // a queued card that waits on a chat agent's hold: say so once, look again soon
-      const alone = aloneNow()
+      // a queued card that waits on a chat agent's hold: say so once. Any card still queued: look again soon - whatever
+      // let it start may have changed with nothing to say so (Codex's review, twice: a request that could start waited on,
+      // as nothing woke the queue). A look that starts nothing writes nothing, says nothing and pushes nothing
       for (const c of j.cards) {
         if (c.state !== 'queued') continue
+        holdLater()
         const held = c.frames.find((f) => hooks.held?.(f))
-        if (held || (exclusiveWaiting && alone(c))) {
-          holdLater()
-          if (held && !waitingSaid.has(c.id)) { waitingSaid.add(c.id); log(`  jam: waiting - ${held} is being worked on in chat; the comment runs once it is done`) }
-        } else waitingSaid.delete(c.id)
+        if (held && !waitingSaid.has(c.id)) { waitingSaid.add(c.id); log(`  jam: waiting - ${held} is being worked on in chat; the comment runs once it is done`) }
+        else if (!held) waitingSaid.delete(c.id)
       }
       return batches
     })
