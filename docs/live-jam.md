@@ -74,7 +74,8 @@ never changed; one you removed by hand is not written back until you turn that t
   with the session's own key, so a sandbox that blocks localhost cannot stop them.
 - **Claude Code dispatches, so it multitasks.** Its brief opens with a few lines for the session - start ONE
   background subagent (the Agent tool, `run_in_background: true`) with the part of the brief below its `----` line and
-  what the conversation knows that matters, then `jam next` until nothing waits, and end the turn - and below the line
+  what the conversation knows that matters, then `jam next` until nothing waits, and end the turn; every run, however
+  small, so the next request never waits behind one - and below the line
   the subagent's own prompt: it owns that run, never takes another, says "On it", works and hands it back itself. A
   subagent's commands carry the session's id, so they speak for its connection; one that cannot reach it adds the
   `--as <id>` its prompt names. Your session is free again in seconds, so several runs go at once: a Claude Code

@@ -36,9 +36,11 @@ request itself is what `next` prints. The routine:
    the next request, and several runs go at once (up to 8 - `jam.sessionMax` caps it). The
    subagent's commands speak for this session (they carry its id); it says "On it", works and
    hands the run back itself, and its report needs nothing from you - unless it says it could
-   not finish: then release the run, or finish it here. A tiny ask (a word, a colour) you may do
-   here yourself, by the same steps. A background subagent's built-in tools can be fewer than
-   yours, and a permission it needs is asked here, in this session: answer it.
+   not finish: then release the run, or finish it here. Dispatch every run, however small (a
+   word, a colour): the next request may already be on its way, and it waits while you work
+   here. Only if you cannot start a background subagent (turned off), do it here, by the same
+   steps. A background subagent's built-in tools can be fewer than yours, and a permission it
+   needs is asked here, in this session: answer it.
    **Codex and Cursor: do it here** - Marver gives their runs to the session one at a time.
 3. Whoever does the run: a one-ask run starts with `npx marver jam say <handle> "On it - ..."`
    (one line to the owner, at once); then the work - the packet file holds the thread, its

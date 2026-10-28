@@ -100,7 +100,7 @@ export function sessionBrief(packet: JobPacket, handle: string, as?: string, o: 
     return [
       `Live Jam run ${handle} from the owner's canvas - dispatch it, so you are free for the next request:`,
       'start ONE background subagent (Agent tool, run_in_background: true) whose prompt is everything below the line, plus what this conversation knows that matters for it.',
-      `Then run \`npx marver jam next\` again until nothing waits, and end your turn. A tiny ask you may do here yourself, by the same steps. Cannot take it: ${jam('release')}.`,
+      `Then run \`npx marver jam next\` again until nothing waits, and end your turn. Dispatch every run, however small - the next request may be on its way, and it waits while you work. Only if you cannot start a background subagent, do it here by the same steps. Cannot take it: ${jam('release')}.`,
       ...(overlapping ? [`${overlapping.slice(0, -1)} - a subagent of yours may be editing ${ov.length === 1 ? 'it' : 'them'}. Your call, for speed and quality:`,
         'send this run to that subagent (SendMessage: do it after, or fold it in now - it answers both handles), or run it in parallel as a variant in a NEW frame placed beside it. Never two subagents on one frame.'] : []),
       '----',

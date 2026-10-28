@@ -167,7 +167,8 @@ describe('F3: the brief splits the dispatcher\'s lines from the subagent\'s own 
     const t = sessionBrief(tag('@marver put this variant next to slide 01'), 'r-1a2b3c4d.1', undefined, { agent: 'claude', conn: 'claude-0123456789ab' })
     const [dispatch, worker] = t.split('\n----\n')
     expect(dispatch).toContain('start ONE background subagent (Agent tool, run_in_background: true) whose prompt is everything below the line, plus what this conversation knows that matters for it.')
-    expect(dispatch).toContain('Then run `npx marver jam next` again until nothing waits, and end your turn.')
+    expect(dispatch).toContain('Then run `npx marver jam next` again until nothing waits, and end your turn. Dispatch every run, however small')
+    expect(dispatch).not.toMatch(/tiny ask/)
     expect(dispatch).toContain('Cannot take it: npx marver jam release r-1a2b3c4d.1')
     // the worker's prompt is whole on its own: the request, the frames, the steps - and nothing that dispatches again
     expect(worker).toMatch(/^You own Live Jam run r-1a2b3c4d\.1 .*never run `jam next` or take another run\./)

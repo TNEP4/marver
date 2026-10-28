@@ -105,8 +105,16 @@ try {
   const projects = join(homedir(), '.claude', 'projects')
   let transcript = ''
   try { for (const d of readdirSync(projects)) { const f = join(projects, d, `${conn.session}.jsonl`); if (existsSync(f)) { transcript = readFileSync(f, 'utf8'); break } } } catch { /* none */ }
-  const agents = (transcript.match(/"name":"Agent","input":\{[^\n]*?"run_in_background":true/g) ?? []).length
-  const anyAgent = (transcript.match(/"name":"Agent"/g) ?? []).length
+  // the Agent tool calls the session made, once each (a transcript can hold a call twice); run_in_background is written
+  // as true or "true"
+  const calls = new Map<string, Record<string, unknown>>()
+  for (const line of transcript.split('\n')) {
+    let o: any
+    try { o = JSON.parse(line) } catch { continue }
+    for (const c of Array.isArray(o?.message?.content) ? o.message.content : []) if (c?.type === 'tool_use' && c.name === 'Agent') calls.set(String(c.id), c.input ?? {})
+  }
+  const anyAgent = calls.size
+  const agents = [...calls.values()].filter((i) => i.run_in_background === true || i.run_in_background === 'true').length
   say(`transcript: ${transcript ? `${anyAgent} Agent call(s), ${agents} with run_in_background: true` : 'not found'}; overlapped: ${overlapped}`)
   pass = edited && fin.length >= 2 && finals().every((r) => r.agentMeta?.runner === 'session' && r.agentMeta?.harness === 'claude') && agents >= 2 && overlapped
   say(pass ? 'JAM-DISPATCH-LIVE PASS' : `JAM-DISPATCH-LIVE FAIL: edited=${edited} finals=${fin.length} runner=${finals().map((r) => r.agentMeta?.runner).join(',')} background-agents=${agents} overlapped=${overlapped}`)
