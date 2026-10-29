@@ -1,5 +1,13 @@
 # Changelog - the Marver Mac app
 
+## 0.3.0 - unreleased (spec 28 A4)
+
+- **A picture in play is what you saw.** With Marver 0.29, a capture's picture of the play stage is read back from the
+  tab's own view - an open menu, typed text, the pins - and uploaded by the canvas, in place of a fresh render
+  (`mv:capture`, A4.6 #35). Only while you see it: the active tab, the window shown, nothing over the view; the readback
+  is checked again after it is taken, and anything that changed meanwhile gives the canvas its render instead. A canvas
+  reads its own view's pixels and nothing else: no Screen Recording permission.
+
 ## 0.2.2 - 2026-10-26
 
 - **The icon has room at its sides.** The mark filled 83% of the icon's width, 9.5% from the left edge and 7.2% from

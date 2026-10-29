@@ -128,10 +128,11 @@ function asRecord(v: unknown): SlotFile | null {
  *  it and its scroll edge, and answers the app's presentation requests - so app 0.2 may run it at the window's full
  *  height. A canvas without it stays below the strip. The names are app-api.ts's `FEATURE`, read by the app too.
  *
- *  A4 (0.29.0, A4.6 #2) adds `live`, `open` and `capture` - each a frozen contract, described at `FEATURE`. None is
- *  listed yet: a name here is a promise the app acts on (it opens a stream, sends `mv:open`, answers `mv:capture`),
- *  so each A4 stream adds its own name here once its half works, never before. */
-export const FEATURES: readonly string[] = [FEATURE.bridge, FEATURE.inset]
+ *  A4 (0.29.0, A4.6 #2) adds `live`, `open` and `capture` - each a frozen contract, described at `FEATURE`. A name here
+ *  is a promise the app acts on (it opens a stream, sends `mv:open`, answers `mv:capture`), so each A4 stream adds its
+ *  own name here once its half works, never before. `capture`: the shell asks for live pictures in play and the
+ *  server takes `POST /api/jam/picture/live` (live-picture.ts, api.ts). */
+export const FEATURES: readonly string[] = [FEATURE.bridge, FEATURE.inset, FEATURE.capture]
 
 export interface Claim {
   slot: number | null

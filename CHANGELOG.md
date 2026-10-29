@@ -4,6 +4,20 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 
 ## 0.29.0 - Unreleased
 
+### Added
+
+- **A picture in play is what you saw, in the Mac app.** With app 0.3, `I` in play (and a capture's first pick and its
+  end) takes a picture of the stage as it is on your screen - a menu you opened, text you typed, the comment pins -
+  instead of a fresh render of the frame, captioned "as you saw it" in the read-back and the review. It is taken when
+  the whole stage is in view with nothing over it and has shown its screen for a second (a device preset, a slide
+  fitted to the window); otherwise, and in Chrome, the picture is a render, as before. The app's picture is checked
+  whole before it is kept, and if anything about it fails the capture takes the render in its place
+  ([Jam session](docs/jam-session.md)).
+- **The agent gets a capture's pictures as files.** Each member of a run's packet lists its pictures with the file to
+  open (`design/.local/jam/pictures/<id>.png`), a live one marked. Until now the agent was given picture ids and no
+  way to see them.
+- `npx marver perf --jam` counts live pictures kept and failed, and names a capture whose live pictures failed.
+
 ### Fixed
 
 - **A canvas in a subfolder of a git repository keeps Jam's hook files out of commits.** In a monorepo, or a
