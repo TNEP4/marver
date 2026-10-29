@@ -21,10 +21,12 @@
  *   a blue count of new frames, else a light sweeping the bubble while an agent works (a still wash under Reduce
  *   Motion) - and a teal dot on the logo's corner while a Jam session runs. A stream that has been down draws the mark
  *   dimmed. The tab's name says them ("Pilot, 2 need you, Jam session on"); the live region says "<name> needs you"
- *   when its count rises, at most once per tab per minute, never for the first marks the strip sees of a tab.
+ *   when its count rises, at most once per tab per minute, never for the first marks the strip sees of a tab - a tab
+ *   that has none is forgotten, so marks coming back are first marks again (needs.ts).
  */
 import type { PillView, TabsSnapshot, TabView, WindowView } from '../../src/shared/channels.ts'
 import { cmdButton, fill, h, hostOf, icon, logo, pageApi, say, setLook, shown } from '../../src/pages/dom.ts'
+import { needsRisen, needsSeen } from './needs.ts'
 
 const api = pageApi('strip')
 const tabsEl = document.getElementById('tabs') as HTMLElement
@@ -44,9 +46,7 @@ let focusId: string | null = null
 const els = new Map<string, HTMLElement>()
 const lastState = new Map<string, string>()
 const announcedAt = new Map<string, number>()
-/** each tab's needs as last seen, and when its rise was last said */
-const lastNeeds = new Map<string, number>()
-const needsSaidAt = new Map<string, number>()
+const needs = needsSeen()
 let tabsBaseline = true
 let pillBaseline = true
 /** after the first `tabs` snapshot, how long a pill with no null before it still counts as found at launch */
@@ -210,15 +210,7 @@ function announceTabs(): void {
 
 /** "<name> needs you" when a tab's count rises (A4.6 #19, A2.13): never for the first marks seen of a tab, once a minute at most. */
 function announceNeeds(shownNow: TabView[], now: number): void {
-  for (const t of shownNow) {
-    if (t.kind !== 'local' || !t.marks) continue
-    const before = lastNeeds.get(t.id)
-    lastNeeds.set(t.id, t.marks.needs)
-    if (tabsBaseline || before === undefined || t.marks.needs <= before) continue
-    if (now - (needsSaidAt.get(t.id) ?? -Infinity) < ANNOUNCE_EVERY) continue
-    needsSaidAt.set(t.id, now)
-    say(live, `${shownName(t)} needs you`)
-  }
+  for (const t of needsRisen(needs, shownNow, now, tabsBaseline, ANNOUNCE_EVERY)) say(live, `${shownName(t)} needs you`)
 }
 
 function renderPill(): void {

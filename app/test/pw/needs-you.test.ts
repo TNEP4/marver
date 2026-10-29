@@ -115,6 +115,16 @@ describe('the strip\'s marks (A4.6 #19)', () => {
       expect(await live()).toBe('Pilot needs you')   // once per tab per minute
       await q.send('tabs', { rev: 5, active: 't1', tabs: [home, tab('t1', 'Pilot', { marks: marks({ needs: 5 }) }), tab('t2', 'Tidewell', { marks: marks({ needs: 6 }) })] })
       await q.page.waitForFunction(() => document.getElementById('live')!.textContent === 'Tidewell needs you')
+      // a stop as a tab's first marks, acknowledged at its restart's ready (no marks), then the workspace's first
+      // snapshot: first marks again, said nothing; a rise after it is said
+      const two = [tab('t1', 'Pilot', { marks: marks({ needs: 5 }) }), tab('t2', 'Tidewell', { marks: marks({ needs: 6 }) })]
+      await q.send('tabs', { rev: 6, active: 't1', tabs: [home, ...two, tab('t3', 'One', { state: 'gone', marks: marks({ needs: 1 }) })] })
+      await q.send('tabs', { rev: 7, active: 't1', tabs: [home, ...two, tab('t3', 'One', { state: 'starting' })] })
+      await q.send('tabs', { rev: 8, active: 't1', tabs: [home, ...two, tab('t3', 'One', { marks: marks({ needs: 3 }) })] })
+      await q.page.waitForTimeout(100)
+      expect(await live()).toBe('Tidewell needs you')
+      await q.send('tabs', { rev: 9, active: 't1', tabs: [home, ...two, tab('t3', 'One', { marks: marks({ needs: 4 }) })] })
+      await q.page.waitForFunction(() => document.getElementById('live')!.textContent === 'One needs you')
     } finally { await q.close() }
   })
 })
