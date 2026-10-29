@@ -77,8 +77,8 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 - `jam.capture` is no longer used: `E` queues a capture, `⇧E` reviews it.
 - **A request that needs a file no run is given asks you** which file and why, instead of failing with "the agent did
   not answer" - "put this variant next to slide 01" once asked for the board file. Tag @marver in its thread to go on.
-- **A tile waiting on a busy frame says so**: "Waits for 01-slide", with the run that holds it in its tooltip, instead
-  of "Queued · next" - "next" is now the next request that can start.
+- **A tile waiting on a busy frame says so**: "Waits for 01-slide", and the request's status in its thread names the
+  run that holds it, instead of "Queued · next" - "next" is now the next request that can start.
 - **A request with no frame no longer waits for everything else.** A capture made on an empty board, a comment on the
   board itself and the session record go to your session beside your other runs; they used to wait until nothing else
   ran, and hold back every request after them. With no session taking the work they still run alone, and the tile says
