@@ -10,7 +10,9 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   tags and voice captures go to the Claude Code, Codex or Cursor session open in the repo, with its conversation,
   tools, MCP servers, skills and subagents. Claude Code is woken through its inbox, idle or busy; Codex and Cursor take
   the work at the end of their turn. The session takes a run with `npx marver jam next`, says one line with `jam say`
-  and hands its reply back with `jam done`, and the canvas posts it as your session's ("your session · Claude Code").
+  and hands its reply back with `jam done`, and the canvas posts it in the thread. A capture's tile, and a tag's status,
+  read "Dispatching" until your session takes the run, then "Claude Code is working" (or Codex, Cursor); hover for
+  whose run it is.
   The commands travel through signed files, so a sandbox that blocks localhost does not stop them. Nothing to set up:
   `marver init`, `marver dev` and starting a Jam session write each tool's hooks (`.claude/settings.local.json`,
   `.codex/hooks.json`, `.cursor/hooks.json`) - only Marver's own entries, never in a committed file - and a hook you
@@ -45,8 +47,9 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   review.
 - **When your session cannot take a run, a copy of it does**, with the same context: runs Marver starts for Claude Code
   and Codex copy your session (`--fork-session`, `exec fork`) - a person's session of this repo, never a headless one;
-  a transcript over 12 MB runs fresh. Its tile says why: "Yours was busy", "Yours let it go", "Yours was idle" (Codex,
-  Cursor), "Jam session ended". Outside a Jam session, tags go to such a copy.
+  a transcript over 12 MB runs fresh. Its tile reads "Claude Code is working" like any run; hover it to see that a copy
+  of your session runs it, and why: yours was busy, yours let it go, yours was idle (Codex, Cursor), or the Jam session
+  had ended. Outside a Jam session, tags go to such a copy.
 - **Full power by default.** Runs Marver starts for Claude Code, Codex and Cursor have the shell inside the tool's own
   sandbox, your MCP servers and skills: Claude Code through `marver jam permit` (MCP, skills, web, subagents and edits
   in the repo allowed; keys unreadable; nothing asked), Codex through its own automatic reviewer (`--approve-for-me`).
@@ -81,6 +84,8 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   ran, and hold back every request after them. With no session taking the work they still run alone, and the tile says
   so: "Waits to run alone", and "Waits · a run goes alone first" on the requests behind one. With your session full,
   "Waits · your session is full", until it has room or you choose another session.
+- **A review opens at its full size.** A capture's before and after pictures load as soon as it is ready to review, so
+  its review opens as wide as they need instead of opening narrow and then growing.
 
 ### Fixed
 

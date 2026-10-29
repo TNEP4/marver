@@ -146,6 +146,21 @@ function AddedNotes({ added, onAdd }: { added: { at: number; text: string }[]; o
   )
 }
 
+/** The review pictures' shapes (width / height) by URL, learned as one loads in a review or ahead of it (preloadShots):
+ *  a review opens at its pictures' width and layout, never the default first (Nic, 29 Oct: it collapsed, then grew). */
+const shapes = new Map<string, number>()
+const preloaded = new Set<string>()
+/** A card's review pictures loaded ahead, each URL once - as the card is ready to review, before its review opens. */
+export function preloadShots(urls: (string | undefined)[]) {
+  for (const url of urls) {
+    if (!url || preloaded.has(url)) continue
+    preloaded.add(url)
+    const im = new Image()
+    im.onload = () => { if (im.naturalWidth > 0 && im.naturalHeight > 0) shapes.set(url, im.naturalWidth / im.naturalHeight) }
+    im.src = url
+  }
+}
+
 /** A picture, or the dashed "No picture" where a shot failed. */
 export function Shot({ url, cap, alt, onSize }: { url?: string; cap?: ReactNode; alt?: string; onSize?: (w: number, h: number) => void }) {
   // a picture that cannot load (gone, refused) is "No picture" too - never a broken image
@@ -372,9 +387,11 @@ export function ReviewDetail({ title, head, of, onPrev, onNext, frames, active, 
   const isNew = (f: string) => !!shots.find((s) => s.frame === f)?.new
   // the frame's shape, from its pictures as they load (After's, else Before's): taller than wide (or square) side by
   // side, wider than tall stacked - and the panel as wide as that needs (0.26.1, the owner's first real session)
+  // - known before it loads when it was preloaded, or shown before
   const [sizes, setSizes] = useState<Record<string, number>>({})
-  const sized = (url?: string) => (url ? (w: number, h: number) => { if (w > 0 && h > 0) setSizes((m) => (m[url] === w / h ? m : { ...m, [url]: w / h })) } : undefined)
-  const aspect = (shot?.after && sizes[shot.after]) || (shot?.before && sizes[shot.before]) || undefined
+  const sized = (url?: string) => (url ? (w: number, h: number) => { if (w > 0 && h > 0) { shapes.set(url, w / h); setSizes((m) => (m[url] === w / h ? m : { ...m, [url]: w / h })) } } : undefined)
+  const shape = (url?: string) => (url ? sizes[url] ?? shapes.get(url) : undefined)
+  const aspect = shape(shot?.after) || shape(shot?.before) || undefined
   // both slots whenever the frame has a before at all (either may read "No picture") - a missing After never hides a Before
   const both = view === 'both' && !!shot && !shot.new && !!(shot.before || shot.after)
   const side = (aspect ?? 1.6) <= 1.1

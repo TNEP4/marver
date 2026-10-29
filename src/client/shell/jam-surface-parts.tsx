@@ -75,9 +75,10 @@ export function FocusPanelView(p: {
   // a capture under review: its review, or the capture itself as it was read back (its pictures, its timeline)
   const [pane, setPane] = useState<'review' | 'capture'>('review')
   useEffect(() => { setPane('review') }, [c.id])
-  // the review asks for the width its pictures need (both at once, as big as the panel's height allows)
+  // the review asks for the width its pictures need (both at once, as big as the panel's height allows) - each card's
+  // review (keyed by it) asks as it mounts, before it paints: a reset here after that would undo a width its preloaded
+  // pictures gave it, and the panel would open narrow, then grow
   const [fit, setFit] = useState<number | undefined>(undefined)
-  useEffect(() => { setFit(undefined) }, [c.id])
   const head = p.kind === 'review' ? (
     <div className="jm-ftabs jm-panes" role="tablist" data-jam-panes="">
       {(['review', 'capture'] as const).map((v) => <button key={v} role="tab" aria-selected={v === pane} className={v === pane ? 'on' : undefined} onClick={() => setPane(v)}>{v === 'review' ? 'Review' : 'Capture'}</button>)}

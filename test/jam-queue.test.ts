@@ -746,7 +746,7 @@ describe('Jam V2: what the status icon says', () => {
     expect(statusLines({ ...base, state: 'queued', waitsFor: { frame: 'deck/01-slide', by: 'chat' } }, 'claude', H).detail).toBe('Your agent in chat is working on it - this one starts when it is done')
   })
   it('working gives the clock and the agent; asks points at the question; failed gives why and the way back', () => {
-    expect(statusLines({ ...base, state: 'working', at: 1000 }, 'claude', H, 42_000).head).toBe('Agent working · 0:41 - Claude Code')
+    expect(statusLines({ ...base, state: 'working', at: 1000 }, 'claude', H, 42_000).head).toBe('Claude Code is working · 0:41')
     expect(statusLines({ ...base, state: 'asks' }, 'claude', H).head).toBe('Asks you - see the question below')
     const f = statusLines({ ...base, state: 'failed', note: 'the agent did not answer this one' }, 'claude', H)
     expect(f).toEqual({ head: 'Failed - the agent did not answer this one', detail: 'Retry here, or tag @marver again' })

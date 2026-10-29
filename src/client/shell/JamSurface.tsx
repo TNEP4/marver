@@ -14,11 +14,11 @@ import { FocusPanel, VoiceAsk } from './jam-panel.tsx'
 import { addNote, decideDraft, laneCards, openThread, openTile, pendingEdit, resumeDraft, reveal, saveEdit, shownLane, startCapture } from './jam-keys.ts'
 import { ContextMenu, useContextMenu, type MenuItem } from './ContextMenu.tsx'
 import { ArrowBendUpLeftIcon, ArrowLineUpIcon, ArrowUpIcon, CheckSquareOffsetIcon, CommentIcon, EyeIcon, NotebookIcon, PencilSimpleIcon, PlayIcon, ReloadIcon, XIcon } from './icons.tsx'
-import { laneLine, timelineLines } from './jam-lines.ts'
+import { laneLine, laneTip, timelineLines } from './jam-lines.ts'
 import { changedShots, useJamQueue, type JamCard } from './jam-queue.ts'
 import { DONE_GROUP, doneFold, letGoOfTile, useJamUi } from './jam-state.ts'
 import { CaptureLaneRow, FocusPanelView } from './jam-surface-parts.tsx'
-import { clearMoreDraft, EdgeRing } from './jam-panel.tsx'
+import { clearMoreDraft, EdgeRing, preloadShots } from './jam-panel.tsx'
 import { useComments } from './comments-store.ts'
 import { HARNESS } from './Comments.tsx'
 import { PUBLISHED, useStore } from './store.ts'
@@ -135,7 +135,8 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
     const sel = useJamQueue.getState().cards?.find((c) => c.id === st.selected)
     if (sel?.thread === s.active) { if (st.panel) st.close() } else letGoOfTile()
   }), [])
-  const withMade = list.map((c) => ({ made: c.made, tile: { id: c.id, state: c.state, title: c.title ?? 'Capture', line: laneLine(c), ...(c.exclusive ? { exclusive: true } : {}), ...(c.state === 'done' && c.shots?.some((x) => !x.same) ? { frames: c.shots.filter((x) => !x.same).map((x) => x.frame) } : {}), ...(c.kind === 'wrapup' ? { record: true } : {}) } as { id: string; state: JamCard['state']; title: string; line: string; exclusive?: boolean; frames?: string[]; record?: boolean } }))
+  const tool = (a: string): string | undefined => HARNESS[a]
+  const withMade = list.map((c) => { const tip = laneTip(c, tool); return { made: c.made, tile: { id: c.id, state: c.state, title: c.title ?? 'Capture', line: laneLine(c, Date.now(), tool), ...(tip ? { tip } : {}), ...(c.exclusive ? { exclusive: true } : {}), ...(c.state === 'done' && c.shots?.some((x) => !x.same) ? { frames: c.shots.filter((x) => !x.same).map((x) => x.frame) } : {}), ...(c.kind === 'wrapup' ? { record: true } : {}) } as { id: string; state: JamCard['state']; title: string; line: string; tip?: string; exclusive?: boolean; frames?: string[]; record?: boolean } } })
   // captures the server does not hold yet: sealing (pictures and flushes still out) or waiting to send -
   // each in its place by when it started, so one sealing late never swaps with a newer one. Stopped with E it is
   // being sent to the queue ("Sending", the spinning glyph of work under way - never To confirm); stopped to review
@@ -166,6 +167,11 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
   } : undefined
 
   const panelCard = ui.panel ? cards?.find((c) => c.id === ui.panel!.id) : undefined
+  // a card ready to review, and the one whose review is open: its pictures load now, every frame's - its review opens
+  // at their size and moves between frames without waiting (each URL once; never a card that is not in review)
+  useEffect(() => {
+    for (const c of cards ?? []) if (c.state === 'review' || (ui.panel?.kind === 'review' && c.id === ui.panel.id)) preloadShots(changedShots(c.shots).flatMap((x) => [picture(x.before), picture(x.after)]))
+  }, [cards, ui.panel])
   const rec = useRecord(ui.panel?.kind === 'capture' || ui.panel?.kind === 'review' ? ui.panel.id : undefined)
   const agentName = agent ? HARNESS[agent] ?? agent : 'your agent'
   const act = (c: JamCard | undefined, action: Parameters<ReturnType<typeof useJamQueue.getState>['act']>[1], body?: string) => (c ? useJamQueue.getState().act(c, action, body) : Promise.resolve(false))

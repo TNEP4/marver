@@ -8,21 +8,31 @@ import type { Bundle, CaptureRecord } from '../../server/jam/types.ts'
 const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`
 const clock = (ms: number) => { const s = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` }
 
-/** Who runs a working card, in words (spec 29b): your session, a copy of it, or a background agent - and,
- *  for your session, where the run stands. `name` is the agent's name ("Claude Code"). Null: today's words. */
-export function runnerLine(c: JamCard, name: (agent: string) => string, now = Date.now()): { head: string; detail?: string } | null {
+/** Why a copy (or a fresh agent) runs it, in a few words, by the reason the canvas gave (daemon.ts, runs.ts): the one that
+ *  matches, never a near one - any other reason as it was given. */
+const whyShort = (w: string) => w.endsWith('it let it go') ? 'yours let it go' : w.startsWith('your session didn') ? 'yours was busy'
+  : w.startsWith('your session was idle') ? 'yours was idle' : w.startsWith('the Jam session had ended') ? 'the Jam session had ended' : w
+
+/** Who runs a working card, in words (spec 29b): the tool at work, as its tile says it ("Claude Code is working · 0:42" -
+ *  Nic, 29 Oct: "Your session" said nothing), then whose run it is - your session, a copy of it and why a copy took it, or
+ *  a background run - and, for your session, where the run stands. `name` is the agent's name ("Claude Code"); unknown,
+ *  "Agent". The detail is the working tile's tooltip too (laneTip), so the tile and the icon never disagree. */
+export function runnerLine(c: JamCard, name: (agent: string) => string | undefined, now = Date.now()): { head: string; detail?: string } | null {
   const r = c.runner
   if (c.state !== 'working' || !r) return null
-  const who = r.agent ? name(r.agent) : 'your session'
+  const tool = (r.agent && name(r.agent)) || undefined
+  const yours = tool ? `your ${tool} session` : 'your session'
+  const working = `${tool ?? 'Agent'} is working · ${clock(now - c.at)}`
   if (r.kind === 'session') {
-    if (r.state === 'offered') return { head: `Waiting for your ${who} session · ${clock(now - c.at)}`, detail: 'It takes the run when it is free' }
+    if (r.state === 'offered') return { head: `Dispatching · ${clock(now - c.at)}`, detail: `Offered to ${yours} - it takes the run when it is free` }
     if (r.state === 'waiting') return { head: 'Waiting for your session', detail: 'Open Claude Code, Codex or Cursor in this repo - it takes the run' }
-    if (r.state === 'stalled') return { head: `No word from your ${who} session for a while`, detail: 'Give it back, run it in the background, or drop it' }
-    if (r.state === 'stopping') return { head: `Stopping - waiting for your ${who} session to let go`, detail: 'Its frames stay reserved until it does' }
-    return { head: `Your ${who} session is on it · ${clock(now - c.at)}` }
+    if (r.state === 'stalled') return { head: `No word from ${yours} for a while`, detail: 'Give it back, run it in the background, or drop it' }
+    if (r.state === 'stopping') return { head: `Stopping - waiting for ${yours} to let go`, detail: 'Its frames stay reserved until it does' }
+    return { head: working, detail: `In ${yours}${r.agent === 'claude' ? ' - a background subagent of it does the work' : ''}` }
   }
-  if (r.kind === 'fork') return { head: `A copy of your ${who} session is on it · ${clock(now - c.at)}`, detail: r.why ? `${r.why[0]!.toUpperCase()}${r.why.slice(1)} - a copy with your conversation, tools, MCP servers and skills took it` : 'With your conversation, tools, MCP servers and skills' }
-  return { head: `Agent working · ${clock(now - c.at)} - ${who}`, ...(r.why ? { detail: r.why } : {}) }
+  const why = r.why ? ` (${whyShort(r.why)})` : ''
+  if (r.kind === 'fork') return { head: working, detail: `In a copy of ${yours}${why} - with your conversation, tools, MCP servers and skills` }
+  return { head: working, detail: `A background ${tool ?? 'agent'} run${why}` }
 }
 
 /** What the icon's tooltip says: the state, then the detail - position, clock and agent, the reason
@@ -44,7 +54,7 @@ export function statusLines(c: JamCard, agent: string | null, harness: Record<st
     const p = c.position ?? 1
     return { head: p <= 1 ? `Queued · next${tags}` : `Queued · ${ordinal(p)}${tags} - runs after ${p - 1} other${p - 1 === 1 ? '' : 's'}` }
   }
-  if (c.state === 'working') return runnerLine(c, (a) => harness[a] ?? a, now) ?? { head: `Agent working · ${clock(now - c.at)}${agent ? ` - ${harness[agent] ?? agent}` : ''}` }
+  if (c.state === 'working') return runnerLine(c, (a) => harness[a], now) ?? { head: `${(agent && harness[agent]) || 'Agent'} is working · ${clock(now - c.at)}` }
   if (c.state === 'asks') return { head: 'Asks you - see the question below' }
   if (c.state === 'failed') return { head: `Failed - ${c.note ?? 'the agent could not finish'}`, detail: 'Retry here, or tag @marver again' }
   return { head: c.state }
@@ -55,10 +65,11 @@ export function statusLines(c: JamCard, agent: string | null, harness: Record<st
 /** A card as the lane reads it: the queue's card, with its last run's shots when the view has them. */
 export type LaneCard = JamCard & { shots?: { frame: string; before?: string; after?: string }[] }
 
-/** A tile's status line (spec 27 Part 1): "To confirm", "Queued · 2nd", "Queued · next", "Agent
- *  working · 0:41", "Asks you", "Ready to review", "Done · 2 frames", "Kept, not sent", "Failed ·
- *  Retry". A queue position counts every queued card, tags included - they share one queue. */
-export function laneLine(c: LaneCard, now = Date.now()): string {
+/** A tile's status line (spec 27 Part 1): "To confirm", "Queued · 2nd", "Queued · next", "Claude Code
+ *  is working · 0:41", "Dispatching", "Asks you", "Ready to review", "Done · 2 frames", "Kept, not sent", "Failed ·
+ *  Retry". A queue position counts every queued card, tags included - they share one queue. `name` is the agent's
+ *  name ("Claude Code"); unknown, "Agent". */
+export function laneLine(c: LaneCard, now = Date.now(), name: (agent: string) => string | undefined = () => undefined): string {
   switch (c.state) {
     // a draft the queue would not take (a conflicting comment under its id - an E capture, or a confirm): it says
     // so, never "To confirm" - E's never asked you to confirm anything
@@ -72,17 +83,11 @@ export function laneLine(c: LaneCard, now = Date.now()): string {
       const p = c.position ?? 1; return p <= 1 ? 'Queued · next' : `Queued · ${ordinal(p)}`
     }
     case 'working': {
-      // who runs it (spec 29b), in a few words: a tile has one short line
+      // the tool at work, whoever runs it (Nic, 29 Oct: "Your session" and "a copy of your session" said nothing) - whose
+      // run it is, and why a copy took it, is the tile's tooltip (laneTip); your session not holding it yet says so
       const r = c.runner
-      if (r?.kind === 'session') return r.state === 'offered' ? 'Waiting for your session' : r.state === 'waiting' ? 'Waiting for a session' : r.state === 'stalled' ? 'Stalled · choose' : r.state === 'stopping' ? 'Stopping' : `Your session · ${clock(now - c.at)}`
-      if (r?.kind === 'fork') {
-        // why a copy runs it, by the reason the canvas gave (daemon.ts, runs.ts): the one that matches, never a near one
-        const w = r.why ?? ''
-        const lead = w.endsWith('it let it go') ? 'Yours let it go' : w.startsWith('your session didn') ? 'Yours was busy'
-          : w.startsWith('your session was idle') ? 'Yours was idle' : w.startsWith('the Jam session had ended') ? 'Jam session ended' : ''
-        return lead ? `${lead} · a copy is on it · ${clock(now - c.at)}` : `A copy of your session · ${clock(now - c.at)}`
-      }
-      return `Agent working · ${clock(now - c.at)}`
+      if (r?.kind === 'session' && r.state && r.state !== 'claimed') return r.state === 'offered' ? 'Dispatching' : r.state === 'waiting' ? 'Waiting for a session' : r.state === 'stalled' ? 'Stalled · choose' : 'Stopping'
+      return `${(r?.agent && name(r.agent)) || 'Agent'} is working · ${clock(now - c.at)}`
     }
     case 'asks': return 'Asks you'
     case 'review': return 'Ready to review'
@@ -92,6 +97,10 @@ export function laneLine(c: LaneCard, now = Date.now()): string {
     case 'dropped': return 'Dropped'
   }
 }
+
+/** A working tile's tooltip (0.28.0): whose run it is - your session, a copy of it and why, a background run - the
+ *  status icon's own detail (runnerLine), so the two never disagree. Other tiles have none. */
+export const laneTip = (c: LaneCard, name: (agent: string) => string | undefined): string | undefined => runnerLine(c, name)?.detail
 
 // ---- the read-back ---------------------------------------------------------------------------------
 

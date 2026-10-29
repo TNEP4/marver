@@ -19,7 +19,7 @@ const pic = (label: string, tone: string) => `data:image/svg+xml,${encodeURIComp
 const TILES: LaneTile[] = [
   { id: 'a', state: 'done', title: 'Footer links', line: 'Done · 2 frames' },
   { id: 'b', state: 'review', title: 'Confirm headline', line: 'Ready to review' },
-  { id: 'c', state: 'working', title: 'Plans table wraps on a phone', line: 'Agent working · 1:12' },
+  { id: 'c', state: 'working', title: 'Plans table wraps on a phone', line: 'Claude Code is working · 1:12', tip: 'In your Claude Code session - a background subagent of it does the work' },
   { id: 'd', state: 'queued', title: 'Empty state copy', line: 'Queued · next' },
   { id: 'e', state: 'queued', title: 'Kit buttons: one radius', line: 'Queued · 2nd', exclusive: true },
   { id: 'f', state: 'asks', title: 'Coupon field placement', line: 'Asks you' },

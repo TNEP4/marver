@@ -105,8 +105,9 @@ never changed; one you removed by hand is not written back until you turn that t
   logs, local state, a frame outside its run) comes back to you as a question saying which and why, never as "the
   agent did not answer".
 - **Who works** shows in the start sheet - with several sessions open, the newest takes the work and one click picks
-  another - and on every run: "Your Claude Code session is on it", "A copy of your Codex session is on it",
-  "Agent working".
+  another - and on every run's tile: "Dispatching" until your session takes it, then "Claude Code is working" (or
+  "Codex is working", "Agent is working"). Hover the tile for whose run it is - your session, a copy of it and why a
+  copy took it, or a background run; the run's status in its thread says the same.
 - **An offer not taken** - Claude Code not pulling it in 2 minutes, a Codex or Cursor turn ending without taking it -
   goes to a copy or a fresh agent. **A run your session took and went quiet on** for 15 minutes is stalled: give it
   back, run it in the background, or drop it (the tag's status, or the tile's menu). The last two wait for your session

@@ -1589,7 +1589,7 @@ body.sh-commenting .sh-sticky-body { cursor: crosshair }
 .sh-pill-btn.jm-jam .jm-nomic { color: var(--glass-ink-2) }
 
 /* ---- a capture's tile (round 3): two lines, a little squarer - glyph | title over a status line
-   ("Ready to review", "Agent working · 0:41", "Done · 1 frame changed"). Colour only in the glyph. ---- */
+   ("Ready to review", "Claude Code is working · 0:41", "Done · 1 frame changed"). Colour only in the glyph. ---- */
 .jm-card { display: inline-flex; align-items: center; gap: 10px; height: 44px; width: 216px; flex: none;   /* one width: a tile never resizes */
   padding: 0 14px 0 12px; border-radius: 10px; color: var(--glass-ink); text-align: left; cursor: pointer }
 .jm-card .jm-st { flex: none }

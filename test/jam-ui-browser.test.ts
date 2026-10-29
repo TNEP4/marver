@@ -71,6 +71,30 @@ describe('Jam V2 gallery: the lane', () => {
     expect(await browser!.eval(s, `getComputedStyle(document.querySelector('.jm-live-dot')).backgroundColor`)).toBe('rgb(0, 210, 224)')   // teal (dark)
   })
 
+  // Nic, 29 Oct: "Your session" said nothing - the tile says the tool at work, and whose run it is shows on hover: "a tooltip
+  // ... dark in light mode and light in dark mode"
+  skippable('a working tile\'s status line says whose run it is on hover, in the shell\'s tooltip - dark in light, light in dark; a tile that is not working has none', async () => {
+    // the lane keeps its newest tile in view: the one hovered is scrolled in first
+    const hover = async (sel: string) => {
+      await browser!.eval(s, `(document.querySelector(${JSON.stringify(sel)}).closest('.jm-card').scrollIntoView({ inline: 'center', block: 'nearest' }), 1)`)
+      await new Promise((r) => setTimeout(r, 200))
+      const b = await box(sel); await browser!.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: b.x + b.w / 2, y: b.y + b.h / 2 }, s)
+    }
+    for (const [theme, bg, ink] of [['light', 'rgb(24, 24, 27)', 'rgb(250, 250, 250)'], ['dark', 'rgb(244, 244, 245)', 'rgb(24, 24, 27)']]) {
+      await open(`scene=lane&theme=${theme}`)
+      expect(await browser!.eval(s, `document.querySelector('.jm-card[data-tile="c"] .m').textContent`)).toBe('Claude Code is working · 1:12')
+      await hover('.jm-card[data-tile="c"] .m')
+      await browser!.until(s, `!!document.querySelector('.sh-tip')`, 3000)
+      expect(await browser!.eval(s, `document.querySelector('.sh-tip').textContent`)).toBe('In your Claude Code session - a background subagent of it does the work')
+      expect(await browser!.eval(s, `(() => { const c = getComputedStyle(document.querySelector('.sh-tip')); return [c.backgroundColor, c.color] })()`)).toEqual([bg, ink])
+      await shot(`lane-tip-${theme}`)
+      await hover('.jm-card[data-tile="d"] .m')
+      await browser!.until(s, `!document.querySelector('.sh-tip')`, 3000)
+      await new Promise((r) => setTimeout(r, 300))
+      expect(await browser!.eval(s, `!!document.querySelector('.sh-tip')`)).toBe(false)
+    }
+  })
+
   skippable('past its width the lane scrolls to keep the newest in view - the earlier tiles go under the left edge', async () => {
     // nine done tiles fold into one: the lane fits
     await open('scene=lane&many=1')

@@ -26,6 +26,8 @@ export interface LaneTile {
   title: string
   /** the status line - jam-lines.ts `laneLine` */
   line: string
+  /** a working tile's status line on hover: whose run it is (jam-lines.ts `laneTip`) */
+  tip?: string
   /** an exclusive card wears a file glyph: it changes how the queue runs */
   exclusive?: boolean
   /** a done tile: the frames it changed (not the ones it left as they were) - the Done group counts each frame once */
@@ -191,7 +193,7 @@ export function Lane({ tiles, recording, between, selected, keyboard, onOpen, on
             <span className="tx">
               {/* the whole title, in the shell's own tooltip - only when the tile cuts it short */}
               <Tip label={<span className="jm-tip-title">{t.title}</span>} only={(el) => el.scrollWidth > el.clientWidth + 1}><span className="t">{t.title}</span></Tip>
-              <span className="m">{t.line}</span>
+              {t.tip ? <Tip label={<div className="sh-tip-lines">{t.tip}</div>}><span className="m">{t.line}</span></Tip> : <span className="m">{t.line}</span>}
             </span>
             {t.exclusive && <span className="x" aria-label="changes a shared file"><FileCodeIcon size={13} /></span>}
           </button>

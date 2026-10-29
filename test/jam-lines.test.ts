@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { laneLine, lineText, runnerLine, statusLines, timelineLines, type LaneCard } from '../src/client/shell/jam-lines.ts'
+import { laneLine, laneTip, lineText, runnerLine, statusLines, timelineLines, type LaneCard } from '../src/client/shell/jam-lines.ts'
 import type { CaptureRecord } from '../src/server/jam/types.ts'
 
 const card = (o: Partial<LaneCard>): LaneCard => ({ id: 'cap-1', kind: 'capture', board: 'home', frames: [], events: [], state: 'queued', rev: 1, made: 0, order: 0, at: 0, ...o })
@@ -13,7 +13,7 @@ describe('the lane: a tile\'s status line', () => {
     expect(laneLine(card({ state: 'queued', waitsFor: { frame: 'test-deck/01-slide', by: 'Icon labels' } }))).toBe('Waits for 01-slide')
     expect(laneLine(card({ state: 'queued', position: 2 }))).toBe('Queued · 2nd')
     expect(laneLine(card({ state: 'queued', position: 13 }))).toBe('Queued · 13th')
-    expect(laneLine(card({ state: 'working', at: 1000 }), 42_000)).toBe('Agent working · 0:41')
+    expect(laneLine(card({ state: 'working', at: 1000 }), 42_000)).toBe('Agent is working · 0:41')
     expect(laneLine(card({ state: 'asks' }))).toBe('Asks you')
     expect(laneLine(card({ state: 'review' }))).toBe('Ready to review')
     expect(laneLine(card({ state: 'done' }))).toBe('Done')
@@ -98,17 +98,58 @@ describe('the read-back: a capture\'s merged timeline', () => {
 
 describe('who runs it, in words (spec 29b)', () => {
   const base = { id: 'c1', kind: 'comment' as const, board: 'b', frames: ['s/f'], events: ['e'], state: 'working' as const, rev: 1, made: 0, order: 0, at: Date.now() - 41_000 }
-  const name = (a: string) => ({ claude: 'Claude Code', codex: 'Codex' } as Record<string, string>)[a] ?? a
-  it('your session: offered, on it, stalled, stopping; a copy; a fresh agent', () => {
+  const name = (a: string) => ({ claude: 'Claude Code', codex: 'Codex' } as Record<string, string>)[a]
+  it('your session: dispatching, working, stalled, stopping; a copy; a fresh agent', () => {
     const run = (r: object) => ({ ...base, runner: { batch: 'x', agent: 'claude', kind: 'session' as const, ...r } })
-    expect(runnerLine(run({ state: 'offered' }), name)?.head).toMatch(/^Waiting for your Claude Code session · 0:4\d$/)
-    expect(runnerLine(run({ state: 'claimed', gen: 1 }), name)?.head).toMatch(/^Your Claude Code session is on it · 0:4\d$/)
+    expect(runnerLine(run({ state: 'offered' }), name)?.head).toMatch(/^Dispatching · 0:4\d$/)
+    expect(runnerLine(run({ state: 'claimed', gen: 1 }), name)?.head).toMatch(/^Claude Code is working · 0:4\d$/)
     expect(runnerLine(run({ state: 'stalled', gen: 1 }), name)?.detail).toBe('Give it back, run it in the background, or drop it')
     expect(runnerLine(run({ state: 'stopping', gen: 1 }), name)?.head).toContain('waiting for your Claude Code session to let go')
-    expect(runnerLine({ ...base, runner: { batch: 'x', agent: 'codex', kind: 'fork' } }, name)?.head).toMatch(/^A copy of your Codex session is on it/)
+    expect(runnerLine({ ...base, runner: { batch: 'x', agent: 'codex', kind: 'fork' } }, name)?.head).toMatch(/^Codex is working · 0:4\d$/)
     expect(runnerLine({ ...base, runner: { batch: 'x', agent: 'claude', kind: 'fresh', why: 'your session is too long to copy - a fresh agent took it' } }, name)?.detail).toContain('too long to copy')
     expect(runnerLine({ ...base, state: 'queued' }, name)).toBeNull()
-    expect(laneLine({ ...base, runner: { batch: 'x', agent: 'claude', kind: 'session', state: 'stalled', gen: 1 } })).toBe('Stalled · choose')
-    expect(laneLine({ ...base, runner: { batch: 'x', agent: 'claude', kind: 'fork' } })).toMatch(/^A copy of your session · /)
+    expect(laneLine({ ...base, runner: { batch: 'x', agent: 'claude', kind: 'session', state: 'stalled', gen: 1 } }, Date.now(), name)).toBe('Stalled · choose')
+  })
+
+  // Nic, 29 Oct: "'Your session' is just a terrible name ... I don't really understand the difference between 'Your session'
+  // and 'a copy of your session'" - the tile says the tool at work; whose run it is shows on hover, the icon's own detail
+  it('a working tile says the tool at work - never "Your session" or "a copy" - and its tooltip whose run it is and why a copy took it; the status icon says the same', () => {
+    const at = base.at, now = at + 42_000
+    const cases: [object, string, string][] = [
+      [{ kind: 'session', agent: 'claude', state: 'claimed', gen: 1 }, 'Claude Code is working · 0:42', 'In your Claude Code session - a background subagent of it does the work'],
+      [{ kind: 'session', agent: 'codex', state: 'claimed', gen: 1 }, 'Codex is working · 0:42', 'In your Codex session'],
+      [{ kind: 'fork', agent: 'claude' }, 'Claude Code is working · 0:42', 'In a copy of your Claude Code session - with your conversation, tools, MCP servers and skills'],
+      [{ kind: 'fork', agent: 'claude', why: "your session didn't take it - it was busy or away" }, 'Claude Code is working · 0:42', 'In a copy of your Claude Code session (yours was busy) - with your conversation, tools, MCP servers and skills'],
+      [{ kind: 'fork', agent: 'claude', why: "your session didn't take it - it already holds 3 runs" }, 'Claude Code is working · 0:42', 'In a copy of your Claude Code session (yours was busy) - with your conversation, tools, MCP servers and skills'],
+      [{ kind: 'fork', agent: 'claude', why: "your session didn't take it - it let it go" }, 'Claude Code is working · 0:42', 'In a copy of your Claude Code session (yours let it go) - with your conversation, tools, MCP servers and skills'],
+      [{ kind: 'fork', agent: 'codex', why: 'your session was idle - Codex takes a run only while it works' }, 'Codex is working · 0:42', 'In a copy of your Codex session (yours was idle) - with your conversation, tools, MCP servers and skills'],
+      [{ kind: 'fork', agent: 'claude', why: 'the Jam session had ended' }, 'Claude Code is working · 0:42', 'In a copy of your Claude Code session (the Jam session had ended) - with your conversation, tools, MCP servers and skills'],
+      [{ kind: 'fresh', agent: 'claude' }, 'Claude Code is working · 0:42', 'A background Claude Code run'],
+      [{ kind: 'fresh', agent: 'claude', why: 'your session is too long to copy - a fresh agent took it' }, 'Claude Code is working · 0:42', 'A background Claude Code run (your session is too long to copy - a fresh agent took it)'],
+      // an agent with no name here: "Agent", never its bare id
+      [{ kind: 'fresh', agent: 'gemini' }, 'Agent is working · 0:42', 'A background agent run'],
+      [{ kind: 'session', agent: 'gemini', state: 'claimed', gen: 1 }, 'Agent is working · 0:42', 'In your session'],
+    ]
+    for (const [r, line, tip] of cases) {
+      const c = { ...base, runner: { batch: 'x', ...r } as LaneCard['runner'] }
+      expect(laneLine(c, now, name)).toBe(line)
+      expect(laneTip(c, name)).toBe(tip)
+      // the status icon: the tile's words, its tooltip as the detail
+      expect(statusLines(c, 'claude', { claude: 'Claude Code', codex: 'Codex' }, now)).toEqual({ head: line, detail: tip })
+      expect(line + tip).not.toMatch(/Your session ·|a copy is on it|Yours was|A copy of your session/)
+    }
+    // with no names at all (the lane before it has them): "Agent is working"
+    expect(laneLine({ ...base, runner: { batch: 'x', kind: 'fork', agent: 'claude' } }, now)).toBe('Agent is working · 0:42')
+  })
+
+  it('offered to your session and not taken yet: "Dispatching", the session it went to on hover; the rare states keep their words; other tiles have no tooltip', () => {
+    const run = (state: string) => ({ ...base, runner: { batch: 'x', agent: 'claude', kind: 'session' as const, state: state as 'offered' } })
+    expect(laneLine(run('offered'), Date.now(), name)).toBe('Dispatching')
+    expect(laneTip(run('offered'), name)).toBe('Offered to your Claude Code session - it takes the run when it is free')
+    expect(laneLine(run('waiting'), Date.now(), name)).toBe('Waiting for a session')
+    expect(laneLine(run('stalled'), Date.now(), name)).toBe('Stalled · choose')
+    expect(laneLine(run('stopping'), Date.now(), name)).toBe('Stopping')
+    for (const state of ['queued', 'review', 'done', 'draft', 'failed'] as const) expect(laneTip({ ...base, state, runner: run('claimed').runner }, name)).toBeUndefined()
+    expect(laneTip({ ...base }, name)).toBeUndefined()   // working with no runner yet: no tooltip
   })
 })

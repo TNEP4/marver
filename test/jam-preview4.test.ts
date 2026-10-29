@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { isApproval } from '../src/shared/approval.ts'
 import { sessionBrief } from '../src/server/jam/session-brief.ts'
-import { laneLine, runnerLine } from '../src/client/shell/jam-lines.ts'
+import { laneLine, laneTip, runnerLine } from '../src/client/shell/jam-lines.ts'
 import { finalWait, FINAL_MAX, FINAL_MS, wordsWhole } from '../src/client/shell/jam-voice-wait.ts'
 
 describe('a More-work note that only approves', () => {
@@ -146,18 +146,21 @@ describe('a draft the queue would not take', () => {
 })
 
 describe('a copy that runs what your session did not take', () => {
-  it('says why on the tile and in its detail', () => {
+  const name = (a: string) => ({ claude: 'Claude Code', codex: 'Codex' } as Record<string, string>)[a]
+  it('says the tool at work on the tile, and why a copy took it on hover and in its detail', () => {
     const c: any = { id: 'c', state: 'working', at: Date.now(), runner: { kind: 'fork', agent: 'claude', why: "your session didn't take it - it was busy or away" } }
-    expect(laneLine(c)).toMatch(/^Yours was busy · a copy is on it/)
-    expect(runnerLine(c, () => 'Claude Code')!.detail).toMatch(/^Your session didn't take it/)
-    expect(laneLine({ ...c, runner: { kind: 'fork', agent: 'claude' } })).toMatch(/^A copy of your session/)
-    expect(laneLine({ ...c, runner: { kind: 'fork', agent: 'claude', why: "your session didn't take it - it already holds 3 runs" } })).toMatch(/^Yours was busy · a copy is on it/)
-    expect(laneLine({ ...c, runner: { kind: 'fork', agent: 'codex', why: 'your session was idle - Codex takes a run only while it works' } })).toMatch(/^Yours was idle · a copy is on it/)
+    expect(laneLine(c, Date.now(), name)).toMatch(/^Claude Code is working · /)
+    expect(laneTip(c, name)).toBe('In a copy of your Claude Code session (yours was busy) - with your conversation, tools, MCP servers and skills')
+    expect(runnerLine(c, name)!.detail).toBe(laneTip(c, name))
+    expect(laneTip({ ...c, runner: { kind: 'fork', agent: 'claude' } }, name)).toMatch(/^In a copy of your Claude Code session - /)
+    expect(laneTip({ ...c, runner: { kind: 'fork', agent: 'claude', why: "your session didn't take it - it already holds 3 runs" } }, name)).toMatch(/\(yours was busy\)/)
+    expect(laneLine({ ...c, runner: { kind: 'fork', agent: 'codex', why: 'your session was idle - Codex takes a run only while it works' } }, Date.now(), name)).toMatch(/^Codex is working · /)
+    expect(laneTip({ ...c, runner: { kind: 'fork', agent: 'codex', why: 'your session was idle - Codex takes a run only while it works' } }, name)).toMatch(/\(yours was idle\)/)
   })
-  it('a run your session let go, or one whose Jam session ended, says that - never "busy"', () => {
+  it('a run your session let go, or one whose Jam session ended, says that on hover - never "busy"', () => {
     const c: any = { id: 'c', state: 'working', at: Date.now(), runner: { kind: 'fork', agent: 'claude', why: "your session didn't take it - it let it go" } }
-    expect(laneLine(c)).toMatch(/^Yours let it go · a copy is on it/)
-    expect(laneLine({ ...c, runner: { kind: 'fork', agent: 'claude', why: 'the Jam session had ended' } })).toMatch(/^Jam session ended · a copy is on it/)
+    expect(laneTip(c, name)).toMatch(/\(yours let it go\)/)
+    expect(laneTip({ ...c, runner: { kind: 'fork', agent: 'claude', why: 'the Jam session had ended' } }, name)).toMatch(/\(the Jam session had ended\)/)
   })
 })
 

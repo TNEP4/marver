@@ -134,9 +134,25 @@ const rect = (sel: string) => ev(`(() => { const r = document.querySelector(${JS
 
 describe('the review shows before and after at once, by the frame\'s shape (0.26.1)', () => {
   let phone = '', laptop = ''
-  skippable('a phone frame: side by side, the panel wider than 580 px - as wide as two pictures at the well\'s height', async () => {
+  // Nic, 29 Oct: "when the user clicks on a review card, the images should be preloaded ... it collapses and then expands
+  // back to the size of the frame because it doesn't have the exact width of the picture before it's effectively loaded"
+  skippable('a phone frame: side by side, the panel wider than 580 px - as wide as two pictures at the well\'s height; its pictures load as it is ready to review, so its review opens that way from its first frame, never stacked at 580 px and then grown', async () => {
+    // every picture the page loads, from here on (an observer: the timing buffer may be full of the page's modules)
+    await ev(`(window.__pics = [], new PerformanceObserver((l) => { for (const e of l.getEntries()) if (e.name.includes('/api/jam/picture')) window.__pics.push(e.name) }).observe({ type: 'resource' }), 1)`)
     phone = await reviewOf('spec/phone')
+    const ids: string[] = await ev(`window.__mvJamQueue.getState().cards.find((c) => c.id === ${JSON.stringify(phone)}).shots.flatMap((x) => [x.before, x.after]).filter(Boolean)`)
+    expect(ids.length).toBe(2)
+    // ready to review, nothing opened: its Before and After are loaded already
+    await until(`${JSON.stringify(ids)}.every((id) => window.__pics.some((n) => n.includes('id=' + id)))`, 10_000)
+    await sleep(300)
+    // each frame painted from the moment its review opens: the panel's width and how its pictures sit
+    await ev(`(window.__frames = [], (function f() { const p = document.querySelector('[data-jam-focus]'); if (p) window.__frames.push({ w: Math.round(p.getBoundingClientRect().width), pair: document.querySelector('[data-jam-pair]')?.getAttribute('data-jam-pair') ?? null }); if (window.__frames.length < 40) requestAnimationFrame(f) })(), 1)`)
     await openReview(phone)
+    await until(`window.__frames.length >= 40`, 10_000)
+    const frames: { w: number; pair: string | null }[] = await ev(`window.__frames`)
+    expect(frames.filter((f) => f.pair !== 'side')).toEqual([])
+    expect([...new Set(frames.map((f) => f.w))]).toEqual([frames[frames.length - 1].w])
+    expect(frames[0].w).toBeGreaterThan(580)
     await until(`document.querySelector('[data-jam-pair]')?.getAttribute('data-jam-pair') === 'side'`, 10_000)
     await sleep(400)   // the panel takes its width
     const shots = await ev(`[...document.querySelectorAll('[data-jam-review] .jm-big .jm-shot')].map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y } })`)
