@@ -1034,8 +1034,9 @@ export function setOpenSender(fn: ((t: Tab, item: OpenItem) => boolean) | null):
 /**
  * A notice's click, once main.ts brought the window forward: its tab shown - reopened when it was closed since - and,
  * for a canvas whose instance lists `open`, the item held as `pendingOpen` until that tab's current document is
- * admitted, trusted and has said hello (an unloaded or never-shown tab loads first). A later click replaces it; it
- * is dropped after `openWaitMs` or when another tab is activated. A stop's click (`item` null) only shows the tab.
+ * admitted, trusted and has said hello (an unloaded or never-shown tab loads first; one whose unload is closing waits
+ * for its outcome). A later click replaces it; it is dropped after `openWaitMs` or when another tab is activated. A
+ * stop's click (`item` null) only shows the tab.
  */
 export function openForNotice(id: string, item: OpenItem | null): void {
   const t = tabs.get(id)
@@ -1059,10 +1060,14 @@ function dropOpen(t: Tab, why: string): void {
   if (o) P().log?.('open', { tab: t.id, id: o.item.id, dropped: why })
 }
 
-/** The held click goes, once, to the tab's current document - admitted, trusted, said hello, its instance listing `open`. */
+/**
+ * The held click goes, once, to the tab's current document - admitted, trusted, said hello, its instance listing
+ * `open`. Never while an unload closes it: that document is gone at `destroyed` (the reopened one's hello takes the
+ * click), or kept at the page's refusal (unloadOp delivers it with its shown).
+ */
 function deliverOpen(t: Tab): void {
   const o = t.pendingOpen
-  if (!o || !isActive(t) || !t.doc?.trusted || !t.doc.doc || !t.reports.hello) return
+  if (!o || !isActive(t) || unloadClosing(t) || !t.doc?.trusted || !t.doc.doc || !t.reports.hello) return
   if (!t.reg?.features.includes(FEATURE.open)) { dropOpen(t, 'no-open'); return }
   t.pendingOpen = undefined
   const sent = openSender?.(t, o.item) ?? false
@@ -1407,6 +1412,7 @@ async function unloadOp(tab: Tab, op: GuardOperation, a: Extract<GuardAction, { 
   if (isActive(tab)) {
     if (tab.doc?.trusted) p.appState(tab, 'shown')
     p.changed({ focus: 'shown' })
+    deliverOpen(tab)   // a notice clicked while it closed (A4.6 #29)
   }
   return 'refused'
 }
