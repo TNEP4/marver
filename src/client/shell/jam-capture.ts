@@ -903,10 +903,14 @@ async function untilQueued(id: string): Promise<void> {
     const after = <T,>(ms: number, v: T) => new Promise<T>((res) => setTimeout(() => res(v), ms))
     for (let wait = 2_000; !held(); wait = Math.min(wait * 2, 10_000)) {
       // a refresh that hangs is given 10 s, then cancelled and the next one asked - it never stops the retries, and
-      // abandoned requests never pile up on the browser's connections (a push that ends the wait cancels it too)
+      // abandoned requests never pile up on the browser's connections. Only a refresh still unanswered at its 10 s is
+      // cancelled: one that answered, or that a push overtook, is left alone (it answers in a moment, and its view is
+      // applied only if newer than the push's). Cancelling those too (as each wait ended) reached whatever else on the
+      // page watches its requests - a browser extension's fetch hook - as a rejection it never handles, printed by Vite
+      // in the marver dev terminal on every E (29 Oct)
       const ac = new AbortController()
-      const answered = await Promise.race([q.getState().load({ signal: ac.signal }), push, after(10_000, false)])
-      ac.abort()
+      const hang = setTimeout(() => ac.abort(), 10_000)
+      const answered = await Promise.race([q.getState().load({ signal: ac.signal }).finally(() => clearTimeout(hang)), push, after(10_000, false)])
       if (answered) return
       await Promise.race([push, after(wait, undefined)])
     }

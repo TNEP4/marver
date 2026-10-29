@@ -1558,6 +1558,103 @@ describe('captures in the browser: the first trial', () => {
     await decide(b, 'good')
   }, 180_000)
 
+  skippable('an E capture whose push lands while its queue refresh is still out: the push ends the wait and the refresh is never cancelled - no unhandled rejection, even with fetch observed by something else on the page', async () => {
+    agentMode({})
+    await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const b = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('the push beats the refresh'), 1`)
+    // the queue refreshes are held at the network, for real (the browser's own request, out on the wire, never answered
+    // until let go below)
+    const held: string[] = []
+    const off = browser!.on((m) => { if (m.method === 'Fetch.requestPaused' && m.sessionId === s) held.push(m.params.requestId) })
+    await browser!.send('Fetch.enable', { patterns: [{ urlPattern: '*/__mv/api/jam/queue*', requestStage: 'Request' }] }, s)
+    // pushes held back, the last one kept; the page's unhandled rejections counted; and the page's fetch observed the way a
+    // browser extension does it (Owner's Chrome, 29 Oct: every E on 0.28.0 rc3 printed "[Unhandled rejection] AbortError:
+    // signal is aborted without reason > untilQueued > upload" in the marver dev terminal): it watches each request - and
+    // reads a copy of its answer - with no handler of its own, so a request cancelled while out (or while its answer is
+    // still read) hands it a rejection nothing handles. The page's own code handles every one: without the observer no
+    // cancel is ever unhandled in Chrome
+    await browser!.eval(s, `(() => {
+      const q = window.__mvJamQueue, real = q.getState().apply
+      const w = window.__qBeat = { real, hold: true, last: null, asked: 0, answered: 0, cancelled: 0, unhandled: [] }
+      w.onUnhandled = (e) => w.unhandled.push(String(e.reason?.name ?? e.reason))
+      addEventListener('unhandledrejection', w.onUnhandled)
+      q.setState({ apply: (v) => { if (w.hold) w.last = v; else real(v) } })
+      const f = window.fetch
+      window.fetch = function (u, init) {
+        const p = f.call(this, u, init)
+        if (String(u).includes('/api/jam/queue') && !(init && init.method && init.method !== 'GET')) {
+          w.asked++
+          p.then((r) => r.clone().text())                                   // the observer: no handler
+          p.then(() => { w.answered++ }, () => { w.cancelled++ })           // the count
+        }
+        return p
+      }
+      return 1 })()`)
+    try {
+      await key('e')
+      // taken by the canvas, its refresh out (held at the network), and the push that carries its card in hand
+      await until(`!!window.__mvJamCapture.getState().sealed.find((x) => x.id === ${JSON.stringify(b)})?.card && window.__qBeat.asked >= 1 && !!window.__qBeat.last?.cards?.some((c) => c.id === ${JSON.stringify(b)})`, 40_000)
+      await until(`${held.length >= 1}`, 5_000)
+      expect(await browser!.eval(s, `window.__mvJamCapture.getState().unsent`)).toContain(b)
+      // the push lands while the refresh is still out: the wait ends on it at once - the refresh still unanswered
+      await browser!.eval(s, `(() => { const w = window.__qBeat; w.hold = false; window.__mvJamQueue.setState({ apply: w.real }); w.real(w.last); return 1 })()`)
+      await until(`!window.__mvJamCapture.getState().unsent.length && document.querySelector('.jm-lane [data-tile="${b}"] .m')?.textContent !== 'Sending'`, 5_000)
+      await sleep(500)
+      // ...and it is left to answer: never cancelled, nothing handed a rejection
+      expect(await browser!.eval(s, `(() => { const w = window.__qBeat; return { answered: w.answered, cancelled: w.cancelled, unhandled: w.unhandled } })()`)).toEqual({ answered: 0, cancelled: 0, unhandled: [] })
+      for (const id of held.splice(0)) await browser!.send('Fetch.continueRequest', { requestId: id }, s).catch(() => null)
+      await until(`window.__qBeat.answered >= 1`, 5_000)
+      await sleep(500)
+      expect(await browser!.eval(s, `(() => { const w = window.__qBeat; return { cancelled: w.cancelled, unhandled: w.unhandled } })()`)).toEqual({ cancelled: 0, unhandled: [] })
+    } finally {
+      off()
+      for (const id of held.splice(0)) await browser!.send('Fetch.continueRequest', { requestId: id }, s).catch(() => null)
+      await browser!.send('Fetch.disable', {}, s).catch(() => null)
+      await browser!.eval(s, `(() => { const w = window.__qBeat; w.hold = false; removeEventListener('unhandledrejection', w.onUnhandled); window.__mvJamQueue.setState({ apply: w.real }); void window.__mvJamQueue.getState().load(); return 1 })()`)
+    }
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((x) => x.id === ${JSON.stringify(b)} && x.state === 'review')`, 90_000)
+    await decide(b, 'good')
+  }, 150_000)
+
+  skippable('an E capture whose queue refresh answers before the push: nothing is cancelled after its answer - a copy of it still read elsewhere on the page is never cut off', async () => {
+    agentMode({})
+    await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
+    await key('s'); await until(`!!window.__mvJamCapture.getState().current`)
+    const b = await browser!.eval(s, `window.__mvJamCapture.getState().current`)
+    await browser!.eval(s, `window.__mvJamCapture.getState().note('the refresh answers first'), 1`)
+    // nothing held: the refresh answers in a few ms, the push some 60 ms after the canvas's answer. The observer reads a
+    // copy of each queue answer, as an extension's fetch hook does - one cut off by a cancel is a rejection nothing handles
+    await browser!.eval(s, `(() => {
+      const w = window.__qFirst = { asked: 0, read: 0, cut: [], unhandled: [] }
+      w.onUnhandled = (e) => w.unhandled.push(String(e.reason?.name ?? e.reason))
+      addEventListener('unhandledrejection', w.onUnhandled)
+      const f = window.fetch
+      window.fetch = function (u, init) {
+        const p = f.call(this, u, init)
+        if (String(u).includes('/api/jam/queue') && !(init && init.method && init.method !== 'GET')) {
+          w.asked++
+          p.then((r) => r.clone().text())                                                        // the observer: no handler
+          p.then((r) => r.clone().text()).then(() => { w.read++ }, (e) => { w.cut.push(e?.name) })   // the count
+        }
+        return p
+      }
+      return 1 })()`)
+    try {
+      await key('e')
+      await until(`!!window.__mvJamCapture.getState().sealed.find((x) => x.id === ${JSON.stringify(b)})?.card`, 40_000)
+      await until(`!window.__mvJamCapture.getState().unsent.length && (window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(b)})`, 10_000)
+      await sleep(1_000)
+      const w = await browser!.eval(s, `(() => { const w = window.__qFirst; return { asked: w.asked >= 1, cut: w.cut, unhandled: w.unhandled } })()`)
+      expect(w).toEqual({ asked: true, cut: [], unhandled: [] })
+    } finally {
+      await browser!.eval(s, `(() => { removeEventListener('unhandledrejection', window.__qFirst.onUnhandled); return 1 })()`)
+    }
+    await until(`(window.__mvJamQueue.getState().cards ?? []).some((x) => x.id === ${JSON.stringify(b)} && x.state === 'review')`, 90_000)
+    await decide(b, 'good')
+  }, 150_000)
+
   skippable('a capture the canvas took is never sent again while it waits for its card - a retry for another capture leaves it alone', async () => {
     agentMode({})
     await browser!.eval(s, `window.__mvJamUi.getState().close(), 1`)
