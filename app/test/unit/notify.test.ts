@@ -2,16 +2,22 @@
  * Marks, notices and the badge (src/main/notify.ts; spec 28 A4.6 #17-#27, r1 #6), pure, over the tab model with fake
  * ports: the baseline once per workspace per run; a reconnect posting nothing old and an item born in the gap
  * posting; a canvas in front posting nothing and the same canvas on another tab posting while Marver is focused;
- * one notice per snapshot with "and N more"; the minute; stops and their acknowledgement; the badge; outcomes and the
- * missed pill; the offer; cut snapshots and the id cap; nothing of the presenter before Turn On.
+ * a locked screen counting as away (window.ts's rule and lock, over a fake powerMonitor); one notice per snapshot
+ * with "and N more"; the minute; stops and their acknowledgement; the badge; outcomes and the missed pill; the offer;
+ * cut snapshots and the id cap; nothing of the presenter before Turn On.
  */
+import { EventEmitter } from 'node:events'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { LiveEvent, LiveItem, OpenItem } from '../../../src/shared/app-api.ts'
 import type { Held } from '../../src/main/live.ts'
 import { bodyOf, createNotify, cut, HELD_MAX, type Notify, type NoticeEvents, type NoticesFile } from '../../src/main/notify.ts'
 import { allTabs, closeTab, onRegistry, openSettingsTab, setMarksSource, viewOf, type Tab } from '../../src/main/tabs.ts'
 import { T } from '../../src/main/timings.ts'
+import { inFrontOf, watchLock } from '../../src/main/window.ts'
 import { entry, liveTab, show, world, type World } from './window-fakes.ts'
+
+// window.ts's rule and lock are pure; the rest of it never runs here
+vi.mock('electron', () => ({ BaseWindow: class {}, View: class {}, WebContentsView: class {}, nativeImage: {}, nativeTheme: { shouldUseDarkColors: false, on() {} }, powerMonitor: {}, screen: {}, app: {} }))
 
 let w: World
 let n: Notify
@@ -21,8 +27,9 @@ let front: boolean
 let state: NoticesFile
 let fx: { journal: ({ op: 'create' } | { op: 'post'; title: string; body: string; on: NoticeEvents } | { op: 'badge'; n: number })[]; offers: boolean[]; missed: string[]; opens: { tab: string; item: OpenItem | null }[]; refreshes: number; turnOn: boolean; writes: Partial<NoticesFile>[] }
 
-function make(o: { seenMax?: number } = {}): Notify {
+function make(o: { seenMax?: number; inFront?: () => boolean } = {}): Notify {
   n?.close()
+  const { inFront, ...opts } = o
   n = createNotify({
     now: () => w.clock.now,
     presenter: () => ({
@@ -33,14 +40,14 @@ function make(o: { seenMax?: number } = {}): Notify {
     held: (i) => held.get(i),
     config: () => ({ ...cfg }),
     turnOn: async () => { if (fx.turnOn) cfg.notifications = true; return fx.turnOn },
-    inFront: () => front,
+    inFront: inFront ?? (() => front),
     state: () => ({ ...state }),
     setState: (p) => { fx.writes.push(p); state = { ...state, ...p } },
     offer: (on) => { fx.offers.push(on) },
     missed: (name) => { fx.missed.push(name) },
     refresh: () => { fx.refreshes += 1 },
     open: (tab, item) => { fx.opens.push({ tab, item }) },
-  }, o)
+  }, opts)
   setMarksSource((t) => n.marksOf(t))
   return n
 }
@@ -175,6 +182,36 @@ describe('when a notice posts (A4.6 #23, #24)', () => {
     show(t.id); front = false
     snap(t, [ask()])
     expect(posts()).toHaveLength(1)
+  })
+
+  it('in front is shown, not minimised, focused and the screen not locked: any one of them not is away', () => {
+    const at = { visible: true, minimized: false, focused: true, locked: false }
+    expect(inFrontOf(at)).toBe(true)
+    for (const k of ['visible', 'minimized', 'focused', 'locked'] as const) expect(inFrontOf({ ...at, [k]: !at[k] }), k).toBe(false)
+  })
+
+  it('a locked screen counts as away: the canvas in front posts; at the unlock the window is in front again - its stop acknowledged, the badge applied', () => {
+    const pm = new EventEmitter()
+    const lock = watchLock(pm, () => n.onFront())
+    make({ inFront: () => inFrontOf({ visible: true, minimized: false, focused: true, locked: lock() }) })
+    const t = canvas()
+    snap(t, [])
+    show(t.id)
+    snap(t, [ask()])
+    expect(posts()).toEqual([])   // in front, focused
+    pm.emit('lock-screen')
+    snap(t, [ask({ title: 'While away' })])
+    expect(posts().map((p) => p.body)).toEqual(['Asks you: While away'])
+    w.clock.now += T.noticeEveryMs
+    held.delete(t.reg!.instance)
+    onRegistry({ kind: 'gone', file: t.reg!.file, instance: t.reg!.instance, why: 'pid' })
+    n.onRegistry({ kind: 'gone', file: t.reg!.file, instance: t.reg!.instance, why: 'pid' })
+    expect(posts().at(-1)!.body).toBe('Stopped')   // locked: not seen as it happened
+    expect(n.total()).toBe(1)
+    const len = badges().length
+    pm.emit('unlock-screen')
+    expect(n.total()).toBe(0)
+    expect(badges().slice(len)).toEqual([0])
   })
 
   it('one notice per snapshot: the newest item\'s words and "and N more"; each kind\'s words; the canvas\'s name first', () => {

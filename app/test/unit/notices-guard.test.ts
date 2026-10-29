@@ -3,6 +3,8 @@
  * place, so the source holds it - notify-mac.ts is the one file in main that constructs a `Notification`, asks
  * `isSupported`, or sets the badge, and notify.ts calls its `create()` only once notices are on (notify.test.ts).
  * live.ts and notify.ts import no Electron at all. And the release bundle never carries the fake presenter's switch.
+ * window.ts's windowInFront reads the screen's lock (#23): its rule and watchLock are tested in notify.test.ts, and
+ * their wiring - the window's setup, which needs a real window - is held here.
  */
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
@@ -24,6 +26,12 @@ describe('the notices guard', () => {
 
   it('live.ts and notify.ts import no Electron', () => {
     for (const f of ['live.ts', 'notify.ts']) expect(readFileSync(join(MAIN, f), 'utf8'), f).not.toMatch(/from 'electron'/)
+  })
+
+  it('windowInFront reads inFrontOf with watchLock\'s lock, watched on powerMonitor with the window\'s front at the unlock', () => {
+    const text = readFileSync(join(MAIN, 'window.ts'), 'utf8')
+    expect(text).toMatch(/export const windowInFront = [^\n]*\n\s*&& inFrontOf\(\{[^}]*\blocked: locked\(\) \}\)/)
+    expect(text).toMatch(/\n\s+locked = watchLock\(powerMonitor, front\)\n/)
   })
 
   it('MARVER_APP_REAL_NOTICES is a test sentinel: the release bundle must not hold it', () => {
