@@ -294,7 +294,7 @@ export function ReadBack({ title, head, of, onPrev, onNext, meta, lines, picture
       <div className="actions">
         {readOnly ? (
           <><span className="sp" />{onOpenThread && <button className="jm-btn" onClick={onOpenThread}>Open thread</button>}
-            {onRetry && <><button className="jm-btn ghost" onClick={onDrop}>Drop</button><button className="jm-btn primary" onClick={onRetry}>Retry</button></>}</>
+            {onRetry && <><button className="jm-btn ghost" data-jam-run-act="drop" onClick={onDrop}>Drop</button><button className="jm-btn primary" data-jam-run-act="retry" onClick={onRetry}>Retry</button></>}</>
         ) : (
           <>
             <span className="dim">{agent ? <>For <b style={{ color: 'var(--glass-ink-2)', fontWeight: 600 }}>{agent}</b></> : 'No agent yet - it waits in the queue'}</span>
@@ -311,8 +311,10 @@ export function ReadBack({ title, head, of, onPrev, onNext, meta, lines, picture
 }
 
 /** What a capture's run asked you, and your answer - for a thread this board cannot show (its frame is on no node
- *  here). Sent with @marver in its thread: the answer goes back to the agent, as a tagged reply does. */
-function AsksAnswer({ question, onAnswer }: { question: string; onAnswer(text: string): Promise<boolean> }) {
+ *  here). Sent with @marver in its thread: the answer goes back to the agent, as a tagged reply does. The thread panel
+ *  (spec 28 A4.6 #30) draws its own messages (no `question`) and says `tag` only when a Jam card is on the thread - a
+ *  tag anywhere else would start a run nobody asked for, so the answer goes as typed. */
+export function AsksAnswer({ question, onAnswer, tag = true }: { question?: string; onAnswer(text: string): Promise<boolean>; tag?: boolean }) {
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   const send = () => {
@@ -322,12 +324,12 @@ function AsksAnswer({ question, onAnswer }: { question: string; onAnswer(text: s
   }
   return (
     <div className="jm-asks" data-jam-asks="" style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-      <div className="jm-reply">
+      {question !== undefined && <div className="jm-reply">
         <Marver size={20} />
         <p>{question || 'It asks you something - see its thread.'}</p>
-      </div>
+      </div>}
       <div className="jm-more">
-        <span className="at">@marver</span>
+        {tag && <span className="at">@marver</span>}
         <textarea className="txt" rows={1} value={text} placeholder="Your answer" disabled={sending}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {

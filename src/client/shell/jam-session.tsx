@@ -397,8 +397,8 @@ export function RecordDetail({ card, agent, more, onMore, onMoreOpen, onGood, on
       {failed && <div className="rule" />}
       {failed && (
         <div className="actions">
-          <button className="jm-btn primary" onClick={onRetry}>Retry</button>
-          <button className="jm-btn ghost" onClick={onDrop}>Drop</button>
+          <button className="jm-btn primary" data-jam-run-act="retry" onClick={onRetry}>Retry</button>
+          <button className="jm-btn ghost" data-jam-run-act="drop" onClick={onDrop}>Drop</button>
         </div>
       )}
       {review && <div className="rule" />}

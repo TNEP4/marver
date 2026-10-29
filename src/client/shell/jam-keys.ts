@@ -8,6 +8,7 @@
  *   a capture open        E end (queued at once) · ⇧E end to review · S says to end it first · N notes card · I picture · Esc drop
  *   a review open         ⏎ looks good · ⇧⏎ more work · → later / next · ← back · B before/after ·
  *                         ⌥← ⌥→ frame tabs · Esc leave
+ *   a thread panel open   Esc close it
  *   the lane has the keys ← → move · ⏎ open · ⌘⏎ do next · K keep · ⌫ drop · Esc leave
  *   a session sheet open  ⏎ start (the start sheet) · Esc close it
  *   always                S start a capture · J the session (start it, or end it) · Q the lane · V next capture to review
@@ -18,7 +19,7 @@
  */
 import { useJamCapture, setOwnedKeys } from './jam-capture.ts'
 import { changedShots, useJamQueue, type JamCard } from './jam-queue.ts'
-import { DONE_CLOSE, DONE_GROUP, doneFold, useJamUi } from './jam-state.ts'
+import { DONE_CLOSE, DONE_GROUP, doneFold, jamSurface, useJamUi } from './jam-state.ts'
 import { pressJ, startSession, wrapWrite } from './jam-session.tsx'
 import { clearMoreDraft } from './jam-panel.tsx'
 import { CONFIG, PUBLISHED, SOURCE_REVEALED, useStore } from './store.ts'
@@ -164,52 +165,123 @@ export async function resumeDraft(id: string) {
   } finally { useJamCapture.setState({ settling: null }) }
 }
 
+/** A request's life (spec 28 A4.6 #30): read before every step that moves the UI. A click passes none - always true. */
+export type Alive = () => boolean
+const always: Alive = () => true
+/** How long a click waits for a board, a thread or a panel to draw; a notice's request has its own deadline in `alive`. */
+const waitMs = (o: { alive?: Alive }, away = false) => (o.alive ? 10_000 : away ? 6_000 : 3_000)
+/** Wait until `ok`, while `alive` holds and `ms` lasts: false once `alive` fails first, or the time is up. */
+async function waitFor(ok: () => boolean, alive: Alive, ms: number): Promise<boolean> {
+  const until = performance.now() + ms
+  for (;;) {
+    if (!alive()) return false
+    if (ok()) return true
+    if (performance.now() > until) return false
+    await new Promise((r) => setTimeout(r, 30))
+  }
+}
+const drawn = (sel: string) => () => !!document.querySelector(sel)
+/** A card's status popover, open (jam-ui.tsx TagStatus): its run's controls on the page. */
+const statusOpen = (card: string) => `.cm-tstat.on[data-jam-card="${CSS.escape(card)}"]`
+
+/** Play is left as its own Esc leaves it, then a frame passes for the layout (A4.6 r4 #1): what opens on the canvas -
+ *  a thread card, a tile and its menu - is never drawn under the Play overlay, and the lane is folded there. */
+async function leavePlay(alive: Alive): Promise<boolean> {
+  if (!useStore.getState().play) return true
+  if (!alive()) return false
+  const { playCtl } = await import('./Play.tsx')
+  playCtl.exit()
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+  return alive()
+}
+
 /** What clicking a tile (or ⏎ on it) does: a review opens the review detail, a card that asks opens
- *  its thread, any other capture its detail - the read-back for a draft. */
-export function openTile(id: string) {
+ *  its thread, any other capture its detail - the read-back for a draft. True once its surface is drawn. */
+export async function openTile(id: string, o: { alive?: Alive } = {}): Promise<boolean> {
+  const alive = o.alive ?? always
   const c = cardById(id)
+  if (!c || !alive()) return false
   const ui = useJamUi.getState()
-  if (!c) return
   if (c.state === 'asks' && c.thread) {
     ui.select(id)
-    openThread(c)
-    return
+    return openThreadAt(c.board, c.thread, { card: c, alive })
   }
   ui.open({ kind: c.state === 'review' ? 'review' : c.kind === 'wrapup' ? 'wrapup' : 'capture', id })
   reveal(c)
+  return waitFor(() => useJamUi.getState().panel?.id === id && !!document.querySelector('[data-jam-focus]'), alive, waitMs(o))
 }
 
-/** Open a card's thread where you can see it, as a notification does - on another board, its link opens that board,
- *  then the thread; on this one, its frame is brought into view (Comments.revealThread: since `E` moves nothing, the
- *  canvas is often far from it). The board's comments still loading: tried again for a few seconds. A thread this
- *  board cannot show (its frame is on no node here): the capture's own panel opens instead - for a card that asks,
- *  with its question and a field to answer it - so a click is never a no-op. */
-export function openThread(c: JamCard) {
-  if (!c.thread) return
-  // on another board: its link opens that board (and the thread, when its frame is there) - then the same as here, so
-  // a thread that board cannot show still opens the capture's panel on the first click
-  const away = c.board !== useStore.getState().board
-  if (away) location.hash = `#/b/${encodeURIComponent(c.board)}?c=${encodeURIComponent(c.thread)}`
-  const thread = c.thread
-  void Promise.all([import('./Comments.tsx'), import('./comments-store.ts')]).then(async ([{ revealThread }, { useComments }]) => {
-    const until = performance.now() + (away ? 6_000 : 3_000)
-    for (;;) {
-      if (useStore.getState().board !== c.board) {
-        // still on its way there - or another board opened meanwhile: this one's thread is not there to open
-        if (!away || performance.now() > until) return
-        await new Promise((r) => setTimeout(r, 250))
-        continue
-      }
-      if (revealThread(thread)) return
-      // known, and still not shown: its frame is on no node of this board - no wait helps
-      if (useComments.getState().threads.some((t) => t.id === thread) || performance.now() > until) break
-      await new Promise((r) => setTimeout(r, 250))
-    }
-    if (useStore.getState().board !== c.board || c.kind !== 'capture') return
+/**
+ * Open a thread where you can see it (spec 28 A4.6 #30, r1 #3, r2 #2, r3 #1) - one helper for notices and every path
+ * that opens a thread. On another board, its link opens that board first. An open thread whose frame a node of the
+ * board hosts shows in its thread card: Play left first, comments hidden by Shift+C turned on (a hidden layer draws
+ * nothing), then revealed. A capture's thread with no host opens the capture's own panel - with its question and a
+ * field when it asks - as in 0.28. Every other thread - frameless, its frame gone, resolved - opens in the thread panel,
+ * a resolved one read-only. `status` (a card id) asks that card's status icon to open its popover once, in its thread
+ * card or the thread panel: the run's controls in view. True only once a surface for the thread is drawn - its card
+ * mounted, or a panel open on it, and with `status` that popover open; false when `alive` failed first.
+ */
+export async function openThreadAt(board: string, thread: string, o: { card?: JamCard; status?: string; alive?: Alive } = {}): Promise<boolean> {
+  const alive = o.alive ?? always
+  const away = board !== useStore.getState().board
+  const ms = waitMs(o, away)
+  if (away) {
+    if (!alive()) return false
+    location.hash = `#/b/${encodeURIComponent(board)}`
+    if (!(await waitFor(() => useStore.getState().board === board, alive, ms))) return false
+  }
+  const [{ revealThread }, { useComments }, { threadHostKey }] = await Promise.all([import('./Comments.tsx'), import('./comments-store.ts'), import('./keys.ts')])
+  const find = () => useComments.getState().threads.find((t) => t.id === thread && (!t.board || t.board === board))
+  // the board's comments may still be loading: known, or the time is up
+  await waitFor(() => !!find(), alive, ms)
+  if (!alive()) return false
+  const t = find()
+  const ok = (sel: string) => waitFor(() => drawn(sel)() && (!o.status || drawn(statusOpen(o.status))()), alive, ms)
+  // only an open thread has a card (the layer keeps open threads)
+  const host = t && !t.resolved ? threadHostKey(t, useStore.getState().nodes) : null
+  if (host) {
+    if (!(await leavePlay(alive))) return false
+    if (!useComments.getState().show) { if (!alive()) return false; useComments.getState().setShow(true) }
+    if (!alive()) return false
+    if (o.status) useJamUi.getState().askStatus(o.status)
+    if (!revealThread(thread)) return false
+    return ok(`.cm-card[data-thread="${CSS.escape(thread)}"]`)
+  }
+  const c = o.card
+  if (c?.kind === 'capture' && !t?.resolved) {
+    if (!alive()) return false
     useJamUi.getState().select(c.id)
     useJamUi.getState().open({ kind: 'capture', id: c.id })
     reveal(c)
-  })
+    return ok('[data-jam-readback]')
+  }
+  if (!t || !alive()) return false
+  if (o.status) useJamUi.getState().askStatus(o.status)
+  useJamUi.getState().open({ kind: 'thread', id: thread, board })
+  return ok(`[data-jam-thread-panel="${CSS.escape(thread)}"]`)
+}
+
+/** Open a card's thread where you can see it, as a notification does (openThreadAt): a click is never a no-op. */
+export function openThread(c: JamCard) {
+  if (c.thread) void openThreadAt(c.board, c.thread, { card: c })
+}
+
+/**
+ * A failed or stalled run's controls in view (spec 28 A4.6 #30, r3 #1), true only once they are on the page. A comment
+ * card has no tile: its thread opens with its status popover open on Retry or the three choices - in its thread card,
+ * or the thread panel. A capture or a record (the cards with a tile): failed, its panel with Retry and Drop in its
+ * footer; stalled, its tile selected and the tile's menu opened at it (Play left first: Play folds the lane).
+ */
+export async function openRunControls(c: JamCard, o: { alive?: Alive } = {}): Promise<boolean> {
+  const alive = o.alive ?? always
+  if (c.kind === 'comment') return c.thread ? openThreadAt(c.board, c.thread, { card: c, status: c.id, alive }) : false
+  if (c.state === 'failed') return (await openTile(c.id, o)) && waitFor(drawn('[data-jam-focus] [data-jam-run-act="retry"]'), alive, waitMs(o))
+  if (!(await leavePlay(alive))) return false
+  if (!(await waitFor(drawn(`.jm-lane [data-tile="${CSS.escape(c.id)}"]`), alive, waitMs(o)))) return false
+  if (!alive()) return false
+  useJamUi.getState().select(c.id)
+  if (!jamSurface.tileMenu(c.id)) return false
+  return waitFor(drawn(`.sh-ctxmenu[data-menu="tile:${CSS.escape(c.id)}"]`), alive, waitMs(o))
 }
 
 /** Bring a card's frames into view beside the panel - on its own board (a frame link lands there). */
@@ -323,6 +395,10 @@ const rows = (): Row[] => {
         'Alt+ArrowRight': () => ui.setTab(Math.min(Math.max(1, changedShots(panelCard?.shots).length) - 1, ui.tab + 1)),
         Escape: () => { if (ui.moreOpen) { clearMoreDraft(panelCard!.id); ui.setMoreOpen(false) } else ui.close() },   // Esc leaves the composer: its words go
       },
+    },
+    { // the thread panel open (a notice's thread no card can show): Esc closes it
+      on: () => ui.panel?.kind === 'thread',
+      keys: { Escape: () => { if (laserOff()) return; ui.close() } },
     },
     { // the lane has the keyboard
       on: () => ui.laneKeys,

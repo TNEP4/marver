@@ -1,10 +1,12 @@
 /**
  * Where Jam's surfaces stand in the shell (spec 27): the one focus panel (a capture's detail, a
- * review, a wrap-up), the lane's selection and its keyboard (`Q`), the review's picture view.
+ * review, a wrap-up, a thread), the lane's selection and its keyboard (`Q`), the review's picture view.
  */
 import { create } from 'zustand'
 
-export type Panel = { kind: 'capture' | 'review' | 'wrapup'; id: string } | null
+/** The focus panel. `thread` (spec 28 A4.6 #30, r1 #3): a thread no frame on its board can show - frameless, its
+ *  frame gone, resolved - opened where it can be read and answered; `id` is the thread's, on `board`. */
+export type Panel = { kind: 'capture' | 'review' | 'wrapup'; id: string } | { kind: 'thread'; id: string; board: string } | null
 
 interface JamUi {
   panel: Panel
@@ -36,13 +38,22 @@ interface JamUi {
   setTab(i: number): void
   setMoreOpen(on: boolean): void
   follow(): void
+  /** a card's status icon asked to open its popover once (A4.6 #30): the first `TagStatus` drawing that card takes it */
+  statusFor: { card: string; n: number } | null
+  askStatus(card: string | null): void
+  /** the status icon of the request `n` opened: it is taken */
+  tookStatus(n: number): void
 }
 
+let asked = 0
 export const useJamUi = create<JamUi>((set, get) => ({
-  panel: null, selected: null, laneKeys: false, view: 'both', tab: 0, moreOpen: false, followEnd: 0, sheet: null, doneOpen: false,
+  panel: null, selected: null, laneKeys: false, view: 'both', tab: 0, moreOpen: false, followEnd: 0, sheet: null, doneOpen: false, statusFor: null,
+  askStatus(card) { set({ statusFor: card ? { card, n: ++asked } : null }) },
+  tookStatus(n) { if (get().statusFor?.n === n) set({ statusFor: null }) },
   setSheet(s) { set({ sheet: s }) },
   // the next card opens on Both, its first frame
-  open(panel) { set({ panel, selected: panel?.id ?? get().selected, view: 'both', tab: 0, moreOpen: false }) },
+  // a thread panel names a thread, never a tile: the lane's selection stays
+  open(panel) { set({ panel, selected: panel && panel.kind !== 'thread' ? panel.id : get().selected, view: 'both', tab: 0, moreOpen: false }) },
   close() { set({ panel: null, moreOpen: false }) },
   setLaneKeys(on) { set({ laneKeys: on }) },
   // folding: a done tile that was selected hands its selection to the group
@@ -75,6 +86,10 @@ export function letGoOfTile() {
   if (a instanceof HTMLElement && a.closest('.jm-focus')) a.blur()
   useJamUi.setState({ panel: null, moreOpen: false, selected: null, laneKeys: false })
 }
+
+/** What JamSurface lends the helpers that open things (jam-keys.ts): a tile's menu opened at the tile, as a right-click
+ *  opens it (spec 28 A4.6 #30) - false when the tile is not drawn. */
+export const jamSurface = { tileMenu: (_id: string): boolean => false }
 
 if (typeof window !== 'undefined' && (import.meta as any).env?.DEV) (window as any).__mvJamUi = useJamUi
 

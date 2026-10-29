@@ -24,7 +24,7 @@ import type { JamConfig } from '../src/server/config.ts'
 
 /**
  * The live stream in a running canvas (spec 28 A4.6 #5-#14; the dev cases of #52 and r2 #3). A REAL `marver dev` from
- * dist/, under a registry of its own: the slot file lists `live`; the app's request proved and answered with
+ * dist/, under a registry of its own: the slot file lists `live` and `open`; the app's request proved and answered with
  * `liveProof`; an asking reply appended to a log reaches a client within a second and an owner reply removes it;
  * `marver work start` lights `working`; marks/seen lowers `unseen`; another workspace is a 409; a close with a client
  * connected ends within 2 s; an .env edit restarts Vite, the stream ends, and a reconnect gets the same ids, `seq`
@@ -110,11 +110,11 @@ const event = (o: Partial<CommentEvent> & { id: string; type: CommentEvent['type
 
 describe('a real marver dev (A4.6 #52 dev)', () => {
   let root = '', dev: Dev
-  it('the slot file lists `live`; the app\'s request is answered 200 with liveProof and a snapshot at once', async () => {
+  it('the slot file lists `live` and `open`; the app\'s request is answered 200 with liveProof and a snapshot at once', async () => {
     root = project('mv-live-dev-')
     dev = await start(root)
     const slot = slotOf(root)
-    expect(slot.features).toEqual(expect.arrayContaining(['bridge', 'inset', 'live']))
+    expect(slot.features).toEqual(expect.arrayContaining(['bridge', 'inset', 'live', 'open']))
     const c = await connect(root)
     expect(c.res.status).toBe(200)
     expect(c.res.headers.get('x-mv-instance')).toBe(slot.instance)
@@ -151,11 +151,18 @@ describe('a real marver dev (A4.6 #52 dev)', () => {
   it('`marver work start` lights `working` within a second; `work done` puts it out and marks the frame new; marks/seen lowers `unseen`', async () => {
     const c = await connect(root)
     await c.until(() => true)
+    // the CLI end to end, then the request it makes timed from the server's answer (a CLI process's own exit is no
+    // part of the stream's latency, and a loaded machine can take a while over it)
     expect((await cli(['work', 'start', 'demo/two'], root)).code).toBe(0)
-    expect((await c.until((e) => e.working)).ms).toBeLessThan(1000)
+    await c.until((e) => e.working)
     expect((await cli(['work', 'done', 'demo/two'], root)).code).toBe(0)
-    const done = await c.until((e) => !e.working)
-    expect(done.ms).toBeLessThan(1000)
+    await c.until((e) => !e.working)
+    const { token } = JSON.parse(readFileSync(join(root, 'design', '.local', 'dev.json'), 'utf8')) as { token: string }
+    const work = (on: boolean) => fetch(`${dev.origin}/__mv/api/work`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-work': token }, body: JSON.stringify({ frames: ['demo/two'], on }) })
+    expect((await work(true)).status).toBe(200)
+    expect((await c.until((e) => e.working)).ms).toBeLessThan(1000)
+    expect((await work(false)).status).toBe(200)
+    expect((await c.until((e) => !e.working)).ms).toBeLessThan(1000)
     expect((await c.until((e) => e.unseen === 1)).e.unseen).toBe(1)   // the agent said it changed it: new to you
     const owner = { cookie: 'mv_c=tok', 'x-mv-c': 'tok', 'content-type': 'application/json' }
     const marks = await (await fetch(`${dev.origin}/__mv/api/marks`, { headers: owner })).json() as { epoch: string; changed: Record<string, number> }

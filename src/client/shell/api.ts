@@ -207,12 +207,16 @@ export const resumed: { outcome: ResumeOutcome; board?: string; camera?: { x: nu
 // words a person typed into the page and has not sent (a comment, a Jam edit, a name): a reload would drop them
 const typed = new WeakSet<EventTarget>()
 const TEXT_FIELDS = 'textarea, input:not([type]), input[type=text], input[type=search], input[type=email], input[type=url], input[type=password]'
+/** Does a text field on the page hold words typed and not sent? The `typing` reason's own check, and what a notice's
+ *  click reads before every move (spec 28 A4.6 #30, r2 #1): a board change, another thread or a panel replaced would
+ *  unmount the field and lose them. Words the shell keeps with no field on screen (a More work draft, a read-back's
+ *  edit still saving) are not here: they survive a move. */
+export const typedUnsent = (): boolean => [...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(TEXT_FIELDS)].some((el) => typed.has(el) && el.value.trim() !== '')
 if (WS) {
   document.addEventListener('input', (e) => { if (e.target) typed.add(e.target); if (canvasStopped()) noteUnsaved(); workChanged() }, true)
-  const typedWords = () => [...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(TEXT_FIELDS)].some((el) => typed.has(el) && el.value.trim() !== '')
-  holdsReload(typedWords)
+  holdsReload(typedUnsent)
   // and leaving the page asks first (spec 28 A2.9): the words are only here
-  unsavedWhen('typing', typedWords)
+  unsavedWhen('typing', typedUnsent)
 }
 
 // one question before this page goes, whatever it holds that the server does not have (unsaved.ts): a capture, a
