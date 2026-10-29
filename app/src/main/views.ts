@@ -29,8 +29,8 @@
  * wired as a canvas's (keys, focus, crash and hang, HTML full screen, the `canvases` map) with nav.ts's adapter and no
  * trust - registered `remote` with the bridge itself, since there is nothing of trust to fake for it. Its commit lifts
  * at once (`onRemoteCommit`), its failure is `unreachable` whatever the adapter said - a load that ends with no page
- * and nothing lifted too (`onRemoteAbort`) - its probe a `HEAD` of its origin, and `net.isOnline()` turning true looks
- * again at once (polled only while one is unreachable). `openRemote` is ⌘L's,
+ * and nothing lifted too (`onRemoteAbort`) - its probe a `HEAD` of its origin (sessions.ts `probeRemote`), and
+ * `net.isOnline()` turning true looks again at once (polled only while one is unreachable). `openRemote` is ⌘L's,
  * Home's and the front door's: one tab per origin, a hash-only change unasked, any other through the guard.
  */
 import { execFile } from 'node:child_process'
@@ -782,17 +782,9 @@ async function probe(t: Tab): Promise<'silent' | 'answers' | 'proved'> {
   } catch { return 'answers' }
 }
 
-/**
- * A shared canvas's probe (A4.6 #44): `HEAD <origin>/` through `persist:remote`, no redirect followed, 3 s. Any HTTP
- * answer is `answers` (nothing proves a shared canvas); a refused certificate is no answer, so nothing is offered past it.
- */
+/** A shared canvas's probe (A4.6 #44): sessions.ts's, of its origin, 3 s. */
 async function probeRemote(t: Tab): Promise<'silent' | 'answers'> {
-  if (!t.remote) return 'silent'
-  try {
-    const r = await sessions.remoteSession().fetch(`${t.remote.origin}/`, { method: 'HEAD', redirect: 'manual', signal: AbortSignal.timeout(T.headTimeoutMs) })
-    void r.body?.cancel().catch(() => {})
-    return 'answers'
-  } catch { return 'silent' }
+  return t.remote ? sessions.probeRemote(t.remote.origin, T.headTimeoutMs) : 'silent'
 }
 
 /**

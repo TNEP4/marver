@@ -2,8 +2,8 @@
  * A shared canvas's session, view and navigation (spec 28 A4.6 #40, #41, #50, r1 #8), in node with Electron mocked:
  * its preferences (no preload), the bridge recording its view so `kindOf` answers `remote` (and its clipboard and
  * full screen pass) and wiring nothing else, `persist:remote`'s permissions, downloads and test certificate, the main
- * frame's https-only, no-loopback rule, `window.open` to its origin's tab or the browser, the front door, and no client
- * certificate offered.
+ * frame's https-only, no-loopback rule, `window.open` to its origin's tab or the browser, the front door, no client
+ * certificate offered, and the probe of an unreachable one (a redirect is an answer).
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -13,6 +13,9 @@ const fx = vi.hoisted(() => ({
   sessions: new Map<string, any>(),
   switches: [] as [string, string][],
   external: [] as string[],
+  /** persist:remote's `fetch`, as the case answers it */
+  fetch: (async () => ({ body: null })) as (url: string, init: RequestInit) => Promise<unknown>,
+  fetched: [] as { url: string; init: RequestInit }[],
 }))
 
 vi.mock('electron', () => {
@@ -24,6 +27,7 @@ vi.mock('electron', () => {
       setDevicePermissionHandler(f: Fn) { s.handlers.device = f },
       setCertificateVerifyProc(f: Fn) { s.verify = f },
       on(ev: string, f: Fn) { s.listeners.set(ev, f) },
+      fetch(url: string, init: RequestInit) { fx.fetched.push({ url, init }); return fx.fetch(url, init) },
     }
     return s
   }
@@ -73,7 +77,8 @@ let b: B
 
 beforeEach(async () => {
   vi.resetModules()
-  fx.appOn.clear(); fx.sessions.clear(); fx.switches.length = 0; fx.external.length = 0
+  fx.appOn.clear(); fx.sessions.clear(); fx.switches.length = 0; fx.external.length = 0; fx.fetched.length = 0
+  fx.fetch = async () => ({ body: null })
   delete process.env.MARVER_APP_TEST
   s = await import('../../src/main/sessions.ts')
   b = await import('../../src/main/bridge.ts')
@@ -159,6 +164,18 @@ describe('persist:remote (A4.6 #40, #50)', () => {
     ses().verify!({ certificate: { fingerprint: 'sha256/other=' } }, (n: number) => got.push(n))
     expect(got).toEqual([0, -3])
     delete process.env.MARVER_APP_TEST_REMOTE_CERT
+  })
+
+  it('its probe: HEAD of the origin\'s / with no redirect followed, under the deadline; any answer, a redirect included, answers - nothing else does', async () => {
+    expect(await s.probeRemote('https://pilot.example.com', 3000)).toBe('answers')
+    expect(fx.fetched).toEqual([{ url: 'https://pilot.example.com/', init: expect.objectContaining({ method: 'HEAD', redirect: 'manual', signal: expect.any(AbortSignal) }) }])
+    // Electron 45's fetch with redirect 'manual' rejects a 3xx (net-client-request.ts) rather than answering it
+    fx.fetch = async () => { throw new Error('Redirect was cancelled') }
+    expect(await s.probeRemote('https://pilot.example.com', 3000)).toBe('answers')
+    for (const err of [new Error('net::ERR_CONNECTION_REFUSED'), new Error('net::ERR_CERT_AUTHORITY_INVALID'), new DOMException('The operation timed out.', 'TimeoutError'), null]) {
+      fx.fetch = async () => { throw err }
+      expect(await s.probeRemote('https://pilot.example.com', 3000), String(err)).toBe('silent')
+    }
   })
 
   it('the test host rules only in a test run, and only mapping .test hosts to 127.0.0.1', async () => {

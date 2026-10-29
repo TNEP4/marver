@@ -286,6 +286,24 @@ export function remoteSession(): Session {
   return remote = ses
 }
 
+/** What Electron 45's `ses.fetch` rejects with when `redirect: 'manual'` meets a redirect (net-client-request.ts). */
+const REDIRECT_NOT_FOLLOWED = 'Redirect was cancelled'
+
+/**
+ * A shared canvas's probe (A4.6 #44): `HEAD <origin>/` through `persist:remote`, no redirect followed, `ms` at most.
+ * Any HTTP answer is `answers` (nothing proves a shared canvas) - a redirect too, which Electron's fetch with
+ * `redirect: 'manual'` rejects rather than answers, so an origin whose `/` redirects (a sign-in, a front door) is not
+ * left unreachable until Try Now. A refused certificate, a refused connection or the deadline is `silent`, so nothing
+ * is offered past a bad certificate.
+ */
+export async function probeRemote(origin: string, ms: number): Promise<'silent' | 'answers'> {
+  try {
+    const r = await remoteSession().fetch(`${origin}/`, { method: 'HEAD', redirect: 'manual', signal: AbortSignal.timeout(ms) })
+    void r.body?.cancel().catch(() => {})
+    return 'answers'
+  } catch (e) { return (e as Error | null)?.message === REDIRECT_NOT_FOLLOWED ? 'answers' : 'silent' }
+}
+
 /**
  * Before ready, test builds only (A4.6 #50): `MARVER_APP_TEST_HOSTS`, host resolver rules that may only map `.test`
  * hosts to 127.0.0.1 (`MAP *.canvas.test 127.0.0.1`), so the harness's https hosts resolve to it.

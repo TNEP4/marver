@@ -14,7 +14,7 @@
   restored at launch.
 - **A shared canvas that cannot be reached**, or whose link opens no page here (a download, a redirect to http), says
   why in words, tries again by itself (at once when the Mac is back online), and offers Open in Browser; a bad
-  certificate is never gone past.
+  certificate is never gone past. A site whose `/` redirects counts as answering.
 
 ## 0.2.2 - 2026-10-26
 
