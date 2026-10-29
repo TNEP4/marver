@@ -41,7 +41,7 @@ beforeEach(async () => {
   fx.opened.length = 0
   fx.copied.length = 0
 })
-afterEach(() => { rmSync(base, { recursive: true, force: true }); delete process.env.MARVER_HOME })
+afterEach(() => { vi.useRealTimers(); rmSync(base, { recursive: true, force: true }); delete process.env.MARVER_HOME })
 
 const boot = () => { cfg.ensureHome({ version: '0.1.0', dev: true }); cfg.loadFiles(); h.startHome() }
 const recentFile = () => join(home, 'state-dev', 'recent.json')
@@ -216,7 +216,8 @@ describe('Shared canvases: state/shared.json (A4.6 #47)', () => {
     expect(existsSync(`${sharedFile()}.bad`)).toBe(true)
   })
 
-  it('Home gets them on `shared` at its app:ready and when the list changes - not at every commit of the same link', () => {
+  it('Home gets them on `shared` at its app:ready and at once when the list changes; a link seen again, once a debounce later - never a stale "Opened 3 days ago"', async () => {
+    vi.useFakeTimers({ now: 1_000_000 })
     boot()
     const sent: { ch: string; p: unknown }[] = []
     let ready = (_c: { kind: string }) => {}
@@ -225,11 +226,27 @@ describe('Shared canvases: state/shared.json (A4.6 #47)', () => {
       linkPorts: { byPort: () => undefined, open: async () => ({ ok: true }), openRemote: async () => ({ ok: true }) },
     })
     ready({ kind: 'home' })
-    expect(sent.filter((x) => x.ch === 'shared')).toEqual([{ ch: 'shared', p: [] }])
+    const pushes = () => sent.filter((x) => x.ch === 'shared').map((x) => x.p as { url: string; lastSeen: number }[])
+    expect(pushes()).toEqual([[]])
     h.noteShared({ url: 'https://pilot.example.com/', host: 'pilot.example.com' })
+    expect(pushes()).toHaveLength(2)
+    expect(pushes().at(-1)).toEqual([expect.objectContaining({ url: 'https://pilot.example.com/', host: 'pilot.example.com', lastSeen: 1_000_000 })])
+    // the same link again 3 days later, a few commits in a row: one push, a debounce later, with the new time
+    await vi.advanceTimersByTimeAsync(3 * 86_400_000)
+    for (let i = 0; i < 3; i++) h.noteShared({ url: 'https://pilot.example.com/', host: 'pilot.example.com' })
+    expect(pushes()).toHaveLength(2)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(pushes()).toHaveLength(3)
+    expect(pushes().at(-1)![0]!.lastSeen).toBe(h.sharedLinks()[0]!.lastSeen)
+    expect(h.sharedLinks()[0]!.lastSeen).toBe(1_000_000 + 3 * 86_400_000)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(pushes()).toHaveLength(3)
+    // another link: at once, the one waiting folded into it
     h.noteShared({ url: 'https://pilot.example.com/', host: 'pilot.example.com' })
-    expect(sent.filter((x) => x.ch === 'shared')).toHaveLength(2)
-    expect(sent.at(-1)).toEqual({ ch: 'shared', p: [expect.objectContaining({ url: 'https://pilot.example.com/', host: 'pilot.example.com' })] })
+    h.noteShared({ url: 'https://tide.example.com/', host: 'tide.example.com' })
+    expect(pushes()).toHaveLength(4)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(pushes()).toHaveLength(4)
   })
 })
 

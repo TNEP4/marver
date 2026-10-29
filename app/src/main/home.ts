@@ -38,6 +38,7 @@ import { effects } from './effects.ts'
 import { readState, writeWhole, type StateWriter } from './fsx.ts'
 import type { HomePorts, PageBridge, WindowPorts } from './ports.ts'
 import { provide } from './testing/index.ts'
+import { T } from './timings.ts'
 
 export interface RecentEntry {
   /** the slot file's `ws`, 16 hex */
@@ -127,6 +128,7 @@ export function tidyShared(list: SharedLink[]): SharedLink[] {
 let shared: SharedLink[] = []
 let sharedWriter: StateWriter<SharedFile> | undefined
 const sharedFns = new Set<() => void>()
+let sharedLater: ReturnType<typeof setTimeout> | undefined
 
 /** A shared canvas committed or moved its place (views.ts, from tabs.ts): kept as its origin's newest link. */
 export function noteShared(c: { url: string; host: string }): void {
@@ -135,8 +137,16 @@ export function noteShared(c: { url: string; host: string }): void {
   const before = JSON.stringify(shared.map((x) => x.url))
   shared = tidyShared([l, ...shared])
   sharedWriter?.set({ v: 1, links: shared })
-  // Home redraws when what it lists changed, not at every commit of the same link
-  if (JSON.stringify(shared.map((x) => x.url)) !== before) for (const fn of sharedFns) fn()
+  // Home redraws at once when what it lists changed; a link only seen again, at most once a debounce later - its past
+  // card, shown again when its tab closes, must not say "Opened 3 days ago" of a link just used
+  if (JSON.stringify(shared.map((x) => x.url)) !== before) sharedChanged()
+  else sharedLater ??= setTimeout(sharedChanged, T.stateDebounceMs)
+}
+
+function sharedChanged(): void {
+  if (sharedLater) clearTimeout(sharedLater)
+  sharedLater = undefined
+  for (const fn of sharedFns) fn()
 }
 
 /** At quit: what waits, written now. */
