@@ -38,9 +38,10 @@
  * **A4** (app 0.3; A4.6 #29, #35), signatures frozen before its streams split (A4.6 #56), wired by them:
  * - `openItem` sends `mv:open { doc, item }` to a tab's admitted, trusted document whose instance lists `open`, after
  *   its hello (tabs.ts holds the click until then); the notices stream builds it and `mv:opened`;
- * - `mv:capture`, the first canvas invoke, admits its sender as the reports do (an `IpcMainInvokeEvent`), checks the
- *   rect, and hands an accepted ask to `onCapture`'s handler with a `still()` that runs the same admission again -
- *   the bridge holds no capture logic (live-picture.ts does); the live pictures stream builds it;
+ * - `mv:capture`, the first canvas invoke, admits its sender as the reports do (an `IpcMainInvokeEvent`) with its
+ *   instance listing `capture` (else `untrusted`), checks the rect (`checkCaptureRect`: inside the view, rounded out;
+ *   else `bounds`), and hands an accepted ask to `onCapture`'s handler with a `still()` that runs the same admission
+ *   again - the bridge holds no capture logic (live-picture.ts does);
  * - `settings:action` carries Settings' one action, `open-notification-settings` (A4.6 #27).
  *
  * **App pages** (A2.5, A2.14 #19): a channel is accepted only from the kinds `SENDERS` lists (src/shared/
@@ -54,7 +55,7 @@
 import { randomBytes } from 'node:crypto'
 import { ipcMain, webFrameMain, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents, type WebFrameMain } from 'electron'
 import {
-  APP_MENU_IDS, BOUNDS, CANVAS_CHANNELS, PERF_BOUNDS, UNSAVED_WHY, WHY,
+  APP_MENU_IDS, BOUNDS, CANVAS_CHANNELS, FEATURE, PERF_BOUNDS, UNSAVED_WHY, WHY,
   type AppState, type Busy, type CaptureAnswer, type CaptureRect, type DocAnswer, type Hello, type Inset, type MenuItem, type OpenItem, type PerfAsk, type PerfCam,
   type PerfMsg, type PerfSize, type Present, type Presented, type Theme, type Why,
 } from '../../../src/shared/app-api.ts'
@@ -139,6 +140,9 @@ export interface Bridge {
 export interface BridgeOptions {
   /** `mv:doc`'s inset for the tab's document now committing (layout.ts `docInset`); 0 without it */
   insetFor?(tabId: string): Inset
+  /** A4 (A4.6 #35): the tab's content view in CSS px (its bounds over its zoom), which `mv:capture`'s rect must lie
+   *  inside; null when it has none */
+  viewSize?(tabId: string): { width: number; height: number } | null
 }
 
 // ---- payload checks (pure) -----------------------------------------------------------------------------------
@@ -243,6 +247,18 @@ export function checkPerf(p: unknown): PerfMsg | null {
 export function checkPresented(p: unknown): Presented | null {
   if (!obj(p) || !whole(p.epoch, BOUNDS.epoch) || !within(p.w, BOUNDS.viewport) || !within(p.h, BOUNDS.viewport)) return null
   return { epoch: p.epoch, w: p.w, h: p.h }
+}
+
+/** `mv:capture`'s ask (A4.6 #35): the rect finite, `x, y >= 0`, `width, height >= 1`, inside the view (`view`, CSS px),
+ *  rounded out to whole px; null answers `bounds` (pure). */
+export function checkCaptureRect(p: unknown, view: { width: number; height: number } | null): CaptureRect | null {
+  if (!obj(p) || !obj(p.rect) || !view) return null
+  const { x, y, width, height } = p.rect
+  const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+  if (!finite(x) || !finite(y) || !finite(width) || !finite(height) || x < 0 || y < 0 || width < 1 || height < 1) return null
+  const x0 = Math.floor(x), y0 = Math.floor(y), x1 = Math.ceil(x + width), y1 = Math.ceil(y + height)
+  if (x1 > Math.ceil(view.width) || y1 > Math.ceil(view.height)) return null
+  return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 }
 }
 
 /** A token bucket of `PERF_BOUNDS.burst`, refilled at `perSecond` (pure but for the clock it is given). */
@@ -518,7 +534,7 @@ export function installBridge(o: BridgeOptions = {}): Bridge {
 
   // A3: the recorder's messages and the presentation answers - the reports' checks, then their own; never stored
   /** The sender is the tab's admitted, trusted document on its canvas origin: its tab and doc, else why not. */
-  const admittedSender = (e: IpcMainEvent, m: Record<string, unknown> | null): { tabId: string; doc: string } | string => {
+  const admittedSender = (e: IpcMainEvent | IpcMainInvokeEvent, m: Record<string, unknown> | null): { tabId: string; doc: string } | string => {
     const id = e.sender.id
     const r = regs.get(id)
     if (!r || r.kind !== 'canvas' || !r.tabId) return 'not a canvas'
@@ -552,6 +568,30 @@ export function installBridge(o: BridgeOptions = {}): Bridge {
     if (!v) { trace('refused', { wc: id, ch: 'presented', why: 'payload' }); return }
     trace('accepted', { wc: id, ch: 'presented', epoch: v.epoch })
     for (const fn of [...presentedFns]) { try { fn(who.tabId, who.doc, v) } catch (err) { process.stderr.write(`marver-app: a presented listener threw: ${(err as Error).message}\n`) } }
+  })
+
+  /** The tab's bound instance lists `feature` (A4.6 #2), as the registry has it now. */
+  const lists = (wcId: number, feature: string): boolean => {
+    const t = targetOf(wcId)
+    return !!t && (appRegistry()?.byInstance(t.entry.instance) ?? t.entry).features.includes(feature)
+  }
+  // A4: the first canvas invoke (A4.6 #35) - a live picture of the asking document's own view. Admitted as the reports
+  // are, its instance listing `capture`, the rect checked and rounded out here; the readback is live-picture.ts's, with
+  // a `still()` that runs this admission again after it
+  ipcMain.handle(CANVAS_CHANNELS.capture, async (e: IpcMainInvokeEvent, msg: unknown): Promise<CaptureAnswer> => {
+    const id = e.sender.id
+    const m = obj(msg) ? msg : null
+    const admitted = () => { const w = admittedSender(e, m); return typeof w === 'string' || lists(id, FEATURE.capture) ? w : 'no capture' }
+    const who = admitted()
+    if (typeof who === 'string') { trace('refused', { wc: id, ch: 'capture', why: who }); return { ok: false, why: 'untrusted' } }
+    let view: { width: number; height: number } | null = null
+    try { view = o.viewSize?.(who.tabId) ?? null } catch { view = null }
+    const rect = checkCaptureRect(m!.p, view)
+    if (!rect) { trace('refused', { wc: id, ch: 'capture', why: 'bounds' }); return { ok: false, why: 'bounds' } }
+    if (!captureFn) { trace('refused', { wc: id, ch: 'capture', why: 'no handler' }); return { ok: false, why: 'hidden' } }
+    const still = () => { const w = admitted(); return typeof w !== 'string' && w.tabId === who.tabId && w.doc === who.doc }
+    trace('accepted', { wc: id, ch: 'capture', rect })
+    try { return await captureFn(who.tabId, who.doc, rect, still) } catch { return { ok: false, why: 'empty' } }
   })
 
   // app pages

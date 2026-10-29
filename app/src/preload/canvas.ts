@@ -18,11 +18,16 @@
  * shell's recorder messages at once with the current `doc` (never held or replayed: they are about now). Main's
  * `mv:perf-ask` is answered here for `mem` (getProcessMemoryInfo and getHeapStatistics, KB) and `shown` (the second
  * animation-frame callback), kept for `display` (`perfInfo().hz`), and handed to the shell for `probes`.
+ *
+ * A4 (app 0.3; A4.6 #35): `capture` asks main for a picture of this document's own view - before an admit it answers
+ * `untrusted` with no IPC; after, `mv:capture { doc, p }` is invoked, and main's answer reaches the page only as the
+ * contract types it (the bytes a `Uint8Array`, the size within `BOUNDS.captureLong`), anything else `untrusted`.
  */
 import { contextBridge, ipcRenderer } from 'electron'
 import {
-  APP_API_VERSION, BOUNDS, CANVAS_CHANNELS, PERF_BOUNDS,
-  type AppState, type DocAnswer, type MarverAppV1, type MenuClick, type PerfMsg, type PerfProbeAsk, type Present, type Presented,
+  APP_API_VERSION, BOUNDS, CANVAS_CHANNELS, CAPTURE_WHY, PERF_BOUNDS,
+  type AppState, type CaptureAnswer, type CaptureAsk, type CaptureWhy, type DocAnswer, type MarverAppV1, type MenuClick, type PerfMsg, type PerfProbeAsk,
+  type Present, type Presented,
 } from '../../../src/shared/app-api.ts'
 
 type Report = 'hello' | 'theme' | 'busy' | 'menu'
@@ -125,6 +130,24 @@ ipcRenderer.on(CANVAS_CHANNELS.perfAsk, (_e, m: Record<string, unknown> | null) 
   }
 })
 
+// A4: a live picture of this document's view (A4.6 #35)
+const WHYS = new Set<string>(CAPTURE_WHY)
+const side = (v: unknown): v is number => whole(v, BOUNDS.captureLong) && v >= 1
+/** main's answer as the contract types it, or `untrusted`: nothing else reaches the page */
+const captureAnswer = (a: unknown): CaptureAnswer => {
+  const m = a && typeof a === 'object' ? a as Record<string, unknown> : null
+  if (m?.ok === true && m.png instanceof Uint8Array && m.png.length > 0 && side(m.width) && side(m.height)) return { ok: true, png: m.png, width: m.width, height: m.height }
+  if (m?.ok === false && typeof m.why === 'string' && WHYS.has(m.why)) return { ok: false, why: m.why as CaptureWhy }
+  return { ok: false, why: 'untrusted' }
+}
+const capture = (a: CaptureAsk): Promise<CaptureAnswer> => {
+  const asked = doc
+  if (!asked) return Promise.resolve({ ok: false, why: 'untrusted' })
+  const p = copy(a)
+  if (p === undefined) return Promise.resolve({ ok: false, why: 'bounds' })
+  return ipcRenderer.invoke(CANVAS_CHANNELS.capture, { doc: asked, p }).then(captureAnswer, () => ({ ok: false, why: 'untrusted' }) as const)
+}
+
 const listen = <T>(set: Set<(x: T) => void>) => (fn: (x: T) => void): (() => void) => {
   if (typeof fn !== 'function') return () => {}
   set.add(fn)
@@ -146,5 +169,6 @@ const api: MarverAppV1 = {
   perf: (p: PerfMsg) => { const c = copy(p); if (c !== undefined) now('perf', c) },
   onPerfAsk: listen(probeFns),
   perfInfo: () => ({ hz }),
+  capture,
 }
 contextBridge.exposeInMainWorld('marverApp', api)

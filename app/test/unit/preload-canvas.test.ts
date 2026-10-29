@@ -10,6 +10,8 @@ import { CANVAS_CHANNELS } from '../../../src/shared/app-api.ts'
 const wire = vi.hoisted(() => ({
   answer: null as unknown,
   sent: [] as { ch: string; msg: unknown }[],
+  invoked: [] as { ch: string; msg: unknown }[],
+  reply: (): Promise<unknown> => Promise.resolve(null),
   on: new Map<string, (e: unknown, m: unknown) => void>(),
   exposed: null as Record<string, unknown> | null,
 }))
@@ -18,6 +20,7 @@ vi.mock('electron', () => ({
   ipcRenderer: {
     sendSync: () => wire.answer,
     send: (ch: string, msg: unknown) => { wire.sent.push({ ch, msg }) },
+    invoke: (ch: string, msg: unknown) => { wire.invoked.push({ ch, msg }); return wire.reply() },
     on: (ch: string, fn: (e: unknown, m: unknown) => void) => { wire.on.set(ch, fn) },
   },
 }))
@@ -27,6 +30,7 @@ async function load(answer: unknown): Promise<Api> {
   vi.resetModules()
   wire.answer = answer
   wire.sent.length = 0
+  wire.invoked.length = 0
   wire.on.clear()
   wire.exposed = null
   ;(globalThis as unknown as { location: unknown }).location = { origin: 'http://[::1]:5301' }
@@ -69,5 +73,42 @@ describe('the canvas preload: the inset and the presentation (A3.8 #26, #27)', (
     expect(wire.sent.slice(n).filter((s) => s.ch === CANVAS_CHANNELS.presented)).toEqual([])
     api.presented({ epoch: 9, w: 1, h: 1 })
     expect((wire.sent.at(-1)!.msg as { doc: string }).doc).toBe('C'.repeat(22))
+  })
+})
+
+describe('the canvas preload: capture (A4.6 #35)', () => {
+  type CaptureApi = { capture(a: unknown): Promise<unknown> }
+  const RECT = { x: 10, y: 20, width: 300, height: 200 }
+  it('before an admit it answers untrusted and sends nothing; after, mv:capture with the admitted doc and the ask as JSON', async () => {
+    const api = await load({ reopen: false }) as unknown as CaptureApi
+    expect(await api.capture({ rect: RECT })).toEqual({ ok: false, why: 'untrusted' })
+    expect(wire.invoked).toEqual([])
+    main(CANVAS_CHANNELS.admit, { doc: DOC })
+    const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47])
+    wire.reply = () => Promise.resolve({ ok: true, png, width: 300, height: 200, extra: 1 })
+    expect(await api.capture({ rect: RECT, more: () => 1 })).toEqual({ ok: true, png, width: 300, height: 200 })
+    expect(wire.invoked).toEqual([{ ch: CANVAS_CHANNELS.capture, msg: { doc: DOC, p: { rect: RECT } } }])
+    expect(wire.sent.filter((x) => x.ch === CANVAS_CHANNELS.capture)).toEqual([])
+  })
+
+  it('main\'s answer reaches the page only as the contract types it: its refusals, else untrusted', async () => {
+    const api = await load({ reopen: false }) as unknown as CaptureApi
+    main(CANVAS_CHANNELS.admit, { doc: DOC })
+    for (const why of ['hidden', 'busy', 'bounds', 'empty', 'timeout', 'stale', 'untrusted']) {
+      wire.reply = () => Promise.resolve({ ok: false, why })
+      expect(await api.capture({ rect: RECT })).toEqual({ ok: false, why })
+    }
+    const png = Uint8Array.from([1, 2, 3])
+    const bad: unknown[] = [
+      { ok: false, why: 'nope' }, { ok: true, png: [1, 2, 3], width: 1, height: 1 }, { ok: true, png, width: 4097, height: 1 },
+      { ok: true, png, width: 0, height: 1 }, { ok: true, png: new Uint8Array(0), width: 1, height: 1 }, { ok: true, png, width: 1.5, height: 1 }, null, 'ok',
+    ]
+    for (const b of bad) {
+      wire.reply = () => Promise.resolve(b)
+      expect(await api.capture({ rect: RECT }), JSON.stringify(b)).toEqual({ ok: false, why: 'untrusted' })
+    }
+    // an invoke main refused (no handler, the frame gone)
+    wire.reply = () => Promise.reject(new Error('refused'))
+    expect(await api.capture({ rect: RECT })).toEqual({ ok: false, why: 'untrusted' })
   })
 })

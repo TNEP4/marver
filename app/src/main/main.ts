@@ -22,6 +22,9 @@
  * and before the views (its writer, the machine profile, the one sampler); memory.ts (unloading) and the white-out
  * detector start once the views and the tabs exist; the recorder's queue is written at will-quit.
  *
+ * A4 (app 0.3): live pictures (live-picture.ts, A4.6 #35) take the bridge's `mv:capture` asks once the views exist, as
+ * the white-out detector does; the bridge checks each rect against the tab's view (`viewSize`).
+ *
  * Who calls what across the streams is app/src/main/ports.ts's table; this file keeps the order and makes the calls.
  */
 import './guard.ts'
@@ -40,14 +43,16 @@ import { installBridge } from './bridge.ts'
 import { createRegistry, type RegistryEntry } from './registry.ts'
 import { fetchLogo, installDispatcher, probeProof } from './proof.ts'
 import { attachNav } from './nav.ts'
-import { contentView, focusWindow, windowVisible } from './window.ts'
-import { activeTab, getTab, startTabs, type Tab } from './tabs.ts'
+import { contentView, focusWindow, pageView, windowVisible } from './window.ts'
+import { activeTab, getTab, liveDoc, startTabs, type Tab } from './tabs.ts'
 import { docInset } from './layout.ts'
 import { identity, recorder, sampler } from './recorder.ts'
 import { provideRecorderHooks } from './testing/recorder.ts'
 import { provideFlashHooks } from './testing/flash.ts'
 import { startMemory } from './memory.ts'
 import { startWhiteout } from './whiteout.ts'
+import { livePictures } from './live-picture.ts'
+import { genOf } from './present.ts'
 import { readAgx } from './machine.ts'
 import { openSameCanvas, startViews, windowPorts, type TrustPort } from './views.ts'
 import { fakeTrust } from './testing/fake-trust.ts'
@@ -125,7 +130,16 @@ function start(): void {
     await registry.start()
     // the bridge: the capability map, the canvas admission, the app pages' channels - before any view. `mv:doc`
     // answers each document's inset from its tab's layout (A3.8 #26)
-    const bridge = installBridge({ insetFor: (id) => { const t = getTab(id); return t ? docInset(t) : 0 } })
+    const bridge = installBridge({
+      insetFor: (id) => { const t = getTab(id); return t ? docInset(t) : 0 },
+      // the tab's view in CSS px: its bounds over its zoom (mv:capture's rect lies inside it, A4.6 #35)
+      viewSize: (id) => {
+        const v = contentView(id), wc = v?.webContents
+        if (!v || !wc || wc.isDestroyed()) return null
+        const b = v.getBounds(), z = wc.getZoomFactor() || 1
+        return { width: b.width / z, height: b.height / z }
+      },
+    })
     if (__MV_TEST__ && testMode()) provideTrustHooks()
     startTabs()
     // the recorder: after the bridge, before the views (A3.8 #53)
@@ -206,6 +220,17 @@ function start(): void {
       record: (ident, body) => recorder.event('whiteout-candidate', ident, body),
       now: () => Date.now(),
     })
+    // a canvas's live picture of its own view, while the person sees it (A4.6 #35)
+    bridge.onCapture(livePictures({
+      look: (tabId) => {
+        const t = getTab(tabId), v = contentView(tabId), wc = v?.webContents
+        if (!t || !v || !wc || wc.isDestroyed()) return null
+        return {
+          wc, active: activeTab() === t, live: liveDoc(t), trusted: !!t.doc?.trusted, doc: t.doc?.doc, commits: t.doc?.commits ?? 0, gen: genOf(tabId),
+          windowShown: windowVisible(), viewShown: v.getVisible() && !pageView(tabId)?.getVisible(),
+        }
+      },
+    }))
     // the pages exist: an uncaught error is recorded (perf/app.jsonl) and the app goes on (errors.ts)
     setErrorHome(home)
     installErrorPolicy()

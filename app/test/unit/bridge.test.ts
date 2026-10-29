@@ -4,7 +4,7 @@
  * app pages' payloads; who may use which app channel, from where. And the preferences every view is made with.
  */
 import { describe, expect, it } from 'vitest'
-import { checkBusy, checkHello, checkMenu, checkPagePayload, checkTheme, INVOKES, isPinnedUrl, mayUsePageChannel } from '../../src/main/bridge.ts'
+import { checkBusy, checkCaptureRect, checkHello, checkMenu, checkPagePayload, checkTheme, INVOKES, isPinnedUrl, mayUsePageChannel } from '../../src/main/bridge.ts'
 import { appWebPreferences, canvasWebPreferences, peopleLink, refuseDownload } from '../../src/main/sessions.ts'
 import { SENDERS } from '../../src/shared/channels.ts'
 
@@ -47,6 +47,29 @@ describe('canvas reports', () => {
     expect(checkMenu([{ ...ok, checked: 'yes' }])).toBe(null)
     expect(checkMenu([ok, ok])).toBe(null)
     expect(checkMenu({})).toBe(null)
+  })
+})
+
+describe('mv:capture\'s rect (A4.6 #35)', () => {
+  const VIEW = { width: 1280, height: 800 }
+  it('finite, x and y at least 0, a side at least 1, inside the view - rounded out to whole px', () => {
+    expect(checkCaptureRect({ rect: { x: 10, y: 20, width: 300, height: 200 }, more: 1 }, VIEW)).toEqual({ x: 10, y: 20, width: 300, height: 200 })
+    // 10.4 -> 10, 20.7 -> 20; right 110.5 -> 111, bottom 71.2 -> 72
+    expect(checkCaptureRect({ rect: { x: 10.4, y: 20.7, width: 100.1, height: 50.5 } }, VIEW)).toEqual({ x: 10, y: 20, width: 101, height: 52 })
+    expect(checkCaptureRect({ rect: { x: 0, y: 0, width: 1280, height: 800 } }, VIEW)).toEqual({ x: 0, y: 0, width: 1280, height: 800 })
+    // a zoomed view's fractional size: its last partial px is inside
+    expect(checkCaptureRect({ rect: { x: 0, y: 0, width: 1163.6, height: 727.3 } }, { width: 1163.6, height: 727.3 })).toEqual({ x: 0, y: 0, width: 1164, height: 728 })
+  })
+  it('anything else is bounds (null): outside the view, negative, empty, not a number, no rect, no view', () => {
+    const bad = [
+      { x: 1000, y: 0, width: 281, height: 10 }, { x: 0, y: 700, width: 10, height: 100.5 }, { x: -1, y: 0, width: 10, height: 10 }, { x: 0, y: -0.5, width: 10, height: 10 },
+      { x: 0, y: 0, width: 0.5, height: 10 }, { x: 0, y: 0, width: 10, height: 0 }, { x: NaN, y: 0, width: 10, height: 10 }, { x: 0, y: 0, width: Infinity, height: 10 },
+      { x: '0', y: 0, width: 10, height: 10 }, { x: 0, y: 0, width: 10 },
+    ]
+    for (const rect of bad) expect(checkCaptureRect({ rect }, VIEW), JSON.stringify(rect)).toBe(null)
+    expect(checkCaptureRect({}, VIEW)).toBe(null)
+    expect(checkCaptureRect(null, VIEW)).toBe(null)
+    expect(checkCaptureRect({ rect: { x: 0, y: 0, width: 10, height: 10 } }, null)).toBe(null)
   })
 })
 
