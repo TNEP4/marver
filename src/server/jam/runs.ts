@@ -118,7 +118,7 @@ export interface Runs {
   /** what a run is called (its first card's name, else the owner's words, clipped) - a ping, a tile waiting on it */
   title(b: Batch): string
   /** a batch's runner, as the lane shows it */
-  runnerOf(b: Batch | undefined): { kind: 'session' | 'fork' | 'fresh'; agent: string; state?: 'offered' | 'claimed' | 'stalled' | 'stopping' | 'waiting'; why?: string; batch: string; gen?: number } | undefined
+  runnerOf(b: Batch | undefined): { kind: 'session' | 'fork' | 'fresh'; agent: string; state?: 'offered' | 'claimed' | 'stalled' | 'stopping' | 'waiting'; why?: string; batch: string; gen?: number; stalls?: number } | undefined
   stop(): void
 }
 
@@ -583,7 +583,8 @@ export function createRuns(d: RunsDeps): Runs {
         if (claim.stopping) { if (writerGone(claim)) await finishStop(b.batchId); continue }
         const quiet = writerGone(claim) || now - claim.progress > STALL_MS
         if (!claim.stalled && quiet) {
-          await q.lock(() => { const x = byId(b.batchId)?.claim; if (x && x.result === undefined && !x.stopping) { x.stalled = true; q.persist() } })
+          // a stall begins: one more `stalls` under this claim (A4.6 #9), so a second stall after Give it back is a new need
+          await q.lock(() => { const x = byId(b.batchId)?.claim; if (x && x.result === undefined && !x.stopping) { if (!x.stalled) x.stalls = (x.stalls ?? 0) + 1; x.stalled = true; q.persist() } })
           d.log(`  jam: a run your session took went quiet (${writerGone(claim) ? 'the session ended' : 'no word for 15 minutes'}) - choose in the lane`)
           d.changed()
         }
@@ -680,7 +681,7 @@ export function createRuns(d: RunsDeps): Runs {
     runnerOf(b) {
       if (!b?.runner) return undefined
       const state = b.offer ? 'offered' as const : b.claim?.stopping ? 'stopping' as const : b.claim?.stalled ? 'stalled' as const : b.claim ? 'claimed' as const : b.runner.kind === 'session' ? 'waiting' as const : undefined
-      return { kind: b.runner.kind, agent: b.runner.agent, batch: b.batchId, ...(b.claim ? { gen: b.claim.gen } : {}), ...(state ? { state } : {}), ...(b.runner.why ? { why: b.runner.why } : {}) }
+      return { kind: b.runner.kind, agent: b.runner.agent, batch: b.batchId, ...(b.claim ? { gen: b.claim.gen } : {}), ...(b.claim?.stalls ? { stalls: b.claim.stalls } : {}), ...(state ? { state } : {}), ...(b.runner.why ? { why: b.runner.why } : {}) }
     },
     stop() { stopped = true; for (const w of waiters.values()) w(null); waiters.clear() },
   }

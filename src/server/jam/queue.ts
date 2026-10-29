@@ -36,9 +36,21 @@ export const ctxFor = (root: string): Ctx => ({ root, dir: join(root, 'design', 
 const isOwned = (ctx: Ctx, board: string, id: string) => ctx.owned.has(`${board}\t${id}`)
 const seenKey = (board: string, id: string) => `${board}|${id}`
 
+/** Every move of a card's state but a requeue's. Entering review or failed from another state begins an episode: one
+ *  more `att` (spec 28 A4.6 #9), what a live item's id hashes - a heartbeat, a rename or a re-read never changes it. */
 const set = (c: Card, state: CardState, now: number, note?: string) => {
+  if ((state === 'review' || state === 'failed') && c.state !== state) c.att = (c.att ?? 0) + 1
   c.state = state; c.rev += 1; c.at = now
   if (note !== undefined) c.note = note
+}
+
+/** The one way a card turns failed (A4.6 #9, r1 #1): `set` it, and when the journal holds its batch, that batch's
+ *  `failures` one more - so a redelivery that fails again is a new occurrence of the same run. Several cards failing
+ *  in one write add several: an id is compared, never counted. daemon.ts calls it too, never writing `failed` itself. */
+export function failCard(j: Journal, c: Card, note: string, now: number): void {
+  set(c, 'failed', now, note)
+  const b = c.batch ? j.batches.find((x) => x.batchId === c.batch) : undefined
+  if (b) b.failures = (b.failures ?? 0) + 1
 }
 const onThread = (j: Journal, board: string, thread: string) => j.cards.filter((c) => c.board === board && c.thread === thread)
 
@@ -384,22 +396,22 @@ export function wrapupIntact(ctx: Ctx, c: Card): boolean {
 /** The wrap-up content a card writes from (a More work card writes from the same, its note added). */
 export const wrapupOf = (c: Card): string => c.id
 
-function validate(ctx: Ctx, c: Card, events: CommentEvent[], now: number, j?: Journal): boolean {
-  if (c.capture && j && !captureIntact(j, ctx, c.capture)) {
-    set(c, 'failed', now, 'the capture changed after it was confirmed - capture it again')
+function validate(ctx: Ctx, c: Card, events: CommentEvent[], now: number, j: Journal): boolean {
+  if (c.capture && !captureIntact(j, ctx, c.capture)) {
+    failCard(j, c, 'the capture changed after it was confirmed - capture it again', now)
     return false
   }
   if (c.kind === 'capture') {
     const ok = c.events.every((id) => isOwned(ctx, c.board, id) && events.some((e) => e.id === id))
-    if (!ok) set(c, 'failed', now, 'an ask on this capture is no longer the owner\'s')
+    if (!ok) failCard(j, c, 'an ask on this capture is no longer the owner\'s', now)
     return ok
   }
   if (c.kind === 'wrapup') {
     // its sealed content, as ledgered: changed after the seal, it never reaches the agent
-    if (!wrapupIntact(ctx, c)) { set(c, 'failed', now, 'the session record changed after it was written - write it again'); return false }
+    if (!wrapupIntact(ctx, c)) { failCard(j, c, 'the session record changed after it was written - write it again', now); return false }
     const w = readWrapup(ctx.root, c.id)
     const unsafe = w && recordPathProblem(ctx.root, w.wrapup.file)
-    if (unsafe) { set(c, 'failed', now, `the record's file is not safe to write: ${unsafe}`); return false }
+    if (unsafe) { failCard(j, c, `the record's file is not safe to write: ${unsafe}`, now); return false }
     return true
   }
   if (c.kind !== 'comment') return true
@@ -627,9 +639,9 @@ function settleOne(j: Journal, b: Batch, m: Member, p: { reply?: string; answere
     set(c, 'done', now, 'resolved')                  // resolved while it ran: nothing comes back to it
     out.push({ card: c })
   } else if ('missing' in r) {
-    set(c, 'failed', now, 'the agent did not answer this one'); out.push({ card: c, notice: 'failed' })
+    failCard(j, c, 'the agent did not answer this one', now); out.push({ card: c, notice: 'failed' })
   } else if (c.exclusive || (c.shared ?? 0) >= 1) {
-    set(c, 'failed', now, 'needed more shared files than it was given'); out.push({ card: c, notice: 'failed' })
+    failCard(j, c, 'needed more shared files than it was given', now); out.push({ card: c, notice: 'failed' })
   } else {
     c.exclusive = r.shared; c.shared = 1
     out.push({ card: requeue(j, c, now) })
@@ -643,7 +655,7 @@ export function fail(j: Journal, b: Batch, note: string, now = Date.now()): Sett
     const c = j.cards.find((x) => x.id === m.card)
     if (!c || c.state !== 'working' || c.batch !== b.batchId) continue
     if (c.resolved) set(c, 'done', now, 'resolved')
-    else { set(c, 'failed', now, note); out.push({ card: c, notice: 'failed' }) }
+    else { failCard(j, c, note, now); out.push({ card: c, notice: 'failed' }) }
   }
   b.state = 'failed'; b.at = now; b.note = note
   return out
@@ -660,7 +672,7 @@ export function undelivered(j: Journal, b: Batch, note: string, now = Date.now()
     // a result with nothing to post (a `shared` answer, a missing one) settles now - its exclusive
     // rerun exists before anything else may start; only a reply that could not be posted waits
     if (r && !('body' in r)) settleOne(j, b, m, {}, now, out)
-    else { set(c, 'failed', now, note); out.push({ card: c, notice: 'failed' }) }
+    else { failCard(j, c, note, now); out.push({ card: c, notice: 'failed' }) }
   }
   b.undelivered = true; b.at = now
   return out
@@ -743,9 +755,10 @@ export function upgrade(v1: JournalV1, ctx: Ctx, now = Date.now()): { j: Journal
       if (b.state === 'done') continue   // finished with no final in the log: nothing left to show
       if (b.state === 'claimed' && b.pgid) fence.push(b.pgid)
       if (!tag) continue
-      j.cards.push(card('failed', b.state === 'failed' ? 'the agent could not finish - Retry' : 'interrupted by the upgrade - Retry'))
+      // a failure, as failCard counts one: the card's first attempt and its batch's first failure (A4.6 #9)
+      j.cards.push({ ...card('failed', b.state === 'failed' ? 'the agent could not finish - Retry' : 'interrupted by the upgrade - Retry'), att: 1 })
       j.batches.push({ batchId: b.batchId, members: [{ id: 'm1', card: `c-${id}`, board }], frames: frame ? [frame] : [], state: 'failed', leaseUntil: 0,
-        attempts: b.attempts, ...(b.pgid ? { pgid: b.pgid } : {}), at: now })
+        attempts: b.attempts, ...(b.pgid ? { pgid: b.pgid } : {}), failures: 1, at: now })
     }
     for (const ev of events) {
       if (ev.type === 'reply' && !ev.agent && v1seen.has(ev.id) && !unfinished.has(ev.id) && !MENTION.test(ev.body ?? '') && isOwned(ctx, board, ev.id)) j.legacy.push(ev.id)

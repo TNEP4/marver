@@ -28,8 +28,13 @@ export interface QueueView {
     notes?: number
     session?: string     // the session it was made in, or whose record it writes
     file?: string        // a session record: the file it writes
-    /** who runs it now (spec 29b): the owner's session, a copy of it, or a fresh agent - and where it stands */
-    runner?: { kind: 'session' | 'fork' | 'fresh'; agent: string; state?: 'offered' | 'claimed' | 'stalled' | 'stopping' | 'waiting'; why?: string; batch: string; gen?: number }
+    /** who runs it now (spec 29b): the owner's session, a copy of it, or a fresh agent - and where it stands.
+     *  `stalls`: how many times its claim went quiet (spec 28 A4.6 #9; absent reads 0) */
+    runner?: { kind: 'session' | 'fork' | 'fresh'; agent: string; state?: 'offered' | 'claimed' | 'stalled' | 'stopping' | 'waiting'; why?: string; batch: string; gen?: number; stalls?: number }
+    /** the occurrence counters (spec 28 A4.6 #9), what a live item's id hashes and a click compares: `att` - how
+     *  many times it entered review or failed; `fails` - its batch's `failures`. Absent reads 0 */
+    att?: number
+    fails?: number
   })[]
   /** the sessions connected to this repo now, and the one that takes the work */
   sessions?: { id: string; agent: 'claude' | 'codex' | 'cursor'; busy: boolean; selected: boolean; since: number; mode?: string }[]

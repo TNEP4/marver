@@ -30,7 +30,7 @@ import { workActivity } from '../work.ts'
 import { acquireLock, releaseLock } from './journal.ts'
 import { buildPacket, goalText, packetPath, parseAgentText, parseMembers, refusedAsk, sharedWhy } from './packet.ts'
 import { uncheckedAnchor, type AnchorCheck, type AnchorLook, type AnchorTarget } from '../../shared/anchor.ts'
-import { ownerOnly, act, addCapture, addWrapup, endSession, moreWrapup, startSession, textOf, wrapupIntact, wrapupOf, answeredSince, captureIntact, beginStep, captureComment, conflictStep, createQueue, ctxFor, endStep, looksGood, payloadKey, redelivering, requeue, joinAlone, runsAlone, sameComment, stillOwned, undelivered, fail, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
+import { ownerOnly, act, addCapture, addWrapup, endSession, moreWrapup, startSession, textOf, wrapupIntact, wrapupOf, answeredSince, captureIntact, beginStep, captureComment, conflictStep, createQueue, ctxFor, endStep, looksGood, payloadKey, redelivering, requeue, joinAlone, runsAlone, sameComment, stillOwned, undelivered, fail, failCard, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
 import { jamReservations, restoreHolds } from './reserve.ts'
 import { jamLive, type QueueView } from './live.ts'
 import type { Batch, Brief, Card, JamAdapter, JobPacket, Journal, Msg, Reanchor, Result } from './types.ts'
@@ -724,7 +724,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         ...(t?.anchor !== undefined ? { anchor: t.anchor } : {}), brief })
     }
     if (bad.length) {
-      await q.lock((j) => { for (const id of bad) { const c = j.cards.find((x) => x.id === id); if (c && c.state === 'working') { c.state = 'failed'; c.note = c.kind === 'wrapup' ? 'the session record changed after it was written - write it again' : 'interrupted - Retry'; c.rev += 1; c.at = Date.now() } } q.persist() })
+      await q.lock((j) => { for (const id of bad) { const c = j.cards.find((x) => x.id === id); if (c && c.state === 'working') failCard(j, c, c.kind === 'wrapup' ? 'the session record changed after it was written - write it again' : 'interrupted - Retry', Date.now()) } q.persist() })
       b.members = b.members.filter((m) => !bad.includes(m.card))
       if (!b.members.length) { await q.lock((j) => { const x = j.batches.find((y) => y.batchId === b.batchId); if (x) x.state = 'failed'; q.persist() }); queueChanged(); timeRun('changed'); return }
     }
@@ -1309,9 +1309,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           const c = j.cards.find((x) => x.id === m.card)
           if (!c) continue
           // a capture changed since it was confirmed never runs again, whoever carries it
-          if (c.capture && !captureIntact(j, ctx, c.capture)) { c.state = 'failed'; c.note = 'the capture changed after it was confirmed - capture it again'; c.rev += 1; c.at = Date.now(); continue }
+          if (c.capture && !captureIntact(j, ctx, c.capture)) { failCard(j, c, 'the capture changed after it was confirmed - capture it again', Date.now()); continue }
           // a session record whose sealed content changed never runs again either
-          if (c.kind === 'wrapup' && !wrapupIntact(ctx, c)) { c.state = 'failed'; c.note = 'the session record changed after it was written - write it again'; c.rev += 1; c.at = Date.now(); continue }
+          if (c.kind === 'wrapup' && !wrapupIntact(ctx, c)) { failCard(j, c, 'the session record changed after it was written - write it again', Date.now()); continue }
           // every kind's asks are checked (a capture's More work and merged tags are events too); only
           // a tag's card has nothing left to do without them - a capture still has its payload
           const comment = c.kind === 'comment'
@@ -1336,7 +1336,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           const members = packet.members.filter((m) => ids.has(m.card)).map((m) => ({ ...m, id: ids.get(m.card)!, brief: clean(m.board, m.brief, true)! }))
           const next = { ...packet, members }
           if (renumbered || JSON.stringify(next) !== JSON.stringify(packet)) writeFileSync(file, JSON.stringify(next, null, 1), { mode: 0o600 })
-        } catch { b.state = 'failed'; b.note = 'its packet is gone'; for (const m of b.members) { const c = j.cards.find((x) => x.id === m.card); if (c) { c.state = 'failed'; c.note = 'interrupted - Retry'; c.rev += 1; c.at = Date.now() } } continue }
+        } catch { b.state = 'failed'; b.note = 'its packet is gone'; for (const m of b.members) { const c = j.cards.find((x) => x.id === m.card); if (c) failCard(j, c, 'interrupted - Retry', Date.now()) } continue }
         out.push({ b, results: false })
       }
       q.persist()
@@ -1556,9 +1556,12 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         const waiting = c.state === 'queued' && exclusiveAhead === 'waiting' && alone(c) ? 'alone' as const
           : c.state === 'queued' && exclusiveAhead ? 'behind' as const
           : c.state === 'queued' && full(c) ? 'session' as const : undefined
+        // the counters an occurrence is named by (A4.6 #9): absent reads 0
+        const fails = c.batch ? j.batches.find((b) => b.batchId === c.batch)?.failures : undefined
         return {
           id: c.id, kind: c.kind, board: c.board, ...(c.thread ? { thread: c.thread } : {}), frames: c.frames, events: c.events,
           state: c.state, ...(c.note ? { note: c.note } : {}), rev: c.rev, made: c.made, order: c.order, at: c.at,
+          ...(c.att ? { att: c.att } : {}), ...(fails ? { fails } : {}),
           ...(c.follows ? { follows: c.follows } : {}), ...(c.reply ? { reply: c.reply } : {}), ...(c.batch ? { batch: c.batch } : {}),
           ...(position ? { position } : {}), ...(waitsFor ? { waitsFor } : {}), ...(waiting ? { waiting } : {}), ...(c.exclusive ? { exclusive: true } : {}),
           ...(c.kind !== 'comment' ? captureView(c) : {}),

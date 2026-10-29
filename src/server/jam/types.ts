@@ -164,6 +164,9 @@ export interface Card {
   order: number              // run position: `made`, unless Do next put it first
   rev: number                // bumped on every change; actions compare it
   at: number                 // last change, for pruning
+  /** how many times it began to wait for review or turned failed (spec 28 A4.6 #9): advanced by queue.ts `set()`
+   *  only when it enters one of them from another state - a live item's occurrence. Absent reads 0 */
+  att?: number
 }
 
 /** One member of a batch. `brief` is the card's brief as this run froze it - a run is named by its
@@ -214,8 +217,9 @@ export interface Batch {
   /** offered to a session (that incarnation of its connection), not taken yet */
   offer?: { conn: string; inc: string; at: number }
   /** taken by a session (`marver jam next`): which incarnation and process took it, its handle's generation, and its
-   *  last word (say, progress) */
-  claim?: { conn: string; inc: string; pid?: number; gen: number; at: number; progress: number; stalled?: boolean; stopping?: 'background' | 'drop'
+   *  last word (say, progress). `stalls`: how many times it went quiet under this claim (spec 28 A4.6 #9) - one more
+   *  each time `stalled` is set where it was not; absent reads 0 */
+  claim?: { conn: string; inc: string; pid?: number; gen: number; at: number; progress: number; stalled?: boolean; stalls?: number; stopping?: 'background' | 'drop'
     /** its final message, stored at `done` under the lock: the completion boundary (a restart delivers it from here) */
     result?: string
     /** the owner gave it back after it stalled: the session is told to carry on, until its next word */
@@ -234,6 +238,9 @@ export interface Batch {
   gen?: number
   /** the owner dropped it while a session held it: it fails, never runs elsewhere */
   dropped?: boolean
+  /** how many times a card of it turned failed (spec 28 A4.6 #9): one more per card, only through queue.ts
+   *  `failCard` - a redelivery that fails again counts on; a rerun is a new batch. Absent reads 0 */
+  failures?: number
   /** formed beside runs of this session incarnation, sharing a frame with them (F4) - or, naming no frame, beside whatever
    *  runs (F5): only it may run it - offered to it, claimed by it, or back in the queue; a run of anyone else never shares a
    *  frame, and one with no frame spawned runs alone. Gone once Marver spawns it: then it is no session's */

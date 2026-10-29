@@ -486,6 +486,31 @@ describe('session runs in the daemon', { timeout: 30_000 }, () => {
     s.jam.stop(); s.done()
   })
 
+  it('each stall of one claim is a new occurrence (spec 28 A4.6 #9): quiet, Give it back, quiet again - stalls 2 under the same generation, in the view and the journal', async () => {
+    const s = await setup()
+    tag(s.root, s.dir)
+    const t = s.jam.tick()
+    await until(() => (readOffers(s.root, s.conn.id)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())
+    const handle = String((await s.ask('next')).handle)
+    const card = () => s.jam.view().cards.find((c) => c.state === 'working')!
+    expect(card().runner?.stalls).toBeUndefined()
+    await s.jam.runs.tick(Date.now() + STALL_MS + 1_000)
+    const r1 = card().runner!
+    expect([r1.state, r1.stalls]).toEqual(['stalled', 1])
+    await s.jam.runs.tick(Date.now() + STALL_MS + 2_000)      // still quiet: the same stall
+    expect(card().runner?.stalls).toBe(1)
+    expect((await s.jam.runs.act(r1.batch, r1.gen!, 'again')).ok).toBe(true)
+    expect([card().runner?.state, card().runner?.stalls]).toEqual(['claimed', 1])
+    await s.jam.runs.tick(Date.now() + STALL_MS + 1_000)
+    const r2 = card().runner!
+    expect([r2.state, r2.stalls, r2.gen]).toEqual(['stalled', 2, r1.gen])
+    const journal = JSON.parse(readFileSync(join(s.root, 'design', '.local', 'jam-jobs.json'), 'utf8'))
+    expect(journal.batches.find((b: { batchId: string }) => b.batchId === r2.batch).claim.stalls).toBe(2)
+    expect((await s.ask('done', { handle, text: REPLY('ok') })).ok).toBe(true)
+    await t
+    s.jam.stop(); s.done()
+  })
+
   it('handed back: a stop after `done` is refused - it just finished', async () => {
     const s = await setup()
     tag(s.root, s.dir)

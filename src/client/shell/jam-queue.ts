@@ -27,8 +27,13 @@ export interface JamCard {
   file?: string
   /** who runs it now (spec 29b): your session, a copy of it, or a fresh agent - and where it stands */
   runner?: JamRunner
+  /** the occurrence counters a notice's click compares (spec 28 A4.6 #9, #30): how many times it entered review or
+   *  failed, and its batch's failures. Absent reads 0 */
+  att?: number
+  fails?: number
 }
-export interface JamRunner { kind: 'session' | 'fork' | 'fresh'; agent: string; state?: 'offered' | 'claimed' | 'stalled' | 'stopping' | 'waiting'; why?: string; batch: string; gen?: number }
+/** `stalls`: how many times its claim went quiet (A4.6 #9; absent reads 0) */
+export interface JamRunner { kind: 'session' | 'fork' | 'fresh'; agent: string; state?: 'offered' | 'claimed' | 'stalled' | 'stopping' | 'waiting'; why?: string; batch: string; gen?: number; stalls?: number }
 /** A coding-agent session connected to this repo (spec 29b): the selected one takes the work while a Jam session runs. */
 export interface JamSession { id: string; agent: 'claude' | 'codex' | 'cursor'; busy: boolean; selected: boolean; since: number; mode?: string }
 /** What Jam does on this machine: the config with the start sheet's switches over it. */

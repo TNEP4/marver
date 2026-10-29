@@ -9,8 +9,8 @@ import { canonicalShared, canonicalSharedWhy, createJam } from '../src/server/ja
 import { claudeAdapter } from '../src/server/jam/adapter/claude.ts'
 import { record } from '../src/server/jam/ledger.ts'
 import { deviceId } from '../src/server/jam/device.ts'
-import { read as readJournal, write as writeJournal } from '../src/server/jam/journal.ts'
-import { act, addWrapup, answers, ctxFor, fail, form, freezeBrief, ingest, merge, runsAlone, settle, writePacket } from '../src/server/jam/queue.ts'
+import { fresh, read as readJournal, write as writeJournal } from '../src/server/jam/journal.ts'
+import { act, addWrapup, answers, ctxFor, fail, failCard, form, freezeBrief, ingest, merge, redelivering, requeue, runsAlone, settle, undelivered, writePacket } from '../src/server/jam/queue.ts'
 import { buildPacket, goalText, packetPath, parseMembers, refusedAsk, sharedFile, sharedWhy } from '../src/server/jam/packet.ts'
 import { sessionBrief } from '../src/server/jam/session-brief.ts'
 import { buildWrapup, storeWrapup, type Wrapup } from '../src/server/jam/session.ts'
@@ -513,6 +513,26 @@ describe('Jam V2: shared files and exclusive jobs', () => {
   })
 })
 
+/** A batch of two tags claimed and running when the server died: its journal (not yet written) and its packet. */
+const crashed = (root: string, dir: string) => {
+  const a = say(root, dir, '@marver one')
+  const b = say(root, dir, '@marver two')
+  const j = readJournal(root)
+  j.baselined = true
+  j.seen = readLog(dir, 'home').map((e) => `home|${e.id}`)
+  const now = Date.now()
+  const card = (e: CommentEvent, m: string): Card => ({ id: `c-${e.id}`, kind: 'comment', board: 'home', frames: ['demo/hero'], thread: e.commentId, events: [e.id], state: 'working', batch: 'b-crash', made: e.ts, order: e.ts, rev: 2, at: now, brief: { asks: [], history: [] } })
+  j.cards.push(card(a, 'm1'), card(b, 'm2'))
+  const batch: Batch = { batchId: 'b-crash', members: [{ id: 'm1', card: `c-${a.id}`, board: 'home' }, { id: 'm2', card: `c-${b.id}`, board: 'home' }], frames: ['demo/hero'], state: 'claimed', leaseUntil: 0, attempts: 1, at: now }
+  j.batches.push(batch)
+  mkdirSync(join(root, 'design', '.local', 'jam', 'packets'), { recursive: true })
+  writeFileSync(join(root, packetPath('b-crash')), JSON.stringify({ v: 2, kind: 'marver.jam.job', batchId: 'b-crash', frames: ['demo/hero'], members: [
+    { id: 'm1', card: `c-${a.id}`, kind: 'comment', board: 'home', thread: a.commentId, frames: ['demo/hero'], brief: { asks: [{ id: a.id, body: '@marver one', ts: a.ts }], history: [] } },
+    { id: 'm2', card: `c-${b.id}`, kind: 'comment', board: 'home', thread: b.commentId, frames: ['demo/hero'], brief: { asks: [{ id: b.id, body: '@marver two', ts: b.ts }], history: [] } },
+  ] }))
+  return { a, b, j, batch }
+}
+
 describe('Jam V2: results first, then replies', () => {
   it('per-member parsing: missing members, unknown and duplicate blocks, a one-member job\'s unfenced reply', () => {
     const r = parseMembers('```marver-reply m2\nsecond\n```\n```marver-reply m9\nnobody\n```\n```marver-reply m2\nduplicate\n```', ['m1', 'm2'])
@@ -540,25 +560,6 @@ describe('Jam V2: results first, then replies', () => {
     expect(cardOf(again, b)!.state).toBe('done')
     done()
   })
-
-  const crashed = (root: string, dir: string) => {
-    const a = say(root, dir, '@marver one')
-    const b = say(root, dir, '@marver two')
-    const j = readJournal(root)
-    j.baselined = true
-    j.seen = readLog(dir, 'home').map((e) => `home|${e.id}`)
-    const now = Date.now()
-    const card = (e: CommentEvent, m: string): Card => ({ id: `c-${e.id}`, kind: 'comment', board: 'home', frames: ['demo/hero'], thread: e.commentId, events: [e.id], state: 'working', batch: 'b-crash', made: e.ts, order: e.ts, rev: 2, at: now, brief: { asks: [], history: [] } })
-    j.cards.push(card(a, 'm1'), card(b, 'm2'))
-    const batch: Batch = { batchId: 'b-crash', members: [{ id: 'm1', card: `c-${a.id}`, board: 'home' }, { id: 'm2', card: `c-${b.id}`, board: 'home' }], frames: ['demo/hero'], state: 'claimed', leaseUntil: 0, attempts: 1, at: now }
-    j.batches.push(batch)
-    mkdirSync(join(root, 'design', '.local', 'jam', 'packets'), { recursive: true })
-    writeFileSync(join(root, packetPath('b-crash')), JSON.stringify({ v: 2, kind: 'marver.jam.job', batchId: 'b-crash', frames: ['demo/hero'], members: [
-      { id: 'm1', card: `c-${a.id}`, kind: 'comment', board: 'home', thread: a.commentId, frames: ['demo/hero'], brief: { asks: [{ id: a.id, body: '@marver one', ts: a.ts }], history: [] } },
-      { id: 'm2', card: `c-${b.id}`, kind: 'comment', board: 'home', thread: b.commentId, frames: ['demo/hero'], brief: { asks: [{ id: b.id, body: '@marver two', ts: b.ts }], history: [] } },
-    ] }))
-    return { a, b, j, batch }
-  }
 
   it('a crash after the results are written and one reply posted resumes by posting the rest - the agent never runs again', async () => {
     const { root, dir, done } = setup()
@@ -680,6 +681,9 @@ describe('Jam V2: the v1 journal upgrade', () => {
     expect([cardOf(jam, a)!.state, cardOf(jam, a)!.note]).toEqual(['done', 'replied'])
     expect(cardOf(jam, d)!.state).toBe('asks')
     for (const e of [b, c]) expect([cardOf(jam, e)!.state, cardOf(jam, e)!.note]).toEqual(['failed', 'interrupted by the upgrade - Retry'])
+    // a failure as failCard counts one (spec 28 A4.6 #9): the card's first, its batch's first
+    for (const e of [b, c]) expect(cardOf(jam, e)!.att).toBe(1)
+    for (const id of ['v1b', 'v1c']) expect(jam.snapshot().batches.find((x) => x.batchId === id)!.failures).toBe(1)
     expect(logs.some((l) => l.includes('only comments that tag @marver start work now'))).toBe(true)
     expect(jam.snapshot().version).toBe(2)
     done()
@@ -1659,5 +1663,136 @@ describe('Jam V2: review round 9 fixes', () => {
     await wait(800)
     expect(agentReplies(dir)).toEqual([])
     done()
+  })
+})
+
+describe('spec 28 A4.6 #9: the occurrence counters a live item is named by', () => {
+  const now = 1_000
+  const cardIn = (o: Partial<Card> = {}): Card => ({ id: 'c-1', kind: 'capture', board: 'home', frames: ['demo/hero'], events: [], state: 'working', batch: 'b1', made: 1, order: 1, rev: 1, at: 1, ...o })
+  const batchOf = (id: string, cards: Card[], o: Partial<Batch> = {}): Batch => ({ batchId: id, members: cards.map((c, i) => ({ id: `m${i + 1}`, card: c.id, board: c.board })), frames: ['demo/hero'], state: 'claimed', leaseUntil: 0, attempts: 1, at: 1, ...o })
+  const journal = (cards: Card[], batches: Batch[]): Journal => ({ ...fresh(), cards, batches })
+  const said = (body: string) => ({ m1: { body, asks: false, reanchors: [] } })
+
+  it('att: one more each time a card enters review or failed from another state - never while it stays there, never for a rename or a later', () => {
+    const c = cardIn()
+    const b1 = batchOf('b1', [c], { results: said('done') })
+    const j = journal([c], [b1])
+    settle(j, b1, { m1: {} }, now)
+    expect([c.state, c.att]).toEqual(['review', 1])
+    expect(act(j, c.id, c.rev, 'later', now).ok).toBe(true)
+    expect(act(j, c.id, c.rev, 'rename', now, 'A name').ok).toBe(true)
+    expect(c.att).toBe(1)
+    // More work: the same card runs again and comes back to review - a new occurrence
+    requeue(j, c, now); c.state = 'working'; c.batch = 'b2'
+    const b2 = batchOf('b2', [c], { results: said('again') })
+    j.batches.push(b2)
+    settle(j, b2, { m1: {} }, now)
+    expect([c.state, c.att]).toEqual(['review', 2])
+  })
+
+  it('failCard: the card\'s att and, when the journal holds its batch, that batch\'s failures; a card with no run, or whose batch is gone, counts on its own', () => {
+    const c = cardIn({ id: 'c-1' }), d = cardIn({ id: 'c-2' }), e = cardIn({ id: 'c-3', batch: undefined }), f = cardIn({ id: 'c-4', batch: 'pruned' })
+    const b1 = batchOf('b1', [c, d])
+    const j = journal([c, d, e, f], [b1])
+    for (const x of [c, d, e, f]) failCard(j, x, 'why', now)
+    expect([c.state, c.note, c.rev, c.at, c.att]).toEqual(['failed', 'why', 2, now, 1])
+    expect(b1.failures).toBe(2)            // two cards in one write add two: an id is compared, never counted
+    expect([e.att, f.att, j.batches.length]).toEqual([1, 1, 1])
+  })
+
+  it('a redelivery that fails again is a new occurrence of the same batch; two failed attempts count each card', () => {
+    const c = cardIn()
+    const b = batchOf('b1', [c], { results: said('saved') })
+    const j = journal([c], [b])
+    undelivered(j, b, 'could not post', now)
+    expect([c.state, c.att, b.failures]).toEqual(['failed', 1, 1])
+    redelivering(j, b, now)
+    expect([c.state, c.att]).toEqual(['working', 1])
+    undelivered(j, b, 'could not post', now)
+    expect([c.state, c.att, b.failures]).toEqual(['failed', 2, 2])
+    const x = cardIn({ id: 'c-x', batch: 'bx' }), y = cardIn({ id: 'c-y', batch: 'bx' })
+    const bx = batchOf('bx', [x, y])
+    j.cards.push(x, y); j.batches.push(bx)
+    fail(j, bx, 'the agent could not finish', now)
+    expect([x.att, y.att, bx.failures, bx.state]).toEqual([1, 1, 2, 'failed'])
+    const m = cardIn({ id: 'c-m', batch: 'bm' })
+    const bm = batchOf('bm', [m], { results: { m1: { missing: true } } })
+    j.cards.push(m); j.batches.push(bm)
+    settle(j, bm, {}, now)
+    expect([m.state, m.att, bm.failures]).toEqual(['failed', 1, 1])
+  })
+
+  it('the counters live in the journal: written and read back, a claim\'s stalls with them', () => {
+    const { root, done } = setup()
+    const c = cardIn({ att: 2 })
+    const b = batchOf('b1', [c], { failures: 3, claim: { conn: 'k', inc: 'i', gen: 4, at: 1, progress: 1, stalled: true, stalls: 2 } })
+    writeJournal(root, journal([c], [b]))
+    const back = readJournal(root)
+    expect([back.cards[0].att, back.batches[0].failures, back.batches[0].claim?.stalls]).toEqual([2, 3, 2])
+    done()
+  })
+
+  it('at boot, a recovered batch whose packet is gone fails each card through failCard - the view gives att and fails', async () => {
+    const { root, dir, done } = setup()
+    const { a, b, j } = crashed(root, dir)
+    writeJournal(root, j)
+    rmSync(join(root, packetPath('b-crash')))
+    const jam = createJam(root, CFG, agent())
+    await jam.tick(); jam.stop()
+    for (const e of [a, b]) expect([cardOf(jam, e)!.state, cardOf(jam, e)!.note, cardOf(jam, e)!.att]).toEqual(['failed', 'interrupted - Retry', 1])
+    expect(jam.snapshot().batches.find((x) => x.batchId === 'b-crash')!.failures).toBe(2)
+    expect(readJournal(root).batches.find((x) => x.batchId === 'b-crash')!.failures).toBe(2)
+    const v = jam.view().cards.find((c) => c.id === `c-${a.id}`)!
+    expect([v.att, v.fails]).toEqual([1, 2])
+    done()
+  })
+
+  it('at boot, a capture or a session record changed since it was confirmed fails its card through failCard', async () => {
+    const { root, dir, done } = setup()
+    const { a, b, j } = crashed(root, dir)
+    j.cards[0].capture = 'cap-gone'      // its capture card is not in the journal: not intact
+    j.cards[1].kind = 'wrapup'           // no sealed record on disk
+    writeJournal(root, j)
+    const jam = createJam(root, CFG, agent('ok', { touch: 'ran.marker' }))
+    await jam.tick(); jam.stop()
+    expect([cardOf(jam, a)!.state, cardOf(jam, a)!.note, cardOf(jam, a)!.att]).toEqual(['failed', 'the capture changed after it was confirmed - capture it again', 1])
+    expect([cardOf(jam, b)!.state, cardOf(jam, b)!.note, cardOf(jam, b)!.att]).toEqual(['failed', 'the session record changed after it was written - write it again', 1])
+    expect(jam.snapshot().batches.find((x) => x.batchId === 'b-crash')!.failures).toBe(2)
+    expect(existsSync(join(root, 'ran.marker'))).toBe(false)
+    done()
+  })
+
+  it('at a start, a member it cannot start fails through failCard; the others run', async () => {
+    const { root, dir, done } = setup()
+    const { a, b, j } = crashed(root, dir)
+    writeJournal(root, j)
+    // b's brief is nowhere: not on its member, not in its packet
+    const file = join(root, packetPath('b-crash'))
+    const packet = JSON.parse(readFileSync(file, 'utf8'))
+    delete packet.members[1].brief
+    writeFileSync(file, JSON.stringify(packet))
+    const jam = createJam(root, CFG, agent())
+    await jam.tick(); jam.stop()
+    expect([cardOf(jam, b)!.state, cardOf(jam, b)!.note, cardOf(jam, b)!.att]).toEqual(['failed', 'interrupted - Retry', 1])
+    expect(cardOf(jam, a)!.state).toBe('done')
+    expect(jam.snapshot().batches.find((x) => x.batchId === 'b-crash')!.failures).toBe(1)
+    done()
+  })
+
+  it('nothing writes failed or review onto a card but queue.ts\'s set(): the daemon and the runs write a batch\'s own state alone, and the queue fails a card only through failCard', () => {
+    const src = (f: string) => readFileSync(fileURLToPath(new URL(`../src/server/jam/${f}`, import.meta.url)), 'utf8')
+    for (const f of ['daemon.ts', 'runs.ts', 'queue.ts']) {
+      for (const line of src(f).split('\n')) {
+        for (const m of line.matchAll(/\b(\w+)\.state\s*=\s*'(failed|review)'/g)) {
+          // a batch's own state: `b`, or a name the same line takes from `.batches`
+          const batch = m[2] === 'failed' && (m[1] === 'b' || new RegExp(`\\b${m[1]} = \\w+\\.batches\\.find\\(`).test(line))
+          expect(batch, `${f}: ${line.trim().slice(0, 140)}`).toBe(true)
+        }
+        if (f !== 'queue.ts') expect(line, f).not.toMatch(/state:\s*'(failed|review)'/)
+      }
+    }
+    const q = src('queue.ts')
+    expect(q.match(/set\(\w+, 'failed'/g)).toEqual(["set(c, 'failed'"])
+    expect(q).toContain("export function failCard(j: Journal, c: Card, note: string, now: number): void {\n  set(c, 'failed', now, note)")
   })
 })
