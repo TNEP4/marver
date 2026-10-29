@@ -1,6 +1,6 @@
 /** One parser for a canvas link (src/shared/links.ts; spec 28 A2.7, v1.10 r1 #4). */
 import { describe, expect, it } from 'vitest'
-import { boardOf, loopbackHost, parseLink, remoteStart, shellDestination, shellPath } from '../../src/shared/links.ts'
+import { boardOf, loopbackHost, parseLink, remoteFavicon, remoteStart, shellDestination, shellPath } from '../../src/shared/links.ts'
 
 describe('parseLink()', () => {
   it('reads a running canvas\'s link on each loopback host, keeping path, query and hash', () => {
@@ -72,6 +72,23 @@ describe('parseLink()', () => {
       'https://id.marver.design/login', 'https://accounts.google.com/o/oauth2/auth', 'https://pilot.example.com:8443/', 'http://pilot.example.com/',
       'https://u:p@pilot.example.com/', 'not a url',
     ]) expect(shellDestination(o, u), u).toBe(false)
+  })
+
+  it('a shared tab\'s favicon: https on its own origin, its document there too - never a sign-in host\'s or another site\'s (A4.6 #46)', () => {
+    const o = 'https://pilot.example.com'
+    expect(remoteFavicon(`${o}/favicon.png`, o, `${o}/#/b/x`)).toBe(true)
+    expect(remoteFavicon(`${o}/__mv/logo.svg`, o, `${o}/index.html`)).toBe(true)
+    for (const [url, doc] of [
+      ['https://id.marver.design/favicon.ico', 'https://id.marver.design/login'],   // during sign-in: its document elsewhere
+      [`${o}/favicon.png`, 'https://id.marver.design/login'],
+      ['https://cdn.example.com/icon.png', `${o}/`],
+      [`http://pilot.example.com/favicon.png`, `${o}/`],
+      ['https://u:p@pilot.example.com/favicon.png', `${o}/`],
+      ['https://pilot.example.com:8443/favicon.png', `${o}/`],
+      ['data:image/png;base64,AAAA', `${o}/`],
+      [`${o}/favicon.png`, 'chrome-error://chromewebdata/'],
+    ]) expect(remoteFavicon(url, o, doc), `${url} on ${doc}`).toBe(false)
+    expect(remoteFavicon(undefined, o, `${o}/`)).toBe(false)
   })
 
   it('names the board of a hash route only', () => {

@@ -12,6 +12,7 @@ import { extname, isAbsolute, join, relative, resolve } from 'node:path'
 import { NAME } from '../cli/name.ts'
 import { poweredByUrl } from '../shared/utm.ts'
 import { secureSuffix } from './secure-cookie.ts'
+import { logoIconLink } from './logo.ts'
 
 export const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript',
@@ -552,6 +553,7 @@ function gate(res: any, meta: { name: string; branding: boolean; logo?: string }
 ${meta.branding ? '<meta property="og:site_name" content="Marver" />' : ''}
 <meta property="og:type" content="website" />
 <meta name="twitter:card" content="summary" />
+${logoIconLink(meta.logo)}
 <link rel="icon" href="/__mv/favicon/favicon.ico" sizes="48x48" />
 <link rel="icon" type="image/png" sizes="32x32" href="/__mv/favicon/favicon-32x32.png" />
 <link rel="icon" type="image/png" sizes="16x16" href="/__mv/favicon/favicon-16x16.png" />

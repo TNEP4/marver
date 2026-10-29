@@ -97,3 +97,16 @@ export function shellDestination(origin: string, href: string): boolean {
   const rest = `${u.pathname}${u.search}${u.hash}`
   return shellPath(rest) === rest
 }
+
+/**
+ * A shared canvas's favicon may be fetched (A4.6 #46): an https URL with no credentials on the tab's own `origin`,
+ * while the committed document (`committed`) is on that origin too - so a sign-in host's icon (`id.marver.design`,
+ * Google) never becomes the canvas's, and no favicon names another site.
+ */
+export function remoteFavicon(url: unknown, origin: string, committed: string): boolean {
+  if (typeof url !== 'string' || url.length >= LINK_MAX) return false
+  let u: URL
+  let d: URL
+  try { u = new URL(url); d = new URL(committed) } catch { return false }
+  return u.protocol === 'https:' && !u.username && !u.password && u.origin === origin && d.origin === origin
+}

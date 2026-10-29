@@ -335,6 +335,57 @@ describe('the quit and the update take shared canvases (A4.6 #43, r1 #8)', () =>
   })
 })
 
+describe('favicons (A2.4, A4.6 #46, #51)', () => {
+  beforeAll(async () => { w = await launchWindow('pw', { extraEnv: r.env }) })
+  afterAll(async () => { await w?.close() })
+
+  it('its page\'s favicon on its own origin is its logo, a checked data: URL', async () => {
+    await lifted('fav', '/')
+    await w.until((x) => !!shared(x, 'fav')?.logo?.startsWith('data:image/png;base64,'), 10_000, 'the favicon as its logo')
+  })
+
+  it('a favicon that redirects to http://127.0.0.1 gets initials, and that port sees no request', async () => {
+    r.page('redir', { favicon: '/favicon-redirect.png' })
+    await lifted('redir', '/')
+    for (let i = 0; i < 40 && !r.requests.some((q) => q.host === 'redir' && q.path === '/favicon-redirect.png'); i++) await sleep(50)
+    await sleep(1000)
+    expect((await now('redir')).logo).toBeNull()
+    expect(r.plain.requests).toEqual([])
+  })
+
+  it('one from the identity host during sign-in is refused: the tab keeps its initials', async () => {
+    r.page('signfav', { favicon: null, script: SIGN_IN })
+    r.loginStalls = true
+    expect(await open(r.url('signfav', '/'))).toEqual({ ok: true })
+    await w.until((x) => !!shared(x, 'signfav')?.doc?.url.startsWith(r.origin('id')), 15_000, 'at the identity host')
+    for (let i = 0; i < 40 && r.hits('id', '/favicon.png') + (await w.log('logo')).filter((l) => l.data.favicon === 'refused').length < 1; i++) await sleep(50)
+    await sleep(500)
+    expect((await now('signfav')).logo).toBeNull()
+    expect(r.hits('id', '/favicon.png')).toBe(0)
+    r.loginStalls = false
+  })
+
+  it('a navigation or a close while a fetch is in flight never applies it', async () => {
+    r.page('slow', { favicon: '/favicon-slow.png' })
+    r.slowMs = 2500
+    const t = await lifted('slow', '/')
+    for (let i = 0; i < 40 && r.hits('slow', '/favicon-slow.png') < 1; i++) await sleep(50)
+    await exec(t.id, "location.href = '/about'; 1")
+    await w.until((x) => !!shared(x, 'slow')?.doc?.url.endsWith('/about'), 10_000, 'navigated')
+    await sleep(3000)
+    expect((await now('slow')).logo).toBeNull()
+    expect((await w.log('logo')).some((l) => l.data.tab === t.id && l.data.aborted)).toBe(true)
+    // and a close: the tab goes with its fetch
+    r.page('slow2', { favicon: '/favicon-slow.png' })
+    const u = await lifted('slow2', '/')
+    for (let i = 0; i < 40 && r.hits('slow2', '/favicon-slow.png') < 1; i++) await sleep(50)
+    await w.run.call('sheet', { mode: 'confirm' })
+    expect(await w.run.call('close', { id: u.id })).toBe('closed')
+    await sleep(3000)
+    expect((await w.log('logo')).some((l) => l.data.tab === u.id && l.data.applied)).toBe(false)
+  })
+})
+
 describe('the overflow: twenty local canvases and two shared ones at 720 px (A2.10, A4.6 #39, #51)', () => {
   const strip = <T>(js: string) => w.run.call<T>('exec', { target: 'strip', js })
   beforeAll(async () => { w = await launchWindow('pw', { extraEnv: r.env }) })

@@ -1,5 +1,19 @@
 # Changelog - the Marver Mac app
 
+## 0.3.0 - unreleased (spec 28 A4)
+
+- **Shared canvases open in a tab** (A4.6 #39-#50). An https link - `⌘L`, Home's field, or a canvas the front door
+  opens - opens that canvas in a tab of its own, one per site, named by its host, after your local canvases; `⌘1`-`⌘9`
+  and `»` reach it. It is someone else's page: its own partition, no access to the app, the clipboard and full screen
+  its only permissions, downloads cancelled (Open in Browser does that), links to other sites sent to your browser.
+  Marver ID's sign-in runs inside the tab and is kept; the tab returns to the board you opened, never to a sign-in page.
+- **Closing, reloading or quitting asks first for a shared canvas**: the app cannot tell what it holds, so one sheet
+  names it ("pilot.example.com is a shared canvas: the app can't tell what it hasn't saved").
+- **Home lists Shared canvases**: the open ones, then the last 12 opened, which reopen with a click. Shared tabs are not
+  restored at launch.
+- **A shared canvas that cannot be reached** says why in words, tries again by itself (at once when the Mac is back
+  online), and offers Open in Browser; a bad certificate is never gone past.
+
 ## 0.2.2 - 2026-10-26
 
 - **The icon has room at its sides.** The mark filled 83% of the icon's width, 9.5% from the left edge and 7.2% from

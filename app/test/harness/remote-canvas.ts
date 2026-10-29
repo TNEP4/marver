@@ -14,7 +14,8 @@
  *   requests are kept, for "that port sees no request"); `/favicon-slow.png`: the PNG after `slowMs`;
  * - the sign-in chain as Marver ID's: `/__mv/id/start?next=<path>` 302s to `id.canvas.test`'s `/login`, which 302s
  *   back to `/__mv/id/finish#code=…&next=<path>`, whose page sets the session cookie and replaces itself with `next`
- *   - unless `finishStalls`, when it stays there (a sign-in cut short); `id.canvas.test` wears its own favicon;
+ *   - unless `finishStalls`, when it stays there (a sign-in cut short); with `loginStalls` the login is a page of its
+ *   own, wearing `id.canvas.test`'s favicon;
  * - `/download`: an attachment; `/to-http`: a 302 to http; `/about`: a page that is not the shell;
  * - `door.canvas.test`: a page whose `window.open(url)` the case drives (`openFromDoor`).
  * `bad` is a second https server whose certificate the app does not accept. `pause()` stops answering on the port,
@@ -64,6 +65,8 @@ export interface RemoteCanvas {
   route(name: string, path: string, fn: Handler): void
   /** the sign-in chain stops at its finish page (a sign-in cut short) */
   finishStalls: boolean
+  /** the identity host's login answers a page of its own (with its favicon) rather than moving on */
+  loginStalls: boolean
   /** `/favicon-slow.png`'s delay */
   slowMs: number
   /** the plain http server a favicon redirects to, and every request it saw */
@@ -114,6 +117,7 @@ export async function startRemoteCanvas(): Promise<RemoteCanvas> {
     page: (name, o) => { pages.set(name, o) },
     route: (name, path, fn) => { routes.set(`${name} ${path}`, fn) },
     finishStalls: false,
+    loginStalls: false,
     slowMs: 3000,
     plain: { port: plainPort, requests: plainReqs },
     bad: { port: 0, origin: (name) => `https://${name}.canvas.test:${h.bad.port}` },
@@ -154,7 +158,7 @@ export async function startRemoteCanvas(): Promise<RemoteCanvas> {
       case '/login': {
         if (name !== 'id') break
         const back = url.searchParams.get('return') ?? ''
-        if (url.searchParams.get('auto') === '0') return void html(`<!doctype html><title>Sign in</title><link rel="icon" href="/favicon.png"><a id="go" href="${back}#code=abc&next=${encodeURIComponent(url.searchParams.get('next') ?? '/')}">Continue</a>`)
+        if (h.loginStalls) return void html(`<!doctype html><title>Sign in</title><link rel="icon" href="/favicon.png"><a id="go" href="${back}#code=abc&next=${encodeURIComponent(url.searchParams.get('next') ?? '/')}">Continue</a>`)
         return go(`${back}#code=abc&next=${encodeURIComponent(url.searchParams.get('next') ?? '/')}`)
       }
       case '/__mv/id/finish':

@@ -45,6 +45,8 @@ beforeAll(async () => {
     ],
   }))
   writeFileSync(join(root, 'design', 'publish.json'), JSON.stringify({ boards: { main: 'comment' } }))
+  // the repo's logo: the published shell lists it first among its icons (spec 28 A4.6 #46)
+  writeFileSync(join(root, 'design', 'logo.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8"/></svg>\n')
   // what 0.24 left behind: its node keys travel for the frames that ship, so an old ?n= link still lands
   writeFileSync(join(root, 'design', 'boards', 'all-scenes.json'), JSON.stringify({ version: 1, auto: true, nodes: [
     { key: 'n_shipkey', frame: `${SECRET_DIR}/hello` }, { key: 'n_privkey', frame: 'elsewhere/private' }] }))
@@ -66,6 +68,17 @@ beforeAll(async () => {
 }, 180_000)
 
 afterAll(() => { rmSync(root, { recursive: true, force: true }) })
+
+describe('the published shell wears the repo\'s logo (spec 28 A4.6 #46, marver 0.29.0)', () => {
+  it('first among its <link rel="icon">, before Marver\'s own set, published beside it', () => {
+    const dist = join(root, 'design', '.dist')
+    const icons = [...readFileSync(join(dist, 'index.html'), 'utf8').matchAll(/<link rel="icon"[^>]*>/g)].map((m) => m[0])
+    expect(icons[0]).toBe('<link rel="icon" type="image/svg+xml" href="/__mv/logo.svg" />')
+    expect(icons.slice(1).length).toBeGreaterThan(0)
+    expect(icons.slice(1).every((l) => l.includes('/__mv/favicon/'))).toBe(true)
+    expect(readFileSync(join(dist, '__mv', 'logo.svg'), 'utf8')).toContain('<svg')
+  })
+})
 
 describe('reveal.source off (the default) strips every repo path from the bundle', () => {
   // The frame ID (`<scene>/<name>`) is the product language - the switcher,

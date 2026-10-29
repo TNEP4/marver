@@ -41,11 +41,13 @@ import { app, dialog, Menu, nativeTheme, net, powerMonitor, shell, WebContentsVi
 import * as sessions from './sessions.ts'
 import { CH, type LinkOpenAnswer, type PageKind, type TabPageAction } from '../shared/channels.ts'
 import { startCommand } from '../shared/command.ts'
-import { parseLink, remoteStart } from '../shared/links.ts'
+import { parseLink, remoteFavicon, remoteStart } from '../shared/links.ts'
+import { LOGO_MAX, LOGO_MIME, sniffLogo } from '../../../src/shared/logo-sniff.ts'
 import { effects, provideEffectHooks } from './effects.ts'
 import type { AppState, MenuItem, Present, Presented } from '../../../src/shared/app-api.ts'
 import type { AppBody, AppKind, TabIdent } from '../../../src/shared/app-perf.ts'
 import { docProof } from '../../../src/server/proof.ts'
+import { readAtMost } from './proof.ts'
 import type { Files, Home } from './config.ts'
 import { bridgeNow, type CanvasReports } from './bridge.ts'
 import { attachNav, type NavAdapter, type NavEvent } from './nav.ts'
@@ -270,6 +272,7 @@ function wireCanvas(t: Tab, view: WebContentsView): void {
   wc.on('destroyed', () => forgetCanvas(t, view))
   keys(wc)
   track(wc, { part: 'content', tab: t.id })
+  if (remote) wc.on('page-favicon-updated', (_e, urls) => { if (mine()) onFavicon(t, wc, urls) })
 }
 
 /** The view is gone (closed by the guard, or destroyed): out of the window, the tab documentless. */
@@ -282,6 +285,7 @@ function forgetCanvas(t: Tab, view: WebContentsView): void {
   detachContent(t.id)
   clearHang(t)
   abortLogo(t)
+  faviconOf.delete(t.id)
   presentForget(t.id)
   t.audible = false
   t.devtools = false
@@ -973,6 +977,45 @@ function refreshLogo(t: Tab): void {
     j('logo', { tab: t.id, applied: !!url })
     if (t.logo !== (url ?? undefined)) { t.logo = url ?? undefined; compose() }
   }, settle)
+}
+
+/**
+ * A shared canvas's logo (A2.4, A4.6 #46): the first `page-favicon-updated` URL of the current commit, taken only when
+ * it is https with no credentials on the tab's own origin and the committed document is there too (links.ts
+ * `remoteFavicon`: a sign-in host's icon is never the canvas's). Fetched through `persist:remote` with no redirect
+ * followed (one to loopback http never reaches it), no cache, 5 s, at most 256 KB actually received, then sniffed as the
+ * local logo is; one in flight (`logoFetch`), aborted at a commit or a close, applied only if the tab and its commit
+ * are unchanged. Without one: its host's initials.
+ */
+const faviconOf = new Map<string, number>()
+function onFavicon(t: Tab, wc: WebContents, urls: string[]): void {
+  const commit = t.doc?.commits ?? 0
+  if (!t.remote || faviconOf.get(t.id) === commit) return   // the commit's first only
+  faviconOf.set(t.id, commit)
+  const url = urls[0]
+  if (!remoteFavicon(url, t.remote.origin, safely(() => wc.getURL()) ?? '')) { j('logo', { tab: t.id, favicon: 'refused' }); return }
+  abortLogo(t)
+  const ac = new AbortController()
+  logoFetch.set(t.id, ac)
+  j('logo', { tab: t.id, fetch: true, commits: commit, favicon: true })
+  void fetchFavicon(url!, ac.signal).then((dataUrl) => {
+    if (ac.signal.aborted || logoFetch.get(t.id) !== ac) return
+    logoFetch.delete(t.id)
+    if (getTab(t.id) !== t || (t.doc?.commits ?? 0) !== commit) return
+    j('logo', { tab: t.id, applied: !!dataUrl, favicon: true })
+    if (dataUrl && t.logo !== dataUrl) { t.logo = dataUrl; compose() }
+  })
+}
+
+/** The favicon's bytes as a checked `data:` URL, or null (an error, a redirect, a status, too big, not an image). */
+async function fetchFavicon(url: string, signal: AbortSignal): Promise<string | null> {
+  try {
+    const res = await sessions.remoteSession().fetch(url, { redirect: 'error', cache: 'no-store', signal: AbortSignal.any([AbortSignal.timeout(T.logoDeadlineMs), signal]) })
+    if (res.status !== 200) { await res.body?.cancel().catch(() => {}); return null }
+    const bytes = await readAtMost(res, LOGO_MAX)
+    const type = bytes && sniffLogo(bytes)
+    return type ? `data:${LOGO_MIME[type]};base64,${bytes!.toString('base64')}` : null
+  } catch { return null }
 }
 
 // ---------------------------------------------------------------------------------------------------------------

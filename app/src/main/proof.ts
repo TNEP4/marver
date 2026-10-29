@@ -316,8 +316,8 @@ export async function fetchLogo(entry: RegistryEntry, signal?: AbortSignal): Pro
   } catch { return null }
 }
 
-/** The body, or null once more than `max` bytes have actually arrived (Content-Length is not trusted). */
-async function readAtMost(res: Response, max: number): Promise<Buffer | null> {
+/** The body, or null once more than `max` bytes have actually arrived (Content-Length is not trusted). A shared canvas's favicon reads it too (A4.6 #46). */
+export async function readAtMost(res: Response, max: number): Promise<Buffer | null> {
   if (!res.body) return Buffer.alloc(0)
   const reader = res.body.getReader()
   const parts: Uint8Array[] = []
