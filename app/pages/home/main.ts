@@ -155,7 +155,6 @@ function hintFor(text: string): (Node | string)[] {
       case 'refused': return [`Not opened: ${t ? possessive(nameOf(t)) : 'the canvas\'s'} page stays as it was`]
       case 'nothing': return [`Nothing is running on localhost:${answer.port ?? ''}`]
       case 'not-canvas': return [`Something else answers on localhost:${answer.port ?? ''}: not a Marver canvas`]
-      case 'later': return ['Shared canvases open in a later build']
       case 'bad': return [badWords(text)]
     }
   }

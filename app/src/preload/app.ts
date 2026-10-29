@@ -11,9 +11,9 @@
  * Whether a channel is an invoke or a send is `INVOKES`'s (src/shared/channels.ts), never this file's own choice.
  */
 import { contextBridge, ipcRenderer } from 'electron'
-import { CH, isInvoke, RECEIVES, type HomeAction, type HomeActionAnswer, type HomeApi, type InvokeChannel, type LinkOpenAnswer, type PageApi, type PageKind, type PillAction, type SettingsApi, type SettingsSet, type SettingsSetResult, type SettingsView, type StripApi, type TabPageAction, type TabPageApi, type TabsMore, type WindowView } from '../shared/channels.ts'
+import { CH, isInvoke, RECEIVES, type AppPageKind, type HomeAction, type HomeActionAnswer, type HomeApi, type InvokeChannel, type LinkOpenAnswer, type PageApi, type PillAction, type SettingsAction, type SettingsApi, type SettingsSet, type SettingsSetResult, type SettingsView, type StripApi, type TabPageAction, type TabPageApi, type TabsMore, type WindowView } from '../shared/channels.ts'
 
-type AppKind = Exclude<PageKind, 'canvas'>
+type AppKind = AppPageKind
 const KINDS: readonly AppKind[] = ['strip', 'home', 'settings', 'tabpage']
 
 const kind: AppKind | null = location.protocol === 'marver-app:' && (KINDS as readonly string[]).includes(location.host)
@@ -93,6 +93,7 @@ function build(k: AppKind): PageApi {
         onRecent: (fn) => on(CH.recent, fn as Fn),
         onHomeInfo: (fn) => on(CH.homeInfo, fn as Fn),
         onHomeFocus: (fn) => on(CH.homeFocus, fn as Fn),
+        onShared: (fn) => on(CH.shared, fn as Fn),
         action: (a: HomeAction) => invoke<HomeActionAnswer>(CH.homeAction, a && typeof a === 'object'
           ? { action: str((a as { action?: unknown }).action, 16), ...('id' in a ? { id: str((a as { id?: unknown }).id) } : {}) }
           : {}),
@@ -109,6 +110,7 @@ function build(k: AppKind): PageApi {
           value: typeof s?.value === 'boolean' || typeof s?.value === 'number' ? s.value : str(s?.value, 16),
         }),
         reveal: () => send(CH.settingsReveal),
+        action: (a: SettingsAction) => send(CH.settingsAction, { action: str(a?.action, 32) }),
       }
       return api
     }

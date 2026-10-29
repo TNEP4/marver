@@ -20,6 +20,7 @@
  */
 import type { MenuItemConstructorOptions } from 'electron'
 import type { MenuItem } from '../../../src/shared/app-api.ts'
+import type { TabKind } from '../shared/channels.ts'
 import { ACCELERATORS, type AppCommand } from './keys.ts'
 import { T } from './timings.ts'
 
@@ -29,7 +30,7 @@ export interface MenuToken { tab: string; commit: number; trusted: boolean }
 export interface MenuModel {
   active: {
     id: string
-    kind: 'home' | 'settings' | 'local'
+    kind: TabKind
     name: string
     token: MenuToken
     trusted: boolean

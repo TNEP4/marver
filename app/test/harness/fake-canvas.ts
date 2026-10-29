@@ -14,15 +14,24 @@
  * In-process: `startFakeCanvas(opts)`. As a child (for `kill -9`), with Node's type stripping:
  *   node app/test/harness/fake-canvas.ts '<json options>'
  * prints one line `{"ready":{...}}` on stdout, logs requests as JSON lines to `opts.log`, and removes its slot
- * file on SIGTERM or SIGINT - never on SIGKILL, which leaves the stale file a case may want.
+ * file on SIGTERM or SIGINT - never on SIGKILL, which leaves the stale file a case may want. A child's live stream
+ * takes one JSON line at a time on stdin: `{"setLive":{...}}`, `{"dropLive":true}`, `{"acceptLive":404}`.
+ *
+ * A4 (spec 28 A4.6 #52, #56): `live` serves the live stream as a 0.29 canvas does - the request proved with
+ * `x-mv-app`, the answer with `liveProof`, whole snapshots as `event: live` lines - driven by `setLive`, `dropLive`
+ * and `acceptLive`. Those three names are frozen; what serves them is this file's own writer until the package's
+ * `src/server/app-live.ts` lands, when the live-stream stream puts its real `liveRoute` here over a scripted
+ * `read()` (A4.6 #4), so the app's cases run against the production SSE code.
  */
 import { createServer, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { appendFileSync, chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
-import { proofHeaders, type DocProof } from '../../../src/server/proof.ts'
+import { appProofOk, NONCE, proofHeaders, type DocProof } from '../../../src/server/proof.ts'
 import type { SlotFile } from '../../../src/server/slots.ts'
+import { LIVE_KINDS, LIVE_WIRE, type LiveEvent } from '../../../src/shared/app-api.ts'
 
 export interface FakeOptions {
   /** MARVER_HOME of the run: the slot file goes in `<home>/running/` */
@@ -69,7 +78,21 @@ export interface FakeOptions {
   cpuBallast?: boolean
   /** the body painted this colour (hex), unlike its view's ground: the painted-launch budget's sentinel (A3.8 #50) */
   sentinel?: string
+
+  // ---- A4 (spec 28 A4.6 #52, #56): FROZEN names, served for real by the live-stream stream ----
+  /**
+   * serve the live stream at `LIVE_WIRE.path`, starting from this snapshot (`true`: nothing waits). It does not add
+   * `live` to `features`: a case lists it, as a 0.29 slot file does, or leaves it out (a stale file, an older canvas).
+   * Without it the path is a 404, as on a canvas before 0.29
+   */
+  live?: true | LiveSnapshot
 }
+
+/** A snapshot as a case writes it (A4.6 #11): the canvas adds `v`, `instance` and `seq`; `counts` default to its
+ *  items by kind, everything else to nothing waiting. Written as given - past the bounds too, for the app's checks. */
+export type LiveSnapshot = Partial<Omit<LiveEvent, 'v' | 'instance' | 'seq'>>
+/** How the next live requests are answered: the stream, or a refusal before anything is read. */
+export type LiveAccept = 'ok' | 403 | 404 | 405 | 409
 
 export interface LoggedRequest { t: number; method: string; path: string; headers: Record<string, string | string[] | undefined> }
 
@@ -101,6 +124,15 @@ export interface FakeCanvas {
    * display and are not loads (review of a3-native, major #6)
    */
   tags: { t: number; tag: string }[]
+  /** A4: the snapshot every open live client is sent now, and each new one at once; `seq` rises by one only when it
+   *  differs from the last one written, as the server's hub does (A4.6 #14) */
+  setLive(s: LiveSnapshot): void
+  /** A4: ends every open live response - a Vite restart, a dropped connection; the app reconnects */
+  dropLive(): void
+  /** A4: how the next live requests are answered (`ok` at start) - 404 an older canvas, 403 a wrong `x-mv-app` */
+  acceptLive(how: LiveAccept): void
+  /** A4: the live responses open now */
+  liveClients(): number
   close(): Promise<void>
 }
 
@@ -260,6 +292,38 @@ export async function startFakeCanvas(opts: FakeOptions): Promise<FakeCanvas> {
   writeWhole(slotFile, JSON.stringify(rec, null, 2) + '\n')
 
   const tags: { t: number; tag: string }[] = []
+
+  // the live stream (A4.6 #5, #6, #11, #14), until app-live.ts's route serves it here
+  const fill = (s: LiveSnapshot): Omit<LiveEvent, 'v' | 'instance' | 'seq'> => {
+    const items = s.items ?? []
+    const tally = Object.fromEntries(LIVE_KINDS.map((k) => [k, items.filter((i) => i.kind === k).length])) as LiveEvent['counts']
+    return { jam: s.jam ?? 'on', items, cut: s.cut ?? 0, counts: s.counts ?? tally, unseen: s.unseen ?? 0, working: s.working ?? false, session: s.session ?? false }
+  }
+  let live = fill(opts.live === true || !opts.live ? {} : opts.live)
+  let liveSeq = 1
+  let accept: LiveAccept = 'ok'
+  const clients: ServerResponse[] = []
+  const frame = () => `event: ${LIVE_WIRE.event}\ndata: ${JSON.stringify({ v: 1, instance, seq: liveSeq, ...live } satisfies LiveEvent)}\n\n`
+  const beat = setInterval(() => { for (const c of clients) c.write(`${LIVE_WIRE.heartbeat}\n\n`) }, LIVE_WIRE.heartbeatMs)
+  beat.unref()
+  const serveLive = (req: IncomingMessage, res: ServerResponse) => {
+    const no = (status: number) => { res.writeHead(status, { 'content-type': 'text/plain', 'cache-control': 'no-store' }); res.end(String(status)) }
+    if (req.method !== 'GET') return no(405)
+    if (accept !== 'ok') return no(accept)
+    if (!appProofOk(proof, req.headers['x-mv-app'])) return no(403)
+    const nonce = req.headers['x-mv-nonce']
+    if (typeof nonce !== 'string' || !NONCE.test(nonce)) return no(400)
+    const p = opts.proof ?? 'valid'
+    const signed = p === 'none' ? null : proofHeaders(p === 'valid' ? proof : wrong, nonce, 'live')
+    res.writeHead(200, { 'content-type': `${LIVE_WIRE.type}; charset=utf-8`, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...signed })
+    res.socket?.setNoDelay(true)
+    // a fifth client ends the oldest (A4.6 #14)
+    if (clients.length >= LIVE_WIRE.clients) clients.shift()!.end()
+    clients.push(res)
+    res.on('close', () => { const i = clients.indexOf(res); if (i >= 0) clients.splice(i, 1) })
+    res.write(frame())
+  }
+
   const isLoad = (h: IncomingHttpHeaders) => { const dest = h['sec-fetch-dest']; return dest === 'document' || (dest === undefined && h['x-mv-nonce'] === undefined) }
   const html = (url: string, load: boolean) => {
     let tag: string | undefined
@@ -291,6 +355,7 @@ export async function startFakeCanvas(opts: FakeOptions): Promise<FakeCanvas> {
       return res.end(JSON.stringify({ ok: true, ws }))
     }
     if (path.startsWith(`${ROUTE}/test/`)) { res.writeHead(204); return res.end() }
+    if (path === LIVE_WIRE.path && opts.live) return serveLive(req, res)
     if ((path === '/' || path === '/index.html') && (req.method === 'GET' || req.method === 'HEAD')) {
       const headers: Record<string, string> = { 'content-type': 'text/html', 'cache-control': 'no-store' }
       const p = opts.proof ?? 'valid'
@@ -314,9 +379,20 @@ export async function startFakeCanvas(opts: FakeOptions): Promise<FakeCanvas> {
   return {
     port, origin, url, slotFile, instance, key, ws, requests, ready, tags,
     record: () => rec,
+    setLive(s) {
+      const next = fill(s)
+      if (JSON.stringify(next) === JSON.stringify(live)) return
+      live = next
+      liveSeq += 1
+      for (const c of clients) c.write(frame())
+    },
+    dropLive() { for (const c of clients.splice(0)) c.destroy() },
+    acceptLive(how) { accept = how },
+    liveClients: () => clients.length,
     async close() {
       if (closed) return
       closed = true
+      clearInterval(beat)
       try {
         const now = JSON.parse(readFileSync(slotFile, 'utf8')) as { instance?: string }
         if (now.instance === instance) rmSync(slotFile, { force: true })
@@ -335,4 +411,13 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const stop = () => { void fake.close().then(() => process.exit(0)) }
   process.on('SIGTERM', stop)
   process.on('SIGINT', stop)
+  // the live stream's commands from a parent that pipes them (never a terminal's keys)
+  if (!process.stdin.isTTY) createInterface({ input: process.stdin }).on('line', (line) => {
+    try {
+      const m = JSON.parse(line) as { setLive?: LiveSnapshot; dropLive?: boolean; acceptLive?: LiveAccept }
+      if (m.setLive) fake.setLive(m.setLive)
+      if (m.dropLive) fake.dropLive()
+      if (m.acceptLive) fake.acceptLive(m.acceptLive)
+    } catch { /* not a command */ }
+  })
 }

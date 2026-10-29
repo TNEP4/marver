@@ -32,7 +32,7 @@ import { homedir, totalmem } from 'node:os'
 import { join } from 'node:path'
 import { app, dialog, Menu, nativeTheme, powerMonitor, shell, WebContentsView, type MenuItemConstructorOptions, type Session, type WebContents, type WebPreferences } from 'electron'
 import * as sessions from './sessions.ts'
-import { CH, type PageKind, type TabPageAction } from '../shared/channels.ts'
+import { CH, type LinkOpenAnswer, type PageKind, type TabPageAction } from '../shared/channels.ts'
 import { startCommand } from '../shared/command.ts'
 import { effects, provideEffectHooks } from './effects.ts'
 import type { AppState, MenuItem, Present, Presented } from '../../../src/shared/app-api.ts'
@@ -742,9 +742,7 @@ export function runCommand(c: AppCommand, via: 'key' | 'menu'): void {
 // through the guard.
 
 export interface LinkTarget { state: string; origin: string | null; port: number; ws: string; name: string }
-type LinkAnswer = { ok: true } | { ok: false; why: 'bad' | 'nothing' | 'not-canvas' | 'later' | 'refused' }
-
-export async function openInTab(e: LinkTarget, url: string | null, rest: string): Promise<LinkAnswer> {
+export async function openInTab(e: LinkTarget, url: string | null, rest: string): Promise<LinkOpenAnswer> {
   const locals = allTabs().filter((t) => t.kind === 'local' && t.reg?.ws === e.ws)
   const t = locals.find((x) => e.origin ? x.reg!.origin === e.origin : x.reg!.port === e.port) ?? locals.find((x) => x.reg!.port === e.port)
   if (!t) return { ok: false, why: 'nothing' }
@@ -1102,6 +1100,8 @@ export function windowPorts() {
         return e ? { state: e.state, origin: e.origin ?? null, port: e.port, ws: e.ws, name: e.name } : undefined
       },
       open: openInTab,
+      // A4.4: the remote stream opens the link's origin in its remote tab (A4.6 #39-#42); until then it opens nothing
+      openRemote: async (): Promise<LinkOpenAnswer> => ({ ok: false, why: 'bad' }),
     },
     setFilesPill(p: { lead?: string; text: string; short: string; tooltip?: string } | null) {
       setCondition('files', p ? { text: p.text, short: p.short, ...(p.lead ? { lead: p.lead } : {}), ...(p.tooltip ? { tooltip: p.tooltip } : {}) } : null)

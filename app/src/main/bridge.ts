@@ -35,6 +35,14 @@
  * - `mv:presented` is accepted the same way and handed to `onPresented`; `present` sends `mv:present` only to the
  *   document named, admitted and trusted. Which epoch counts is present.ts's.
  *
+ * **A4** (app 0.3; A4.6 #29, #35), signatures frozen before its streams split (A4.6 #56), wired by them:
+ * - `openItem` sends `mv:open { doc, item }` to a tab's admitted, trusted document whose instance lists `open`, after
+ *   its hello (tabs.ts holds the click until then); the notices stream builds it and `mv:opened`;
+ * - `mv:capture`, the first canvas invoke, admits its sender as the reports do (an `IpcMainInvokeEvent`), checks the
+ *   rect, and hands an accepted ask to `onCapture`'s handler with a `still()` that runs the same admission again -
+ *   the bridge holds no capture logic (live-picture.ts does); the live pictures stream builds it;
+ * - `settings:action` carries Settings' one action, `open-notification-settings` (A4.6 #27).
+ *
  * **App pages** (A2.5, A2.14 #19): a channel is accepted only from the kinds `SENDERS` lists (src/shared/
  * channels.ts), from that webContents' main frame, while its frame shows the page's own pinned document
  * (`marver-app://<kind>/`), with every field checked here; `send` reaches a page only once it said `app:ready`,
@@ -47,8 +55,8 @@ import { randomBytes } from 'node:crypto'
 import { ipcMain, webFrameMain, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents, type WebFrameMain } from 'electron'
 import {
   APP_MENU_IDS, BOUNDS, CANVAS_CHANNELS, PERF_BOUNDS, UNSAVED_WHY, WHY,
-  type AppState, type Busy, type DocAnswer, type Hello, type Inset, type MenuItem, type PerfAsk, type PerfCam, type PerfMsg, type PerfSize,
-  type Present, type Presented, type Theme, type Why,
+  type AppState, type Busy, type CaptureAnswer, type CaptureRect, type DocAnswer, type Hello, type Inset, type MenuItem, type OpenItem, type PerfAsk, type PerfCam,
+  type PerfMsg, type PerfSize, type Present, type Presented, type Theme, type Why,
 } from '../../../src/shared/app-api.ts'
 import { CH, INVOKES as INVOKE_LIST, SENDERS, type PageKind } from '../shared/channels.ts'
 import { mainFrameOf, safely } from './frames.ts'
@@ -70,6 +78,13 @@ export interface CanvasReports {
 
 /** Who sent an app page's message, as main's map knows it. */
 export interface PageCtx { wc: WebContents; kind: PageKind; tabId?: string }
+
+/**
+ * A4 (A4.6 #35): main's answer to an accepted `mv:capture` - the tab and document that asked, the rect checked and
+ * rounded out to whole CSS px, and `still()`, the bridge's admission of that sender and `doc` run again (admitted,
+ * trusted, its instance listing `capture`), for the checks after the readback.
+ */
+export type CaptureHandler = (tabId: string, doc: string, rect: CaptureRect, still: () => boolean) => Promise<CaptureAnswer>
 
 export interface Bridge {
   /** record a webContents main created, with its kind (and its tab, for a canvas or a tab page) */
@@ -110,6 +125,14 @@ export interface Bridge {
   present(tabId: string, doc: string, r: Present): boolean
   /** `mv:perf` so far: accepted, refused by a check, dropped by the rate limit */
   perfCounts(): { accepted: number; refused: number; dropped: number }
+
+  // ---- A4 (A4.6 #29, #35): signatures frozen here, built by their streams ----
+  /** `mv:open { doc, item }` to the tab's admitted, trusted document whose instance lists `open`; false when there is
+   *  none (A4.6 #29). Until the notices stream builds it, nothing is sent */
+  openItem(tabId: string, item: OpenItem): boolean
+  /** main's handler for accepted `mv:capture` asks (live-picture.ts, A4.6 #35); null takes it away. The live pictures
+   *  stream installs the invoke itself */
+  onCapture(fn: CaptureHandler | null): void
 }
 
 /** What the bridge asks of the rest of main (main.ts passes them at install). */
@@ -249,6 +272,8 @@ export function checkPagePayload(channel: string, p: unknown): { ok: true; value
   const no = { ok: false as const }
   switch (channel) {
     case CH.ready: case CH.settingsGet: case CH.settingsReveal: return yes(null)
+    case CH.settingsAction:
+      return obj(p) && p.action === 'open-notification-settings' ? yes({ action: p.action }) : no
     case CH.tabActivate: case CH.tabClose:
       return obj(p) && typeof p.id === 'string' && TAB_ID.test(p.id) ? yes({ id: p.id }) : no
     case CH.tabMenu:
@@ -276,9 +301,10 @@ export function checkPagePayload(channel: string, p: unknown): { ok: true; value
   }
 }
 
-/** An app page's own pinned document: `marver-app://<kind>/` (its index.html, a hash at most). */
+/** An app page's own pinned document: `marver-app://<kind>/` (its index.html, a hash at most). A canvas and a remote
+ *  view (A4.6 #40) have none. */
 export function isPinnedUrl(url: string, kind: PageKind): boolean {
-  if (kind === 'canvas') return false
+  if (kind === 'canvas' || kind === 'remote') return false
   let u: URL
   try { u = new URL(url) } catch { return false }
   return u.protocol === 'marver-app:' && u.host === kind && (u.pathname === '/' || u.pathname === '/index.html') && !u.search && !u.username && !u.password
@@ -355,6 +381,8 @@ export function installBridge(o: BridgeOptions = {}): Bridge {
   const readyFns = new Set<(ctx: PageCtx) => void>()
   const handlers = new Map<string, (ctx: PageCtx, payload: unknown) => unknown>()
   const listening = new Set<string>()
+  /** A4: main's capture handler (A4.6 #35), read by the `mv:capture` invoke the live pictures stream adds */
+  let captureFn: CaptureHandler | null = null
   let watched: Registry | null = null
   let unwatch: (() => void) | null = null
 
@@ -680,6 +708,9 @@ export function installBridge(o: BridgeOptions = {}): Bridge {
       return sent
     },
     perfCounts: () => ({ ...perfCount }),
+    // A4.6 #29: the notices stream sends `mv:open` here; until then nothing is sent
+    openItem: () => false,
+    onCapture(fn) { captureFn = fn; trace('capture-handler', { set: !!captureFn }) },
   }
   return installed
 }

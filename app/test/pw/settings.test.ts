@@ -17,6 +17,7 @@ function view(o: { restoreTabs?: boolean; mode?: string; theme?: Partial<Setting
     config: { ...fs(), values: { restoreTabs: o.restoreTabs ?? true, unloadUnderPressure: true, recorder: true, keepPerfDays: 14, dockBadge: true } },
     theme,
     status: { v: 1, app: '0.1.0', at: 1, writable: o.writable ?? true, files: { 'config.json': fs(), 'theme.json': theme }, ...(o.write ? { write: o.write } : {}) },
+    notices: { outcome: 'unknown' },
   }
 }
 

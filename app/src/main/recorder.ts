@@ -179,7 +179,8 @@ function pagesNow(): Page[] {
   for (const wc of safely(() => allContents.getAllWebContents()) ?? []) {
     if (seen.has(wc.id)) continue
     const k = kindOf(wc.id)
-    if (k) add(wc, k, k === 'canvas' ? tabOf(wc.id) : undefined)
+    // a shared canvas's renderer is a canvas, never the app's own memory (A4.6 #48: its identity is the remote stream's)
+    if (k) add(wc, k === 'remote' ? 'canvas' : k, k === 'canvas' ? tabOf(wc.id) : undefined)
   }
   return out
 }

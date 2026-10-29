@@ -5,7 +5,7 @@
  * In node with Electron mocked; the real preload under a real renderer is test/pw/{strip,home,settings,tabpage}.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { INVOKES, isInvoke, RECEIVES, SENDERS, type PageKind } from '../../src/shared/channels.ts'
+import { INVOKES, isInvoke, RECEIVES, SENDERS, type AppPageKind, type PageKind } from '../../src/shared/channels.ts'
 
 const wire = vi.hoisted(() => ({
   sent: [] as { ch: string; args: unknown[] }[],
@@ -22,7 +22,7 @@ vi.mock('electron', () => ({
   },
 }))
 
-type AppKind = Exclude<PageKind, 'canvas'>
+type AppKind = AppPageKind
 async function load(kind: string): Promise<Record<string, unknown> | null> {
   vi.resetModules()
   wire.sent.length = wire.invoked.length = wire.listened.length = 0

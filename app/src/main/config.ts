@@ -411,7 +411,8 @@ export function settingsView(): SettingsView {
     values: { ...(f === 'config' ? v.config : v.theme) } as Record<string, unknown>,
     ...(recs[f].text !== undefined ? { text: recs[f].text } : {}),
   })
-  return { dir: tildeOf(home.dir), statusFile: tildeOf(statusPath()), config: file('config'), theme: file('theme'), status: filesStatus(), shown: shownKeys() }
+  // notices (A4.6 #27): `unknown` until the notices stream posts one and keeps its outcome in state/notices.json
+  return { dir: tildeOf(home.dir), statusFile: tildeOf(statusPath()), config: file('config'), theme: file('theme'), status: filesStatus(), shown: shownKeys(), notices: { outcome: 'unknown' } }
 }
 
 /** `settings:set`'s payload, checked again in main (the bridge checks it first). */

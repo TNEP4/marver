@@ -6,10 +6,40 @@
  * DRAFT contract, frozen before the streams split (A2.14 #32). Owners: trust (bridge.ts checks every field in
  * main), window (tabs, pill, window, page:focus, tabpage), home and files (home, settings, recent). No
  * Electron or file-system imports: pages import it too.
+ *
+ * A4 (app 0.3) amends it, frozen before its streams split (A4.6 #56): a tab's marks (`TabView.marks`, #19), the
+ * remote tab and its view (`TabKind` and `PageKind` `remote`, #39, #40, #49), the notices offer (`PillView.kind`
+ * `offer`, #26), Settings' notices (`SettingsView.notices` and `settings:action`, #27), `link:open` without
+ * `later` (#39) and Home's Shared canvases (`shared`, #47).
  */
 
-/** The kind `bridge.ts` records for each webContents it created. */
-export type PageKind = 'strip' | 'home' | 'settings' | 'tabpage' | 'canvas'
+/**
+ * The kind `bridge.ts` records for each webContents it created. `remote` (A4.6 #40): a shared canvas's view - no
+ * preload, no channels, never in `SENDERS`, no pinned page; recorded so `kindOf()` can answer for its permissions.
+ */
+export type PageKind = 'strip' | 'home' | 'settings' | 'tabpage' | 'canvas' | 'remote'
+/** The app's own pages: the kinds the app preload serves, with channels of their own. */
+export type AppPageKind = Exclude<PageKind, 'canvas' | 'remote'>
+
+/** What a tab is (tabs.ts `Tab.kind`): a local canvas, a shared one opened by its https link (A4.6 #39), Home, Settings. */
+export type TabKind = 'local' | 'remote' | 'home' | 'settings'
+
+/**
+ * What waits on the owner in a local canvas (A4.6 #19), from its server's live stream and main's own stop: set only
+ * for a local tab with a snapshot or a stop, whatever its view state, so hidden and unloaded tabs keep theirs; Home,
+ * Settings and remote tabs have none. The strip's one slot shows `needs` (orange), else `unseen` (blue), else
+ * `working` (a sweep); `session` a teal dot on the logo, whatever the slot shows.
+ */
+export interface TabMarks {
+  /** the stream's `counts.ask + review + failed + stalled` (exact past the 100-item cap), plus 1 for a stop not yet
+   *  acknowledged (#20) */
+  needs: number
+  unseen: number
+  working: boolean
+  session: boolean
+  /** the stream has been down `liveIdleMs`: drawn dimmed, "may be out of date" - never zero (#18) */
+  stale?: boolean
+}
 
 /**
  * A2.4's display state. `displayState(tab)` in tabs.ts computes it. `unloaded` is A3's (A3.8 #43, #46): a hidden
@@ -20,7 +50,7 @@ export type DisplayState = 'none' | 'live' | 'hidden' | 'gone' | 'starting' | 'u
 
 export interface TabView {
   id: string
-  kind: 'local' | 'home' | 'settings'
+  kind: TabKind
   /**
    * The canvas's name as its shell shows it (the slot file's `name`). For an `unverified` tab the pages never show
    * it: they name the tab by its link's host ("localhost:4808, not a Marver canvas", A2.13; frame mac-app/05), so
@@ -53,6 +83,8 @@ export interface TabView {
    * `hueOf(ws)` in src/shared/hue.ts. Optional (added by the pages stream): absent, the page picks one from the name.
    */
   hue?: number
+  /** A4 (A4.6 #19): what waits on the owner in this local canvas */
+  marks?: TabMarks
 }
 
 /** `tabs` (main to strip, home). */
@@ -78,7 +110,8 @@ export interface PageFocus { target: 'active-tab' | 'heading' }
 /** `pill` (main to strip), or null: the one pill main chose (A2.2). */
 export interface PillView {
   rev: number
-  kind: 'unsaved' | 'stopped' | 'not-responding' | 'confirmation' | 'files' | 'test'
+  /** `offer` (A4.6 #26): "Get a notice when a canvas needs you", Turn On, dismissible - tier 4, beside `test` */
+  kind: 'unsaved' | 'stopped' | 'not-responding' | 'confirmation' | 'files' | 'test' | 'offer'
   lead?: string
   text: string
   short: string
@@ -147,13 +180,19 @@ export type HomeAction =
 /** `home:action`'s answer: false when there was nothing to do (a recent id main no longer holds). */
 export interface HomeActionAnswer { ok: boolean }
 
-/** `link:open` (strip, home; an invoke). */
-export type LinkOpenAnswer = { ok: true } | { ok: false; why: 'bad' | 'nothing' | 'not-canvas' | 'later' | 'refused' }
+/** `link:open` (strip, home; an invoke). An https link opens a shared canvas's tab (A4.6 #39): never `later` from A4. */
+export type LinkOpenAnswer = { ok: true } | { ok: false; why: 'bad' | 'nothing' | 'not-canvas' | 'refused' }
+
+/**
+ * `shared` (main to home, A4.6 #47): Home's Shared canvases - links opened before, newest first, at most 12, each `url`
+ * a shell destination of its origin (never a sign-in URL); a card's click sends `link:open` with its `url`.
+ */
+export interface SharedLink { url: string; host: string; lastSeen: number }
 
 /**
  * Settings, a view of the files (A2.7, A2.12; the home-and-files stream). `settings:get` answers a `SettingsView`;
  * `status` (main to settings) pushes a `FilesStatus` whenever a file is judged or a write fails or recovers, and
- * the page asks `settings:get` again. `notices` joins at A4.2.
+ * the page asks `settings:get` again. `notices` joins at A4.2 (A4.6 #27).
  */
 export interface FileProblem { key?: string; message: string }
 /** What main last judged of one file, and what is in force. Written whole into `state/status.json` (README rule). */
@@ -194,12 +233,21 @@ export interface SettingsView {
   status: FilesStatus
   /** the keys this build shows, as `<file>.<key>` (settings-keys.ts `since`) */
   shown: string[]
+  /**
+   * A4 (A4.6 #25, #27): what macOS did with the last notice posted - `accepted` (it took the request: never a claim
+   * that it was seen), `failed` (it refused to schedule it: the row says "macOS turned down Marver's last notice"),
+   * `unknown` (none posted yet). `state/notices.json`'s `lastOutcome`, absent reading `unknown`.
+   */
+  notices: { outcome: 'unknown' | 'accepted' | 'failed' }
 }
 /** `settings:set` (settings to main; an invoke): one key into one file. */
 export interface SettingsSet { file: 'config' | 'theme'; key: string; value: boolean | number | string }
 export type SettingsSetResult =
   | { ok: true }
   | { ok: false; why: 'unknown-key' | 'bad-value' | 'unwritable' | 'write-failed'; code?: string }
+/** `settings:action` (settings to main; a send, A4.6 #27): the Notices row's Open System Settings, the one action. The
+ *  Notices switch itself is `settings:set notifications`; `notices-on` and `notices-off` are not built. */
+export interface SettingsAction { action: 'open-notification-settings' }
 
 /** The channel names. */
 export const CH = {
@@ -224,6 +272,9 @@ export const CH = {
   settingsSet: 'settings:set',
   settingsReveal: 'settings:reveal',
   status: 'status',
+  /** A4 (A4.6 #27, #47) */
+  settingsAction: 'settings:action',
+  shared: 'shared',
 } as const
 
 /**
@@ -253,12 +304,13 @@ export const SENDERS: Record<string, readonly PageKind[]> = {
   [CH.settingsGet]: ['settings'],
   [CH.settingsSet]: ['settings'],
   [CH.settingsReveal]: ['settings'],
+  [CH.settingsAction]: ['settings'],
 }
 
 /** Main-to-page channels each kind receives: the app preload subscribes to these alone (added by the pages stream). */
-export const RECEIVES: Record<Exclude<PageKind, 'canvas'>, readonly string[]> = {
+export const RECEIVES: Record<AppPageKind, readonly string[]> = {
   strip: [CH.tabs, CH.window, CH.pill, CH.pageFocus],
-  home: [CH.tabs, CH.window, CH.recent, CH.homeInfo, CH.homeFocus],
+  home: [CH.tabs, CH.window, CH.recent, CH.homeInfo, CH.homeFocus, CH.shared],
   settings: [CH.window, CH.status],
   tabpage: [CH.window, CH.tabpage, CH.pageFocus],
 }
@@ -293,6 +345,8 @@ export interface HomeApi extends PageApiBase {
   onRecent(fn: (r: RecentView[]) => void): Off
   onHomeInfo(fn: (i: HomeInfo) => void): Off
   onHomeFocus(fn: (f: HomeFocus) => void): Off
+  /** A4 (A4.6 #47): the Shared canvases list */
+  onShared(fn: (s: SharedLink[]) => void): Off
   activate(id: string): void
   close(id: string): void
   tabMenu(id: string, x: number, y: number): void
@@ -305,6 +359,8 @@ export interface SettingsApi extends PageApiBase {
   get(): Promise<SettingsView>
   set(s: SettingsSet): Promise<SettingsSetResult>
   reveal(): void
+  /** A4 (A4.6 #27): Open System Settings, on the Notifications pane */
+  action(a: SettingsAction): void
 }
 export interface TabPageApi extends PageApiBase {
   readonly kind: 'tabpage'

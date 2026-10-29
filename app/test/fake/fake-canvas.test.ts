@@ -1,6 +1,8 @@
 /**
  * The fake canvas (test/harness/fake-canvas.ts; spec 28 A2.14 #27) is a Marver canvas as far as the app can tell:
- * its slot file in A1's shape, and a document proof the app's check - A1's own formula - accepts, or refuses.
+ * its slot file in A1's shape, and a document proof the app's check - A1's own formula - accepts, or refuses. From
+ * A4, its live stream (A4.6 #5, #6, #11, #14): proved both ways, whole snapshots, driven by setLive, dropLive and
+ * acceptLive.
  */
 import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, statSync } from 'node:fs'
@@ -8,7 +10,9 @@ import { randomBytes } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { docProof } from '../../../src/server/proof.ts'
+import { appProof, docProof } from '../../../src/server/proof.ts'
+import { LIVE_WIRE, type LiveEvent, type LiveItem } from '../../../src/shared/app-api.ts'
+import { checkProof, oneHeaders } from '../../src/main/proof.ts'
 import { startFakeCanvas, type FakeCanvas } from '../harness/fake-canvas.ts'
 import { runSlotBase, testEnv, type TestEnv } from '../harness/env.ts'
 
@@ -164,5 +168,155 @@ describe('A3\'s options (spec 28 A3.8 #34, #45, #49, #50)', () => {
     expect(f).toContain('for (var g = 0; g < 32; g++)')
     expect(f).toContain("say('cpu-ballast')")
     expect(f).toContain('background:#00c853')
+  })
+})
+
+describe('A4\'s live stream (spec 28 A4.6 #5, #6, #11, #14, #56)', () => {
+  const ask = (n: number): LiveItem => ({ id: `ask:${n.toString(16).padStart(20, '0')}`, kind: 'ask', board: 'home', title: `Which one, ${n}?`, at: n, thread: `t${n}`, msg: `m${n}` })
+  /** a live request as main makes it (A4.6 #16): its proof headers checked as main checks them */
+  async function connect(f: FakeCanvas, o: { app?: string | null; nonce?: string | null; ws?: string; method?: string } = {}) {
+    const n = o.nonce === undefined ? nonce() : o.nonce
+    const headers: Record<string, string> = { accept: LIVE_WIRE.type, 'x-mv-ws': o.ws ?? f.ws }
+    if (n !== null) headers['x-mv-nonce'] = n
+    const app = o.app === undefined ? appProof(f.key, f.port) : o.app
+    if (app !== null) headers['x-mv-app'] = app
+    const ac = new AbortController()
+    const res = await fetch(`${f.origin}${LIVE_WIRE.path}`, { method: o.method ?? 'GET', headers, signal: ac.signal, redirect: 'error' })
+    const h = oneHeaders(Object.fromEntries([...res.headers.entries()].map(([k, v]) => [k, [v]])))
+    const proved = n !== null ? checkProof({ headers: h, nonce: n, key: f.key, port: f.port, instance: f.instance, kind: 'live' }) : 'proof'
+    const reader = res.status === 200 ? res.body!.getReader() : null
+    let buf = ''
+    /** the next whole block (an event or a comment), or null once the stream ended */
+    const next = async (): Promise<string | null> => {
+      for (;;) {
+        const i = buf.indexOf('\n\n')
+        if (i >= 0) { const block = buf.slice(0, i); buf = buf.slice(i + 2); return block }
+        const r = await reader!.read().catch(() => ({ done: true as const, value: undefined }))
+        if (r.done) return null
+        buf += new TextDecoder().decode(r.value)
+      }
+    }
+    const event = async (): Promise<LiveEvent | null> => {
+      const block = await next()
+      if (block === null) return null
+      const lines = block.split('\n')
+      expect(lines[0]).toBe(`event: ${LIVE_WIRE.event}`)
+      expect(lines).toHaveLength(2)
+      expect(lines[1].startsWith('data: ')).toBe(true)
+      return JSON.parse(lines[1].slice(6)) as LiveEvent
+    }
+    return { res, proved, event, close: () => ac.abort() }
+  }
+
+  it('without the option the route is a 404, as before 0.29; it does not list `live` by itself', async () => {
+    const f = await start({ slot: 13 })
+    expect((await connect(f)).res.status).toBe(404)
+    const g = await start({ slot: 14, live: true })
+    expect(g.record().features).toEqual(['bridge'])
+  })
+
+  it('the request is proved first: no or a wrong x-mv-app 403, no nonce 400, another method 405, another workspace 409 - nothing streamed', async () => {
+    const f = await start({ slot: 15, live: true })
+    expect((await connect(f, { app: null })).res.status).toBe(403)
+    expect((await connect(f, { app: appProof(f.key, f.port + 1) })).res.status).toBe(403)
+    expect((await connect(f, { app: appProof(randomBytes(32), f.port) })).res.status).toBe(403)
+    expect((await connect(f, { nonce: null })).res.status).toBe(400)
+    expect((await connect(f, { nonce: 'short' })).res.status).toBe(400)
+    expect((await connect(f, { method: 'POST' })).res.status).toBe(405)
+    const other = await connect(f, { ws: '0123456789abcdef' })
+    expect([other.res.status, other.res.headers.get('x-mv-elsewhere')]).toEqual([409, '1'])
+    expect(f.liveClients()).toBe(0)
+  })
+
+  it('the answer: an event stream signed with liveProof, which main\'s check kind live accepts; a whole snapshot at once', async () => {
+    const f = await start({ slot: 16, live: { items: [ask(2), ask(1)], unseen: 3, session: true } })
+    const c = await connect(f)
+    expect(c.res.status).toBe(200)
+    expect(c.res.headers.get('content-type')).toBe('text/event-stream; charset=utf-8')
+    expect(c.res.headers.get('cache-control')).toBe('no-store')
+    expect(c.res.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(c.proved).toBe('ok')
+    expect(await c.event()).toEqual({ v: 1, instance: f.instance, seq: 1, jam: 'on', items: [ask(2), ask(1)], cut: 0,
+      counts: { ask: 2, review: 0, failed: 0, stalled: 0 }, unseen: 3, working: false, session: true })
+    c.close()
+  })
+
+  it('a wrong key\'s answer fails main\'s check (proof invalid), and none carries no proof (proof none)', async () => {
+    const f = await start({ slot: 17, live: true, proof: 'invalid' })
+    const c = await connect(f)
+    expect([c.res.status, c.proved]).toEqual([200, 'proof'])
+    c.close()
+    const g = await start({ slot: 18, live: true, proof: 'none' })
+    const d = await connect(g)
+    expect([d.res.headers.get('x-mv-proof'), d.proved]).toEqual([null, 'proof'])
+    d.close()
+  })
+
+  it('setLive: a changed snapshot to every client with seq one higher; the same again writes nothing; a new client gets it at once', async () => {
+    const f = await start({ slot: 19, live: true })
+    const a = await connect(f), b = await connect(f)
+    expect((await a.event())!.seq).toBe(1)
+    expect((await b.event())!.seq).toBe(1)
+    f.setLive({ items: [ask(1)], working: true })
+    f.setLive({ items: [ask(1)], working: true })
+    f.setLive({ items: [], counts: { ask: 0, review: 1, failed: 0, stalled: 0 }, jam: 'off' })
+    for (const c of [a, b]) {
+      expect(await c.event()).toMatchObject({ seq: 2, items: [ask(1)], counts: { ask: 1 }, working: true })
+      expect(await c.event()).toMatchObject({ seq: 3, items: [], counts: { review: 1 }, jam: 'off' })
+    }
+    const late = await connect(f)
+    expect(await late.event()).toMatchObject({ seq: 3, jam: 'off' })
+    for (const c of [a, b, late]) c.close()
+  })
+
+  it('dropLive ends every response; a reconnect gets the same snapshot and seq. acceptLive answers the next requests', async () => {
+    const f = await start({ slot: 20, live: { items: [ask(7)] } })
+    const a = await connect(f)
+    expect((await a.event())!.seq).toBe(1)
+    await expect.poll(() => f.liveClients()).toBe(1)
+    f.dropLive()
+    expect(await a.event()).toBe(null)
+    const b = await connect(f)
+    expect(await b.event()).toMatchObject({ seq: 1, items: [ask(7)] })
+    b.close()
+    for (const how of [404, 403, 405, 409] as const) {
+      f.acceptLive(how)
+      expect((await connect(f)).res.status).toBe(how)
+    }
+    f.acceptLive('ok')
+    const c = await connect(f)
+    expect(c.res.status).toBe(200)
+    c.close()
+  })
+
+  it('at most four clients: a fifth that passes the proof ends the oldest', async () => {
+    const f = await start({ slot: 1, live: true })
+    const cs = []
+    for (let i = 0; i < 5; i++) { const c = await connect(f); await c.event(); cs.push(c) }
+    expect(await cs[0].event()).toBe(null)
+    await expect.poll(() => f.liveClients()).toBe(LIVE_WIRE.clients)
+    for (const c of cs) c.close()
+  })
+
+  it('as a child: driven by JSON lines on stdin', async () => {
+    const child = spawn(process.execPath, [resolve(import.meta.dirname, '..', 'harness', 'fake-canvas.ts'),
+      JSON.stringify({ home: env.home, slotBase, slot: 2, live: true })], { stdio: ['pipe', 'pipe', 'pipe'] })
+    const line = await new Promise<string>((ok, fail) => {
+      createInterface({ input: child.stdout! }).once('line', ok)
+      child.once('exit', (c) => fail(new Error(`exited ${c}`)))
+    })
+    const { ready } = JSON.parse(line) as { ready: { port: number; origin: string; instance: string; ws: string; slotFile: string } }
+    const key = Buffer.from(JSON.parse(readFileSync(ready.slotFile, 'utf8')).key, 'base64url')
+    const f = { ...ready, key } as unknown as FakeCanvas
+    const c = await connect(f)
+    expect([c.res.status, c.proved]).toEqual([200, 'ok'])
+    expect((await c.event())!.seq).toBe(1)
+    child.stdin!.write(`${JSON.stringify({ setLive: { items: [ask(3)] } })}\n`)
+    expect(await c.event()).toMatchObject({ seq: 2, items: [ask(3)] })
+    child.stdin!.write(`${JSON.stringify({ acceptLive: 404 })}\n${JSON.stringify({ dropLive: true })}\n`)
+    expect(await c.event()).toBe(null)
+    expect((await connect(f)).res.status).toBe(404)
+    child.kill('SIGTERM')
+    await new Promise((r) => child.once('exit', r))
   })
 })

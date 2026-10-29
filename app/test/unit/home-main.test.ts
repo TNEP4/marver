@@ -234,11 +234,15 @@ describe('home:action', () => {
 
 describe('link:open', () => {
   const ready: LinkEntry = { state: 'ready', origin: 'http://[::1]:4806', port: 4806, ws: WS(1), name: 'TMS broker' }
+  /** the https links handed to `openRemote` by the last run */
+  let remote: string[] = []
   const run = (url: unknown, entries: LinkEntry[], answer: { ok: true } | { ok: false; why: 'refused' } = { ok: true }) => {
     const opened: { url: string | null; rest: string }[] = []
+    remote = []
     return h.openLink({ url }, {
       byPort: (p) => entries.find((e) => e.port === p),
       open: async (_e, u, rest) => { opened.push({ url: u, rest }); return answer },
+      openRemote: async (u) => { remote.push(u); return answer },
     }).then((a) => ({ a, opened }))
   }
 
@@ -256,10 +260,13 @@ describe('link:open', () => {
     expect(await run('localhost:4806/#/b/x', [{ ...ready, state: 'starting', origin: null }])).toEqual({ a: { ok: true }, opened: [{ url: null, rest: '/#/b/x' }] })
   })
 
-  it('https is a later build; credentials, other hosts, 2 KB and non-strings are bad', async () => {
-    expect((await run('https://pilot.example.com/', [ready])).a).toEqual({ ok: false, why: 'later' })
+  it('an https link goes to its remote tab, its answer passed through - never `later` (A4.6 #39); credentials, other hosts, 2 KB and non-strings are bad', async () => {
+    expect(await run('https://pilot.example.com/b?x=1#/b/flow', [ready])).toEqual({ a: { ok: true }, opened: [] })
+    expect(remote).toEqual(['https://pilot.example.com/b?x=1#/b/flow'])
+    expect((await run('https://pilot.example.com/', [ready], { ok: false, why: 'refused' })).a).toEqual({ ok: false, why: 'refused' })
     for (const u of ['http://example.com/', 'http://u:p@localhost:4806/', `http://localhost:4806/#${'a'.repeat(2048)}`, 42, null]) {
       expect((await run(u, [ready])), String(u).slice(0, 40)).toEqual({ a: { ok: false, why: 'bad' }, opened: [] })
+      expect(remote).toEqual([])
     }
   })
 
@@ -304,7 +311,7 @@ describe('mountPages (ports.ts): the pages\' channels, mounted once at ready', (
     const { INVOKES, CH } = await import('../../src/shared/channels.ts')
     h.mountPages(f.bridge as never, {
       running: () => [], onRunningChange: () => () => {}, setFilesPill: (p) => pills.push(p),
-      linkPorts: { byPort: (port) => (port === 4901 ? { state: 'ready', origin: 'http://[::1]:4901', port, ws: WS(1), name: 'A' } : undefined), open: async () => ({ ok: true }) },
+      linkPorts: { byPort: (port) => (port === 4901 ? { state: 'ready', origin: 'http://[::1]:4901', port, ws: WS(1), name: 'A' } : undefined), open: async () => ({ ok: true }), openRemote: async () => ({ ok: true }) },
     })
     expect([...f.handlers.keys()].sort()).toEqual([...INVOKES, CH.settingsReveal].sort())
     expect(await f.invoke(CH.homeAction, { action: 'copy-start', id: `r_${WS(1)}` })).toEqual({ ok: true })
@@ -324,7 +331,7 @@ describe('mountPages (ports.ts): the pages\' channels, mounted once at ready', (
     const f = fakeBridge()
     const off = h.mountPages(f.bridge as never, {
       running: () => running, onRunningChange: (fn) => { runningChanged = fn; return () => {} }, setFilesPill: () => {},
-      linkPorts: { byPort: () => undefined, open: async () => ({ ok: true }) },
+      linkPorts: { byPort: () => undefined, open: async () => ({ ok: true }), openRemote: async () => ({ ok: true }) },
     })
     f.ready('home')
     expect(f.sent.map((s) => s.ch)).toEqual(['home:info', 'recent'])

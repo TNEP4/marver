@@ -208,6 +208,11 @@ export interface LinkPorts {
    * - otherwise `guard(tab, { kind: 'load', url })`: `done` is `ok`, `refused` is `refused`.
    */
   open(entry: LinkEntry, url: string | null, rest: string): Promise<LinkOpenAnswer>
+  /**
+   * A4 (A4.6 #39): an https link as `parseLink` gives it - its origin's remote tab, found or made by the tabs' own
+   * rules and activated (the remote stream's). Its answer passes through; never `later`.
+   */
+  openRemote(url: string): Promise<LinkOpenAnswer>
 }
 
 /** `link:open { url }` from the strip or Home (A2.7): checked again in main, never loading the host it wrote. */
@@ -217,7 +222,7 @@ export async function openLink(raw: unknown, ports: LinkPorts): Promise<LinkOpen
   if (typeof s !== 'string' || s.length >= LINK_MAX) return { ok: false, why: 'bad' }
   const p = parseLink(s)
   if (p.kind === 'bad') return { ok: false, why: 'bad' }
-  if (p.kind === 'https') return { ok: false, why: 'later' }   // shared canvases: A4.4
+  if (p.kind === 'https') return ports.openRemote(p.url)   // shared canvases: A4.4
   const e = ports.byPort(p.port)
   if (!e || (e.state !== 'ready' && e.state !== 'starting')) return { ok: false, why: 'nothing' }
   if (e.state === 'starting' || !e.origin) return ports.open(e, null, p.rest)
@@ -285,9 +290,11 @@ function provideHomeHooks(): void {
   provide('home.link', (a) => {
     const o = a as { url: unknown; entries?: LinkEntry[]; answer?: LinkOpenAnswer }
     const opened: { url: string | null; rest: string }[] = []
+    const remote: string[] = []
     return openLink({ url: o.url }, {
       byPort: (port) => o.entries?.find((e) => e.port === port),
       open: async (_e, url, rest) => { opened.push({ url, rest }); return o.answer ?? { ok: true } },
-    }).then((answer) => ({ answer, opened }))
+      openRemote: async (url) => { remote.push(url); return o.answer ?? { ok: true } },
+    }).then((answer) => ({ answer, opened, remote }))
   })
 }

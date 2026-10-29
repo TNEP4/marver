@@ -102,6 +102,23 @@ export const T = {
    * unload ends within `unloadActMs` and a task unless its webContents never goes, and that wait has no end of its own
    */
   quitWaitMs: 15_000,
+
+  // ---- A4 (app 0.3): frozen names, starting values (A4.6 #28, #44, #56) ----
+
+  /** a live stream's reconnects (A4.6 #16): these, then every `liveBackoffMaxMs`, each with up to 20 % jitter, reset
+   *  once a connection delivers a valid snapshot; no byte for `liveIdleMs` (the server's heartbeat is 30 s) aborts and
+   *  reconnects, and a stream down that long marks its tab's marks stale (#18) */
+  liveBackoffMs: [1000, 2000, 4000, 8000, 16_000] as readonly number[],
+  liveBackoffMaxMs: 30_000,
+  liveIdleMs: 75_000,
+  /** notices (A4.6 #21, #23): at most one per canvas in this window, none summed after; the badge applied again this
+   *  long after Turn On, since macOS grants the permission asynchronously */
+  noticeEveryMs: 60_000,
+  badgeRetryMs: 10_000,
+  /** a notice's click held for its tab's document to be admitted and say hello, then dropped (A4.6 #29) */
+  openWaitMs: 15_000,
+  /** remote tabs (A4.6 #44): `net.isOnline()` read this often, only while some remote tab is unreachable */
+  onlinePollMs: 1000,
 } satisfies Record<string, number | readonly number[]>
 
 export type Timings = typeof T

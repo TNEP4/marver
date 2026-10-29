@@ -23,7 +23,7 @@
  *   unload's admission (`unloadRefusal`), its op, `onUnloaded` and the reopen are the section at the end (the
  *   unloading stream); memory.ts decides when.
  */
-import type { DisplayState, TabPageProbe, TabView } from '../shared/channels.ts'
+import type { DisplayState, TabKind, TabPageProbe, TabView } from '../shared/channels.ts'
 import type { AppState, Busy, Hello, Inset, MenuItem, Theme, Why } from '../../../src/shared/app-api.ts'
 import { FEATURE, UNSAVED_WHY, WHY_WORDS } from '../../../src/shared/app-api.ts'
 import type { AppBody, AppKind, TabIdent, UnloadReason } from '../../../src/shared/app-perf.ts'
@@ -35,7 +35,8 @@ import type { RegistryEntry, RegistryEvent } from './registry.ts'
 import { tilde } from '../shared/command.ts'
 import { hueOf } from '../shared/hue.ts'
 
-export type TabKind = 'local' | 'home' | 'settings'   // 'remote' from A4
+/** A tab's kind is channels.ts's (A4.6 #39: `remote` from A4, a shared canvas - the remote stream builds it). */
+export type { TabKind }
 
 /** The registry's facts about the tab's canvas (writer: tabs.ts, from the registry's events). */
 export interface TabReg {

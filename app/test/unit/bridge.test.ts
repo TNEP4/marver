@@ -66,6 +66,10 @@ describe('app pages', () => {
     expect(checkPagePayload('home:action', { action: 'show-files', path: '/etc' })).toEqual({ ok: true, value: { action: 'show-files' } })
     expect(checkPagePayload('settings:set', { file: 'config', key: 'restoreTabs', value: false }).ok).toBe(true)
     expect(checkPagePayload('settings:set', { file: '../x', key: 'k', value: 1 }).ok).toBe(false)
+    // A4.6 #27: Settings' one action, nothing else - notices-on and notices-off are not built
+    expect(checkPagePayload('settings:action', { action: 'open-notification-settings', url: 'x' })).toEqual({ ok: true, value: { action: 'open-notification-settings' } })
+    for (const action of ['notices-on', 'notices-off', 'open-browser', undefined]) expect(checkPagePayload('settings:action', { action }).ok).toBe(false)
+    expect(checkPagePayload('settings:action', null).ok).toBe(false)
     expect(checkPagePayload('mv:theme', { dark: true }).ok).toBe(false)
   })
   it('a pinned page is exactly marver-app://<kind>/', () => {
@@ -93,6 +97,13 @@ describe('app pages', () => {
     expect(mayUsePageChannel('tab:activate', 'strip', true, 'marver-app://home/')).toBe(false)
     expect(mayUsePageChannel('tab:activate', undefined, true, 'marver-app://strip/')).toBe(false)
     expect(mayUsePageChannel('no-such-channel', 'strip', true, 'marver-app://strip/')).toBe(false)
+    // A4.6 #27: settings:action from Settings alone; #40: a remote view sends nothing and has no pinned page
+    expect(mayUsePageChannel('settings:action', 'settings', true, 'marver-app://settings/')).toBe(true)
+    expect(mayUsePageChannel('settings:action', 'home', true, 'marver-app://home/')).toBe(false)
+    for (const url of ['https://pilot.example.com/', 'marver-app://remote/']) {
+      for (const ch of Object.keys(SENDERS)) expect(mayUsePageChannel(ch, 'remote', true, url), `${ch} ${url}`).toBe(false)
+      expect(isPinnedUrl(url, 'remote')).toBe(false)
+    }
   })
 })
 
