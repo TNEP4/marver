@@ -106,6 +106,8 @@ export function goalText(packet: JobPacket, subagents = true, runner?: Runner): 
       'A frame they pointed at can be WHERE they want something new ("a new frame to the right of this one"), not',
       'what to change: then leave that frame as it is and make the new one - Marver moves the capture\'s thread onto it.',
       '`added` are notes they wrote after the capture ended, in its read-back: read them after the timeline.',
+      'Its pictures are files: the member\'s `pictures` names each one\'s `file` - open the ones you need. A `live` one is',
+      'the owner\'s screen in play as they saw it (an open menu, text they typed); the others are fresh renders of the frame.',
       '',
     ] : []),
     ...(packet.members.some((m) => m.brief.wrapup) ? [
