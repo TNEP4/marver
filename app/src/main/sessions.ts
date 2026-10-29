@@ -291,8 +291,7 @@ export function remoteSession(): Session {
  * hosts to 127.0.0.1 (`MAP *.canvas.test 127.0.0.1`), so the harness's https hosts resolve to it.
  */
 export function remoteTestSwitches(): void {
-  if (!(__MV_TEST__ && testMode())) return
-  const rules = process.env.MARVER_APP_TEST_HOSTS
+  const rules = __MV_TEST__ && testMode() ? process.env.MARVER_APP_TEST_HOSTS : undefined
   if (rules && /^MAP [*a-z0-9.-]+\.test 127\.0\.0\.1(\s*,\s*MAP [*a-z0-9.-]+\.test 127\.0\.0\.1)*$/.test(rules)) app.commandLine.appendSwitch('host-resolver-rules', rules)
 }
 

@@ -102,6 +102,25 @@ describe('can\'t be reached (A2.11)', () => {
     await show({ page: 'unreachable', name: 'TMS broker', since: Date.now(), origin: 'http://[::1]:4806', retained: true, probe: none })
     expect(await words()).toBe('Can\'t reach TMS broker Its address doesn\'t answer. The page you had is still open. Try Again reloads it. Try Again Close Tab')
   })
+
+  it('the reason main sends, in words: offline, no host, no answer, a certificate', async () => {
+    for (const [reason, said] of [['offline', 'You\'re offline.'], ['nothing', 'The server didn\'t answer.'], ['certificate', 'Its certificate isn\'t valid, and the app never goes past that.']]) {
+      await show({ page: 'unreachable', name: 'TMS broker', since: Date.now(), origin: 'http://[::1]:4806', reason, retained: false, probe: none })
+      expect(await words()).toContain(said)
+    }
+  })
+
+  it('a shared canvas: Opening <host> first; unreachable with Open in Browser, and "<host> answers again" for its answer (A4.6 #42, #44)', async () => {
+    await show({ page: 'starting', phase: 'opening', name: 'pilot.example.com', since: Date.now() - 1000, hue: 2 })
+    await p.page.waitForFunction(() => document.querySelector('#content h1')?.textContent === 'Opening pilot.example.com', null, { timeout: 2000 })
+    const r = await show({ page: 'unreachable', name: 'pilot.example.com', since: Date.now(), origin: 'https://pilot.example.com', reason: 'offline', retained: false, probe: none, hue: 2 })
+    expect(await words()).toBe('Can\'t reach pilot.example.com You\'re offline. Try Now Open in Browser Close Tab Trying again every few seconds')
+    await p.page.getByRole('button', { name: 'Open in Browser' }).click()
+    expect(await p.calls('tabpage:action')).toEqual([{ rev: r, action: 'open-browser' }])
+    await show({ page: 'unreachable', name: 'pilot.example.com', since: Date.now(), origin: 'https://pilot.example.com', retained: true, probe: { state: 'answers', lastAt: 1 }, hue: 2 })
+    expect(await p.page.$eval('.tp-line', (e) => e.textContent)).toBe('pilot.example.com answers again')
+    expect(await buttons()).toEqual(['Try Again', 'Open in Browser', 'Close Tab'])
+  })
 })
 
 describe('crashed (A2.11)', () => {

@@ -46,8 +46,11 @@ export const IDENTITY = process.env.MARVER_SIGN_IDENTITY || 'Developer ID Applic
 export const TEAM = /\(([A-Z0-9]{10})\)$/.exec(IDENTITY)?.[1] ?? null
 export const MIC = 'Marver uses the microphone only during a Jam session you start.'
 export const MIN_MACOS = '13.0'
-/** Strings only the dev flavour's test hooks hold (testing/index.ts): the release bundle must have none. */
-export const TEST_SENTINELS = ['mv-test-hook', 'MARVER_APP_CONTROL', '__mvTest', 'MARVER_APP_SPY']
+/**
+ * Strings only the dev flavour's test hooks hold (testing/index.ts): the release bundle must have none. A4 (A4.6 #50):
+ * the remote harness's three switches (sessions.ts), never in a release.
+ */
+export const TEST_SENTINELS = ['mv-test-hook', 'MARVER_APP_CONTROL', '__mvTest', 'MARVER_APP_SPY', 'MARVER_APP_TEST_HOSTS', 'MARVER_APP_TEST_REMOTE_CERT', 'MARVER_APP_TEST_FRONT_DOOR']
 
 const require = createRequire(join(APP, 'package.json'))
 const pkg = JSON.parse(readFileSync(join(APP, 'package.json'), 'utf8'))
