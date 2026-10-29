@@ -125,6 +125,31 @@ describe('marver perf --jam', () => {
   })
 })
 
+describe('live pictures in the log (A4.6 #36)', () => {
+  it('a capture\'s live counts are kept as numbers, anything else in them dropped; absent without the app', async () => {
+    const root = temp()
+    logJam(root, { kind: 'capture', capture: CAP, pictures: { count: 3, ms: [400], live: { count: 2, failed: 1, fellBack: 1, why: SENTINEL } } })
+    logJam(root, { kind: 'capture', capture: CAP2, pictures: { count: 1, ms: [500], live: { count: SENTINEL } } })
+    await flushJam(root)
+    expect(readFileSync(jamLog(root), 'utf8')).not.toContain(SENTINEL)
+    const evs = readJam(root).events
+    expect(evs[0].pictures.live).toEqual({ count: 2, failed: 1, fellBack: 1 })
+    expect(evs[1].pictures.live).toBeUndefined()
+    expect(cleanJamEvent({ kind: 'capture', capture: CAP, pictures: { count: 1 } })!.pictures).toEqual({ count: 1 })
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('marver perf --jam sums them, and a capture whose live pictures failed is a problem', () => {
+    const s = jamSummary([
+      { ts: 1, kind: 'capture', capture: 'c1', pictures: { ms: [500], live: { count: 2, failed: 0, fellBack: 0 } } },
+      { ts: 2, kind: 'capture', capture: 'c2', pictures: { ms: [700], live: { count: 0, failed: 2, fellBack: 1 } } },
+    ])
+    expect(s.live).toEqual({ count: 2, failed: 2, fellBack: 1 })
+    expect(s.problems.map((p) => p.what)).toEqual(['capture c2: 2 live picture(s) failed, 1 rendered instead'])
+    expect(jamSummary([{ ts: 1, kind: 'capture', capture: 'c1', pictures: { ms: [500] } }]).live).toBeUndefined()
+  })
+})
+
 describe('the Done group\'s line (0.26.1)', () => {
   it('captures and records apart, frames changed when known', async () => {
     const { doneLine } = await import('../src/client/shell/jam-state.ts')

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { laneLine, laneTip, lineText, runnerLine, statusLines, timelineLines, type LaneCard } from '../src/client/shell/jam-lines.ts'
+import { laneLine, laneTip, lineText, pictureCaption, runnerLine, statusLines, timelineLines, type LaneCard } from '../src/client/shell/jam-lines.ts'
 import type { CaptureRecord } from '../src/server/jam/types.ts'
 
 const card = (o: Partial<LaneCard>): LaneCard => ({ id: 'cap-1', kind: 'capture', board: 'home', frames: [], events: [], state: 'queued', rev: 1, made: 0, order: 0, at: 0, ...o })
@@ -93,6 +93,14 @@ describe('the read-back: a capture\'s merged timeline', () => {
     expect(lines.filter((l) => l.kind === 'note')).toHaveLength(0)
     expect(timelineLines(rec, '')[0].text).toMatch(/no words/)
     expect(lines.find((l) => l.kind === 'pick')?.source).toBe('design/scenes/pricing/checkout.tsx:48')
+  })
+
+  it('a live picture (A4.6 #38) reads "as you saw it", in its timeline line and its caption; a render as before', () => {
+    const live = 'p-0000000000000002'
+    const r: CaptureRecord = { ...rec, pictures: ['p-0000000000000001', live],
+      timeline: [...rec.timeline, { at: t0 + 21000, frame: 'pricing/checkout', event: 'picture', id: live, why: 'key', source: 'live' }] }
+    expect(timelineLines(r).filter((l) => l.kind === 'picture').map(lineText)).toEqual(['[0:19] (picture 1) checkout at E', '[0:21] (picture 2) checkout · as you saw it'])
+    expect(r.pictures.map((id, i) => pictureCaption(r, id, i + 1))).toEqual(['picture 1', 'picture 2 · as you saw it'])
   })
 })
 

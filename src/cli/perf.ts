@@ -343,10 +343,15 @@ export function jamSummary(events: Record<string, any>[]) {
     ...of('run').filter((r) => r.failure).map((r) => ({ ts: r.ts, what: `run ${String(r.batch).slice(0, 8)} ${r.redelivered ? 'could not post its replies' : `failed: ${r.failure}`}` })),
     ...shots.filter((s) => s.outcome && s.outcome !== 'ok').map((s) => ({ ts: s.ts, what: `shot ${s.frame ?? '?'}: ${s.outcome}${s.recaptures ? ` after ${s.recaptures} retakes` : ''}` })),
     ...caps.filter((c) => c.pictures?.late || c.pictures?.failed).map((c) => ({ ts: c.ts, what: `capture ${c.capture}: ${c.pictures.late ?? 0} picture(s) too late, ${c.pictures.failed ?? 0} failed` })),
+    // a live picture that failed (A4.6 #36): the render took its place - one that always fails shows here
+    ...caps.filter((c) => c.pictures?.live?.failed).map((c) => ({ ts: c.ts, what: `capture ${c.capture}: ${c.pictures.live.failed} live picture(s) failed, ${c.pictures.live.fellBack ?? 0} rendered instead` })),
     ...of('name').filter((n) => !n.ok).map((n) => ({ ts: n.ts, what: `naming ${n.capture} gave no name` })),
     ...of('dropped').map((d) => ({ ts: d.ts, what: `${d.count} event(s) dropped (the log was busy)` })),
   ].sort((a, b) => b.ts - a.ts).slice(0, 10)
-  return { steps, outcomes, problems, retakes: shots.reduce((n, s) => n + (s.recaptures ?? 0), 0) }
+  const lives = caps.map((c) => c.pictures?.live).filter((l): l is Record<string, number> => !!l)
+  const live = { count: 0, failed: 0, fellBack: 0 }
+  for (const l of lives) for (const k of ['count', 'failed', 'fellBack'] as const) live[k] += typeof l[k] === 'number' ? l[k] : 0
+  return { steps, outcomes, problems, retakes: shots.reduce((n, s) => n + (s.recaptures ?? 0), 0), ...(lives.length ? { live } : {}) }
 }
 
 function jamPerf(root: string, opts: { minutes?: number; json?: boolean }) {
@@ -367,6 +372,7 @@ function jamPerf(root: string, opts: { minutes?: number; json?: boolean }) {
   const out = Object.entries(sum.outcomes)
   if (out.length) console.log(`\nruns by outcome: ${out.map(([k, n]) => `${n} ${k}`).join(', ')}`)
   if (sum.retakes) console.log(`pictures taken again (a stale surface): ${sum.retakes}`)
+  if (sum.live) console.log(`live pictures (the Mac app's, in play): ${sum.live.count} kept, ${sum.live.failed} failed (${sum.live.fellBack} rendered instead)`)
   if (sum.problems.length) {
     console.log('\nlately')
     for (const p of sum.problems) console.log(`  ${new Date(p.ts).toLocaleTimeString()}  ${p.what}`)

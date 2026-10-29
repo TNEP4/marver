@@ -14,7 +14,7 @@ import { FocusPanel, VoiceAsk } from './jam-panel.tsx'
 import { addNote, decideDraft, laneCards, openThread, openTile, pendingEdit, resumeDraft, reveal, saveEdit, shownLane, startCapture } from './jam-keys.ts'
 import { ContextMenu, useContextMenu, type MenuItem } from './ContextMenu.tsx'
 import { ArrowBendUpLeftIcon, ArrowLineUpIcon, ArrowUpIcon, CheckSquareOffsetIcon, CommentIcon, EyeIcon, NotebookIcon, PencilSimpleIcon, PlayIcon, ReloadIcon, XIcon } from './icons.tsx'
-import { laneLine, laneTip, timelineLines } from './jam-lines.ts'
+import { laneLine, laneTip, pictureCaption, timelineLines } from './jam-lines.ts'
 import { changedShots, useJamQueue, type JamCard } from './jam-queue.ts'
 import { DONE_GROUP, doneFold, letGoOfTile, useJamUi } from './jam-state.ts'
 import { CaptureLaneRow, FocusPanelView } from './jam-surface-parts.tsx'
@@ -240,7 +240,7 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
           agent={agentName}
           reviewedTitle={panelCard.reviewing ? cards?.find((c) => c.id === panelCard.reviewing!.card)?.title : undefined}
           lines={rec ? timelineLines(rec.record, panelCard.edited ?? rec.edited) : []}
-          pictures={(rec?.record.pictures ?? []).map((id, i) => ({ id, url: picture(id)!, caption: `picture ${i + 1}` }))}
+          pictures={(rec?.record.pictures ?? []).map((id, i) => ({ id, url: picture(id)!, caption: pictureCaption(rec!.record, id, i + 1) }))}
           shots={changedShots(panelCard.shots).map((x) => ({ frame: x.frame, before: picture(x.before), after: picture(x.after), ...(x.new ? { new: true } : {}) }))}
           reply={panelCard.reply ? replyText(panelCard) : ''}
           view={ui.view} tab={ui.tab} moreOpen={ui.moreOpen}
