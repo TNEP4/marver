@@ -103,7 +103,10 @@ function exclude(root: string, rel: string): void {
   if (r.status !== 0) return
   const p = r.stdout.trim()
   const file = isAbsolute(p) ? p : join(root, p)
-  const line = `/${rel.split('\\').join('/')}`
+  // the exclude file's patterns are relative to the repository's top: a canvas in a subfolder names its folder too
+  const prefix = git(root, ['rev-parse', '--show-prefix'])
+  if (prefix.status !== 0) return
+  const line = `/${prefix.stdout.trim()}${rel.split('\\').join('/')}`
   let text = ''
   try { text = readFileSync(file, 'utf8') } catch { /* none yet */ }
   if (text.split('\n').some((l) => l.trim() === line)) return

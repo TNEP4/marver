@@ -130,6 +130,22 @@ describe('connectors: one shape of hook for Claude Code, Codex and Cursor', () =
     expect(() => execFileSync('git', ['check-ignore', '-q', '--', '.cursor/hooks.json'], { cwd: root })).not.toThrow()
     done()
   })
+  it('a canvas in a subfolder of a git repository keeps its hook files out of commits too - the exclude line names the subfolder', () => {
+    const { root: top, done } = workspace()
+    execFileSync('git', ['init', '-q'], { cwd: top })
+    const root = join(top, 'canvas')
+    mkdirSync(join(root, 'design', '.local'), { recursive: true })
+    const bin = join(root, 'node_modules', '.bin', 'marver')
+    mkdirSync(join(root, 'node_modules', '.bin'), { recursive: true }); writeFileSync(bin, '#!/bin/sh\n', { mode: 0o755 })
+    expect(ensureConnectors(root, { agents: ['codex', 'cursor'], bin }).map((x) => x.state)).toEqual(['installed', 'installed'])
+    for (const rel of ['canvas/.codex/hooks.json', 'canvas/.cursor/hooks.json']) {
+      expect(() => execFileSync('git', ['check-ignore', '-q', '--', rel], { cwd: top })).not.toThrow()
+    }
+    // nothing at the repository's top is hidden in its place
+    mkdirSync(join(top, '.codex')); writeFileSync(join(top, '.codex', 'hooks.json'), '{}')
+    expect(() => execFileSync('git', ['check-ignore', '-q', '--', '.codex/hooks.json'], { cwd: top })).toThrow()
+    done()
+  })
 })
 
 describe('hooks: the right host, the right answer', () => {

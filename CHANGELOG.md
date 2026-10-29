@@ -2,6 +2,15 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## 0.29.0 - Unreleased
+
+### Fixed
+
+- **A canvas in a subfolder of a git repository keeps Jam's hook files out of commits.** In a monorepo, or a
+  `canvas/` folder beside your app, `.codex/hooks.json` and `.cursor/hooks.json` showed up in `git status` as new
+  files: their line in `.git/info/exclude` named them from the repository's top, not from the canvas's folder. It
+  names the folder now.
+
 ## 0.28.0 - 2026-10-29
 
 ### Highlights
