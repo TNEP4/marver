@@ -151,7 +151,8 @@ export function createNotify(ports: NotifyPorts, o: { seenMax?: number } = {}): 
   let created = false
   /** notifications turned true while the app runs (#21, #22) */
   let turnedOn = false
-  let anySnapshot = false
+  /** a snapshot or a stop seen this run: found on at launch, the badge starts at the first (#21) */
+  let observed = false
   let badgeShown: number | null = null
   let offered = false
   let retry: ReturnType<typeof setTimeout> | undefined
@@ -187,7 +188,7 @@ export function createNotify(ports: NotifyPorts, o: { seenMax?: number } = {}): 
       if (badgeShown) { presenter().badge(0); badgeShown = 0; log({ badge: 0 }) }
       return
     }
-    if (!turnedOn && !anySnapshot) return
+    if (!turnedOn && !observed) return
     const n = total()
     if (!force && n === badgeShown) return
     presenter().badge(n)
@@ -278,7 +279,7 @@ export function createNotify(ports: NotifyPorts, o: { seenMax?: number } = {}): 
   return {
     marksOf,
     onLive(instance, why) {
-      if (why === 'applied') { anySnapshot = true; diff(instance) }
+      if (why === 'applied') { observed = true; diff(instance) }
       after()
     },
     onRegistry(e) {
@@ -290,6 +291,8 @@ export function createNotify(ports: NotifyPorts, o: { seenMax?: number } = {}): 
         // seen as it happens, in front: acknowledged at once
         if (inFront(t)) { log({ ack: s.id, tab: t.id, front: true }); return }
         stops.set(t.id, s)
+        // a canvas without live, or one killed before its first snapshot: the stop is what the badge first counts
+        observed = true
         log({ stop: s.id, tab: t.id })
         post(t, s.ws, 'Stopped', 0, null)
         after()

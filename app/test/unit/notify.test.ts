@@ -376,6 +376,21 @@ describe('the badge (A4.6 #21, #22)', () => {
     expect(fx.journal.map((l) => l.op)).toEqual(['badge', 'create', 'post', 'badge'])
   })
 
+  it('found on at launch: a stop before any snapshot - a canvas without live, or one killed before its first - is in the badge', () => {
+    const t = canvas({ features: ['bridge', 'inset'] })
+    n.onCompose()
+    expect(fx.journal).toEqual([])
+    held.delete(t.reg!.instance)
+    onRegistry({ kind: 'gone', file: t.reg!.file, instance: t.reg!.instance, why: 'pid' })
+    n.onRegistry({ kind: 'gone', file: t.reg!.file, instance: t.reg!.instance, why: 'pid' })
+    expect(n.total()).toBe(1)
+    expect(fx.journal.map((l) => l.op === 'post' ? `post:${l.body}` : l.op === 'badge' ? `badge:${l.n}` : l.op)).toEqual(['create', 'post:Stopped', 'badge:1'])
+    front = true
+    show(t.id)
+    n.onFront()
+    expect(badges().at(-1)).toBe(0)   // acknowledged in front: the badge follows
+  })
+
   it('a closed tab\'s needs are not in the badge', async () => {
     const a = canvas(); const b = canvas()
     snap(a, [ask()]); snap(b, [ask(), ask()])
