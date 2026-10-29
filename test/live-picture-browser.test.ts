@@ -100,7 +100,7 @@ const WATCH = `(() => {
   return 1
 })()`
 
-/** The stage has shown \`at\` for at least \`ms\` (its own record, src/client/stage/main.tsx). */
+/** The stage has shown `at` for at least `ms` (its own record, src/client/stage/main.tsx). */
 const settled = (at: string, ms = 1100) => until(`(() => { try { const r = document.querySelector('.sh-play-stage iframe').contentWindow.__mvStage; return !!r && r.at === ${JSON.stringify(at)} && Date.now() - r.t > ${ms} } catch { return false } })()`, 20_000)
 const play = async (o: Record<string, unknown>) => {
   await ev(`window.__mvStore.getState().setPlay(${JSON.stringify(o)}), 1`)
@@ -123,6 +123,9 @@ const over = async (sel: string) => {
   await ev(`(() => { const n = document.querySelector(${JSON.stringify(sel)}); const r = document.querySelector('.sh-play-stage .dev').getBoundingClientRect(); Object.assign(n.style, { position: 'fixed', left: (r.x + r.width / 2 - 100) + 'px', top: (r.y + r.height / 2 - 60) + 'px', zIndex: 99 }); return 1 })()`)
   expect(await ev(`(() => { const r = document.querySelector('.sh-play-stage .dev').getBoundingClientRect(); return !!document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest(${JSON.stringify(sel)}) })()`)).toBe(true)
 }
+/** I, in the page's own turn as soon as the stage shows `at` - inside its first second whatever the machine's load; how
+ *  long it had shown it */
+const shotOnShown = (at: string) => ev(`new Promise((done) => { const f = () => { let r = null; try { r = document.querySelector('.sh-play-stage iframe').contentWindow.__mvStage } catch {} if (r && r.at === ${JSON.stringify(at)}) { window.__mvJamCapture.getState().picture(); done(Date.now() - r.t) } else setTimeout(f, 5) }; f() })`) as Promise<number>
 /** I, as its key does it */
 const shot = async () => { if (process.env.MV_DEBUG) console.log('shot:', await why(), JSON.stringify(await ev(`window.__mvStore.getState().play`))); return ev(`window.__mvJamCapture.getState().picture(), 1`) }
 const shots = (id: string) => ev(`window.__mvJamCapture.getState().caps[${JSON.stringify(id)}]?.shots ?? -1`)
@@ -369,8 +372,7 @@ describe('live pictures in play (A4.6 #33-#36)', () => {
   skippable('the first second on a frame, and a slide\'s transition, take the render; a slide fitted to the window, settled, a live one', async () => {
     const id = await inPlay('spec/alpha')
     await arrow('ArrowRight')
-    await stageAt('spec/bravo')
-    await shot()                                                      // within a second of the move
+    expect(await shotOnShown('spec/bravo')).toBeLessThan(1000)         // within a second of the move
     await until(`window.__mvJamCapture.getState().caps[${JSON.stringify(id)}]?.pictures.length === 1`, 25_000)
     expect(await live()).toEqual({ calls: 0, answered: 0 })
     await leave(id)
@@ -392,6 +394,23 @@ describe('live pictures in play (A4.6 #33-#36)', () => {
     expect((await live()).calls).toBe(1)
     await drop(id2); await leave()
   }, 150_000)
+
+  skippable('the same frame committed again (a restart on it) is a new showing: the render within its first second, never stuck unshown - a live one after', async () => {
+    const id = await inPlay('spec/alpha')
+    const seq = await ev(`document.querySelector('.sh-play-stage iframe').contentWindow.__mvStage.seq`)
+    // the shell steps the stage to the frame it already shows, as Restart on the first frame does
+    await ev(`(() => { const f = document.querySelector('.sh-play-stage iframe'); f.contentWindow.postMessage({ type: 'sh:stage-set', at: 'spec/alpha' }, location.origin); return 1 })()`)
+    await until(`document.querySelector('.sh-play-stage iframe').contentWindow.__mvStage.seq > ${seq}`, 5000)
+    expect(await shotOnShown('spec/alpha')).toBeLessThan(1000)
+    await until(`window.__mvJamCapture.getState().caps[${JSON.stringify(id)}]?.pictures.length === 1`, 25_000)
+    expect(await live()).toEqual({ calls: 0, answered: 0 })
+    await settled('spec/alpha')
+    await shot()
+    await until(`window.__mvJamCapture.getState().caps[${JSON.stringify(id)}]?.pictures.length === 2`, 25_000)
+    const rec = await sealed(id)
+    expect(pics(rec).map((x: any) => x.source ?? 'render')).toEqual(['render', 'live'])
+    await drop(id); await leave()
+  })
 
   skippable('a stage under the scroll edge (the app\'s 44 px inset) takes the render', async () => {
     await boot({ inset: true })
