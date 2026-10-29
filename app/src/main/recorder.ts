@@ -65,11 +65,15 @@ import type { PerfMsg } from '../../../src/shared/app-api.ts'
 
 export type { ProcSample, ProcType, Role, Sample, Sampler, TabIdent } from '../../../src/shared/app-perf.ts'
 
-/** A tab's identity now (A3.8 #8), before any await. */
+/**
+ * A tab's identity now (A3.8 #8), before any await. A shared canvas's (A4.6 #48): its tab, its origin and its commit -
+ * no `ws` (so `marver perf` in a repo never shows it), never a path, query, hash or token.
+ */
 export function identity(t: Tab): TabIdent {
   return {
     tab: t.id,
     ...(t.reg?.ws ? { ws: t.reg.ws } : {}),
+    ...(t.remote ? { origin: t.remote.origin } : {}),
     ...(t.doc ? { commit: t.doc.commits } : {}),
     ...(t.reports.hello?.page ? { page: t.reports.hello.page } : {}),
   }
@@ -173,7 +177,9 @@ function pagesNow(): Page[] {
   add(coverContents() ?? undefined, 'cover')
   for (const t of allTabs()) {
     const v = contentView(t.id)?.webContents
-    if (v) add(v, t.kind === 'local' ? 'canvas' : t.kind === 'home' ? 'home' : 'settings', t.kind === 'local' ? t.id : undefined)
+    // a shared canvas's renderer is a canvas, someone else's page - never the app's own memory (A4.6 #48)
+    const canvas = t.kind === 'local' || t.kind === 'remote'
+    if (v) add(v, canvas ? 'canvas' : t.kind === 'home' ? 'home' : 'settings', canvas ? t.id : undefined)
     add(pageView(t.id)?.webContents, 'tabpage')
   }
   for (const wc of safely(() => allContents.getAllWebContents()) ?? []) {
@@ -648,7 +654,7 @@ export const recorder = {
     for (const t of allTabs()) {
       live.add(t.id)
       const active = isActive(t)
-      const wc = t.kind === 'local' ? contentView(t.id)?.webContents : undefined
+      const wc = t.kind === 'local' || t.kind === 'remote' ? contentView(t.id)?.webContents : undefined
       const pid = wc ? safely(() => mainFrameOf(wc)?.osProcessId) : undefined
       const state = displayState(t, active)
       const key = `${state}|${active}|${t.view}|${t.doc?.commits ?? ''}|${pid ?? ''}`

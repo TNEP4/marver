@@ -42,6 +42,9 @@
  *   rect, and hands an accepted ask to `onCapture`'s handler with a `still()` that runs the same admission again -
  *   the bridge holds no capture logic (live-picture.ts does); the live pictures stream builds it;
  * - `settings:action` carries Settings' one action, `open-notification-settings` (A4.6 #27).
+ * - a shared canvas's view (`remote`, A4.6 #40, r1 #8) is recorded like any view - its kind and tab, and its cleanup
+ *   at `destroyed` - so `kindOf` answers for its permissions (sessions.ts `allowRemote`); then `register` returns,
+ *   before the app-page and canvas wiring: it has no channel, no document record and no admission.
  *
  * **App pages** (A2.5, A2.14 #19): a channel is accepted only from the kinds `SENDERS` lists (src/shared/
  * channels.ts), from that webContents' main frame, while its frame shows the page's own pinned document
@@ -369,6 +372,8 @@ function frameOf(wc: WebContents, rec: DocRecord): WebFrameMain | null {
 const trace = (event: string, data: Record<string, unknown>) => { if (__MV_TEST__) note('bridge', { event, ...data }) }
 
 let installed: Bridge | null = null
+/** The bridge once installed, else null: views.ts registers a shared canvas's view here - there is no trust to fake for it. */
+export const bridgeNow = (): Bridge | null => installed
 
 /** Installs the IPC handlers, at ready, before any view. A second call gives the same bridge. */
 export function installBridge(o: BridgeOptions = {}): Bridge {
@@ -619,6 +624,8 @@ export function installBridge(o: BridgeOptions = {}): Bridge {
         buckets.delete(id)
         if (r?.tabId && tabWc.get(r.tabId) === id) tabWc.delete(r.tabId)
       })
+      // a shared canvas: recorded for kindOf (its permissions), nothing more - no channel, no document (A4.6 r1 #8)
+      if (kind === 'remote') { trace('remote', { wc: id, tab: tabId }); return }
       if (kind !== 'canvas') {
         // a new document says ready again; until then it gets nothing. Only a commit makes one - a document
         // (did-navigate), an error page (did-fail-provisional-load: Electron sends it for a committed error page

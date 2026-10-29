@@ -24,23 +24,31 @@
  * requests through window.ts, the GPU process lost); the unload's act (`act(t, { kind: 'unload' })`, its renderer
  * gone and its `destroyed` in forgetCanvas, the reopen's load) and the fields its admission reads (audible, DevTools
  * open, a navigation under way).
+ *
+ * A4 (app 0.3, A4.6 #39-#46) adds the shared canvas, a `remote` tab on `persist:remote` with no preload: its view is
+ * wired as a canvas's (keys, focus, crash and hang, HTML full screen, the `canvases` map) with nav.ts's adapter and no
+ * trust - registered `remote` with the bridge itself, since there is nothing of trust to fake for it. Its commit lifts
+ * at once (`onRemoteCommit`), its failure is `unreachable` whatever the adapter said, its probe a `HEAD` of its origin,
+ * and `net.isOnline()` turning true looks again at once (polled only while one is unreachable). `openRemote` is ⌘L's,
+ * Home's and the front door's: one tab per origin, a hash-only change unasked, any other through the guard.
  */
 import { execFile } from 'node:child_process'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync, writeSync } from 'node:fs'
 import { homedir, totalmem } from 'node:os'
 import { join } from 'node:path'
-import { app, dialog, Menu, nativeTheme, powerMonitor, shell, WebContentsView, type MenuItemConstructorOptions, type Session, type WebContents, type WebPreferences } from 'electron'
+import { app, dialog, Menu, nativeTheme, net, powerMonitor, shell, WebContentsView, type MenuItemConstructorOptions, type Session, type WebContents, type WebPreferences } from 'electron'
 import * as sessions from './sessions.ts'
 import { CH, type LinkOpenAnswer, type PageKind, type TabPageAction } from '../shared/channels.ts'
 import { startCommand } from '../shared/command.ts'
+import { parseLink, remoteStart } from '../shared/links.ts'
 import { effects, provideEffectHooks } from './effects.ts'
 import type { AppState, MenuItem, Present, Presented } from '../../../src/shared/app-api.ts'
 import type { AppBody, AppKind, TabIdent } from '../../../src/shared/app-perf.ts'
 import { docProof } from '../../../src/server/proof.ts'
 import type { Files, Home } from './config.ts'
-import type { CanvasReports } from './bridge.ts'
-import type { NavAdapter, NavEvent } from './nav.ts'
+import { bridgeNow, type CanvasReports } from './bridge.ts'
+import { attachNav, type NavAdapter, type NavEvent } from './nav.ts'
 import type { RegistryEntry, RegistryEvent } from './registry.ts'
 import { mainFrameOf, safely } from './frames.ts'
 import { attachKeys, digitOf, type AppCommand } from './keys.ts'
@@ -48,14 +56,14 @@ import { focusOwner, f6, track } from './focus.ts'
 import { buildNow, HELP_URL, invalidateMenu, startMenu, type MenuModel, type MenuToken } from './menu.ts'
 import { crashReloaded, currentPill, onPillAction, setCondition, setPillPorts } from './pill.ts'
 import {
-  activate, activeTab, allTabs, applyRestore, cameraKept, canvasOrder, closeTab, cycleFrom, displayState, forDigit, getTab, guard,
-  guardAll, hasBridge, hashOnly, isActive, keyOf, linkOpens, liveDoc, onCommit, onDocumentGone, onFail, onInPage, onRegistry, onReport, onUnloaded, openSettingsTab,
-  ordered, parseTabsFile, reopenTab, restorePlan, safePath, savedPathIn, setTabsPorts, sheetBox, sheetConfirmed, sheetText, snapshotFile, startReopen, stuckUnloads, tabName,
+  activate, activeTab, addressOf, allTabs, applyRestore, cameraKept, canLoad, canvasOrder, closeTab, cycleFrom, displayState, forDigit, getTab, guard,
+  guardAll, hasBridge, hashOnly, isActive, isCanvasTab, keptDoc, keyOf, linkOpens, liveDoc, onCommit, onDocumentGone, onFail, onInPage, onRegistry, onRemoteCommit, onReport, onUnloaded, openRemoteTab, openSettingsTab,
+  ordered, parseTabsFile, remoteTab, reopenTab, restorePlan, safePath, savedPathIn, setTabsPorts, sheetBox, sheetConfirmed, sheetText, snapshotFile, startReopen, stuckUnloads, tabName,
   unloadClosing, viewlessAct, type GuardAllAction, type GuardAction, type GuardAnswer, type Sheet, type Tab, type TabsFile,
 } from './tabs.ts'
 import {
-  copyDetails, forgetTab, hangDecision, hangSheetText, onAttemptFailed, onLifted, onShown, onViewClosed, personReload, recover,
-  reloadIsPersons, scheduleRetry, setTabpagePorts, type ProcessSnapshot,
+  copyDetails, forgetTab, hangDecision, hangSheetText, onAttemptFailed, onLifted, onlineTick, onShown, onViewClosed, personReload, recover,
+  reloadIsPersons, scheduleRetry, setTabpagePorts, wantsOnline, type ProcessSnapshot,
 } from './tabpage.ts'
 import {
   appPrefs, APP_ORIGIN, attachContent, captureWindow, compose, contentView, detachContent, hideWindow, mainWindow, onAppReady, openWindow,
@@ -125,6 +133,8 @@ export interface HomeNotes {
   homeShown(): void
   verified(c: { ws: string; root: string; name: string; origin: string; slot: number | null; port: number }): void
   gone(ws: string): void
+  /** A4 (A4.6 #47): a shared canvas committed or moved its place - Home's Shared canvases keep it (home.ts noteShared) */
+  shared?(c: { url: string; host: string }): void
   /** the quit, once guardAll answered 'done', before app.quit(): every canvas still running seen now */
   quitting?(running: string[]): void
 }
@@ -183,6 +193,7 @@ async function ensureView(t: Tab): Promise<WebContentsView | null> {
   const pending = making.get(t.id)
   if (pending) return pending
   const p = (async () => {
+    if (t.kind === 'remote') return remoteView(t)
     if (!t.reg) return null
     const ses = await trust.session(t.reg.ws)
     // closed (⌘W) or gone while its partition was prepared: no view - the close saw none to guard, so one made now
@@ -205,13 +216,31 @@ async function ensureView(t: Tab): Promise<WebContentsView | null> {
   return p
 }
 
+/**
+ * A shared canvas's view (A4.6 #40): `persist:remote` prepared once, no preload, placed `below` under the opaque strip
+ * like any canvas, never unloaded. Wired as a canvas's, with no trust.
+ */
+function remoteView(t: Tab): WebContentsView | null {
+  sessions.remoteSession()
+  if (!getTab(t.id)) return null
+  const view = new WebContentsView({ webPreferences: sessions.remoteWebPreferences() })
+  wireCanvas(t, view)
+  attachContent(t.id, view, 'remote')
+  t.view = 'live'
+  return view
+}
+
 const NO_DRAG = 'html, html * { app-region: no-drag !important; -webkit-app-region: no-drag !important }'
 
 function wireCanvas(t: Tab, view: WebContentsView): void {
   const wc = view.webContents
   recorder.watchCanvas(t, wc)
-  trust.register(wc, 'canvas', t.id)
-  const nav = trust.attach(wc, t)
+  // a shared canvas: recorded with the bridge (kindOf answers its permissions) and nav.ts's own adapter - no proof
+  // dispatcher, no admission, nothing of trust (A4.6 #40)
+  const remote = t.kind === 'remote'
+  if (remote) bridgeNow()?.register(wc, 'remote', t.id)
+  else trust.register(wc, 'canvas', t.id)
+  const nav = remote ? attachNav(wc) : trust.attach(wc, t)
   const off = nav.on((e) => onNav(t, wc, e))
   canvases.set(t.id, { view, nav, off })
   // the tab's view still: a webContents the unload's backstop took out without its destroyed (unload-act.ts) says
@@ -275,14 +304,18 @@ function forgetCanvas(t: Tab, view: WebContentsView): void {
   compose()
 }
 
-/** Load a documentless tab: its path on its bound origin (never guarded: there is nothing to lose). */
+/** Load a documentless tab: its path on its bound origin, a shared canvas's place (never guarded: there is nothing to lose). */
 function load(t: Tab): void {
-  if (!t.reg?.origin || t.reg.state !== 'ready') return
+  if (!canLoad(t)) return
   beginReopen(t)
   t.needsLoad = false
   t.loadAt = Date.now()
   clearUnattributed(t)   // this load replaces the reload an unattributed commit had waiting
-  const url = t.reg.origin + safePath(t.path)
+  loadInView(t, addressOf(t)!)
+}
+
+/** The tab's view, made if needed, loads `url` (checked by its caller). */
+function loadInView(t: Tab, url: string): void {
   void ensureView(t).then((v) => {
     if (!v || v.webContents.isDestroyed() || !getTab(t.id) || !t.open) return
     j('load', { tab: t.id, url })
@@ -294,6 +327,7 @@ function load(t: Tab): void {
 
 function onNav(t: Tab, wc: WebContents, e: NavEvent): void {
   if (!getTab(t.id)) return
+  if (t.kind === 'remote') { onRemoteNav(t, wc, e); return }
   switch (e.kind) {
     case 'start': {
       // a main-frame, cross-document navigation: under way until it commits, fails or aborts (A3.8 #40); its
@@ -341,6 +375,49 @@ function onNav(t: Tab, wc: WebContents, e: NavEvent): void {
       if (commitLayout(t, { kind: 'abort', gen: e.gen })) compose()
       return
     }
+    default: return
+  }
+}
+
+/**
+ * A shared canvas's navigation (A4.6 #42): every main-frame commit is attributed for navigation and presentation and
+ * lifts its tab page at once - no proof, no admission, never reloaded as unattributed; a failure is `unreachable` with
+ * its reason, whatever the adapter said, never `unverified`. The no-drag CSS goes in at every commit.
+ */
+function onRemoteNav(t: Tab, wc: WebContents, e: NavEvent): void {
+  switch (e.kind) {
+    case 'start':
+      t.loading = true
+      if (commitLayout(t, { kind: 'start', gen: e.gen })) compose()
+      return
+    case 'commit': {
+      t.loading = false
+      abortLogo(t)
+      const href = safely(() => wc.isDestroyed() ? undefined : wc.getURL()) || e.url
+      onRemoteCommit(t, { gen: e.gen, href })
+      void wc.insertCSS(NO_DRAG, { cssOrigin: 'user' }).catch(() => {})
+      clearUnattributed(t)
+      onLifted(t)
+      pollOnline()
+      compose()
+      return
+    }
+    case 'fail': {
+      t.loading = false
+      let errorPage = false
+      try { errorPage = wc.mainFrame?.origin === 'null' } catch { /* the frame went */ }
+      abortLogo(t)
+      onFail(t, { why: 'unreachable', code: e.code, errorPage, gen: e.gen })
+      onAttemptFailed(t)
+      scheduleRetry(t)
+      pollOnline()
+      compose()
+      return
+    }
+    case 'abort':
+      t.loading = false
+      if (commitLayout(t, { kind: 'abort', gen: e.gen })) compose()
+      return
     default: return
   }
 }
@@ -412,7 +489,9 @@ function act(t: Tab, a: GuardAction): Promise<GuardAnswer> {
     if (a.kind === 'unload') { j('act', { tab: t.id, action: a.kind, answer: 'refused', why: 'no-view' }); return Promise.resolve('refused') }
     const loads = viewlessAct(t, a)
     j('act', { tab: t.id, action: a.kind, noView: true, loads, path: t.path })
-    if (loads && t.reg?.origin) load(t)
+    // a shared canvas's link loads what it names; its place moves only when a shell page commits (A4.6 r1 #9)
+    if (loads && t.kind === 'remote' && a.kind === 'load') loadInView(t, a.url)
+    else if (loads && canLoad(t)) load(t)
     return Promise.resolve('done')
   }
   if (a.kind === 'unload') return actUnload(t, wc, a)
@@ -449,11 +528,11 @@ function act(t: Tab, a: GuardAction): Promise<GuardAnswer> {
       return
     }
     wc.on('did-start-navigation', onStart)
-    const origin = t.reg?.origin
+    const address = addressOf(t)
     switch (a.kind) {
       case 'reload': wc.reload(); break
       case 'forceReload': wc.reloadIgnoringCache(); break
-      case 'tryAgain': if (origin) void wc.loadURL(origin + safePath(t.path)).catch(() => {}); else done('refused', 'no-origin'); break
+      case 'tryAgain': if (address) void wc.loadURL(address).catch(() => {}); else done('refused', 'no-origin'); break
       case 'load': void wc.loadURL(a.url).catch(() => {}); break
     }
   })
@@ -662,6 +741,7 @@ async function notResponding(t: Tab): Promise<void> {
 // Probes of a failed tab's address (A2.11, v1.14 r3 #4)
 
 async function probe(t: Tab): Promise<'silent' | 'answers' | 'proved'> {
+  if (t.kind === 'remote') return probeRemote(t)
   if (!t.reg?.origin) return 'silent'
   if (trust.probe) return trust.probe(t)
   const ses = await trust.session(t.reg.ws)
@@ -683,12 +763,43 @@ async function probe(t: Tab): Promise<'silent' | 'answers' | 'proved'> {
   } catch { return 'answers' }
 }
 
+/**
+ * A shared canvas's probe (A4.6 #44): `HEAD <origin>/` through `persist:remote`, no redirect followed, 3 s. Any HTTP
+ * answer is `answers` (nothing proves a shared canvas); a refused certificate is no answer, so nothing is offered past it.
+ */
+async function probeRemote(t: Tab): Promise<'silent' | 'answers'> {
+  if (!t.remote) return 'silent'
+  try {
+    const r = await sessions.remoteSession().fetch(`${t.remote.origin}/`, { method: 'HEAD', redirect: 'manual', signal: AbortSignal.timeout(T.headTimeoutMs) })
+    void r.body?.cancel().catch(() => {})
+    return 'answers'
+  } catch { return 'silent' }
+}
+
+/**
+ * `net.isOnline()`, once a second only while a shared canvas is unreachable (A4.6 #44): its turn to true looks at once
+ * (tabpage.ts `onlineTick`). A test build may answer for it (`remote:online`).
+ */
+let onlineTimer: ReturnType<typeof setInterval> | undefined
+let onlineStub: boolean | null = null
+const isOnline = (): boolean => (__MV_TEST__ && onlineStub !== null ? onlineStub : net.isOnline())
+function pollOnline(): void {
+  if (!wantsOnline()) {
+    if (onlineTimer) { clearInterval(onlineTimer); onlineTimer = undefined; onlineTick(null) }
+    return
+  }
+  if (onlineTimer) return
+  onlineTick(isOnline())
+  onlineTimer = setInterval(() => { if (wantsOnline()) onlineTick(isOnline()); else pollOnline() }, T.onlinePollMs)
+  ;(onlineTimer as { unref?: () => void }).unref?.()
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Commands: one path for the keys and the menu (A2.4, A2.7, A2.14 #25)
 
 /** ⌘R, ⇧⌘R and the menu's Reload: the person's crash reload on a crashed or latched tab with no live page, else the guard's. */
 function reloadTab(t: Tab | undefined, force: boolean): void {
-  if (!t || t.kind !== 'local') return
+  if (!t || !isCanvasTab(t)) return
   if (reloadIsPersons(t)) { personReload(t); compose(); return }
   void guard(t, { kind: force ? 'forceReload' : 'reload' })
 }
@@ -784,6 +895,38 @@ export async function openInTab(e: LinkTarget, url: string | null, rest: string)
   return (await guard(t, { kind: 'load', url })) === 'done' ? { ok: true } : { ok: false, why: 'refused' }
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// A shared canvas's link (A4.6 #39, #41, #43): ⌘L's, Home's and the front door's - home.ts's `LinkPorts.openRemote`
+
+/**
+ * An https link (checked again here: parseLink's https, no loopback host) opens its origin's shared tab: a new one,
+ * activated and loaded, or the open one, activated - with no question when only the hash changes, and through the
+ * guard (its sheet naming the host) when the link would replace the page. `refused` when the guard refused.
+ */
+export async function openRemote(raw: string): Promise<LinkOpenAnswer> {
+  const p = parseLink(raw)
+  if (p.kind !== 'https') return { ok: false, why: 'bad' }
+  const have = remoteTab(new URL(p.url).origin)
+  if (!have) {
+    const t = openRemoteTab(p.url)
+    j('link', { tab: t.id, remote: 'new' })
+    activate(t.id)   // its view is made and its place loaded (tabs.ts activate)
+    return { ok: true }
+  }
+  activate(have.id)
+  const url = remoteStart(p.url)
+  const wc = contentView(have.id)?.webContents
+  const at = wc && !wc.isDestroyed() ? wc.getURL() : ''
+  if (at === url) { j('link', { tab: have.id, remote: 'same' }); return { ok: true } }
+  if (wc && !wc.isDestroyed() && hashOnly(at, url)) {
+    // only the hash changes: the same document, no question asked
+    j('link', { tab: have.id, remote: 'hash' })
+    void wc.loadURL(url).catch(() => {})
+    return { ok: true }
+  }
+  return (await guard(have, { kind: 'load', url })) === 'done' ? { ok: true } : { ok: false, why: 'refused' }
+}
+
 /**
  * A canvas's same-origin `window.open` of its own shell document (sessions.ts `onSameCanvasOpen`, A2.14 #4): that
  * canvas's tab, focused and taken there - with no question when only the hash changes, else through the guard.
@@ -850,11 +993,13 @@ function tabAct(k: MenuToken, what: 'activate' | 'open-browser' | 'reveal' | 'co
   j('tab-act', { what, tab: t.id })
   // the people link (the slot file's `url`): what a browser opens and a person shares - never the bound origin
   const link = t.reg ? `http://localhost:${t.reg.port}${safePath(t.path)}` : undefined
+  // a shared canvas's own place (A4.6 #49): its link to share, opened through sessions.ts's checked openOutside
+  const shared = t.kind === 'remote' ? t.remote?.url : undefined
   switch (what) {
     case 'activate': if (t.kind === 'local' && !t.open) reopenTab(t.id); else activate(t.id); return
-    case 'open-browser': if (link && t.doc?.trusted) openOutside(link); return
+    case 'open-browser': if (shared) sessions.openOutside(shared); else if (link && t.doc?.trusted) openOutside(link); return
     case 'reveal': reveal(t); return
-    case 'copy-link': if (link && t.doc?.trusted) effects.copy(link); return
+    case 'copy-link': if (shared) effects.copy(shared); else if (link && t.doc?.trusted) effects.copy(link); return
     case 'close': void closeTab(t.id); return
     case 'mark-all-seen': if (t.doc?.trusted && hasBridge(t)) { const sent = trust.menuClick(t.id, 'mark-all-seen'); j('tab-act', { what, tab: t.id, sent }) } return
     // the menu's Reload Canvas and Force Reload: the tab the menu was built for, its document and trust unchanged
@@ -920,6 +1065,16 @@ export const pageHandlers = {
         { label: 'Mark All as Seen', enabled: !!t.doc?.trusted && hasBridge(t), click: () => tabAct(k, 'mark-all-seen') },
         { type: 'separator' },
       )
+    } else if (t.kind === 'remote') {
+      // a shared canvas (A4.6 #49): no Reveal in Finder, no Mark All as Seen, no canvas items
+      items.push(
+        { label: 'Open in Browser', click: () => tabAct(k, 'open-browser') },
+        { label: 'Copy Link', click: () => tabAct(k, 'copy-link') },
+        { type: 'separator' },
+        { label: 'Reload', click: () => tabAct(k, 'reload') },
+        { label: 'Force Reload', click: () => tabAct(k, 'force-reload') },
+        { type: 'separator' },
+      )
     }
     if (t.kind !== 'home') items.push({ label: 'Close Tab', click: () => tabAct(k, 'close') })
     popup(items, x, y)
@@ -944,16 +1099,18 @@ export const pageHandlers = {
     const b = pg.body
     const offers: TabPageAction[] = b.page === 'stopped' ? (b.retained ? ['retry', 'copy-start', 'reveal', 'close'] : ['copy-start', 'reveal', 'close'])
       : b.page === 'unverified' ? ['retry', 'close']
-        : b.page === 'unreachable' ? ['retry', 'close']
+        : b.page === 'unreachable' ? (t.kind === 'remote' ? ['retry', 'open-browser', 'close'] : ['retry', 'close'])
           : b.page === 'crashed' && b.latched ? ['reload', 'copy-details'] : []
     if (!offers.includes(action)) { j('tabpage', { refused: action, page: b.page }); return false }
     j('tabpage', { tab: t.id, action })
     switch (action) {
       case 'retry':
         // a page retained beneath: Try Again is the only way to replace it, through the guard (it asks first)
-        if (t.retained && liveDoc(t)) void guard(t, { kind: 'tryAgain' })
+        if (t.retained && keptDoc(t)) void guard(t, { kind: 'tryAgain' })
         else load(t)
         return true
+      // a shared canvas's Open in Browser (A2.11's unreachable page, A4.6 #42): its place, through openOutside's checks
+      case 'open-browser': if (t.kind === 'remote' && t.remote) sessions.openOutside(t.remote.url); return true
       case 'reload': personReload(t); compose(); return true
       case 'copy-start': if (t.root) effects.copy(startCommand({ root: t.root, port: t.reg?.slot == null ? t.reg?.port : null })); return true
       case 'copy-details': effects.copy(details(t)); return true
@@ -999,13 +1156,13 @@ function menuModel(): MenuModel {
   const a = activeTab() ?? getTab('home')!
   const list = allTabs()
   const tabsList = ordered(list).map((t) => {
-    const word = t.kind === 'local' ? STATE_WORD[displayState(t, t === a)] : undefined
-    const key = t.kind === 'local' ? keyOf(t, list) : undefined
+    const word = isCanvasTab(t) ? STATE_WORD[displayState(t, t === a)] : undefined
+    const key = isCanvasTab(t) ? keyOf(t, list) : undefined
     return { id: t.id, name: tabName(t), ...(word ? { word } : {}), ...(key ? { key } : {}), active: t === a, token: tokenOf(t) }
   })
   const trusted = a.kind === 'local' && !!a.doc?.trusted
   return {
-    active: { id: a.id, kind: a.kind, name: tabName(a), token: tokenOf(a), trusted, canClose: a.kind !== 'home', canReload: a.kind === 'local' },
+    active: { id: a.id, kind: a.kind, name: tabName(a), token: tokenOf(a), trusted, canClose: a.kind !== 'home', canReload: isCanvasTab(a) },
     canvas: trusted && a.reports.menu?.length ? { token: tokenOf(a), items: a.reports.menu } : null,
     tabs: tabsList,
     header: Number(process.getSystemVersion().split('.')[0]) >= 14,
@@ -1100,8 +1257,8 @@ export function windowPorts() {
         return e ? { state: e.state, origin: e.origin ?? null, port: e.port, ws: e.ws, name: e.name } : undefined
       },
       open: openInTab,
-      // A4.4: the remote stream opens the link's origin in its remote tab (A4.6 #39-#42); until then it opens nothing
-      openRemote: async (): Promise<LinkOpenAnswer> => ({ ok: false, why: 'bad' }),
+      // A4.4: the link's origin in its shared tab, new or existing (A4.6 #39-#43)
+      openRemote,
     },
     setFilesPill(p: { lead?: string; text: string; short: string; tooltip?: string } | null) {
       setCondition('files', p ? { text: p.text, short: p.short, ...(p.lead ? { lead: p.lead } : {}), ...(p.tooltip ? { tooltip: p.tooltip } : {}) } : null)
@@ -1128,6 +1285,8 @@ export function startViews(i: StartInput): void {
     changed: (o) => { ensureAppViews(); compose(o) }, load, appState: sendState, act, ask, forget, save: saveSoon,
     shown: (t) => { onShown(t); refreshLogo(t) }, forward,
     recheck: (t) => scheduleRetry(t, { now: true }),
+    // Home's Shared canvases (A4.6 #47): the place, never a sign-in URL (tabs.ts moves it only to a shell page)
+    shared: (t) => { if (t.remote) notes?.shared?.({ url: t.remote.url, host: t.remote.host }) },
     // a canvas that starts after launch opens on its saved board (A2.14 #23): the file as read at launch, kept
     // whole since (snapshotFile keeps the entries of canvases not running), read only with restoreTabs on
     savedPath: (ws, origin) => i.files.config.restoreTabs ? savedPathIn(tabsFile, ws, origin) : undefined,
@@ -1137,10 +1296,11 @@ export function startViews(i: StartInput): void {
   setTabpagePorts({
     now: () => Date.now(), isActive, changed: () => compose(), log: j, load,
     reload: (t) => {
-      // the reload after a crash: rebuilt from the bound origin and the saved path, in its own view (a new renderer)
-      if (!t.reg?.origin || !t.open) return
-      trust.reopenNext(t.id)
-      const url = t.reg.origin + safePath(t.path)
+      // the reload after a crash: rebuilt from the bound origin and the saved path (a shared canvas: its place), in its
+      // own view (a new renderer)
+      const url = addressOf(t)
+      if (!url || !t.open) return
+      if (t.kind === 'local') trust.reopenNext(t.id)
       void ensureView(t).then((v) => { if (v && !v.webContents.isDestroyed() && getTab(t.id) && t.open) void v.webContents.loadURL(url).catch(() => {}) })
     },
     confirmed: (t) => crashReloaded(t),
@@ -1221,6 +1381,14 @@ export function startViews(i: StartInput): void {
   app.on('activate', () => showWindow())   // the Dock icon
   powerMonitor.on('resume', onResume)
   execFile('/usr/sbin/sysctl', ['-n', 'hw.model'], { timeout: 2000 }, (err, out) => { if (!err) macModel = String(out).trim() })
+
+  // a shared canvas's window.open of an https URL (A4.6 #41): its origin's tab when one is open, or the front door asked
+  sessions.onRemoteOpen((url, fromFrontDoor) => {
+    if (!fromFrontDoor && !remoteTab(new URL(url).origin)) return false
+    j('link', { remote: 'window', fromFrontDoor })
+    void openRemote(url)
+    return true
+  })
 
   // ⌘Q, the menu, the Dock: every canvas tab through guardAll (A2.2, v1.13 r2 #2, v1.14 r3 #1)
   let quitInFlight = false
@@ -1320,6 +1488,8 @@ function tabDump(t: Tab) {
     // A3's unloading (A3.8 #39-#45)
     unload: t.unload ? { ...t.unload } : null, unloadRefused: t.unloadRefused ?? null, hiddenAt: t.hiddenAt ?? null,
     audible: !!t.audible, devtools: !!t.devtools, loading: !!t.loading,
+    // A4's shared canvas (A4.6 #39)
+    remote: t.remote ? { ...t.remote } : null,
   }
 }
 
@@ -1514,4 +1684,8 @@ function testHooks(): void {
   })
   provideEffectHooks()   // `effects`: the copies and folders recorded (home.ts provides it too once the streams meet)
   provide('resume', () => { onResume(); return true })
+  // A4: an https link opened as ⌘L and Home open it (home.ts's openLink hands it here); net.isOnline() answered by
+  // the case (null: Electron's own again)
+  provide('remote:open', async (a) => openRemote(String(arg<{ url: string }>(a).url)))
+  provide('remote:online', (a) => { const v = arg<{ online: boolean | null }>(a).online; onlineStub = typeof v === 'boolean' ? v : null; pollOnline(); return true })
 }

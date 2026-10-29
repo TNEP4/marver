@@ -88,7 +88,7 @@ const { setPressureSpawner, pressureSpawns, resetPressure } = await import('../.
 const { flushNow, idle } = await import('../../src/main/perflog.ts')
 const { T } = await import('../../src/main/timings.ts')
 const tabsMod = await import('../../src/main/tabs.ts')
-const { world, liveTab } = await import('./window-fakes.ts')
+const { world, liveTab, sharedTab } = await import('./window-fakes.ts')
 
 // ---- the run -------------------------------------------------------------------------------------------------------
 
@@ -481,5 +481,29 @@ describe('the second review of a3-recorder', () => {
     expect(line.procs.find((p: { pid: number }) => p.pid === 1).rssMB.last).toBe(123)
     // a sample injected (memory.ts's cases) was read from no tick
     expect(recorderTesting.rawOf({ ...s })).toBe(null)
+  })
+})
+
+// last: its lines name a tab id the cases before reuse
+describe('a shared canvas (A4.6 #48)', () => {
+  it('its renderer is a canvas, never the app\'s own memory; its lines carry its tab, origin and commit - no ws, no path, query or hash', async () => {
+    const w = world()
+    const r = sharedTab(w, 'https://pilot.example.com/?token=secret#/b/main')
+    views.set(r.id, new FakeWc(320))
+    fx.metrics.push({ pid: 320, type: 'Tab', creationTime: 3200, cum: 0, kb: 50 * 1024 })
+    expect(identity(r)).toEqual({ tab: r.id, origin: 'https://pilot.example.com', commit: 1 })
+    recording = true
+    const n = lines().length   // tab ids repeat across cases (world() starts again at t1): this case's lines only
+    const s = (await recorderTesting.tick())!
+    expect(s.procs.find((p) => p.pid === 320)).toMatchObject({ role: 'canvas', tabs: [r.id] })
+    recorder.processGone(r, { reason: 'crashed', exitCode: 1 } as never, false)
+    recorder.tabsChanged()
+    const mine = lines().slice(n).filter((l) => l.tab === r.id)
+    expect(mine.find((l) => l.kind === 'gone')).toMatchObject({ tab: r.id, origin: 'https://pilot.example.com', commit: 1, role: 'canvas', pid: 320 })
+    expect(mine.find((l) => l.kind === 'tab')).toMatchObject({ origin: 'https://pilot.example.com', main: { pid: 320, born: 3200 } })
+    for (const l of mine) {
+      expect('ws' in l, l.kind).toBe(false)
+      expect(JSON.stringify(l), l.kind).not.toMatch(/token|secret|#\/b\/main/)
+    }
   })
 })

@@ -50,7 +50,12 @@ const WORDS: Partial<Record<TabView['state'], string>> = {
 }
 /** What the eye reads on a tab: an unverified one by its address (A2.13), never a name it has not proved. */
 const shownName = (t: TabView) => (t.state === 'unverified' ? hostOf(t.link) ?? t.name : t.name)
-const nameOf = (t: TabView) => (t.kind === 'home' ? 'Home' : WORDS[t.state] ? `${shownName(t)}, ${WORDS[t.state]}` : shownName(t))
+/** a shared canvas says so: "<host>, shared canvas" (A4.6 #39) */
+const nameOf = (t: TabView) => {
+  if (t.kind === 'home') return 'Home'
+  const name = t.kind === 'remote' ? `${t.name}, shared canvas` : shownName(t)
+  return WORDS[t.state] ? `${name}, ${WORDS[t.state]}` : name
+}
 const shownTabs = (): TabView[] => (snap?.tabs ?? []).filter((t) => t.kind === 'home' || t.open !== false)
 const visibleEls = (): HTMLElement[] => shownTabs().map((t) => els.get(t.id)).filter((e): e is HTMLElement => !!e && !e.hidden)
 const idOf = (el: Element | null) => (el as HTMLElement | null)?.dataset?.id ?? null
@@ -135,7 +140,7 @@ function fit(): void {
     if (!hiddenIds.length) moreEl.hidden = true
   }
   if (hiddenIds.length) {
-    const allCanvases = hiddenIds.every((id) => snap!.tabs.find((t) => t.id === id)?.kind === 'local')
+    const allCanvases = hiddenIds.every((id) => { const k = snap!.tabs.find((t) => t.id === id)?.kind; return k === 'local' || k === 'remote' })
     const n = hiddenIds.length
     const what = allCanvases ? (n === 1 ? 'canvas' : 'canvases') : (n === 1 ? 'tab' : 'tabs')
     fill(moreEl, '»', h('span', { 'aria-hidden': 'true' }, String(n)))

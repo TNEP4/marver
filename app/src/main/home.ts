@@ -15,6 +15,11 @@
  *   page (`/` or `/index.html`, its query and hash: the only documents the proof admits, A2.14 #11). Opening it is
  *   the tabs' (`LinkPorts.open`), through A2.2's guard when it changes more than the hash.
  *
+ * - **Shared canvases** (A4, A4.6 #47) are `state/shared.json`, the app's own: at most 12 `{ url, host, lastSeen }`,
+ *   newest first, one per origin, each `url` a shared tab's place (tabs.ts moves it only to a shell page of its
+ *   origin, so no sign-in URL is ever kept), noted at each of its commits and moves (`noteShared`), written
+ *   debounced and flushed at quit (`flushShared`). Home gets them on `shared`; a past card sends `link:open`.
+ *
  * Who calls what, and when, is the frozen contract in ports.ts (`HomePorts`): the trust stream calls `noteVerified`
  * (a tab's first trusted commit of each instance), the window stream `noteHomeShown`, `noteGone`, `isFirstLaunch`
  * and, in the quit path, `flushRecent`; the bridge mounts `homeAction` and `openLink` as invokes; the home page's
@@ -24,10 +29,10 @@ import { existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { app } from 'electron'
-import { CH, type HomeActionAnswer, type HomeInfo, type LinkOpenAnswer, type RecentView } from '../shared/channels.ts'
+import { CH, type HomeActionAnswer, type HomeInfo, type LinkOpenAnswer, type RecentView, type SharedLink } from '../shared/channels.ts'
 import { FIXED_COMMANDS, startCommand, tilde } from '../shared/command.ts'
 import { hueOf } from '../shared/hue.ts'
-import { LINK_MAX, parseLink, shellPath } from '../shared/links.ts'
+import { LINK_MAX, parseLink, remoteStart, shellPath } from '../shared/links.ts'
 import { currentHome, filesStatus, noteWrite, onPill, onStatus, settingsReveal, settingsSet, settingsView, stateDir, stateFileWriter } from './config.ts'
 import { effects } from './effects.ts'
 import { readState, writeWhole, type StateWriter } from './fsx.ts'
@@ -91,6 +96,55 @@ export function recentViewsOf(list: RecentEntry[], running: Iterable<string>, ho
   }))
 }
 
+// ---- Shared canvases (A4.6 #47) ---------------------------------------------------------------------------------
+
+export interface SharedFile { v: 1; links: SharedLink[] }
+export const SHARED_MAX = 12
+
+/** shared.json's envelope (pure): its links are checked one by one, so one bad link costs only itself. */
+export function checkSharedFile(v: unknown): v is { v: 1; links: unknown[] } {
+  const f = v as { v?: unknown; links?: unknown } | null
+  return !!f && typeof f === 'object' && f.v === 1 && Array.isArray(f.links)
+}
+
+/**
+ * One past shared canvas (pure): an https link `parseLink` takes (no credentials, no loopback host, under 2 KB) that is
+ * already where a tab would start (`remoteStart`: never a path under `/__mv/`), its `host` the link's own.
+ */
+export function checkSharedLink(v: unknown): v is SharedLink {
+  const l = v as SharedLink
+  if (!l || typeof l !== 'object' || typeof l.url !== 'string' || typeof l.host !== 'string' || typeof l.lastSeen !== 'number' || !Number.isFinite(l.lastSeen)) return false
+  const p = parseLink(l.url)
+  return p.kind === 'https' && p.url === l.url && p.host === l.host && remoteStart(l.url) === l.url
+}
+
+/** Newest first, one per origin, at most 12. Pure. */
+export function tidyShared(list: SharedLink[]): SharedLink[] {
+  const seen = new Set<string>()
+  return [...list].sort((a, b) => b.lastSeen - a.lastSeen).filter((l) => { const o = new URL(l.url).origin; return !seen.has(o) && !!seen.add(o) }).slice(0, SHARED_MAX)
+}
+
+let shared: SharedLink[] = []
+let sharedWriter: StateWriter<SharedFile> | undefined
+const sharedFns = new Set<() => void>()
+
+/** A shared canvas committed or moved its place (views.ts, from tabs.ts): kept as its origin's newest link. */
+export function noteShared(c: { url: string; host: string }): void {
+  const l = { url: c?.url, host: c?.host, lastSeen: Date.now() }
+  if (!checkSharedLink(l)) return
+  const before = JSON.stringify(shared.map((x) => x.url))
+  shared = tidyShared([l, ...shared])
+  sharedWriter?.set({ v: 1, links: shared })
+  // Home redraws when what it lists changed, not at every commit of the same link
+  if (JSON.stringify(shared.map((x) => x.url)) !== before) for (const fn of sharedFns) fn()
+}
+
+/** At quit: what waits, written now. */
+export function flushShared(): void { sharedWriter?.flushSync() }
+
+export const sharedLinks = (): SharedLink[] => shared.map((l) => ({ ...l }))
+export function onSharedChange(fn: () => void): () => void { sharedFns.add(fn); return () => sharedFns.delete(fn) }
+
 let recent: RecentEntry[] = []
 let writer: StateWriter<RecentFile> | undefined
 let firstLaunch = false
@@ -108,6 +162,10 @@ export function startHome(): void {
   recent = tidyRecent(loaded.filter(checkEntry).filter((e) => isDir(e.root)))
   writer = state ? stateFileWriter<RecentFile>('recent.json') : undefined
   if (recent.length !== loaded.length) save()
+  const links = (state ? readState(join(state, 'shared.json'), checkSharedFile) : undefined)?.links ?? []
+  shared = tidyShared(links.filter(checkSharedLink))
+  sharedWriter = state ? stateFileWriter<SharedFile>('shared.json') : undefined
+  if (shared.length !== links.length) sharedWriter?.set({ v: 1, links: shared })
   if (__MV_TEST__) provideHomeHooks()
 }
 
@@ -257,12 +315,14 @@ export function mountPages(bridge: PageBridge, w: WindowPorts): () => void {
     bridge.send('home', CH.homeInfo, i)
   }
   const pushRecent = () => { bridge.send('home', CH.recent, recentViews(w.running())) }
+  const pushShared = () => { bridge.send('home', CH.shared, sharedLinks()) }
   const offs = [
     bridge.onReady((ctx) => {
-      if (ctx.kind === 'home') { pushInfo(true); pushRecent() }
+      if (ctx.kind === 'home') { pushInfo(true); pushRecent(); pushShared() }
       else if (ctx.kind === 'settings') bridge.send('settings', CH.status, filesStatus())
     }),
     onRecentChange(pushRecent),
+    onSharedChange(pushShared),
     w.onRunningChange(pushRecent),
     onStatus((s) => { bridge.send('settings', CH.status, s); pushInfo() }),
     onPill((p) => w.setFilesPill(p)),
@@ -286,7 +346,8 @@ function provideHomeHooks(): void {
   provide('home.views', (a) => recentViews(((a as { running?: string[] })?.running) ?? []))
   provide('home.entries', () => recentEntries())
   provide('home.action', (a) => homeAction(a))
-  provide('home.flush', async (a) => { flushRecent(((a as { running?: string[] })?.running) ?? []); return true })
+  provide('home.flush', async (a) => { flushRecent(((a as { running?: string[] })?.running) ?? []); flushShared(); return true })
+  provide('home.shared', () => sharedLinks())
   provide('home.link', (a) => {
     const o = a as { url: unknown; entries?: LinkEntry[]; answer?: LinkOpenAnswer }
     const opened: { url: string | null; rest: string }[] = []

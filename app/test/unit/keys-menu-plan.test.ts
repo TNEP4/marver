@@ -173,6 +173,26 @@ describe('the menu bar (A2.7)', () => {
   it('macOS 13: a disabled item stands in for a header', () => {
     expect(sub(menuTemplate(model({ header: false }), acts()), 'View')[0]).toMatchObject({ label: 'Tidewell', enabled: false })
   })
+
+  it('a shared canvas: File has Open in Browser and Copy Link, View its Reload and Force Reload - no Reveal in Finder, no Mark All as Seen, no canvas items (A4.6 #49)', () => {
+    const a = acts()
+    const r = model({ active: { id: 't7', kind: 'remote', name: 'pilot.example.com', token: { tab: 't7', commit: 1, trusted: false }, trusted: false, canClose: true, canReload: true }, canvas: null })
+    const t = menuTemplate(r, a)
+    const file = sub(t, 'File').filter((m) => m.type !== 'separator')
+    expect(file.map((m) => m.label)).toEqual(['Home', 'Open Link…', 'Close Tab', 'Close Window', 'pilot.example.com', 'Open in Browser', 'Copy Link'])
+    expect(file.some((m) => m.label === 'Reveal in Finder' || m.label === 'Copy Local Link' || m.label === 'Mark All as Seen')).toBe(false)
+    click(item(file, 'Open in Browser'))
+    click(item(file, 'Copy Link'))
+    expect(a.tab.mock.calls).toEqual([[{ tab: 't7', commit: 1, trusted: false }, 'open-browser'], [{ tab: 't7', commit: 1, trusted: false }, 'copy-link']])
+    const view = sub(t, 'View')
+    expect(view[0]!.label).toBe('Reload Canvas')
+    expect([item(view, 'reload').enabled, item(view, 'force-reload').enabled]).toEqual([true, true])
+    expect(t.some((m) => m.label === 'Jam')).toBe(false)
+    // a stale token does nothing: the shared canvas the menu was built for, its document unchanged
+    const stale = acts(false)
+    click(item(sub(menuTemplate(r, stale), 'File'), 'Open in Browser'))
+    expect(stale.tab).not.toHaveBeenCalled()
+  })
 })
 
 describe('the layout: a canvas without the one ground stays below the strip (A2.14 #1, A3.8 #24, #32)', () => {
@@ -194,6 +214,16 @@ describe('the layout: a canvas without the one ground stays below the strip (A2.
     expect(p.views.find((v) => v.key === 't1:page')!).toMatchObject({ visible: true, rect: { x: 0, y: 0, width: 800, height: 600 } })
     expect(p.views.find((v) => v.key === 'home:view')!.color).toBe(GROUND.dark)
     expect(plan({ tabs: [tab('home', 'home')], active: 'home', w: 800, h: 600, appDark: false }).cover.color).toBe(GROUND.light)
+  })
+
+  it('a shared canvas sits below the opaque strip, covered, never see-through; its tab page full height over it (A4.6 #40, #42)', () => {
+    const r = { id: 't7', kind: 'remote', view: true, page: false, pageView: false, dark: false, placed: 'full' as const, seeThrough: true, presented: true }
+    const p = plan({ tabs: [tab('home', 'home'), r], active: 't7', w: 1280, h: 820, appDark: false })
+    expect(p.views.find((v) => v.key === 't7:view')!).toMatchObject({ visible: true, rect: { x: 0, y: 44, width: 1280, height: 776 } })
+    expect(p.cover.visible).toBe(true)
+    const q = plan({ tabs: [tab('home', 'home'), { ...r, page: true, pageView: true }], active: 't7', w: 1280, h: 820, appDark: false })
+    expect(q.views.find((v) => v.key === 't7:view')!.visible).toBe(false)
+    expect(q.views.find((v) => v.key === 't7:page')!).toMatchObject({ visible: true, rect: { x: 0, y: 0, width: 1280, height: 820 } })
   })
 
   it('a hidden tab\'s page view (closing in 30 s) stays hidden', () => {

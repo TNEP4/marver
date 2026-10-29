@@ -7,7 +7,8 @@
  * view's own in main's map, never named here. Neutral words: a canvas is named only once main says it proved itself.
  * A send has no answer, so no button says "Copied". A new snapshot redraws the page but keeps focus on the same
  * action (A2.13 moves focus only when the focused view goes away): a probe's update never sends VoiceOver back to
- * the heading.
+ * the heading. A shared canvas (A4.6 #42, #44) is told by its https origin - a local canvas is always http on a
+ * loopback host: its unreachable page adds Open in Browser, and an answer to its probe reads "<host> answers again".
  */
 import type { TabPageAction, TabPageView } from '../../src/shared/channels.ts'
 import { clock, cmdButton, fill, h, icon, logo, pageApi, setLook, shown } from '../../src/pages/dom.ts'
@@ -26,6 +27,13 @@ const REASONS: Record<string, string> = {
   'abnormal-exit': 'Ended abnormally', 'launch-failed': 'Couldn\'t start', 'integrity-failure': 'Failed a code check',
 }
 const reasonWords = (r?: string) => (r ? REASONS[r] ?? r.charAt(0).toUpperCase() + r.slice(1) : null)
+/** A failed load's reason (tabpage.ts `netReason`) in words (A2.11): "You're offline", never a code. */
+const NET: Record<string, string> = {
+  offline: 'You\'re offline.', 'no-host': 'There is no such address.', nothing: 'The server didn\'t answer.', timeout: 'The server took too long to answer.',
+  certificate: 'Its certificate isn\'t valid, and the app never goes past that.', failed: 'The page couldn\'t load.',
+}
+/** A shared canvas's page: an https origin (a local canvas is always http on a loopback host). */
+const isShared = (origin?: string) => !!origin && origin.startsWith('https:')
 const possessive = (name: string) => (name.endsWith('s') ? `${name}'` : `${name}'s`)
 const RETAINED = 'The page you had is still open. Try Again reloads it.'
 
@@ -77,14 +85,17 @@ function parts(v: TabPageView, now: number): Parts | null {
         actions: [button('Try Again', 'retry'), button('Close Tab', 'close')],
         meta: [v.folder && `Registered by ${v.folder}`, v.host ?? local(v.origin)].filter(Boolean).join(' · '),
       }
-    case 'unreachable':
+    case 'unreachable': {
+      // a shared canvas answering again is its host answering: nothing proves one (A4.6 #44)
+      const shared = isShared(v.origin)
       return {
         mark: mark(), title: `Can't reach ${v.name}`,
-        body: [v.reason ?? 'Its address doesn\'t answer.', ...(v.retained ? [' ', RETAINED] : [])],
-        line: v.retained ? v.probe.state === 'proved' ? `${v.name} answers again` : v.probe.state === 'answers' ? 'The address answers again' : undefined : undefined,
-        actions: [button(v.retained ? 'Try Again' : 'Try Now', 'retry'), button('Close Tab', 'close')],
+        body: [(v.reason && NET[v.reason]) ?? v.reason ?? 'Its address doesn\'t answer.', ...(v.retained ? [' ', RETAINED] : [])],
+        line: v.retained ? v.probe.state === 'proved' || (shared && v.probe.state === 'answers') ? `${v.name} answers again` : v.probe.state === 'answers' ? 'The address answers again' : undefined : undefined,
+        actions: [button(v.retained ? 'Try Again' : 'Try Now', 'retry'), ...(shared ? [button('Open in Browser', 'open-browser')] : []), button('Close Tab', 'close')],
         meta: v.retained ? undefined : 'Trying again every few seconds',
       }
+    }
     case 'reopening':
       // A3 (A3.8 #42, #43): an unloaded tab opening again, or one activated while its unload closes - the dimmed logo
       // and the spinner (a pulse under Reduce Motion), words only after 400 ms; it promises the board, and the camera
