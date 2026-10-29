@@ -130,8 +130,8 @@ function asRecord(v: unknown): SlotFile | null {
  *
  *  A4 (0.29.0, A4.6 #2) adds `live`, `open` and `capture` - each a frozen contract, described at `FEATURE`. None is
  *  listed yet: a name here is a promise the app acts on (it opens a stream, sends `mv:open`, answers `mv:capture`),
- *  so each A4 stream adds its own name here once its half works, never before. */
-export const FEATURES: readonly string[] = [FEATURE.bridge, FEATURE.inset]
+ *  so each A4 stream adds its own name here once its half works, never before: `live` is listed (app-live.ts). */
+export const FEATURES: readonly string[] = [FEATURE.bridge, FEATURE.inset, FEATURE.live]
 
 export interface Claim {
   slot: number | null

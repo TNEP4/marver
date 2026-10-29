@@ -24,7 +24,7 @@ import { join, relative, sep } from 'node:path'
 import { noteFileFor, type FrameEntry, type Manifest } from './manifest.ts'
 import { checkBoardsDir, checkRealDirs, listBoardFiles } from './boards.ts'
 import { compare, frameDeps, observed, stat, type Observed } from './deps.ts'
-import type { Marks } from '../shared/marks.ts'
+import { isNew, type Marks } from '../shared/marks.ts'
 import { framesOn } from '../shared/board-tree.ts'
 
 type Frames = readonly Pick<FrameEntry, 'id' | 'file' | 'kind'>[]
@@ -224,6 +224,16 @@ const snapshot = (root: string, manifest: Manifest, st: State): Marks => {
 export function readMarks(root: string, manifest: Manifest): Marks | null {
   const st = state(root, manifest.frames)
   return st && snapshot(root, manifest, st)
+}
+
+/** The frames new to the owner now, for the live stream (spec 28 A4.6 #7): the running server's own state read with
+ *  the pure `isNew` - never `projectMarks` (the next boot's view, from disk) nor `readMarks` (it reads every board
+ *  file). Never loads a state: marks off, or not started, is none. */
+export function freshFrames(root: string, frames: Frames): string[] {
+  const st = states.get(root)
+  if (!st || st === 'off') return []
+  const m: Marks = { epoch: st.epoch, changed: st.changed, doc: st.doc, seen: st.seen, boards: {} }
+  return frames.map((f) => f.id).filter((id) => isNew(m, id))
 }
 
 /** The marks as the next `marver dev` would see them, from the files alone - nothing is written, so

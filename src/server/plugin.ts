@@ -1,15 +1,15 @@
 import type { Plugin, ViteDevServer } from 'vite'
-import { boardsChanged } from './work.ts'
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, watch, writeFileSync } from 'node:fs'
+import { boardsChanged, workActivity } from './work.ts'
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, watch, writeFileSync } from 'node:fs'
 import { basename, join, relative, sep } from 'node:path'
 import { hash } from './manifest.ts'
 import { NAME, PKG, ROUTE } from '../cli/name.ts'
 import { loadConfig, type ShConfig } from './config.ts'
-import { scanFrames, writeManifest, affectedFrameIds, isNoteFile, noteFileFor, type Manifest } from './manifest.ts'
+import { scanFrames, writeManifest, affectedFrameIds, isNoteFile, noteFileFor, type FrameEntry, type Manifest } from './manifest.ts'
 import { checkBoardsDir, isRegularFile, listBoardFiles, nodeExists, parseBoard, readMembership } from './boards.ts'
 import { ALL_SCENES } from '../shared/board-tree.ts'
 import { contentOnly } from '../shared/frames.ts'
-import { docRev, docRevs, initMarks, observe, recordChanged } from './marks.ts'
+import { docRev, docRevs, freshFrames, initMarks, observe, recordChanged } from './marks.ts'
 import { guardUpdates, updatesPlugin, type Touched, type UpdateHooks } from './updates.ts'
 import { logReload, tidyPerfDir } from './perf.ts'
 import { apiMiddleware } from './api.ts'
@@ -23,6 +23,9 @@ import { originOf } from './slots.ts'
 import { perfRunBarrier, runs, runT } from './perf-run.ts'
 import { loadedFiles, type InputsWatch } from './perf-inputs.ts'
 import type { DocProof } from './proof.ts'
+import { createLiveHub, liveChanged, liveRoute, liveSnapshot, type LiveInput } from './app-live.ts'
+import { listBoards, readLog, replay, type Thread } from './comments.ts'
+import { jamLive } from './jam/live.ts'
 
 const VIRTUAL_THEME = 'virtual:sh-theme'
 const VIRTUAL_CONFIG = 'virtual:sh-config'
@@ -80,6 +83,8 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       return s ? loadedFiles(urls, s.config.root, s.environments?.client?.moduleGraph ?? null, s.config.base) : []
     },
   }
+  // the live stream's sources (spec 28 A4.6 #7): kept across Vite restarts, so a recompute re-reads only a log that changed
+  const live = liveSources(root)
   const bootId = String(process.hrtime.bigint())   // opaque, boot-scoped: a restart never mints a "lower" rev
   let invRev = 0
   const pendingInv = new Set<string>()
@@ -143,7 +148,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
     setTimeout(() => done(file), 0)
   }
   const observeMarks = () => observed(observe(root, manifest.frames))
-  const observeLater = () => whenSettled(() => { if (observeMarks()) devServer?.ws.send('sh:marks', {}) })
+  const observeLater = () => whenSettled(() => { if (observeMarks()) { devServer?.ws.send('sh:marks', {}); liveChanged() } })
   const hooks: UpdateHooks = {
     // a tick later: Vite finishes this update after the hooks (it invalidates the modules it walks), so
     // a revision is published - and a document stamped with it - only once its code is there to serve
@@ -162,7 +167,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
     const reload = [...new Set([...seen.doc, ...t.doc])]
     for (const id of reload) pendingInv.add(id)
     flushInv()
-    if (reload.length || touched.length || seen.note.length) devServer?.ws.send('sh:marks', {})
+    if (reload.length || touched.length || seen.note.length) { devServer?.ws.send('sh:marks', {}); liveChanged() }
     logReload(root, { kind: 'update', cause, file: t.file ? relative(root, t.file).split(sep).join('/') : null, reload, inPlace: t.touched })
   }
 
@@ -270,6 +275,11 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       server.middlewares.use(guardMiddleware(ws))
       // spec 28 A3.8 #17: right after it, a headless run's writes - any it may not make - refused and counted per run
       server.middlewares.use(perfRunBarrier())
+      // spec 28 A4.6 #5: the live stream right after them, ahead of everything that serves content - proved both ways
+      // (app-live.ts), one hub per server, closed with it. No slot (no proof): a 404, and no hub is made
+      const hub = ctx.proof ? createLiveHub({ instance: ctx.proof.instance, read: () => liveSnapshot(live.read(manifest.frames)), on: (fn) => workActivity.onChange(fn) }) : null
+      if (hub) onClose(() => hub.close())
+      server.middlewares.use(liveRoute(hub, ctx.proof))
       // a run's inputs (A3.8 #21): the files this watcher watches - this server's from now on - and every event it fires
       // marks the runs under way, even an edit undone before they end
       const viteWatcher = server.watcher
@@ -329,7 +339,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       // the marks start with the dev server, before any page asks (spec 26)
       initMarks(root, manifest.frames)
       tidyPerfDir(root)   // the perf logs are the owner's alone, and age out (spec 28 A1.7)
-      server.middlewares.use(apiMiddleware(root, { viewports: config.viewports, origin: listeningOrigin, bakeGen: () => bakeGen, notify: (event) => server.ws.send(event, {} as any), manifest: () => manifest, settled, workspace: ws, inputs }))
+      server.middlewares.use(apiMiddleware(root, { viewports: config.viewports, origin: listeningOrigin, bakeGen: () => bakeGen, notify: (event) => { server.ws.send(event, {} as any); liveChanged() }, manifest: () => manifest, settled, workspace: ws, inputs }))
       // the canvas's logo for the Mac app's tab (spec 28 A2.4, A2.9): proved like the document when asked with a nonce
       server.middlewares.use(logoRoute(root, () => config.share.logo, ctx.proof))
       server.middlewares.use(routesMiddleware(server, clientDir, {
@@ -364,7 +374,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
         const changed = writeManifest(root, manifest)
         observeLater()   // a frame added (a new id, a rename) or gone
         const key = JSON.stringify(manifest.frames), sKey = JSON.stringify(manifest.scenes)
-        if (changed && key !== framesKey) server.ws.send('sh:manifest', manifest as any)
+        if (changed && key !== framesKey) { server.ws.send('sh:manifest', manifest as any); liveChanged() }
         // a scene's title or description changed (its brief) with the frames intact: the shell
         // relabels its rows off `sh:scenes` - no manifest apply, no iframe re-keyed
         else if (changed && sKey !== scenesKey) server.ws.send('sh:scenes', { scenes: manifest.scenes } as any)
@@ -584,6 +594,34 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
     },
   }
   return [main, updatesPlugin(root, () => manifest, () => devServer && hooks, landed)]
+}
+
+/**
+ * The live stream's four adapters (spec 28 A4.6 #7), the hub's `read()`: every board's comment log replayed - cached by
+ * its `size:mtimeMs`, so a recompute re-reads only a log that changed (the logs only grow); the frames new now, from the
+ * running server's marks (`freshFrames`); Jam's view (`jamLive.view()`, absent when Jam is off or its lock is held
+ * elsewhere); and `marver work`'s own leases - never `active()`, which holds the Jam daemon's too (A4.6 r2 #3).
+ */
+export function liveSources(root: string): { read(frames: readonly Pick<FrameEntry, 'id' | 'file' | 'kind'>[]): LiveInput; reads(): number } {
+  const dir = join(root, 'design', 'comments')
+  const cache = new Map<string, { key: string; threads: Thread[] }>()
+  let reads = 0
+  return {
+    read(frames) {
+      const names = listBoards(dir)
+      for (const b of cache.keys()) if (!names.includes(b)) cache.delete(b)
+      const boards: LiveInput['boards'] = []
+      for (const board of names) {
+        let key: string
+        try { const st = statSync(join(dir, `${board}.jsonl`)); key = `${st.size}:${st.mtimeMs}` } catch { continue }
+        let c = cache.get(board)
+        if (c?.key !== key) { reads++; c = { key, threads: replay(readLog(dir, board)) }; cache.set(board, c) }
+        boards.push({ board, threads: c.threads })
+      }
+      return { boards, fresh: freshFrames(root, frames), jam: jamLive.view?.(), cli: workActivity.leases('cli').map(([f]) => f) }
+    },
+    reads: () => reads,
+  }
 }
 
 /** The marks look at the frames on disk; true when they recorded something. */
