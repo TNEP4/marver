@@ -1,13 +1,15 @@
 /**
  * The remote harness on its own (test/harness/remote-canvas.ts; spec 28 A4.6 #50): its hosts over https with the
  * checked-in certificate and the fingerprint the app's test build accepts, the shell page and its favicon, the favicon
- * that redirects to loopback http, the sign-in chain, a download, pausing and answering again on the same port, and a
- * second server whose certificate is not that one. No Electron.
+ * that redirects to loopback http, a published canvas's icons with the repo's logo first and a favicon that fails
+ * once, the sign-in chain, a download, pausing and answering again on the same port, and a second server whose
+ * certificate is not that one. No Electron.
  */
 import { request } from 'node:https'
 import { createHash, X509Certificate } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { CERT_PEM, PNG, startRemoteCanvas, TEST_FINGERPRINT, type RemoteCanvas } from '../harness/remote-canvas.ts'
+import { CERT_PEM, LOGO_SVG, PNG, PUBLISHED_ICONS, startRemoteCanvas, TEST_FINGERPRINT, type RemoteCanvas } from '../harness/remote-canvas.ts'
+import { sniffLogo } from '../../../src/shared/logo-sniff.ts'
 
 let r: RemoteCanvas
 beforeAll(async () => { r = await startRemoteCanvas() })
@@ -49,6 +51,18 @@ describe('the remote harness (A4.6 #50)', () => {
     expect(body).toContain('window.x = 1')
     expect(body).not.toContain('rel="icon"')
     expect((await get('pilot', '/favicon.png')).body.equals(PNG)).toBe(true)
+  })
+
+  it('a published canvas\'s icons in marver build\'s order, the logo an SVG the app sniffs as one; a favicon that fails once', async () => {
+    r.page('published', { icons: PUBLISHED_ICONS })
+    const body = String((await get('published', '/')).body)
+    expect([...body.matchAll(/<link rel="icon" href="([^"]+)">/g)].map((m) => m[1])).toEqual(PUBLISHED_ICONS)
+    const logo = await get('published', '/__mv/logo.svg')
+    expect([logo.status, String(logo.body), sniffLogo(logo.body)]).toEqual([200, LOGO_SVG, 'svg'])
+    for (const path of PUBLISHED_ICONS.slice(1)) expect((await get('published', path)).body.equals(PNG)).toBe(true)
+    expect((await get('published', '/favicon-flaky.png')).status).toBe(500)
+    expect((await get('published', '/favicon-flaky.png')).body.equals(PNG)).toBe(true)
+    expect((await get('pilot', '/favicon-flaky.png')).status).toBe(500)   // once per host
   })
 
   it('a favicon that redirects to loopback http names the plain server, whose requests are kept', async () => {

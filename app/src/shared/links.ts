@@ -110,3 +110,18 @@ export function remoteFavicon(url: unknown, origin: string, committed: string): 
   try { u = new URL(url); d = new URL(committed) } catch { return false }
   return u.protocol === 'https:' && !u.username && !u.password && u.origin === origin && d.origin === origin
 }
+
+/** The repo's logo as a published shell and gate list it (src/server/logo.ts `logoIconLink`). */
+const MV_LOGO = /^\/__mv\/logo\.(svg|png|ico)$/
+
+/**
+ * Which of a page's favicons a shared tab wears (A4.6 #46): of those `remoteFavicon` takes, the repo's logo on the
+ * tab's origin, else the first. Not the page's first: Electron 45's `page-favicon-updated` hands a sorted,
+ * de-duplicated set (a `base::flat_set<GURL>`), so a published canvas's `/__mv/favicon/favicon-16x16.png` comes before
+ * the `/__mv/logo.svg` its page lists first.
+ */
+export function remoteFaviconPick(urls: unknown, origin: string, committed: string): string | undefined {
+  if (!Array.isArray(urls)) return undefined
+  const ok = urls.filter((u): u is string => remoteFavicon(u, origin, committed))
+  return ok.find((u) => MV_LOGO.test(new URL(u).pathname)) ?? ok[0]
+}

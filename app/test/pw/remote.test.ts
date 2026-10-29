@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { launchWindow, sleep, SWALLOW_KEYS, type State, type TabDump, type WindowRun } from '../harness/window.ts'
-import { startRemoteCanvas, type RemoteCanvas } from '../harness/remote-canvas.ts'
+import { LOGO_SVG, PUBLISHED_ICONS, startRemoteCanvas, type RemoteCanvas } from '../harness/remote-canvas.ts'
 import type { LinkOpenAnswer, SharedLink } from '../../src/shared/channels.ts'
 
 let r: RemoteCanvas
@@ -342,6 +342,25 @@ describe('favicons (A2.4, A4.6 #46, #51)', () => {
   it('its page\'s favicon on its own origin is its logo, a checked data: URL', async () => {
     await lifted('fav', '/')
     await w.until((x) => !!shared(x, 'fav')?.logo?.startsWith('data:image/png;base64,'), 10_000, 'the favicon as its logo')
+  })
+
+  it('a published canvas wears the repo\'s logo, though Electron hands its icons sorted, Marver\'s 16 px mark first', async () => {
+    r.page('published', { icons: PUBLISHED_ICONS })
+    await lifted('published', '/')
+    await w.until((x) => !!shared(x, 'published')?.logo?.startsWith('data:image/svg+xml;base64,'), 10_000, 'the repo\'s logo')
+    expect(Buffer.from((await now('published')).logo!.split(',')[1]!, 'base64').toString()).toBe(LOGO_SVG)
+    expect(r.hits('published', '/__mv/favicon/favicon-16x16.png')).toBe(0)
+  })
+
+  it('a favicon whose one fetch failed is fetched again at the next commit with the same icons, which Electron does not send twice', async () => {
+    r.page('flaky', { favicon: '/favicon-flaky.png' })
+    const t = await lifted('flaky', '/')
+    for (let i = 0; i < 40 && r.hits('flaky', '/favicon-flaky.png') < 1; i++) await sleep(50)
+    await sleep(500)
+    expect((await now('flaky')).logo).toBeNull()
+    await exec(t.id, 'location.reload(); 1')   // the page's own reload: never guarded
+    await w.until((x) => !!shared(x, 'flaky')?.logo?.startsWith('data:image/png;base64,'), 10_000, 'fetched again')
+    expect(r.hits('flaky', '/favicon-flaky.png')).toBe(2)
   })
 
   it('a favicon that redirects to http://127.0.0.1 gets initials, and that port sees no request', async () => {

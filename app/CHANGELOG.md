@@ -7,6 +7,7 @@
   and `»` reach it. It is someone else's page: its own partition, no access to the app, the clipboard and full screen
   its only permissions, downloads cancelled (Open in Browser does that), links to other sites sent to your browser.
   Marver ID's sign-in runs inside the tab and is kept; the tab returns to the board you opened, never to a sign-in page.
+  It wears its page's icon - a canvas published with marver 0.29.0 or later, its repo's logo - else its host's initials.
 - **Closing, reloading or quitting asks first for a shared canvas**: the app cannot tell what it holds, so one sheet
   names it ("pilot.example.com is a shared canvas: the app can't tell what it hasn't saved").
 - **Home lists Shared canvases**: the open ones, then the last 12 opened, which reopen with a click. Shared tabs are not

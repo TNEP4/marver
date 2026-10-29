@@ -1,6 +1,6 @@
 /** One parser for a canvas link (src/shared/links.ts; spec 28 A2.7, v1.10 r1 #4). */
 import { describe, expect, it } from 'vitest'
-import { boardOf, loopbackHost, parseLink, remoteFavicon, remoteStart, shellDestination, shellPath } from '../../src/shared/links.ts'
+import { boardOf, loopbackHost, parseLink, remoteFavicon, remoteFaviconPick, remoteStart, shellDestination, shellPath } from '../../src/shared/links.ts'
 
 describe('parseLink()', () => {
   it('reads a running canvas\'s link on each loopback host, keeping path, query and hash', () => {
@@ -89,6 +89,25 @@ describe('parseLink()', () => {
       [`${o}/favicon.png`, 'chrome-error://chromewebdata/'],
     ]) expect(remoteFavicon(url, o, doc), `${url} on ${doc}`).toBe(false)
     expect(remoteFavicon(undefined, o, `${o}/`)).toBe(false)
+  })
+
+  it('a shared tab wears the repo\'s logo out of Electron\'s sorted set, else the first it may fetch (A4.6 #46)', () => {
+    const o = 'https://pilot.example.com'
+    // a published shell's icons as its page lists them, the logo first (marver build's iconFirst) ...
+    const listed = [`${o}/__mv/logo.svg`, `${o}/__mv/favicon/favicon.ico`, `${o}/__mv/favicon/favicon-32x32.png`, `${o}/__mv/favicon/favicon-16x16.png`]
+    // ... as page-favicon-updated hands them: a flat_set<GURL>, ordered by spec - the logo no longer first
+    const sorted = [...listed].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)))
+    expect(sorted[0]).toBe(`${o}/__mv/favicon/favicon-16x16.png`)
+    expect(remoteFaviconPick(sorted, o, `${o}/#/b/x`)).toBe(`${o}/__mv/logo.svg`)
+    for (const type of ['png', 'ico']) expect(remoteFaviconPick([`${o}/__mv/favicon/favicon.ico`, `${o}/__mv/logo.${type}`], o, `${o}/`)).toBe(`${o}/__mv/logo.${type}`)
+    // no logo: the first it may fetch; another site's logo, or the logo while the document is elsewhere, never
+    expect(remoteFaviconPick(sorted.filter((u) => !u.includes('logo')), o, `${o}/`)).toBe(`${o}/__mv/favicon/favicon-16x16.png`)
+    expect(remoteFaviconPick(['https://cdn.example.com/__mv/logo.svg', `${o}/favicon.png`], o, `${o}/`)).toBe(`${o}/favicon.png`)
+    expect(remoteFaviconPick([`${o}/__mv/logo.svg`], o, 'https://id.marver.design/login')).toBeUndefined()
+    // a path that only looks like it, and nothing to take
+    expect(remoteFaviconPick([`${o}/a.png`, `${o}/__mv/logo.svg.png`, `${o}/x/__mv/logo.svg`], o, `${o}/`)).toBe(`${o}/a.png`)
+    expect(remoteFaviconPick([], o, `${o}/`)).toBeUndefined()
+    expect(remoteFaviconPick(undefined, o, `${o}/`)).toBeUndefined()
   })
 
   it('names the board of a hash route only', () => {

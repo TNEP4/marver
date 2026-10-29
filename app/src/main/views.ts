@@ -41,7 +41,7 @@ import { app, dialog, Menu, nativeTheme, net, powerMonitor, shell, WebContentsVi
 import * as sessions from './sessions.ts'
 import { CH, type LinkOpenAnswer, type PageKind, type TabPageAction } from '../shared/channels.ts'
 import { startCommand } from '../shared/command.ts'
-import { parseLink, remoteFavicon, remoteStart } from '../shared/links.ts'
+import { parseLink, remoteFaviconPick, remoteStart } from '../shared/links.ts'
 import { LOGO_MAX, LOGO_MIME, sniffLogo } from '../../../src/shared/logo-sniff.ts'
 import { effects, provideEffectHooks } from './effects.ts'
 import type { AppState, MenuItem, Present, Presented } from '../../../src/shared/app-api.ts'
@@ -402,6 +402,7 @@ function onRemoteNav(t: Tab, wc: WebContents, e: NavEvent): void {
       void wc.insertCSS(NO_DRAG, { cssOrigin: 'user' }).catch(() => {})
       clearUnattributed(t)
       onLifted(t)
+      faviconAgain(t, wc)
       pollOnline()
       compose()
       return
@@ -973,25 +974,39 @@ function refreshLogo(t: Tab): void {
 }
 
 /**
- * A shared canvas's logo (A2.4, A4.6 #46): the first `page-favicon-updated` URL of the current commit, taken only when
- * it is https with no credentials on the tab's own origin and the committed document is there too (links.ts
- * `remoteFavicon`: a sign-in host's icon is never the canvas's). Fetched through `persist:remote` with no redirect
- * followed (one to loopback http never reaches it), no cache, 5 s, at most 256 KB actually received, then sniffed as the
- * local logo is; one in flight (`logoFetch`), aborted at a commit or a close, applied only if the tab and its commit
- * are unchanged. Without one: its host's initials.
+ * A shared canvas's logo (A2.4, A4.6 #46): the current commit's first `page-favicon-updated`, its pick
+ * (links.ts `remoteFaviconPick`: the repo's logo, else the first URL that is https with no credentials on the tab's own
+ * origin while the committed document is there too - a sign-in host's icon is never the canvas's). Fetched through
+ * `persist:remote` with no redirect followed (one to loopback http never reaches it), no cache, 5 s, at most 256 KB
+ * actually received, then sniffed as the local logo is; one in flight (`logoFetch`), aborted at a commit or a close,
+ * applied only if the tab and its commit are unchanged. Without one: its host's initials.
+ * Electron 45 sends the event only when the page's set changes, so a later commit with the same icons hears nothing:
+ * `faviconOf` keeps the last set, and a commit of a tab that wears none tries it again (`faviconAgain`).
  */
-const faviconOf = new Map<string, number>()
+const faviconOf = new Map<string, { taken: number; urls: string[] }>()
 function onFavicon(t: Tab, wc: WebContents, urls: string[]): void {
+  if (!t.remote) return
   const commit = t.doc?.commits ?? 0
-  if (!t.remote || faviconOf.get(t.id) === commit) return   // the commit's first only
-  faviconOf.set(t.id, commit)
-  const url = urls[0]
-  if (!remoteFavicon(url, t.remote.origin, safely(() => wc.getURL()) ?? '')) { j('logo', { tab: t.id, favicon: 'refused' }); return }
+  const first = faviconOf.get(t.id)?.taken !== commit   // the commit's first only
+  faviconOf.set(t.id, { taken: commit, urls: Array.isArray(urls) ? urls : [] })
+  if (first) takeFavicon(t, wc, urls, commit, false)
+}
+
+/** A shared tab's commit while it wears no favicon: the page's last set again, which Electron does not send twice. */
+function faviconAgain(t: Tab, wc: WebContents): void {
+  const f = faviconOf.get(t.id)
+  if (f && !t.logo && t.remote) takeFavicon(t, wc, f.urls, t.doc?.commits ?? 0, true)
+}
+
+/** Fetch the pick of `urls` for this commit; a fetch in flight (a commit's retry, when the page then sent its own) goes. */
+function takeFavicon(t: Tab, wc: WebContents, urls: string[], commit: number, again: boolean): void {
   abortLogo(t)
+  const url = remoteFaviconPick(urls, t.remote!.origin, safely(() => wc.getURL()) ?? '')
+  if (!url) { j('logo', { tab: t.id, favicon: 'refused', again }); return }
   const ac = new AbortController()
   logoFetch.set(t.id, ac)
-  j('logo', { tab: t.id, fetch: true, commits: commit, favicon: true })
-  void fetchFavicon(url!, ac.signal).then((dataUrl) => {
+  j('logo', { tab: t.id, fetch: true, commits: commit, favicon: true, again })
+  void fetchFavicon(url, ac.signal).then((dataUrl) => {
     if (ac.signal.aborted || logoFetch.get(t.id) !== ac) return
     logoFetch.delete(t.id)
     if (getTab(t.id) !== t || (t.doc?.commits ?? 0) !== commit) return

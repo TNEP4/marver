@@ -8,10 +8,12 @@
  * never leak between runs.
  *
  * What it serves, per host (`page(host, o)` sets a host's shell page; `route` adds anything else):
- * - `/` and `/index.html`: a shell-like page - a title, `<link rel="icon">` (`favicon`, default `/favicon.png`), the
- *   page's `script` - that beacons `/__mv/test/script` once its script ran;
+ * - `/` and `/index.html`: a shell-like page - a title, `<link rel="icon">` (`favicon`, default `/favicon.png`; or
+ *   `icons`, several in their order), the page's `script` - that beacons `/__mv/test/script` once its script ran;
  * - `/favicon.png`: a PNG; `/favicon-redirect.png`: a 302 to the plain http server on 127.0.0.1 (`plain`, whose
  *   requests are kept, for "that port sees no request"); `/favicon-slow.png`: the PNG after `slowMs`;
+ *   `/favicon-flaky.png`: a 500 at its first request on each host, the PNG after;
+ * - a published canvas's icons: `/__mv/logo.svg` (the repo's logo, `LOGO_SVG`) and Marver's `/__mv/favicon/*` (the PNG);
  * - the sign-in chain as Marver ID's: `/__mv/id/start?next=<path>` 302s to `id.canvas.test`'s `/login`, which 302s
  *   back to `/__mv/id/finish#code=…&next=<path>`, whose page sets the session cookie and replaces itself with `next`
  *   - unless `finishStalls`, when it stays there (a sign-in cut short); with `loginStalls` the login is a page of its
@@ -41,12 +43,18 @@ export const TEST_FINGERPRINT = fingerprintOf(CERT)
 
 /** A 1 px PNG (the favicon's bytes). */
 export const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
+/** The repo's logo a published canvas serves at `/__mv/logo.svg`. */
+export const LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8" fill="#e5484d"/></svg>'
+/** A published shell's icons in the order `marver build` writes them: the repo's logo first, then Marver's set. */
+export const PUBLISHED_ICONS = ['/__mv/logo.svg', '/__mv/favicon/favicon.ico', '/__mv/favicon/favicon-32x32.png', '/__mv/favicon/favicon-16x16.png']
 
 export interface Req { host: string; method: string; path: string; headers: IncomingMessage['headers'] }
 export interface PageOpts {
   title?: string
   /** the `<link rel="icon">` href; null for none (default `/favicon.png`) */
   favicon?: string | null
+  /** several `<link rel="icon">`s, in this order (in place of `favicon`) */
+  icons?: string[]
   /** inline script, run before it beacons `/__mv/test/script` */
   script?: string
 }
@@ -82,7 +90,8 @@ export interface RemoteCanvas {
 const NAME = /^([a-z0-9-]+)\.canvas\.test(?::\d+)?$/
 
 function shellPage(name: string, o: PageOpts): string {
-  const icon = o.favicon === null ? '' : `<link rel="icon" href="${o.favicon ?? '/favicon.png'}">`
+  const icon = o.icons ? o.icons.map((href) => `<link rel="icon" href="${href}">`).join('')
+    : o.favicon === null ? '' : `<link rel="icon" href="${o.favicon ?? '/favicon.png'}">`
   return `<!doctype html><html><head><meta charset="utf-8"><title>${o.title ?? `${name} shared`}</title>${icon}</head>
 <body><h1>${name}</h1><textarea id="words"></textarea>
 <script>
@@ -98,6 +107,7 @@ export async function startRemoteCanvas(): Promise<RemoteCanvas> {
   const routes = new Map<string, Handler>()
   const sockets = new Set<Socket>()
   const plainReqs: Req[] = []
+  const flaked = new Set<string>()
 
   const plain: Server = createHttp((req, res) => {
     plainReqs.push({ host: req.headers.host ?? '', method: req.method ?? 'GET', path: req.url ?? '/', headers: req.headers })
@@ -145,11 +155,16 @@ export async function startRemoteCanvas(): Promise<RemoteCanvas> {
     const own = routes.get(`${name} ${url.pathname}`)
     if (own) return own(req, res, url)
     if (url.pathname.startsWith('/__mv/test/')) return void res.writeHead(204).end()
+    if (url.pathname.startsWith('/__mv/favicon/')) return void res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'no-store' }).end(PNG)
     switch (url.pathname) {
       case '/': case '/index.html': return void html(shellPage(name, pages.get(name) ?? {}))
       case '/favicon.png': return void res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'no-store' }).end(PNG)
       case '/favicon-redirect.png': return go(`http://127.0.0.1:${plainPort}/x.png`)
       case '/favicon-slow.png': { const t = setTimeout(() => res.writeHead(200, { 'content-type': 'image/png' }).end(PNG), h.slowMs); res.on('close', () => clearTimeout(t)); return }
+      case '/favicon-flaky.png':
+        if (!flaked.has(name)) { flaked.add(name); return void res.writeHead(500, { 'content-type': 'text/plain' }).end('not yet') }
+        return void res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'no-store' }).end(PNG)
+      case '/__mv/logo.svg': return void res.writeHead(200, { 'content-type': 'image/svg+xml', 'cache-control': 'no-store' }).end(LOGO_SVG)
       case '/about': return void html('<!doctype html><title>about</title><p>about')
       case '/download': return void res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-disposition': 'attachment; filename="board.zip"' }).end('zip')
       case '/to-http': return go(`http://${name}.canvas.test:${port}/`)
