@@ -22,6 +22,12 @@
  *   and waits for those under way - `quitWaitMs` at most, then it answers 'stuck' (code review r2 #1). The
  *   unload's admission (`unloadRefusal`), its op, `onUnloaded` and the reopen are the section at the end (the
  *   unloading stream); memory.ts decides when.
+ *
+ * A4 (app 0.3, A4.6 #39-#49) adds the shared canvas, a `remote` tab: opened by its https link, one per origin, on
+ * `persist:remote` with no preload (views.ts, sessions.ts). Its document is never trusted and never reports, so its
+ * safety stays `unknown` and the guard always asks (`keptDoc`, `sheetWhy` `remote`); it lifts at its commit
+ * (`onRemoteCommit`); its place (`remote.url`) moves only to a shell page of its own origin; it is never unloaded and
+ * never restored. `canLoad`, `addressOf` and `keptDoc` answer for both kinds where a gate read the registry.
  */
 import type { DisplayState, TabKind, TabPageProbe, TabView } from '../shared/channels.ts'
 import type { AppState, Busy, Hello, Inset, MenuItem, Theme, Why } from '../../../src/shared/app-api.ts'
@@ -34,6 +40,7 @@ import type { FailWhy } from './nav.ts'
 import type { RegistryEntry, RegistryEvent } from './registry.ts'
 import { tilde } from '../shared/command.ts'
 import { hueOf } from '../shared/hue.ts'
+import { remoteStart, shellDestination } from '../shared/links.ts'
 
 /** A tab's kind is channels.ts's (A4.6 #39: `remote` from A4, a shared canvas - the remote stream builds it). */
 export type { TabKind }
@@ -154,6 +161,13 @@ export interface TabUnload {
   forced?: boolean
 }
 
+/**
+ * A shared canvas's place (A4.6 #39): `origin` the opening link's, fixed for the tab's life (a sign-in through other
+ * hosts leaves it this canvas's tab); `url` where it returns - the opening link, moved only to a later shell page of
+ * that origin (r1 #9); `host` its name, never the page's title.
+ */
+export interface TabRemote { origin: string; url: string; host: string }
+
 export interface Tab {
   /** main's opaque id, `t` and a counter, stable for the tab's life (A2.14 #10); `home` and `settings` for those */
   id: string
@@ -211,6 +225,10 @@ export interface Tab {
   audible?: boolean
   devtools?: boolean
   loading?: boolean
+
+  // ---- A4 (app 0.3; A4.6 #39) ----
+  /** a shared canvas's place: only on a `remote` tab */
+  remote?: TabRemote
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -269,6 +287,8 @@ export type SheetWhy =
   | { kind: 'stale'; stopped: boolean; held: Why[] }
   /** a quit's stuck sheet (code review r2 #1): the tab's unload close has not ended */
   | { kind: 'stuck' }
+  /** a shared canvas (A4.6 #43): it never reports, so the app cannot tell what it holds */
+  | { kind: 'remote' }
 
 /** One native sheet the guard asks (Cancel the default). */
 export interface Sheet { action: GuardAction; tabs: { id: string; name: string; why: SheetWhy }[] }
@@ -315,6 +335,8 @@ export interface TabsPorts {
   log?(topic: string, data: unknown): void
   /** A3: a record for the recorder (`recorder.event`; app.jsonl only with the recorder on) - the unload's and the reopen's (A3.8 #45) */
   record?<K extends AppKind>(kind: K, who: Tab | TabIdent, body: Omit<AppBody<K>, keyof TabIdent>): void
+  /** A4: a shared canvas committed or moved its place - Home's Shared canvases keep its `remote.url` (A4.6 #47) */
+  shared?(t: Tab): void
 }
 
 let ports: TabsPorts | null = null
@@ -376,6 +398,15 @@ export function startTabs(): Tabs {
 
 /** A live document the view still holds, which may hold the person's work (the guard's and the rebind's test). */
 export const liveDoc = (t: Tab): boolean => t.kind === 'local' && t.view === 'live' && t.retained
+/** A document the view still holds that may hold work: a local one (`liveDoc`), or a shared canvas's, live and retained (A4.6 #42). */
+export const keptDoc = (t: Tab): boolean => liveDoc(t) || (t.kind === 'remote' && t.view === 'live' && t.retained)
+/** The tab has an address to load now (A4.6 #42): a local canvas `ready` on its bound origin; a shared canvas always. */
+export const canLoad = (t: Tab): boolean => t.kind === 'remote' ? !!t.remote : t.kind === 'local' && t.reg?.state === 'ready' && !!t.reg.origin
+/** What a load of the tab loads (A4.6 #42): a local tab's path on its bound origin; a shared canvas's `remote.url`. */
+export function addressOf(t: Tab): string | null {
+  if (t.kind === 'remote') return t.remote?.url ?? null
+  return t.kind === 'local' && t.reg?.origin ? t.reg.origin + safePath(t.path) : null
+}
 /**
  * A tab loads when shown (A2.4's lazy views, v1.13 r2 #5): ready, not latched, not crashed (tabpage.ts owns that
  * reload), holding no live document, and with no view yet or a view a rebind left documentless.
@@ -403,6 +434,7 @@ export function tabName(t: Tab): string {
 
 /** A2.4's state, a pure function of the record. */
 export function displayState(t: Tab, active: boolean): DisplayState {
+  if (t.kind === 'remote') return remoteState(t, active)
   if (t.kind !== 'local') return active ? 'live' : 'hidden'
   const gone = !t.reg || t.reg.state === 'gone'
   if (t.fail?.why === 'unverified' && !gone) return 'unverified'
@@ -415,17 +447,36 @@ export function displayState(t: Tab, active: boolean): DisplayState {
   return active ? 'live' : 'hidden'
 }
 
-/** Home, local canvases by slot then explicit ports by port (a grey tab after a live one on the same slot), Settings (A2.14 #23). */
+/**
+ * A shared canvas's state (A4.6 #42): `starting` ("Opening <host>") until its first lift, `unreachable` after a
+ * failed load, `crashed` as a local tab; never `gone` or `unverified` - nothing proves or stops it.
+ */
+function remoteState(t: Tab, active: boolean): DisplayState {
+  if (t.view === 'crashed' || (t.crash.latched && !t.doc?.lifted)) return 'crashed'
+  if (t.fail) return 'unreachable'
+  if (t.view === 'none') return 'none'
+  if (!t.doc?.lifted) return 'starting'
+  return active ? 'live' : 'hidden'
+}
+
+/**
+ * Home, local canvases by slot then explicit ports by port (a grey tab after a live one on the same slot), shared
+ * canvases in the order opened (A4.6 #39), Settings (A2.14 #23).
+ */
 export function ordered(list: Tab[] = allTabs()): Tab[] {
   const rank = (t: Tab) => t.reg?.slot != null ? t.reg.slot : 10_000 + (t.reg?.port ?? 0)
   const num = (t: Tab) => Number.parseInt(t.id.slice(1), 36) || 0
   const local = list.filter((t) => t.kind === 'local' && t.open).sort((a, b) =>
     rank(a) - rank(b) || Number(a.reg?.state === 'gone') - Number(b.reg?.state === 'gone') || num(a) - num(b))
-  return [...list.filter((t) => t.kind === 'home'), ...local, ...list.filter((t) => t.kind === 'settings')]
+  const remote = list.filter((t) => t.kind === 'remote').sort((a, b) => num(a) - num(b))
+  return [...list.filter((t) => t.kind === 'home'), ...local, ...remote, ...list.filter((t) => t.kind === 'settings')]
 }
 
-/** The canvas tabs in strip order: ⌘1-⌘8 are the first eight, ⌘9 the last (A2.4, A2.14 #23). */
-export const canvasOrder = (list: Tab[] = allTabs()): Tab[] => ordered(list).filter((t) => t.kind === 'local')
+/** A canvas tab: a local canvas or a shared one (A4.6 #39) - what ⌘1-⌘9 and `»` count. */
+export const isCanvasTab = (t: Tab): boolean => t.kind === 'local' || t.kind === 'remote'
+
+/** The canvas tabs in strip order: ⌘1-⌘8 are the first eight, ⌘9 the last (A2.4, A2.14 #23), shared canvases last (A4.6 #39). */
+export const canvasOrder = (list: Tab[] = allTabs()): Tab[] => ordered(list).filter(isCanvasTab)
 
 export function forDigit(d: number, list: Tab[] = allTabs()): Tab | undefined {
   const c = canvasOrder(list)
@@ -449,9 +500,21 @@ export function cycleFrom(id: string, dir: 1 | -1, list: Tab[] = allTabs()): Tab
   return o[((i < 0 ? 0 : i + dir) + o.length) % o.length]
 }
 
-/** What the strip and Home get for one tab (A2.14 #19). No key, instance, ws or root unshortened. */
+/**
+ * What the strip and Home get for one tab (A2.14 #19). No key, instance, ws or root unshortened. A shared canvas
+ * (A4.6 #49): its host as its name, never verified, its `remote.url` as its link, initials on its host's hue - no
+ * marks, folder or version.
+ */
 export function viewOf(t: Tab, active: boolean, home: string, list: Tab[] = allTabs()): TabView {
   const v: TabView = { id: t.id, kind: t.kind, name: tabName(t), state: displayState(t, active), verified: !!t.doc?.trusted, open: t.open }
+  if (t.kind === 'remote' && t.remote) {
+    const key = keyOf(t, list)
+    if (key !== undefined) v.key = key
+    v.link = t.remote.url
+    if (t.logo) v.logo = t.logo
+    v.hue = hueOf(t.remote.host)
+    return v
+  }
   if (t.kind !== 'local') return v
   const key = keyOf(t, list)
   if (key !== undefined) v.key = key
@@ -786,6 +849,61 @@ function dropTab(t: Tab): void {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Shared canvases (A4.6 #39, #42, r1 #9): one tab per origin, its place kept apart from wherever sign-in takes it
+
+/** The open shared canvas on this origin, if any: ⌘L, Home and the front door activate it rather than open another. */
+export const remoteTab = (origin: string): Tab | undefined => allTabs().find((t) => t.kind === 'remote' && t.remote?.origin === origin)
+
+/**
+ * A new shared canvas's tab for an https link as `parseLink` gave it (checked there: no credentials, no loopback host):
+ * named by its host, starting at `remoteStart(url)`, after every tab opened before it. Not activated or loaded here.
+ */
+export function openRemoteTab(url: string): Tab {
+  const u = new URL(url)
+  const t = blankTab(`t${(++counter).toString(36)}`, 'remote', u.host, { remote: { origin: u.origin, url: remoteStart(url), host: u.host } })
+  tabs.set(t.id, t)
+  P().log?.('remote', { tab: t.id, opened: true })
+  return t
+}
+
+/** `remote.url` follows `href` when it is a shell page of the tab's origin (r1 #9); true when it moved. */
+function moveRemote(t: Tab, href: string): boolean {
+  const r = t.remote
+  if (!r || r.url === href || !shellDestination(r.origin, href)) return false
+  r.url = href
+  return true
+}
+
+/**
+ * A shared canvas's main-frame commit (A4.6 #42): attributed for navigation and presentation and lifted at once - no
+ * proof, no admission, never trusted, never reloaded as unattributed. Its safety stays `unknown` (nothing reports);
+ * the document may hold work from now (`retained`); its place moves under r1 #9's rule. `href` is the committed URL
+ * with its hash.
+ */
+export function onRemoteCommit(t: Tab, c: { gen: number; href: string }): void {
+  const p = P()
+  const d = ensureDoc(t)
+  d.commits += 1
+  d.gen = c.gen
+  d.url = c.href
+  d.trusted = false
+  d.doc = undefined
+  d.lifted = true
+  d.shown = false
+  t.reports = { safety: 'unknown' }
+  t.view = 'live'
+  t.hung = false
+  t.retained = true
+  t.fail = undefined
+  t.probe = undefined
+  t.held = undefined
+  moveRemote(t, c.href)
+  commitLayout(t, { kind: 'commit', gen: c.gen, attributed: false })
+  p.log?.('commit', { tab: t.id, gen: c.gen, remote: true, commits: d.commits })
+  p.shared?.(t)
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // Transitions: the document (from the adapter, nav.ts; A2.14 #8, v1.12 r1 #1, v1.13 r2 #3)
 
 function ensureDoc(t: Tab): TabDoc {
@@ -874,8 +992,12 @@ export function onDocumentGone(t: Tab, view: TabViewState): void {
   commitLayout(t, { kind: view === 'crashed' ? 'renderer-gone' : 'view-gone' })
 }
 
-/** A hash or pushState navigation inside the trusted document: the path follows the page (a board change). */
+/**
+ * A hash or pushState navigation inside the trusted document: the path follows the page (a board change). A shared
+ * canvas's comes first, before the trust test (A4.6 r1 #9): its place follows a shell page of its origin.
+ */
 export function onInPage(t: Tab, url: string): void {
+  if (t.kind === 'remote') { if (moveRemote(t, url)) P().shared?.(t); return }
   if (!t.doc?.trusted) return
   const path = pathOf(url)
   if (path) { t.path = path; P().save() }
@@ -954,6 +1076,10 @@ export function activate(id: string): void {
     // an activation during an unload's close is queued under its tab page: no shown until the outcome (A3.8 #42)
     const closing = u?.phase === 'closing' || u?.phase === 'unsure'
     if (prev !== next && next.doc?.trusted && !closing) p.appState(next, 'shown')
+  } else if (next.kind === 'remote') {
+    // a crash's reload waiting for it, a failed address looked at again; a shared canvas with no view yet loads
+    p.shown(next)
+    if (next.view === 'none' && canLoad(next)) p.load(next)
   }
   p.changed({ focus: 'shown' })
   p.save()
@@ -1032,8 +1158,11 @@ function endOperation(t: Tab, op: GuardOperation): void {
   ends.delete(op)
 }
 
-/** Whether the guard runs at all: a live document that was shown or admitted (v1.12 r1 #3's "not guarded" list). */
-export const guarded = (t: Tab): boolean => liveDoc(t)
+/**
+ * Whether the guard runs at all: a live document that was shown or admitted (v1.12 r1 #3's "not guarded" list), a
+ * shared canvas's included (A4.6 #43): it never reports, so it is never fresh and always asks.
+ */
+export const guarded = (t: Tab): boolean => keptDoc(t)
 
 /** The document is the one the operation bound. */
 const sameDoc = (t: Tab, op: GuardOperation): boolean => (t.doc?.commits ?? 0) === op.commit && t.doc?.doc === op.doc
@@ -1050,8 +1179,9 @@ export function mayGo(t: Tab, op: GuardOperation): boolean {
   return freshClean(t) || covers(t, op)
 }
 
-/** Why a sheet would name this tab. */
+/** Why a sheet would name this tab. A shared canvas first: it has no slot file, and no bridge to have (A4.6 #43). */
 export function sheetWhy(t: Tab): SheetWhy {
+  if (t.kind === 'remote') return { kind: 'remote' }
   if (!hasBridge(t)) return { kind: 'no-bridge', version: t.reg?.version }
   if (t.reports.safety === 'stale') {
     const held = t.reports.busy?.unsaved ? t.reports.busy.why.filter((w) => (UNSAVED_WHY as readonly string[]).includes(w)) : []
@@ -1150,7 +1280,8 @@ export async function guardAll(action: GuardAllAction): Promise<GuardAllAnswer> 
 async function sweep(action: GuardAllAction): Promise<GuardAnswer> {
   const p = P()
   const a = copyAction(action) as GuardAllAction
-  const list = ordered(allTabs()).filter((t) => t.kind === 'local' && guarded(t))
+  // every guarded tab, shared canvases with the local ones (A4.6 r1 #8): the rule the newcomer check below reads
+  const list = ordered(allTabs()).filter(guarded)
   const busy = allTabs().find((t) => t.replacing)
   if (busy) { p.log?.('guard', { all: a.kind, answer: 'refused', busy: busy.id }); if (!isActive(busy)) activate(busy.id); p.forward?.(); return 'refused' }
   const ops = new Map<Tab, GuardOperation>()
@@ -1211,6 +1342,7 @@ export function sheetLine(name: string, why: SheetWhy): string {
     case 'no-bridge': return `${name} runs Marver ${why.version ?? '0.27.0'}, which can't tell the app about unsaved work.`
     case 'unknown': return `${name} hasn't told the app yet whether it holds unsaved work.`
     case 'stuck': return `${name} hasn't finished closing.`
+    case 'remote': return `${name} is a shared canvas: the app can't tell what it hasn't saved.`
     case 'stale':
       if (why.stopped) return why.held.length ? `When ${name} stopped, it held ${words(why.held)}.` : `${name} stopped, so the app can't hear it any more: it may hold work made since.`
       return why.held.length ? `The app can't hear ${name} any more. When it last could, it held ${words(why.held)}.` : `The app can't hear ${name} any more: it may hold work made since.`
@@ -1314,6 +1446,8 @@ export function tabIdent(t: Tab): TabIdent {
   return {
     tab: t.id,
     ...(t.reg?.ws ? { ws: t.reg.ws } : {}),
+    // a shared canvas: its origin, never a path, query or hash (A4.6 #48)
+    ...(t.remote ? { origin: t.remote.origin } : {}),
     ...(t.doc ? { commit: t.doc.commits } : {}),
     ...(t.reports.hello?.page ? { page: t.reports.hello.page } : {}),
   }

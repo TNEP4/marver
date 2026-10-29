@@ -5,10 +5,11 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
-  activeTab, allTabs, applyRestore, canvasOrder, cycleFrom, displayState, forDigit, getTab, hashOnly, keyOf, onCommit, onFail, onRegistry,
-  onReport, openSettingsTab, ordered, parseTabsFile, restorePlan, safePath, snapshotFile, viewOf, wantsLoad, type TabsFile,
+  activate, activeTab, addressOf, allTabs, applyRestore, canLoad, canvasOrder, closeTab, cycleFrom, displayState, forDigit, getTab, guarded, hashOnly, keptDoc, keyOf, onCommit, onDocumentGone,
+  onFail, onInPage, onRegistry, onRemoteCommit, onReport, openRemoteTab, openSettingsTab, ordered, parseTabsFile, remoteTab, restorePlan, safePath, snapshotFile, tabIdent, unloadRefusal, viewOf, wantsLoad, type TabsFile,
 } from '../../src/main/tabs.ts'
-import { entry, liveTab, show, world, type World } from './window-fakes.ts'
+import { hueOf } from '../../src/shared/hue.ts'
+import { entry, liveTab, sharedTab, show, world, type World } from './window-fakes.ts'
 
 let w: World
 beforeEach(() => { w = world() })
@@ -407,4 +408,114 @@ describe('the document (A2.14 #8, v1.12 r1 #1, v1.13 r2 #3)', () => {
     expect(hashOnly('', 'http://[::1]:40100/#/b/x')).toBe(false)
   })
 
+})
+
+describe('shared canvases (A4.6 #39, #42, #47-#49, r1 #9)', () => {
+  it('one tab per origin, named by its host, after the local canvases in the order opened; ⌘1-⌘9, ⌃Tab and » reach them', () => {
+    const a = add({ slot: 2 }).t
+    const r1 = sharedTab(w, 'https://pilot.example.com/#/b/main')
+    const r2 = sharedTab(w, 'https://other.example.org:8443/')
+    const b = add({ slot: 1 }).t
+    openSettingsTab(false)
+    expect(ordered().map((t) => t.id)).toEqual(['home', b.id, a.id, r1.id, r2.id, 'settings'])
+    expect(canvasOrder().map((t) => t.id)).toEqual([b.id, a.id, r1.id, r2.id])
+    expect(forDigit(9)?.id).toBe(r2.id)
+    expect([r1, r2].map((t) => keyOf(t))).toEqual([3, 4])
+    expect(cycleFrom(r2.id, 1)?.id).toBe('settings')
+    expect(remoteTab('https://pilot.example.com')).toBe(r1)
+    expect(remoteTab('https://pilot.example.com:8443')).toBeUndefined()
+    expect([r1.name, r2.name]).toEqual(['pilot.example.com', 'other.example.org:8443'])
+  })
+
+  it('its TabView: the host, never verified, its place as the link, initials on the host\'s hue - no marks, folder, version or bridge', () => {
+    const r = sharedTab(w, 'https://pilot.example.com/#/b/main')
+    expect(viewOf(r, true, '/Users/nic')).toEqual({
+      id: r.id, kind: 'remote', name: 'pilot.example.com', state: 'live', verified: false, open: true, key: 1,
+      link: 'https://pilot.example.com/#/b/main', hue: hueOf('pilot.example.com'),
+    })
+    r.logo = 'data:image/png;base64,AAAA'
+    expect(viewOf(r, false, '/Users/nic')).toMatchObject({ state: 'hidden', logo: 'data:image/png;base64,AAAA' })
+  })
+
+  it('its state: starting until its first lift, unreachable after a failed load, crashed; never stopped or unverified', () => {
+    const r = openRemoteTab('https://pilot.example.com/')
+    expect(displayState(r, true)).toBe('none')
+    activate(r.id)
+    expect(w.loads).toEqual([r.id])   // a shared canvas with no view loads when shown
+    r.view = 'live'
+    expect(displayState(r, true)).toBe('starting')
+    onFail(r, { why: 'unverified', code: -106, errorPage: true })
+    expect(displayState(r, true)).toBe('unreachable')
+    onRemoteCommit(r, { gen: 2, href: 'https://pilot.example.com/' })
+    expect(displayState(r, true)).toBe('live')
+    expect(r.fail).toBeUndefined()
+    onDocumentGone(r, 'crashed')
+    expect(displayState(r, true)).toBe('crashed')
+  })
+
+  it('a commit lifts at once and is never trusted, admitted or reloaded as unattributed; it may hold work from then on', () => {
+    const r = sharedTab(w)
+    expect(r.doc).toMatchObject({ trusted: false, lifted: true, commits: 1 })
+    expect(r.doc!.doc).toBeUndefined()
+    expect(r.unattributed).toBeUndefined()
+    expect(r.retained).toBe(true)
+    expect(r.reports.safety).toBe('unknown')
+    expect(keptDoc(r) && guarded(r)).toBe(true)
+    expect(canLoad(r)).toBe(true)
+    expect(addressOf(r)).toBe('https://pilot.example.com/#/b/main')
+  })
+
+  it('its place moves only to a shell page of its origin: a sign-in through other hosts and its routes leaves it, cut short or not (r1 #9)', () => {
+    const r = sharedTab(w, 'https://pilot.example.com/#/b/plans?f=checkout')
+    w.shared.length = 0
+    for (const href of [
+      'https://pilot.example.com/__mv/id/start?next=%2F%23%2Fb%2Fplans', 'https://id.marver.design/login?c=1', 'https://accounts.google.com/o/oauth2/auth',
+      'https://pilot.example.com/__mv/id/finish#code=secret', 'https://pilot.example.com/about', 'https://elsewhere.example.com/#/b/x',
+    ]) {
+      onRemoteCommit(r, { gen: (r.doc?.gen ?? 0) + 1, href })
+      expect(r.remote!.url, href).toBe('https://pilot.example.com/#/b/plans?f=checkout')
+    }
+    // a sign-in cut short at finish keeps the board opened; the shell page after it moves the place
+    onRemoteCommit(r, { gen: 9, href: 'https://pilot.example.com/#/b/flow' })
+    expect(r.remote!.url).toBe('https://pilot.example.com/#/b/flow')
+    // a board changed by its hash moves it too, before any trust test - a shared canvas is never trusted
+    onInPage(r, 'https://pilot.example.com/#/b/other')
+    expect(r.remote!.url).toBe('https://pilot.example.com/#/b/other')
+    onInPage(r, 'https://pilot.example.com/__mv/id/finish#code=x')
+    expect(r.remote!.url).toBe('https://pilot.example.com/#/b/other')
+    expect(r.remote!.origin).toBe('https://pilot.example.com')
+    // Home heard each commit (lastSeen) and each move, never a URL its place does not hold
+    expect(w.shared.map((x) => x.url).every((u) => !u.includes('__mv') && u.startsWith('https://pilot.example.com/'))).toBe(true)
+    expect(w.shared.at(-1)).toEqual({ tab: r.id, url: 'https://pilot.example.com/#/b/other' })
+  })
+
+  it('an opening link under /__mv/ starts at the origin and /: the tab never holds a sign-in URL (r1 #9)', () => {
+    const r = openRemoteTab('https://pilot.example.com/__mv/id/finish#code=secret')
+    expect(r.remote).toEqual({ origin: 'https://pilot.example.com', url: 'https://pilot.example.com/', host: 'pilot.example.com' })
+  })
+
+  it('not restored: tabs.json is unchanged, an active shared canvas saving as Home (A4.6 #47)', () => {
+    const t = liveTab(w)
+    const r = sharedTab(w)
+    expect(activeTab()).toBe(r)
+    const f = snapshotFile(null, 5)
+    expect(f.active).toEqual({ kind: 'home' })
+    expect(f.canvases.map((c) => c.ws)).toEqual([t.reg!.ws])
+    expect(JSON.stringify(f)).not.toContain('pilot.example.com')
+  })
+
+  it('its identity: the tab, its origin and commit - never a path, query, hash or workspace (A4.6 #48)', () => {
+    const r = sharedTab(w, 'https://pilot.example.com/?token=abc#/b/main')
+    expect(tabIdent(r)).toEqual({ tab: r.id, origin: 'https://pilot.example.com', commit: 1 })
+  })
+
+  it('never unloaded; closing it asks (its record is never fresh), then drops the tab: no run of it to keep', async () => {
+    const r = sharedTab(w)
+    expect(unloadRefusal(r, Date.now() + 1e9)).toBe('not-canvas')
+    w.askWith = () => true
+    expect(await closeTab(r.id)).toBe('closed')
+    expect(w.sheets).toHaveLength(1)
+    expect(getTab(r.id)).toBeUndefined()
+    expect(activeTab()?.id).toBe('home')
+  })
 })

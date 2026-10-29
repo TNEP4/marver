@@ -5,6 +5,11 @@
  * Pure (no Electron import): `pageFor(tab, now)` is the page as a function of the record; `recover` is the only
  * thing that reloads a tab after its renderer went; the probe schedule (A2.3's retries, A2.11's 5 s check) decides
  * when to look and when to load. The views, the fetches and the sheets are `views.ts`'s, through the ports.
+ *
+ * A shared canvas (A4.6 #42, #44, #45) has three of these pages: `starting` ("Opening <host>") until its first lift,
+ * `unreachable` (never `stopped` or `unverified`: nothing proves or stops it), `crashed` as a local tab. Its probe is
+ * a `HEAD` of its origin; with no page retained an answer loads its place, with one only the line changes, and
+ * `net.isOnline()` turning true looks at once (`onlineTick`) - it only shortens the wait.
  */
 import { homedir } from 'node:os'
 import type { TabPageProbe, TabPageView } from '../shared/channels.ts'
@@ -12,7 +17,7 @@ import { startCommandShown, tilde } from '../shared/command.ts'
 import { hueOf } from '../shared/hue.ts'
 import { WHY_WORDS } from '../../../src/shared/app-api.ts'
 import { T } from './timings.ts'
-import { cameraKept, liveDoc, onDocumentGone, tabName, type Tab } from './tabs.ts'
+import { allTabs, cameraKept, canLoad, keptDoc, liveDoc, onDocumentGone, tabName, type Tab } from './tabs.ts'
 
 /**
  * Why a renderer went, as `recover` records it. The app's own endings (a confirmed force reload) count nothing; an
@@ -44,6 +49,7 @@ export function netReason(code: number | undefined): string {
  * beneath); a gone canvas with nothing kept; a kept page (none: the pill speaks instead); starting or opening.
  */
 export function pageFor(t: Tab, now: number, home: string = homedir()): PageBody | null {
+  if (t.kind === 'remote') return remotePage(t, now)
   if (t.kind !== 'local') return null
   const c = t.crash
   const base = {
@@ -92,6 +98,26 @@ export function pageFor(t: Tab, now: number, home: string = homedir()): PageBody
   if (t.doc?.lifted && t.view === 'live') return null
   const starting = t.reg!.state === 'starting'
   return { ...base, page: 'starting', phase: starting ? 'starting' : 'opening', since: starting ? (t.regAt ?? now) : (t.loadAt ?? t.regAt ?? now) }
+}
+
+/**
+ * A shared canvas's page (A4.6 #42): a crash not yet recovered, else a failed load (`unreachable`, the page it may have
+ * left `retained` beneath), else nothing over a kept or lifted document, else `starting` - "Opening <host>". No look of
+ * its own and no folder: the app's theme, its host's initials. `origin` is https: the page offers Open in Browser.
+ */
+function remotePage(t: Tab, now: number): PageBody | null {
+  const r = t.remote
+  if (!r) return null
+  const c = t.crash
+  const base = { name: tabName(t), ...(t.logo ? { logo: t.logo } : {}), hue: hueOf(r.host) }
+  if (c.inFlight === 'force' && !c.latched && !t.doc?.lifted) return { ...base, page: 'starting', phase: 'opening', since: t.loadAt ?? now }
+  if (t.view === 'crashed' || (!t.doc?.lifted && (c.latched || !!c.pendingShow || c.inFlight === 'auto'))) {
+    return { ...base, page: 'crashed', latched: c.latched, since: c.times?.at(-1) ?? now,
+      ...(c.reason ? { reason: c.reason } : {}), ...(c.count ? { crashes: c.count } : {}) }
+  }
+  if (t.fail) return { ...base, page: 'unreachable', since: t.fail.at, retained: t.retained, probe: t.probe ?? NO_PROBE, origin: r.origin, reason: netReason(t.fail.code) }
+  if (keptDoc(t) || (t.doc?.lifted && t.view === 'live')) return null
+  return { ...base, page: 'starting', phase: 'opening', since: t.loadAt ?? now }
 }
 
 /**
@@ -166,7 +192,7 @@ export function recover(t: Tab, cause: RecoverCause): void {
     // not a crash (A2.11's `crashed` excludes it): nothing counted; reloaded when it is in front (and, with its
     // canvas gone, once it is back: the rebind or the showing starts it)
     p.log?.('crash', { tab: t.id, cleanExit: true })
-    if (!c.latched) { if (t.reg?.state === 'ready' && p.isActive(t)) startReload(t, 'person'); else c.pendingShow = true }
+    if (!c.latched) { if (canLoad(t) && p.isActive(t)) startReload(t, 'person'); else c.pendingShow = true }
     p.changed()
     return
   }
@@ -190,8 +216,8 @@ export function recover(t: Tab, cause: RecoverCause): void {
     return
   }
   // nothing to reload into: stopped. Its one automatic attempt waits for the canvas - a rebind starts it for the
-  // active tab, the showing for a hidden one (A2.14 v1.13 r2 #5)
-  if (t.reg?.state !== 'ready') { c.inFlight = false; c.pendingShow = true; p.changed(); return }
+  // active tab, the showing for a hidden one (A2.14 v1.13 r2 #5). A shared canvas always has its place (A4.6 #45)
+  if (!canLoad(t)) { c.inFlight = false; c.pendingShow = true; p.changed(); return }
   if (p.isActive(t)) startReload(t, 'auto')                                  // the budget: started within 1 s
   else { c.inFlight = false; c.pendingShow = true }                         // dimmed; its one automatic attempt when shown
   p.changed()
@@ -200,7 +226,7 @@ export function recover(t: Tab, cause: RecoverCause): void {
 /** The tab was shown: a hidden tab's one automatic attempt after a crash starts now. */
 export function onShown(t: Tab): void {
   const c = t.crash
-  if (c.pendingShow && !c.latched && t.reg?.state === 'ready') {
+  if (c.pendingShow && !c.latched && canLoad(t)) {
     c.pendingShow = false
     startReload(t, 'auto')
   }
@@ -212,11 +238,11 @@ export function onShown(t: Tab): void {
  * latched tab with no live document. Once a person's reload has brought the page back, the latch stays 60 s
  * (A2.11), but that page is live and may hold work: its reload goes through the guard (A2.2) like any other.
  */
-export const reloadIsPersons = (t: Tab): boolean => t.view === 'crashed' || (t.crash.latched && !liveDoc(t))
+export const reloadIsPersons = (t: Tab): boolean => t.view === 'crashed' || (t.crash.latched && !keptDoc(t))
 
 /** Reload on a crashed tab's page (latched or not) and ⌘R there: the person's (A2.11). */
 export function personReload(t: Tab): void {
-  if (t.reg?.state !== 'ready') return
+  if (!canLoad(t)) return
   t.crash.pendingShow = false
   startReload(t, 'person')
 }
@@ -290,7 +316,7 @@ export function nextDelay(n: number, active: boolean): number {
 
 /** Arm (or re-arm) the looks for a failed tab. Called at each failure and on activation and hiding. */
 export function scheduleRetry(t: Tab, o: { now?: boolean } = {}): void {
-  if (!t.fail || t.reg?.state !== 'ready') { stopRetries(t); return }
+  if (!t.fail || !canLoad(t)) { stopRetries(t); return }
   const r = retries.get(t.id) ?? { n: 0, running: false }
   retries.set(t.id, r)
   if (r.timer) clearTimeout(r.timer)
@@ -312,7 +338,7 @@ async function look(t: Tab): Promise<void> {
   const r = retries.get(t.id)
   if (!r || r.running) return
   r.timer = undefined
-  if (!t.fail || t.reg?.state !== 'ready') { stopRetries(t); return }
+  if (!t.fail || !canLoad(t)) { stopRetries(t); return }
   r.running = true
   let state: TabPageProbe['state'] = 'silent'
   try { state = await p.probe(t) } catch { state = 'silent' } finally { r.running = false }
@@ -328,6 +354,21 @@ async function look(t: Tab): Promise<void> {
   }
   if (before !== state) p.changed()
   scheduleRetry(t)
+}
+
+/**
+ * `net.isOnline()` as main polls it (A4.6 #44: once a second, and only while `wantsOnline()`): it only shortens the
+ * wait, never stands for reachability - a turn from false to true looks at every failed shared canvas at once. The
+ * first reading of a poll is its baseline.
+ */
+let wasOnline: boolean | null = null
+export const wantsOnline = (): boolean => allTabs().some((t) => t.kind === 'remote' && !!t.fail)
+export function onlineTick(online: boolean | null): void {
+  const turned = wasOnline === false && online === true
+  wasOnline = online
+  if (!turned) return
+  P().log?.('online', { turned: true })
+  for (const t of allTabs()) if (t.kind === 'remote' && t.fail) scheduleRetry(t, { now: true })
 }
 
 // ---------------------------------------------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 /** One parser for a canvas link (src/shared/links.ts; spec 28 A2.7, v1.10 r1 #4). */
 import { describe, expect, it } from 'vitest'
-import { boardOf, parseLink, shellPath } from '../../src/shared/links.ts'
+import { boardOf, loopbackHost, parseLink, remoteStart, shellDestination, shellPath } from '../../src/shared/links.ts'
 
 describe('parseLink()', () => {
   it('reads a running canvas\'s link on each loopback host, keeping path, query and hash', () => {
@@ -16,6 +16,22 @@ describe('parseLink()', () => {
 
   it('an https link is a shared canvas (A4.4)', () => {
     expect(parseLink('https://pilot.example.com/')).toEqual({ kind: 'https', url: 'https://pilot.example.com/', host: 'pilot.example.com' })
+  })
+
+  it('an https link to a loopback host is no canvas link (A4.6 #39): every spelling URL normalises to, and the unspecified address', () => {
+    for (const s of [
+      'https://localhost/', 'https://localhost:4806/#/b/x', 'https://LOCALHOST./', 'https://app.localhost/', 'https://127.0.0.1/', 'https://127.9.8.7:8443/',
+      'https://127.1/', 'https://0x7f.1/', 'https://[::1]/', 'https://[0:0:0:0:0:0:0:1]:4806/', 'https://0.0.0.0/', 'https://[::]/', 'https://[::ffff:127.0.0.1]/',
+    ]) expect(parseLink(s), s).toEqual({ kind: 'bad' })
+    for (const h of ['localhost', 'a.b.localhost', '127.0.0.1', '127.255.0.1', '0.0.0.0', '[::1]', '[::]', '[::ffff:7f00:1]']) expect(loopbackHost(h), h).toBe(true)
+    for (const h of ['localhost.example.com', '128.0.0.1', '10.0.0.1', '[2001:db8::1]', 'pilot.example.com', 'mylocalhost']) expect(loopbackHost(h), h).toBe(false)
+  })
+
+  it('a bare non-loopback host reads as https, a bare loopback one as a local link; a bare word is no link (A4.6 #39)', () => {
+    expect(parseLink('pilot.example.com/#/b/flow')).toEqual({ kind: 'https', url: 'https://pilot.example.com/#/b/flow', host: 'pilot.example.com' })
+    expect(parseLink('pilot.example.com:8443')).toEqual({ kind: 'https', url: 'https://pilot.example.com:8443/', host: 'pilot.example.com:8443' })
+    expect(parseLink('localhost:4806/#/b/x')).toMatchObject({ kind: 'local', port: 4806 })
+    for (const s of ['pilot', 'u:p@pilot.example.com', 'localhost', `pilot.example.com/${'a'.repeat(2048)}`]) expect(parseLink(s), s).toEqual({ kind: 'bad' })
   })
 
   it('refuses anything else', () => {
@@ -38,6 +54,24 @@ describe('parseLink()', () => {
     expect(shellPath('/#/b/flow?f=x')).toBe('/#/b/flow?f=x')
     expect(shellPath('/index.html?n=1#/b/x')).toBe('/index.html?n=1#/b/x')
     for (const p of ['/other', 'x', 3, `/#${'a'.repeat(2048)}`, '//evil.com/']) expect(shellPath(p)).toBe('/')
+  })
+
+  it('a shared tab starts at its opening link, or its origin and / under /__mv/ (A4.6 r1 #9)', () => {
+    expect(remoteStart('https://pilot.example.com/#/b/flow?f=x')).toBe('https://pilot.example.com/#/b/flow?f=x')
+    expect(remoteStart('https://pilot.example.com/other/page?q=1')).toBe('https://pilot.example.com/other/page?q=1')
+    for (const u of ['https://pilot.example.com/__mv/id/start?next=/', 'https://pilot.example.com/__mv/id/finish#code=abc', 'https://pilot.example.com/__mv']) {
+      expect(remoteStart(u), u).toBe('https://pilot.example.com/')
+    }
+  })
+
+  it('its place moves only to a shell page of its own origin - never a sign-in route, another page or another origin (A4.6 r1 #9)', () => {
+    const o = 'https://pilot.example.com'
+    for (const u of [`${o}/`, `${o}/#/b/plans`, `${o}/index.html?n=1#/b/x?f=y`, `${o}/?share=1`]) expect(shellDestination(o, u), u).toBe(true)
+    for (const u of [
+      `${o}/__mv/id/start?next=%2F`, `${o}/__mv/id/finish#code=abc`, `${o}/__mv/logo.svg`, `${o}/other/page`, `${o}/index.htm`,
+      'https://id.marver.design/login', 'https://accounts.google.com/o/oauth2/auth', 'https://pilot.example.com:8443/', 'http://pilot.example.com/',
+      'https://u:p@pilot.example.com/', 'not a url',
+    ]) expect(shellDestination(o, u), u).toBe(false)
   })
 
   it('names the board of a hash route only', () => {
