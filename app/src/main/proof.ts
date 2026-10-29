@@ -20,11 +20,12 @@
  * The proof only makes a result pending: trust is decided at the commit by the adapter (nav.ts), and `isTrusted` is
  * "attributed at its commit, nothing lost since, and its instance still the tab's current, live registry instance".
  *
- * `fetchLogo` and `probeProof` prove the logo and the address the same way (A2.4, v1.14 r3 #4).
+ * `fetchLogo` and `probeProof` prove the logo and the address the same way (A2.4, v1.14 r3 #4), and A4's live stream
+ * its answer, with `checkProof` kind `live` (A4.6 #6, #16).
  */
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import type { OnBeforeSendHeadersListenerDetails, OnHeadersReceivedListenerDetails, Session } from 'electron'
-import { docProof, logoProof, NONCE } from '../../../src/server/proof.ts'
+import { docProof, liveProof, logoProof, NONCE, type ProofKind } from '../../../src/server/proof.ts'
 import { LOGO_MAX, LOGO_MIME, sniffLogo, type LogoType } from '../../../src/shared/logo-sniff.ts'
 import { adapterFor, noHash, setLiveResolver, type FailWhy, type Outcome } from './nav.ts'
 import { appRegistry, type RegistryEntry } from './registry.ts'
@@ -120,15 +121,18 @@ const same = (a: string, b: string) => {
   return x.length === y.length && timingSafeEqual(x, y)
 }
 
-/** A final response's proof against one entry (pure). */
-export function checkProof(input: { headers: Record<string, string>; nonce: string; key: Buffer; port: number; instance: string; kind?: 'doc' | 'logo' }): 'ok' | 'proof' | 'elsewhere' | 'instance' {
+const PROOFS: Record<ProofKind, typeof docProof> = { doc: docProof, logo: logoProof, live: liveProof }
+
+/** A final response's proof against one entry (pure): the shell's document (`doc`), the logo (`logo`, A2.4), or
+ *  the live stream's answer (`live`, A4.6 #6) - each A1's own formula for its kind, never another's. */
+export function checkProof(input: { headers: Record<string, string>; nonce: string; key: Buffer; port: number; instance: string; kind?: ProofKind }): 'ok' | 'proof' | 'elsewhere' | 'instance' {
   const h = input.headers
   if (h['x-mv-elsewhere'] === '1') return 'elsewhere'
   const got = h['x-mv-proof']
   const inst = h['x-mv-instance']
   if (!got || !inst) return 'proof'
   if (inst !== input.instance) return 'instance'
-  const want = (input.kind === 'logo' ? logoProof : docProof)(input.key, input.nonce, input.port)
+  const want = PROOFS[input.kind ?? 'doc'](input.key, input.nonce, input.port)
   return same(got, want) ? 'ok' : 'proof'
 }
 

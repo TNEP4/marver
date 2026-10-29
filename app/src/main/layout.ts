@@ -36,7 +36,7 @@
  *
  * FROZEN (A3.8 #53): `LayoutEvent`, `commitLayout`, `placed`, `docInset`, `seeThrough`, `rectFor`.
  */
-import type { Inset } from '../../../src/shared/app-api.ts'
+import { FEATURE, type Inset } from '../../../src/shared/app-api.ts'
 import { below, full, type Rect } from './plan.ts'
 import type { Geometry, Layout, Tab } from './tabs.ts'
 
@@ -103,7 +103,7 @@ function without(g: Geometry, ...keys: ('pending' | 'inset')[]): Geometry {
 
 /** What the tab's canvas offers for the document a navigation starts now. */
 function startLayout(t: Tab): Layout {
-  return ground && t.kind === 'local' && t.reg?.state === 'ready' && t.reg.features.includes('inset') ? 'full' : 'below'
+  return ground && t.kind === 'local' && t.reg?.state === 'ready' && t.reg.features.includes(FEATURE.inset) ? 'full' : 'below'
 }
 
 function next(t: Tab, e: LayoutEvent): Geometry {

@@ -31,6 +31,7 @@ import type { AddressInfo } from 'node:net'
 import { asHolder, pidRuns, portInUse, readJson, takeExclusive } from './exclusive.ts'
 import { legacyWorkspace, workspaceId } from './workspace.ts'
 import { NAME } from '../cli/name.ts'
+import { FEATURE } from '../shared/app-api.ts'
 
 export const SLOTS = 20
 
@@ -125,8 +126,12 @@ function asRecord(v: unknown): SlotFile | null {
  *  reports. A canvas without it (0.27.0) gets the app's degraded guard, which asks first. `inset` (0.27.2, A3.8 #31):
  *  its shell takes the top inset under the app's transparent strip, keeps what it means to be read or clicked below
  *  it and its scroll edge, and answers the app's presentation requests - so app 0.2 may run it at the window's full
- *  height. A canvas without it stays below the strip. */
-export const FEATURES: readonly string[] = ['bridge', 'inset']
+ *  height. A canvas without it stays below the strip. The names are app-api.ts's `FEATURE`, read by the app too.
+ *
+ *  A4 (0.29.0, A4.6 #2) adds `live`, `open` and `capture` - each a frozen contract, described at `FEATURE`. None is
+ *  listed yet: a name here is a promise the app acts on (it opens a stream, sends `mv:open`, answers `mv:capture`),
+ *  so each A4 stream adds its own name here once its half works, never before. */
+export const FEATURES: readonly string[] = [FEATURE.bridge, FEATURE.inset]
 
 export interface Claim {
   slot: number | null

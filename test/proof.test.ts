@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createHmac } from 'node:crypto'
 import { join } from 'node:path'
 import { routesMiddleware } from '../src/server/routes.ts'
-import { appProof, docProof, NONCE, type DocProof } from '../src/server/proof.ts'
+import { appProof, appProofOk, docProof, liveProof, logoProof, NONCE, proofHeaders, type DocProof } from '../src/server/proof.ts'
 import { ROUTE } from '../src/cli/name.ts'
 
 /**
@@ -78,5 +78,33 @@ describe('the document proof (A1.4)', () => {
     expect(appProof(key, 4806)).toBe(createHmac('sha256', key).update('app|4806').digest('base64url'))
     expect(appProof(Buffer.alloc(32, 1), 4805)).toBe('qa-8BfONEDtk2Snz2yGeCU1IBqCko97vHjnEpMxVJno')
     expect(NONCE.test('A-z_0'.repeat(4))).toBe(true)
+  })
+})
+
+describe('the live stream\'s proofs (A4.6 #6)', () => {
+  it('the answer: live|<nonce>|<port>, pinned, and never a document\'s or a logo\'s', () => {
+    expect(liveProof(key, nonce, 4806)).toBe(createHmac('sha256', key).update(`live|${nonce}|4806`).digest('base64url'))
+    expect(liveProof(Buffer.alloc(32, 1), 'A-z_0'.repeat(4), 4805)).toBe('wrsFSxyM7i75VufiBKWGHE8P9sJjCRyCHEgxPDNuoSM')
+    const three = [liveProof(key, nonce, 4806), docProof(key, nonce, 4806), logoProof(key, nonce, 4806)]
+    expect(new Set(three).size).toBe(3)
+    expect(liveProof(key, nonce, 4807)).not.toBe(three[0])
+    expect(liveProof(Buffer.alloc(32, 8), nonce, 4806)).not.toBe(three[0])
+    expect(liveProof(key, 'b'.repeat(32), 4806)).not.toBe(three[0])
+  })
+
+  it('its headers: the instance and the live proof, for a well-formed nonce only', () => {
+    expect(proofHeaders(proof, nonce, 'live')).toEqual({ 'x-mv-instance': 'the-instance', 'x-mv-proof': liveProof(key, nonce, 4806) })
+    expect(proofHeaders(proof, 'short', 'live')).toBe(null)
+    expect(proofHeaders(undefined, nonce, 'live')).toBe(null)
+  })
+
+  it('the request: x-mv-app is appProof(key, port) exactly - another key, port or length, or anything not one string, is no', () => {
+    expect(appProofOk(proof, appProof(key, 4806))).toBe(true)
+    expect(appProofOk(proof, appProof(key, 4807))).toBe(false)
+    expect(appProofOk(proof, appProof(Buffer.alloc(32, 8), 4806))).toBe(false)
+    expect(appProofOk(proof, appProof(key, 4806).slice(1))).toBe(false)
+    expect(appProofOk(proof, `${appProof(key, 4806)}=`)).toBe(false)
+    expect(appProofOk(proof, liveProof(key, nonce, 4806))).toBe(false)
+    for (const bad of [undefined, '', [appProof(key, 4806)], 42]) expect(appProofOk(proof, bad)).toBe(false)
   })
 })

@@ -8,7 +8,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { createServer, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { docProof, logoProof } from '../../../src/server/proof.ts'
+import { docProof, logoProof, proofHeaders } from '../../../src/server/proof.ts'
 import { canvasAddress, checkProof, commitsNothing, fetchLogo, installDispatcher, isRedirect, oneHeaders, probeProof, REDIRECTS, shellDocUrl, targetOf, unsafePrefs, type ProofTarget } from '../../src/main/proof.ts'
 import type { RegistryEntry } from '../../src/main/registry.ts'
 
@@ -19,12 +19,24 @@ const nonce = randomBytes(24).toString('base64url')
 describe('checkProof', () => {
   const port = 30003
   const good = { 'x-mv-instance': instance, 'x-mv-proof': docProof(key, nonce, port) }
-  const check = (headers: Record<string, string>, o: { kind?: 'doc' | 'logo'; inst?: string } = {}) => checkProof({ headers, nonce, key, port, instance: o.inst ?? instance, kind: o.kind })
+  const check = (headers: Record<string, string>, o: { kind?: 'doc' | 'logo' | 'live'; inst?: string } = {}) => checkProof({ headers, nonce, key, port, instance: o.inst ?? instance, kind: o.kind })
   it('passes A1\'s own docProof, and only for that nonce, port and key', () => {
     expect(check(good)).toBe('ok')
     expect(check({ ...good, 'x-mv-proof': docProof(key, nonce, port + 1) })).toBe('proof')
     expect(check({ ...good, 'x-mv-proof': docProof(randomBytes(32), nonce, port) })).toBe('proof')
     expect(check({ ...good, 'x-mv-proof': docProof(key, randomBytes(24).toString('base64url'), port) })).toBe('proof')
+  })
+  it('the live stream\'s answer (A4.6 #6): what the package signs passes kind live alone; a wrong nonce, port or key fails', () => {
+    const live = proofHeaders({ instance, key, port }, nonce, 'live')!
+    expect(check(live, { kind: 'live' })).toBe('ok')
+    expect(check(live)).toBe('proof')
+    expect(check(live, { kind: 'logo' })).toBe('proof')
+    expect(check(good, { kind: 'live' })).toBe('proof')
+    expect(check({ ...good, 'x-mv-proof': logoProof(key, nonce, port) }, { kind: 'live' })).toBe('proof')
+    expect(check(proofHeaders({ instance, key, port: port + 1 }, nonce, 'live')!, { kind: 'live' })).toBe('proof')
+    expect(check(proofHeaders({ instance, key: randomBytes(32), port }, nonce, 'live')!, { kind: 'live' })).toBe('proof')
+    expect(check(proofHeaders({ instance, key, port }, randomBytes(24).toString('base64url'), 'live')!, { kind: 'live' })).toBe('proof')
+    expect(check(live, { kind: 'live', inst: randomUUID() })).toBe('instance')
   })
   it('a logo proof is not a document proof, and the other way round', () => {
     expect(check({ ...good, 'x-mv-proof': logoProof(key, nonce, port) })).toBe('proof')

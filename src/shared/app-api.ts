@@ -13,6 +13,12 @@
  * presentation epochs of the one ground; `mv:perf` / `mv:perf-ask`, the recorder's traffic. Every new method of
  * `MarverAppV1` is optional: a 0.27.2 shell inside app 0.1 still sees `marverApp` (marver-app.ts requires only the
  * six 0.1 methods), and a shell trusts the inset only with the whole presentation contract (inset.ts).
+ *
+ * A4 (app 0.3, marver 0.29.0) adds, frozen before its streams split (A4.6 #56) and `v` still 1: the features a slot
+ * file may list (`FEATURE`, A4.6 #2); the live stream's event and wire (`LiveEvent`, `LIVE_BOUNDS`, `LIVE_WIRE`,
+ * A4.6 #11, #14), which the server writes and main reads - no page ever opens it; `mv:open` / `mv:opened`, a notice's
+ * click handed to the shell (`OpenItem`, `OpenResult`, A4.6 #29, #30); `mv:capture`, a live picture of the
+ * document's own view (`CaptureAsk`, `CaptureAnswer`, A4.6 #35). The new methods are optional, as A3's are.
  */
 
 export const APP_API_VERSION = 1
@@ -41,7 +47,8 @@ export interface Busy { busy: boolean; unsaved: boolean; why: Why[] }
 export interface Theme { dark: boolean }
 /** `mv:menu` - at most 40, no separators in 0.1 (A2.7). */
 export interface MenuItem { id: string; group: 'view' | 'jam'; label: string; hint?: string; checked?: boolean }
-/** `mv:app-state` (main to canvas). `untrusted`: stop every microphone track (A2.14 #13). `open-next` is A4's. */
+/** `mv:app-state` (main to canvas). `untrusted`: stop every microphone track (A2.14 #13). A4 adds `mv:open` and
+ *  `mv:capture`; this stays these three (A4.6 #29). */
 export type AppState = 'shown' | 'hidden' | 'untrusted'
 /**
  * `mv:doc` - the preload's one synchronous call at document start, answered at once on every path while untrusted,
@@ -109,7 +116,8 @@ export type PerfAsk =
 /** What reaches the shell's `onPerfAsk`. */
 export type PerfProbeAsk = Extract<PerfAsk, { kind: 'probes' }>
 
-/** The canvas channels. `mv:inset` is gone (A3.8 #26: `mv:doc` answers it); needs-you and capture are A4's. */
+/** The canvas channels. `mv:inset` is gone (A3.8 #26: `mv:doc` answers it). A4 adds `mv:open` and `mv:capture`;
+ *  `mv:needs-you` is cut (A4.6 #15): main reads what needs you from the server's live stream. */
 export const CANVAS_CHANNELS = {
   doc: 'mv:doc',
   admit: 'mv:admit',
@@ -125,6 +133,11 @@ export const CANVAS_CHANNELS = {
   /** A3: the recorder (A3.8 #10) */
   perf: 'mv:perf',
   perfAsk: 'mv:perf-ask',
+  /** A4: a notice's click (main to canvas) and the shell's answer (A4.6 #29) */
+  open: 'mv:open',
+  opened: 'mv:opened',
+  /** A4: a live picture of the document's own view - an invoke (A4.6 #35) */
+  capture: 'mv:capture',
 } as const
 
 /** Bounds main checks again (A2.14 #19): unknown fields are stripped, a known one of the wrong type or past its bound refuses the message. */
@@ -142,6 +155,10 @@ export const BOUNDS = {
   epoch: 2 ** 31 - 1,
   viewport: 20_000,
   frames: 8,
+  /** A4.6 #35, #37: a live picture's long side at most (main scales down to it; the server refuses past it), and
+   *  main's deadline for one capture */
+  captureLong: 4096,
+  captureMs: 1500,
 } as const
 
 /**
@@ -161,9 +178,151 @@ export const PERF_BOUNDS = {
   burst: 64,
 } as const
 
+// ---- A4 (app 0.3, marver 0.29.0): frozen by A4.6 #56 ----------------------------------------------------------
+
+/**
+ * What a slot file's `features` say a canvas offers the Mac app (src/server/slots.ts `FEATURES`; the app reads each
+ * registry entry's). A name is a version (A4.6 #2): a breaking change to its contract takes a new name (`live2`),
+ * never a new meaning for this one, and `bridge` and `inset` imply none of the others. An app ignores a name it does
+ * not know (A1.3), and asks nothing of a canvas that does not list one (A4.6 #3).
+ */
+export const FEATURE = {
+  /** 0.27.1 (A2.9, A2.14 #15): the shell says hello, theme, menu and `mv:busy` with `unsaved` */
+  bridge: 'bridge',
+  /** 0.27.2 (A3.8 #31): the shell takes the top inset under the strip and answers presentation requests */
+  inset: 'inset',
+  /** 0.29.0 (A4.6 #5, #6, #11): the server answers `GET /__mv/app/live` (`LIVE_WIRE`) with `LiveEvent` v1 */
+  live: 'live',
+  /** 0.29.0 (A4.6 #29, #30): the shell handles `mv:open` and answers `mv:opened` */
+  open: 'open',
+  /** 0.29.0 (A4.6 #33-#37): the shell asks `mv:capture` for live pictures and the server takes `POST /api/jam/picture/live` */
+  capture: 'capture',
+} as const
+export type Feature = (typeof FEATURE)[keyof typeof FEATURE]
+
+/** What waits on the owner, one item per need (A4.6 #8, #10). `stopped` is main's own item, never on the wire (#20). */
+export const LIVE_KINDS = ['ask', 'review', 'failed', 'stalled'] as const
+export type LiveKind = (typeof LIVE_KINDS)[number]
+
+/**
+ * One need (A4.6 #8-#11). Its `id` is `<kind>:` and the first 20 hex of a sha256 over the occurrence's persisted
+ * parts (#9): the same need gives the same id across reconnects and restarts, a new occurrence a new id; the app
+ * compares ids and never parses one. Every ref (`board`, `frame`, `thread`, `msg`, a card or batch id) is at most
+ * `LIVE_BOUNDS.ref`; an item with a longer one is left out of `items` and still counted.
+ */
+export interface LiveItem {
+  id: string
+  kind: LiveKind
+  board: string
+  /** one line: whitespace collapsed, control characters removed, at most 140 UTF-16 units, never cut inside a pair */
+  title: string
+  /** failed: why, at most 140 */
+  note?: string
+  /** when it began waiting: order only, never identity */
+  at: number
+  frame?: string
+  /** an ask's thread; a comment card's thread */
+  thread?: string
+  /** ask: the asking message's id - its occurrence */
+  msg?: string
+  /** the Jam cards it covers, at most 8 (MAX_MEMBERS) */
+  cards?: string[]
+  /** review, failed with a run, stalled */
+  batch?: string
+  /** stalled: the claim's generation */
+  gen?: number
+  /** the counter in its id (A4.6 #9, r1 #1): a review's `att`, a failed run's `failures` (a card that failed with no
+   *  run: its `att`), a stalled run's `stalls`. A click compares it with the view as it is then (#30) */
+  occ?: number
+}
+
+/** One snapshot of the live stream, whole every time (A4.6 #11, #12): no deltas. */
+export interface LiveEvent {
+  v: 1
+  /** the slot file's; equals the response's `x-mv-instance` */
+  instance: string
+  /** per server process: rises across Vite restarts of one instance */
+  seq: number
+  /** off: no Jam view here (Jam off, or the repo's Jam lock held elsewhere) - its review, failed and stalled are then
+   *  0 because nothing on this canvas can act on them, not because none wait (#12) */
+  jam: 'on' | 'off'
+  /** newest first by `at`, at most `LIVE_BOUNDS.items`, and only as many as fit `eventBytes` */
+  items: LiveItem[]
+  /** items the cap or the byte budget left out (the oldest); 0 when none. An item left out for a long ref is not here */
+  cut: number
+  /** exact, before the cap */
+  counts: { ask: number; review: number; failed: number; stalled: number }
+  /** frames new to the owner: a count only, never items, never a notice */
+  unseen: number
+  /** `marver work` holds a lease, or a Jam run is at work (not stalled, offered, waiting or stopping) (#8) */
+  working: boolean
+  /** a Jam session runs (`!!view.session`) */
+  session: boolean
+}
+
+/**
+ * The bounds both sides keep (A4.6 #11, #16): the server's selector and encoder write within them, and main checks
+ * every field again, stripping unknown ones and dropping an item of an unknown kind (not the event). `eventBytes`:
+ * the event as written (`event: live`, its `data:` line, the blank line) in UTF-8 bytes - the encoder drops the
+ * oldest whole items until it fits, and main drops a connection whose event is longer.
+ */
+export const LIVE_BOUNDS = {
+  items: 100,
+  title: 140,
+  note: 140,
+  ref: 128,
+  cards: 8,
+  eventBytes: 65_536,
+  id: /^(ask|review|failed|stalled):[0-9a-f]{20}$/,
+} as const
+
+/**
+ * The live stream's wire (A4.6 #5, #6, #14). `GET <origin><path>` with `x-mv-ws`, a fresh `x-mv-nonce` and
+ * `x-mv-app` = `appProof(key, port)`; the 200 is `text/event-stream` carrying `x-mv-instance` and `x-mv-proof` =
+ * `liveProof(key, nonce, port)` (src/server/proof.ts). Each snapshot is `event: <event>`, one `data:` line of
+ * `LiveEvent` JSON, then a blank line; `<heartbeat>` is a comment line every `heartbeatMs`. No `Last-Event-ID`, no
+ * `retry:`. At most `clients` at once (one more ends the oldest); a client with more than `slowBytes` unsent is
+ * dropped and reconnects.
+ */
+export const LIVE_WIRE = {
+  path: '/__mv/app/live',
+  type: 'text/event-stream',
+  event: 'live',
+  heartbeat: ': hb',
+  heartbeatMs: 30_000,
+  clients: 4,
+  slowBytes: 65_536,
+} as const
+
+/** What a notice's click hands the shell (A4.6 #29, r1 #1): the item as the stream gave it, its words left out. */
+export type OpenItem = Pick<LiveItem, 'id' | 'kind' | 'board' | 'thread' | 'msg' | 'cards' | 'batch' | 'gen' | 'occ'>
+/**
+ * The shell's answer (A4.6 #30): `handled` - the item is on screen; `stale` - its target stands in another state, or
+ * the same state with another counter, and opens as it stands; `missing` - the target is gone, its board opens;
+ * `busy` - a capture records or words wait unsent, nothing moved; `dropped` - a read failed, the deadline passed or
+ * a later request took its place, nothing moved.
+ */
+export const OPEN_RESULTS = ['handled', 'stale', 'missing', 'busy', 'dropped'] as const
+export type OpenResult = (typeof OPEN_RESULTS)[number]
+/** `mv:open` (main to canvas; on the wire `{ doc, item }`, stamped by main like `mv:app-state`). */
+export interface Open { item: OpenItem }
+/** `mv:opened` (canvas to main; on the wire `{ doc, p }`, stamped by the preload and accepted like the reports). */
+export interface Opened { id: string; result: OpenResult }
+
+/** `mv:capture`'s rect, in view CSS px (A4.6 #35): finite, `x, y >= 0`, `width, height >= 1`, inside the view. */
+export interface CaptureRect { x: number; y: number; width: number; height: number }
+/** `mv:capture` (canvas to main, an invoke; on the wire `{ doc, p }`). */
+export interface CaptureAsk { rect: CaptureRect }
+/** Why there is no picture (A4.6 #35): the shell then takes the server's render, as without the app (#36). */
+export const CAPTURE_WHY = ['hidden', 'busy', 'bounds', 'empty', 'timeout', 'stale', 'untrusted'] as const
+export type CaptureWhy = (typeof CAPTURE_WHY)[number]
+/** The PNG's bytes cross IPC as a `Uint8Array` (a sandboxed preload has no `Buffer` in Electron 45, A4.6 #1); its
+ *  size in device pixels, its long side at most `BOUNDS.captureLong`. */
+export type CaptureAnswer = { ok: true; png: Uint8Array; width: number; height: number } | { ok: false; why: CaptureWhy }
+
 /**
  * `window.marverApp`, exposed by the canvas preload to verified local canvases. Typed methods only: a page never
- * names a channel. The six methods of 0.1 are required (marver-app.ts checks them); every A3 one is optional.
+ * names a channel. The six methods of 0.1 are required (marver-app.ts checks them); every A3 and A4 one is optional.
  */
 export interface MarverAppV1 {
   readonly v: 1
@@ -190,6 +349,17 @@ export interface MarverAppV1 {
   onPerfAsk?(fn: (a: PerfProbeAsk) => void): () => void
   /** A3 (app 0.2): the display's refresh rate from main's `display` ask, null until one came; the shell puts it on its gesture records */
   perfInfo?(): { hz: number | null }
+  /**
+   * A4 (app 0.3): main's `mv:open` for a clicked notice, delivered once to this document after its hello when its
+   * instance lists `open` (A4.6 #29). The shell resolves the occurrence against a fresh read and answers (#30); the
+   * preload sends the answer as `mv:opened`
+   */
+  onOpen?(fn: (p: OpenItem) => OpenResult | Promise<OpenResult>): () => void
+  /**
+   * A4 (app 0.3): a picture of this document's own view, `rect` in view CSS px (A4.6 #35). Before an admit it
+   * answers `untrusted` with no IPC; main answers `hidden`, `busy`, `bounds`, `empty`, `timeout` or `stale` otherwise
+   */
+  capture?(a: CaptureAsk): Promise<CaptureAnswer>
 }
 
 /** Main's words for a reason (the hang sheet, the unsaved pill); `heights` is never named (A2.14 #18). */

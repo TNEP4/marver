@@ -25,7 +25,7 @@
  */
 import type { DisplayState, TabPageProbe, TabView } from '../shared/channels.ts'
 import type { AppState, Busy, Hello, Inset, MenuItem, Theme, Why } from '../../../src/shared/app-api.ts'
-import { UNSAVED_WHY, WHY_WORDS } from '../../../src/shared/app-api.ts'
+import { FEATURE, UNSAVED_WHY, WHY_WORDS } from '../../../src/shared/app-api.ts'
 import type { AppBody, AppKind, TabIdent, UnloadReason } from '../../../src/shared/app-perf.ts'
 import { commitLayout } from './layout.ts'
 import { bumpGen } from './present.ts'
@@ -392,7 +392,7 @@ const loadsNow = (t: Tab): boolean => wantsLoad(t) && !(t.view === 'unloaded' &&
 export const fresh = (t: Tab): boolean => t.reports.safety === 'fresh' && !!t.doc?.trusted
 export const freshUnsaved = (t: Tab): boolean => fresh(t) && t.reports.busy?.unsaved === true
 export const freshClean = (t: Tab): boolean => fresh(t) && t.reports.busy?.unsaved !== true
-export const hasBridge = (t: Tab): boolean => !!t.reg?.features.includes('bridge')
+export const hasBridge = (t: Tab): boolean => !!t.reg?.features.includes(FEATURE.bridge)
 
 /** The name the eye reads: an unverified tab is its address, never the slot file's name (frame 05, A2.13). */
 export function tabName(t: Tab): string {
