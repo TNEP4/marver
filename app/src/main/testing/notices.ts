@@ -16,7 +16,7 @@ let count = 0
 let hooked = false
 
 export function fakePresenter(): Presenter {
-  hooks()
+  provideNoticeHooks()
   return {
     create() { journal.push({ op: 'create' }); note('notices', { op: 'create' }) },
     post(n, on) {
@@ -30,7 +30,8 @@ export function fakePresenter(): Presenter {
   }
 }
 
-function hooks(): void {
+/** The hooks, from the start of a test run: a case reads an empty journal before anything made the presenter. */
+export function provideNoticeHooks(): void {
   if (hooked) return
   hooked = true
   provide('notices', (a) => {

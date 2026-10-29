@@ -48,6 +48,7 @@ import { activeTab, getTab, openForNotice, setMarksSource, setOpenSender, startT
 import { createLive } from './live.ts'
 import { createNotify, type Notify } from './notify.ts'
 import { presenter } from './notify-mac.ts'
+import { provideNoticeHooks } from './testing/notices.ts'
 import { confirm, setCondition, setOfferActions } from './pill.ts'
 import { effects } from './effects.ts'
 import { CH } from '../shared/channels.ts'
@@ -278,6 +279,7 @@ function startNotices(trust: TrustPort, bridge: ReturnType<typeof installBridge>
     try { noticesWriter().flushSync() } catch { /* a report, never the quit's */ }
   })
   if (__MV_TEST__ && testMode()) {
+    provideNoticeHooks()
     provide('live', () => live.dump())
     provide('notify', () => n.dump())
   }

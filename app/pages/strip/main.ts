@@ -17,6 +17,11 @@
  *   tab per minute, and each new pill - nothing for what was found at launch: the first `tabs` snapshot, and the
  *   pill main sends with it at `app:ready` (null when none; a pill within a second of that first snapshot counts as
  *   found at launch when main sent no null). Words that arrive together are said together.
+ * - **Marks** (A4, A4.6 #19; `TabView.marks`): one slot after the name - an orange count of what needs you (99+), else
+ *   a blue count of new frames, else a light sweeping the bubble while an agent works (a still wash under Reduce
+ *   Motion) - and a teal dot on the logo's corner while a Jam session runs. A stream that has been down draws the mark
+ *   dimmed. The tab's name says them ("Pilot, 2 need you, Jam session on"); the live region says "<name> needs you"
+ *   when its count rises, at most once per tab per minute, never for the first marks the strip sees of a tab.
  */
 import type { PillView, TabsSnapshot, TabView, WindowView } from '../../src/shared/channels.ts'
 import { cmdButton, fill, h, hostOf, icon, logo, pageApi, say, setLook, shown } from '../../src/pages/dom.ts'
@@ -39,6 +44,9 @@ let focusId: string | null = null
 const els = new Map<string, HTMLElement>()
 const lastState = new Map<string, string>()
 const announcedAt = new Map<string, number>()
+/** each tab's needs as last seen, and when its rise was last said */
+const lastNeeds = new Map<string, number>()
+const needsSaidAt = new Map<string, number>()
 let tabsBaseline = true
 let pillBaseline = true
 /** after the first `tabs` snapshot, how long a pill with no null before it still counts as found at launch */
@@ -50,7 +58,20 @@ const WORDS: Partial<Record<TabView['state'], string>> = {
 }
 /** What the eye reads on a tab: an unverified one by its address (A2.13), never a name it has not proved. */
 const shownName = (t: TabView) => (t.state === 'unverified' ? hostOf(t.link) ?? t.name : t.name)
-const nameOf = (t: TabView) => (t.kind === 'home' ? 'Home' : WORDS[t.state] ? `${shownName(t)}, ${WORDS[t.state]}` : shownName(t))
+/** What a tab's marks say (A4.6 #19): its needs, else its new frames; an agent at work, a session, and a stream that is down. */
+function marksWords(t: TabView): string[] {
+  const m = t.marks
+  if (!m) return []
+  const out: string[] = []
+  if (m.needs > 0) out.push(`${m.needs} ${m.needs === 1 ? 'needs' : 'need'} you`)
+  else if (m.unseen > 0) out.push(`${m.unseen} new ${m.unseen === 1 ? 'frame' : 'frames'}`)
+  else if (m.working) out.push('agent working')
+  if (m.session) out.push('Jam session on')
+  if (m.stale) out.push('may be out of date')
+  return out
+}
+const nameOf = (t: TabView) => (t.kind === 'home' ? 'Home'
+  : [WORDS[t.state] ? `${shownName(t)}, ${WORDS[t.state]}` : shownName(t), ...marksWords(t)].join(', '))
 const shownTabs = (): TabView[] => (snap?.tabs ?? []).filter((t) => t.kind === 'home' || t.open !== false)
 const visibleEls = (): HTMLElement[] => shownTabs().map((t) => els.get(t.id)).filter((e): e is HTMLElement => !!e && !e.hidden)
 const idOf = (el: Element | null) => (el as HTMLElement | null)?.dataset?.id ?? null
@@ -61,7 +82,18 @@ function slotFor(t: TabView): HTMLElement {
   else if (t.state === 'starting') slot.append(h('i', { class: 'spin' }))
   else if (t.state === 'unverified') slot.append(icon('warning', 16, 'warn'))   // never a logo for a canvas not proven
   else slot.append(logo(t, 18))
+  if (t.marks?.session) slot.append(h('i', { class: 'sess' }))   // a Jam session: whatever the mark slot shows
   return slot
+}
+
+/** The one mark slot (A4.6 #19): needs you (orange), else new frames (blue); the shimmer is the bubble's own class. */
+function markOf(t: TabView): HTMLElement | null {
+  const m = t.marks
+  if (!m) return null
+  const count = (n: number) => (n > 99 ? '99+' : String(n))
+  if (m.needs > 0) return h('span', { class: 'mk ask', 'aria-hidden': 'true' }, count(m.needs))
+  if (m.unseen > 0) return h('span', { class: 'mk new', 'aria-hidden': 'true' }, count(m.unseen))
+  return null
 }
 
 function paintTab(el: HTMLElement, t: TabView, active: boolean): void {
@@ -76,11 +108,13 @@ function paintTab(el: HTMLElement, t: TabView, active: boolean): void {
     fill(el, icon('house', 15))
     return
   }
-  el.className = ['tab', active && 'on', t.state !== 'live' && t.state !== 'hidden' && t.state !== 'none' && `is-${t.state}`].filter(Boolean).join(' ')
+  const m = t.marks
+  el.className = ['tab', active && 'on', t.state !== 'live' && t.state !== 'hidden' && t.state !== 'none' && `is-${t.state}`,
+    m && !m.needs && !m.unseen && m.working && 'working', m?.stale && 'stale'].filter(Boolean).join(' ')
   if (t.key) el.setAttribute('aria-keyshortcuts', `Meta+${t.key}`)
   else el.removeAttribute('aria-keyshortcuts')
   el.removeAttribute('title')
-  fill(el, slotFor(t), h('span', { class: 'name' }, shownName(t)), t.key ? h('kbd', { class: 'key', 'aria-hidden': 'true' }, `⌘${t.key}`) : null)
+  fill(el, slotFor(t), h('span', { class: 'name' }, shownName(t)), markOf(t), t.key ? h('kbd', { class: 'key', 'aria-hidden': 'true' }, `⌘${t.key}`) : null)
 }
 
 function renderTabs(): void {
@@ -170,7 +204,21 @@ function announceTabs(): void {
     announcedAt.set(t.id, now)
     say(live, words)
   }
+  announceNeeds(shownNow, now)
   tabsBaseline = false
+}
+
+/** "<name> needs you" when a tab's count rises (A4.6 #19, A2.13): never for the first marks seen of a tab, once a minute at most. */
+function announceNeeds(shownNow: TabView[], now: number): void {
+  for (const t of shownNow) {
+    if (t.kind !== 'local' || !t.marks) continue
+    const before = lastNeeds.get(t.id)
+    lastNeeds.set(t.id, t.marks.needs)
+    if (tabsBaseline || before === undefined || t.marks.needs <= before) continue
+    if (now - (needsSaidAt.get(t.id) ?? -Infinity) < ANNOUNCE_EVERY) continue
+    needsSaidAt.set(t.id, now)
+    say(live, `${shownName(t)} needs you`)
+  }
 }
 
 function renderPill(): void {

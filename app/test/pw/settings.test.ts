@@ -183,3 +183,44 @@ describe('the files (A2.7, A2.12)', () => {
 
   it('loads under the CSP with nothing refused', async () => { expect(await p.csp()).toEqual([]) })
 })
+
+describe('Notices, at STAGE a4 (app 0.3, A4.6 #25, #27)', () => {
+  const a4 = (notifications: boolean | undefined, outcome: SettingsView['notices']['outcome'] = 'unknown'): SettingsView => {
+    const v = view()
+    const values = { ...v.config.values, ...(notifications === undefined ? {} : { notifications }) }
+    return { ...v, shown: shownKeys('a4'), config: { ...v.config, values }, notices: { outcome } }
+  }
+  const row = (key: string) => p.page.locator(`[data-ctl="config.${key}"]`)
+
+  it('the Notices row is notifications\' own switch, with Open System Settings always - before any post - and no Dock badge row until notices are on', async () => {
+    await p.answer('settings:get', a4(undefined))
+    await p.send('status', view().status)
+    await p.page.waitForSelector('[data-ctl="config.notifications"]')
+    expect(await row('notifications').getAttribute('aria-checked')).toBe('false')
+    expect(await row('dockBadge').count()).toBe(0)
+    expect(await p.page.locator('#notices-failed').count()).toBe(0)
+    await p.page.click('#notice-settings')
+    await p.page.waitForTimeout(30)
+    expect(await p.calls('settings:action')).toEqual([{ action: 'open-notification-settings' }])
+  })
+
+  it('turned on: one settings:set, then the Dock badge row; after an accepted post, still Open System Settings and nothing more', async () => {
+    await p.answer('settings:get', a4(true, 'accepted'))
+    await row('notifications').click()
+    await p.page.waitForSelector('[data-ctl="config.dockBadge"]')
+    expect(await p.calls('settings:set')).toEqual([{ file: 'config', key: 'notifications', value: true }])
+    expect(await row('notifications').getAttribute('aria-checked')).toBe('true')
+    expect(await p.page.locator('#notices-failed').count()).toBe(0)
+    expect(await p.page.locator('#notice-settings').count()).toBe(1)
+  })
+
+  it('after a refused post: "macOS turned down Marver\'s last notice", and Open System Settings still there', async () => {
+    await p.answer('settings:get', a4(true, 'failed'))
+    await p.send('status', view().status)
+    await p.page.waitForSelector('#notices-failed')
+    expect(await p.page.$eval('#notices-failed', (e) => e.textContent)).toBe('macOS turned down Marver\'s last notice')
+    await p.page.click('#notice-settings')
+    await p.page.waitForTimeout(30)
+    expect(await p.calls('settings:action')).toEqual([{ action: 'open-notification-settings' }])
+  })
+})

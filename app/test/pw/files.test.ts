@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { launchPW, type AppRun } from '../harness/app.ts'
 import { NIC_PROFILES, runSlotBase, snapshot, testEnv, type TestEnv } from '../harness/env.ts'
+import { startFakeCanvas } from '../harness/fake-canvas.ts'
 
 const nicBefore = NIC_PROFILES.map(snapshot)
 const sha = (b: string | Buffer) => createHash('sha256').update(b).digest('hex')
@@ -53,6 +54,25 @@ describe('first launch (A2.12, A2.14 #24)', () => {
     const spies = await call<{ counts: Record<string, number>; installed: string[] }>('spies')
     expect(spies.installed.length).toBeGreaterThan(0)
     expect(spies.counts).toEqual({})
+  })
+
+  it('a live canvas raising an ask before Turn On: no notice, no badge, the presenter never made, the spies at {} (A4.6 #22, #51)', async () => {
+    env = testEnv(runSlotBase())
+    const f = await startFakeCanvas({ home: env.home, slotBase: runSlotBase(), slot: 1, features: ['bridge', 'live'], live: true })
+    try {
+      await f.ready
+      await launch({ MARVER_APP_SPY: '1' })
+      await until(() => call<{ held: boolean }[]>('live'), (l) => l.some((x) => x.held), 10_000)
+      f.setLive({ items: [{ id: `ask:${'1'.repeat(20)}`, kind: 'ask', board: 'main', title: 'Which logo?', at: 1, thread: 't1', msg: 'm1' }] })
+      const seen = await until(() => call<{ seen: Record<string, number> }>('notify'), (d) => Object.values(d.seen).some((n) => n > 0), 5000)
+      expect(Object.values(seen.seen)).toContain(1)
+      await wait(500)
+      expect((await call<{ journal: unknown[] }>('notices')).journal).toEqual([])
+      expect((await call<{ config: Record<string, unknown> }>('files.values')).config.notifications).toBeUndefined()
+      const spies = await call<{ counts: Record<string, number>; installed: string[] }>('spies')
+      expect(spies.installed.length).toBeGreaterThan(0)
+      expect(spies.counts).toEqual({})
+    } finally { await f.close() }
   })
 
   it('state/launched only once Home has shown; the welcome holds for the run; the next launch is "On this Mac" and quick', async () => {
