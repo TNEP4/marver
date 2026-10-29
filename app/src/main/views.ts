@@ -60,7 +60,7 @@ import { crashReloaded, currentPill, onPillAction, setCondition, setPillPorts } 
 import {
   activate, activeTab, addressOf, allTabs, applyRestore, cameraKept, canLoad, canvasOrder, closeTab, cycleFrom, displayState, forDigit, getTab, guard,
   guardAll, hasBridge, hashOnly, isActive, isCanvasTab, keptDoc, keyOf, linkOpens, liveDoc, onCommit, onDocumentGone, onFail, onInPage, onRegistry, onRemoteCommit, onReport, onUnloaded, openRemoteTab, openSettingsTab,
-  ordered, parseTabsFile, remoteTab, reopenTab, restorePlan, safePath, savedPathIn, setTabsPorts, sheetBox, sheetConfirmed, sheetText, snapshotFile, startReopen, stuckUnloads, tabName,
+  ordered, parseTabsFile, remoteLinkPlan, remoteTab, reopenTab, restorePlan, safePath, savedPathIn, setTabsPorts, sheetBox, sheetConfirmed, sheetText, snapshotFile, startReopen, stuckUnloads, tabName,
   unloadClosing, viewlessAct, type GuardAllAction, type GuardAction, type GuardAnswer, type Sheet, type Tab, type TabsFile,
 } from './tabs.ts'
 import {
@@ -911,23 +911,16 @@ export async function openRemote(raw: string): Promise<LinkOpenAnswer> {
   const p = parseLink(raw)
   if (p.kind !== 'https') return { ok: false, why: 'bad' }
   const have = remoteTab(new URL(p.url).origin)
-  if (!have) {
-    const t = openRemoteTab(p.url)
-    j('link', { tab: t.id, remote: 'new' })
-    activate(t.id)   // its view is made and its place loaded (tabs.ts activate)
-    return { ok: true }
-  }
-  activate(have.id)
   const url = remoteStart(p.url)
-  const wc = contentView(have.id)?.webContents
-  const at = wc && !wc.isDestroyed() ? wc.getURL() : ''
-  if (at === url) { j('link', { tab: have.id, remote: 'same' }); return { ok: true } }
-  if (wc && !wc.isDestroyed() && hashOnly(at, url)) {
-    // only the hash changes: the same document, no question asked
-    j('link', { tab: have.id, remote: 'hash' })
-    void wc.loadURL(url).catch(() => {})
-    return { ok: true }
-  }
+  const wc = have ? contentView(have.id)?.webContents : undefined
+  const live = wc && !wc.isDestroyed() ? wc : undefined
+  const plan = remoteLinkPlan(have, url, live?.getURL() ?? '')
+  j('link', { remote: plan, ...(have ? { tab: have.id } : {}) })
+  if (!have) { activate(openRemoteTab(p.url).id); return { ok: true } }   // its view made and its place loaded (tabs.ts activate)
+  activate(have.id)
+  if (plan === 'same') return { ok: true }
+  // only the hash changes: the same document, no question asked
+  if (plan === 'hash' && live) { void live.loadURL(url).catch(() => {}); return { ok: true } }
   return (await guard(have, { kind: 'load', url })) === 'done' ? { ok: true } : { ok: false, why: 'refused' }
 }
 

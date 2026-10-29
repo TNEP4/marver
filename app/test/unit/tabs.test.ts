@@ -6,7 +6,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   activate, activeTab, addressOf, allTabs, applyRestore, canLoad, canvasOrder, closeTab, cycleFrom, displayState, forDigit, getTab, guarded, hashOnly, keptDoc, keyOf, onCommit, onDocumentGone,
-  onFail, onInPage, onRegistry, onRemoteCommit, onReport, openRemoteTab, openSettingsTab, ordered, parseTabsFile, remoteTab, restorePlan, safePath, snapshotFile, tabIdent, unloadRefusal, viewOf, wantsLoad, type TabsFile,
+  onFail, onInPage, onRegistry, onRemoteCommit, onReport, openRemoteTab, openSettingsTab, ordered, parseTabsFile, remoteLinkPlan, remoteTab, restorePlan, safePath, snapshotFile, tabIdent, unloadRefusal, viewOf, wantsLoad, type TabsFile,
 } from '../../src/main/tabs.ts'
 import { hueOf } from '../../src/shared/hue.ts'
 import { entry, liveTab, sharedTab, show, world, type World } from './window-fakes.ts'
@@ -487,6 +487,19 @@ describe('shared canvases (A4.6 #39, #42, #47-#49, r1 #9)', () => {
     // Home heard each commit (lastSeen) and each move, never a URL its place does not hold
     expect(w.shared.map((x) => x.url).every((u) => !u.includes('__mv') && u.startsWith('https://pilot.example.com/'))).toBe(true)
     expect(w.shared.at(-1)).toEqual({ tab: r.id, url: 'https://pilot.example.com/#/b/other' })
+  })
+
+  it('a link to an origin with a tab: nothing where it already is, its hash alone unasked, anything else the guard; no tab, a new one (#39, #43)', () => {
+    const r = sharedTab(w, 'https://pilot.example.com/#/b/main')
+    const at = 'https://pilot.example.com/#/b/main'
+    expect(remoteLinkPlan(undefined, 'https://other.example.com/', '')).toBe('new')
+    expect(remoteLinkPlan(r, at, at)).toBe('same')
+    expect(remoteLinkPlan(r, 'https://pilot.example.com/#/b/other', at)).toBe('hash')
+    for (const url of ['https://pilot.example.com/', 'https://pilot.example.com/?view=2#/b/main', 'https://pilot.example.com/about#/b/main']) expect(remoteLinkPlan(r, url, at), url).toBe('guard')
+    // mid sign-in on another host: the board's link replaces that page, through the guard
+    expect(remoteLinkPlan(r, at, 'https://id.marver.design/login')).toBe('guard')
+    // no document shown yet (a view still loading): never "only the hash"
+    expect(remoteLinkPlan(r, at, '')).toBe('guard')
   })
 
   it('an opening link under /__mv/ starts at the origin and /: the tab never holds a sign-in URL (r1 #9)', () => {

@@ -866,6 +866,17 @@ export function openRemoteTab(url: string): Tab {
   return t
 }
 
+/**
+ * What an https link does (A4.6 #39, #43), for the open shared tab on its origin (`t`) whose document shows `at`: no
+ * tab, a new one; the link where it already is, nothing; only its hash differing, the same document, unasked; any
+ * other change replaces the page, through the guard. `url` is where the link starts (`remoteStart`).
+ */
+export function remoteLinkPlan(t: Tab | undefined, url: string, at: string): 'new' | 'same' | 'hash' | 'guard' {
+  if (!t) return 'new'
+  if (at === url) return 'same'
+  return hashOnly(at, url) ? 'hash' : 'guard'
+}
+
 /** `remote.url` follows `href` when it is a shell page of the tab's origin (r1 #9); true when it moved. */
 function moveRemote(t: Tab, href: string): boolean {
   const r = t.remote
