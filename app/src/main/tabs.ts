@@ -914,6 +914,21 @@ export function onRemoteCommit(t: Tab, c: { gen: number; href: string }): void {
   p.shared?.(t)
 }
 
+/** Chromium's net error for a navigation that ended with no commit (nav.ts's, which this file does not import). */
+const ERR_ABORTED = -3
+
+/**
+ * A shared canvas's load that ended with no commit and no newer one under way (nav.ts's abort, Chromium's
+ * `ERR_ABORTED`): a redirect the policy refused, a download, a 204. Over a lifted document nothing changes - the page
+ * stays as it was. With none, nothing else would move the tab on from "Opening <host>", so the load failed: unreachable
+ * (`aborted`), with Try Now and Open in Browser (#42). True when it failed.
+ */
+export function onRemoteAbort(t: Tab, gen: number): boolean {
+  if (t.kind !== 'remote' || t.doc?.lifted) return false
+  onFail(t, { why: 'unreachable', code: ERR_ABORTED, errorPage: false, gen })
+  return true
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Transitions: the document (from the adapter, nav.ts; A2.14 #8, v1.12 r1 #1, v1.13 r2 #3)
 

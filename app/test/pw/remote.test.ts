@@ -259,6 +259,19 @@ describe('recovery, split by what is kept (A4.6 #44)', () => {
     expect(Date.now() - at).toBeLessThan(6500)
   })
 
+  it('a first load that opens no page - a redirect to http, a download, a 204 - is unreachable with Open in Browser, never "Opening <host>" for good', async () => {
+    for (const [name, path] of [['tohttp', '/to-http'], ['dl', '/download'], ['empty', '/no-content']] as const) {
+      expect(await open(r.url(name, path))).toEqual({ ok: true })
+      const s = await w.until((x) => shared(x, name)?.state === 'unreachable', 15_000, `${path}: unreachable`)
+      const t = shared(s, name)!
+      expect(t.doc?.lifted ?? false).toBe(false)
+      expect(await w.run.call('page', { tab: t.id })).toMatchObject({ body: { page: 'unreachable', reason: 'aborted', origin: r.origin(name), retained: false } })
+      await w.run.call('tabpage:action', { tab: t.id, action: 'open-browser' })
+      expect(await opened()).toContain(r.url(name, path))
+      await sleep(1100)   // openOutside: one a second
+    }
+  })
+
   it('a bad certificate: unreachable for its certificate, nothing offered past it; Open in Browser sends its place outside', async () => {
     const url = `${r.bad.origin('pilot')}/`
     expect(await open(url)).toEqual({ ok: true })

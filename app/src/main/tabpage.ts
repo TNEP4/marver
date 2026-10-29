@@ -39,6 +39,7 @@ export function netReason(code: number | undefined): string {
   if (code === -102 || code === -324) return 'nothing'
   if (code === -7 || code === -118) return 'timeout'
   if (code <= -200 && code > -300) return 'certificate'
+  if (code === -3) return 'aborted'   // a shared canvas's load that ended with no page (tabs.ts onRemoteAbort)
   return 'failed'
 }
 

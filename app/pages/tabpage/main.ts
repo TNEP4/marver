@@ -31,6 +31,7 @@ const reasonWords = (r?: string) => (r ? REASONS[r] ?? r.charAt(0).toUpperCase()
 const NET: Record<string, string> = {
   offline: 'You\'re offline.', 'no-host': 'There is no such address.', nothing: 'The server didn\'t answer.', timeout: 'The server took too long to answer.',
   certificate: 'Its certificate isn\'t valid, and the app never goes past that.', failed: 'The page couldn\'t load.',
+  aborted: 'The link didn\'t open a page here.',
 }
 /** A shared canvas's page: an https origin (a local canvas is always http on a loopback host). */
 const isShared = (origin?: string) => !!origin && origin.startsWith('https:')

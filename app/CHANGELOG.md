@@ -12,8 +12,9 @@
   names it ("pilot.example.com is a shared canvas: the app can't tell what it hasn't saved").
 - **Home lists Shared canvases**: the open ones, then the last 12 opened, which reopen with a click. Shared tabs are not
   restored at launch.
-- **A shared canvas that cannot be reached** says why in words, tries again by itself (at once when the Mac is back
-  online), and offers Open in Browser; a bad certificate is never gone past.
+- **A shared canvas that cannot be reached**, or whose link opens no page here (a download, a redirect to http), says
+  why in words, tries again by itself (at once when the Mac is back online), and offers Open in Browser; a bad
+  certificate is never gone past.
 
 ## 0.2.2 - 2026-10-26
 

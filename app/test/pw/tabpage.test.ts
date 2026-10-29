@@ -120,6 +120,9 @@ describe('can\'t be reached (A2.11)', () => {
     await show({ page: 'unreachable', name: 'pilot.example.com', since: Date.now(), origin: 'https://pilot.example.com', retained: true, probe: { state: 'answers', lastAt: 1 }, hue: 2 })
     expect(await p.page.$eval('.tp-line', (e) => e.textContent)).toBe('pilot.example.com answers again')
     expect(await buttons()).toEqual(['Try Again', 'Open in Browser', 'Close Tab'])
+    // a link that opened no page here (tabs.ts onRemoteAbort): its words, and Open in Browser
+    await show({ page: 'unreachable', name: 'pilot.example.com', since: Date.now(), origin: 'https://pilot.example.com', reason: 'aborted', retained: false, probe: none, hue: 2 })
+    expect(await words()).toBe('Can\'t reach pilot.example.com The link didn\'t open a page here. Try Now Open in Browser Close Tab Trying again every few seconds')
   })
 })
 

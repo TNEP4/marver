@@ -9,7 +9,7 @@ import {
   copyDetails, hangDecision, hangSheetText, nextDelay, onAttemptFailed, onLifted, onlineTick, onShown, onViewClosed, pageFor, personReload, recover, reloadIsPersons,
   scheduleRetry, snapshotKey, stopRetries, wantsOnline, type HangCheck, type ProcessSnapshot,
 } from '../../src/main/tabpage.ts'
-import { activate, onRemoteCommit, openRemoteTab } from '../../src/main/tabs.ts'
+import { activate, onRemoteAbort, onRemoteCommit, openRemoteTab } from '../../src/main/tabs.ts'
 import { hueOf } from '../../src/shared/hue.ts'
 import { entry, liveTab, sharedTab, show, world, type World } from './window-fakes.ts'
 
@@ -540,6 +540,33 @@ describe('a shared canvas\'s page (A4.6 #42, #44, #45)', () => {
     expect(k.probe?.state).toBe('answers')
     expect(pageFor(k, 1, HOME)).toMatchObject({ page: 'unreachable', retained: true, probe: { state: 'answers' } })
     stopRetries(k)
+  })
+
+  it('a load that ended with no page and no document lifted (a refused redirect, a download, a 204): unreachable with Open in Browser, its looks loading it again - never "Opening <host>" for good; a lifted page keeps itself', async () => {
+    vi.useFakeTimers()
+    const r = openRemoteTab('https://pilot.example.com/to-http')
+    show(r.id)
+    r.view = 'live'
+    r.loadAt = 42
+    w.loads.length = 0
+    expect(pageFor(r, 99, HOME)).toMatchObject({ page: 'starting', phase: 'opening' })
+    expect(onRemoteAbort(r, 1)).toBe(true)
+    expect(displayState(r, true)).toBe('unreachable')
+    expect(pageFor(r, 99, HOME)).toMatchObject({ page: 'unreachable', name: 'pilot.example.com', origin: 'https://pilot.example.com', reason: 'aborted', retained: false })
+    expect(wantsOnline()).toBe(true)
+    w.probeWith = () => 'answers'
+    scheduleRetry(r)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(w.loads).toEqual([r.id])
+    // the load lifted: a later load from the page that ends with none (a download from it) leaves the page as it is
+    onRemoteCommit(r, { gen: 2, href: 'https://pilot.example.com/' })
+    expect(onRemoteAbort(r, 3)).toBe(false)
+    expect([displayState(r, true), pageFor(r, 99, HOME)]).toEqual(['live', null])
+    // a local tab's abort is never a failure: its own page waits on the registry and the proof
+    const local = add()
+    expect(onRemoteAbort(local, 1)).toBe(false)
+    expect(local.fail).toBeUndefined()
+    stopRetries(r)
   })
 
   it('net.isOnline() only shortens the wait: wanted while a shared canvas is unreachable; a turn to true looks at once, the first reading a baseline', async () => {

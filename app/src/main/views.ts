@@ -28,8 +28,9 @@
  * A4 (app 0.3, A4.6 #39-#46) adds the shared canvas, a `remote` tab on `persist:remote` with no preload: its view is
  * wired as a canvas's (keys, focus, crash and hang, HTML full screen, the `canvases` map) with nav.ts's adapter and no
  * trust - registered `remote` with the bridge itself, since there is nothing of trust to fake for it. Its commit lifts
- * at once (`onRemoteCommit`), its failure is `unreachable` whatever the adapter said, its probe a `HEAD` of its origin,
- * and `net.isOnline()` turning true looks again at once (polled only while one is unreachable). `openRemote` is ⌘L's,
+ * at once (`onRemoteCommit`), its failure is `unreachable` whatever the adapter said - a load that ends with no page
+ * and nothing lifted too (`onRemoteAbort`) - its probe a `HEAD` of its origin, and `net.isOnline()` turning true looks
+ * again at once (polled only while one is unreachable). `openRemote` is ⌘L's,
  * Home's and the front door's: one tab per origin, a hash-only change unasked, any other through the guard.
  */
 import { execFile } from 'node:child_process'
@@ -59,7 +60,7 @@ import { buildNow, HELP_URL, invalidateMenu, startMenu, type MenuModel, type Men
 import { crashReloaded, currentPill, onPillAction, setCondition, setPillPorts } from './pill.ts'
 import {
   activate, activeTab, addressOf, allTabs, applyRestore, cameraKept, canLoad, canvasOrder, closeTab, cycleFrom, displayState, forDigit, getTab, guard,
-  guardAll, hasBridge, hashOnly, isActive, isCanvasTab, keptDoc, keyOf, linkOpens, liveDoc, onCommit, onDocumentGone, onFail, onInPage, onRegistry, onRemoteCommit, onReport, onUnloaded, openRemoteTab, openSettingsTab,
+  guardAll, hasBridge, hashOnly, isActive, isCanvasTab, keptDoc, keyOf, linkOpens, liveDoc, onCommit, onDocumentGone, onFail, onInPage, onRegistry, onRemoteAbort, onRemoteCommit, onReport, onUnloaded, openRemoteTab, openSettingsTab,
   ordered, parseTabsFile, remoteLinkPlan, remoteTab, reopenTab, restorePlan, safePath, savedPathIn, setTabsPorts, sheetBox, sheetConfirmed, sheetText, snapshotFile, startReopen, stuckUnloads, tabName,
   unloadClosing, viewlessAct, type GuardAllAction, type GuardAction, type GuardAnswer, type Sheet, type Tab, type TabsFile,
 } from './tabs.ts'
@@ -419,10 +420,23 @@ function onRemoteNav(t: Tab, wc: WebContents, e: NavEvent): void {
       compose()
       return
     }
-    case 'abort':
+    case 'abort': {
       t.loading = false
       if (commitLayout(t, { kind: 'abort', gen: e.gen })) compose()
+      // a load replaced by a newer one is aborted just before the newer one starts: a turn later, only an attempt
+      // still current ended with no page (a refused redirect, a download, a 204) - with no lifted document, a failure
+      const nav = canvases.get(t.id)?.nav
+      setImmediate(() => {
+        if (getTab(t.id) !== t || !nav || canvases.get(t.id)?.nav !== nav || nav.gen() !== e.gen) return
+        if (!onRemoteAbort(t, e.gen)) return
+        j('abort', { tab: t.id, gen: e.gen, failed: true })
+        onAttemptFailed(t)
+        scheduleRetry(t)
+        pollOnline()
+        compose()
+      })
       return
+    }
     default: return
   }
 }

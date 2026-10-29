@@ -2,7 +2,7 @@
  * The remote harness on its own (test/harness/remote-canvas.ts; spec 28 A4.6 #50): its hosts over https with the
  * checked-in certificate and the fingerprint the app's test build accepts, the shell page and its favicon, the favicon
  * that redirects to loopback http, a published canvas's icons with the repo's logo first and a favicon that fails
- * once, the sign-in chain, a download, pausing and answering again on the same port, and a second server whose
+ * once, the sign-in chain, a download, a 204, pausing and answering again on the same port, and a second server whose
  * certificate is not that one. No Electron.
  */
 import { request } from 'node:https'
@@ -83,9 +83,10 @@ describe('the remote harness (A4.6 #50)', () => {
     r.finishStalls = false
   })
 
-  it('a download, a redirect to http, a page that is not the shell', async () => {
+  it('a download, a redirect to http, a 204, a page that is not the shell', async () => {
     expect((await get('pilot', '/download')).headers['content-disposition']).toBe('attachment; filename="board.zip"')
     expect((await get('pilot', '/to-http')).headers.location).toBe(`http://pilot.canvas.test:${r.port}/`)
+    expect((await get('pilot', '/no-content')).status).toBe(204)
     expect((await get('pilot', '/about')).status).toBe(200)
   })
 

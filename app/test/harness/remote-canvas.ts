@@ -18,7 +18,7 @@
  *   back to `/__mv/id/finish#code=…&next=<path>`, whose page sets the session cookie and replaces itself with `next`
  *   - unless `finishStalls`, when it stays there (a sign-in cut short); with `loginStalls` the login is a page of its
  *   own, wearing `id.canvas.test`'s favicon;
- * - `/download`: an attachment; `/to-http`: a 302 to http; `/about`: a page that is not the shell;
+ * - `/download`: an attachment; `/to-http`: a 302 to http; `/no-content`: a 204; `/about`: a page that is not the shell;
  * - `door.canvas.test`: a page whose `window.open(url)` the case drives (`openFromDoor`).
  * `bad` is a second https server whose certificate the app does not accept. `pause()` stops answering on the port,
  * `resume()` answers again on the same one. Every request is kept (`requests`, `hits`).
@@ -168,6 +168,7 @@ export async function startRemoteCanvas(): Promise<RemoteCanvas> {
       case '/about': return void html('<!doctype html><title>about</title><p>about')
       case '/download': return void res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-disposition': 'attachment; filename="board.zip"' }).end('zip')
       case '/to-http': return go(`http://${name}.canvas.test:${port}/`)
+      case '/no-content': return void res.writeHead(204).end()
       // Marver ID's chain: the canvas's start, the identity host's login, the canvas's finish with its code in the hash
       case '/__mv/id/start': return go(`${h.origin('id')}/login?return=${encodeURIComponent(`${h.origin(name)}/__mv/id/finish`)}&next=${encodeURIComponent(url.searchParams.get('next') ?? '/')}`)
       case '/login': {
