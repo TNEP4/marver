@@ -841,7 +841,7 @@ export function runCommand(c: AppCommand, via: 'key' | 'menu'): void {
     case 'next-tab': case 'prev-tab': { const t = cycleFrom(activeTab()?.id ?? 'home', c === 'next-tab' ? 1 : -1); if (t) activate(t.id); return }
     case 'devtools': {
       const t = activeTab()
-      const v = t ? (pageView(t.id) && !liveDoc(t) ? pageView(t.id) : contentView(t.id)) : undefined
+      const v = t ? (pageView(t.id) && !keptDoc(t) ? pageView(t.id) : contentView(t.id)) : undefined
       v?.webContents.openDevTools({ mode: 'detach' })
       return
     }
