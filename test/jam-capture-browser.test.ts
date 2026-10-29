@@ -1596,7 +1596,8 @@ describe('captures in the browser: the first trial', () => {
       await key('e')
       // taken by the canvas, its refresh out (held at the network), and the push that carries its card in hand
       await until(`!!window.__mvJamCapture.getState().sealed.find((x) => x.id === ${JSON.stringify(b)})?.card && window.__qBeat.asked >= 1 && !!window.__qBeat.last?.cards?.some((c) => c.id === ${JSON.stringify(b)})`, 40_000)
-      await until(`${held.length >= 1}`, 5_000)
+      // held is this process's list (CDP's paused requests): polled here, never read once into a page expression
+      for (const t0 = Date.now(); !held.length; await sleep(50)) if (Date.now() - t0 > 5_000) throw new Error('the queue refresh was never held at the network')
       expect(await browser!.eval(s, `window.__mvJamCapture.getState().unsent`)).toContain(b)
       // the push lands while the refresh is still out: the wait ends on it at once - the refresh still unanswered
       await browser!.eval(s, `(() => { const w = window.__qBeat; w.hold = false; window.__mvJamQueue.setState({ apply: w.real }); w.real(w.last); return 1 })()`)
