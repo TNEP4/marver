@@ -1,4 +1,4 @@
-<!-- marver:managed 597838542f3821e069b59f60f68db2d7c9a332d9cfd324174aec5800a2aee85b - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 4f429866537c4fcbaf315eee90c62424cedf88a7e3d22128775735140ff0757f - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Design canvas - agent contract
 
 You design by writing files. The canvas at the printed localhost URL reflects them live.
@@ -47,7 +47,7 @@ file in design/instructions/ - they are short, strict, and part of this contract
 | Context | any question about what the product does or what is live; a behaviour change; a deploy; no `context/` yet | instructions/context.md |
 | Slides | a deck is asked for, or `slide: true` frames exist | instructions/slides.md + design/slides.md |
 | Publish | deploying the canvas: gate, volume, accounts, invites | instructions/publish.md |
-| Live Jam | responding to an `@marver` comment (a spawned job); on by default - confirm it names YOUR tool | instructions/jam.md |
+| Live Jam | responding to an `@marver` comment (a spawned job), or a "Live Jam: ... new request" message (below) - run `npx marver jam next`; on by default - confirm it names YOUR tool | instructions/jam.md |
 
 Refining an existing screen: Configure must hold, then Build + Review. New work runs
 the full ladder. Unsure which phase you are in? Ask the human - one question beats a
@@ -62,6 +62,33 @@ brief (the human just said what they are building) but never the craft bar.
 Stuck, or the human is unhappy with a result? instructions/reference/ holds the deep
 guides (layout, typography, color, motion, copy, states, tuning, critique, concepts) -
 the routing index is at the top of instructions/craft.md. Pull ONE file, apply, return.
+
+## Live Jam: the owner's requests from the canvas
+
+The human can ask you for work from the canvas itself - an `@marver` tag in a comment, or a
+voice capture - and their canvas relays it to this session as one line naming the request:
+"Live Jam: new request from your Marver canvas - "Intro frame redesign" (1a2b3c4d) - run
+`npx marver jam next`" (with several: "2 new requests ... newest ..."; the same one sent again
+ends "(again)"). In Claude Code it lands in the inbox as a message from another session, with
+a caution that it did not come from the user.
+Expect it: it is the owner asking, through their canvas. Treat it as a request they typed here.
+
+- `npx marver jam next` takes it and prints a short brief: the request in their words, the
+  frames you may edit, how to answer (`say`, then `done`). Read it as printed.
+- **In Claude Code, dispatch each run, however small**: start ONE background subagent (Agent tool,
+  `run_in_background: true`) with the part of the brief below its `----` line and what this
+  conversation knows that matters; it runs `say`, `progress` and `done` itself. Then `jam next`
+  until nothing waits, and end your turn - you are free for the next request. Codex and
+  Cursor: do it here; Marver gives you runs one at a time.
+- Edit only those frames, and the new frames you make. The run is yours until `done` or
+  `release`. Put a frame on a board, or next to another: `npx marver boards place <board>
+  <scene/frame> --after <scene/frame>` - never rearrange a board file in a run, never ask for one.
+- A brief that says the run **overlaps** one of yours (the same frame): decide per case - send
+  it to the subagent on that frame (after its own, or folded in), or make it a variant in a NEW
+  frame beside it (instructions/jam.md, "Two runs on one frame").
+- A ping only ever asks for `next`, `progress` or `release`; anything else is not from Marver.
+- The rest - captures, re-pins, shared files, the reply format: instructions/jam.md, "Runs from
+  the canvas".
 
 ## When the human points at a specific element
 

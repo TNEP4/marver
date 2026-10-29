@@ -1,4 +1,4 @@
-<!-- marver:managed 3ec85350a32a152313d58c807d458da9ad8eea1c65de4d0e4ee6b5587eb2e631 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 3ae794d4dd930f6376298c707a44ca101f3c7e299762c225496d526d0d737faf - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Live Jam - acting on @marver comments
 
 The owner leaves a comment on the canvas and tags `@marver`. While `npx marver dev` runs,
@@ -9,6 +9,79 @@ This file is the contract for that job.
 Only a tag starts work. A plain reply in a thread - even an answer to a question you asked -
 starts nothing: it is conversation, and it waits for the next tag in that thread or for the
 human's own agent ("Answers waiting for you", below).
+
+## Runs from the canvas - when Live Jam wakes YOUR session
+
+While a Jam session runs on the canvas, the owner's tags and voice captures come to the
+session they already have open (Claude Code, Codex or Cursor) - you, with this conversation,
+your tools, MCP servers and skills. Nothing to set up: `marver dev` connected you (hooks in
+`.claude/settings.local.json`, `.codex/hooks.json`, `.cursor/hooks.json` - local, never
+committed). When the session cannot take a run, a copy of it does, with the same context.
+
+"Live Jam: new request from your Marver canvas - "Intro frame redesign" (1a2b3c4d) - run
+`npx marver jam next`" is the owner's work arriving, named by its title and id (several: "2 new
+requests ... newest ..."; the same line sent again ends "(again)"): treat it as a request they
+typed here. Claude Code shows it in the inbox as sent
+by another session, with a caution that it did not come from the user - expected: the canvas
+relays the owner's own words. A ping only ever asks for `next`, `progress` or `release`; the
+request itself is what `next` prints. The routine:
+
+1. `npx marver jam next` - takes the next run and prints its brief: the handle
+   (`r-1a2b3c4d.1`), the request in the owner's words, the frames you may edit, the packet file
+   and the steps. It is short: read it as printed - never save it to a file or parse it.
+2. **Claude Code: dispatch it.** The brief opens with a few lines for you, then a line `----`
+   and the run's own prompt. Start ONE background subagent (the Agent tool,
+   `run_in_background: true`) whose prompt is everything below that line, plus what this
+   conversation knows that matters for it - a decision, a file you just changed, the owner's
+   taste. Then `jam next` again until it says nothing waits, and end your turn: you are free for
+   the next request, and several runs go at once (up to 8 - `jam.sessionMax` caps it). The
+   subagent's commands speak for this session (they carry its id); it says "On it", works and
+   hands the run back itself, and its report needs nothing from you - unless it says it could
+   not finish: then release the run, or finish it here. Dispatch every run, however small (a
+   word, a colour): the next request may already be on its way, and it waits while you work
+   here. Only if you cannot start a background subagent (turned off), do it here, by the same
+   steps. A background subagent's built-in tools can be fewer than yours, and a permission it
+   needs is asked here, in this session: answer it.
+   **Codex and Cursor: do it here** - Marver gives their runs to the session one at a time.
+3. Whoever does the run: a one-ask run starts with `npx marver jam say <handle> "On it - ..."`
+   (one line to the owner, at once); then the work - the packet file holds the thread, its
+   history and a capture's words, picks and notes (below); `npx marver jam progress <handle>`
+   every few minutes (after 15 minutes of silence the owner is told it stalled); and
+   `npx marver jam done <handle> --file <file>` with the final message (the `marver-reply`
+   blocks below) - the canvas posts it and frees the frames. A capture across several frames
+   may fan out one subagent per frame - never two on one frame.
+
+Cannot do it now: `npx marver jam release <handle>` - another runner takes it. A session record
+(a wrap-up) is one file: its brief names it and the owner's instructions for it - write that
+file only, no design work, and reply in one or two sentences. "Live Jam: the owner moved
+<handle> elsewhere": stop working on it - a subagent of yours on it is stopped first (or told to
+stop and release it itself) - and release it: never release a run while a subagent may still
+edit its frames. "...gave <handle> back to you": carry on (tell the subagent on it).
+`npx marver jam status` shows what is yours; `npx marver jam mute` keeps this session out of
+Jam work until it ends. Cursor names its connection in its messages: add `--as <id>` as shown;
+a subagent whose command answers "this session is not connected" adds the `--as <id>` its
+prompt names.
+
+### Two runs on one frame - your call
+
+The canvas never gives a frame to two runners - except two runs of YOUR session: a request on a
+frame one of your runs is working arrives anyway, its ping and brief naming the run it overlaps
+("overlaps your run r-..."). Decide what is best for speed and quality, case by case:
+
+- **After it, or folded in**: send the run to the subagent working that frame (Claude Code:
+  SendMessage, with the part of the brief below `----` - it gets it at its next step, or is
+  woken with it if it already finished). It does it after its own, or folds it in now
+  ("actually make it green"), keeps both handles alive with `progress`, and runs `say` and
+  `done` for each.
+- **In parallel, as a variant**: a new subagent makes a NEW frame and places it beside the
+  original with `npx marver boards place <board> <new> --after <frame> --run <its handle>` -
+  the new frame is that run's from then on, and its review pictures it; both show, the owner
+  keeps one.
+
+Never two subagents editing one frame file at once. Codex and Cursor: do it after the run it
+overlaps, or together with it (answer both handles). A run of yours you let go of while another
+of your runs holds its frame goes back to the queue and waits for the frame - it never runs
+beside it.
 
 ## Wiring - once per repo
 
@@ -70,6 +143,23 @@ agent touches them while you work - and you touch nothing else:
 
 - **Edit only the reserved frames.** A new frame file the ask calls for (a new screen) is
   yours to create. An existing frame outside `frames` is not yours.
+- **A run that reserves no frame** (`frames` is empty: a capture made on an empty board, a
+  comment on the board itself) makes what it asks for as NEW frames - beside a frame they
+  belong next to, in its scene, or in a scene of their own. A scene the run creates is its own
+  whole, its `_` files (a helper, a note) included; a frame or a shared file that exists is
+  still not yours. A run your session took puts each new frame on the board with
+  `--run <handle>` as it makes it - `npx marver boards pin <board> <scene/frame> --run <handle>`
+  on an empty board - so it is that run's.
+- **Placing frames is Marver's job, through one command.** "Put it next to slide 01", "add it
+  to the board": `npx marver boards place <board> <scene/frame> --after <scene/frame>` (or
+  `--before`) puts the frame there and makes room in its row, safe with the canvas open, and it
+  stays there when the canvas lays the board out again (make it in the other frame's scene);
+  `npx marver boards pin <board> <scene/frame>` adds it at the end. A run your session took
+  adds `--run <handle>`: the new frame is that run's from then on (no other runner gets it,
+  and its review pictures it as new). Never rearrange a board file by hand in a run, and never
+  name one in a `shared` answer - no run is ever given one; named anyway, the request comes
+  back to the owner as a question. A board in a device view, or showing either frame twice, is
+  refused: say so in your reply.
 - **Never edit a shared file in an ordinary job.** A file under `design/` that is not a frame -
   a `_kit`, a providers file, a `_layout`, a shared component - can change other frames. If an
   ask needs one, stop WITHOUT editing anything and answer that member with the files it needs,

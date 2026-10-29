@@ -1,4 +1,4 @@
-<!-- marver:managed 85dd67145ce9b67cb443c68da952f6e76ece400e2f93b1b698a53fe368d61bf0 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 3aabf1daf2afb7a4e922569cea750c9ede802984c9d5eff0ba829bd9fa805885 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Boards - curated canvases and publishing
 
 A board is a saved canvas: `design/boards/<name>.json` (name: `^[a-z0-9][a-z0-9-]*$`).
@@ -50,7 +50,13 @@ is safe to resolve either way.
   point they may adjust.
 - **Every frame goes on the board it belongs to - its feature, its spec, its flow - and a
   frame that belongs to two goes on both.** `npx marver boards pin <board> <scene/frame ...>`
-  appends them as nodes (or append a `{ "frame": ... }` node yourself). No board holds
+  appends them as nodes (or append a `{ "frame": ... }` node yourself). `npx marver boards
+  place <board> <scene/frame> --after|--before <scene/frame>` puts one next to another, the
+  frames after it moved right to make room (it plays right after it, in a deck), and next to it
+  in the board's order and its scene's recipe, so it stays there when the canvas lays the board
+  out again (make the frame in the other's scene: on a board laid out scene by scene, one from
+  another scene is refused) - the way to rearrange with the canvas open: it waits for the canvas's own save, and an edit you are
+  making on that board in the same second may be undone ("board changed on disk"). No board holds
   everything: a frame on no board is listed apart - `npx marver boards`, the dev log, the
   sidebar's Not on a board - and `work done` and `marver link` say where it belongs.
   `all-scenes` is a reserved name, never a board.
