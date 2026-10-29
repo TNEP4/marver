@@ -18,12 +18,17 @@
  * shell's recorder messages at once with the current `doc` (never held or replayed: they are about now). Main's
  * `mv:perf-ask` is answered here for `mem` (getProcessMemoryInfo and getHeapStatistics, KB) and `shown` (the second
  * animation-frame callback), kept for `display` (`perfInfo().hz`), and handed to the shell for `probes`.
+ *
+ * A4 (app 0.3; A4.6 #29): `mv:open` - a notice's click - is dropped unless its `doc` is this document's admitted one
+ * and its item passes open-item.ts's check; only the known fields reach `onOpen`'s listener, and the first listener's
+ * answer goes back as `mv:opened { doc, p: { id, result } }`, for the document that was asked alone.
  */
 import { contextBridge, ipcRenderer } from 'electron'
 import {
-  APP_API_VERSION, BOUNDS, CANVAS_CHANNELS, PERF_BOUNDS,
-  type AppState, type DocAnswer, type MarverAppV1, type MenuClick, type PerfMsg, type PerfProbeAsk, type Present, type Presented,
+  APP_API_VERSION, BOUNDS, CANVAS_CHANNELS, OPEN_RESULTS, PERF_BOUNDS,
+  type AppState, type DocAnswer, type MarverAppV1, type MenuClick, type OpenItem, type OpenResult, type PerfMsg, type PerfProbeAsk, type Present, type Presented,
 } from '../../../src/shared/app-api.ts'
+import { checkOpenItem } from '../shared/open-item.ts'
 
 type Report = 'hello' | 'theme' | 'busy' | 'menu'
 const ORDER: readonly Report[] = ['hello', 'theme', 'busy', 'menu']
@@ -44,6 +49,7 @@ const stateFns = new Set<(s: AppState) => void>()
 const clickFns = new Set<(p: MenuClick) => void>()
 const presentFns = new Set<(r: Present) => void>()
 const probeFns = new Set<(a: PerfProbeAsk) => void>()
+const openFns = new Set<(p: OpenItem) => OpenResult | Promise<OpenResult>>()
 /** the display's rate main last said (`display` ask) */
 let hz: number | null = null
 
@@ -125,6 +131,21 @@ ipcRenderer.on(CANVAS_CHANNELS.perfAsk, (_e, m: Record<string, unknown> | null) 
   }
 })
 
+// A4: a notice's click, for this document alone; the first listener answers
+ipcRenderer.on(CANVAS_CHANNELS.open, (_e, m: Record<string, unknown> | null) => {
+  if (!m || !doc || m.doc !== doc) return
+  const item = checkOpenItem(m.item)
+  const fn = [...openFns][0]
+  if (!item || !fn) return
+  const asked = doc
+  let r: OpenResult | Promise<OpenResult>
+  try { r = fn({ ...item, ...(item.cards ? { cards: [...item.cards] } : {}) }) } catch { return }
+  void Promise.resolve(r).then((result) => {
+    if (doc !== asked || !(OPEN_RESULTS as readonly unknown[]).includes(result)) return
+    ipcRenderer.send(CANVAS_CHANNELS.opened, { doc, p: { id: item.id, result } })
+  }, () => { /* the page's own */ })
+})
+
 const listen = <T>(set: Set<(x: T) => void>) => (fn: (x: T) => void): (() => void) => {
   if (typeof fn !== 'function') return () => {}
   set.add(fn)
@@ -146,5 +167,10 @@ const api: MarverAppV1 = {
   perf: (p: PerfMsg) => { const c = copy(p); if (c !== undefined) now('perf', c) },
   onPerfAsk: listen(probeFns),
   perfInfo: () => ({ hz }),
+  onOpen: (fn) => {
+    if (typeof fn !== 'function') return () => {}
+    openFns.add(fn)
+    return () => { openFns.delete(fn) }
+  },
 }
 contextBridge.exposeInMainWorld('marverApp', api)

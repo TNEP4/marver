@@ -258,9 +258,7 @@ describe('settings:set', () => {
 
   it('refuses a key of a later milestone, an unknown key, a bad value and a bad shape', async () => {
     start()
-    // app 0.2 is A3: unloading, the recorder and its days are shown (and set); A4's keys not yet
-    expect(await cfg.settingsSet({ file: 'config', key: 'notifications', value: true })).toEqual({ ok: false, why: 'unknown-key' })
-    expect(await cfg.settingsSet({ file: 'config', key: 'dockBadge', value: false })).toEqual({ ok: false, why: 'unknown-key' })
+    // app 0.3 is A4 (A4.6 #27): notices and the badge are set from Settings; a key no milestone has is not
     expect(await cfg.settingsSet({ file: 'config', key: 'nope', value: true })).toEqual({ ok: false, why: 'unknown-key' })
     expect(await cfg.settingsSet({ file: 'config', key: 'restoreTabs', value: 'no' })).toEqual({ ok: false, why: 'bad-value' })
     expect(await cfg.settingsSet({ file: 'theme', key: 'mode', value: 'midnight' })).toEqual({ ok: false, why: 'bad-value' })
@@ -269,6 +267,10 @@ describe('settings:set', () => {
     expect(existsSync(join(home, 'config.json'))).toBe(false)
     expect(await cfg.settingsSet({ file: 'config', key: 'unloadUnderPressure', value: false })).toEqual({ ok: true })
     expect(cfg.values().config.unloadUnderPressure).toBe(false)
+    expect(await cfg.settingsSet({ file: 'config', key: 'notifications', value: true })).toEqual({ ok: true })
+    expect(await cfg.settingsSet({ file: 'config', key: 'dockBadge', value: false })).toEqual({ ok: true })
+    expect(cfg.values().config).toMatchObject({ notifications: true, dockBadge: false })
+    expect(await cfg.settingsSet({ file: 'config', key: 'notifications', value: 'yes' })).toEqual({ ok: false, why: 'bad-value' })
   })
 
   it('onto a file that does not apply: the last good values plus the change, the broken bytes kept as .bad', async () => {
@@ -358,7 +360,8 @@ describe('settings:set', () => {
     writeFileSync(join(home, 'theme.json'), '{ "mode": "midnight" }')
     await cfg.reread()
     const v = cfg.settingsView()
-    expect(v.shown).toEqual(['config.restoreTabs', 'config.unloadUnderPressure', 'config.recorder', 'config.keepPerfDays', 'theme.mode'])
+    // STAGE a4 (A4.6 #27): notices and the badge are Settings' rows now
+    expect(v.shown).toEqual(['config.restoreTabs', 'config.unloadUnderPressure', 'config.recorder', 'config.keepPerfDays', 'config.notifications', 'config.dockBadge', 'theme.mode'])
     expect(v.statusFile).toBe(join(home, 'state-dev', 'status.json'))   // under the temp home: no ~ to shorten
     expect(v.config).toMatchObject({ ok: true, present: false, values: { restoreTabs: true } })
     expect(v.config).not.toHaveProperty('text')
@@ -457,5 +460,50 @@ describe('tabs.json (v1.12 r1 #5)', () => {
     const f = join(home, 'state-dev', 'tabs.json')
     expect(JSON.parse(read(f))).toEqual(good)
     expect(mode(f)).toBe(0o600)
+  })
+})
+
+describe('state/notices.json (A4.6 #26, #27)', () => {
+  const file = () => join(home, 'state-dev', 'notices.json')
+
+  it('absent: v 1 and nothing else, Settings\' outcome unknown; a change is written whole, debounced, and Settings told', async () => {
+    start()
+    expect(cfg.noticesState()).toEqual({ v: 1 })
+    expect(cfg.settingsView().notices).toEqual({ outcome: 'unknown' })
+    const told: unknown[] = []
+    cfg.onStatus((s) => told.push(s))
+    cfg.setNoticesState({ offeredAt: 5 })
+    cfg.setNoticesState({ lastOutcome: 'failed' })
+    expect(cfg.settingsView().notices).toEqual({ outcome: 'failed' })
+    expect(told).toHaveLength(2)
+    await cfg.noticesWriter().flush()
+    expect(JSON.parse(read(file()))).toEqual({ v: 1, offeredAt: 5, lastOutcome: 'failed' })
+    expect(mode(file())).toBe(0o600)
+  })
+
+  it('written only on a change', async () => {
+    start()
+    cfg.setNoticesState({ lastOutcome: 'accepted' })
+    await cfg.noticesWriter().flush()
+    const told: unknown[] = []
+    cfg.onStatus((s) => told.push(s))
+    cfg.setNoticesState({ lastOutcome: 'accepted' })
+    expect(cfg.noticesWriter().pending()).toBe(false)
+    expect(told).toEqual([])
+  })
+
+  it('read back at launch; a bad file goes aside as notices.json.bad', async () => {
+    start()
+    mkdirSync(join(home, 'state-dev'), { recursive: true })
+    writeFileSync(file(), JSON.stringify({ v: 1, dismissedAt: 9, lastOutcome: 'accepted' }))
+    expect(cfg.noticesState()).toEqual({ v: 1, dismissedAt: 9, lastOutcome: 'accepted' })
+    vi.resetModules()
+    cfg = await import('../../src/main/config.ts')
+    start()
+    writeFileSync(file(), JSON.stringify({ v: 1, lastOutcome: 'seen' }))
+    expect(cfg.noticesState()).toEqual({ v: 1 })
+    expect(read(`${file()}.bad`)).toBe(JSON.stringify({ v: 1, lastOutcome: 'seen' }))
+    expect(cfg.checkNotices({ v: 2 })).toBe(false)
+    expect(cfg.checkNotices({ v: 1, offeredAt: -1 })).toBe(false)
   })
 })

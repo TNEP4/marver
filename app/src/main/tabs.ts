@@ -22,9 +22,13 @@
  *   and waits for those under way - `quitWaitMs` at most, then it answers 'stuck' (code review r2 #1). The
  *   unload's admission (`unloadRefusal`), its op, `onUnloaded` and the reopen are the section at the end (the
  *   unloading stream); memory.ts decides when.
+ *
+ * A4 (app 0.3, A4.6 #19, #29): a local tab's `marks` in its view come from notify.ts (`setMarksSource`), whatever its
+ * view state; a notice's click is held as `pendingOpen` until that tab's current document is admitted, trusted and
+ * has said hello, then sent once through the bridge (`setOpenSender`) - the section before the guard.
  */
-import type { DisplayState, TabKind, TabPageProbe, TabView } from '../shared/channels.ts'
-import type { AppState, Busy, Hello, Inset, MenuItem, Theme, Why } from '../../../src/shared/app-api.ts'
+import type { DisplayState, TabKind, TabMarks, TabPageProbe, TabView } from '../shared/channels.ts'
+import type { AppState, Busy, Hello, Inset, MenuItem, OpenItem, Theme, Why } from '../../../src/shared/app-api.ts'
 import { FEATURE, UNSAVED_WHY, WHY_WORDS } from '../../../src/shared/app-api.ts'
 import type { AppBody, AppKind, TabIdent, UnloadReason } from '../../../src/shared/app-perf.ts'
 import { commitLayout } from './layout.ts'
@@ -211,6 +215,10 @@ export interface Tab {
   audible?: boolean
   devtools?: boolean
   loading?: boolean
+
+  // ---- A4 (app 0.3; A4.6 #29) ----
+  /** a notice's click, held for this tab's next admitted document's hello; a later click replaces it */
+  pendingOpen?: { item: OpenItem; at: number }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -463,8 +471,14 @@ export function viewOf(t: Tab, active: boolean, home: string, list: Tab[] = allT
   if (t.logo && t.fail?.why !== 'unverified') v.logo = t.logo
   if (t.look !== undefined) v.dark = t.look
   if (t.reg) v.hue = hueOf(t.reg.ws)   // the same initials hue as its Recently here card and its tab page
+  const m = marksSource?.(t)
+  if (m) v.marks = m
   return v
 }
+
+/** What waits on the owner in a local tab (notify.ts `marksOf`, A4.6 #19): none until main.ts installs it. */
+let marksSource: ((t: Tab) => TabMarks | undefined) | null = null
+export function setMarksSource(fn: ((t: Tab) => TabMarks | undefined) | null): void { marksSource = fn }
 
 /** The tab's look: its own last theme this run, else the app's (A2.14 #26). */
 export const darkOf = (t: Tab | undefined, appDark: boolean): boolean => t?.kind === 'local' && t.look !== undefined ? t.look : appDark
@@ -939,6 +953,7 @@ export function activate(id: string): void {
   if (prev && prev !== next) {
     prev.hiddenAt = now
     prev.held = undefined   // the unsaved pill lasts while its tab is active (A2.14 #33)
+    if (prev.pendingOpen) dropOpen(prev, 'another tab')   // a notice's click is for the tab it showed (A4.6 #29)
     if (prev.kind === 'local' && prev.doc?.trusted) p.appState(prev, 'hidden')
   }
   activeId = next.id
@@ -1007,6 +1022,51 @@ export function reopenTab(id: string): void {
   if (!t || t.kind !== 'local') return
   if (t.reg) closed.delete(closeKey(t.reg.ws, t.reg.instance))
   activate(id)
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// A notice's click (A4.6 #29): main holds it until a document can take it
+
+/** `mv:open { doc, item }` to the tab's admitted document (bridge.ts `openItem`, which checks it all again). */
+let openSender: ((t: Tab, item: OpenItem) => boolean) | null = null
+export function setOpenSender(fn: ((t: Tab, item: OpenItem) => boolean) | null): void { openSender = fn }
+
+/**
+ * A notice's click, once main.ts brought the window forward: its tab shown - reopened when it was closed since - and,
+ * for a canvas whose instance lists `open`, the item held as `pendingOpen` until that tab's current document is
+ * admitted, trusted and has said hello (an unloaded or never-shown tab loads first). A later click replaces it; it
+ * is dropped after `openWaitMs` or when another tab is activated. A stop's click (`item` null) only shows the tab.
+ */
+export function openForNotice(id: string, item: OpenItem | null): void {
+  const t = tabs.get(id)
+  if (!t || t.kind !== 'local') return
+  if (!t.open) reopenTab(id)
+  else activate(id)
+  if (!item) return
+  const p = P()
+  if (!t.reg?.features.includes(FEATURE.open)) { p.log?.('open', { tab: t.id, id: item.id, held: false, why: 'no-open' }); return }
+  const o = { item, at: p.now() }
+  t.pendingOpen = o
+  p.log?.('open', { tab: t.id, id: item.id, held: true })
+  const timer = setTimeout(() => { if (t.pendingOpen === o) dropOpen(t, 'wait') }, T.openWaitMs)
+  ;(timer as { unref?: () => void }).unref?.()
+  deliverOpen(t)
+}
+
+function dropOpen(t: Tab, why: string): void {
+  const o = t.pendingOpen
+  t.pendingOpen = undefined
+  if (o) P().log?.('open', { tab: t.id, id: o.item.id, dropped: why })
+}
+
+/** The held click goes, once, to the tab's current document - admitted, trusted, said hello, its instance listing `open`. */
+function deliverOpen(t: Tab): void {
+  const o = t.pendingOpen
+  if (!o || !isActive(t) || !t.doc?.trusted || !t.doc.doc || !t.reports.hello) return
+  if (!t.reg?.features.includes(FEATURE.open)) { dropOpen(t, 'no-open'); return }
+  t.pendingOpen = undefined
+  const sent = openSender?.(t, o.item) ?? false
+  P().log?.('open', { tab: t.id, id: o.item.id, doc: t.doc.doc, sent })
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1479,8 +1539,9 @@ function writeReopen(t: Tab, hello: boolean): void {
   p.record?.('reopen', hello ? t : r.ident, { activateToLiftMs: r.activateToLiftMs, unloadedForMs: r.unloadedForMs })
 }
 
-/** The first accepted hello of a document: a reopened one writes its `reopen` record now (A3.8 #45). */
-function onDocHello(t: Tab): void { writeReopen(t, true) }
+/** The first accepted hello of a document: a reopened one writes its `reopen` record now (A3.8 #45); a notice's held
+ *  click goes to it (A4.6 #29). */
+function onDocHello(t: Tab): void { writeReopen(t, true); deliverOpen(t) }
 
 /** A quit or an update was refused: the active unloaded tab reopens now (A3.8 #42). */
 function sweepRefused(): void {

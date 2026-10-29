@@ -7,12 +7,17 @@
  * Folders open with `shell.openPath()`: `showItemInFolder` selects a dot-folder inside `~`, where Finder hides it
  * (A2.14 #24). A file inside one - a flash's picture (A3.8 #13) - is selected with `showItemInFolder`: Finder opens
  * the folder holding it.
+ *
+ * A4 (A4.6 #27): Settings' Open System Settings opens the Notifications pane through `shell.openExternal`, recorded
+ * the same way (`external` in the hook's answer, once there is one).
  */
 import { clipboard, shell } from 'electron'
 import { provide, testMode } from './testing/index.ts'
 
-/** what a test build recorded; `shown` is in the hook's answer only once a file was shown, so A2's `{ copies, opened }` answers keep their shape */
-const recorded = { copies: [] as string[], opened: [] as string[], shown: [] as string[] }
+/** what a test build recorded; `shown` and `external` are in the hook's answer only once there is one, so A2's `{ copies, opened }` answers keep their shape */
+const recorded = { copies: [] as string[], opened: [] as string[], shown: [] as string[], external: [] as string[] }
+/** macOS's Notifications pane in System Settings (A4.6 #27) */
+export const NOTIFICATION_SETTINGS = 'x-apple.systempreferences:com.apple.Notifications-Settings.extension'
 const fake = (): boolean => __MV_TEST__ && testMode() && process.env.MARVER_APP_REAL_EFFECTS !== '1'
 
 export const effects = {
@@ -29,6 +34,11 @@ export const effects = {
     if (__MV_TEST__ && fake()) { recorded.shown.push(file); return }
     shell.showItemInFolder(file)
   },
+  /** A4: Settings' Open System Settings, on the Notifications pane */
+  openNotificationSettings(): void {
+    if (__MV_TEST__ && fake()) { recorded.external.push(NOTIFICATION_SETTINGS); return }
+    void shell.openExternal(NOTIFICATION_SETTINGS).catch(() => { /* macOS answers nothing to the app */ })
+  },
 }
 
 let effectHooks = false
@@ -37,8 +47,8 @@ export function provideEffectHooks(): void {
   if (!__MV_TEST__ || effectHooks) return
   effectHooks = true
   provide('effects', (a) => {
-    const out = { copies: [...recorded.copies], opened: [...recorded.opened], ...(recorded.shown.length ? { shown: [...recorded.shown] } : {}) }
-    if ((a as { clear?: unknown } | null)?.clear === true) { recorded.copies.length = 0; recorded.opened.length = 0; recorded.shown.length = 0 }
+    const out = { copies: [...recorded.copies], opened: [...recorded.opened], ...(recorded.shown.length ? { shown: [...recorded.shown] } : {}), ...(recorded.external.length ? { external: [...recorded.external] } : {}) }
+    if ((a as { clear?: unknown } | null)?.clear === true) { recorded.copies.length = 0; recorded.opened.length = 0; recorded.shown.length = 0; recorded.external.length = 0 }
     return out
   })
 }

@@ -193,10 +193,8 @@ describe('Settings through main (A2.7)', () => {
     writeFileSync(`${p}.x.tmp`, '{ "restoreTabs": true }')
     renameSync(`${p}.x.tmp`, p)
     await until(() => call<Values>('files.values'), (v) => v.config.restoreTabs === true)
-    // app 0.2 is A3: unloading and the recorder are set from Settings; A4's notices are a later milestone's
-    for (const s of [{ file: 'config', key: 'notifications', value: true }, { file: 'config', key: 'dockBadge', value: false }, { file: 'config', key: 'nope', value: true }]) {
-      expect(await call('files.set', s)).toEqual({ ok: false, why: 'unknown-key' })
-    }
+    // app 0.3 is A4 (A4.6 #27): notices and the badge are Settings' keys too; one no milestone has is refused
+    expect(await call('files.set', { file: 'config', key: 'nope', value: true })).toEqual({ ok: false, why: 'unknown-key' })
     expect(await call('files.set', { file: 'config', key: 'restoreTabs', value: 'no' })).toEqual({ ok: false, why: 'bad-value' })
   })
 

@@ -3,7 +3,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { onRegistry, type Tab } from '../../src/main/tabs.ts'
-import { clockOf, crashReloaded, currentPill, flashMarked, onPillAction, onVisibility, recompute, setCondition, setPillPorts } from '../../src/main/pill.ts'
+import { clockOf, confirm, crashReloaded, currentPill, flashMarked, onPillAction, onVisibility, recompute, setCondition, setOfferActions, setPillPorts } from '../../src/main/pill.ts'
+import { T } from '../../src/main/timings.ts'
 import { liveTab, report, show, world, type World } from './window-fakes.ts'
 
 let w: World
@@ -249,6 +250,55 @@ describe('Flash marked (A3.3, A3.8 #13; frame mac-app/11-moments)', () => {
     tick(2900)
     expect(currentPill()).not.toBeNull()
     tick(200)
+    expect(currentPill()).toBeNull()
+  })
+})
+
+describe('the notices offer (A4.6 #26)', () => {
+  const OFFER = { lead: 'Get a notice when a canvas needs you', text: '', short: 'Turn On Notices', button: { label: 'Turn On', style: 'accent' as const }, dismissible: true }
+  let acts: string[]
+  beforeEach(() => { acts = []; setOfferActions({ turnOn: () => acts.push('turnOn'), dismissed: () => acts.push('dismissed') }) })
+  afterEach(() => setOfferActions(null))
+
+  it('tier 4: under the files and every pill above them, over the test kind; Turn On is its button, a short form below 960 px', () => {
+    show('home')
+    setCondition('test', { text: 'a test offer', short: 'Test', dismissible: true })
+    setCondition('offer', OFFER)
+    expect(currentPill()).toMatchObject({ kind: 'offer', lead: OFFER.lead, short: 'Turn On Notices', button: { label: 'Turn On', style: 'accent' }, dismissible: true })
+    setCondition('files', { lead: 'config.json', text: 'did not apply', short: 'Settings not applied' })
+    expect(currentPill()?.kind).toBe('files')
+    setCondition('files', null)
+    expect(currentPill()?.kind).toBe('offer')
+  })
+
+  it('Turn On calls notify\'s turnOn; an old rev is refused; Not now (dismiss, the x or Esc) tells notify and never comes back this run', () => {
+    show('home')
+    setCondition('offer', OFFER)
+    const r = currentPill()!.rev
+    expect(onPillAction(r - 1, 'button')).toBe(false)
+    expect(acts).toEqual([])
+    expect(onPillAction(r, 'button')).toBe(true)
+    expect(acts).toEqual(['turnOn'])
+    expect(onPillAction(r, 'dismiss')).toBe(true)
+    expect(acts).toEqual(['turnOn', 'dismissed'])
+    expect(currentPill()).toBeNull()
+    setCondition('offer', OFFER)
+    expect(currentPill()).toBeNull()
+  })
+
+  it('taken down when notify says so', () => {
+    show('home')
+    setCondition('offer', OFFER)
+    setCondition('offer', null)
+    expect(currentPill()).toBeNull()
+  })
+
+  it('a missed notice is a 4 s confirmation leading with the canvas\'s name, no button', () => {
+    show('home')
+    confirm('notice-missed', { lead: 'Pilot', text: 'needs you', short: 'Needs you' })
+    expect(currentPill()).toMatchObject({ kind: 'confirmation', lead: 'Pilot', text: 'needs you', short: 'Needs you', icon: 'check' })
+    expect(currentPill()!.button).toBeUndefined()
+    tick(T.pillConfirmMs + 10)
     expect(currentPill()).toBeNull()
   })
 })

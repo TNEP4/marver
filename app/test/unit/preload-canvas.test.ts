@@ -71,3 +71,62 @@ describe('the canvas preload: the inset and the presentation (A3.8 #26, #27)', (
     expect((wire.sent.at(-1)!.msg as { doc: string }).doc).toBe('C'.repeat(22))
   })
 })
+
+describe('the canvas preload: a notice\'s click (A4.6 #29)', () => {
+  const ITEM = { id: `review:${'a'.repeat(20)}`, kind: 'review', board: 'main', cards: ['c1', 'c2'], batch: 'b1', occ: 2 }
+  interface OpenApi { onOpen(fn: (p: unknown) => unknown): () => void }
+  const opened = () => wire.sent.filter((s) => s.ch === CANVAS_CHANNELS.opened).map((s) => s.msg)
+  const flushed = () => new Promise((r) => setTimeout(r, 0))
+
+  it('mv:open reaches onOpen only for this document\'s admitted doc, its item checked, the known fields alone; the answer goes back stamped', async () => {
+    const api = await load({ reopen: false, inset: 44 }) as unknown as OpenApi
+    const heard: unknown[] = []
+    api.onOpen((p) => { heard.push(p); return 'handled' })
+    main(CANVAS_CHANNELS.open, { doc: DOC, item: ITEM })   // before the admit: not this document's
+    main(CANVAS_CHANNELS.admit, { doc: DOC })
+    main(CANVAS_CHANNELS.open, { doc: 'B'.repeat(22), item: ITEM })
+    for (const bad of [
+      { ...ITEM, kind: 'stopped', id: `stopped:${'a'.repeat(20)}` }, { ...ITEM, id: 'review:xyz' }, { ...ITEM, board: 'b'.repeat(129) },
+      { ...ITEM, thread: 'a\nb' }, { ...ITEM, batch: 'x'.repeat(129) }, { ...ITEM, cards: Array.from({ length: 9 }, (_, i) => `c${i}`) },
+      { ...ITEM, gen: 1.5 }, { ...ITEM, occ: -1 }, { ...ITEM, msg: 3 },
+    ]) main(CANVAS_CHANNELS.open, { doc: DOC, item: bad })
+    expect(heard).toEqual([])
+    main(CANVAS_CHANNELS.open, { doc: DOC, item: { ...ITEM, title: 'words main never sends', note: 'x' } })
+    expect(heard).toEqual([ITEM])
+    await flushed()
+    expect(opened()).toEqual([{ doc: DOC, p: { id: ITEM.id, result: 'handled' } }])
+  })
+
+  it('an async answer goes to the document that was asked; a result that is not one of the five, or a throw, sends nothing', async () => {
+    const api = await load({ reopen: false }) as unknown as OpenApi
+    let answer: unknown = 'stale'
+    let release!: () => void
+    const off = api.onOpen(() => new Promise((r) => { release = () => r(answer) }))
+    main(CANVAS_CHANNELS.admit, { doc: DOC })
+    main(CANVAS_CHANNELS.open, { doc: DOC, item: ITEM })
+    release(); await flushed()
+    expect(opened()).toEqual([{ doc: DOC, p: { id: ITEM.id, result: 'stale' } }])
+    answer = 'opened-ish'
+    main(CANVAS_CHANNELS.open, { doc: DOC, item: ITEM })
+    release(); await flushed()
+    expect(opened()).toHaveLength(1)
+    answer = 'busy'
+    main(CANVAS_CHANNELS.open, { doc: DOC, item: ITEM })
+    main(CANVAS_CHANNELS.admit, { doc: 'C'.repeat(22) })   // another doc meanwhile: the answer was for the one asked
+    release(); await flushed()
+    expect(opened()).toHaveLength(1)
+    off()
+    api.onOpen(() => { throw new Error('the page\'s own') })
+    main(CANVAS_CHANNELS.open, { doc: 'C'.repeat(22), item: ITEM })
+    await flushed()
+    expect(opened()).toHaveLength(1)
+  })
+
+  it('with no listener (a 0.28 shell) a click answers nothing', async () => {
+    await load({ reopen: false })
+    main(CANVAS_CHANNELS.admit, { doc: DOC })
+    main(CANVAS_CHANNELS.open, { doc: DOC, item: ITEM })
+    await flushed()
+    expect(opened()).toEqual([])
+  })
+})
