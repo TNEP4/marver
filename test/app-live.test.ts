@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { createLiveHub, encodeLive, liveChanged, liveId, liveRoute, liveSnapshot, oneLine, type LiveBody, type LiveClient, type LiveInput } from '../src/server/app-live.ts'
 import { appProof, docProof, liveProof, logoProof, type DocProof } from '../src/server/proof.ts'
 import { LIVE_BOUNDS, LIVE_WIRE, type LiveEvent, type LiveItem } from '../src/shared/app-api.ts'
-import type { Thread } from '../src/shared/events.ts'
+import { replay, type CommentEvent, type Thread } from '../src/shared/events.ts'
 import type { QueueView } from '../src/server/jam/live.ts'
 
 /**
@@ -157,6 +157,26 @@ describe('the selector: what waits on the owner (A4.6 #7, #8, #10)', () => {
     expect([cut.length, cut]).toEqual([139, 'a'.repeat(139)])
     const t = one(liveSnapshot(input({ threads: [asking('t', {}, { body: 'x'.repeat(300) })] }))).title
     expect(t).toHaveLength(140)
+  })
+
+  it('a body that is not a string (a hand-edited log line, a dev POST) reads as no words: every item stays, and a client gets its snapshot', () => {
+    const evs = (t: string, msg: string): CommentEvent[] => [
+      { id: `${t}-c`, ts: ++t0, type: 'create', commentId: t, board: 'home', frame: 'demo/one', nodeKey: 'n1', author: { name: 'Nic' }, body: 'make it blue' },
+      { id: `${t}-r`, ts: ++t0, type: 'reply', commentId: msg, parentId: t, board: 'home', agent: true, asks: true, body: 'Which blue?' },
+    ]
+    // an ask's last message and a comment card's thread root, each edited to a body that is no string
+    const threads = replay([...evs('t1', 'm1'), ...evs('t2', 'm2'),
+      { id: 'e-msg', ts: ++t0, type: 'edit', commentId: 'm2', board: 'home', body: 123 as unknown as string },
+      { id: 'e-root', ts: ++t0, type: 'edit', commentId: 't1', board: 'home', body: { x: 1 } as unknown as string }])
+    const read = () => liveSnapshot(input({ threads, cards: [card('c1', { kind: 'comment', thread: 't1', state: 'review', att: 1 })] }))
+    const b = read()
+    expect(b.counts).toEqual({ ask: 2, review: 1, failed: 0, stalled: 0 })
+    expect(b.items.map((i) => `${i.kind} ${i.thread} ${i.title}`).sort()).toEqual(['ask t1 Which blue?', 'ask t2 ', 'review t1 '])
+    const hub = createLiveHub({ instance: 'i', read, seq: { n: 0 } })
+    const c = client()
+    hub.add(c)
+    expect(c.events().map((e) => e.counts)).toEqual([b.counts])
+    hub.close()
   })
 })
 

@@ -23,6 +23,7 @@ import { DONE_CLOSE, DONE_GROUP, doneFold, jamSurface, useJamUi } from './jam-st
 import { pressJ, startSession, wrapWrite } from './jam-session.tsx'
 import { clearMoreDraft } from './jam-panel.tsx'
 import { CONFIG, PUBLISHED, SOURCE_REVEALED, useStore } from './store.ts'
+import { ALL_SCENES } from '../../shared/board-tree.ts'
 import { holdsReload } from './api.ts'
 import { unsavedWhen, workChanged } from './unsaved.ts'
 
@@ -185,12 +186,15 @@ const drawn = (sel: string) => () => !!document.querySelector(sel)
 const statusOpen = (card: string) => `.cm-tstat.on[data-jam-card="${CSS.escape(card)}"]`
 
 /** Play is left as its own Esc leaves it, then a frame passes for the layout (A4.6 r4 #1): what opens on the canvas -
- *  a thread card, a tile and its menu - is never drawn under the Play overlay, and the lane is folded there. */
+ *  a thread card, a tile and its menu - is never drawn under the Play overlay, and the lane is folded there. False when
+ *  `alive` failed, or when Play could not be left - a board locked to its mode has no way out (Play.tsx `noDoor`); the
+ *  caller tells them apart by `alive()` and opens over Play instead. */
 async function leavePlay(alive: Alive): Promise<boolean> {
   if (!useStore.getState().play) return true
-  if (!alive()) return false
   const { playCtl } = await import('./Play.tsx')
+  if (!alive()) return false
   playCtl.exit()
+  if (useStore.getState().play) return false
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
   return alive()
 }
@@ -213,17 +217,19 @@ export async function openTile(id: string, o: { alive?: Alive } = {}): Promise<b
 
 /**
  * Open a thread where you can see it (spec 28 A4.6 #30, r1 #3, r2 #2, r3 #1) - one helper for notices and every path
- * that opens a thread. On another board, its link opens that board first. An open thread whose frame a node of the
- * board hosts shows in its thread card: Play left first, comments hidden by Shift+C turned on (a hidden layer draws
- * nothing), then revealed. A capture's thread with no host opens the capture's own panel - with its question and a
- * field when it asks - as in 0.28. Every other thread - frameless, its frame gone, resolved - opens in the thread panel,
- * a resolved one read-only. `status` (a card id) asks that card's status icon to open its popover once, in its thread
+ * that opens a thread. On another board, its link opens that board first - the legacy all-scenes log is no board a link
+ * lands on (App.tsx sends it elsewhere), so its threads open on the board shown. An open thread whose frame a node of
+ * the board hosts shows in its thread card: Play left first, comments hidden by Shift+C turned on (a hidden layer draws
+ * nothing), then revealed; Play that cannot be left (a board locked to its mode) keeps the canvas under it, so the
+ * thread opens over Play as an unhosted one does. A capture's thread with no host opens the capture's own panel - with
+ * its question and a field when it asks - as in 0.28. Every other thread - frameless, its frame gone, resolved - opens
+ * in the thread panel, a resolved one read-only. `status` (a card id) asks that card's status icon to open its popover once, in its thread
  * card or the thread panel: the run's controls in view. True only once a surface for the thread is drawn - its card
  * mounted, or a panel open on it, and with `status` that popover open; false when `alive` failed first.
  */
 export async function openThreadAt(board: string, thread: string, o: { card?: JamCard; status?: string; alive?: Alive } = {}): Promise<boolean> {
   const alive = o.alive ?? always
-  const away = board !== useStore.getState().board
+  const away = board !== ALL_SCENES && board !== useStore.getState().board
   const ms = waitMs(o, away)
   if (away) {
     if (!alive()) return false
@@ -237,10 +243,13 @@ export async function openThreadAt(board: string, thread: string, o: { card?: Ja
   if (!alive()) return false
   const t = find()
   const ok = (sel: string) => waitFor(() => drawn(sel)() && (!o.status || drawn(statusOpen(o.status))()), alive, ms)
-  // only an open thread has a card (the layer keeps open threads)
-  const host = t && !t.resolved ? threadHostKey(t, useStore.getState().nodes) : null
+  // only an open thread has a card (the layer keeps open threads); Play kept, a card would draw under it
+  let host = t && !t.resolved ? threadHostKey(t, useStore.getState().nodes) : null
+  if (host && !(await leavePlay(alive))) {
+    if (!alive()) return false
+    host = null
+  }
   if (host) {
-    if (!(await leavePlay(alive))) return false
     if (!useComments.getState().show) { if (!alive()) return false; useComments.getState().setShow(true) }
     if (!alive()) return false
     if (o.status) useJamUi.getState().askStatus(o.status)
@@ -270,13 +279,17 @@ export function openThread(c: JamCard) {
  * A failed or stalled run's controls in view (spec 28 A4.6 #30, r3 #1), true only once they are on the page. A comment
  * card has no tile: its thread opens with its status popover open on Retry or the three choices - in its thread card,
  * or the thread panel. A capture or a record (the cards with a tile): failed, its panel with Retry and Drop in its
- * footer; stalled, its tile selected and the tile's menu opened at it (Play left first: Play folds the lane).
+ * footer; stalled, its tile selected and the tile's menu opened at it (Play left first: Play folds the lane - Play that
+ * cannot be left opens its lane over the stage, as Q does there).
  */
 export async function openRunControls(c: JamCard, o: { alive?: Alive } = {}): Promise<boolean> {
   const alive = o.alive ?? always
   if (c.kind === 'comment') return c.thread ? openThreadAt(c.board, c.thread, { card: c, status: c.id, alive }) : false
   if (c.state === 'failed') return (await openTile(c.id, o)) && waitFor(drawn('[data-jam-focus] [data-jam-run-act="retry"]'), alive, waitMs(o))
-  if (!(await leavePlay(alive))) return false
+  if (!(await leavePlay(alive))) {
+    if (!alive()) return false
+    useJamUi.getState().setLaneKeys(true)
+  }
   if (!(await waitFor(drawn(`.jm-lane [data-tile="${CSS.escape(c.id)}"]`), alive, waitMs(o)))) return false
   if (!alive()) return false
   useJamUi.getState().select(c.id)

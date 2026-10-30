@@ -38,6 +38,12 @@ beforeAll(async () => {
     'design/boards/other.json': JSON.stringify({ version: 1, name: 'other', order: 1, auto: false, nodes: [{ key: 'n-three', frame: 'demo/three', x: 0, y: 0, w: 390, h: 844 }] }),
     // demo/four is on no board: a thread on it has no card to draw in
     'design/boards/side.json': JSON.stringify({ version: 1, name: 'side', order: 2, auto: false, nodes: [] }),
+    // a board locked to present: Play has no way out there (Play.tsx noDoor)
+    'design/boards/deck.json': JSON.stringify({ version: 1, name: 'deck', order: 3, auto: false, nodes: [
+      { key: 'n-d1', frame: 'demo/one', x: 0, y: 0, w: 390, h: 844 },
+      { key: 'n-d2', frame: 'demo/two', x: 600, y: 0, w: 390, h: 844 },
+    ] }),
+    'design/publish.json': JSON.stringify({ boards: { deck: { open: 'present', lock: true } } }),
   })
   dev = await startDev(root)
   browser = await Browser.launch()
@@ -117,6 +123,8 @@ async function open(hash = '#/b/main', o: { onOpen?: boolean; view?: object; fai
   }
 }
 const skip = (ctx: { skip: () => void }) => { if (!browser) ctx.skip() }
+/** What is at the middle of `sel` is `sel` itself: it is drawn on top, not under an overlay. */
+const onTop = (sel: string) => `(() => { const r = document.querySelector(${JSON.stringify(sel)})?.getBoundingClientRect(); return !!r && !!document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.closest(${JSON.stringify(sel)}) })()`
 
 // ---- the threads, real comment logs --------------------------------------------------------------------------
 
@@ -284,7 +292,8 @@ describe('the occurrence: a stale click opens the target as it stands; a gone on
       capture('fc-2', { state: 'failed', batch: 'b-f2', fails: 2, att: 2 }),
       capture('sc-2', { state: 'working', batch: 'b-s2', runner: stalled('b-s2', 5, 2) }),
     ] } })
-    expect(await p.open({ id: liveId('review', 'rv-2', 1), kind: 'review', board: 'main', cards: ['rv-2'], batch: 'b-rv', occ: 1 })).toBe('stale')
+    // its batch as the card's: only the counter differs
+    expect(await p.open({ id: liveId('review', 'rv-2', 1), kind: 'review', board: 'main', cards: ['rv-2'], batch: 'b-rv2', occ: 1 })).toBe('stale')
     expect(await p.open({ id: liveId('failed', 'b-f2', 1), kind: 'failed', board: 'main', cards: ['fc-2'], batch: 'b-f2', occ: 1 })).toBe('stale')
     expect(await p.open({ id: liveId('stalled', 'b-s2', 5, 1), kind: 'stalled', board: 'main', cards: ['sc-2'], batch: 'b-s2', gen: 5, occ: 1 })).toBe('stale')
     // as it stands: the stalled capture's panel, never its menu
@@ -398,6 +407,54 @@ describe('Play is left first when what opens is on the canvas (A4.6 r4 #1)', () 
     await p.type('#mv-words', 'half a thought')
     expect(await p.open(askItem('main', t))).toBe('busy')
     expect([!!(await p.ev(`__mvStore.getState().play`)), await p.ev(`document.querySelector('#mv-words').value`)]).toEqual([true, 'half a thought'])
+  })
+})
+
+describe('a board locked to its mode: Play cannot be left, so what opens shows over it (A4.6 r4 #1)', () => {
+  it('a hosted thread on another frame than the one playing: handled - Play kept on its frame, the thread panel on top with its answer field', async (ctx) => {
+    skip(ctx)
+    const p = await open('#/b/deck')
+    const t = asking('deck', { frame: 'demo/two', node: 'n-d2' })
+    await p.ev(`__mvStore.getState().select('n-d1'), 1`)
+    await browser!.press(p.s, 'p')
+    await p.until(`__mvStore.getState().play?.at === 'demo/one' && !!document.querySelector('.sh-play-stage')`)
+    expect(await p.open(askItem('deck', t))).toBe('handled')
+    expect(await p.ev(`__mvStore.getState().play?.at`)).toBe('demo/one')
+    const panel = `[data-jam-thread-panel="${t.thread}"]`
+    expect([await p.has(`${panel} [data-jam-asks] textarea`), await p.ev(onTop(panel))]).toEqual([true, true])
+  })
+
+  it('a stalled capture: handled - Play kept, its lane opened over the stage, the tile\'s menu on top and usable', async (ctx) => {
+    skip(ctx)
+    const p = await open('#/b/deck', { view: { agent: 'claude', cards: [capture('sc-l', { board: 'deck', state: 'working', batch: 'b-l', runner: stalled('b-l', 8, 1) })] } })
+    await p.ev(`__mvStore.getState().select('n-d1'), 1`)
+    await browser!.press(p.s, 'p')
+    await p.until(`!!__mvStore.getState().play && !!document.querySelector('.sh-play-stage')`)
+    expect(await p.has('.jm-lane [data-tile="sc-l"]')).toBe(false)   // folded
+    expect(await p.open({ id: liveId('stalled', 'b-l', 8, 1), kind: 'stalled', board: 'deck', cards: ['sc-l'], batch: 'b-l', gen: 8, occ: 1 })).toBe('handled')
+    expect(!!(await p.ev(`__mvStore.getState().play`))).toBe(true)
+    const menu = '.sh-ctxmenu[data-menu="tile:sc-l"]'
+    expect([await p.has('.jm-lane .jm-card.focus[data-tile="sc-l"]'), await p.ev(onTop(menu))]).toEqual([true, true])
+    await p.ev(`[...document.querySelectorAll('${menu} button')].find((b) => b.textContent === 'Give it back to your session').click(), 1`)
+    await p.until(`__q.acts.some(([k, b]) => k === 'run' && b.batch === 'b-l' && b.gen === 8 && b.action === 'again')`)
+  })
+})
+
+describe('a thread in the legacy all-scenes log opens on the board shown (A4.6 r1 #3)', () => {
+  it('its frame on this board: handled, its thread card drawn, the board kept', async (ctx) => {
+    skip(ctx)
+    const p = await open()
+    const t = asking('all-scenes', { frame: 'demo/two', node: 'n-two' })
+    expect(await p.open(askItem('all-scenes', t))).toBe('handled')
+    expect([await p.board(), await p.has(`.cm-card[data-thread="${t.thread}"]`)]).toEqual(['main', true])
+  })
+
+  it('its frame on no board here: handled, the thread panel with its answer field, the board kept', async (ctx) => {
+    skip(ctx)
+    const p = await open()
+    const t = asking('all-scenes', { frame: 'demo/four', node: 'n-gone' })
+    expect(await p.open(askItem('all-scenes', t))).toBe('handled')
+    expect([await p.board(), await p.has(`[data-jam-thread-panel="${t.thread}"] [data-jam-asks] textarea`)]).toEqual(['main', true])
   })
 })
 
