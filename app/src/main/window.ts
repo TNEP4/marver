@@ -34,10 +34,14 @@
  *
  * App pages get nothing before they say `app:ready`, then every snapshot their kind receives, each with a `rev`
  * per channel; a page that reloads says ready again and gets everything again (A2.14 #19).
+ *
+ * A4 (A4.6 #19, #23, #26): `windowInFront()` - shown, not minimised, focused, the screen not locked - is what a
+ * notice and the offer read; `onFront` hears the window come to the front and `onCompose` each compose; a mark
+ * refreshes the strip's and Home's tabs alone through `refreshTabs()`, never a compose (A3.8 #27).
  */
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import { app, BaseWindow, nativeImage, nativeTheme, screen, View, WebContentsView, type WebContents, type WebPreferences } from 'electron'
+import { app, BaseWindow, nativeImage, nativeTheme, powerMonitor, screen, View, WebContentsView, type WebContents, type WebPreferences } from 'electron'
 import * as sessions from './sessions.ts'
 import type { Present } from '../../../src/shared/app-api.ts'
 import { CH, type PageKind, type PageFocus, type TabsSnapshot, type TabView, type WindowView } from '../shared/channels.ts'
@@ -219,6 +223,9 @@ export function sendPill(v: unknown): void {
   pillBody = v
   send(stripContents(), CH.pill, v)
 }
+
+/** The tabs' feed alone (A4.6 #19): a mark changed - no bounds, no cover, no epoch moves for it. */
+export function refreshTabs(): void { feedTabs() }
 
 function feedTabs(): void {
   const a = activeTab()
@@ -481,7 +488,38 @@ function composeOnce(o: { focus?: 'shown' }): void {
   recomputePill()
   invalidateMenu()
   deps?.afterCompose?.()
+  for (const fn of [...composeFns]) fn()
 }
+
+// ---- A4: what notices read of the window (A4.6 #20, #21, #23, #26) ----
+
+const frontFns = new Set<() => void>()
+const composeFns = new Set<() => void>()
+/** `lock-screen` .. `unlock-screen` (watchLock, from the window's setup): a locked screen counts as away */
+let locked: () => boolean = () => false
+
+/** In front (#23): shown, not minimised, focused, and the screen not locked. */
+export const inFrontOf = (w: { visible: boolean; minimized: boolean; focused: boolean; locked: boolean }): boolean =>
+  w.visible && !w.minimized && w.focused && !w.locked
+/**
+ * The screen's lock, from `powerMonitor`: locked from `lock-screen` to `unlock-screen`, and the window counts as come
+ * to the front again at the unlock (a stop it showed is acknowledged then, the badge applied again).
+ */
+export function watchLock(pm: { on(ev: 'lock-screen' | 'unlock-screen', fn: () => void): unknown }, unlocked: () => void): () => boolean {
+  let on = false
+  pm.on('lock-screen', () => { on = true })
+  pm.on('unlock-screen', () => { on = false; unlocked() })
+  return () => on
+}
+
+/** The window the person is looking at (#23). */
+export const windowInFront = (): boolean => !!win && !win.isDestroyed()
+  && inFrontOf({ visible: win.isVisible(), minimized: win.isMinimized(), focused: win.isFocused(), locked: locked() })
+/** The window came to the front: focused, shown, restored, or the screen unlocked. */
+export function onFront(fn: () => void): () => void { frontFns.add(fn); return () => { frontFns.delete(fn) } }
+/** After each compose: a tab shown, switched or closed. */
+export function onCompose(fn: () => void): () => void { composeFns.add(fn); return () => { composeFns.delete(fn) } }
+const front = () => { for (const fn of [...frontFns]) fn() }
 
 /** Every view's bounds and visibility as Electron reports them now (test builds read it). */
 export function viewsNow(): { key: string; bounds: { x: number; y: number; width: number; height: number }; visible: boolean }[] {
@@ -688,9 +726,11 @@ export function openWindow(d?: WindowDeps): BaseWindow {
   win.on('resize', () => { if (resizing) armQuiet(); compose(); deferred() })
   win.on('enter-full-screen', () => { compose(); deferred() })
   win.on('leave-full-screen', () => { compose(); deferred() })
-  win.on('focus', () => feedWindow())
+  win.on('focus', () => { feedWindow(); front() })
   win.on('blur', () => feedWindow())
-  for (const ev of ['show', 'hide', 'minimize', 'restore'] as const) win.on(ev as 'show', () => { onVisibility(); feedWindow() })
+  for (const ev of ['show', 'hide', 'minimize', 'restore'] as const) win.on(ev as 'show', () => { onVisibility(); feedWindow(); if (ev === 'show' || ev === 'restore') front() })
+  // a locked screen is away (A4.6 #23): a notice posts for the canvas in front too
+  locked = watchLock(powerMonitor, front)
   // the window hidden (on macOS also covered entirely: Electron 45 emits hide and show from its occlusion state alone):
   // the shown view's open epoch ends its record now, and no request goes out while its pages draw nothing (A3.8 #27).
   // Shown again, compose sends the epoch held meanwhile, its times starting then. Made hidden, it cannot draw until

@@ -3,12 +3,15 @@
  * state, the order and the keys, tabs.json's shape and restore, the registry's rebind rules and the document's
  * commits - pure, with fake ports.
  */
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { OpenItem } from '../../../src/shared/app-api.ts'
+import { T } from '../../src/main/timings.ts'
 import {
-  activeTab, allTabs, applyRestore, canvasOrder, cycleFrom, displayState, forDigit, getTab, hashOnly, keyOf, onCommit, onFail, onRegistry,
-  onReport, openSettingsTab, ordered, parseTabsFile, restorePlan, safePath, snapshotFile, viewOf, wantsLoad, type TabsFile,
+  activeTab, allTabs, applyRestore, canvasOrder, cycleFrom, displayState, forDigit, getTab, guard, hashOnly, keyOf, onCommit, onFail, onRegistry,
+  onReport, onUnloaded, openForNotice, openSettingsTab, ordered, parseTabsFile, restorePlan, safePath, setOpenSender, snapshotFile, viewOf, wantsLoad, closeTab,
+  type GuardAnswer, type Tab, type TabsFile,
 } from '../../src/main/tabs.ts'
-import { entry, liveTab, show, world, type World } from './window-fakes.ts'
+import { deferred, entry, flush, liveTab, show, world, type Deferred, type World } from './window-fakes.ts'
 
 let w: World
 beforeEach(() => { w = world() })
@@ -407,4 +410,148 @@ describe('the document (A2.14 #8, v1.12 r1 #1, v1.13 r2 #3)', () => {
     expect(hashOnly('', 'http://[::1]:40100/#/b/x')).toBe(false)
   })
 
+})
+
+describe('a notice\'s click, held for its tab\'s document (A4.6 #29)', () => {
+  const OPEN = ['bridge', 'inset', 'live', 'open']
+  const item = (n = 1): OpenItem => ({ id: `ask:${String(n).padStart(20, '0')}`, kind: 'ask', board: 'main', thread: `t${n}`, msg: `m${n}` })
+  const hello = (t: Tab) => onReport(t.id, t.doc!.doc!, { hello: { version: '0.29.0', board: 'main', page: 'PAGE_0123456789' } })
+  let sent: { tab: string; doc?: string; id: string }[]
+  beforeEach(() => { sent = []; setOpenSender((t, it) => { sent.push({ tab: t.id, doc: t.doc?.doc, id: it.id }); return true }) })
+  afterEach(() => { setOpenSender(null); vi.useRealTimers() })
+
+  it('a document that has said hello takes it at once, once', () => {
+    const t = liveTab(w, { entry: { features: OPEN } })
+    hello(t)
+    show('home')
+    openForNotice(t.id, item())
+    expect(activeTab()).toBe(t)
+    expect(sent).toEqual([{ tab: t.id, doc: t.doc!.doc, id: item().id }])
+    expect(t.pendingOpen).toBeUndefined()
+    hello(t)   // its hello again (accepted once): nothing more
+    expect(sent).toHaveLength(1)
+  })
+
+  it('a never-shown tab loads first; the click goes after its document\'s hello, to that document alone', () => {
+    const { t } = add({ features: OPEN })
+    openForNotice(t.id, item())
+    expect(w.loads).toEqual([t.id])
+    expect(sent).toEqual([])
+    t.view = 'live'
+    onCommit(t, { gen: 1, url: `${t.reg!.origin}/`, attributed: true, admitted: 'doc-new' })
+    expect(sent).toEqual([])   // admitted, no hello yet
+    hello(t)
+    expect(sent).toEqual([{ tab: t.id, doc: 'doc-new', id: item().id }])
+  })
+
+  it('an unloaded tab reopens, then its reopened document takes it', () => {
+    const t = liveTab(w, { entry: { features: OPEN } })
+    show('home')
+    t.view = 'unloaded'
+    t.unload = { phase: 'unloaded', reason: 'warn', at: 1, commit: t.doc!.commits, origin: t.reg!.origin!, unloadedAt: 1 }
+    t.doc!.trusted = false
+    openForNotice(t.id, item())
+    expect(w.reopens).toEqual([t.id])
+    expect(sent).toEqual([])
+    t.view = 'live'
+    onCommit(t, { gen: 2, url: `${t.reg!.origin}/`, attributed: true, admitted: 'doc-reopened' })
+    hello(t)
+    expect(sent).toEqual([{ tab: t.id, doc: 'doc-reopened', id: item().id }])
+  })
+
+  describe('clicked while an unload closes its document', () => {
+    /** a hidden canvas past unloadMinHiddenMs, its unload held at closing: the act answers when the case says */
+    async function closing(): Promise<{ t: Tab; gate: Deferred<GuardAnswer>; u: Promise<GuardAnswer> }> {
+      const t = liveTab(w, { entry: { features: OPEN } })
+      hello(t)
+      show('home')
+      w.clock.now += T.unloadMinHiddenMs
+      let gate!: Deferred<GuardAnswer>
+      w.actWith = (_t, a) => { if (a.kind !== 'unload') return 'done'; gate = deferred<GuardAnswer>(); return gate.promise }
+      const u = guard(t, { kind: 'unload', reason: 'warn' })
+      await flush()
+      expect(t.unload?.phase).toBe('closing')
+      return { t, gate, u }
+    }
+
+    it('held from the closing document; the reopened document takes it at its hello', async () => {
+      const { t, gate, u } = await closing()
+      const old = t.doc!.doc
+      openForNotice(t.id, item())
+      expect(sent).toEqual([])   // never to a document about to be destroyed
+      expect(t.pendingOpen).toBeDefined()
+      onUnloaded(t)
+      gate.resolve('done')
+      expect(await u).toBe('done')
+      await flush()
+      expect(w.reopens).toEqual([t.id])
+      t.view = 'live'
+      onCommit(t, { gen: 2, url: `${t.reg!.origin}/`, attributed: true, admitted: 'doc-reopened' })
+      hello(t)
+      expect(sent).toEqual([{ tab: t.id, doc: 'doc-reopened', id: item().id }])
+      expect(sent.some((s) => s.doc === old)).toBe(false)
+    })
+
+    it('the page refuses the unload: the kept document takes it with its shown', async () => {
+      const { t, gate, u } = await closing()
+      openForNotice(t.id, item())
+      expect(sent).toEqual([])
+      gate.resolve('refused')
+      expect(await u).toBe('refused')
+      expect(w.states.filter((s) => s.tab === t.id && s.s === 'shown')).toHaveLength(1)
+      expect(sent).toEqual([{ tab: t.id, doc: t.doc!.doc, id: item().id }])
+      expect(t.pendingOpen).toBeUndefined()
+    })
+  })
+
+  it('dropped after openWaitMs, and when another tab is activated', () => {
+    vi.useFakeTimers()
+    const a = add({ features: OPEN }).t
+    openForNotice(a.id, item())
+    vi.advanceTimersByTime(T.openWaitMs)
+    expect(a.pendingOpen).toBeUndefined()
+    a.view = 'live'
+    onCommit(a, { gen: 1, url: `${a.reg!.origin}/`, attributed: true, admitted: 'doc-late' })
+    hello(a)
+    expect(sent).toEqual([])
+    const b = add({ features: OPEN }).t
+    openForNotice(b.id, item(2))
+    expect(b.pendingOpen).toBeDefined()
+    show(a.id)
+    expect(b.pendingOpen).toBeUndefined()
+    expect(w.logs.filter((l) => l.topic === 'open' && l.data.dropped).map((l) => l.data.dropped)).toEqual(['wait', 'another tab'])
+  })
+
+  it('a later click replaces an earlier one; a canvas without open, and a stop\'s click, are only shown', () => {
+    const { t } = add({ features: OPEN })
+    openForNotice(t.id, item(1))
+    openForNotice(t.id, item(2))
+    t.view = 'live'
+    onCommit(t, { gen: 1, url: `${t.reg!.origin}/`, attributed: true, admitted: 'doc-1' })
+    hello(t)
+    expect(sent.map((s) => s.id)).toEqual([item(2).id])
+    const old = liveTab(w, { entry: { features: ['bridge', 'inset', 'live'] } })   // a 0.29 canvas without open: never
+    hello(old)
+    show('home')
+    openForNotice(old.id, item(3))
+    expect(activeTab()).toBe(old)
+    expect(old.pendingOpen).toBeUndefined()
+    show('home')
+    openForNotice(old.id, null)
+    expect(activeTab()).toBe(old)
+    expect(sent).toHaveLength(1)
+  })
+
+  it('a tab closed since is reopened for this run; an untrusted document never takes the click', async () => {
+    const t = liveTab(w, { entry: { features: OPEN } })
+    t.retained = false
+    await closeTab(t.id)
+    expect(t.open).toBe(false)
+    openForNotice(t.id, item())
+    expect(t.open).toBe(true)
+    expect(activeTab()).toBe(t)
+    t.doc!.trusted = false
+    hello(t)
+    expect(sent).toEqual([])
+  })
 })

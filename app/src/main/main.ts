@@ -22,26 +22,36 @@
  * and before the views (its writer, the machine profile, the one sampler); memory.ts (unloading) and the white-out
  * detector start once the views and the tabs exist; the recorder's queue is written at will-quit.
  *
+ * A4 (app 0.3, A4.6 #16-#29): once the views and Home's channels exist, the live streams (live.ts) and the notices
+ * (notify.ts) start, hearing the registry after the tabs do; the streams end and notices.json is written at will-quit.
+ *
  * Who calls what across the streams is app/src/main/ports.ts's table; this file keeps the order and makes the calls.
  */
 import './guard.ts'
 import { mkdirSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
-import { app, crashReporter, protocol } from 'electron'
+import { app, crashReporter, powerMonitor, protocol } from 'electron'
 import { installSpies } from './testing/spies.ts'
 import { note, provide, startTesting, testMode } from './testing/index.ts'
 import { provideTrustHooks } from './testing/trust.ts'
 import { overrideTimings } from './timings.ts'
 import { totalmem } from 'node:os'
-import { applyTheme, ensureHome, readFiles, readTabsFile, startFiles, tabsWriter, values } from './config.ts'
+import { applyTheme, ensureHome, noticesState, noticesWriter, onChange, readFiles, readTabsFile, setNoticesState, settingsSet, startFiles, tabsWriter, values } from './config.ts'
 import { flushRecent, isFirstLaunch, mountPages, noteGone, noteHomeShown, noteVerified, startHome } from './home.ts'
 import { installNavigationPolicy, localSession, onSameCanvasOpen, setupAppSession } from './sessions.ts'
 import { installBridge } from './bridge.ts'
 import { createRegistry, type RegistryEntry } from './registry.ts'
 import { fetchLogo, installDispatcher, probeProof } from './proof.ts'
 import { attachNav } from './nav.ts'
-import { contentView, focusWindow, windowVisible } from './window.ts'
-import { activeTab, getTab, startTabs, type Tab } from './tabs.ts'
+import { contentView, focusWindow, onCompose, onFront, refreshTabs, windowInFront, windowVisible } from './window.ts'
+import { activeTab, getTab, openForNotice, setMarksSource, setOpenSender, startTabs, type Tab } from './tabs.ts'
+import { createLive } from './live.ts'
+import { createNotify, type Notify } from './notify.ts'
+import { presenter } from './notify-mac.ts'
+import { provideNoticeHooks } from './testing/notices.ts'
+import { confirm, setCondition, setOfferActions } from './pill.ts'
+import { effects } from './effects.ts'
+import { CH } from '../shared/channels.ts'
 import { docInset } from './layout.ts'
 import { identity, recorder, sampler } from './recorder.ts'
 import { provideRecorderHooks } from './testing/recorder.ts'
@@ -187,6 +197,7 @@ function start(): void {
     })
     // Home's and Settings' channels and pushes, ⌘L's links into their tabs, the files pill (home.ts, ports.ts)
     mountPages(bridge, windowPorts())
+    startNotices(trust, bridge)
     // unloading under pressure, on the one sampler's samples (A3.8 #41), and the white-out detector (A3.8 #15)
     startMemory({
       config: () => values().config, sampler, totalMB: () => totalmem() / 2 ** 20,
@@ -222,4 +233,54 @@ function start(): void {
     }
     if (__MV_TEST__) note('startup', { step: 'ready' })
   })
+}
+
+/**
+ * A4 (A4.6 #16-#29): one live stream per running canvas that lists `live` (live.ts), and every notices rule on them
+ * (notify.ts) - the marks in the tabs' views, the notices through the presenter (notify-mac.ts, or a test build's
+ * fake), the badge, the offer in the pill, a click held for its tab's document (tabs.ts) and sent by the bridge.
+ */
+function startNotices(trust: TrustPort, bridge: ReturnType<typeof installBridge>): void {
+  const j = (topic: string, data: unknown) => { if (__MV_TEST__) note(topic, data) }
+  let notify: Notify | null = null
+  const live = createLive({ changed: (instance, why) => notify?.onLive(instance, why), log: j })
+  notify = createNotify({
+    now: () => Date.now(),
+    presenter,
+    held: (instance) => live.held(instance),
+    config: () => values().config,
+    turnOn: async () => (await settingsSet({ file: 'config', key: 'notifications', value: true })).ok,
+    inFront: windowInFront,
+    state: noticesState,
+    setState: setNoticesState,
+    offer: (on) => setCondition('offer', on
+      ? { lead: 'Get a notice when a canvas needs you', text: '', short: 'Turn On Notices', button: { label: 'Turn On', style: 'accent' }, dismissible: true }
+      : null),
+    missed: (name) => confirm('notice-missed', { lead: name, text: 'needs you', short: 'Needs you' }),
+    refresh: refreshTabs,
+    open: (tabId, item) => { focusWindow(); openForNotice(tabId, item) },
+    log: j,
+  })
+  const n = notify
+  setMarksSource((t) => n.marksOf(t))
+  setOpenSender((t, item) => bridge.openItem(t.id, item))
+  setOfferActions({ turnOn: () => { void n.offerTurnOn() }, dismissed: () => n.offerDismissed() })
+  bridge.handle(CH.settingsAction, () => effects.openNotificationSettings())
+  // after views.ts's listener: the tabs have heard the event first (a stop reads whether its tab is open)
+  trust.onRegistry((e) => { live.onRegistry(e); n.onRegistry(e) })
+  live.start(trust.entries())
+  onChange((f) => { if (f === 'config') n.onConfig() })
+  onFront(() => n.onFront())
+  onCompose(() => n.onCompose())
+  powerMonitor.on('resume', () => live.resume())
+  app.on('will-quit', () => {
+    live.close()
+    n.close()
+    try { noticesWriter().flushSync() } catch { /* a report, never the quit's */ }
+  })
+  if (__MV_TEST__ && testMode()) {
+    provideNoticeHooks()
+    provide('live', () => live.dump())
+    provide('notify', () => n.dump())
+  }
 }

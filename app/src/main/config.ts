@@ -35,6 +35,7 @@ import { check, defaults, FILE_MAX, judgeObject, keySpec, shownIn, shownKeys, ST
 import { tilde } from '../shared/command.ts'
 import type { FilesPorts } from './ports.ts'
 import type { TabsFile } from './tabs.ts'
+import type { NoticesFile } from './notify.ts'
 import { effects, provideEffectHooks } from './effects.ts'
 import { faults, readCapped, readCappedSync, readState, stateWriter, sweepTemps, writeWhole, writeWholeSync, type Capped, type StateWriter, type WriteHooks } from './fsx.ts'
 import { shellPath } from '../shared/links.ts'
@@ -411,8 +412,40 @@ export function settingsView(): SettingsView {
     values: { ...(f === 'config' ? v.config : v.theme) } as Record<string, unknown>,
     ...(recs[f].text !== undefined ? { text: recs[f].text } : {}),
   })
-  // notices (A4.6 #27): `unknown` until the notices stream posts one and keeps its outcome in state/notices.json
-  return { dir: tildeOf(home.dir), statusFile: tildeOf(statusPath()), config: file('config'), theme: file('theme'), status: filesStatus(), shown: shownKeys(), notices: { outcome: 'unknown' } }
+  // notices (A4.6 #25, #27): what macOS did with the last notice posted, as notices.json keeps it; none yet is unknown
+  return { dir: tildeOf(home.dir), statusFile: tildeOf(statusPath()), config: file('config'), theme: file('theme'), status: filesStatus(), shown: shownKeys(), notices: { outcome: noticesState().lastOutcome ?? 'unknown' } }
+}
+
+// ---- state/notices.json (A4.6 #26, #27) ---------------------------------------------------------------------------
+
+/** `{ v: 1, offeredAt?, dismissedAt?, lastOutcome? }`: the offer shown and dismissed, the last post's outcome. */
+export function checkNotices(v: unknown): v is NoticesFile {
+  const f = v as NoticesFile
+  if (!f || typeof f !== 'object' || Array.isArray(f) || f.v !== 1) return false
+  const at = (x: unknown) => x === undefined || (typeof x === 'number' && Number.isFinite(x) && x >= 0)
+  return at(f.offeredAt) && at(f.dismissedAt) && (f.lastOutcome === undefined || f.lastOutcome === 'accepted' || f.lastOutcome === 'failed')
+}
+
+let notices: NoticesFile | undefined
+let noticesW: StateWriter<NoticesFile> | undefined
+/** notices.json as read once (a bad file goes aside as `.bad`), then as changed this run. */
+export function noticesState(): NoticesFile {
+  notices ??= (home.state ? readState(join(home.state, 'notices.json'), checkNotices) : undefined) ?? { v: 1 }
+  return { ...notices }
+}
+/** Its one writer (debounced; flushed at quit beside tabs.json). */
+export function noticesWriter(): StateWriter<NoticesFile> {
+  return noticesW ??= stateFileWriter<NoticesFile>('notices.json')
+}
+/** A change to notices.json, written only when something changed; Settings is told, so its outcome line follows. */
+export function setNoticesState(patch: Partial<NoticesFile>): void {
+  const was = noticesState()
+  const next: NoticesFile = { ...was, ...patch, v: 1 }
+  if (JSON.stringify(next) === JSON.stringify(was)) return
+  notices = next
+  noticesWriter().set(next)
+  const s = filesStatus()
+  for (const fn of statusFns) fn(s)
 }
 
 /** `settings:set`'s payload, checked again in main (the bridge checks it first). */
@@ -539,4 +572,5 @@ function provideFileHooks(): void {
   provide('files.inject', (a) => { faults.inject(a as Parameters<typeof faults.inject>[0]); return faults.list() })
   provide('files.tabs', () => readTabsFile() ?? null)
   provide('files.tabsWrite', async (a) => { const w = tabsWriter(); w.set(a as TabsFile); await w.flush(); return true })
+  provide('files.notices', async () => { await noticesWriter().flush(); return noticesState() })
 }

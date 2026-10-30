@@ -37,7 +37,8 @@
  *
  * **A4** (app 0.3; A4.6 #29, #35), signatures frozen before its streams split (A4.6 #56), wired by them:
  * - `openItem` sends `mv:open { doc, item }` to a tab's admitted, trusted document whose instance lists `open`, after
- *   its hello (tabs.ts holds the click until then); the notices stream builds it and `mv:opened`;
+ *   its hello (tabs.ts holds the click until then), the item checked as the preload checks it (open-item.ts);
+ *   `mv:opened`, the shell's answer, is accepted like the reports and journaled;
  * - `mv:capture`, the first canvas invoke, admits its sender as the reports do (an `IpcMainInvokeEvent`), checks the
  *   rect, and hands an accepted ask to `onCapture`'s handler with a `still()` that runs the same admission again -
  *   the bridge holds no capture logic (live-picture.ts does); the live pictures stream builds it;
@@ -54,11 +55,12 @@
 import { randomBytes } from 'node:crypto'
 import { ipcMain, webFrameMain, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents, type WebFrameMain } from 'electron'
 import {
-  APP_MENU_IDS, BOUNDS, CANVAS_CHANNELS, PERF_BOUNDS, UNSAVED_WHY, WHY,
+  APP_MENU_IDS, BOUNDS, CANVAS_CHANNELS, FEATURE, PERF_BOUNDS, UNSAVED_WHY, WHY,
   type AppState, type Busy, type CaptureAnswer, type CaptureRect, type DocAnswer, type Hello, type Inset, type MenuItem, type OpenItem, type PerfAsk, type PerfCam,
   type PerfMsg, type PerfSize, type Present, type Presented, type Theme, type Why,
 } from '../../../src/shared/app-api.ts'
 import { CH, INVOKES as INVOKE_LIST, SENDERS, type PageKind } from '../shared/channels.ts'
+import { checkOpened, checkOpenItem } from '../shared/open-item.ts'
 import { mainFrameOf, safely } from './frames.ts'
 import { adapterFor, attachNav, type NavEvent } from './nav.ts'
 import { isTrusted, targetOf, unsafePrefs } from './proof.ts'
@@ -128,7 +130,7 @@ export interface Bridge {
 
   // ---- A4 (A4.6 #29, #35): signatures frozen here, built by their streams ----
   /** `mv:open { doc, item }` to the tab's admitted, trusted document whose instance lists `open`; false when there is
-   *  none (A4.6 #29). Until the notices stream builds it, nothing is sent */
+   *  none, or the item fails open-item.ts's check (A4.6 #29) */
   openItem(tabId: string, item: OpenItem): boolean
   /** main's handler for accepted `mv:capture` asks (live-picture.ts, A4.6 #35); null takes it away. The live pictures
    *  stream installs the invoke itself */
@@ -553,6 +555,16 @@ export function installBridge(o: BridgeOptions = {}): Bridge {
     trace('accepted', { wc: id, ch: 'presented', epoch: v.epoch })
     for (const fn of [...presentedFns]) { try { fn(who.tabId, who.doc, v) } catch (err) { process.stderr.write(`marver-app: a presented listener threw: ${(err as Error).message}\n`) } }
   })
+  // A4: the shell's answer to a notice's click (A4.6 #29) - accepted like the reports, journaled, nothing more
+  ipcMain.on(CANVAS_CHANNELS.opened, (e: IpcMainEvent, msg: unknown) => {
+    const id = e.sender.id
+    const m = obj(msg) ? msg : null
+    const who = admittedSender(e, m)
+    if (typeof who === 'string') { trace('refused', { wc: id, ch: 'opened', why: who }); return }
+    const v = checkOpened(m!.p)
+    if (!v) { trace('refused', { wc: id, ch: 'opened', why: 'payload' }); return }
+    trace('accepted', { wc: id, ch: 'opened', tab: who.tabId, doc: who.doc, id: v.id, result: v.result })
+  })
 
   // app pages
   const pageCtx = (e: IpcMainEvent | IpcMainInvokeEvent, channel: string): PageCtx | null => {
@@ -708,8 +720,18 @@ export function installBridge(o: BridgeOptions = {}): Bridge {
       return sent
     },
     perfCounts: () => ({ ...perfCount }),
-    // A4.6 #29: the notices stream sends `mv:open` here; until then nothing is sent
-    openItem: () => false,
+    // A4.6 #29: to the admitted, trusted document of an instance that lists `open`, the item checked as the preload checks it
+    openItem(tabId, item) {
+      const id = tabWc.get(tabId)
+      const rec = id === undefined ? undefined : docs.get(id)
+      if (id === undefined || !rec?.doc || !isTrusted(id)) { trace('open', { tab: tabId, sent: false, why: 'not admitted' }); return false }
+      if (!targetOf(id)?.entry.features.includes(FEATURE.open)) { trace('open', { wc: id, tab: tabId, sent: false, why: 'no open' }); return false }
+      const it = checkOpenItem(item)
+      if (!it) { trace('open', { wc: id, tab: tabId, sent: false, why: 'payload' }); return false }
+      const sent = sendCanvas(id, CANVAS_CHANNELS.open, { doc: rec.doc, item: it })
+      trace('open', { wc: id, tab: tabId, id: it.id, sent })
+      return sent
+    },
     onCapture(fn) { captureFn = fn; trace('capture-handler', { set: !!captureFn }) },
   }
   return installed

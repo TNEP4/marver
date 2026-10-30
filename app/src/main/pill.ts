@@ -12,7 +12,8 @@
  *   2. a confirmation, 4 s on screen - "Reloaded after a crash" in A2, "Flash marked" in A3 (its Show reveals the
  *      mark's picture, `flashMarked`), a missed notice A4;
  *   3. the files: "Settings not applied", "Files not saved" (A2.12, A2.14 #24);
- *   4. a dismissible offer (A4's notices; a test-only kind in A2); 5. the update (A5).
+ *   4. a dismissible offer - A4's notices offer (A4.6 #26: "Get a notice when a canvas needs you", Turn On; its
+ *      actions are notify.ts's, through `setOfferActions`), and A2's test-only kind; 5. the update (A5).
  * Lifetimes: a confirmation's 4 s count only while it is on screen and the window shown; one pushed off keeps
  * what it has left; one not shown within 30 s is dropped (its record - the crash - stays); one of each kind waits,
  * a newer replaces it. The unsaved pill lasts while the page's own `unsaved` is true (10 s for a record that is not
@@ -66,7 +67,13 @@ interface Waiting { rec: Rec; left: number; created: number; since?: number }
 /** confirmations waiting, at most one per sub-kind (FIFO by creation) */
 const confirms = new Map<string, Waiting>()
 /** tiers 3 and 4 */
-const conds = new Map<'files' | 'test', Rec>()
+type Cond = 'files' | 'test' | 'offer'
+const conds = new Map<Cond, Rec>()
+
+/** The notices offer's Turn On and Not now (A4.6 #26): notify.ts's, installed by main.ts. */
+export interface OfferActions { turnOn(): void; dismissed(): void }
+let offerActs: OfferActions | null = null
+export function setOfferActions(a: OfferActions | null): void { offerActs = a }
 const dismissed = new Set<string>()
 
 let rev = 0
@@ -137,7 +144,7 @@ export function recompute(): void {
     else if (w.left === T.pillConfirmMs && now - w.created >= T.pillDropMs) { confirms.delete(k); p.log?.('pill', { dropped: k }) }   // never shown in 30 s
   }
   const oldest = [...confirms.values()].sort((a, b) => a.created - b.created)[0]
-  const next = tier1(activeTab(), now) ?? oldest?.rec ?? conds.get('files') ?? conds.get('test') ?? null
+  const next = tier1(activeTab(), now) ?? oldest?.rec ?? conds.get('files') ?? conds.get('offer') ?? conds.get('test') ?? null
   if (next?.kind === 'confirmation' && visible) confirms.get(next.sub!)!.since = now
   if (!(next && shown && next.about === shown.about)) {
     shown = next
@@ -195,9 +202,10 @@ export function flashMarked(c: { at: number; recorder: boolean; picture: string 
 
 /**
  * Tier 3, the files (A2.12, A2.14 #24): "Settings not applied" or "Files not saved", or null when the cause is
- * gone. The home stream's config.ts calls it. `test`: a dismissible kind for A2's tests (A4's notices offer).
+ * gone. The home stream's config.ts calls it. Tier 4: `offer`, the notices offer (A4.6 #26), and `test`, a
+ * dismissible kind for A2's tests. A dismissed one is not raised again this run.
  */
-export function setCondition(kind: 'files' | 'test', c: { text: string; short: string; lead?: string; tooltip?: string; dismissible?: boolean } | null): void {
+export function setCondition(kind: Cond, c: { text: string; short: string; lead?: string; tooltip?: string; dismissible?: boolean; button?: PillView['button'] } | null): void {
   if (!c) conds.delete(kind)
   else {
     const about = `${kind}:${c.lead ?? ''}:${c.text}`
@@ -221,6 +229,8 @@ export function onPillAction(r: number, act: 'button' | 'dismiss'): boolean {
     dismissed.add(rec.about)
     for (const [k, c] of conds) if (c === rec) conds.delete(k)
     recompute()
+    // the offer's Not now is kept by notify.ts in notices.json: it never comes back, after a relaunch too (A4.6 #26)
+    if (rec.kind === 'offer') offerActs?.dismissed()
     return true
   }
   if (!rec.button) return false
@@ -231,6 +241,8 @@ export function onPillAction(r: number, act: 'button' | 'dismiss'): boolean {
     case 'not-responding': if (t?.hung) p.notResponding(t); return true
     // a flash's Show: its own picture, whichever tab is active by then
     case 'confirmation': if (rec.sub === 'flash' && rec.ref && p.showFlash) { p.showFlash(rec.ref); return true } return false
+    // Turn On: notifications true as Settings would write it; the offer goes once that write is made (A4.6 #26)
+    case 'offer': if (offerActs) { offerActs.turnOn(); return true } return false
     default: return false
   }
 }

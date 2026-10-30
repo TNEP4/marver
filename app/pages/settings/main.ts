@@ -4,7 +4,12 @@
  * the same table main validates with), under its file's heading, a switch, a menu or a number field, the key's name
  * under its label. A change is one `settings:set`; refused, the control goes back to what is in force and the row
  * says why. A file that does not apply says so, with each problem and the file's text beside it. "Show the Files"
- * opens the folder. System Settings links (notices) come with A4.2.
+ * opens the folder.
+ *
+ * Notices (A4, A4.6 #25, #27): the Notices row is `notifications`' own switch, and always offers Open System Settings
+ * (`settings:action`, the Notifications pane) - macOS can hide notices without any failure; after a notice macOS
+ * refused it says "macOS turned down Marver's last notice", and no more than that. The Dock badge row shows only
+ * once notices are on.
  */
 import type { SettingsFileView, SettingsSetResult, SettingsView } from '../../src/shared/channels.ts'
 import { keySpec, type FileName, type KeySpec } from '../../src/shared/settings-keys.ts'
@@ -97,14 +102,25 @@ function section(file: FileName, keys: string[]): HTMLElement | null {
     ...keys.map((key) => {
       const spec = keySpec(file, key)
       if (!spec) return null
+      // the badge needs the same permission as notices (A4.6 #21): its row only once they are on
+      if (file === 'config' && key === 'dockBadge' && f.values.notifications !== true) return null
       const labelId = `l-${file}-${key}`
       const id = `${file}.${key}`
       return h('div', { class: 'row-wrap' },
         h('div', { class: 'row' },
           h('div', { class: 'row-txt' }, h('span', { id: labelId }, spec.label), h('small', { class: 'hint' }, hintOf(key, spec))),
           control(file, key, spec, f, labelId)),
+        file === 'config' && key === 'notifications' ? noticesMore() : null,
         h('p', { class: 'row-err' }, errors.get(id) ?? ''))
     }))
+}
+
+/** Under the Notices switch: what macOS last did with a notice, if it refused one, and Open System Settings, always. */
+function noticesMore(): HTMLElement {
+  const failed = view?.notices.outcome === 'failed'
+  return h('div', { class: 'row-more' },
+    failed ? h('p', { class: 'hint warn', id: 'notices-failed' }, 'macOS turned down Marver\'s last notice') : null,
+    h('button', { class: 'quiet', type: 'button', id: 'notice-settings', onclick: () => api?.action({ action: 'open-notification-settings' }) }, 'Open System Settings'))
 }
 
 function sideFor(file: FileName): HTMLElement | null {

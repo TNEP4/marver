@@ -57,6 +57,24 @@ body.dots .strip { background: radial-gradient(var(--dot) 1px, transparent 1px) 
 /* unloaded to free memory (A3.8 #46): dimmed, its name kept; it reopens when shown */
 .tab.is-unloaded .logo { opacity: .55 }
 
+/* A4 (A4.6 #19): the tab's one mark slot, after its name - orange needs you, blue new frames (the sidebar's marks,
+   their own tokens) - else a light sweeping the bubble while an agent works; a teal dot on the logo's corner for a
+   Jam session. A stream that has been down: the mark dimmed. At 58 px the name ellipsises first */
+.mk { flex: none; min-width: 16px; height: 15px; padding: 0 4px; border-radius: 8px; color: #fff; text-align: center;
+  font: 700 10px/15px -apple-system, system-ui, sans-serif; font-variant-numeric: tabular-nums }
+.mk.ask { background: var(--mk-ask) }
+.mk.new { background: var(--mk-new) }
+.tab.stale .mk, .tab.stale .sess { opacity: .45 }
+.sess { position: absolute; right: -2px; bottom: -2px; width: 6px; height: 6px; border-radius: 50%; background: #00c3d0;
+  box-shadow: 0 0 0 1.5px var(--ground) }
+:root.dark .sess { background: #00d2e0 }
+.tab.working::before { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(100deg, transparent 35%, var(--inner-tint) 50%, transparent 65%) 0 0 / 250% 100% no-repeat;
+  animation: mv-sweep 1.8s linear infinite }
+.tab.working.stale::before { opacity: .45 }
+@keyframes mv-sweep { from { background-position: 150% 0 } to { background-position: -50% 0 } }
+@media (prefers-reduced-motion: reduce) { .tab.working::before { animation: none; background: var(--accent-wash) } }
+
 /* the window in the background: dimmed, as native title bars do */
 body.inactive .tab, body.inactive .home { opacity: .55 }
 body.inactive .tab.on { opacity: .8; box-shadow: none }
