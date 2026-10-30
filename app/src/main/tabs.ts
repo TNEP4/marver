@@ -1185,12 +1185,14 @@ export function setOpenSender(fn: ((t: Tab, item: OpenItem) => boolean) | null):
  * A notice's click, once main.ts brought the window forward: its tab shown - reopened when it was closed since - and,
  * for a canvas whose instance lists `open`, the item held as `pendingOpen` until that tab's current document is
  * admitted, trusted and has said hello (an unloaded or never-shown tab loads first; one whose unload is closing waits
- * for its outcome). A later click replaces it; it is dropped after `openWaitMs` or when another tab is activated. A
- * stop's click (`item` null) only shows the tab.
+ * for its outcome). A later click replaces it - every later click, before the tab is shown, so neither its showing nor
+ * a stop's click hands the earlier item on (code review r2 P2); it is dropped after `openWaitMs` or when another tab is
+ * activated. A stop's click (`item` null) only shows the tab.
  */
 export function openForNotice(id: string, item: OpenItem | null): void {
   const t = tabs.get(id)
   if (!t || t.kind !== 'local') return
+  dropOpen(t, 'superseded')
   if (!t.open) reopenTab(id)
   else activate(id)
   if (!item) return

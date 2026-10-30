@@ -544,6 +544,19 @@ describe('a notice\'s click, held for its tab\'s document (A4.6 #29)', () => {
     expect(sent).toHaveLength(1)
   })
 
+  it('a stop\'s click after an item\'s, before the document\'s hello: the item is superseded, never delivered (code review r2 P2)', () => {
+    const { t } = add({ features: OPEN })
+    openForNotice(t.id, item(1))
+    expect(t.pendingOpen).toBeDefined()
+    openForNotice(t.id, null)
+    expect(t.pendingOpen).toBeUndefined()
+    t.view = 'live'
+    onCommit(t, { gen: 1, url: `${t.reg!.origin}/`, attributed: true, admitted: 'doc-1' })
+    hello(t)
+    expect(sent).toEqual([])
+    expect(w.logs.filter((l) => l.topic === 'open' && l.data.dropped).map((l) => [l.data.id, l.data.dropped])).toEqual([[item(1).id, 'superseded']])
+  })
+
   it('a tab closed since is reopened for this run; an untrusted document never takes the click', async () => {
     const t = liveTab(w, { entry: { features: OPEN } })
     t.retained = false
