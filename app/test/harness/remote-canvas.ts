@@ -2,10 +2,13 @@
  * Shared canvases for the app's cases (spec 28 A4.6 #50, #51): several `*.canvas.test` hosts over https on one port of
  * the run's own (the OS picks it: never 4805-4824 or 5298), told apart by their `Host`, with the checked-in test
  * certificate (`remote-cert/`, test-only: `*.canvas.test`, never trusted by anything but a test build that names its
- * fingerprint). The app reaches them through its test switches (`env`): `MARVER_APP_TEST_HOSTS` maps `*.canvas.test` to
- * 127.0.0.1, `MARVER_APP_TEST_REMOTE_CERT` accepts exactly this certificate, `MARVER_APP_TEST_FRONT_DOOR` names
- * `door.canvas.test` as the front door. Each run has its own `userData` (env.ts), so HSTS and certificate caches
- * never leak between runs.
+ * fingerprint). Its key is EC P-256 named by its OID: Chromium refuses a key that spells out its curve's parameters
+ * (-107 at the handshake), which is what macOS's LibreSSL `openssl` writes unless told, so it was made with `openssl
+ * req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -pkeyopt ec_param_enc:named_curve`, SAN `*.canvas.test,
+ * canvas.test`, server auth, 20 years (`bad-cert.pem` the same, another key). The app reaches them through its test
+ * switches (`env`): `MARVER_APP_TEST_HOSTS` maps `*.canvas.test` to 127.0.0.1, `MARVER_APP_TEST_REMOTE_CERT` accepts
+ * exactly this certificate, `MARVER_APP_TEST_FRONT_DOOR` names `door.canvas.test` as the front door. Each run has its
+ * own `userData` (env.ts), so HSTS and certificate caches never leak between runs.
  *
  * What it serves, per host (`page(host, o)` sets a host's shell page; `route` adds anything else):
  * - `/` and `/index.html`: a shell-like page - a title, `<link rel="icon">` (`favicon`, default `/favicon.png`; or
@@ -30,7 +33,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AddressInfo, Socket } from 'node:net'
 
-const CERT_DIR = join(import.meta.dirname, 'remote-cert')
+export const CERT_DIR = join(import.meta.dirname, 'remote-cert')
 const CERT = readFileSync(join(CERT_DIR, 'cert.pem'))
 const KEY = readFileSync(join(CERT_DIR, 'key.pem'))
 const BAD_CERT = readFileSync(join(CERT_DIR, 'bad-cert.pem'))

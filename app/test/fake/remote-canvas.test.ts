@@ -7,8 +7,10 @@
  */
 import { request } from 'node:https'
 import { createHash, X509Certificate } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { CERT_PEM, LOGO_SVG, PNG, PUBLISHED_ICONS, startRemoteCanvas, TEST_FINGERPRINT, type RemoteCanvas } from '../harness/remote-canvas.ts'
+import { CERT_DIR, CERT_PEM, LOGO_SVG, PNG, PUBLISHED_ICONS, startRemoteCanvas, TEST_FINGERPRINT, type RemoteCanvas } from '../harness/remote-canvas.ts'
 import { sniffLogo } from '../../../src/shared/logo-sniff.ts'
 
 let r: RemoteCanvas
@@ -42,6 +44,15 @@ describe('the remote harness (A4.6 #50)', () => {
     expect(String(g.body)).toContain('<link rel="icon" href="/favicon.png">')
     expect(r.env).toEqual({ MARVER_APP_TEST_HOSTS: 'MAP *.canvas.test 127.0.0.1', MARVER_APP_TEST_REMOTE_CERT: TEST_FINGERPRINT, MARVER_APP_TEST_FRONT_DOOR: `https://door.canvas.test:${r.port}` })
     expect(r.hits('pilot', '/')).toBe(1)
+  })
+
+  it('both certificates name their curve: Chromium refuses a key that spells out its parameters (-107, every shared tab unreachable)', () => {
+    // an SPKI of id-ecPublicKey with the prime256v1 OID as its parameters, 91 bytes; LibreSSL's explicit encoding is 335
+    const named = '3059301306072a8648ce3d020106082a8648ce3d030107'
+    for (const f of ['cert.pem', 'bad-cert.pem']) {
+      const spki = new X509Certificate(readFileSync(join(CERT_DIR, f))).publicKey.export({ type: 'spki', format: 'der' })
+      expect([f, spki.subarray(0, 23).toString('hex'), spki.length]).toEqual([f, named, 91])
+    }
   })
 
   it('a host\'s page: its title, script and favicon; none at all', async () => {
