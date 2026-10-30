@@ -206,6 +206,8 @@ export async function toBoard(board: string, alive?: Alive): Promise<boolean> {
 /** `p`, or false as soon as `alive` fails, read every 30 ms: a request never waits past its own life - its deadline, or
  *  its end - whatever it waits on (a board's save or read, a hidden view's frames). The look stops once either settles. */
 async function whileAlive<T>(p: Promise<T>, alive: Alive): Promise<T | false> {
+  // a click has no request to outlive: it waits on `p` alone, leaving no look behind in a hidden view (code review r4 P3)
+  if (alive === always) return p
   let done = false
   const ended = new Promise<false>((r) => { const look = () => { if (done) return; if (!alive()) { r(false); return } setTimeout(look, 30) }; look() })
   try { return await Promise.race([p, ended]) } finally { done = true }
