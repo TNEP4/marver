@@ -61,6 +61,26 @@ function readBody(req: any, limit = BODY_LIMIT): Promise<string | null> {
   })
 }
 
+/** A raw body (A4.6 #37): `limit` counted as the bytes arrive, never trusting `content-length` - past it `large`, and
+ *  nothing more is kept; `stop` ends the read where it stands. The socket is left alone, so the answer still goes out. */
+function readBytes(req: any, limit: number, stop?: AbortSignal): Promise<Buffer | 'large' | 'error' | 'stopped'> {
+  return new Promise((done) => {
+    let size = 0, settled = false
+    const chunks: Buffer[] = []
+    const end = (v: Buffer | 'large' | 'error' | 'stopped') => { if (!settled) { settled = true; chunks.length = 0; done(v) } }
+    req.on('data', (c: Buffer) => {
+      if (settled) return
+      size += c.length
+      if (size > limit) end('large'); else chunks.push(c)
+    })
+    req.on('end', () => end(Buffer.concat(chunks)))
+    req.on('error', () => end('error'))
+    stop?.addEventListener('abort', () => end('stopped'), { once: true })
+  })
+}
+/** A live picture's bytes at most (A4.6 #37): a 4096 px image of a design is well under it. */
+const LIVE_PICTURE_MAX = 8 * 1024 * 1024
+
 /** Atomic write: random temp name (no predictable symlink target), rename, and a
  *  copy-fallback only for the Windows rename errors - anything else rethrows. */
 function atomicWrite(file: string, content: string) {
@@ -113,7 +133,9 @@ function contained(target: string, base: string): boolean {
   } catch { return false }
 }
 
-export function apiMiddleware(root: string, opts: { viewports?: Record<string, { width: number; height: number }>; origin?: () => string | null; bakeGen?: () => number; notify?: (event: string) => void; manifest?: () => Manifest; settled?: () => boolean; workspace?: string; inputs?: InputsWatch } = {}): Connect.NextHandleFunction {
+export function apiMiddleware(root: string, opts: { viewports?: Record<string, { width: number; height: number }>; origin?: () => string | null; bakeGen?: () => number; notify?: (event: string) => void; manifest?: () => Manifest; settled?: () => boolean; workspace?: string; inputs?: InputsWatch
+  /** a live picture's whole upload, read and checked, at most (A4.6 #37: 10 s; shorter in tests) */
+  livePictureMs?: number } = {}): Connect.NextHandleFunction {
   // the run's workspace (spec 28 A1.6): a --recover run serves under an earlier address's key
   const ws = opts.workspace ?? workspaceId(root)
   // the frames as the dev server knows them now (its cached manifest), else as the disk says
@@ -153,6 +175,29 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
   try {
     for (const f of readdirSync(boardsDir)) if (f.endsWith('.tmp')) rmSync(join(boardsDir, f), { force: true })
   } catch { /* boards dir may not exist yet */ }
+
+  /** `POST jam/picture/live?capture=&frame=` (A4.6 #37), in order: a PNG body, a capture id, a frame of the manifest, a
+   *  capture not sealed; then the bytes, 8 MB at most as they arrive, their signature and the whole PNG; and the capture
+   *  still not sealed, just before it is stored. Nothing is stored once `stop` (the deadline) has fired. */
+  const livePicture = async (req: any, url: URL, stop: AbortSignal): Promise<[number, unknown]> => {
+    const { CAPTURE_ID, addPictureBytes, checkPng, isPng, readCapture, sweepPictures } = await import('./jam/capture.ts')
+    if (String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase() !== 'image/png') return [415, { error: 'expected image/png' }]
+    const capture = url.searchParams.get('capture') ?? '', frame = url.searchParams.get('frame') ?? ''
+    if (!CAPTURE_ID.test(capture)) return [400, { error: 'bad capture id' }]
+    if (!devFrames().some((f) => f.id === frame)) return [404, { error: 'unknown frame' }]
+    if (readCapture(root, capture)) return [409, { error: 'that capture is sealed' }]
+    const png = await readBytes(req, LIVE_PICTURE_MAX, stop)
+    if (png === 'large') return [413, { error: `a live picture is ${LIVE_PICTURE_MAX / 2 ** 20} MB at most` }]
+    if (typeof png === 'string') return [400, { error: 'the picture did not arrive whole' }]
+    if (!isPng(png)) return [415, { error: 'not a PNG' }]
+    const checked = await checkPng(png)
+    if (typeof checked === 'string') return [400, { error: `not a picture it takes: ${checked}` }]
+    if (stop.aborted) return [408, { error: 'the picture took too long' }]
+    // sealed while its bytes came in: the record is final, and nothing joins it
+    if (readCapture(root, capture)) return [409, { error: 'that capture is sealed' }]
+    sweepPictures(root)
+    return [200, { id: addPictureBytes(root, png, { frame, capture, source: 'live' }) }]
+  }
 
   return async (req, res, next) => {
     const url = new URL(req.url ?? '/', 'http://x')
@@ -1262,6 +1307,18 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         sweepPictures(root)
         const unchecked = /not checked for a stale surface/.test(r.note ?? '')
         return json(res, 200, { id: addPicture(root, r.path, { frame: b.frame, capture: b.capture, ...(unchecked ? { unchecked: true as const } : {}) }), ...(unchecked ? { unchecked: true } : {}) })
+      }
+      if (path === 'jam/picture/live' && req.method === 'POST') {
+        // a live picture (A4.6 #37): the owner's screen in play as the Mac app read it back, its raw PNG checked whole
+        // before it is stored - refused, the page takes the server's render (#36). Owner only; 10 s in all (408)
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        const stop = new AbortController()
+        let timer: ReturnType<typeof setTimeout> | undefined
+        const late = new Promise<[number, unknown]>((done) => { timer = setTimeout(() => { stop.abort(); done([408, { error: 'the picture took too long' }]) }, opts.livePictureMs ?? 10_000) })
+        const [status, body] = await Promise.race([livePicture(req, url, stop.signal), late]).finally(() => clearTimeout(timer))
+        // an answer before the whole body was read (a refusal, the deadline): the rest is not waited for
+        if (status === 408 || status === 413) res.setHeader('connection', 'close')
+        return json(res, status, body)
       }
       if (path === 'jam/picture' && req.method === 'GET') {
         // one picture by its opaque id; the file must stay inside design/.local/jam/ - owner only. An

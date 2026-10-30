@@ -22,11 +22,16 @@
  * A4 (app 0.3; A4.6 #29): `mv:open` - a notice's click - is dropped unless its `doc` is this document's admitted one
  * and its item passes open-item.ts's check; only the known fields reach `onOpen`'s listener, and the first listener's
  * answer goes back as `mv:opened { doc, p: { id, result } }`, for the document that was asked alone.
+ *
+ * A4 (app 0.3; A4.6 #35): `capture` asks main for a picture of this document's own view - before an admit it answers
+ * `untrusted` with no IPC; after, `mv:capture { doc, p }` is invoked, and main's answer reaches the page only as the
+ * contract types it (the bytes a `Uint8Array`, the size within `BOUNDS.captureLong`), anything else `untrusted`.
  */
 import { contextBridge, ipcRenderer } from 'electron'
 import {
-  APP_API_VERSION, BOUNDS, CANVAS_CHANNELS, OPEN_RESULTS, PERF_BOUNDS,
-  type AppState, type DocAnswer, type MarverAppV1, type MenuClick, type OpenItem, type OpenResult, type PerfMsg, type PerfProbeAsk, type Present, type Presented,
+  APP_API_VERSION, BOUNDS, CANVAS_CHANNELS, CAPTURE_WHY, OPEN_RESULTS, PERF_BOUNDS,
+  type AppState, type CaptureAnswer, type CaptureAsk, type CaptureWhy, type DocAnswer, type MarverAppV1, type MenuClick, type OpenItem, type OpenResult,
+  type PerfMsg, type PerfProbeAsk, type Present, type Presented,
 } from '../../../src/shared/app-api.ts'
 import { checkOpenItem } from '../shared/open-item.ts'
 
@@ -146,6 +151,24 @@ ipcRenderer.on(CANVAS_CHANNELS.open, (_e, m: Record<string, unknown> | null) => 
   }, () => { /* the page's own */ })
 })
 
+// A4: a live picture of this document's view (A4.6 #35)
+const WHYS = new Set<string>(CAPTURE_WHY)
+const side = (v: unknown): v is number => whole(v, BOUNDS.captureLong) && v >= 1
+/** main's answer as the contract types it, or `untrusted`: nothing else reaches the page */
+const captureAnswer = (a: unknown): CaptureAnswer => {
+  const m = a && typeof a === 'object' ? a as Record<string, unknown> : null
+  if (m?.ok === true && m.png instanceof Uint8Array && m.png.length > 0 && side(m.width) && side(m.height)) return { ok: true, png: m.png, width: m.width, height: m.height }
+  if (m?.ok === false && typeof m.why === 'string' && WHYS.has(m.why)) return { ok: false, why: m.why as CaptureWhy }
+  return { ok: false, why: 'untrusted' }
+}
+const capture = (a: CaptureAsk): Promise<CaptureAnswer> => {
+  const asked = doc
+  if (!asked) return Promise.resolve({ ok: false, why: 'untrusted' })
+  const p = copy(a)
+  if (p === undefined) return Promise.resolve({ ok: false, why: 'bounds' })
+  return ipcRenderer.invoke(CANVAS_CHANNELS.capture, { doc: asked, p }).then(captureAnswer, () => ({ ok: false, why: 'untrusted' }) as const)
+}
+
 const listen = <T>(set: Set<(x: T) => void>) => (fn: (x: T) => void): (() => void) => {
   if (typeof fn !== 'function') return () => {}
   set.add(fn)
@@ -172,5 +195,6 @@ const api: MarverAppV1 = {
     openFns.add(fn)
     return () => { openFns.delete(fn) }
   },
+  capture,
 }
 contextBridge.exposeInMainWorld('marverApp', api)

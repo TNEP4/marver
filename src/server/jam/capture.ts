@@ -11,10 +11,13 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
+import { promisify } from 'node:util'
+import { crc32, inflate } from 'node:zlib'
 import { sanitize } from './packet.ts'
 import { speechLines } from '../../shared/speech.ts'
 import { touchedFrames } from '../../shared/capture-frames.ts'
-import type { Bundle, CaptureRecord, Step, View } from './types.ts'
+import { BOUNDS } from '../../shared/app-api.ts'
+import type { Brief, Bundle, CaptureRecord, PacketPicture, Step, View } from './types.ts'
 
 export const CAPTURE_ID = /^cap-\d{10,16}-[a-z0-9]{4,12}$/
 export const PICTURE_ID = /^p-[0-9a-f]{16}$/
@@ -72,7 +75,7 @@ function stepOf(v: unknown): Step | null {
     case 'theme': return o.theme === 'light' || o.theme === 'dark' ? { ...base, event: 'theme', theme: o.theme } : null
     case 'copied': return o.what === 'path' || o.what === 'image' ? { ...base, event: 'copied', what: o.what, frame: str(o.frame, 300) ?? '' } : null
     case 'interact': return { ...base, event: 'interact', on: o.on === true }
-    case 'picture': return typeof o.id === 'string' && PICTURE_ID.test(o.id) ? { ...base, event: 'picture', id: o.id, why: ['key', 'pick', 'end'].includes(o.why) ? o.why : 'key' } : null
+    case 'picture': return typeof o.id === 'string' && PICTURE_ID.test(o.id) ? { ...base, event: 'picture', id: o.id, why: ['key', 'pick', 'end'].includes(o.why) ? o.why : 'key', ...(o.source === 'live' ? { source: 'live' as const } : {}) } : null
     case 'missing': return { ...base, event: 'missing', what: str(o.what, 300) ?? '' }
     default: return null
   }
@@ -211,7 +214,11 @@ export function factsOf(r: CaptureRecord): string {
 
 export interface PictureEntry { file: string; frame: string; when: number; capture?: string; batch?: string
   /** the stale-surface guard could not read it (0.26.1): kept, but not known to be free of Chrome's tiling */
-  unchecked?: true }
+  unchecked?: true
+  /** the Mac app's picture of the play stage, as the owner saw it (A4.6 #33, #37); absent, the server's render */
+  source?: 'live'
+  /** its capture sealed with it in the record: the sweep never reads that record for it again */
+  listed?: true }
 
 const readIndex = (root: string): Record<string, PictureEntry> => {
   try { const v = JSON.parse(readFileSync(indexFile(root), 'utf8')); return v && typeof v === 'object' ? v : {} } catch { return {} }
@@ -251,17 +258,128 @@ export function picturePath(root: string, id: string): { path: string; entry: Pi
   } catch { return null }
 }
 
-/** Pictures whose capture never sealed are removed after an hour. */
+/** Keep a live picture's bytes (A4.6 #37) - already checked whole (`checkPng`) - as a jam picture: the same store and
+ *  index as a render, the file 600, `source: 'live'` on its entry. */
+export function addPictureBytes(root: string, png: Uint8Array, entry: { frame: string; capture: string; source: 'live' }): string {
+  const id = `p-${randomBytes(8).toString('hex')}`
+  mkdirSync(picturesDir(root), { recursive: true })
+  const file = join('pictures', `${id}.png`)
+  writeFileSync(join(jamDir(root), file), png, { mode: 0o600, flag: 'wx' })
+  const ix = readIndex(root)
+  ix[id] = { file, when: Date.now(), ...entry }
+  writeIndex(root, ix)
+  return id
+}
+
+/** Pictures no record keeps are removed after an hour: one whose capture never sealed, and (A4.6 #36) one its sealed
+ *  capture's record does not list - a live upload or a render that landed after its shot had settled without it. One
+ *  found listed is marked, so a record is read for it once; a record that cannot be read keeps everything. */
 export function sweepPictures(root: string, now = Date.now()) {
   const ix = readIndex(root)
+  const lists = new Map<string, string[] | null>()
+  const listOf = (capture: string) => {
+    if (!lists.has(capture)) lists.set(capture, readCapture(root, capture)?.record.pictures ?? null)
+    return lists.get(capture)!
+  }
   let changed = false
   for (const [id, e] of Object.entries(ix)) {
-    if (!e.capture || e.batch || now - e.when < 3_600_000) continue
-    if (existsSync(join(capturesDir(root), `${e.capture}.json`))) continue
+    if (!e.capture || e.batch || e.listed || now - e.when < 3_600_000) continue
+    if (existsSync(join(capturesDir(root), `${e.capture}.json`))) {
+      const listed = listOf(e.capture)
+      if (!listed) continue
+      if (listed.includes(id)) { e.listed = true; changed = true; continue }
+    }
     try { rmSync(join(jamDir(root), e.file), { force: true }) } catch { /* gone */ }
     delete ix[id]; changed = true
   }
   if (changed) writeIndex(root, ix)
+}
+
+/** The pictures a packet member's brief names - its capture's, the capture it reviewed, a session record's captures' -
+ *  each once, as files the agent can open (A4.6 #38): `file` relative to the repo, resolved through `picturePath`, so an
+ *  id that no longer resolves is left out; `live` for the owner's screen in play. */
+export function packetPictures(root: string, brief: Brief): PacketPicture[] {
+  const ids = [
+    ...(brief.capture?.record.pictures ?? []), ...(brief.capture?.reviewed?.capture?.record.pictures ?? []),
+    ...(brief.wrapup?.content.captures ?? []).flatMap((c) => c.record.pictures ?? []),
+  ]
+  const out: PacketPicture[] = []
+  for (const id of new Set(ids)) {
+    const p = picturePath(root, id)
+    if (!p) continue
+    out.push({ id, frame: p.entry.frame, file: ['design', '.local', 'jam', ...p.entry.file.split(/[\\/]/)].join('/'), ...(p.entry.source === 'live' ? { live: true as const } : {}) })
+  }
+  return out
+}
+
+// ---- a live picture's bytes, checked whole (A4.6 #37, r1 #10) -------------------------------------------------
+
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+/** Does it open with the PNG signature? The route's 415, before the whole check. */
+export const isPng = (b: Uint8Array): boolean => b.length >= 8 && PNG_SIGNATURE.every((x, i) => b[i] === x)
+/** what Chromium's `toPNG()` writes: 8-bit RGBA (6), or RGB (2) for an opaque image - and its bytes a pixel */
+const CHANNELS: Record<number, number> = { 6: 4, 2: 3 }
+const inflateAsync = promisify(inflate)
+
+let checking: Promise<unknown> = Promise.resolve()
+/**
+ * A PNG checked whole, with no decoder added: its size, or why not. Every chunk walked from the signature, each length
+ * inside the body and each CRC right; `IHDR` first, 13 bytes, 1-4096 a side, 8-bit RGBA or RGB, never interlaced; the
+ * `IDAT` chunks consecutive, `IEND` last and empty, nothing after it; any other critical chunk refused, ancillary ones
+ * skipped. The joined `IDAT` inflated to exactly the raw size (a filter byte a row, each 0-4), never past it. Undoing
+ * the filters cannot fail on such data, so it is not done. One check at a time in the server, so at most one raw image
+ * is held.
+ */
+export function checkPng(bytes: Uint8Array): Promise<{ width: number; height: number } | string> {
+  const run = checking.then(() => checkPngNow(bytes))
+  checking = run.catch(() => {})
+  return run
+}
+
+async function checkPngNow(bytes: Uint8Array): Promise<{ width: number; height: number } | string> {
+  if (!isPng(bytes)) return 'not a PNG'
+  const b = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  let head: { width: number; height: number; channels: number } | null = null
+  const idat: Buffer[] = []
+  let idatEnded = false, ended = false
+  for (let off = 8; off < b.length;) {
+    if (ended) return 'data after IEND'
+    if (b.length - off < 12) return 'a chunk cut short'
+    const len = b.readUInt32BE(off)
+    const type = b.toString('latin1', off + 4, off + 8)
+    if (!/^[A-Za-z]{4}$/.test(type)) return 'a chunk with no name'
+    if (len > b.length - off - 12) return `${type} cut short`
+    const data = b.subarray(off + 8, off + 8 + len)
+    if (crc32(b.subarray(off + 4, off + 8 + len)) !== b.readUInt32BE(off + 8 + len)) return `${type}'s CRC is wrong`
+    off += 12 + len
+    if (!head) {
+      if (type !== 'IHDR' || len !== 13) return 'IHDR is not first'
+      const width = data.readUInt32BE(0), height = data.readUInt32BE(4)
+      if (width < 1 || height < 1 || width > BOUNDS.captureLong || height > BOUNDS.captureLong) return `${width}x${height} is past ${BOUNDS.captureLong}`
+      if (data[8] !== 8 || !CHANNELS[data[9]]) return `bit depth ${data[8]}, colour type ${data[9]}: not 8-bit RGBA or RGB`
+      if (data[10] || data[11] || data[12]) return 'compression, filter or interlace other than 0'
+      head = { width, height, channels: CHANNELS[data[9]] }
+      continue
+    }
+    if (type === 'IDAT') {
+      if (idatEnded) return 'IDAT chunks apart'
+      idat.push(data)
+      continue
+    }
+    if (idat.length) idatEnded = true
+    if (type === 'IEND') { if (len) return 'IEND not empty'; ended = true; continue }
+    if (type.charCodeAt(0) < 0x61) return `a critical ${type}`
+  }
+  if (!head) return 'no IHDR'
+  if (!ended) return 'no IEND'
+  if (!idat.length) return 'no IDAT'
+  const row = 1 + head.width * head.channels
+  const size = head.height * row
+  let raw: Buffer
+  try { raw = await inflateAsync(Buffer.concat(idat), { maxOutputLength: size }) } catch { return 'IDAT does not inflate to its size' }
+  if (raw.length !== size) return 'IDAT inflates short'
+  for (let y = 0; y < head.height; y++) if (raw[y * row] > 4) return `row ${y}'s filter is ${raw[y * row]}`
+  return { width: head.width, height: head.height }
 }
 
 /** Every capture id stored (for the sweep and the tests). */

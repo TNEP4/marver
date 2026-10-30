@@ -25,6 +25,7 @@ import { onStageSize, stageSize } from './stage-size.ts'
 import { api, holdsReload } from './api.ts'
 import { unsavedWhen, workChanged } from './unsaved.ts'
 import { bytesOf } from './recorder-core.ts'
+import { LIVE_PICTURE_MS, liveAsk, takeLive } from './live-picture.ts'
 
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
 const now = () => performance.timeOrigin + performance.now()
@@ -94,8 +95,9 @@ interface Cap {
   pictures: string[]
   probes: number                           // probe answers still out
   shots: number                            // picture requests still out
-  /** its timing (spec 27a Part D): when E was pressed, the wait for its last words, each picture's time, the missing ones */
-  timing?: { endAt?: number; wordsMs?: number; pics: number[]; late: number; failed: number }
+  /** its timing (spec 27a Part D): when E was pressed, the wait for its last words, each picture's time, the missing ones;
+   *  `live` (A4.6 #36): the app's pictures of the stage kept, the ones that failed, and the renders that replaced them */
+  timing?: { endAt?: number; wordsMs?: number; pics: number[]; late: number; failed: number; live?: { count: number; failed: number; fellBack: number } }
   shotFrames: string[]                     // frames pictured (or being pictured) in it: an automatic picture is taken once per frame
   review?: boolean                         // ended with ⇧E: it waits for its read-back (E: queued once sealed)
   endShot?: boolean                        // its end pictures were asked for (once its steps were all in)
@@ -520,12 +522,20 @@ let pointerAt: { key: string; at: number } | null = null
 
 // ---- pictures ------------------------------------------------------------------------------------------
 
+/**
+ * One picture of `frame` - one bounded operation with one settlement, counted in `shots` from its start, so the seal
+ * waits for it (A4.6 #36): in the Mac app, when the shot is eligible (live-picture.ts, decided here at the trigger), the
+ * app's picture of the stage and its upload, under one deadline; on any failure there - and everywhere else - the
+ * server's render, as in 0.28. One step at the end: a picture (`source: 'live'` for a live one), or the render's
+ * missing step when that fails too; a live failure alone adds none.
+ */
 function shoot(id: string, frame: string, why: 'key' | 'pick' | 'end', key?: string) {
   const c = capOf(id)
   if (!c || c.pictures.length + c.shots >= MAX_PICTURES) return
   // each picture is a render on the server, and the capture waits for it as it ends: a point or the end
   // pictures a frame once - only I asks for another
   if (why !== 'key' && c.shotFrames.includes(frame)) return
+  const live = liveAsk(frame)
   // the instance pictured is the one this frame is about (its size for the run's pictures)
   // (an I picture is a touch at this instant: a hover from before it, answering late, never overrides it)
   const touchAt = now()
@@ -543,29 +553,43 @@ function shoot(id: string, frame: string, why: 'key' | 'pick' | 'end', key?: str
   const theme = st.play && st.play.at === frame ? st.play.theme : n?.theme ?? st.viewTheme
   mutate((s) => { const x = s.caps[id]; if (x) x.shots += 1 })
   const t0 = performance.now()
-  const done = (pid: string | null, late: boolean) => {
+  const done = (pid: string | null, late: boolean, source?: 'live') => {
     mutate((s) => {
       const x = s.caps[id]
       if (!x) return
       x.shots -= 1
       const tm = (x.timing ??= { pics: [], late: 0, failed: 0 })
       if (pid) tm.pics.push(Math.round(performance.now() - t0)); else if (late) tm.late++; else tm.failed++
-      if (pid) { x.pictures.push(pid); x.steps.push({ at, frame, event: 'picture', id: pid, why }) }
+      if (live) { const l = (tm.live ??= { count: 0, failed: 0, fellBack: 0 }); if (source) l.count++; else { l.failed++; if (pid) l.fellBack++ } }
+      if (pid) { x.pictures.push(pid); x.steps.push({ at, frame, event: 'picture', id: pid, why, ...(source ? { source } : {}) }) }
       else x.steps.push({ at, frame, event: 'missing', what: `no picture of ${frame} - ${late ? `it took over ${PICTURE_MS / 1000} s` : 'the render failed'}` })
     })
     trySeal(id)
   }
+  const render = () => {
+    const ctl = new AbortController()
+    const timer = setTimeout(() => ctl.abort(), PICTURE_MS)
+    // settled exactly once - a picture, or a missing one - whatever fails: the request, its body, the abort
+    let settled = false
+    const finish = (pid: string | null) => { if (settled) return; settled = true; clearTimeout(timer); done(pid, ctl.signal.aborted) }
+    api('jam/picture', {
+      method: 'POST', signal: ctl.signal, headers: { 'content-type': 'application/json', 'x-mv-c': csrf() },
+      body: JSON.stringify({ capture: id, frame, theme, ...(size ? { w: Math.round(size.width), h: Math.round(size.height) } : {}) }),
+    }).then(async (r) => (r.ok ? ((await r.json()) as { id?: string }).id ?? null : null))
+      .catch(() => null)
+      .then((pid) => finish(typeof pid === 'string' ? pid : null))
+  }
+  if (!live) { render(); return }
+  // the call and the upload under one deadline; a result after it is dropped, and the render starts. Sealed meanwhile
+  // (the page left: sealOnLeave sealed it as it stood), nothing changes
   const ctl = new AbortController()
-  const timer = setTimeout(() => ctl.abort(), PICTURE_MS)
-  // settled exactly once - a picture, or a missing one - whatever fails: the request, its body, the abort
-  let settled = false
-  const finish = (pid: string | null) => { if (settled) return; settled = true; clearTimeout(timer); done(pid, ctl.signal.aborted) }
-  api('jam/picture', {
-    method: 'POST', signal: ctl.signal, headers: { 'content-type': 'application/json', 'x-mv-c': csrf() },
-    body: JSON.stringify({ capture: id, frame, theme, ...(size ? { w: Math.round(size.width), h: Math.round(size.height) } : {}) }),
-  }).then(async (r) => (r.ok ? ((await r.json()) as { id?: string }).id ?? null : null))
-    .catch(() => null)
-    .then((pid) => finish(typeof pid === 'string' ? pid : null))
+  const timer = setTimeout(() => ctl.abort(), LIVE_PICTURE_MS)
+  void takeLive(live, id, () => !!capOf(id), ctl.signal).then((pid) => {
+    clearTimeout(timer)
+    if (!capOf(id)) return
+    if (pid && !ctl.signal.aborted) done(pid, false, 'live')
+    else render()
+  })
 }
 
 // ---- start, end, seal ----------------------------------------------------------------------------------
@@ -779,7 +803,7 @@ function timeCapture(c: Cap, interrupted: boolean) {
   const t = c.timing
   perf({ kind: 'capture', capture: c.id, ...(t?.endAt !== undefined && !interrupted ? { sealMs: performance.now() - t.endAt } : {}),
     ...(t?.wordsMs !== undefined ? { wordsWaitMs: t.wordsMs } : {}),
-    pictures: { count: t?.pics.length ?? 0, ms: t?.pics ?? [], late: t?.late ?? 0, failed: t?.failed ?? 0 }, ...(interrupted ? { interrupted: true } : {}) }, interrupted)
+    pictures: { count: t?.pics.length ?? 0, ms: t?.pics ?? [], late: t?.late ?? 0, failed: t?.failed ?? 0, ...(t?.live ? { live: t.live } : {}) }, ...(interrupted ? { interrupted: true } : {}) }, interrupted)
 }
 const uploadTries = new Map<string, number>()
 

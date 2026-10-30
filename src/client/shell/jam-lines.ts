@@ -154,11 +154,20 @@ export function timelineLines(r: CaptureRecord, edited?: string): TimelineLine[]
       case 'interact': out.push({ t, kind: 'interact', text: s.on ? 'on' : 'off' }); break
       case 'picture':
         pictures++
-        out.push({ t, kind: 'picture', text: `${frameName(s.frame).toLowerCase()}${s.why === 'end' ? ' at E' : s.why === 'pick' ? ' at a pick' : ''}`, point: pictures }); break
+        out.push({ t, kind: 'picture', text: `${frameName(s.frame).toLowerCase()}${s.why === 'end' ? ' at E' : s.why === 'pick' ? ' at a pick' : ''}${s.source === 'live' ? ` · ${AS_SEEN}` : ''}`, point: pictures }); break
       case 'missing': out.push({ t, kind: 'missing', text: s.what }); break
     }
   }
   return out
+}
+
+/** A live picture's words (A4.6 #38): the Mac app's picture of the stage, as the owner saw it - not a render. */
+const AS_SEEN = 'as you saw it'
+/** A capture's picture as the read-back and the review's Capture tab caption it: "picture N", and "picture N · as you saw
+ *  it" for a live one (its picture step says `source: 'live'`). */
+export function pictureCaption(r: CaptureRecord, id: string, n: number): string {
+  const live = r.timeline.some((s) => s.event === 'picture' && s.id === id && s.source === 'live')
+  return `picture ${n}${live ? ` · ${AS_SEEN}` : ''}`
 }
 
 /** A line as plain text, the spec's format: `[0:05] (pick 1) <span> "Save 20%" · file.tsx:48`,

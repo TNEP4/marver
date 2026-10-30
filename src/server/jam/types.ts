@@ -95,7 +95,8 @@ export type Step = { at: number; frame?: string } & (
   | { event: 'theme'; theme: 'light' | 'dark' }
   | { event: 'copied'; what: 'path' | 'image'; frame: string }
   | { event: 'interact'; on: boolean }
-  | { event: 'picture'; id: string; why: 'key' | 'pick' | 'end' }
+  /** `source: 'live'` (A4.6 #33): the Mac app's picture of the play stage as the owner saw it; absent, the server's render */
+  | { event: 'picture'; id: string; why: 'key' | 'pick' | 'end'; source?: 'live' }
   | { event: 'missing'; what: string })
 /** The sealed capture (design/.local/jam/captures/<id>.json). No category: a capture is what you said and did. */
 export interface CaptureRecord {
@@ -292,7 +293,11 @@ export interface PacketMember {
   frames: string[]
   anchor?: unknown
   brief: Brief
+  /** the pictures its brief names, as files the agent can open (A4.6 #38): `file` relative to the repo, `live` for the
+   *  owner's screen in play as they saw it; an id that no longer resolves is left out. Outside the hashed brief */
+  pictures?: PacketPicture[]
 }
+export interface PacketPicture { id: string; frame: string; file: string; live?: true }
 
 export interface JobPacket {
   v: 2

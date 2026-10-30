@@ -8,10 +8,11 @@ import { createJam } from '../src/server/jam/daemon.ts'
 import { claudeAdapter } from '../src/server/jam/adapter/claude.ts'
 import { has, record } from '../src/server/jam/ledger.ts'
 import { read as readJournal, write as writeJournal } from '../src/server/jam/journal.ts'
-import { addPicture, captureWords, checkRecord, factsOf, picturePath, readCapture } from '../src/server/jam/capture.ts'
+import { addPicture, addPictureBytes, captureWords, checkRecord, factsOf, picturePath, readCapture } from '../src/server/jam/capture.ts'
 import { speechLines } from '../src/shared/speech.ts'
 import { addCapture, merge, payloadKey, prune, sameComment, touchRun } from '../src/server/jam/queue.ts'
 import { sessionBrief } from '../src/server/jam/session-brief.ts'
+import { goalText } from '../src/server/jam/packet.ts'
 import { captureFrames } from '../src/server/jam/capture.ts'
 import type { CaptureRecord, JamAdapter } from '../src/server/jam/types.ts'
 import type { JamConfig } from '../src/server/config.ts'
@@ -129,6 +130,39 @@ describe('captures: confirm, and the thread it becomes', () => {
     expect(shots).toEqual(['demo/a:light:batch', 'demo/a:light:batch'])         // before and after, while it held the frame
     expect(jam.snapshot().batches[0].shots).toMatchObject([{ frame: 'demo/a', before: 'p-0000000000000001', after: 'p-0000000000000002' }])
     expect(agentReplies(dir)[0].body).toContain('Done:')
+    done()
+  })
+
+  it('its pictures reach the agent as files (A4.6 #38): each member names them with their frame, a live one marked; an id that does not resolve is left out, and the brief is as before', async () => {
+    const { root, done } = setup()
+    mkdirSync(join(root, 'design', '.local', 'shots'), { recursive: true })
+    writeFileSync(join(root, 'design', '.local', 'shots', 'x.png'), 'png')
+    const r0 = rec({ words: 'please @marver fix the menu' })
+    const live = addPictureBytes(root, Buffer.from('live png'), { frame: 'demo/a', capture: r0.id, source: 'live' })
+    const render = addPicture(root, 'design/.local/shots/x.png', { frame: 'demo/a', capture: r0.id })
+    const gone = 'p-00000000000000ff'
+    const r = { ...r0, pictures: [live, render, gone], timeline: [...r0.timeline, { at: 1_005_000, frame: 'demo/a', event: 'picture' as const, id: live, why: 'key' as const, source: 'live' as const }] }
+    const jam = createJam(root, CFG, agent(), undefined, {
+      anchor: async () => ({ ok: true, anchor: { el: { semantics: { quote: 'x' } } }, holders: [], viewport: 'laptop', theme: 'light' }),
+      shoot: async () => null,
+    })
+    const a = await jam.capture(r)
+    await jam.act(r.id, a.card!.rev, 'confirm')
+    await jam.tick(); jam.stop()
+    const m = packets(root)[0].members[0]
+    expect(m.pictures).toEqual([
+      { id: live, frame: 'demo/a', file: `design/.local/jam/pictures/${live}.png`, live: true },
+      { id: render, frame: 'demo/a', file: `design/.local/jam/pictures/${render}.png` },
+    ])
+    for (const p of m.pictures) expect(existsSync(join(root, p.file))).toBe(true)
+    // beside the brief, never in it: its record keeps the ids and the live step as sealed
+    expect(m.brief.pictures).toBeUndefined()
+    expect(m.brief.capture.record.pictures).toEqual([live, render, gone])
+    expect(m.brief.capture.record.timeline.find((x: any) => x.event === 'picture')).toMatchObject({ id: live, source: 'live' })
+    // and the prompt says what they are
+    const g = goalText(packets(root)[0])
+    expect(g).toContain('`pictures` names each one\'s `file`')
+    expect(g).toMatch(/A `live` one is\s+the owner's screen in play as they saw it/)
     done()
   })
 

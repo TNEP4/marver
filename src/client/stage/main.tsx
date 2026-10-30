@@ -87,6 +87,14 @@ const startId = params.get('at') ?? ''
 // data-goto ever navigates the stage cross-origin
 const post = (msg: Record<string, unknown>) => { if (window.parent !== window) window.parent.postMessage(msg, location.origin) }
 
+/** What a live picture binds (spec 28 A4.6 #34, r1 #5), read by the shell straight from this same-origin document - no
+ *  message ordering involved (src/client/shell/live-picture.ts). `boot` is this document's; `seq` rises as every swap
+ *  starts and as it commits; `at` is cleared as a swap starts and set, with `t`, in the tick the committed frame says
+ *  `sh:stage-shown`. A reloaded stage is a new document: a new `boot`, and no `at` until its first frame commits. */
+export interface StageRecord { boot: string; seq: number; at: string | null; t: number }
+const stageRecord: StageRecord = { boot: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, seq: 0, at: null, t: 0 }
+;(window as unknown as { __mvStage: StageRecord }).__mvStage = stageRecord
+
 window.addEventListener('error', (e) => post({ type: 'sh:stage-error', message: String(e.message || e.error) }))
 window.addEventListener('unhandledrejection', (e) => post({ type: 'sh:stage-error', message: `unhandled rejection: ${e.reason}` }))
 // pinch inside the stage must not zoom the parent page (same rule as the frame bridge)
@@ -95,7 +103,9 @@ document.addEventListener('gesturestart', (e) => e.preventDefault())
 // B0.2: a nested scroll container hitting its boundary must not chain into the shell page
 document.documentElement.style.overscrollBehavior = 'contain'
 
-interface Mounted { id: string; Frame: ComponentType; wrappers: ComponentType[]; slide: boolean }
+interface Mounted { id: string; Frame: ComponentType; wrappers: ComponentType[]; slide: boolean
+  /** the swap that committed it: the same frame committed again (a restart on it) is a new showing */
+  commit?: number }
 
 /** Resolve a frame id to its component + wrapper chain. Modules are import()-cached by
  *  Vite, so re-resolving a chain yields the SAME component references - React keeps
@@ -118,7 +128,11 @@ class Boundary extends Component<{ resetKey: string; children?: ReactNode }, { e
   componentDidUpdate(prev: { resetKey: string }) {
     if (prev.resetKey !== this.props.resetKey && this.state.err) this.setState({ err: null })
   }
-  componentDidCatch(err: Error) { post({ type: 'sh:stage-error', message: err.message }) }
+  componentDidCatch(err: Error) {
+    // its card holds the stage now: nothing on it is the frame
+    stageRecord.at = null; stageRecord.seq++
+    post({ type: 'sh:stage-error', message: err.message })
+  }
   render() {
     if (!this.state.err) return this.props.children
     return createElement(ErrorCard, { title: 'frame crashed', message: this.state.err.message, detail: this.props.resetKey })
@@ -128,13 +142,18 @@ class Boundary extends Component<{ resetKey: string; children?: ReactNode }, { e
 /** spec 26: a frame that committed - inside the error boundary, so a crash never counts - says which
  *  frame the stage shows, at which revision (the stamp this document was served with: a frame imported
  *  later never claims more than the wrappers it renders with), for which document generation. */
-function Shown({ id }: { id: string }) {
+function Shown({ id, commit }: { id: string; commit?: number }) {
+  const said = useRef(false)
   // a tick later, and only if it is still mounted: a frame that throws from its own effects is replaced by
-  // the boundary's card first, which unmounts this and cancels the report
+  // the boundary's card first, which unmounts this and cancels the report. Said once per frame shown; the record
+  // follows every commit (A4.6 #34), so the same frame committed again is shown again from then
   useEffect(() => {
-    const t = setTimeout(() => post({ type: 'sh:stage-shown', at: id, nav: params.get('r') ?? '', epoch: stamps?.epoch ?? '', doc: stamps?.doc[id] ?? 0 }), 0)
+    const t = setTimeout(() => {
+      if (!said.current) { said.current = true; post({ type: 'sh:stage-shown', at: id, nav: params.get('r') ?? '', epoch: stamps?.epoch ?? '', doc: stamps?.doc[id] ?? 0 }) }
+      stageRecord.at = id; stageRecord.t = Date.now()
+    }, 0)
     return () => clearTimeout(t)
-  }, [id])
+  }, [id, commit])
   return null
 }
 
@@ -158,6 +177,8 @@ function Stage() {
   const goto = async (id: string, announce: boolean) => {
     if (id === current.current && mounted && !err) return
     const seq = ++swapSeq.current
+    // a live picture asked before this swap is of another showing (A4.6 #34)
+    stageRecord.seq++; stageRecord.at = null
     try {
       const next = await resolve(id)
       if (seq !== swapSeq.current) return       // a newer swap superseded this one
@@ -187,7 +208,8 @@ function Stage() {
         if (seq !== swapSeq.current) return
         // the slide mark first: content primitives read it while they render
         document.documentElement.toggleAttribute('data-mv-slide', next.slide)
-        flushSync(() => { setErr(null); setMounted(next) })
+        stageRecord.seq++
+        flushSync(() => { setErr(null); setMounted({ ...next, commit: seq }) })
         current.current = id
         disarm()
       }
@@ -310,7 +332,7 @@ function Stage() {
   // that differs at depth k legitimately remounts everything below
   let tree: ReactNode = createElement(mounted.Frame)
   for (const W of [...mounted.wrappers].reverse()) tree = createElement(W, null, tree)
-  return createElement(Boundary, { resetKey: mounted.id }, createElement(Shown, { key: mounted.id, id: mounted.id }), tree)
+  return createElement(Boundary, { resetKey: mounted.id }, createElement(Shown, { key: mounted.id, id: mounted.id, commit: mounted.commit }), tree)
 }
 
 async function boot() {

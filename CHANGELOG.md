@@ -10,6 +10,17 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   (`design/logo.svg` and the rest of the ladder) first among the shell's and the sign-in gate's icons, so a browser tab
   - and the Mac app's tab for a shared canvas - shows it rather than Marver's mark. Canvases published before keep
   Marver's mark until they are built again.
+- **A picture in play is what you saw, in the Mac app.** With app 0.3, `I` in play (and a capture's first pick and its
+  end) takes a picture of the stage as it is on your screen - a menu you opened, text you typed, the comment pins -
+  instead of a fresh render of the frame, captioned "as you saw it" in the read-back and the review. It is taken when
+  the whole stage is in view with nothing over it and has shown its screen for a second (a device preset, a slide
+  fitted to the window); otherwise, and in Chrome, the picture is a render, as before. The app's picture is checked
+  whole before it is kept, and if anything about it fails the capture takes the render in its place
+  ([Jam session](docs/jam-session.md)).
+- **The agent gets a capture's pictures as files.** Each member of a run's packet lists its pictures with the file to
+  open (`design/.local/jam/pictures/<id>.png`), a live one marked. Until now the agent was given picture ids and no
+  way to see them.
+- `npx marver perf --jam` counts live pictures kept and failed, and names a capture whose live pictures failed.
 
 ### Fixed
 

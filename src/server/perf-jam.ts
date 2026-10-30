@@ -44,8 +44,11 @@ export function cleanJamEvent(raw: Record<string, unknown>): Record<string, unkn
       const p = (raw.pictures && typeof raw.pictures === 'object' ? raw.pictures : {}) as Record<string, unknown>
       const capture = capId(raw.capture)
       if (!capture) return null
+      // `live` (A4.6 #36): the Mac app's pictures of the stage kept, the ones that failed, the renders that replaced them
+      const l = (p.live && typeof p.live === 'object' ? p.live : null) as Record<string, unknown> | null
+      const live = l ? prune({ count: count(l.count), failed: count(l.failed), fellBack: count(l.fellBack) }) : undefined
       return prune({ kind: 'capture', capture, sealMs: ms(raw.sealMs), wordsWaitMs: ms(raw.wordsWaitMs),
-        pictures: prune({ count: count(p.count), ms: msList(p.ms), late: count(p.late), failed: count(p.failed) }),
+        pictures: prune({ count: count(p.count), ms: msList(p.ms), late: count(p.late), failed: count(p.failed), live: live && Object.keys(live).length ? live : undefined }),
         interrupted: raw.interrupted === true ? true : undefined })
     }
     case 'upload': { const capture = capId(raw.capture); return capture ? prune({ kind: 'upload', capture, ms: ms(raw.ms), tries: count(raw.tries) }) : null }

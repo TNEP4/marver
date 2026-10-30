@@ -24,6 +24,12 @@ dot. While it records, everything you do is part of it:
 - **pictures**: `I` takes one of the frame under the pointer, and the frames you touched are
   pictured as the capture ends - three at most - at the size you were looking at them (a
   device, a width you dragged, the play stage). A capture holds twelve pictures in all.
+  In the Mac app (0.3, with Marver 0.29), a picture in play is **live**: the stage as you saw
+  it - a menu you opened, text you typed - captioned "as you saw it". It is taken when the
+  whole stage is in view with nothing over it and has shown its screen for a second (a device
+  preset, a slide fitted to the window); otherwise, and everywhere else, it is a fresh render of
+  the frame. A live picture shows what was on the stage, comment pins and anyone's words in
+  them included: it is not filtered. The agent gets every picture as a file it can open.
 
 Two ways to end it (0.28): `E` **stops and queues it** - the agent starts on it, nothing to confirm - and `⇧E`
 **stops to review**: its read-back opens so you can check it and add to it first. Both are on the capture bar. `Esc`

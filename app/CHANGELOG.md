@@ -15,6 +15,11 @@
 - **A shared canvas that cannot be reached**, or whose link opens no page here (a download, a redirect to http), says
   why in words, tries again by itself (at once when the Mac is back online), and offers Open in Browser; a bad
   certificate is never gone past. A site whose `/` redirects counts as answering.
+- **A picture in play is what you saw.** With Marver 0.29, a capture's picture of the play stage is read back from the
+  tab's own view - an open menu, typed text, the pins - and uploaded by the canvas, in place of a fresh render
+  (`mv:capture`, A4.6 #35). Only while you see it: the active tab, the window shown, nothing over the view; the readback
+  is checked again after it is taken, and anything that changed meanwhile gives the canvas its render instead. A canvas
+  reads its own view's pixels and nothing else: no Screen Recording permission.
 
 ## 0.2.2 - 2026-10-26
 

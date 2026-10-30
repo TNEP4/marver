@@ -34,7 +34,7 @@ import { ownerOnly, act, addCapture, addWrapup, endSession, moreWrapup, startSes
 import { jamReservations, restoreHolds } from './reserve.ts'
 import { jamLive, type QueueView } from './live.ts'
 import type { Batch, Brief, Card, JamAdapter, JobPacket, Journal, Msg, Reanchor, Result } from './types.ts'
-import { CAPTURE_ID, captureFrames, captureWords, checkRecord, continues, firstPoint, picturePath, readCapture, storeCapture } from './capture.ts'
+import { CAPTURE_ID, captureFrames, captureWords, checkRecord, continues, firstPoint, packetPictures, picturePath, readCapture, storeCapture } from './capture.ts'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { logJam } from '../perf-jam.ts'
@@ -720,8 +720,10 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       // of its own - is cleaned before any runner reads it, and kept cleaned
       if (b.others === undefined || (b.others && !runs.settings().others)) { brief = ownerOnly(brief, me()); m.brief = brief }
       const t = c.thread ? threadsOf(m.board).find((x) => x.id === c.thread) : undefined
+      // the pictures its brief names, as files (A4.6 #38): beside the brief, never in its hash
+      const pictures = packetPictures(root, brief)
       members.push({ id: m.id, card: c.id, kind: c.kind, board: m.board, ...(c.thread ? { thread: c.thread } : {}), frames: c.frames,
-        ...(t?.anchor !== undefined ? { anchor: t.anchor } : {}), brief })
+        ...(t?.anchor !== undefined ? { anchor: t.anchor } : {}), brief, ...(pictures.length ? { pictures } : {}) })
     }
     if (bad.length) {
       await q.lock((j) => { for (const id of bad) { const c = j.cards.find((x) => x.id === id); if (c && c.state === 'working') failCard(j, c, c.kind === 'wrapup' ? 'the session record changed after it was written - write it again' : 'interrupted - Retry', Date.now()) } q.persist() })
