@@ -103,9 +103,12 @@ them - for you, or for your agent at the start of a session.
 orange count of what needs you - Marver's questions, captures to review, runs that failed or stalled -
 else a blue count of new frames, else a shimmer while an agent works, and a teal dot while a Jam session
 runs. Turn notices on and a canvas you are not looking at sends one when something new needs you, and
-the Dock counts them all. Clicking a notice opens what it names - the thread, the review, the run's
-Retry or choices - on its board, out of play; a thread the board cannot show opens in a panel of its
-own, with a field to answer. It moves nothing while you are capturing or have typed words not yet sent.
+the Dock counts them all. Clicking a notice opens what it names on its board, where you can see it: a
+question in its thread on the frame (Play left and hidden pins shown for it), or in a panel with a field
+to answer when no frame on the board holds it; a review in its review; a failed or stalled run with Retry
+or its three choices in view. On a board locked to play, Play stays and the thread opens over it; a
+resolved thread opens read-only. It moves nothing while you are capturing or have typed words not yet
+sent.
 
 ## Edits land calmly
 

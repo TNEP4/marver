@@ -27,17 +27,21 @@ none of them, only "Stopped" when its process dies.
   can hide notices without saying so (Focus, summaries). After macOS turns one down, the row says "macOS turned down
   Marver's last notice" and the strip says "<name> needs you" in its place. The Dock badge row shows once notices are
   on.
-- **A picture in play is what you saw.** A capture's picture of the play stage is read from the canvas's own view - an
-  open menu, typed text, the comment pins - in place of a fresh render. Only while you see it: the tab in front, the
-  window shown, nothing over the view; if anything changes before it is kept, the canvas takes its render instead. A
-  canvas reads its own view's pixels and nothing else: no Screen Recording permission.
+- **A picture in play is what you saw.** A capture's picture of the play stage is read back from the canvas's own
+  view - an open menu, typed text, the comment pins - in place of a fresh render. The canvas asks only when the whole
+  stage is in view with nothing of its own over it and has shown its screen for a second (a device preset, a slide
+  fitted to the window). The app answers only for the active tab, with the window shown and not minimised and no tab
+  page (Home, Settings, an error page) over the canvas; it does not check that the window has focus, that the screen
+  is unlocked or that no other app covers it. When the app cannot answer, or the tab, its page or the stage changed
+  while it was read, the canvas takes its render instead. A canvas reads its own view's pixels and nothing else: no
+  Screen Recording permission.
 - **Shared canvases open in a tab.** An https link - `⌘L`, Home's field, or a canvas the front door opens - opens that
   canvas in a tab of its own, one per site, named by its host, after your local canvases; `⌘1`-`⌘9` and `»` reach it.
   It is someone else's page: it cannot reach the app, it may copy to the clipboard and go full screen and nothing
-  more, a download is cancelled (Open in Browser does that), and an http link or a window it opens on another site
-  goes to your browser. Marver ID's sign-in runs inside the tab and is kept; the tab returns to the board you opened,
-  never to a sign-in page. It wears its page's icon - for a canvas published with marver 0.29.0 or later, its repo's
-  logo - else its host's initials.
+  more, a download is cancelled (Open in Browser does that), and an http link goes to your browser, as does a window
+  it opens on another site - unless that site already has a shared tab here, where it opens instead. Marver ID's
+  sign-in runs inside the tab and is kept; the tab returns to the board you opened, never to a sign-in page. It wears
+  its page's icon - for a canvas published with marver 0.29.0 or later, its repo's logo - else its host's initials.
 - **Closing, reloading or quitting asks first for a shared canvas**: the app cannot tell what it holds, so one sheet
   names it ("pilot.example.com is a shared canvas: the app can't tell what it hasn't saved").
 - **Home lists Shared canvases**: the open ones, then the last 12 opened, which reopen with a click. Shared tabs are not
