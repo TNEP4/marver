@@ -770,6 +770,20 @@ describe('a board change under the request: it commits only while the request li
     expect(await p.board()).toBe('main')
   }, 30_000)
 
+  it('the other board\'s load held past the request\'s 10 s: dropped at the deadline, and nothing lands once it comes (code review r2 P2)', async (ctx) => {
+    skip(ctx)
+    const p = await open()
+    const t = asking('other', { frame: 'demo/three', node: 'n-three' })
+    await p.ev(`__q.gateBoard('other')`)
+    const i = await p.ev(`(window.__t0 = performance.now(), __fake.start(${JSON.stringify(askItem('other', t))}))`)
+    await p.until(`__q.board.asked`)
+    // its answer while the load is still held, within a moment of the deadline
+    expect(await p.ev(`Promise.race([__fake.result(${i}).then((r) => [r, Math.round((performance.now() - __t0) / 1000)]), new Promise((r) => setTimeout(() => r(['still waiting']), 12_000))])`)).toEqual(['dropped', 10])
+    await p.ev(`__q.board.release()`)
+    await loaded(p)
+    expect(await p.board()).toBe('main')
+  }, 40_000)
+
   it('a newer notice for this board while the first one\'s board loads: the first dropped, the second handled, the board kept', async (ctx) => {
     skip(ctx)
     const p = await open()

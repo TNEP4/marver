@@ -198,7 +198,11 @@ export async function toBoard(board: string, alive?: Alive): Promise<boolean> {
   if (!alive()) return false
   // a stale overlay never survives into another board (App.tsx's router does the same)
   if (useStore.getState().play) useStore.getState().setPlay(null)
-  return (await switchFor(board, navigated(), alive)) && alive()
+  // the wait is the request's too: its deadline, or its end, answers false then and there, however long the board's
+  // save or read takes (code review r2 P2) - and the switch, should it finish later, cannot commit (its predicate is alive)
+  let done = false
+  const ended = new Promise<false>((r) => { const look = () => { if (done) return; if (!alive()) { r(false); return } setTimeout(look, 30) }; look() })
+  try { return (await Promise.race([switchFor(board, navigated(), alive), ended])) && alive() } finally { done = true }
 }
 
 /** Play is left, then a frame passes for the layout (A4.6 r4 #1): what opens on the canvas - a thread card, a tile and
