@@ -424,7 +424,17 @@ describe('the overflow: twenty local canvases and two shared ones at 720 px (A2.
   const strip = <T>(js: string) => w.run.call<T>('exec', { target: 'strip', js })
   // under the fake trust no bridge hears the strip's app:ready, so main would send it nothing: the hook stands in for
   // that ready, and the strip draws main's own snapshots (its sends back are refused: » is asked through tabsMore)
-  beforeAll(async () => { w = await launchWindow('pw', { extraEnv: r.env }); await w.run.call('pageReady', { target: 'strip' }) })
+  // - once its first document has committed and loaded: a ready before that commit is cleared by it (window.ts
+  // registerApp's did-navigate), and nothing says ready again (code review r5 P3)
+  beforeAll(async () => {
+    w = await launchWindow('pw', { extraEnv: r.env })
+    const end = Date.now() + 15_000
+    while (!(await strip<boolean>(`document.readyState === 'complete' && location.href !== 'about:blank'`).catch(() => false))) {
+      if (Date.now() > end) throw new Error('the strip never loaded its page')
+      await sleep(50)
+    }
+    await w.run.call('pageReady', { target: 'strip' })
+  })
   afterAll(async () => { await w?.close() })
 
   it('the shared ones last in opening order, behind »; ⌘9 the last of them; one chosen from » shows; » counts them', async () => {
