@@ -50,7 +50,8 @@ export const TEST_FINGERPRINT = fingerprintOf(CERT)
 export const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
 /** The repo's logo a published canvas serves at `/__mv/logo.svg`. */
 export const LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8" fill="#e5484d"/></svg>'
-/** A published shell's icons in the order `marver build` writes them: the repo's logo first, then Marver's set. */
+/** A page listing the repo's logo first, then Marver's set, as marver 0.29's release candidates published a shell
+ *  (0.29.0 lists the logo alone): a shared tab must still pick the logo out of Electron's sorted set. */
 export const PUBLISHED_ICONS = ['/__mv/logo.svg', '/__mv/favicon/favicon.ico', '/__mv/favicon/favicon-32x32.png', '/__mv/favicon/favicon-16x16.png']
 
 export interface Req { host: string; method: string; path: string; headers: IncomingMessage['headers'] }

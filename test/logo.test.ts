@@ -7,7 +7,7 @@ import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { LOGO_MAX, sniffLogo } from '../src/shared/logo-sniff.ts'
-import { findLogo, iconFirst, LOGO_LADDER, logoIconLink, logoRoute, logoTag, publishLogo } from '../src/server/logo.ts'
+import { findLogo, LOGO_LADDER, logoIconLink, logoIcons, logoRoute, logoTag, publishLogo } from '../src/server/logo.ts'
 import { portInUse } from '../src/server/exclusive.ts'
 import { png } from './png-fixture.ts'
 
@@ -194,7 +194,10 @@ describe('marver build publishes the logo by its bytes (A2.9)', () => {
   })
 })
 
-describe('the published shell and gate wear the repo\'s logo first (spec 28 A4.6 #46, marver 0.29.0)', () => {
+/** A page's tab icons as a browser reads them: every `<link>` whose rel is `icon` or `shortcut icon`, however quoted. */
+const tabIcons = (html: string): string[] => [...html.matchAll(/<link\b[^>]*>/gi)].map((m) => m[0]).filter((l) => /\srel\s*=\s*["']?(?:shortcut\s+)?icon["'\s/>]/i.test(l))
+
+describe('the published shell and gate wear the repo\'s logo as their only tab icon (spec 28 A4.6 #46, marver 0.29.0)', () => {
   it('its icon line names the published logo by its type; anything else - none, another path, markup - writes nothing', () => {
     expect(logoIconLink('/__mv/logo.svg')).toBe('<link rel="icon" type="image/svg+xml" href="/__mv/logo.svg" />')
     expect(logoIconLink('/__mv/logo.png')).toBe('<link rel="icon" type="image/png" href="/__mv/logo.png" />')
@@ -202,14 +205,47 @@ describe('the published shell and gate wear the repo\'s logo first (spec 28 A4.6
     for (const bad of [undefined, '', '/logo.svg', '/__mv/logo.gif', '/__mv/logo.svg" onload="alert(1)', '/__mv/logo.svg?x', 'https://evil.example/__mv/logo.svg']) expect(logoIconLink(bad), String(bad)).toBe('')
   })
 
-  it('the shell as marver build writes it: the logo before Marver\'s own icons, everything else as it was; no logo, unchanged', () => {
+  it('the shell as marver build writes it: the logo its only tab icon, in the place of Marver\'s set, everything else as it was; no logo, Marver\'s set unchanged (release review P2)', () => {
     const shell = readFileSync(join(import.meta.dirname, '..', 'src', 'client', 'shell', 'index.html'), 'utf8').replaceAll('{{ROUTE}}', '/__mv')
-    const out = iconFirst(shell, '/__mv/logo.svg')
-    const icons = [...out.matchAll(/<link rel="icon"[^>]*>/g)].map((m) => m[0])
-    expect(icons[0]).toBe('<link rel="icon" type="image/svg+xml" href="/__mv/logo.svg" />')
-    expect(icons.slice(1)).toEqual([...shell.matchAll(/<link rel="icon"[^>]*>/g)].map((m) => m[0]))
-    expect(out.replace(/<link rel="icon" type="image\/svg\+xml" href="\/__mv\/logo.svg" \/>\n\s*/, '')).toBe(shell)
-    expect(iconFirst(shell, undefined)).toBe(shell)
+    // no logo: the page as it was, Marver's three icons its tab icons
+    expect(logoIcons(shell, undefined)).toBe(shell)
+    expect(tabIcons(shell)).toHaveLength(3)
+    expect(tabIcons(shell).every((l) => l.includes('/__mv/favicon/'))).toBe(true)
+    // a logo: its line where Marver's first was, the other two gone - a browser picks among icons by type and size,
+    // the last declared among equals, so any of Marver's beside the logo could still be the tab's
+    const out = logoIcons(shell, '/__mv/logo.svg')
+    expect(tabIcons(out)).toEqual(['<link rel="icon" type="image/svg+xml" href="/__mv/logo.svg" />'])
+    const lines = shell.split('\n')
+    const first = lines.findIndex((l) => l.includes('rel="icon"'))
+    expect(out.split('\n')).toEqual([...lines.slice(0, first), '    <link rel="icon" type="image/svg+xml" href="/__mv/logo.svg" />', ...lines.slice(first).filter((l) => !l.includes('rel="icon"'))])
+    // apple-touch-icon and the manifest are no tab icons: they stay
+    expect(out).toContain('<link rel="apple-touch-icon" href="/__mv/favicon/apple-touch-icon.png" />')
+    expect(out).toContain('<link rel="manifest" href="/__mv/favicon/site.webmanifest" />')
+  })
+
+  it('every tab icon goes however it is written - quotes, attribute order, "shortcut icon", two on a line; other links stay; no icon line, the logo at the head\'s end', () => {
+    const html = [
+      '<head>',
+      '  <link rel=\'icon\' href=\'/a.ico\'>',
+      '  <link href="/b.png" rel="shortcut icon" type="image/png">',
+      '  <link rel=icon href=/c.png>',
+      '  <link rel="apple-touch-icon" href="/t.png">',
+      '  <link rel="preload" href="/f.woff2" data-rel="icon">',
+      '  <link rel="icon" href="/d.svg" /><link rel="stylesheet" href="/s.css">',
+      '</head>',
+    ].join('\n')
+    const out = logoIcons(html, '/__mv/logo.png')
+    expect(out).toBe([
+      '<head>',
+      '  <link rel="icon" type="image/png" href="/__mv/logo.png" />',
+      '  <link rel="apple-touch-icon" href="/t.png">',
+      '  <link rel="preload" href="/f.woff2" data-rel="icon">',
+      '<link rel="stylesheet" href="/s.css">',
+      '</head>',
+    ].join('\n'))
+    expect(tabIcons(out)).toEqual(['<link rel="icon" type="image/png" href="/__mv/logo.png" />'])
+    expect(logoIcons('<head><title>x</title></head>', '/__mv/logo.ico')).toBe('<head><title>x</title><link rel="icon" type="image/x-icon" href="/__mv/logo.ico" />\n</head>')
+    for (const bad of [undefined, '', 'https://evil.example/__mv/logo.svg', '/__mv/logo.gif']) expect(logoIcons(html, bad), String(bad)).toBe(html)
   })
 })
 
@@ -290,30 +326,49 @@ describe('GET /__mv/logo (A2.4, A2.9)', () => {
 
 describe('a gated marver serve shows the logo before sign-in (v1.7 review #5)', () => {
   const CLI = join(import.meta.dirname, '..', 'dist', 'cli.mjs')
-  let proc: ChildProcess | null = null
+  const procs: ChildProcess[] = []
   let port = 0
+  let bare = 0
   let root = ''
-  beforeAll(async () => {
-    root = repo({
-      'design/.dist/index.html': '<!doctype html><title>bundle</title><script>window.__BUNDLE__=1</script>',
-      'design/.dist/meta.json': JSON.stringify({ name: 'Fixture', branding: true, logo: '/__mv/logo.ico' }),
-      'design/.dist/__mv/logo.ico': ICO,
-    })
-    port = 7100 + Math.floor(Math.random() * 300)
+  /** A gated `marver serve` of this export on a free port, answering. */
+  const serveGated = async (dist: Record<string, string | Buffer>, ready: string): Promise<{ root: string; port: number }> => {
+    const root = repo(dist)
+    let port = 7100 + Math.floor(Math.random() * 300)
     while (await portInUse(port)) port++
     const data = mkdtempSync(join(tmpdir(), 'mv-logo-data-'))
     dirs.push(data)
-    proc = spawn(process.execPath, [CLI, 'serve', '--port', String(port)], { cwd: root, stdio: 'pipe', env: { ...process.env, MARVER_PASSWORD: 'hunter2', MARVER_DATA_DIR: data, MARVER_ID_ISSUER: '' } })
+    procs.push(spawn(process.execPath, [CLI, 'serve', '--port', String(port)], { cwd: root, stdio: 'pipe', env: { ...process.env, MARVER_PASSWORD: 'hunter2', MARVER_DATA_DIR: data, MARVER_ID_ISSUER: '' } }))
     const by = Date.now() + 20_000
-    while (Date.now() < by && !(await fetch(`http://localhost:${port}/__mv/logo.ico`).then(() => true, () => false))) await new Promise((r) => setTimeout(r, 100))
-  }, 30_000)
-  afterAll(() => { proc?.kill('SIGKILL') })
+    while (Date.now() < by && !(await fetch(`http://localhost:${port}${ready}`).then(() => true, () => false))) await new Promise((r) => setTimeout(r, 100))
+    return { root, port }
+  }
+  beforeAll(async () => {
+    ;({ root, port } = await serveGated({
+      'design/.dist/index.html': '<!doctype html><title>bundle</title><script>window.__BUNDLE__=1</script>',
+      'design/.dist/meta.json': JSON.stringify({ name: 'Fixture', branding: true, logo: '/__mv/logo.ico' }),
+      'design/.dist/__mv/logo.ico': ICO,
+    }, '/__mv/logo.ico'))
+    // an export with no repo logo
+    ;({ port: bare } = await serveGated({
+      'design/.dist/index.html': '<!doctype html><title>bundle</title><script>window.__BUNDLE__=1</script>',
+      'design/.dist/meta.json': JSON.stringify({ name: 'Fixture', branding: true }),
+    }, '/'))
+  }, 60_000)
+  afterAll(() => { for (const p of procs) p.kill('SIGKILL') })
 
-  it('the gate\'s first icon is the repo\'s logo, before Marver\'s own set (A4.6 #46)', async () => {
+  it('the gate\'s only tab icon is the repo\'s logo; with none, Marver\'s own set (A4.6 #46; release review P2)', async () => {
     const html = await (await fetch(`http://localhost:${port}/`)).text()
-    const icons = [...html.matchAll(/<link rel="icon"[^>]*>/g)].map((m) => m[0])
-    expect(icons[0]).toBe('<link rel="icon" type="image/x-icon" href="/__mv/logo.ico" />')
-    expect(icons.slice(1).every((l) => l.includes('/__mv/favicon/'))).toBe(true)
+    expect(tabIcons(html)).toEqual(['<link rel="icon" type="image/x-icon" href="/__mv/logo.ico" />'])
+    expect(html).toContain('<link rel="apple-touch-icon" href="/__mv/favicon/apple-touch-icon.png" />')
+    const none = await (await fetch(`http://localhost:${bare}/`)).text()
+    expect(none).toContain('<form')
+    expect(tabIcons(none)).toEqual([
+      '<link rel="icon" href="/__mv/favicon/favicon.ico" sizes="48x48" />',
+      '<link rel="icon" type="image/png" sizes="32x32" href="/__mv/favicon/favicon-32x32.png" />',
+      '<link rel="icon" type="image/png" sizes="16x16" href="/__mv/favicon/favicon-16x16.png" />',
+    ])
+    expect(none).not.toContain('/__mv/logo.')
+    expect(none).toContain('<link rel="apple-touch-icon" href="/__mv/favicon/apple-touch-icon.png" />')
   })
 
   it('/__mv/logo.ico answers before sign-in when it exists, and 404 - never the bundle - when it does not', async () => {

@@ -31,10 +31,11 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 
 ### Added
 
-- **A published canvas wears your logo in the browser's tab.** `marver build` puts your repo's logo (`design/logo.svg`,
-  or the first logo file it finds) first among the icons of the canvas and its sign-in page, so a browser tab - and
-  the Mac app's tab for a shared canvas - shows it rather than Marver's mark. A canvas published before keeps Marver's
-  mark until you build it again ([Publishing](docs/publish.md#name-the-canvas)).
+- **A published canvas wears your logo in the browser's tab.** When your repo has a logo (`design/logo.svg`, or the
+  first logo file `marver build` finds), it is the only tab icon of the canvas and its sign-in page, so a browser tab -
+  and the Mac app's tab for a shared canvas - shows it rather than Marver's mark; without one, Marver's mark as before.
+  A canvas published before keeps Marver's mark until you build it again
+  ([Publishing](docs/publish.md#name-the-canvas)).
 - `npx marver perf --jam` counts the Mac app's live pictures - kept, failed, rendered instead - and lists a capture
   whose live pictures failed among what went wrong.
 

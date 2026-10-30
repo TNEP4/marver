@@ -77,22 +77,37 @@ export function publishLogo(root: string, shareLogo: string | undefined, outDir:
 }
 
 /**
- * The repo's logo as the first `<link rel="icon">` of the published shell and gate (spec 28 A4.6 #46, marver 0.29.0):
- * a browser tab, and the Mac app's tab for a shared canvas, wear the repo's logo; Marver's own set follows it. `logo`
- * is `publishLogo`'s answer (`meta.json`'s `logo`); '' for none - or anything else, never written into the page.
+ * The repo's logo as the `<link rel="icon">` of the published shell and gate (spec 28 A4.6 #46, marver 0.29.0): a
+ * browser tab, and the Mac app's tab for a shared canvas, wear the repo's logo. `logo` is `publishLogo`'s answer
+ * (`meta.json`'s `logo`); '' for none - or anything else, never written into the page.
  */
 export function logoIconLink(logo: string | undefined): string {
   const m = typeof logo === 'string' ? new RegExp(`^${ROUTE}/logo\\.(svg|png|ico)$`).exec(logo) : null
   return m ? `<link rel="icon" type="${LOGO_MIME[m[1] as LogoType]}" href="${logo}" />` : ''
 }
 
-/** A page's HTML with the logo's icon first among its `<link rel="icon">`s (before the first, else at the head's end). */
-export function iconFirst(html: string, logo: string | undefined): string {
+/** A tab icon's `<link>`, its line's indent and line end with it: `rel="icon"` or `"shortcut icon"`, in any quotes and
+ *  attribute order. `apple-touch-icon` and the manifest are no tab icon. */
+const TAB_ICON = /[ \t]*<link\b(?=[^>]*\srel\s*=\s*["']?(?:shortcut\s+)?icon["'\s/>])[^>]*>[ \t]*\r?\n?/gi
+
+/**
+ * A page's HTML with the logo's icon as its only tab icon (A4.6 #46; release review P2): the logo's line takes the
+ * first `<link rel="icon">`'s place and every other one goes - Marver's own set beside it would compete, since a
+ * browser picks among icons by type and size, the last declared among equals, never simply the first. The Mac app's
+ * shared tab picks the logo by its path from whatever a page lists (app/src/shared/links.ts remoteFaviconPick). No
+ * logo: the page as it was, Marver's set its icons. No icon line: the logo's at the head's end.
+ */
+export function logoIcons(html: string, logo: string | undefined): string {
   const link = logoIconLink(logo)
   if (!link) return html
-  const i = html.indexOf('<link rel="icon"')
-  if (i >= 0) return `${html.slice(0, i)}${link}\n    ${html.slice(i)}`
-  return html.includes('</head>') ? html.replace('</head>', `${link}\n</head>`) : html
+  let placed = false
+  const out = html.replace(TAB_ICON, (line) => {
+    if (placed) return ''
+    placed = true
+    return line.replace(/<link\b[^>]*>/i, () => link)
+  })
+  if (placed) return out
+  return html.includes('</head>') ? html.replace('</head>', () => `${link}\n</head>`) : html
 }
 
 /** A strong `ETag` for these bytes. */

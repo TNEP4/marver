@@ -93,13 +93,16 @@ describe('parseLink()', () => {
 
   it('a shared tab wears the repo\'s logo out of Electron\'s sorted set, else the first it may fetch (A4.6 #46)', () => {
     const o = 'https://pilot.example.com'
-    // a published shell's icons as its page lists them, the logo first (marver build's iconFirst) ...
+    // a page listing the logo first and Marver's set after it (as marver 0.29's release candidates published a shell;
+    // 0.29.0 lists the logo alone, logo.ts logoIcons) ...
     const listed = [`${o}/__mv/logo.svg`, `${o}/__mv/favicon/favicon.ico`, `${o}/__mv/favicon/favicon-32x32.png`, `${o}/__mv/favicon/favicon-16x16.png`]
     // ... as page-favicon-updated hands them: a flat_set<GURL>, ordered by spec - the logo no longer first
     const sorted = [...listed].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)))
     expect(sorted[0]).toBe(`${o}/__mv/favicon/favicon-16x16.png`)
     expect(remoteFaviconPick(sorted, o, `${o}/#/b/x`)).toBe(`${o}/__mv/logo.svg`)
     for (const type of ['png', 'ico']) expect(remoteFaviconPick([`${o}/__mv/favicon/favicon.ico`, `${o}/__mv/logo.${type}`], o, `${o}/`)).toBe(`${o}/__mv/logo.${type}`)
+    // marver 0.29.0's published shell: the logo its only icon, beside Marver's apple-touch-icon, which sorts first
+    expect(remoteFaviconPick([`${o}/__mv/favicon/apple-touch-icon.png`, `${o}/__mv/logo.svg`], o, `${o}/#/b/x`)).toBe(`${o}/__mv/logo.svg`)
     // no logo: the first it may fetch; another site's logo, or the logo while the document is elsewhere, never
     expect(remoteFaviconPick(sorted.filter((u) => !u.includes('logo')), o, `${o}/`)).toBe(`${o}/__mv/favicon/favicon-16x16.png`)
     expect(remoteFaviconPick(['https://cdn.example.com/__mv/logo.svg', `${o}/favicon.png`], o, `${o}/`)).toBe(`${o}/favicon.png`)

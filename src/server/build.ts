@@ -31,7 +31,7 @@ import { PUBLISHABLE, publishableStatus } from '../shared/status.ts'
 import { boardFields, checkBoardsDir, isRegularFile, listBoardFiles, readRegistry } from './boards.ts'
 import { appendEvents, legacyExposure, readLog, shareable } from './comments.ts'
 import { autoWidthOf, keptSizes, measuringFrames, readSizes } from './sizes.ts'
-import { iconFirst, publishLogo } from './logo.ts'
+import { logoIcons, publishLogo } from './logo.ts'
 
 const posix = (p: string) => p.split(sep).join('/')
 
@@ -772,8 +772,8 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   try { name = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).name ?? name } catch { /* keep basename */ }
   if (config.share.name) name = config.share.name
   const logo = publishLogo(root, config.share.logo, outDir, (m) => console.warn(`  ${m}`))
-  // the published shell wears it first among its icons (spec 28 A4.6 #46): a browser tab and the Mac app's shared tab
-  if (logo) writeFileSync(join(outDir, 'index.html'), iconFirst(readFileSync(join(outDir, 'index.html'), 'utf8'), logo))
+  // the published shell's only tab icon (spec 28 A4.6 #46): a browser tab and the Mac app's shared tab wear it
+  if (logo) writeFileSync(join(outDir, 'index.html'), logoIcons(readFileSync(join(outDir, 'index.html'), 'utf8'), logo))
   // rights ride in meta.json so serve can enforce the policy on comment APIs without parsing the bundle - hiding UI controls is not authorization;
   // `shows` (each published board's frames) lets the old all-scenes log serve the threads whose frame ships (collab.ts, spec 26)
   writeFileSync(join(outDir, 'meta.json'), JSON.stringify({

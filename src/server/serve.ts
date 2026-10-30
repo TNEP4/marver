@@ -451,6 +451,11 @@ function isCosmetic(pathname: string): boolean {
 const MARK_AT = (size: number) => `<svg viewBox="0 0 256 256" width="${size}" height="${size}" fill="currentColor" aria-hidden><path d="M239.29,59.28l-64.8,144a8,8,0,0,1-7.3,4.72H24a8,8,0,0,1-7.3-11.28l64.8-144A8,8,0,0,1,88.81,48H232A8,8,0,0,1,239.29,59.28Z" opacity=".1"/><path d="M245.43,47.31A15.94,15.94,0,0,0,232,40H88.81a16,16,0,0,0-14.59,9.43l-64.8,144A16,16,0,0,0,24,216H167.19a16,16,0,0,0,14.59-9.43l64.8-144A16,16,0,0,0,245.43,47.31ZM167.19,200H24L88.81,56H232Z"/></svg>`
 const MARK = MARK_AT(17)
 const MARK_LG = MARK_AT(24)
+/** Marver's own tab icons: the gate's only when the build found no repo logo, whose icon is then the one there is
+ *  (spec 28 A4.6 #46; release review P2 - beside it, a browser could still pick one of these). */
+const MARVER_ICONS = `<link rel="icon" href="/__mv/favicon/favicon.ico" sizes="48x48" />
+<link rel="icon" type="image/png" sizes="32x32" href="/__mv/favicon/favicon-32x32.png" />
+<link rel="icon" type="image/png" sizes="16x16" href="/__mv/favicon/favicon-16x16.png" />`
 
 /** The gate: the canvas's own antechamber - light ground, dot grid, glass card in the
  *  shell's exact token language. Three doors, one credential each:
@@ -553,10 +558,7 @@ function gate(res: any, meta: { name: string; branding: boolean; logo?: string }
 ${meta.branding ? '<meta property="og:site_name" content="Marver" />' : ''}
 <meta property="og:type" content="website" />
 <meta name="twitter:card" content="summary" />
-${logoIconLink(meta.logo)}
-<link rel="icon" href="/__mv/favicon/favicon.ico" sizes="48x48" />
-<link rel="icon" type="image/png" sizes="32x32" href="/__mv/favicon/favicon-32x32.png" />
-<link rel="icon" type="image/png" sizes="16x16" href="/__mv/favicon/favicon-16x16.png" />
+${logoIconLink(meta.logo) || MARVER_ICONS}
 <link rel="apple-touch-icon" href="/__mv/favicon/apple-touch-icon.png" />
 <style>
   * { box-sizing: border-box; margin: 0 }

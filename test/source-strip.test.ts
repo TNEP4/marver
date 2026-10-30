@@ -45,7 +45,7 @@ beforeAll(async () => {
     ],
   }))
   writeFileSync(join(root, 'design', 'publish.json'), JSON.stringify({ boards: { main: 'comment' } }))
-  // the repo's logo: the published shell lists it first among its icons (spec 28 A4.6 #46)
+  // the repo's logo: the published shell's only tab icon (spec 28 A4.6 #46)
   writeFileSync(join(root, 'design', 'logo.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8"/></svg>\n')
   // what 0.24 left behind: its node keys travel for the frames that ship, so an old ?n= link still lands
   writeFileSync(join(root, 'design', 'boards', 'all-scenes.json'), JSON.stringify({ version: 1, auto: true, nodes: [
@@ -70,12 +70,13 @@ beforeAll(async () => {
 afterAll(() => { rmSync(root, { recursive: true, force: true }) })
 
 describe('the published shell wears the repo\'s logo (spec 28 A4.6 #46, marver 0.29.0)', () => {
-  it('first among its <link rel="icon">, before Marver\'s own set, published beside it', () => {
+  it('its only tab icon - none of Marver\'s beside it for a browser to pick (release review P2) - published beside it', () => {
     const dist = join(root, 'design', '.dist')
-    const icons = [...readFileSync(join(dist, 'index.html'), 'utf8').matchAll(/<link rel="icon"[^>]*>/g)].map((m) => m[0])
-    expect(icons[0]).toBe('<link rel="icon" type="image/svg+xml" href="/__mv/logo.svg" />')
-    expect(icons.slice(1).length).toBeGreaterThan(0)
-    expect(icons.slice(1).every((l) => l.includes('/__mv/favicon/'))).toBe(true)
+    const html = readFileSync(join(dist, 'index.html'), 'utf8')
+    const icons = [...html.matchAll(/<link\b[^>]*>/gi)].map((m) => m[0]).filter((l) => /\srel\s*=\s*["']?(?:shortcut\s+)?icon["'\s/>]/i.test(l))
+    expect(icons).toEqual(['<link rel="icon" type="image/svg+xml" href="/__mv/logo.svg" />'])
+    // apple-touch-icon and the manifest are no tab icons: Marver's stay
+    expect(html).toMatch(/<link rel="apple-touch-icon" href="\/__mv\/favicon\/apple-touch-icon\.png"/)
     expect(readFileSync(join(dist, '__mv', 'logo.svg'), 'utf8')).toContain('<svg')
   })
 })

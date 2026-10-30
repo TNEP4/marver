@@ -260,9 +260,10 @@ containerised canvas reports as one campaign.
 
 Your logo - `share.logo`, else the first of `design/logo.svg|png`, `public/logo.svg|png`
 and `public/favicon.svg|png|ico` - ships with the build. The gate shows it, and since
-0.29 it comes first among the page's icons, so a browser tab (and the Mac app's tab for a
-shared canvas) wears it rather than Marver's mark. A canvas built before 0.29 keeps
-Marver's mark until you build and deploy it again.
+0.29 it is the only tab icon of the canvas and the gate, so a browser tab (and the Mac
+app's tab for a shared canvas) wears it rather than Marver's mark. With no logo, the tab
+wears Marver's mark. A canvas built before 0.29 keeps Marver's mark until you build and
+deploy it again.
 
 ## Railway (the one-pager)
 
