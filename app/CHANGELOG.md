@@ -2,12 +2,42 @@
 
 ## 0.3.0 - unreleased (spec 28 A4)
 
-- **Shared canvases open in a tab** (A4.6 #39-#50). An https link - `⌘L`, Home's field, or a canvas the front door
-  opens - opens that canvas in a tab of its own, one per site, named by its host, after your local canvases; `⌘1`-`⌘9`
-  and `»` reach it. It is someone else's page: its own partition, no access to the app, the clipboard and full screen
-  its only permissions, downloads cancelled (Open in Browser does that), links to other sites sent to your browser.
-  Marver ID's sign-in runs inside the tab and is kept; the tab returns to the board you opened, never to a sign-in page.
-  It wears its page's icon - a canvas published with marver 0.29.0 or later, its repo's logo - else its host's initials.
+Marks, notices, a notice's click and live pictures need a canvas on marver 0.29.0: a canvas on 0.28 or earlier shows
+none of them, only "Stopped" when its process dies.
+
+- **Each canvas's tab says when it needs you.** One mark after its name: an orange count of what needs you - Marver's
+  questions, captures to review, runs that failed or stalled (99+ past 99) - else a blue count of new frames, else a
+  light sweeping the mark while an agent works (a still wash with Reduce Motion); and a teal dot on its logo while a
+  Jam session runs. A hidden or unloaded tab keeps its mark, and one the app cannot hear from for a while dims it.
+  VoiceOver reads the marks in the tab's name and says "<name> needs you" when the count rises.
+- **Notices, once you want them.** The first time a canvas needs you while the window is in front, the strip offers
+  "Get a notice when a canvas needs you": Turn On, and macOS asks then; Not now, and it never offers again. Nothing
+  touches macOS's notices or the Dock before that. With notices on, a canvas open in a tab you are not looking at -
+  another tab in front, or the window hidden, minimised, in the background or the screen locked - sends one when
+  something new needs you: its name, then "Asks you:", "Ready to review:", "Failed:" or "Stalled: ... - choose what to
+  do", and "and N more"; at most one a minute per canvas, and none for what already waited when the app connected.
+- **The Dock counts what needs you** across your open canvases, once notices are on (Settings: Dock badge, on by default).
+- **A canvas that dies says so.** When a canvas's process ends without stopping (a crash, `kill -9`), its tab counts a
+  "Stopped" need and, with notices on, sends a notice, until you look at it, close it or the canvas starts again. A
+  canvas you stop yourself sends nothing.
+- **A notice opens its item.** Clicking one brings the window forward on its canvas's tab - reopening it if you
+  closed it, loading it again if it was unloaded - and the canvas opens what the notice named: the thread, the review,
+  the run's Retry or choices. A later click replaces one still waiting for its page; a "Stopped" notice shows its tab.
+- **Settings: Notices.** The Notices row turns notices on and off, and always offers Open System Settings, since macOS
+  can hide notices without saying so (Focus, summaries). After macOS turns one down, the row says "macOS turned down
+  Marver's last notice" and the strip says "<name> needs you" in its place. The Dock badge row shows once notices are
+  on.
+- **A picture in play is what you saw.** A capture's picture of the play stage is read from the canvas's own view - an
+  open menu, typed text, the comment pins - in place of a fresh render. Only while you see it: the tab in front, the
+  window shown, nothing over the view; if anything changes before it is kept, the canvas takes its render instead. A
+  canvas reads its own view's pixels and nothing else: no Screen Recording permission.
+- **Shared canvases open in a tab.** An https link - `⌘L`, Home's field, or a canvas the front door opens - opens that
+  canvas in a tab of its own, one per site, named by its host, after your local canvases; `⌘1`-`⌘9` and `»` reach it.
+  It is someone else's page: it cannot reach the app, it may copy to the clipboard and go full screen and nothing
+  more, a download is cancelled (Open in Browser does that), and an http link or a window it opens on another site
+  goes to your browser. Marver ID's sign-in runs inside the tab and is kept; the tab returns to the board you opened,
+  never to a sign-in page. It wears its page's icon - for a canvas published with marver 0.29.0 or later, its repo's
+  logo - else its host's initials.
 - **Closing, reloading or quitting asks first for a shared canvas**: the app cannot tell what it holds, so one sheet
   names it ("pilot.example.com is a shared canvas: the app can't tell what it hasn't saved").
 - **Home lists Shared canvases**: the open ones, then the last 12 opened, which reopen with a click. Shared tabs are not
@@ -15,11 +45,6 @@
 - **A shared canvas that cannot be reached**, or whose link opens no page here (a download, a redirect to http), says
   why in words, tries again by itself (at once when the Mac is back online), and offers Open in Browser; a bad
   certificate is never gone past. A site whose `/` redirects counts as answering.
-- **A picture in play is what you saw.** With Marver 0.29, a capture's picture of the play stage is read back from the
-  tab's own view - an open menu, typed text, the pins - and uploaded by the canvas, in place of a fresh render
-  (`mv:capture`, A4.6 #35). Only while you see it: the active tab, the window shown, nothing over the view; the readback
-  is checked again after it is taken, and anything that changed meanwhile gives the canvas its render instead. A canvas
-  reads its own view's pixels and nothing else: no Screen Recording permission.
 
 ## 0.2.2 - 2026-10-26
 

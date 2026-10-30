@@ -99,6 +99,14 @@ new when you do; everything already there the first time counts as seen. They li
 `design/.local/`, on this machine only, and a published canvas shows none. `npx marver marks` prints
 them - for you, or for your agent at the start of a session.
 
+**In the Mac app** (0.3, with Marver 0.29), each canvas's tab sums this up, even while it is hidden: an
+orange count of what needs you - Marver's questions, captures to review, runs that failed or stalled -
+else a blue count of new frames, else a shimmer while an agent works, and a teal dot while a Jam session
+runs. Turn notices on and a canvas you are not looking at sends one when something new needs you, and
+the Dock counts them all. Clicking a notice opens what it names - the thread, the review, the run's
+Retry or choices - on its board, out of play; a thread the board cannot show opens in a panel of its
+own, with a field to answer. It moves nothing while you are capturing or have typed words not yet sent.
+
 ## Edits land calmly
 
 When a file changes, the canvas reloads only the frames that read it, a few at a time, the ones on

@@ -72,6 +72,9 @@ never changed; one you removed by hand is not written back until you turn that t
   <f>` hands back the replies, and the canvas posts them and frees the frames. `jam release` gives a run back,
   `jam status` and `jam mute` are there too. The commands travel through files under `design/.local/jam/`, signed
   with the session's own key, so a sandbox that blocks localhost cannot stop them.
+- **A capture's pictures are files** (0.29). Each request lists its pictures - the frame each shows and the file to
+  open, `design/.local/jam/pictures/<id>.png` - for whoever runs it: your session, a copy, a fresh agent. A `live` one,
+  from the Mac app, is your screen in play as you saw it; the others are fresh renders ([Jam sessions](jam-session.md)).
 - **Claude Code dispatches, so it multitasks.** Its brief opens with a few lines for the session - start ONE
   background subagent (the Agent tool, `run_in_background: true`) with the part of the brief below its `----` line and
   what the conversation knows that matters, then `jam next` until nothing waits, and end the turn; every run, however

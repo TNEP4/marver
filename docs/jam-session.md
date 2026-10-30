@@ -27,9 +27,9 @@ dot. While it records, everything you do is part of it:
   In the Mac app (0.3, with Marver 0.29), a picture in play is **live**: the stage as you saw
   it - a menu you opened, text you typed - captioned "as you saw it". It is taken when the
   whole stage is in view with nothing over it and has shown its screen for a second (a device
-  preset, a slide fitted to the window); otherwise, and everywhere else, it is a fresh render of
-  the frame. A live picture shows what was on the stage, comment pins and anyone's words in
-  them included: it is not filtered. The agent gets every picture as a file it can open.
+  preset, a slide fitted to the window); otherwise, in a browser, and whenever the app cannot
+  take it, the picture is a fresh render of the frame. A live picture is not filtered: it shows
+  whatever was on the stage, comment pins and anyone's words in them included.
 
 Two ways to end it (0.28): `E` **stops and queues it** - the agent starts on it, nothing to confirm - and `⇧E`
 **stops to review**: its read-back opens so you can check it and add to it first. Both are on the capture bar. `Esc`
@@ -95,7 +95,9 @@ your own session's run is working goes to that session at once, which decides ho
 ## Review
 
 When a run finishes, its tile turns to **Ready to review**, with a soft chime (`jam: { chime:
-false }` silences it). `V` opens the next one to review:
+false }` silences it). In the Mac app, with notices on, a canvas you are not looking at sends a
+notice too, and clicking it opens the review ([what needs you](boards-and-folders.md#what-is-new-what-needs-you)).
+`V` opens the next one to review:
 
 - **Review** shows the agent's reply beside each frame it changed, **before and after at
   once**: side by side for a tall frame (a phone), one above the other for a wide one (a
@@ -173,8 +175,9 @@ words. Other agents do not name captures.
 ## What your agent receives
 
 Each capture reaches your agent as one job: its words with their times, your notes, every UI
-step, the pictures, and the element under each point with its source location
-(`data-mv-loc`, the file and line it was written at, so the agent goes straight there). It
+step, the pictures (files it opens, since 0.29 - a live one marked), and the element under each
+point with its source location (`data-mv-loc`, the file and line it was written at, so the agent
+goes straight there). It
 reads each distinct ask, acts on the reserved frames only, and replies per ask; the reply
 shows in the review, beside the before and after pictures. The managed instructions
 (`design/instructions/jam.md`, refreshed by `npx marver init`) spell this out for the agent.

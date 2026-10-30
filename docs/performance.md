@@ -357,7 +357,7 @@ their reason. `--days <n>` (14 by default) and `--json` as elsewhere.
 | Option | |
 |---|---|
 | `--loads` | each board load in full |
-| `--jam` | Jam's timings |
+| `--jam` | Jam's timings; with the Mac app, its live pictures kept, failed and rendered instead |
 | `run <board>` | a headless run of the board ([Headless runs](#headless-runs)); with `--slow` and `--repeat <n>` (1-5) |
 | `--runs` | the headless runs, compared inside their cohorts; with `--against <run>` and `--days <n>` (14) |
 | `--crashes` | the Mac app's crashes and hangs of this repo's canvases (below) |

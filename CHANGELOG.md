@@ -4,23 +4,45 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 
 ## 0.29.0 - Unreleased
 
+### Highlights
+
+- **Your agent sees a capture's pictures.** A run was given the ids of a capture's pictures and no way to open them,
+  so no picture you took reached your agent. Each request now lists its pictures - the frame each shows and the file
+  to open, `design/.local/jam/pictures/<id>.png` - and `design/instructions/jam.md` tells the agent to open the ones it
+  needs. In a browser as in the Mac app.
+- **The Mac app tells you when a canvas needs you.** A running canvas now tells Marver's Mac app (0.3) what waits on
+  you - a question from Marver, a capture ready to review, a run that failed or stalled - and whether an agent is
+  working or a Jam session runs, as it changes. The app counts it on the canvas's tab, hidden or not; with notices on,
+  a canvas you are not looking at sends one, and the Dock counts them all. A canvas on 0.28 or earlier shows none of
+  this in the app. In a browser nothing changes: the sidebar and the lane say it as before
+  ([What needs you](docs/boards-and-folders.md#what-is-new-what-needs-you)).
+- **A notice opens what it names.** Click one in the Mac app and the canvas opens that question's thread, that
+  capture's review, or the failed or stalled run with Retry or its three choices in view - on its own board, out of
+  Play. If it has moved on since (answered, reviewed, run again), it opens as it is now; if it is gone, its board
+  opens. It moves nothing while you are capturing or have typed words you have not sent. A thread the board cannot
+  show - no frame, its frame gone - opens in a thread panel: its first line, the last message, the run's status and a
+  field to answer.
+- **A picture in play is what you saw, in the Mac app.** With app 0.3, a capture's pictures in play - `I`, and the ones
+  it takes itself as you point and as it ends - are the stage as it was on your screen: a menu you opened, text you
+  typed, the comment pins. They are captioned "as you saw it" in the read-back and the review. One is taken once the
+  whole stage is in view with nothing over it and has shown its screen for a second (a device preset, a slide fitted
+  to the window); otherwise, in a browser, and whenever the app cannot take it, the picture is a fresh render of the
+  frame, as before ([Jam sessions](docs/jam-session.md)).
+
 ### Added
 
-- **A published canvas wears your repo's logo in the browser's tab.** `marver build` lists the logo it publishes
-  (`design/logo.svg` and the rest of the ladder) first among the shell's and the sign-in gate's icons, so a browser tab
-  - and the Mac app's tab for a shared canvas - shows it rather than Marver's mark. Canvases published before keep
-  Marver's mark until they are built again.
-- **A picture in play is what you saw, in the Mac app.** With app 0.3, `I` in play (and a capture's first pick and its
-  end) takes a picture of the stage as it is on your screen - a menu you opened, text you typed, the comment pins -
-  instead of a fresh render of the frame, captioned "as you saw it" in the read-back and the review. It is taken when
-  the whole stage is in view with nothing over it and has shown its screen for a second (a device preset, a slide
-  fitted to the window); otherwise, and in Chrome, the picture is a render, as before. The app's picture is checked
-  whole before it is kept, and if anything about it fails the capture takes the render in its place
-  ([Jam session](docs/jam-session.md)).
-- **The agent gets a capture's pictures as files.** Each member of a run's packet lists its pictures with the file to
-  open (`design/.local/jam/pictures/<id>.png`), a live one marked. Until now the agent was given picture ids and no
-  way to see them.
-- `npx marver perf --jam` counts live pictures kept and failed, and names a capture whose live pictures failed.
+- **A published canvas wears your logo in the browser's tab.** `marver build` puts your repo's logo (`design/logo.svg`,
+  or the first logo file it finds) first among the icons of the canvas and its sign-in page, so a browser tab - and
+  the Mac app's tab for a shared canvas - shows it rather than Marver's mark. A canvas published before keeps Marver's
+  mark until you build it again ([Publishing](docs/publish.md#name-the-canvas)).
+- `npx marver perf --jam` counts the Mac app's live pictures - kept, failed, rendered instead - and lists a capture
+  whose live pictures failed among what went wrong.
+
+### Changed
+
+- **Opening a capture's thread always shows it.** Clicking an "Asks you" tile, or Open thread on a capture, now leaves
+  Play and brings back comment pins you hid with `⇧C` - the thread opened unseen under them before - and a resolved
+  thread opens read-only in the thread panel.
 
 ### Fixed
 
@@ -28,6 +50,13 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   `canvas/` folder beside your app, `.codex/hooks.json` and `.cursor/hooks.json` showed up in `git status` as new
   files: their line in `.git/info/exclude` named them from the repository's top, not from the canvas's folder. It
   names the folder now.
+
+### Upgrading
+
+`npm install @marver-design/marver@latest`, then `npx marver init` to refresh the agent instructions
+(`instructions/jam.md`: a capture's pictures are files to open, and what a live one shows). Restart each canvas; the
+Mac app picks up what a canvas can do as it starts. A published canvas wears your logo once you build and deploy it
+again.
 
 ## 0.28.0 - 2026-10-29
 
