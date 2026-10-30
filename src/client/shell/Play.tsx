@@ -164,8 +164,11 @@ export const playCtl = {
   setAt: (_at: string) => {},
   /** Apply a parsed play hash to the OPEN session - at, device, and theme alike. */
   sync: (_p: { at?: string; device?: string; theme?: string }) => {},
-  /** Leave play as its own Esc does (spec 28 A4.6 r4 #1: a notice's click opening something on the canvas) */
+  /** Leave play as its own Esc does: then back on the canvas at the frame you ended on */
   exit: () => {},
+  /** Leave play and nothing more - no way back to its frame (no fit, no board switch): a notice's click opening something
+   *  on the canvas owns what moves next (spec 28 A4.6 r4 #1; code review r2 P1). False on a board with no way out. */
+  leave: (): boolean => false,
 }
 
 export function PlayOverlay() {
@@ -353,14 +356,19 @@ function PlayInner() {
   useEffect(() => { postStage({ type: 'sh:laser', on: laser, inspect: laserInspect }) }, [laser, laserInspect])
   useEffect(() => { postStage({ type: 'sh:pick', on: commentMode, quiet: !useComments.getState().showAnchor }) }, [commentMode, playShowAnchor])
 
-  const exit = () => {
+  /** Play torn down, nothing more: false where there is no way out */
+  const leave = (): boolean => {
     // the lock caps disclosure: a locked board has no way out into other modes,
     // and a deep-link visit carries no door on the surface (URL still works)
-    if (noDoor) return
+    if (noDoor) return false
     frozenDeck = null
-    const { at } = useStore.getState().play ?? {}
     if (isHideUI()) toggleHideUI()             // never strand the canvas with its chrome hidden
     useStore.getState().setPlay(null)
+    return true
+  }
+  const exit = () => {
+    const { at } = useStore.getState().play ?? {}
+    if (!leave()) return
     // land back on the canvas at the frame you ended on
     const n = useStore.getState().nodes.find((x) => x.frame === at && !x.missing)
     if (n) { useStore.getState().select(n.key); setTimeout(() => canvasCtl.fitNode(n.key), 30) }
@@ -451,7 +459,8 @@ function PlayInner() {
       if (p.at && p.at !== cur.at) playCtl.setAt(p.at)
     }
     playCtl.exit = exit
-    return () => { playCtl.setAt = () => {}; playCtl.sync = () => {}; playCtl.exit = () => {} }
+    playCtl.leave = leave
+    return () => { playCtl.setAt = () => {}; playCtl.sync = () => {}; playCtl.exit = () => {}; playCtl.leave = () => false }
   }, [])
 
   // messages from the stage; source-validated against our one iframe

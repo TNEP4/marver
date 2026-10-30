@@ -521,6 +521,26 @@ describe('Play is left first when what opens is on the canvas (A4.6 r4 #1)', () 
     expect(await p.has(`.cm-card[data-thread="${t.thread}"]`)).toBe(true)
   })
 
+  it('Play on a frame of another board: left with no way back to that frame - a reply typed once the thread opened is kept, and the board (code review r2 P1)', async (ctx) => {
+    skip(ctx)
+    const p = await open()
+    const t = asking('main', { frame: 'demo/two', node: 'n-two' })
+    // Play over `main` on a frame only `other` holds: Esc's way back would read the boards and switch to `other`
+    await p.ev(`__mvStore.getState().setPlay({ at: 'demo/three', device: 'mobile', theme: 'light' }), 1`)
+    await p.until(`!!document.querySelector('.sh-play-stage')`)
+    await p.ev(`__q.gateBoard('other')`)
+    expect(await p.open(askItem('main', t))).toBe('handled')
+    expect(await p.ev(`__mvStore.getState().play`)).toBe(null)
+    const field = `.cm-card[data-thread="${t.thread}"] textarea`
+    await p.until(`!!document.querySelector('${field}')`)
+    await p.type(field, 'and a darker border')
+    // what a way back would have asked for lands now, if anything asked
+    await p.ev(`__q.board.release()`)
+    await new Promise((r) => setTimeout(r, 800))
+    expect([await p.board(), await p.ev(`__mvComments.getState().active`), await p.ev(`document.querySelector('${field}')?.value`), await p.ev(`__q.board.asked`)])
+      .toEqual(['main', t.thread, 'and a darker border', false])
+  })
+
   it('the same with words unsent: busy, Play kept, the words kept', async (ctx) => {
     skip(ctx)
     const p = await open()

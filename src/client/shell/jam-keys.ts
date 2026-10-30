@@ -201,16 +201,17 @@ export async function toBoard(board: string, alive?: Alive): Promise<boolean> {
   return (await switchFor(board, navigated(), alive)) && alive()
 }
 
-/** Play is left as its own Esc leaves it, then a frame passes for the layout (A4.6 r4 #1): what opens on the canvas -
- *  a thread card, a tile and its menu - is never drawn under the Play overlay, and the lane is folded there. False when
- *  `alive` failed, or when Play could not be left - a board locked to its mode has no way out (Play.tsx `noDoor`); the
- *  caller tells them apart by `alive()` and opens over Play instead. */
+/** Play is left, then a frame passes for the layout (A4.6 r4 #1): what opens on the canvas - a thread card, a tile and
+ *  its menu - is never drawn under the Play overlay, and the lane is folded there. Left with no way back to its frame
+ *  (playCtl.leave, not Esc's exit): Esc's return - a fit, or a switch to the board a frame of another board lives on -
+ *  would run outside the request, and land on another board over a reply typed after the thread opened (code review r2
+ *  P1). False when `alive` failed, or when Play could not be left - a board locked to its mode has no way out (Play.tsx
+ *  `noDoor`); the caller tells them apart by `alive()` and opens over Play instead. */
 async function leavePlay(alive: Alive): Promise<boolean> {
   if (!useStore.getState().play) return true
   const { playCtl } = await import('./Play.tsx')
   if (!alive()) return false
-  playCtl.exit()
-  if (useStore.getState().play) return false
+  if (!playCtl.leave() || useStore.getState().play) return false
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
   return alive()
 }
