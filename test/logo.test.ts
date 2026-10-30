@@ -195,7 +195,7 @@ describe('marver build publishes the logo by its bytes (A2.9)', () => {
 })
 
 /** A page's tab icons as a browser reads them: every `<link>` whose rel is `icon` or `shortcut icon`, however quoted. */
-const tabIcons = (html: string): string[] => [...html.matchAll(/<link\b[^>]*>/gi)].map((m) => m[0]).filter((l) => /\srel\s*=\s*["']?(?:shortcut\s+)?icon["'\s/>]/i.test(l))
+const tabIcons = (html: string): string[] => [...html.matchAll(/<link\b[^>]*>/gi)].map((m) => m[0]).filter((l) => /\srel\s*=\s*["']?\s*(?:shortcut\s+)?icon["'\s/>]/i.test(l))
 
 describe('the published shell and gate wear the repo\'s logo as their only tab icon (spec 28 A4.6 #46, marver 0.29.0)', () => {
   it('its icon line names the published logo by its type; anything else - none, another path, markup - writes nothing', () => {
@@ -223,12 +223,13 @@ describe('the published shell and gate wear the repo\'s logo as their only tab i
     expect(out).toContain('<link rel="manifest" href="/__mv/favicon/site.webmanifest" />')
   })
 
-  it('every tab icon goes however it is written - quotes, attribute order, "shortcut icon", two on a line; other links stay; no icon line, the logo at the head\'s end', () => {
+  it('every tab icon goes however it is written - quotes, padding, attribute order, "shortcut icon", two on a line; other links stay; no icon line, the logo at the head\'s end', () => {
     const html = [
       '<head>',
       '  <link rel=\'icon\' href=\'/a.ico\'>',
       '  <link href="/b.png" rel="shortcut icon" type="image/png">',
       '  <link rel=icon href=/c.png>',
+      '  <link rel=" icon " href="/e.ico">',
       '  <link rel="apple-touch-icon" href="/t.png">',
       '  <link rel="preload" href="/f.woff2" data-rel="icon">',
       '  <link rel="icon" href="/d.svg" /><link rel="stylesheet" href="/s.css">',

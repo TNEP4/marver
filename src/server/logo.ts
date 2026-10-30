@@ -86,9 +86,9 @@ export function logoIconLink(logo: string | undefined): string {
   return m ? `<link rel="icon" type="${LOGO_MIME[m[1] as LogoType]}" href="${logo}" />` : ''
 }
 
-/** A tab icon's `<link>`, its line's indent and line end with it: `rel="icon"` or `"shortcut icon"`, in any quotes and
- *  attribute order. `apple-touch-icon` and the manifest are no tab icon. */
-const TAB_ICON = /[ \t]*<link\b(?=[^>]*\srel\s*=\s*["']?(?:shortcut\s+)?icon["'\s/>])[^>]*>[ \t]*\r?\n?/gi
+/** A tab icon's `<link>`, its line's indent and line end with it: `rel="icon"` or `"shortcut icon"`, in any quotes,
+ *  padded or not, and attribute order. `apple-touch-icon` and the manifest are no tab icon. */
+const TAB_ICON = /[ \t]*<link\b(?=[^>]*\srel\s*=\s*["']?\s*(?:shortcut\s+)?icon["'\s/>])[^>]*>[ \t]*\r?\n?/gi
 
 /**
  * A page's HTML with the logo's icon as its only tab icon (A4.6 #46; release review P2): the logo's line takes the
