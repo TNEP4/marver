@@ -10,17 +10,22 @@
  *   only, and another tab active with the window focused, a post; working and session; `kill -9` giving one Stopped
  *   post and its count until the tab is shown, a SIGTERM none; a click on a never-shown tab delivered to its
  *   document after its hello; a refused notice raising the pill; the offer once, Turn On writing
- *   `notifications: true` and journaling one create and two canvases summed on the badge, Not now across a relaunch.
+ *   `notifications: true` and journaling one create and two canvases summed on the badge, Not now across a relaunch;
+ * - a click after its tab was unloaded by main's own guard: delivered once, to the document that reopened it; and a
+ *   stale click on a REAL canvas (`marver dev` from this branch's dist/): the question answered between the post and
+ *   the click, the shell answering `stale` with the thread open as it stands.
  *
- * Unloaded tabs' delivery and the held click's 15 s are tabs.ts's (test/unit/tabs.test.ts); a stale click's
- * resolution is the shell's (the package's browser cases).
+ * The held click's 15 s is tabs.ts's (test/unit/tabs.test.ts); a stale click's every rule is the shell's (the
+ * package's browser cases).
  */
-import { spawn, type ChildProcess } from 'node:child_process'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
+import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { appendEvents } from '../../../src/server/comments.ts'
 import type { LiveItem } from '../../../src/shared/app-api.ts'
+import { fixtureRoot, startDev, type Dev } from '../../../test/dev-server.ts'
 import type { TabsSnapshot, TabView } from '../../src/shared/channels.ts'
 import { launchPW, type AppRun } from '../harness/app.ts'
 import { runSlotBase, testEnv, type TestEnv } from '../harness/env.ts'
@@ -134,7 +139,15 @@ describe('the strip\'s marks (A4.6 #19)', () => {
 
 interface Line { op: 'create' | 'post' | 'badge'; n: number; title?: string; body?: string }
 interface Pill { rev: number; kind: string; short: string; lead?: string }
-interface TabRow { id: string; kind: string; name: string; open: boolean; reg: { state: string; instance: string } | null }
+interface TabRow { id: string; kind: string; name: string; open: boolean; reg: { state: string; instance: string; port?: number } | null }
+/** what the `state` hook says of a tab beside TabRow: its document, what it reported, its unload */
+interface TabState extends TabRow {
+  doc: { doc?: string; trusted: boolean; lifted?: boolean } | null
+  reports: { hello?: { page: string }; busy?: unknown }
+  unload: { phase: string } | null
+  hasView: boolean
+  loading: boolean
+}
 
 const slotBase = runSlotBase()
 /** a 0.29 shell as far as main can tell: hello and busy at once, and a notice's click reported back to the server */
@@ -145,10 +158,10 @@ const ask = (title: string): LiveItem => { k += 1; return { id: `ask:${k.toStrin
 
 function app() {
   const o = { env: undefined as unknown as TestEnv, run: undefined as unknown as AppRun, fakes: [] as FakeCanvas[], children: [] as ChildProcess[] }
-  const launch = async (config?: Record<string, unknown>, env?: TestEnv) => {
+  const launch = async (config?: Record<string, unknown>, env?: TestEnv, timings: Record<string, unknown> = {}) => {
     o.env = env ?? testEnv(slotBase)
     if (config) writeFileSync(join(o.env.home, 'config.json'), JSON.stringify(config))
-    o.run = await launchPW(o.env, { extraEnv: { MARVER_APP_TIMINGS: TIMINGS } })
+    o.run = await launchPW(o.env, { extraEnv: { MARVER_APP_TIMINGS: JSON.stringify({ ...JSON.parse(TIMINGS), ...timings }) } })
   }
   const call = <T = unknown>(n: string, a?: unknown) => o.run.call<T>(n, a)
   const journal = async () => (await call<{ journal: Line[] }>('notices')).journal
@@ -323,4 +336,101 @@ describe('before Turn On, the offer, Turn On and the badge (A4.6 #21, #22, #26)'
     expect((await a.pill())?.kind).not.toBe('offer')
     expect(await a.journal()).toEqual([])
   })
+})
+
+// ---------------------------------------------------------------------------------------------------------------
+// A click after an unload, and a stale click on a real canvas (A4.6 #29, #30, #52; code review r1 P2)
+
+/** SHELL, each document saying which it is: `doc-<page>` once heard, `open-<item>-<page>` for each item it takes */
+const DOC_SHELL = `var A = window.marverApp; if (A) { try { var page = 'needs-' + Math.random().toString(36).slice(2, 12); A.hello({ version: '0.29.0-fake', board: 'main', page: page }); A.busy({ busy: false, unsaved: false, why: [] }); say('doc-' + page); if (A.onOpen) A.onOpen(function (p) { say('open-' + p.id + '-' + page); return 'handled' }) } catch (e) {} }`
+const ROOT = resolve(import.meta.dirname, '..', '..', '..')
+const FRAME = (t: string) => `export const meta = { title: '${t}', viewport: 'mobile' }\nexport default () => <main style={{ padding: 24 }}><h1>${t}</h1></main>\n`
+
+describe('a click after an unload, and a stale click (A4.6 #29, #30, #52)', () => {
+  const a = app()
+  // a tab may be unloaded as soon as it is hidden: the guard's rule, not its 10 s, is under test
+  beforeAll(async () => { await a.launch({ notifications: true }, undefined, { unloadMinHiddenMs: 0 }) }, 60_000)
+  afterAll(async () => { await a.close(); a.o.env?.cleanup() })
+  const tabOf = async (id: string) => (await a.call<{ tabs: TabState[] }>('state')).tabs.find((t) => t.id === id)
+  /** main's journal, after line `seq` (the journal drops its oldest lines: never an index) */
+  const log = (afterSeq = 0) => a.call<{ seq: number; topic: string; data: Record<string, unknown> }[]>('log', { afterSeq })
+  const lastSeq = async () => (await log()).at(-1)?.seq ?? 0
+
+  it('a click after its tab was unloaded: the tab reopens, and only the document that replaced the unloaded one takes the item, once', async () => {
+    const { f, id } = await a.canvas({ slot: 11, name: 'Sleepy', script: DOC_SHELL })
+    const pages = () => f.requests.filter((r) => r.path.startsWith('/__mv/test/doc-')).map((r) => r.path.slice('/__mv/test/doc-'.length))
+    // shown once: its document admitted and heard
+    await a.call('activate', { id })
+    const first = await until('its first document heard', async () => { const t = await tabOf(id); return t?.doc?.trusted && t.doc.lifted && t.reports.hello && t.reports.busy && !t.loading && pages().includes(t.reports.hello.page) ? t : null })
+    // hidden, then unloaded as pressure unloads one: main's own guard operation, its view destroyed
+    await a.call('activate', { id: 'home' })
+    await until('a candidate', async () => (await a.call<{ tabs: { id: string; why: string | null }[] }>('memory:state')).tabs.find((t) => t.id === id)?.why === null || null)
+    expect(await a.call('guard', { id, action: { kind: 'unload', reason: 'warn' } })).toBe('done')
+    await until('unloaded', async () => { const t = await tabOf(id); return t?.unload?.phase === 'unloaded' && !t.hasView ? t : null })
+    // its notice, clicked with the window away
+    await a.away()
+    const q = ask('After the unload')
+    f.setLive({ items: [q] })
+    const p = await until('the post', async () => (await a.posts()).find((x) => x.body === 'Asks you: After the unload'))
+    const seq = await lastSeq()
+    expect(await a.call('notices:fire', { n: p.n, event: 'click' })).toBe(true)
+    await until('its tab active', async () => (await a.call<{ active: string }>('state')).active === id || null)
+    const opens = () => f.requests.filter((r) => r.path.startsWith(`/__mv/test/open-${q.id}-`)).map((r) => r.path)
+    await until('the shell opened it', async () => opens().length > 0 || null)
+    await sleep(500)
+    // a new document, admitted and heard after the reopen: the one item went to it alone
+    const now = (await tabOf(id))!
+    const page = now.reports.hello?.page
+    expect([now.doc?.doc === first.doc?.doc, page === first.reports.hello?.page, pages().includes(page!)]).toEqual([false, false, true])
+    expect(opens()).toEqual([`/__mv/test/open-${q.id}-${page}`])
+    const ls = await log(seq)
+    expect(ls.filter((l) => l.topic === 'open' && l.data.id === q.id && 'sent' in l.data).map((l) => [l.data.doc, l.data.sent])).toEqual([[now.doc?.doc, true]])
+    expect(ls.filter((l) => l.topic === 'bridge' && l.data.ch === 'opened' && l.data.id === q.id).map((l) => [l.data.event, l.data.doc, l.data.result])).toEqual([['accepted', now.doc?.doc, 'handled']])
+  }, 60_000)
+
+  it('a stale click on a real canvas: the question answered between the post and the click - stale, its thread open as it stands', async () => {
+    // the package's dist/ from this branch: the shell that resolves the click is the one these commits ship
+    const b = spawnSync(process.execPath, [join(ROOT, 'node_modules', 'tsdown', 'dist', 'run.mjs')], { cwd: ROOT, encoding: 'utf8', timeout: 180_000 })
+    if (b.status !== 0) throw new Error(`the package build failed: ${b.stderr || b.stdout}`)
+    const root = fixtureRoot('mv-app-stale-', {
+      'design/config.ts': `export default { share: { name: 'Stale canvas' } }\n`,
+      'design/scenes/demo/one.tsx': FRAME('One'),
+      'design/boards/main.json': JSON.stringify({ version: 1, name: 'main', order: 0, auto: false, nodes: [{ key: 'n-one', frame: 'demo/one', x: 0, y: 0, w: 390, h: 844 }] }),
+    })
+    let dev: Dev | null = null
+    try {
+      dev = await startDev(root, { env: { MARVER_HOME: a.o.env.home, MARVER_SLOT_BASE: String(slotBase) } })
+      const tab = await until('the canvas tab', async () => (await a.tabs()).find((t) => t.reg?.port === dev!.port && t.reg.state === 'ready'), 20_000)
+      const id = tab.id
+      await until('its stream', async () => (await a.call<{ instance: string; held: boolean }[]>('live')).find((s) => s.instance === tab.reg!.instance && s.held))
+      // shown once, so its shell is up when the click comes; then the window away
+      await a.call('activate', { id })
+      await until('the shell', async () => (await a.call<boolean>('exec', { target: id, js: `!!window.__mvStore && !!window.__mvComments && window.__mvStore.getState().nodes.length === 1` })) || null, 60_000)
+      await a.call('activate', { id: 'home' })
+      await a.away()
+      // Marver asks in a thread on the frame: a post
+      const dir = join(root, 'design', 'comments')
+      const thread = 't-stale', at = Date.now()
+      appendEvents(dir, 'main', [
+        { id: 'e-create', ts: at, type: 'create', commentId: thread, board: 'main', frame: 'demo/one', nodeKey: 'n-one', author: { name: 'Nic' }, body: 'make it blue' },
+        { id: 'e-ask', ts: at + 1, type: 'reply', commentId: 'r-ask', parentId: thread, board: 'main', agent: true, asks: true, body: 'Which blue?' },
+      ])
+      const p = await until('the post', async () => (await a.posts()).find((x) => x.body === 'Asks you: Which blue?'), 15_000)
+      // answered before the click: the stream drops it, and the tab no longer says it needs you
+      appendEvents(dir, 'main', [{ id: 'e-answer', ts: at + 2, type: 'reply', commentId: 'r-answer', parentId: thread, board: 'main', author: { name: 'Nic' }, body: 'the light one' }])
+      await until('the need gone', async () => { const x = await a.strip(id); return !!x && !/need/.test(x.label ?? 'need') }, 15_000)
+      const seq = await lastSeq()
+      expect(await a.call('notices:fire', { n: p.n, event: 'click' })).toBe(true)
+      await until('its tab active', async () => (await a.call<{ active: string }>('state')).active === id || null)
+      const opened = await until('the shell\'s answer', async () => (await log(seq)).find((l) => l.topic === 'bridge' && l.data.ch === 'opened'), 20_000)
+      expect([opened.data.event, opened.data.result]).toEqual(['accepted', 'stale'])
+      // the thread as it stands: its card drawn on the canvas, the answer its last word
+      const surface = await a.call<{ active: string | null; card: boolean; last: string }>('exec', { target: id, js: `(() => { const c = document.querySelector('.cm-card[data-thread="${thread}"]'); return { active: window.__mvComments.getState().active, card: !!c, last: c ? c.textContent : '' } })()` })
+      expect([surface.active, surface.card]).toEqual([thread, true])
+      expect(surface.last).toContain('the light one')
+    } finally {
+      await dev?.stop()
+      rmSync(root, { recursive: true, force: true })
+    }
+  }, 300_000)
 })
