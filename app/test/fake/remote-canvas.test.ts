@@ -89,6 +89,7 @@ describe('the remote harness (A4.6 #50)', () => {
     const login = await get('id', new URL(String(start.headers.location)).pathname + new URL(String(start.headers.location)).search)
     expect(login.headers.location).toBe(`https://pilot.canvas.test:${r.port}/__mv/id/finish#code=abc&next=${encodeURIComponent('/#/b/plans')}`)
     expect(String((await get('pilot', '/__mv/id/finish')).body)).toContain('location.replace')
+    expect(String((await get('pilot', '/__mv/id/finish')).body)).toContain("'; Path=/; ")   // the whole canvas's, not /__mv/id's
     r.finishStalls = true
     expect(String((await get('pilot', '/__mv/id/finish')).body)).not.toContain('location.replace')
     r.finishStalls = false

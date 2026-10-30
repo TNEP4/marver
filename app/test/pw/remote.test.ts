@@ -195,7 +195,9 @@ describe('the sign-in chain, Home and a relaunch (A4.6 #39, #47, r1 #9)', () => 
 
   it('a sign-in through the identity host and back: the tab stays the canvas\'s, its place never a sign-in URL, the board kept', async () => {
     expect(await open(r.url('pilot', '/#/b/plans'))).toEqual({ ok: true })
-    await w.until((x) => { const t = shared(x, 'pilot'); return !!t?.doc?.lifted && t.doc.url === r.url('pilot', '/#/b/plans') }, 20_000, 'signed in, back on the board')
+    // the board commits first (and lifts) before its script sends it to sign in: back on it means after the login,
+    // through finish (the redirects commit nothing) - its third commit
+    await w.until((x) => { const t = shared(x, 'pilot'); return r.hits('id', '/login') > 0 && !!t?.doc?.lifted && t.doc.commits >= 3 && t.doc.url === r.url('pilot', '/#/b/plans') }, 20_000, 'signed in, back on the board')
     const t = await now('pilot')
     expect(r.hits('id', '/login')).toBe(1)
     expect(t).toMatchObject({ name: host('pilot'), remote: { origin: r.origin('pilot'), url: r.url('pilot', '/#/b/plans') } })
@@ -420,7 +422,9 @@ describe('favicons (A2.4, A4.6 #46, #51)', () => {
 
 describe('the overflow: twenty local canvases and two shared ones at 720 px (A2.10, A4.6 #39, #51)', () => {
   const strip = <T>(js: string) => w.run.call<T>('exec', { target: 'strip', js })
-  beforeAll(async () => { w = await launchWindow('pw', { extraEnv: r.env }) })
+  // under the fake trust no bridge hears the strip's app:ready, so main would send it nothing: the hook stands in for
+  // that ready, and the strip draws main's own snapshots (its sends back are refused: » is asked through tabsMore)
+  beforeAll(async () => { w = await launchWindow('pw', { extraEnv: r.env }); await w.run.call('pageReady', { target: 'strip' }) })
   afterAll(async () => { await w?.close() })
 
   it('the shared ones last in opening order, behind »; ⌘9 the last of them; one chosen from » shows; » counts them', async () => {

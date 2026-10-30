@@ -18,7 +18,9 @@
  *   `/favicon-flaky.png`: a 500 at its first request on each host, the PNG after;
  * - a published canvas's icons: `/__mv/logo.svg` (the repo's logo, `LOGO_SVG`) and Marver's `/__mv/favicon/*` (the PNG);
  * - the sign-in chain as Marver ID's: `/__mv/id/start?next=<path>` 302s to `id.canvas.test`'s `/login`, which 302s
- *   back to `/__mv/id/finish#code=…&next=<path>`, whose page sets the session cookie and replaces itself with `next`
+ *   back to `/__mv/id/finish#code=…&next=<path>`, whose page sets the session cookie (`Path=/`: without it the cookie
+ *   would be `/__mv/id`'s alone, and the canvas, never seeing it, would sign in again for good) and replaces itself
+ *   with `next`
  *   - unless `finishStalls`, when it stays there (a sign-in cut short); with `loginStalls` the login is a page of its
  *   own, wearing `id.canvas.test`'s favicon;
  * - `/download`: an attachment; `/to-http`: a 302 to http; `/no-content`: a 204; `/about`: a page that is not the shell;
@@ -182,7 +184,7 @@ export async function startRemoteCanvas(): Promise<RemoteCanvas> {
       }
       case '/__mv/id/finish':
         return void html(`<!doctype html><title>Signing in</title><script>
-var p = new URLSearchParams(location.hash.slice(1)); document.cookie = 'mvsession=' + p.get('code') + '; Max-Age=31536000; Secure; SameSite=Lax';
+var p = new URLSearchParams(location.hash.slice(1)); document.cookie = 'mvsession=' + p.get('code') + '; Path=/; Max-Age=31536000; Secure; SameSite=Lax';
 ${h.finishStalls ? '' : "location.replace(p.get('next') || '/')"}
 </script>`)
     }
