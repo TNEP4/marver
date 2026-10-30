@@ -71,7 +71,7 @@ export const KNOWN_FAILABLE = {
     measured: (r) => r.memory?.totalMB,
     budget: (r) => r.memory?.budgetMB ?? 200,
     unit: 'MB',
-    decision: 'Nic, 24 Oct: app 0.2 ships with it, the 200 MB limit unchanged; investigated later',
+    decision: 'Nic, 24 Oct: app 0.2 ships with it, the 200 MB limit unchanged; 29 Oct: it no longer blocks (A3 closed); investigated later',
   },
 }
 
