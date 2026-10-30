@@ -25,6 +25,7 @@ import { clearMoreDraft } from './jam-panel.tsx'
 import { CONFIG, PUBLISHED, SOURCE_REVEALED, useStore } from './store.ts'
 import { ALL_SCENES } from '../../shared/board-tree.ts'
 import { holdsReload } from './api.ts'
+import { navigated, switchFor } from './goto.ts'
 import { unsavedWhen, workChanged } from './unsaved.ts'
 
 export interface KeyIn { key: string; shift?: boolean; alt?: boolean; meta?: boolean; ctrl?: boolean }
@@ -185,6 +186,21 @@ const drawn = (sel: string) => () => !!document.querySelector(sel)
 /** A card's status popover, open (jam-ui.tsx TagStatus): its run's controls on the page. */
 const statusOpen = (card: string) => `.cm-tstat.on[data-jam-card="${CSS.escape(card)}"]`
 
+/** Another board (A4.6 #30). A request's switch commits only while its `alive` holds, read just before the board commits
+ *  (store.ts switchBoard): words typed while the board loads, a hidden tab, the deadline or a later click leave the board,
+ *  its draft and its open thread as they were - a hash set and left to the router would land whatever came after. A
+ *  click (no request) follows the board's link, as before. True once the board is shown. */
+export async function toBoard(board: string, alive?: Alive): Promise<boolean> {
+  if (!alive) {
+    location.hash = `#/b/${encodeURIComponent(board)}`
+    return waitFor(() => useStore.getState().board === board, always, waitMs({}, true))
+  }
+  if (!alive()) return false
+  // a stale overlay never survives into another board (App.tsx's router does the same)
+  if (useStore.getState().play) useStore.getState().setPlay(null)
+  return (await switchFor(board, navigated(), alive)) && alive()
+}
+
 /** Play is left as its own Esc leaves it, then a frame passes for the layout (A4.6 r4 #1): what opens on the canvas -
  *  a thread card, a tile and its menu - is never drawn under the Play overlay, and the lane is folded there. False when
  *  `alive` failed, or when Play could not be left - a board locked to its mode has no way out (Play.tsx `noDoor`); the
@@ -210,14 +226,16 @@ export async function openTile(id: string, o: { alive?: Alive } = {}): Promise<b
     ui.select(id)
     return openThreadAt(c.board, c.thread, { card: c, alive })
   }
+  // a request's card on another board: that board first, under the request (a click's reveal follows the link)
+  if (o.alive && c.board !== useStore.getState().board && !(await toBoard(c.board, o.alive))) return false
   ui.open({ kind: c.state === 'review' ? 'review' : c.kind === 'wrapup' ? 'wrapup' : 'capture', id })
-  reveal(c)
+  reveal(c, o.alive)
   return waitFor(() => useJamUi.getState().panel?.id === id && !!document.querySelector('[data-jam-focus]'), alive, waitMs(o))
 }
 
 /**
  * Open a thread where you can see it (spec 28 A4.6 #30, r1 #3, r2 #2, r3 #1) - one helper for notices and every path
- * that opens a thread. On another board, its link opens that board first - the legacy all-scenes log is no board a link
+ * that opens a thread. On another board, that board opens first (toBoard) - the legacy all-scenes log is no board a link
  * lands on (App.tsx sends it elsewhere), so its threads open on the board shown. An open thread whose frame a node of
  * the board hosts shows in its thread card: Play left first, comments hidden by Shift+C turned on (a hidden layer draws
  * nothing), then revealed; Play that cannot be left (a board locked to its mode) keeps the canvas under it, so the
@@ -231,11 +249,7 @@ export async function openThreadAt(board: string, thread: string, o: { card?: Ja
   const alive = o.alive ?? always
   const away = board !== ALL_SCENES && board !== useStore.getState().board
   const ms = waitMs(o, away)
-  if (away) {
-    if (!alive()) return false
-    location.hash = `#/b/${encodeURIComponent(board)}`
-    if (!(await waitFor(() => useStore.getState().board === board, alive, ms))) return false
-  }
+  if (away && !(await toBoard(board, o.alive))) return false
   const [{ revealThread }, { useComments }, { threadHostKey }] = await Promise.all([import('./Comments.tsx'), import('./comments-store.ts'), import('./keys.ts')])
   const find = () => useComments.getState().threads.find((t) => t.id === thread && (!t.board || t.board === board))
   // the board's comments may still be loading: known, or the time is up
@@ -253,7 +267,7 @@ export async function openThreadAt(board: string, thread: string, o: { card?: Ja
     if (!useComments.getState().show) { if (!alive()) return false; useComments.getState().setShow(true) }
     if (!alive()) return false
     if (o.status) useJamUi.getState().askStatus(o.status)
-    if (!revealThread(thread)) return false
+    if (!revealThread(thread, alive)) return false
     return ok(`.cm-card[data-thread="${CSS.escape(thread)}"]`)
   }
   const c = o.card
@@ -261,7 +275,7 @@ export async function openThreadAt(board: string, thread: string, o: { card?: Ja
     if (!alive()) return false
     useJamUi.getState().select(c.id)
     useJamUi.getState().open({ kind: 'capture', id: c.id })
-    reveal(c)
+    reveal(c, o.alive)
     return ok('[data-jam-readback]')
   }
   if (!t || !alive()) return false
@@ -297,14 +311,20 @@ export async function openRunControls(c: JamCard, o: { alive?: Alive } = {}): Pr
   return waitFor(drawn(`.sh-ctxmenu[data-menu="tile:${CSS.escape(c.id)}"]`), alive, waitMs(o))
 }
 
-/** Bring a card's frames into view beside the panel - on its own board (a frame link lands there). */
-export function reveal(c: JamCard) {
+/** Bring a card's frames into view beside the panel - on its own board (a frame link lands there). A request's `alive`
+ *  (A4.6 #30) is read again when the camera moves: one that ended meanwhile - a later click, a hidden tab, the deadline,
+ *  words typed - moves nothing, and its board is switched under it (toBoard), never by a link. */
+export function reveal(c: JamCard, alive?: Alive) {
   const s = useStore.getState()
   if (!c.frames.length) return
-  if (c.board !== s.board) { location.hash = `#/b/${encodeURIComponent(c.board)}?f=${c.frames.map(encodeURIComponent).join(',')}`; return }
+  if (c.board !== s.board) {
+    if (!alive) location.hash = `#/b/${encodeURIComponent(c.board)}?f=${c.frames.map(encodeURIComponent).join(',')}`
+    else void toBoard(c.board, alive).then((ok) => { if (ok) reveal(c, alive) })
+    return
+  }
   const keys = s.nodes.filter((n) => c.frames.includes(n.frame)).map((n) => n.key)
   // after the panel has drawn, so the fit measures it and lands the frames in the space right of it
-  if (keys.length) void import('./canvas/ctl.ts').then(({ canvasCtl }) => requestAnimationFrame(() => requestAnimationFrame(() => canvasCtl.fitNodes(keys))))
+  if (keys.length) void import('./canvas/ctl.ts').then(({ canvasCtl }) => requestAnimationFrame(() => requestAnimationFrame(() => { if (!alive || alive()) canvasCtl.fitNodes(keys) })))
 }
 
 /** The next capture to review after `from` (or the oldest), walking the lane left to right. */

@@ -60,6 +60,8 @@ const FAKE = (o: { onOpen: boolean }) => `(() => {
   const realFetch = window.fetch.bind(window)
   const q = window.__q = { view: { agent: 'claude', cards: [] }, n: 0, fail: false, commentsFail: false, hold: null, release: null, acts: [], posts: [], onAct: null }
   q.gate = () => { q.hold = new Promise((r) => { q.release = () => { q.hold = null; r(); return 1 } }); return 1 }
+  // one board's load held open: its GET waits until released; asked once it came, done once its answer went back
+  q.gateBoard = (name) => { const b = q.board = { name, asked: false, done: false }; b.held = new Promise((r) => { b.release = () => { b.held = null; r(); return 1 } }); return 1 }
   const json = (b, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } })
   window.fetch = async (input, init) => {
     const url = String(input && input.url ? input.url : input)
@@ -72,6 +74,7 @@ const FAKE = (o: { onOpen: boolean }) => `(() => {
       return json({ ok: true })
     }
     if (path.startsWith('/__mv/api/comments/') && method === 'GET') { if (q.hold) await q.hold; if (q.commentsFail) return json({ error: 'no' }, 500) }
+    if (q.board && path === '/__mv/api/boards/' + q.board.name && method === 'GET') { const b = q.board; b.asked = true; if (b.held) await b.held; const r = await realFetch(input, init); b.done = true; return r }
     if (path.startsWith('/__mv/api/comments/') && method === 'POST') q.posts.push(JSON.parse(init.body))
     return realFetch(input, init)
   }
@@ -586,6 +589,100 @@ describe('one request at a time, and only a read that succeeds counts (A4.6 r1 #
     // and through a click that resolves to nothing on this board
     expect(await p.open({ id: liveId('ask', 'main', 'nope', 'nope'), kind: 'ask', board: 'main', thread: 'nope', msg: 'nope' })).toBe('missing')
     expect(await p.ev(`__mvComments.getState().draft?.nodeKey`)).toBe('n-two')
+  })
+})
+
+describe('a board change under the request: it commits only while the request lives (A4.6 #30; code review r1 P1)', () => {
+  /** the held board's answer went back, and the time it takes a load to commit after it has passed */
+  const loaded = async (p: Awaited<ReturnType<typeof open>>) => { await p.until(`__q.board.done`); await new Promise((r) => setTimeout(r, 400)) }
+
+  it('words typed into an empty draft while the other board loads: busy, the board, the draft and its words kept', async (ctx) => {
+    skip(ctx)
+    const p = await open()
+    const t = asking('other', { frame: 'demo/three', node: 'n-three' })
+    // a draft pin with nothing typed yet: the click goes ahead
+    await p.ev(`__mvComments.getState().setDraft({ nodeKey: 'n-one', frame: 'demo/one', anchor: null }), 1`)
+    await p.until(`!!document.querySelector('.cm-draft textarea')`)
+    await p.ev(`__q.gateBoard('other')`)
+    const i = await p.ev(`__fake.start(${JSON.stringify(askItem('other', t))})`)
+    await p.until(`__q.board.asked`)
+    await p.type('.cm-draft textarea', 'this needs more room')
+    await p.ev(`__q.board.release()`)
+    expect(await p.ev(`__fake.result(${i})`)).toBe('busy')
+    await loaded(p)
+    expect([await p.board(), !!(await p.ev(`__mvComments.getState().draft`)), await p.ev(`document.querySelector('.cm-draft textarea')?.value`)]).toEqual(['main', true, 'this needs more room'])
+  }, 30_000)
+
+  it('the tab hidden while the other board loads: dropped, the board kept', async (ctx) => {
+    skip(ctx)
+    const p = await open()
+    const t = asking('other', { frame: 'demo/three', node: 'n-three' })
+    await p.ev(`__q.gateBoard('other')`)
+    const i = await p.ev(`__fake.start(${JSON.stringify(askItem('other', t))})`)
+    await p.until(`__q.board.asked`)
+    expect(await p.ev(`__fake.state('hidden')`)).toBeGreaterThan(0)
+    await p.ev(`__q.board.release()`)
+    expect(await p.ev(`__fake.result(${i})`)).toBe('dropped')
+    await loaded(p)
+    expect(await p.board()).toBe('main')
+  }, 30_000)
+
+  it('a newer notice for this board while the first one\'s board loads: the first dropped, the second handled, the board kept', async (ctx) => {
+    skip(ctx)
+    const p = await open()
+    const a = asking('other', { frame: 'demo/three', node: 'n-three' })
+    const b = asking('main', { frame: 'demo/two', node: 'n-two' })
+    await p.ev(`__q.gateBoard('other')`)
+    const first = await p.ev(`__fake.start(${JSON.stringify(askItem('other', a))})`)
+    await p.until(`__q.board.asked`)
+    const second = await p.ev(`__fake.start(${JSON.stringify(askItem('main', b))})`)
+    expect(await p.ev(`__fake.result(${second})`)).toBe('handled')
+    await p.ev(`__q.board.release()`)
+    expect(await p.ev(`__fake.result(${first})`)).toBe('dropped')
+    await loaded(p)
+    expect([await p.board(), await p.has(`.cm-card[data-thread="${b.thread}"]`)]).toEqual(['main', true])
+  }, 30_000)
+})
+
+describe('a request\'s queued camera moves end with it (A4.6 #30; code review r1 P2)', () => {
+  /** every fit the camera is asked for from now on, with what it was asked to fit */
+  const fits = `(() => { window.__fits = []; const c = __mvJamCanvas; for (const k of ['fitNode', 'fitNodes']) { const f = c[k]; c[k] = (...a) => { __fits.push(JSON.stringify([k, ...a])); return f(...a) } } return 1 })()`
+  const settle = () => new Promise((r) => setTimeout(r, 400))
+
+  it('a hosted thread: the request ends as its thread is made active - its 80 ms fit never lands', async (ctx) => {
+    skip(ctx)
+    const p = await open()
+    const t = asking('main', { frame: 'demo/two', node: 'n-two' })
+    await p.ev(fits)
+    await p.ev(`(() => { const off = __mvComments.subscribe((s) => { if (s.active === ${JSON.stringify(t.thread)}) { off(); __fake.state('hidden') } }); return 1 })()`)
+    expect(await p.open(askItem('main', t))).toBe('dropped')
+    await settle()
+    expect(await p.ev(`__fits.filter((f) => f.includes('n-two'))`)).toEqual([])
+  })
+
+  it('a review: the request ends as its panel opens - its frames\' fit, two frames later, never lands', async (ctx) => {
+    skip(ctx)
+    const p = await open('#/b/main', { view: { agent: 'claude', cards: [capture('rv-cam', { state: 'review', batch: 'b-cam', att: 1 })] } })
+    await p.ev(fits)
+    await p.ev(`(() => { const off = __mvJamUi.subscribe((s) => { if (s.panel?.id === 'rv-cam') { off(); __fake.state('hidden') } }); return 1 })()`)
+    expect(await p.open({ id: liveId('review', 'rv-cam', 1), kind: 'review', board: 'main', cards: ['rv-cam'], batch: 'b-cam', occ: 1 })).toBe('dropped')
+    await settle()
+    expect(await p.ev(`__fits.filter((f) => f.includes('n-one'))`)).toEqual([])
+  })
+
+  it('a later notice: the first one\'s queued fit never lands after the second opens', async (ctx) => {
+    skip(ctx)
+    const p = await open('#/b/main', { view: { agent: 'claude', cards: [capture('rv-two', { state: 'review', batch: 'b-two', att: 1, frames: ['demo/one'] })] } })
+    const t = asking('main', { frame: 'demo/two', node: 'n-two' })
+    await p.ev(fits)
+    // the second notice comes the moment the first's thread is made active, before its camera moves
+    const second = { id: liveId('review', 'rv-two', 1), kind: 'review', board: 'main', cards: ['rv-two'], batch: 'b-two', occ: 1 }
+    await p.ev(`(() => { const off = __mvComments.subscribe((s) => { if (s.active === ${JSON.stringify(t.thread)}) { off(); window.__second = __fake.start(${JSON.stringify(second)}) } }); return 1 })()`)
+    expect(await p.open(askItem('main', t))).toBe('dropped')
+    expect(await p.ev(`__fake.result(__second)`)).toBe('handled')
+    await settle()
+    const asked = await p.ev(`__fits`) as string[]
+    expect([asked.some((f) => f.includes('n-one')), asked.some((f) => f.includes('n-two'))]).toEqual([true, false])
   })
 })
 

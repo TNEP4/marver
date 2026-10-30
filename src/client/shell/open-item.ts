@@ -17,7 +17,7 @@ import { LIVE_KINDS, type OpenItem, type OpenResult } from '../../shared/app-api
 import { typedUnsent } from './api.ts'
 import { useComments } from './comments-store.ts'
 import { useJamCapture } from './jam-capture.ts'
-import { openRunControls, openThreadAt, openTile, type Alive } from './jam-keys.ts'
+import { openRunControls, openThreadAt, openTile, toBoard, type Alive } from './jam-keys.ts'
 import { useJamQueue } from './jam-queue.ts'
 import { resolveItem, type Target } from './open-resolve.ts'
 import { fetchBoardNames, useStore } from './store.ts'
@@ -57,12 +57,9 @@ export async function openLiveItem(p: OpenItem): Promise<OpenResult> {
   const found = resolveItem(p, useComments.getState().threads, queue === true ? useJamQueue.getState().cards ?? [] : null)
   if (found === 'unread') return gaveUp()
   if (found === 'missing') {
-    // only its board opens, when it exists
+    // only its board opens, when it exists - its switch under the request, as every move here
     const exists = p.board === useStore.getState().board || !!(await inTime(fetchBoardNames()))?.includes(p.board)
-    if (exists && p.board !== useStore.getState().board) {
-      if (!alive()) return gaveUp()
-      location.hash = `#/b/${encodeURIComponent(p.board)}`
-    }
+    if (exists && p.board !== useStore.getState().board && !(await toBoard(p.board, alive))) return gaveUp()
     return 'missing'
   }
   return (await openTarget(p.board, found.target, alive)) ? found.result : gaveUp()

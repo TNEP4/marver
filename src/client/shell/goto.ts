@@ -72,9 +72,10 @@ export const isLatest = (seq: number): boolean => seq === gotoSeq
  *  notification's View: the switch is navigation `nav`'s (a new one, unless the caller took it at its own start, before
  *  a lookup), and true only once it landed with nothing newer since. What the caller does on the board - select, set a
  *  mode, enter play, move the camera - waits for true: a switch a newer navigation cancelled comes back too, and may
- *  find the board it asked for, the newer one's by then. */
-export async function switchFor(board: string, nav: number = navigated()): Promise<boolean> {
-  await useStore.getState().switchBoard(board)
+ *  find the board it asked for, the newer one's by then. `mayCommit`: the caller's own condition, read just before the
+ *  board commits - false keeps the board shown (a notice's request, jam-keys.ts toBoard). */
+export async function switchFor(board: string, nav: number = navigated(), mayCommit?: () => boolean): Promise<boolean> {
+  await useStore.getState().switchBoard(board, mayCommit)
   return isLatest(nav) && useStore.getState().board === board
 }
 /** The camera to a node once it is drawn - unless a newer navigation has it by then. */

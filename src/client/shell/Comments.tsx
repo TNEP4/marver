@@ -986,8 +986,9 @@ export function IdentityDialog() {
   )
 }
 
-/** Open a thread by id: activate, select its node, fit the camera. True on success. */
-export function revealThread(c: string): boolean {
+/** Open a thread by id: activate, select its node, fit the camera. True on success. `alive` (a notice's request, A4.6
+ *  #30) is read again when the camera moves: a request that ended meanwhile moves nothing. */
+export function revealThread(c: string, alive: () => boolean = () => true): boolean {
   const t = useComments.getState().threads.find((t) => t.id === c)
   if (!t) return false
   // resolve the host BEFORE activating: a thread whose frame is not on this board
@@ -996,7 +997,7 @@ export function revealThread(c: string): boolean {
   if (!key) return false
   useComments.getState().setActive(c)
   useStore.getState().select(key)
-  setTimeout(() => canvasCtl.fitNode(key), 80)
+  setTimeout(() => { if (alive()) canvasCtl.fitNode(key) }, 80)
   return true
 }
 

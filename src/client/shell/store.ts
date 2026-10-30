@@ -667,7 +667,9 @@ interface State {
   setSelectedTheme(theme: string): void
   setDeviceView(name: string | null): void
   resizeSelected(name: string | null): void
-  switchBoard(name: string): Promise<void>
+  /** `mayCommit`, read last before the new board commits: false leaves the board shown as it is (a notice's request,
+   *  jam-keys.ts toBoard) */
+  switchBoard(name: string, mayCommit?: () => boolean): Promise<void>
   /** what the sidebar labels boards by: slug → title, off the last tree read */
   boardTitles: Record<string, string>
   /** what the sidebar draws beside a board: its type and status (spec 20), off the last tree read */
@@ -1194,7 +1196,7 @@ export const useStore = create<State>((set, get) => {
       return true
     },
 
-    async switchBoard(name) {
+    async switchBoard(name, mayCommit) {
       const mySwitch = ++switchSeq             // also cancels any pending switch (incl. re-clicking the current board)
       switchCalls++
       recorderHooks.cut(switchRequest, 'superseded')
@@ -1224,6 +1226,8 @@ export const useStore = create<State>((set, get) => {
       for (let i = 0; i < 5 && get().dirty && ok; i++) { clearTimeout(saveTimer); ok = await get().save() }
       if (mySwitch !== switchSeq) return recorderHooks.cut(request, 'superseded')
       if (get().dirty) { recorderHooks.cut(request, 'unsaved'); get().toast('current board could not be saved - staying here'); return }
+      // the caller's own condition, read last: words typed while the board loaded, or its request ended, keep this board
+      if (mayCommit && !mayCommit()) return recorderHooks.cut(request, 'superseded')
       clearTimeout(saveTimer)                  // a scheduled-but-clean timer must not fire against the new board
       ++loadSeq                                // invalidate any in-flight boot of the old board
       recorderHooks.cut(bootRequest, 'superseded')
