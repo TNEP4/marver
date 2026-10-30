@@ -40,9 +40,10 @@ export interface LiveInput {
 export const liveId = (kind: LiveKind, ...parts: (string | number)[]): string =>
   `${kind}:${createHash('sha256').update(parts.map(String).join('\0')).digest('hex').slice(0, 20)}`
 
-/** One line of at most `max` UTF-16 units: whitespace collapsed, control characters gone, never cut inside a pair. */
+/** One line of at most `max` UTF-16 units: whitespace collapsed, control characters gone, never cut inside a pair. A
+ *  log is data: a body that is not a string (a hand edit, a dev POST) reads as none, never stopping the stream. */
 export function oneLine(s: string | undefined, max: number = LIVE_BOUNDS.title): string {
-  const t = (s ?? '').replace(/\s+/g, ' ').replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim()
+  const t = (typeof s === 'string' ? s : '').replace(/\s+/g, ' ').replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim()
   if (t.length <= max) return t
   const cut = t.slice(0, max)
   return /[\ud800-\udbff]$/.test(cut) ? cut.slice(0, -1) : cut
