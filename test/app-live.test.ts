@@ -96,6 +96,14 @@ describe('the selector: what waits on the owner (A4.6 #7, #8, #10)', () => {
     expect(b.counts.failed).toBe(1)
   })
 
+  it('a failed batch from a journal older than the counters (no `failures`, no `att`) is one item too, its occurrence 0', () => {
+    const b = liveSnapshot(input({ cards: [card('c1', { state: 'failed', batch: 'b0' }), card('c2', { state: 'failed', batch: 'b0' }), card('c3', { state: 'failed' })] }))
+    expect(b.items.find((i) => i.batch === 'b0')).toMatchObject({ id: liveId('failed', 'b0', 0), kind: 'failed', cards: ['c1', 'c2'], occ: 0 })
+    // a card refused before it ran (no batch) stays its own
+    expect(b.items.find((i) => !i.batch)).toMatchObject({ id: liveId('failed', 'c3', 0), cards: ['c3'], occ: 0 })
+    expect(b.counts.failed).toBe(2)
+  })
+
   it('progress and a re-stall (stalled, Give it back, stalled again) give a new id under the same gen', () => {
     const run = (stalls: number, state: 'stalled' | 'claimed' = 'stalled') => card('c1', { state: 'working', batch: 'b1', runner: { kind: 'session', agent: 'claude', batch: 'b1', gen: 4, state, stalls } })
     const first = one(liveSnapshot(input({ cards: [run(1)] })))

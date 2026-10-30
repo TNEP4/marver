@@ -92,10 +92,11 @@ export function liveSnapshot(input: LiveInput): LiveBody {
   }
 
   // failed (#10): a run's failed cards are one item, named by its batch and how many times it failed; a card that
-  // failed with no run (refused before it ran) its own, by its card and its attempts
+  // failed with no run (refused before it ran: a requeued card has no batch, queue.ts requeue) its own, by its card and
+  // its attempts. The batch alone says which: a journal from before the counters has none, and an absent one reads 0 (#9)
   const failed = new Map<string, ViewCard[]>()
   for (const c of cards.filter((x) => x.state === 'failed').sort(byMade)) {
-    const k = c.batch && c.fails ? `b\0${c.batch}` : `c\0${c.id}`
+    const k = c.batch ? `b\0${c.batch}` : `c\0${c.id}`
     failed.set(k, [...(failed.get(k) ?? []), c])
   }
   for (const [k, group] of failed) {

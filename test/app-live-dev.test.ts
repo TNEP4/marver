@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { CLI, fixtureRoot, startDev, type Dev } from './dev-server.ts'
 import { appProof, liveProof } from '../src/server/proof.ts'
 import { LIVE_WIRE, type LiveEvent } from '../src/shared/app-api.ts'
-import { liveSnapshot } from '../src/server/app-live.ts'
+import { liveId, liveSnapshot } from '../src/server/app-live.ts'
 import { liveSources } from '../src/server/plugin.ts'
 import { appendEvents, type CommentEvent } from '../src/server/comments.ts'
 import { createJam, type JamHooks } from '../src/server/jam/daemon.ts'
@@ -274,6 +274,29 @@ describe('Jam through the real adapters, in this process (A4.6 #52 dev, r2 #3)',
     expect([failed.attempts, failed.failures]).toEqual([2, 1])
     const i = w.live().items.find((x) => x.kind === 'failed')!
     expect(i).toMatchObject({ batch: failed.batchId, occ: 1, thread, title: '@marver make it blue' })
+  }, 30_000)
+
+  it('a failed batch of two cards in a journal from before the counters - no `failures`, no `att` - is one item listing both (A4.6 #9, #10)', async () => {
+    const w = workspace()
+    const jam = createJam(w.root, { ...CFG, runner: 'background', session: false, context: 'fresh' }, agent('fail'), undefined, { work })
+    // two tags on one frame, queued together: one run
+    const first = tag(w.root, w.dir, '@marver make it blue'), second = tag(w.root, w.dir, '@marver and the border')
+    await jam.tick(); jam.stop()
+    const { batches } = jam.snapshot()
+    // (each card failing counts one: an id is compared, never counted - A4.6 #9)
+    expect([batches.length, batches[0].members.length, batches[0].failures]).toEqual([1, 2, 2])
+    // the same journal as a 0.28 canvas wrote it
+    const file = join(w.root, 'design', '.local', 'jam-jobs.json')
+    const j = JSON.parse(readFileSync(file, 'utf8'))
+    for (const b of j.batches) delete b.failures
+    for (const c of j.cards) delete c.att
+    writeFileSync(file, JSON.stringify(j))
+    const older = createJam(w.root, { ...CFG, runner: 'background', session: false, context: 'fresh' }, agent('fail'), undefined, { work })
+    jamLive.view = () => older.view()
+    const b = w.live()
+    expect(b.items.filter((x) => x.kind === 'failed')).toEqual([expect.objectContaining({ id: liveId('failed', batches[0].batchId, 0), batch: batches[0].batchId, occ: 0, cards: expect.arrayContaining([j.cards.find((c: { thread: string }) => c.thread === first).id, j.cards.find((c: { thread: string }) => c.thread === second).id]) })])
+    expect(b.counts.failed).toBe(1)
+    older.stop()
   }, 30_000)
 
   /** A daemon with a Jam session and one Claude Code session connected (this process), as jam-runs.test.ts runs them. */
