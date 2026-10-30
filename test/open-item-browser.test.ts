@@ -541,6 +541,32 @@ describe('Play is left first when what opens is on the canvas (A4.6 r4 #1)', () 
       .toEqual(['main', t.thread, 'and a darker border', false])
   })
 
+  it('a view that draws no frames while Play is left: the request ended then answers dropped at once, its frame cancelled, nothing revealed after (code review r3 P2)', async (ctx) => {
+    skip(ctx)
+    const p = await open()
+    const t = asking('main', { frame: 'demo/two', node: 'n-two' })
+    await p.ev(`__mvStore.getState().select('n-one'), 1`)
+    await browser!.press(p.s, 'p')
+    await p.until(`!!__mvStore.getState().play && !!document.querySelector('.sh-play-stage')`)
+    // from here the page draws no frames: every animation frame asked for is held (a hidden view's, as far as it knows)
+    await p.ev(`(() => { const held = window.__held = new Map(); let id = 1e6; const raf = window.requestAnimationFrame, caf = window.cancelAnimationFrame
+      window.requestAnimationFrame = (cb) => { held.set(++id, cb); return id }
+      window.cancelAnimationFrame = (i) => { held.delete(i) }
+      window.__frames = () => { window.requestAnimationFrame = raf; window.cancelAnimationFrame = caf; const cbs = [...held.values()]; held.clear(); for (const cb of cbs) cb(performance.now()); return cbs.length }
+      return 1 })()`)
+    const i = await p.ev(`__fake.start(${JSON.stringify(askItem('main', t))})`)
+    // Play left, its layout frames asked for and held: then the tab is hidden
+    await p.until(`!__mvStore.getState().play && __held.size > 0`)
+    const asked = await p.ev(`[...__held.keys()]`) as number[]
+    expect(await p.ev(`__fake.state('hidden')`)).toBeGreaterThan(0)
+    expect(await p.ev(`Promise.race([__fake.result(${i}), new Promise((r) => setTimeout(() => r('still waiting'), 2000))])`)).toBe('dropped')
+    // the frame it waited on was cancelled; and once frames come again, nothing of it is revealed
+    expect((await p.ev(`[...__held.keys()]`) as number[]).filter((k) => asked.includes(k)).length).toBeLessThan(asked.length)
+    await p.ev(`__frames()`)
+    await new Promise((r) => setTimeout(r, 400))
+    expect([await p.ev(`__mvComments.getState().active`), await p.has(`.cm-card[data-thread="${t.thread}"]`)]).toEqual([null, false])
+  })
+
   it('the same with words unsent: busy, Play kept, the words kept', async (ctx) => {
     skip(ctx)
     const p = await open()

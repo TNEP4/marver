@@ -198,11 +198,17 @@ export async function toBoard(board: string, alive?: Alive): Promise<boolean> {
   if (!alive()) return false
   // a stale overlay never survives into another board (App.tsx's router does the same)
   if (useStore.getState().play) useStore.getState().setPlay(null)
-  // the wait is the request's too: its deadline, or its end, answers false then and there, however long the board's
-  // save or read takes (code review r2 P2) - and the switch, should it finish later, cannot commit (its predicate is alive)
+  // the wait is the request's too, however long the board's save or read takes (code review r2 P2) - and the switch,
+  // should it finish later, cannot commit: its predicate is alive, which never holds again once it failed (open-item.ts)
+  return (await whileAlive(switchFor(board, navigated(), alive), alive)) && alive()
+}
+
+/** `p`, or false as soon as `alive` fails, read every 30 ms: a request never waits past its own life - its deadline, or
+ *  its end - whatever it waits on (a board's save or read, a hidden view's frames). The look stops once either settles. */
+async function whileAlive<T>(p: Promise<T>, alive: Alive): Promise<T | false> {
   let done = false
   const ended = new Promise<false>((r) => { const look = () => { if (done) return; if (!alive()) { r(false); return } setTimeout(look, 30) }; look() })
-  try { return (await Promise.race([switchFor(board, navigated(), alive), ended])) && alive() } finally { done = true }
+  try { return await Promise.race([p, ended]) } finally { done = true }
 }
 
 /** Play is left, then a frame passes for the layout (A4.6 r4 #1): what opens on the canvas - a thread card, a tile and
@@ -216,8 +222,12 @@ async function leavePlay(alive: Alive): Promise<boolean> {
   const { playCtl } = await import('./Play.tsx')
   if (!alive()) return false
   if (!playCtl.leave() || useStore.getState().play) return false
-  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
-  return alive()
+  // two frames for the layout, under the request: a hidden view can hold its frames for good (code review r3 P2), and
+  // the frame asked for is cancelled once the request has ended
+  let raf = 0
+  const laid = await whileAlive(new Promise<true>((r) => { raf = requestAnimationFrame(() => { raf = requestAnimationFrame(() => r(true)) }) }), alive)
+  if (!laid) cancelAnimationFrame(raf)
+  return laid && alive()
 }
 
 /** What clicking a tile (or ⏎ on it) does: a review opens the review detail, a card that asks opens
