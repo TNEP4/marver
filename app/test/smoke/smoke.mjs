@@ -396,7 +396,7 @@ async function memoryGate(name, L, { canvas, countGpu, check }) {
   const spin = { wanted: false, res: null, asked: null }
   spin.askedP = new Promise((r) => { spin.asked = r })
   const fake = await startFakeCanvas({ home, slotBase: SLOT_BASE, slot: 1, cookie: true, name: 'Smoke canvas', root: join(RUN, 'clean', 'repo'),
-    script: "if (window.marverApp) { marverApp.hello({ version: '0.27.1', board: null, page: 'smoke-page-01' }); marverApp.busy({ busy: false, unsaved: false, why: [] }) }\n"
+    script: "if (window.marverApp) { marverApp.hello({ version: '0.27.1', board: null, page: 'smoke-page-01' }); marverApp.busy({ busy: false, unsaved: false, why: [] }); fetch('/__mv/test/api-' + typeof marverApp.onOpen + '-' + typeof marverApp.capture, { method: 'POST' }) }\n"
       + "requestAnimationFrame(function () { setTimeout(function () { fetch('/__mv/test/spin-please', { method: 'POST' }).then(function (r) { if (r.status !== 200) return; var end = performance.now() + 2500; while (performance.now() < end) {} fetch('/__mv/test/spun', { method: 'POST', keepalive: true }) }).catch(function () {}) }, 100) })",
     onRequest: (req, res) => {
       if ((req.url ?? '').split('?')[0] !== '/__mv/test/spin-please') return false
@@ -417,6 +417,11 @@ async function memoryGate(name, L, { canvas, countGpu, check }) {
   else fail('launch-ready', `mainRan=${mainRan(C)} ready=${reachedReady(C)} alive=${alive(C)} code=${C.code}; stderr: ${C.err.trim().split('\n').slice(-3).join(' | ')}`)
   const raf = fake.requests.find((r) => r.path === '/__mv/test/raf')
   const doc = fake.requests.find((r) => r.path === '/' && r.headers['x-mv-nonce'])
+  // A4.6 #52: the release build's canvas preload gives a verified local tab A4's two functions, a notice's click
+  // (onOpen) and a live picture (capture); the page reports what it was given
+  const api = fake.requests.find((r) => r.path.startsWith('/__mv/test/api-'))?.path.slice('/__mv/test/api-'.length)
+  api === 'function-function' ? pass('canvas-api-a4', 'marverApp.onOpen and marverApp.capture are functions in the canvas tab')
+    : fail('canvas-api-a4', api ? `marverApp.onOpen-capture: ${api}` : 'the canvas page never reported its marverApp (none, or it never loaded)')
   // the first launch on a fresh profile is reported, not gated (A2.14 #28: S9's one-off keychain stall); launch-warm gates the second
   if (raf) pass('launch-frame-callback', `${raf.t - C.t0} ms from spawn to the canvas page's first animation-frame callback (first launch, reported; launch-warm gates the second)`)
   else fail('launch-frame-callback', doc ? 'the canvas document was requested, no frame callback seen' : 'the canvas named the active tab was never loaded')
