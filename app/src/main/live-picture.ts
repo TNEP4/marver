@@ -82,9 +82,11 @@ export function livePictures(p: LivePicturePorts): CaptureHandler {
     const x = Math.floor(rect.x * z), y = Math.floor(rect.y * z)
     const at = { x, y, width: Math.ceil((rect.x + rect.width) * z) - x, height: Math.ceil((rect.y + rect.height) * z) - y }
     reading.add(id)
+    // the readback's start and its settling journaled, beside the white-out detector's own (#52's pw case)
+    j({ tab: tabId, read: 'start' })
     let read: Promise<PictureImage | null>
     try { read = a.wc.capturePage(at).then((img) => img, () => null) } catch { read = Promise.resolve(null) }
-    read = read.finally(() => reading.delete(id))
+    read = read.finally(() => { reading.delete(id); j({ tab: tabId, read: 'end' }) })
     let timer: ReturnType<typeof setTimeout> | undefined
     const img = await Promise.race([read, new Promise<'late'>((done) => { timer = setTimeout(() => done('late'), p.deadlineMs ?? BOUNDS.captureMs) })])
     clearTimeout(timer)

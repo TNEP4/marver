@@ -7,9 +7,11 @@
  * Eligible (#34), decided synchronously at the trigger, never cropped to fit: the app offers `capture`; the shot's frame
  * is the one playing; the stage document has shown it for `STAGE_SETTLE_MS` (its `__mvStage` record, past a slide's
  * tempo); the stage's whole rect is on screen below the scroll edge (`onScreen`, unchanged), at least `RING` px inside
- * the view (the Jam ring), and a 3 x 3 grid of `elementFromPoint` over it finds only the stage - its frame and its own
- * pins and cards, never a lane, a panel, the notes card or a menu. So fill and doc presets, edge to edge, take the
- * render; a device preset or a slide fitted to the window takes a live one.
+ * the view (the Jam ring), a 3 x 3 grid of `elementFromPoint` over it finds only the stage - its frame and its own
+ * pins and cards - and no floating layer of the shell's touches it by its box (the live caption and tips take no
+ * pointer, so hit-testing alone never sees them): never a lane tile, a panel, the notes card, the caption, a toast or
+ * a menu. So fill and doc presets, edge to edge, take the render; a device preset or a slide fitted to the window
+ * takes a live one.
  *
  * The ask binds what it was decided for - the frame, the theme, the rect, the view's size, the stage's `boot` and
  * `seq` - and the answer is checked against all of it again (#35): a reload, A -> B -> A, a resize or an overlay
@@ -58,6 +60,22 @@ function clear(stage: Element, r: DOMRect): boolean {
   return true
 }
 
+/** The shell's floating layers, by their visible boxes: the caption, the notes card and the mic question, the lane's
+ *  tiles (never its full-width row), toasts, tips, menus, the focus panel, Jam's sheets. */
+const LAYERS = '.jm-caption, .jm-over, .jm-lane-in > *, .sh-toasts > *, .sh-tip, .sh-menu, .jm-focus > *, .jm-sheet-at > *'
+
+/** Does any of them, outside the stage, touch its rect? By box, not by hit-testing: the caption and a tip take no
+ *  pointer, so the grid looks through them, and a band along an edge falls between its points - yet the readback
+ *  holds whatever is drawn there. */
+function covered(stage: Element, r: DOMRect): boolean {
+  for (const el of document.querySelectorAll(LAYERS)) {
+    if (stage.contains(el)) continue
+    const b = el.getBoundingClientRect()
+    if (b.width > 0 && b.height > 0 && b.left < r.right && r.left < b.right && b.top < r.bottom && r.top < b.bottom) return true
+  }
+  return false
+}
+
 const near = (a: number, b: number) => Math.abs(a - b) < 0.01
 
 /** The ask for a live picture of `frame` now, or null: the shot takes the server's render (#34). */
@@ -75,7 +93,7 @@ export function liveAsk(frame: string): LiveAsk | null {
   const on = onScreen(r)
   if (!on || !near(on.left, r.left) || !near(on.top, r.top) || !near(on.right, r.right) || !near(on.bottom, r.bottom)) return null
   if (r.left < RING || r.top < RING || r.right > innerWidth - RING || r.bottom > innerHeight - RING) return null
-  if (!clear(stage, r)) return null
+  if (!clear(stage, r) || covered(stage, r)) return null
   return { frame, theme: play.theme, rect: { x: r.left, y: r.top, width: r.width, height: r.height }, view: { w: innerWidth, h: innerHeight }, boot: rec.boot, seq: rec.seq }
 }
 

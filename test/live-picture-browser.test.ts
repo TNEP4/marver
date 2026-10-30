@@ -10,7 +10,8 @@ import { Browser } from './browser.ts'
  * page carries a fake `window.marverApp` with `capture` - it answers the ask with a PNG of the rect's size, or refuses,
  * throws or holds as a case says. In play on a device preset, I takes one picture: the app's, uploaded raw and stored
  * with `source: 'live'`, and no render asked for. Every other shot - fill and doc presets, a stage under the scroll edge
- * or the Jam ring, an overlay on it, the first second on a frame - takes the server's render; so does every failure of
+ * or the Jam ring, an overlay on it (the live caption and a tip, which take no pointer, found by their boxes), the first
+ * second on a frame - takes the server's render; so does every failure of
  * the live path within its one shot, which the seal waits for. A reload, A -> B -> A, a resize or an overlay during the
  * ask drops its bytes. Without `marverApp` the record is 0.28's. The app's own half (the readback) is the app's suite.
  * Skips without Chrome.
@@ -216,6 +217,7 @@ const why = () => ev(`(() => {
   const on = window.__mvInset.onScreen(r); if (!on || Math.abs(on.top - r.top) > .01 || Math.abs(on.left - r.left) > .01 || Math.abs(on.bottom - r.bottom) > .01 || Math.abs(on.right - r.right) > .01) bad.push('off screen')
   if (r.left < 6 || r.top < 6 || r.right > innerWidth - 6 || r.bottom > innerHeight - 6) bad.push('ring ' + JSON.stringify([r.left, r.top, r.right, r.bottom, innerWidth, innerHeight]))
   for (const fy of [1/6, 1/2, 5/6]) for (const fx of [1/6, 1/2, 5/6]) { const el = document.elementFromPoint(r.left + r.width * fx, r.top + r.height * fy); if (!el || !st.contains(el)) bad.push('covered at ' + fx.toFixed(2) + ',' + fy.toFixed(2) + ' by ' + (el ? (el.className || el.tagName) + ' in ' + [...Array(4)].reduce((a) => { a.n = a.n?.parentElement; if (a.n) a.p.push(a.n.className || a.n.tagName); return a }, { n: el, p: [] }).p.join(' < ') : 'nothing')) }
+  for (const el of document.querySelectorAll('.jm-caption, .jm-over, .jm-lane-in > *, .sh-toasts > *, .sh-tip, .sh-menu, .jm-focus > *, .jm-sheet-at > *')) { const b = el.getBoundingClientRect(); if (!st.contains(el) && b.width > 0 && b.height > 0 && b.left < r.right && r.left < b.right && b.top < r.bottom && r.top < b.bottom) bad.push('under ' + el.className) }
   return bad.join('; ') || 'eligible'
 })()`)
 
@@ -286,6 +288,43 @@ describe('live pictures in play (A4.6 #33-#36)', () => {
     await leave(id)
     await ev(`location.hash = '#/b/main', 1`)
     await until(`window.__mvStore.getState().board === 'main' && window.__mvStore.getState().nodes.every((n) => n.status === 'ready')`, 20_000)
+  }, 150_000)
+
+  skippable('a wide stage (the laptop preset) under the live caption, or a tip, takes the render, the app never asked - they take no pointer, so only their boxes tell', async () => {
+    const id = await inPlay('spec/alpha', { device: 'laptop' })
+    const n = (k: number) => until(`window.__mvJamCapture.getState().caps[${JSON.stringify(id)}]?.pictures.length === ${k}`, 25_000)
+    // clear, it is live: the recording tile below it never touches it
+    await shot(); await n(1)
+    expect((await live()).calls).toBe(1)
+    // the words heard so far, over the capture tile: a band across the stage's lower left, below the grid's last row
+    const words = 'make the header calmer and move the call to action up so it reads first on a laptop and the footer quieter too'
+    await ev(`window.__mvJamVoice.setState((st) => ({ heard: { ...st.heard, [${JSON.stringify(id)}]: ${JSON.stringify(words)}.split(' ').map((w, i) => ({ w, at: i * 100 })) } })), 1`)
+    await until(`!!document.querySelector('.jm-caption')`, 5000)
+    const lap = (sel: string) => ev(`(() => { const c = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(), d = document.querySelector('.sh-play-stage .dev').getBoundingClientRect()
+      const l = Math.max(c.left, d.left), r = Math.min(c.right, d.right), t = Math.max(c.top, d.top), b = Math.min(c.bottom, d.bottom)
+      const el = document.elementFromPoint((l + r) / 2, (t + b) / 2)
+      return { w: Math.round(r - l), h: Math.round(b - t), through: !!el && document.querySelector('.sh-play-stage').contains(el) } })()`)
+    // over the stage, drawn on top, and hit-testing goes through it to the frame
+    const cap = await lap('.jm-caption')
+    expect(cap.w).toBeGreaterThan(100); expect(cap.h).toBeGreaterThan(10); expect(cap.through).toBe(true)
+    await shot(); await n(2)
+    expect((await live()).calls).toBe(1)
+    await ev(`window.__mvJamVoice.setState((st) => { const heard = { ...st.heard }; delete heard[${JSON.stringify(id)}]; return { heard } }), 1`)
+    await until(`!document.querySelector('.jm-caption')`, 5000)
+    // a tip, where the shell puts it (its root), over the stage's top right corner, between the grid's points
+    await ev(`(() => { const d = document.querySelector('.sh-play-stage .dev').getBoundingClientRect(); const t = document.createElement('div'); t.className = 'sh-tip below'; t.id = 'mvtest-tip'; t.textContent = 'Comments need the canvas running'; Object.assign(t.style, { left: (d.right - 60) + 'px', top: (d.top + 8) + 'px' }); (document.querySelector('.sh-app') ?? document.body).appendChild(t); return 1 })()`)
+    const tip = await lap('#mvtest-tip')
+    expect(tip.w).toBeGreaterThan(10); expect(tip.h).toBeGreaterThan(10); expect(tip.through).toBe(true)
+    await shot(); await n(3)
+    expect((await live()).calls).toBe(1)
+    await ev(`document.getElementById('mvtest-tip').remove(), 1`)
+    // all gone: live again
+    await shot(); await n(4)
+    const rec = await sealed(id)
+    expect(pics(rec).map((x: any) => x.source ?? 'render')).toEqual(['live', 'render', 'render', 'live'])
+    expect((await live()).calls).toBe(2)
+    expect((await net()).renders).toBe(2)
+    await drop(id); await leave()
   }, 150_000)
 
   skippable('every failure of the live path falls back to the render within its one shot, and the seal waits for it: ok false, a throw, an upload 500, an upload past 5 s', async () => {

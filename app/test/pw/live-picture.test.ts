@@ -3,9 +3,11 @@
  * in a real tab of the app (real trust). In play on a device preset, a button opens a red panel on the stage, then I:
  * the capture's picture is the app's (`source: 'live'`), its PNG at the stage's on-screen size times the display's
  * scale, and the red panel is in it - what a render of the frame, its panel closed, never shows. The recorder is on (its
- * default), so the white-out detector's own readbacks share the view with it. A tab that is not the active one is
- * answered `hidden`. The rules themselves are unit cases (live-picture, bridge-capture, preload-canvas) and the shell's
- * the package's live-picture-browser.test.ts.
+ * default), and the I is taken inside a gesture, as one of the white-out detector's own full-view readbacks starts
+ * (whiteout.ts reads back only from a gesture's start to 500 ms after its end): main's journal shows that readback in
+ * flight while the live one runs, and the live picture still lands. A tab that is not the active one is answered
+ * `hidden`. The rules themselves are unit cases (live-picture, bridge-capture, preload-canvas) and the shell's the
+ * package's live-picture-browser.test.ts.
  */
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
@@ -105,8 +107,14 @@ describe('a live picture on a real canvas (A4.6 #35)', () => {
     const geo = await exec<{ x: number; y: number; width: number; height: number; dpr: number }>(`(() => { const r = document.querySelector('.sh-play-stage .dev').getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height, dpr: devicePixelRatio } })()`)
     await exec(`window.__mvJamCapture.getState().start(), 1`)
     const cap = await until('a capture', () => exec<string | null>(`window.__mvJamCapture.getState().current`))
-    await exec(`window.__mvJamCapture.getState().picture(), 1`)
+    // a gesture opens the white-out detector's window (a full-view readback every 250 ms, each after the shell answers
+    // its probes ask), and I is pressed in that ask, just after the shell's answer: main starts its readback, then ours
+    const since = (await w.log()).length
+    await exec(`window.marverApp.perf({ kind: 'gesture', on: true, seq: 4242 }), 1`)
+    await until('the white-out window', async () => (await w.log('whiteout', since)).some((l) => l.data.window === 'open'), 5_000)
+    await exec(`(() => { window.__mvArmed = true; window.__mvArmOff = window.marverApp.onPerfAsk((a) => { if (a.kind === 'probes' && a.at === 'before' && window.__mvArmed) { window.__mvArmed = false; window.__mvJamCapture.getState().picture() } }); return 1 })()`)
     await until('its picture', () => exec<boolean>(`window.__mvJamCapture.getState().caps[${JSON.stringify(cap)}]?.pictures.length === 1`), 30_000)
+    await exec(`(() => { window.__mvArmOff(); window.marverApp.perf({ kind: 'gesture', on: false, seq: 4242 }); return 1 })()`)
     await exec(`window.__mvJamCapture.getState().end(true), 1`)
     await until('the draft', () => exec<boolean>(`(window.__mvJamQueue.getState().cards ?? []).some((c) => c.id === ${JSON.stringify(cap)} && c.state === 'draft')`), 30_000)
     const rec = await exec<{ timeline: { event: string; id?: string; source?: string }[] }>(`fetch('/__mv/api/jam/capture?id=${cap}', { headers: { 'x-mv-c': (/(?:^|;\\s*)mv_c=([\\w-]+)/.exec(document.cookie) || [])[1] || '' } }).then((r) => r.json()).then((b) => b.record)`)
@@ -124,8 +132,17 @@ describe('a live picture on a real canvas (A4.6 #35)', () => {
     let red = 0
     for (let i = 0; i < p.w * p.h; i++) { const o = i * p.ch; if (p.data[o]! > 200 && p.data[o + 1]! < 50 && p.data[o + 2]! < 50) red++ }
     expect(red / (p.w * p.h)).toBeGreaterThan(0.2)
-    // main's journal: the readback it answered
-    expect((await w.log('live-picture')).some((l) => l.data.tab === id && l.data.ok === true)).toBe(true)
+    // main's journal: the readback it answered, and a white-out readback of the same view in flight beside it - one
+    // that started before ours ended and ended after ours started (journal order is main's own order)
+    const ls = (await w.log(undefined, since)).map((l, i) => ({ ...l, i }))
+    expect(ls.some((l) => l.topic === 'live-picture' && l.data.tab === id && l.data.ok === true)).toBe(true)
+    const read = (k: string) => ls.find((l) => l.topic === 'live-picture' && l.data.tab === id && l.data.read === k)
+    const r0 = read('start'), r1 = read('end')
+    expect(!!r0 && !!r1).toBe(true)
+    const wo = ls.filter((l) => l.topic === 'whiteout' && typeof l.data.capture === 'string')
+    const beside = wo.filter((s) => s.data.capture === 'start' && s.i < r1!.i
+      && (wo.find((e) => e.data.capture === 'end' && e.data.tick === s.data.tick && e.i > s.i)?.i ?? Infinity) > r0!.i)
+    expect(beside.length, JSON.stringify(ls.filter((l) => l.topic === 'live-picture' || l.data.capture).map((l) => [l.i, l.topic, l.data]))).toBeGreaterThan(0)
     await exec(`(async () => { const q = window.__mvJamQueue.getState(); const c = (q.cards ?? []).find((x) => x.id === ${JSON.stringify(cap)}); if (c) await q.act(c, 'drop'); window.__mvJamUi.getState().close(); return 1 })()`)
     await exec(`window.__mvStore.getState().setPlay(null), 1`)
   }, 120_000)

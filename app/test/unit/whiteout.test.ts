@@ -9,8 +9,11 @@ import type { PerfMsg, PerfProbeAsk } from '../../../src/shared/app-api.ts'
 import type { AppBody, TabIdent } from '../../../src/shared/app-perf.ts'
 import { T } from '../../src/main/timings.ts'
 import { classify, probeWhite, startWhiteout, stopWhiteout, wholeWhite, whiteoutStats, type WhiteoutPorts } from '../../src/main/whiteout.ts'
+import { note } from '../../src/main/testing/index.ts'
 
 vi.mock('electron', () => ({ app: {} }))
+// the test journal, watched: a live picture's pw case reads each capture's start and end from it (A4.6 #52)
+vi.mock('../../src/main/testing/index.ts', () => ({ note: vi.fn() }))
 
 const W = 100, H = 80
 const solid = (w: number, h: number, v: number) => { const b = Buffer.alloc(w * h * 4, v); for (let i = 3; i < b.length; i += 4) b[i] = 255; return b }
@@ -212,6 +215,19 @@ describe('the detector, at 4 Hz', () => {
     expect(first.length).toBeGreaterThan(1)
     expect(second.length).toBeGreaterThan(1)
     expect(Math.min(...second)).toBeGreaterThan(Math.max(...first))
+  })
+
+  it('each capture\'s start and settling are journaled, one capture at a time (A4.6 #52: what a live picture\'s readback overlapped)', async () => {
+    vi.mocked(note).mockClear()
+    const r = rig()
+    r.o.captureMs = 40
+    r.looks = Array(6).fill('clear')
+    await gesture(r, 600)
+    const caps = vi.mocked(note).mock.calls.filter(([t, d]) => t === 'whiteout' && 'capture' in (d as object)).map(([, d]) => d as { tick: number; capture: string })
+    expect(caps.length).toBe(r.captures.length * 2)
+    expect(r.captures.length).toBeGreaterThan(1)
+    // start, then its own end, before the next start
+    for (let i = 0; i < caps.length; i += 2) expect([caps[i], caps[i + 1]]).toEqual([{ tick: caps[i]!.tick, capture: 'start' }, { tick: caps[i]!.tick, capture: 'end' }])
   })
 
   it('only with the recorder on, and only from a gesture until 500 ms after it ends', async () => {
