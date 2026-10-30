@@ -59,6 +59,9 @@ interface CommentsState {
    *  path as the poll, so dedup + the reply notification behave identically. ANY board:
    *  notifications must reach the user wherever they are on the canvas. */
   poke(board?: string): void
+  /** Read a board's log now and answer whether the read succeeded (spec 28 A4.6 #30): `poke`'s read, awaited, its
+   *  events merged - the board, the open thread and a draft stay as they are (never `load`, which clears them first). */
+  refresh(board: string): Promise<boolean>
   /** A thread by id, from any board's log - one sweep first when it is not loaded yet. */
   findThread(id: string): Promise<Thread | null>
   /** `board` routes the write to a thread's ORIGIN log; default = the active board. */
@@ -251,6 +254,17 @@ export const useComments = create<CommentsState>((set, get) => {
         union(stamped(r.data.events, b))   // brand-new events still notify via the bootTs rule
         baselinedBoards.add(b)
       })
+    },
+
+    async refresh(board) {
+      if (!board || apiOff || board === UNPLACED) return false
+      try {
+        const r = await api(`comments/${board}`)
+        if (!r.ok) return false
+        union(stamped(r.data.events, board))
+        baselinedBoards.add(board)
+        return true
+      } catch { return false }
     },
 
     async load(board) {

@@ -17,11 +17,13 @@
  * file on SIGTERM or SIGINT - never on SIGKILL, which leaves the stale file a case may want. A child's live stream
  * takes one JSON line at a time on stdin: `{"setLive":{...}}`, `{"dropLive":true}`, `{"acceptLive":404}`.
  *
- * A4 (spec 28 A4.6 #52, #56): `live` serves the live stream as a 0.29 canvas does - the request proved with
- * `x-mv-app`, the answer with `liveProof`, whole snapshots as `event: live` lines - driven by `setLive`, `dropLive`
- * and `acceptLive`. Those three names are frozen; what serves them is this file's own writer until the package's
- * `src/server/app-live.ts` lands, when the live-stream stream puts its real `liveRoute` here over a scripted
- * `read()` (A4.6 #4), so the app's cases run against the production SSE code.
+ * A4 (spec 28 A4.6 #4, #52, #56): `live` serves the live stream as a 0.29 canvas does, through the package's own
+ * `liveRoute` and hub (src/server/app-live.ts) over a scripted `read()` - the request proved with `x-mv-app`, the
+ * answer with `liveProof`, whole snapshots as `event: live` lines, the heartbeat, the fifth client and backpressure
+ * as the server has them - so the app's cases run against the production SSE code, not a copy. `setLive`, `dropLive`
+ * and `acceptLive` drive it. A snapshot is written as given, past the bounds too, except the byte budget: the
+ * encoder keeps every event inside `LIVE_BOUNDS.eventBytes` as the server does (a case of an oversized event needs a
+ * server of its own).
  */
 import { createServer, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from 'node:http'
 import { randomBytes, randomUUID } from 'node:crypto'
@@ -29,8 +31,9 @@ import { appendFileSync, chmodSync, mkdirSync, readFileSync, renameSync, rmSync,
 import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
-import { appProofOk, NONCE, proofHeaders, type DocProof } from '../../../src/server/proof.ts'
+import { proofHeaders, type DocProof } from '../../../src/server/proof.ts'
 import type { SlotFile } from '../../../src/server/slots.ts'
+import { createLiveHub, liveRoute } from '../../../src/server/app-live.ts'
 import { LIVE_KINDS, LIVE_WIRE, type LiveEvent } from '../../../src/shared/app-api.ts'
 
 export interface FakeOptions {
@@ -293,35 +296,31 @@ export async function startFakeCanvas(opts: FakeOptions): Promise<FakeCanvas> {
 
   const tags: { t: number; tag: string }[] = []
 
-  // the live stream (A4.6 #5, #6, #11, #14), until app-live.ts's route serves it here
+  // the live stream (A4.6 #4-#6, #11, #14): the package's route and hub, reading the case's snapshot; seq counted per
+  // fake canvas (a server counts per process), so each starts at 1
   const fill = (s: LiveSnapshot): Omit<LiveEvent, 'v' | 'instance' | 'seq'> => {
     const items = s.items ?? []
     const tally = Object.fromEntries(LIVE_KINDS.map((k) => [k, items.filter((i) => i.kind === k).length])) as LiveEvent['counts']
     return { jam: s.jam ?? 'on', items, cut: s.cut ?? 0, counts: s.counts ?? tally, unseen: s.unseen ?? 0, working: s.working ?? false, session: s.session ?? false }
   }
   let live = fill(opts.live === true || !opts.live ? {} : opts.live)
-  let liveSeq = 1
   let accept: LiveAccept = 'ok'
-  const clients: ServerResponse[] = []
-  const frame = () => `event: ${LIVE_WIRE.event}\ndata: ${JSON.stringify({ v: 1, instance, seq: liveSeq, ...live } satisfies LiveEvent)}\n\n`
-  const beat = setInterval(() => { for (const c of clients) c.write(`${LIVE_WIRE.heartbeat}\n\n`) }, LIVE_WIRE.heartbeatMs)
-  beat.unref()
+  const hub = opts.live ? createLiveHub({ instance, read: () => live, seq: { n: 0 } }) : null
+  const route = liveRoute(hub, proof)
   const serveLive = (req: IncomingMessage, res: ServerResponse) => {
-    const no = (status: number) => { res.writeHead(status, { 'content-type': 'text/plain', 'cache-control': 'no-store' }); res.end(String(status)) }
-    if (req.method !== 'GET') return no(405)
-    if (accept !== 'ok') return no(accept)
-    if (!appProofOk(proof, req.headers['x-mv-app'])) return no(403)
-    const nonce = req.headers['x-mv-nonce']
-    if (typeof nonce !== 'string' || !NONCE.test(nonce)) return no(400)
+    if (accept !== 'ok') { res.writeHead(accept, { 'content-type': 'text/plain', 'cache-control': 'no-store' }); return res.end(String(accept)) }
+    // the request is proved with the canvas's key whatever the option; the answer's proof is as the option says -
+    // signed with another key, or none at all
     const p = opts.proof ?? 'valid'
-    const signed = p === 'none' ? null : proofHeaders(p === 'valid' ? proof : wrong, nonce, 'live')
-    res.writeHead(200, { 'content-type': `${LIVE_WIRE.type}; charset=utf-8`, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...signed })
-    res.socket?.setNoDelay(true)
-    // a fifth client ends the oldest (A4.6 #14)
-    if (clients.length >= LIVE_WIRE.clients) clients.shift()!.end()
-    clients.push(res)
-    res.on('close', () => { const i = clients.indexOf(res); if (i >= 0) clients.splice(i, 1) })
-    res.write(frame())
+    if (p !== 'valid') {
+      const head = res.writeHead.bind(res) as (status: number, headers?: Record<string, string>) => ServerResponse
+      ;(res as unknown as { writeHead: typeof head }).writeHead = (status, headers = {}) => {
+        if (status !== 200) return head(status, headers)
+        const { 'x-mv-instance': _i, 'x-mv-proof': _p, ...rest } = headers
+        return head(status, { ...rest, ...(p === 'invalid' ? proofHeaders(wrong, req.headers['x-mv-nonce'], 'live') : {}) })
+      }
+    }
+    route(req, res, () => { res.writeHead(404); res.end() })
   }
 
   const isLoad = (h: IncomingHttpHeaders) => { const dest = h['sec-fetch-dest']; return dest === 'document' || (dest === undefined && h['x-mv-nonce'] === undefined) }
@@ -379,20 +378,14 @@ export async function startFakeCanvas(opts: FakeOptions): Promise<FakeCanvas> {
   return {
     port, origin, url, slotFile, instance, key, ws, requests, ready, tags,
     record: () => rec,
-    setLive(s) {
-      const next = fill(s)
-      if (JSON.stringify(next) === JSON.stringify(live)) return
-      live = next
-      liveSeq += 1
-      for (const c of clients) c.write(frame())
-    },
-    dropLive() { for (const c of clients.splice(0)) c.destroy() },
+    setLive(s) { live = fill(s); hub?.push() },
+    dropLive() { hub?.drop() },
     acceptLive(how) { accept = how },
-    liveClients: () => clients.length,
+    liveClients: () => hub?.clients() ?? 0,
     async close() {
       if (closed) return
       closed = true
-      clearInterval(beat)
+      hub?.close()
       try {
         const now = JSON.parse(readFileSync(slotFile, 'utf8')) as { instance?: string }
         if (now.instance === instance) rmSync(slotFile, { force: true })

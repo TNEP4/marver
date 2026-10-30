@@ -11,6 +11,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } f
 import { Tip } from './Tip.tsx'
 import { cardForEvent, useJamQueue, type JamCardState } from './jam-queue.ts'
 import { statusLines } from './jam-lines.ts'
+import { useJamUi } from './jam-state.ts'
 
 const GRAY = 'var(--glass-ink-3)'
 const RED = '#e5484d'              // board-icons.tsx RED - errors and failures only
@@ -71,6 +72,9 @@ export function TagStatus({ board, eventId, harness }: { board?: string; eventId
     return () => window.removeEventListener('pointerdown', away, true)
   }, [open])
   useEffect(() => { if (!card) setOpen(false) }, [card])
+  // asked to open once (a notice's click, A4.6 #30): this card's icon, wherever it is drawn first - its run's controls on the page
+  const asked = useJamUi((s) => (card && s.statusFor?.card === card.id ? s.statusFor.n : 0))
+  useEffect(() => { if (asked) { setOpen(true); useJamUi.getState().tookStatus(asked) } }, [asked])
   // the open detail stays on screen: it sits under the icon and slides left at the viewport's edge
   const popRef = useRef<HTMLSpanElement>(null)
   useLayoutEffect(() => {

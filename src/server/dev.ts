@@ -8,6 +8,7 @@ import { NAME, PKG } from '../cli/name.ts'
 import { loadConfig } from './config.ts'
 import { detectHost } from './detect.ts'
 import { marverPlugin, tailwind3Css, tailwind4Plugin } from './plugin.ts'
+import { liveChanged } from './app-live.ts'
 import { iconModules, iconsPlugin } from './icons.ts'
 import { locPlugin } from './loc.ts'
 import { Startup } from './startup.ts'
@@ -704,7 +705,7 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
         const m = typeof file === 'string' ? file.match(/^([a-z0-9][a-z0-9-]*)\.jsonl$/) : null
         if (!m) return
         clearTimeout(due.get(m[1]))
-        due.set(m[1], setTimeout(() => { due.delete(m[1]); server.ws.send('sh:jam-comment', { board: m[1] } as any) }, 120))
+        due.set(m[1], setTimeout(() => { due.delete(m[1]); server.ws.send('sh:jam-comment', { board: m[1] } as any); liveChanged() }, 120))
       }))
       t.defer(() => { w.close(); for (const x of due.values()) clearTimeout(x) })
     } catch { /* the 30s poll is the backstop */ }
@@ -715,13 +716,13 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
     const { startJam } = await import('./jam/daemon.ts')
     const { checkAnchor } = await import('./anchor-check.ts')
     const jam = startJam(root, config.jam, (m) => console.log(m),
-      (board) => server.ws.send('sh:jam-comment', { board } as any),   // reply landed - fetch now, don't wait the 30s poll
+      (board) => { server.ws.send('sh:jam-comment', { board } as any); liveChanged() },   // reply landed - fetch now, don't wait the 30s poll
       // a re-pin is found in the rendered frame, as `comments move` finds it
       (frameId, target, others, look) => checkAnchor({ root, viewports: config.viewports, origin: `http://localhost:${port}`, frameId, target, others, ...look }),
       // the queue changed - pages redraw the status icons by each tag's time (coalesced: one push per tick)
       (() => {
         let due: ReturnType<typeof setTimeout> | null = null
-        return () => { due ??= setTimeout(async () => { due = null; const { jamLive } = await import('./jam/live.ts'); server.ws.send('sh:jam-queue', (jamLive.view?.() ?? { cards: [] }) as any) }, 60) }
+        return () => { due ??= setTimeout(async () => { due = null; const { jamLive } = await import('./jam/live.ts'); server.ws.send('sh:jam-queue', (jamLive.view?.() ?? { cards: [] }) as any); liveChanged() }, 60) }
       })(),
       // a jam picture: one frame shot headless into an immutable file behind an opaque id
       async (frameId, theme, entry, size) => {

@@ -23,7 +23,8 @@ export const framePath = (board: string, f: { id: string; file: string }) => {
 /** A menu row. `panel` makes it open a panel IN PLACE of the menu (a picker - the board's status),
  *  drawn by the caller and handed `close`; `onClick` then is not called. */
 export type MenuItem = { label: string; icon: ReactNode; onClick?: () => void; panel?: (close: () => void) => ReactNode }
-export type MenuState = { x: number; y: number; items: MenuItem[] }
+/** `id`: what the menu is for, on its element (`data-menu`) - a tile's menu opened by a notice's click is waited for by it */
+export type MenuState = { x: number; y: number; items: MenuItem[]; id?: string }
 export type MenuOpener = (e: { preventDefault(): void; clientX: number; clientY: number }, items: MenuItem[]) => void
 
 /** A right-click menu for the sidebar. One instance lives in App; `open(e, items)` positions
@@ -32,13 +33,13 @@ export type MenuOpener = (e: { preventDefault(): void; clientX: number; clientY:
  *  keydown (which would clear the selection/laser underneath the menu). */
 export function useContextMenu() {
   const [menu, setMenu] = useState<MenuState | null>(null)
-  const open: MenuOpener = (e, items) => {
+  const open = (e: Parameters<MenuOpener>[0], items: MenuItem[], id?: string) => {
     e.preventDefault()
     const MENU_W = 240   // the CSS max-width; labels ellipsize inside it
     // a menu taller than the window (many "Move to …" folders) pins to the top edge and scrolls
     // ...and never under the Mac app's strip (TOP 44 when the shell took the inset)
     const h = Math.min(items.length * 32 + 12, window.innerHeight - 16 - TOP)
-    setMenu({ x: Math.max(8, Math.min(e.clientX, window.innerWidth - MENU_W - 8)), y: Math.max(TOP + 8, Math.min(e.clientY, window.innerHeight - h - 8)), items })
+    setMenu({ x: Math.max(8, Math.min(e.clientX, window.innerWidth - MENU_W - 8)), y: Math.max(TOP + 8, Math.min(e.clientY, window.innerHeight - h - 8)), items, ...(id ? { id } : {}) })
   }
   return { menu, open, close: () => setMenu(null) }
 }
@@ -65,7 +66,7 @@ export function ContextMenu({ menu, close }: { menu: MenuState | null; close: ()
   const app = document.querySelector('.sh-app')
   if (!menu || !app) return null
   return createPortal(
-    <div className={`sh-menu sh-ctxmenu${panel ? ' sh-ctxpanel' : ''}`} ref={ref} style={{ left: menu.x, top: top ?? menu.y }}>
+    <div className={`sh-menu sh-ctxmenu${panel ? ' sh-ctxpanel' : ''}`} ref={ref} data-menu={menu.id} style={{ left: menu.x, top: top ?? menu.y }}>
       {panel ? panel(close) : menu.items.map((it) => (
         <button key={it.label} onClick={() => { if (it.panel) { setPanel(() => it.panel!); return } it.onClick?.(); close() }}>{it.icon}<span>{it.label}</span></button>
       ))}

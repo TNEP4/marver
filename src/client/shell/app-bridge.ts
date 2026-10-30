@@ -17,7 +17,10 @@
  *   name, never as an accelerator, so the key stays the page's (A2.7); a click replays that key, so the menu does
  *   exactly what the key does;
  * - `mv:app-state`: `shown` runs a resume reconcile, `untrusted` stops every microphone track the page holds (A2.14
- *   #13), `hidden` changes nothing (a hidden tab keeps running, A2.6).
+ *   #13), `hidden` changes nothing (a hidden tab keeps running, A2.6) - but each of the two ends a notice's click in
+ *   hand (A4.6 #30);
+ * - `mv:open` (app 0.3, A4.6 #29, #30): a notice's click, opened by open-item.ts and answered as `mv:opened`. An app
+ *   without `onOpen` never sends one, and nothing here waits for it.
  *
  * The one ground (0.27.2, A3.8 #27, #31): `mv:hello` says the inset the shell applied (inset.ts's `TOP`: 44 only when
  * the app said so and gave the whole presentation contract), and each `mv:present { epoch, w, h, frames }` is answered
@@ -40,6 +43,7 @@ import { useJamCapture } from './jam-capture.ts'
 import { useJamQueue } from './jam-queue.ts'
 import { useJamUi } from './jam-state.ts'
 import { useJamVoice, voiceUntrusted } from './jam-voice.ts'
+import { endOpen, openLiveItem } from './open-item.ts'
 
 /** The ground under the strip (A2.14 #26): the shell's own - never a frame's pinned theme. */
 export const shellDark = (): boolean => { const s = useStore.getState(); return !!s.play || s.viewTheme === 'dark' }
@@ -173,8 +177,10 @@ export async function resumeReconcile(): Promise<void> {
 }
 
 function onAppState(s: AppState): void {
-  if (s === 'shown') void resumeReconcile()
-  else if (s === 'untrusted') voiceUntrusted()
+  if (s === 'shown') { void resumeReconcile(); return }
+  // a notice's click still reading or waiting moves nothing more once the tab is hidden or its trust is gone
+  endOpen()
+  if (s === 'untrusted') voiceUntrusted()
 }
 
 // ---- the bridge ---------------------------------------------------------------------------------------------
@@ -193,6 +199,8 @@ export function startAppBridge(): void {
   // what the app says, listened for before the page says anything
   call(() => app.onAppState((s) => onAppState(s)))
   call(() => app.onMenuClick((p) => runMenuItem(typeof p?.id === 'string' ? p.id : '')))
+  // a notice's click (A4.6 #29, #30): the exact item, resolved against fresh reads and answered
+  if (typeof app.onOpen === 'function') call(() => { app.onOpen!((p) => openLiveItem(p)) })
   // the one ground's presentation requests (0.27.2): answered only when the shell took the inset - a shell that did
   // not is placed below the strip and never asked (A3.8 #31)
   if (TOP) call(() => { answerPresents(app, call) })

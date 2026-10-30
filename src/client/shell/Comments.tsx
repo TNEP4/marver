@@ -779,7 +779,7 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
     if (sent.trim() && await useComments.getState().replyOk(thread.id, sent)) setText((cur) => (cur === sent ? '' : cur))
   }
   const card = (
-    <div ref={cardRef} data-sh-wheel-local className={`cm-card sh-no-pan${flip ? ' flip' : ''}${float ? ` parked dock-${side}` : ''}${float && flank ? ` flank-${flank}` : ''}${stage ? ' stage-dock' : ''}`} style={{ ...pos, ...hueVars(anchorHue(thread.anchor)) }}
+    <div ref={cardRef} data-sh-wheel-local data-thread={thread.id} className={`cm-card sh-no-pan${flip ? ' flip' : ''}${float ? ` parked dock-${side}` : ''}${float && flank ? ` flank-${flank}` : ''}${stage ? ' stage-dock' : ''}`} style={{ ...pos, ...hueVars(anchorHue(thread.anchor)) }}
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
       {/* thread-level actions pin to the card corner, out of the header's flow -
           the name row never has to share its line with them */}

@@ -10,17 +10,18 @@ import { ROUTE } from '../const.ts'
 import { captureCounts, endedToReview, useJamCapture } from './jam-capture.ts'
 import { useJamVoice, voiceSession, voiceSessionEnd, voiceSessionId, type Heard } from './jam-voice.ts'
 import { holdsSessionMic, PlayCounter, RecordDetail, StartSheet, WrapSheet } from './jam-session.tsx'
-import { FocusPanel, VoiceAsk } from './jam-panel.tsx'
+import { AsksAnswer, FocusPanel, Marver, VoiceAsk } from './jam-panel.tsx'
 import { addNote, decideDraft, laneCards, openThread, openTile, pendingEdit, resumeDraft, reveal, saveEdit, shownLane, startCapture } from './jam-keys.ts'
 import { ContextMenu, useContextMenu, type MenuItem } from './ContextMenu.tsx'
 import { ArrowBendUpLeftIcon, ArrowLineUpIcon, ArrowUpIcon, CheckSquareOffsetIcon, CommentIcon, EyeIcon, NotebookIcon, PencilSimpleIcon, PlayIcon, ReloadIcon, XIcon } from './icons.tsx'
 import { laneLine, laneTip, timelineLines } from './jam-lines.ts'
 import { changedShots, useJamQueue, type JamCard } from './jam-queue.ts'
-import { DONE_GROUP, doneFold, letGoOfTile, useJamUi } from './jam-state.ts'
+import { DONE_GROUP, doneFold, jamSurface, letGoOfTile, useJamUi } from './jam-state.ts'
 import { CaptureLaneRow, FocusPanelView } from './jam-surface-parts.tsx'
 import { clearMoreDraft, EdgeRing, preloadShots } from './jam-panel.tsx'
 import { useComments } from './comments-store.ts'
-import { HARNESS } from './Comments.tsx'
+import { Avatar, HARNESS } from './Comments.tsx'
+import { TagStatus } from './jam-ui.tsx'
 import { PUBLISHED, useStore } from './store.ts'
 import { api, withWs } from './api.ts'
 import type { CaptureRecord } from '../../server/jam/types.ts'
@@ -127,6 +128,18 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
   // a draft being resumed is the capture recording (or sealing) now: its own tile steps aside
   const list = shownLane(cards, run, cap.resuming)
   const cm = useContextMenu()
+  // a tile's menu opened at the tile, for the helper that opens a stalled run's controls (jam-keys.ts openRunControls)
+  useEffect(() => {
+    jamSurface.tileMenu = (id) => {
+      const c = useJamQueue.getState().cards?.find((x) => x.id === id)
+      const el = document.querySelector(`.jm-lane [data-tile="${CSS.escape(id)}"]`)
+      if (!c || !el) return false
+      const r = el.getBoundingClientRect()
+      cm.open({ preventDefault() {}, clientX: r.left + 8, clientY: r.top - 8 }, tileMenu(c), `tile:${id}`)
+      return true
+    }
+    return () => { jamSurface.tileMenu = () => false }
+  }, [])
   // a comment opening (a pin, a thread, Open thread) takes the place of the read-back or review: the panel
   // closes; the tile lets go too, unless the thread is that tile's own (a capture that asks opens its thread)
   useEffect(() => useComments.subscribe((s, p) => {
@@ -166,7 +179,7 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
     onCapture: () => startCapture(),   // as S: one started over an open review follows it
   } : undefined
 
-  const panelCard = ui.panel ? cards?.find((c) => c.id === ui.panel!.id) : undefined
+  const panelCard = ui.panel && ui.panel.kind !== 'thread' ? cards?.find((c) => c.id === ui.panel!.id) : undefined
   // a card ready to review, and the one whose review is open: its pictures load now, every frame's - its review opens
   // at their size and moves between frames without waiting (each URL once; never a card that is not in review)
   useEffect(() => {
@@ -193,6 +206,7 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
   // the microphone question in a session with no capture recording: under the Jam button
   const askAlone = voice.asking && !cap.current && !!session
   if (!shown && !ui.panel && !sheetOpen && !askAlone) return null
+  const panel = ui.panel
   // in play the lane folds to a counter beside the navigator (Q opens it); the capture recording stays
   const folded = playing && !ui.laneKeys
   return (
@@ -208,7 +222,7 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
           tiles={folded ? [] : tiles} recording={recording} between={between} selected={ui.selected ?? undefined} keyboard={ui.laneKeys} followEnd={ui.followEnd}
           doneOpen={ui.doneOpen} onDoneOpen={(open, ids) => ui.setDoneOpen(open, ids)}
           onOpen={(id) => openTile(id)}
-          onMenu={(e, id) => { const c = cards?.find((x) => x.id === id); if (c) { ui.select(id); cm.open(e, tileMenu(c)) } else e.preventDefault() }}
+          onMenu={(e, id) => { const c = cards?.find((x) => x.id === id); if (c) { ui.select(id); cm.open(e, tileMenu(c), `tile:${id}`) } else e.preventDefault() }}
           ask={voice.asking && cap.current ? voiceAsk(voice) : undefined}
           caption={cap.current ? captionOf(voice.heard[cap.current]) : undefined}
           notes={cap.noteOpen ? {
@@ -216,6 +230,11 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
             draft: cap.noteDraft, onDraft: cap.setNoteDraft, onAdd: () => cap.note(cap.noteDraft), onClose: () => cap.setNoteOpen(false),
           } : undefined}
         />
+      )}
+      {panel?.kind === 'thread' && (
+        <FocusPanel left={sidebarRight} onClose={() => ui.close()}>
+          <ThreadPanel key={`${panel.board}/${panel.id}`} board={panel.board} id={panel.id} />
+        </FocusPanel>
       )}
       {ui.panel && panelCard && panelCard.kind === 'wrapup' && (
         <FocusPanel left={sidebarRight} onClose={() => ui.close()}>
@@ -231,10 +250,10 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
             })()} />
         </FocusPanel>
       )}
-      {ui.panel && panelCard && panelCard.kind !== 'wrapup' && (
+      {panel && panel.kind !== 'thread' && panelCard && panelCard.kind !== 'wrapup' && (
         <FocusPanelView
           left={sidebarRight}
-          kind={ui.panel.kind}
+          kind={panel.kind}
           card={panelCard}
           of={detail?.of}
           agent={agentName}
@@ -272,6 +291,58 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
       )}
       <ContextMenu menu={cm.menu} close={cm.close} />
     </>
+  )
+}
+
+/**
+ * A thread no card on the canvas can show (spec 28 A4.6 #30, r1 #3, r2 #2, r3 #1): a question with no frame, one whose
+ * frame left its board, an early question while its card still works, a resolved thread. Its root line, its last
+ * message, the status of each Jam comment card on it - the thread card's own icon, tooltip and popover, so its Retry or
+ * its three choices act as there - and a field that answers in the thread: with @marver when a Jam card is on the
+ * thread (the answer carries the work on, as the capture panel's does), as typed otherwise (a tag would start a run
+ * nobody asked for). Resolved, it reads only - "Resolved", no field: a reply would land in a closed thread and reopen
+ * nothing - and its cards' status stays, since a resolve keeps a working card running.
+ */
+function ThreadPanel({ board, id }: { board: string; id: string }) {
+  const t = useComments((s) => s.threads.find((x) => x.id === id && (!x.board || x.board === board)))
+  const cards = useJamQueue((s) => s.cards)
+  const frame = useStore((s) => (t?.frame ? s.manifest?.frames.find((f) => f.id === t.frame)?.title ?? t.frame : null))
+  const onThread = (cards ?? []).filter((c) => c.board === board && c.thread === id)
+  const line = (b?: string) => (b ?? '').replace(/\s+/g, ' ').trim()
+  const last = t && t.replies.length ? t.replies[t.replies.length - 1] : t
+  return (
+    <div className="jm-panel jm-thread" data-jam-thread-panel={id} {...(t?.resolved ? { 'data-resolved': '' } : {})}>
+      <div className="top">
+        <h3>{frame ?? 'Thread'}</h3>
+        {t?.resolved && <span className="dim" data-jam-thread-resolved="">Resolved</span>}
+      </div>
+      <div className="jm-body">
+        {!t ? <p>This thread is gone.</p> : <>
+          <div className="jm-reply" data-jam-thread-root="">
+            {t.agent ? <Marver size={20} /> : <Avatar author={t.author} size={20} />}
+            <p>{line(t.body)}</p>
+          </div>
+          {last && last !== t && (
+            <div className="jm-reply" data-jam-thread-last="">
+              {last.agent ? <Marver size={20} /> : <Avatar author={last.author} size={20} />}
+              <p>{last.body}</p>
+            </div>
+          )}
+          {/* each Jam comment card's status, by its tag's time in the thread card: here the same icon and popover */}
+          {onThread.filter((c) => c.kind === 'comment').map((c) => (
+            <div key={c.id} className="jm-thread-status"><TagStatus board={board} eventId={c.events[c.events.length - 1]} harness={HARNESS} /></div>
+          ))}
+          {!t.resolved && (
+            <AsksAnswer tag={onThread.length > 0} onAnswer={async (text) => {
+              const body = onThread.length && !/@marver\b/i.test(text) ? `@marver ${text}` : text
+              const ok = await useComments.getState().replyOk(id, body)
+              if (!ok) useStore.getState().toast('your answer was not sent - try again')
+              return ok
+            }} />
+          )}
+        </>}
+      </div>
+    </div>
   )
 }
 

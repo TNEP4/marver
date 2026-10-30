@@ -164,6 +164,8 @@ export const playCtl = {
   setAt: (_at: string) => {},
   /** Apply a parsed play hash to the OPEN session - at, device, and theme alike. */
   sync: (_p: { at?: string; device?: string; theme?: string }) => {},
+  /** Leave play as its own Esc does (spec 28 A4.6 r4 #1: a notice's click opening something on the canvas) */
+  exit: () => {},
 }
 
 export function PlayOverlay() {
@@ -448,7 +450,8 @@ function PlayInner() {
       if (p.theme && p.theme !== cur.theme) setTheme(p.theme)
       if (p.at && p.at !== cur.at) playCtl.setAt(p.at)
     }
-    return () => { playCtl.setAt = () => {}; playCtl.sync = () => {} }
+    playCtl.exit = exit
+    return () => { playCtl.setAt = () => {}; playCtl.sync = () => {}; playCtl.exit = () => {} }
   }, [])
 
   // messages from the stage; source-validated against our one iframe
