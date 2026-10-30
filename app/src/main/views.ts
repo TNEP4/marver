@@ -937,7 +937,7 @@ export async function openRemote(raw: string): Promise<LinkOpenAnswer> {
  * One local tab per canvas in app 0.1. `url` is already rebuilt on the tab's bound origin and checked.
  */
 export function openSameCanvas(webContentsId: number, url: string): void {
-  const t = allTabs().find((x) => contentView(x.id)?.webContents.id === webContentsId)
+  const t = allTabs().find((x) => contentView(x.id)?.webContents?.id === webContentsId)   // a closing view's reads undefined
   if (!t || t.kind !== 'local') return
   activate(t.id)
   const wc = contentView(t.id)?.webContents
@@ -1540,7 +1540,7 @@ function tabDump(t: Tab) {
     state: displayState(t, t === activeTab()), reg: t.reg ? { state: t.reg.state, instance: t.reg.instance, origin: t.reg.origin, port: t.reg.port, slot: t.reg.slot, ws: t.reg.ws } : null,
     doc: t.doc ? { ...t.doc } : null, reports: { ...t.reports }, crash: { ...t.crash }, fail: t.fail ?? null, probe: t.probe ?? null,
     hung: !!t.hung, held: t.held ?? null, replacing: !!t.replacing, key: keyOf(t), look: t.look ?? null, logo: t.logo ?? null,
-    hasView: canvases.has(t.id) || !!contentView(t.id), wcId: contentView(t.id)?.webContents.id ?? null, pageView: !!pageView(t.id),
+    hasView: canvases.has(t.id) || !!contentView(t.id), wcId: contentView(t.id)?.webContents?.id ?? null, pageView: !!pageView(t.id),
     geo: { ...t.geo },
     // A3's unloading (A3.8 #39-#45)
     unload: t.unload ? { ...t.unload } : null, unloadRefused: t.unloadRefused ?? null, hiddenAt: t.hiddenAt ?? null,
@@ -1612,7 +1612,7 @@ function testHooks(): void {
     const s = stripContents()
     if (s?.isFocused()) out.push('strip')
     for (const t of allTabs()) {
-      if (contentView(t.id)?.webContents.isFocused()) out.push(`${t.id}:view`)
+      if (contentView(t.id)?.webContents?.isFocused()) out.push(`${t.id}:view`)
       if (pageView(t.id)?.webContents.isFocused()) out.push(`${t.id}:page`)
     }
     return { focused: out, owner: focusOwner() }

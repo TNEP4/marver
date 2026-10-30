@@ -168,12 +168,15 @@ function send(wc: WebContents | undefined, channel: string, payload: unknown): v
   else { try { wc.send(channel, payload) } catch { /* its renderer went: sent again at its next app:ready */ } }
 }
 
-/** Every app page's webContents main made, with its kind. */
+/**
+ * Every app page's webContents main made, with its kind. A shared canvas's view is no app page (A4.6 #40); and a
+ * closing view's `webContents` reads undefined from Electron's teardown until its `destroyed` takes it out.
+ */
 function appPages(): WebContents[] {
   const out: WebContents[] = []
   const s = stripContents()
   if (s) out.push(s)
-  for (const c of content.values()) if (c.kind !== 'canvas' && !c.view.webContents.isDestroyed()) out.push(c.view.webContents)
+  for (const c of content.values()) if (c.kind !== 'canvas' && c.kind !== 'remote' && c.view.webContents && !c.view.webContents.isDestroyed()) out.push(c.view.webContents)
   for (const h of pages.values()) if (!h.view.webContents.isDestroyed()) out.push(h.view.webContents)
   return out
 }
