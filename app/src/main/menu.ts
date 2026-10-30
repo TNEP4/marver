@@ -16,7 +16,9 @@
  *
  * Pure (no Electron import): `menuTemplate(model, acts)` is unit-tested; `views.ts` builds and applies it,
  * rebuilt (debounced 100 ms) when the active tab, its items or a tab's state change. A2's items: all of A2.7 but
- * the performance report and Check for Updates (A5); A3 adds Mark a Flash (⌃⌥F) to Help.
+ * the performance report and Check for Updates (A5); A3 adds Mark a Flash (⌃⌥F) to Help. A4 (A4.6 #49): a shared
+ * canvas's File items are Open in Browser and Copy Link, its View items Reload and Force Reload - no Reveal in
+ * Finder, no Mark All as Seen, no canvas items.
  */
 import type { MenuItemConstructorOptions } from 'electron'
 import type { MenuItem } from '../../../src/shared/app-api.ts'
@@ -79,6 +81,7 @@ export function menuTemplate(m: MenuModel, acts: MenuActs): MenuItemConstructorO
   const jamItems = items('jam')
   const a = m.active
   const local = a.kind === 'local'
+  const remote = a.kind === 'remote'
 
   return [
     { label: 'Marver', submenu: [
@@ -95,6 +98,10 @@ export function menuTemplate(m: MenuModel, acts: MenuActs): MenuItemConstructorO
         { label: 'Open in Browser', enabled: a.trusted, click: guarded(a.token, () => acts.tab(a.token, 'open-browser')) },
         { label: 'Reveal in Finder', click: guarded(a.token, () => acts.tab(a.token, 'reveal')) },
         { label: 'Copy Local Link', enabled: a.trusted, click: guarded(a.token, () => acts.tab(a.token, 'copy-link')) },
+      ] : remote ? [sep, header(a.name),
+        // a shared canvas: its own link, through sessions.ts's checked openOutside; nothing of a repo
+        { label: 'Open in Browser', click: guarded(a.token, () => acts.tab(a.token, 'open-browser')) },
+        { label: 'Copy Link', click: guarded(a.token, () => acts.tab(a.token, 'copy-link')) },
       ] : []),
     ] },
     { label: 'Edit', submenu: [

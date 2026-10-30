@@ -200,6 +200,10 @@ function plist(file) { return JSON.parse(sh('plutil', ['-convert', 'json', '-o',
   if (!files.includes('/dist/pages/manifest.json')) bad.push('no dist/pages/manifest.json')
   bad.length ? fail('asar-contents', bad.join('; ')) : pass('asar-contents', `${files.length} entries: package.json and dist/, no test hook, no source map`)
 }
+// A4.6 #52's "a remote tab has no marverApp" is checked by hand (#53): the release flavour folds away the remote test
+// switches, so no .test host or test certificate reaches a shared tab here, and the smoke opens no real site. pw
+// remote.test checks it on the dev flavour, whose remote view is made by the same code.
+skip('remote-no-marverapp', 'a shared tab of the release build: by hand on the signed build (A4.6 #53)')
 
 // ---- one Team ID, or no launch at all ------------------------------------------------------------------
 const teamChecks = new Map()

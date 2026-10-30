@@ -4,6 +4,13 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 
 ## 0.29.0 - Unreleased
 
+### Added
+
+- **A published canvas wears your repo's logo in the browser's tab.** `marver build` lists the logo it publishes
+  (`design/logo.svg` and the rest of the ladder) first among the shell's and the sign-in gate's icons, so a browser tab
+  - and the Mac app's tab for a shared canvas - shows it rather than Marver's mark. Canvases published before keep
+  Marver's mark until they are built again.
+
 ### Fixed
 
 - **A canvas in a subfolder of a git repository keeps Jam's hook files out of commits.** In a monorepo, or a

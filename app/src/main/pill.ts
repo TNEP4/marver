@@ -24,7 +24,7 @@
 import type { PillView } from '../shared/channels.ts'
 import { startCommandShown } from '../shared/command.ts'
 import { T } from './timings.ts'
-import { activeTab, fresh, getTab, liveDoc, type Tab } from './tabs.ts'
+import { activeTab, fresh, getTab, keptDoc, liveDoc, type Tab } from './tabs.ts'
 
 type Kind = PillView['kind']
 /** What a pill is about; `about` names it for "the same pill" (no new rev for the same thing). */
@@ -90,15 +90,18 @@ export function resetPill(): void {
 
 export const currentPill = (): (PillView & { tab?: string }) | null => shown ? { ...toView(shown, rev), ...(shown.tab ? { tab: shown.tab } : {}) } : null
 
-/** Tier 1: the active tab's own state while its page is kept. */
+/**
+ * Tier 1: the active tab's own state while its page is kept. A shared canvas's too (A4.6 #43, #45): "Not responding"
+ * and "Unsaved work here" when its page vetoed a close the person consented to; it never stops.
+ */
 function tier1(t: Tab | undefined, now: number): Rec | null {
-  if (!t || t.kind !== 'local') return null
+  if (!t || (t.kind !== 'local' && t.kind !== 'remote')) return null
   // a hung page first: it cannot save what it holds, and its Reload (which asks first) is the way out
   if (t.hung && t.view === 'live') {
     return { kind: 'not-responding', about: `hung:${t.id}:${t.doc?.commits}`, tab: t.id, commit: t.doc?.commits, lead: 'Not responding', text: '', short: 'Not responding',
       button: { label: 'Reload', style: 'plain' } }
   }
-  if (t.held && liveDoc(t)) {
+  if (t.held && keptDoc(t)) {
     // while the page says unsaved (a clean report clears the hold); else - no bridge, not yet heard, no longer
     // heard, or a page that refused though its last report said clean - 10 s
     const lasts = (fresh(t) && t.reports.busy?.unsaved === true) || now - t.held.at < T.unsavedPillMs

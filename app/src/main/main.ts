@@ -37,8 +37,8 @@ import { provideTrustHooks } from './testing/trust.ts'
 import { overrideTimings } from './timings.ts'
 import { totalmem } from 'node:os'
 import { applyTheme, ensureHome, noticesState, noticesWriter, onChange, readFiles, readTabsFile, setNoticesState, settingsSet, startFiles, tabsWriter, values } from './config.ts'
-import { flushRecent, isFirstLaunch, mountPages, noteGone, noteHomeShown, noteVerified, startHome } from './home.ts'
-import { installNavigationPolicy, localSession, onSameCanvasOpen, setupAppSession } from './sessions.ts'
+import { flushRecent, flushShared, isFirstLaunch, mountPages, noteGone, noteHomeShown, noteShared, noteVerified, startHome } from './home.ts'
+import { installNavigationPolicy, localSession, onSameCanvasOpen, remoteTestSwitches, setupAppSession } from './sessions.ts'
 import { installBridge } from './bridge.ts'
 import { createRegistry, type RegistryEntry } from './registry.ts'
 import { fetchLogo, installDispatcher, probeProof } from './proof.ts'
@@ -80,6 +80,8 @@ if (__MV_TEST__ && testMode()) {
   const missing = ['MARVER_HOME', 'MARVER_SLOT_BASE', 'MARVER_APP_USER_DATA'].filter((k) => !process.env[k])
   if (missing.length) refuse(`a test run needs ${missing.join(', ')} (spec 28 A2.14 #23)`)
   if (process.env.MARVER_APP_TIMINGS) overrideTimings(process.env.MARVER_APP_TIMINGS)
+  // the remote harness's *.test hosts resolved to it, before Chromium's network service starts (A4.6 #50)
+  remoteTestSwitches()
 }
 
 // 3. Marver Dev keeps apart: its own name, data, lock and partitions (A2.14 #23)
@@ -192,7 +194,7 @@ function start(): void {
     startViews({
       trust, home, files,
       firstLaunch: isFirstLaunch(),
-      notes: { homeShown: noteHomeShown, verified: noteVerified, gone: noteGone, quitting: flushRecent },
+      notes: { homeShown: noteHomeShown, verified: noteVerified, gone: noteGone, shared: noteShared, quitting: (running) => { flushRecent(running); flushShared() } },
       tabsStore: { read: readTabsFile, set: (f) => tabsWriter().set(f), flushSync: () => tabsWriter().flushSync() },
     })
     // Home's and Settings' channels and pushes, ⌘L's links into their tabs, the files pill (home.ts, ports.ts)

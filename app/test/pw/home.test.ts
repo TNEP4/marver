@@ -2,10 +2,10 @@
  * Home (spec 28 A2.7, A2.12, A2.13, A2.14 #3, #5, v1.13 r2 #6): the real page and the real app preload under a fake
  * main (test/harness/pages.ts). First launch and the empty Home, running and recent canvases, the commands named by
  * id, the link field's line and every answer of link:open, ⌘L's focus and Esc, the page's ARIA and the system
- * settings.
+ * settings. A4 (A4.6 #39, #47): an https link's line, its refusal, and the Shared canvases section.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import type { RecentView, TabView } from '../../src/shared/channels.ts'
+import type { RecentView, SharedLink, TabView } from '../../src/shared/channels.ts'
 import { animatedProperties, openPage, type PageRun } from '../harness/pages.ts'
 
 const home: TabView = { id: 'h', kind: 'home', name: 'Home', state: 'live', verified: true, open: true }
@@ -149,7 +149,11 @@ describe('the link field (A2.7, v1.13 r2 #6)', () => {
     await p.page.fill('#link', 'http://localhost:4999/')
     expect(await text('#hint')).toBe('Nothing is running on localhost:4999')
     await p.page.fill('#link', 'https://pilot.example.com/')
-    expect(await text('#hint')).toBe('Shared canvases open in a later build')
+    expect(await text('#hint')).toBe('↩ opens pilot.example.com in a new tab')
+    await p.page.fill('#link', 'pilot.example.com/#/b/flow')   // a bare host that is not loopback reads as https
+    expect(await text('#hint')).toBe('↩ opens pilot.example.com in a new tab')
+    await p.page.fill('#link', 'https://localhost:4806/')   // a loopback https link is no canvas link (A4.6 #39)
+    expect(await text('#hint')).toBe('Not a canvas link')
     await p.page.fill('#link', 'http://example.com/')
     expect(await text('#hint')).toBe('Not a canvas link')
     // only a canvas's own page opens in its tab: the proof admits nothing else (A2.14 #11)
@@ -215,11 +219,67 @@ describe('the link field (A2.7, v1.13 r2 #6)', () => {
     })
   }
 
-  it('later: a shared link says it comes in a later build', async () => {
-    await p.answer('link:open', { ok: false, why: 'later' })
-    await p.page.fill('#link', 'https://pilot.example.com/')
+  it('a shared link with its origin\'s tab open opens in that tab; refused, its page stays as it was (A4.6 #39, #43)', async () => {
+    await tabs([...TABS, { id: 't9', kind: 'remote', name: 'pilot.example.com', state: 'live', verified: false, open: true, key: 4, link: 'https://pilot.example.com/#/b/main', hue: 2 }])
+    await p.page.fill('#link', 'https://pilot.example.com/#/b/other')
+    expect(await text('#hint')).toBe('↩ opens in pilot.example.com\'s tab')
+    await p.answer('link:open', { ok: false, why: 'refused' })
     await p.page.press('#link', 'Enter')
-    await p.page.waitForFunction(() => document.getElementById('hint')!.textContent === 'Shared canvases open in a later build')
+    await p.page.waitForFunction(() => document.getElementById('hint')!.textContent!.startsWith('Not opened'))
+    expect(await text('#hint')).toBe('Not opened: pilot.example.com\'s page stays as it was')
+    expect(await p.calls('link:open')).toEqual([{ url: 'https://pilot.example.com/#/b/other' }])
+  })
+})
+
+describe('Shared canvases (A4.6 #47)', () => {
+  const remote: TabView = { id: 't9', kind: 'remote', name: 'pilot.example.com', state: 'live', verified: false, open: true, key: 4, link: 'https://pilot.example.com/#/b/main', hue: 2 }
+  const SHARED: SharedLink[] = [
+    { url: 'https://pilot.example.com/#/b/old', host: 'pilot.example.com', lastSeen: Date.now() - 60_000 },
+    { url: 'https://tidewell.example.org/#/b/flow', host: 'tidewell.example.org', lastSeen: Date.now() - 3 * 3600_000 },
+  ]
+
+  it('none open and none opened before: no section', async () => {
+    await tabs(TABS)
+    await p.send('shared', [])
+    expect(await p.page.$$eval('h2', (els) => els.map((e) => e.textContent))).not.toContain('Shared canvases')
+  })
+
+  it('the open shared tabs, then the links opened before - one per origin, the open one not listed twice', async () => {
+    await tabs([...TABS, remote])
+    await p.send('shared', SHARED)
+    expect(await p.page.$$eval('h2', (els) => els.map((e) => e.textContent))).toContain('Shared canvases')
+    expect(await p.page.$$eval('#shared .card', (els) => els.map((e) => e.getAttribute('aria-label')))).toEqual([
+      'pilot.example.com, shared canvas, running', expect.stringMatching(/^tidewell\.example\.org, shared canvas, opened /),
+    ])
+    expect(await text('#shared')).toContain('Opened 3 hours ago')
+    // its host's initials, never a logo it has not proved
+    expect(await p.page.$$eval('#shared .card img', (els) => els.length)).toBe(0)
+  })
+
+  it('an open one shows its tab; one opened before asks main to open its link again, checked there', async () => {
+    await tabs([...TABS, remote])
+    await p.send('shared', SHARED)
+    await p.page.click('[data-key="tab:t9"]')
+    expect(await p.calls('tab:activate')).toEqual([{ id: 't9' }])
+    await p.page.click('[data-key="shared:https://tidewell.example.org/#/b/flow"]')
+    await p.page.waitForTimeout(50)
+    expect(await p.calls('link:open')).toEqual([{ url: 'https://tidewell.example.org/#/b/flow' }])
+  })
+
+  it('a past link main refuses: the field takes it, selected, with its line', async () => {
+    await tabs(TABS)
+    await p.send('shared', SHARED)
+    await p.answer('link:open', { ok: false, why: 'refused' })
+    await p.page.click('[data-key="shared:https://tidewell.example.org/#/b/flow"]')
+    await p.page.waitForFunction(() => document.getElementById('hint')!.textContent!.startsWith('Not opened'))
+    expect(await text('#hint')).toBe('Not opened: tidewell.example.org\'s page stays as it was')
+    expect(await p.page.inputValue('#link')).toBe('https://tidewell.example.org/#/b/flow')
+  })
+
+  it('a link main sends as markup is text: never an element', async () => {
+    await tabs(TABS)
+    await p.send('shared', [{ url: 'https://x.example.com/#/b/<img src=x onerror=alert(1)>', host: '<b>x</b>.example.com', lastSeen: Date.now() }])
+    expect(await p.page.$$eval('#shared b b, #shared img', (els) => els.length)).toBe(0)
   })
 })
 

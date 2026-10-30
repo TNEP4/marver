@@ -41,7 +41,7 @@ beforeEach(async () => {
   fx.opened.length = 0
   fx.copied.length = 0
 })
-afterEach(() => { rmSync(base, { recursive: true, force: true }); delete process.env.MARVER_HOME })
+afterEach(() => { vi.useRealTimers(); rmSync(base, { recursive: true, force: true }); delete process.env.MARVER_HOME })
 
 const boot = () => { cfg.ensureHome({ version: '0.1.0', dev: true }); cfg.loadFiles(); h.startHome() }
 const recentFile = () => join(home, 'state-dev', 'recent.json')
@@ -161,6 +161,92 @@ describe('Recently here', () => {
     h.flushRecent([WS(7)])
     const f = JSON.parse(readFileSync(recentFile(), 'utf8'))
     expect(f.canvases[0].lastSeen).toBeGreaterThanOrEqual(t)
+  })
+})
+
+describe('Shared canvases: state/shared.json (A4.6 #47)', () => {
+  const sharedFile = () => join(home, 'state-dev', 'shared.json')
+  const link = (n: number, o: Partial<{ url: string; host: string; lastSeen: number }> = {}) => ({ url: `https://c${n}.example.com/#/b/main`, host: `c${n}.example.com`, lastSeen: 1000 + n, ...o })
+
+  it('a link: an https place a tab could hold - never a sign-in route, a loopback host, credentials, or a host not its own', () => {
+    expect(h.checkSharedLink(link(1))).toBe(true)
+    expect(h.checkSharedLink(link(1, { url: 'https://pilot.example.com:8443/', host: 'pilot.example.com:8443' }))).toBe(true)
+    for (const bad of [
+      link(1, { url: 'https://c1.example.com/__mv/id/finish#code=secret' }), link(1, { url: 'https://c1.example.com/__mv/id/start' }),
+      link(1, { url: 'https://localhost/', host: 'localhost' }), link(1, { url: 'https://127.0.0.1/', host: '127.0.0.1' }),
+      link(1, { url: 'http://c1.example.com/' }), link(1, { url: 'https://u:p@c1.example.com/' }), link(1, { host: 'other.example.com' }),
+      link(1, { url: 'https://C1.example.com/#/b/main' }), link(1, { lastSeen: Number.NaN }), { url: 'https://c1.example.com/', host: 'c1.example.com' }, null,
+    ]) expect(h.checkSharedLink(bad), JSON.stringify(bad)).toBe(false)
+    expect(h.checkSharedFile({ v: 1, links: [link(1), 'x'] })).toBe(true)
+    for (const bad of [{ v: 2, links: [] }, { v: 1 }, { v: 1, links: {} }, null]) expect(h.checkSharedFile(bad)).toBe(false)
+  })
+
+  it('newest first, one per origin, at most 12; each commit\'s place noted, its origin\'s older link replaced', () => {
+    boot()
+    for (let i = 1; i <= 14; i++) h.noteShared({ url: `https://c${i}.example.com/`, host: `c${i}.example.com` })
+    expect(h.sharedLinks().map((l) => l.host)).toEqual(Array.from({ length: 12 }, (_, i) => `c${14 - i}.example.com`))
+    h.noteShared({ url: 'https://c5.example.com/#/b/later', host: 'c5.example.com' })
+    expect(h.sharedLinks()[0]).toMatchObject({ url: 'https://c5.example.com/#/b/later', host: 'c5.example.com' })
+    expect(h.sharedLinks().filter((l) => l.host === 'c5.example.com')).toHaveLength(1)
+    // what a tab would never hold is never kept
+    h.noteShared({ url: 'https://c5.example.com/__mv/id/finish#code=secret', host: 'c5.example.com' })
+    h.noteShared({ url: 'https://localhost/', host: 'localhost' })
+    expect(h.sharedLinks()[0]!.url).toBe('https://c5.example.com/#/b/later')
+    expect(h.sharedLinks()).toHaveLength(12)
+  })
+
+  it('flushed at quit and read back at launch; a bad link dropped alone, a bad file set aside', async () => {
+    boot()
+    h.noteShared({ url: 'https://pilot.example.com/#/b/plans', host: 'pilot.example.com' })
+    h.flushShared()
+    const f = JSON.parse(readFileSync(sharedFile(), 'utf8'))
+    expect(f).toMatchObject({ v: 1, links: [{ url: 'https://pilot.example.com/#/b/plans', host: 'pilot.example.com' }] })
+    writeFileSync(sharedFile(), JSON.stringify({ v: 1, links: [...f.links, link(2, { url: 'https://c2.example.com/__mv/id/start' }), link(3)] }))
+    vi.resetModules()
+    cfg = await import('../../src/main/config.ts')
+    h = await import('../../src/main/home.ts')
+    boot()
+    expect(h.sharedLinks().map((l) => l.host)).toEqual(['pilot.example.com', 'c3.example.com'])
+    writeFileSync(sharedFile(), '{"v":1,')
+    vi.resetModules()
+    cfg = await import('../../src/main/config.ts')
+    h = await import('../../src/main/home.ts')
+    boot()
+    expect(h.sharedLinks()).toEqual([])
+    expect(existsSync(`${sharedFile()}.bad`)).toBe(true)
+  })
+
+  it('Home gets them on `shared` at its app:ready and at once when the list changes; a link seen again, once a debounce later - never a stale "Opened 3 days ago"', async () => {
+    vi.useFakeTimers({ now: 1_000_000 })
+    boot()
+    const sent: { ch: string; p: unknown }[] = []
+    let ready = (_c: { kind: string }) => {}
+    h.mountPages({ handle: () => {}, onReady: (fn: typeof ready) => { ready = fn; return () => {} }, send: (_t: string, ch: string, p: unknown) => { sent.push({ ch, p }); return true } } as never, {
+      running: () => [], onRunningChange: () => () => {}, setFilesPill: () => {},
+      linkPorts: { byPort: () => undefined, open: async () => ({ ok: true }), openRemote: async () => ({ ok: true }) },
+    })
+    ready({ kind: 'home' })
+    const pushes = () => sent.filter((x) => x.ch === 'shared').map((x) => x.p as { url: string; lastSeen: number }[])
+    expect(pushes()).toEqual([[]])
+    h.noteShared({ url: 'https://pilot.example.com/', host: 'pilot.example.com' })
+    expect(pushes()).toHaveLength(2)
+    expect(pushes().at(-1)).toEqual([expect.objectContaining({ url: 'https://pilot.example.com/', host: 'pilot.example.com', lastSeen: 1_000_000 })])
+    // the same link again 3 days later, a few commits in a row: one push, a debounce later, with the new time
+    await vi.advanceTimersByTimeAsync(3 * 86_400_000)
+    for (let i = 0; i < 3; i++) h.noteShared({ url: 'https://pilot.example.com/', host: 'pilot.example.com' })
+    expect(pushes()).toHaveLength(2)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(pushes()).toHaveLength(3)
+    expect(pushes().at(-1)![0]!.lastSeen).toBe(h.sharedLinks()[0]!.lastSeen)
+    expect(h.sharedLinks()[0]!.lastSeen).toBe(1_000_000 + 3 * 86_400_000)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(pushes()).toHaveLength(3)
+    // another link: at once, the one waiting folded into it
+    h.noteShared({ url: 'https://pilot.example.com/', host: 'pilot.example.com' })
+    h.noteShared({ url: 'https://tide.example.com/', host: 'tide.example.com' })
+    expect(pushes()).toHaveLength(4)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(pushes()).toHaveLength(4)
   })
 })
 
@@ -334,7 +420,7 @@ describe('mountPages (ports.ts): the pages\' channels, mounted once at ready', (
       linkPorts: { byPort: () => undefined, open: async () => ({ ok: true }), openRemote: async () => ({ ok: true }) },
     })
     f.ready('home')
-    expect(f.sent.map((s) => s.ch)).toEqual(['home:info', 'recent'])
+    expect(f.sent.map((s) => s.ch)).toEqual(['home:info', 'recent', 'shared'])
     expect(f.sent[0].p).toEqual({ welcome: true, writable: true })
     mkdirSync(join(repos, 'a'))
     h.noteVerified({ ws: WS(1), root: join(repos, 'a'), name: 'A', origin: 'http://[::1]:4901', slot: 1, port: 4901 })

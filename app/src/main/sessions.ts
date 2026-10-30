@@ -30,11 +30,25 @@
  *   `persist:app` cancels every download. `print()` is not covered: Electron 45 has no hook for it, Marver's shell
  *   never calls it, and a frame's own `print()` shows the print panel as it would in a browser (a narrowing of
  *   A2.14 #14, for the spec).
+ * - **`persist:remote`** (A4, A4.6 #40, #41, #50), a shared canvas's - someone else's page: no preload, no proof
+ *   dispatcher, its own service workers as in a browser. A webContents the bridge registered `remote` may write the
+ *   clipboard and go full screen from an https page, nothing else (media, notifications, geolocation, the local
+ *   network, display capture, storage access all denied; the device handler false); every download is cancelled
+ *   (Open in Browser covers it). Its main frame goes to any https origin with no credentials and a host that is not
+ *   loopback - sign-in hops through other hosts, so no allowlist - and never to http, `about:`, `blob:`,
+ *   `javascript:`, `marver-app:` or loopback; a refused navigation to http or mailto goes to `openOutside`.
+ *   `window.open` always denies, then an https URL on an open shared canvas's origin, or one the front door opened
+ *   (`frontDoor()`, https://app.marver.design), goes to that origin's tab (`onRemoteOpen`); anything else to
+ *   `openOutside`. Process-wide, a client certificate is never offered (Electron's default sends the keychain's first);
+ *   `login` and `certificate-error` keep Electron's refusal, so a bad certificate is never bypassed. Test builds only:
+ *   `MARVER_APP_TEST_HOSTS` (host resolver rules for `*.test` hosts), `MARVER_APP_TEST_REMOTE_CERT` (exactly that
+ *   certificate accepted, any other Chromium's own verdict) and `MARVER_APP_TEST_FRONT_DOOR`.
  */
 import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { extname, join } from 'node:path'
 import { app, session, shell, type MediaAccessPermissionRequest, type PermissionCheckHandlerHandlerDetails, type PermissionRequest, type Session, type WebContents, type WebPreferences } from 'electron'
+import { loopbackHost } from '../shared/links.ts'
 import { kindOf } from './bridge.ts'
 import { canvasAddress, installDispatcher, isTrusted, SHELL_DOC, shellDocUrl, targetOf } from './proof.ts'
 import type { RegistryEntry } from './registry.ts'
@@ -42,6 +56,8 @@ import { note, provide, testMode } from './testing/index.ts'
 
 export const APP_PARTITION = 'persist:app'
 export const localPartition = (ws: string): string => `persist:local:${ws}`
+/** Every shared canvas's partition (A4.6 #40): one, apart from the app's and every repo's. */
+export const REMOTE_PARTITION = 'persist:remote'
 export const APP_SCHEME = 'marver-app'
 export type AppPage = 'strip' | 'home' | 'settings' | 'tabpage'
 /** A2.5's policy for every app page. */
@@ -72,6 +88,18 @@ export function appWebPreferences(): WebPreferences {
     partition: APP_PARTITION, preload: preloadPath('app'), sandbox: true, contextIsolation: true,
     nodeIntegration: false, nodeIntegrationInSubFrames: false, nodeIntegrationInWorker: false, webviewTag: false,
     disableDialogs: true, navigateOnDragDrop: false, safeDialogs: true, webSecurity: true,
+  }
+}
+
+/**
+ * A shared canvas's view (A4.6 #40): `persist:remote`, **no preload** - nothing of the app reaches someone else's
+ * page - sandboxed, isolated, no dialogs, HTML full screen kept in its view, no navigation on a drop, web security on.
+ */
+export function remoteWebPreferences(): WebPreferences {
+  return {
+    partition: REMOTE_PARTITION, sandbox: true, contextIsolation: true, nodeIntegration: false, nodeIntegrationInSubFrames: false,
+    nodeIntegrationInWorker: false, webviewTag: false, disableDialogs: true, disableHtmlFullscreenWindowResize: true,
+    focusOnNavigation: false, navigateOnDragDrop: false, spellcheck: false, safeDialogs: true, webSecurity: true, allowRunningInsecureContent: false,
   }
 }
 
@@ -116,14 +144,25 @@ export function allowCheck(wc: WebContents | null, permission: string, requestin
   return permission === 'clipboard-sanitized-write' || permission === 'fullscreen'
 }
 
-function harden(ses: Session, kind: 'app' | 'local'): void {
+/**
+ * A shared canvas's one grant (A4.6 #40): `clipboard-sanitized-write` and `fullscreen`, only for a webContents the
+ * bridge registered `remote` (bridge.ts `register` records it first: unrecorded, it is refused even the clipboard),
+ * only from an https page. Everything else is denied.
+ */
+export function allowRemote(wc: WebContents | null | undefined, permission: string, requesting: string | undefined): boolean {
+  if (!wc || wc.isDestroyed() || kindOf(wc.id) !== 'remote') return false
+  if (permission !== 'clipboard-sanitized-write' && permission !== 'fullscreen') return false
+  try { return new URL(requesting ?? '').protocol === 'https:' } catch { return false }
+}
+
+function harden(ses: Session, kind: 'app' | 'local' | 'remote'): void {
   ses.setPermissionRequestHandler((wc, permission, cb, details) => {
-    const ok = kind === 'local' && allowRequest(wc, permission, details)
+    const ok = kind === 'local' ? allowRequest(wc, permission, details) : kind === 'remote' && allowRemote(wc, permission, details.requestingUrl)
     if (__MV_TEST__) note('permission', { wc: wc?.id, permission, ok, how: 'request', media: (details as MediaAccessPermissionRequest).mediaTypes, main: details.isMainFrame })
     cb(ok)
   })
   ses.setPermissionCheckHandler((wc, permission, origin, details) => {
-    const ok = kind === 'local' && allowCheck(wc, permission, origin, details)
+    const ok = kind === 'local' ? allowCheck(wc, permission, origin, details) : kind === 'remote' && allowRemote(wc, permission, details.requestingUrl ?? origin)
     if (__MV_TEST__) note('permission', { wc: wc?.id, permission, ok, how: 'check' })
     return ok
   })
@@ -223,6 +262,88 @@ export function localSession(ws: string): Promise<Session> {
   return p
 }
 
+// ---- persist:remote (A4.6 #40, #50) ------------------------------------------------------------------------------
+
+let remote: Session | null = null
+
+/**
+ * The shared canvases' partition, prepared once before the first remote view: its handlers, every download cancelled
+ * (journaled in test builds) and, in a test build only, the one test certificate accepted. No proof dispatcher:
+ * nothing on it is ever trusted.
+ */
+export function remoteSession(): Session {
+  if (remote) return remote
+  const ses = session.fromPartition(REMOTE_PARTITION)
+  harden(ses, 'remote')
+  ses.on('will-download', (e, item, wc) => {
+    if (__MV_TEST__ && testMode()) note('download', { url: item.getURL(), wc: wc?.id, saved: false, why: 'a shared canvas' })
+    e.preventDefault()
+  })
+  // test builds only: the harness's certificate, by its fingerprint; any other gets Chromium's own verdict (-3), so a
+  // bad certificate stays a failure there too
+  const cert = __MV_TEST__ && testMode() ? process.env.MARVER_APP_TEST_REMOTE_CERT : undefined
+  if (cert) ses.setCertificateVerifyProc((req, cb) => cb(req.certificate.fingerprint === cert ? 0 : -3))
+  return remote = ses
+}
+
+/** What Electron 45's `ses.fetch` rejects with when `redirect: 'manual'` meets a redirect (net-client-request.ts). */
+const REDIRECT_NOT_FOLLOWED = 'Redirect was cancelled'
+
+/**
+ * A shared canvas's probe (A4.6 #44): `HEAD <origin>/` through `persist:remote`, no redirect followed, `ms` at most.
+ * Any HTTP answer is `answers` (nothing proves a shared canvas) - a redirect too, which Electron's fetch with
+ * `redirect: 'manual'` rejects rather than answers, so an origin whose `/` redirects (a sign-in, a front door) is not
+ * left unreachable until Try Now. A refused certificate, a refused connection or the deadline is `silent`, so nothing
+ * is offered past a bad certificate.
+ */
+export async function probeRemote(origin: string, ms: number): Promise<'silent' | 'answers'> {
+  try {
+    const r = await remoteSession().fetch(`${origin}/`, { method: 'HEAD', redirect: 'manual', signal: AbortSignal.timeout(ms) })
+    void r.body?.cancel().catch(() => {})
+    return 'answers'
+  } catch (e) { return (e as Error | null)?.message === REDIRECT_NOT_FOLLOWED ? 'answers' : 'silent' }
+}
+
+/**
+ * Before ready, test builds only (A4.6 #50): `MARVER_APP_TEST_HOSTS`, host resolver rules that may only map `.test`
+ * hosts to 127.0.0.1 (`MAP *.canvas.test 127.0.0.1`), so the harness's https hosts resolve to it.
+ */
+export function remoteTestSwitches(): void {
+  const rules = __MV_TEST__ && testMode() ? process.env.MARVER_APP_TEST_HOSTS : undefined
+  if (rules && /^MAP [*a-z0-9.-]+\.test 127\.0\.0\.1(\s*,\s*MAP [*a-z0-9.-]+\.test 127\.0\.0\.1)*$/.test(rules)) app.commandLine.appendSwitch('host-resolver-rules', rules)
+}
+
+/** The front door (A4.6 #41): its `window.open` of a canvas opens that canvas's shared tab. A test build may name its own. */
+export function frontDoor(): string {
+  const t = __MV_TEST__ && testMode() ? process.env.MARVER_APP_TEST_FRONT_DOOR : undefined
+  if (t) { try { const u = new URL(t); if (u.protocol === 'https:' && u.origin === t) return t } catch { /* the real one */ } }
+  return 'https://app.marver.design'
+}
+
+/** Where a shared canvas's main frame may go (A4.6 #41): https, a hostname that is not loopback, no credentials. */
+export function remoteNavAllowed(raw: string): boolean {
+  let u: URL
+  try { u = new URL(raw) } catch { return false }
+  return u.protocol === 'https:' && !!u.hostname && !u.username && !u.password && !loopbackHost(u.hostname)
+}
+
+let remoteOpen: ((url: string, fromFrontDoor: boolean) => boolean) | null = null
+/**
+ * The window stream's handler for a shared canvas's `window.open` of an https URL (A4.6 #41): true when it took it -
+ * a shared tab on that origin is open, or the front door opened it - else the browser gets it.
+ */
+export function onRemoteOpen(fn: (url: string, fromFrontDoor: boolean) => boolean): void { remoteOpen = fn }
+
+/** The origin a webContents' main frame shows now, or null. */
+const shownOrigin = (wc: WebContents): string | null => { try { return new URL(wc.getURL()).origin } catch { return null } }
+
+/** A shared canvas's `window.open` (A4.6 #41): denied, then its origin's tab when one is open or the front door asked; else the browser. */
+function remoteWindow(wc: WebContents, url: string): void {
+  if (remoteNavAllowed(url) && remoteOpen?.(new URL(url).href, shownOrigin(wc) === frontDoor())) return
+  if (__MV_TEST__) note('policy', { wc: wc.id, event: 'remote-window-outside', url })
+  openOutside(url)
+}
+
 // ---- navigation -----------------------------------------------------------------------------------------------
 
 let last = 0
@@ -257,6 +378,8 @@ export const peopleLink = (e: Pick<RegistryEntry, 'url'>, u: URL): string => e.u
 export function allowNav(wc: WebContents, url: string, isMainFrame: boolean): boolean {
   if (url.startsWith('devtools://')) return true
   const kind = kindOf(wc.id)
+  // a shared canvas navigates like a browser over https; its subframes freely (A4.6 #41)
+  if (kind === 'remote') return !isMainFrame || remoteNavAllowed(url)
   if (kind !== 'canvas') return false   // app pages are pinned; a webContents main never made navigates nowhere
   if (!isMainFrame) return true
   const t = targetOf(wc.id)
@@ -294,15 +417,20 @@ function sendOn(wc: WebContents, url: string, how: 'navigation' | 'window'): voi
 
 function policy(wc: WebContents): void {
   wc.setWindowOpenHandler(({ url }) => {
-    if (kindOf(wc.id) === 'canvas') sendOn(wc, url, 'window')
+    const kind = kindOf(wc.id)
+    if (kind === 'canvas') sendOn(wc, url, 'window')
+    else if (kind === 'remote') remoteWindow(wc, url)
     else if (__MV_TEST__) note('policy', { wc: wc.id, event: 'window-refused', url })
-    return { action: 'deny' }
+    return { action: 'deny' }   // never an Electron child window
   })
   wc.on('will-frame-navigate', (e) => {
     if (allowNav(wc, e.url, e.isMainFrame)) return
     e.preventDefault()
     if (__MV_TEST__) note('policy', { wc: wc.id, event: 'navigation-refused', url: e.url, main: e.isMainFrame })
-    if (e.isMainFrame && kindOf(wc.id) === 'canvas') sendOn(wc, e.url, 'navigation')
+    const kind = kindOf(wc.id)
+    if (e.isMainFrame && kind === 'canvas') sendOn(wc, e.url, 'navigation')
+    // a shared canvas's refused link to http or mailto: the browser, through openOutside's checks (A4.6 #41)
+    else if (e.isMainFrame && kind === 'remote' && /^(http|mailto):/i.test(e.url)) openOutside(e.url)
   })
   wc.on('will-navigate', (e) => { if (!allowNav(wc, e.url, true)) e.preventDefault() })
   wc.on('will-redirect', (e) => {
@@ -314,11 +442,19 @@ function policy(wc: WebContents): void {
 }
 
 let hooked = false
-/** The one `web-contents-created` hook, installed at ready before any view exists. */
+/**
+ * The one `web-contents-created` hook, installed at ready before any view exists - and, process-wide, no client
+ * certificate offered to any site that asks (A4.6 #40: Electron's default sends the keychain's first).
+ */
 export function installNavigationPolicy(): void {
   if (hooked) return
   hooked = true
   app.on('web-contents-created', (_e, wc) => policy(wc))
+  app.on('select-client-certificate', (e, _wc, _url, _list, cb) => {
+    e.preventDefault()
+    if (__MV_TEST__) note('policy', { event: 'client-certificate', offered: false })
+    cb()
+  })
 }
 
 /** Test builds: what left the app through `openOutside`. */

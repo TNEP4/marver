@@ -118,7 +118,10 @@ export const stripContents = (): WebContents | undefined => strip && !strip.webC
 export const contentView = (tabId: string): WebContentsView | undefined => content.get(tabId)?.view
 export const pageView = (tabId: string): WebContentsView | undefined => pages.get(tabId)?.view
 
-/** A content view (canvas, Home, Settings) goes beneath the tab pages, hidden until compose shows it. Never re-added. */
+/**
+ * A content view (canvas, a shared canvas, Home, Settings) goes beneath the tab pages, hidden until compose shows it.
+ * Never re-added. A shared canvas's is no app page: its kind is recorded by views.ts with the bridge, never here.
+ */
 export function attachContent(tabId: string, view: WebContentsView, kind: PageKind): void {
   if (!win) throw new Error('window.ts: no window')
   if (content.get(tabId)?.view === view) return
@@ -130,7 +133,7 @@ export function attachContent(tabId: string, view: WebContentsView, kind: PageKi
   win.contentView.addChildView(view, 0)
   content.set(tabId, { view, kind })
   applied.delete(`${tabId}:view`)
-  if (kind !== 'canvas') registerApp(view.webContents, kind)
+  if (kind !== 'canvas' && kind !== 'remote') registerApp(view.webContents, kind)
   j('view', { turn, op: 'add', key: `${tabId}:view`, kind })
 }
 
@@ -316,7 +319,7 @@ export function pageOf(wc: WebContents): { tab: string; rev: number; body: PageB
 function syncPages(now: number): void {
   const a = activeTab()
   for (const t of allTabs()) {
-    if (t.kind !== 'local') continue
+    if (t.kind !== 'local' && t.kind !== 'remote') continue   // a shared canvas has its pages too (A4.6 #42)
     const body = pageFor(t, now)
     let h = pages.get(t.id)
     if (!body) { if (h) h.closing = true; continue }
@@ -473,7 +476,7 @@ function composeOnce(o: { focus?: 'shown' }): void {
   // 6. lifted tab pages, closed after the canvas view shows
   for (const [id, hp] of [...pages]) if (hp.closing) closePage(id)
   // a document the person can see is retained: it may hold their work (v1.13 r2 #3)
-  if (a?.kind === 'local' && a.doc && a.doc.lifted && applied.get(`${a.id}:view`)?.vis) { a.doc.shown = true; a.retained = true }
+  if ((a?.kind === 'local' || a?.kind === 'remote') && a.doc && a.doc.lifted && applied.get(`${a.id}:view`)?.vis) { a.doc.shown = true; a.retained = true }
   // 7. after the views changed in this turn: the request goes out, so it reaches a view already shown and sized
   // (A3.8 #27) - never during a live resize, and never while the window cannot draw (present.ts holds it until the
   // window's show); a send that fails is retried by the next compose

@@ -6,10 +6,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { allTabs, displayState, guard, liveDoc, onCommit, onDocumentGone, onRegistry, onFail, wantsLoad, type Tab } from '../../src/main/tabs.ts'
 import {
-  copyDetails, hangDecision, hangSheetText, nextDelay, onAttemptFailed, onLifted, onShown, onViewClosed, pageFor, personReload, recover, reloadIsPersons,
-  scheduleRetry, snapshotKey, stopRetries, type HangCheck, type ProcessSnapshot,
+  copyDetails, hangDecision, hangSheetText, nextDelay, onAttemptFailed, onLifted, onlineTick, onShown, onViewClosed, pageFor, personReload, recover, reloadIsPersons,
+  scheduleRetry, snapshotKey, stopRetries, wantsOnline, type HangCheck, type ProcessSnapshot,
 } from '../../src/main/tabpage.ts'
-import { entry, liveTab, show, world, type World } from './window-fakes.ts'
+import { activate, onRemoteAbort, onRemoteCommit, openRemoteTab } from '../../src/main/tabs.ts'
+import { hueOf } from '../../src/shared/hue.ts'
+import { entry, liveTab, sharedTab, show, world, type World } from './window-fakes.ts'
 
 let w: World
 beforeEach(() => { w = world() })
@@ -473,5 +475,123 @@ describe('the words', () => {
     expect(text).toMatch(/^Marver app 0\.1\.0 · Electron 45\.0\.0 · Chromium 156\.0\.8078\.48 · Marver 0\.27\.1\nmacOS 26\.0 · Mac16,1 · 36 GB\nreason oom · exit 9\ncrashes 1 at \d\d:\d\d:\d\d\nmemory pressure 1\n$/)
     for (const bad of ['Secret', 'secret', '/Users', 'ERR_', t.path, 'main']) expect(text).not.toContain(bad)
     expect(copyDetails(t, { app: '../../etc', electron: 'x y', chrome: '1', macos: '26', memGB: 8 })).toContain('Marver app unknown · Electron unknown')
+  })
+})
+
+describe('a shared canvas\'s page (A4.6 #42, #44, #45)', () => {
+  it('"Opening <host>" until its first lift, from its load; none over a lifted or kept page', () => {
+    const r = openRemoteTab('https://pilot.example.com/#/b/main')
+    r.loadAt = 42
+    r.view = 'live'
+    expect(pageFor(r, 99, HOME)).toEqual({ name: 'pilot.example.com', hue: hueOf('pilot.example.com'), page: 'starting', phase: 'opening', since: 42 })
+    onRemoteCommit(r, { gen: 1, href: 'https://pilot.example.com/#/b/main' })
+    expect(pageFor(r, 99, HOME)).toBeNull()
+  })
+
+  it('unreachable with its reason, its https origin, retained or not - never stopped or unverified, whatever the adapter said', () => {
+    const r = sharedTab(w)
+    onFail(r, { why: 'unverified', code: -106, errorPage: false })
+    expect(pageFor(r, 9, HOME)).toMatchObject({ page: 'unreachable', name: 'pilot.example.com', origin: 'https://pilot.example.com', reason: 'offline', retained: true })
+    onFail(r, { why: 'unreachable', code: -202, errorPage: true })
+    expect(pageFor(r, 9, HOME)).toMatchObject({ page: 'unreachable', reason: 'certificate', retained: false })
+    const b = pageFor(r, 9, HOME)!
+    expect('folder' in b || 'dark' in b || 'command' in b).toBe(false)
+  })
+
+  it('crashed: one automatic reload of its place at once while active; a second crash within 60 s latches', () => {
+    const r = sharedTab(w)
+    recover(r, { kind: 'crash', reason: 'crashed', exitCode: 1 })
+    expect(w.reloads).toEqual([r.id])
+    expect(pageFor(r, 1, HOME)).toMatchObject({ page: 'crashed', latched: false, crashes: 1 })
+    recover(r, { kind: 'crash', reason: 'oom', exitCode: 9 })
+    expect(r.crash.latched).toBe(true)
+    expect(w.reloads).toEqual([r.id])
+    expect(pageFor(r, 1, HOME)).toMatchObject({ page: 'crashed', latched: true, reason: 'oom', crashes: 2 })
+    expect(reloadIsPersons(r)).toBe(true)
+    personReload(r)
+    expect(w.reloads).toEqual([r.id, r.id])
+  })
+
+  it('a hidden shared canvas that crashed reloads when shown', () => {
+    const r = sharedTab(w)
+    show('home')
+    recover(r, { kind: 'crash', reason: 'crashed', exitCode: 1 })
+    expect(w.reloads).toEqual([])
+    activate(r.id)
+    expect(w.shown).toEqual([r.id])   // views.ts's port: onShown, as for a local tab
+    onShown(r)
+    expect(w.reloads).toEqual([r.id])
+  })
+
+  it('no retained document: any answer loads its place; a retained one is only probed, its line changing (#44)', async () => {
+    vi.useFakeTimers()
+    const r = sharedTab(w)
+    onFail(r, { why: 'unreachable', code: -102, errorPage: true })
+    w.probeWith = () => 'answers'
+    scheduleRetry(r)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(w.loads).toEqual([r.id])
+    const k = sharedTab(w, 'https://kept.example.com/')
+    onFail(k, { why: 'unreachable', code: -102, errorPage: false })
+    w.loads.length = 0
+    scheduleRetry(k)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(w.loads).toEqual([])
+    expect(k.probe?.state).toBe('answers')
+    expect(pageFor(k, 1, HOME)).toMatchObject({ page: 'unreachable', retained: true, probe: { state: 'answers' } })
+    stopRetries(k)
+  })
+
+  it('a load that ended with no page and no document lifted (a refused redirect, a download, a 204): unreachable with Open in Browser, its looks loading it again - never "Opening <host>" for good; a lifted page keeps itself', async () => {
+    vi.useFakeTimers()
+    const r = openRemoteTab('https://pilot.example.com/to-http')
+    show(r.id)
+    r.view = 'live'
+    r.loadAt = 42
+    w.loads.length = 0
+    expect(pageFor(r, 99, HOME)).toMatchObject({ page: 'starting', phase: 'opening' })
+    expect(onRemoteAbort(r, 1)).toBe(true)
+    expect(displayState(r, true)).toBe('unreachable')
+    expect(pageFor(r, 99, HOME)).toMatchObject({ page: 'unreachable', name: 'pilot.example.com', origin: 'https://pilot.example.com', reason: 'aborted', retained: false })
+    expect(wantsOnline()).toBe(true)
+    w.probeWith = () => 'answers'
+    scheduleRetry(r)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(w.loads).toEqual([r.id])
+    // the load lifted: a later load from the page that ends with none (a download from it) leaves the page as it is
+    onRemoteCommit(r, { gen: 2, href: 'https://pilot.example.com/' })
+    expect(onRemoteAbort(r, 3)).toBe(false)
+    expect([displayState(r, true), pageFor(r, 99, HOME)]).toEqual(['live', null])
+    // a local tab's abort is never a failure: its own page waits on the registry and the proof
+    const local = add()
+    expect(onRemoteAbort(local, 1)).toBe(false)
+    expect(local.fail).toBeUndefined()
+    stopRetries(r)
+  })
+
+  it('net.isOnline() only shortens the wait: wanted while a shared canvas is unreachable; a turn to true looks at once, the first reading a baseline', async () => {
+    vi.useFakeTimers()
+    const local = liveTab(w)
+    onFail(local, { why: 'unreachable', code: -102, errorPage: false })
+    expect(wantsOnline()).toBe(false)   // a local canvas's are the registry's and the proof's
+    const r = sharedTab(w)
+    show('home')
+    onFail(r, { why: 'unreachable', code: -106, errorPage: true })
+    expect(wantsOnline()).toBe(true)
+    w.probeWith = () => 'silent'
+    scheduleRetry(r)   // hidden: the next look in 1 s
+    onlineTick(true)   // a baseline: nothing
+    onlineTick(false)
+    await vi.advanceTimersByTimeAsync(10)
+    expect(w.probes).toEqual([])
+    onlineTick(true)   // offline to online: a look at once, before the second is up
+    await vi.advanceTimersByTimeAsync(10)
+    expect(w.probes).toEqual([r.id])
+    onlineTick(true)
+    await vi.advanceTimersByTimeAsync(10)
+    expect(w.probes).toEqual([r.id])
+    stopRetries(r)
+    stopRetries(local)
+    onlineTick(null)
   })
 })

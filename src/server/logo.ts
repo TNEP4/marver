@@ -76,6 +76,25 @@ export function publishLogo(root: string, shareLogo: string | undefined, outDir:
   return `${ROUTE}/logo.${logo.type}`
 }
 
+/**
+ * The repo's logo as the first `<link rel="icon">` of the published shell and gate (spec 28 A4.6 #46, marver 0.29.0):
+ * a browser tab, and the Mac app's tab for a shared canvas, wear the repo's logo; Marver's own set follows it. `logo`
+ * is `publishLogo`'s answer (`meta.json`'s `logo`); '' for none - or anything else, never written into the page.
+ */
+export function logoIconLink(logo: string | undefined): string {
+  const m = typeof logo === 'string' ? new RegExp(`^${ROUTE}/logo\\.(svg|png|ico)$`).exec(logo) : null
+  return m ? `<link rel="icon" type="${LOGO_MIME[m[1] as LogoType]}" href="${logo}" />` : ''
+}
+
+/** A page's HTML with the logo's icon first among its `<link rel="icon">`s (before the first, else at the head's end). */
+export function iconFirst(html: string, logo: string | undefined): string {
+  const link = logoIconLink(logo)
+  if (!link) return html
+  const i = html.indexOf('<link rel="icon"')
+  if (i >= 0) return `${html.slice(0, i)}${link}\n    ${html.slice(i)}`
+  return html.includes('</head>') ? html.replace('</head>', `${link}\n</head>`) : html
+}
+
 /** A strong `ETag` for these bytes. */
 export const logoTag = (bytes: Uint8Array): string => `"${createHash('sha256').update(bytes).digest('base64url').slice(0, 22)}"`
 

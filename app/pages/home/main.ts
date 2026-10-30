@@ -15,9 +15,13 @@
  *   line; Esc goes back to the tab it came from, whatever it holds - unless that tab has closed (`open: false`).
  *   Only a canvas's own page opens in its tab (`/` or `/index.html`, src/shared/links.ts): the line says so first.
  * - A tab that is not verified is named by its address, never by a canvas's name (A2.13, frame mac-app/05).
- * - No Shared canvases section in app 0.1 (A2.14 #3).
+ * - Shared canvases (A4, A4.6 #39, #47): an https link's line says "↩ opens <host> in a new tab", or "↩ opens in
+ *   <host>'s tab" when one is open on its origin; a loopback one is not a canvas link. The section lists the open
+ *   shared tabs (a click shows one), then the links opened before (`shared`, at most 12, newest first, initials on
+ *   the host's hue), whose click asks main to open it again (`link:open`) - a refusal shows on the field's line.
  */
-import type { HomeInfo, LinkOpenAnswer, RecentView, TabsSnapshot, TabView } from '../../src/shared/channels.ts'
+import type { HomeInfo, LinkOpenAnswer, RecentView, SharedLink, TabsSnapshot, TabView } from '../../src/shared/channels.ts'
+import { hueOf } from '../../src/shared/hue.ts'
 import { parseLink } from '../../src/shared/links.ts'
 import { ago, cmdButton, fill, h, hostOf, icon, logo, pageApi, portOf, say, setLook, shown } from '../../src/pages/dom.ts'
 
@@ -34,16 +38,21 @@ $('field-ic').append(icon('link', 15))
 
 let snap: TabsSnapshot | null = null
 let recent: RecentView[] = []
+let shared: SharedLink[] = []
 let info: HomeInfo = { welcome: false, writable: true }
 let back: string | undefined
-/** the answer to the last Return, while the field still holds what was sent */
-let answer: { why: Exclude<LinkOpenAnswer, { ok: true }>['why']; sent: string; port: number | null } | null = null
+/** the answer to the last Return, while the field still holds what was sent; `host` a shared canvas's */
+let answer: { why: Exclude<LinkOpenAnswer, { ok: true }>['why']; sent: string; port: number | null; host: string | null } | null = null
 
 const STATE_WORDS: Record<TabView['state'], string> = {
   none: 'Running', live: 'Running', hidden: 'Running', starting: 'Starting', gone: 'Stopped',
   unverified: 'Not a Marver canvas', unreachable: 'Can\'t reach', crashed: 'Crashed', unloaded: 'Unloaded',
 }
 const canvases = (): TabView[] => (snap?.tabs ?? []).filter((t) => t.kind === 'local')
+const remotes = (): TabView[] => (snap?.tabs ?? []).filter((t) => t.kind === 'remote')
+const originOf = (u?: string): string | null => { try { return u ? new URL(u).origin : null } catch { return null } }
+/** The open shared tab on a link's origin: one tab per origin (A4.6 #39). */
+const remoteOn = (url: string): TabView | undefined => remotes().find((t) => originOf(t.link) === originOf(url))
 /** What a tab is called here: an unverified one by its address (A2.13), never a name it has not proved. */
 const nameOf = (t: TabView): string => (t.state === 'unverified' ? hostOf(t.link) ?? t.name : t.name)
 /** The tab ⌘L came from, while it is still open. */
@@ -93,6 +102,28 @@ function recentCard(r: RecentView): HTMLElement {
     cmdButton('npx marver dev', `Copy the start command for ${r.name}`, async () => (await api?.action({ action: 'copy-start', id: r.id }))?.ok === true))
 }
 
+/** An open shared canvas: a click shows its tab (A4.6 #47). */
+function remoteCard(t: TabView): HTMLElement {
+  const word = STATE_WORDS[t.state]
+  return h('button', {
+    class: `card is-${t.state}`, type: 'button', 'data-key': `tab:${t.id}`, 'aria-label': `${t.name}, shared canvas, ${word.charAt(0).toLowerCase() + word.slice(1)}`,
+    onclick: () => api?.activate(t.id),
+  },
+  h('span', { class: 'card-hd' }, logo(t, 30, t.state === 'unreachable' ? 'grey' : undefined), h('span', {}, t.name)),
+  h('small', {}, 'Shared canvas'),
+  h('span', { class: 'state' }, t.state === 'starting' ? h('i', { class: 'spin', 'aria-hidden': 'true' }) : null, t.state === 'starting' ? 'Opening' : word))
+}
+
+/** A shared canvas opened before (A4.6 #47): its host's initials; a click opens it again through main's checks. */
+function sharedCard(l: SharedLink): HTMLElement {
+  return h('button', {
+    class: 'card stopped', type: 'button', 'data-key': `shared:${l.url}`, 'aria-label': `${l.host}, shared canvas, opened ${ago(l.lastSeen)}`,
+    onclick: () => { void open(l.url, false) },
+  },
+  h('span', { class: 'card-hd' }, logo({ name: l.host, hue: hueOf(l.host) }, 30, 'grey'), h('span', {}, l.host)),
+  h('small', { class: 'ran', 'data-seen': String(l.lastSeen) }, `Opened ${ago(l.lastSeen)}`))
+}
+
 function emptyCard(): HTMLElement[] {
   if (info.welcome) {
     return [
@@ -116,11 +147,17 @@ function emptyCard(): HTMLElement[] {
 function renderBody(): void {
   const key = (document.activeElement as HTMLElement | null)?.dataset?.key
   const running = canvases()
+  const open = remotes()
+  // the links opened before, but not one whose origin has a tab open now: that tab is its card
+  const past = shared.filter((l) => !remoteOn(l.url)).slice(0, 12)
+  const sharedCards = [...open.map(remoteCard), ...past.map(sharedCard)]
   fill(bodyEl,
     info.welcome ? h('h2', { class: 'h2' }, 'On this Mac') : null,
     running.length ? h('div', { class: 'cards' }, ...running.map(card)) : h('div', { class: 'cards' }, ...emptyCard()),
     recent.length ? h('h2', { class: 'h2' }, 'Recently here') : null,
-    recent.length ? h('div', { class: 'cards' }, ...recent.map(recentCard)) : null)
+    recent.length ? h('div', { class: 'cards' }, ...recent.map(recentCard)) : null,
+    sharedCards.length ? h('h2', { class: 'h2' }, 'Shared canvases') : null,
+    sharedCards.length ? h('div', { class: 'cards', id: 'shared' }, ...sharedCards) : null)
   if (key) (bodyEl.querySelector(`[data-key="${CSS.escape(key)}"]`) as HTMLElement | null)?.focus()
 }
 
@@ -152,7 +189,7 @@ function hintFor(text: string): (Node | string)[] {
   if (answer && answer.sent === text) {
     const t = answer.port ? tabOnPort(answer.port) : undefined
     switch (answer.why) {
-      case 'refused': return [`Not opened: ${t ? possessive(nameOf(t)) : 'the canvas\'s'} page stays as it was`]
+      case 'refused': return [`Not opened: ${answer.host ? possessive(answer.host) : t ? possessive(nameOf(t)) : 'the canvas\'s'} page stays as it was`]
       case 'nothing': return [`Nothing is running on localhost:${answer.port ?? ''}`]
       case 'not-canvas': return [`Something else answers on localhost:${answer.port ?? ''}: not a Marver canvas`]
       case 'bad': return [badWords(text)]
@@ -161,7 +198,11 @@ function hintFor(text: string): (Node | string)[] {
   if (!text.trim()) return []
   const p = parseLink(text)
   if (p.kind === 'bad') return [badWords(text)]
-  if (p.kind === 'https') return ['Shared canvases open in a later build']
+  if (p.kind === 'https') {
+    const r = remoteOn(p.url)
+    return r ? [h('kbd', { 'aria-hidden': 'true' }, '↩'), ' opens in ', logo(r, 14), h('b', {}, possessive(r.name)), ' tab']
+      : [h('kbd', { 'aria-hidden': 'true' }, '↩'), ' opens ', h('b', {}, p.host), ' in a new tab']
+  }
   const t = tabOnPort(p.port)
   if (!t) return [`Nothing is running on localhost:${p.port}`]
   if (t.state === 'unverified') return [`Something else answers on localhost:${p.port}: not a Marver canvas`]
@@ -179,8 +220,11 @@ function renderHint(): void {
 /** a Return still waiting for main's answer: another is ignored until it lands */
 let submitting = false
 
-async function submit(): Promise<void> {
-  const sent = input.value
+/**
+ * Asks main to open a link: what the field holds (Return), or a past shared canvas's (its card). A refusal keeps the
+ * link in the field, selected, with its line - a card's link is put there first, so its line has something to say.
+ */
+async function open(sent: string, fromField: boolean): Promise<void> {
   if (!sent.trim() || !api || submitting) return
   const p = parseLink(sent)
   submitting = true
@@ -190,12 +234,14 @@ async function submit(): Promise<void> {
     if (input.value === sent) input.value = ''
     answer = null
   } else {
-    answer = { why: a.why, sent, port: p.kind === 'local' ? p.port : p.kind === 'bad' ? p.port ?? null : null }
+    answer = { why: a.why, sent, port: p.kind === 'local' ? p.port : p.kind === 'bad' ? p.port ?? null : null, host: p.kind === 'https' ? p.host : null }
+    if (!fromField) input.value = sent
     if (input.value === sent) input.select()
   }
   renderHint()
   if (!a.ok) say(live, hintEl.textContent ?? '')
 }
+const submit = () => open(input.value, true)
 
 input.addEventListener('input', () => renderHint())
 input.addEventListener('keydown', (e) => {
@@ -218,14 +264,16 @@ shown()
 setInterval(() => {
   for (const el of bodyEl.querySelectorAll<HTMLElement>('.card.stopped')) {
     const r = recent.find((x) => `recent:${x.id}` === el.dataset.key)
-    const ran = el.querySelector('.ran')
+    const ran = el.querySelector<HTMLElement>('.ran')
     if (r && ran) ran.textContent = `Ran ${ago(r.lastSeen)}`
+    else if (ran?.dataset.seen) ran.textContent = `Opened ${ago(Number(ran.dataset.seen))}`
   }
 }, 60_000)
 
 if (api) {
   api.onTabs((s) => { snap = s; renderBody(); renderHint() })
   api.onRecent((r) => { recent = Array.isArray(r) ? r : []; renderBody() })
+  api.onShared((l) => { shared = Array.isArray(l) ? l : []; renderBody() })
   api.onHomeInfo((i) => { info = i; renderTitle(); renderBody(); renderFoot() })
   api.onHomeFocus((f) => {
     if (f.field !== 'link') return

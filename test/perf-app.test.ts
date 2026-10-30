@@ -121,6 +121,18 @@ describe('--crashes (A3.8 #23)', () => {
     expect(s.dumps).toBe(1)
   })
 
+  it('a shared canvas\'s lines - its origin and no workspace (spec 28 A4.6 #48) - never show in a repo: not a crash, not a hang, not machine-wide', () => {
+    let seq = 900
+    const remote = (kind: string, ago: number, body: Record<string, unknown>) =>
+      ({ v: 1, ts: NOW - ago, kind, app: APP, seq: seq++, flavour: 'release', machine: H_APP, tab: 't9', origin: 'https://pilot.example.com', commit: 2, role: 'canvas', pid: 990, born: 9, ...body }) as unknown as AppRecord
+    const app = [...readAppLog(home), remote('gone', 3_500, { reason: 'crashed', exitCode: 11, ours: false, pressure: 1 }), remote('unresponsive', 3_400, {}), remote('responsive', 3_300, {})]
+    const s = crashesSummary(app, page(), repoWorkspaces(root, page()), home)
+    expect(s.crashes.map((c) => c.pid)).toEqual([779, 777])
+    expect(s.hangs.map((h) => h.pid)).toEqual([777])
+    expect(s.byTime.map((m) => m.what)).toEqual(['child-gone', 'gpu-restart', 'app-page-gone'])
+    expect(JSON.stringify(s)).not.toContain('pilot.example.com')
+  })
+
   it('printed: each crash with its board in words, the minute before, the machine-wide ends labelled by time, the dump count', () => {
     const out: string[] = []
     vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => { out.push(a.join(' ')) })

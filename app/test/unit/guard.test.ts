@@ -6,10 +6,11 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
-  activeTab, closeTab, closeView, guard, guardAll, onCommit, onDocumentGone, onFail, onRegistry, sheetBox, sheetConfirmed, sheetText, type GuardAction, type Tab,
+  activeTab, closeTab, closeView, guard, guardAll, onCommit, onDocumentGone, onFail, onInPage, onRegistry, onRemoteCommit, sheetBox, sheetConfirmed, sheetLine, sheetText, sheetWhy, type GuardAction, type Tab,
 } from '../../src/main/tabs.ts'
 import { hangSheetText } from '../../src/main/tabpage.ts'
-import { deferred, flush, liveTab, report, show, world, type World } from './window-fakes.ts'
+import { currentPill } from '../../src/main/pill.ts'
+import { deferred, flush, liveTab, report, sharedTab, show, world, type World } from './window-fakes.ts'
 
 let w: World
 beforeEach(() => { w = world() })
@@ -395,5 +396,94 @@ describe('the native sheet (A2.2, A2.11): what showMessageBox is given and how i
     const t = liveTab(w)
     const hang = sheetBox(hangSheetText(t, []))
     expect([hang.buttons, hang.defaultId, hang.cancelId]).toEqual([['Keep Waiting', 'Reload Page'], 0, 0])
+  })
+})
+
+describe('a shared canvas: its unsaved state is unknown, so the guard asks (A4.6 #43, r1 #8)', () => {
+  const REMOTE: GuardAction[] = [{ kind: 'close' }, { kind: 'reload' }, { kind: 'forceReload' }, { kind: 'tryAgain' }, { kind: 'load', url: 'https://pilot.example.com/?x=1' }]
+  for (const a of REMOTE) {
+    it(`${a.kind}: one sheet naming the host and why, Cancel acting on nothing, Close acting once`, async () => {
+      const r = sharedTab(w)
+      w.askWith = () => false
+      expect(await guard(r, a)).toBe('refused')
+      expect(w.acts).toHaveLength(0)
+      expect(w.sheets[0]!.tabs).toEqual([{ id: r.id, name: 'pilot.example.com', why: { kind: 'remote' } }])
+      w.askWith = () => true
+      expect(await guard(r, a)).toBe('done')
+      expect(w.acts).toEqual([{ tab: r.id, action: a }])
+    })
+  }
+
+  it('the sheet\'s words: the host, and that the app cannot tell what it has not saved', () => {
+    const r = sharedTab(w)
+    expect(sheetWhy(r)).toEqual({ kind: 'remote' })
+    expect(sheetLine('pilot.example.com', { kind: 'remote' })).toBe("pilot.example.com is a shared canvas: the app can't tell what it hasn't saved.")
+    const words = sheetText({ action: { kind: 'close' }, tabs: [{ id: r.id, name: 'pilot.example.com', why: { kind: 'remote' } }] })
+    expect(words).toMatchObject({ message: 'Close pilot.example.com anyway?', buttons: ['Cancel', 'Close'] })
+    expect(words.detail).toContain('What it hasn\'t saved is lost.')
+  })
+
+  it('a page that vetoes after consent keeps its tab, comes forward and wears "Unsaved work here" - ⌘W is never silently nothing', async () => {
+    const r = sharedTab(w)
+    show('home')
+    w.askWith = () => true
+    w.actWith = () => 'refused'
+    expect(await closeTab(r.id)).toBe('refused')
+    expect(activeTab()).toBe(r)
+    expect(r.held?.action).toBe('close')
+    expect(currentPill()).toMatchObject({ kind: 'unsaved', tab: r.id })
+  })
+
+  it('no retained document (an error page): nothing to ask about', async () => {
+    const r = sharedTab(w)
+    onFail(r, { why: 'unreachable', code: -106, errorPage: true })
+    expect(await guard(r, { kind: 'tryAgain' })).toBe('done')
+    expect(w.sheets).toHaveLength(0)
+  })
+
+  it('a quit with only a shared canvas: one sheet naming it, then its close - never a quit refused unasked', async () => {
+    const r = sharedTab(w)
+    w.askWith = () => true
+    expect(await guardAll({ kind: 'quit' })).toBe('done')
+    expect(w.sheets).toHaveLength(1)
+    expect(w.sheets[0]!.tabs.map((x) => [x.id, x.why.kind])).toEqual([[r.id, 'remote']])
+    expect(w.acts).toEqual([{ tab: r.id, action: { kind: 'quit' } }])
+  })
+
+  it('an update with a local canvas not yet heard and a shared one: the one sheet names both, each with its own line', async () => {
+    const t = liveTab(w, { busy: null })
+    const r = sharedTab(w)
+    w.askWith = () => true
+    expect(await guardAll({ kind: 'update' })).toBe('done')
+    expect(w.sheets).toHaveLength(1)
+    expect(w.sheets[0]!.tabs.map((x) => [x.id, x.why.kind])).toEqual([[t.id, 'unknown'], [r.id, 'remote']])
+    expect(w.acts.map((x) => x.tab)).toEqual([t.id, r.id])
+    // a fresh, clean local canvas beside it is closed, not named
+  })
+
+  it('a fresh, clean local canvas and a shared one: only the shared one named; Cancel closes neither', async () => {
+    const t = liveTab(w)
+    const r = sharedTab(w)
+    w.askWith = () => false
+    expect(await guardAll({ kind: 'quit' })).toBe('refused')
+    expect(w.sheets[0]!.tabs.map((x) => x.id)).toEqual([r.id])
+    expect(w.acts).toHaveLength(0)
+    void t
+  })
+
+  it('a shared document that commits again while the quit\'s sheet is up is a newcomer: the quit is refused', async () => {
+    const r = sharedTab(w)
+    const sheet = deferred<boolean>()
+    w.askWith = () => sheet.promise
+    const quit = guardAll({ kind: 'quit' })
+    await flush()
+    onRemoteCommit(r, { gen: 2, href: 'https://pilot.example.com/#/b/next' })
+    sheet.resolve(true)
+    expect(await quit).toBe('refused')
+    expect(w.acts).toHaveLength(0)
+    // a hash change in the same document is not a new one: a later quit asks again and goes
+    onInPage(r, 'https://pilot.example.com/#/b/again')
+    w.askWith = () => true
+    expect(await guardAll({ kind: 'quit' })).toBe('done')
   })
 })

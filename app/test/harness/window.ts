@@ -20,6 +20,8 @@ export interface TabDump {
   /** A3's unloading (A3.8 #39-#45) */
   unload?: { phase: 'closing' | 'unsure' | 'unloaded' | 'reopening'; reason: string; at: number; commit: number; origin: string; unloadedAt?: number; activatedAt?: number; stuck?: boolean } | null
   unloadRefused?: number | null; hiddenAt?: number | null; audible?: boolean; devtools?: boolean; loading?: boolean
+  /** A4's shared canvas (A4.6 #39): its fixed origin, its place, its host */
+  remote?: { origin: string; url: string; host: string } | null
 }
 export interface State { active: string; tabs: TabDump[]; order: string[]; canvases: string[]; pill: { rev: number; kind: string; short: string; tab?: string } | null; focus: unknown; quitting: boolean }
 export interface LogLine { topic: string; turn: number; t: string; data: Record<string, unknown> }

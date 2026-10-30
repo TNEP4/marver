@@ -1,6 +1,6 @@
 /** One parser for a canvas link (src/shared/links.ts; spec 28 A2.7, v1.10 r1 #4). */
 import { describe, expect, it } from 'vitest'
-import { boardOf, parseLink, shellPath } from '../../src/shared/links.ts'
+import { boardOf, loopbackHost, parseLink, remoteFavicon, remoteFaviconPick, remoteStart, shellDestination, shellPath } from '../../src/shared/links.ts'
 
 describe('parseLink()', () => {
   it('reads a running canvas\'s link on each loopback host, keeping path, query and hash', () => {
@@ -16,6 +16,22 @@ describe('parseLink()', () => {
 
   it('an https link is a shared canvas (A4.4)', () => {
     expect(parseLink('https://pilot.example.com/')).toEqual({ kind: 'https', url: 'https://pilot.example.com/', host: 'pilot.example.com' })
+  })
+
+  it('an https link to a loopback host is no canvas link (A4.6 #39): every spelling URL normalises to, and the unspecified address', () => {
+    for (const s of [
+      'https://localhost/', 'https://localhost:4806/#/b/x', 'https://LOCALHOST./', 'https://app.localhost/', 'https://127.0.0.1/', 'https://127.9.8.7:8443/',
+      'https://127.1/', 'https://0x7f.1/', 'https://[::1]/', 'https://[0:0:0:0:0:0:0:1]:4806/', 'https://0.0.0.0/', 'https://[::]/', 'https://[::ffff:127.0.0.1]/',
+    ]) expect(parseLink(s), s).toEqual({ kind: 'bad' })
+    for (const h of ['localhost', 'a.b.localhost', '127.0.0.1', '127.255.0.1', '0.0.0.0', '[::1]', '[::]', '[::ffff:7f00:1]']) expect(loopbackHost(h), h).toBe(true)
+    for (const h of ['localhost.example.com', '128.0.0.1', '10.0.0.1', '[2001:db8::1]', 'pilot.example.com', 'mylocalhost']) expect(loopbackHost(h), h).toBe(false)
+  })
+
+  it('a bare non-loopback host reads as https, a bare loopback one as a local link; a bare word is no link (A4.6 #39)', () => {
+    expect(parseLink('pilot.example.com/#/b/flow')).toEqual({ kind: 'https', url: 'https://pilot.example.com/#/b/flow', host: 'pilot.example.com' })
+    expect(parseLink('pilot.example.com:8443')).toEqual({ kind: 'https', url: 'https://pilot.example.com:8443/', host: 'pilot.example.com:8443' })
+    expect(parseLink('localhost:4806/#/b/x')).toMatchObject({ kind: 'local', port: 4806 })
+    for (const s of ['pilot', 'u:p@pilot.example.com', 'localhost', `pilot.example.com/${'a'.repeat(2048)}`]) expect(parseLink(s), s).toEqual({ kind: 'bad' })
   })
 
   it('refuses anything else', () => {
@@ -38,6 +54,60 @@ describe('parseLink()', () => {
     expect(shellPath('/#/b/flow?f=x')).toBe('/#/b/flow?f=x')
     expect(shellPath('/index.html?n=1#/b/x')).toBe('/index.html?n=1#/b/x')
     for (const p of ['/other', 'x', 3, `/#${'a'.repeat(2048)}`, '//evil.com/']) expect(shellPath(p)).toBe('/')
+  })
+
+  it('a shared tab starts at its opening link, or its origin and / under /__mv/ (A4.6 r1 #9)', () => {
+    expect(remoteStart('https://pilot.example.com/#/b/flow?f=x')).toBe('https://pilot.example.com/#/b/flow?f=x')
+    expect(remoteStart('https://pilot.example.com/other/page?q=1')).toBe('https://pilot.example.com/other/page?q=1')
+    for (const u of ['https://pilot.example.com/__mv/id/start?next=/', 'https://pilot.example.com/__mv/id/finish#code=abc', 'https://pilot.example.com/__mv']) {
+      expect(remoteStart(u), u).toBe('https://pilot.example.com/')
+    }
+  })
+
+  it('its place moves only to a shell page of its own origin - never a sign-in route, another page or another origin (A4.6 r1 #9)', () => {
+    const o = 'https://pilot.example.com'
+    for (const u of [`${o}/`, `${o}/#/b/plans`, `${o}/index.html?n=1#/b/x?f=y`, `${o}/?share=1`]) expect(shellDestination(o, u), u).toBe(true)
+    for (const u of [
+      `${o}/__mv/id/start?next=%2F`, `${o}/__mv/id/finish#code=abc`, `${o}/__mv/logo.svg`, `${o}/other/page`, `${o}/index.htm`,
+      'https://id.marver.design/login', 'https://accounts.google.com/o/oauth2/auth', 'https://pilot.example.com:8443/', 'http://pilot.example.com/',
+      'https://u:p@pilot.example.com/', 'not a url',
+    ]) expect(shellDestination(o, u), u).toBe(false)
+  })
+
+  it('a shared tab\'s favicon: https on its own origin, its document there too - never a sign-in host\'s or another site\'s (A4.6 #46)', () => {
+    const o = 'https://pilot.example.com'
+    expect(remoteFavicon(`${o}/favicon.png`, o, `${o}/#/b/x`)).toBe(true)
+    expect(remoteFavicon(`${o}/__mv/logo.svg`, o, `${o}/index.html`)).toBe(true)
+    for (const [url, doc] of [
+      ['https://id.marver.design/favicon.ico', 'https://id.marver.design/login'],   // during sign-in: its document elsewhere
+      [`${o}/favicon.png`, 'https://id.marver.design/login'],
+      ['https://cdn.example.com/icon.png', `${o}/`],
+      [`http://pilot.example.com/favicon.png`, `${o}/`],
+      ['https://u:p@pilot.example.com/favicon.png', `${o}/`],
+      ['https://pilot.example.com:8443/favicon.png', `${o}/`],
+      ['data:image/png;base64,AAAA', `${o}/`],
+      [`${o}/favicon.png`, 'chrome-error://chromewebdata/'],
+    ]) expect(remoteFavicon(url, o, doc), `${url} on ${doc}`).toBe(false)
+    expect(remoteFavicon(undefined, o, `${o}/`)).toBe(false)
+  })
+
+  it('a shared tab wears the repo\'s logo out of Electron\'s sorted set, else the first it may fetch (A4.6 #46)', () => {
+    const o = 'https://pilot.example.com'
+    // a published shell's icons as its page lists them, the logo first (marver build's iconFirst) ...
+    const listed = [`${o}/__mv/logo.svg`, `${o}/__mv/favicon/favicon.ico`, `${o}/__mv/favicon/favicon-32x32.png`, `${o}/__mv/favicon/favicon-16x16.png`]
+    // ... as page-favicon-updated hands them: a flat_set<GURL>, ordered by spec - the logo no longer first
+    const sorted = [...listed].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)))
+    expect(sorted[0]).toBe(`${o}/__mv/favicon/favicon-16x16.png`)
+    expect(remoteFaviconPick(sorted, o, `${o}/#/b/x`)).toBe(`${o}/__mv/logo.svg`)
+    for (const type of ['png', 'ico']) expect(remoteFaviconPick([`${o}/__mv/favicon/favicon.ico`, `${o}/__mv/logo.${type}`], o, `${o}/`)).toBe(`${o}/__mv/logo.${type}`)
+    // no logo: the first it may fetch; another site's logo, or the logo while the document is elsewhere, never
+    expect(remoteFaviconPick(sorted.filter((u) => !u.includes('logo')), o, `${o}/`)).toBe(`${o}/__mv/favicon/favicon-16x16.png`)
+    expect(remoteFaviconPick(['https://cdn.example.com/__mv/logo.svg', `${o}/favicon.png`], o, `${o}/`)).toBe(`${o}/favicon.png`)
+    expect(remoteFaviconPick([`${o}/__mv/logo.svg`], o, 'https://id.marver.design/login')).toBeUndefined()
+    // a path that only looks like it, and nothing to take
+    expect(remoteFaviconPick([`${o}/a.png`, `${o}/__mv/logo.svg.png`, `${o}/x/__mv/logo.svg`], o, `${o}/`)).toBe(`${o}/a.png`)
+    expect(remoteFaviconPick([], o, `${o}/`)).toBeUndefined()
+    expect(remoteFaviconPick(undefined, o, `${o}/`)).toBeUndefined()
   })
 
   it('names the board of a hash route only', () => {

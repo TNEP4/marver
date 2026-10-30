@@ -216,6 +216,18 @@ describe('fitting (A2.2, A2.14 #19)', () => {
     expect(await p.page.isVisible(`[data-id="${first}"]`)).toBe(true)
     await p.resize(1280, 44)
   })
+
+  it('shared canvases behind » count as canvases; each is named "<host>, shared canvas" (A4.6 #39, #51)', async () => {
+    const remote = (id: string, host: string): TabView => ({ id, kind: 'remote', name: host, state: 'live', verified: false, open: true, link: `https://${host}/`, hue: 3 })
+    await p.resize(720, 44)
+    await p.send('tabs', snap('t1', [...twenty(), remote('t21', 'pilot.example.com'), { ...remote('t22', 'other.example.org'), state: 'unreachable' }]))
+    const hidden = await p.page.$$eval('.tab[hidden]', (els) => els.map((e) => (e as HTMLElement).dataset.id))
+    expect(hidden).toEqual(expect.arrayContaining(['t21', 't22']))
+    expect(await p.page.getAttribute('#more', 'aria-label')).toBe(`${hidden.length} more canvases`)
+    expect(await p.page.getAttribute('[data-id="t21"]', 'aria-label')).toBe('pilot.example.com, shared canvas')
+    expect(await p.page.getAttribute('[data-id="t22"]', 'aria-label')).toBe('other.example.org, shared canvas, can\'t be reached')
+    await p.resize(1280, 44)
+  })
 })
 
 describe('the one pill (A2.2)', () => {

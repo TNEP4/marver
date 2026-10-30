@@ -3,7 +3,7 @@
  * guard's act and sheet answered by the case. No Electron.
  */
 import type { RegistryEntry } from '../../src/main/registry.ts'
-import { resetTabs, setTabsPorts, onRegistry, allTabs, onCommit, onReport, activate, isActive, savedPathIn, startReopen, tabIdent, type GuardAction, type GuardAnswer, type Sheet, type Tab, type TabsFile } from '../../src/main/tabs.ts'
+import { resetTabs, setTabsPorts, onRegistry, allTabs, onCommit, onRemoteCommit, onReport, activate, isActive, openRemoteTab, savedPathIn, startReopen, tabIdent, type GuardAction, type GuardAnswer, type Sheet, type Tab, type TabsFile } from '../../src/main/tabs.ts'
 import { scheduleRetry, setTabpagePorts } from '../../src/main/tabpage.ts'
 import { recompute, resetPill, setPillPorts } from '../../src/main/pill.ts'
 import type { PillView } from '../../src/shared/channels.ts'
@@ -40,6 +40,8 @@ export interface World {
   logs: { topic: string; data: Record<string, unknown> }[]
   /** load(): the tabs whose load was the reopen of an unloaded tab */
   reopens: string[]
+  /** shared(): a shared canvas committed or moved its place - its `remote.url` then (A4.6 #47) */
+  shared: { tab: string; url: string }[]
   /** of those, the reopens on the origin that kept the camera: views.ts arms mv:doc's reopen for these alone */
   cameras: string[]
   /** how the next act answers: a value, or a deferred the case resolves */
@@ -52,7 +54,7 @@ export interface World {
 export function world(): World {
   const w: World = {
     clock: { now: 1_000_000 }, acts: [], sheets: [], loads: [], reloads: [], states: [], forgets: [], pills: [], copies: [], confirmed: [], probes: [],
-    forwards: 0, shown: [], saved: null, records: [], logs: [], reopens: [], cameras: [],
+    forwards: 0, shown: [], saved: null, records: [], logs: [], reopens: [], cameras: [], shared: [],
     actWith: () => 'done', askWith: () => false, probeWith: () => 'silent', visible: true,
   }
   resetTabs()
@@ -69,6 +71,7 @@ export function world(): World {
     forward: () => { w.forwards += 1 }, savedPath: (ws, origin) => savedPathIn(w.saved, ws, origin),
     log: (topic, data) => { w.logs.push({ topic, data: data as Record<string, unknown> }) },
     record: (kind, who, body) => { w.records.push({ kind, tab: 'id' in who ? who.id : who.tab, who: 'id' in who ? tabIdent(who) : { ...who }, body: { ...(body as object) } }) },
+    shared: (t) => { w.shared.push({ tab: t.id, url: t.remote!.url }) },
   })
   setTabpagePorts({
     now: () => w.clock.now, isActive,
@@ -117,6 +120,20 @@ export function liveTab(w: World, o: { entry?: Partial<RegistryEntry>; busy?: { 
     onReport(t.id, t.doc!.doc!, { busy: { busy: why.length > 0, unsaved: busy.unsaved, why } })
   }
   w.loads.length = 0
+  return t
+}
+
+/**
+ * A shared canvas's tab opened on `url` (A4.6 #39), shown, and its first document committed (`href`, else where the
+ * tab starts) - lifted, never trusted (#42).
+ */
+export function sharedTab(w: World, url = 'https://pilot.example.com/#/b/main', o: { show?: boolean; href?: string } = {}): Tab {
+  const t = openRemoteTab(url)
+  if (o.show !== false) show(t.id)
+  t.view = 'live'
+  onRemoteCommit(t, { gen: 1, href: o.href ?? t.remote!.url })
+  w.loads.length = 0
+  w.shown.length = 0
   return t
 }
 

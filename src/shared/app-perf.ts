@@ -49,9 +49,11 @@ export interface AppEnvelope {
 /**
  * A record about a tab carries its identity, captured in the event's turn before any await (A3.8 #8). `page` is the
  * one the admitted document's accepted `mv:hello` sent; a document that has not said hello has none, and never gets
- * the next document's. `commit` is the tab's commit count (tabs.ts `doc.commits`).
+ * the next document's. `commit` is the tab's commit count (tabs.ts `doc.commits`). A shared canvas's (A4.6 #48) has no
+ * `ws` - so `marver perf` in a repo never shows it - and `origin`, its scheme, host and port: never a path, query,
+ * hash or credential, so two shared canvases on one host stay apart and no sign-in token is ever written.
  */
-export interface TabIdent { tab: string; ws?: string; commit?: number; page?: string }
+export interface TabIdent { tab: string; ws?: string; commit?: number; page?: string; origin?: string }
 
 /** A process, as the budgets and `--crashes` name it. */
 export interface ProcId { pid: number; born: number }

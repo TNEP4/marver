@@ -7,7 +7,7 @@ import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { LOGO_MAX, sniffLogo } from '../src/shared/logo-sniff.ts'
-import { findLogo, LOGO_LADDER, logoRoute, logoTag, publishLogo } from '../src/server/logo.ts'
+import { findLogo, iconFirst, LOGO_LADDER, logoIconLink, logoRoute, logoTag, publishLogo } from '../src/server/logo.ts'
 import { portInUse } from '../src/server/exclusive.ts'
 import { png } from './png-fixture.ts'
 
@@ -194,6 +194,25 @@ describe('marver build publishes the logo by its bytes (A2.9)', () => {
   })
 })
 
+describe('the published shell and gate wear the repo\'s logo first (spec 28 A4.6 #46, marver 0.29.0)', () => {
+  it('its icon line names the published logo by its type; anything else - none, another path, markup - writes nothing', () => {
+    expect(logoIconLink('/__mv/logo.svg')).toBe('<link rel="icon" type="image/svg+xml" href="/__mv/logo.svg" />')
+    expect(logoIconLink('/__mv/logo.png')).toBe('<link rel="icon" type="image/png" href="/__mv/logo.png" />')
+    expect(logoIconLink('/__mv/logo.ico')).toBe('<link rel="icon" type="image/x-icon" href="/__mv/logo.ico" />')
+    for (const bad of [undefined, '', '/logo.svg', '/__mv/logo.gif', '/__mv/logo.svg" onload="alert(1)', '/__mv/logo.svg?x', 'https://evil.example/__mv/logo.svg']) expect(logoIconLink(bad), String(bad)).toBe('')
+  })
+
+  it('the shell as marver build writes it: the logo before Marver\'s own icons, everything else as it was; no logo, unchanged', () => {
+    const shell = readFileSync(join(import.meta.dirname, '..', 'src', 'client', 'shell', 'index.html'), 'utf8').replaceAll('{{ROUTE}}', '/__mv')
+    const out = iconFirst(shell, '/__mv/logo.svg')
+    const icons = [...out.matchAll(/<link rel="icon"[^>]*>/g)].map((m) => m[0])
+    expect(icons[0]).toBe('<link rel="icon" type="image/svg+xml" href="/__mv/logo.svg" />')
+    expect(icons.slice(1)).toEqual([...shell.matchAll(/<link rel="icon"[^>]*>/g)].map((m) => m[0]))
+    expect(out.replace(/<link rel="icon" type="image\/svg\+xml" href="\/__mv\/logo.svg" \/>\n\s*/, '')).toBe(shell)
+    expect(iconFirst(shell, undefined)).toBe(shell)
+  })
+})
+
 describe('GET /__mv/logo (A2.4, A2.9)', () => {
   const key = randomBytes(32)
   const proof = { instance: 'inst-1234', key, port: 4321 }
@@ -289,6 +308,13 @@ describe('a gated marver serve shows the logo before sign-in (v1.7 review #5)', 
     while (Date.now() < by && !(await fetch(`http://localhost:${port}/__mv/logo.ico`).then(() => true, () => false))) await new Promise((r) => setTimeout(r, 100))
   }, 30_000)
   afterAll(() => { proc?.kill('SIGKILL') })
+
+  it('the gate\'s first icon is the repo\'s logo, before Marver\'s own set (A4.6 #46)', async () => {
+    const html = await (await fetch(`http://localhost:${port}/`)).text()
+    const icons = [...html.matchAll(/<link rel="icon"[^>]*>/g)].map((m) => m[0])
+    expect(icons[0]).toBe('<link rel="icon" type="image/x-icon" href="/__mv/logo.ico" />')
+    expect(icons.slice(1).every((l) => l.includes('/__mv/favicon/'))).toBe(true)
+  })
 
   it('/__mv/logo.ico answers before sign-in when it exists, and 404 - never the bundle - when it does not', async () => {
     const r = await fetch(`http://localhost:${port}/__mv/logo.ico`)
