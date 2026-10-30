@@ -15,6 +15,8 @@ import { startFakeCanvas } from '../harness/fake-canvas.ts'
 
 const nicBefore = NIC_PROFILES.map(snapshot)
 const sha = (b: string | Buffer) => createHash('sha256').update(b).digest('hex')
+/** the version state/launched records: app.getVersion(), the app's package.json (a literal went stale at 0.2.1) */
+const APP_VERSION = (JSON.parse(readFileSync(join(import.meta.dirname, '..', '..', 'package.json'), 'utf8')) as { version: string }).version
 const mode = (p: string) => statSync(p).mode & 0o777
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -83,7 +85,7 @@ describe('first launch (A2.12, A2.14 #24)', () => {
     // stream's, and gets its own end-to-end case once it merges
     await call('home.shown')
     await until(async () => existsSync(state('launched')), (x) => x)
-    expect(JSON.parse(readFileSync(state('launched'), 'utf8'))).toMatchObject({ v: 1, app: '0.2.0' })
+    expect(JSON.parse(readFileSync(state('launched'), 'utf8'))).toMatchObject({ v: 1, app: APP_VERSION })
     expect((await call<{ welcome: boolean }>('home.info')).welcome).toBe(true)
     await relaunch()
     expect((await call<{ welcome: boolean }>('home.info')).welcome).toBe(false)

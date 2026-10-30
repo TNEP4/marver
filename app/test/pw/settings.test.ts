@@ -171,8 +171,9 @@ describe('the files (A2.7, A2.12)', () => {
   })
 
   it('the preload exposes Settings\' own methods alone, and no channel', async () => {
+    // A4 (A4.6 #27): action, Open System Settings - settings:action, open-notification-settings alone
     expect(await p.page.evaluate(() => Object.keys((window as unknown as { marverPage: object }).marverPage).sort()))
-      .toEqual(['get', 'kind', 'onStatus', 'onWindow', 'ready', 'reveal', 'set'])
+      .toEqual(['action', 'get', 'kind', 'onStatus', 'onWindow', 'ready', 'reveal', 'set'])
   })
 
   it('Reduce Motion: the switch does not slide', async () => {
@@ -205,6 +206,11 @@ describe('Notices, at STAGE a4 (app 0.3, A4.6 #25, #27)', () => {
   })
 
   it('turned on: one settings:set, then the Dock badge row; after an accepted post, still Open System Settings and nothing more', async () => {
+    // drawn at a4 with notices off (beforeEach drew app 0.1's rows), then main's answer to the switch: on, accepted
+    await p.answer('settings:get', a4(false))
+    await p.send('status', view().status)
+    await p.page.waitForSelector('[data-ctl="config.notifications"]')
+    expect(await row('dockBadge').count()).toBe(0)
     await p.answer('settings:get', a4(true, 'accepted'))
     await row('notifications').click()
     await p.page.waitForSelector('[data-ctl="config.dockBadge"]')

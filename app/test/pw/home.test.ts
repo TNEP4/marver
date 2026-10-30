@@ -320,18 +320,21 @@ describe('accessibility and the system settings (A2.13, A2.14 #26)', () => {
     await p.send('home:info', { welcome: false, writable: true })
     await tabs(TABS)
     await p.send('recent', RECENT.slice(0, 1))
+    // its own Shared list (the Shared canvases cases leave theirs): one link opened before, read after Recently here
+    await p.send('shared', [{ url: 'https://pilot.example.com/#/b/old', host: 'pilot.example.com', lastSeen: Date.now() - 60_000 }])
     expect(await p.page.$$eval('h1', (els) => els.length)).toBe(1)
     expect(await p.page.locator('#link').getAttribute('placeholder')).toBe('Open a canvas link…')
     expect(await p.page.getByLabel('Open a canvas link').count()).toBe(1)
     await p.page.focus('#link')
     const order: string[] = []
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 7; i++) {
       await p.page.keyboard.press('Tab')
       order.push(await p.page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? document.activeElement?.textContent ?? ''))
     }
     expect(order).toEqual([
       'Marver Platform, localhost:4805, running', 'TMS broker, localhost:4806, running', 'Tidewell, localhost:4807, stopped',
-      'Copy the start command for OS alignment', 'Copy the update command', 'Show the Files',
+      'Copy the start command for OS alignment', expect.stringMatching(/^pilot\.example\.com, shared canvas, opened /),
+      'Copy the update command', 'Show the Files',
     ])
   })
 

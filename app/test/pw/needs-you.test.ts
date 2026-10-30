@@ -191,7 +191,8 @@ function app() {
   const away = () => call('hide')
   const front = async () => { await call('show', { focus: true }); await until('the window focused', async () => (await call<{ focused: boolean }>('focusApp')) || null) }
   const close = async () => {
-    for (const c of o.children.splice(0)) if (c.exitCode === null) { c.kill('SIGKILL'); await new Promise((r) => c.once('exit', r)) }
+    // one a case killed has exited with exitCode null (signalCode set): waiting on its exit again would wait for good
+    for (const c of o.children.splice(0)) if (c.exitCode === null && c.signalCode === null) { c.kill('SIGKILL'); await new Promise((r) => c.once('exit', r)) }
     await o.run?.close()
     for (const f of o.fakes.splice(0)) await f.close().catch(() => {})
   }
