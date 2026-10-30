@@ -40,6 +40,8 @@ describe('a review', () => {
   it('in review with its batch and att: handled; after More work (att 2, a new batch) or decided: stale; gone: missing; the queue unread: nothing said', () => {
     expect(resolveItem(item, [], [card('c', { state: 'review', batch: 'b1', att: 1 })])).toEqual({ result: 'handled', target: { tile: 'c' } })
     expect(resolveItem(item, [], [card('c', { state: 'review', batch: 'b2', att: 2 })])).toEqual({ result: 'stale', target: { tile: 'c' } })
+    // the counter alone: the same batch in review again is another occurrence
+    expect(resolveItem(item, [], [card('c', { state: 'review', batch: 'b1', att: 2 })])).toEqual({ result: 'stale', target: { tile: 'c' } })
     expect(resolveItem(item, [], [card('c', { state: 'done', batch: 'b1', att: 1 })])).toEqual({ result: 'stale', target: { tile: 'c' } })
     expect(resolveItem(item, [], [])).toBe('missing')
     expect(resolveItem(item, [], null)).toBe('unread')
