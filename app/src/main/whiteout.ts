@@ -195,7 +195,9 @@ export function startWhiteout(p: WhiteoutPorts): void {
     const capAt = p.now()
     let img: NativeImage | null = null
     let late = false
-    const cap = t.wc.capturePage().then((x) => x, () => null).finally(() => { capturing = false })
+    // its start and its settling journaled: a case can tell what overlapped it (a live picture's readback, A4.6 #52)
+    j({ tick: k, capture: 'start' })
+    const cap = t.wc.capturePage().then((x) => x, () => null).finally(() => { capturing = false; j({ tick: k, capture: 'end' }) })
     const res = await Promise.race([cap, new Promise<'late'>((r) => setTimeout(() => r('late'), T.whiteoutCaptureMs))])
     if (res === 'late') { late = true; stats.abandoned++ } else img = res
     if (late || !img || img.isEmpty()) { inconclusive(w, k, capAt, late ? 'abandoned' : 'empty'); return }

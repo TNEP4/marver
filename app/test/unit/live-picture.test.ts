@@ -8,8 +8,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { CaptureRect } from '../../../src/shared/app-api.ts'
 import { livePictures, type PictureImage, type PictureLook } from '../../src/main/live-picture.ts'
+import { note } from '../../src/main/testing/index.ts'
 
 vi.mock('electron', () => ({ app: {} }))
+// the test journal, watched: the pw case reads a readback's start and end from it
+vi.mock('../../src/main/testing/index.ts', () => ({ note: vi.fn() }))
 
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3])
 const image = (w = 300, h = 200, empty = false): PictureImage & { resized?: { width: number; height: number } } => {
@@ -135,6 +138,18 @@ describe('live pictures in main (A4.6 #35)', () => {
     expect(await livePictures({ look: () => v.look })('t1', 'D1', RECT, yes)).toMatchObject({ ok: true, width: 4096, height: 4096 })
     v.img = () => image(1000, 4200)
     expect(await livePictures({ look: () => v.look })('t1', 'D1', RECT, yes)).toMatchObject({ ok: true, width: 975, height: 4096 })
+  })
+
+  it('the readback\'s start and its settling are journaled around it, then its answer (#52\'s pw case reads them)', async () => {
+    const v = view()
+    v.img = () => 'hang'
+    const lines = () => vi.mocked(note).mock.calls.filter(([t, d]) => t === 'live-picture' && (d as { tab?: string }).tab === 't9').map(([, d]) => d)
+    const out = livePictures({ look: () => v.look })('t9', 'D1', RECT, yes)
+    expect(v.asked).toHaveLength(1)
+    expect(lines()).toEqual([{ tab: 't9', read: 'start' }])
+    v.settle[0]!(image())
+    expect((await out).ok).toBe(true)
+    expect(lines().map((d) => (d as { read?: string; ok?: boolean }).read ?? (d as { ok?: boolean }).ok)).toEqual(['start', 'end', true])
   })
 
   it('the rect is CSS px: read back at the page\'s zoom (1.25), rounded out', async () => {
