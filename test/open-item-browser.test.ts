@@ -1,11 +1,16 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { rmSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { randomBytes, randomUUID } from 'node:crypto'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Browser } from './browser.ts'
 import { fixtureRoot, startDev, type Dev } from './dev-server.ts'
 import { appendEvents, type CommentEvent } from '../src/server/comments.ts'
 import { liveId } from '../src/server/app-live.ts'
-import type { OpenItem } from '../src/shared/app-api.ts'
+import { appProof } from '../src/server/proof.ts'
+import { readConn, readOffers, upsertConn } from '../src/server/jam/conn.ts'
+import { request } from '../src/server/jam/transport.ts'
+import { LIVE_WIRE, type LiveEvent, type LiveItem, type OpenItem } from '../src/shared/app-api.ts'
 
 /**
  * A notice's click in the shell (spec 28 A4.6 #29, #30; r1 #1-#3, r2 #1, #2, r3, r4 #1; the opening cases of #52), against
@@ -56,7 +61,7 @@ afterAll(async () => {
 })
 
 /** The fake bridge with `onOpen`, and the page's own Jam queue: a view the case sets, its actions recorded. */
-const FAKE = (o: { onOpen: boolean }) => `(() => {
+const FAKE = (o: { onOpen: boolean; realJam?: boolean }) => `(() => {
   const realFetch = window.fetch.bind(window)
   const q = window.__q = { view: { agent: 'claude', cards: [] }, n: 0, fail: false, commentsFail: false, hold: null, release: null, acts: [], posts: [], onAct: null }
   q.gate = () => { q.hold = new Promise((r) => { q.release = () => { q.hold = null; r(); return 1 } }); return 1 }
@@ -67,8 +72,9 @@ const FAKE = (o: { onOpen: boolean }) => `(() => {
     const url = String(input && input.url ? input.url : input)
     const path = url.replace(/^https?:\\/\\/[^/]+/, '').split('?')[0]
     const method = (init && init.method) || 'GET'
-    if (path === '/__mv/api/jam/queue') { if (q.hold) await q.hold; return q.fail ? json({ error: 'no queue' }, 500) : json({ ...q.view, seq: { boot: 'page', n: ++q.n } }) }
-    if (path === '/__mv/api/jam/card' || path === '/__mv/api/jam/run') {
+    // a canvas with Jam on (realJam): its queue, its actions and its answers are the server's own
+    if (${!o.realJam} && path === '/__mv/api/jam/queue') { if (q.hold) await q.hold; return q.fail ? json({ error: 'no queue' }, 500) : json({ ...q.view, seq: { boot: 'page', n: ++q.n } }) }
+    if (${!o.realJam} && (path === '/__mv/api/jam/card' || path === '/__mv/api/jam/run')) {
       const body = JSON.parse(init.body); const kind = path.slice('/__mv/api/jam/'.length)
       q.acts.push([kind, body]); if (q.onAct) q.onAct(kind, body)
       return json({ ok: true })
@@ -97,13 +103,13 @@ const FAKE = (o: { onOpen: boolean }) => `(() => {
 })()`
 
 /** A tab of its own, the fake installed, the canvas loaded on `hash` and its board shown. */
-async function open(hash = '#/b/main', o: { onOpen?: boolean; view?: object; fail?: boolean } = {}) {
+async function open(hash = '#/b/main', o: { onOpen?: boolean; view?: object; fail?: boolean; dev?: Dev } = {}) {
   const s = await browser!.tab({ width: 1400, height: 900 })
   tabs.push(s)
-  await browser!.send('Page.addScriptToEvaluateOnNewDocument', { source: FAKE({ onOpen: o.onOpen !== false }) }, s)
+  await browser!.send('Page.addScriptToEvaluateOnNewDocument', { source: FAKE({ onOpen: o.onOpen !== false, realJam: !!o.dev }) }, s)
   if (o.view || o.fail) await browser!.send('Page.addScriptToEvaluateOnNewDocument', { source: `window.__q.view = ${JSON.stringify(o.view ?? { agent: 'claude', cards: [] })}; window.__q.fail = ${!!o.fail}` }, s)
   await browser!.go(s, 'about:blank')
-  await browser!.go(s, `${dev!.origin}/${hash}`)
+  await browser!.go(s, `${(o.dev ?? dev)!.origin}/${hash}`)
   await browser!.until(s, `!!window.__mvStore && __mvStore.getState().nodes.length > 0 && __mvStore.getState().nodes.every((n) => n.status === 'ready') && !!window.__mvOpen && !!window.__mvJamQueue`, 30_000)
   await browser!.send('Page.bringToFront', {}, s)
   await browser!.eval(s, `window.__mvJamVoice?.getState().setChoice('no'), 1`)
@@ -338,37 +344,154 @@ describe('the occurrence: a stale click opens the target as it stands; a gone on
   })
 })
 
-describe('a comment card\'s run controls show in its thread, never a tile (A4.6 r3 #1)', () => {
-  it('resolved, then stalled: handled - the thread panel Resolved with no answer field, the popover open with the three choices; Give it back takes', async (ctx) => {
-    skip(ctx)
-    const t = tagged('main', { frame: 'demo/one', node: 'n-one', resolved: true })
-    const card = comment('rc-1', t.thread, t.create, { state: 'working', batch: 'b-r', runner: stalled('b-r', 4, 1) })
-    const p = await open('#/b/main', { view: { agent: 'claude', cards: [card] } })
-    expect(await p.open({ id: liveId('stalled', 'b-r', 4, 1), kind: 'stalled', board: 'main', thread: t.thread, cards: ['rc-1'], batch: 'b-r', gen: 4, occ: 1 })).toBe('handled')
-    const panel = `[data-jam-thread-panel="${t.thread}"]`
-    expect([await p.has(`${panel}[data-resolved]`), await p.has(`${panel} [data-jam-asks]`)]).toEqual([true, false])
-    const pop = `${panel} .cm-tstat.on[data-jam-card="rc-1"]`
-    expect(await p.ev(`[...document.querySelectorAll('${pop} [data-jam-run-act]')].map((b) => b.dataset.jamRunAct)`)).toEqual(['again', 'background', 'drop'])
-    // Give it back: the run's own action, at its generation; the queue moves on and the run is no longer stalled
-    await p.ev(`__q.onAct = (k, b) => { if (k === 'run' && b.action === 'again') __q.view = { agent: 'claude', cards: [${JSON.stringify({ ...card, runner: stalled('b-r', 4, 1, 'claimed') })}] } }, 1`)
-    await p.click(`${pop} [data-jam-run-act="again"]`)
-    await p.until(`__q.acts.some(([k, b]) => k === 'run' && b.batch === 'b-r' && b.gen === 4 && b.action === 'again')`)
-    await p.until(`__mvJamQueue.getState().cards.find((c) => c.id === 'rc-1').runner.state === 'claimed'`)
+// ---- a canvas with Jam on: the queue's real transitions ------------------------------------------------------
+
+/** A stand-in `claude -p <goal>` (jam-browser.test.ts's): answers every member of the packet the goal names, after
+ *  `delay` - or exits 1, as told by fake-agent.json in the canvas. */
+const FAKE_CLAUDE = `#!/usr/bin/env node
+const fs = require('fs')
+const goal = process.argv[process.argv.indexOf('-p') + 1] || ''
+const file = (/design\\/\\.local\\/jam\\/packets\\/[\\w-]+\\.json/.exec(goal) || [])[0]
+let mode = {}; try { mode = JSON.parse(fs.readFileSync('fake-agent.json', 'utf8')) } catch {}
+if (!file || mode.fail) process.exit(1)
+const p = JSON.parse(fs.readFileSync(file, 'utf8'))
+const F = '\`\`\`'
+const out = p.members.map((m) => F + 'marver-reply ' + m.id + '\\nDone.\\n' + F).join('\\n')
+setTimeout(() => process.stdout.write(JSON.stringify({ type: 'result', result: out }) + '\\n'), mode.delay || 0)
+`
+/** This canvas's slot file (the suite's own MARVER_HOME): its key, port, instance and workspace. */
+const slotOf = (root: string) => {
+  const dir = join(process.env.MARVER_HOME!, 'running')
+  for (const f of readdirSync(dir)) {
+    try { const r = JSON.parse(readFileSync(join(dir, f), 'utf8')); if (r.root === root && r.state === 'ready') return r } catch { /* mid-write */ }
+  }
+  throw new Error('no slot file')
+}
+/** What the canvas's live stream says now, read as the Mac app reads it (A4.6 #16): its first snapshot. */
+async function liveNow(root: string): Promise<LiveEvent> {
+  const slot = slotOf(root)
+  const ac = new AbortController()
+  const res = await fetch(`${slot.origin}${LIVE_WIRE.path}`, { signal: ac.signal, redirect: 'error', headers: { accept: LIVE_WIRE.type, 'x-mv-ws': slot.ws,
+    'x-mv-nonce': randomBytes(24).toString('base64url'), 'x-mv-app': appProof(Buffer.from(slot.key, 'base64url'), slot.port) } })
+  const reader = res.body!.getReader()
+  let buf = ''
+  try {
+    for (;;) {
+      const r = await reader.read()
+      if (r.done) throw new Error(`the stream ended (${res.status})`)
+      buf += new TextDecoder().decode(r.value)
+      for (let i = buf.indexOf('\n\n'); i >= 0; i = buf.indexOf('\n\n')) {
+        const block = buf.slice(0, i); buf = buf.slice(i + 2)
+        if (block.startsWith('event: live\ndata: ')) return JSON.parse(block.slice('event: live\ndata: '.length))
+      }
+    }
+  } finally { ac.abort() }
+}
+/** The first item the live stream names that satisfies `ok`, within `ms`. */
+async function liveItem(root: string, ok: (i: LiveItem) => boolean, ms = 30_000): Promise<LiveItem> {
+  const end = Date.now() + ms
+  for (;;) {
+    const hit = (await liveNow(root)).items.find(ok)
+    if (hit) return hit
+    if (Date.now() > end) throw new Error('no such item in the live stream')
+    await new Promise((r) => setTimeout(r, 250))
+  }
+}
+/** What main hands the shell for an item (A4.6 #29): OpenItem's fields alone. */
+const asOpen = (i: LiveItem): OpenItem => {
+  const { id, kind, board, thread, msg, cards, batch, gen, occ } = i
+  return JSON.parse(JSON.stringify({ id, kind, board, thread, msg, cards, batch, gen, occ }))
+}
+const waitUntil = async (ok: () => boolean, ms = 20_000) => {
+  const end = Date.now() + ms
+  while (!ok()) { if (Date.now() > end) throw new Error('timed out'); await new Promise((r) => setTimeout(r, 25)) }
+}
+/** A tag sent from the page as the owner sends one: its thread. */
+const tagFrom = (p: Awaited<ReturnType<typeof open>>, frame: string, node: string, body: string): Promise<string> =>
+  p.ev(`(async () => { const id = crypto.randomUUID(); await __mvComments.getState().send([{ id, ts: Date.now(), type: 'create', commentId: id, frame: ${JSON.stringify(frame)}, nodeKey: ${JSON.stringify(node)}, body: ${JSON.stringify(body)} }], 'main'); return id })()`)
+
+describe('a comment card\'s run controls show in its thread, through the queue\'s real transitions (A4.6 r3 #1, #52; code review r1 P2)', () => {
+  // a REAL marver dev with Jam on, a stand-in `claude` on PATH for its spawned runs, and this process standing in for a
+  // connected Claude Code session; the stall time short (MV_JAM_STALL_MS, the suite's build only). The item each case
+  // clicks is the one the canvas's live stream names; every action goes to the server's own routes and is read back
+  // from its journal.
+  let jroot = '', bin = ''
+  let jdev: Dev | null = null
+  const journal = () => JSON.parse(readFileSync(join(jroot, 'design', '.local', 'jam-jobs.json'), 'utf8'))
+  const BOARD = (nodes: object[]) => JSON.stringify({ version: 1, name: 'main', order: 0, auto: false, nodes })
+  beforeAll(async () => {
+    bin = realpathSync(mkdtempSync(join(tmpdir(), 'mv-open-bin-')))
+    writeFileSync(join(bin, 'claude'), FAKE_CLAUDE)
+    chmodSync(join(bin, 'claude'), 0o755)
+    jroot = fixtureRoot('mv-open-jam-', {
+      'design/config.ts': "export default { jam: { agent: 'claude', concurrency: 1 } }\n",
+      'design/scenes/demo/one.tsx': FRAME('One'),
+      'design/scenes/demo/two.tsx': FRAME('Two'),
+      'design/boards/main.json': BOARD([{ key: 'n-one', frame: 'demo/one', x: 0, y: 0, w: 390, h: 844 }, { key: 'n-two', frame: 'demo/two', x: 600, y: 0, w: 390, h: 844 }]),
+      'fake-agent.json': JSON.stringify({ fail: true }),
+    })
+    jdev = await startDev(jroot, { env: { PATH: `${bin}:${process.env.PATH}`, MV_JAM_STALL_MS: '4000' } })
+  }, 120_000)
+  afterAll(async () => {
+    await jdev?.stop()
+    for (const d of [jroot, bin]) if (d) rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   })
 
-  it('a failed comment card whose frame left its board: handled - the thread panel with the answer field and the popover open on Retry; Retry requeues it', async (ctx) => {
+  it('a failed comment card whose frame then left its board: handled - the thread panel with the answer field and the popover open on Retry; Retry requeues it', async (ctx) => {
     skip(ctx)
-    const t = tagged('main', { frame: 'demo/four', node: 'n-gone' })
-    const card = comment('cc-2', t.thread, t.create, { frames: ['demo/four'], state: 'failed', batch: 'b-c2', fails: 1, att: 1, note: 'the agent could not finish' })
-    const p = await open('#/b/main', { view: { agent: 'claude', cards: [card] } })
-    expect(await p.open({ id: liveId('failed', 'b-c2', 1), kind: 'failed', board: 'main', thread: t.thread, cards: ['cc-2'], batch: 'b-c2', occ: 1 })).toBe('handled')
-    const panel = `[data-jam-thread-panel="${t.thread}"]`
+    const p = await open('#/b/main', { dev: jdev! })
+    const thread = await tagFrom(p, 'demo/two', 'n-two', '@marver make it blue')
+    // the stand-in fails both attempts: the card fails with its run
+    await p.until(`(__mvJamQueue.getState().cards ?? []).some((c) => c.thread === ${JSON.stringify(thread)} && c.state === 'failed')`, 60_000)
+    // its frame leaves the board
+    writeFileSync(join(jroot, 'design', 'boards', 'main.json'), BOARD([{ key: 'n-one', frame: 'demo/one', x: 0, y: 0, w: 390, h: 844 }]))
+    await p.until(`!__mvStore.getState().nodes.some((n) => n.key === 'n-two')`, 15_000)
+    const item = await liveItem(jroot, (i) => i.kind === 'failed' && i.thread === thread)
+    const card = item.cards![0]
+    expect([typeof item.batch, item.occ]).toEqual(['string', 1])
+    expect(await p.open(asOpen(item))).toBe('handled')
+    const panel = `[data-jam-thread-panel="${thread}"]`
     expect(await p.has(`${panel} [data-jam-asks] textarea`)).toBe(true)
-    await p.ev(`__q.onAct = (k, b) => { if (k === 'card' && b.action === 'retry') __q.view = { agent: 'claude', cards: [${JSON.stringify({ ...card, state: 'queued', rev: 2 })}] } }, 1`)
-    await p.click(`${panel} .cm-tstat.on[data-jam-card="cc-2"] .cm-tstat-act`)
-    await p.until(`__q.acts.some(([k, b]) => k === 'card' && b.id === 'cc-2' && b.action === 'retry')`)
-    await p.until(`document.querySelector('${panel} .cm-tstat[data-jam-card="cc-2"]')?.dataset.jamState === 'queued'`)
-  })
+    const pop = `${panel} .cm-tstat.on[data-jam-card="${card}"]`
+    expect(await p.has(pop)).toBe(true)
+    // Retry, as the popover sends it: the server's own route, the queue's own requeue - the failed run kept in `ran`
+    writeFileSync(join(jroot, 'fake-agent.json'), JSON.stringify({ delay: 1500 }))
+    await p.click(`${pop} .cm-tstat-act`)
+    const mine = () => journal().cards.find((c: { id: string }) => c.id === card)
+    await waitUntil(() => mine().state !== 'failed' && (mine().ran ?? []).includes(item.batch), 15_000)
+    expect((await liveNow(jroot)).items.some((i) => i.kind === 'failed' && i.thread === thread)).toBe(false)
+  }, 150_000)
+
+  it('resolved, then stalled: handled - the thread panel Resolved with no answer field, the popover open with the three choices; Give it back takes', async (ctx) => {
+    skip(ctx)
+    writeFileSync(join(jroot, 'fake-agent.json'), JSON.stringify({}))
+    const p = await open('#/b/main', { dev: jdev! })
+    // a Jam session on, as its Start sends it, and a Claude Code session connected - this process
+    const conn = upsertConn(jroot, 'claude', randomUUID(), { pid: process.pid, cwd: jroot }, Date.now(), true)
+    expect(await p.ev(`(async () => { const c = /(?:^|;\\s*)mv_c=([\\w-]+)/.exec(document.cookie)?.[1] ?? ''; return (await fetch('/__mv/api/jam/session', { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': c }, body: JSON.stringify({ action: 'start', id: 'ses-' + Date.now() + '-standin' }) })).status })()`)).toBe(200)
+    const thread = await tagFrom(p, 'demo/one', 'n-one', '@marver make it say Hello')
+    // offered to the session, which takes it
+    await waitUntil(() => (readOffers(jroot, conn.id)?.n ?? 0) === 1, 30_000)
+    expect(typeof (await request(jroot, readConn(jroot, conn.id) ?? conn, 'next', {}, 20_000)).handle).toBe('string')
+    // the thread resolved while the run works (the card keeps working, queue.ts:145), then the run goes quiet: stalled
+    await p.ev(`__mvComments.getState().send([{ id: crypto.randomUUID(), ts: Date.now(), type: 'resolve', commentId: ${JSON.stringify(thread)} }], 'main').then(() => 1)`)
+    await p.until(`!!__mvComments.getState().threads.find((t) => t.id === ${JSON.stringify(thread)})?.resolved`)
+    expect(journal().cards.find((c: { thread?: string }) => c.thread === thread).state).toBe('working')
+    const item = await liveItem(jroot, (i) => i.kind === 'stalled' && i.thread === thread)
+    const card = item.cards![0]
+    expect(item.occ).toBe(1)
+    expect(await p.open(asOpen(item))).toBe('handled')
+    const panel = `[data-jam-thread-panel="${thread}"]`
+    expect([await p.has(`${panel}[data-resolved]`), await p.has(`${panel} [data-jam-asks]`)]).toEqual([true, false])
+    const pop = `${panel} .cm-tstat.on[data-jam-card="${card}"]`
+    expect(await p.ev(`[...document.querySelectorAll('${pop} [data-jam-run-act]')].map((b) => b.dataset.jamRunAct)`)).toEqual(['again', 'background', 'drop'])
+    // Give it back, as the popover sends it: the run's own action through the daemon - the same claim, no longer stalled
+    await p.ev(`(() => { window.__runner = []; __mvJamQueue.subscribe((s) => { const r = s.cards?.find((c) => c.id === ${JSON.stringify(card)})?.runner?.state; if (r !== __runner.at(-1)) __runner.push(r) }); return 1 })()`)
+    await p.click(`${pop} [data-jam-run-act="again"]`)
+    const claim = () => journal().batches.find((b: { batchId: string }) => b.batchId === item.batch)?.claim
+    await waitUntil(() => claim()?.resumed === true && !claim().stalled && claim().gen === item.gen, 10_000)
+    await p.until(`__runner.includes('claimed')`, 10_000)
+  }, 150_000)
 })
 
 describe('Play is left first when what opens is on the canvas (A4.6 r4 #1)', () => {

@@ -21,6 +21,7 @@ import { parseAgentText, sanitize } from './packet.ts'
 import type { Queue } from './queue.ts'
 import { answer, sweep, takeRequests, verify, type Req } from './transport.ts'
 import type { Batch } from './types.ts'
+import { TEST_BUILD } from '../test-build.ts'
 
 /** An offer Claude Code has not pulled in this long goes to a copy or a fresh agent. */
 export const OFFER_MS = 2 * 60_000
@@ -28,6 +29,14 @@ export const OFFER_MS = 2 * 60_000
 export const IDLE_OFFER_MS = 30_000
 /** A claimed run with no word from its session in this long is stalled - the owner decides. */
 export const STALL_MS = 15 * 60_000
+/** STALL_MS, or the suite's MV_JAM_STALL_MS for a dev server a test starts - read in the suite's build only, with
+ *  MARVER_SLOT_BASE set (test-build.ts; as perf-run.ts's MV_PERF_RUN_T): a real stall in seconds, so a browser case
+ *  drives one through this daemon and the page's own actions. */
+const stallMs = (): number => {
+  if (!TEST_BUILD || !process.env.MARVER_SLOT_BASE) return STALL_MS
+  const v = Number(process.env.MV_JAM_STALL_MS)
+  return Number.isFinite(v) && v > 0 ? v : STALL_MS
+}
 /** How long a request's answer is kept for the same request sent again. */
 const RECEIPT_MS = 10 * 60_000
 /** The longest final message a session hands back (its replies, not its work). */
@@ -581,7 +590,7 @@ export function createRuns(d: RunsDeps): Runs {
         const claim = b.claim
         if (claim.result !== undefined) continue   // handed back: the daemon delivers it
         if (claim.stopping) { if (writerGone(claim)) await finishStop(b.batchId); continue }
-        const quiet = writerGone(claim) || now - claim.progress > STALL_MS
+        const quiet = writerGone(claim) || now - claim.progress > stallMs()
         if (!claim.stalled && quiet) {
           // a stall begins: one more `stalls` under this claim (A4.6 #9), so a second stall after Give it back is a new need
           await q.lock(() => { const x = byId(b.batchId)?.claim; if (x && x.result === undefined && !x.stopping) { if (!x.stalled) x.stalls = (x.stalls ?? 0) + 1; x.stalled = true; q.persist() } })
