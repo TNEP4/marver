@@ -3,11 +3,14 @@
  * profile and home of its own. One case per harness to start the others from: the wiring is there, and the
  * switches Playwright's loader adds are visible - the reason the production-switch harness exists.
  */
-import { existsSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { launchPW, type AppRun } from '../harness/app.ts'
 import { NIC_PROFILES, runSlotBase, snapshot, testEnv, type TestEnv } from '../harness/env.ts'
+
+/** app.getVersion(): the app's package.json (a literal went stale at 0.2.1) */
+const APP_VERSION = (JSON.parse(readFileSync(join(import.meta.dirname, '..', '..', 'package.json'), 'utf8')) as { version: string }).version
 
 interface Ping { name: string; version: string; electron: string; userData: string; crashDumps: string; switches: string[]; env: Record<string, string>; ready: boolean }
 
@@ -26,7 +29,7 @@ afterAll(async () => {
 describe('the dev build under Playwright', () => {
   it('starts as Marver Dev on its own profile and home', async () => {
     const p = await run.call<Ping>('ping')
-    expect(p).toMatchObject({ name: 'Marver Dev', version: '0.2.0', electron: '45.0.0', ready: true, userData: env.userData })
+    expect(p).toMatchObject({ name: 'Marver Dev', version: APP_VERSION, electron: '45.0.0', ready: true, userData: env.userData })
     expect(p.env.MARVER_HOME).toBe(env.home)
     expect(p.crashDumps).toBe(join(env.home, 'perf', 'crashpad'))
     expect(statSync(join(env.home, 'perf', 'crashpad')).mode & 0o777).toBe(0o700)
