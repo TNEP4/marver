@@ -8,7 +8,7 @@
  * `dropped` - a read failed, the deadline passed, or a later click, a hidden tab or a revoked trust took its place.
  *
  * One request at a time, under one deadline over everything: `alive()` holds while the request is the current one,
- * before its deadline, with no capture recording and no words typed and unsent. The helpers read it before every step
+ * before its deadline, with no capture recording and no words typed and unsent - and once it fails it stays failed. The helpers read it before every step
  * that moves the UI - a board change, comments turned on, a thread made active, a panel or a menu opened, Play left -
  * so words typed during the reads or a wait are seen at the next step, and once it fails nothing more moves. Opening
  * a question never marks it answered.
@@ -36,9 +36,16 @@ const busy = () => !!useJamCapture.getState().current || typedUnsent()
 export async function openLiveItem(p: OpenItem): Promise<OpenResult> {
   const n = ++current
   const until = performance.now() + OPEN_MS
-  const alive: Alive = () => n === current && performance.now() < until && !busy()
-  /** once it fails: busy if a capture records or words wait, else dropped */
-  const gaveUp = (): OpenResult => (busy() ? 'busy' : 'dropped')
+  // one way (code review r3): the first time it reads false - a later click, hidden, untrusted, the deadline, a recording,
+  // words unsent - the request has ended for good, for every helper and every deferred callback at once. Words cleared or
+  // sent after never bring it back: a switch it started would otherwise commit when they go (toBoard's predicate)
+  let ended: 'busy' | 'dropped' | null = null
+  const alive: Alive = () => {
+    if (!ended && (n !== current || performance.now() >= until || busy())) ended = busy() ? 'busy' : 'dropped'
+    return !ended
+  }
+  /** once it fails: busy if a capture recorded or words waited when it ended, else dropped */
+  const gaveUp = (): OpenResult => ended ?? (busy() ? 'busy' : 'dropped')
   if (!p || typeof p.board !== 'string' || !(LIVE_KINDS as readonly string[]).includes(p.kind)) return 'dropped'
   if (busy()) return 'busy'
   /** a promise, or undefined at the deadline */

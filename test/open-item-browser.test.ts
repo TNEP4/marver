@@ -784,6 +784,23 @@ describe('a board change under the request: it commits only while the request li
     expect(await p.board()).toBe('main')
   }, 40_000)
 
+  it('a request answered busy stays ended: its words cleared before the other board\'s load returns, nothing lands (code review r3 P2)', async (ctx) => {
+    skip(ctx)
+    const p = await open()
+    const t = asking('other', { frame: 'demo/three', node: 'n-three' })
+    await p.ev(`(() => { const f = document.createElement('textarea'); f.id = 'mv-words'; document.querySelector('.sh-app').appendChild(f); return 1 })()`)
+    await p.ev(`__q.gateBoard('other')`)
+    const i = await p.ev(`__fake.start(${JSON.stringify(askItem('other', t))})`)
+    await p.until(`__q.board.asked`)
+    await p.type('#mv-words', 'wait')
+    expect(await p.ev(`__fake.result(${i})`)).toBe('busy')
+    // the words go - cleared, as sending them would - well before the deadline, then the load returns
+    await p.ev(`(document.querySelector('#mv-words').value = '', 1)`)
+    await p.ev(`__q.board.release()`)
+    await loaded(p)
+    expect(await p.board()).toBe('main')
+  }, 30_000)
+
   it('a newer notice for this board while the first one\'s board loads: the first dropped, the second handled, the board kept', async (ctx) => {
     skip(ctx)
     const p = await open()
