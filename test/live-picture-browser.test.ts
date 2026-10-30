@@ -164,7 +164,15 @@ async function boot(o: { noapp?: boolean; inset?: boolean } = {}) {
   await ev(WATCH)
 }
 
-beforeEach(async () => { if (browser && s) await ev(WATCH).catch(() => null) })
+// each case starts clean: one that failed partway left its capture current and Play on, and the next case's start()
+// took that capture - in a loaded full suite one slow render failed every case after it
+beforeEach(async () => {
+  if (!browser || !s) return
+  await ev(`(() => { const c = window.__mvJamCapture?.getState(); if (c?.current) c.drop(); return 1 })()`).catch(() => null)
+  await until(`!window.__mvJamCapture?.getState().current`, 5000).catch(() => null)
+  await leave().catch(() => null)
+  await ev(WATCH).catch(() => null)
+})
 
 beforeAll(async () => {
   root = mkdtempSync(join(tmpdir(), 'mv-live-pic-'))
