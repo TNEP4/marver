@@ -106,7 +106,7 @@ runs. Turn notices on and a canvas you are not looking at sends one when somethi
 Dock counts them all. Clicking a notice opens what it names where you can see it, on its board: a question
 in its thread on the frame (Play left and hidden pins shown for it), or in a panel with a field to answer
 when no frame on the board holds it; a review in its review; a failed run with Retry in view, a stalled
-one with its three choices (a stalled capture's on its tile in the lane, on the board you are on). On a
+one with its three choices (a stalled capture's or Jam session's on its tile in the lane, on the board you are on). On a
 board locked to play, Play stays and the thread opens over it; a resolved thread opens read-only. It moves
 nothing while you are capturing or have typed words not yet sent.
 

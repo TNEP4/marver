@@ -19,10 +19,10 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 - **A notice opens what it names.** Click one in the Mac app and the canvas opens it on its board, where you can see
   it: a question in its thread on the frame (Play is left, and comment pins you hid with `⇧C` come back for it), or,
   when no frame on the board holds it, in a panel with a field to answer; a review in its review; a failed run with
-  Retry in view, a stalled one with its three choices (a stalled capture's on its tile in the lane, on the board you
-  are on). On a board locked to play, Play stays and the thread opens over it. An item that has moved on opens as it
-  is now - a resolved thread read-only - and one that is gone opens its board. Nothing moves while you are capturing
-  or have words you have not sent.
+  Retry in view, a stalled one with its three choices (a stalled capture's or Jam session's on its tile in the lane,
+  on the board you are on). On a board locked to play, Play stays and the thread opens over it. An item that has moved
+  on opens as it is now - a resolved thread read-only - and one that is gone opens its board. Nothing moves while you
+  are capturing or have words you have not sent.
 - **A picture in play is what you saw, in the Mac app.** With app 0.3, a capture's pictures in play - `I`, and the ones
   it takes itself as you point and as it ends - are the stage as it was on your screen: a menu you opened, text you
   typed, the comment pins. They are captioned "as you saw it" in the read-back and the review. One is taken once the

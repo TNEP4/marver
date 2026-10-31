@@ -8,7 +8,7 @@
  *
  * Notices (A4, A4.6 #25, #27): the Notices row is `notifications`' own switch, says that macOS decides whether notices
  * show, and always offers Open System Settings (`settings:action`, the Notifications pane): a notice macOS hides -
- * Marver set to Don't Allow, a Focus - still reports itself shown, so the app cannot tell (the #53 hand check, 31 Oct).
+ * Marver set to Don't Allow, a Focus that silences it - still reports itself shown, so the app cannot tell (the #53 hand check, 31 Oct).
  * After a notice that failed to post it says "macOS couldn't post Marver's last notice", and no more than that. The
  * Dock badge row shows only once notices are on.
  */
@@ -120,7 +120,7 @@ function section(file: FileName, keys: string[]): HTMLElement | null {
 function noticesMore(): HTMLElement {
   const failed = view?.notices.outcome === 'failed'
   return h('div', { class: 'row-more' },
-    h('p', { class: 'hint', id: 'notices-macos' }, 'macOS decides whether notices show. With Marver set to Don\'t Allow, or a Focus on, they don\'t appear, and Marver can\'t tell.'),
+    h('p', { class: 'hint', id: 'notices-macos' }, 'macOS decides whether notices show. With Marver set to Don\'t Allow, or a Focus that silences it, they don\'t appear, and Marver can\'t tell.'),
     failed ? h('p', { class: 'hint warn', id: 'notices-failed' }, 'macOS couldn\'t post Marver\'s last notice') : null,
     h('button', { class: 'quiet', type: 'button', id: 'notice-settings', onclick: () => api?.action({ action: 'open-notification-settings' }) }, 'Open System Settings'))
 }

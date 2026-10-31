@@ -24,10 +24,10 @@ none of them, only "Stopped" when its process dies.
   closed it, loading it again if it was unloaded - and the canvas opens what the notice named: the thread, the review,
   the run's Retry or choices. A later click replaces one still waiting for its page; a "Stopped" notice shows its tab.
 - **Settings: Notices.** The Notices row turns notices on and off, says that macOS decides whether they show, and
-  always offers Open System Settings. With Marver set to Don't Allow, or a Focus on, macOS hides notices without
-  telling the app, so the app cannot warn you; they still wait in Notification Center when only a Focus held them.
-  When a notice fails to post, the row says "macOS couldn't post Marver's last notice" and the strip says "<name>
-  needs you" in its place. The Dock badge row shows once notices are on.
+  always offers Open System Settings. With Marver set to Don't Allow, or a Focus that silences it, macOS hides notices
+  without telling the app, so the app cannot warn you; they still wait in Notification Center when only a Focus held
+  them. When a notice fails to post, the row says "macOS couldn't post Marver's last notice" and the strip says
+  "<name> needs you" in its place. The Dock badge row shows once notices are on.
 - **A picture in play is what you saw.** A capture's picture of the play stage is read back from the canvas's own
   view - an open menu, typed text, the comment pins - in place of a fresh render. The canvas asks only when the whole
   stage is in view with nothing of its own over it and has shown its screen for a second (a device preset, a slide
