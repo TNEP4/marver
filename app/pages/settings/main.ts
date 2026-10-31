@@ -6,10 +6,11 @@
  * says why. A file that does not apply says so, with each problem and the file's text beside it. "Show the Files"
  * opens the folder.
  *
- * Notices (A4, A4.6 #25, #27): the Notices row is `notifications`' own switch, and always offers Open System Settings
- * (`settings:action`, the Notifications pane) - macOS can hide notices without any failure; after a notice macOS
- * refused it says "macOS turned down Marver's last notice", and no more than that. The Dock badge row shows only
- * once notices are on.
+ * Notices (A4, A4.6 #25, #27): the Notices row is `notifications`' own switch, says that macOS decides whether notices
+ * show, and always offers Open System Settings (`settings:action`, the Notifications pane): a notice macOS hides -
+ * Marver set to Don't Allow, a Focus - still reports itself shown, so the app cannot tell (the #53 hand check, 31 Oct).
+ * After a notice that failed to post it says "macOS couldn't post Marver's last notice", and no more than that. The
+ * Dock badge row shows only once notices are on.
  */
 import type { SettingsFileView, SettingsSetResult, SettingsView } from '../../src/shared/channels.ts'
 import { keySpec, type FileName, type KeySpec } from '../../src/shared/settings-keys.ts'
@@ -115,11 +116,12 @@ function section(file: FileName, keys: string[]): HTMLElement | null {
     }))
 }
 
-/** Under the Notices switch: what macOS last did with a notice, if it refused one, and Open System Settings, always. */
+/** Under the Notices switch: that macOS decides, a notice that failed to post, if one did, and Open System Settings, always. */
 function noticesMore(): HTMLElement {
   const failed = view?.notices.outcome === 'failed'
   return h('div', { class: 'row-more' },
-    failed ? h('p', { class: 'hint warn', id: 'notices-failed' }, 'macOS turned down Marver\'s last notice') : null,
+    h('p', { class: 'hint', id: 'notices-macos' }, 'macOS decides whether notices show. With Marver set to Don\'t Allow, or a Focus on, they don\'t appear, and Marver can\'t tell.'),
+    failed ? h('p', { class: 'hint warn', id: 'notices-failed' }, 'macOS couldn\'t post Marver\'s last notice') : null,
     h('button', { class: 'quiet', type: 'button', id: 'notice-settings', onclick: () => api?.action({ action: 'open-notification-settings' }) }, 'Open System Settings'))
 }
 

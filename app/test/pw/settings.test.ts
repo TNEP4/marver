@@ -200,6 +200,8 @@ describe('Notices, at STAGE a4 (app 0.3, A4.6 #25, #27)', () => {
     expect(await row('notifications').getAttribute('aria-checked')).toBe('false')
     expect(await row('dockBadge').count()).toBe(0)
     expect(await p.page.locator('#notices-failed').count()).toBe(0)
+    // macOS hides a notice without telling the app (the #53 hand check): the row says so, always
+    expect(await p.page.$eval('#notices-macos', (e) => e.textContent)).toBe('macOS decides whether notices show. With Marver set to Don\'t Allow, or a Focus on, they don\'t appear, and Marver can\'t tell.')
     await p.page.click('#notice-settings')
     await p.page.waitForTimeout(30)
     expect(await p.calls('settings:action')).toEqual([{ action: 'open-notification-settings' }])
@@ -217,14 +219,15 @@ describe('Notices, at STAGE a4 (app 0.3, A4.6 #25, #27)', () => {
     expect(await p.calls('settings:set')).toEqual([{ file: 'config', key: 'notifications', value: true }])
     expect(await row('notifications').getAttribute('aria-checked')).toBe('true')
     expect(await p.page.locator('#notices-failed').count()).toBe(0)
+    expect(await p.page.locator('#notices-macos').count()).toBe(1)
     expect(await p.page.locator('#notice-settings').count()).toBe(1)
   })
 
-  it('after a refused post: "macOS turned down Marver\'s last notice", and Open System Settings still there', async () => {
+  it('after a post that failed: "macOS couldn\'t post Marver\'s last notice", and Open System Settings still there', async () => {
     await p.answer('settings:get', a4(true, 'failed'))
     await p.send('status', view().status)
     await p.page.waitForSelector('#notices-failed')
-    expect(await p.page.$eval('#notices-failed', (e) => e.textContent)).toBe('macOS turned down Marver\'s last notice')
+    expect(await p.page.$eval('#notices-failed', (e) => e.textContent)).toBe('macOS couldn\'t post Marver\'s last notice')
     await p.page.click('#notice-settings')
     await p.page.waitForTimeout(30)
     expect(await p.calls('settings:action')).toEqual([{ action: 'open-notification-settings' }])

@@ -235,7 +235,7 @@ export interface SettingsView {
   shown: string[]
   /**
    * A4 (A4.6 #25, #27): what macOS did with the last notice posted - `accepted` (it took the request: never a claim
-   * that it was seen), `failed` (it refused to schedule it: the row says "macOS turned down Marver's last notice"),
+   * that it was seen), `failed` (it could not schedule it: the row says "macOS couldn't post Marver's last notice"; a notice macOS hides - Don't Allow, a Focus - still reads `accepted`),
    * `unknown` (none posted yet). `state/notices.json`'s `lastOutcome`, absent reading `unknown`.
    */
   notices: { outcome: 'unknown' | 'accepted' | 'failed' }
