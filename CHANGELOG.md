@@ -16,15 +16,13 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   a canvas you are not looking at sends one, and the Dock counts them all. A canvas on 0.28 or earlier shows none of
   this in the app. In a browser nothing changes: the sidebar and the lane say it as before
   ([What needs you](docs/boards-and-folders.md#what-is-new-what-needs-you)).
-- **A notice opens what it names.** Click one in the Mac app and the canvas opens it where you can see it, on its
-  board. A question opens in its thread on the frame - Play is left and comment pins hidden with `⇧C` come back for
-  it; when no frame on the board holds it, a capture's question opens in the capture's panel, and any other in a new
-  thread panel (its first line, the last message, the run's status and a field to answer). A review opens its review.
-  A failed run opens with Retry in view, a stalled one with its three choices - a stalled capture's on its tile in the
-  lane, on the board you are on. On a board locked to play, Play stays and the thread opens in a panel over it. If the
-  item has moved on since (answered, reviewed, run again), it opens as it is now - a resolved thread read-only, with
-  no field; if it is gone, its board opens. It moves nothing while you are capturing or have typed words you have not
-  sent.
+- **A notice opens what it names.** Click one in the Mac app and the canvas opens it on its board, where you can see
+  it: a question in its thread on the frame (Play is left, and comment pins you hid with `⇧C` come back for it), or,
+  when no frame on the board holds it, in a panel with a field to answer; a review in its review; a failed run with
+  Retry in view, a stalled one with its three choices (a stalled capture's on its tile in the lane, on the board you
+  are on). On a board locked to play, Play stays and the thread opens over it. An item that has moved on opens as it
+  is now - a resolved thread read-only - and one that is gone opens its board. Nothing moves while you are capturing
+  or have words you have not sent.
 - **A picture in play is what you saw, in the Mac app.** With app 0.3, a capture's pictures in play - `I`, and the ones
   it takes itself as you point and as it ends - are the stage as it was on your screen: a menu you opened, text you
   typed, the comment pins. They are captioned "as you saw it" in the read-back and the review. One is taken once the
