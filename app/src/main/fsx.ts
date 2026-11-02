@@ -242,8 +242,12 @@ export interface WriteHooks {
 
 export interface StateWriter<T> {
   set(v: T): void
-  /** writes what waits now, synchronously (the quit) */
-  flushSync(): void
+  /**
+   * writes what waits now, synchronously (the quit). True when it is on disk (A5.1 #20, frozen #41): what waited -
+   * a debounced value, or one whose async write has not landed - written now, or nothing waited and the last write
+   * succeeded. False otherwise, an unwritable home included.
+   */
+  flushSync(): boolean
   /** writes what waits now; resolves when written (or failed) */
   flush(): Promise<void>
   pending(): boolean
@@ -254,13 +258,20 @@ export function stateWriter<T>(file: string, debounceMs: number, hooks: WriteHoo
   let value: T | undefined
   let dirty = false
   let timer: ReturnType<typeof setTimeout> | undefined
+  /** the last write's outcome, and which write that was: an async one that settles after a newer write says nothing */
+  let lastOk = true
+  let writes = 0
+  let inFlight = 0
   const text = (v: T) => JSON.stringify(v, null, 2) + '\n'
   const write = async () => {
     timer = undefined
     if (!dirty || !hooks.writable()) return
     dirty = false
-    try { await writeWhole(file, text(value as T)); hooks.noted(file, null) }
-    catch (e) { hooks.noted(file, e as NodeJS.ErrnoException) }
+    const mine = ++writes
+    inFlight += 1
+    try { await writeWhole(file, text(value as T)); if (mine === writes) lastOk = true; hooks.noted(file, null) }
+    catch (e) { if (mine === writes) lastOk = false; hooks.noted(file, e as NodeJS.ErrnoException) }
+    finally { inFlight -= 1 }
   }
   return {
     set(v) {
@@ -272,10 +283,16 @@ export function stateWriter<T>(file: string, debounceMs: number, hooks: WriteHoo
     },
     flushSync() {
       if (timer) { clearTimeout(timer); timer = undefined }
-      if (!dirty || !hooks.writable()) return
+      if (!hooks.writable()) return false
+      // nothing waits: as the last write went - unless one is still in flight, whose value is written now (a sync
+      // write lands over it, and it stands down at its rename)
+      if (!dirty && !inFlight) return lastOk
+      if (value === undefined) return lastOk
       dirty = false
-      try { writeWholeSync(file, text(value as T)); hooks.noted(file, null) }
-      catch (e) { hooks.noted(file, e as NodeJS.ErrnoException) }
+      ++writes
+      try { writeWholeSync(file, text(value)); lastOk = true; hooks.noted(file, null) }
+      catch (e) { lastOk = false; hooks.noted(file, e as NodeJS.ErrnoException) }
+      return lastOk
     },
     async flush() {
       if (timer) { clearTimeout(timer); timer = undefined }
