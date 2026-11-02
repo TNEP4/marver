@@ -349,6 +349,8 @@ describe('release.mjs (A5.1 #11, #33)', { timeout: 300_000 }, () => {
       w.gh.crashAfter.add('markPrerelease')
       await expect(w.run([V, '--withdraw'])).rejects.toThrow(Crash)
       expect(w.state(V).pending).toMatchObject({ what: 'withdraw' })
+      // a resume in its place never checks public meanwhile (it would write check-failed over the withdrawal)
+      await stops(w, [V, '--resume'], /a withdrawal of v1\.0\.0 is under way: .*--withdraw finishes it/)
       await ok(w, [V, '--withdraw'])
       expect(w.gh.calls.filter((c) => c.startsWith('markPrerelease'))).toHaveLength(1)
       expect(w.record(V)).toMatchObject({ status: 'withdrawn', reason: expect.stringMatching(/the tag v1\.0\.0 is on b+/) })

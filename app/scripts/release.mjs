@@ -828,13 +828,14 @@ async function reconcilePending(cx) {
       const drafts = rels.filter((r) => r.draft)
       if (drafts.length > 1) stop(`v${cx.version} has ${drafts.length} drafts on GitHub (${drafts.map((d) => d.id).join(', ')}): a release adopts one, never a second - delete the extra by hand, then run again`)
       if (drafts.length === 1) {
-        settle(cx, (s) => { s.release = { id: drafts[0].id, url: drafts[0].html_url, tagTarget: p.tagTarget } })
+        settle(cx, (s) => { s.release = { id: drafts[0].id, url: drafts[0].html_url, tagTarget: drafts[0].target_commitish ?? p.tagTarget } })
         cx.say(`draft: release ${drafts[0].id} found on GitHub, adopted`)
       } else settle(cx)
       return
     }
     case 'upload': case 'delete': settle(cx); return   // the upload step reconciles every asset by its digest
-    case 'withdraw': settle(cx); return   // --withdraw reads the flag again and sets it again if need be
+    // a withdrawal under way is finished by --withdraw alone (it reads the flag again): never checked public meanwhile
+    case 'withdraw': stop(`a withdrawal of v${cx.version} is under way: ${cmd(cx, '--withdraw')} finishes it`)
     case 'publish': return reconcilePublish(cx)
     default: stop(`an unknown pending ${JSON.stringify(p)} in ${statePath(cx)}`)
   }
@@ -1389,6 +1390,7 @@ async function publish(cx) {
 
 async function afterPublish(cx) {
   if (cx.command === 'accept') stop(`v${cx.version} is published: an acceptance is recorded only before the publish`)
+  if (cx.state.steps.withdrawn && !cx.state.steps.final) stop(`a withdrawal of v${cx.version} is under way: ${cmd(cx, '--withdraw')} finishes it`)
   // only the state and its recorded files: whatever HEAD is, the tree clean or not (r3 #3)
   checkFiles(cx, assetList(cx.version))
   if (cx.state.steps.final) return finished(cx)
