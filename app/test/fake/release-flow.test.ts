@@ -787,4 +787,17 @@ describe('release.mjs --test (A5.1 #4, #31, #43)', { timeout: 300_000 }, () => {
     expect(w.gh.find(P, '0.99.1')).toEqual([])
     expect(w.shared(true)).toMatchObject({ owner: null })
   })
+
+  it('a candidate may pass with the no-canvas memory check failing, its number in the record; any other failure, or a production build, stops (Nic, 2 Nov)', async () => {
+    expect(w.builds[0]).toMatchObject({ knownFail: ['memory-no-canvas'] })
+    w.bump('0.99.2')
+    w.failing = [{ name: 'memory-no-canvas', measured: 226.9, budget: 200 }]
+    await ok(w, ['0.99.2', '--test'])
+    await ok(w, ['0.99.2', '--publish', '--test'])
+    expect(w.record('0.99.2')).toMatchObject({ status: 'published', kind: 'candidate', knownFailures: [{ name: 'memory-no-canvas', measured: 226.9, budget: 200 }] })
+    w.bump('0.99.3')
+    w.failing = [{ name: 'launch-warm', measured: 1400, budget: 1000 }]
+    await stops(w, ['0.99.3', '--test'], /the build failed/)
+    w.failing = []
+  })
 })

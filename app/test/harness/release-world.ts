@@ -13,7 +13,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
-import { feedKind } from '../../scripts/build.mjs'
+import { BuildFailure, feedKind } from '../../scripts/build.mjs'
 import { REPOS, Stop, Unreadable, assetNames, realPorts, run } from '../../scripts/release.mjs'
 
 export class Crash extends Error {
@@ -362,6 +362,8 @@ export interface World {
   record(version: string, app?: string): any
   /** a new version committed and pushed: package.json and its CHANGELOG section */
   bump(version: string, o?: { companion?: string; push?: boolean }): void
+  /** smoke checks the next builds fail at a measured number: a named one lands in build.json's knownFailures, any other fails the build */
+  failing: { name: string; measured: number; budget: number }[]
   worktree(name: string): string
   evidence(version: string, o?: Record<string, unknown>): string
   /** the whole world - checkout, origin, shared folder and every fake - kept, to be restored at the same path */
@@ -411,13 +413,17 @@ export function makeWorld(version: string, { test = false } = {}): World {
       builds.push(o)
       const v = JSON.parse(readFileSync(join(o.into, '..', '..', 'package.json'), 'utf8')).version
       makeBundle(join(o.into, 'Marver.app'), v)
-      writeFileSync(join(o.into, 'smoke-1.json'), '{"completed":true,"failures":0}\n')
+      const unnamed = w.failing.filter((f) => !o.knownFail.includes(f.name))
+      if (unnamed.length) throw new BuildFailure(`the packaged smoke failed (${unnamed.length} failing checks)`)
+      writeFileSync(join(o.into, 'smoke-1.json'), `{"completed":true,"failures":${w.failing.length}}\n`)
+      const knownFailures = w.failing.map((f) => ({ ...f, unit: 'MB' }))
       writeFileSync(join(o.into, 'build.json'), JSON.stringify({ app: join(o.into, 'Marver.app'), adhoc: false, version: v, electron: '45.0.0', team: 'PXV6WER853',
-        feed: feedKind(o.feed), release: true, smoke: 'default', smokeReport: 'smoke-1.json', knownFailures: [] }, null, 2))
+        feed: feedKind(o.feed), release: true, smoke: 'default', smokeReport: 'smoke-1.json', knownFailures }, null, 2))
     },
   }
   const w: World = {
     base, repo, app, home, clock, gh, notary, tools, builds, lines, npm, ports,
+    failing: [],
     run: (argv, o = {}) => run(argv, { ports, app: o.app ?? app, home, log: (s: string) => { lines.push(s) } }),
     state: (v, a = app) => { const f = join(a, '.release', v, 'state.json'); return existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : null },
     shared: (t = test) => { const f = join(home, `${(t ? REPOS.test : REPOS.production).replace('/', '-')}.json`); return existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : null },
