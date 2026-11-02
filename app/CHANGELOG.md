@@ -1,5 +1,12 @@
 # Changelog - the Marver Mac app
 
+## 0.99.1 - 2026-11-02
+
+A test candidate of 1.0.0, published only to the test releases repo for the clean-Mac checks (spec 28 A5.1 #43.4).
+
+It is 1.0.0's code under a candidate number, on the test feed: Marver moves itself to Applications, updates itself
+and restarts to install, and exports the performance report. Use it with canvases on marver 0.29.0 or later.
+
 ## 1.0.0 - unreleased
 
 The first public release: notarised by Apple, and from now on Marver keeps itself up to date.
