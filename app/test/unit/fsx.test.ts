@@ -187,6 +187,52 @@ describe('stateWriter', () => {
     expect(noted).toEqual([null, 'ENOSPC', null])
   })
 
+  it('flushSync says whether what waited is on disk (A5.1 #20): after a write, with nothing waiting, after a failed write', async () => {
+    const f = join(dir, 'tabs.json')
+    const w = stateWriter<{ n: number }>(f, 50, { writable: () => true, noted: () => {} })
+    // nothing ever waited, and no write failed
+    expect(w.flushSync()).toBe(true)
+    w.set({ n: 1 })
+    expect(w.flushSync()).toBe(true)
+    expect(JSON.parse(readFileSync(f, 'utf8'))).toEqual({ n: 1 })
+    // nothing waits now: as the last write went
+    expect(w.flushSync()).toBe(true)
+    faults.inject({ match: 'tabs\\.json$', code: 'ENOSPC', at: 'write' })
+    w.set({ n: 2 })
+    expect(w.flushSync()).toBe(false)
+    expect(JSON.parse(readFileSync(f, 'utf8'))).toEqual({ n: 1 })
+    // still nothing waiting, and the last write failed: false until one succeeds
+    expect(w.flushSync()).toBe(false)
+    w.set({ n: 3 })
+    expect(w.flushSync()).toBe(true)
+    // a debounced write that failed on its own, then nothing waiting: false
+    faults.inject({ match: 'tabs\\.json$', code: 'EIO' })
+    w.set({ n: 4 })
+    await w.flush()
+    expect(w.flushSync()).toBe(false)
+    expect(JSON.parse(readFileSync(f, 'utf8'))).toEqual({ n: 3 })
+  })
+
+  it('flushSync over an async write still in flight writes its value now, and says true', async () => {
+    const f = join(dir, 'tabs.json')
+    const w = stateWriter<{ n: number }>(f, 1, { writable: () => true, noted: () => {} })
+    w.set({ n: 1 })
+    await new Promise((r) => setTimeout(r, 4))   // its debounced write has started
+    expect(w.flushSync()).toBe(true)
+    expect(JSON.parse(readFileSync(f, 'utf8'))).toEqual({ n: 1 })
+    await settled()
+    expect(w.flushSync()).toBe(true)
+  })
+
+  it('flushSync with an unwritable home: false, whether or not anything waits', () => {
+    const f = join(dir, 'tabs.json')
+    const w = stateWriter<{ n: number }>(f, 50, { writable: () => false, noted: () => { throw new Error('no write expected') } })
+    expect(w.flushSync()).toBe(false)
+    w.set({ n: 1 })
+    expect(w.flushSync()).toBe(false)
+    expect(existsSync(f)).toBe(false)
+  })
+
   it('keeps nothing while the home cannot be written', async () => {
     const f = join(dir, 'tabs.json')
     const w = stateWriter<{ n: number }>(f, 1, { writable: () => false, noted: () => { throw new Error('no write expected') } })

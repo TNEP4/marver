@@ -14,7 +14,8 @@
  *      (before any view), the registry, the bridge, the tabs' record, then views.ts: the window with the opaque
  *      strip and its pages (strip, Home, Settings, the tab pages), the tabs restored from tabs.json (only the
  *      active one loads; each canvas view on its repo's partition, its proof dispatcher attached before its first
- *      load), the menu, the quit through guardAll; then the Home and Settings channels (home.ts mountPages); and
+ *      load), the menu, the shutdown coordinator (shutdown.ts: the quit through guardAll); then the Home and Settings
+ *      channels (home.ts mountPages); and
  *      last the error policy (errors.ts): from here an uncaught error is recorded and the app goes on, never
  *      Electron's modal box over pages that may hold unsaved work.
  *
@@ -61,7 +62,7 @@ import { provideFlashHooks } from './testing/flash.ts'
 import { startMemory } from './memory.ts'
 import { startWhiteout } from './whiteout.ts'
 import { livePictures } from './live-picture.ts'
-import { genOf } from './present.ts'
+import { genOf, quitting as presentQuitting } from './present.ts'
 import { readAgx } from './machine.ts'
 import { openSameCanvas, startViews, windowPorts, type TrustPort } from './views.ts'
 import { fakeTrust } from './testing/fake-trust.ts'
@@ -209,6 +210,13 @@ function start(): void {
       firstLaunch: isFirstLaunch(),
       notes: { homeShown: noteHomeShown, verified: noteVerified, gone: noteGone, shared: noteShared, quitting: (running) => { flushRecent(running); flushShared() } },
       tabsStore: { read: readTabsFile, set: (f) => tabsWriter().set(f), flushSync: () => tabsWriter().flushSync() },
+      // the shutdown's flushAll (A5.1 #15): what will-quit also writes, once more at `done`, before the end - the
+      // presentation records first (they are the recorder's lines), the recorder's queue, notices.json
+      flushAll: () => {
+        presentQuitting(Date.now())
+        recorder.flushSync()
+        try { noticesWriter().flushSync() } catch { /* a report, never the quit's */ }
+      },
     })
     // Home's and Settings' channels and pushes, ⌘L's links into their tabs, the files pill (home.ts, ports.ts)
     mountPages(bridge, windowPorts())
