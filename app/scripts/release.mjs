@@ -404,9 +404,10 @@ const tail = (s, n = 400) => String(s ?? '').trim().split('\n').slice(-4).join('
  * `toolLog` (the state's logs/tools.log). Checks answer `{ ok, out }`; actions throw a Stop with the tool's words.
  */
 export function realPorts({ toolLog = () => {} } = {}) {
-  const x = (cmd, args, { timeout = 600_000, input, stdio } = {}) => {
-    const r = spawnSync(cmd, args, { encoding: 'utf8', timeout, input, maxBuffer: 256 << 20, ...(stdio ? { stdio } : {}) })
-    toolLog(cmd, args, r)
+  const x = (cmd, args, { timeout = 600_000, input, secret = false } = {}) => {
+    const r = spawnSync(cmd, args, { encoding: 'utf8', timeout, input, maxBuffer: 256 << 20 })
+    // a secret's output (gh's token) never reaches the log
+    toolLog(cmd, args, secret ? { ...r, stdout: '[secret]' } : r)
     if (r.error) throw new Unreadable(`${cmd} ${args.join(' ')}: ${r.error.message}`)
     return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '', out: `${r.stdout ?? ''}${r.stderr ?? ''}` }
   }
@@ -504,8 +505,8 @@ function githubPort(x) {
   let token = null
   const auth = () => {
     if (token) return token
-    const r = x('gh', ['auth', 'token'])
-    if (r.status !== 0) throw new Unreadable(`gh auth token failed: ${tail(r.out)}`)
+    const r = x('gh', ['auth', 'token'], { secret: true })
+    if (r.status !== 0) throw new Unreadable(`gh auth token failed: ${tail(r.stderr)}`)
     return (token = r.stdout.trim())
   }
   const api = (args, input) => {
@@ -524,12 +525,13 @@ function githubPort(x) {
     releases: async (repo) => pages(`repos/${repo}/releases?per_page=100`, `the releases of ${repo}`),
     release: async (repo, id) => { const r = api([`repos/${repo}/releases/${id}`]); return r.status === 404 ? null : ok(r, `release ${id}`) },
     tags: async (repo) => pages(`repos/${repo}/tags?per_page=100`, `the tags of ${repo}`).map((t) => ({ name: t.name, sha: t.commit?.sha })),
-    tagCommit: async (repo, tag) => { const r = api([`repos/${repo}/commits/refs/tags/${tag}`]); return r.status === 404 || r.status === 422 ? null : ok(r, `the tag ${tag}`).sha },
+    /** the commit a tag names (`GET /repos/{owner}/{repo}/commits/tags/{tag}`); no such tag answers 404 or 422 */
+    tagCommit: async (repo, tag) => { const r = api([`repos/${repo}/commits/tags/${tag}`]); return r.status === 404 || r.status === 422 ? null : ok(r, `the tag ${tag}`).sha },
     branchHead: async (repo, branch) => ok(api([`repos/${repo}/branches/${branch}`]), `${repo}'s ${branch}`).commit.sha,
     /** the repository's release immutability (#10): 200 with enabled, or 404 for off (it needs admin read) */
     immutable: async (repo) => { const r = api([`repos/${repo}/immutable-releases`]); return r.status === 404 ? false : ok(r, 'the immutable-releases setting')?.enabled === true },
     canWrite: async (repo) => { const j = ok(api([`repos/${repo}`]), repo); return j.permissions?.push === true || j.permissions?.admin === true },
-    createDraft: async (repo, body) => ok(api(['-X', 'POST', `repos/${repo}/releases`, '--input', '-'], JSON.stringify(body)), 'the draft'),
+    createDraft: async (repo, body) => ok(api(['-X', 'POST', `repos/${repo}/releases`, '-H', 'Content-Type: application/json', '--input', '-'], JSON.stringify(body)), 'the draft'),
     publish: async (repo, id) => ok(api(publishArgs(repo, id).slice(1)), 'the publish'),
     markPrerelease: async (repo, id) => ok(api(['-X', 'PATCH', `repos/${repo}/releases/${id}`, '-F', 'prerelease=true']), 'the prerelease flag'),
     deleteAsset: async (repo, assetId) => { const r = api(['-X', 'DELETE', `repos/${repo}/releases/assets/${assetId}`]); if (r.status !== 404) ok(r, `deleting asset ${assetId}`) },
