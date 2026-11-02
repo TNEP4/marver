@@ -35,7 +35,7 @@ import { APP_KINDS, UPDATE_MOVE_WHY, type AppKind, type Flavour, type PressureLe
 
 // ---- bounds -------------------------------------------------------------------------------------------------------
 
-export const REPORT_V = 1
+export const REPORT_V = 1 as const
 /** the window: the last 7 days, or fewer if `keepPerfDays` keeps fewer (#26) */
 export const REPORT_DAYS = 7
 /** the file, whole (#26): past it the oldest events go first, counted in `events.cut` */
@@ -266,10 +266,10 @@ const AGX: readonly Field[] = ['gpuSystemMemoryMB', 'allocMB', 'utilPct', 'rende
 /** An unload's before and after: the level, availablePct, the canvases' memory, the tab's memMB (never its pids), the GPU process's RSS. */
 const FIGURES: readonly Field[] = [f('level', level), f('availablePct', num), f('canvasMB', num), f('tab', nested([f('memMB', num)])), f('gpuProcessRssMB', num)]
 
-/** The kinds exported one by one; `sample` and `shown` are folded, `tab` counted. */
-export type ExportedKind = Exclude<AppKind, 'sample' | 'shown' | 'tab'>
+/** The kinds exported one by one; `sample` and `shown` are folded (FOLDED_KINDS), `tab` only counted (COUNTED_KINDS). */
 export const FOLDED_KINDS = ['sample', 'shown'] as const
 export const COUNTED_KINDS = ['tab'] as const
+export type ExportedKind = Exclude<AppKind, (typeof FOLDED_KINDS)[number] | (typeof COUNTED_KINDS)[number]>
 
 /** Each kind's projection, field by field (#27): what a record may carry out, in this order after `ts` and `kind`. */
 export const PROJECTIONS: { readonly [K in ExportedKind]: readonly Field[] } = {
@@ -520,7 +520,7 @@ export class ReportFold {
   finish(h: { made: number; version: unknown; electron: unknown; macos: unknown; flavour: Flavour; log: LogRead; crashpad: CrashpadSection }): { report: PerfReport; json: string } {
     const word = (r: Rule, v: unknown): string => { const x = r(v); return typeof x === 'string' ? x : 'other' }
     const head = {
-      v: 1 as const, made: h.made,
+      v: REPORT_V, made: h.made,
       version: word(appVersion, h.version), electron: word(chromium, h.electron), macos: word(matches(MACOS), h.macos),
       flavour: h.flavour, start: this.start, end: this.end,
     }
@@ -566,10 +566,11 @@ export class ReportFold {
       events: { status: status(this.unparsed.events, cut + this.unknown), unparsed: this.unparsed.events, unknown: this.unknown, cut, counts, list },
       crashpad: h.crashpad,
     })
+    const bytes = (t: string): number => new TextEncoder().encode(t).length
     let report = build()
     let json = JSON.stringify(report, null, 2) + '\n'
     // the 2 MB bound: the oldest events go, a tenth at a time, counted
-    while (Buffer.byteLength(json) > REPORT_MAX_BYTES) {
+    while (bytes(json) > REPORT_MAX_BYTES) {
       if (!list.length) throw new Error('the report is over its bound with no event left to cut')
       const n = Math.max(1, Math.ceil(list.length / 10))
       list = list.slice(0, list.length - n)
