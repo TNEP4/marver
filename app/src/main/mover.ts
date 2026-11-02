@@ -51,6 +51,8 @@ export const moveAsks = false
 
 export const BUNDLE_ID = 'design.marver.app'
 export const APP_NAME = 'Marver.app'
+/** where the mover installs, and so where its moved copy runs from */
+export const APPS = '/Applications'
 /** The staging folder's name (frozen, #41): a private `mkdtemp` beside the destination. */
 export const STAGING_PREFIX = '.Marver-staging-'
 /** ditto's preservations, each named (#23): `DITTONORSRC` in the environment cannot drop one. */
@@ -59,7 +61,8 @@ export const DITTO_FLAGS = ['--rsrc', '--extattr', '--qtn', '--acl'] as const
 /** What is at the destination (#23). */
 export type Destination =
   | { kind: 'empty'; writable: boolean }
-  | { kind: 'marver'; version: string; newer: boolean; writable: boolean }
+  /** `dev` and `ino`: the copy's identity when it was read, so an answer acts only on the copy it was given for */
+  | { kind: 'marver'; version: string; newer: boolean; writable: boolean; dev: number; ino: number }
   | { kind: 'other-app' }
   | { kind: 'empty-folder' }
   | { kind: 'other' }
@@ -188,7 +191,7 @@ export interface MoverPorts {
 export function nodeMoverPorts(o: Pick<MoverPorts, 'bundle' | 'version' | 'read' | 'write' | 'record' | 'ask' | 'reveal' | 'quit' | 'log'> & { apps?: string }): MoverPorts {
   return {
     ...o,
-    apps: o.apps ?? '/Applications',
+    apps: o.apps ?? APPS,
     pid: process.pid,
     now: () => Date.now(),
     run: (cmd, args) => {
@@ -230,7 +233,7 @@ export function look(p: MoverPorts): Destination {
   }
   if (info.CFBundleIdentifier !== BUNDLE_ID) return { kind: 'other-app' }
   const version = typeof info.CFBundleShortVersionString === 'string' ? info.CFBundleShortVersionString : ''
-  return { kind: 'marver', version, newer: compareVersions(version, p.version) >= 0, writable: p.writable(dest) && p.writable(p.apps) }
+  return { kind: 'marver', version, newer: compareVersions(version, p.version) >= 0, writable: p.writable(dest) && p.writable(p.apps), dev: st.dev, ino: st.ino }
 }
 
 // ---- the install's steps (exported: the unit cases stop between them, as a crash would) ---------------------------
@@ -395,6 +398,13 @@ async function decide(p: MoverPorts, first: boolean): Promise<'go-on' | 'quit'> 
     p.record({ phase: 'move', why: 'offered', version: d.version })
     const r = await p.ask(openItAlert(d.version))
     if (r.button === 'Open It') {
+      // the answer was given for the copy read before the alert (code review r1 P2): read again, and only that same
+      // copy - its identity and its version - is opened; anything else there now decides afresh, once
+      const now = look(p)
+      if (!(now.kind === 'marver' && now.version === d.version && now.dev === d.dev && now.ino === d.ino)) {
+        p.log?.('move', { changed: now.kind })
+        return first ? decide(p, false) : 'go-on'
+      }
       p.record({ phase: 'move', why: 'opened-existing', version: d.version })
       p.relaunch(relaunchScript(p.pid, destOf(p)))
       p.quit()

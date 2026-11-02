@@ -152,6 +152,32 @@ describe('what is at the destination decides (#23)', () => {
     }
   })
 
+  it('Open It acts only on the copy it was asked about: replaced or removed while the alert was up, what is there now decides (code review r1 P2)', async () => {
+    const changing = (r: Rig, change: () => void) => {
+      const ask = r.p.ask
+      let n = 0
+      r.p = { ...r.p, ask: async (a) => { if (n++ === 0) change(); return ask(a) } }
+    }
+    // replaced by an older Marver: the Finder route, nothing opened, nothing quit
+    bundle(dest(), '1.2.0')
+    const r = rig()
+    changing(r, () => { rmSync(dest(), { recursive: true }); bundle(dest(), '0.3.0') })
+    expect(await offerMove(r.p, { feed: 'f', inApplications: false })).toBe('go-on')
+    expect(r.relaunched).toEqual([])
+    expect(r.quits).toBe(0)
+    expect(r.asked.map((a) => a.message)).toEqual(['Marver 1.2.0 is already in Applications', 'An older Marver (0.3.0) is in Applications'])
+    expect(whys(r)).not.toContain('opened-existing')
+    rmSync(dest(), { recursive: true })
+    // removed: the slot is empty now, and the silent move runs instead
+    bundle(dest(), '1.2.0')
+    const m = rig()
+    changing(m, () => { rmSync(dest(), { recursive: true }) })
+    expect(await offerMove(m.p, { feed: 'f', inApplications: false })).toBe('quit')
+    expect(whys(m)).toEqual(['offered', 'moved'])
+    expect(m.relaunched).toEqual([relaunchScript(process.pid, dest())])
+    rmSync(dest(), { recursive: true, force: true })
+  })
+
   it('anything else is the Finder route: an older Marver, another app of that name, an empty folder, a file, a link, an Applications this account cannot write', async () => {
     const cases: [string, () => void, RegExp][] = [
       ['older', () => bundle(dest(), '0.3.0'), /^An older Marver \(0\.3\.0\) is in Applications$/],
@@ -184,8 +210,8 @@ describe('what is at the destination decides (#23)', () => {
   })
 
   it('the older Marver\'s words: drag and Replace, and Finder asks for an administrator when the copy cannot be written', () => {
-    expect(finderAlert({ kind: 'marver', version: '0.3.0', newer: false, writable: true }).detail).toBe('To replace it, drag this Marver into Applications and choose Replace.')
-    expect(finderAlert({ kind: 'marver', version: '0.3.0', newer: false, writable: false }).detail).toContain("Finder asks for an administrator's name and password.")
+    expect(finderAlert({ kind: 'marver', version: '0.3.0', newer: false, writable: true, dev: 1, ino: 2 }).detail).toBe('To replace it, drag this Marver into Applications and choose Replace.')
+    expect(finderAlert({ kind: 'marver', version: '0.3.0', newer: false, writable: false, dev: 1, ino: 2 }).detail).toContain("Finder asks for an administrator's name and password.")
     expect(finderAlert({ kind: 'empty-folder' }).detail).toBe('Move that empty folder to the Trash, then open the download again.')
   })
 

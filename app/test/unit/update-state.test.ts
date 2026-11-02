@@ -88,36 +88,36 @@ describe('the reconciliation (#18), against the version running', () => {
   const f = (o: Partial<import('../../src/main/config.ts').UpdateFile> = {}) => ({ v: 1 as const, intent: null, move: null, staging: null, ...o })
 
   it('it equals `to`: "Updated to 0.99.2", installed, the intent cleared', () => {
-    const r = upd.reconcile(f({ intent: intent() }), '0.99.2', NOW)
+    const r = upd.reconcile(f({ intent: intent() }), '0.99.2', NOW, true)
     expect(r).toMatchObject({ changed: true, installed: true, failure: null, show: { text: 'Updated to 0.99.2', short: 'Updated' } })
     expect(r.next.intent).toBeNull()
     expect(r.records).toEqual([{ phase: 'installed', from: '0.99.1', to: '0.99.2', version: '0.99.2' }])
   })
 
   it('it equals `from`: the failure, install-failed, the intent cleared, nothing shown but the pill', () => {
-    const r = upd.reconcile(f({ intent: intent({ via: 'quit' }) }), '0.99.1', NOW)
+    const r = upd.reconcile(f({ intent: intent({ via: 'quit' }) }), '0.99.1', NOW, true)
     expect(r).toMatchObject({ changed: true, installed: false, show: null, failure: { from: '0.99.1', to: '0.99.2', at: NOW } })
     expect(r.next.intent).toBeNull()
     expect(r.records).toEqual([{ phase: 'install-failed', from: '0.99.1', to: '0.99.2', version: '0.99.1' }])
   })
 
   it('another version: cleared and recorded, nothing shown', () => {
-    const r = upd.reconcile(f({ intent: intent() }), '0.99.3', NOW)
+    const r = upd.reconcile(f({ intent: intent() }), '0.99.3', NOW, true)
     expect(r).toMatchObject({ changed: true, installed: false, show: null, failure: null })
     expect(r.records).toEqual([{ phase: 'late', why: 'intent', from: '0.99.1', to: '0.99.2', version: '0.99.3' }])
   })
 
   it('an intent over 30 days old: cleared and recorded, nothing shown - even one that reads `to` or `from`', () => {
     for (const running of ['0.99.2', '0.99.1']) {
-      const r = upd.reconcile(f({ intent: intent({ at: NOW - 30 * DAY - 1 }) }), running, NOW)
+      const r = upd.reconcile(f({ intent: intent({ at: NOW - 30 * DAY - 1 }) }), running, NOW, true)
       expect(r).toMatchObject({ changed: true, installed: false, show: null, failure: null })
       expect(r.records).toEqual([{ phase: 'late', why: 'intent-old', from: '0.99.1', to: '0.99.2', version: running }])
     }
-    expect(upd.reconcile(f({ intent: intent({ at: NOW - 30 * DAY }) }), '0.99.2', NOW).installed).toBe(true)
+    expect(upd.reconcile(f({ intent: intent({ at: NOW - 30 * DAY }) }), '0.99.2', NOW, true).installed).toBe(true)
   })
 
   it('the moved copy\'s note, once: from a disk image, from a folder, from nowhere known; over 30 days, cleared unshown', () => {
-    const moved = (from: string, at = NOW - 1000) => upd.reconcile(f({ move: { moved: true, at, from } }), '0.99.1', NOW)
+    const moved = (from: string, at = NOW - 1000) => upd.reconcile(f({ move: { moved: true, at, from } }), '0.99.1', NOW, true)
     expect(moved('dmg').show).toEqual({ lead: 'Marver moved itself to Applications.', text: 'You can eject the disk image.', short: 'Moved to Applications' })
     expect(moved('Downloads').show).toEqual({ lead: 'Marver moved itself to Applications.', text: 'You can delete the copy in Downloads.', short: 'Moved to Applications' })
     expect(moved('').show).toEqual({ lead: 'Marver moved itself to Applications.', text: '', short: 'Moved to Applications' })
@@ -129,9 +129,17 @@ describe('the reconciliation (#18), against the version running', () => {
     expect(old.next.move).toBeNull()
   })
 
+  it('only the copy at the destination reads the note: the copy it came from, opened again, leaves it for the moved one (code review r1 P3)', () => {
+    const file = f({ move: { moved: true, at: NOW - 1000, from: 'dmg' } })
+    const away = upd.reconcile(file, '0.99.1', NOW, false)
+    expect(away).toMatchObject({ show: null, changed: false, records: [] })
+    expect(away.next.move).toEqual({ moved: true, at: NOW - 1000, from: 'dmg' })
+    expect(upd.reconcile(away.next, '0.99.1', NOW, true).show).toMatchObject({ lead: 'Marver moved itself to Applications.' })
+  })
+
   it('a declined move and a staging record are the mover\'s: kept, nothing written for them', () => {
     const staging = { path: '/Applications/.Marver-staging-a', dev: 1, ino: 2, placeholder: null, at: 3 }
-    const r = upd.reconcile(f({ move: { declined: true, at: 1 }, staging }), '0.99.1', NOW)
+    const r = upd.reconcile(f({ move: { declined: true, at: 1 }, staging }), '0.99.1', NOW, true)
     expect(r).toMatchObject({ changed: false, show: null, records: [] })
     expect(r.next).toEqual(f({ move: { declined: true, at: 1 }, staging }))
   })

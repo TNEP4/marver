@@ -24,12 +24,13 @@
  */
 import { accessSync, appendFileSync, constants } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 import { app, autoUpdater, BaseWindow, dialog, net, powerMonitor } from 'electron'
 import type { UpdateBody } from '../../../src/shared/app-perf.ts'
 import { tilde } from '../shared/command.ts'
 import { readUpdateFile, writeUpdateFile, type UpdateFile } from './config.ts'
 import { invalidateMenu } from './menu.ts'
+import { APP_NAME, APPS } from './mover.ts'
 import { confirm, setUpdatePill, waitingEnds } from './pill.ts'
 import { beforeQuitForUpdate, request, restartFailed, setUpdateSide, updateSide } from './shutdown.ts'
 import { getTab, tabName } from './tabs.ts'
@@ -102,9 +103,10 @@ export interface Reconciled {
  * update.json at launch, against the version running - never the one expected (#18). The intent and the moved note
  * (#23) are cleared as they are read: each lives for one launch. A declined `move` and a `staging` record are the
  * mover's, kept. An intent that reads neither version is recorded `late` with why `intent` (no record phase names it),
- * one over 30 days old with why `intent-old`.
+ * one over 30 days old with why `intent-old`. The moved note is the moved copy's alone (code review r1 P3): read and
+ * cleared only by a copy running from the mover's destination, so the copy it came from, opened again, leaves it.
  */
-export function reconcile(f: UpdateFile, running: string, now: number): Reconciled {
+export function reconcile(f: UpdateFile, running: string, now: number, atDestination: boolean): Reconciled {
   const out: Reconciled = { next: { ...f }, changed: false, records: [], show: null, failure: null, installed: false }
   const i = f.intent
   if (i) {
@@ -121,7 +123,7 @@ export function reconcile(f: UpdateFile, running: string, now: number): Reconcil
     } else out.records.push({ phase: 'late', why: 'intent', from: i.from, to: i.to, version: running })
   }
   const m = f.move
-  if (m && 'moved' in m) {
+  if (m && 'moved' in m && atDestination) {
     out.next.move = null
     out.changed = true
     // the move itself, recorded by the copy it made: the copy that moved quit before its records could be written
@@ -278,7 +280,8 @@ export function startUpdater(s: UpdaterStart): UpdateModel {
   }))
 
   // #18, before the first check (updateFirstMs after setup ends)
-  const r = reconcile(readUpdateFile(), run, Date.now())
+  const here = bundleOf(app.getPath('exe'))
+  const r = reconcile(readUpdateFile(), run, Date.now(), here !== null && here === join(APPS, APP_NAME))
   for (const b of r.records) s.record(b)
   if (r.changed && !writeUpdateFile(r.next)) j('update', { reconciled: 'not written' })
   if (r.failure) m.failed(r.failure)
