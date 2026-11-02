@@ -1,0 +1,89 @@
+{
+  "v": 1,
+  "version": "0.99.1",
+  "status": "published",
+  "kind": "candidate",
+  "repo": "TNEP4/marver-app-test",
+  "tag": "v0.99.1",
+  "source": {
+    "sha": "e76214b8f87b16f056420c0e812954cd8c272605",
+    "branch": "a5-cand"
+  },
+  "companion": "0.29.0",
+  "tagTarget": "d2181213429d01bcdbe43cc98983788428e362a2",
+  "release": {
+    "id": 431644909,
+    "url": "https://github.com/TNEP4/marver-app-test/releases/tag/untagged-e72586c5078319077a4c"
+  },
+  "assets": [
+    {
+      "name": "Marver-darwin-arm64-0.99.1.zip",
+      "bytes": 120948712,
+      "sha256": "c7a0763e66eb2b924efbe236317cb0392c1050ba55c3411ca886d5918a7d82b9"
+    },
+    {
+      "name": "Marver-arm64.dmg",
+      "bytes": 131400677,
+      "sha256": "233165d0b09ea94b3fb6ea59d68d2d9a8a157789a37068a3f734d1db306a14fa"
+    },
+    {
+      "name": "releases.json",
+      "bytes": 702,
+      "sha256": "a831faf9f92455e79b01e5154483449fe8d4b5d03ef4a3414a6f2900d40ed2c3"
+    }
+  ],
+  "acceptance": null,
+  "notary": {
+    "app": [
+      "749ed432-d33d-4656-888b-e9180b87ef92"
+    ],
+    "dmg": [
+      "6e3aa00a-6af2-41bd-94dd-300a856b038a"
+    ]
+  },
+  "dr": "identifier \"design.marver.app\" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = PXV6WER853",
+  "immutable": true,
+  "smokeReport": "smoke-1793634000011.json",
+  "knownFailures": [
+    {
+      "name": "memory-no-canvas",
+      "measured": 200.2,
+      "unit": "MB",
+      "budget": 200,
+      "detail": "200.2 MB footprint, mean of 3 reads 10 s apart: browser 52.3, utility 7.4 (NetworkService), app pages 59.1 (3 renderers), crashpad 2.4, GPU 79.1 counted (35.8 with a canvas open: -43.3); RSS beside it 645.2 MB counted, 645.2 MB all 7 processes; over the 200 MB budget - the limit stays (Nic, 23 Oct): the numbers go to Nic",
+      "decision": "Nic, 24 Oct: app 0.2 ships with it, the 200 MB limit unchanged; 29 Oct: it no longer blocks (A3 closed); investigated later"
+    }
+  ],
+  "steps": {
+    "preflight": "2026-11-02T15:37:49.205Z",
+    "freeze": "2026-11-02T15:37:49.264Z",
+    "build": "2026-11-02T15:40:00.022Z",
+    "app-hashed": "2026-11-02T15:40:00.147Z",
+    "app-zipped": "2026-11-02T15:40:06.148Z",
+    "notarize-app": "2026-11-02T15:41:12.770Z",
+    "staple-app": "2026-11-02T15:41:14.211Z",
+    "zip": "2026-11-02T15:41:19.931Z",
+    "dmg-built": "2026-11-02T15:41:27.515Z",
+    "dmg-signed": "2026-11-02T15:41:28.017Z",
+    "dmg-accepted": "2026-11-02T15:42:36.320Z",
+    "dmg-stapled": "2026-11-02T15:42:37.517Z",
+    "dmg": "2026-11-02T15:42:37.529Z",
+    "verify": "2026-11-02T15:42:44.852Z",
+    "feed": "2026-11-02T15:42:44.869Z",
+    "draft": "2026-11-02T15:42:46.781Z",
+    "upload": "2026-11-02T15:43:27.386Z",
+    "check-draft": "2026-11-02T15:44:10.362Z",
+    "publish": "2026-11-02T15:44:25.944Z"
+  },
+  "check": {
+    "at": 1793634266053,
+    "problems": [],
+    "latest": {
+      "owner": "0.99.1",
+      "agreeing": 18,
+      "reads": 18
+    },
+    "immutable": true,
+    "status": "published"
+  }
+}
