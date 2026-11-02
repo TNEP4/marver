@@ -3,9 +3,11 @@
  * name; release.mjs takes one version of three numbers, at most one command and `--test`, nothing else. Neither
  * script runs here: only their parsers.
  */
+import { userInfo } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { BUILD_FLAGS, feedKind, parseBuildArgs } from '../../scripts/build.mjs'
-import { COMMANDS, parseArgs, run } from '../../scripts/release.mjs'
+import { COMMANDS, Stop, parseArgs, run } from '../../scripts/release.mjs'
 import { FEEDS } from '../../tsdown.config.ts'
 
 describe('build.mjs, every argument checked', () => {
@@ -80,5 +82,25 @@ describe('release.mjs, every argument checked', () => {
     const r = await run(['1.0.0', '--no-smoke'], { ports, log: (s: string) => { lines.push(s) } })
     expect(r).toEqual({ code: 2 })
     expect(lines.join('\n')).toMatch(/--no-smoke: not an option[\s\S]*usage: node scripts\/release\.mjs <X\.Y\.Z>/)
+  })
+})
+
+describe('one lock and one owner record per repository, whatever the environment says (code review r2 #5)', () => {
+  it('a real run takes ~/.marver/release from the account\'s home, never MARVER_HOME or HOME; only a test injects another', async () => {
+    const saved = { m: process.env.MARVER_HOME, h: process.env.HOME }
+    const seen: string[] = []
+    // a lock port that only notes the path and stops the run there: nothing is written anywhere
+    const ports = { lock: { take: (p: string) => { seen.push(p); throw new Stop('noted') } } }
+    try {
+      process.env.MARVER_HOME = '/tmp/mv-elsewhere'
+      process.env.HOME = '/tmp/mv-nohome'
+      expect(await run(['1.0.0'], { ports, log: () => {} })).toMatchObject({ code: 1 })
+      expect(await run(['0.99.1', '--test'], { ports, log: () => {} })).toMatchObject({ code: 1 })
+      expect(await run(['1.0.0'], { ports, home: '/tmp/mv-injected', log: () => {} })).toMatchObject({ code: 1 })
+    } finally {
+      for (const [k, v] of [['MARVER_HOME', saved.m], ['HOME', saved.h]] as const) { if (v === undefined) delete process.env[k]; else process.env[k] = v }
+    }
+    const home = join(userInfo().homedir, '.marver', 'release')
+    expect(seen).toEqual([join(home, 'TNEP4-marver-app.lock'), join(home, 'TNEP4-marver-app-test.lock'), '/tmp/mv-injected/TNEP4-marver-app.lock'])
   })
 })

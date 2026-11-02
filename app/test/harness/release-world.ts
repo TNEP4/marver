@@ -62,6 +62,8 @@ export class FakeGitHub {
   after: Record<string, Hook> = {}
   /** anonymous `latest` lags the API by this much (S3: 59-74 s) */
   latestLagMs = 70_000
+  /** the next this-many anonymous downloads throw (a timeout, a reset), as the real port's Unreadable */
+  anonGetThrows = 0
   constructor(public clock: FakeClock) {
     for (const r of Object.values(REPOS)) this.repos.set(r, { immutable: true, canWrite: true, releases: [], tags: new Map(), latestLog: [{ t: 0, latest: null }] })
   }
@@ -129,6 +131,7 @@ export class FakeGitHub {
     this.held = []
     this.after = {}
     this.latestLagMs = 70_000
+    this.anonGetThrows = 0
   }
   private asset(repo: string, version: string, name: string, bytes: Buffer): Asset {
     return { id: this.nextId++, name, size: bytes.length, digest: `sha256:${sha(bytes)}`, bytes, browser_download_url: `https://github.com/${repo}/releases/download/v${version}/${name}` }
@@ -224,6 +227,7 @@ export class FakeGitHub {
   /** anonymous: a published release's versioned URLs serve its bytes; a draft's nothing */
   anonGet = async (url: string) => {
     this.calls.push(`anonGet ${url}`)
+    if (this.anonGetThrows > 0) { this.anonGetThrows--; throw new Unreadable(`${url}: The operation was aborted due to timeout`) }
     const m = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/releases\/download\/([^/]+)\/(.+)$/.exec(url)
     const r = m ? this.repo(m[1]!)?.releases.find((x) => !x.draft && x.tag_name === m[2]) : null
     const a = r?.assets.find((x) => x.name === m![3])
