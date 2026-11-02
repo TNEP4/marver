@@ -23,3 +23,6 @@ research/hifi/out/
 app/out/
 # the Mac app's staging folder: builds are packaged and signed here, then moved into app/out/ (spec 28 A2.8)
 app/.stage/
+# a release's state, its bundle, its notarised and stapled copies and its three assets (spec 28 A5.1 #10): one folder per
+# version, never committed - the record of a release is app/releases/X.Y.Z.json
+app/.release/

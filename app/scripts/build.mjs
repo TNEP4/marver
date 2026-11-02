@@ -11,17 +11,25 @@
  *                                     number, still moves into out/ - said loudly, with the number, and recorded in
  *                                     out/build.json (KNOWN_FAILABLE lists the only checks it can name)
  *
+ * Every argument is checked (A5.1 #3): anything else is refused by name, `--js` takes no other option, and
+ * `--release` is refused - a release is scripts/release.mjs, which calls `buildRelease` below with a feed and a
+ * folder of its own (`into`). This script never writes an archive, and its bundles carry no feed (`__MARVER_FEED__`
+ * is '' in every build it makes: the dev flavour, ad-hoc and ordinary signed builds; A5.1 #4).
+ *
  * The release pipeline, each step failing the build, nothing retried:
  *   checks -> tsdown (release flavour) -> pages + manifest -> stage { package.json, dist/ } -> @electron/packager
  *   (unsigned, asar, arm64) -> @electron/fuses (all nine, strict) -> @electron/osx-sign (hardened runtime,
  *   per-helper entitlements) -> verify (codesign --deep --strict, one Team ID) -> test/smoke/smoke.mjs -> out/
  * Fuses come before signing: flipping them changes the binary. Output: out/Marver-darwin-arm64/Marver.app, and an
- * ad-hoc build in out/adhoc/Marver-darwin-arm64/Marver.app, so it never replaces Nic's signed one.
+ * ad-hoc build in out/adhoc/Marver-darwin-arm64/Marver.app, so it never replaces Nic's signed one. A release's bundle
+ * (`into`) goes to its own folder, `.release/X.Y.Z/Marver.app` beside its build.json, and never into out/ (A5.1 #3):
+ * Nic's day-to-day signed build and a release never replace each other.
  *
  * Never a half-signed bundle in out/ (spec 28 A2.8): everything up to the smoke happens in app/.stage/<flavour>/
- * (a hidden folder, outside out/), and the finished bundle - signed, verified and smoked - moves into out/ only at
- * the end, by rename. A bundle launched while osx-sign works on it carries two Team IDs and crashes with macOS's
- * dialog; the one in out/ is always the last finished build. A build that fails leaves out/ as it was.
+ * (a hidden folder, outside out/; `.stage/release/` for a release), and the finished bundle - signed, verified and
+ * smoked - moves into out/ (or `into`) only at the end, by rename. A bundle launched while osx-sign works on it
+ * carries two Team IDs and crashes with macOS's dialog; the one in out/ is always the last finished build. A build
+ * that fails leaves out/ as it was.
  *
  * The signing identity is Nic's Developer ID (MARVER_SIGN_IDENTITY overrides). The first signing on a Mac asks
  * the keychain for the private key ("Always Allow" once); Apple's timestamp server needs the network - an offline
@@ -33,6 +41,7 @@ import { createRequire } from 'node:module'
 import { arch, platform, release } from 'node:os'
 import { join, resolve } from 'node:path'
 import { HARNESS_ERROR } from '../test/smoke/report.mjs'
+import { FEEDS } from '../tsdown.config.ts'
 import { checkTeams } from './team-id.mjs'
 import { tokensFrom } from './tokens.mjs'
 
@@ -90,6 +99,41 @@ export function parseKnownFail(argv) {
   return { names }
 }
 
+/** The options build.mjs takes beside `--known-fail=…` (A5.1 #3); nothing else is accepted. */
+export const BUILD_FLAGS = ['--js', '--adhoc', '--no-smoke', '--tamper']
+
+/**
+ * The command line, every argument checked (A5.1 #3: the old parser ignored what it did not know, so `--release`
+ * would have run an ordinary signed build and made no archive). Anything but BUILD_FLAGS and `--known-fail=…` is
+ * refused by name, `--release` with where a release is made, and `--js` with any other option. Returns the build's
+ * options, or `{ error }`.
+ */
+export function parseBuildArgs(argv) {
+  for (const a of argv) {
+    if (a === '--release' || a.startsWith('--release=')) return { error: `${a}: a release is scripts/release.mjs` }
+    if (BUILD_FLAGS.includes(a) || a === '--known-fail' || a.startsWith('--known-fail=')) continue
+    return { error: `${a}: not an option of build.mjs (it takes ${BUILD_FLAGS.join(', ')} and --known-fail=<check>)` }
+  }
+  const js = argv.includes('--js')
+  const others = argv.filter((a) => a !== '--js')
+  if (js && others.length) return { error: `--js takes no other option: ${others.join(' ')}` }
+  const known = parseKnownFail(argv)
+  if (known.error) return { error: known.error }
+  return { js, adhoc: argv.includes('--adhoc'), smoke: !argv.includes('--no-smoke'), tamper: argv.includes('--tamper'), knownFail: known.names }
+}
+
+/**
+ * Which feed a bundle carries (A5.1 #4), as build.json's `feed` and the smoke's `--feed=` name it: 'none' for '',
+ * 'production' or 'test' for one of tsdown.config.ts's FEEDS, null for anything else.
+ */
+export function feedKind(feed) {
+  if (!feed) return 'none'
+  return Object.entries(FEEDS).find(([, url]) => url === feed)?.[0] ?? null
+}
+
+/** A build that stops: the CLI prints it and exits 1; scripts/release.mjs catches it and stops its own run. */
+export class BuildFailure extends Error {}
+
 /**
  * Whether the smoke ended normally (code review r2 #2): its report finalized after its cleanup with `completed: true`,
  * and its exit status not HARNESS_ERROR (test/smoke/report.mjs) - an error of the harness's own, which no option
@@ -132,7 +176,7 @@ export function judgeSmoke(report, status, names) {
 
 const t0 = Date.now()
 const step = (s) => console.log(`[${((Date.now() - t0) / 1000).toFixed(1)}s] ${s}`)
-const fail = (s) => { console.error(`build: ${s}`); process.exit(1) }
+const fail = (s) => { throw new BuildFailure(s) }
 
 /** True once Nic has made Marver.icon in Icon Composer (a folder with icon.json); until then only the .icns. */
 export const iconComposerReady = () => existsSync(join(ICON_COMPOSER, 'icon.json'))
@@ -147,12 +191,13 @@ function walk(dir, base = dir) {
   return out
 }
 
-/** The bundles (tsdown.config.ts) of one flavour into `out`. */
-function bundles(flavour, out) {
+/** The bundles (tsdown.config.ts) of one flavour into `out`; `feed` (a release's only) becomes `__MARVER_FEED__`. */
+function bundles(flavour, out, feed = '') {
   const bin = join(resolve(require.resolve('tsdown/package.json'), '..'), 'dist', 'run.mjs')
-  const r = spawnSync(process.execPath, [bin, '--config', 'tsdown.config.ts'], {
-    cwd: APP, stdio: 'inherit', env: { ...process.env, MV_FLAVOUR: flavour, MV_OUT: out },
-  })
+  const env = { ...process.env, MV_FLAVOUR: flavour, MV_OUT: out }
+  delete env.MV_FEED   // never inherited: only a release's own `feed` sets it
+  if (feed) env.MV_FEED = feed
+  const r = spawnSync(process.execPath, [bin, '--config', 'tsdown.config.ts'], { cwd: APP, stdio: 'inherit', env })
   if (r.status !== 0) fail(`tsdown failed (${flavour})`)
 }
 
@@ -223,19 +268,32 @@ export function buildJs() {
   step(`dist/ (dev flavour): main, 2 preloads, ${Object.keys(manifest).length} pages`)
 }
 
-async function buildRelease({ adhoc, smoke, tamper, knownFail }) {
+/**
+ * The signed (or ad-hoc) build, packaged, fused, signed, verified and smoked in `.stage/`, then moved into out/ - or,
+ * for a release (A5.1 #3), into `into`: scripts/release.mjs passes `{ adhoc: false, smoke: true, tamper: false,
+ * knownFail: [], feed, into: '.release/X.Y.Z' }` and the bundle lands at `<into>/Marver.app` beside `<into>/build.json`
+ * and the smoke's report, staged in `.stage/release/`. `feed` is '' or one of FEEDS, and only a release's: an ad-hoc
+ * or an ordinary signed build carries none (A5.1 #4). build.json says which (`feed`: none, production or test), and
+ * the smoke checks the bundle against it (A5.1 #36). A failure throws BuildFailure, leaving out/ (or `into`) as it was.
+ */
+export async function buildRelease({ adhoc, smoke, tamper, knownFail, feed = '', into = null }) {
+  const started = Date.now()
   checks({ release: true })
   if (knownFail.length && !smoke) fail('--known-fail names smoke checks: it cannot go with --no-smoke')
-  const out = adhoc ? join(APP, 'out', 'adhoc') : join(APP, 'out')
+  const kind = feedKind(feed)
+  if (kind === null) fail(`the feed ${feed} is not one of tsdown.config.ts's FEEDS`)
+  if (feed && (adhoc || !into)) fail('a feed goes only into a release, Developer ID signed: scripts/release.mjs (A5.1 #4)')
+  if (into && (resolve(into) + '/').startsWith(join(APP, 'out') + '/')) fail(`a release's bundle never goes into out/ (A5.1 #3): ${into}`)
+  const out = into ? resolve(into) : adhoc ? join(APP, 'out', 'adhoc') : join(APP, 'out')
   // the staging folder: never under out/, so nothing there is ever a bundle half-way through
-  const work = join(APP, '.stage', adhoc ? 'adhoc' : 'signed')
+  const work = join(APP, '.stage', into ? 'release' : adhoc ? 'adhoc' : 'signed')
   const stage = join(work, 'src')
   rmSync(work, { recursive: true, force: true })
   mkdirSync(stage, { recursive: true })
-  rmSync(join(out, 'stage'), { recursive: true, force: true })   // the old layout's stage, from before .stage/
+  if (!into) rmSync(join(out, 'stage'), { recursive: true, force: true })   // the old layout's stage, from before .stage/
 
-  step('bundles (release flavour)')
-  bundles('release', join(stage, 'dist'))
+  step(`bundles (release flavour${feed ? `, the ${kind} feed` : ''})`)
+  bundles('release', join(stage, 'dist'), feed)
   pages(join(stage, 'dist'))
   checkNoTestHooks(join(stage, 'dist'))
   writeFileSync(join(stage, 'package.json'), JSON.stringify({
@@ -253,7 +311,10 @@ async function buildRelease({ adhoc, smoke, tamper, knownFail }) {
     appVersion: pkg.version, buildVersion: pkg.version,
     icon,
     usageDescription: { Microphone: MIC },
-    extendInfo: { LSMinimumSystemVersion: MIN_MACOS, CFBundleDisplayName: PRODUCT, LSArchitecturePriority: ['arm64'] },
+    // ElectronSquirrelPreventDowngrades (A5.1 #8): Squirrel refuses a bundle whose CFBundleShortVersionString is lower
+    // than the running one's - downgrade prevention, nothing more (an equal one passes); "strictly higher" is
+    // release.mjs's version floor
+    extendInfo: { LSMinimumSystemVersion: MIN_MACOS, CFBundleDisplayName: PRODUCT, LSArchitecturePriority: ['arm64'], ElectronSquirrelPreventDowngrades: true },
   })
   const app = join(dir, `${PRODUCT}.app`)
 
@@ -312,7 +373,7 @@ async function buildRelease({ adhoc, smoke, tamper, knownFail }) {
     // its report into a folder of this build's own, so the one read is this smoke's; then beside out/ as before
     const reports = join(work, 'smoke')
     mkdirSync(reports, { recursive: true })
-    const r = spawnSync(process.execPath, [join(APP, 'test', 'smoke', 'smoke.mjs'), app, `--report=${reports}`,
+    const r = spawnSync(process.execPath, [join(APP, 'test', 'smoke', 'smoke.mjs'), app, `--report=${reports}`, `--feed=${kind}`,
       ...(adhoc ? ['--adhoc'] : []), ...(tamper ? ['--tamper'] : [])], { stdio: 'inherit' })
     const file = readdirSync(reports).filter((f) => /^smoke-\d+\.json$/.test(f)).sort().at(-1)
     let report = null
@@ -338,34 +399,42 @@ async function buildRelease({ adhoc, smoke, tamper, knownFail }) {
     }
   }
 
-  // the move: the finished bundle replaces out/'s by rename, the old one put aside first (never a mix of the two)
-  step('into out/')
+  // the move: the finished bundle replaces out/'s by rename, the old one put aside first (never a mix of the two); a
+  // release's bundle alone (not packager's folder of licences) into its own folder
+  step(into ? `into ${out}` : 'into out/')
   mkdirSync(out, { recursive: true })
-  const dest = join(out, `${PRODUCT}-darwin-arm64`)
+  const dest = into ? join(out, `${PRODUCT}.app`) : join(out, `${PRODUCT}-darwin-arm64`)
   const old = join(work, 'previous')
   if (existsSync(dest)) renameSync(dest, old)
-  renameSync(dir, dest)
+  renameSync(into ? app : dir, dest)
   rmSync(work, { recursive: true, force: true })
-  const final = join(dest, `${PRODUCT}.app`)
+  const final = into ? dest : join(dest, `${PRODUCT}.app`)
   const known = verdict?.known ?? []
   const report = { app: final, adhoc, version: pkg.version, electron: ELECTRON, team: teams.team, parts: teams.parts.length,
+    feed: kind, ...(into ? { release: true } : {}),
     icon: icon.map((p) => p.slice(APP.length + 1)), smoke: smoke ? (tamper ? 'with --tamper' : 'default') : 'skipped',
     ...(smokeReport ? { smokeReport } : {}),
     // never left out: a build moved into out/ with failing checks says which, at what number, and on whose decision
     knownFailures: known.map(({ name, measured, unit, budget, detail, decision }) => ({ name, measured, unit, budget, detail, decision })),
     ...(knownFail.length ? { knownFailNamed: knownFail } : {}),
-    seconds: (Date.now() - t0) / 1000 }
+    seconds: (Date.now() - started) / 1000 }
   writeFileSync(join(out, 'build.json'), JSON.stringify(report, null, 2) + '\n')
   step(`built ${final}${known.length ? ` WITH ${known.length} KNOWN FAILURE${known.length > 1 ? 'S' : ''}: ${known.map((k) => `${k.name} ${k.measured.toFixed(1)} ${k.unit} (budget ${k.budget})`).join(', ')}` : ''}`)
   for (const k of known) console.error(`build: ${k.line}`)
   console.log(`APP=${final}`)
+  return report
 }
 
 // run as a script (tests import the constants above without building)
 if (process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.filename)) {
-  const args = process.argv.slice(2)
-  const known = parseKnownFail(args)
-  if (known.error) fail(known.error)
-  if (args.includes('--js')) buildJs()
-  else await buildRelease({ adhoc: args.includes('--adhoc'), smoke: !args.includes('--no-smoke'), tamper: args.includes('--tamper'), knownFail: known.names })
+  const a = parseBuildArgs(process.argv.slice(2))
+  try {
+    if (a.error) fail(a.error)
+    if (a.js) buildJs()
+    else await buildRelease({ adhoc: a.adhoc, smoke: a.smoke, tamper: a.tamper, knownFail: a.knownFail })
+  } catch (err) {
+    if (!(err instanceof BuildFailure)) throw err
+    console.error(`build: ${err.message}`)
+    process.exit(1)
+  }
 }
