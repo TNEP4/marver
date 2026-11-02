@@ -204,7 +204,8 @@ export const GPU_STATUS = [
   'enabled_readback', 'enabled_force', 'enabled', 'enabled_on', 'enabled_force_on',
 ] as const
 /** tabs.ts's `UnloadRefusal` (an app type: unit `report.test` holds the two equal). */
-export const UNLOAD_REFUSALS = ['not-canvas', 'active', 'no-document', 'replacing', 'sweeping', 'no-bridge', 'unknown'] as const
+export const UNLOAD_REFUSALS = ['not-canvas', 'active', 'no-document', 'replacing', 'sweeping', 'no-bridge', 'unknown', 'stale',
+  'unsaved', 'busy', 'crash', 'hung', 'audible', 'devtools', 'loading', 'refused-before', 'recent'] as const
 export const UNLOAD_REASONS = ['warn', 'critical', 'half-ram'] as const
 export const UNLOAD_PHASES = ['start', 'unsure', 'done', 'forced', 'refused'] as const
 export const POWER_EVENTS = ['on-ac', 'on-battery', 'suspend', 'resume', 'thermal-state-change', 'speed-limit-change'] as const
