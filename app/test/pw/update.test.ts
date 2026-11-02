@@ -246,8 +246,10 @@ describe('a blocked build (#13, #22)', () => {
       },
     })
     try {
+      // the item exists once the gates have blocked: a click before it would find nothing to press
+      expect(await menuItem(w)).toMatchObject({ label: 'Updates Need the Applications Folder…', enabled: true })
       await w.run.call('updater:answer', { button: 'Move at Next Launch' })
-      await w.run.call('menu:click', { id: 'update' })
+      expect(await w.run.call('menu:click', { id: 'update' })).toBe(true)
       const a = await until('the alert', async () => (await updater(w)).alerts[0])
       expect(a.buttons).toEqual(['OK', 'Show in Finder', 'Move at Next Launch'])
       await until('the decline cleared', async () => (await updater(w)).file.move === null)

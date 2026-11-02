@@ -18,6 +18,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { AppRun } from '../harness/app.ts'
+import type { FakeCanvas } from '../harness/fake-canvas.ts'
 import { launchWindow, sleep, type WindowRun } from '../harness/window.ts'
 
 interface Phase { kind: string; version?: string }
@@ -68,9 +69,10 @@ async function launch(o: { restart?: 'ok' | 'error' | 'silent'; timings?: Record
   await until('ready', async () => (await phase(w)).kind === 'ready')
   return { w, log }
 }
-/** A fake canvas, shown, lifted and reporting clean. */
-async function shown(w: WindowRun, slot: number, name: string): Promise<string> {
+/** A fake canvas, shown, lifted and reporting clean; `made` collects it for a case whose first window closes with `keep`. */
+async function shown(w: WindowRun, slot: number, name: string, made?: FakeCanvas[]): Promise<string> {
   const c = await w.canvas({ slot, name })
+  made?.push(c.fake)
   await w.run.call('activate', { id: c.id })
   await w.until((x) => { const t = x.tabs.find((q) => q.id === c.id); return !!t?.doc?.lifted && t.retained }, 10_000, `${name} lifted`)
   await w.report(c.id, { unsaved: false })
@@ -139,8 +141,11 @@ describe('a failure before exit (#17) and the next launch (#18)', () => {
     it(`${restart === 'error' ? 'an error after the windows closed' : 'no exit restartWaitMs after the windows closed'}: the alert once, one quit, exit 0, the intent kept; the next launch reconciles`, async () => {
       const { w, log } = await launch({ restart, timings: { restartWaitMs: 1500 } })
       const env = w.env
+      // the first window closes with `keep` and the next launch never knew this canvas: it is closed here at the end,
+      // or the next case's slot 1 would find its port still taken (EADDRINUSE)
+      const made: FakeCanvas[] = []
       try {
-        await shown(w, 1, 'Tidewell')
+        await shown(w, 1, 'Tidewell', made)
         const exit = exited(w.run)
         expect(await press(w)).toBe(true)
         // the window and every view are gone; the app still answers, the alert held by the test seam
@@ -172,6 +177,7 @@ describe('a failure before exit (#17) and the next launch (#18)', () => {
         expect((await next.run.call<{ file: { intent: unknown } }>('updater')).file.intent).toBeNull()
       } finally {
         await next.close()
+        for (const f of made) await f.close().catch(() => {})
       }
     })
   }
