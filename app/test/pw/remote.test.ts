@@ -422,18 +422,15 @@ describe('favicons (A2.4, A4.6 #46, #51)', () => {
 
 describe('the overflow: twenty local canvases and two shared ones at 720 px (A2.10, A4.6 #39, #51)', () => {
   const strip = <T>(js: string) => w.run.call<T>('exec', { target: 'strip', js })
-  // under the fake trust no bridge hears the strip's app:ready, so main would send it nothing: the hook stands in for
-  // that ready, and the strip draws main's own snapshots (its sends back are refused: » is asked through tabsMore)
-  // - once its first document has committed and loaded: a ready before that commit is cleared by it (window.ts
-  // registerApp's did-navigate), and nothing says ready again (code review r5 P3)
+  // the strip's own app:ready, through the bridge the fake trust hands the app pages: from then main sends it its
+  // snapshots and it draws them (» is asked through the tabsMore hook)
   beforeAll(async () => {
     w = await launchWindow('pw', { extraEnv: r.env })
     const end = Date.now() + 15_000
-    while (!(await strip<boolean>(`document.readyState === 'complete' && location.href !== 'about:blank'`).catch(() => false))) {
-      if (Date.now() > end) throw new Error('the strip never loaded its page')
+    while (!(await w.log('page')).some((l) => l.data.ready === 'strip')) {
+      if (Date.now() > end) throw new Error('the strip never said ready')
       await sleep(50)
     }
-    await w.run.call('pageReady', { target: 'strip' })
   })
   afterAll(async () => { await w?.close() })
 

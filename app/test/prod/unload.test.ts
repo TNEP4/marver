@@ -284,13 +284,10 @@ describe('while it closes, and after (A3.8 #42-#44, r1 #2, r2 #4, r3 #3)', () =>
       await w.run.call('activate', { id: a.id })
       await sleep(120)
       expect((await w.run.call<{ body: { page: string; cameraKept: boolean } }>('page', { tab: a.id })).body).toMatchObject({ page: 'reopening', cameraKept: true })
-      // the fake trust registers no app page with the bridge: its app:ready is the hook's, once the page has loaded
-      // (the 400 ms before its words are the page's own: test/pw/tabpage.test.ts)
-      const loaded = Date.now() + 5000
-      while (Date.now() < loaded && !(await w.run.call('exec', { target: `${a.id}:page`, js: `!!document.getElementById('content') && document.readyState === 'complete'` }).catch(() => false))) await sleep(50)
-      await w.run.call('pageReady', { target: `${a.id}:page` })
-      const title = () => w.run.call<string | null>('exec', { target: `${a.id}:page`, js: `document.getElementById('tp-title')?.textContent ?? null` })
-      const end = Date.now() + 3000
+      // the page loads and says ready itself, through the bridge the fake trust hands the app pages; main sends it the
+      // snapshot then (the 400 ms before its words are the page's own: test/pw/tabpage.test.ts)
+      const title = () => w.run.call<string | null>('exec', { target: `${a.id}:page`, js: `document.getElementById('tp-title')?.textContent ?? null` }).catch(() => null)
+      const end = Date.now() + 5000
       let words: string | null = null
       while (Date.now() < end && !(words = await title())) await sleep(50)
       expect(words).toBe('Reopening Tidewell')
