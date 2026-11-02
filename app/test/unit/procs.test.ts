@@ -149,3 +149,78 @@ describe('the minute on disk (A3.8 #7)', () => {
     expect(b).toEqual({ mono: 5, cum: undefined })
   })
 })
+
+describe('the app\'s own processes, folded at each sample (A5.1 #27, r2 #4, r3 #5)', () => {
+  type P = Pick<ProcSample, 'pid' | 'type' | 'role' | 'cpu' | 'rssMB'>
+  const proc = (p: P): ProcSample => ({ born: p.pid, tabs: p.role === 'canvas' ? ['t1'] : [], footprintMB: null, ...p })
+  const at = (mono: number, dt: number | null, procs: P[]): Sample => ({
+    ts: 1_761_000_000_000 + mono, mono, dt, procs: procs.map(proc), gpu: null, pressure: null, thermal: 'nominal', sys: null, visible: null,
+  })
+  const browser = (cpu: number | null, rssMB = 100): P => ({ pid: 1, type: 'browser', role: 'none', cpu, rssMB })
+
+  it('RSS summed at each sample: two helpers one after the other are never added together', () => {
+    const body = foldMinute([
+      at(0, 5, [browser(0.1), { pid: 7, type: 'utility', role: 'none', cpu: 0.5, rssMB: 50 }]),
+      at(5000, 5, [browser(0.1), { pid: 8, type: 'utility', role: 'none', cpu: null, rssMB: 60 }]),
+    ], 0)!
+    // 150 then 160 - never 100 + 50 + 60
+    expect(body.own!.rssMB).toEqual({ mean: 155, max: 160, last: 160 })
+  })
+
+  it('CPU only over intervals every own process measured: a new helper\'s first interval is unmeasured, never idle', () => {
+    // helper A at one core, then helper B at one core: 0.1 + 1 cores over the two measured 5 s intervals, B's first unmeasured
+    const body = foldMinute([
+      at(0, null, [browser(null)]),                                                                         // the first: no interval, nothing
+      at(5000, 5, [browser(0.1), { pid: 7, type: 'utility', role: 'none', cpu: 1, rssMB: 50 }]),
+      at(10_000, 5, [browser(0.1), { pid: 8, type: 'utility', role: 'none', cpu: null, rssMB: 50 }]),         // B's first sample
+      at(15_000, 5, [browser(0.1), { pid: 8, type: 'utility', role: 'none', cpu: 1, rssMB: 50 }]),
+    ], 0)!
+    expect(body.own!.cpu.s).toBeCloseTo(11, 9)
+    expect(body.own!.cpu).toMatchObject({ ms: 10_000, unmeasuredMs: 5000 })
+    expect(body.own!.cpu.ms + body.own!.cpu.unmeasuredMs).toBe(body.span)
+    // observed CPU over measured seconds: 1.1 cores
+    expect(body.own!.cpu.s / (body.own!.cpu.ms / 1000)).toBeCloseTo(1.1, 9)
+  })
+
+  it('a missing cumulative reading makes its interval unmeasured; a sample after a resume (no interval) adds nothing', () => {
+    const body = foldMinute([
+      at(0, 5, [browser(0.2)]),
+      at(5000, 5, [browser(null)]),           // the cumulative reading missing: CPU null on an interval
+      at(10_000, null, [browser(null, 300)]), // after a wake: no interval
+      at(15_000, 5, [browser(0.2)]),
+    ], 0)!
+    expect(body.own!.cpu.s).toBeCloseTo(2, 9)
+    expect(body.own!.cpu).toMatchObject({ ms: 10_000, unmeasuredMs: 5000 })
+    // the wake's sample still counts for memory: RSS is read at every sample
+    expect(body.own!.rssMB).toEqual({ mean: 150, max: 300, last: 100 })
+  })
+
+  it('a renderer whose role changes within the minute counts only while it is the app\'s own, with that sample\'s role', () => {
+    const body = foldMinute([
+      at(0, 5, [browser(0), { pid: 9, type: 'renderer', role: 'strip', cpu: 0.5, rssMB: 40 }]),
+      // now a canvas renderer: out of both sets, and its CPU null does not leave the interval unmeasured
+      at(5000, 5, [browser(0), { pid: 9, type: 'renderer', role: 'canvas', cpu: 2, rssMB: 400 }]),
+      at(10_000, 5, [browser(0), { pid: 9, type: 'renderer', role: 'canvas', cpu: null, rssMB: 400 }]),
+    ], 0)!
+    // the per-process list keeps the last role only - which is why `own` never comes from it
+    expect(body.procs.find((p) => p.pid === 9)!.role).toBe('canvas')
+    expect(body.own!.cpu.s).toBeCloseTo(2.5, 9)
+    expect(body.own!.cpu).toMatchObject({ ms: 15_000, unmeasuredMs: 0 })
+    expect(body.own!.rssMB).toEqual({ mean: 113.3333, max: 140, last: 100 })   // 140, 100, 100
+  })
+
+  it('the GPU process, every utility process and every app-page renderer are the app\'s own (A3\'s sets); a spare renderer too', () => {
+    const body = foldMinute([
+      at(0, 2, [
+        browser(0.1, 100),
+        { pid: 2, type: 'gpu', role: 'none', cpu: 0.3, rssMB: 200 },
+        { pid: 3, type: 'utility', role: 'none', cpu: 0.05, rssMB: 20 },
+        { pid: 4, type: 'renderer', role: 'unknown', cpu: 0.05, rssMB: 30 },
+        { pid: 5, type: 'renderer', role: 'canvas', cpu: 3, rssMB: 900 },
+      ]),
+    ], 0)!
+    expect(body.own!.rssMB.max).toBe(350)
+    expect(body.own!.cpu.s).toBeCloseTo(1, 9)
+    expect(body.own!.cpu.ms).toBe(2000)
+  })
+})

@@ -10,7 +10,8 @@
  * tabs is counted once. The budgets' process sets come from roles through `inOwnSet`, the one function.
  *
  * FROZEN (A3.8 #53): `procKey`, `Owners`, `Baseline`, `build`'s signature, `inOwnSet`. `canvasMem` and `foldMinute`
- * (the minute on disk, A3.8 #7) are the recorder stream's, pure like the rest.
+ * (the minute on disk, A3.8 #7) are the recorder stream's, pure like the rest. A5 (A5.1 #41): `foldMinute` folds
+ * `SampleBody.own` at each sample, which the performance report reads (src/shared/app-report.ts).
  */
 import type { ProcessMetric } from 'electron'
 import type { Agg, PressureLevel, ProcSample, ProcType, Role, Sample, SampleBody } from '../../../src/shared/app-perf.ts'
@@ -132,6 +133,14 @@ const round = (v: number): number => Math.round(v * 1e4) / 1e4
  * budget can add minutes up. A CPU figure with no interval (none, after a resume) is a last and a max, never in the
  * mean. Memory is mean, max and last per process and for the canvases. A process is listed once per `(pid, born)`,
  * with what it was last seen as (its role, its tabs).
+ *
+ * `own` (A5.1 #27, r2 #4, r3 #5) is folded **at each sample**, with that sample's roles (`inOwnSet`: 'memory-no-canvas'
+ * for memory, 'cpu' for CPU) - never from the list above, which keeps only a process's last role. `rssMB`: the own
+ * processes' RSS summed at the sample (two helpers one after the other are never added together), then mean, max and
+ * last over the minute. `cpu`: a sample whose interval (`dt`) every own process has a CPU figure for adds Σ cpu x dt
+ * to `s` and the interval to `ms`; one where any own process has none (its first sample, a missing cumulative reading)
+ * adds the interval to `unmeasuredMs` only - unknown, never idle; a sample with no interval (the first, after a
+ * resume) adds nothing. So `ms + unmeasuredMs` is the minute's `span`.
  */
 export function foldMinute(samples: readonly Sample[], spawnMs: number): SampleBody | null {
   if (!samples.length) return null
@@ -144,9 +153,11 @@ export function foldMinute(samples: readonly Sample[], spawnMs: number): SampleB
   let maxLevel: PressureLevel | null = null
   let span = 0
   let gpuLast = ''
+  const own = { rssMB: new Fold(), s: 0, ms: 0, unmeasuredMs: 0 }
   for (const s of samples) {
     const dt = s.dt !== null && Number.isFinite(s.dt) && s.dt > 0 ? s.dt : null
     if (dt !== null) span += dt * 1000
+    foldOwn(own, s.procs, dt)
     lastLevel = s.pressure?.level ?? null
     if (lastLevel !== null) maxLevel = maxLevel === null ? lastLevel : (Math.max(maxLevel, lastLevel) as PressureLevel)
     for (const p of s.procs) {
@@ -199,7 +210,24 @@ export function foldMinute(samples: readonly Sample[], spawnMs: number): SampleB
     visible: last.visible,
     sys: last.sys,
     spawnMs: Math.round(spawnMs),
+    own: { rssMB: own.rssMB.agg(), cpu: { s: round(own.s), ms: Math.round(own.ms), unmeasuredMs: Math.round(own.unmeasuredMs) } },
   }
+}
+
+/** One sample into the minute's `own` (A5.1 #27): this sample's own processes, by this sample's roles. */
+function foldOwn(own: { rssMB: Fold; s: number; ms: number; unmeasuredMs: number }, procs: readonly ProcSample[], dt: number | null): void {
+  let rss = 0
+  let cores = 0
+  let measured = true
+  for (const p of procs) {
+    if (inOwnSet(p, 'memory-no-canvas') && num(p.rssMB)) rss += p.rssMB
+    if (!inOwnSet(p, 'cpu')) continue
+    if (p.cpu === null || !num(p.cpu)) measured = false
+    else cores += p.cpu
+  }
+  own.rssMB.add(rss)
+  if (dt === null) return
+  if (measured) { own.s += cores * dt; own.ms += dt * 1000 } else own.unmeasuredMs += dt * 1000
 }
 
 /**
