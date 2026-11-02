@@ -80,6 +80,7 @@ import { appMetrics, gpuIdentity, recorder, sampler } from './recorder.ts'
 import { lastPressure } from './pressure.ts'
 import { actUnload as unloadAct, forceUnload, takeAct, unloadGone as actGone, type ActPorts } from './unload-act.ts'
 import { isQuitting, request as shutdownRequest, shutdownState, startShutdown, type RestartAlert } from './shutdown.ts'
+import { updateAct, updateMenu, updaterTabs } from './updater.ts'
 
 export const PRELOAD_CANVAS = join(__dirname, 'preload-canvas.cjs')
 
@@ -1077,14 +1078,19 @@ function tabAct(k: MenuToken, what: 'activate' | 'open-browser' | 'reveal' | 'co
  * Reveal in Finder and Open in Browser, run in main from the tab's record. A test run never opens a Finder window
  * or a browser on the screen of whoever is at the Mac: recorded instead, as effects.ts records its copies.
  */
-const outside: { revealed: string[]; opened: string[] } = { revealed: [], opened: [] }
+const outside: { revealed: string[]; opened: string[]; shown?: string[] } = { revealed: [], opened: [] }
 const recordOutside = (): boolean => __MV_TEST__ && testMode() && process.env.MARVER_APP_REAL_EFFECTS !== '1'
 function reveal(t: Tab): void {
   if (!t.root) return
   if (__MV_TEST__ && recordOutside()) { outside.revealed.push(t.root); return }
   shell.showItemInFolder(t.root)
 }
-function openOutside(url: string): void {
+/** A5.1 #22: the app itself selected in Finder (Updates Need the Applications Folder…'s Show in Finder). */
+export function showOutside(path: string): void {
+  if (__MV_TEST__ && recordOutside()) { (outside.shown ??= []).push(path); return }
+  shell.showItemInFolder(path)
+}
+export function openOutside(url: string): void {
   if (__MV_TEST__ && recordOutside()) { outside.opened.push(url); return }
   void shell.openExternal(url)
 }
@@ -1231,7 +1237,7 @@ function menuModel(): MenuModel {
     canvas: trusted && a.reports.menu?.length ? { token: tokenOf(a), items: a.reports.menu } : null,
     tabs: tabsList,
     header: Number(process.getSystemVersion().split('.')[0]) >= 14,
-    update: null,                                                    // A5.1 #22: the restart stream wires the updater's item
+    update: updateMenu(),                                            // A5.1 #22: the updater's item, none before it starts
   }
 }
 
@@ -1356,7 +1362,8 @@ export function startViews(i: StartInput): void {
   }
   setTabsPorts({
     now: () => Date.now(), home, appDark: () => nativeTheme.shouldUseDarkColors,
-    changed: (o) => { ensureAppViews(); compose(o) }, load, appState: sendState, act, ask, forget, save: saveSoon,
+    // a waiting update looks at its tab after every change: closed, or its document changed (A5.1 #21)
+    changed: (o) => { ensureAppViews(); compose(o); updaterTabs() }, load, appState: sendState, act, ask, forget, save: saveSoon,
     shown: (t) => { onShown(t); refreshLogo(t) }, forward,
     recheck: (t) => scheduleRetry(t, { now: true }),
     // Home's Shared canvases (A4.6 #47): the place, never a sign-in URL (tabs.ts moves it only to a shell page)
@@ -1420,7 +1427,7 @@ export function startViews(i: StartInput): void {
   // A2.4: a local tab's logo is fetched once its entry is ready - for the canvases running at launch too, so a tab
   // not yet shown wears its logo in the strip and on Home rather than its initials until its first showing
   for (const t of allTabs()) if (t.kind === 'local' && t.reg?.state === 'ready') refreshLogo(t)
-  trust.onReport((tabId, doc, r) => { onReport(tabId, doc, r); invalidateMenu() })
+  trust.onReport((tabId, doc, r) => { onReport(tabId, doc, r); invalidateMenu(); updaterTabs(tabId) })
 
   startMenu({
     model: menuModel,
@@ -1430,7 +1437,7 @@ export function startViews(i: StartInput): void {
       tab: (k, what) => tabAct(k, what),
       help: () => openOutside(HELP_URL),
       perfFiles: () => effects.openPath(join(homeDir.dir, 'perf')),
-      update: () => {},                                                // A5.1 #22: the restart stream wires it
+      update: (t) => { updateAct(t) },                                 // A5.1 #22: the pill's entry too; acts only while its token holds
       exportReport: () => {},                                          // A5.1 #28: the report stream wires it
       rebuild: () => buildNow(true),
     },

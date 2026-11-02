@@ -84,3 +84,50 @@ export class FakeClock implements UpdateClock {
   }
   pending(): number { return this.timers.length }
 }
+
+/** What the live fake's next `checkForUpdates()` finds (A5.1 #34): nothing, an error, or an update it downloads. */
+export type FakeAnswer = { kind: 'current' } | { kind: 'error'; message: string } | { kind: 'offer'; version: string; notes?: string }
+/** How the live fake's restart ends (S4's three outcomes): the new version, a preparation `error`, or nothing at all. */
+export type FakeRestart = 'ok' | 'error' | 'silent'
+
+/**
+ * The dev flavour's updater behind `MARVER_APP_FAKE_UPDATER=1` (A5.1 #4, #34, #35): the same fake, made to act as
+ * Electron 45 does when the app runs it (S4). Electron-free still: updater.ts hands it the window's close and the quit.
+ *
+ * - `checkForUpdates()` answers `next` a macrotask later, as Squirrel would: `checking-for-update`, then
+ *   `update-not-available`, an `error`, or `update-available` and `update-downloaded` with the feed's name. With no
+ *   `next`, nothing: a case emits the events itself.
+ * - `quitAndInstall()` in S4's order: `before-quit-for-update`; every window closed (close-to-hide must let it, the
+ *   coordinator having set `quitting`); `before-quit-for-update` again, as Electron's last-window observer sends it;
+ *   then, by `restart`: an ordinary quit (`ok`, the relaunch is not the fake's), an `error` with Squirrel's words, the
+ *   app left running with no window (`error`), or nothing (`silent`, #17's wait).
+ */
+export class LiveFakeUpdater extends FakeUpdater {
+  next: FakeAnswer | null = null
+  restart: FakeRestart = 'ok'
+  constructor(private readonly live: { closeWindows(): Promise<void>; quit(): void; later(fn: () => void): void }) { super() }
+
+  override checkForUpdates(): void {
+    super.checkForUpdates()
+    const a = this.next
+    if (!a) return
+    this.live.later(() => {
+      this.emit('checking-for-update')
+      if (a.kind === 'current') { this.emit('update-not-available'); return }
+      if (a.kind === 'error') { this.fail(a.message); return }
+      this.emit('update-available')
+      this.live.later(() => this.downloaded(a.version, a.notes ?? ''))
+    })
+  }
+
+  override quitAndInstall(): void {
+    this.calls.push('quitAndInstall')
+    this.emit('before-quit-for-update')
+    void this.live.closeWindows().then(() => {
+      this.calls.push('windows-closed')
+      this.emit('before-quit-for-update')
+      if (this.restart === 'ok') this.live.quit()
+      else if (this.restart === 'error') this.fail('Could not write update request')
+    })
+  }
+}

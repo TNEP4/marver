@@ -672,12 +672,13 @@ export const recorder = {
     for (const id of [...tabSeen.keys()]) if (!live.has(id)) { tabSeen.delete(id); boards.delete(id); lastDoc.delete(id) }
   },
   /**
-   * a record of another stream's kind (app.jsonl only with the recorder on; the journal always in tests): `who` a tab,
+   * a record of another stream's kind (app.jsonl only with the recorder on, but `update`; the journal always in tests): `who` a tab,
    * its identity taken now, or an identity a caller took in its event's turn (a flash, a candidate, a reopen)
    */
   event<K extends AppKind>(kind: K, who: Tab | TabIdent | null, body: Omit<AppBody<K>, keyof TabIdent>): void {
     const ident = who === null ? null : isTab(who) ? identity(who) : { ...who }
-    record(kind, ident, body as unknown as Record<string, unknown>)
+    // the updater's records are written whatever `recorder` says, as a flash's and main's errors are (A5.1 #25)
+    record(kind, ident, body as unknown as Record<string, unknown>, kind === 'update')
   },
   /** the shell's last `board` for the tab's current document (Copy Details' frame count, A3.8 #9), or null */
   boardOf(tabId: string): { frames: number; asleep: number } | null {
