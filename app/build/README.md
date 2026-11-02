@@ -7,6 +7,7 @@
 | `Marver.icon` | **not made yet** - the icon macOS 26 draws in its own glass | Icon Composer, by hand (below) |
 | `entitlements/app.plist` | `Marver.app` and `Marver Helper.app`: allow-jit, audio-input | by hand |
 | `entitlements/jit.plist` | the Renderer, GPU and Plugin helpers: allow-jit | by hand |
+| `designated-requirement.txt` | the designated requirement of the first notarised build (0.3.0, 2 Nov): every release's staged app, the app in its ZIP and the app on its DMG must satisfy it (`codesign --verify --deep --strict -R "=<it>"`), or updates break. Changing it is Nic's decision, recorded (spec 28 A5.1 #8) | spike S1 (`codesign -d -r-`), committed |
 
 ## Marver.icon (the manual step)
 
