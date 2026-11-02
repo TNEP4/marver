@@ -3,7 +3,7 @@
  * The packaged smoke (spec 28 A2.8, A2.10, A2.14 #29, #30, v1.12 r1 #9): no Playwright, on the signed, fused
  * build - spike S9's twelve checks and X7's cases, against the real app.
  *
- *   node test/smoke/smoke.mjs [<Marver.app>] [--adhoc] [--keep] [--tamper] [--report=<dir>]
+ *   node test/smoke/smoke.mjs [<Marver.app>] [--adhoc] [--keep] [--tamper] [--report=<dir>] [--feed=none|production|test]
  *
  * The default app is out/Marver-darwin-arm64/Marver.app. `--adhoc` expects an ad-hoc signature (no Developer ID,
  * no timestamp). `--keep` leaves the run's temporary folder. Every line is PASS, FAIL, WARN or SKIP; the exit code
@@ -37,6 +37,17 @@
  *   page burns when the smoke asks it to.
  * A footprint that cannot be read makes a memory gate inconclusive, a FAIL, never a pass on RSS. A gate that fails
  * says its numbers; the limits are not loosened here - the numbers go to Nic.
+ *
+ * A5's checks (spec 28 A5.1 #36), on every build. Every launch's home is seeded with `state/update.json` `{ v: 1,
+ * intent: null, move: { declined: true, at }, staging: null }`, the answer Don't ask again writes, so a build with a
+ * feed - launched from .stage/, exactly where Marver would move itself from - never meets the move, through the
+ * ordinary persisted preference and no switch in the code. Then: the feed constant as build.json's `feed` expects
+ * (none, production or test; scripts/build.mjs passes `--feed=`, else build.json beside the app says, else none); the
+ * Info.plist's two versions equal to the package's, ElectronSquirrelPreventDowngrades true, LSMinimumSystemVersion
+ * 13.0; no MARVER_APP_FAKE_UPDATER in the asar; and the clean launch completes its startup and records one `update`
+ * `blocked` - `location` with a feed, `feed` without - with no `move` record (nothing copied) and no `check` record
+ * (no feed request). A bundle with a feed is never launched from an Applications folder here: it would check its feed.
+ * The move with a fresh home is S5's, by hand.
  */
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
@@ -45,6 +56,8 @@ import { createRequire } from 'node:module'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { BUNDLE_ID, IDENTITY, MIC, MIN_MACOS, PRODUCT, TEAM, TEST_SENTINELS } from '../../scripts/build.mjs'
+import { FEEDS } from '../../tsdown.config.ts'
+import { feedExpected, judgeFeed, judgeUpdate, seedHome, updateRecords } from './a5.mjs'
 import { bundleOf, checkTeams, machOParts } from '../../scripts/team-id.mjs'
 import { describeError, finalize, guardProcess, HARNESS_ERROR } from './report.mjs'
 
@@ -59,6 +72,8 @@ const reportArg = args.find((a) => a.startsWith('--report='))?.slice('--report='
 const BIN = join(appPath, 'Contents', 'MacOS', PRODUCT)
 const VERSION = JSON.parse(readFileSync(join(APP_DIR, 'package.json'), 'utf8')).version
 if (!existsSync(BIN)) { console.error(`smoke: no app at ${appPath}`); process.exit(1) }
+const FEED = feedExpected(appPath, args.find((a) => a.startsWith('--feed='))?.slice('--feed='.length))
+if (FEED !== 'none' && !Object.hasOwn(FEEDS, FEED)) { console.error(`smoke: --feed=${FEED}: none, production or test`); process.exit(1) }
 
 // short paths: a Unix socket or a Chromium profile path must stay well under macOS's limits
 const RUN = realpathSync(mkdtempSync(join(tmpdir(), 'mv-smoke-')))
@@ -120,13 +135,15 @@ function plist(file) { return JSON.parse(sh('plutil', ['-convert', 'json', '-o',
   const res = join(appPath, 'Contents', 'Resources')
   const want = {
     CFBundleIdentifier: BUNDLE_ID, CFBundleName: PRODUCT, CFBundleDisplayName: PRODUCT, CFBundleExecutable: PRODUCT,
-    CFBundleShortVersionString: VERSION, LSMinimumSystemVersion: MIN_MACOS, NSMicrophoneUsageDescription: MIC,
+    CFBundleShortVersionString: VERSION, CFBundleVersion: VERSION, LSMinimumSystemVersion: MIN_MACOS, NSMicrophoneUsageDescription: MIC,
+    // A5.1 #8: Squirrel refuses a lower bundle; "strictly higher" is the release's version floor
+    ElectronSquirrelPreventDowngrades: true,
   }
   const bad = Object.entries(want).filter(([k, v]) => p[k] !== v).map(([k, v]) => `${k}=${JSON.stringify(p[k])} (want ${JSON.stringify(v)})`)
   const iconFile = String(p.CFBundleIconFile ?? '')
   if (!iconFile || !(existsSync(join(res, iconFile)) || existsSync(join(res, `${iconFile}.icns`)))) bad.push(`CFBundleIconFile ${iconFile} names no file`)
   if (!p.ElectronAsarIntegrity?.['Resources/app.asar']?.hash) bad.push('no ElectronAsarIntegrity for Resources/app.asar')
-  bad.length ? fail('info-plist', bad.join('; ')) : pass('info-plist', `${BUNDLE_ID} ${VERSION}, macOS ${MIN_MACOS}+, microphone line, icon ${iconFile}`)
+  bad.length ? fail('info-plist', bad.join('; ')) : pass('info-plist', `${BUNDLE_ID} ${VERSION} (both versions), macOS ${MIN_MACOS}+, ElectronSquirrelPreventDowngrades, microphone line, icon ${iconFile}`)
   const iconComposer = existsSync(join(APP_DIR, 'build', 'Marver.icon', 'icon.json'))
   if (!iconComposer) warn('icon-composer', 'build/Marver.icon not made yet (Icon Composer, by hand): macOS 26 shows Marver.icns')
   else if (p.CFBundleIconName === 'Icon' && existsSync(join(res, 'Assets.car'))) pass('icon-composer', 'Assets.car and CFBundleIconName')
@@ -200,6 +217,21 @@ function plist(file) { return JSON.parse(sh('plutil', ['-convert', 'json', '-o',
   if (!files.includes('/dist/pages/manifest.json')) bad.push('no dist/pages/manifest.json')
   bad.length ? fail('asar-contents', bad.join('; ')) : pass('asar-contents', `${files.length} entries: package.json and dist/, no test hook, no source map`)
 }
+{ // 7b. the update feed (A5.1 #4, #36): `__MARVER_FEED__` as build.json's kind expects, and no fake updater's switch
+  const asar = await import(require.resolve('@electron/asar'))
+  const archive = join(appPath, 'Contents', 'Resources', 'app.asar')
+  const js = asar.listPackage(archive, { isPack: false }).filter((f) => /\.c?js$/.test(f)).map((f) => [f, asar.extractFile(archive, f.slice(1)).toString('utf8')])
+  const f = judgeFeed(js, FEED, FEEDS)
+  f.ok ? pass('feed-constant', f.detail) : fail('feed-constant', f.detail)
+  const fake = js.filter(([, text]) => text.includes('MARVER_APP_FAKE_UPDATER')).map(([name]) => name)
+  fake.length ? fail('no-fake-updater', `${fake.join(', ')} hold MARVER_APP_FAKE_UPDATER`) : pass('no-fake-updater', 'no MARVER_APP_FAKE_UPDATER in the asar')
+}
+// a bundle with a feed is never launched from an Applications folder here: its updater would check the feed (A5.1 #13)
+if (FEED !== 'none' && appPath.split('/').includes('Applications')) {
+  fail('update-blocked', `refusing to launch ${appPath}: a bundle with the ${FEED} feed in an Applications folder would check its feed - the smoke runs it from .stage/ or out/`)
+  await finish('no launch: a bundle with a feed inside an Applications folder')
+}
+
 // A4.6 #52's "a remote tab has no marverApp" is checked by hand (#53): the release flavour folds away the remote test
 // switches, so no .test host or test certificate reaches a shared tab here, and the smoke opens no real site. pw
 // remote.test checks it on the dev flavour, whose remote view is made by the same code.
@@ -243,6 +275,7 @@ function launch(name, { argv = [], env = {}, bin = BIN, stdio } = {}) {
   const ud = join(dir, 'ud')
   const home = join(dir, 'home')
   mkdirSync(home, { recursive: true, mode: 0o700 })
+  seedHome(home)
   const t = Date.now()
   const teams = teamCheck(bin)
   if (!teams.ok) {
@@ -434,6 +467,14 @@ async function memoryGate(name, L, { canvas, countGpu, check }) {
   const errsC = mainErrors(C)
   quit && C.code === 0 && !errsC.length ? pass('quit-exit-code', `SIGTERM to main: exit 0 ${C.t0 + C.exitAt - termAt} ms later; nothing uncaught in main`)
     : fail('quit-exit-code', `code=${C.code} signal=${C.signal} graceful=${quit}; main errors: ${errsC.join(' | ') || 'none'}`)
+
+  // 10b. the updater's gate (A5.1 #13, #36), from main's own record: this launch completed its startup (launch-ready),
+  // and its updater is blocked once - by its location with a feed (it runs from .stage/, never Applications), by the
+  // feed without one - with no move (the seeded decline: nothing copied) and no check (no feed request)
+  {
+    const u = judgeUpdate(updateRecords(C.home), FEED)
+    u.ok ? pass('update-blocked', u.detail) : fail('update-blocked', u.detail)
+  }
 
   // the temporary profile is the one Chromium wrote: its Local State (written at a graceful quit), persist:app and
   // the canvas's own partition (persist:local:<ws>, one per canvas workspace, A2.5) - Nic's profiles are checked
@@ -703,6 +744,7 @@ async function guarded(name, { argv, bin, stdio, pipe, refusedByMacOS = false })
   const dir = join(RUN, 'rdp-open')
   const ud = join(dir, 'ud'), home = join(dir, 'home')
   mkdirSync(home, { recursive: true, mode: 0o700 })
+  seedHome(home)
   const tag = `--mv-smoke-run=${basename(RUN)}-open`
   const P = poll(port, 10)
   await sleep(50)
@@ -778,7 +820,7 @@ function end() {
     const reportDir = reportArg ? resolve(reportArg) : appPath.includes(`${join(APP_DIR, 'out')}/`) ? join(APP_DIR, 'out') : keep ? RUN : dirname(RUN)
     const r = finalize({
       results, harnessErrors,
-      base: { app: appPath, adhoc, tamper, version: VERSION, at: new Date().toISOString(), seconds },
+      base: { app: appPath, adhoc, tamper, feed: FEED, version: VERSION, at: new Date().toISOString(), seconds },
       cleanup: () => { block?.release(); if (!keep) rmSync(RUN, { recursive: true, force: true, maxRetries: 3 }) },
       write: (report) => { mkdirSync(reportDir, { recursive: true }); writeFileSync(join(reportDir, `smoke-${Date.now()}.json`), JSON.stringify(report, null, 2) + '\n') },
     })
