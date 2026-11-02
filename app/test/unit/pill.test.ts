@@ -1,9 +1,14 @@
 /**
- * The strip's one pill (spec 28 A2.2, A2.14 #33): its order, its lifetimes and its revs, with a fake clock.
+ * The strip's one pill (spec 28 A2.2, A2.14 #33): its order, its lifetimes and its revs, with a fake clock. A5.1 #21:
+ * the update's pill, tier 5, on update-model.ts's model and testing/updater.ts's fakes, wired as updater.ts wires it.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { onRegistry, type Tab } from '../../src/main/tabs.ts'
-import { clockOf, confirm, crashReloaded, currentPill, flashMarked, onPillAction, onVisibility, recompute, setCondition, setOfferActions, setPillPorts } from '../../src/main/pill.ts'
+import { closeTab, getTab, onCommit, onDocumentGone, onRegistry, onReport, tabName, type Tab } from '../../src/main/tabs.ts'
+import {
+  clockOf, confirm, crashReloaded, currentPill, flashMarked, onPillAction, onVisibility, recompute, setCondition, setOfferActions, setPillPorts, setUpdatePill, waitingEnds,
+} from '../../src/main/pill.ts'
+import { FakeClock, FakeUpdater } from '../../src/main/testing/updater.ts'
+import { pillOf, startUpdates, type UpdateModel } from '../../src/main/update-model.ts'
 import { T } from '../../src/main/timings.ts'
 import { liveTab, report, show, world, type World } from './window-fakes.ts'
 
@@ -299,6 +304,160 @@ describe('the notices offer (A4.6 #26)', () => {
     expect(currentPill()).toMatchObject({ kind: 'confirmation', lead: 'Pilot', text: 'needs you', short: 'Needs you', icon: 'check' })
     expect(currentPill()!.button).toBeUndefined()
     tick(T.pillConfirmMs + 10)
+    expect(currentPill()).toBeNull()
+  })
+})
+
+describe('the update, tier 5 (A5.1 #21)', () => {
+  const OFFER = { lead: 'Get a notice when a canvas needs you', text: '', short: 'Turn On Notices', button: { label: 'Turn On', style: 'accent' as const }, dismissible: true }
+  /** update-model.ts's model on the fakes, wired as updater.ts wires it: each change chooses the pill again */
+  function updater() {
+    const u = new FakeUpdater()
+    const uc = new FakeClock()
+    const requests: string[] = []
+    let downloads = 0
+    const box: { m?: UpdateModel } = {}
+    const m = startUpdates({
+      adapter: u, clock: uc, feed: 'https://example.invalid/releases.json', version: '0.99.1',
+      record: () => {}, answer: () => {}, online: () => true,
+      changed: (st) => setUpdatePill(pillOf(st, (id) => { const t = getTab(id); return t ? tabName(t) : 'a closed tab' }), (t) => box.m!.act(t)),
+      request: (kind, t) => { requests.push(`${kind}:${t.version}`) }, openDownload: () => { downloads += 1 }, explain: () => {},
+      restartFailed: () => {}, beforeQuitForUpdate: () => {},
+    }, { inApplications: true, writable: true })
+    box.m = m
+    uc.tick()
+    const ready = (version = '0.99.2') => { uc.advance(T.updateFirstMs); u.emit('update-available'); u.downloaded(version, 'Boards open faster\nAnd more') }
+    /** updater.ts's updaterTabs, as views.ts calls it after a report and after every tab change */
+    const tabs = (reportTab?: string) => { const p = m.state().phase; if (p.kind === 'waiting' && waitingEnds(p, reportTab)) m.unhold(p.tab) }
+    return { u, uc, m, requests, ready, tabs, downloads: () => downloads }
+  }
+  const press = () => onPillAction(currentPill()!.rev, 'button')
+
+  it('after the offer: every other tier first, then "1.0.1 is ready" with Restart to Update, its notes\' first line its tooltip', () => {
+    show('home')
+    const x = updater()
+    x.ready()
+    expect(currentPill()).toMatchObject({ kind: 'update', lead: '0.99.2 is ready', short: 'Restart to Update', button: { label: 'Restart to Update', style: 'accent' }, tooltip: 'Boards open faster' })
+    setCondition('test', { text: 'a test offer', short: 'Test', dismissible: true })
+    expect(currentPill()?.kind).toBe('test')
+    setCondition('offer', OFFER)
+    expect(currentPill()?.kind).toBe('offer')
+    setCondition('offer', null)
+    setCondition('test', null)
+    expect(currentPill()?.kind).toBe('update')
+    confirm('update', { text: 'Marver 0.99.1 is up to date', short: 'Up to date' })
+    expect(currentPill()?.kind).toBe('confirmation')
+  })
+
+  it('waiting: "1.0.1 waits for <the tab>", Try Again - bound to that tab and its document; Try Again asks request(update)', () => {
+    const x = updater()
+    x.ready()
+    const t = liveTab(w, { busy: { unsaved: true } })
+    show('home')
+    expect(x.m.hold(t.id, t.doc!.commits)).toBe(true)
+    expect(currentPill()).toMatchObject({ kind: 'update', lead: `0.99.2 waits for ${tabName(t)}`, short: 'Update waits', button: { label: 'Try Again', style: 'plain' }, tab: t.id })
+    expect(press()).toBe(true)
+    expect(x.requests).toEqual(['update:0.99.2'])
+  })
+
+  it('waiting back to ready on its tab\'s unsaved turning false, its close and its new document - never on a tab switch or a stale report', async () => {
+    const x = updater()
+    x.ready()
+    const t = liveTab(w, { busy: { unsaved: true } })
+    const other = liveTab(w)
+    const wait = () => { x.m.hold(t.id, t.doc!.commits); expect(x.m.state().phase.kind).toBe('waiting') }
+    const kind = () => x.m.state().phase.kind
+
+    // a tab switch, a report of another tab, a report still unsaved: nothing
+    wait()
+    show(other.id); x.tabs()
+    report(other, false); x.tabs(other.id)
+    report(t, true); x.tabs(t.id)
+    expect(kind()).toBe('waiting')
+    // a stale report (the bridge says the document went stale): nothing, even saying clean
+    onReport(t.id, t.doc!.doc!, { safety: 'stale' }); x.tabs(t.id)
+    expect(kind()).toBe('waiting')
+    // fresh and clean: ready (a new document first, to be fresh again)
+    onCommit(t, { gen: 2, url: `${t.reg!.origin}/#/b/main`, attributed: true, admitted: `doc-${t.id}-2` })
+    x.tabs()
+    expect(kind()).toBe('ready')                                   // its document changed
+    wait()
+    report(t, false); x.tabs(t.id)
+    expect(kind()).toBe('ready')                                   // its unsaved turned false
+    // its close
+    wait()
+    w.actWith = (tab) => { onDocumentGone(tab, 'none'); return 'done' }
+    expect(await closeTab(t.id)).toBe('closed')
+    x.tabs()
+    expect(kind()).toBe('ready')
+    // leaving waiting asks for nothing: the person presses again
+    expect(x.requests).toEqual([])
+  })
+
+  it('failed: "1.0.1 couldn\'t be installed", Download, dismissible - shown whatever the phase when neither ready nor waiting is', () => {
+    show('home')
+    const x = updater()
+    x.m.failed({ from: '0.99.1', to: '0.99.2', at: 1 })
+    expect(currentPill()).toMatchObject({ kind: 'update', lead: "0.99.2 couldn't be installed", short: 'Update failed', button: { label: 'Download', style: 'plain' }, dismissible: true })
+    // a check runs while it is shown, and one that finds nothing keeps it
+    x.uc.advance(T.updateFirstMs)
+    expect(x.m.state().phase.kind).toBe('checking')
+    expect(currentPill()?.kind).toBe('update')
+    x.u.emit('update-not-available')
+    expect(currentPill()).toMatchObject({ kind: 'update', lead: "0.99.2 couldn't be installed" })
+  })
+
+  it('each action against its requirement: Download right after the reconciliation acts, after Dismiss nothing; after a later ready Download nothing and Restart to Update acts', () => {
+    show('home')
+    const x = updater()
+    x.m.failed({ from: '0.99.1', to: '0.99.2', at: 1 })
+    const failed = currentPill()!
+    expect(press()).toBe(true)
+    expect(x.downloads()).toBe(1)
+    // Dismiss clears the failure in the model: the pill goes, and the old rev's Download does nothing
+    expect(onPillAction(failed.rev, 'dismiss')).toBe(true)
+    expect(x.m.state().failure).toBeNull()
+    expect(currentPill()).toBeNull()
+    expect(onPillAction(failed.rev, 'button')).toBe(false)
+    expect(x.downloads()).toBe(1)
+    // failed again, then a check that ends ready: the failure is superseded
+    x.m.failed({ from: '0.99.1', to: '0.99.2', at: 2 })
+    const again = currentPill()!
+    x.ready('0.99.3')
+    expect(onPillAction(again.rev, 'button')).toBe(false)
+    expect(x.downloads()).toBe(1)
+    expect(currentPill()).toMatchObject({ lead: '0.99.3 is ready' })
+    expect(press()).toBe(true)
+    expect(x.requests).toEqual(['update:0.99.3'])
+  })
+
+  it('a click whose requirement no longer holds does nothing, and the pill is chosen again; a waiting pill\'s tab whose document moved is stale', () => {
+    show('home')
+    const x = updater()
+    x.ready()
+    const t = liveTab(w, { busy: { unsaved: true } })
+    show('home')
+    x.m.hold(t.id, t.doc!.commits)
+    const waiting = currentPill()!
+    // its document moves on before the click: refused here, as any pill's with a tab
+    t.doc!.commits += 1
+    expect(onPillAction(waiting.rev, 'button')).toBe(false)
+    expect(x.requests).toEqual([])
+    t.doc!.commits -= 1
+    // restarting: neither Restart to Update nor Try Again holds
+    x.m.unhold()
+    const ready = currentPill()!
+    expect(x.m.restarting('0.99.2')).toBe(true)
+    expect(currentPill()).toBeNull()
+    expect(onPillAction(ready.rev, 'button')).toBe(false)
+    expect(x.requests).toEqual([])
+  })
+
+  it('checking has no pill', () => {
+    show('home')
+    const x = updater()
+    x.uc.advance(T.updateFirstMs)
+    expect(x.m.state().phase.kind).toBe('checking')
     expect(currentPill()).toBeNull()
   })
 })

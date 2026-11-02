@@ -16,6 +16,11 @@ describe('README.md', () => {
     expect(isWhole('README.md', '')).toBe(false)
   })
 
+  it('lists update.json among the app\'s state files (A5.1 #18, #23)', () => {
+    const state = renderReadme('1.0.0').split('\n').find((l) => l.startsWith('| `state/`'))
+    expect(state).toContain('`update.json`')
+  })
+
   it('another version is whole, and says so (a dev build keeps it; a release build writes its own)', () => {
     expect(wholeVersion('README.md', renderReadme('0.0.9'))).toBe('0.0.9')
     expect(renderReadme('0.0.9')).not.toBe(renderReadme('0.1.0'))
