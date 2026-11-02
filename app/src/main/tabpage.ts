@@ -12,7 +12,7 @@
  * `net.isOnline()` turning true looks at once (`onlineTick`) - it only shortens the wait.
  */
 import { homedir } from 'node:os'
-import type { TabPageProbe, TabPageView } from '../shared/channels.ts'
+import type { TabPageAction, TabPageProbe, TabPageView } from '../shared/channels.ts'
 import { startCommandShown, tilde } from '../shared/command.ts'
 import { hueOf } from '../shared/hue.ts'
 import { WHY_WORDS } from '../../../src/shared/app-api.ts'
@@ -119,6 +119,21 @@ function remotePage(t: Tab, now: number): PageBody | null {
   if (t.fail) return { ...base, page: 'unreachable', since: t.fail.at, retained: t.retained, probe: t.probe ?? NO_PROBE, origin: r.origin, reason: netReason(t.fail.code) }
   if (keptDoc(t) || (t.doc?.lifted && t.view === 'live')) return null
   return { ...base, page: 'starting', phase: 'opening', since: t.loadAt ?? now }
+}
+
+/**
+ * The actions a page offers (A2.11; v1.10 r1 #6): main refuses any other, whatever the page sends. The latched
+ * crashed page adds Export Performance Report… beside Copy Details (A5.1 #28), a local canvas's and a shared one's
+ * alike: the report holds nothing of the canvas (src/shared/app-report.ts), only the tab's opaque id.
+ */
+export function pageOffers(b: PageBody, remote: boolean): TabPageAction[] {
+  switch (b.page) {
+    case 'stopped': return b.retained ? ['retry', 'copy-start', 'reveal', 'close'] : ['copy-start', 'reveal', 'close']
+    case 'unverified': return ['retry', 'close']
+    case 'unreachable': return remote ? ['retry', 'open-browser', 'close'] : ['retry', 'close']
+    case 'crashed': return b.latched ? ['reload', 'copy-details', 'export-report'] : []
+    default: return []
+  }
 }
 
 /**

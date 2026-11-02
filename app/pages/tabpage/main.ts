@@ -9,6 +9,8 @@
  * action (A2.13 moves focus only when the focused view goes away): a probe's update never sends VoiceOver back to
  * the heading. A shared canvas (A4.6 #42, #44) is told by its https origin - a local canvas is always http on a
  * loopback host: its unreachable page adds Open in Browser, and an answer to its probe reads "<host> answers again".
+ * A5 (A5.1 #28): the latched crashed page adds Export Performance Report… beside Copy Details; main opens the save
+ * panel, as Help's item does.
  */
 import type { TabPageAction, TabPageView } from '../../src/shared/channels.ts'
 import { clock, cmdButton, fill, h, icon, logo, pageApi, setLook, shown } from '../../src/pages/dom.ts'
@@ -112,7 +114,8 @@ function parts(v: TabPageView, now: number): Parts | null {
       return {
         mark: mark('dim'), title: `${possessive(v.name)} page keeps crashing`,
         body: ['The canvas itself is fine. Reload brings back its board and camera; the details hold versions and this Mac, never your files.'],
-        actions: [button('Reload', 'reload', true), button('Copy Details', 'copy-details')],
+        // A5.1 #28: Export Performance Report… beside Copy Details - main's save panel, the menu's own export
+        actions: [button('Reload', 'reload', true), button('Copy Details', 'copy-details'), button('Export Performance Report…', 'export-report')],
         meta: [reason, v.crashes ? `${v.crashes} crashes since ${clock(v.since)}` : null].filter(Boolean).join(' · '),
       }
     }

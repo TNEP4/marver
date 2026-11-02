@@ -10,12 +10,19 @@
  *
  * A4 (A4.6 #27): Settings' Open System Settings opens the Notifications pane through `shell.openExternal`, recorded
  * the same way (`external` in the hook's answer, once there is one).
+ *
+ * A5 (A5.1 #28): the performance report's save panel and its failure's alert. A test build never shows either: the
+ * panel's default path is recorded (`saves`) and it answers what the case set with `effects:save` - a path in the
+ * case's own temporary folder, or null (cancelled, also when nothing was set), so a test never writes to the real
+ * `~/Downloads`; an alert's words are recorded (`alerts`).
  */
-import { clipboard, shell } from 'electron'
+import { clipboard, dialog, shell, type BaseWindow } from 'electron'
 import { provide, testMode } from './testing/index.ts'
 
-/** what a test build recorded; `shown` and `external` are in the hook's answer only once there is one, so A2's `{ copies, opened }` answers keep their shape */
-const recorded = { copies: [] as string[], opened: [] as string[], shown: [] as string[], external: [] as string[] }
+/** what a test build recorded; `shown`, `external`, `saves` and `alerts` are in the hook's answer only once there is one, so A2's `{ copies, opened }` answers keep their shape */
+const recorded = { copies: [] as string[], opened: [] as string[], shown: [] as string[], external: [] as string[], saves: [] as string[], alerts: [] as { message: string; detail: string }[] }
+/** test builds: what the stubbed save panel answers (`effects:save`); null cancels */
+let saveAnswer: string | null = null
 /** macOS's Notifications pane in System Settings (A4.6 #27) */
 export const NOTIFICATION_SETTINGS = 'x-apple.systempreferences:com.apple.Notifications-Settings.extension'
 const fake = (): boolean => __MV_TEST__ && testMode() && process.env.MARVER_APP_REAL_EFFECTS !== '1'
@@ -39,6 +46,22 @@ export const effects = {
     if (__MV_TEST__ && fake()) { recorded.external.push(NOTIFICATION_SETTINGS); return }
     void shell.openExternal(NOTIFICATION_SETTINGS).catch(() => { /* macOS answers nothing to the app */ })
   },
+  /**
+   * A5: the report's save panel on `defaultPath` (a sheet on the window when it shows, else on its own); the path
+   * chosen, or null. macOS's panel asks before replacing a file of that name.
+   */
+  async savePanel(defaultPath: string, parent: BaseWindow | null): Promise<string | null> {
+    if (__MV_TEST__ && fake()) { recorded.saves.push(defaultPath); return saveAnswer }
+    const o = { defaultPath, filters: [{ name: 'JSON', extensions: ['json'] }], properties: ['createDirectory' as const, 'showOverwriteConfirmation' as const] }
+    const r = parent ? await dialog.showSaveDialog(parent, o) : await dialog.showSaveDialog(o)
+    return r.canceled || !r.filePath ? null : r.filePath
+  },
+  /** A5: an alert (the report's failure): its words, and OK */
+  alert(message: string, detail: string, parent: BaseWindow | null): void {
+    if (__MV_TEST__ && fake()) { recorded.alerts.push({ message, detail }); return }
+    const o = { type: 'warning' as const, message, detail, buttons: ['OK'] }
+    void (parent ? dialog.showMessageBox(parent, o) : dialog.showMessageBox(o)).catch(() => { /* dismissed with the window */ })
+  },
 }
 
 let effectHooks = false
@@ -47,8 +70,15 @@ export function provideEffectHooks(): void {
   if (!__MV_TEST__ || effectHooks) return
   effectHooks = true
   provide('effects', (a) => {
-    const out = { copies: [...recorded.copies], opened: [...recorded.opened], ...(recorded.shown.length ? { shown: [...recorded.shown] } : {}), ...(recorded.external.length ? { external: [...recorded.external] } : {}) }
-    if ((a as { clear?: unknown } | null)?.clear === true) { recorded.copies.length = 0; recorded.opened.length = 0; recorded.shown.length = 0; recorded.external.length = 0 }
+    const out = {
+      copies: [...recorded.copies], opened: [...recorded.opened], ...(recorded.shown.length ? { shown: [...recorded.shown] } : {}), ...(recorded.external.length ? { external: [...recorded.external] } : {}),
+      ...(recorded.saves.length ? { saves: [...recorded.saves] } : {}), ...(recorded.alerts.length ? { alerts: recorded.alerts.map((x) => ({ ...x })) } : {}),
+    }
+    if ((a as { clear?: unknown } | null)?.clear === true) {
+      recorded.copies.length = 0; recorded.opened.length = 0; recorded.shown.length = 0; recorded.external.length = 0; recorded.saves.length = 0; recorded.alerts.length = 0
+    }
     return out
   })
+  // A5: what the stubbed save panel answers next (a path in the case's own folder, or null to cancel)
+  provide('effects:save', (a) => { const p = (a as { path?: unknown } | null)?.path; saveAnswer = typeof p === 'string' ? p : null; return true })
 }
