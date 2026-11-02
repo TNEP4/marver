@@ -1,6 +1,6 @@
 # Changelog - the Marver Mac app
 
-## 1.0.0 - unreleased
+## 1.0.0 - 2026-11-02
 
 The first public release: notarised by Apple, and from now on Marver keeps itself up to date.
 
