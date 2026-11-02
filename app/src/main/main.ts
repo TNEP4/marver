@@ -28,18 +28,22 @@
  * A4 (app 0.3): live pictures (live-picture.ts, A4.6 #35) take the bridge's `mv:capture` asks once the views exist, as
  * the white-out detector does; the bridge checks each rect against the tab's view (`viewSize`).
  *
+ * A5 (app 1.0, A5.1 #13, #23): a build with a feed offers Move to Applications at ready, before the registry, the views
+ * and any tab (mover.ts); once the views exist the updater starts (updater.ts), and Restart to Update goes through the
+ * shutdown coordinator views.ts starts (shutdown.ts).
+ *
  * Who calls what across the streams is app/src/main/ports.ts's table; this file keeps the order and makes the calls.
  */
 import './guard.ts'
 import { mkdirSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
-import { app, crashReporter, powerMonitor, protocol } from 'electron'
+import { app, crashReporter, dialog, powerMonitor, protocol, shell } from 'electron'
 import { installSpies } from './testing/spies.ts'
 import { note, provide, startTesting, testMode } from './testing/index.ts'
 import { provideTrustHooks } from './testing/trust.ts'
 import { overrideTimings } from './timings.ts'
 import { totalmem } from 'node:os'
-import { applyTheme, ensureHome, noticesState, noticesWriter, onChange, readFiles, readTabsFile, setNoticesState, settingsSet, startFiles, tabsWriter, values } from './config.ts'
+import { applyTheme, ensureHome, noticesState, noticesWriter, onChange, readFiles, readTabsFile, readUpdateFile, setNoticesState, settingsSet, startFiles, tabsWriter, values, writeUpdateFile } from './config.ts'
 import { flushRecent, flushShared, isFirstLaunch, mountPages, noteGone, noteHomeShown, noteShared, noteVerified, startHome } from './home.ts'
 import { installNavigationPolicy, localSession, onSameCanvasOpen, remoteTestSwitches, setupAppSession } from './sessions.ts'
 import { installBridge } from './bridge.ts'
@@ -64,7 +68,10 @@ import { startWhiteout } from './whiteout.ts'
 import { livePictures } from './live-picture.ts'
 import { genOf, quitting as presentQuitting } from './present.ts'
 import { readAgx } from './machine.ts'
-import { openSameCanvas, startViews, windowPorts, type TrustPort } from './views.ts'
+import { openOutside, openSameCanvas, showOutside, startViews, windowPorts, type TrustPort } from './views.ts'
+import { bundleOf, startUpdater } from './updater.ts'
+import { nodeMoverPorts, offerMove } from './mover.ts'
+import type { UpdateBody } from '../../../src/shared/app-perf.ts'
 import { fakeTrust } from './testing/fake-trust.ts'
 import { installErrorPolicy, setErrorHome } from './errors.ts'
 
@@ -134,6 +141,27 @@ function start(): void {
   void app.whenReady().then(async () => {
     applyTheme(files)
     startFiles()
+
+    // Move to Applications (A5.1 #23): before the registry, the views or any tab, so nothing editable exists and nothing
+    // needs a guard. Only a build with a feed looks. A copy that moved itself, or opened the one already there, ends
+    // here - its relaunch waits for this process to go, and no listener of ours holds the quit. Its records wait for
+    // the recorder; on those two paths they never land, and the moved copy records the move at its first launch
+    const moveRecords: UpdateBody[] = []
+    if (__MARVER_FEED__) {
+      const bundle = bundleOf(app.getPath('exe'))
+      let inApplications = false
+      try { inApplications = app.isInApplicationsFolder() } catch { /* outside, as far as anyone can tell */ }
+      if (bundle && await offerMove(nodeMoverPorts({
+        bundle, version: app.getVersion(), read: readUpdateFile, write: writeUpdateFile, record: (b) => { moveRecords.push(b) },
+        ask: async (a) => {
+          const r = await dialog.showMessageBox({ type: 'info', message: a.message, detail: a.detail, buttons: a.buttons, defaultId: 0, cancelId: a.buttons.length - 1, noLink: true, ...(a.checkbox ? { checkboxLabel: a.checkbox } : {}) })
+          return { button: a.buttons[r.response] ?? a.buttons.at(-1)!, checked: r.checkboxChecked }
+        },
+        reveal: (paths) => { for (const p of paths) shell.showItemInFolder(p) },
+        quit: () => app.quit(),
+      }), { feed: __MARVER_FEED__, inApplications }) === 'quit') return
+    }
+
     setupAppSession()
     installNavigationPolicy()
 
@@ -156,6 +184,7 @@ function start(): void {
     startTabs()
     // the recorder: after the bridge, before the views (A3.8 #53)
     recorder.start({ bridge, home, flavour: __MARVER_RELEASE__ ? 'release' : 'dev', config: () => values().config })
+    for (const b of moveRecords) recorder.event('update', null, b)
     if (__MV_TEST__ && testMode()) { provideRecorderHooks(); provideFlashHooks(home) }
     app.on('will-quit', () => recorder.flushSync())
 
@@ -220,6 +249,9 @@ function start(): void {
     })
     // Home's and Settings' channels and pushes, ⌘L's links into their tabs, the files pill (home.ts, ports.ts)
     mountPages(bridge, windowPorts())
+    // the updater, once the views exist - the pill and the menu are there (A5.1 #13): #18's reconciliation, then its
+    // gates and setup; the shutdown coordinator gets its update side
+    startUpdater({ record: (b) => recorder.event('update', null, b), openExternal: openOutside, reveal: showOutside })
     startNotices(trust, bridge)
     // unloading under pressure, on the one sampler's samples (A3.8 #41), and the white-out detector (A3.8 #15)
     startMemory({

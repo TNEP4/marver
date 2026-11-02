@@ -590,3 +590,42 @@ export interface UpdateFile {
   staging: { path: string; dev: number; ino: number; placeholder: { dev: number; ino: number } | null; at: number } | null
 }
 export const UPDATE_FILE = 'update.json'
+
+const FINITE = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x) && x >= 0
+const VERSION = /^\d+\.\d+\.\d+$/
+
+/** update.json's shape, field by field (A5.1 #41): anything else is a bad file, set aside as `.bad` and read as empty. */
+export function checkUpdateFile(v: unknown): v is UpdateFile {
+  const f = v as UpdateFile
+  if (!f || typeof f !== 'object' || Array.isArray(f) || f.v !== 1) return false
+  const i = f.intent
+  if (i !== null && !(i && typeof i === 'object' && typeof i.from === 'string' && VERSION.test(i.from) && typeof i.to === 'string' && VERSION.test(i.to)
+    && (i.via === 'restart' || i.via === 'quit') && FINITE(i.at))) return false
+  const m = f.move as Record<string, unknown> | null
+  if (m !== null && !(m && typeof m === 'object' && FINITE(m.at) && ((m.declined === true && m.moved === undefined)
+    || (m.moved === true && m.declined === undefined && typeof m.from === 'string' && m.from.length <= 255)))) return false
+  const s = f.staging
+  if (s !== null && !(s && typeof s === 'object' && typeof s.path === 'string' && s.path.startsWith('/') && FINITE(s.dev) && FINITE(s.ino) && FINITE(s.at)
+    && (s.placeholder === null || (!!s.placeholder && typeof s.placeholder === 'object' && FINITE(s.placeholder.dev) && FINITE(s.placeholder.ino))))) return false
+  return true
+}
+
+export const EMPTY_UPDATE: UpdateFile = { v: 1, intent: null, move: null, staging: null }
+
+/** update.json now: empty when absent or bad (a bad one set aside as `update.json.bad`, A2.12), or with no state folder. */
+export function readUpdateFile(): UpdateFile {
+  const f = home.state ? readState(join(home.state, UPDATE_FILE), checkUpdateFile) : undefined
+  return f ? structuredClone(f) : structuredClone(EMPTY_UPDATE)
+}
+
+/**
+ * update.json written whole and synchronously, now (A5.1 #18, #20, #23): true when it is on disk. Its failures reach the
+ * files pill and status.json as any state file's do. Only the shutdown coordinator, the updater's reconciliation and the
+ * mover write it, each the whole file as read and changed. Nothing waits between writes, so no writer is kept.
+ */
+export function writeUpdateFile(f: UpdateFile): boolean {
+  if (!home.state) return false
+  const w = stateFileWriter<UpdateFile>(UPDATE_FILE)
+  w.set(f)
+  return w.flushSync()
+}

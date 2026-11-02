@@ -18,7 +18,10 @@
  * rebuilt (debounced 100 ms) when the active tab, its items or a tab's state change. A2's items: all of A2.7 but
  * the performance report and Check for Updates (A5); A3 adds Mark a Flash (⌃⌥F) to Help. A4 (A4.6 #49): a shared
  * canvas's File items are Open in Browser and Copy Link, its View items Reload and Force Reload - no Reveal in
- * Finder, no Mark All as Seen, no canvas items.
+ * Finder, no Mark All as Seen, no canvas items. A5 (A5.1 #22, #28, #29): the updater's item after About Marver - its
+ * label and enablement update-model.ts's `menuItem`, its click the same entry the pill calls, acting only while its
+ * token holds; the model is part of the key, so every state change rebuilds - Help's Export Performance Report…, and
+ * Marver Help on the install page.
  */
 import type { MenuItemConstructorOptions } from 'electron'
 import type { MenuItem } from '../../../src/shared/app-api.ts'
@@ -65,7 +68,8 @@ export interface MenuActs {
   rebuild(): void
 }
 
-export const HELP_URL = 'https://github.com/TNEP4/marver#readme'
+/** Help > Marver Help: the install page on GitHub (A5.1 #29, #30), `docs/app.md` in the marver repo. */
+export const HELP_URL = 'https://github.com/TNEP4/marver/blob/main/docs/app.md'
 
 const sep: MenuItemConstructorOptions = { type: 'separator' }
 

@@ -131,6 +131,8 @@ export const T = {
   updateSlowMs: 25 * 60_000,
   /** #17: no exit this long after Restart to Update's windows closed is the restart's preparation failing */
   restartWaitMs: 60_000,
+  /** #18, #23: an intent, or the moved copy's note, older than this is cleared at launch, recorded, never shown */
+  updateNoteMaxMs: 30 * 86_400_000,
 } satisfies Record<string, number | readonly number[]>
 
 export type Timings = typeof T
