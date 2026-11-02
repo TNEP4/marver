@@ -134,16 +134,18 @@ describe('crashed (A2.11)', () => {
     expect(await buttons()).toEqual([])
   })
 
-  it('latched: the reason in words, the count; Reload and Copy Details, on the snapshot\'s own rev', async () => {
+  it('latched: the reason in words, the count; Reload, Copy Details and Export Performance Report…, on the snapshot\'s own rev', async () => {
     const since = Date.now() - 60_000
     const r = await show({ page: 'crashed', name: 'Tidewell', since, latched: true, reason: 'oom', crashes: 2, dark: true })
-    expect(await words()).toBe(`Tidewell's page keeps crashing The canvas itself is fine. Reload brings back its board and camera; the details hold versions and this Mac, never your files. Reload Copy Details Out of memory · 2 crashes since ${at(since)}`)
+    expect(await words()).toBe(`Tidewell's page keeps crashing The canvas itself is fine. Reload brings back its board and camera; the details hold versions and this Mac, never your files. Reload Copy Details Export Performance Report… Out of memory · 2 crashes since ${at(since)}`)
     expect(await p.page.evaluate(() => document.documentElement.classList.contains('dark'))).toBe(true)
     await p.page.getByRole('button', { name: 'Reload' }).click()
     await p.page.getByRole('button', { name: 'Copy Details' }).click()
-    expect(await p.calls('tabpage:action')).toEqual([{ rev: r, action: 'reload' }, { rev: r, action: 'copy-details' }])
-    // a send has no answer, and main refuses an old rev: no button claims it copied
-    expect(await buttons()).toEqual(['Reload', 'Copy Details'])
+    // A5.1 #28: beside Copy Details; main opens the save panel
+    await p.page.getByRole('button', { name: 'Export Performance Report…' }).click()
+    expect(await p.calls('tabpage:action')).toEqual([{ rev: r, action: 'reload' }, { rev: r, action: 'copy-details' }, { rev: r, action: 'export-report' }])
+    // a send has no answer, and main refuses an old rev: no button claims it copied or saved
+    expect(await buttons()).toEqual(['Reload', 'Copy Details', 'Export Performance Report…'])
   })
 })
 

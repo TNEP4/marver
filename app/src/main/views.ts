@@ -49,7 +49,7 @@ import type { AppState, MenuItem, Present, Presented } from '../../../src/shared
 import type { AppBody, AppKind, TabIdent } from '../../../src/shared/app-perf.ts'
 import { docProof } from '../../../src/server/proof.ts'
 import { readAtMost } from './proof.ts'
-import type { Files, Home } from './config.ts'
+import { values, type Files, type Home } from './config.ts'
 import { bridgeNow, type CanvasReports } from './bridge.ts'
 import { attachNav, type NavAdapter, type NavEvent } from './nav.ts'
 import type { RegistryEntry, RegistryEvent } from './registry.ts'
@@ -65,9 +65,11 @@ import {
   unloadClosing, viewlessAct, type GuardAllAction, type GuardAction, type GuardAnswer, type Sheet, type Tab, type TabsFile,
 } from './tabs.ts'
 import {
-  copyDetails, forgetTab, hangDecision, hangSheetText, onAttemptFailed, onLifted, onlineTick, onShown, onViewClosed, personReload, recover,
+  copyDetails, forgetTab, hangDecision, hangSheetText, onAttemptFailed, onLifted, onlineTick, onShown, onViewClosed, pageOffers, personReload, recover,
   reloadIsPersons, scheduleRetry, setTabpagePorts, wantsOnline, type ProcessSnapshot,
 } from './tabpage.ts'
+import { exportReport, type ExportResult } from './report.ts'
+import { flushQueued } from './perflog.ts'
 import {
   appPrefs, APP_ORIGIN, attachContent, captureWindow, compose, contentView, detachContent, hideWindow, mainWindow, onAppReady, openWindow,
   pageOf, pageView, sendHeld, sendPill, showWindow, stripContents, viewsNow, windowVisible,
@@ -1154,11 +1156,7 @@ export const pageHandlers = {
     const t = pg ? getTab(pg.tab) : undefined
     if (!pg || !t || !pg.body || rev !== pg.rev) { j('tabpage', { refused: action, rev, latest: pg?.rev }); compose(); return false }
     const b = pg.body
-    const offers: TabPageAction[] = b.page === 'stopped' ? (b.retained ? ['retry', 'copy-start', 'reveal', 'close'] : ['copy-start', 'reveal', 'close'])
-      : b.page === 'unverified' ? ['retry', 'close']
-        : b.page === 'unreachable' ? (t.kind === 'remote' ? ['retry', 'open-browser', 'close'] : ['retry', 'close'])
-          : b.page === 'crashed' && b.latched ? ['reload', 'copy-details'] : []
-    if (!offers.includes(action)) { j('tabpage', { refused: action, page: b.page }); return false }
+    if (!pageOffers(b, t.kind === 'remote').includes(action)) { j('tabpage', { refused: action, page: b.page }); return false }
     j('tabpage', { tab: t.id, action })
     switch (action) {
       case 'retry':
@@ -1171,6 +1169,8 @@ export const pageHandlers = {
       case 'reload': personReload(t); compose(); return true
       case 'copy-start': if (t.root) effects.copy(startCommand({ root: t.root, port: t.reg?.slot == null ? t.reg?.port : null })); return true
       case 'copy-details': effects.copy(details(t)); return true
+      // A5.1 #28: the latched page's Export Performance Report…, the menu's own export (the report names no canvas)
+      case 'export-report': void exportNow('tabpage'); return true
       case 'reveal': reveal(t); return true
       case 'close': void closeTab(t.id); return true
       default: return false
@@ -1199,6 +1199,28 @@ function details(t: Tab): string {
     // A3: the last pressure reading and the board's frame count (A3.8 #9, #46)
     ...(level != null ? { pressure: level } : {}), ...(board ? { board } : {}),
   })
+}
+
+/**
+ * The performance report (A5.1 #28): Help > Export Performance Report… and the latched crashed page's button. The
+ * save panel a sheet on the window when it shows; the report made from this flavour's log under the home's perf/
+ * (report.ts), written whole and shown in Finder; a failure an alert. A test build records the panel, Finder and
+ * the alert (effects.ts) and journals each export's `report` line with its result.
+ */
+function exportNow(via: 'menu' | 'tabpage'): Promise<ExportResult> {
+  const parent = () => (windowVisible() ? mainWindow() ?? null : null)
+  j('report', { via })
+  return exportReport({
+    savePanel: (path) => effects.savePanel(path, parent()),
+    showItem: (file) => effects.showItem(file),
+    alert: (message, detail) => effects.alert(message, detail, parent()),
+    flush: () => flushQueued(),
+    downloads: () => safely(() => app.getPath('downloads')) ?? join(homedir(), 'Downloads'),
+    input: () => ({
+      perfDir: join(homeDir.dir, 'perf'), flavour: __MARVER_RELEASE__ ? 'release' : 'dev', keepPerfDays: values().config.keepPerfDays,
+      now: Date.now(), version: app.getVersion(), electron: process.versions.electron ?? '', macos: process.getSystemVersion(),
+    }),
+  }).then((r) => { j('report', { via, ...r }); return r })
 }
 
 /** `mv:menu-click` for the active canvas's own items, only while its token holds. */
@@ -1416,7 +1438,7 @@ export function startViews(i: StartInput): void {
       help: () => openOutside(HELP_URL),
       perfFiles: () => effects.openPath(join(homeDir.dir, 'perf')),
       update: () => {},                                                // A5.1 #22: the restart stream wires it
-      exportReport: () => {},                                          // A5.1 #28: the report stream wires it
+      exportReport: () => { void exportNow('menu') },                  // A5.1 #28
       rebuild: () => buildNow(true),
     },
   })
@@ -1727,6 +1749,15 @@ function testHooks(): void {
     const { id, stale } = arg<{ id: string; stale?: boolean }>(a)
     const it = stale ? held.get(id) : Menu.getApplicationMenu()?.getMenuItemById(id)
     if (!it) return false
+    it.click()
+    return true
+  })
+  // an item with no id, by its menu's label and its own (A5: Help > Export Performance Report…), as built now
+  provide('menu:clickLabel', (a) => {
+    const { menu, label } = arg<{ menu: string; label: string }>(a)
+    buildNow()
+    const it = Menu.getApplicationMenu()?.items.find((m) => m.label === menu)?.submenu?.items.find((m) => m.label === label)
+    if (!it || !it.enabled) return false
     it.click()
     return true
   })
