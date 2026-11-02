@@ -630,6 +630,13 @@ describe('release.mjs (A5.1 #11, #33)', { timeout: 300_000 }, () => {
       expect(w.builds).toEqual([])
     })
 
+    it('signing continuity (#8): an app whose signature does not satisfy the committed DR stops at its first check, and nothing is uploaded', async () => {
+      w.tools.dr = 'identifier "design.marver.app" and anchor apple generic and certificate leaf[subject.OU] = ANOTHERTEAM'
+      await stops(w, [V], /the stapled app fails its checks: it does not satisfy the designated requirement[\s\S]*its own DR is "identifier \\"design\.marver\.app\\" .*ANOTHERTEAM"/)
+      expect(w.state(V).steps['staple-app']).toBeUndefined()
+      expect(w.gh.calls).not.toContain('createDraft')
+    })
+
     it('notarisation stops on Invalid with the issues, and waits again after a timeout without submitting again', async () => {
       w.notary.waitTimeouts = 1
       await stops(w, [V], /not finished .*run again to keep waiting/)

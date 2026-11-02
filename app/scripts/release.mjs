@@ -288,6 +288,19 @@ export function submissionsOf(history, name, since) {
 }
 
 /**
+ * What the waits on a submission's ids decide (#7), in their order: the first Accepted serves (a ticket belongs to the
+ * code's hash, not to a submission); all Invalid or Rejected fail; anything else (In Progress, a timeout, no answer)
+ * is waited on again by the next run, nothing submitted again.
+ * @param {{ id: string; status: string | null }[]} seen
+ */
+export function notaryOutcome(seen) {
+  const ok = seen.find((x) => x.status === 'Accepted')
+  if (ok) return { accepted: ok.id }
+  if (seen.length && seen.every((x) => x.status === 'Invalid' || x.status === 'Rejected')) return { failed: true }
+  return { waiting: true }
+}
+
+/**
  * The acceptance evidence (#11, r2 #5): `{ version, dmg, zip, mac, macos, checks: { <id>: 'pass' | 'fail' }, google:
  * 'accepted' | 'refused', notes }`. Refused unless both hashes equal the state's and the draft's digests and every
  * required id is present and `pass`: matching hashes alone admit nothing. Whether Continue with Google was accepted
@@ -1055,9 +1068,9 @@ async function notarize(cx, kind, name) {
       const log = at(cx, `logs/notary-${id}.json`)
       if (!existsSync(log)) { try { await cx.p.notary.log(id, log) } catch (err) { if (!(err instanceof Stop)) throw err; cx.say(`notary: no log for ${id}: ${err.message}`) } }
     }
-    if (r.status === 'Accepted') { cx.say(`notary: ${id} Accepted`); return id }
+    if (notaryOutcome(seen).accepted) { cx.say(`notary: ${id} Accepted`); return id }
   }
-  if (seen.every((x) => x.status === 'Invalid' || x.status === 'Rejected')) {
+  if (notaryOutcome(seen).failed) {
     const issues = seen.map((x) => { try { return `${x.id}: ${JSON.stringify(JSON.parse(readFileSync(at(cx, `logs/notary-${x.id}.json`), 'utf8')).issues ?? []).slice(0, 2000)}` } catch { return `${x.id}: ${x.status} (no log)` } })
     stop(`Apple did not accept ${name} (${seen.map((x) => `${x.id} ${x.status}`).join(', ')}): the issues, from notarytool log:\n${issues.join('\n')}\nA new build happens only after ${cmd(cx, '--abandon')}`)
   }
