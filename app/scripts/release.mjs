@@ -66,6 +66,14 @@ export const NOTARY_PROFILE = 'marver-notary'
  * release never names a known failure (#3): the check stays binding for 1.0.0. The number goes into the record.
  */
 export const CANDIDATE_WAIVERS = ['memory-no-canvas']
+/**
+ * A production release's waivers, by version, each Nic's own decision: 1.0.0 ships with the no-canvas memory check
+ * waived (Nic, 2 Nov: the idle GPU process puts it at 200-227 MB against 200; investigated in the A3 end-to-end check
+ * after 1.0), its number in the record. Every other version names none (#3).
+ */
+export const RELEASE_WAIVERS = { '1.0.0': ['memory-no-canvas'] }
+/** The smoke checks a build may pass failing at a measured number: a candidate's, else this version's own */
+export const waiversFor = (version, test) => (test ? [...CANDIDATE_WAIVERS] : [...(RELEASE_WAIVERS[version] ?? [])])
 /** the companion's npm name (#2): the repo's own package, read from its package.json - never a bare `marver`, which is someone else's */
 export const NPM_NAME = JSON.parse(readFileSync(join(APP, '..', 'package.json'), 'utf8')).name
 /** The commands besides preparing (#3, #11) */
@@ -1030,9 +1038,9 @@ async function build(cx) {
   rmSync(at(cx, FILES.app), { recursive: true, force: true })
   rmSync(at(cx, 'build.json'), { force: true })
   for (const f of readdirSync(cx.dir)) if (/^smoke-\d+\.json$/.test(f)) rmSync(at(cx, f))
-  const waive = cx.test ? CANDIDATE_WAIVERS : []
+  const waive = waiversFor(cx.version, cx.test)
   const o = { adhoc: false, smoke: true, tamper: false, knownFail: [...waive], feed: cx.feed, into: cx.dir }
-  cx.say(`build: Developer ID signed, the ${feedKind(cx.feed)} feed baked in, the smoke whole (no --adhoc, no --no-smoke, ${waive.length ? `a candidate: only ${waive.join(', ')} may fail, at a measured number` : 'no known failure'})`)
+  cx.say(`build: Developer ID signed, the ${feedKind(cx.feed)} feed baked in, the smoke whole (no --adhoc, no --no-smoke, ${waive.length ? `only ${waive.join(', ')} may fail, at a measured number (${cx.test ? 'a candidate' : `Nic's decision for ${cx.version}`})` : 'no known failure'})`)
   try { await cx.p.build(o) } catch (err) {
     if (err instanceof BuildFailure) stop(`the build failed: ${err.message} - a smoke check that fails stops the release, and its numbers go to Nic`)
     throw err

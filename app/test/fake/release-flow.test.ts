@@ -66,8 +66,9 @@ describe('release.mjs (A5.1 #11, #33)', { timeout: 300_000 }, () => {
       expect(s.source.sha).toBe(gitIn(w.repo, ['rev-parse', 'HEAD']))
       expect(said(w)).toMatch(/awaiting-acceptance/)
       expect(said(w)).toContain(s.files[N.dmg].sha256)
-      // the build: never ad-hoc, never without the smoke, never a known failure, the production feed, into the state
-      expect(w.builds).toEqual([{ adhoc: false, smoke: true, tamper: false, knownFail: [], feed: PROD_FEED, into: stateDir(w) }])
+      // the build: never ad-hoc, never without the smoke, the production feed, into the state; 1.0.0 names Nic's one
+      // waiver (2 Nov), every later version none (release-plan's waiversFor)
+      expect(w.builds).toEqual([{ adhoc: false, smoke: true, tamper: false, knownFail: ['memory-no-canvas'], feed: PROD_FEED, into: stateDir(w) }])
       // one private draft with the three assets, its tag to be made on the releases repo's main
       const d = draftOf(w)
       expect(d).toMatchObject({ draft: true, name: `Marver ${V}`, target_commitish: s.release.tagTarget })
