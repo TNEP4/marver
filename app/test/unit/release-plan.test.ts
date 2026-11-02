@@ -11,7 +11,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import {
   ACCEPTANCE_IDS, REPOS, T, assetNames, changelogSection, cmpVersion, companionVersions, feedText, ghFieldsPayload, isCandidate,
   judgeEvidence, notaryAppName, notaryDmgName, notaryOutcome, publishArgs, reconcileAssets, releaseBody, requiredChecks, sha256,
-  submissionsOf, treeHash, versionAgreement, versionFloor,
+  submissionsOf, treeHash, versionAgreement, versionFloor, NPM_NAME,
 } from '../../scripts/release.mjs'
 
 const V = '1.0.0'
@@ -57,6 +57,10 @@ describe('the version floor (#5, r2 #7)', () => {
 })
 
 describe('the CHANGELOG section (#11 step 0)', () => {
+  it('the companion is looked up on npm under the repo\'s own package name, never a bare marver (0.99.1\'s first run)', () => {
+    expect(NPM_NAME).toBe('@marver-design/marver')
+  })
+
   const log = '# Changelog\n\n## 1.0.0 - 2026-11-09\n\n- One, on marver 0.29.0.\n- Two.\n\n## 0.3.0 - unreleased (spec 28 A4)\n\n- Old.\n'
   it('is exactly one dated heading and its body', () => {
     expect(changelogSection(log, V)).toEqual({ heading: '## 1.0.0 - 2026-11-09', date: '2026-11-09', text: '- One, on marver 0.29.0.\n- Two.' })
