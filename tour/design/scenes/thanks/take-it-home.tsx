@@ -23,10 +23,6 @@ const AFTER = [
   },
 ]
 
-/** The Mac app: the latest release's DMG, always with its requirement beside it, and its install page. */
-const MAC_DMG = 'https://github.com/TNEP4/marver-app/releases/latest/download/Marver-arm64.dmg'
-const MAC_DOCS = 'https://github.com/TNEP4/marver/blob/main/docs/app.md'
-
 export default function TakeItHome() {
   return (
     <Slide
@@ -43,32 +39,20 @@ export default function TakeItHome() {
       hint={<>That is the whole pitch. Go and see.</>}
     >
       <div className="flex max-w-[1140px] flex-col items-stretch gap-7 lg:flex-row">
-        <div className="flex w-full max-w-[520px] shrink-0 flex-col">
-          <Term title="your repo" className="flex-1">
-            <Cmd note="reads the codebase, writes design/">npx marver init</Cmd>
-            <Out className="text-comment-ink">✓ canvas configured from your components</Out>
-            <div className="h-3" />
-            <Cmd note="the canvas, live">npx marver dev</Cmd>
-            <Out>→ http://localhost:5240</Out>
-            <div className="h-4" />
-            <Out className="pl-0 text-muted-soft">
-              # or just tell your agent:
-            </Out>
-            <Out className="pl-0 text-foreground/80">
-              # “set up marver here and design me the settings screen”
-            </Out>
-          </Term>
-          <p className="mt-3.5 text-[13.5px] leading-[1.55] text-muted-foreground">
-            Rather have an app?{' '}
-            <a href={MAC_DMG} target="_blank" rel="noreferrer" className="font-semibold text-brand-ink underline underline-offset-2">
-              Download Marver for Mac
-            </a>
-            <span className="text-muted-soft"> · Apple silicon · macOS 13 or later · </span>
-            <a href={MAC_DOCS} target="_blank" rel="noreferrer" className="text-brand-ink underline underline-offset-2">
-              How to install
-            </a>
-          </p>
-        </div>
+        <Term title="your repo" className="w-full max-w-[520px] shrink-0">
+          <Cmd note="reads the codebase, writes design/">npx marver init</Cmd>
+          <Out className="text-comment-ink">✓ canvas configured from your components</Out>
+          <div className="h-3" />
+          <Cmd note="the canvas, live">npx marver dev</Cmd>
+          <Out>→ http://localhost:5240</Out>
+          <div className="h-4" />
+          <Out className="pl-0 text-muted-soft">
+            # or just tell your agent:
+          </Out>
+          <Out className="pl-0 text-foreground/80">
+            # “set up marver here and design me the settings screen”
+          </Out>
+        </Term>
 
         <div className="grid min-w-0 flex-1 grid-rows-3 gap-3.5">
           {AFTER.map((a, i) => (
