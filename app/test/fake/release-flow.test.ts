@@ -653,6 +653,124 @@ describe('release.mjs (A5.1 #11, #33)', { timeout: 300_000 }, () => {
   })
 })
 
+describe('release.mjs, code review round 2 (A5.1 #10, #11)', { timeout: 300_000 }, () => {
+  let w: World
+  let accepted: Snap
+  beforeAll(async () => {
+    w = makeWorld(V)
+    await ok(w, [V])
+    await accept(w)
+    accepted = w.snap()
+  }, 300_000)
+  afterAll(() => w.cleanup())
+  beforeEach(() => w.restore(accepted))
+  /** an uncertain publish of `v`, settled unpublished 24 h on: the release watched */
+  const settled = async (v = V) => {
+    w.gh.holdNextPublish = true
+    await expect(w.run([v, '--publish'])).rejects.toThrow(Crash)
+    w.clock.advance(24 * HOUR + MIN)
+    await ok(w, [v, '--settle-unpublished'])
+  }
+
+  it('#1 a crash between the local final and the shared one: the next run finishes the shared final and frees the repository', async () => {
+    await ok(w, [V, '--publish'])
+    expect(w.state(V).steps.final.status).toBe('published')
+    // the shared record as the crash left it: the owner unfinished
+    writeShared(w, { ...w.shared(), owner: { version: V, state: stateDir(w), at: 1 } })
+    await ok(w, [V, '--resume'])
+    expect(w.shared().owner).toBeNull()
+  })
+
+  it('#2 a republication cut before its request, then abandoned: the flag cleared, a late original publish still raises the alarm', async () => {
+    await settled()
+    // --republish cut after it marked the watch and before its request: the shared record as the crash left it
+    const sh = w.shared()
+    writeShared(w, { ...sh, watch: sh.watch.map((e: object) => ({ ...e, republishing: true })) })
+    await ok(w, [V, '--abandon'])
+    expect(w.shared().watch).toEqual([{ version: V, releaseId: draftOf(w).id }])
+    w.gh.landHeld()
+    await stops(w, ['1.0.1'], /1\.0\.0 was settled unpublished .* GitHub now shows it published/)
+  })
+
+  it('#2 the same with the owner\'s folder lost: --clear-owner clears the flag too', async () => {
+    await settled()
+    const sh = w.shared()
+    writeShared(w, { ...sh, watch: sh.watch.map((e: object) => ({ ...e, republishing: true })) })
+    rmSync(stateDir(w), { recursive: true, force: true })
+    await ok(w, [V, '--clear-owner'])
+    expect(w.shared()).toMatchObject({ owner: null, watch: [{ version: V, releaseId: draftOf(w).id }] })
+    expect(w.shared().watch[0].republishing).toBeUndefined()
+    w.gh.landHeld()
+    await stops(w, ['1.0.1'], /1\.0\.0 was settled unpublished .* GitHub now shows it published/)
+  })
+
+  it('#3 two late publications: each --withdraw goes past the other\'s alarm, which stays', async () => {
+    await settled()
+    await ok(w, [V, '--abandon'])
+    w.bump('1.0.1')
+    await ok(w, ['1.0.1'])
+    await accept(w, '1.0.1')
+    await settled('1.0.1')
+    await ok(w, ['1.0.1', '--abandon'])
+    w.gh.landHeld()
+    await stops(w, ['1.0.2'], /settled unpublished/)
+    await ok(w, [V, '--withdraw'])
+    expect(w.shared().watch).toEqual([{ version: '1.0.1', releaseId: draftOf(w, '1.0.1').id }])
+    await ok(w, ['1.0.1', '--withdraw'])
+    expect(w.shared().watch).toEqual([])
+    expect([draftOf(w).prerelease, draftOf(w, '1.0.1').prerelease]).toEqual([true, true])
+  })
+
+  it('#4 settled unpublished: --resume advises --republish, --publish refuses naming it, --republish publishes and retires the watch', async () => {
+    await settled()
+    const from = w.lines.length
+    await ok(w, [V, '--resume'])
+    const out = w.lines.slice(from).join('\n')
+    expect(out).toMatch(/--republish/)
+    expect(out).not.toMatch(/--publish\b/)
+    await stops(w, [V, '--publish'], /settled unpublished[\s\S]*--republish/)
+    expect(w.gh.publishCalls()).toHaveLength(1)
+    await ok(w, [V, '--republish'])
+    expect(w.record(V).status).toBe('published')
+    expect(w.shared()).toMatchObject({ owner: null, pending: null, watch: [] })
+  })
+
+  it('#6 a download that throws: a mutable release is still withdrawn, and a failed check still records check-failed', async () => {
+    w.gh.after.immutable = () => { delete w.gh.after.immutable; w.gh.repo(P).immutable = false }
+    w.gh.anonGetThrows = 1000
+    await stops(w, [V, '--publish'], /published mutable: it is withdrawn/)
+    expect(w.record(V)).toMatchObject({ status: 'withdrawn' })
+    expect(draftOf(w).prerelease).toBe(true)
+    w.restore(accepted)
+    w.gh.anonGetThrows = 1000
+    await stops(w, [V, '--publish'], /check-failed/)
+    expect(w.record(V)).toMatchObject({ status: 'check-failed', check: { problems: expect.arrayContaining([expect.stringMatching(/could not be read: .*aborted due to timeout/)]) } })
+    w.gh.anonGetThrows = 0
+    await ok(w, [V, '--resume'])
+    expect(w.record(V).status).toBe('published')
+  })
+
+  it('#6 a read that throws once is read again, as a refused one is', async () => {
+    w.gh.anonGetThrows = 1
+    await ok(w, [V, '--publish'])
+    expect(w.record(V).status).toBe('published')
+  })
+
+  it('#7 the draft\'s identity is checked again just before the publish: its tag, title, target, body and prerelease flag', async () => {
+    type Draft = { tag_name: string; name: string; target_commitish: string; body: string; prerelease: boolean }
+    const edits: ((d: Draft) => void)[] = [
+      (d) => { d.tag_name = 'v0.9.0' }, (d) => { d.name = 'Marver 1.0' }, (d) => { d.target_commitish = 'c'.repeat(40) },
+      (d) => { d.body = 'edited by hand' }, (d) => { d.prerelease = true },
+    ]
+    for (const edit of edits) {
+      w.restore(accepted)
+      edit(w.gh.repo(P).releases.find((r) => r.tag_name === `v${V}`)!)
+      await stops(w, [V, '--publish'], /the draft .* is not this release's/)
+      expect(w.gh.publishCalls()).toEqual([])
+    }
+  })
+})
+
 describe('release.mjs --test (A5.1 #4, #31, #43)', { timeout: 300_000 }, () => {
   let w: World
   beforeAll(() => { w = makeWorld('0.99.1', { test: true }) })

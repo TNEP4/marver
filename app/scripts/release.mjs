@@ -49,7 +49,7 @@ import {
   closeSync, constants, copyFileSync, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync,
   readFileSync, readlinkSync, readSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync, writeSync,
 } from 'node:fs'
-import { homedir, userInfo } from 'node:os'
+import { userInfo } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { FEEDS } from '../tsdown.config.ts'
 import { APP, BuildFailure, BUNDLE_ID, IDENTITY, MIN_MACOS, PRODUCT, feedKind } from './build.mjs'
@@ -518,6 +518,8 @@ function githubPort(x) {
   }
   const ok = (r, what) => { if (r.status >= 300) throw new Unreadable(`${what}: HTTP ${r.status} ${r.message ?? ''}`); return r.json }
   const pages = (path, what) => ok(api(['--paginate', '--slurp', path]), what).flat()
+  /** a body read cut short (a timeout, a reset) is Unreadable, as a request that never answered */
+  const body = async (res, what) => { try { return Buffer.from(await res.arrayBuffer()) } catch (err) { throw new Unreadable(`${what}: ${err.message}`) } }
   const net = async (url, init, what) => {
     try { return await fetch(url, { ...init, signal: AbortSignal.timeout(init.timeoutMs ?? 120_000) }) } catch (err) { throw new Unreadable(`${what}: ${err.message}`) }
   }
@@ -549,11 +551,11 @@ function githubPort(x) {
         timeoutMs: 30 * 60_000, headers: { Authorization: `Bearer ${auth()}`, Accept: 'application/octet-stream', 'X-GitHub-Api-Version': '2022-11-28' },
       }, `downloading asset ${assetId}`)
       if (res.status !== 200) stop(`downloading asset ${assetId}: HTTP ${res.status}`)
-      writeFileSync(dest, Buffer.from(await res.arrayBuffer()))
+      writeFileSync(dest, await body(res, `downloading asset ${assetId}`))
     },
     anonGet: async (url) => {
       const res = await net(url, { redirect: 'follow', headers: { 'Cache-Control': 'no-cache' }, timeoutMs: 30 * 60_000 }, url)
-      return { status: res.status, bytes: res.status === 200 ? Buffer.from(await res.arrayBuffer()) : null }
+      return { status: res.status, bytes: res.status === 200 ? await body(res, url) : null }
     },
     anonLocation: async (url) => {
       const res = await net(url, { redirect: 'manual', headers: { 'Cache-Control': 'no-cache' } }, url)
@@ -592,7 +594,9 @@ export async function run(argv, opts = {}) {
 
 function context(args, opts, log) {
   const app = resolve(opts.app ?? APP)
-  const home = resolve(opts.home ?? join(process.env.MARVER_HOME || join(homedir(), '.marver'), 'release'))
+  // one lock and one owner record per repository on this Mac (#10; code review r2 #5): the account's own ~/.marver,
+  // from its passwd entry - never MARVER_HOME or HOME, which two checkouts could set apart. Tests inject theirs.
+  const home = resolve(opts.home ?? join(userInfo().homedir, '.marver', 'release'))
   const repo = args.test ? REPOS.test : REPOS.production
   const cx = {
     ...args, app, home, repo, tag: `v${args.version}`, dir: join(app, '.release', args.version),
@@ -722,6 +726,9 @@ async function startup(cx) {
   // a publish in flight is observed, never replayed
   if (sh.pending) await observeSharedPending(cx)
   // the watched releases (settled unpublished)
+  // a republication is reconciled as its own run's publish only while that run's release owns the repository, its
+  // folder there (code review r2 #2): otherwise nothing tells it from the original request landing late
+  const active = (v) => sh.owner?.version === v && existsSync(join(sh.owner.state, 'state.json'))
   for (const w of [...sh.watch]) {
     const rel = await readRelease(cx, w.releaseId)
     if (!rel) {
@@ -731,14 +738,16 @@ async function startup(cx) {
       continue
     }
     if (rel.draft) continue
-    if (w.republishing) {
+    if (w.republishing && active(w.version)) {
       // its own run's republication, reconciled before any alarm (r7)
       sh.watch = sh.watch.filter((x) => x !== w)
       saveShared(cx)
       cx.say(`watch: ${w.version} was republished and GitHub shows it published: its entry is retired`)
       continue
     }
-    if (cx.command === 'withdraw' && cx.version === w.version) continue
+    // --withdraw goes past every alarm, its own and the others' (each entry kept for its own --withdraw): two late
+    // publications would otherwise stop each other's way out (code review r2 #3)
+    if (cx.command === 'withdraw') continue
     stop(`${w.version} was settled unpublished (--settle-unpublished) and GitHub now shows it published (${rel.html_url}): a publish request landed late. ${cmd(cx, '--withdraw', w.version)} ends it`)
   }
   // the owner
@@ -769,7 +778,8 @@ async function observeSharedPending(cx) {
   try { rel = await cx.p.github.release(cx.repo, p.releaseId) } catch (err) { if (!(err instanceof Unreadable)) throw err; unreadable = true }
   if (!unreadable && rel && !rel.draft) {
     cx.shared.pending = null
-    cx.shared.watch = cx.shared.watch.filter((w) => !(w.version === p.version && w.republishing))
+    const o = cx.shared.owner
+    if (o?.version === p.version && existsSync(join(o.state, 'state.json'))) cx.shared.watch = cx.shared.watch.filter((w) => !(w.version === p.version && w.republishing))
     saveShared(cx)
     cx.say(`the publish request of ${p.version} landed: GitHub shows it published`)
     // into this state only when it is the owner's: another checkout's state of the same version is never touched
@@ -909,6 +919,8 @@ function checkFiles(cx, names) {
 
 function finished(cx) {
   const f = cx.state.steps.final
+  // a crash between the state's final and the shared one left the owner unfinished: finished here (code review r2 #1)
+  finishOwner(cx, f.status)
   cx.say(`ended ${f.status} at ${iso(f.at)}${existsSync(join(cx.app, 'releases', `${cx.version}.json`)) ? `; its record is app/releases/${cx.version}.json` : ''}: nothing to do`)
 }
 
@@ -1237,6 +1249,16 @@ function feed(cx) {
   mark(cx, 'feed', { sha256: h.sha256 }, (s) => { s.files[cx.names.feed] = h })
 }
 
+/** The draft is this release's (#5, #10): its tag, title, target, body, a draft and no prerelease (code review r2 #7) */
+function draftIdentity(cx, rel) {
+  const bad = versionAgreement(cx.version, { release: rel })
+  if (rel.target_commitish !== cx.state.release.tagTarget) bad.push(`its target is ${rel.target_commitish}, not ${cx.state.release.tagTarget}`)
+  if (rel.body !== releaseBody({ notes: cx.state.steps.freeze.notes.text, sha: cx.state.source.sha })) bad.push('its body is not the CHANGELOG section and its footer')
+  if (rel.prerelease !== false) bad.push('it is marked a prerelease')
+  if (rel.draft !== true) bad.push('it is no longer a draft')
+  return bad
+}
+
 const expectedAssets = (cx) => Object.fromEntries(assetList(cx.version).map((n) => [n, cx.state.files[n]]))
 
 /** This state's draft, read again; gone or published, the run stops (githubFirst handles a publish) */
@@ -1293,8 +1315,7 @@ async function upload(cx) {
 /** 11: the draft downloaded back with authentication, checked as step 7, and private (#10) */
 async function checkDraft(cx) {
   const rel = await ownDraft(cx)
-  const bad = versionAgreement(cx.version, { release: rel })
-  if (rel.body !== releaseBody({ notes: cx.state.steps.freeze.notes.text, sha: cx.state.source.sha })) bad.push('the draft\'s body is not the CHANGELOG section and its footer')
+  const bad = draftIdentity(cx, rel)
   const want = expectedAssets(cx)
   if (!exactlyKept(reconcileAssets(want, rel.assets))) bad.push(`its assets are ${rel.assets.map((a) => `${a.name} ${a.digest}`).join(', ')}`)
   if (bad.length) stop(`the draft ${rel.html_url} is not this release's: ${bad.join('; ')}`)
@@ -1321,7 +1342,8 @@ async function checkDraft(cx) {
 function awaiting(cx) {
   const f = cx.state.files
   const lines = [`awaiting-acceptance: the private draft ${cx.state.release.url} holds`, ...assetList(cx.version).map((n) => `  ${n.padEnd(34)} ${f[n].sha256}`)]
-  if (cx.state.accepted) lines.push(`accepted by ${cx.state.accepted.by} at ${iso(cx.state.accepted.at)}: next, ${cmd(cx, '--publish')}`)
+  if (cx.shared.watch.some((w) => w.version === cx.version)) lines.push(`settled unpublished and watched: next, ${cmd(cx, '--republish')} (every gate again, then the one request) or ${cmd(cx, '--abandon')}`)
+  else if (cx.state.accepted) lines.push(`accepted by ${cx.state.accepted.by} at ${iso(cx.state.accepted.at)}: next, ${cmd(cx, '--publish')}`)
   else if (cx.test) lines.push(`a --test release needs no acceptance: next, ${cmd(cx, '--publish')}`)
   else lines.push('next: on the clean Mac, download the DMG from the draft, compare its sha256, run the acceptance list, then',
     `  ${cmd(cx, '--accept=<evidence.json>')}`, `  ${cmd(cx, '--publish')}`)
@@ -1348,6 +1370,10 @@ async function accept(cx) {
 
 /** Step 12's gates, fresh (#11; r1 #10; r2 #7): the acceptance, the hashes, immutability, the floor */
 async function publishGates(cx, rel) {
+  // the draft's identity again, just before the request: an edit by hand would publish these bytes under another
+  // version, the feed naming URLs that never exist (code review r2 #7)
+  const who = draftIdentity(cx, rel)
+  if (who.length) stop(`the draft ${rel.html_url} is not this release's any more: ${who.join('; ')}. Nothing is published - mend it on GitHub, or ${cmd(cx, '--abandon')}`)
   const bad = []
   const want = expectedAssets(cx)
   if (!exactlyKept(reconcileAssets(want, rel.assets))) bad.push(`the draft does not hold exactly the three recorded assets (${cmd(cx, '--resume')} repairs it)`)
@@ -1381,6 +1407,9 @@ async function sendPublish(cx, rel) {
 
 async function publish(cx) {
   if (!did(cx, 'check-draft')) stop(`the draft is not checked yet: ${cmd(cx)} prepares it`)
+  // settled unpublished, it is watched: only --republish marks the watch before its request, so the publish is told
+  // from a late one (code review r2 #4)
+  if (cx.shared.watch.some((w) => w.version === cx.version)) stop(`v${cx.version} was settled unpublished and is watched: ${cmd(cx, '--republish')} publishes it (or ${cmd(cx, '--abandon')})`)
   const rel = await ownDraft(cx)
   await publishGates(cx, rel)
   await sendPublish(cx, rel)
@@ -1410,29 +1439,40 @@ async function checkPublic(cx) {
   const { github, clock } = cx.p
   const files = cx.state.files
   const result = { at: now(cx), problems: [], latest: null }
-  // this release's artifacts, anonymously, by their versioned URLs
+  // a read that throws (a timeout, a reset) is a failed read, never the end of the step: every outcome is recorded
+  // (code review r2 #6). Anything but the port's own Stop/Unreadable is a crash, as everywhere.
+  const tryRead = async (what, fn) => {
+    try { return { value: await fn() } } catch (err) { if (!(err instanceof Stop)) throw err; return { error: `${what} could not be read: ${err.message}` } }
+  }
+  // the release first: one that reads mutable is withdrawn whatever its downloads do (r1 #10, r2 #6)
+  const read = await tryRead(`release ${cx.state.release.id}`, () => github.release(cx.repo, cx.state.release.id))
+  const rel = read.value ?? null
+  if (read.error) result.problems.push(read.error)
+  else if (!rel) result.problems.push(`GitHub no longer has release ${cx.state.release.id}`)
+  result.immutable = rel?.immutable ?? null
+  if (rel && rel.immutable !== true) {
+    // published mutable (r1 #10, r2 #6): withdrawn at once, its record written, the step failing
+    const reason = 'it reads immutable: false after its publish, so nothing protects its assets from replacement (#10)'
+    keepCheck(cx, { ...result, status: 'withdrawn', reason })
+    await withdrawRelease(cx, rel, reason)
+    stop(`v${cx.version} was published mutable: it is withdrawn (a prerelease; latest falls back) and its version is spent - the replacement is the next version, published once immutability is on`)
+  }
+  const tag = await tryRead(`the tag ${cx.tag}`, () => github.tagCommit(cx.repo, cx.tag))
+  if (tag.error) result.problems.push(tag.error)
+  else if (tag.value !== cx.state.release.tagTarget) result.problems.push(`the tag ${cx.tag} is on ${tag.value ?? 'nothing'}, not ${cx.state.release.tagTarget}`)
+  // this release's artifacts, anonymously, by their versioned URLs; a refused or a failed read is read again
   for (const name of assetList(cx.version)) {
     let r = { status: 0 }
+    let error = null
     for (let i = 0; i < T.versionedTries; i++) {
-      r = await github.anonGet(assetUrl(cx.repo, cx.version, name))
+      const got = await tryRead(name, () => github.anonGet(assetUrl(cx.repo, cx.version, name)))
+      r = got.value ?? { status: 0 }
+      error = got.error ?? null
       if (r.status === 200) break
       await clock.sleep(T.versionedEveryMs)
     }
     const got = r.status === 200 ? sha256(r.bytes) : null
-    if (got !== files[name].sha256) result.problems.push(`${name}: ${got ? `sha256 ${got}` : `HTTP ${r.status}`} anonymously, recorded ${files[name].sha256}`)
-  }
-  const rel = await readRelease(cx, cx.state.release.id)
-  let tagSha = null
-  try { tagSha = await github.tagCommit(cx.repo, cx.tag) } catch (err) { if (!(err instanceof Unreadable)) throw err }
-  if (tagSha !== cx.state.release.tagTarget) result.problems.push(`the tag ${cx.tag} is on ${tagSha ?? 'nothing readable'}, not ${cx.state.release.tagTarget}`)
-  if (!rel) result.problems.push(`GitHub no longer has release ${cx.state.release.id}`)
-  result.immutable = rel?.immutable ?? null
-  if (rel && rel.immutable !== true) {
-    // published mutable (r1 #10, r2 #6): withdrawn at once, its record written, the step failing
-    const reason = `it reads immutable: false after its publish, so nothing protects its assets from replacement (#10)${result.problems.length ? `; and ${result.problems.join('; ')}` : ''}`
-    keepCheck(cx, { ...result, status: 'withdrawn', reason })
-    await withdrawRelease(cx, rel, reason)
-    stop(`v${cx.version} was published mutable: it is withdrawn (a prerelease; latest falls back) and its version is spent - the replacement is the next version, published once immutability is on`)
+    if (got !== files[name].sha256) result.problems.push(error ?? `${name}: ${got ? `sha256 ${got}` : `HTTP ${r.status}`} anonymously, recorded ${files[name].sha256}`)
   }
   if (result.problems.length) {
     keepCheck(cx, { ...result, status: 'check-failed' })
@@ -1443,15 +1483,18 @@ async function checkPublic(cx) {
   const end = now(cx) + T.latestForMs
   let owner, run = 0, reads = 0, status = null
   for (;;) {
-    const v = await latestRead(cx)
+    const v = (await tryRead('latest', () => latestRead(cx))).value ?? 'unreadable'
     reads++
     if (v === owner) run++
     else { owner = v; run = 1 }
     if (run >= T.latestAgree && owner) {
       if (owner === cx.version) {
-        const d = await github.anonLocation(`https://github.com/${cx.repo}/releases/latest/download/${cx.names.dmg}`)
-        const dv = /\/releases\/download\/v(\d+\.\d+\.\d+)\//.exec(d.location ?? '')?.[1]
-        const bytes = dv === cx.version ? await github.anonGet(d.location) : null
+        const ours = await tryRead('the latest DMG', async () => {
+          const d = await github.anonLocation(`https://github.com/${cx.repo}/releases/latest/download/${cx.names.dmg}`)
+          const dv = /\/releases\/download\/v(\d+\.\d+\.\d+)\//.exec(d.location ?? '')?.[1]
+          return dv === cx.version ? github.anonGet(d.location) : null
+        })
+        const bytes = ours.value
         if (bytes?.status === 200 && sha256(bytes.bytes) === files[cx.names.dmg].sha256) { status = 'published'; break }
         run = 0
       } else if (parseVersion(owner) && cmpVersion(owner, cx.version) > 0) { status = 'superseded'; break }
@@ -1481,13 +1524,21 @@ function keepCheck(cx, result) {
 /** A final status (#10): the state's, then the shared owner's, then the owner cleared */
 function finalize(cx, status) {
   if (cx.state) { cx.state.steps.final = { at: now(cx), status }; saveState(cx) }
+  finishOwner(cx, status)
+}
+/** The shared half of a final status, idempotent: `final` written into this version's owner, then the owner cleared */
+function finishOwner(cx, status) {
   const o = cx.shared.owner
-  if (o?.version === cx.version) {
-    o.final = status
-    saveShared(cx)
-    cx.shared.owner = null
-    saveShared(cx)
-  }
+  if (o?.version !== cx.version) return
+  if (o.final !== status) { o.final = status; saveShared(cx) }
+  cx.shared.owner = null
+  saveShared(cx)
+}
+/** This version's watch entries lose `republishing` when its release ends unpublished (code review r2 #2) */
+function unmarkRepublishing(cx) {
+  let changed = false
+  for (const w of cx.shared.watch) if (w.version === cx.version && w.republishing) { delete w.republishing; changed = true }
+  return changed
 }
 
 /** What a record cannot say when the state is lost (r6 #3): named, never made up */
@@ -1580,8 +1631,11 @@ async function abandon(cx) {
   if (rels.some((r) => !r.draft)) stop(`v${cx.version} is published on GitHub: --abandon is refused (a published release ends with ${cmd(cx, '--withdraw')})`)
   if (cx.shared.pending?.version === cx.version) stop(choices(cx, cx.shared.pending, 'a publish request is not settled'))
   const mine = o?.version === cx.version
-  // journal, final, owner cleared, the folder last
-  if (mine && !o.abandoning) { o.abandoning = now(cx); saveShared(cx) }
+  // journal, final, owner cleared, the folder last; a republication cut before its request ends with the release, so
+  // a late original publish still raises the alarm (code review r2 #2)
+  const unmarked = unmarkRepublishing(cx)
+  if (mine && !o.abandoning) o.abandoning = now(cx)
+  if (unmarked || (mine && o.abandoning)) saveShared(cx)
   cx.state.steps.abandoning ??= { at: now(cx) }
   saveState(cx)
   if (mine) {
@@ -1610,6 +1664,7 @@ async function clearOwner(cx) {
   if (rels.some((r) => !r.draft)) stop(`GitHub shows v${cx.version} published: ${cmd(cx, '--withdraw')} ends it`)
   // a matching pending is settled only by --settle-unpublished; one whose release is gone (startup) is already retired
   if (cx.shared.pending?.version === cx.version) stop(`a publish request of v${cx.version} is not settled: ${cmd(cx, '--settle-unpublished')} first, from ${iso(cx.shared.pending.at + T.settleUnpublishedMs)}`)
+  unmarkRepublishing(cx)
   o.final = 'abandoned'
   saveShared(cx)
   cx.shared.owner = null
