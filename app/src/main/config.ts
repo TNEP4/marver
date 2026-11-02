@@ -574,3 +574,19 @@ function provideFileHooks(): void {
   provide('files.tabsWrite', async (a) => { const w = tabsWriter(); w.set(a as TabsFile); await w.flush(); return true })
   provide('files.notices', async () => { await noticesWriter().flush(); return noticesState() })
 }
+
+// ---- state/update.json (A5.1 #18, #23, #41) -------------------------------------------------------------------------
+
+/**
+ * Frozen (A5.1 #41): #18's intent, #23's answer or its one-time note, and #23's staging record - nothing about attempts
+ * (#14). Written whole and synchronously (`flushSync`, #20); a bad file is set aside as `.bad` and read as empty
+ * (#18). The release smoke seeds `{ v: 1, intent: null, move: { declined: true, at }, staging: null }` (#36).
+ */
+export interface UpdateFile {
+  v: 1
+  intent: { from: string; to: string; via: 'restart' | 'quit'; at: number } | null
+  /** `declined`: the move never runs (the smoke's seed; no alert writes it since 2 Nov); `moved`: the moved copy's note, once */
+  move: { declined: true; at: number } | { moved: true; at: number; from: 'dmg' | string } | null
+  staging: { path: string; dev: number; ino: number; placeholder: { dev: number; ino: number } | null; at: number } | null
+}
+export const UPDATE_FILE = 'update.json'

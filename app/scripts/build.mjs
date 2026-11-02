@@ -50,7 +50,7 @@ export const MIN_MACOS = '13.0'
  * Strings only the dev flavour's test hooks hold (testing/index.ts): the release bundle must have none. A4: the fake
  * presenter's switch (A4.6 #22) and the remote harness's three switches (sessions.ts, #50), never in a release.
  */
-export const TEST_SENTINELS = ['mv-test-hook', 'MARVER_APP_CONTROL', '__mvTest', 'MARVER_APP_SPY', 'MARVER_APP_REAL_NOTICES', 'MARVER_APP_TEST_HOSTS', 'MARVER_APP_TEST_REMOTE_CERT', 'MARVER_APP_TEST_FRONT_DOOR']
+export const TEST_SENTINELS = ['mv-test-hook', 'MARVER_APP_CONTROL', '__mvTest', 'MARVER_APP_SPY', 'MARVER_APP_REAL_NOTICES', 'MARVER_APP_TEST_HOSTS', 'MARVER_APP_TEST_REMOTE_CERT', 'MARVER_APP_TEST_FRONT_DOOR', 'MARVER_APP_FAKE_UPDATER']
 
 const require = createRequire(join(APP, 'package.json'))
 const pkg = JSON.parse(readFileSync(join(APP, 'package.json'), 'utf8'))

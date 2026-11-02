@@ -32,6 +32,8 @@ export const APP_KINDS = [
   'start', 'sample', 'agx', 'gone', 'child-gone', 'gpu-restart', 'unresponsive', 'responsive', 'gpu', 'power',
   'tab', 'shown', 'pressure', 'unload', 'unload-skip', 'unload-effect', 'reopen', 'cover', 'flash',
   'whiteout-candidate', 'dropped', 'main-error',
+  // A5 (app 1.0): the updater, the restart and the move (A5.1 #25)
+  'update',
 ] as const
 export type AppKind = (typeof APP_KINDS)[number]
 
@@ -161,6 +163,14 @@ export interface SampleBody {
   sys: Sample['sys']
   /** wall ms of this minute's sysctl / ioreg spawns: the recorder's own cost */
   spawnMs: number
+  /**
+   * the app's own processes, folded at each sample with that sample's roles (A5.1 #27; `inOwnSet`: 'cpu' for CPU,
+   * 'memory-no-canvas' for memory). `rssMB`: their RSS summed at each sample, folded over the minute. `cpu`: an
+   * interval in which every own process has a figure adds Σ cpu × dt (core-seconds) to `s` and its length to `ms`; one
+   * in which any has none adds its length to `unmeasuredMs` only; a sample with no interval adds nothing. Absent on
+   * lines from before A5 (the report counts those minutes as missing)
+   */
+  own?: { rssMB: Agg; cpu: { s: number; ms: number; unmeasuredMs: number } }
 }
 
 /** `ioreg -rc AGXAccelerator -d1`, machine-wide (A3.1, A3.8 #9): a missing key is 'unknown'. */
@@ -191,6 +201,24 @@ export type PictureWhy = 'window hidden' | 'timeout' | 'empty' | 'write failed' 
 
 /** A record held in the ring, as a flash quotes it: its kind, its time and its body. */
 export type RingEvent = { kind: AppKind; ts: number } & Record<string, unknown>
+
+/**
+ * The `update` record (A5.1 #25): written whatever `recorder` says, as `flash` and `main-error` are. Each attempt
+ * writes `check` at its start and one end. `message` is the updater's error text, kept in app.jsonl only: the report
+ * never takes it (#27). A `move` record's `why` is one of UPDATE_MOVE_WHY.
+ */
+export interface UpdateBody {
+  phase: 'blocked' | 'check' | 'current' | 'downloading' | 'downloaded' | 'error' | 'late' | 'slow' | 'restart'
+    | 'restart-failed' | 'installed' | 'install-failed' | 'move'
+  attempt?: number
+  version?: string
+  from?: string
+  to?: string
+  why?: string
+  manual?: boolean
+  message?: string
+}
+export const UPDATE_MOVE_WHY = ['offered', 'moved', 'opened-existing', 'declined', 'finder', 'cancelled', 'taken', 'failed', 'cleaned'] as const
 
 export interface AppBodies {
   start: { version: string; electron: string; chrome: string; recorder: boolean; pid: number }
@@ -279,6 +307,7 @@ export interface AppBodies {
   dropped: { n: number }
   /** app 0.1's error policy (errors.ts) */
   'main-error': { what: 'exception' | 'rejection'; name: string; message: string; stack: string[] }
+  update: UpdateBody
 }
 
 /** A kind's body alone (what `recorder.event` and the writer take; the writer adds the envelope). */

@@ -74,10 +74,11 @@ describe('the menu bar (A2.7)', () => {
       { id: 't2', name: 'Gen lab', word: 'stopped', key: 9, active: false, token: token('t2') },
     ],
     header: true,
+    update: null,
     ...o,
   })
   const acts = (holds = true) => {
-    const a = { run: vi.fn(), holds: vi.fn(() => holds), canvasClick: vi.fn(), tab: vi.fn(), help: vi.fn(), perfFiles: vi.fn(), rebuild: vi.fn() }
+    const a = { run: vi.fn(), holds: vi.fn(() => holds), canvasClick: vi.fn(), tab: vi.fn(), help: vi.fn(), perfFiles: vi.fn(), update: vi.fn(), exportReport: vi.fn(), rebuild: vi.fn() }
     return a as typeof a & MenuActs
   }
   const sub = (t: MenuItemConstructorOptions[], label: string) => (t.find((m) => m.label === label || m.role === label)!.submenu as MenuItemConstructorOptions[])
@@ -128,10 +129,10 @@ describe('the menu bar (A2.7)', () => {
     expect(sub(t, 'Edit').map((m) => m.role).filter(Boolean)).toEqual(['undo', 'redo', 'cut', 'copy', 'paste', 'pasteAndMatchStyle', 'delete', 'selectAll'])
   })
 
-  it('Help: Marver Help, then Mark a Flash with ⌃⌥F (A3), then Show Performance Files', () => {
+  it('Help: Marver Help, then Mark a Flash with ⌃⌥F (A3), then Show Performance Files and Export Performance Report… (A5.1 #28)', () => {
     const a = acts()
     const help = sub(menuTemplate(model(), a), 'help')
-    expect(help.filter((m) => m.type !== 'separator').map((m) => m.label)).toEqual(['Marver Help', 'Mark a Flash', 'Show Performance Files'])
+    expect(help.filter((m) => m.type !== 'separator').map((m) => m.label)).toEqual(['Marver Help', 'Mark a Flash', 'Show Performance Files', 'Export Performance Report…'])
     const mark = item(help, 'Mark a Flash')
     expect(mark.accelerator).toBe('Ctrl+Alt+F')
     click(mark)

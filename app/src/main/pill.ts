@@ -173,7 +173,7 @@ function arm(now: number): void {
 }
 
 /** A confirmation (tier 2): "Reloaded after a crash" in A2, "Flash marked" in A3. One of each kind waits; a newer replaces it. */
-export function confirm(sub: 'crash-reloaded' | 'flash' | 'notice-missed', o: { tab?: string; lead?: string; text: string; short: string; button?: PillView['button']; ref?: string }): void {
+export function confirm(sub: 'crash-reloaded' | 'flash' | 'notice-missed' | 'update', o: { tab?: string; lead?: string; text: string; short: string; button?: PillView['button']; ref?: string }): void {
   const now = ports?.now() ?? Date.now()
   const rec: Rec = { kind: 'confirmation', about: `confirm:${sub}:${now}`, sub, icon: 'check', ...o }
   confirms.set(sub, { rec, left: T.pillConfirmMs, created: now })

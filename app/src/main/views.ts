@@ -1223,6 +1223,7 @@ function menuModel(): MenuModel {
     canvas: trusted && a.reports.menu?.length ? { token: tokenOf(a), items: a.reports.menu } : null,
     tabs: tabsList,
     header: Number(process.getSystemVersion().split('.')[0]) >= 14,
+    update: null,                                                    // A5.1 #22: the restart stream wires the updater's item
   }
 }
 
@@ -1414,6 +1415,8 @@ export function startViews(i: StartInput): void {
       tab: (k, what) => tabAct(k, what),
       help: () => openOutside(HELP_URL),
       perfFiles: () => effects.openPath(join(homeDir.dir, 'perf')),
+      update: () => {},                                                // A5.1 #22: the restart stream wires it
+      exportReport: () => {},                                          // A5.1 #28: the report stream wires it
       rebuild: () => buildNow(true),
     },
   })

@@ -23,6 +23,7 @@
  *   `update-downloaded` and a later `installed` clear it.
  * - **Actions** (#21, #22): the pill and the menu call `act(token)`, which acts only while its token still holds.
  */
+import type { UpdateBody } from '../../../src/shared/app-perf.ts'
 import { T } from './timings.ts'
 
 // ---- the frozen contracts (#41) ---------------------------------------------------------------------------------
@@ -66,18 +67,8 @@ export type UpdateToken =
   | { act: 'restart' | 'try-again' | 'download' | 'dismiss'; version: string }
   | { act: 'explain'; why: Exclude<BlockedWhy, 'feed'> }
 
-/** The `update` record (#25); `APP_KINDS` gains it at integration. `message` stays in app.jsonl, never the report. */
-export interface UpdateBody {
-  phase: 'blocked' | 'check' | 'current' | 'downloading' | 'downloaded' | 'error' | 'late' | 'slow' | 'restart'
-    | 'restart-failed' | 'installed' | 'install-failed' | 'move'
-  attempt?: number
-  version?: string
-  from?: string
-  to?: string
-  why?: string
-  manual?: boolean
-  message?: string
-}
+/** The `update` record (#25), frozen in app-perf.ts beside the other kinds. */
+export type { UpdateBody }
 
 /** A manual check's end, as the pill says it (#14); a check that finds one says nothing. */
 export type CheckAnswer = 'current' | 'offline' | 'later'

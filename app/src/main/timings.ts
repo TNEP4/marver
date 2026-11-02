@@ -129,6 +129,8 @@ export const T = {
   updateEveryMs: 4 * 3_600_000,
   updateWakeQuietMs: 30 * 60_000,
   updateSlowMs: 25 * 60_000,
+  /** #17: no exit this long after Restart to Update's windows closed is the restart's preparation failing */
+  restartWaitMs: 60_000,
 } satisfies Record<string, number | readonly number[]>
 
 export type Timings = typeof T
