@@ -1499,11 +1499,18 @@ export function startViews(i: StartInput): void {
 
 /**
  * #17's alert (A5.1): app-modal - the window and every view are gone - with one button, Quit. A test build never puts
- * it on the screen: it is kept for the `shutdown:alerts` hook and answered at once.
+ * it on the screen: it is kept for the `shutdown:alerts` hook and held until the case answers (`shutdown:alert-answer`),
+ * so the case reads it before the quit that follows.
  */
 const restartAlerts: RestartAlert[] = []
+let alertHeld: (() => void) | null = null
 async function restartAlertBox(a: RestartAlert): Promise<void> {
-  if (__MV_TEST__ && testMode()) { restartAlerts.push(a); j('alert', a); return }
+  if (__MV_TEST__ && testMode()) {
+    restartAlerts.push(a)
+    j('alert', a)
+    await new Promise<void>((r) => { alertHeld = r })
+    return
+  }
   await dialog.showMessageBox({ type: 'warning', message: a.message, detail: a.detail, buttons: [...a.buttons], defaultId: 0, noLink: true })
 }
 
@@ -1564,7 +1571,8 @@ function testHooks(): void {
     pill: currentPill(), focus: focusOwner(), quitting: isQuitting(),
   }))
   provide('shutdown', () => shutdownState())
-  provide('shutdown:alerts', () => [...restartAlerts])
+  provide('shutdown:alerts', () => ({ shown: [...restartAlerts], held: !!alertHeld }))
+  provide('shutdown:alert-answer', () => { const r = alertHeld; alertHeld = null; r?.(); return !!r })
   provide('views', () => viewsNow())
   // a picture of the window (window.ts captureWindow), written to an absolute path the case names
   provide('capture', async (x) => {

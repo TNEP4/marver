@@ -22,7 +22,7 @@
  * - **A waiting update** (#21) goes back to `ready` when its tab's fresh `unsaved` turns false, the tab closes or its
  *   document changes (`updaterTabs`, from views.ts's reports and tab changes; pill.ts `waitingEnds`).
  */
-import { accessSync, constants } from 'node:fs'
+import { accessSync, appendFileSync, constants } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname } from 'node:path'
 import { app, autoUpdater, BaseWindow, dialog, net, powerMonitor } from 'electron'
@@ -209,12 +209,12 @@ const clockOf = (): UpdateClock => ({
 })
 
 /** Every window closed, as Electron's quitAndInstall() closes them (the live fake's). */
-function closeWindows(): Promise<void> {
+function closeWindows(say: (e: string) => void): Promise<void> {
   return new Promise((done) => {
     const wins = BaseWindow.getAllWindows()
     if (!wins.length) { done(); return }
     let left = wins.length
-    for (const w of wins) { w.once('closed', () => { if (--left === 0) done() }); w.close() }
+    for (const w of wins) { w.once('closed', () => { say('window-closed'); if (--left === 0) done() }); w.close() }
   })
 }
 
@@ -226,8 +226,20 @@ export function startUpdater(s: UpdaterStart): UpdateModel {
   let version = s.version ?? app.getVersion()
   let gates = s.gates
   if (__MV_TEST__ && !s.adapter && testMode() && process.env.MARVER_APP_FAKE_UPDATER === '1') {
-    // the dev flavour's fake (#4, #34): a feed of its own that nothing fetches, the gates and the version the case says
-    fake = new LiveFakeUpdater({ closeWindows, quit: () => app.quit(), later: (fn) => { setImmediate(fn) } })
+    // the dev flavour's fake (#4, #34): a feed of its own that nothing fetches, the gates and the version the case says.
+    // The restart's events go to a file the case names, appended as they happen: what it reads once the process is gone
+    const log = process.env.MARVER_APP_FAKE_UPDATER_LOG
+    const say = (e: string) => { if (log) try { appendFileSync(log, `${e}\n`) } catch { /* the case reads what landed */ } }
+    fake = new LiveFakeUpdater({ closeWindows: () => closeWindows(say), quit: () => app.quit(), later: (fn) => { setImmediate(fn) } })
+    if (log) {
+      fake.on('before-quit-for-update', () => say('before-quit-for-update'))
+      // heard only beside the coordinator's own listener: one of the case's would hold Electron's default quit off by
+      // itself, and the race the coordinator's listener prevents (#16) would go unseen
+      if (app.listenerCount('window-all-closed') > 0) app.on('window-all-closed', () => say('window-all-closed'))
+      app.on('before-quit', () => say('before-quit'))
+      app.on('will-quit', () => say('will-quit'))
+      process.on('exit', (code) => say(`exit ${code}`))
+    }
     const next = process.env.MARVER_APP_FAKE_OFFER
     if (next) fake.next = { kind: 'offer', version: next, notes: 'What changed\nAnd more' }
     const r = process.env.MARVER_APP_FAKE_RESTART
