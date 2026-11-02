@@ -1,5 +1,11 @@
 # Changelog - the Marver Mac app
 
+## 0.99.2 - 2026-11-02
+
+The second test candidate of 1.0.0: what 0.99.1 updates to, for the clean-Mac checks (spec 28 A5.1 #43.4).
+
+The same code as 0.99.1 under a higher number, on the test feed. Use it with canvases on marver 0.29.0 or later.
+
 ## 0.99.1 - 2026-11-02
 
 A test candidate of 1.0.0, published only to the test releases repo for the clean-Mac checks (spec 28 A5.1 #43.4).
