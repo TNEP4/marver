@@ -60,6 +60,8 @@ import { APP, BuildFailure, BUNDLE_ID, IDENTITY, MIN_MACOS, PRODUCT, feedKind } 
 export const REPOS = { production: 'TNEP4/marver-app', test: 'TNEP4/marver-app-test' }
 /** The notarytool keychain profile Nic stored (#7, "As done": from the team's App Store Connect API key) */
 export const NOTARY_PROFILE = 'marver-notary'
+/** the companion's npm name (#2): the repo's own package, read from its package.json - never a bare `marver`, which is someone else's */
+export const NPM_NAME = JSON.parse(readFileSync(join(APP, '..', 'package.json'), 'utf8')).name
 /** The commands besides preparing (#3, #11) */
 export const COMMANDS = ['resume', 'accept', 'publish', 'abandon', 'withdraw', 'settle-published', 'republish', 'settle-unpublished', 'clear-owner']
 /** The operator's commands (#11): each has its own prerequisites and skips the resume checks */
@@ -485,8 +487,8 @@ export function realPorts({ toolLog = () => {} } = {}) {
     plist: { read: (file) => JSON.parse(must(x('plutil', ['-convert', 'json', '-o', '-', file]), `plutil ${file}`).stdout) },
     npm: {
       published: async (v) => {
-        const r = x('npm', ['view', `marver@${v}`, 'version', '--json'], { timeout: 120_000 })
-        if (r.status !== 0) throw new Unreadable(`npm view marver@${v} failed (exit ${r.status}): ${tail(r.out)}`)
+        const r = x('npm', ['view', `${NPM_NAME}@${v}`, 'version', '--json'], { timeout: 120_000 })
+        if (r.status !== 0) throw new Unreadable(`npm view ${NPM_NAME}@${v} failed (exit ${r.status}): ${tail(r.out)}`)
         try { return JSON.parse(r.stdout) === v } catch { return false }   // an unknown version answers nothing
       },
     },
