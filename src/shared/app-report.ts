@@ -219,7 +219,9 @@ const phasesExact: Exact<(typeof UPDATE_PHASES)[number], UpdateBody['phase']> = 
  * `throw`) and a move's (UPDATE_MOVE_WHY). A why the restart stream adds is `other` until it is listed here.
  */
 export const UPDATE_WHY = ['feed', 'location', 'write', 'setup', 'throw', 'error', 'checking-for-update', 'update-available',
-  'update-not-available', 'update-downloaded', ...UPDATE_MOVE_WHY] as const
+  'update-not-available', 'update-downloaded',
+  // #18: an intent naming neither version, or over 30 days old, cleared and recorded `late` (restart stream)
+  'intent', 'intent-old', ...UPDATE_MOVE_WHY] as const
 void rolesExact; void thermalExact; void phasesExact
 
 /** A Mac's chip (#27). */

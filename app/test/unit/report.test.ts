@@ -329,8 +329,10 @@ describe('privacy (A5.1 #27): nothing unlisted leaves', () => {
     const same: Exact<(typeof UNLOAD_REFUSALS)[number], UnloadRefusal> = true
     expect(same).toBe(true)
     // update-model.ts's blocks and late events, and a move's whys: a new one is `other` until listed (A5.1 #25)
-    const whys: readonly (typeof UPDATE_WHY)[number][] = [] as (BlockedWhy | 'throw' | 'error' | 'checking-for-update' | 'update-available' | 'update-not-available' | 'update-downloaded' | (typeof UPDATE_MOVE_WHY)[number])[]
+    const whys: readonly (typeof UPDATE_WHY)[number][] = [] as (BlockedWhy | 'throw' | 'error' | 'checking-for-update' | 'update-available' | 'update-not-available' | 'update-downloaded' | 'intent' | 'intent-old' | (typeof UPDATE_MOVE_WHY)[number])[]
     expect(whys).toEqual([])
+    // updater.ts's #18 reconciliation records an intent it clears unshown as `late` with these (integration, 2 Nov)
+    expect(UPDATE_WHY).toEqual(expect.arrayContaining(['intent', 'intent-old']))
     expect(GPU_FEATURES).toContain('webgl')
   })
 })
