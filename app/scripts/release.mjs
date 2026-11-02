@@ -60,6 +60,12 @@ import { APP, BuildFailure, BUNDLE_ID, IDENTITY, MIN_MACOS, PRODUCT, feedKind } 
 export const REPOS = { production: 'TNEP4/marver-app', test: 'TNEP4/marver-app-test' }
 /** The notarytool keychain profile Nic stored (#7, "As done": from the team's App Store Connect API key) */
 export const NOTARY_PROFILE = 'marver-notary'
+/**
+ * The one smoke check a --test candidate may pass failing, at a measured number (Nic, 2 Nov: the no-canvas memory
+ * budget, 226.9 MB against 200 on 0.99.1; candidates test the update and install mechanics, not memory). A production
+ * release never names a known failure (#3): the check stays binding for 1.0.0. The number goes into the record.
+ */
+export const CANDIDATE_WAIVERS = ['memory-no-canvas']
 /** the companion's npm name (#2): the repo's own package, read from its package.json - never a bare `marver`, which is someone else's */
 export const NPM_NAME = JSON.parse(readFileSync(join(APP, '..', 'package.json'), 'utf8')).name
 /** The commands besides preparing (#3, #11) */
@@ -1024,8 +1030,9 @@ async function build(cx) {
   rmSync(at(cx, FILES.app), { recursive: true, force: true })
   rmSync(at(cx, 'build.json'), { force: true })
   for (const f of readdirSync(cx.dir)) if (/^smoke-\d+\.json$/.test(f)) rmSync(at(cx, f))
-  const o = { adhoc: false, smoke: true, tamper: false, knownFail: [], feed: cx.feed, into: cx.dir }
-  cx.say(`build: Developer ID signed, the ${feedKind(cx.feed)} feed baked in, the smoke whole (no --adhoc, no --no-smoke, no known failure)`)
+  const waive = cx.test ? CANDIDATE_WAIVERS : []
+  const o = { adhoc: false, smoke: true, tamper: false, knownFail: [...waive], feed: cx.feed, into: cx.dir }
+  cx.say(`build: Developer ID signed, the ${feedKind(cx.feed)} feed baked in, the smoke whole (no --adhoc, no --no-smoke, ${waive.length ? `a candidate: only ${waive.join(', ')} may fail, at a measured number` : 'no known failure'})`)
   try { await cx.p.build(o) } catch (err) {
     if (err instanceof BuildFailure) stop(`the build failed: ${err.message} - a smoke check that fails stops the release, and its numbers go to Nic`)
     throw err
@@ -1039,11 +1046,13 @@ async function build(cx) {
     if (b.feed !== feedKind(cx.feed)) bad.push(`feed ${b.feed}`)
     if (b.adhoc !== false) bad.push('ad-hoc')
     if (b.smoke !== 'default') bad.push(`smoke ${b.smoke}`)
-    if (b.knownFailures?.length) bad.push(`known failures ${b.knownFailures.map((k) => k.name).join(', ')}`)
+    const known = (b.knownFailures ?? []).map((k) => k.name)
+    const beyond = known.filter((n) => !waive.includes(n))
+    if (beyond.length) bad.push(`known failures ${beyond.join(', ')}`)
   }
   if (!existsSync(join(at(cx, FILES.app), 'Contents', 'Info.plist'))) bad.push(`no ${FILES.app}`)
   if (bad.length) stop(`the build is not a release's: ${bad.join('; ')}`)
-  mark(cx, 'build', { smokeReport: b.smokeReport ?? null, electron: b.electron ?? null, team: b.team ?? null })
+  mark(cx, 'build', { smokeReport: b.smokeReport ?? null, electron: b.electron ?? null, team: b.team ?? null, knownFailures: b.knownFailures ?? [] })
 }
 
 /** 3: the built app hashed, then zipped under a name no other submission has and submitted (#7) */
@@ -1567,6 +1576,7 @@ function writeRecord(cx, status, { reason = null, rel = null, tagTarget = null }
     dr: s?.steps.freeze?.dr ?? null,
     immutable: s?.steps['check-public']?.immutable ?? rel?.immutable ?? null,
     smokeReport: s?.steps.build?.smokeReport ?? null,
+    knownFailures: s?.steps.build?.knownFailures ?? [],
     steps,
     check: s?.steps['check-public'] ?? null,
     ...(s ? {} : { unavailable: LOST }),
