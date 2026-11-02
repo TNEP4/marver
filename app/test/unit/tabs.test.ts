@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { OpenItem } from '../../../src/shared/app-api.ts'
 import { T } from '../../src/main/timings.ts'
 import {
-  activate, activeTab, addressOf, allTabs, applyRestore, canLoad, canvasOrder, closeTab, cycleFrom, displayState, forDigit, getTab, guard, guarded, hashOnly, keptDoc, keyOf, onCommit,
+  activate, activeTab, addressOf, allTabs, applyRestore, canLoad, canvasOrder, closeTab, cycleFrom, displayState, forDigit, getTab, guard, guardAll, guarded, hashOnly, keptDoc, keyOf, onCommit,
   onDocumentGone, onFail, onInPage, onRegistry, onRemoteCommit, onReport, onUnloaded, openForNotice, openRemoteTab, openSettingsTab, ordered, parseTabsFile, remoteLinkPlan, remoteTab,
   restorePlan, safePath, setOpenSender, snapshotFile, tabIdent, unloadRefusal, viewOf, wantsLoad,
   type GuardAnswer, type Tab, type TabsFile,
@@ -213,6 +213,27 @@ describe('tabs.json (v1.12 r1 #5)', () => {
     expect(out.active).toEqual({ kind: 'canvas', ws: WS_A, origin: e.origin })
     expect(out.canvases[0]).toMatchObject({ ws: WS_A, origin: e.origin, path: '/#/b/x' })
     expect(parseTabsFile(JSON.parse(JSON.stringify(out)))).toEqual(out)
+  })
+
+  it('a quit\'s or an update\'s sweep is never the person\'s closes: no closed run added, the snapshot after done the one before (A5.1 #20)', async () => {
+    for (const kind of ['quit', 'update'] as const) {
+      w = world()
+      const a = liveTab(w)
+      liveTab(w, { entry: { ws: 'ab'.repeat(8) } })
+      const c = liveTab(w)
+      // the act as views.ts's closes a view (the person's close, a quit's, an update's): the page closes, its document gone
+      w.actWith = (t) => { onDocumentGone(t, 'none'); return 'done' }
+      expect(await closeTab(c.id)).toBe('closed')                  // the person's close: a closed run
+      show(a.id)
+      a.path = '/#/b/kept'
+      const before = snapshotFile(null, 77)
+      expect(before.closed).toHaveLength(1)
+      w.acts.length = 0
+      expect(await guardAll({ kind })).toBe('done')
+      expect(w.acts.map((x) => x.action.kind)).toEqual([kind, kind])
+      expect(allTabs().filter((t) => t.kind === 'local').every((t) => t.open || t.id === c.id)).toBe(true)
+      expect(snapshotFile(null, 77)).toEqual(before)
+    }
   })
 })
 

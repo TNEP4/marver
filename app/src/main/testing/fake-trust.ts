@@ -14,10 +14,15 @@
  * `mv:doc`'s one-shot reopen flag is kept as the bridge keeps it (`reopenNext` arms it, `reopenCancel` takes it back)
  * and taken by the next document committed on the tab's own origin, trusted or not - an error page never commits
  * here: journaled `fake-trust { doc, reopen }`, the answer that document's `mv:doc` would have had.
+ *
+ * It fakes the canvases' trust alone. The app's own pages - the strip, Home, Settings, the tab pages - are the real
+ * bridge's, as main.ts wires them: registered with it, their `app:ready` and their channels its own (`pages`), and
+ * what main sends them its `send`. Without that no page ever said ready to main, so main sent the strip and every tab
+ * page nothing and they drew blank under this fake - a tab page's words were never seen in its cases.
  */
 import { randomBytes } from 'node:crypto'
 import { session, type WebContents } from 'electron'
-import type { CanvasReports } from '../bridge.ts'
+import { bridgeNow, type CanvasReports } from '../bridge.ts'
 import type { FailWhy, NavAdapter, NavEvent } from '../nav.ts'
 import type { RegistryEntry, RegistryEvent } from '../registry.ts'
 import { localPartition } from '../sessions.ts'
@@ -35,6 +40,7 @@ export function fakeTrust(): TrustPort {
   const admits: { tab: string; doc: string }[] = []
   const reopen = new Set<string>()
   const emit = (e: RegistryEvent) => { for (const f of regFns) f(e) }
+  const bridge = bridgeNow()
   // the canvases already running at launch (restore's cases): MARVER_APP_FAKE_ENTRIES, a JSON array of slot records
   try {
     for (const r of JSON.parse(process.env.MARVER_APP_FAKE_ENTRIES ?? '[]') as RegistryEntry[]) entries.set(r.instance, { ...r, key: Buffer.alloc(32), features: r.features ?? ['bridge'] })
@@ -149,7 +155,8 @@ export function fakeTrust(): TrustPort {
     },
     attach,
     admit(tabId) { const doc = randomBytes(16).toString('base64url'); admits.push({ tab: tabId, doc }); return doc },
-    register() { /* the bridge's capability map: nothing to check here */ },
+    // a canvas: the bridge's capability map and admission, faked here - nothing to check. An app page: the real bridge's
+    register(wc, kind, tabId) { if (kind !== 'canvas' && kind !== 'remote') bridge?.register(wc, kind, tabId) },
     entries: () => [...entries.values()],
     entryFor: (t) => (t.reg ? entries.get(t.reg.instance) : undefined),
     onRegistry(fn) { regFns.add(fn); return () => regFns.delete(fn) },
@@ -159,5 +166,13 @@ export function fakeTrust(): TrustPort {
     reopenNext(tabId) { reopen.add(tabId); note('fake-trust', { reopenNext: tabId }) },
     reopenCancel(tabId) { reopen.delete(tabId); note('fake-trust', { reopenCancel: tabId }) },
     fetchLogo(t, signal) { return logo.on ? fetchLogo(t, signal) : Promise.resolve(null) },
+    // the app pages' plumbing, as main.ts's real port has it (main.ts installs the bridge before it makes this fake)
+    ...(bridge ? {
+      pages: {
+        onReady: (fn) => { bridge.onReady((ctx) => fn(ctx.wc)) },
+        handle: (ch, fn) => bridge.handle(ch, (ctx, p) => fn(ctx.wc, p)),
+        send: (wc, ch, payload) => bridge.send(wc, ch, payload),
+      },
+    } satisfies Pick<TrustPort, 'pages'> : {}),
   }
 }

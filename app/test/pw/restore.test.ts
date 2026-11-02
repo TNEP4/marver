@@ -2,7 +2,8 @@
  * Restoring from tabs.json (spec 28 A2.4, A2.12, A2.14 #23, v1.12 r1 #5), end to end on a test home: the canvases
  * running at launch take their saved paths on their own bound origins, only the active tab loads, the file follows
  * the pages (a board change inside a page included) and is written whole; a file of another version is set aside
- * as tabs.json.bad and the app starts as if it were empty.
+ * as tabs.json.bad and the app starts as if it were empty. After Restart to Update through the fake updater (A5.1 #19,
+ * #34), the restore a quit gets - restoreTabs on and off - and no closed run from the update's own sweep.
  */
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -10,6 +11,7 @@ import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { launchWindow, sleep, type WindowRun } from '../harness/window.ts'
 import { startFakeCanvas, type FakeCanvas } from '../harness/fake-canvas.ts'
+import type { TabsFile } from '../../src/main/tabs.ts'
 
 let w: WindowRun | undefined
 afterAll(async () => { await w?.close() })
@@ -186,4 +188,76 @@ describe('a tabs.json of another version', () => {
     expect(existsSync(join(state, 'tabs.json.bad'))).toBe(true)
     expect(JSON.parse(readFileSync(join(state, 'tabs.json.bad'), 'utf8')).v).toBe(2)
   })
+})
+
+describe('after Restart to Update, the restore a quit gets (A5.1 #19, #34)', () => {
+  /** Restart to Update through the fake updater (MARVER_APP_FAKE_UPDATER=1): pressed in the pill, the app exits by itself */
+  async function restart(run: WindowRun): Promise<number | null> {
+    const end = Date.now() + 10_000
+    while ((await run.run.call<{ state: { phase: { kind: string } } }>('updater')).state.phase.kind !== 'ready') {
+      if (Date.now() > end) throw new Error('the fake update never got ready')
+      await sleep(50)
+    }
+    // pressed with its canvas in front (a clean page has no pill of its own): the active tab is part of the snapshot
+    const p = run.run.pw!.process()
+    const exited = new Promise<number | null>((r) => p.once('exit', (code) => r(code)))
+    expect(await run.run.call('pill:action', { rev: (await run.state()).pill!.rev, act: 'button' })).toBe(true)
+    return Promise.race([exited, sleep(20_000).then(() => null)])
+  }
+  const UPDATE = { MARVER_APP_FAKE_UPDATER: '1', MARVER_APP_FAKE_OFFER: '0.99.2', MARVER_APP_TIMINGS: JSON.stringify({ updateFirstMs: 300 }) }
+
+  for (const restoreTabs of [true, false]) {
+    it(`restoreTabs ${restoreTabs ? 'on: each running canvas on the board it showed, the active one active' : 'off: every running canvas at /, and Home'}`, async () => {
+      let alpha!: FakeCanvas
+      let beta!: FakeCanvas
+      w = await launchWindow('pw', {
+        extraEnv: UPDATE,
+        prepare: async (env, slotBase) => {
+          alpha = await startFakeCanvas({ home: env.home, slotBase, slot: 5, name: 'Alpha' })
+          beta = await startFakeCanvas({ home: env.home, slotBase, slot: 6, name: 'Beta' })
+          await Promise.all([alpha.ready, beta.ready])
+          mkdirSync(join(env.home, 'state-dev'), { recursive: true })
+          writeFileSync(join(env.home, 'state-dev', 'launched'), '')
+          if (!restoreTabs) writeFileSync(join(env.home, 'config.json'), '{ "restoreTabs": false }\n')
+          return { extraEnv: { MARVER_APP_FAKE_ENTRIES: JSON.stringify([recOf(alpha), recOf(beta)]) }, fakes: [alpha, beta] }
+        },
+      })
+      const s0 = await w.until((x) => x.tabs.filter((t) => t.kind === 'local').length === 2, 5000, 'two canvas tabs')
+      const a = s0.tabs.find((t) => t.reg?.instance === alpha.instance)!
+      const b = s0.tabs.find((t) => t.reg?.instance === beta.instance)!
+      for (const t of [a, b]) {
+        await w.run.call('activate', { id: t.id })
+        await w.until((x) => !!x.tabs.find((q) => q.id === t.id)?.doc?.lifted, 10_000, `${t.name} lifted`)
+        await w.report(t.id, { unsaved: false })
+      }
+      await w.run.call('exec', { target: a.id, js: "location.hash = '#/b/where-it-was'; 1" })
+      await w.until((x) => x.tabs.find((t) => t.id === a.id)!.path === '/#/b/where-it-was', 3000, 'the board followed')
+      await w.run.call('activate', { id: a.id })
+      const env = w.env
+      // the restart: its snapshot, the person's board in a tab never closed by them
+      expect(await restart(w)).toBe(0)
+      await w.close({ keep: true })
+      const file = JSON.parse(readFileSync(join(env.home, 'state-dev', 'tabs.json'), 'utf8')) as TabsFile
+      expect(file.closed).toEqual([])                                         // the sweep's closes are not the person's
+      expect(file.active).toEqual({ kind: 'canvas', ws: alpha.ws, origin: alpha.origin })
+
+      // the next launch, as the version it went to: what a quit restores, no more
+      w = await launchWindow('pw', { env, extraEnv: { MARVER_APP_FAKE_UPDATER: '1', MARVER_APP_FAKE_VERSION: '0.99.2', MARVER_APP_FAKE_ENTRIES: JSON.stringify([recOf(alpha), recOf(beta)]) } })
+      const s = await w.until((x) => x.tabs.filter((t) => t.kind === 'local').length === 2, 5000, 'two canvas tabs again')
+      const a2 = s.tabs.find((t) => t.reg?.instance === alpha.instance)!
+      const b2 = s.tabs.find((t) => t.reg?.instance === beta.instance)!
+      if (restoreTabs) {
+        expect(s.active).toBe(a2.id)
+        expect(a2.path).toBe('/#/b/where-it-was')
+        expect(b2).toMatchObject({ open: true, hasView: false })   // only the active tab loads
+      } else {
+        expect(s.active).toBe('home')
+        expect([a2.path, b2.path]).toEqual(['/', '/'])
+      }
+      await w.close()
+      w = undefined
+      await alpha.close()
+      await beta.close()
+    })
+  }
 })

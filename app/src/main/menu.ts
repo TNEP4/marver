@@ -18,12 +18,16 @@
  * rebuilt (debounced 100 ms) when the active tab, its items or a tab's state change. A2's items: all of A2.7 but
  * the performance report and Check for Updates (A5); A3 adds Mark a Flash (⌃⌥F) to Help. A4 (A4.6 #49): a shared
  * canvas's File items are Open in Browser and Copy Link, its View items Reload and Force Reload - no Reveal in
- * Finder, no Mark All as Seen, no canvas items.
+ * Finder, no Mark All as Seen, no canvas items. A5 (A5.1 #22, #28, #29): the updater's item after About Marver - its
+ * label and enablement update-model.ts's `menuItem`, its click the same entry the pill calls, acting only while its
+ * token holds; the model is part of the key, so every state change rebuilds - Help's Export Performance Report…, and
+ * Marver Help on the install page.
  */
 import type { MenuItemConstructorOptions } from 'electron'
 import type { MenuItem } from '../../../src/shared/app-api.ts'
 import type { TabKind } from '../shared/channels.ts'
 import { ACCELERATORS, type AppCommand } from './keys.ts'
+import type { UpdateMenuItem, UpdateToken } from './update-model.ts'
 import { T } from './timings.ts'
 
 /** What a click must still find (v1.10 r1 #10). */
@@ -45,6 +49,8 @@ export interface MenuModel {
   tabs: { id: string; name: string; word?: string; key?: number; active: boolean; token: MenuToken }[]
   /** macOS 14 and later draw `header` items; before, a disabled item stands in (A2.14 #24) */
   header: boolean
+  /** A5.1 #22: the updater's item after About Marver (update-model.ts's `menuItem`); null, none (`blocked feed`) */
+  update: UpdateMenuItem | null
 }
 
 export interface MenuActs {
@@ -54,11 +60,16 @@ export interface MenuActs {
   tab(t: MenuToken, what: 'activate' | 'open-browser' | 'reveal' | 'copy-link' | 'reload' | 'force-reload'): void
   help(): void
   perfFiles(): void
+  /** A5.1 #22: the same entry the pill calls; acts only while the token (state and version) still holds */
+  update(token: UpdateToken): void
+  /** A5.1 #28: Help > Export Performance Report…, a save panel, then the file shown in Finder */
+  exportReport(): void
   /** build the menu again now (after any canvas item's click: the mark shows the page's state) */
   rebuild(): void
 }
 
-export const HELP_URL = 'https://github.com/TNEP4/marver#readme'
+/** Help > Marver Help: the install page on GitHub (A5.1 #29, #30), `docs/app.md` in the marver repo. */
+export const HELP_URL = 'https://github.com/TNEP4/marver/blob/main/docs/app.md'
 
 const sep: MenuItemConstructorOptions = { type: 'separator' }
 
@@ -85,7 +96,8 @@ export function menuTemplate(m: MenuModel, acts: MenuActs): MenuItemConstructorO
 
   return [
     { label: 'Marver', submenu: [
-      { role: 'about' }, sep,
+      { role: 'about' },
+      ...(m.update ? [((u) => ({ id: 'update', label: u.label, enabled: u.enabled, click: () => { if (u.token) acts.update(u.token) } }))(m.update)] : []), sep,
       cmd('settings', 'Settings…'), sep,
       { role: 'services' }, sep,
       { role: 'hide', accelerator: 'Cmd+H' }, { role: 'hideOthers', accelerator: 'Alt+Cmd+H' }, { role: 'unhide' }, sep,
@@ -134,6 +146,7 @@ export function menuTemplate(m: MenuModel, acts: MenuActs): MenuItemConstructorO
       { label: 'Marver Help', click: () => acts.help() }, sep,
       cmd('mark-flash', 'Mark a Flash'),
       { label: 'Show Performance Files', click: () => acts.perfFiles() },
+      { label: 'Export Performance Report…', click: () => acts.exportReport() },
     ] },
   ]
 }

@@ -13,7 +13,11 @@
  *      mark's picture, `flashMarked`), a missed notice A4;
  *   3. the files: "Settings not applied", "Files not saved" (A2.12, A2.14 #24);
  *   4. a dismissible offer - A4's notices offer (A4.6 #26: "Get a notice when a canvas needs you", Turn On; its
- *      actions are notify.ts's, through `setOfferActions`), and A2's test-only kind; 5. the update (A5).
+ *      actions are notify.ts's, through `setOfferActions`), and A2's test-only kind;
+ *   5. the update (A5.1 #21): the updater's state, not the tab hold's - "1.0.1 is ready" (Restart to Update), "1.0.1
+ *      waits for <the tab>" (Try Again, bound to that tab and its document), "1.0.1 couldn't be installed" (Download,
+ *      dismissible). update-model.ts's `pillOf` chooses it; its buttons act through the model's `act`, which acts only
+ *      while each one's requirement holds - a click that no longer holds does nothing, and the pill is chosen again.
  * Lifetimes: a confirmation's 4 s count only while it is on screen and the window shown; one pushed off keeps
  * what it has left; one not shown within 30 s is dropped (its record - the crash - stays); one of each kind waits,
  * a newer replaces it. The unsaved pill lasts while the page's own `unsaved` is true (10 s for a record that is not
@@ -25,6 +29,7 @@ import type { PillView } from '../shared/channels.ts'
 import { startCommandShown } from '../shared/command.ts'
 import { T } from './timings.ts'
 import { activeTab, fresh, getTab, keptDoc, liveDoc, type Tab } from './tabs.ts'
+import type { UpdatePill, UpdateToken } from './update-model.ts'
 
 type Kind = PillView['kind']
 /** What a pill is about; `about` names it for "the same pill" (no new rev for the same thing). */
@@ -43,6 +48,9 @@ interface Rec {
   dismissible?: boolean
   /** a confirmation's button acts on this (a flash's picture, `flashes/<id>.png` under perf/) */
   ref?: string
+  /** tier 5's button and its dismiss: what each click asks of the updater (A5.1 #21) */
+  token?: UpdateToken
+  dismissToken?: UpdateToken
 }
 
 export interface PillPorts {
@@ -76,6 +84,35 @@ let offerActs: OfferActions | null = null
 export function setOfferActions(a: OfferActions | null): void { offerActs = a }
 const dismissed = new Set<string>()
 
+/** Tier 5 (A5.1 #21): the update's pill as update-model.ts's `pillOf` reads the state, and the model's one entry. */
+let update: { rec: Rec; act: (t: UpdateToken) => boolean } | null = null
+/** The updater's state changed (updater.ts): the pill it reads, or null; chosen again at once. */
+export function setUpdatePill(p: UpdatePill | null, act: (t: UpdateToken) => boolean): void {
+  update = p ? { rec: updateRec(p), act } : null
+  recompute()
+}
+/**
+ * #21: a waiting update goes back to `ready` when its tab closes, its document changes, or - a report of it just
+ * accepted (`reportTab`) - its fresh `unsaved` turned false: `mv:busy`'s `unsaved`, never `busy`, which a Jam session
+ * holds. A tab switch or a stale report changes nothing. updater.ts asks after every report and every tab change.
+ */
+export function waitingEnds(w: { tab: string; commit: number }, reportTab?: string): boolean {
+  const t = getTab(w.tab)
+  if (!t || !t.open || (t.doc?.commits ?? 0) !== w.commit) return true
+  return reportTab === w.tab && fresh(t) && t.reports.busy?.unsaved === false
+}
+
+function updateRec(p: UpdatePill): Rec {
+  return {
+    kind: 'update', about: `update:${p.show}:${p.version}:${p.tab ?? ''}:${p.commit ?? ''}`,
+    ...(p.tab !== undefined ? { tab: p.tab, commit: p.commit } : {}),
+    lead: p.text, text: '', short: p.short,
+    button: { label: p.button.label, style: p.show === 'ready' ? 'accent' : 'plain' }, token: p.button.token,
+    ...(p.tooltip ? { tooltip: p.tooltip.slice(0, 199) } : {}),
+    ...(p.dismiss ? { dismissible: true, dismissToken: p.dismiss } : {}),
+  }
+}
+
 let rev = 0
 let shown: Rec | null = null
 let timer: ReturnType<typeof setTimeout> | undefined
@@ -83,7 +120,7 @@ let wasVisible = true
 
 /** Test seam. */
 export function resetPill(): void {
-  confirms.clear(); conds.clear(); dismissed.clear(); rev = 0; shown = null; wasVisible = true
+  confirms.clear(); conds.clear(); dismissed.clear(); rev = 0; shown = null; wasVisible = true; update = null
   if (timer) clearTimeout(timer)
   timer = undefined
 }
@@ -147,7 +184,7 @@ export function recompute(): void {
     else if (w.left === T.pillConfirmMs && now - w.created >= T.pillDropMs) { confirms.delete(k); p.log?.('pill', { dropped: k }) }   // never shown in 30 s
   }
   const oldest = [...confirms.values()].sort((a, b) => a.created - b.created)[0]
-  const next = tier1(activeTab(), now) ?? oldest?.rec ?? conds.get('files') ?? conds.get('offer') ?? conds.get('test') ?? null
+  const next = tier1(activeTab(), now) ?? oldest?.rec ?? conds.get('files') ?? conds.get('offer') ?? conds.get('test') ?? update?.rec ?? null
   if (next?.kind === 'confirmation' && visible) confirms.get(next.sub!)!.since = now
   if (!(next && shown && next.about === shown.about)) {
     shown = next
@@ -173,7 +210,7 @@ function arm(now: number): void {
 }
 
 /** A confirmation (tier 2): "Reloaded after a crash" in A2, "Flash marked" in A3. One of each kind waits; a newer replaces it. */
-export function confirm(sub: 'crash-reloaded' | 'flash' | 'notice-missed', o: { tab?: string; lead?: string; text: string; short: string; button?: PillView['button']; ref?: string }): void {
+export function confirm(sub: 'crash-reloaded' | 'flash' | 'notice-missed' | 'update', o: { tab?: string; lead?: string; text: string; short: string; button?: PillView['button']; ref?: string }): void {
   const now = ports?.now() ?? Date.now()
   const rec: Rec = { kind: 'confirmation', about: `confirm:${sub}:${now}`, sub, icon: 'check', ...o }
   confirms.set(sub, { rec, left: T.pillConfirmMs, created: now })
@@ -229,6 +266,9 @@ export function onPillAction(r: number, act: 'button' | 'dismiss'): boolean {
   const t = rec.tab ? getTab(rec.tab) : undefined
   if (act === 'dismiss') {
     if (!rec.dismissible) return false
+    // the update's failure (A5.1 #21): Dismiss clears it in the model, only while its requirement holds - nothing of it
+    // is kept here, so a later failure shows again
+    if (rec.kind === 'update') return !!rec.dismissToken && !!update && update.act(rec.dismissToken)
     dismissed.add(rec.about)
     for (const [k, c] of conds) if (c === rec) conds.delete(k)
     recompute()
@@ -246,6 +286,9 @@ export function onPillAction(r: number, act: 'button' | 'dismiss'): boolean {
     case 'confirmation': if (rec.sub === 'flash' && rec.ref && p.showFlash) { p.showFlash(rec.ref); return true } return false
     // Turn On: notifications true as Settings would write it; the offer goes once that write is made (A4.6 #26)
     case 'offer': if (offerActs) { offerActs.turnOn(); return true } return false
+    // Restart to Update, Try Again, Download (A5.1 #21): the model acts only while the record's requirement holds; a
+    // waiting pill's tab and document were checked above
+    case 'update': return !!rec.token && !!update && update.act(rec.token)
     default: return false
   }
 }

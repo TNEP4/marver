@@ -19,7 +19,7 @@ const SETUP = [join(import.meta.dirname, 'test', 'global-setup.ts')]
 export default defineConfig({
   // the dev flavour's build constants (src/env.d.ts), for unit tests that import main's modules (with `electron`
   // mocked): test hooks compiled in, switched off without MARVER_APP_TEST=1
-  define: { __MARVER_RELEASE__: 'false', __MV_TEST__: 'true' },
+  define: { __MARVER_RELEASE__: 'false', __MV_TEST__: 'true', __MARVER_FEED__: '""' },
   test: {
     // one file at a time, across projects too: two apps at once would fight over focus and the machine
     fileParallelism: false,

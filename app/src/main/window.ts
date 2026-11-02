@@ -58,6 +58,7 @@ import { bumpAll, bumpGen, epochOf, flush as presentFlush, genOf, gpuGone, liftA
 import { appMetrics, identity, recorder } from './recorder.ts'
 import type { TabIdent } from '../../../src/shared/app-perf.ts'
 import { coverReady, makeCover, type Cover } from './cover.ts'
+import { isQuitting } from './shutdown.ts'
 
 export { STRIP_HEIGHT }
 
@@ -71,8 +72,6 @@ export interface WindowDeps {
   register(wc: WebContents, kind: PageKind, tabId?: string): void
   /** keys (before-input-event), and anything else every app view gets */
   wire(wc: WebContents, kind: PageKind, tabId?: string): void
-  /** the window's red button and ⇧⌘W hide it; the quit itself is main.ts's guarded quit */
-  quitting(): boolean
   /** the bridge's send (it checks the page is ready and on its pinned document); else main sends itself */
   send?(wc: WebContents, channel: string, payload: unknown): boolean
   /** A3: `mv:present` to a tab's admitted document (bridge.ts `present`): compose's request after the turn's view changes (A3.8 #27) */
@@ -750,8 +749,10 @@ export function openWindow(d?: WindowDeps): BaseWindow {
   // quitting: every open epoch's record, before the recorder's last write (main.ts's will-quit flushSync)
   app.prependListener('will-quit', () => presentQuitting(Date.now()))
   win.on('close', (e) => {
-    // ⇧⌘W and the red button hide the window: the views stay as they are (A2.2)
-    if (deps?.quitting()) return
+    // ⇧⌘W and the red button hide the window: the views stay as they are (A2.2). Quitting - a quit, or Restart to
+    // Update, whose quitAndInstall() would otherwise wait for good on a close cancelled here (A5.1 #16) - it closes:
+    // the shutdown coordinator's one flag (shutdown.ts), set before either
+    if (isQuitting()) return
     e.preventDefault()
     win?.hide()
   })

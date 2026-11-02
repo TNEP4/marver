@@ -1,5 +1,42 @@
 # Changelog - the Marver Mac app
 
+## 1.0.0 - unreleased
+
+The first public release: notarised by Apple, and from now on Marver keeps itself up to date.
+
+Use it with canvases on marver 0.29.0 or later, which marks, notices and live pictures need; a canvas on 0.27 or 0.28
+shows in a tab and asks before losing unsaved work, without them. It is also the first public build of 0.3.0's work:
+marks, notices, shared canvases in tabs and live pictures. How to install, update and remove it:
+[the install page](https://github.com/TNEP4/marver/blob/main/docs/app.md).
+
+- **One download, always the latest.**
+  [Marver-arm64.dmg](https://github.com/TNEP4/marver-app/releases/latest/download/Marver-arm64.dmg), for Apple silicon
+  and macOS 13 or later. The app and its disk image are signed with a Developer ID and notarised by Apple, so macOS
+  asks one question at the first open, because the app was downloaded.
+- **Marver moves itself to Applications.** Opened from the disk image or another folder while Applications holds no
+  Marver, it copies itself there without asking, opens from there and says "Marver moved itself to Applications."
+  once. Opened from the disk image, macOS asks its question again at the moved copy. With a Marver of this version or
+  newer already there, it offers Open It. With an older one ("To replace it, drag this Marver into Applications and
+  choose Replace."), or anything else of that name, it says what it found and what to do, and Show Both opens both in
+  Finder: Marver never replaces, renames or deletes an app itself, and never asks for an administrator's password.
+- **Updates on their own.** From the Applications folder, Marver checks 30 seconds after it opens, every 4 hours and
+  when the Mac wakes, and downloads an update quietly. Marver > Check for Updates… checks now and answers in the strip
+  ("Marver 1.0.0 is up to date"). A copy outside Applications, or one this account can't change, does not update, and
+  the Marver menu says why: Updates Need the Applications Folder… or Updates Unavailable….
+- **Restart to Update.** A downloaded update shows in the strip as "1.0.1 is ready", with Restart to Update; the
+  Marver menu reads Restart to Install Update. It closes your canvases as a quit does, so a canvas with unsaved work
+  holds it: its tab comes forward, and the strip says "1.0.1 waits for Checkout" (that canvas's name), with Try Again.
+  Marver never restarts by itself; not pressed, the update installs at your next quit.
+- **After an update, Marver opens as it does after a quit**: each running canvas's tab on the board it showed (with
+  Reopen tabs at launch on), and "Updated to 1.0.1", once. Shared canvases reopen from Home. An update that did not
+  install says "1.0.1 couldn't be installed", with Download.
+- **Export Performance Report…** in the Help menu, and on a canvas's page that keeps crashing: the last 7 days of the
+  app's own records as one JSON file you save and can read - your Mac, the app's CPU and memory by the hour, and
+  crashes, hangs and flashes as counts and times. No board or canvas names, links, paths, error text or pictures, and
+  nothing is uploaded. Attach it to an issue on TNEP4/marver.
+- **An earlier Marver is replaced by hand, once.** Builds before 1.0 have no updater: quit it, install 1.0, and drag
+  the old copy to the Trash (`~/Applications/Marver.app` included). Your settings and tabs stay.
+
 ## 0.3.0 - unreleased (spec 28 A4)
 
 Marks, notices, a notice's click and live pictures need a canvas on marver 0.29.0: a canvas on 0.28 or earlier shows

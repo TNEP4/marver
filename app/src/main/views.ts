@@ -49,7 +49,7 @@ import type { AppState, MenuItem, Present, Presented } from '../../../src/shared
 import type { AppBody, AppKind, TabIdent } from '../../../src/shared/app-perf.ts'
 import { docProof } from '../../../src/server/proof.ts'
 import { readAtMost } from './proof.ts'
-import type { Files, Home } from './config.ts'
+import { values, type Files, type Home } from './config.ts'
 import { bridgeNow, type CanvasReports } from './bridge.ts'
 import { attachNav, type NavAdapter, type NavEvent } from './nav.ts'
 import type { RegistryEntry, RegistryEvent } from './registry.ts'
@@ -62,12 +62,14 @@ import {
   activate, activeTab, addressOf, allTabs, applyRestore, cameraKept, canLoad, canvasOrder, closeTab, cycleFrom, displayState, forDigit, getTab, guard,
   guardAll, hasBridge, hashOnly, isActive, isCanvasTab, keptDoc, keyOf, linkOpens, liveDoc, onCommit, onDocumentGone, onFail, onInPage, onRegistry, onRemoteAbort, onRemoteCommit, onReport, onUnloaded, openRemoteTab, openSettingsTab,
   ordered, parseTabsFile, remoteLinkPlan, remoteTab, reopenTab, restorePlan, safePath, savedPathIn, setTabsPorts, sheetBox, sheetConfirmed, sheetText, snapshotFile, startReopen, stuckUnloads, tabName,
-  unloadClosing, viewlessAct, type GuardAllAction, type GuardAction, type GuardAnswer, type Sheet, type Tab, type TabsFile,
+  unloadClosing, viewlessAct, type GuardAction, type GuardAnswer, type Sheet, type Tab, type TabsFile,
 } from './tabs.ts'
 import {
-  copyDetails, forgetTab, hangDecision, hangSheetText, onAttemptFailed, onLifted, onlineTick, onShown, onViewClosed, personReload, recover,
+  copyDetails, forgetTab, hangDecision, hangSheetText, onAttemptFailed, onLifted, onlineTick, onShown, onViewClosed, pageOffers, personReload, recover,
   reloadIsPersons, scheduleRetry, setTabpagePorts, wantsOnline, type ProcessSnapshot,
 } from './tabpage.ts'
+import { exportReport, type ExportResult } from './report.ts'
+import { flushQueued } from './perflog.ts'
 import {
   appPrefs, APP_ORIGIN, attachContent, captureWindow, compose, contentView, detachContent, hideWindow, mainWindow, onAppReady, openWindow,
   pageOf, pageView, sendHeld, sendPill, showWindow, stripContents, viewsNow, windowVisible,
@@ -79,6 +81,8 @@ import { answer as presentAnswer, forget as presentForget, gpuGone, noteGpu } fr
 import { appMetrics, gpuIdentity, recorder, sampler } from './recorder.ts'
 import { lastPressure } from './pressure.ts'
 import { actUnload as unloadAct, forceUnload, takeAct, unloadGone as actGone, type ActPorts } from './unload-act.ts'
+import { isQuitting, request as shutdownRequest, shutdownState, startShutdown, type RestartAlert } from './shutdown.ts'
+import { updateAct, updateMenu, updaterTabs } from './updater.ts'
 
 export const PRELOAD_CANVAS = join(__dirname, 'preload-canvas.cjs')
 
@@ -138,7 +142,7 @@ export interface HomeNotes {
   gone(ws: string): void
   /** A4 (A4.6 #47): a shared canvas committed or moved its place - Home's Shared canvases keep it (home.ts noteShared) */
   shared?(c: { url: string; host: string }): void
-  /** the quit, once guardAll answered 'done', before app.quit(): every canvas still running seen now */
+  /** the quit, once guardAll answered 'done', before app.quit() (shutdown.ts): every canvas still running seen now */
   quitting?(running: string[]): void
 }
 
@@ -152,11 +156,18 @@ export interface TabsStore {
   read(): TabsFile | undefined
   /** the latest state, written debounced */
   set(file: TabsFile): void
-  /** what waits, written now (the quit) */
-  flushSync(): void
+  /** what waits, written now (the quit): true when it is on disk (A5.1 #20, fsx.ts `StateWriter.flushSync`) */
+  flushSync(): boolean
 }
 
-export interface StartInput { trust: TrustPort; home: Home; files: Files; firstLaunch?: boolean; notes?: HomeNotes; tabsStore?: TabsStore }
+export interface StartInput {
+  trust: TrustPort; home: Home; files: Files; firstLaunch?: boolean; notes?: HomeNotes; tabsStore?: TabsStore
+  /**
+   * A5.1 #15: the shutdown coordinator's `flushAll` port, run once at `done` before the end - the presentation records,
+   * the recorder's queue, notices.json (main.ts's, which also run at will-quit; each idempotent)
+   */
+  flushAll?(): void
+}
 
 const j = (topic: string, data: unknown) => { if (__MV_TEST__) note(topic, data) }
 
@@ -179,13 +190,13 @@ let homeDir: Home
 let notes: HomeNotes | undefined
 /** the instance each tab was last noted verified on: Recently here hears once per instance */
 const notedVerified = new Map<string, string>()
-let quitting = false
 const canvases = new Map<string, { view: WebContentsView; nav: NavAdapter; off: () => void }>()
 const making = new Map<string, Promise<WebContentsView | null>>()
 const unattributedTimers = new Map<string, ReturnType<typeof setTimeout>>()
 let macModel: string | undefined
 
-export const isQuitting = (): boolean => quitting
+/** The one flag lives in the shutdown coordinator (A5.1 #15); kept here for the readers that took it from views.ts. */
+export { isQuitting }
 
 // ---------------------------------------------------------------------------------------------------------------
 // Canvas views (A2.4: lazy, kept, never re-added)
@@ -840,7 +851,7 @@ export function runCommand(c: AppCommand, via: 'key' | 'menu'): void {
     case 'reload': reloadActive(false); return
     case 'force-reload': reloadActive(true); return
     case 'settings': showWindow(); openSettingsTab(); return
-    case 'quit': app.quit(); return
+    case 'quit': shutdownRequest('quit'); return
     case 'hide': app.hide(); return
     case 'hide-others': Menu.sendActionToFirstResponder('hideOtherApplications:'); return
     case 'minimize': win?.minimize(); return
@@ -1069,14 +1080,19 @@ function tabAct(k: MenuToken, what: 'activate' | 'open-browser' | 'reveal' | 'co
  * Reveal in Finder and Open in Browser, run in main from the tab's record. A test run never opens a Finder window
  * or a browser on the screen of whoever is at the Mac: recorded instead, as effects.ts records its copies.
  */
-const outside: { revealed: string[]; opened: string[] } = { revealed: [], opened: [] }
+const outside: { revealed: string[]; opened: string[]; shown?: string[] } = { revealed: [], opened: [] }
 const recordOutside = (): boolean => __MV_TEST__ && testMode() && process.env.MARVER_APP_REAL_EFFECTS !== '1'
 function reveal(t: Tab): void {
   if (!t.root) return
   if (__MV_TEST__ && recordOutside()) { outside.revealed.push(t.root); return }
   shell.showItemInFolder(t.root)
 }
-function openOutside(url: string): void {
+/** A5.1 #22: the app itself selected in Finder (Updates Need the Applications Folder…'s Show in Finder). */
+export function showOutside(path: string): void {
+  if (__MV_TEST__ && recordOutside()) { (outside.shown ??= []).push(path); return }
+  shell.showItemInFolder(path)
+}
+export function openOutside(url: string): void {
   if (__MV_TEST__ && recordOutside()) { outside.opened.push(url); return }
   void shell.openExternal(url)
 }
@@ -1154,11 +1170,7 @@ export const pageHandlers = {
     const t = pg ? getTab(pg.tab) : undefined
     if (!pg || !t || !pg.body || rev !== pg.rev) { j('tabpage', { refused: action, rev, latest: pg?.rev }); compose(); return false }
     const b = pg.body
-    const offers: TabPageAction[] = b.page === 'stopped' ? (b.retained ? ['retry', 'copy-start', 'reveal', 'close'] : ['copy-start', 'reveal', 'close'])
-      : b.page === 'unverified' ? ['retry', 'close']
-        : b.page === 'unreachable' ? (t.kind === 'remote' ? ['retry', 'open-browser', 'close'] : ['retry', 'close'])
-          : b.page === 'crashed' && b.latched ? ['reload', 'copy-details'] : []
-    if (!offers.includes(action)) { j('tabpage', { refused: action, page: b.page }); return false }
+    if (!pageOffers(b, t.kind === 'remote').includes(action)) { j('tabpage', { refused: action, page: b.page }); return false }
     j('tabpage', { tab: t.id, action })
     switch (action) {
       case 'retry':
@@ -1171,6 +1183,8 @@ export const pageHandlers = {
       case 'reload': personReload(t); compose(); return true
       case 'copy-start': if (t.root) effects.copy(startCommand({ root: t.root, port: t.reg?.slot == null ? t.reg?.port : null })); return true
       case 'copy-details': effects.copy(details(t)); return true
+      // A5.1 #28: the latched page's Export Performance Report…, the menu's own export (the report names no canvas)
+      case 'export-report': void exportNow('tabpage'); return true
       case 'reveal': reveal(t); return true
       case 'close': void closeTab(t.id); return true
       default: return false
@@ -1201,6 +1215,28 @@ function details(t: Tab): string {
   })
 }
 
+/**
+ * The performance report (A5.1 #28): Help > Export Performance Report… and the latched crashed page's button. The
+ * save panel a sheet on the window when it shows; the report made from this flavour's log under the home's perf/
+ * (report.ts), written whole and shown in Finder; a failure an alert. A test build records the panel, Finder and
+ * the alert (effects.ts) and journals each export's `report` line with its result.
+ */
+function exportNow(via: 'menu' | 'tabpage'): Promise<ExportResult> {
+  const parent = () => (windowVisible() ? mainWindow() ?? null : null)
+  j('report', { via })
+  return exportReport({
+    savePanel: (path) => effects.savePanel(path, parent()),
+    showItem: (file) => effects.showItem(file),
+    alert: (message, detail) => effects.alert(message, detail, parent()),
+    flush: () => flushQueued(),
+    downloads: () => safely(() => app.getPath('downloads')) ?? join(homedir(), 'Downloads'),
+    input: () => ({
+      perfDir: join(homeDir.dir, 'perf'), flavour: __MARVER_RELEASE__ ? 'release' : 'dev', keepPerfDays: values().config.keepPerfDays,
+      now: Date.now(), version: app.getVersion(), electron: process.versions.electron ?? '', macos: process.getSystemVersion(),
+    }),
+  }).then((r) => { j('report', { via, ...r }); return r })
+}
+
 /** `mv:menu-click` for the active canvas's own items, only while its token holds. */
 function canvasClick(k: MenuToken, id: string): void {
   const t = getTab(k.tab)
@@ -1223,6 +1259,7 @@ function menuModel(): MenuModel {
     canvas: trusted && a.reports.menu?.length ? { token: tokenOf(a), items: a.reports.menu } : null,
     tabs: tabsList,
     header: Number(process.getSystemVersion().split('.')[0]) >= 14,
+    update: updateMenu(),                                            // A5.1 #22: the updater's item, none before it starts
   }
 }
 
@@ -1237,20 +1274,25 @@ function ownStore(h: Home): TabsStore {
   const path = () => join(h.state, 'tabs.json')
   let waiting: TabsFile | undefined
   let timer: ReturnType<typeof setTimeout> | undefined
-  const write = () => {
+  let lastOk = true
+  const write = (): boolean => {
     if (timer) { clearTimeout(timer); timer = undefined }
     const file = waiting
     waiting = undefined
-    if (!file || !h.writable) return
+    if (!h.writable) return false
+    // nothing waited: as the last write went (A5.1 #20)
+    if (!file) return lastOk
     try {
       mkdirSync(h.state, { recursive: true, mode: 0o700 })
       const tmp = `${path()}.${randomBytes(6).toString('hex')}.tmp`
       const fd = openSync(tmp, 'w', 0o600)
       try { writeSync(fd, JSON.stringify(file, null, 2) + '\n'); fsyncSync(fd) } finally { closeSync(fd) }
       renameSync(tmp, path())
+      return lastOk = true
     } catch (err) {
       j('tabs.json', { writeFailed: (err as NodeJS.ErrnoException).code })
       setCondition('files', { lead: 'Files not saved', text: '', short: 'Files not saved', tooltip: 'The app could not write ~/.marver/state' })
+      return lastOk = false
     }
   }
   return {
@@ -1269,7 +1311,7 @@ function ownStore(h: Home): TabsStore {
     },
     set(file) {
       waiting = file
-      if (!timer) { timer = setTimeout(write, T.stateDebounceMs); (timer as { unref?: () => void }).unref?.() }
+      if (!timer) { timer = setTimeout(() => void write(), T.stateDebounceMs); (timer as { unref?: () => void }).unref?.() }
     },
     flushSync: write,
   }
@@ -1277,17 +1319,20 @@ function ownStore(h: Home): TabsStore {
 
 /** The model's snapshot to the store (written debounced 1 s). */
 function saveSoon(): void {
-  if (quitting || !store) return
+  if (isQuitting() || !store) return
   tabsFile = snapshotFile(tabsFile, Date.now())
   store.set(tabsFile)
 }
 
-/** The quit's snapshot (v1.10 r5): handed over and written now. */
-export function writeTabsNow(): void {
-  if (!store) return
+/**
+ * The shutdown's snapshot (v1.10 r5; A5.1 #15, #20): handed over and written now. True when it is on disk - the
+ * coordinator notes a false and goes on (the files pill already says so).
+ */
+export function writeTabsNow(): boolean {
+  if (!store) return false
   tabsFile = snapshotFile(tabsFile, Date.now())
   store.set(tabsFile)
-  store.flushSync()
+  return store.flushSync()
 }
 
 /** The workspaces of the canvases running now (the registry's starting and ready entries). */
@@ -1339,7 +1384,8 @@ export function startViews(i: StartInput): void {
   }
   setTabsPorts({
     now: () => Date.now(), home, appDark: () => nativeTheme.shouldUseDarkColors,
-    changed: (o) => { ensureAppViews(); compose(o) }, load, appState: sendState, act, ask, forget, save: saveSoon,
+    // a waiting update looks at its tab after every change: closed, or its document changed (A5.1 #21)
+    changed: (o) => { ensureAppViews(); compose(o); updaterTabs() }, load, appState: sendState, act, ask, forget, save: saveSoon,
     shown: (t) => { onShown(t); refreshLogo(t) }, forward,
     recheck: (t) => scheduleRetry(t, { now: true }),
     // Home's Shared canvases (A4.6 #47): the place, never a sign-in URL (tabs.ts moves it only to a shell page)
@@ -1374,7 +1420,6 @@ export function startViews(i: StartInput): void {
   openWindow({
     register: (wc, kind, tabId) => trust.register(wc, kind, tabId),
     wire: (wc) => keys(wc),
-    quitting: () => quitting,
     ...(trust.pages ? { send: trust.pages.send } : {}),
     present: (tabId, doc, r) => trust.present?.(tabId, doc, r) ?? false,
     afterCompose: () => recorder.tabsChanged(),
@@ -1404,7 +1449,7 @@ export function startViews(i: StartInput): void {
   // A2.4: a local tab's logo is fetched once its entry is ready - for the canvases running at launch too, so a tab
   // not yet shown wears its logo in the strip and on Home rather than its initials until its first showing
   for (const t of allTabs()) if (t.kind === 'local' && t.reg?.state === 'ready') refreshLogo(t)
-  trust.onReport((tabId, doc, r) => { onReport(tabId, doc, r); invalidateMenu() })
+  trust.onReport((tabId, doc, r) => { onReport(tabId, doc, r); invalidateMenu(); updaterTabs(tabId) })
 
   startMenu({
     model: menuModel,
@@ -1414,6 +1459,8 @@ export function startViews(i: StartInput): void {
       tab: (k, what) => tabAct(k, what),
       help: () => openOutside(HELP_URL),
       perfFiles: () => effects.openPath(join(homeDir.dir, 'perf')),
+      update: (t) => { updateAct(t) },                                 // A5.1 #22: the pill's entry too; acts only while its token holds
+      exportReport: () => { void exportNow('menu') },                  // A5.1 #28
       rebuild: () => buildNow(true),
     },
   })
@@ -1447,63 +1494,46 @@ export function startViews(i: StartInput): void {
     return true
   })
 
-  // ⌘Q, the menu, the Dock: every canvas tab through guardAll (A2.2, v1.13 r2 #2, v1.14 r3 #1)
-  let quitInFlight = false
-  app.on('before-quit', (e) => {
-    if (quitting) return
-    e.preventDefault()
-    if (quitInFlight) return
-    quitInFlight = true
-    try { writeTabsNow() } catch (err) { j('quit', { tabsJson: String((err as Error)?.message ?? err) }) }   // the session as the quit starts
-    j('quit', { asked: true })
-    void guardAll({ kind: 'quit' }).catch((err: unknown) => {
-      // a throw in the guard (its sheet, an act, a compose): this quit is refused, never the next one - a quit left
-      // in flight would swallow every later ⌘Q, Dock quit and logout until Force Quit
-      j('quit', { error: String((err as Error)?.message ?? err) })
-      return 'refused' as const
-    }).then((r) => {
-      quitInFlight = false
-      j('quit', { answer: r })
-      // an unload's close that has not ended (code review r2 #1): this quit is over, and the person is asked about it
-      if (r === 'stuck') { void stuckQuit({ kind: 'quit' }); return }
-      // the quit is cancelled, and says so where the person can see it: a quit from the Dock or a logout may start
-      // with the window hidden (tabs.ts refuse() brought its tab forward); never retried by itself
-      if (r !== 'done') { try { forward() } catch { /* the window went */ } return }
-      // what is saved on the way out never holds the quit
-      try { writeTabsNow() } catch (err) { j('quit', { tabsJson: String((err as Error)?.message ?? err) }) }
-      try { notes?.quitting?.(runningWorkspaces()) } catch (err) { j('quit', { recent: String((err as Error)?.message ?? err) }) }
-      quitting = true
-      app.quit()
-    })
+  // ⌘Q, the menu, the Dock, a logout, Restart to Update: one coordinator, every canvas tab through guardAll (A2.2,
+  // v1.13 r2 #2, v1.14 r3 #1; A5.1 #15-#17)
+  startShutdown({
+    now: () => Date.now(),
+    writeTabsNow,
+    guardAll,
+    stuck: stuckUnloads,
+    ask,
+    forceUnload,
+    forward,
+    notes: () => notes?.quitting?.(runningWorkspaces()),
+    flushAll: () => i.flushAll?.(),
+    quit: () => app.quit(),
+    onBeforeQuit: (fn) => { app.on('before-quit', fn) },
+    onWindowAllClosed: (fn) => { app.on('window-all-closed', fn) },
+    alert: restartAlertBox,
+    setTimeout: (fn, ms) => setTimeout(fn, ms),
+    clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+    log: j,
+    record: (b) => record('update', null, b),
   })
 
   if (__MV_TEST__) testHooks()
 }
 
 /**
- * A quit answered 'stuck' (code review r2 #1): an unload's close has not ended within `quitWaitMs`. The quit is over
- * and its flags cleared, so a later ⌘Q is heard; the person is asked, through the guard's sheet seam, about the tabs
- * still closing - Keep Waiting (the default, `Esc`) changes nothing: the unload goes on owning its tab and ends at
- * `destroyed`; Force Quit Tab ends each one by hand (unload-act.ts forceUnload: its own `forced` outcome, never a
- * completed unload), then quits again - through guardAll, every other tab guarded as on any quit. One sheet at a
- * time: a later stuck quit while it is open only brings the window forward.
+ * #17's alert (A5.1): app-modal - the window and every view are gone - with one button, Quit. A test build never puts
+ * it on the screen: it is kept for the `shutdown:alerts` hook and held until the case answers (`shutdown:alert-answer`),
+ * so the case reads it before the quit that follows.
  */
-let stuckSheetOpen = false
-async function stuckQuit(action: GuardAllAction): Promise<void> {
-  const stuck = stuckUnloads()
-  // ended meanwhile: nothing to ask, and a later ⌘Q goes through
-  if (!stuck.length) { j('quit', { stuck: 'ended' }); return }
-  if (stuckSheetOpen) { forward(); return }
-  stuckSheetOpen = true
-  let force = false
-  try {
-    force = await ask({ action, tabs: stuck.map((t) => ({ id: t.id, name: tabName(t), why: { kind: 'stuck' } })) })
-  } catch (err) { j('quit', { stuckSheet: String((err as Error)?.message ?? err) }) } finally { stuckSheetOpen = false }
-  if (!force) { j('quit', { stuck: 'keep-waiting', tabs: stuck.map((t) => t.id) }); return }
-  // only those still closing: one that ended while the sheet was open is not forced
-  const forced = stuck.filter((t) => getTab(t.id) === t && forceUnload(t)).map((t) => t.id)
-  j('quit', { stuck: 'forced', tabs: forced })
-  if (action.kind === 'quit') app.quit()
+const restartAlerts: RestartAlert[] = []
+let alertHeld: (() => void) | null = null
+async function restartAlertBox(a: RestartAlert): Promise<void> {
+  if (__MV_TEST__ && testMode()) {
+    restartAlerts.push(a)
+    j('alert', a)
+    await new Promise<void>((r) => { alertHeld = r })
+    return
+  }
+  await dialog.showMessageBox({ type: 'warning', message: a.message, detail: a.detail, buttons: [...a.buttons], defaultId: 0, noLink: true })
 }
 
 /** The Mac woke: every failed tab looks again at once (A2.11: a check on `powerMonitor` `resume`). */
@@ -1560,8 +1590,11 @@ function testHooks(): void {
   const arg = <T>(a: unknown) => (a ?? {}) as T
   provide('state', () => ({
     active: activeTab()?.id, tabs: allTabs().map(tabDump), order: ordered().map((t) => t.id), canvases: canvasOrder().map((t) => t.id),
-    pill: currentPill(), focus: focusOwner(), quitting,
+    pill: currentPill(), focus: focusOwner(), quitting: isQuitting(),
   }))
+  provide('shutdown', () => shutdownState())
+  provide('shutdown:alerts', () => ({ shown: [...restartAlerts], held: !!alertHeld }))
+  provide('shutdown:alert-answer', () => { const r = alertHeld; alertHeld = null; r?.(); return !!r })
   provide('views', () => viewsNow())
   // a picture of the window (window.ts captureWindow), written to an absolute path the case names
   provide('capture', async (x) => {
@@ -1724,6 +1757,15 @@ function testHooks(): void {
     const { id, stale } = arg<{ id: string; stale?: boolean }>(a)
     const it = stale ? held.get(id) : Menu.getApplicationMenu()?.getMenuItemById(id)
     if (!it) return false
+    it.click()
+    return true
+  })
+  // an item with no id, by its menu's label and its own (A5: Help > Export Performance Report…), as built now
+  provide('menu:clickLabel', (a) => {
+    const { menu, label } = arg<{ menu: string; label: string }>(a)
+    buildNow()
+    const it = Menu.getApplicationMenu()?.items.find((m) => m.label === menu)?.submenu?.items.find((m) => m.label === label)
+    if (!it || !it.enabled) return false
     it.click()
     return true
   })

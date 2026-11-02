@@ -13,11 +13,20 @@ import { defineConfig, type UserConfig } from 'tsdown'
  * - each page (`pages/<page>/main.ts`) as one browser IIFE.
  *
  * MV_FLAVOUR=release builds the release flavour (the guard on, no test hooks); anything else the dev
- * flavour. MV_OUT moves the output (the release build writes into its stage).
+ * flavour. MV_OUT moves the output (the release build writes into its stage). MV_FEED (A5.1 #4, #9) is one of
+ * FEEDS or unset: only scripts/release.mjs sets it, and only for the release flavour.
  */
 const release = process.env.MV_FLAVOUR === 'release'
 const outDir = process.env.MV_OUT ?? 'dist'
-const define = { __MARVER_RELEASE__: JSON.stringify(release), __MV_TEST__: JSON.stringify(!release) }
+/** the two feeds (A5.1 #9, #31): one static `releases.json`, served by GitHub's `latest` redirect */
+export const FEEDS = {
+  production: 'https://github.com/TNEP4/marver-app/releases/latest/download/releases.json',
+  test: 'https://github.com/TNEP4/marver-app-test/releases/latest/download/releases.json',
+} as const
+const feed = process.env.MV_FEED ?? ''
+if (feed && !(Object.values(FEEDS) as string[]).includes(feed)) throw new Error(`MV_FEED is not one of the two feeds: ${feed}`)
+if (feed && !release) throw new Error('MV_FEED is for the release flavour only (A5.1 #4)')
+const define = { __MARVER_RELEASE__: JSON.stringify(release), __MV_TEST__: JSON.stringify(!release), __MARVER_FEED__: JSON.stringify(feed) }
 
 const common: UserConfig = {
   outDir, define, clean: false, dts: false, hash: false, report: false, publint: false,

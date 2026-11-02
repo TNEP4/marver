@@ -53,6 +53,15 @@ describe('a crash of the active tab (A2.11)', () => {
     expect(t.state).toBe('crashed')
     expect(t.pageView).toBe(true)
     expect(await w.run.call('page', { tab: id })).toMatchObject({ body: { page: 'crashed', latched: true, crashes: 2 } })
+    // and the page draws it: its own words, read from the page (it said ready to main, which sent it the snapshot)
+    const js = `({ title: document.title, heading: document.getElementById('tp-title')?.textContent ?? null, buttons: Array.from(document.querySelectorAll('#content button')).map((b) => b.textContent) })`
+    type Drawn = { title: string; heading: string | null; buttons: string[] } | null
+    let drawn: Drawn = null
+    for (const end = Date.now() + 3000; Date.now() < end; await sleep(50)) {
+      drawn = await w.run.call<Drawn>('exec', { target: `${id}:page`, js }).catch(() => null)
+      if (drawn?.heading) break
+    }
+    expect(drawn).toEqual({ title: 'Tidewell\'s page keeps crashing', heading: 'Tidewell\'s page keeps crashing', buttons: ['Reload', 'Copy Details', 'Export Performance Report…'] })
   })
 
   it('Reload on its page is the person\'s: the canvas comes back; ⌘R on a latched tab is the same', async () => {

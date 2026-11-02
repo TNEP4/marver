@@ -112,6 +112,8 @@ export interface PillView {
   rev: number
   /** `offer` (A4.6 #26): "Get a notice when a canvas needs you", Turn On, dismissible - tier 4, beside `test` */
   kind: 'unsaved' | 'stopped' | 'not-responding' | 'confirmation' | 'files' | 'test' | 'offer'
+    /** A5.1 #21: the updater's pill, tier 5 after `offer` - ready (Restart to Update), waiting (Try Again), failed (Download) */
+    | 'update'
   lead?: string
   text: string
   short: string
@@ -159,7 +161,8 @@ export type TabPageView =
    * the page then promises the board alone.
    */
   | TabPageBase & { page: 'reopening'; unloadedAt: number; cameraKept: boolean }
-export type TabPageAction = 'retry' | 'reload' | 'copy-start' | 'copy-details' | 'reveal' | 'open-browser' | 'close'
+/** `export-report` (A5.1 #28): the crashed page's latched state, beside Copy Details */
+export type TabPageAction = 'retry' | 'reload' | 'copy-start' | 'copy-details' | 'reveal' | 'open-browser' | 'close' | 'export-report'
 
 /**
  * `recent` (main to home): Recently here (A2.12). `id` is main's (`r_` and the workspace, within the bridge's id

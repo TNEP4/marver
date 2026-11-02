@@ -307,7 +307,7 @@ export function checkPagePayload(channel: string, p: unknown): { ok: true; value
     case CH.pillAction:
       return obj(p) && rev(p.rev) && one(p.act, ['button', 'dismiss'] as const) ? yes({ rev: p.rev, act: p.act }) : no
     case CH.tabpageAction:
-      return obj(p) && rev(p.rev) && one(p.action, ['retry', 'reload', 'copy-start', 'copy-details', 'reveal', 'open-browser', 'close'] as const) ? yes({ rev: p.rev, action: p.action }) : no
+      return obj(p) && rev(p.rev) && one(p.action, ['retry', 'reload', 'copy-start', 'copy-details', 'reveal', 'open-browser', 'close', 'export-report'] as const) ? yes({ rev: p.rev, action: p.action }) : no
     case CH.homeAction:
       if (!obj(p)) return no
       if (p.action === 'copy') return one(p.id, ['dev', 'init', 'update'] as const) ? yes({ action: 'copy', id: p.id }) : no
