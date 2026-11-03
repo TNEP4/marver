@@ -1,0 +1,115 @@
+{
+  "v": 1,
+  "version": "1.0.0",
+  "status": "published",
+  "kind": "production",
+  "repo": "TNEP4/marver-app",
+  "tag": "v1.0.0",
+  "source": {
+    "sha": "021cd5aa2a11d67e0f787a9fa58996896f59953c",
+    "branch": "main"
+  },
+  "companion": "0.29.0",
+  "tagTarget": "2fb18a895a71439c50c888d594b7e77ac67bfad0",
+  "release": {
+    "id": 431735830,
+    "url": "https://github.com/TNEP4/marver-app/releases/tag/untagged-22fce4a29447a976feca"
+  },
+  "assets": [
+    {
+      "name": "Marver-darwin-arm64-1.0.0.zip",
+      "bytes": 120948689,
+      "sha256": "2249d2a17975e092c9b7afc853faf84aa57992ede0a6982b11c6fdfe7e38f3f1"
+    },
+    {
+      "name": "Marver-arm64.dmg",
+      "bytes": 132033383,
+      "sha256": "63b0782e67d12d119895566760191889770f31afa2ce60b3c8f2d7a19496731f"
+    },
+    {
+      "name": "releases.json",
+      "bytes": 3747,
+      "sha256": "7483581197cf9db937620f5f03c099a1d57aec56e3d3a0f154ba55e5507707d9"
+    }
+  ],
+  "acceptance": {
+    "by": "Nic Touron",
+    "at": "2026-11-03T11:14:40.620Z",
+    "evidence": {
+      "version": "1.0.0",
+      "dmg": "63b0782e67d12d119895566760191889770f31afa2ce60b3c8f2d7a19496731f",
+      "zip": "2249d2a17975e092c9b7afc853faf84aa57992ede0a6982b11c6fdfe7e38f3f1",
+      "mac": "Mac17,8 (Apple silicon): install items in clean tart VMs on it; the other items on the same Mac itself (#53)",
+      "macos": "26.6.2 (install-matrix also 13.7.4)",
+      "google": "refused",
+      "checks": {
+        "install-open": "pass",
+        "notarised": "pass",
+        "not-translocated": "pass",
+        "install-matrix": "pass",
+        "notice-ask": "pass",
+        "notice-banner": "pass",
+        "dock-badge": "pass",
+        "notice-denied": "pass",
+        "settings-link": "pass",
+        "signin": "pass",
+        "shared-card": "pass",
+        "live-picture": "pass"
+      },
+      "notes": "Run on these exact bytes (the draft's DMG and ZIP, hash-checked), 2 Nov, clean macOS VMs: install-open, notarised, not-translocated (offline, stapled ticket, one question), install-matrix (drag + offline on 26.6.2; DMG route with the silent move on 26.6.2 and 13.7.4; the newer, older, Open It and Finder cases on candidates 0.99.1 and 0.99.2, same code, same day). NOT re-run on 1.0.0: notice-ask, notice-banner, dock-badge, notice-denied, settings-link, signin, shared-card, live-picture - they carry over from Nic's hand checks of app 0.3.0 on his own Mac, 31 Oct (#53, all pass; notice-denied's wording fix 60821741 checked by the settings window tests, 19/19); A5 did not change that code. Nic skipped the S7 hand session, 3 Nov: 'You can skip and publish'. google 'refused' means not shown to work: on 31 Oct Sign in with Google did not open for Nic (#53 finding 2, cause open); not retried on 1.0.0. Email-code sign-in works, and Open in Browser either way."
+    }
+  },
+  "notary": {
+    "app": [
+      "e74412f6-1c14-4057-aee0-86bb2a17c732"
+    ],
+    "dmg": [
+      "2e124dc4-7cd7-4907-b30c-e19449492f90"
+    ]
+  },
+  "dr": "identifier \"design.marver.app\" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = PXV6WER853",
+  "immutable": true,
+  "smokeReport": "smoke-1793639163992.json",
+  "knownFailures": [
+    {
+      "name": "memory-no-canvas",
+      "measured": 217.8,
+      "unit": "MB",
+      "budget": 200,
+      "detail": "217.8 MB footprint, mean of 3 reads 10 s apart: browser 53.3, utility 7.4 (NetworkService), app pages 59.0 (3 renderers), crashpad 2.4, GPU 95.6 counted (32.3 with a canvas open: -63.3); RSS beside it 651.5 MB counted, 651.5 MB all 7 processes; over the 200 MB budget - the limit stays (Nic, 23 Oct): the numbers go to Nic",
+      "decision": "Nic, 24 Oct: app 0.2 ships with it, the 200 MB limit unchanged; 29 Oct: it no longer blocks (A3 closed); investigated later"
+    }
+  ],
+  "steps": {
+    "preflight": "2026-11-02T17:03:53.704Z",
+    "freeze": "2026-11-02T17:03:53.772Z",
+    "build": "2026-11-02T17:06:04.001Z",
+    "app-hashed": "2026-11-02T17:06:04.124Z",
+    "app-zipped": "2026-11-02T17:06:10.385Z",
+    "notarize-app": "2026-11-02T17:07:09.127Z",
+    "staple-app": "2026-11-02T17:07:10.986Z",
+    "zip": "2026-11-02T17:07:17.738Z",
+    "dmg-built": "2026-11-02T17:07:26.708Z",
+    "dmg-signed": "2026-11-02T17:07:27.276Z",
+    "dmg-accepted": "2026-11-02T17:08:45.378Z",
+    "dmg-stapled": "2026-11-02T17:08:46.413Z",
+    "dmg": "2026-11-02T17:08:46.426Z",
+    "verify": "2026-11-02T17:08:55.026Z",
+    "feed": "2026-11-02T17:08:55.046Z",
+    "draft": "2026-11-02T17:08:56.873Z",
+    "upload": "2026-11-02T17:09:28.882Z",
+    "check-draft": "2026-11-02T17:10:04.660Z",
+    "publish": "2026-11-03T11:14:46.609Z"
+  },
+  "check": {
+    "at": 1793704486719,
+    "problems": [],
+    "latest": {
+      "owner": "1.0.0",
+      "agreeing": 18,
+      "reads": 18
+    },
+    "immutable": true,
+    "status": "published"
+  }
+}
