@@ -365,7 +365,8 @@ describe('with the app\'s bridge (A2.9)', () => {
     await atRest(s)
     await ev(s, `(__fakeFetched.length = 0, __fake.state('hidden'))`)
     await wait(500)
-    expect(await ev(s, `__fakeFetched.filter((u) => u.includes('/__mv/api/'))`)).toEqual([])
+    // a hidden page asks nothing; the recorder's own flush at hide is not an ask (spec 30)
+    expect(await ev(s, `__fakeFetched.filter((u) => u.includes('/__mv/api/') && !u.includes('/__mv/api/perf/'))`)).toEqual([])
     await ev(s, `__fake.state('shown')`)
     await until(s, `['/__mv/api/marks', '/__mv/api/work', '/__mv/api/jam/queue', '/__mv/api/boards/main'].every((p) => __fakeFetched.some((u) => new URL(u, location.href).pathname === p))`)
     // the hash it holds is not the file's: the board loads again
