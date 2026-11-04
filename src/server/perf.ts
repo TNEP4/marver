@@ -398,7 +398,7 @@ const SHELL_BODY: Record<ShellReloadKind | 'dropped', (r: Record<string, unknown
     const node = str(r.node), ts = hmrTs(r.hmrTs)
     // what was seen, no more (#15): `applied` is never true, and a line that says nothing was fetched is no line
     if (!node || ts === undefined || r.fetched !== true || (r.applied !== 'unknown' && r.applied !== false)) return null
-    return { node, frame: str(r.frame), hmrTs: ts, fetched: true, applyMs: ms(r.applyMs), nextObservedCommitMs: ms(r.nextObservedCommitMs), applied: r.applied }
+    return { node, frame: str(r.frame), hmrTs: ts, fetched: true, applyMs: ms(r.applyMs), nextObservedCommitMs: ms(r.nextObservedCommitMs), applied: r.applied, noAfterUpdate: flag(r.noAfterUpdate) }
   },
   watchdog: (r) => { const node = str(r.node), action = oneOf(r.action, WATCHDOG_ACTIONS); return node && action ? { node, frame: str(r.frame), nav: count(r.nav), action } : null },
   dropped: (r) => (count(r.n) === undefined ? null : { n: count(r.n), reason: oneOf(r.reason, DROP_REASONS) }),

@@ -72,8 +72,9 @@ export interface RendersMsg { type: 'sh:renders'; id: string; boot: string; minu
 export interface HmrMsg { type: 'sh:hmr'; id: string }
 /** #15: a document that fetched `<acceptedPath>?t=<hmrTs>` (Resource Timing) reports what it saw - after its next
  *  observed commit, or `RELOAD_BOUNDS.commitWaitMs` with none. `applied` is `false` only on Vite's own failure message
- *  for that path; never `true`. Registry-only updates send nothing (main.tsx:129's filter). */
-export interface InplaceMsg { type: 'sh:inplace'; id: string; boot: string; hmrTs: number; applyMs?: number; nextObservedCommitMs?: number; applied: 'unknown' | false }
+ *  for that path; never `true`. Registry-only updates send nothing (main.tsx:129's filter). `noAfterUpdate`: its round
+ *  ended with no `vite:afterUpdate`, so this is what was known by then, `applyMs` how long the round stood open. */
+export interface InplaceMsg { type: 'sh:inplace'; id: string; boot: string; hmrTs: number; applyMs?: number; nextObservedCommitMs?: number; applied: 'unknown' | false; noAfterUpdate?: true }
 /** #50: the stage's background click posted as Space (stage/main.tsx:273) says so. */
 export interface StageKeyMsg { type: 'sh:stage-key'; key: string; code: string; alt?: boolean; meta?: boolean; origin?: 'click' }
 /** #26: Play's first `sh:stage-shown` after `enterPlay`/`enterSlides` ends the mode's `firstFrameMs`; the existing

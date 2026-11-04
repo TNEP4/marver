@@ -149,6 +149,20 @@ describe('one summary per canvas (#46)', () => {
   })
 })
 
+describe('an in-place update whose round had no end from Vite (#15)', () => {
+  it('counted, and said; one that ended as ever is not', () => {
+    writeFileSync(join(perf(one), 'reloads.jsonl'), ln([
+      { ts: NOW - MIN, kind: 'inplace', tab: 's', page: PG, seq: 1, node: 'n', frame: 'x/1', hmrTs: 5, fetched: true, applied: 'unknown', noAfterUpdate: true, applyMs: 30_000 },
+      { ts: NOW - MIN, kind: 'inplace', tab: 's', page: PG, seq: 2, node: 'n', frame: 'x/1', hmrTs: 6, fetched: true, applied: 'unknown', applyMs: 40 },
+    ]))
+    expect(allSummary({ now: NOW, home }).canvases.find((x) => x.name === 'One Canvas')!.inplaceNoAfterUpdate).toBe(1)
+    const out: string[] = []
+    const log = vi.spyOn(console, 'log').mockImplementation((...a) => { out.push(a.join(' ')) })
+    try { allPerf({}) } finally { log.mockRestore() }
+    expect(out.join('\n')).toContain('in-place updates with no end from Vite: 1')
+  })
+})
+
 describe('a start with no end (#48): interrupted takes evidence, elapsed time alone says unmatched', () => {
   const PAGE = 'p00000000001', OTHER = 'p00000000002', ID1 = 'c00000000001'
   const pageStart = (ago: number) => ({ v: 1, ws: WS, page: PAGE, load: '-', seq: 1, ts: NOW - ago, kind: 'cmd', phase: 'start', id: ID1, cmd: 'copy-image', via: 'key', in: 'shell' })

@@ -71,6 +71,8 @@ export interface CanvasSummary {
   commentsShownP50Ms: number | null
   errors: Record<string, number>
   commands: CommandsSummary
+  /** in-place updates fetched whose round ended with no `vite:afterUpdate` (#15) */
+  inplaceNoAfterUpdate: number
   /** lines the safety cap deleted (#43) */
   retentionCap: number
 }
@@ -129,6 +131,7 @@ export function canvasSummary(c: KnownCanvas, since: number, now = Date.now(), a
     commentsShownP50Ms: quantile(nums(page.filter((r) => r.kind === 'mode' && r.mode === 'comments' && r.phase === 'enter').map((r) => r.shownMs)), 0.5),
     errors,
     commands: commandsSummary(page, now, [...reloads, ...app]),
+    inplaceNoAfterUpdate: reloads.filter((r) => r.kind === 'inplace' && r.noAfterUpdate === true).length,
     retentionCap: [...page, ...reloads].filter((r) => r.kind === 'dropped' && r.reason === 'retention-cap').reduce((n, r) => n + (Number(r.n) || 0), 0),
   }
 }
@@ -229,6 +232,7 @@ export function allPerf(opts: { days?: number | string; json?: boolean }): void 
     const trouble = [
       ...(Object.keys(c.errors).length ? [`errors: ${list(c.errors)}`] : []),
       ...commandsWords(c.commands),
+      ...(c.inplaceNoAfterUpdate ? [`in-place updates with no end from Vite: ${c.inplaceNoAfterUpdate}`] : []),
       ...(c.retentionCap ? [`${c.retentionCap} lines deleted by the safety cap`] : []),
     ]
     if (trouble.length) console.log(`    ${trouble.join(' · ')}`)

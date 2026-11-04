@@ -139,7 +139,7 @@ function onFrameMessage(key: string, data: Record<string, unknown>): void {
     if (typeof data.boot !== 'string' || data.boot !== bootOf(iframeOf(key))) return
     const n = nodeOf(key)
     if (!n) return
-    logReload({ kind: 'inplace', node: key, frame: n.frame, hmrTs: data.hmrTs, fetched: true, applyMs: data.applyMs, nextObservedCommitMs: data.nextObservedCommitMs, applied: data.applied === false ? false : 'unknown' })
+    logReload({ kind: 'inplace', node: key, frame: n.frame, hmrTs: data.hmrTs, fetched: true, applyMs: data.applyMs, nextObservedCommitMs: data.nextObservedCommitMs, applied: data.applied === false ? false : 'unknown', ...(data.noAfterUpdate === true ? { noAfterUpdate: true } : {}) })
   }
 }
 

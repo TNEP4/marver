@@ -44,15 +44,25 @@ function fetchedBy(u: Update, url: URL): boolean {
 
 /** Vite's messages run one at a time (its client queues them), so one update round is open at most. It holds what its own
  *  updates left behind, no more - the observer sees every resource this document loads - and it ends by
- *  `vite:afterUpdate`, the next update, or `inplaceRoundMs`: an accept callback that throws means no `vite:afterUpdate`. */
+ *  `vite:afterUpdate`, or with none (an accept callback threw, an import still pending) by the next update or
+ *  `inplaceRoundMs`. Those last two write what was known by then, each update fetched so far, `noAfterUpdate`: an update
+ *  that was seen is never lost silently. A `vite:afterUpdate` after that has no round, and writes nothing more. */
 export function watchInplace(hot: { on(event: string, cb: (p: any) => void): void }, post: (m: InplaceReport) => void): void {
-  let round: { at: number; updates: Update[]; fetched: Set<Update>; take: () => void; failed: Set<string>; close: () => void } | null = null
+  interface Round { at: number; updates: Update[]; fetched: Set<Update>; take: () => void; failed: Set<string>; close: () => void }
+  let round: Round | null = null
+  const appliedOf = (r: Round, u: Update) => (r.failed.has(u.acceptedPath ?? u.path ?? '') ? false as const : 'unknown' as const)
+  /** A round `afterUpdate` never came for: closed, and what it knew written now. */
+  const giveUp = (r: Round) => {
+    if (round === r) round = null
+    r.take()
+    r.close()
+    const applyMs = Math.round(performance.now() - r.at)
+    for (const u of r.updates) if (r.fetched.has(u)) post({ type: 'sh:inplace', hmrTs: u.timestamp!, applyMs, applied: appliedOf(r, u), noAfterUpdate: true })
+  }
 
   hot.on('vite:beforeUpdate', (p: { updates?: Update[] }) => {
     try {
-      // a round `afterUpdate` never came for (an accept callback threw): nothing of it stays on
-      round?.close()
-      round = null
+      if (round) giveUp(round)
       const updates = (p.updates ?? []).filter((u) => u.type === 'js-update' && !isRegistry(u) && typeof u.timestamp === 'number')
       if (!updates.length) return
       const fetched = new Set<Update>()
@@ -87,8 +97,8 @@ export function watchInplace(hot: { on(event: string, cb: (p: any) => void): voi
         observer.disconnect()
         if (console.error === watching) console.error = original   // a frame's own replacement meanwhile stays
       }
-      const r = { at: performance.now(), updates, fetched, take: () => note(observer.takeRecords()), failed, close }
-      const timer = setTimeout(() => { if (round === r) round = null; close() }, RELOAD_BOUNDS.inplaceRoundMs)
+      const r: Round = { at: performance.now(), updates, fetched, take: () => note(observer.takeRecords()), failed, close }
+      const timer = setTimeout(() => { try { giveUp(r) } catch { /* the same */ } }, RELOAD_BOUNDS.inplaceRoundMs)
       round = r
     } catch { /* the recorder never stands in the way */ }
   })
@@ -103,7 +113,7 @@ export function watchInplace(hot: { on(event: string, cb: (p: any) => void): voi
       r.close()
       for (const u of r.updates) {
         if (!r.fetched.has(u)) continue
-        const applied = r.failed.has(u.acceptedPath ?? u.path ?? '') ? false as const : 'unknown' as const
+        const applied = appliedOf(r, u)
         void nextCommit(RELOAD_BOUNDS.commitWaitMs).then((at) => post({
           type: 'sh:inplace', hmrTs: u.timestamp!, applyMs: Math.round(after - r.at), applied,
           ...(at !== undefined ? { nextObservedCommitMs: Math.round(at - after) } : {}),

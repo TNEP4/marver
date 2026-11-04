@@ -421,6 +421,9 @@ export interface InplaceLine extends ShellLineEnvelope {
   applyMs?: number
   nextObservedCommitMs?: number
   applied: 'unknown' | false
+  /** its round ended with no `vite:afterUpdate`, by the next update or `inplaceRoundMs`: `applyMs` is how long it had
+   *  been open, this line what was known by then */
+  noAfterUpdate?: true
 }
 /** #20: the ready watchdog's silences. */
 export interface WatchdogLine extends ShellLineEnvelope { kind: 'watchdog'; node: string; frame: string; nav: number; action: 'retry' | 'gave-up' }

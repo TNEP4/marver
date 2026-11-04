@@ -79,7 +79,7 @@ export class Tail {
 type Rec = Record<string, any>
 const shorten = (v: unknown, n = 80) => { const s = String(v); return s.length > n ? `${s.slice(0, n - 1)}…` : s }
 /** The fields that matter, by what a record holds; the rest is `--json`'s. */
-const FIELDS = ['board', 'cause', 'trigger', 'reason', 'request', 'ms', 'node', 'frame', 'outcome', 'file', 'event', 'change', 'revision', 'cmd', 'phase', 'via', 'in', 'keys', 'why', 'mode', 'to', 'scope', 'source', 'type', 'p95', 'n', 'readyMs', 'tab', 'message'] as const
+const FIELDS = ['board', 'cause', 'trigger', 'reason', 'request', 'ms', 'node', 'frame', 'outcome', 'file', 'event', 'change', 'revision', 'cmd', 'phase', 'via', 'in', 'keys', 'why', 'mode', 'to', 'scope', 'source', 'type', 'p95', 'n', 'readyMs', 'tab', 'noAfterUpdate', 'message'] as const
 /** One line for a record: its time, its canvas, its kind, the fields that matter. */
 export function liveLine(canvas: string, r: Rec): string {
   const t = typeof r.ts === 'number' ? new Date(r.ts).toLocaleTimeString() : '-'

@@ -297,6 +297,15 @@ describe('edit to redraw, joined end to end (R1)', () => {
     await sleep(800)
   }, 60_000)
 
+  it('a round with no end from Vite: its line says so, through the shell and the server', async () => {
+    if (!browser) return
+    await allReady(tab.s, ['k-uses', 'k-plain'])
+    const hmrTs = Date.now()
+    await browser.eval(tab.s, `document.querySelector('[data-node="k-uses"] iframe').contentWindow.eval(${JSON.stringify(`parent.postMessage({ type: 'sh:inplace', id: 'app/uses', boot: window.__mvBoot, hmrTs: ${hmrTs}, applyMs: 30000, applied: 'unknown', noAfterUpdate: true }, location.origin), 1`)})`)
+    const line = await until(() => eachPage(reloads(), tab.page).find((l) => l.kind === 'inplace' && l.hmrTs === hmrTs))
+    expect(line).toMatchObject({ node: 'k-uses', frame: 'app/uses', fetched: true, applied: 'unknown', applyMs: 30000, noAfterUpdate: true })
+  }, 60_000)
+
   it('a self-accepting component: inplace in the frame that imports it, nothing in the one that does not', async () => {
     if (!browser) return
     await allReady(tab.s, ['k-uses', 'k-plain'])

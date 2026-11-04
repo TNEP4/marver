@@ -115,6 +115,11 @@ describe('what it prints (#47)', () => {
     expect(liveLine('x', { kind: 'error', source: 'frame', message: 'm'.repeat(400) }).length).toBeLessThan(200)
   })
 
+  it('an in-place update with no end from Vite says so', () => {
+    expect(liveLine('tms', { kind: 'inplace', node: 'n', noAfterUpdate: true })).toContain('noAfterUpdate true')
+    expect(liveLine('tms', { kind: 'inplace', node: 'n' })).not.toContain('noAfterUpdate')
+  })
+
   it('from a canvas\'s files and the app\'s, `--kinds` its filter, the raw line with --json', () => {
     const r = repo(), home = join(base, 'home')
     mkdirSync(join(home, 'perf'), { recursive: true })

@@ -32,6 +32,11 @@ const VALID: Record<string, Record<string, unknown>> = {
 }
 
 describe('a shell reload line', () => {
+  it('`inplace` keeps `noAfterUpdate`, only as itself', () => {
+    expect(cleanReloadRecord(line('inplace', { ...VALID.inplace, noAfterUpdate: true }))).toMatchObject({ noAfterUpdate: true })
+    expect(cleanReloadRecord(line('inplace', { ...VALID.inplace, noAfterUpdate: SENTINEL }))).not.toHaveProperty('noAfterUpdate')
+    expect(cleanReloadRecord(line('inplace', VALID.inplace))).not.toHaveProperty('noAfterUpdate')
+  })
   it('`shell-boot` keeps the page its tab showed before, only as a page id', () => {
     expect(cleanReloadRecord(line('shell-boot', { prev: OTHER }))).toMatchObject({ prev: OTHER })
     expect(cleanReloadRecord(line('shell-boot', { prev: SENTINEL }))).not.toHaveProperty('prev')

@@ -14,7 +14,8 @@ class FakeObserver {
   constructor(private cb: (list: { getEntries(): PerformanceEntry[] }) => void) { FakeObserver.all.push(this) }
   observe() {}
   disconnect() { this.disconnected = true }
-  takeRecords(): PerformanceEntry[] { return [] }
+  pending: PerformanceEntry[] = []
+  takeRecords(): PerformanceEntry[] { return this.pending.splice(0) }
   deliver(entries: PerformanceEntry[]) { this.cb({ getEntries: () => entries }) }
 }
 const live = () => FakeObserver.all.at(-1)!
@@ -55,6 +56,58 @@ describe('an update round (#15)', () => {
     // its late `afterUpdate` has no round to report
     after()
     expect(posted).toEqual([])
+  })
+
+  describe('with no `afterUpdate`: what was known is written, once', () => {
+    const OTHER = { ...UPDATE, path: '/design/b.tsx', acceptedPath: '/design/b.tsx', timestamp: 6000 }
+    const NEVER = { ...UPDATE, path: '/design/c.tsx', acceptedPath: '/design/c.tsx', timestamp: 7000 }
+    it('at the limit: one record per update fetched by then, the flag on each, `applyMs` the time it stood open', () => {
+      before([UPDATE, OTHER, NEVER])
+      live().deliver([entry(OF_UPDATE)])
+      live().pending.push(entry('http://localhost/design/b.tsx?t=6000'))   // fetched, not yet told: read at the end
+      vi.advanceTimersByTime(RELOAD_BOUNDS.inplaceRoundMs)
+      expect(posted).toEqual([
+        { type: 'sh:inplace', hmrTs: 5000, applyMs: RELOAD_BOUNDS.inplaceRoundMs, applied: 'unknown', noAfterUpdate: true },
+        { type: 'sh:inplace', hmrTs: 6000, applyMs: RELOAD_BOUNDS.inplaceRoundMs, applied: 'unknown', noAfterUpdate: true },
+      ])
+      expect(live().disconnected).toBe(true)
+    })
+    it('a later `afterUpdate` for that round writes nothing more', async () => {
+      before()
+      live().deliver([entry(OF_UPDATE)])
+      vi.advanceTimersByTime(RELOAD_BOUNDS.inplaceRoundMs)
+      expect(posted).toHaveLength(1)
+      after()
+      rootCommitted()
+      await vi.advanceTimersByTimeAsync(RELOAD_BOUNDS.commitWaitMs)
+      expect(posted).toHaveLength(1)
+    })
+    it('Vite\'s failure for its path was known too: `applied: false`', () => {
+      before()
+      live().deliver([entry(OF_UPDATE)])
+      console.error('Failed to reload /design/a.tsx. something')
+      vi.advanceTimersByTime(RELOAD_BOUNDS.inplaceRoundMs)
+      expect(posted).toEqual([expect.objectContaining({ hmrTs: 5000, applied: false, noAfterUpdate: true })])
+    })
+    it('the next update ends it the same way, at once, and its own round goes on', async () => {
+      before()
+      live().deliver([entry(OF_UPDATE)])
+      vi.advanceTimersByTime(1000)
+      before([OTHER])
+      expect(posted).toEqual([{ type: 'sh:inplace', hmrTs: 5000, applyMs: 1000, applied: 'unknown', noAfterUpdate: true }])
+      live().deliver([entry('http://localhost/design/b.tsx?t=6000')])
+      after()
+      rootCommitted()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(posted).toHaveLength(2)
+      expect(posted[1]).toMatchObject({ hmrTs: 6000 })
+      expect(posted[1]).not.toHaveProperty('noAfterUpdate')
+    })
+    it('nothing fetched: nothing to say', () => {
+      before([UPDATE, OTHER])
+      vi.advanceTimersByTime(RELOAD_BOUNDS.inplaceRoundMs)
+      expect(posted).toEqual([])
+    })
   })
 
   it('a frame\'s own console.error set meanwhile stays; the watch inside it has stopped listening', () => {
