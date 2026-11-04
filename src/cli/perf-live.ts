@@ -120,7 +120,7 @@ export class Live {
     let r: Rec
     try { r = JSON.parse(text) } catch { return }
     if (!r || typeof r !== 'object') return
-    if (this.kinds && !this.kinds.has(String(r.kind))) return
+    if (this.kinds && !this.kinds.has(String(r.kind ?? 'run'))) return
     if (typeof r.page === 'string' && typeof r.seq === 'number') {
       const k = `${r.page}/${r.seq}`
       if (this.seen.has(k)) return

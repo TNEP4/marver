@@ -49,11 +49,11 @@ describe('the dev server\'s logs: segments (#42)', () => {
     const t0 = now
     pageLines(quiet(0, t0))
     now = t0 + 10 * 3_600_000
-    pageLines(quiet(1, now + 5 * 3_600_000))   // an event time ahead of the server's (its clock within 24 h)
+    pageLines(quiet(1, now + 20 * 3_600_000))   // an event time ahead of the server's (its clock within 24 h): past the close
     now = t0 + DAY + 1
     pageLines(quiet(2, now))
     const [seg] = segs(root, 'page')
-    expect(seg).toBe(segmentName('page.jsonl', t0, t0 + 15 * 3_600_000 > now ? t0 + 15 * 3_600_000 : now))
+    expect(seg).toBe(segmentName('page.jsonl', t0, t0 + 30 * 3_600_000))
     expect(readPage(root).map((r) => r.seq)).toEqual([0, 1, 2])
   })
 

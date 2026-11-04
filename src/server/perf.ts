@@ -7,9 +7,9 @@
  *    commit, each frame's outcome, every move and why, quiet, the last move and settled - plus gestures and
  *    errors. Each record is rebuilt from its kind's allowlist; `npx marver perf --loads` reads them back.
  *
- * Spec 30: every log is written and read through `perfLogs` (#1, #42) - one writer per file, which the app-store
- * stream reimplements with segments, retention by age and the safety cap, behind the same two calls; the records'
- * shapes and bounds are src/shared/perf-records.ts's. Each stream fills its own kinds' cleaners in `BODY`.
+ * Spec 30: every log is written and read through `perfLogs` (#1, #42) - one writer per file: a live file plus closed
+ * segments, retention by age and the safety cap (perf-segments.ts); the records' shapes and bounds are
+ * src/shared/perf-records.ts's. Each stream fills its own kinds' cleaners in `BODY`.
  */
 import { appendFileSync, chmodSync, lstatSync, mkdirSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'

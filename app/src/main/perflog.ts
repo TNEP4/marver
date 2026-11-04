@@ -283,7 +283,7 @@ function writeTo(out: Out, lines: string[]): string[] {
     if (__MV_TEST__) faults.check(out.path, 'write')
     // opened 24 h ago: closed before this append (#42)
     const was = liveOf(out)
-    if (was && dueToClose(out.name, was, now) && now - was.openedAt >= 0) { close(out); capCheck(out) }
+    if (was && dueToClose(out.name, was, now)) { close(out); capCheck(out) }
     const fresh = !existsSync(out.path)
     // after a failed append, or at a launch's first write, the file may end inside a torn line: ours starts on a line
     // of its own
