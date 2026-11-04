@@ -151,6 +151,37 @@ describe('what it prints (#47)', () => {
     l.close()
   })
 
+  it('an app event and a canvas\'s record with the same page and seq are two records; each repeats once, by its own identity', () => {
+    const r = repo(), home = join(base, 'home')
+    mkdirSync(join(home, 'perf'), { recursive: true })
+    const { out, l } = live()
+    l.addCanvas(r, 'tms')
+    l.addApp(home)
+    const PAGE = 'aaaaaaaaaaaa', p = join(perfDir(r), 'page.jsonl'), a = join(home, 'perf', 'app.jsonl')
+    const shell = line({ kind: 'theme', page: PAGE, seq: 7 })
+    const event = line({ kind: 'shown', flavour: 'release', app: 'bbbbbbbbbbbb', seq: 7, page: PAGE, tab: 't1', ms: 3 })
+    appendFileSync(p, shell + shell)
+    appendFileSync(a, event + event)
+    // the same seq in another launch, in the other flavour, and from another page: each its own
+    appendFileSync(a, line({ kind: 'shown', flavour: 'release', app: 'cccccccccccc', seq: 7, page: PAGE, tab: 't1', ms: 4 }))
+    appendFileSync(join(home, 'perf', 'app-dev.jsonl'), line({ kind: 'shown', flavour: 'dev', app: 'bbbbbbbbbbbb', seq: 7, page: PAGE, tab: 't1', ms: 5 }))
+    appendFileSync(p, line({ kind: 'theme', page: 'dddddddddddd', seq: 7 }))
+    l.poll()
+    expect(out.map((x) => `${x.split('  ')[1]} ${x.split('  ')[2]}`).sort()).toEqual(['app shown', 'app shown', 'app shown', 'tms theme', 'tms theme'])
+    l.close()
+  })
+
+  it('a canvas that happens to be called `app` keeps a page\'s identity', () => {
+    const r = repo()
+    const { out, l } = live()
+    l.addCanvas(r, 'app')
+    const rec = line({ kind: 'theme', page: 'aaaaaaaaaaaa', seq: 1, app: 'not-a-launch' })
+    appendFileSync(join(perfDir(r), 'page.jsonl'), rec + line({ kind: 'theme', page: 'aaaaaaaaaaaa', seq: 1, app: 'another' }))
+    l.poll()
+    expect(out).toHaveLength(1)
+    l.close()
+  })
+
   it('follows the server\'s own rotation: nothing skipped, nothing twice', () => {
     const r = repo()
     const { out, l } = live({ kinds: ['ready'] })

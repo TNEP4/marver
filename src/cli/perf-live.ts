@@ -9,7 +9,8 @@
  * descriptor: nothing is skipped or read twice. A path with no file yet is opened from its start when one comes.
  *
  * One line per record (time, canvas, kind, the fields that matter), or the raw line with `--json`; every page and shell
- * line once by `(page, seq)` (#7). Latency is the page's 2 s batch plus the app's 2 s flush, about 3 s.
+ * line once by `(page, seq)` (#7), every app event by its flavour, launch and `seq`: their counters are not one.
+ * Latency is the page's 2 s batch plus the app's 2 s flush, about 3 s.
  */
 import { closeSync, fstatSync, openSync, readSync, statSync } from 'node:fs'
 import { join } from 'node:path'
@@ -89,6 +90,13 @@ export function liveLine(canvas: string, r: Rec): string {
 }
 
 export interface LiveSource { canvas: string; dir: string }
+/** What one record is, once (#7), in its own source's terms - an app event may name a page, and its `seq` is the launch's,
+ *  never the page's; null for a line that names none, which was written once and always prints. */
+function identity(r: Rec, app: boolean): string | null {
+  if (typeof r.seq !== 'number') return null
+  if (app) return typeof r.app === 'string' ? `app/${String(r.flavour ?? '')}/${r.app}/${r.seq}` : null
+  return typeof r.page === 'string' ? `page/${r.page}/${r.seq}` : null
+}
 export interface LiveOptions { kinds?: readonly string[]; json?: boolean; print?: (line: string) => void }
 const CANVAS_FILES = ['page.jsonl', 'reloads.jsonl', 'jam.jsonl', 'runs.jsonl']
 
@@ -97,7 +105,7 @@ const CANVAS_FILES = ['page.jsonl', 'reloads.jsonl', 'jam.jsonl', 'runs.jsonl']
  * start); `poll` prints what came since. Separate from the timer so a test can drive it, poll by poll.
  */
 export class Live {
-  private tails: { tail: Tail; canvas: string }[] = []
+  private tails: { tail: Tail; canvas: string; app: boolean }[] = []
   private known = new Set<string>()
   private seen = new Set<string>()
   private kinds: Set<string> | null
@@ -106,23 +114,23 @@ export class Live {
     this.kinds = o.kinds?.length ? new Set(o.kinds) : null
     this.print = o.print ?? ((l) => console.log(l))
   }
-  follow(path: string, canvas: string): void {
+  follow(path: string, canvas: string, app = false): void {
     if (this.known.has(path)) return
     this.known.add(path)
-    this.tails.push({ tail: new Tail(path, true), canvas })
+    this.tails.push({ tail: new Tail(path, true), canvas, app })
   }
   addCanvas(root: string, canvas: string): void { for (const f of CANVAS_FILES) this.follow(join(perfDir(root), f), canvas) }
-  addApp(home: string): void { for (const f of Object.values(APP_LOG)) this.follow(join(home, 'perf', f), 'app') }
+  addApp(home: string): void { for (const f of Object.values(APP_LOG)) this.follow(join(home, 'perf', f), 'app', true) }
   poll(): void {
-    for (const { tail, canvas } of this.tails) for (const line of tail.poll()) this.line(canvas, line)
+    for (const { tail, canvas, app } of this.tails) for (const line of tail.poll()) this.line(canvas, line, app)
   }
-  private line(canvas: string, text: string): void {
+  private line(canvas: string, text: string, app: boolean): void {
     let r: Rec
     try { r = JSON.parse(text) } catch { return }
     if (!r || typeof r !== 'object') return
     if (this.kinds && !this.kinds.has(String(r.kind ?? 'run'))) return
-    if (typeof r.page === 'string' && typeof r.seq === 'number') {
-      const k = `${r.page}/${r.seq}`
+    const k = identity(r, app)
+    if (k !== null) {
       if (this.seen.has(k)) return
       this.seen.add(k)
       if (this.seen.size > SEEN_MAX) this.seen.delete(this.seen.values().next().value as string)
