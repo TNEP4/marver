@@ -53,6 +53,8 @@ const keyOf = (k: SleepKey) => `${k.frame}|${k.theme}|${Math.round(k.w)}|${Math.
 const asleep = new Map<string, { key: string; doc: Document }>()
 /** How many frames are asleep now (the recorder's weight of a settled load, spec 28 A1.7). */
 export const sleepingCount = (): number => asleep.size
+/** Is this node's document asleep now (the recorder's `invalidated`, `ready`: spec 30 #13, #14)? */
+export const isAsleep = (key: string): boolean => asleep.has(key)
 /**
  * The page's own bake work (spec 28 A3.8 #18): four counts of their own - `pending` below is the current request
  * per node and survives a successful sleep, so it says nothing about idleness. `scheduled`: FrameNode's 250 ms

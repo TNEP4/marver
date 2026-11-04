@@ -12,6 +12,7 @@
  */
 import { api, isStopped } from './api.ts'
 import { CONFIG, PUBLISHED, geometryCause, knownHeight, recorderHooks, reflowIdle, settleRule, useStore, type LoadCause, type Manifest, type MeasureResult, type Node, type RequestCut } from './store.ts'
+import type { BoardWriter, LoadTrigger } from '../../shared/perf-records.ts'
 import { admissionIdle, onAdmissionIdle } from './canvas/admission.ts'
 import { canvasCtl } from './canvas/ctl.ts'
 import { bootOf, iframeOf } from './canvas/frame-registry.ts'
@@ -22,7 +23,7 @@ import { nextSeq, PAGE_ID, perfSeams, type LoadPhase } from './recorder-seams.ts
 import { fullRecorder } from '../recorder-level.ts'
 import { startReloads } from './recorder-reloads.ts'
 import { startSignals } from './recorder-signals.ts'
-import { startCommands } from './commands.ts'
+import { currentCmd, startCommands } from './commands.ts'
 import { startSelf } from './recorder-self.ts'
 
 /** This document, in every record (and, in the app, in its hello: the app's records about this tab carry it). Minted in
@@ -129,7 +130,7 @@ export function startRecorder(opts: { capturesPending: () => boolean; sealCaptur
   ws = CONFIG.workspace
   capturesPending = opts.capturesPending
   sealCaptures = opts.sealCaptures
-  recorderHooks.request = (board, cause) => { try { return request(board, cause) } catch { return '' } }
+  recorderHooks.request = (board, cause, trigger, writer) => { try { return request(board, cause, trigger, writer) } catch { return '' } }
   recorderHooks.handover = guard(handover)
   recorderHooks.commit = guard(commit)
   recorderHooks.cut = guard(cutRequest)
@@ -163,14 +164,16 @@ export function attachCanvas(c: { onMotion: (fn: (m: { camera: boolean; preset: 
 
 // ---- loads ------------------------------------------------------------------------------------------------------
 
-function request(board: string, cause: LoadCause): string {
+function request(board: string, cause: LoadCause, trigger?: LoadTrigger, writer?: BoardWriter): string {
   if (!on) return ''
   const t0 = performance.now()
   const L: Load = { id: newId(), board, cause, t0, lastMoveAt: t0, quietSent: false, moves: 0, distance: 0, causes: {}, errors: 0, errAt: new Map(), reported: new Map() }
   pending.set(L.id, L)
   // `load`, its uncommitted `cut` and its `commit` carry the request's own id (the load's, once it commits)
-  rec('load', L.id, { board, cause, request: L.id, ...(cause === 'boot' ? { sinceNav: Math.round(t0) } : {}) })
-  phase({ phase: 'request', load: L.id, board, cause })
+  // spec 30 (#17, #18, `by`): why it read the board, who may have written it, the command behind it
+  const why = fullRecorder() ? { trigger, ...writer, by: currentCmd() } : {}
+  rec('load', L.id, { board, cause, request: L.id, ...(cause === 'boot' ? { sinceNav: Math.round(t0) } : {}), ...why })
+  phase({ phase: 'request', load: L.id, board, cause, ...(fullRecorder() ? { trigger } : {}) })
   // the deadline runs from the request: a load not settled 120 s after it was asked for is cut, committed or not - a
   // board fetch that never answers included
   L.timeout = setTimeout(guard(() => expire(L)), LOAD_MAX_MS)
@@ -363,14 +366,10 @@ function trySettle(): void {
 function settle(L: Load, s: State, outs: Outcome[]): void {
   ensureVisible(L)
   s.nodes.forEach((n, i) => { if (L.reported.get(n.key) !== said(n, outs[i])) frameRecord(L, n, outs[i]) })
-  const lastReady = (ns: readonly Node[]) => {
-    const xs = ns.map((n) => tracks.get(n.key)?.readyAt).filter((x): x is number => x !== undefined)
-    return xs.length ? Math.max(0, Math.round(Math.max(...xs) - L.t0)) : undefined
-  }
   if (!L.quietSent) { L.quietSent = true; rec('quiet', L.id, { ms: Math.round(L.lastMoveAt - L.t0) }) }
   rec('settled', L.id, {
     ms: Math.round(performance.now() - L.t0), moves: L.moves, distance: Math.round(L.distance), causes: L.causes, lastMove: rel(L, L.movedAt),
-    visibleReadyMs: lastReady(s.nodes.filter((n) => L.cohort?.has(n.key))), allReadyMs: lastReady(s.nodes),
+    visibleReadyMs: lastReady(L, s.nodes.filter((n) => L.cohort?.has(n.key))), allReadyMs: lastReady(L, s.nodes),
     missing: outs.filter((o) => o === 'missing').length, neverReady: outs.filter((o) => o === 'never-ready').length, errors: outs.filter((o) => o === 'error').length,
     weight: weight(),
   })
@@ -386,16 +385,29 @@ function cut(L: Load, reason: 'switch' | 'reload' | 'hidden' | 'timeout'): void 
   const s = useStore.getState()
   ensureVisible(L)
   let ready = 0
+  const readyNodes: Node[] = []
   for (const n of s.nodes) {
     const o = outcomeNow(n, s.manifest)
-    if (o === 'settled' || o === 'ready') ready++
+    if (o === 'settled' || o === 'ready') { ready++; readyNodes.push(n) }
     if (!o) frameRecord(L, n, 'cut')
     else if (L.reported.get(n.key) !== said(n, o)) frameRecord(L, n, o)
   }
-  rec('cut', L.id, { reason, ms: Math.round(performance.now() - L.t0), lastMove: rel(L, L.movedAt), frames: s.nodes.length, ready })
+  rec('cut', L.id, { reason, ms: Math.round(performance.now() - L.t0), lastMove: rel(L, L.movedAt), frames: s.nodes.length, ready, ...(fullRecorder() ? partialTimes(L, readyNodes) : {}) })
   L.cutReason = reason
   finish(L, 'cut')
   phase({ phase: 'cut', load: L.id, reason })
+}
+
+/** Spec 30 #19: what a cut load had ready, as `settled` computes it, over the frames ready by then - `visibleReady` says
+ *  how many of the cohort that is, so a partial time is never read as the whole. */
+function partialTimes(L: Load, ready: readonly Node[]) {
+  const visible = ready.filter((n) => L.cohort?.has(n.key))
+  return { visibleReadyMs: lastReady(L, visible), allReadyMs: lastReady(L, ready), visibleReady: visible.length }
+}
+/** ms from the request to the last of these nodes' ready; none while none was. */
+function lastReady(L: Load, ns: readonly Node[]): number | undefined {
+  const xs = ns.map((n) => tracks.get(n.key)?.readyAt).filter((x): x is number => x !== undefined)
+  return xs.length ? Math.max(0, Math.round(Math.max(...xs) - L.t0)) : undefined
 }
 
 function finish(L: Load, how: 'settled' | 'cut'): void {

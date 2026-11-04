@@ -20,6 +20,7 @@
 import { realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import type { EnvironmentModuleNode, HotPayload, Plugin, ViteDevServer } from 'vite'
+import type { Attribution, Changes } from './changes.ts'
 import { affectedFrameIds, type FrameEntry, type Manifest } from './manifest.ts'
 
 const safeReal = (p: string) => { try { return realpathSync(p) } catch { return p } }
@@ -60,32 +61,49 @@ export function framesFor(root: string, manifest: Manifest, file: string, module
 }
 
 export interface UpdateHooks {
-  /** an edit reached these frames (from a hot update, a refused refresh, or a dropped reload) */
-  onFrames(t: Touched, cause: 'update' | 'invalidate' | 'reload'): void
-  /** every full-reload Vite tried to send, and whether it went out */
-  onReload(payload: { triggeredBy?: string; path?: string }, passed: boolean): void
+  /** an edit reached these frames (from a hot update, a refused refresh, or a dropped reload); `at`: what is known of
+   *  the change behind it (spec 30 #8), kept by the caller's closure however late it writes */
+  onFrames(t: Touched, cause: 'update' | 'invalidate' | 'reload', at: Attribution): void
+  /** every full-reload Vite tried to send, whether it went out, and what is known of its change (#11; none for one
+   *  that passes, the optimiser's) */
+  onReload(payload: { triggeredBy?: string; path?: string }, passed: boolean, at?: Attribution): void
+}
+
+/** The hook that runs first on every hot update (spec 30 #8): this run takes its file's oldest open token, and its
+ *  bracket opens. Ordered `pre`, so a plugin's own hook (Tailwind's full-reload) runs inside it. */
+export function updatesBeginPlugin(changes: Changes): Plugin {
+  return {
+    name: 'marver:updates-begin',
+    hotUpdate: {
+      order: 'pre',
+      handler(opts) { if (this.environment.name === 'client') changes.begin(opts.file, opts.timestamp) },
+    },
+  }
 }
 
 /** The hook that runs last on every hot update of the client environment. */
-export function updatesPlugin(root: string, manifest: () => Manifest, hooks: () => UpdateHooks | null, landed: (file: string) => void): Plugin {
+export function updatesPlugin(root: string, manifest: () => Manifest, hooks: () => UpdateHooks | null, landed: (file: string) => void, changes: Changes): Plugin {
   return {
     name: 'marver:updates',
     hotUpdate: {
       order: 'post',
       handler(opts) {
         landed(opts.file)   // this environment is done with the file; the last one releases it
-        if (this.environment.name !== 'client') return
-        const h = hooks()
-        if (!h) return
-        const t = framesFor(root, manifest(), opts.file, opts.modules)
-        if (t.doc.length || t.touched.length) h.onFrames(t, 'update')
+        try {
+          if (this.environment.name !== 'client') return
+          const h = hooks()
+          if (!h) return
+          const t = framesFor(root, manifest(), opts.file, opts.modules)
+          // inside the bracket: the closure keeps this run's token. None: the event came with no watcher token
+          if (t.doc.length || t.touched.length) { const token = changes.run(opts.file, opts.timestamp); h.onFrames(t, 'update', token ? { token } : changes.ofFile(opts.file)) }
+        } finally { changes.landed(opts.file, opts.timestamp) }
       },
     },
   }
 }
 
 /** Wraps the client's hot channel: the reload guard and refused refreshes. */
-export function guardUpdates(server: ViteDevServer, root: string, manifest: () => Manifest, hooks: UpdateHooks): void {
+export function guardUpdates(server: ViteDevServer, root: string, manifest: () => Manifest, hooks: UpdateHooks, changes: Changes): void {
   const env = server.environments.client
   const wrap = (ch: { send: (...a: any[]) => void }) => {
     const send = ch.send.bind(ch)
@@ -96,15 +114,17 @@ export function guardUpdates(server: ViteDevServer, root: string, manifest: () =
         // URLs changed) or a restart's. A dead end in the graph names its file, Tailwind names no page,
         // an HTML page names itself - those become calm reloads instead
         const passed = p.path === '*' && !p.triggeredBy
-        hooks.onReload({ triggeredBy: p.triggeredBy, path: p.path }, passed)
+        // the file behind it: the one it names, else the page it reloads (an HTML frame no page has
+        // loaded yet has no module - Vite then names only its path)
+        const by = passed ? undefined : p.triggeredBy ?? (p.path && p.path !== '*' ? join(root, p.path.replace(/^\//, '')) : undefined)
+        // what it knows of its change (spec 30 #11): named, that file's token; named nothing, the brackets open right now
+        const at = passed ? undefined : by ? changes.ofFile(by) : changes.pathless()
+        hooks.onReload({ triggeredBy: p.triggeredBy, path: p.path }, passed, at)
         if (!passed) {
-          // the file behind it: the one it names, else the page it reloads (an HTML frame no page has
-          // loaded yet has no module - Vite then names only its path)
-          const by = p.triggeredBy ?? (p.path && p.path !== '*' ? join(root, p.path.replace(/^\//, '')) : undefined)
           const mods = by ? env.moduleGraph.getModulesByFile(by) : undefined
           const all = manifest().frames.map((f: FrameEntry) => f.id)
           const t: Touched = by ? framesFor(root, manifest(), by, mods ?? []) : { file: '', doc: all, touched: [], unattributed: true }
-          if (t.doc.length || t.touched.length) hooks.onFrames(t, 'reload')   // a file no frame reads reloads nothing
+          if (t.doc.length || t.touched.length) hooks.onFrames(t, 'reload', at!)   // a file no frame reads reloads nothing
           return
         }
       }
@@ -122,6 +142,7 @@ export function guardUpdates(server: ViteDevServer, root: string, manifest: () =
     if (refused.get(mod.url) === mod.lastHMRTimestamp) return
     refused.set(mod.url, mod.lastHMRTimestamp)
     const t = framesFor(root, manifest(), mod.file, [mod], true)
-    if (t.doc.length || t.touched.length) hooks.onFrames(t, 'invalidate')
+    // no identity of its own (spec 30 #8): Vite's message carries none, and the module's timestamp may be a later save's
+    if (t.doc.length || t.touched.length) hooks.onFrames(t, 'invalidate', changes.refused(mod.lastHMRTimestamp))
   })
 }

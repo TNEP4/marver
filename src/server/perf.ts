@@ -14,7 +14,7 @@
 import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { checkRealDirs } from './boards.ts'
-import { DROP_REASONS as R30_DROP_REASONS, PAGE_KINDS as R30_PAGE_KINDS } from '../shared/perf-records.ts'
+import { DEDUPE, DROP_REASONS as R30_DROP_REASONS, HELD_BY, LOAD_TRIGGERS, PAGE_KINDS as R30_PAGE_KINDS, RELOAD_BOUNDS, SHELL_RELOAD_KINDS, WRITER_ATTRIBUTION, type BatchAnswer, type BatchFailed, type ShellReloadKind } from '../shared/perf-records.ts'
 
 const MAX = 2_000_000   // past this the oldest half goes: the log answers "what happened lately"
 /** page.jsonl's: one load of a 120-frame board writes ~140 KB (two thirds of it moves), so 2 MB held about fourteen
@@ -88,6 +88,12 @@ export function logReload(root: string, entry: Record<string, unknown>): void {
   try { perfLogs.append(root, 'reloads', [JSON.stringify({ ts: Date.now(), ...entry })]) } catch { /* the log never stands in the way of the canvas */ }
 }
 
+/** Lines of one event, one append and one time (spec 30 #10, #12): a list and its parts stay together. Never retried. */
+export function logReloadLines(root: string, entries: readonly Record<string, unknown>[]): void {
+  const ts = Date.now()
+  try { perfLogs.append(root, 'reloads', entries.map((e) => JSON.stringify({ ts, ...e }))) } catch { /* the log never stands in the way of the canvas */ }
+}
+
 export const readReloads = (root: string, since = 0): Record<string, any>[] => perfLogs.read(root, 'reloads', since)
 /** The page's records from `since` (epoch ms): malformed lines skipped. */
 export const readPage = (root: string, since = 0): Record<string, any>[] => perfLogs.read(root, 'page', since)
@@ -125,11 +131,21 @@ const obj = (v: unknown): Record<string, unknown> => (v && typeof v === 'object'
 const prune = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).filter(([, x]) => x !== undefined))
 const cause = (v: unknown) => (typeof v === 'string' && CAUSE.test(v) ? v : undefined)
 
+/** #18: a load's candidate writers: at most 8, each its page and at most 8 command ids, and their count. */
+const writers = (v: unknown) => {
+  if (!Array.isArray(v)) return undefined
+  const out = v.slice(0, RELOAD_BOUNDS.candidates).flatMap((x) => {
+    const c = obj(x), page = id(c.page), cmds = Array.isArray(c.cmds) ? c.cmds.slice(0, RELOAD_BOUNDS.candidates).flatMap((y) => id(y) ?? []) : []
+    return page ? [{ page, cmds, n: Math.max(count(c.n) ?? 0, cmds.length) }] : []
+  })
+  return out.length ? out : undefined
+}
+
 /** Each kind's fields, rebuilt from what the page sent - anything else is left out; null = the record is dropped. */
 const BODY: Record<typeof PAGE_KINDS[number], (r: Record<string, unknown>) => Record<string, unknown> | null> = {
   load: (r) => {
     const board = typeof r.board === 'string' && BOARD.test(r.board) ? r.board : undefined, c = oneOf(r.cause, LOAD_CAUSES), request = id(r.request)
-    return board && c && request ? { board, cause: c, request, sinceNav: ms(r.sinceNav) } : null
+    return board && c && request ? { board, cause: c, request, sinceNav: ms(r.sinceNav), trigger: oneOf(r.trigger, LOAD_TRIGGERS), writer: oneOf(r.writer, WRITER_ATTRIBUTION), candidates: writers(r.candidates), by: id(r.by) } : null
   },
   commit: (r) => {
     const k = obj(r.byKind)
@@ -155,7 +171,7 @@ const BODY: Record<typeof PAGE_KINDS[number], (r: Record<string, unknown>) => Re
       weight: prune({ domNodes: count(w.domNodes), iframes: count(w.iframes), awake: count(w.awake), asleep: count(w.asleep), heapMB: tenth(w.heapMB) }),
     }
   },
-  cut: (r) => { const reason = oneOf(r.reason, CUT_REASONS); return reason ? { reason, request: id(r.request), ms: ms(r.ms), lastMove: ms(r.lastMove), frames: count(r.frames), ready: count(r.ready) } : null },
+  cut: (r) => { const reason = oneOf(r.reason, CUT_REASONS); return reason ? { reason, request: id(r.request), ms: ms(r.ms), lastMove: ms(r.lastMove), frames: count(r.frames), ready: count(r.ready), visibleReadyMs: ms(r.visibleReadyMs), allReadyMs: ms(r.allReadyMs), visibleReady: count(r.visibleReady) } : null },
   // spec 30: `load` and `cut` above are the edits stream's to extend (#17-#19); `gesture` and `error` below the signals
   // stream's (#27-#35)
   gesture: (r) => {
@@ -211,6 +227,112 @@ export function logPage(root: string, raws: unknown[], o: { run?: string; kept?:
   try { perfLogs.append(root, 'page', recs.map((c) => JSON.stringify(c))) } catch { return 0 }
   o.kept?.(recs)
   return recs.length
+}
+
+// ---- spec 30 R1, R2: the shell's reload lines, and acknowledged delivery (#7, #16) ------------------------------------
+
+/** A revision: the dev server's boot, and its send's number (plugin.ts). */
+const REVISION = /^\d{1,24}:\d{1,9}$/
+const revision = (v: unknown) => (typeof v === 'string' && REVISION.test(v) ? v : undefined)
+const NAV_TYPES = ['navigate', 'reload', 'back_forward', 'prerender'] as const
+const WATCHDOG_ACTIONS = ['retry', 'gave-up'] as const
+/** Vite's timestamp, epoch ms */
+const hmrTs = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 && v < 1e14 ? Math.round(v) : undefined)
+const strings = (v: unknown, n = RELOAD_BOUNDS.idsPerLine) => (Array.isArray(v) ? v.slice(0, n).flatMap((x) => str(x) ?? []) : [])
+
+/** A shell line's fields by kind; null = dropped. `dropped` is R13's own: what the reload Outbox lost, counted (#5). */
+const SHELL_BODY: Record<ShellReloadKind | 'dropped', (r: Record<string, unknown>) => Record<string, unknown> | null> = {
+  'shell-boot': (r) => ({ nav: oneOf(r.nav, NAV_TYPES), resumed: flag(r.resumed) }),
+  ready: (r) => {
+    const node = str(r.node)
+    if (!node) return null
+    const revisions = Array.isArray(r.revisions) ? r.revisions.slice(0, RELOAD_BOUNDS.idsPerLine).flatMap((x) => revision(x) ?? []) : undefined
+    return { cause: cause(r.cause), node, frame: str(r.frame), shown: str(r.shown), ms: ms(r.ms), revisions, queuedMs: ms(r.queuedMs), bootMs: ms(r.bootMs), heldBy: oneOf(r.heldBy, HELD_BY), asleep: flag(r.asleep) }
+  },
+  settled: (r) => { const node = str(r.node); return node ? { node, frame: str(r.frame), ms: ms(r.ms) } : null },
+  invalidated: (r) => {
+    const rev = revision(r.revision), h = obj(r.held)
+    return rev ? { revision: rev, asked: count(r.asked), offBoard: count(r.offBoard), onBoard: count(r.onBoard), awake: count(r.awake), asleep: count(r.asleep), held: prune(Object.fromEntries(HELD_BY.map((k) => [k, count(h[k])]))), parts: count(r.parts) } : null
+  },
+  'invalidated-nodes': (r) => { const rev = revision(r.revision); return rev ? { revision: rev, part: count(r.part), parts: count(r.parts), nodes: strings(r.nodes) } : null },
+  inplace: (r) => {
+    const node = str(r.node), ts = hmrTs(r.hmrTs)
+    // what was seen, no more (#15): `applied` is never true, and a line that says nothing was fetched is no line
+    if (!node || ts === undefined || r.fetched !== true || (r.applied !== 'unknown' && r.applied !== false)) return null
+    return { node, frame: str(r.frame), hmrTs: ts, fetched: true, applyMs: ms(r.applyMs), nextObservedCommitMs: ms(r.nextObservedCommitMs), applied: r.applied }
+  },
+  watchdog: (r) => { const node = str(r.node), action = oneOf(r.action, WATCHDOG_ACTIONS); return node && action ? { node, frame: str(r.frame), nav: count(r.nav), action } : null },
+  dropped: (r) => (count(r.n) === undefined ? null : { n: count(r.n), reason: oneOf(r.reason, DROP_REASONS) }),
+}
+const SHELL_KINDS = [...SHELL_RELOAD_KINDS, 'dropped'] as const
+
+/** A shell line rebuilt from its envelope and its kind's allowlist, or null (#16, as `cleanPageRecord`). */
+export function cleanReloadRecord(raw: unknown, now = Date.now()): Record<string, unknown> | null {
+  const r = obj(raw)
+  const kind = oneOf(r.kind, SHELL_KINDS), page = id(r.page), seq = count(r.seq)
+  if (!kind || !page || seq === undefined) return null
+  const body = SHELL_BODY[kind](r)
+  if (!body) return null
+  const ts = typeof r.ts === 'number' && Number.isFinite(r.ts) && Math.abs(r.ts - now) < 86_400_000 ? Math.round(r.ts) : now
+  return { ts, kind, tab: str(r.tab, 16), page, seq, ...prune(body) }
+}
+
+/** #7: the `(page, seq)` a server wrote - best effort: 10 minutes, 4,096 per page, 64 pages. One window for both logs,
+ *  whose records share one seq per page. Every reader dedupes again: a retry past it, or after an eviction, is written
+ *  twice. Oldest first, by Map order. */
+const written = new Map<string, Map<number, number>>()
+const wroteLately = (root: string, page: string, seq: number, now: number): boolean => {
+  const at = written.get(`${root}\0${page}`)?.get(seq)
+  return at !== undefined && now - at < DEDUPE.windowMs
+}
+function rememberWrites(root: string, recs: readonly Record<string, unknown>[], now: number): void {
+  for (const r of recs) {
+    const key = `${root}\0${r.page as string}`
+    const seqs = written.get(key) ?? new Map<number, number>()
+    written.delete(key)   // newest last: the page evicted first is the one that wrote longest ago
+    written.set(key, seqs)
+    seqs.delete(r.seq as number)
+    seqs.set(r.seq as number, now)
+    if (seqs.size > DEDUPE.perPage) seqs.delete(seqs.keys().next().value!)
+    if (written.size > DEDUPE.pages) written.delete(written.keys().next().value!)
+  }
+}
+
+/** failed appends, by project (#7): each 503 says the count so far */
+const failures = new Map<string, number>()
+export const failedWrites = (root: string): number => failures.get(root) ?? 0
+
+/** A batch into its log: duplicates dropped, the answer only after the append returned. `kept` receives what was written.
+ *  An append that failed is `BatchFailed`, and remembers nothing: the retry writes it. */
+function writeBatch(root: string, log: 'page' | 'reloads', recs: readonly Record<string, unknown>[], now: number, kept?: (recs: Record<string, unknown>[]) => void): BatchAnswer | BatchFailed {
+  const inBatch = new Set<string>()
+  const fresh = recs.filter((r) => {
+    const k = `${r.page as string}:${r.seq as number}`
+    if (inBatch.has(k) || wroteLately(root, r.page as string, r.seq as number, now)) return false
+    inBatch.add(k)
+    return true
+  })
+  if (fresh.length) {
+    try { perfLogs.append(root, log, fresh.map((r) => JSON.stringify(r))) }
+    catch {
+      const n = failedWrites(root) + 1
+      failures.set(root, n)
+      return { error: 'the perf log could not be written', failedWrites: n }
+    }
+    rememberWrites(root, fresh, now)
+    kept?.(fresh)
+  }
+  return { ok: true, accepted: fresh.length, duplicates: recs.length - fresh.length }
+}
+
+/** `POST perf/reload`'s batch (#16). */
+export function takeReloadBatch(root: string, raws: unknown[], now = Date.now()): BatchAnswer | BatchFailed {
+  return writeBatch(root, 'reloads', raws.slice(0, 5_000).flatMap((x) => { const c = cleanReloadRecord(x, now); return c ? [c] : [] }), now)
+}
+/** `POST perf/page`'s batch (#7): as `logPage`, a headless run's records stamped after the cleaner. */
+export function takePageBatch(root: string, raws: unknown[], o: { run?: string; kept?: (records: Record<string, unknown>[]) => void } = {}, now = Date.now()): BatchAnswer | BatchFailed {
+  const recs = raws.slice(0, 5_000).flatMap((x) => { const c = cleanPageRecord(x, now); return c ? [o.run ? { ...c, run: o.run } : c] : [] })
+  return writeBatch(root, 'page', recs, now, o.kept)
 }
 
 /** One run line into runs.jsonl (spec 28 A3.8 #22) - best effort. A cancelled run writes its line too. */

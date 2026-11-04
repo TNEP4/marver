@@ -26,3 +26,7 @@ export function shouldArmReadyWatch(node: ReadyNode, hasFrame: boolean): boolean
 export function canAutoReload(node: ReadyNode): boolean {
   return node.status === 'loading' && !node.readyRetried
 }
+
+/** What a silence comes to (spec 30 #20): the first a retry, the second giving up - the watchdog's own line says which,
+ *  before it acts. */
+export const silenceAction = (node: ReadyNode, hasFrame: boolean): 'retry' | 'gave-up' => (shouldArmReadyWatch(node, hasFrame) ? 'retry' : 'gave-up')
