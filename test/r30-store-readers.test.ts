@@ -119,6 +119,32 @@ describe('0.30 lines through the same views (#7, #10, #56)', () => {
     expect(Object.keys(j.files)).toEqual(['a.tsx', 'b.tsx'])
   })
 
+  it('a refused refresh keeps its whole membership: its parts, as the server writes them, go with their own update and no other', async () => {
+    const { createChanges } = await import('../src/server/changes.ts')
+    const lines: Record<string, unknown>[] = []
+    let ts = NOW - 5 * MIN
+    const changes = createChanges({ root: '/r', envs: () => 1, write: (ls) => { for (const l of ls) lines.push({ ts, ...l }) } })
+    const ids = (p: string, n: number) => Array.from({ length: n }, (_, i) => `${p}/${i}`)
+    // 600 frames: three parts, and no change to name them by
+    changes.update('invalidate', '/r/a.tsx', ids('a', 600), ['a/in'], changes.refused(5))
+    ts++
+    // the next refused refresh: its parts are its own
+    changes.update('invalidate', '/r/b.tsx', ids('b', 300), [], changes.refused(6))
+    ts++
+    // and one with no parts, then a stray part with nothing before it (its update past the window): it joins nothing
+    changes.update('invalidate', '/r/c.tsx', ['c/0'], [], changes.refused(7))
+    lines.push({ ts, kind: 'update-ids', change: 'unknown', part: 2, parts: 2, reload: ['stray/0'] })
+    expect(lines.filter((l) => l.kind === 'update-ids').length, 'the shape under test').toBe(4)
+    write('reloads.jsonl', lines)
+    const j = await run({})
+    expect(j.files['a.tsx'].reached).toEqual(ids('a', 600))
+    expect(j.files['a.tsx'].inPlace).toEqual(['a/in'])
+    expect(j.files['a.tsx'].edits, 'parts are no edits').toBe(1)
+    expect(j.files['b.tsx'].reached).toEqual(ids('b', 300))
+    expect(j.files['c.tsx'].reached).toEqual(['c/0'])
+    expect(Object.keys(j.files).sort()).toEqual(['a.tsx', 'b.tsx', 'c.tsx'])
+  })
+
   it('a shell line written twice past the server\'s window counts once by (page, seq); server lines, which name none, each count', async () => {
     const ready = { ts: NOW - MIN, kind: 'ready', tab: 's1', page: PG, seq: 7, node: 'n', frame: 'x/1', cause: 'job', ms: 100 }
     write('reloads.jsonl', [

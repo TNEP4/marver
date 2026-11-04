@@ -17,6 +17,7 @@ import { readJam } from '../server/perf-jam.ts'
 import { marverHome } from '../server/slots.ts'
 import { readDevInfo } from '../server/work.ts'
 import { isBoardName, labelOf } from '../shared/board-tree.ts'
+import { UNKNOWN_CHANGE } from '../shared/perf-records.ts'
 import type { RunLine, RunStreamLine } from '../shared/perf-run.ts'
 import { crashesSummary, flashesSummary, machineSummary, PRESSURE_FRESH_MS, readAppLog, repoWorkspaces, runsSummary, type PageMoment } from './perf-app.ts'
 import { allPerf } from './perf-all.ts'
@@ -97,29 +98,36 @@ const BOOKKEEPING = new Set(['change', 'update-ids', 'invalidate', 'invalidate-i
 /**
  * Edits per file, with the frames each reached and how (#10, #56). With 0.30's change ids an edit is its id, and its
  * lists the union of its `update` and `update-ids` lines. A line with none (0.29, or a refused refresh: `unknown`,
- * never attributed, #8) is an edit of its own, as 0.29 counted. A part whose `update` fell before the window goes.
+ * never attributed, #8) is an edit of its own, as 0.29 counted; a refused refresh's parts name no change, so they go by
+ * where they are: the server writes an `update` and its parts in one append, so the parts right after it are its own.
+ * A part whose `update` fell before the window goes.
  */
 export function editsByFile(log: readonly Record<string, any>[]): Map<string, { edits: number; reload: Set<string>; inPlace: Set<string> }> {
   const files = new Map<string, { edits: number; reload: Set<string>; inPlace: Set<string> }>()
   const ofChange = new Map<string, string>()
   const put = (key: string) => { let f = files.get(key); if (!f) files.set(key, f = { edits: 0, reload: new Set(), inPlace: new Set() }); return f }
-  const change = (e: Record<string, any>) => (typeof e.change === 'string' && e.change !== 'unknown' ? e.change : null)
+  const change = (e: Record<string, any>) => (typeof e.change === 'string' && e.change !== UNKNOWN_CHANGE ? e.change : null)
+  const union = (f: { reload: Set<string>; inPlace: Set<string> }, e: Record<string, any>) => {
+    for (const x of e.reload ?? []) f.reload.add(x)
+    for (const x of e.inPlace ?? []) f.inPlace.add(x)
+  }
+  /** the refused refresh whose parts may come next */
+  let refused: { key: string; parts: unknown } | null = null
   for (const e of log) {
+    if (e.kind === 'update-ids' && e.change === UNKNOWN_CHANGE && refused?.parts === e.parts) { union(put(refused.key), e); continue }
+    refused = null
     if (e.kind !== 'update') continue
     const key = e.file ?? '(no file)', id = change(e)
     const f = put(key)
     if (!id || !ofChange.has(id)) f.edits++
     if (id) ofChange.set(id, key)
-    for (const x of e.reload ?? []) f.reload.add(x)
-    for (const x of e.inPlace ?? []) f.inPlace.add(x)
+    union(f, e)
+    if (e.change === UNKNOWN_CHANGE && Number(e.parts) > 1) refused = { key, parts: e.parts }
   }
   for (const e of log) {
     if (e.kind !== 'update-ids') continue
     const key = ofChange.get(e.change)
-    if (key === undefined) continue
-    const f = put(key)
-    for (const x of e.reload ?? []) f.reload.add(x)
-    for (const x of e.inPlace ?? []) f.inPlace.add(x)
+    if (key !== undefined) union(put(key), e)
   }
   return files
 }
