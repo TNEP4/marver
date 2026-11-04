@@ -214,8 +214,10 @@ describe('R3: a theme switch', () => {
     const { s, page } = await open('three')
     await inFrame(s, 'k-b', HOLD_FRAMES)
     await key(s, 'd')
-    // k-b's ack, said by a document that is not the one there now
-    await inFrame(s, 'k-b', `(() => { const t = window.__raf.length; window.__mvBoot = 'someone-else'; for (let i = 0; i < 4; i++) { const a = window.__raf.shift(); if (a) a(0) } return t })()`)
+    await browser.until(s, `${FRAME('k-b')}.contentWindow.__raf.length > 0`, 3_000)
+    // k-b's ack, said by a document that is not the one there now: the id the shell reads off the window has moved on
+    const released = await inFrame(s, 'k-b', `(() => { window.__mvBoot = 'someone-else'; let n = 0; for (let i = 0; i < 4; i++) { const a = window.__raf.shift(); if (a) { a(0); n++ } } return n })()`)
+    expect(released).toBeGreaterThanOrEqual(2)
     const t = await until(() => of(page, 'theme')[0], 12_000, 'the timeout')
     expect(t).toMatchObject({ frames: 3, applied: 2, late: 1, outcome: 'timeout' })
   }, 90_000)
@@ -546,24 +548,19 @@ describe('R5: more bugs', () => {
     if (!browser) return
     const { s } = await open('three')
     await browser.eval(s, `(() => { window.__posted = 0; addEventListener('message', (e) => { if (e.data?.type === 'sh:console') __posted++ }); return true })()`)
-    // forty calls in one turn; only formatting reads the message more than Chrome's own console does
+    // forty calls in one turn. An object's kind is read by the formatting alone: a getter nothing else touches
     const reads = await inFrame(s, 'k-b', `(() => {
       let reads = 0
-      const e = new Error('y')
-      Object.defineProperty(e, 'message', { get() { reads++; return 'formatted' } })
-      const perCall = []
-      for (let i = 0; i < 40; i++) { const r0 = reads; console.error(e); perCall.push(reads - r0) }
-      return perCall
-    })()`) as number[]
+      const o = {}
+      Object.defineProperty(o, 'constructor', { enumerable: false, get() { reads++; return Object } })
+      for (let i = 0; i < 40; i++) console.error('state', o)
+      return reads
+    })()`) as number
+    await browser.until(s, `window.__posted > 0`, 3_000)
     await wait(300)
     const posted = await browser.eval(s, `window.__posted`)
     expect(posted).toBeLessThanOrEqual(5)
-    expect(posted).toBeGreaterThan(0)
-    // the calls past the budget read less than the ones it formatted, and each of them the same
-    const past = reads.slice(-5)
-    expect(new Set(past).size).toBe(1)
-    expect(reads[0]).toBeGreaterThan(past[0])
-    expect(reads.filter((r) => r > past[0]).length).toBe(posted)
+    expect(reads, 'formatted exactly what was posted').toBe(posted)
   }, 90_000)
 
   it('60 errors in one load: every source shares the load\'s 50, the rest counted; a document\'s first window error always goes', async () => {
