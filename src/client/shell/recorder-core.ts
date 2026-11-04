@@ -3,8 +3,11 @@
  * (the ready-watch.ts precedent): the bounded outbox, sizes in UTF-8 bytes, what fits a page's last keepalive send, a
  * gesture's numbers, and a node's outcome from what its live document said.
  */
+import { PAGE_KINDS } from '../../shared/perf-records.ts'
 
-export const KINDS = ['load', 'commit', 'visible', 'frame', 'move', 'quiet', 'settled', 'cut', 'gesture', 'error', 'dropped'] as const
+/** Every kind a page records: 0.29's, and spec 30's (`renders`, `warnings`, `theme`, `mode`, `hmr`, `cmd`, `self`) -
+ *  one list, the server's allowlist reads it too (perf-records.ts). */
+export const KINDS = PAGE_KINDS
 export type Kind = typeof KINDS[number]
 /** Every record: the workspace, this page, the load that owns the geometry ('-' before the first commit), its place
  *  in this page's order, and when it happened. */

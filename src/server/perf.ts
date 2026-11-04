@@ -6,10 +6,15 @@
  *  - page.jsonl, the recorder's page half (spec 28 A1.7): what each board load did, from the page - its request and
  *    commit, each frame's outcome, every move and why, quiet, the last move and settled - plus gestures and
  *    errors. Each record is rebuilt from its kind's allowlist; `npx marver perf --loads` reads them back.
+ *
+ * Spec 30: every log is written and read through `perfLogs` (#1, #42) - one writer per file, which the app-store
+ * stream reimplements with segments, retention by age and the safety cap, behind the same two calls; the records'
+ * shapes and bounds are src/shared/perf-records.ts's. Each stream fills its own kinds' cleaners in `BODY`.
  */
 import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { checkRealDirs } from './boards.ts'
+import { DROP_REASONS as R30_DROP_REASONS, PAGE_KINDS as R30_PAGE_KINDS } from '../shared/perf-records.ts'
 
 const MAX = 2_000_000   // past this the oldest half goes: the log answers "what happened lately"
 /** page.jsonl's: one load of a 120-frame board writes ~140 KB (two thirds of it moves), so 2 MB held about fourteen
@@ -46,10 +51,6 @@ function appendLog(root: string, file: string, text: string): void {
   appendFileSync(file, text, { mode: 0o600 })
 }
 
-export function logReload(root: string, entry: Record<string, unknown>): void {
-  try { appendLog(root, reloadLog(root), JSON.stringify({ ts: Date.now(), ...entry }) + '\n') } catch { /* the log never stands in the way of the canvas */ }
-}
-
 const readLines = (file: string, since: number): Record<string, any>[] => {
   try {
     return readFileSync(file, 'utf8').split('\n').flatMap((l) => {
@@ -57,22 +58,54 @@ const readLines = (file: string, since: number): Record<string, any>[] => {
     })
   } catch { return [] }
 }
-export const readReloads = (root: string, since = 0): Record<string, any>[] => readLines(reloadLog(root), since)
+
+// ---- the writer and the reader (spec 30 #1, #42) ------------------------------------------------------------------
+
+/** The logs this writer owns, by name; jam.jsonl has its own (perf-jam.ts), under the same rules. */
+export type PerfLog = 'page' | 'reloads' | 'runs'
+const fileOf = (root: string, log: PerfLog) => (log === 'page' ? pageLog(root) : log === 'reloads' ? reloadLog(root) : runsLog(root))
+
+/**
+ * The one way a perf log is written and read back. Today: one file each, its oldest half gone past its cap. The
+ * app-store stream reimplements both behind these signatures (R9): a live file plus closed segments named
+ * `<name>.<openedAt>-<bound>.jsonl` (perf-records.ts `segmentName`), deleted whole by age in the writer's own order,
+ * the safety cap's counted drop - so no caller ever names a file or knows about segments.
+ */
+export interface PerfLogs {
+  /** Whole lines (none holding a newline), appended in order, synchronously. Throws when the append failed: nothing is
+   *  retried here - a batch route answers 503 (#7), a server line is lost and never retried. */
+  append(root: string, log: PerfLog, lines: readonly string[]): void
+  /** Every line with a numeric `ts` from `since` (epoch ms) on - every segment in `openedAt` order, then the live
+   *  file; malformed lines skipped. Readers dedupe page and shell lines by `(page, seq)` themselves (#7). */
+  read(root: string, log: PerfLog, since?: number): Record<string, any>[]
+}
+export const perfLogs: PerfLogs = {
+  append(root, log, lines) { if (lines.length) appendLog(root, fileOf(root, log), lines.join('\n') + '\n') },
+  read(root, log, since = 0) { return readLines(fileOf(root, log), since) },
+}
+
+export function logReload(root: string, entry: Record<string, unknown>): void {
+  try { perfLogs.append(root, 'reloads', [JSON.stringify({ ts: Date.now(), ...entry })]) } catch { /* the log never stands in the way of the canvas */ }
+}
+
+export const readReloads = (root: string, since = 0): Record<string, any>[] => perfLogs.read(root, 'reloads', since)
 /** The page's records from `since` (epoch ms): malformed lines skipped. */
-export const readPage = (root: string, since = 0): Record<string, any>[] => readLines(pageLog(root), since)
+export const readPage = (root: string, since = 0): Record<string, any>[] => perfLogs.read(root, 'page', since)
 
 // ---- the recorder's page half (spec 28 A1.7) ----------------------------------------------------------------------
 
 /** What one request may carry. */
 export const PAGE_BODY_MAX = 512 * 1024
-export const PAGE_KINDS = ['load', 'commit', 'visible', 'frame', 'move', 'quiet', 'settled', 'cut', 'gesture', 'error', 'dropped'] as const
+/** 0.29's kinds and spec 30's, one list with the page's (perf-records.ts) */
+export const PAGE_KINDS = R30_PAGE_KINDS
 export const LOAD_CAUSES = ['boot', 'switch', 'disk-reload'] as const
 export const CUT_REASONS = ['switch', 'reload', 'hidden', 'timeout', 'superseded', 'error', 'edited', 'unsaved'] as const
 export const OUTCOMES = ['settled', 'ready', 'missing', 'error', 'never-ready', 'cut'] as const
 export const GESTURES = ['pan', 'zoom', 'layout'] as const
 export const SOURCES = ['shell', 'frame', 'stage'] as const
-/** why records were dropped, when it is not the queue's bound or a failed send: errors past a load's 50 */
-export const DROP_REASONS = ['errors'] as const
+/** why records were dropped, when it is not the queue's bound or a failed send: errors past a load's 50, and spec 30's
+ *  sources, commands, transitions and the safety cap (perf-records.ts) */
+export const DROP_REASONS = R30_DROP_REASONS
 
 // each id in its own generated format - free text never passes as one
 const ID = /^[0-9a-f]{12}$/, WS = /^[0-9a-f]{16}$/
@@ -123,6 +156,8 @@ const BODY: Record<typeof PAGE_KINDS[number], (r: Record<string, unknown>) => Re
     }
   },
   cut: (r) => { const reason = oneOf(r.reason, CUT_REASONS); return reason ? { reason, request: id(r.request), ms: ms(r.ms), lastMove: ms(r.lastMove), frames: count(r.frames), ready: count(r.ready) } : null },
+  // spec 30: `load` and `cut` above are the edits stream's to extend (#17-#19); `gesture` and `error` below the signals
+  // stream's (#27-#35)
   gesture: (r) => {
     const type = oneOf(r.type, GESTURES)
     return type ? { type, ms: ms(r.ms), frames: count(r.frames), p50: tenth(r.p50), p95: tenth(r.p95), max: tenth(r.max), over17ms: count(r.over17ms), over33ms: count(r.over33ms), longFrames: count(r.longFrames), hz: hz(r.hz) } : null
@@ -133,6 +168,18 @@ const BODY: Record<typeof PAGE_KINDS[number], (r: Record<string, unknown>) => Re
     return source && message ? { source, frame: str(r.frame), component: str(r.component), message, stack: stack.length ? stack : undefined, late: flag(r.late) } : null
   },
   dropped: (r) => (count(r.n) === undefined ? null : { n: count(r.n), reason: oneOf(r.reason, DROP_REASONS) }),
+
+  // ---- spec 30: each stream fills its own kinds (perf-records.ts has their fields); null drops the record until then
+  // signals (R3-R6)
+  renders: () => null,
+  warnings: () => null,
+  theme: () => null,
+  mode: () => null,
+  hmr: () => null,
+  // commands (R12)
+  cmd: () => null,
+  // app-store (R15)
+  self: () => null,
 }
 
 /** A page record rebuilt from the envelope and its kind's allowlist, or null. Strings are cut to 200 characters. */
@@ -161,17 +208,17 @@ export function logPage(root: string, raws: unknown[], o: { run?: string; kept?:
   const now = Date.now()
   const recs = raws.slice(0, 5_000).flatMap((x) => { const c = cleanPageRecord(x, now); return c ? [o.run ? { ...c, run: o.run } : c] : [] })
   if (!recs.length) return 0
-  try { appendLog(root, pageLog(root), recs.map((c) => JSON.stringify(c)).join('\n') + '\n') } catch { return 0 }
+  try { perfLogs.append(root, 'page', recs.map((c) => JSON.stringify(c))) } catch { return 0 }
   o.kept?.(recs)
   return recs.length
 }
 
 /** One run line into runs.jsonl (spec 28 A3.8 #22) - best effort. A cancelled run writes its line too. */
 export function appendRun(root: string, line: Record<string, unknown>): boolean {
-  try { appendLog(root, runsLog(root), JSON.stringify(line) + '\n'); return true } catch { return false }
+  try { perfLogs.append(root, 'runs', [JSON.stringify(line)]); return true } catch { return false }
 }
 /** The run lines from `since` (epoch ms): malformed lines skipped. */
-export const readRuns = (root: string, since = 0): Record<string, any>[] => readLines(runsLog(root), since)
+export const readRuns = (root: string, since = 0): Record<string, any>[] => perfLogs.read(root, 'runs', since)
 
 /** At start (spec 28 A1.7): design/.local/perf/ is the owner's alone - the directory 700 and every file in it 600,
  *  those earlier versions created without modes included - and the logs whose lines age out lose the ones older than

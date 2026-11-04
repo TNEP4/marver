@@ -10,6 +10,9 @@ import { create } from 'zustand'
 import { ROUTE } from '../const.ts'
 import { guardLeaving, leaveNow, unsavedWhen, workChanged } from './unsaved.ts'
 import { PERF_RUN, perfRunGate, RUN_HEADER, RUN_PARAM } from './perf-run.ts'
+import { RECORDER_LEVEL } from '../recorder-level.ts'
+import { RECORDER_PARAM } from '../../shared/perf-records.ts'
+import { perfSeams } from './recorder-seams.ts'
 // @ts-expect-error virtual module provided by the plugin
 import shConfig from 'virtual:sh-config'
 // @ts-expect-error virtual module: null in dev; a published build inlines manifest+boards
@@ -22,10 +25,12 @@ export const WS: string = shData === null && typeof shConfig?.workspace === 'str
 export const scoped = (key: string) => (WS ? `${key}:${WS}` : key)
 const param = (url: string, k: string, v: string) => `${url}${url.includes('?') ? '&' : '?'}${k}=${v}`
 /** A URL a document or an <img> loads, naming the workspace (frames, the stage, Jam pictures) - and, in a headless
- *  perf run, the run (spec 28 A3.8 #17): a frame's own writes are refused by its Referer, its Video asks no poster. */
+ *  perf run, the run (spec 28 A3.8 #17): a frame's own writes are refused by its Referer, its Video asks no poster.
+ *  A page recording at the `core` level (spec 30 #58) says so too, so its frames' hooks keep its level. */
 export const withWs = (url: string) => {
   const u = WS ? param(url, 'ws', WS) : url
-  return PERF_RUN ? param(u, RUN_PARAM, PERF_RUN.id) : u
+  const v = RECORDER_LEVEL === 'core' ? param(u, RECORDER_PARAM, 'core') : u
+  return PERF_RUN ? param(v, RUN_PARAM, PERF_RUN.id) : v
 }
 /** The headers every request of this page carries: its workspace, and its perf run's id. */
 const named = (h: Record<string, string> | undefined): Record<string, string> => ({ ...h, ...(WS ? { 'x-mv-ws': WS } : {}), ...(PERF_RUN ? { [RUN_HEADER]: PERF_RUN.id } : {}) })
@@ -56,14 +61,20 @@ export function mvFetch(url: string, init: RequestInit = {}): Promise<Response> 
   const refused = perfRunGate(url, init)
   if (refused) return Promise.resolve(refused)
   if (WS && canvasStopped()) return Promise.resolve(stoppedAnswer())
-  const sent = fetch(url, WS || PERF_RUN ? { ...init, headers: named(init.headers as Record<string, string> | undefined) } : init)
+  // the recorder's (spec 30 #18): a board write names its page and the commands folded into it - none until then
+  const extra = WS ? perfSeams.requestHeaders(url, init) : undefined
+  const headers = extra ? { ...(init.headers as Record<string, string> | undefined), ...extra } : init.headers as Record<string, string> | undefined
+  const t0 = performance.now()
+  const sent = fetch(url, WS || PERF_RUN ? { ...init, headers: named(headers) } : init)
   if (!WS) return sent
   // the server's refusal is told apart here, before any caller's own 409 (a board conflict, a stale tree)
   return sent.then((r) => {
+    perfSeams.answered.emit({ url, init, headers, status: r.status, ms: performance.now() - t0 })
     if (r.status !== 409 || r.headers.get('x-mv-elsewhere') !== '1') return r
     lost('elsewhere')
     return stoppedAnswer()
   }, (e: unknown) => {
+    perfSeams.answered.emit({ url, init, headers, status: (e as Error)?.name === 'TimeoutError' ? 'timeout' : 0, ms: performance.now() - t0 })
     // the live socket is gone, so nothing else would say so: a request that reaches nothing stops the page
     if (hmrLost && (e as Error)?.name !== 'AbortError') lost('down')
     throw e

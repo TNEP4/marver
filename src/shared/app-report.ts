@@ -268,9 +268,10 @@ const AGX: readonly Field[] = ['gpuSystemMemoryMB', 'allocMB', 'utilPct', 'rende
 /** An unload's before and after: the level, availablePct, the canvases' memory, the tab's memMB (never its pids), the GPU process's RSS. */
 const FIGURES: readonly Field[] = [f('level', level), f('availablePct', num), f('canvasMB', num), f('tab', nested([f('memMB', num)])), f('gpuProcessRssMB', num)]
 
-/** The kinds exported one by one; `sample` and `shown` are folded (FOLDED_KINDS), `tab` only counted (COUNTED_KINDS). */
+/** The kinds exported one by one; `sample` and `shown` are folded (FOLDED_KINDS), `tab` only counted (COUNTED_KINDS) -
+ *  and spec 30's `launch`, `cmd` and `window`, counted and never exported until a report v2 (spec 30 #56). */
 export const FOLDED_KINDS = ['sample', 'shown'] as const
-export const COUNTED_KINDS = ['tab'] as const
+export const COUNTED_KINDS = ['tab', 'launch', 'cmd', 'window'] as const
 export type ExportedKind = Exclude<AppKind, (typeof FOLDED_KINDS)[number] | (typeof COUNTED_KINDS)[number]>
 
 /** Each kind's projection, field by field (#27): what a record may carry out, in this order after `ts` and `kind`. */

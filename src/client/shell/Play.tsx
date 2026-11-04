@@ -27,6 +27,7 @@ import { stranded, withWs } from './api.ts'
 import { poweredByUrl } from '../../shared/utm.ts'
 import { canvasCtl } from './canvas/ctl.ts'
 import { recorder } from './recorder.ts'
+import { perfSeams } from './recorder-seams.ts'
 import { revealFrame, switchFor } from './goto.ts'
 import { Tip } from './Tip.tsx'
 import { keyAllowed } from '../frame-host/keys.js'
@@ -470,6 +471,8 @@ function PlayInner() {
       const data = e.data
       if (!data || typeof data.type !== 'string') return
       const s = useStore.getState()
+      // the recorder's (spec 30): every stage message, before the shell acts on it - never consumed here
+      perfSeams.stageMessage.emit(data)
       // Jam (spec 27): the stage records like a frame; a key the shell owns comes back as sh:key
       if (onFrameMessage('stage', data)) return
       if (data.type === 'sh:key') { if (typeof data.key === 'string') jamKey({ key: data.key, shift: !!data.shift, alt: !!data.alt, meta: !!data.meta, ctrl: !!data.ctrl }); return }

@@ -19,6 +19,11 @@
  * A4.6 #11, #14), which the server writes and main reads - no page ever opens it; `mv:open` / `mv:opened`, a notice's
  * click handed to the shell (`OpenItem`, `OpenResult`, A4.6 #29, #30); `mv:capture`, a live picture of the
  * document's own view (`CaptureAsk`, `CaptureAnswer`, A4.6 #35). The new methods are optional, as A3's are.
+ *
+ * Spec 30 (app 1.0.1, marver 0.30.0) adds, frozen before its streams split and `v` still 1: `mv:perf`'s `watch`, the
+ * three white-out windows a shell asks for (R8 #38), sent only when `perfInfo().watch` is true - app 1.0.0 would refuse
+ * it and spend the tab's bucket; and `mv:menu-click`'s `in`, the menu a relayed item came from (#51), absent from 1.0.0
+ * (the shell then records `in: 'app'`). Owners: app-store (`watch`, `perfInfo().watch`), commands (`in`).
  */
 
 export const APP_API_VERSION = 1
@@ -59,8 +64,11 @@ export type AppState = 'shown' | 'hidden' | 'untrusted'
 export interface DocAnswer { reopen: boolean; inset?: Inset }
 /** `mv:admit` (main to canvas) - the document admitted at its trusted commit (v1.12 r1 #1). */
 export interface Admit { doc: string }
-/** `mv:menu-click` (main to canvas). */
-export interface MenuClick { id: string }
+/** Spec 30 #51: the menu a relayed item came from - a View or Jam item, or the tab's right-click menu. */
+export const MENU_IN = ['menu', 'tab-menu'] as const
+export type MenuIn = (typeof MENU_IN)[number]
+/** `mv:menu-click` (main to canvas). `in` (app 1.0.1): where the person chose it; absent from app 1.0.0. */
+export interface MenuClick { id: string; in?: MenuIn }
 /**
  * The ids main sends of its own, never in the page's `mv:menu`: the tab's right-click Mark All as Seen (A2.4's
  * channels table: "Mark all as seen sends `mv:menu-click mark-all-seen` to the canvas"). A shell that does not know
@@ -93,7 +101,11 @@ export interface PerfSize { w: number; h: number }
  *   says which of them are still valid (moved by less than their clearance between the two answers);
  * - `mem`: `process.getProcessMemoryInfo().private` and `getHeapStatistics()`, all in KB (A3.8 #5);
  * - `shown`: the second animation-frame callback after a `shown` ask (A3.8 #9: a frame produced, not presented);
- * - `board`: the board's frame count and how many sleep, at each commit (Copy Details, A3.8 #9).
+ * - `board`: the board's frame count and how many sleep, at each commit (Copy Details, A3.8 #9);
+ * - `watch` (spec 30 R8 #38, app 1.0.1): a white-out window the shell opens (`on`) and closes, numbered (`seq`) like a
+ *   gesture's - `load` from the request to settled or cut, `theme` from a switch to its outcome, `reload` from an
+ *   on-screen job's `startReload` to its ready. Main keeps one window per tab: a new reason extends it, and a window
+ *   ends at 10 s whatever the shell says.
  */
 export type PerfMsg =
   | { kind: 'gesture'; on: boolean; seq: number; type?: 'pan' | 'zoom' | 'layout' }
@@ -102,6 +114,13 @@ export type PerfMsg =
   | { kind: 'mem'; tick: number; privateKB: number; heapUsedKB: number; heapTotalKB: number }
   | { kind: 'shown'; tick: number }
   | { kind: 'board'; frames: number; asleep: number }
+  | { kind: 'watch'; on: boolean; seq: number; why: WatchWhy }
+
+/** Spec 30 R8 #38: the windows a shell asks for; main's own are `gesture` and `shown` (app-perf.ts `WHITEOUT_WHY`). */
+export const WATCH_WHY = ['load', 'theme', 'reload'] as const
+export type WatchWhy = (typeof WATCH_WHY)[number]
+/** #40: a non-gesture window's end, whatever the shell says. */
+export const WATCH_MAX_MS = 10_000
 
 /**
  * `mv:perf-ask` (main to canvas; on the wire `{ doc, ...PerfAsk }`). The preload answers `mem` and `shown` itself,
@@ -347,8 +366,11 @@ export interface MarverAppV1 {
   perf?(p: PerfMsg): void
   /** A3 (app 0.2): main's probe asks (the white-out detector, A3.8 #16) */
   onPerfAsk?(fn: (a: PerfProbeAsk) => void): () => void
-  /** A3 (app 0.2): the display's refresh rate from main's `display` ask, null until one came; the shell puts it on its gesture records */
-  perfInfo?(): { hz: number | null }
+  /**
+   * A3 (app 0.2): the display's refresh rate from main's `display` ask, null until one came; the shell puts it on its
+   * gesture records. `watch` (app 1.0.1, spec 30 #38): true when main takes `mv:perf` `watch` - a shell sends it only then
+   */
+  perfInfo?(): { hz: number | null; watch?: boolean }
   /**
    * A4 (app 0.3): main's `mv:open` for a clicked notice, delivered once to this document after its hello when its
    * instance lists `open` (A4.6 #29). The shell resolves the occurrence against a fresh read and answers (#30); the

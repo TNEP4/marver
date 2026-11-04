@@ -330,12 +330,17 @@ interface PageApiBase {
   ready(): void
   onWindow(fn: (w: WindowView) => void): Off
 }
+/** Spec 30 #50: how a strip or Home tab was chosen - `tab:activate`'s `via` (allowlisted by the bridge), so the
+ *  `tab-activate` command records it; absent reads `click`. */
+export type ActivateVia = 'key' | 'click'
+/** `tab:activate`'s payload. */
+export interface TabActivate { id: string; via?: ActivateVia }
 export interface StripApi extends PageApiBase {
   readonly kind: 'strip'
   onTabs(fn: (s: TabsSnapshot) => void): Off
   onPill(fn: (p: PillView | null) => void): Off
   onPageFocus(fn: (f: PageFocus) => void): Off
-  activate(id: string): void
+  activate(id: string, via?: ActivateVia): void
   close(id: string): void
   tabMenu(id: string, x: number, y: number): void
   more(m: TabsMore): void
@@ -350,7 +355,7 @@ export interface HomeApi extends PageApiBase {
   onHomeFocus(fn: (f: HomeFocus) => void): Off
   /** A4 (A4.6 #47): the Shared canvases list */
   onShared(fn: (s: SharedLink[]) => void): Off
-  activate(id: string): void
+  activate(id: string, via?: ActivateVia): void
   close(id: string): void
   tabMenu(id: string, x: number, y: number): void
   openLink(url: string): Promise<LinkOpenAnswer>

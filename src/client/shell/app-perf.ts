@@ -13,7 +13,7 @@
  * holds two); `board` is sent when the frame count or the sleeping count changed, read at each change of the board's
  * nodes and again at each gesture's end (frames fall asleep without the store moving), never more.
  */
-import type { PerfMsg } from '../../shared/app-api.ts'
+import type { PerfMsg, WatchWhy } from '../../shared/app-api.ts'
 import { APP } from './marver-app.ts'
 import { useStore } from './store.ts'
 import { sleepingCount } from './canvas/sleep.ts'
@@ -84,6 +84,20 @@ export function boardChanged(frames: number, asleep: number): void {
 export function displayHz(): number | null {
   try { return APP?.perfInfo?.().hz ?? null } catch { return null }
 }
+
+/** Spec 30 R8 #38: does the app take `mv:perf` `watch`? App 1.0.1's preload says so in `perfInfo()`; app 1.0.0 would
+ *  refuse it and spend the tab's bucket, so nothing is sent without it. */
+export function watchSupported(): boolean {
+  try { return PERF_ON && APP?.perfInfo?.().watch === true } catch { return false }
+}
+
+/**
+ * Spec 30 R8 #38: a white-out window this page opens (`on`) or closes - `load` from the request to settled or cut,
+ * `theme` from a switch to its outcome, `reload` from an on-screen job's `startReload` to its ready. Callers: the
+ * app-store stream (`load`, from recorder-seams.ts `load`), signals (`theme`), edits (`reload`). A stub until the
+ * app-store stream fills it: one `seq` per window, sent only when `watchSupported()`.
+ */
+export function watchWindow(_why: WatchWhy, _on: boolean): void {}
 
 /** One message to the app, never throwing. */
 export function sendPerf(p: PerfMsg): void {

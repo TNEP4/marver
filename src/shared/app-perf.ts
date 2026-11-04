@@ -2,13 +2,19 @@
  * The app half of the recorder, on disk and in memory (spec 28 A3.1, A3.8 #4-#9, #13, #16, #45, #48, #49): the
  * one schema the Mac app writes into `~/.marver/perf/app.jsonl` (Marver Dev: `app-dev.jsonl`) and the CLI reads
  * (`marver perf --crashes`, `--flashes`, `--machine`), and the sampler's shapes `memory.ts` and the budgets read.
- * Types, constants and one pure reader only - no imports - so the app's main bundle, the CLI and the test harness
- * all take it as it is.
+ * Types, constants and one pure reader only - no imports but a type (perf-records.ts's `cmd`, erased) - so the app's
+ * main bundle, the CLI and the test harness all take it as it is.
  *
  * FROZEN before the A3 streams split (A3.8 #53). Owners: the recorder stream writes the envelope and most kinds;
  * the unloading stream writes `pressure`, `unload`, `unload-skip`, `unload-effect` and `reopen` through
  * `recorder.event`; the one-ground stream writes `cover`; the flash stream writes `flash` and
  * `whiteout-candidate`. A kind's body grows only by optional fields; a field's meaning never changes.
+ *
+ * Spec 30 (app 1.0.1) adds, frozen before its streams split and `v` still 1: `launch` (R7 #37), `cmd` (R12, the record
+ * the canvas shares, perf-records.ts), `window` (#53); `by` on `shown` and `reopen`; `why` on `whiteout-candidate`
+ * and the minute's `whiteout` on `sample` (R8 #41); `dropped`'s `reason`; and `samples.jsonl`, where `sample` and
+ * `agx` lines move unchanged (R9 #44). Owners: app-store writes `launch`, the white-out fields and the files;
+ * commands writes `cmd`, `window` (R12 #53) and `by`. The report counts `launch`, `cmd` and `window`, never exports them (#56).
  *
  * Units, said once: every `...MB` is MiB (KB / 1024 once per process, A3.8 #4); `cpu` is cores (Δ
  * `cumulativeCPUUsage` / Δ monotonic seconds, never `percentCPUUsage`); times are epoch ms (`ts`, `at`) or
@@ -16,6 +22,7 @@
  * `gpuProcessRssMB` is the GPU process's working set, never "GPU memory" (Codex r1 #19); the app never reads a
  * footprint about itself (A3.8 #2) - the budgets read footprint from outside.
  */
+import type { CmdRecord } from './perf-records.ts'
 
 // ---- the line --------------------------------------------------------------------------------------------------
 
@@ -23,6 +30,11 @@
 export type Flavour = 'release' | 'dev'
 /** The file each flavour writes, under `<MARVER_HOME>/perf/`. */
 export const APP_LOG: Record<Flavour, string> = { release: 'app.jsonl', dev: 'app-dev.jsonl' }
+/** Spec 30 R9 #44: where each flavour's `sample` and `agx` lines go from app 1.0.1, rows unchanged. One `seq` per
+ *  launch runs across both files; readers merge by `app` and `seq`. */
+export const APP_SAMPLES_LOG: Record<Flavour, string> = { release: 'samples.jsonl', dev: 'samples-dev.jsonl' }
+/** The kinds that go to the samples file (#44). */
+export const SAMPLE_KINDS = ['sample', 'agx'] as const
 
 /**
  * The record kinds (A3.8 #8). `main-error` is app 0.1's (errors.ts), kept so a 0.1 line still parses once the
@@ -34,6 +46,8 @@ export const APP_KINDS = [
   'whiteout-candidate', 'dropped', 'main-error',
   // A5 (app 1.0): the updater, the restart and the move (A5.1 #25)
   'update',
+  // spec 30 (app 1.0.1): the launch (R7 #37), commands (R12 #48), observable window events (#53)
+  'launch', 'cmd', 'window',
 ] as const
 export type AppKind = (typeof APP_KINDS)[number]
 
@@ -171,6 +185,8 @@ export interface SampleBody {
    * lines from before A5 (the report counts those minutes as missing)
    */
   own?: { rssMB: Agg; cpu: { s: number; ms: number; unmeasuredMs: number } }
+  /** spec 30 R8 #41: the white-out detector's minute; absent before app 1.0.1 */
+  whiteout?: WhiteoutMinute
 }
 
 /** `ioreg -rc AGXAccelerator -d1`, machine-wide (A3.1, A3.8 #9): a missing key is 'unknown'. */
@@ -220,6 +236,46 @@ export interface UpdateBody {
 }
 export const UPDATE_MOVE_WHY = ['offered', 'moved', 'opened-existing', 'declined', 'finder', 'cancelled', 'taken', 'failed', 'cleaned'] as const
 
+/** Spec 30 R8 #38: a white-out window's reason - main's own (`gesture`, `shown`) and the three a 0.30 shell asks for
+ *  with `mv:perf watch` (app-api.ts `WATCH_WHY`). */
+export const WHITEOUT_WHY = ['gesture', 'shown', 'load', 'theme', 'reload'] as const
+export type WhiteoutWhy = (typeof WHITEOUT_WHY)[number]
+/** #39: why a window's time went uncaptured. */
+export const UNCOVERED_WHY = ['stage', 'budget', 'hidden'] as const
+export type UncoveredWhy = (typeof UNCOVERED_WHY)[number]
+/** #41: the detector's minute, on `sample`. `captureMs` charges each capture's true length when its promise settled;
+ *  `overrunMs` is the part past the 500 ms abandon; `skipped`: ticks refused admission (#40). */
+export interface WhiteoutMinute {
+  windows: number
+  captures: number
+  captureMs: number
+  overrunMs: number
+  skipped: number
+  uncoveredMs: Record<UncoveredWhy, number>
+  byWhy: Partial<Record<WhiteoutWhy, number>>
+}
+
+/**
+ * Spec 30 R7 #37: one per launch, at the first local canvas uncovered or 30 s after ready. Times are ms from process
+ * start (`Date.now() - process.uptime() * 1000` at main's first line). `firstCanvas.page` joins the page's boot `load`.
+ */
+export interface LaunchBody {
+  readyMs: number
+  /** the first `showWindow` (window.ts:871) */
+  windowShownMs?: number
+  /** the first uncovered `cover` of a local tab (window.ts:703); `page` null before its hello (a 0.27.1 shell or older) */
+  firstCanvas?: { tab: string; ws?: string; page: string | null; commit?: number; uncoveredMs: number; cause: AppBodies['cover']['cause'] }
+  tabs: { restored: number; local: number; remote: number; active: 'local' | 'remote' | 'home' | 'settings' | null }
+  /** ms main spent restoring the saved tabs */
+  restoreTabs?: number
+  /** no canvas uncovered: Home was up, nothing was restored, or 30 s passed */
+  why?: 'home' | 'none-restored' | 'timeout'
+}
+/** #53: what macOS lets main observe of the native roles; `cause: 'app'` when one of the app's own commands did it in
+ *  the same turn, else `unknown` (a role item, the green button, the Dock). */
+export const WINDOW_EVENTS = ['enter-full-screen', 'leave-full-screen', 'minimize', 'restore', 'maximize', 'unmaximize'] as const
+export type WindowEvent = (typeof WINDOW_EVENTS)[number]
+
 export interface AppBodies {
   start: { version: string; electron: string; chrome: string; recorder: boolean; pid: number }
   sample: SampleBody
@@ -244,7 +300,7 @@ export interface AppBodies {
    * main's show to main's receipt of the preload's answer from its second animation-frame callback, on tab switches
    * only (A3.8 #9): the answer's IPC back to main is in it
    */
-  shown: TabIdent & { ms: number }
+  shown: TabIdent & { ms: number; /** spec 30: the command that caused it (#52) */ by?: string }
   /** memory.ts: a change of level (A3.8 #45) */
   pressure: { level: PressureLevel | null; availablePct: number | null; was: PressureLevel | null }
   /** `forced`: Force Quit Tab on a quit's stuck sheet (app 0.2 code review r2 #1) - the view taken out by hand, never a completed unload */
@@ -254,7 +310,7 @@ export interface AppBodies {
   /** 5 s after an unload (A3.8 #45) */
   'unload-effect': TabIdent & { reason: UnloadReason; before: UnloadFigures; after: UnloadFigures; pidGone: boolean }
   /** written at the reopened document's accepted hello, or its next document or 30 s after its lift with no page (A3.8 #45) */
-  reopen: TabIdent & { activateToLiftMs: number; unloadedForMs: number }
+  reopen: TabIdent & { activateToLiftMs: number; unloadedForMs: number; /** spec 30: the command that caused it */ by?: string }
   /** a presentation epoch's outcome (A3.8 #27; the one-ground stream's tuning record) */
   cover: TabIdent & {
     epoch: number
@@ -302,12 +358,20 @@ export interface AppBodies {
     inconclusive: number
     gpuEvents: RingEvent[]
     agx: AgxReading
+    /** spec 30 #41: the reasons of the window it was taken in (a window extended by a new reason has several) */
+    why?: WhiteoutWhy[]
   }
-  /** the writer's queue overflowed (2,000 lines): how many went */
-  dropped: { n: number }
+  /** the writer's queue overflowed (2,000 lines): how many went; spec 30: `retention-cap` (#43), `cmd` (#48) */
+  dropped: { n: number; reason?: 'retention-cap' | 'cmd' }
   /** app 0.1's error policy (errors.ts) */
   'main-error': { what: 'exception' | 'rejection'; name: string; message: string; stack: string[] }
   update: UpdateBody
+  /** spec 30 R7 #37 */
+  launch: LaunchBody
+  /** spec 30 R12: the tab's identity when the command acts on one (`tab`, `page`); never a relay's (#51) */
+  cmd: Partial<TabIdent> & CmdRecord
+  /** spec 30 #53 */
+  window: { event: WindowEvent; cause: 'app' | 'unknown' }
 }
 
 /** A kind's body alone (what `recorder.event` and the writer take; the writer adds the envelope). */

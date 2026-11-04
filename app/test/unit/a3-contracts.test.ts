@@ -98,7 +98,8 @@ describe('app.jsonl\'s envelope (A3.8 #8)', () => {
   it('the frozen kinds', () => {
     expect(APP_KINDS).toEqual(['start', 'sample', 'agx', 'gone', 'child-gone', 'gpu-restart', 'unresponsive', 'responsive', 'gpu', 'power',
       'tab', 'shown', 'pressure', 'unload', 'unload-skip', 'unload-effect', 'reopen', 'cover', 'flash', 'whiteout-candidate', 'dropped', 'main-error',
-      'update'])                                                     // A5.1 #25
+      'update',                                                      // A5.1 #25
+      'launch', 'cmd', 'window'])                                    // spec 30 R7 #37, R12 #48, #53
   })
 })
 

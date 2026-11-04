@@ -18,9 +18,16 @@ import { bootOf, iframeOf } from './canvas/frame-registry.ts'
 import { adopt, bound, fitWithin, KEEPALIVE_BYTES, LOAD_MAX_MS, newId, Outbox, outcomeOf, QUIET_MS, SEND_MS, stackLines, type Kind, type Outcome, type PerfRecord, type Track } from './recorder-core.ts'
 import { PERF_RUN, type PerfRunStatus } from './perf-run.ts'
 import { displayHz } from './app-perf.ts'
+import { nextSeq, PAGE_ID, perfSeams, type LoadPhase } from './recorder-seams.ts'
+import { fullRecorder } from '../recorder-level.ts'
+import { startReloads } from './recorder-reloads.ts'
+import { startSignals } from './recorder-signals.ts'
+import { startCommands } from './commands.ts'
+import { startSelf } from './recorder-self.ts'
 
-/** This document, in every record (and, in the app, in its hello: the app's records about this tab carry it). */
-export const PAGE_ID = newId()
+/** This document, in every record (and, in the app, in its hello: the app's records about this tab carry it). Minted in
+ *  recorder-seams.ts, which the spec 30 streams read without importing this module. */
+export { PAGE_ID }
 
 type State = ReturnType<typeof useStore.getState>
 type View = { x: number; y: number; w: number; h: number }
@@ -49,7 +56,6 @@ interface Load {
 
 let on = false
 let ws = ''
-let seq = 0
 let capturesPending = (): boolean => false
 let sealCaptures = (): void => {}
 /** requested, not committed (or cut) yet */
@@ -85,7 +91,7 @@ let sleeping = (): number => 0
 const unowned = { errors: 0, errAt: new Map<string, number>() }
 
 const env = (kind: Kind, load: string, body: Record<string, unknown>): PerfRecord =>
-  ({ ...Object.fromEntries(Object.entries(body).filter(([, x]) => x !== undefined)), v: 1, ws, page: PAGE_ID, load, seq: seq++, ts: Date.now(), kind })
+  ({ ...Object.fromEntries(Object.entries(body).filter(([, x]) => x !== undefined)), v: 1, ws, page: PAGE_ID, load, seq: nextSeq(), ts: Date.now(), kind })
 function rec(kind: Kind, load: string, body: Record<string, unknown>): PerfRecord {
   if (kind !== 'move') open.clear()   // a merged drag ends at the next record of another kind
   const r = env(kind, load, body)
@@ -94,6 +100,8 @@ function rec(kind: Kind, load: string, body: Record<string, unknown>): PerfRecor
   return r
 }
 const ownerId = () => owner?.id ?? '-'
+/** A load's phase, to whoever listens (spec 30: recorder-seams.ts `load`). */
+const phase = (p: LoadPhase) => perfSeams.load.emit(p)
 /** ms from the load's request; undefined for a moment before it (a document kept from an earlier load) */
 const rel = (L: Load, at?: number) => (at === undefined || at < L.t0 ? undefined : Math.round(at - L.t0))
 const node = (key: string) => useStore.getState().nodes.find((n) => n.key === key)
@@ -117,6 +125,7 @@ export function startRecorder(opts: { capturesPending: () => boolean; sealCaptur
   if (on || PUBLISHED || !CONFIG.workspace || w.__mvRecorderOn) return   // a hot-replaced module never records twice
   w.__mvRecorderOn = true
   on = true
+  perfSeams.on = true
   ws = CONFIG.workspace
   capturesPending = opts.capturesPending
   sealCaptures = opts.sealCaptures
@@ -138,6 +147,10 @@ export function startRecorder(opts: { capturesPending: () => boolean; sealCaptur
   }))
   addEventListener('pagehide', guard(leave))
   if (import.meta.env.DEV) (window as unknown as { __mvRecorder: unknown }).__mvRecorder = { page: PAGE_ID, ws, state, send }
+  // spec 30: the streams write through the page's envelope and outbox, and start only at the full level (#57, #58)
+  perfSeams.record = (kind, body, load) => { if (on) rec(kind, load ?? ownerId(), body) }
+  if (!fullRecorder()) return
+  for (const start of [startReloads, startSignals, startCommands, startSelf]) { try { start() } catch { /* one stream's start never stops another's, nor the page */ } }
 }
 
 /** What only the canvas knows, from Canvas.tsx when it mounts: when the camera or a layout animation starts and stops
@@ -157,6 +170,7 @@ function request(board: string, cause: LoadCause): string {
   pending.set(L.id, L)
   // `load`, its uncommitted `cut` and its `commit` carry the request's own id (the load's, once it commits)
   rec('load', L.id, { board, cause, request: L.id, ...(cause === 'boot' ? { sinceNav: Math.round(t0) } : {}) })
+  phase({ phase: 'request', load: L.id, board, cause })
   // the deadline runs from the request: a load not settled 120 s after it was asked for is cut, committed or not - a
   // board fetch that never answers included
   L.timeout = setTimeout(guard(() => expire(L)), LOAD_MAX_MS)
@@ -180,6 +194,7 @@ function cutRequest(id: string, reason: RequestCut | 'timeout' | 'hidden'): void
   L.done = 'cut'
   L.cutReason = reason
   rec('cut', id, { reason, request: id, ms: Math.round(performance.now() - L.t0) })
+  phase({ phase: 'cut', load: id, reason, request: true })
   // its fetch may still answer and mount it
   if (reason === 'timeout' || reason === 'hidden') {
     lapsed.set(id, L)
@@ -213,6 +228,7 @@ function commit(id: string, nodes: readonly Node[], manifest: Manifest): void {
   // a request already cut (its deadline passed, the page hid) mounts all the same: said, its cut kept - its board's
   // geometry is its own from here, every move late
   rec('commit', id, { request: id, ms: Math.round(L.committedAt - L.t0), ...facts(nodes, manifest), ...(late ? { late: true } : {}) })
+  phase({ phase: 'commit', load: id, ...(late ? { late: true as const } : {}) })
   if (late) return
   L.quietTimer = setTimeout(guard(() => quiet(L)), QUIET_MS)
   // a page hidden already: cut once the set that mounts this load has run - its nodes, not the board it replaces
@@ -359,6 +375,7 @@ function settle(L: Load, s: State, outs: Outcome[]): void {
     weight: weight(),
   })
   finish(L, 'settled')
+  phase({ phase: 'settled', load: L.id })
 }
 
 /** The load ended before it settled: another board, a reload of this one, the page hidden, or 120 s. What its nodes
@@ -378,6 +395,7 @@ function cut(L: Load, reason: 'switch' | 'reload' | 'hidden' | 'timeout'): void 
   rec('cut', L.id, { reason, ms: Math.round(performance.now() - L.t0), lastMove: rel(L, L.movedAt), frames: s.nodes.length, ready })
   L.cutReason = reason
   finish(L, 'cut')
+  phase({ phase: 'cut', load: L.id, reason })
 }
 
 function finish(L: Load, how: 'settled' | 'cut'): void {
@@ -407,6 +425,7 @@ function ensureVisible(L: Load): void {
   const v = canvasCtl.view()
   L.cohort = v ? cohortIn(v) : new Set()
   rec('visible', L.id, { nodes: L.cohort.size, ms: Math.round(performance.now() - L.t0), assumed: true })
+  phase({ phase: 'visible', load: L.id, nodes: L.cohort.size, assumed: true })
 }
 
 // ---- errors -----------------------------------------------------------------------------------------------------
@@ -501,10 +520,13 @@ function leave(): void {
   if (capturesPending() || WARM) return
   // a send on its way may not outlive the page: its records again (the report drops a duplicate by its seq)
   const all = [...inFlight, ...outbox.takeAll()]
-  if (!all.length) return
-  // the cuts first, newest first: the load this page leaves in flight ends in the last of them
-  const { fit, lost } = fitWithin(all.filter((r) => r.kind === 'cut').reverse(), all.filter((r) => r.kind !== 'cut'), KEEPALIVE_BYTES)
-  try { void post([...fit, ...droppedNow(lost)], true).catch(() => {}) } catch { /* going anyway */ }
+  if (all.length) {
+    // the cuts first, newest first: the load this page leaves in flight ends in the last of them
+    const { fit, lost } = fitWithin(all.filter((r) => r.kind === 'cut').reverse(), all.filter((r) => r.kind !== 'cut'), KEEPALIVE_BYTES)
+    try { void post([...fit, ...droppedNow(lost)], true).catch(() => {}) } catch { /* going anyway */ }
+  }
+  // then the reload lines' share (spec 30 #7), after the page's own
+  perfSeams.leaving.emit()
 }
 
 // ---- a headless perf run (spec 28 A3.8 #17) ----------------------------------------------------------------------
@@ -596,6 +618,7 @@ export const recorder = {
     if (!L || L.committedAt === undefined || L.cohort) return
     L.cohort = cohortIn(view)
     rec('visible', L.id, { nodes: L.cohort.size, ms: Math.round(performance.now() - L.t0) })
+    phase({ phase: 'visible', load: L.id, nodes: L.cohort.size })
   }),
   /** A pan, zoom or layout animation ended (perf.ts). */
   gesture: guard((g: Gesture) => { rec('gesture', ownerId(), { ...g, hz: displayHz() ?? undefined }); settleSoon() }),

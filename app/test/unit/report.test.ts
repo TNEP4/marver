@@ -127,6 +127,10 @@ describe('an input of every kind, its output byte for byte (A5.1 #27, r1 #9)', (
     ['main-error', { what: 'exception', name: 'TypeError', message: 'x is undefined', stack: ['at f (main.cjs:1:2)'] }, { what: 'exception', name: 'TypeError' }],
     ['update', { phase: 'move', why: 'moved', attempt: 2, version: '1.0.0', from: '0.3.0', to: '1.0.0', manual: false, message: 'm' },
       { phase: 'move', version: '1.0.0', from: '0.3.0', to: '1.0.0', why: 'moved', manual: false }],
+    // spec 30 #56: counted, never exported, until a report v2
+    ['launch', { readyMs: 410, windowShownMs: 520, tabs: { restored: 1, local: 1, remote: 0, active: 'local' }, why: 'home' }, null],
+    ['cmd', { phase: 'once', id: 'aaaaaaaaaaaa', cmd: 'home', via: 'key', keys: 'Meta+T', in: 'strip', outcome: 'done', ms: 3 }, null],
+    ['window', { event: 'enter-full-screen', cause: 'unknown' }, null],
   ]
   const SAMPLE: SampleBody = {
     span: 60_000, n: 12, pressure: { last: 1, max: 2 }, thermal: 'fair',
@@ -168,7 +172,7 @@ describe('an input of every kind, its output byte for byte (A5.1 #27, r1 #9)', (
   })
 
   it('every exported kind has a projection, and the folded and counted kinds none', () => {
-    const exported = APP_KINDS.filter((k) => !['sample', 'shown', 'tab'].includes(k))
+    const exported = APP_KINDS.filter((k) => !['sample', 'shown', 'tab', 'launch', 'cmd', 'window'].includes(k))
     expect(Object.keys(PROJECTIONS).sort()).toEqual([...exported].sort())
   })
 

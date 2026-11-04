@@ -18,6 +18,7 @@ import { api, resumed, scoped, useLink } from './api.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { frameByWindow, fromLiveDocument } from './canvas/frame-registry.ts'
 import { recorder } from './recorder.ts'
+import { perfSeams } from './recorder-seams.ts'
 import { enterFocus, enterPlay, enterSlides, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, linkTargets, parseHash, retargetBoot, UNPLACED, writeHash } from './hash.ts'
 import { isLegacyLink, landLegacy } from './legacy-links.ts'
@@ -649,6 +650,8 @@ export function App() {
       if (!reg) return
       const { key: nodeKey, iframe: el } = reg
       const s = useStore.getState()
+      // the recorder's (spec 30): every frame message, before the shell acts on it - never consumed here
+      perfSeams.frameMessage.emit(nodeKey, data)
       // Jam (spec 27): a capture's trail, handshake, probes and flushes; a key the shell owns
       if (onFrameMessage(nodeKey, data)) return
       if (data.type === 'sh:key') { if (typeof data.key === 'string') jamKey({ key: data.key, shift: !!data.shift, alt: !!data.alt, meta: !!data.meta, ctrl: !!data.ctrl }); return }
