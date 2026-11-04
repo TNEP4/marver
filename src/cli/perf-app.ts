@@ -38,23 +38,29 @@ import { loadsSummary, type LoadSummary } from './perf.ts'
 /**
  * Both flavours' app records from `since` (epoch ms): each flavour's `app.jsonl` and, from app 1.0.1, `samples.jsonl`,
  * every segment of both (spec 30 #42, #44) merged by time and `seq`; a line without the envelope skipped; a line
- * written twice (its launch, flavour and seq) once. A 1.0.0 log - samples in `app.jsonl`, one file - reads the same.
+ * written twice (its launch, flavour and seq) once. A 1.0.0 log - samples in `app.jsonl`, one file - reads the same. A
+ * file the writer closed while these were read - renamed under a list already made - is read too; its lines read before
+ * the rename count once, by that same identity.
  */
 export function readAppLog(home: string, since = 0): AppRecord[] {
   const out: AppRecord[] = []
   const seen = new Set<string>()
   for (const f of Object.keys(APP_LOG) as Flavour[]) {
     const mine: AppRecord[] = []
-    for (const path of appLogFiles(join(home, 'perf'), f, since)) {
-      let text = ''
-      try { text = readFileSync(path, 'utf8') } catch { continue }
-      for (const l of text.split('\n')) {
-        const r = l ? parseAppLine(l) : null
-        if (!r || r.ts < since) continue
-        const k = `${r.flavour}/${r.app}/${r.seq}`
-        if (seen.has(k)) continue
-        seen.add(k)
-        mine.push(r)
+    const done = new Set<string>()
+    for (let paths = appLogFiles(join(home, 'perf'), f, since); paths.length; paths = appLogFiles(join(home, 'perf'), f, since).filter((p) => !done.has(p))) {
+      for (const path of paths) {
+        done.add(path)
+        let text = ''
+        try { text = readFileSync(path, 'utf8') } catch { continue }
+        for (const l of text.split('\n')) {
+          const r = l ? parseAppLine(l) : null
+          if (!r || r.ts < since) continue
+          const k = `${r.flavour}/${r.app}/${r.seq}`
+          if (seen.has(k)) continue
+          seen.add(k)
+          mine.push(r)
+        }
       }
     }
     mine.sort((a, b) => a.ts - b.ts || a.seq - b.seq)

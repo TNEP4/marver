@@ -12,7 +12,9 @@
  *
  * **Never blocking main on a whole file**: the log is read as a stream (`readline` over a read stream), a line outside
  * the window skipped by its envelope's `ts` before it is parsed; a close renaming it to a segment meanwhile leaves
- * this read on the same file, whole. A read that fails after some lines gives what it read, `partial`; one that fails
+ * this read on the same file, whole, and one renaming it before its open leaves a name the list lacks: the list is made
+ * again after the last read, what closed meanwhile read too - a file already read (its inode) from where that read
+ * ended, so each line counts once. A read that fails after some lines gives what it read, `partial`; one that fails
  * before any, `unreadable`.
  *
  * **Where it is offered** (#28): Help > Export Performance Report… and the crashed tab page's latched state, both
@@ -55,18 +57,22 @@ export interface ReportInput {
   macos: string
 }
 
-/** The log, line by line into the fold: how the read went. */
-async function readLog(file: string, fold: ReportFold): Promise<LogRead> {
+/** The log, line by line into the fold: how the read went. `reached`: how far each file has been read, by inode. */
+async function readLog(file: string, fold: ReportFold, reached: Map<number, number>): Promise<LogRead> {
   let fh: Awaited<ReturnType<typeof open>>
   try { fh = await open(file, 'r') } catch (e) { return codeOf(e) === 'ENOENT' ? 'missing' : 'unreadable' }
   let lines = 0
   let failed = false
-  const input = fh.createReadStream({ encoding: 'utf8' })
+  let ino = -1
+  try { ino = (await fh.stat()).ino } catch { /* read it whole */ }
+  const start = reached.get(ino) ?? 0
+  const input = fh.createReadStream({ encoding: 'utf8', start })
   input.on('error', () => { failed = true })
   const rl = createInterface({ input, crlfDelay: Infinity })
   try {
     for await (const line of rl) { lines += 1; fold.line(line) }
   } catch { failed = true } finally {
+    reached.set(ino, start + input.bytesRead)
     rl.close()
     input.destroy()
     await fh.close().catch(() => { /* closed with its stream */ })
@@ -74,13 +80,18 @@ async function readLog(file: string, fold: ReportFold): Promise<LogRead> {
   return failed ? (lines > 0 ? 'stopped' : 'unreadable') : 'ok'
 }
 
-/** Every file of the flavour's logs into the fold (spec 30 #44), one after another: `missing` when none was there. */
-async function readLogs(files: readonly string[], fold: ReportFold): Promise<LogRead> {
+/** Every file of the flavour's logs into the fold (spec 30 #44), one after another, then any that closed meanwhile:
+ *  `missing` when none was there. */
+async function readLogs(list: () => readonly string[], fold: ReportFold): Promise<LogRead> {
   let read = false, failed = false
-  for (const f of files) {
-    const r = await readLog(f, fold)
-    if (r === 'ok' || r === 'stopped') read = true
-    if (r === 'stopped' || r === 'unreadable') failed = true
+  const done = new Set<string>(), reached = new Map<number, number>()
+  for (let files = list(); files.length; files = list().filter((f) => !done.has(f))) {
+    for (const f of files) {
+      done.add(f)
+      const r = await readLog(f, fold, reached)
+      if (r === 'ok' || r === 'stopped') read = true
+      if (r === 'stopped' || r === 'unreadable') failed = true
+    }
   }
   return failed ? (read ? 'stopped' : 'unreadable') : read ? 'ok' : 'missing'
 }
@@ -120,7 +131,7 @@ export async function buildReport(i: ReportInput): Promise<{ report: PerfReport;
   const end = i.now
   const start = end - reportDays(i.keepPerfDays) * DAY
   const fold = new ReportFold(start, end)
-  const log = await readLogs(appLogFiles(i.perfDir, i.flavour, start), fold)
+  const log = await readLogs(() => appLogFiles(i.perfDir, i.flavour, start), fold)
   // the hash is the envelope's, 16 hex (readEnvelope): a file name, never a path
   for (const hash of fold.wanted()) fold.profile(hash, await readProfile(join(i.perfDir, 'machine', `${hash}.json`)))
   const crashpad = await crashpadCounts(join(i.perfDir, 'crashpad'), start, end)
