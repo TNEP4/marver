@@ -285,6 +285,8 @@ function wrapConsole(): void {
 
 /** #31: a failure mvFetch saw. A save's 409 is the save-conflict command's outcome; `perf/*` is the recorder's own; a
  *  request its caller aborted did not fail. */
+const hasCookie = () => { try { return /(?:^|;\s*)mv_c=/.test(document.cookie) } catch { return true } }
+let cookieSeen = hasCookie()
 function onAnswered(a: Answered): void {
   if (/\/api\/perf\//.test(a.url)) return
   const { status } = a
@@ -292,8 +294,9 @@ function onAnswered(a: Answered): void {
   if (status === 0 && a.init.signal?.aborted) return
   const route = normRoute(a.url), method = (a.init.method ?? 'GET').toUpperCase()
   if (status === 409 && method === 'PUT' && route === 'boards/:board') return
-  // a fresh page's first ask: the refusal primes the double-submit cookie and the caller asks again (store.ts `syncWorking`)
-  if (status === 403 && method === 'GET' && route === 'work') return
+  // a fresh page's first asks, before its double-submit cookie exists: the refusal primes it and the caller asks again
+  // (store.ts `syncWorking`); once the cookie has been seen, a 403 is a 403
+  if (status === 403 && !cookieSeen) { cookieSeen = hasCookie(); if (method === 'GET') return }
   if (!takeSource('api')) return
   signalSink.error({ source: 'api', message: `${method} ${route} ${status}`, fields: { route, method, status, ms: Math.round(a.ms) } })
 }
