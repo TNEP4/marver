@@ -327,6 +327,9 @@ export interface ChangeLine {
   change: string
   file: string
   event: ChangeEvent
+  /** epoch ms, at the watcher: a line held for a deferred one (#10) is written later than its change ended, so edit to
+   *  redraw reads this, never the line's own `ts` less `flightMs` (absent: a line from before this field) */
+  at?: number
   hmrTs?: number
   flightMs?: number
   reloadN?: number

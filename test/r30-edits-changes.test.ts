@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer, type Plugin, type ViteDevServer } from 'vite'
+import { editToRedraw } from '../src/cli/perf-all.ts'
 import { createChanges, type Attribution, type Changes, type Line } from '../src/server/changes.ts'
 import { guardUpdates, updatesBeginPlugin, updatesPlugin, type Touched, type UpdateHooks } from '../src/server/updates.ts'
 import { scanFrames } from '../src/server/manifest.ts'
@@ -41,7 +42,7 @@ describe('the ledger', () => {
     t = 1250
     changes.landed('/r/design/a.tsx', 5000)
     await sleep(5)
-    expect(of('change')).toEqual([{ kind: 'change', change: token.change, file: 'design/a.tsx', event: 'update', hmrTs: 5000, flightMs: 250, reloadN: 2, inPlaceN: 1 }])
+    expect(of('change')).toEqual([{ kind: 'change', change: token.change, file: 'design/a.tsx', event: 'update', at: 1000, hmrTs: 5000, flightMs: 250, reloadN: 2, inPlaceN: 1 }])
   })
 
   it('a token with no run says no-hook, at the safety path - and one with hooks does not', async () => {
@@ -55,6 +56,28 @@ describe('the ledger', () => {
     changes.expire('/r/b.tsx')   // began, never landed: ended by the safety path, its hooks did run
     expect(of('change')[1]).toMatchObject({ change: ran.change, hmrTs: 7000 })
     expect(of('change')[1]).not.toHaveProperty('outcome')
+  })
+
+  it('a change held past its end keeps the watcher\'s time: edit to redraw counts the wait, as it does for one written at once', async () => {
+    let t = 1000
+    const lines: Record<string, any>[] = []
+    const changes = createChanges({ root: '/r', envs: () => 1, boot: 'deadbeef', now: () => t, write: (ls) => { for (const l of ls) lines.push({ ts: t, ...l }) } })
+    const token = changes.watch('/r/a.tsx', 'update')
+    changes.begin('/r/a.tsx', 1010)
+    const release = changes.hold({ token })
+    t = 1100
+    changes.landed('/r/a.tsx', 1010)
+    await sleep(5)                                        // its token ended: flightMs is 100, its line still held
+    expect(lines.filter((l) => l.kind === 'change')).toEqual([])
+    t = 6100                                               // another file's hooks kept the deferred line for 5 s
+    release()
+    const line = lines.find((l) => l.kind === 'change')!
+    expect(line).toMatchObject({ ts: 6100, at: 1000, flightMs: 100 })
+    const redraw = [line, { ts: 6200, kind: 'invalidate', revision: 'r1', frames: 1, changes: [token.change] }, { ts: 7000, kind: 'ready', page: 'p', seq: 1, node: 'n', revisions: ['r1'] }]
+    expect(editToRedraw(redraw), 'from the watcher, not from the held line less its flight').toEqual([6000])
+    // a line from before `at`: its own time less its flight, as it always read
+    const { at: _, ...old } = line
+    expect(editToRedraw([old, ...redraw.slice(1)])).toEqual([1000])
   })
 
   it('a deferred line holds the change line back, so its counts are whole', async () => {

@@ -79,7 +79,7 @@ export function createChanges(o: {
 
   function writeChange(t: ChangeToken): void {
     o.write([{
-      kind: 'change', change: t.change, file: rel(t.file), event: t.event,
+      kind: 'change', change: t.change, file: rel(t.file), event: t.event, at: t.at,
       ...(t.hmrTs !== undefined ? { hmrTs: t.hmrTs } : { outcome: 'no-hook' }),
       flightMs: t.flightMs, reloadN: t.reload.size, inPlaceN: t.inPlace.size,
       ...(t.fullReload ? { fullReload: t.fullReload } : {}),

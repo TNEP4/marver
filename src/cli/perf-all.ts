@@ -77,14 +77,14 @@ export interface CanvasSummary {
 
 /**
  * Edit to last redraw (#2): a change, the revisions that carried it (`invalidate`, in parts: many to many), and the
- * latest `ready` that names one of those revisions. From the watcher's event: the change line's time less its flight,
- * else its `hmrTs`. A change no ready names is not in it.
+ * latest `ready` that names one of those revisions. From the watcher's event: the change line's `at`; a line from before
+ * it, its own time less its flight, else its `hmrTs`. A change no ready names is not in it.
  */
 export function editToRedraw(reloads: readonly Rec[]): number[] {
   const at = new Map<string, number>()
   const revisions = new Map<string, Set<string>>()
   for (const r of reloads) {
-    if (r.kind === 'change' && typeof r.change === 'string') at.set(r.change, typeof r.flightMs === 'number' ? r.ts - r.flightMs : typeof r.hmrTs === 'number' ? r.hmrTs : r.ts)
+    if (r.kind === 'change' && typeof r.change === 'string') at.set(r.change, typeof r.at === 'number' ? r.at : typeof r.flightMs === 'number' ? r.ts - r.flightMs : typeof r.hmrTs === 'number' ? r.hmrTs : r.ts)
     if ((r.kind === 'invalidate' || r.kind === 'invalidate-ids') && typeof r.revision === 'string' && Array.isArray(r.changes)) {
       for (const c of r.changes) { if (typeof c !== 'string') continue; let s = revisions.get(c); if (!s) revisions.set(c, s = new Set()); s.add(r.revision) }
     }
