@@ -288,7 +288,7 @@ describe('a 0.29.0 canvas at launch', () => {
   beforeAll(async () => {
     w0 = await launchWindow('prod', {
       extraEnv: { MARVER_APP_FAKE_TRUST: '0', MARVER_APP_TIMINGS: JSON.stringify(TIMINGS) },
-      prepare: async (env, slotBase) => ({ fakes: [await startFakeCanvas({ home: env.home, slotBase, slot: 1, name: 'Old canvas', script: HELLO(PAGE1) })] }),
+      prepare: async (env, slotBase) => ({ fakes: [await startFakeCanvas({ home: env.home, slotBase, slot: 7, name: 'Old canvas', script: HELLO(PAGE1) })] }),
     })
   }, 60_000)
   afterAll(async () => { await w0?.close() })
