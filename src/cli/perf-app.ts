@@ -217,7 +217,7 @@ export interface FlashItem extends PageMoment {
   /** the picture's absolute path, or null with why; `picturePruned` when the file is gone since (50 are kept) */
   picture: string | null; pictureWhy?: string; picturePruned?: true
 }
-export interface CandidateItem extends PageMoment { at: number; flavour: Flavour; tab?: string; ws?: string; gestureSeq?: number; observedAt: number[]; rateHz?: number; samples?: number; skipped?: number; inconclusive?: number; gpuEvents: number }
+export interface CandidateItem extends PageMoment { at: number; flavour: Flavour; tab?: string; ws?: string; gestureSeq?: number; observedAt: number[]; rateHz?: number; samples?: number; skipped?: number; inconclusive?: number; gpuEvents: number; /** spec 30 #41: its window's reasons; absent before app 1.0.1 (a gesture's) */ why?: string[] }
 export interface FlashesSummary { marks: FlashItem[]; others: number; candidates: CandidateItem[] }
 export interface ProfileItem {
   hash: string; kind: 'app' | 'headless' | 'unknown'; hostHash: string | null; current: boolean
@@ -303,6 +303,7 @@ export function flashesSummary(app: AppRecord[], page: Record<string, any>[], wo
         ...(typeof x.gesture === 'number' ? { gestureSeq: x.gesture } : {}),
         observedAt, rateHz: x.rateHz, samples: x.samples, skipped: x.skipped, inconclusive: x.inconclusive,
         gpuEvents: Array.isArray(x.gpuEvents) ? x.gpuEvents.filter(isGpuProcessEvent).length : 0,
+        ...(Array.isArray(x.why) ? { why: x.why as string[] } : {}),
         ...momentOf(x, page, observedAt[0] ?? r.ts),
       })
     }

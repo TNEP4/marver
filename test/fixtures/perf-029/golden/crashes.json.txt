@@ -1,0 +1,148 @@
+{
+  "days": 14,
+  "workspaces": [
+    "ROOTWS",
+    "163cf821d349d94a"
+  ],
+  "crashes": [
+    {
+      "at": 1793706000000,
+      "flavour": "release",
+      "app": "b29529ef1979",
+      "tab": "t2",
+      "ws": "163cf821d349d94a",
+      "commit": 4,
+      "pid": 57221,
+      "born": 1793461525603.633,
+      "reason": "crashed",
+      "exitCode": 11,
+      "pressure": 2,
+      "join": "page",
+      "page": "90879e227f04",
+      "load": {
+        "id": "b0aac0bfea3a",
+        "cause": "disk-reload",
+        "settled": false,
+        "state": "cut"
+      },
+      "board": "main",
+      "gesture": {
+        "type": "zoom",
+        "ms": 500,
+        "p95": 25.8,
+        "during": false,
+        "startedMsBefore": 1140500,
+        "endedMsBefore": 1140000
+      },
+      "before": {
+        "join": "time",
+        "ts": 1793705940000,
+        "msBefore": 60000,
+        "pressure": 1,
+        "pressureMax": 2,
+        "thermal": "nominal",
+        "canvasMB": 822.2,
+        "gpuProcessRssMB": 512.4,
+        "procMB": 822.2,
+        "procCpu": 0.12
+      }
+    }
+  ],
+  "hangs": [
+    {
+      "at": 1793705460000,
+      "flavour": "release",
+      "tab": "t2",
+      "ws": "163cf821d349d94a",
+      "pid": 57221,
+      "role": "canvas",
+      "respondedAfterMs": 4000,
+      "join": "page",
+      "page": "90879e227f04",
+      "load": {
+        "id": "b0aac0bfea3a",
+        "cause": "disk-reload",
+        "settled": false,
+        "state": "cut"
+      },
+      "board": "main",
+      "gesture": {
+        "type": "zoom",
+        "ms": 500,
+        "p95": 25.8,
+        "during": false,
+        "startedMsBefore": 600500,
+        "endedMsBefore": 600000
+      }
+    }
+  ],
+  "byTime": [
+    {
+      "at": 1793706120000,
+      "flavour": "release",
+      "join": "time",
+      "what": "child-gone",
+      "text": "the GPU process ended: crashed (exit 5)",
+      "record": {
+        "v": 1,
+        "ts": 1793706120000,
+        "kind": "child-gone",
+        "app": "b29529ef1979",
+        "seq": 14,
+        "flavour": "release",
+        "machine": "a90e807694120061",
+        "type": "GPU",
+        "reason": "crashed",
+        "exitCode": 5,
+        "ours": false,
+        "machineWide": false
+      }
+    },
+    {
+      "at": 1793706180000,
+      "flavour": "release",
+      "join": "time",
+      "what": "gpu-restart",
+      "text": "a new GPU process (pid 102) with no ending reported, after pid 101",
+      "record": {
+        "v": 1,
+        "ts": 1793706180000,
+        "kind": "gpu-restart",
+        "app": "b29529ef1979",
+        "seq": 15,
+        "flavour": "release",
+        "machine": "a90e807694120061",
+        "pid": 102,
+        "born": 1793461525700.1,
+        "was": {
+          "pid": 101,
+          "born": 1793392562999.1
+        }
+      }
+    },
+    {
+      "at": 1793706240000,
+      "flavour": "release",
+      "join": "time",
+      "what": "app-page-gone",
+      "text": "the app's strip page's renderer ended: crashed (exit 1)",
+      "record": {
+        "v": 1,
+        "ts": 1793706240000,
+        "kind": "gone",
+        "app": "b29529ef1979",
+        "seq": 16,
+        "flavour": "release",
+        "machine": "a90e807694120061",
+        "role": "strip",
+        "pid": 300,
+        "born": 1793392563000.1,
+        "reason": "crashed",
+        "exitCode": 1,
+        "ours": false,
+        "pressure": null
+      }
+    }
+  ],
+  "dumps": 1
+}

@@ -1,0 +1,63 @@
+{
+  "days": 14,
+  "profiles": [
+    {
+      "hash": "7b2b481bec96d801",
+      "kind": "app",
+      "hostHash": "abcdefabcdefabcd",
+      "current": true,
+      "records": 16,
+      "runs": 5,
+      "mtime": 1793703600000,
+      "chip": "Apple M3 Max",
+      "model": "Mac15,9",
+      "os": "26.1",
+      "electron": "Electron 45.0.0, Chrome 156.0.8078.48",
+      "displays": "built-in 3456x2234 @ 120 Hz",
+      "gpu": "Apple M3 Max, 40 cores",
+      "power": "ac"
+    },
+    {
+      "hash": "a90e807694120061",
+      "kind": "app",
+      "hostHash": "abcdefabcdefabcd",
+      "current": true,
+      "records": 5,
+      "runs": 0,
+      "mtime": 1793703600000,
+      "chip": "Apple M3 Max",
+      "model": "Mac15,9",
+      "os": "26.1",
+      "electron": "Electron 45.0.0, Chrome 156.0.8078.48",
+      "displays": "built-in 3456x2234 @ 120 Hz",
+      "gpu": "Apple M3 Max, 40 cores",
+      "power": "ac"
+    },
+    {
+      "hash": "f00df00df00df00d",
+      "kind": "headless",
+      "hostHash": "abcdefabcdefabcd",
+      "current": false,
+      "records": 0,
+      "runs": 0,
+      "mtime": 1793703600000,
+      "chip": "Apple M3 Max",
+      "model": "Mac15,9",
+      "os": "26.1",
+      "electron": "Electron 45.0.0, Chrome 156.0.8078.48",
+      "displays": "built-in 3456x2234 @ 120 Hz",
+      "gpu": "Apple M3 Max, 40 cores",
+      "power": "ac"
+    }
+  ],
+  "byHost": [
+    {
+      "hostHash": "abcdefabcdefabcd",
+      "profiles": [
+        "7b2b481bec96d801",
+        "a90e807694120061",
+        "f00df00df00df00d"
+      ]
+    }
+  ]
+}

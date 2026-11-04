@@ -1,0 +1,30 @@
+board loads, last 120 min - design/.local/perf/page.jsonl
+
+  T  The Main Board (boot)                    settled 2.6 s
+    committed 0.4 s · 7 frames (3 hi-fi, 3 content, 1 html) · 3 measure, 2 opened at a known height
+    first frame started 0.35 s · visible ready 1.1 s (4 frames) · all ready 1.4 s · still from 1.6 s · settled 2.6 s
+    2 moves, 600 px: measure-height 1, reflow:measured 1 · late, after it settled: 1 (reflow:stale 1)
+    slowest to settle: docs/a 1.6 s (waited 0.35 s, then 1.25 s), docs/b 1.2 s
+    never ready: kit/f · missing: kit/g
+    error (frame docs/a): Failed to fetch dynamically imported module
+    1 gesture · worst p95 25.8 ms · 2 frames over 33 ms
+
+  T  The Main Board (disk-reload)             cut (reload) at 8.3 s
+    committed 1.0 s · 75 frames (68 hi-fi, 7 content) · 7 measure, 7 opened at a known height
+    10 of 75 ready · last move 1.9 s
+    0 moves
+    1 never finished
+
+  T  Other Board (switch)                     cut (hidden) at 0.5 s before it mounted · mounted 3.0 s
+    mounted after its cut 3.0 s · 2 frames (2 hi-fi)
+    0 moves
+    25 more errors past the first 50, not recorded
+
+  T  The Main Board (boot)                    settled 1.5 s
+    committed 0.3 s · 12 frames (12 hi-fi)
+    visible ready 0.0 s · all ready 0.4 s · still from 0.5 s · settled 1.5 s
+    0 moves
+
+  4 records never reached this log: a page's queue was full, or its sends failed
+
+  1 headless run load not shown: npx marver perf --runs

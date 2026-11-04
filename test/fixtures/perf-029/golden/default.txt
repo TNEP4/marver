@@ -1,0 +1,27 @@
+last 120 min - design/.local/perf/reloads.jsonl
+
+edits (2 files)
+  design/screens/onboarding/fixtures.ts  2x  reached 301 frames, 1 updated in place
+  (no file)  1x  reached 2 frames
+
+frame documents booted: 1 after an edit (a frame off screen reloads when it comes into view), 1 first loads, 1 by hand, 1 watchdog retries, 1 reloaded themselves
+
+page-wide reloads: 1 sent (dependency rebuilds), 1 dropped
+  T  dropped  /Users/someone/repo/design/scenes/onboarding/full.tsx
+  T  sent     no file named
+
+canvas page loads: 2
+  T
+  T  after: update, full-reload, full-reload
+
+slowest to settle
+  onboarding/papers  2200 ms
+  onboarding/join  290 ms
+  onboarding/self  90 ms
+
+board loads: 4  (--loads: each in full)
+(1 headless run load not shown: npx marver perf --runs)
+  T  The Main Board  boot        settled 2.6 s · 2 moves (1 late) · 1 error
+  T  The Main Board  disk-reload cut (reload) at 8.3 s
+  T  Other Board     switch      cut (hidden) at 0.5 s before it mounted · mounted 3.0 s
+  T  The Main Board  boot        settled 1.5 s

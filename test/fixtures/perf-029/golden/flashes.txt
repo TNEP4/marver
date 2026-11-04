@@ -1,0 +1,11 @@
+flashes marked (⌃⌥F), last 14 days - HOME/perf, joined to design/.local/perf/page.jsonl by page
+
+  D T  The Main Board · its load had not settled
+    pressure warn (read 1.00 s before) · thermal nominal · the GPU process 512 MB · GPU in use 608.4 MB, 1 % (machine-wide)
+    GPU process events within 1 s: child-gone -0.10 s
+    no picture: pruned since (at most 50 are kept, none older than keepPerfDays)
+
+1 more mark on other canvases or on Home (--all shows them)
+
+white-out candidates (automatic, not verified): 1
+  D T  white at 2 samples at 4 Hz (0.00 s, 0.25 s) · The Main Board · its load settled in 2.6 s · last gesture a zoom, ended 0.06 s before

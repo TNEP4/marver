@@ -3,6 +3,11 @@
  * and how; every page-wide reload (sent or dropped) and every time the canvas page itself booted,
  * with what came just before; the slowest frames to settle; one line per board load. Reads
  * design/.local/perf/reloads.jsonl, and page.jsonl for the loads (`--loads`: each load in full, spec 28 A1.8).
+ *
+ * Spec 30 (R14 #56): every view reads every segment and both kinds of data. 0.29 lines read as ever: no change ids
+ * (each `update` an edit, grouped by file), uncapped reload lists, samples in app.jsonl, no segments. 0.30 lines: an
+ * edit is a change id, its frames the union of its `update` and `update-ids` lines (#10); every page and shell record
+ * once by `(page, seq)` (#7). `--all` is perf-all.ts, `--live` perf-live.ts.
  */
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -14,37 +19,39 @@ import { readDevInfo } from '../server/work.ts'
 import { isBoardName, labelOf } from '../shared/board-tree.ts'
 import type { RunLine, RunStreamLine } from '../shared/perf-run.ts'
 import { crashesSummary, flashesSummary, machineSummary, PRESSURE_FRESH_MS, readAppLog, repoWorkspaces, runsSummary, type PageMoment } from './perf-app.ts'
+import { allPerf } from './perf-all.ts'
+import { livePerf } from './perf-live.ts'
 
 export interface PerfOptions {
   minutes?: number; json?: boolean; jam?: boolean; loads?: boolean
+  /** spec 30 R11 #47: a tail in the terminal; `kinds` its filter */
+  live?: boolean; kinds?: string
   /** the headless runs (spec 28 A3.4, the headless stream's `--runs`, `--against`) */
   runs?: boolean; against?: string
   /** the Mac app's records (spec 28 A3.5): 14 days by default (`days`, which `--runs` reads too) */
   crashes?: boolean; flashes?: boolean; machine?: boolean; all?: boolean; days?: number | string
 }
 
-export function perfCommand(root: string, opts: PerfOptions): void {
+export function perfCommand(root: string, opts: PerfOptions): void | Promise<void> {
+  if (opts.live) return livePerf(root, opts)
   if (opts.jam) return jamPerf(root, opts)
   if (opts.loads) return loadsPerf(root, opts)
   if (opts.runs) return runsPerf(root, opts)
   if (opts.crashes) return crashesPerf(root, opts)
   if (opts.flashes) return flashesPerf(root, opts)
   if (opts.machine) return machinePerf(root, opts)
+  // alone, `--all` is every canvas's summary (#46); with `--flashes` it keeps its meaning, above
+  if (opts.all) return allPerf(opts)
   const minutes = Number(opts.minutes) > 0 ? Number(opts.minutes) : 60
   const since = Date.now() - minutes * 60_000
-  const log = readReloads(root, since)
+  const log = dedupeSeq(readReloads(root, since))
   const { records: pageRecords, runLoads } = ownLoads(readPage(root, since))
   const loads = loadsSummary(pageRecords)
-  const files = new Map<string, { edits: number; reload: Set<string>; inPlace: Set<string> }>()
-  for (const e of log) if (e.kind === 'update') {
-    const f = files.get(e.file ?? '(no file)') ?? { edits: 0, reload: new Set(), inPlace: new Set() }
-    f.edits++
-    for (const id of e.reload ?? []) f.reload.add(id)
-    for (const id of e.inPlace ?? []) f.inPlace.add(id)
-    files.set(e.file ?? '(no file)', f)
-  }
+  const files = editsByFile(log)
   const reloads = log.filter((e) => e.kind === 'full-reload')
-  const boots = log.flatMap((e, i) => (e.kind === 'shell-boot' ? [{ ts: e.ts, before: log.slice(Math.max(0, i - 3), i).filter((x) => x.kind !== 'ready' && x.kind !== 'settled') }] : []))
+  // what came just before a page load: the lines that say why, not spec 30's bookkeeping between them
+  const said = log.filter((x) => !BOOKKEEPING.has(x.kind))
+  const boots = said.flatMap((e, i) => (e.kind === 'shell-boot' ? [{ ts: e.ts, before: said.slice(Math.max(0, i - 3), i).filter((x) => x.kind !== 'ready' && x.kind !== 'settled') }] : []))
   const slow = log.filter((e) => e.kind === 'settled' && typeof e.ms === 'number').sort((a, b) => b.ms - a.ms).slice(0, 5)
   const booted = log.filter((e) => e.kind === 'ready')
   const by = (c: string) => booted.filter((e) => e.cause === c).length
@@ -61,7 +68,7 @@ export function perfCommand(root: string, opts: PerfOptions): void {
     console.log(`  ${file}  ${f.edits}x  reached ${f.reload.size} frame${f.reload.size === 1 ? '' : 's'}${f.inPlace.size ? `, ${f.inPlace.size} updated in place` : ''}`)
   console.log(`\nframe documents booted: ${reloaded} after an edit (a frame off screen reloads when it comes into view), ${by('first')} first loads, ${by('manual')} by hand, ${by('retry')} watchdog retries, ${by('self')} reloaded themselves`)
   console.log(`\npage-wide reloads: ${reloads.filter((r) => r.passed).length} sent (dependency rebuilds), ${reloads.filter((r) => !r.passed).length} dropped`)
-  for (const r of reloads) console.log(`  ${t(r.ts)}  ${r.passed ? 'sent   ' : 'dropped'}  ${r.triggeredBy ?? 'no file named'}`)
+  for (const r of reloads) console.log(`  ${t(r.ts)}  ${r.passed ? 'sent   ' : 'dropped'}  ${r.triggeredBy ?? (r.by === 'hook' && r.file ? r.file : 'no file named')}${r.by === 'hook' ? ' (the file whose hooks were running)' : r.by === 'ambiguous' ? ` (two files' hooks were running: ${r.candidates?.n ?? 0} candidates)` : r.by === 'unknown' ? ` (no file's hooks were running${r.candidates?.n ? `: ${r.candidates.n} in flight` : ''})` : ''}`)
   console.log(`\ncanvas page loads: ${boots.length}`)
   for (const b of boots) console.log(`  ${t(b.ts)}${b.before.length ? `  after: ${b.before.map((x) => x.kind + (x.file ? ` ${x.file}` : '')).join(', ')}` : ''}`)
   if (slow.length) {
@@ -82,6 +89,39 @@ export function perfCommand(root: string, opts: PerfOptions): void {
       console.log(`  ${t(l.at)}  ${name(l.board).padEnd(w)}  ${(l.cause ?? '').padEnd(11)} ${bits.join(' · ')}`)
     }
   }
+}
+
+/** Spec 30's reload lines that are bookkeeping for a reader (R13), never what a page load came after. */
+const BOOKKEEPING = new Set(['change', 'update-ids', 'invalidate', 'invalidate-ids', 'invalidated', 'invalidated-nodes', 'inplace', 'watchdog'])
+
+/**
+ * Edits per file, with the frames each reached and how (#10, #56). With 0.30's change ids an edit is its id, and its
+ * lists the union of its `update` and `update-ids` lines. A line with none (0.29, or a refused refresh: `unknown`,
+ * never attributed, #8) is an edit of its own, as 0.29 counted. A part whose `update` fell before the window goes.
+ */
+export function editsByFile(log: readonly Record<string, any>[]): Map<string, { edits: number; reload: Set<string>; inPlace: Set<string> }> {
+  const files = new Map<string, { edits: number; reload: Set<string>; inPlace: Set<string> }>()
+  const ofChange = new Map<string, string>()
+  const put = (key: string) => { let f = files.get(key); if (!f) files.set(key, f = { edits: 0, reload: new Set(), inPlace: new Set() }); return f }
+  const change = (e: Record<string, any>) => (typeof e.change === 'string' && e.change !== 'unknown' ? e.change : null)
+  for (const e of log) {
+    if (e.kind !== 'update') continue
+    const key = e.file ?? '(no file)', id = change(e)
+    const f = put(key)
+    if (!id || !ofChange.has(id)) f.edits++
+    if (id) ofChange.set(id, key)
+    for (const x of e.reload ?? []) f.reload.add(x)
+    for (const x of e.inPlace ?? []) f.inPlace.add(x)
+  }
+  for (const e of log) {
+    if (e.kind !== 'update-ids') continue
+    const key = ofChange.get(e.change)
+    if (key === undefined) continue
+    const f = put(key)
+    for (const x of e.reload ?? []) f.reload.add(x)
+    for (const x of e.inPlace ?? []) f.inPlace.add(x)
+  }
+  return files
 }
 
 // ---- board loads, from the page (spec 28 A1.7, A1.8) ----------------------------------------------------------------
@@ -128,11 +168,22 @@ export interface LoadSummary {
   weight?: Record<string, number>
 }
 
-/** Each record once: a send retried after its first attempt landed repeats its records - same ws, page and seq. */
-function unique(records: Record<string, any>[]): Record<string, any>[] {
+/**
+ * Each record once (spec 30 #7): a send retried after its first attempt landed repeats its records - same page and
+ * seq, one seq per page across page and shell lines. A line that names none - a server's own, a 0.29 shell's, the
+ * safety cap's - was written once and is kept as it is.
+ */
+export function dedupeSeq(records: readonly Record<string, any>[]): Record<string, any>[] {
   const seen = new Set<string>()
-  return records.filter((r) => { const k = `${r.ws}/${r.page}/${r.seq}`; if (seen.has(k)) return false; seen.add(k); return true })
+  return records.filter((r) => {
+    if (typeof r.page !== 'string' || typeof r.seq !== 'number') return true
+    const k = `${r.ws ?? ''}/${r.page}/${r.seq}`
+    if (seen.has(k)) return false
+    seen.add(k)
+    return true
+  })
 }
+const unique = dedupeSeq
 const ranked = (counts: Map<string, number>, n = 5): Ranked => [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, n)
 const bump = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1)
 
@@ -252,7 +303,7 @@ function endOf(l: LoadSummary): string {
  *  and how many run loads that hid. */
 export function ownLoads(records: Record<string, any>[]): { records: Record<string, any>[]; runLoads: number } {
   const loads = new Set<string>()
-  const own = records.filter((r) => { if (typeof r.run !== 'string') return true; if (r.kind === 'load') loads.add(`${r.ws}/${r.page}/${r.load}`); return false })
+  const own = dedupeSeq(records).filter((r) => { if (typeof r.run !== 'string') return true; if (r.kind === 'load') loads.add(`${r.ws}/${r.page}/${r.load}`); return false })
   return { records: own, runLoads: loads.size }
 }
 
@@ -262,7 +313,8 @@ function loadsPerf(root: string, opts: { minutes?: number; json?: boolean }) {
   const { records, runLoads } = ownLoads(readPage(root, Date.now() - minutes * 60_000))
   const loads = loadsSummary(records)
   const dropped = droppedOf(records)
-  if (opts.json) { console.log(JSON.stringify({ minutes, loads, unowned: unownedOf(records), dropped, runLoads }, null, 2)); return }
+  const capped = records.filter((r) => r.kind === 'dropped' && r.reason === 'retention-cap').reduce((n, r) => n + (Number(r.n) || 0), 0)
+  if (opts.json) { console.log(JSON.stringify({ minutes, loads, unowned: unownedOf(records), dropped, runLoads, ...(capped ? { retentionCap: capped } : {}) }, null, 2)); return }
   console.log(`board loads, last ${minutes} min - design/.local/perf/page.jsonl`)
   const hidden = runLoads ? `${runLoads} headless run load${runLoads === 1 ? '' : 's'} not shown: npx marver perf --runs` : ''
   if (!loads.length) { console.log(`\nnothing yet - open a board in the canvas${hidden ? `\n  ${hidden}` : ''}`); return }
@@ -303,6 +355,7 @@ function loadsPerf(root: string, opts: { minutes?: number; json?: boolean }) {
     if (l.gestures) console.log(`    ${plural(l.gestures.n, 'gesture')} · worst p95 ${l.gestures.worstP95} ms · ${plural(l.gestures.over33ms, 'frame')} over 33 ms`)
   }
   if (dropped) console.log(`\n  ${plural(dropped, 'record')} never reached this log: a page's queue was full, or its sends failed`)
+  if (capped) console.log(`\n  ${plural(capped, 'record')} deleted by the safety cap: the log was past its size for its 14 days`)
   if (hidden) console.log(`\n  ${hidden}`)
 }
 
@@ -346,7 +399,7 @@ export function jamSummary(events: Record<string, any>[]) {
     // a live picture that failed (A4.6 #36): the render took its place - one that always fails shows here
     ...caps.filter((c) => c.pictures?.live?.failed).map((c) => ({ ts: c.ts, what: `capture ${c.capture}: ${c.pictures.live.failed} live picture(s) failed, ${c.pictures.live.fellBack ?? 0} rendered instead` })),
     ...of('name').filter((n) => !n.ok).map((n) => ({ ts: n.ts, what: `naming ${n.capture} gave no name` })),
-    ...of('dropped').map((d) => ({ ts: d.ts, what: `${d.count} event(s) dropped (the log was busy)` })),
+    ...of('dropped').map((d) => ({ ts: d.ts, what: d.reason === 'retention-cap' ? `${d.count} event(s) deleted by the safety cap` : `${d.count} event(s) dropped (the log was busy)` })),
   ].sort((a, b) => b.ts - a.ts).slice(0, 10)
   const lives = caps.map((c) => c.pictures?.live).filter((l): l is Record<string, number> => !!l)
   const live = { count: 0, failed: 0, fellBack: 0 }
@@ -464,7 +517,7 @@ function flashesPerf(root: string, opts: PerfOptions) {
   }
   if (!opts.all && sum.others) console.log(`\n${sum.others} more mark${sum.others === 1 ? '' : 's'} on other canvases or on Home (--all shows them)`)
   console.log(`\nwhite-out candidates (automatic, not verified): ${sum.candidates.length}`)
-  for (const c of sum.candidates) console.log(`  ${when(c.at)}  white at ${c.observedAt.length} samples ${c.rateHz ? `at ${c.rateHz} Hz ` : ''}(${c.observedAt.map((t) => secs2(t - c.at)).join(', ')}) · ${momentWords(c, name)}`)
+  for (const c of sum.candidates) console.log(`  ${when(c.at)}  white at ${c.observedAt.length} samples ${c.rateHz ? `at ${c.rateHz} Hz ` : ''}(${c.observedAt.map((t) => secs2(t - c.at)).join(', ')})${c.why?.length ? ` · during ${c.why.join(', ')}` : ''} · ${momentWords(c, name)}`)
 }
 
 /** `marver perf --machine`: the machine profiles, by host, which is current, and how many records and runs name each. */
