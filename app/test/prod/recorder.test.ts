@@ -230,14 +230,6 @@ describe('the recorder on the real binary (A3.7)', () => {
     expect(new Set(tabs.map((x) => x.commit)).size).toBeGreaterThan(1)
   })
 
-  it('a 0.29.0 canvas (spec 30 R14 #54; VM only): `launch` names its hello\'s page, and no `watch` window opened', async (ctx) => {
-    if (!real) { ctx.skip(); return }
-    const launch = await until('the launch line', async () => (await of('launch'))[0], 40_000)
-    expect(launch.firstCanvas, JSON.stringify(launch)).toMatchObject({ page: PAGE1 })
-    const whys = (await of('whiteout-candidate')).flatMap((c) => c.why ?? [])
-    expect(whys.filter((y) => y === 'load' || y === 'theme' || y === 'reload')).toEqual([])
-  })
-
   it('recorder: false set live: no sample line and no getAppMetrics; memory.ts wanting it samples again, still nothing on disk', async () => {
     // unloading off too: with it on, memory.ts wants the sampler while a hidden canvas could be unloaded (A3.8 #4) -
     // this case's own `recorder:need` stands in for it below
@@ -289,3 +281,29 @@ function footprintMB(pid: number): { mb: number | null; why: string } {
 function statMode(p: string): number {
   return Number.parseInt(execFileSync('/usr/bin/stat', ['-f', '%Lp', p], { encoding: 'utf8' }).trim(), 8)
 }
+
+/** Spec 30 R14 #54 - VM only: a 0.29.0 canvas already running when the app starts, so the launch restores its tab. */
+describe('a 0.29.0 canvas at launch', () => {
+  let w0: WindowRun
+  beforeAll(async () => {
+    w0 = await launchWindow('prod', {
+      extraEnv: { MARVER_APP_FAKE_TRUST: '0', MARVER_APP_TIMINGS: JSON.stringify(TIMINGS) },
+      prepare: async (env, slotBase) => ({ fakes: [await startFakeCanvas({ home: env.home, slotBase, slot: 1, name: 'Old canvas', script: HELLO(PAGE1) })] }),
+    })
+  }, 60_000)
+  afterAll(async () => { await w0?.close() })
+
+  it('`launch` names its hello\'s page, and no `watch` window opened', async (ctx) => {
+    if (!real) { ctx.skip(); return }
+    const read = async () => {
+      await w0.run.call('recorder:flush')
+      const f = join(w0.env.home, 'perf', 'app-dev.jsonl')
+      return (existsSync(f) ? readFileSync(f, 'utf8').split('\n').filter(Boolean).map((l) => parseAppLine(l)).filter((r): r is AppRecord => !!r) : [])
+    }
+    const launch = await until('the launch line', async () => (await read()).find((r) => r.kind === 'launch') as Extract<AppRecord, { kind: 'launch' }> | undefined, 40_000)
+    expect(launch.firstCanvas, JSON.stringify(launch)).toMatchObject({ page: PAGE1 })
+    expect(launch.tabs.restored).toBeGreaterThan(0)
+    const whys = (await read()).filter((r) => r.kind === 'whiteout-candidate').flatMap((c) => (c as { why?: string[] }).why ?? [])
+    expect(whys.filter((y) => y === 'load' || y === 'theme' || y === 'reload')).toEqual([])
+  })
+})
