@@ -43,8 +43,9 @@ export interface Candidates { ids: string[]; n: number }
 // ---- bounds (one place: writers, the server's cleaners and readers keep the same numbers) ------------------------
 
 /** R1: ids per reload line before the rest go to `-ids` parts (#10, #12, #13); candidates kept (#8, #11); the
- *  `hmrTs → change` history (#8); a refused refresh's look-back (#8); an inplace's wait for the next commit (#15). */
-export const RELOAD_BOUNDS = { idsPerLine: 256, candidates: 8, hmrHistory: 512, lookBackMs: 10_000, commitWaitMs: 2_000 } as const
+ *  `hmrTs → change` history (#8); a refused refresh's look-back (#8); an inplace's wait for the next commit (#15), and
+ *  how long a round's watch stays up with no `vite:afterUpdate` (an accept callback threw, #15). */
+export const RELOAD_BOUNDS = { idsPerLine: 256, candidates: 8, hmrHistory: 512, lookBackMs: 10_000, commitWaitMs: 2_000, inplaceRoundMs: 30_000 } as const
 /** #7: the server's best-effort `(page, seq)` window - every reader dedupes again. */
 export const DEDUPE = { windowMs: 600_000, perPage: 4_096, pages: 64 } as const
 /** #16: the shell's reload Outbox (recorder-core.ts `Outbox`), its send delay, and its share of a page's keepalive

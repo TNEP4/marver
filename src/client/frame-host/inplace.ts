@@ -38,18 +38,15 @@ function nextCommit(ms: number): Promise<number | undefined> {
 const isRegistry = (u: Update) => (u.acceptedPath ?? u.path ?? '').includes('/frame-host/registry')
 const pathOf = (u: Update) => (u.acceptedPath ?? u.path ?? '').split('?')[0]
 /** The URL Vite's client imports (client.mjs `importUpdatedModule`): this update's path, this update's timestamp. */
-function fetchedBy(u: Update, entries: readonly PerformanceEntry[]): boolean {
-  return entries.some((e) => {
-    try {
-      const url = new URL(e.name)
-      return url.pathname.endsWith(pathOf(u)) && url.searchParams.get('t') === String(u.timestamp)
-    } catch { return false }
-  })
+function fetchedBy(u: Update, url: URL): boolean {
+  return url.pathname.endsWith(pathOf(u)) && url.searchParams.get('t') === String(u.timestamp)
 }
 
-/** Vite's messages run one at a time (its client queues them), so one update round is open at most. */
+/** Vite's messages run one at a time (its client queues them), so one update round is open at most. It holds what its own
+ *  updates left behind, no more - the observer sees every resource this document loads - and it ends by
+ *  `vite:afterUpdate`, the next update, or `inplaceRoundMs`: an accept callback that throws means no `vite:afterUpdate`. */
 export function watchInplace(hot: { on(event: string, cb: (p: any) => void): void }, post: (m: InplaceReport) => void): void {
-  let round: { at: number; updates: Update[]; seen: PerformanceEntry[]; observer: PerformanceObserver; failed: Set<string>; close: () => void } | null = null
+  let round: { at: number; updates: Update[]; fetched: Set<Update>; take: () => void; failed: Set<string>; close: () => void } | null = null
 
   hot.on('vite:beforeUpdate', (p: { updates?: Update[] }) => {
     try {
@@ -58,23 +55,41 @@ export function watchInplace(hot: { on(event: string, cb: (p: any) => void): voi
       round = null
       const updates = (p.updates ?? []).filter((u) => u.type === 'js-update' && !isRegistry(u) && typeof u.timestamp === 'number')
       if (!updates.length) return
-      const seen: PerformanceEntry[] = []
-      const observer = new PerformanceObserver((list) => { seen.push(...list.getEntries()) })
+      const fetched = new Set<Update>()
+      const note = (entries: readonly PerformanceEntry[]) => {
+        for (const e of entries) {
+          let url: URL
+          try { url = new URL(e.name) } catch { continue }
+          for (const u of updates) if (fetchedBy(u, url)) fetched.add(u)
+        }
+      }
+      const observer = new PerformanceObserver((list) => note(list.getEntries()))
       observer.observe({ type: 'resource' })
+      const paths = new Set(updates.map((u) => u.acceptedPath ?? u.path ?? ''))
       const failed = new Set<string>()
       const original = console.error
+      let open = true
       // only while an update is on its way, and the original always runs: Vite's own words for a failed import
-      // (client.mjs `warnFailedUpdate`: `[vite] Failed to reload <acceptedPath>. …`)
+      // (client.mjs `warnFailedUpdate`: `[vite] Failed to reload <acceptedPath>. …`), for this round's paths
       const watching = function (this: unknown, ...a: unknown[]) {
         original.apply(this, a)
-        for (const x of a) if (typeof x === 'string' && x.startsWith('Failed to reload ')) failed.add(x.slice('Failed to reload '.length).split('. ')[0])
+        if (!open) return
+        for (const x of a) {
+          if (typeof x !== 'string' || !x.startsWith('Failed to reload ')) continue
+          const path = x.slice('Failed to reload '.length).split('. ')[0]
+          if (paths.has(path)) failed.add(path)
+        }
       }
       console.error = watching
       const close = () => {
+        open = false
+        clearTimeout(timer)
         observer.disconnect()
         if (console.error === watching) console.error = original   // a frame's own replacement meanwhile stays
       }
-      round = { at: performance.now(), updates, seen, observer, failed, close }
+      const r = { at: performance.now(), updates, fetched, take: () => note(observer.takeRecords()), failed, close }
+      const timer = setTimeout(() => { if (round === r) round = null; close() }, RELOAD_BOUNDS.inplaceRoundMs)
+      round = r
     } catch { /* the recorder never stands in the way */ }
   })
 
@@ -84,10 +99,10 @@ export function watchInplace(hot: { on(event: string, cb: (p: any) => void): voi
     if (!r) return
     try {
       const after = performance.now()
-      const entries = [...r.seen, ...r.observer.takeRecords()]
+      r.take()
       r.close()
       for (const u of r.updates) {
-        if (!fetchedBy(u, entries)) continue
+        if (!r.fetched.has(u)) continue
         const applied = r.failed.has(u.acceptedPath ?? u.path ?? '') ? false as const : 'unknown' as const
         void nextCommit(RELOAD_BOUNDS.commitWaitMs).then((at) => post({
           type: 'sh:inplace', hmrTs: u.timestamp!, applyMs: Math.round(after - r.at), applied,
