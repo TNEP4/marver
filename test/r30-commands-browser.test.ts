@@ -186,7 +186,13 @@ describe('keys: the lifecycle each declares, and how it arrived', () => {
     await expectDone(t, 'fit-selection', () => key(t, '@', { mods: M.shift, code: 'Digit2' }), { keys: 'Shift+2' })
     await expectDone(t, 'device', () => key(t, '1', { code: 'Digit1' }), { keys: '1' })
     await expectOnceNoop(t, 'device', 'unknown-device', () => key(t, '9', { code: 'Digit9' }))
-    await expectOnceNoop(t, 'next-new', 'nothing-new', async () => { await ev(t, `__mvStore.getState().markSeen(Object.keys(__mvStore.getState().marks?.changed ?? {})), 1`); await wait(100); await key(t, 'u') }).catch(() => { /* a frame still new goes to it: the camera's end instead */ })
+    // U: every frame seen (whatever the fixture's first scan left new), nothing to go to
+    await browser.until(t.s, `(() => { const s = __mvStore.getState(), m = s.marks; if (!m) return false; s.markSeen(Object.keys(m.changed)); const n = __mvStore.getState().marks; return Object.keys(n.changed).every((id) => (n.seen[id] ?? 0) >= n.changed[id]) })()`, 5_000)
+    await expectOnceNoop(t, 'next-new', 'nothing-new', () => key(t, 'u'))
+    // and a frame new again: a start, and its end when the camera lands on that frame
+    await ev(t, `(() => { const s = __mvStore.getState(), m = s.marks; __mvStore.setState({ marks: { ...m, changed: { ...m.changed, 'demo/three': (m.seen['demo/three'] ?? 0) + 1 } } }); return 1 })()`)
+    await expectDone(t, 'next-new', () => key(t, 'u'), { keys: 'u' })
+    expect(await ev(t, `__mvStore.getState().selection`)).toEqual(['n-three'])
     await expectDone(t, 'theme', () => key(t, 'd'), { keys: 'd' })
   }, 180_000)
 
