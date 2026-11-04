@@ -140,6 +140,22 @@ describe('the dev server\'s logs: segments (#42)', () => {
     expect(readPage(root).map((r) => r.seq)).toEqual([0, 1, 2])
   })
 
+  it('a first line whose time is no epoch ms, or is past the file\'s last write, never names a segment no reader could find', () => {
+    mkdirSync(perfDir(root), { recursive: true })
+    const f = join(perfDir(root), 'reloads.jsonl')
+    const mtime = new Date(now - 2 * DAY)
+    for (const first of [1, now + 5 * DAY]) {
+      writeFileSync(f, JSON.stringify({ ts: first, kind: 'k', first }) + '\n')
+      utimesSync(f, mtime, mtime)
+      perfLogSeams.reset()
+      tidyPerfDir(root, now)
+      expect(existsSync(f), String(first)).toBe(false)         // closed: opened two days ago, by its mtime
+      const seg = segs(root, 'reloads').find((x) => readFileSync(join(perfDir(root), x), 'utf8').includes(`"first":${first}`))!
+      expect(Math.abs(parseSegmentName('reloads.jsonl', seg)!.openedAt - mtime.getTime()), String(first)).toBeLessThanOrEqual(1)
+      expect(readSegmented(perfDir(root), 'reloads.jsonl').some((l) => l.includes(`"first":${first}`))).toBe(true)
+    }
+  })
+
   it('readers read the segments in openedAt order, then the live file; a segment whose bound is before `since` is not read', () => {
     mkdirSync(perfDir(root), { recursive: true })
     const w = (name: string, ...ts: number[]) => writeFileSync(join(perfDir(root), name), ts.map((t) => JSON.stringify({ ts: t, kind: 'k', at: t })).join('\n') + '\n')

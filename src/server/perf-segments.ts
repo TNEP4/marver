@@ -69,7 +69,10 @@ export function adoptLive(path: string): LiveState | null {
   let st
   try { st = lstatSync(path) } catch { return null }
   if (!st.isFile()) throw new Error('not a regular file')
-  return { openedAt: firstLineTs(path) ?? st.mtimeMs, maxTs: 0, adopted: true, size: st.size, ino: st.ino }
+  // a first line whose time is no epoch ms (a torn or hand-made one) says nothing: a name must parse back, or its segment
+  // is lost to every reader and to retention; and a file was not opened after its last write
+  const first = firstLineTs(path)
+  return { openedAt: first !== null && first >= 1e10 ? Math.min(first, st.mtimeMs) : st.mtimeMs, maxTs: 0, adopted: true, size: st.size, ino: st.ino }
 }
 
 /** The live file is due to close: opened 24 h ago or past its segment size. */

@@ -270,6 +270,8 @@ function flush(force = false): boolean {
     queue = [...again, ...queue]
     while (queue.length > QUEUE_MAX) { queue.shift(); lost += 1 }
   }
+  // a forced flush may be the last (a quit): the cap's line, queued while it wrote, goes with it
+  if (force && ok && queue.length) return flush(true)
   return ok
 }
 

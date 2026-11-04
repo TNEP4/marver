@@ -176,6 +176,24 @@ describe('segments (#42)', () => {
   })
 })
 
+describe('the last flush (#43)', () => {
+  it('a close at quit that trips the cap writes its counted line in the same flush', () => {
+    const now = Date.now()
+    mkdirSync(perf(), { recursive: true, mode: 0o700 })
+    start()
+    L.append('sample', SAMPLE)                            // this version's first samples line: the app file's cap applies from here
+    L.flushNow()
+    const line = old(0, now, { pad: 'p'.repeat(1000) }) + '\n'
+    const per = Math.ceil(5 * 2 ** 20 / line.length)
+    for (let i = 0; i < 3; i++) writeFileSync(join(perf(), segmentName('app.jsonl', now + i + 1, now + i + 2)), line.repeat(per))
+    // past the app file's segment size in one append: it closes, and 4 segments of 5 MB pass its 16 MB
+    L.append('dropped', { n: 1, pad: 'x'.repeat(5 * 2 ** 20) } as never)
+    L.flushSync()
+    const said = appLogFiles(perf(), 'release').flatMap((f) => lines(f)).filter((l) => l.includes('"retention-cap"'))
+    expect(said).toHaveLength(1)
+  })
+})
+
 describe('migration (#45)', () => {
   it('1.0.0\'s app.jsonl is closed as a segment at the first 1.0.1 launch: openedAt its first line\'s ts, bound its mtime + 24 h, nothing rewritten', () => {
     mkdirSync(perf(), { recursive: true, mode: 0o700 })

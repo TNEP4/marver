@@ -197,6 +197,28 @@ describe('the windows (#38, #40)', () => {
   })
 })
 
+describe('a window a watch keeps open past a gesture\'s hard end (#38)', () => {
+  it('a later gesture in it has its own hard end: it is a gesture, never under the budget', async () => {
+    const r = rig()
+    r.o.captureMs = 300
+    const hardEnd = T.whiteoutMaxMs
+    T.whiteoutMaxMs = 2000
+    try {
+      r.send(watch(true, 1))
+      r.send({ kind: 'gesture', on: true, seq: 2, type: 'pan' })
+      await run(500)
+      r.send({ kind: 'gesture', on: false, seq: 2 })
+      await run(8000)                                        // that gesture is long over, the watch's 10 s are not, and the budget is spent
+      expect(takeWhiteoutMinute()!.skipped).toBeGreaterThan(0)
+      const n = r.captures.length
+      r.send({ kind: 'gesture', on: true, seq: 3, type: 'zoom' })
+      await run(1000)
+      expect(takeWhiteoutMinute()!.skipped).toBe(0)          // refused nothing, with the budget spent: a gesture is admitted
+      expect(r.captures.length).toBeGreaterThan(n)
+    } finally { T.whiteoutMaxMs = hardEnd }
+  })
+})
+
 describe('the admission budget (#40)', () => {
   it('admission stops once the minute\'s capture time reaches 3 s; the rest is skipped, counted and uncovered', async () => {
     const r = rig()

@@ -215,7 +215,8 @@ export function startWhiteout(p: WhiteoutPorts): void {
       if (!t || t.tabId !== tabId) return
       const w = join(tabId, msg.seq, 'gesture')
       w.seq = msg.seq
-      w.gesture = { until: Infinity, hardEnd: w.gesture?.hardEnd ?? now + T.whiteoutMaxMs }
+      // a gesture still running keeps its hard end; one long over, in a window a watch kept open, is no part of this one
+      w.gesture = { until: Infinity, hardEnd: gestureLive(w, now) ? w.gesture!.hardEnd : now + T.whiteoutMaxMs }
     } else if (win && win.tabId === tabId && win.gesture) {
       win.gesture.until = now + T.whiteoutTailMs
     }
