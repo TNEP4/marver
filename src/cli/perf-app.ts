@@ -351,7 +351,7 @@ export function machineSummary(home: string, app: AppRecord[], runs: RunLine[]):
   return { profiles, byHost: [...byHost].map(([hostHash, ps]) => ({ hostHash, profiles: ps })) }
 }
 
-/** `--runs`: comparisons inside one cohort (script, board, chrome, flags, machine, power, slow, bakes), by inputs; `against` two runs of one cohort. */
+/** `--runs`: comparisons inside one cohort (script, board, chrome, flags, machine, power, slow, bakes, the recorder's level), by inputs; `against` two runs of one cohort. */
 export function runsSummary(runs: RunLine[], o: { against?: string } = {}): RunsSummary {
   const ordered = [...runs].sort((a, b) => a.ts - b.ts)
   const comparable = (r: RunLine) => r.valid && !r.overlapped
@@ -380,7 +380,7 @@ export function runsSummary(runs: RunLine[], o: { against?: string } = {}): Runs
       const latest = [...ordered].reverse().find((r) => r.run !== base.run && r.ts > base.ts && cohortKey(r) === cohortKey(base) && comparable(r))
       out.against = latest && comparable(base)
         ? { run: base.run, ...compare(base, latest), within10: within(base, latest) }
-        : { run: base.run, error: !comparable(base) ? `run ${base.run} is ${base.valid ? 'overlapped' : `invalid (${base.invalidReason})`}: never compared` : 'no later valid run of its cohort (script, board, Chrome, flags, machine, power, --slow, bakes) - pass the earlier run' }
+        : { run: base.run, error: !comparable(base) ? `run ${base.run} is ${base.valid ? 'overlapped' : `invalid (${base.invalidReason})`}: never compared` : 'no later valid run of its cohort (script, board, Chrome, flags, machine, power, --slow, bakes, --recorder) - pass the earlier run' }
     }
   }
   return out
@@ -400,7 +400,7 @@ export interface RunBrief { run: string; ts: number; inputs: string | null; load
 export interface RunCompare { from: RunBrief; to: RunBrief; deltas: { loadToSettledMs: number | null; p95: number | null; over33ms: number | null; heapPeakMB: number | null } }
 
 /** Runs compare only inside one cohort (A3.8 #22). */
-export const cohortOf = (r: RunLine) => ({ script: r.script, board: r.board, chrome: r.chrome, flags: r.flags, machine: r.machine, power: r.power, slow: r.slow, bakes: r.bakes })
+export const cohortOf = (r: RunLine) => ({ script: r.script, board: r.board, chrome: r.chrome, flags: r.flags, machine: r.machine, power: r.power, slow: r.slow, bakes: r.bakes, recorder: r.recorder })
 const cohortKey = (r: RunLine) => JSON.stringify(cohortOf(r))
 const brief = (r: RunLine): RunBrief => ({ run: r.run, ts: r.ts, inputs: r.inputs?.hash ?? null, loadToSettledMs: r.loadToSettledMs, p50: r.p50, p95: r.p95, over33ms: r.over33ms, heapPeakMB: r.heapPeakMB, moves: r.moves })
 const diff = (a: number | null, b: number | null) => (a === null || b === null ? null : Math.round((b - a) * 10) / 10)

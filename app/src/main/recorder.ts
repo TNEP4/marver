@@ -61,6 +61,7 @@ import { contentView, coverContents, mainWindow, pageView, stripContents, window
 import { mainFrameOf, safely } from './frames.ts'
 import { note } from './testing/index.ts'
 import { T } from './timings.ts'
+import { noteShown, takeWhiteoutMinute } from './whiteout.ts'
 import type { PerfMsg } from '../../../src/shared/app-api.ts'
 
 export type { ProcSample, ProcType, Role, Sample, Sampler, TabIdent } from '../../../src/shared/app-perf.ts'
@@ -314,7 +315,8 @@ function writeMinute(): { body: ReturnType<typeof foldMinute>; last: Sample | nu
   const last = minute.at(-1) ?? null
   minute = []
   spawnMs = 0
-  if (body) record('sample', null, body as unknown as Record<string, unknown>)
+  // the detector's minute beside the rows, which stay as they are (spec 30 #41, #44)
+  if (body) { const whiteout = takeWhiteoutMinute(); record('sample', null, { ...(body as unknown as Record<string, unknown>), ...(whiteout ? { whiteout } : {}) }) }
   return { body, last }
 }
 const minuteBody = () => (minute.length ? foldMinuteSafe() : null)
@@ -642,6 +644,8 @@ export const recorder = {
     if (!P || !doc || t.kind !== 'local') return
     const k = ++tickN
     shownAsks.set(k, { tabId: t.id, doc, ident: identity(t), mono: performance.now() })
+    // main's own white-out window (spec 30 #38): what a tab shows as it comes up
+    noteShown(t.id)
     if (!P.bridge.perfAsk(t.id, { kind: 'shown', tick: k })) { shownAsks.delete(k); return }
     const c = setTimeout(() => shownAsks.delete(k), T.shownAnswerMs + 100)
     c.unref?.()

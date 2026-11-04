@@ -20,6 +20,7 @@
  *  - `selfCost`: app-store (#58: `self` records' `hookMs`), charged by every stream through `hooked()`.
  */
 import { newId } from './recorder-core.ts'
+import { busyWait, SLOW_HOOK, SLOW_HOOK_MS } from '../recorder-level.ts'
 import type { LoadTrigger, PageKind, SelfHook } from '../../shared/perf-records.ts'
 import type { LoadCause } from './store.ts'
 
@@ -96,13 +97,20 @@ export const perfSeams = {
   selfCost: (_hook: SelfHook, _ms: number): void => {},
 }
 
+let hookDepth = 0
+/** Is a measured hook running? (`self` counts a record written inside one as that hook's.) */
+export const insideHook = (): boolean => hookDepth > 0
+
 /** A stream's hook, as recorder.ts's `guard`: nothing while the page does not record, never in the way - and its time
- *  charged to `hook` in `self` (#58) when it is one of the measured hooks. */
+ *  charged to `hook` in `self` (#58) when it is one of the measured hooks. `?mvslowhook=<hook>` adds the cost run's
+ *  injected wait here (recorder-level.ts, test only). */
 export function hooked<A extends unknown[]>(hook: SelfHook | null, fn: (...a: A) => void): (...a: A) => void {
   return (...a) => {
     if (!perfSeams.on) return
     const t0 = hook ? performance.now() : 0
+    if (hook) hookDepth++
+    if (hook && hook === SLOW_HOOK) busyWait(SLOW_HOOK_MS)
     try { fn(...a) } catch { /* never in the way */ }
-    if (hook) { try { perfSeams.selfCost(hook, performance.now() - t0) } catch { /* the same */ } }
+    if (hook) { hookDepth--; try { perfSeams.selfCost(hook, performance.now() - t0) } catch { /* the same */ } }
   }
 }

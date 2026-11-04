@@ -10,6 +10,7 @@
  * Stricter than A3.4's `/api/perf/*`: `perf/reload` and `perf/jam` would put headless documents into those logs.
  */
 import type { HostProfile } from './machine.ts'
+import type { RecorderLevel } from './perf-records.ts'
 
 /** The script's version: a run line compares only with lines of the same script (A3.4). */
 export const RUN_SCRIPT = 1 as const
@@ -118,6 +119,9 @@ export interface RunLine {
   host: HostProfile
   power: 'ac' | 'battery' | 'unknown'
   slow: boolean
+  /** spec 30 #58: the recorder's level (`--recorder`), part of the cohort and of the inputs: `core` and `full` never
+   *  compare as one. Absent from 0.29 lines: they compare with neither */
+  recorder?: RecorderLevel
   /** the warm-up reached settled and bake-idle within 60 s */
   bakes: 'warm' | 'cold'
   postersMissing: number
@@ -173,5 +177,5 @@ export type RunStreamLine =
   | { done: true }
   | { error: string }
 
-/** The request's body. `repeat` 1-5, 1 by default. */
-export interface RunRequest { board: string; slow?: boolean; repeat?: number }
+/** The request's body. `repeat` 1-5, 1 by default; `recorder` (spec 30 #58) `full` by default. */
+export interface RunRequest { board: string; slow?: boolean; repeat?: number; recorder?: RecorderLevel }

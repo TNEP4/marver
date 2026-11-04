@@ -349,6 +349,7 @@ cli
   .option('--days <n>', 'How far back --runs, --crashes, --flashes and --machine read (default 14)')
   .option('--slow', 'With `run`: the CPU throttled 4x (a stand-in for a slower Mac\'s CPU, not its GPU or memory)')
   .option('--repeat <n>', 'With `run`: how many runs, one after another (1-5, default 1)')
+  .option('--recorder <level>', 'With `run`: core (only what the run\'s driver reads, 0.29\'s load tracking) or full (everything the recorder records, the default); the two never compare as one')
   .option('--json', 'Machine-readable output')
   .action(async (action: string | undefined, board: string | undefined, opts) => {
     if (action !== undefined && action !== 'run') {

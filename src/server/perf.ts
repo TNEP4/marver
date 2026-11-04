@@ -222,8 +222,12 @@ const BODY: Record<typeof PAGE_KINDS[number], (r: Record<string, unknown>) => Re
   hmr: () => null,
   // commands (R12)
   cmd: () => null,
-  // app-store (R15)
-  self: () => null,
+  // app-store (R15 #58): the recorder's own cost over 5 minutes
+  self: (r) => {
+    const cpuMs = tenth(r.cpuMs), hooks = obj(r.hookMs)
+    if (cpuMs === undefined) return null
+    return { cpuMs, hookMs: prune(Object.fromEntries(SELF_HOOKS.map((k) => [k, tenth(hooks[k])]))), records: count(r.records), bytes: count(r.bytes), dropped: count(r.dropped) }
+  },
 }
 
 /** A page record rebuilt from the envelope and its kind's allowlist, or null. Strings are cut to 200 characters. */

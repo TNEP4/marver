@@ -38,6 +38,7 @@ import { randomBytes } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { ROUTE } from '../cli/name.ts'
 import { allowedInRun, RUN_HEADER, RUN_ID, RUN_PARAM, RUN_SCRIPT, WARM_PARAM, type InvalidReason, type PerfRunStatus, type RunLine, type RunRequest, type RunStreamLine } from '../shared/perf-run.ts'
+import { RECORDER_LEVELS, RECORDER_PARAM, type RecorderLevel } from '../shared/perf-records.ts'
 import type { HostProfile } from '../shared/machine.ts'
 import { Browser, launchFlags } from './cdp.ts'
 import { endRunBakes, jobsIdle, jobsOf } from './bake.ts'
@@ -177,6 +178,8 @@ export interface RunOptions {
   origin: string
   board: string
   slow: boolean
+  /** spec 30 #58: the recorder's level on the run's URLs; `full` when not said */
+  recorder?: RecorderLevel
   signal: AbortSignal
   progress(l: RunStreamLine): void
   watch?: InputsWatch
@@ -197,9 +200,10 @@ export function runT(): Durations {
   return t
 }
 
-/** The shell's address for a run's load: its run id, the warm-up's mark, the board. */
-export const runUrl = (origin: string, board: string, id: string, warm: boolean): string =>
-  `${origin}/?${RUN_PARAM}=${id}${warm ? `&${WARM_PARAM}=1` : ''}#/b/${encodeURIComponent(board)}`
+/** The shell's address for a run's load: its run id, the warm-up's mark, the recorder's level when not `full` (spec 30
+ *  #58: the shell reads it, `withWs()` carries it to the frames), the board. */
+export const runUrl = (origin: string, board: string, id: string, warm: boolean, recorder: RecorderLevel = 'full'): string =>
+  `${origin}/?${RUN_PARAM}=${id}${warm ? `&${WARM_PARAM}=1` : ''}${recorder === 'core' ? `&${RECORDER_PARAM}=core` : ''}#/b/${encodeURIComponent(board)}`
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -427,7 +431,7 @@ export function failureOf(e: unknown, at: { clientGone: boolean; halted: HaltWhy
 
 /** What a run saw, for its line. */
 export interface RunSeen {
-  id: string; board: string; slow: boolean; startedAt: number
+  id: string; board: string; slow: boolean; recorder?: RecorderLevel; startedAt: number
   inputs: Inputs | null; inputsEnd: string | null
   chrome: string; renderer: RunLine['renderer']
   machine: string; host: HostProfile; power: RunLine['power']
@@ -482,7 +486,7 @@ export function runLine(reg: RunReg, s: RunSeen): RunLine {
     inputs: s.inputs, inputsEnd: s.inputsEnd,
     frames: typeof commit?.frames === 'number' ? commit.frames : null,
     marver: installedVersion() ?? '0.0.0', chrome: s.chrome, flags: launchFlags(), renderer: s.renderer,
-    machine: s.machine, host: s.host, power: s.power, slow: s.slow, bakes: s.bakes, postersMissing: s.postersSkipped,
+    machine: s.machine, host: s.host, power: s.power, slow: s.slow, recorder: s.recorder ?? 'full', bakes: s.bakes, postersMissing: s.postersSkipped,
     saved: commit ? { measuring: commit.measuring ?? 0, savedHeights: commit.savedHeights ?? 0 } : null,
     loadToSettledMs: load && settled && typeof load.sinceNav === 'number' && typeof settled.ms === 'number' ? load.sinceNav + settled.ms : null,
     settledMs: typeof settled?.ms === 'number' ? settled.ms : null,
@@ -506,7 +510,7 @@ export async function runOnce(o: RunOptions): Promise<RunLine> {
   if (anyLingering()) reg.overlapped = true   // an earlier run's compile still running: this one measures beside it
   const me = {}
   const seen: RunSeen = {
-    id, board: o.board, slow: o.slow, startedAt: reg.startedAt, inputs: null, inputsEnd: null, chrome: 'unknown', renderer: null,
+    id, board: o.board, slow: o.slow, recorder: o.recorder ?? 'full', startedAt: reg.startedAt, inputs: null, inputsEnd: null, chrome: 'unknown', renderer: null,
     machine: 'unknown', host: basicHost(), power: 'unknown', bakes: 'cold', cancelled: false, crashed: false,
     bakesMissed: false, gestures: 0, gesturesOk: false, stats: null, heapPeakMB: null, landed: false, postersSkipped: 0, refusedInPage: 0,
   }
@@ -519,7 +523,7 @@ export async function runOnce(o: RunOptions): Promise<RunLine> {
     const paths = o.watch ? await inputPaths(o.root, o.watch, urls) : null
     if (!paths) return
     set.paths = paths
-    seen.inputs = await hashInputs(o.root, paths)
+    seen.inputs = await hashInputs(o.root, paths, o.recorder)
   }
   const requested = new Set<string>()   // the warm-up page's requests, its frames' among them
   let offRequests = () => {}
@@ -561,7 +565,7 @@ export async function runOnce(o: RunOptions): Promise<RunLine> {
       const url = m.sessionId === warmSession && m.method === 'Network.requestWillBeSent' ? m.params?.request?.url : undefined
       if (typeof url === 'string' && url.startsWith(`${o.origin}/`)) requested.add(url)
     })
-    await page.send('Page.navigate', { url: runUrl(o.origin, o.board, id, true) })
+    await page.send('Page.navigate', { url: runUrl(o.origin, o.board, id, true, o.recorder) })
     const warm = await until(page, (s) => loadEnded(s) && bakeIdle(id)(s), T.warmMs, halt(page))
     seen.bakes = warm.ok ? 'warm' : 'cold'
     seen.refusedInPage += warm.status?.refused ?? 0
@@ -587,7 +591,7 @@ export async function runOnce(o: RunOptions): Promise<RunLine> {
     }
     const heapTimer = setInterval(sampleHeap, T.heapMs)
     try {
-      await p.send('Page.navigate', { url: runUrl(o.origin, o.board, id, false) })
+      await p.send('Page.navigate', { url: runUrl(o.origin, o.board, id, false, o.recorder) })
       sampleHeap()
       const loaded = await until(p, loadEnded, T.settleMs, hp)
       if (!loaded.ok || loaded.status?.load?.state === 'cut') seen.cut = loaded.status?.load?.reason ?? (p.crashed ? 'crash' : 'timeout')
@@ -632,7 +636,7 @@ export async function runOnce(o: RunOptions): Promise<RunLine> {
   // fingerprint reads the run's own set again, with no watcher (a restart closed the one it began with)
   if (!(await jobsIdle(id, 50_000))) { seen.bakesPending = true; lingering.add(id) }
   await sleep(T.watcherLagMs)
-  seen.inputsEnd = set.paths ? (await hashInputs(o.root, set.paths)).hash : null
+  seen.inputsEnd = set.paths ? (await hashInputs(o.root, set.paths, o.recorder)).hash : null
   const done = runs.end(id) ?? reg
   seen.cancelled ||= o.signal.aborted
   const line = runLine(done, seen)
@@ -659,12 +663,13 @@ export function readRunRequest(raw: string | null, boards: string[]): { ok: true
   if (raw === null) return { ok: false, error: 'body too large, unreadable or cut short' }
   let b: Record<string, unknown>
   try { b = JSON.parse(raw) } catch { return { ok: false, error: 'malformed JSON' } }
-  if (!b || typeof b !== 'object' || Array.isArray(b)) return { ok: false, error: 'expected { board, slow?, repeat? }' }
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return { ok: false, error: 'expected { board, slow?, repeat?, recorder? }' }
   if (typeof b.board !== 'string' || !boards.includes(b.board)) return { ok: false, error: `no board "${String(b.board ?? '')}" - the boards: ${boards.join(', ') || 'none'}` }
   if (b.slow !== undefined && typeof b.slow !== 'boolean') return { ok: false, error: 'slow must be true or false' }
   const repeat = b.repeat === undefined ? 1 : b.repeat
   if (!(Number.isInteger(repeat) && (repeat as number) >= 1 && (repeat as number) <= 5)) return { ok: false, error: 'repeat must be 1-5' }
-  return { ok: true, req: { board: b.board, slow: b.slow === true, repeat: repeat as number } }
+  if (b.recorder !== undefined && !(RECORDER_LEVELS as readonly unknown[]).includes(b.recorder)) return { ok: false, error: 'recorder must be core or full' }
+  return { ok: true, req: { board: b.board, slow: b.slow === true, repeat: repeat as number, recorder: b.recorder === 'core' ? 'core' : 'full' } }
 }
 
 /**
@@ -693,7 +698,7 @@ export async function serveRun(req: IncomingMessage, res: ServerResponse, o: { r
   try {
     const drive = (TEST_BUILD ? runSeams.driver : undefined) ?? runOnce
     for (let i = 0; i < asked.req.repeat && !ac.signal.aborted; i++) {
-      const line = await drive({ root: o.root, origin: o.origin, board: asked.req.board, slow: asked.req.slow, signal: ac.signal, progress: write, watch: o.watch })
+      const line = await drive({ root: o.root, origin: o.origin, board: asked.req.board, slow: asked.req.slow, recorder: asked.req.recorder, signal: ac.signal, progress: write, watch: o.watch })
       write({ line })
     }
     write({ done: true })

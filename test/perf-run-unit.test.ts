@@ -93,10 +93,13 @@ describe('POST /api/perf/run', () => {
   })
 
   it('names a board that exists, repeat 1-5, slow a boolean - else 400, and nothing runs', async () => {
-    expect(readRunRequest(JSON.stringify({ board: 'main' }), ['main'])).toEqual({ ok: true, req: { board: 'main', slow: false, repeat: 1 } })
+    expect(readRunRequest(JSON.stringify({ board: 'main' }), ['main'])).toEqual({ ok: true, req: { board: 'main', slow: false, repeat: 1, recorder: 'full' } })
     expect(readRunRequest(JSON.stringify({ board: 'nope' }), ['main', 'b'])).toEqual({ ok: false, error: 'no board "nope" - the boards: main, b' })
     for (const repeat of [0, 6, 1.5, '2']) expect(readRunRequest(JSON.stringify({ board: 'main', repeat }), ['main']).ok).toBe(false)
     expect(readRunRequest(JSON.stringify({ board: 'main', slow: 'yes' }), ['main']).ok).toBe(false)
+    // spec 30 #58: the recorder's level
+    expect(readRunRequest(JSON.stringify({ board: 'main', recorder: 'core' }), ['main'])).toEqual({ ok: true, req: { board: 'main', slow: false, repeat: 1, recorder: 'core' } })
+    expect(readRunRequest(JSON.stringify({ board: 'main', recorder: 'off' }), ['main']).ok).toBe(false)
     expect(readRunRequest('{', ['main']).ok).toBe(false)
     expect(readRunRequest(null, ['main']).ok).toBe(false)
     let started = 0

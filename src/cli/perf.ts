@@ -506,7 +506,7 @@ const hint = (l: RunLine): string | null =>
 export function runBlock(l: RunLine, name: (b?: string) => string): string[] {
   const h = hint(l)
   return [
-    `run ${l.run} · ${name(l.board)} · Chrome ${l.chrome.split('.')[0]} · bakes ${l.bakes}${l.slow ? ' · --slow' : ''}${l.overlapped ? ' · overlapped' : ''}`,
+    `run ${l.run} · ${name(l.board)} · Chrome ${l.chrome.split('.')[0]} · bakes ${l.bakes}${l.slow ? ' · --slow' : ''}${l.recorder === 'core' ? ' · recorder core' : ''}${l.overlapped ? ' · overlapped' : ''}`,
     `load to settled ${ms2(l.loadToSettledMs)} · ${l.moves} move${l.moves === 1 ? '' : 's'}${l.lateMoves ? ` (${l.lateMoves} late)` : ''} · p50 ${mms(l.p50)} p95 ${mms(l.p95)} · ${over33(l.over33ms)} · heap peak ${l.heapPeakMB ?? '-'} MB${l.postersMissing ? ` · ${l.postersMissing} without a poster` : ''}`,
     `${l.valid ? 'valid' : why(l)} · inputs ${l.inputs ? `${l.inputs.hash.slice(0, 8)}… (${l.inputs.files.toLocaleString('en-US')} files)` : 'unknown'}${l.forbidden ? ` · ${l.forbidden} write${l.forbidden === 1 ? '' : 's'} refused` : ''}`,
     ...(h ? [h] : []),
@@ -546,8 +546,9 @@ class ServerSaid extends Error {}
  * with the lines of the runs before it (`--json`: `{ runs, error }`); only a stream that breaks, or ends before its
  * `done`, under a run waits for that run's line.
  */
-export async function perfRunCommand(root: string, board: string | undefined, opts: { slow?: boolean; repeat?: string | number; json?: boolean }): Promise<number> {
-  if (!board) throw new Error('name the board: marver perf run <board> [--slow] [--repeat 1-5] [--json]')
+export async function perfRunCommand(root: string, board: string | undefined, opts: { slow?: boolean; repeat?: string | number; json?: boolean; recorder?: string }): Promise<number> {
+  if (!board) throw new Error('name the board: marver perf run <board> [--slow] [--repeat 1-5] [--recorder core|full] [--json]')
+  if (opts.recorder !== undefined && opts.recorder !== 'core' && opts.recorder !== 'full') throw new Error('--recorder must be core or full')
   const info = readDevInfo(root)
   if (!info) throw new Error('`marver dev` is not running in this repo (design/.local/dev.json not found) - start it first.')
   const repeat = opts.repeat === undefined ? 1 : Number(opts.repeat)
@@ -562,7 +563,7 @@ export async function perfRunCommand(root: string, board: string | undefined, op
     const res = await fetch(`http://localhost:${info.port}/__mv/api/perf/run`, {
       method: 'POST', signal: ac.signal,
       headers: { 'x-mv-work': info.token, 'content-type': 'application/json' },
-      body: JSON.stringify({ board, slow: !!opts.slow, repeat }),
+      body: JSON.stringify({ board, slow: !!opts.slow, repeat, recorder: opts.recorder ?? 'full' }),
     })
     if (!res.ok || !res.body) {
       const b = await res.json().catch(() => ({})) as { error?: string }
@@ -617,7 +618,7 @@ function runsPerf(root: string, opts: { days?: number | string; json?: boolean; 
   if (!lines.length) { console.log('\nnone yet - npx marver perf run <board>'); return }
   const pct = (a: number | null, b: number | null) => (a && b !== null ? `${b >= a ? '+' : ''}${Math.round(((b - a) / a) * 100)} %` : '-')
   for (const b of sum.boards) {
-    console.log(`\n  ${name(b.board)} · Chrome ${String(b.cohort.chrome).split('.')[0]} · bakes ${b.cohort.bakes}${b.cohort.slow ? ' · --slow' : ''} · ${b.runs} valid run${b.runs === 1 ? '' : 's'}`)
+    console.log(`\n  ${name(b.board)} · Chrome ${String(b.cohort.chrome).split('.')[0]} · bakes ${b.cohort.bakes}${b.cohort.slow ? ' · --slow' : ''}${b.cohort.recorder === 'core' ? ' · recorder core' : ''} · ${b.runs} valid run${b.runs === 1 ? '' : 's'}`)
     const d33 = b.afterChange?.deltas.over33ms ?? null
     console.log(`    latest ${b.latest.run}: load to settled ${ms2(b.latest.loadToSettledMs)} · p95 ${mms(b.latest.p95)} · ${b.latest.over33ms ?? '-'} over 33 ms · inputs ${b.latest.inputs?.slice(0, 8) ?? 'unknown'}…`)
     if (b.sameInputs) console.log(`    against ${b.sameInputs.from.run} (same inputs): ${b.sameInputs.within10 ? 'within 10 %' : 'NOT within 10 %'} - load ${pct(b.sameInputs.from.loadToSettledMs, b.latest.loadToSettledMs)}, p95 ${pct(b.sameInputs.from.p95, b.latest.p95)}`)

@@ -91,8 +91,10 @@ function cameraPath(): { path: PerfCam[]; stop(): void } {
   return { path, stop: () => { on = false } }
 }
 
-/** The `before` answer for `tick`: the points chosen now, the camera and the viewport. */
+/** The `before` answer for `tick`: the points chosen now, the camera and the viewport. A covering play stage leaves no
+ *  ground to probe, and says so (spec 30 #39): main takes no capture and records the time as uncovered. */
 export function pick(tick: number): Extract<PerfMsg, { kind: 'probes'; at: 'before' }> {
+  if (document.querySelector('.sh-play')) return { kind: 'probes', tick, at: 'before', points: [], cam: canvasCtl.transform(), view: view(), stage: true }
   const top = VISIBLE_TOP
   const w = innerWidth, h = Math.max(0, innerHeight - top)
   const rects = nodeRects()
