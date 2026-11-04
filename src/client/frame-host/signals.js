@@ -10,7 +10,8 @@
 //
 // Limited at the source (#33): every count is taken BEFORE a message is formatted or posted. Errors, console errors and
 // resource errors share 5 a second and 50 per document; what the budget refuses is counted by source and travels on
-// its own, in counter-only `sh:dropped` messages (at most one a second, a final one at `pagehide`).
+// its own, in counter-only `sh:dropped` messages (at most one a second, a final one at `pagehide`). A window error spends
+// the budget but is never refused: it marks the frame failed (bridge.js, #5).
 
 /** perf-records.ts `ERROR_BUDGET.frame`, repeated (this file ships verbatim). */
 export const FRAME_BUDGET = { perSecond: 5, perDoc: 50, countsMs: 1000 }
@@ -147,8 +148,8 @@ export function onConsoleError(fn) { consoleListeners.add(fn); return () => { co
 /**
  * A canvas frame's hooks, once (bridge.js, before anything else it posts): `console.error` and `console.warn` wrapped
  * (the original runs first), the capture-phase element error listener, the budget, the counters, and the shell's
- * `sh:gesture`. Returns `take(source, force?)` - the budget, for the bridge's own window errors - or null when this
- * document does not record.
+ * `sh:gesture`. Returns `take(source, force?)` - the budget, which the bridge's own window errors spend with `force` -
+ * or null when this document does not record.
  */
 export function startDocumentSignals({ post, id, gen, boot }) {
   if (started) return started

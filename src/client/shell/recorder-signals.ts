@@ -373,7 +373,7 @@ function onCanvasMotion(m: { camera: boolean; preset: boolean }): void {
 
 // ---- the messages ------------------------------------------------------------------------------------------------------
 
-const FROM_FRAME_DROPS = ['frame', 'console', 'resource'] as const
+const FROM_FRAME_DROPS = ['console', 'resource'] as const
 /** Which node a document was (its `sh:boot`): its last counts come with no source once it has gone, below. */
 const bootNodes = new Map<string, string>()
 function onFrameMessage(node: string, d: Record<string, unknown>): void {

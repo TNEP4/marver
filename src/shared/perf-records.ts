@@ -57,7 +57,8 @@ export const WATCHDOG_MS = 10_000
 /** #23, #25: a transition's ack deadline, and the rate of `theme` and `mode` records (#57). */
 export const TRANSITION = { timeoutMs: 5_000, perSecond: 10 } as const
 /** #33: limited at the source. In each frame (bridge.js, before formatting or posting): errors, console errors and
- *  resource errors share `perSecond` and `perDoc`; refused counts travel in `sh:dropped`, at most one a `countsMs`.
+ *  resource errors share `perSecond` and `perDoc`; refused counts travel in `sh:dropped`, at most one a `countsMs`. A
+ *  window error spends it and always goes (`sh:error` marks the frame failed, #5).
  *  In the shell: `perLoad` and the `sameMs` duplicate rule for every source, plus `perSourcePerSecond` for console,
  *  api and resource. bridge.js ships verbatim (build.ts copies it): it repeats these numbers inline. */
 export const ERROR_BUDGET = {

@@ -57,8 +57,8 @@ export interface ConsoleMsg { type: 'sh:console'; id: string; gen: string; boot:
 /** #32: an element's load error, caught in the capture phase: `url` a same-origin path without query, else the
  *  other origin alone. */
 export interface ResourceErrorMsg { type: 'sh:resource-error'; id: string; gen: string; boot: string; tag: ResourceTag; url: string }
-/** What a frame's budget refuses, by source (#33): window errors (`frame`), console errors, resource errors. */
-export type FrameDropSource = 'frame' | 'console' | 'resource'
+/** What a frame's budget refuses, by source (#33): console errors, resource errors. A window error spends it and is never refused. */
+export type FrameDropSource = 'console' | 'resource'
 /** #33: counter-only, independent of the detail budget, at most one a second, a final one at `pagehide`. Counts since
  *  the document's previous `sh:dropped`: the shell adds them to `dropped { reason: <source>, n }`. */
 export interface DroppedMsg { type: 'sh:dropped'; id: string; boot: string; counts: Partial<Record<FrameDropSource, number>>; final?: true }

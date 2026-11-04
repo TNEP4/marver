@@ -89,6 +89,8 @@ beforeAll(async () => {
   put('design/scenes/kit/b.tsx', 'export default () => <main><h1>b</h1></main>\n')
   put('design/scenes/kit/c.tsx', 'export default () => <main><h1>c</h1></main>\n')
   put('design/scenes/kit/broken.tsx', 'export default () => <main><h1>not broken yet</h1></main>\n')
+  // a frame whose module reports one error as it loads, then renders: its document's first window error is behind it when it is ready
+  put('design/scenes/kit/early.tsx', "reportError(new Error('early, at import'))\nexport default () => <main><h1>early</h1></main>\n")
   // a frame whose own module holds the main thread for 120 ms when asked
   put('design/scenes/kit/blocker.tsx', `import { useEffect } from 'react'
 export default function Blocker() {
@@ -113,6 +115,7 @@ export default function Rerender() {
   board('blocker', [at('k-block', 'kit/blocker', 0)])
   board('rerender', [at('k-re', 'kit/rerender', 0)])
   board('broken', [at('k-broken', 'kit/broken', 0)])
+  board('early', [at('k-early', 'kit/early', 0)])
   board('thirty', Array.from({ length: 30 }, (_, i) => at(`k-${i}`, 'kit/a', (i % 6) * 360, Math.floor(i / 6) * 280)))
   server = spawn(process.execPath, [CLI, 'dev', '--root', root, '--port', String(PORT)], { cwd: root, stdio: 'pipe', env: { ...process.env, BROWSER: 'none', CI: '1' } })
   server.stdout?.on('data', (d) => { log += d; const m = log.match(/→ (http:\/\/localhost:\d+)\//); if (m) ORIGIN = m[1] })
@@ -564,19 +567,43 @@ describe('R5: more bugs', () => {
     expect(reads, 'formatted exactly what was posted').toBe(posted)
   }, 90_000)
 
-  it('60 errors in one load: every source shares the load\'s 50, the rest counted; a document\'s first window error always goes', async () => {
+  it('60 errors in one load: every source shares the load\'s 50, the rest counted; a window error always goes', async () => {
     if (!browser) return
     const { s, page } = await open('thirty')
     // twelve frames, five distinct window errors each: within each frame's budget, and no rate of the shell's own
     const keys = Array.from({ length: 12 }, (_, i) => `k-${i}`)
     for (const k of keys) await inFrame(s, k, `(() => { for (let i = 0; i < 5; i++) setTimeout(() => { throw new Error('sixty ${k} ' + i) }, 0); return true })()`)
     await until(() => errorsOf(page, 'frame').length === 50 && droppedOf(page, 'errors') === 10, 20_000, '50 kept, 10 counted')
-    // a frame that used its whole budget on the console still fails on its first window error
+    // a frame that used its whole budget on the console still fails on a window error
     const flooded = 'k-20'
     const out = await inFrame(s, flooded, `(() => { for (let i = 0; i < 80; i++) console.error('flood ' + i); setTimeout(() => { throw new Error('the real one') }, 0); return true })()`)
     expect(out).toBe(true)
     await browser.until(s, `window.__mvStore.getState().nodes.find((n) => n.key === '${flooded}').status === 'error'`, 8_000)
   }, 120_000)
+
+  it('a frame past its budget still fails: an error after an early one, ready and a budget spent to its last still reaches the shell (#33, #5)', async () => {
+    if (!browser) return
+    const { s, page } = await open('early')
+    const node = (f: string) => `window.__mvStore.getState().nodes.find((n) => n.key === 'k-early').${f}`
+    await browser.until(s, `${node('status')} === 'ready'`, 15_000)
+    expect(errorsOf(page, 'frame').map((r) => r.message).join()).not.toContain('past its budget')
+    // the document's whole 50: each call a second after the last, by the clock its budget reads
+    await inFrame(s, 'k-early', `(() => { const real = performance.now; let t = real.call(performance); performance.now = () => (t += 1000); for (let i = 0; i < 80; i++) console.error('flood ' + i); performance.now = real; return true })()`)
+    await sendNow(s)
+    await until(() => droppedOf(page, 'console') >= 30, 10_000, 'the budget to be spent')
+    expect(await browser.eval(s, node('status')), 'a console error fails nothing').toBe('ready')
+    await inFrame(s, 'k-early', `setTimeout(() => { throw new Error('an error past its budget') }, 0), true`)
+    await browser.until(s, `${node('status')} === 'error'`, 8_000)
+    expect(await browser.eval(s, node('error'))).toContain('an error past its budget')
+    // and a rejection, the same way
+    await browser.eval(s, `window.__mvStore.getState().setStatus('k-early', 'ready'), 1`)
+    await inFrame(s, 'k-early', `Promise.reject(new Error('a rejection past its budget')), true`)
+    await browser.until(s, `${node('status')} === 'error'`, 8_000)
+    expect(await browser.eval(s, node('error'))).toContain('a rejection past its budget')
+    // both recorded: the shell's own bounds are what bound these
+    await sendNow(s)
+    await until(() => errorsOf(page, 'frame').filter((r) => /past its budget/.test(r.message)).length === 2, 10_000, 'both on file')
+  }, 90_000)
 
   it('the `core` level adds nothing: no console hook, no ack, no `theme`, no `mode`', async () => {
     if (!browser) return

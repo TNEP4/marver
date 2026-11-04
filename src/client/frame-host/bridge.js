@@ -92,12 +92,12 @@ document.addEventListener('click', (e) => {
 // consumed and forwarded it already, so this never sees it
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') post({ type: 'sh:exit-interact' }) })
 
-// (spec 30 #33) the shared budget, before anything is formatted or posted - but a document's first window error always
-// goes: it is what marks the frame failed, and the recorder never stands in the way of that (#5)
-let windowErrors = 0
-const errorGoes = () => !signals || signals.take('frame', ++windowErrors === 1)
-window.addEventListener('error', (e) => { if (errorGoes()) post({ type: 'sh:error', id, gen: GEN, boot: BOOT, message: String(e.message || e.error), stack: stackOf(e.error) }) })
-window.addEventListener('unhandledrejection', (e) => { if (errorGoes()) post({ type: 'sh:error', id, gen: GEN, boot: BOOT, message: `unhandled rejection: ${e.reason}`, stack: stackOf(e.reason) }) })
+// A window error or an unhandled rejection always reaches the shell: `sh:error` is what marks the frame failed
+// (App.tsx), and the recorder never stands in the way of that (spec 30 #5). It spends the document's budget (#33), which
+// limits only the telemetry beside it - console and resource errors; the shell's 50 a load and its duplicate rule bound
+// the `error` records.
+window.addEventListener('error', (e) => { signals?.take('frame', true); post({ type: 'sh:error', id, gen: GEN, boot: BOOT, message: String(e.message || e.error), stack: stackOf(e.error) }) })
+window.addEventListener('unhandledrejection', (e) => { signals?.take('frame', true); post({ type: 'sh:error', id, gen: GEN, boot: BOOT, message: `unhandled rejection: ${e.reason}`, stack: stackOf(e.reason) }) })
 
 window.addEventListener('message', (e) => {
   // commands come from the SHELL (parent) only - embedded app content must not flip the theme
