@@ -446,12 +446,12 @@ describe('R5: more bugs', () => {
     // twelve refusals in one turn, each its own message
     await browser.eval(s, `${shellModule('api')}.then(async (m) => {
       const { perfSeams } = await ${shellModule('recorder-seams')}
-      for (let i = 0; i < 12; i++) perfSeams.answered.emit({ url: '/__mv/api/route' + i, init: {}, headers: undefined, status: 500, ms: 1 })
+      for (let i = 0; i < 12; i++) perfSeams.answered.emit({ url: '/__mv/api/sizes', init: {}, headers: undefined, status: 500 + i, ms: 1 })
       return true
     })`)
     await until(() => errorsOf(page, 'api').length - kept + droppedOf(page, 'api') - before === 12, 10_000, 'twelve accounted for')
     const got = errorsOf(page, 'api').length - kept
-    expect(got).toBeGreaterThanOrEqual(1)
+    expect(got).toBeGreaterThanOrEqual(5)
     expect(got).toBeLessThanOrEqual(10)   // two wall seconds at most
     expect(droppedOf(page, 'api') - before).toBeGreaterThanOrEqual(2)
   }, 90_000)
