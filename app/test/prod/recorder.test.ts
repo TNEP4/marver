@@ -293,19 +293,17 @@ describe('a 0.29.0 canvas at launch', () => {
   }, 60_000)
   afterAll(async () => { await w0?.close() })
 
-  it('`launch` names its hello\'s page, and no `watch` window opened', async (ctx) => {
+  // A fake page presents no frames, so it never reaches `uncovered`: the page join is launch's unit case (r30-store-launch)
+  // and a real 0.29 canvas in the installed 1.0.1 (R18's day of use). Here: the line tells the truth, and no `watch`.
+  it('`launch` says the tab was restored behind Home, and no `watch` window opened', async (ctx) => {
     if (!real) { ctx.skip(); return }
     const read = async () => {
       await w0.run.call('recorder:flush')
       const f = join(w0.env.home, 'perf', 'app-dev.jsonl')
       return (existsSync(f) ? readFileSync(f, 'utf8').split('\n').filter(Boolean).map((l) => parseAppLine(l)).filter((r): r is AppRecord => !!r) : [])
     }
-    // restored behind Home: the line's moment is that tab first uncovered
-    const up = await w0.until((x) => x.tabs.some((t) => t.reg?.state === 'ready'), 15_000, 'the restored canvas')
-    await w0.run.call('activate', { id: up.tabs.find((t) => t.reg?.state === 'ready')!.id })
     const launch = await until('the launch line', async () => (await read()).find((r) => r.kind === 'launch') as Extract<AppRecord, { kind: 'launch' }> | undefined, 40_000)
-    expect(launch.firstCanvas, JSON.stringify(launch)).toMatchObject({ page: PAGE1 })
-    expect(launch.tabs.restored).toBeGreaterThan(0)
+    expect(launch, JSON.stringify(launch)).toMatchObject({ why: 'home', tabs: { restored: 1, local: 1, active: 'home' } })
     const whys = (await read()).filter((r) => r.kind === 'whiteout-candidate').flatMap((c) => (c as { why?: string[] }).why ?? [])
     expect(whys.filter((y) => y === 'load' || y === 'theme' || y === 'reload')).toEqual([])
   })
