@@ -28,6 +28,7 @@ import { poweredByUrl } from '../../shared/utm.ts'
 import { canvasCtl } from './canvas/ctl.ts'
 import { recorder } from './recorder.ts'
 import { perfSeams } from './recorder-seams.ts'
+import { cmd, endAfterFrames, endOnStage, keysOf, type CmdHandle, type CmdOpts, type CmdName } from './commands.ts'
 import { revealFrame, switchFor } from './goto.ts'
 import { Tip } from './Tip.tsx'
 import { keyAllowed } from '../frame-host/keys.js'
@@ -147,13 +148,13 @@ export function enterFocus(at?: string, over?: { device?: string; theme?: string
 
 /** Switch boards WITHOUT leaving play: the overlay stays up over the canvas churn, then
  *  a fresh stage mounts at the new board's start (PlayInner is keyed by board). */
-async function switchPlayBoard(name: string) {
+async function switchPlayBoard(name: string, h: CmdHandle) {
   const s = useStore.getState()
-  if (name === s.board) return
+  if (name === s.board) { h.cancel('same-board'); return }
   const device = s.play?.device               // the device is the viewer's choice - it survives the switch
   // a navigation like any other: a link still reading its board gives way to it, and it to a newer one - which then
   // has the board, the stage and the camera
-  if (!await switchFor(name)) return
+  if (!await switchFor(name)) { h.cancel('superseded'); return }
   const dev = device && device !== 'slide' ? { device } : undefined   // the deck's own size does not follow to a prototype
   if (playsAsSlides(name)) enterSlides(device ? { device } : undefined)
   else enterPlay(dev)
@@ -200,7 +201,7 @@ function BoardMenu({ current }: { current: string }) {
       </Tip>
       <Popover pop={pop} dark>
         {names.map((n) => (
-          <button key={n} onClick={() => { pop.setOpen(false); switchPlayBoard(n) }}>
+          <button key={n} onClick={() => { pop.setOpen(false); switchPlayBoard(n, cmd('play-board', { via: 'click', in: 'pill', board: n })) }}>
             <span>{boardLabel(n)}</span>
             {n === current && <CheckIcon size={13} className="chk" />}
           </button>
@@ -349,7 +350,7 @@ function PlayInner() {
     if (!p) return
     iframeRef.current.src = withWs(`${ROUTE}/stage/?at=${encodeURIComponent(p.at)}&theme=${encodeURIComponent(p.theme)}${slParams(p)}&r=${playNav}`)
   }, [playNav])
-  const applyUpdate = () => useStore.getState().applyPlayUpdate()
+  const applyUpdate = () => { cmd('play-update', { via: 'click', in: 'pill' }); useStore.getState().applyPlayUpdate() }
 
   // laser / comment ride the same rail as canvas frames, broadcast to the stage iframe.
   // Re-sent on stage-ready (below) so a stage reload restores the mode.
@@ -367,6 +368,8 @@ function PlayInner() {
     useStore.getState().setPlay(null)
     return true
   }
+  /** Open in canvas, or an Esc with nothing live (spec 30 `play-exit`): a board with no way out stays. */
+  const exitFrom = (how: CmdOpts) => { const h = cmd('play-exit', how); if (noDoor) h.noop('no-door'); exit() }
   const exit = () => {
     const { at } = useStore.getState().play ?? {}
     if (!leave()) return
@@ -384,17 +387,19 @@ function PlayInner() {
     if (p.slides) { useStore.getState().setPlay({ ...p, device: name === 'fill' ? 'fill' : 'slide' }); return }
     if (CONFIG.viewports[name] || name === 'fill') useStore.getState().setPlay({ ...p, device: name })
   }
-  const setTheme = (t: string) => {
+  const setTheme = (t: string, how?: CmdOpts) => {
     const p = useStore.getState().play
     if (!p) return
+    if (how) cmd('theme', how)
     useStore.getState().setPlay({ ...p, theme: t })
     postStage({ type: 'sh:set-theme', theme: t, t: perfSeams.transition('theme') })
   }
   /** Walk to a frame: the stage swaps silently; state + URL follow via the projection. */
   const goTo = (at: string) => playCtl.setAt(at)
-  const step = (dir: 1 | -1) => {
+  const step = (dir: 1 | -1, how: CmdOpts) => {
+    const h = cmd(dir === 1 ? 'play-next' : 'play-prev', how)
     const p = useStore.getState().play
-    if (!p || p.focus) return                  // focus is one frame - no walking
+    if (!p || p.focus) { h.noop('end'); return }   // focus is one frame - no walking
     if (p.slides) {
       // a deck never wraps: past the last slide is the end, before the first is
       // the start. A variant swap can put `at` off the frozen deck - step from
@@ -407,20 +412,27 @@ function PlayInner() {
         if (g) i = deck.findIndex((id) => frames.find((f) => f.id === id)?.variantGroup === g)
       }
       const next = i === -1 ? deck[0] : deck[Math.min(deck.length - 1, Math.max(0, i + dir))]
-      if (next && next !== p.at) goTo(next)
+      if (next && next !== p.at) { endOnStage(h, next); goTo(next) } else h.noop('end')
       return
     }
     const list = playList()
-    if (!list.length) return
+    if (!list.length) { h.noop('end'); return }
     const i = list.indexOf(p.at)
     // an off-board frame has no position: → restarts, ← goes to the last board frame
-    goTo(i === -1 ? (dir === 1 ? list[0] : list[list.length - 1]) : list[(i + dir + list.length) % list.length])
+    const to = i === -1 ? (dir === 1 ? list[0] : list[list.length - 1]) : list[(i + dir + list.length) % list.length]
+    if (to === p.at) { h.noop('end'); return }   // a board of one frame
+    endOnStage(h, to)
+    goTo(to)
   }
-  const restart = () => {
+  const restart = (how: CmdOpts) => {
+    const h = cmd('play-restart', how)
     const p = useStore.getState().play
-    if (p?.focus) return
+    if (p?.focus) { h.noop('no-frames'); return }
     const list = p?.slides ? currentDeck() : playList()
-    if (list.length) goTo(list[0])
+    if (!list.length) { h.noop('no-frames'); return }
+    // already on the first: nothing to swap, nothing for the stage to say
+    if (list[0] === p?.at) endAfterFrames(h); else endOnStage(h, list[0])
+    goTo(list[0])
   }
 
   /** Variant siblings of the CURRENT frame present on this board: the
@@ -436,13 +448,16 @@ function PlayInner() {
       .filter((f) => f.variantGroup === cur.variantGroup && f.kind === 'tsx' && onBoard.has(f.id))
       .sort((a, b) => (a.variant ?? '').localeCompare(b.variant ?? ''))
   }
-  const switchVariant = (dir: 1 | -1) => {
+  const switchVariant = (dir: 1 | -1, how: CmdOpts) => {
+    const h = cmd('play-variant', how)
     const p = useStore.getState().play
-    if (!p) return
+    if (!p) { h.noop('no-variants'); return }
     const vs = variantList()
-    if (vs.length < 2) return
+    if (vs.length < 2) { h.noop('no-variants'); return }
     const i = vs.findIndex((f) => f.id === p.at)
-    goTo(vs[(i + dir + vs.length) % vs.length].id)
+    const to = vs[(i + dir + vs.length) % vs.length].id
+    endOnStage(h, to)
+    goTo(to)
   }
 
   // history restores + walk: swap the stage silently (no sh:stage-at back) and track here
@@ -475,7 +490,7 @@ function PlayInner() {
       perfSeams.stageMessage.emit(data)
       // Jam (spec 27): the stage records like a frame; a key the shell owns comes back as sh:key
       if (onFrameMessage('stage', data)) return
-      if (data.type === 'sh:key') { if (typeof data.key === 'string') jamKey({ key: data.key, shift: !!data.shift, alt: !!data.alt, meta: !!data.meta, ctrl: !!data.ctrl }); return }
+      if (data.type === 'sh:key') { if (typeof data.key === 'string') jamKey({ key: data.key, shift: !!data.shift, alt: !!data.alt, meta: !!data.meta, ctrl: !!data.ctrl }, 'stage'); return }
       if (data.type === 'sh:stage-ready') {
         frameReady('stage')
         // an iframe reload (registry HMR invalidation) boots at the frozen initial src -
@@ -495,7 +510,8 @@ function PlayInner() {
           useStore.setState({ stageShown: { at: data.at, shown: `${String(data.epoch ?? '')}:${Number(data.doc) || 0}` } })
       } else if (data.type === 'sh:stage-at') {
         const p = s.play
-        if (p && typeof data.at === 'string') stageNavigated(data.at, () => s.setPlay({ ...p, at: data.at }))
+        // a data-goto in the stage, handled there in place (stage/main.tsx:277)
+        if (p && typeof data.at === 'string') { endOnStage(cmd('goto', { via: 'click', in: 'stage', frame: data.at }), data.at); stageNavigated(data.at, () => s.setPlay({ ...p, at: data.at })) }
       } else if (data.type === 'sh:stage-exit') {
         exit()
       } else if (data.type === 'sh:stage-error') {
@@ -509,8 +525,9 @@ function PlayInner() {
           if (s.playNav && !s.stageShown) useStore.setState({ playUpdateRevision: 'retry' })   // an Update that failed: offer it again
         }
       } else if (data.type === 'sh:stage-key') {
-        if (data.meta && data.key === '/') toggleCollapse()
-        else handleKey(String(data.key), String(data.code), !!data.alt)
+        if (data.meta && data.key === '/') { cmd('toolbar', { via: 'key', in: 'stage', keys: 'Meta+/' }); toggleCollapse() }
+        // the stage's background click, posted as Space, says so (#50)
+        else handleKey(String(data.key), String(data.code), !!data.alt, data.origin === 'click' ? { via: 'click', in: 'stage' } : { via: 'key', in: 'stage', keys: keysOf({ key: String(data.key), alt: !!data.alt }) })
       } else if (data.type === 'sh:picked') {
         // comment pick from the stage: stage the draft on the walked frame (its canvas
         // node when one is on this board, so the thread also lands on the canvas). Stamp
@@ -522,11 +539,12 @@ function PlayInner() {
         const at = String(data.id ?? '')
         if (!at || at !== s.play?.at) return
         const n = s.nodes.find((x) => x.frame === at && !x.missing)
+        cmd('comment-pick', { via: 'click', in: 'stage', frame: at })
         c.setDraft({ nodeKey: n?.key ?? '', frame: at, anchor: data.anchor })
       } else if (data.type === 'sh:frame-down') {
         const c = commentsStore()
-        if (c.active) c.setActive(null)
-        letGoOfTile()   // a click in the prototype closes the review open over it, as on the canvas
+        if (c.active) { cmd('thread-close', { via: 'click', in: 'stage' }); c.setActive(null) }
+        letGoOfTile({ via: 'click', in: 'stage' })   // a click in the prototype closes the review open over it, as on the canvas
       } else if (data.type === 'sh:laser-copy') {
         // laser click in the prototype: copy the element's address ([board ▸ scene] +
         // frame file + css path) and confirm in the frame's own hover label, like the canvas
@@ -535,9 +553,10 @@ function PlayInner() {
         // drop a stale post that outran a stage swap (the sender echoes its frame id)
         if (f && String(data.id ?? '') === at) {
           const addr = `[${s.board} ▸ ${f.scene || '(root)'}]  ${f.file} · ${String(data.path ?? '')}${data.source ? ` (${String(data.source)})` : ''}`
+          const h = cmd('laser-copy', { via: 'click', in: 'stage', frame: at })
           navigator.clipboard.writeText(addr).then(
-            () => postStage({ type: 'sh:copy-ok', seq: data.seq }),
-            () => s.toast('copy blocked - click the canvas first'))
+            () => { h.done(); postStage({ type: 'sh:copy-ok', seq: data.seq }) },
+            () => { h.fail('clipboard-blocked'); s.toast('copy blocked - click the canvas first') })
         }
       }
     }
@@ -546,38 +565,52 @@ function PlayInner() {
   }, [])
 
   // shared handler: keys arrive directly (focus in shell) or forwarded by the stage
-  const handleKey = (key: string, code: string, alt = false) => {
+  const handleKey = (key: string, code: string, alt: boolean, how: CmdOpts) => {
     if (key === 'Escape') {
       // a live review mode swallows Escape first (cancel), so it never ejects you from
       // the prototype mid-comment; a second Escape (nothing live) exits
       const c = commentsStore()
       const s = useStore.getState()
-      if (c.commentMode || s.laser || c.active || c.draft) { c.setMode(false); c.setActive(null); c.setDraft(null); s.setLaser(false) }
-      else exit()
+      if (c.commentMode || s.laser || c.active || c.draft) {
+        const h = cmd('escape', how)
+        if (c.commentMode || c.active || c.draft) h.step('comments-off')
+        if (s.laser) h.step('laser-off')
+        c.setMode(false); c.setActive(null); c.setDraft(null); s.setLaser(false)
+        endAfterFrames(h)
+      }
+      else exitFrom(how)
       return
     }
-    if (key === 'ArrowRight') { step(1); return }
-    if (key === 'ArrowLeft') { step(-1); return }
-    if (key === ' ' && useStore.getState().play?.slides) { step(1); return }
-    if (key === '[') { switchVariant(-1); return }
-    if (key === ']') { switchVariant(1); return }
-    if (key === 'r') { restart(); return }
-    if (key === 'h') { toggleHideUI(); return }
+    if (key === 'ArrowRight') { step(1, how); return }
+    if (key === 'ArrowLeft') { step(-1, how); return }
+    if (key === ' ' && useStore.getState().play?.slides) { step(1, how); return }
+    if (key === '[') { switchVariant(-1, how); return }
+    if (key === ']') { switchVariant(1, how); return }
+    if (key === 'r') { restart(how); return }
+    if (key === 'h') { cmd('hide-ui', how); toggleHideUI(); return }
     // L: the pointer laser; ⌥L: inspect
-    if (key === 'l' && SOURCE_REVEALED) { commentsStore().setMode(false); useStore.getState().toggleLaser(alt); return }
-    if (key === 'c') { const c = commentsStore(); if (!c.commentMode && useStore.getState().board === UNPLACED) return useStore.getState().toast(NO_COMMENTS_HERE); if (!c.commentMode && stoppedFor('Comments need the canvas running')) return; if (!c.commentMode) useStore.getState().setLaser(false); c.setMode(!c.commentMode); return }
-    if (key === 'C') { const c = commentsStore(); c.setShow(!c.show); return }   // ⇧C hides/shows pins
-    if (key === 'L') { const c = commentsStore(); c.setShowAnchor(!c.showAnchor); return }   // ⇧L element focus
+    if (key === 'l') {
+      const h = cmd(alt ? 'inspect' : 'laser', how)
+      if (!SOURCE_REVEALED) h.noop('stripped')
+      else { commentsStore().setMode(false); useStore.getState().toggleLaser(alt); return }
+    }
+    if (key === 'c') { const c = commentsStore(); const h = cmd('comments', how); if (!c.commentMode && useStore.getState().board === UNPLACED) { h.noop('unplaced'); return useStore.getState().toast(NO_COMMENTS_HERE) } if (!c.commentMode && stoppedFor('Comments need the canvas running')) { h.noop('stopped'); return } if (!c.commentMode) useStore.getState().setLaser(false); c.setMode(!c.commentMode); return }
+    if (key === 'C') { const c = commentsStore(); cmd('pins', how); c.setShow(!c.show); return }   // ⇧C hides/shows pins
+    if (key === 'L') { const c = commentsStore(); cmd('laser-comment', how); c.setShowAnchor(!c.showAnchor); return }   // ⇧L element focus
 
     if (/^Digit[1-9]$/.test(code)) {
       const names = Object.keys(CONFIG.viewports)
       const idx = Number(code.slice(5))
+      const h = cmd('device', how)
       if (idx <= names.length) setDevice(names[idx - 1])
       else if (idx === names.length + 1) setDevice('fill')
+      else h.noop('unknown-device')
     }
-    if (key === 'd' && CONFIG.themes.length > 1) {
-      const p = useStore.getState().play!
-      setTheme(CONFIG.themes[(CONFIG.themes.indexOf(p.theme) + 1) % CONFIG.themes.length])
+    if (key === 'd') {
+      if (CONFIG.themes.length > 1) {
+        const p = useStore.getState().play!
+        setTheme(CONFIG.themes[(CONFIG.themes.indexOf(p.theme) + 1) % CONFIG.themes.length], how)
+      } else cmd('theme', how).noop('one-theme')
     }
   }
   /** ⌘/ collapses the toolbar to a re-open fab - same shortcut + ladder as design mode. */
@@ -589,9 +622,9 @@ function PlayInner() {
       // with Option a Mac types a symbol (⌥L is "¬"): an Alt shortcut is named by the key pressed
       const key = e.altKey && /^Key[A-Z]$/.test(e.code) ? e.code.slice(3).toLowerCase() : e.key
       if (!e.repeat && jamKey({ key, shift: e.shiftKey, alt: e.altKey, meta: e.metaKey, ctrl: e.ctrlKey })) { e.preventDefault(); return }
-      if ((e.metaKey || e.ctrlKey) && e.key === '/') { e.preventDefault(); toggleCollapse(); return }
+      if ((e.metaKey || e.ctrlKey) && e.key === '/') { e.preventDefault(); cmd('toolbar', { via: 'key', in: 'shell', keys: keysOf(e) }); toggleCollapse(); return }
       if (e.metaKey || e.ctrlKey) return
-      handleKey(key, e.code, e.altKey)
+      handleKey(key, e.code, e.altKey, { via: 'key', in: 'shell', keys: keysOf(e, key) })
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -649,7 +682,7 @@ function PlayInner() {
           // background advance: never on controls, links, media, comments, or goto targets
           const t = e.target as Element
           if (t.closest('a, button, input, textarea, select, video, [contenteditable], [data-goto], .cm-card, .cm-pin, .cm-stack, .sh-pill')) return
-          step(1)
+          step(1, { via: 'click', in: 'stage' })
         } : undefined}>
         <div className="dev" data-theme={play.theme} style={{ width: dw, height: dh }}>
           <iframe
@@ -717,8 +750,8 @@ function PlayInner() {
           <LaserButton />
           {!PUBLISHED && CONFIG.jam && <JamButton inPlay />}
           <i className="sep" />
-          {!docPreset && <DevicePicker value={fill ? 'fill' : play.device} onSelect={(n) => n && setDevice(n)} includeFill includeSlide={slides} stageOnly={slides} hint={deviceHint} dark />}
-          <ThemePicker value={play.theme} onSelect={setTheme} hint="D" dark />
+          {!docPreset && <DevicePicker value={fill ? 'fill' : play.device} onSelect={(n) => { if (!n) return; cmd('device', { via: 'click', in: 'pill', arg: n }); setDevice(n) }} includeFill includeSlide={slides} stageOnly={slides} hint={deviceHint} dark />}
+          <ThemePicker value={play.theme} onSelect={(t) => setTheme(t, { via: 'click', in: 'pill' })} hint="D" dark />
         </>}
         {playUpdateRevision && <>
           <i className="sep" />
@@ -730,7 +763,7 @@ function PlayInner() {
         <i className="sep" />
         <HideUIButton />
         <Tip side="bottom" label={<><b>Collapse toolbar</b><span>H hides everything · ⌘/</span></>}>
-          <button className="sh-pill-btn" onClick={() => setPillOpen(false)} tabIndex={pillOpen ? 0 : -1}>
+          <button className="sh-pill-btn" onClick={() => { cmd('toolbar', { via: 'click', in: 'pill' }); setPillOpen(false) }} tabIndex={pillOpen ? 0 : -1}>
             <PanelFilledIcon size={17} style={{ transform: 'rotate(90deg)' }} />
           </button>
         </Tip>
@@ -739,7 +772,7 @@ function PlayInner() {
             deep link (the link's chrome) - not hidden, not rendered */}
         {!noDoor && (
           <Tip side="bottom" label={<><b>Open in canvas</b><span>Esc</span></>}>
-            <button className="sh-pill-btn" data-play-exit="" onClick={exit}><GridIcon size={16} /></button>
+            <button className="sh-pill-btn" data-play-exit="" onClick={() => exitFrom({ via: 'click', in: 'pill' })}><GridIcon size={16} /></button>
           </Tip>
         )}
         {BRANDING && PUBLISHED && !trimmed && (
@@ -753,28 +786,28 @@ function PlayInner() {
       )}
       {!(slides && deckChrome === 'none') && (
       <Tip side="bottom" label={<><b>Open toolbar</b><span>⌘/</span></>}>
-        <button className={`sh-pill-fab${pillOpen ? ' hidden' : ''}`} onClick={() => setPillOpen(true)}
+        <button className={`sh-pill-fab${pillOpen ? ' hidden' : ''}`} onClick={() => { cmd('toolbar', { via: 'click', in: 'pill' }); setPillOpen(true) }}
           aria-hidden={pillOpen} tabIndex={pillOpen ? -1 : 0}><PanelHollowIcon size={18} style={{ transform: 'rotate(90deg)' }} /></button>
       </Tip>
       )}
 
       {!focus && !trimmed && <div className="sh-play-nav">
         <Tip inv label={<><b>Restart</b><span className="k">R</span></>}>
-          <button onClick={restart}><ReloadIcon size={14} /></button>
+          <button onClick={() => restart({ via: 'click', in: 'pill' })}><ReloadIcon size={14} /></button>
         </Tip>
         <i className="sep" />
         <Tip inv label={<><b>Previous frame</b><span className="k">←</span></>}>
-          <button onClick={() => step(-1)}><ArrowLeftIcon size={14} /></button>
+          <button onClick={() => step(-1, { via: 'click', in: 'pill' })}><ArrowLeftIcon size={14} /></button>
         </Tip>
         <span className="pos">{pos === -1 ? '·' : pos + 1}<em>/</em>{list.length}</span>
         <Tip inv label={<><b>Next frame</b><span className="k">→</span></>}>
-          <button onClick={() => step(1)}><ArrowRightIcon size={14} /></button>
+          <button onClick={() => step(1, { via: 'click', in: 'pill' })}><ArrowRightIcon size={14} /></button>
         </Tip>
         {variants.length > 1 && <>
           <i className="sep" />
           {variants.map((v) => (
             <Tip inv key={v.id} label={<><b>{v.title ?? v.id}</b><span className="k">[ ]</span></>}>
-              <button className={`vchip${v.id === play.at ? ' on' : ''}`} onClick={() => goTo(v.id)}>
+              <button className={`vchip${v.id === play.at ? ' on' : ''}`} onClick={() => { if (v.id === play.at) cmd('play-variant', { via: 'click', in: 'pill' }).noop('no-variants'); else { endOnStage(cmd('play-variant', { via: 'click', in: 'pill' }), v.id); goTo(v.id) } }}>
                 {(v.variant ?? '?').toUpperCase()}
               </button>
             </Tip>

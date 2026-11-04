@@ -45,6 +45,8 @@ interface Load {
   quietSent: boolean
   /** the visible cohort: the nodes the first camera placement after the commit showed */
   cohort?: Set<string>
+  /** spec 30 #49: its cohort's frames all reached their outcome - `board-open`'s `visibleReady` step, said once */
+  visibleReady?: true
   /** store changes that moved a node (before drags are merged), their distance, by cause */
   moves: number; distance: number; causes: Record<string, number>
   errors: number; errAt: Map<string, number>
@@ -319,8 +321,16 @@ function progress(n: Node): void {
   if (L && !L.done && L.committedAt !== undefined) {
     const o = outcomeNow(n, useStore.getState().manifest)
     if (o && L.reported.get(n.key) !== said(n, o)) frameRecord(L, n, o)
+    visibleReadyNow(L)
   }
   settleSoon()
+}
+
+/** Spec 30 #49: the cohort's frames all reached their outcome - `board-open`'s `visibleReady` step - once per load. */
+function visibleReadyNow(L: Load): void {
+  if (L.visibleReady || !L.cohort || [...L.cohort].some((k) => !L.reported.has(k))) return
+  L.visibleReady = true
+  phase({ phase: 'visible-ready', load: L.id })
 }
 
 function frameRecord(L: Load, n: Node, outcome: Outcome | 'cut'): void {
@@ -370,6 +380,7 @@ function settle(L: Load, s: State, outs: Outcome[]): void {
   ensureVisible(L)
   s.nodes.forEach((n, i) => { if (L.reported.get(n.key) !== said(n, outs[i])) frameRecord(L, n, outs[i]) })
   if (!L.quietSent) { L.quietSent = true; rec('quiet', L.id, { ms: Math.round(L.lastMoveAt - L.t0) }) }
+  visibleReadyNow(L)
   rec('settled', L.id, {
     ms: Math.round(performance.now() - L.t0), moves: L.moves, distance: Math.round(L.distance), causes: L.causes, lastMove: rel(L, L.movedAt),
     visibleReadyMs: lastReady(L, s.nodes.filter((n) => L.cohort?.has(n.key))), allReadyMs: lastReady(L, s.nodes),

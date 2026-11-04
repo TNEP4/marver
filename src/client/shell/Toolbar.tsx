@@ -13,6 +13,7 @@ import { STOPPED_TIP, useStopped } from './api.ts'
 import { NO_COMMENTS_HERE, useComments } from './comments-store.ts'
 import { UNPLACED } from './hash.ts'
 import { Tip } from './Tip.tsx'
+import { cmd } from './commands.ts'
 import { CaretIcon, CheckIcon, CommentIcon, DevicesIcon, EyeSlashIcon, FrameCornersIcon, LaserIcon, MoonIcon, SlideFrameIcon, SunIcon, deviceIcon } from './icons.tsx'
 
 const commentsStore = () => useComments.getState()
@@ -100,6 +101,7 @@ export function LaserButton() {
   return (
     <Tip side="bottom" label={<TipRows rows={[['Laser', 'L'], ['Inspect', '⌥L'], [showAnchor ? 'Hide laser comment' : 'Show laser comment', '⇧L']]} />}>
       <button className={`sh-pill-btn${laser ? ' on' : ''}`} data-laser={laser ? (laserInspect ? 'inspect' : 'pointer') : 'off'} onClick={(e) => {
+        cmd(e.altKey ? 'inspect' : 'laser', { via: 'click', in: 'pill' })
         commentsStore().setMode(false)
         useStore.getState().toggleLaser(e.altKey)
       }}><LaserIcon size={16} /></button>
@@ -124,7 +126,7 @@ export function CommentButton() {
   if (stopped && !commentMode) {
     return (
       <Tip side="bottom" label={<div className="sh-tip-lines"><b>Comments need the canvas running</b><small>{STOPPED_TIP}</small></div>}>
-        <button className="sh-pill-btn off" aria-disabled="true" data-stopped="" onClick={() => stoppedFor('Comments need the canvas running')}><CommentIcon size={16} /></button>
+        <button className="sh-pill-btn off" aria-disabled="true" data-stopped="" onClick={() => { const h = cmd('comments', { via: 'click', in: 'pill' }); stoppedFor('Comments need the canvas running'); h.noop('stopped') }}><CommentIcon size={16} /></button>
       </Tip>
     )
   }
@@ -133,10 +135,13 @@ export function CommentButton() {
       <Tip side="bottom" label={<><b>Commenting is not available for you yet</b><span>click to ask the owner</span></>}>
         <button className="sh-pill-btn" style={{ opacity: .55 }} onClick={() => {
           const s = useStore.getState()
-          if (Date.now() - asked.current < 8000) return
+          const h = cmd('ask-to-comment', { via: 'click', in: 'pill' })
+          if (Date.now() - asked.current < 8000) { h.noop('too-soon'); return }
           asked.current = Date.now()
-          void commentsStore().askToComment().then((ok) =>
-            s.toast(ok ? 'asked the owner for comment access - they decide' : 'could not send the request - try again'))
+          void commentsStore().askToComment().then((ok) => {
+            if (ok) h.done(); else h.fail('api')
+            s.toast(ok ? 'asked the owner for comment access - they decide' : 'could not send the request - try again')
+          }, (e: unknown) => { h.fail('api'); throw e })
         }}><CommentIcon size={16} /></button>
       </Tip>
     )
@@ -145,8 +150,9 @@ export function CommentButton() {
     <Tip side="bottom" label={<TipRows rows={[['Comment', 'C'], [show ? 'Hide pins' : 'Show pins', '⇧C']]} />}>
       <button className={`sh-pill-btn${commentMode ? ' on' : ''}`} onClick={() => {
         const c = commentsStore()
-        if (!c.commentMode && useStore.getState().board === UNPLACED) return useStore.getState().toast(NO_COMMENTS_HERE)
-        if (!c.commentMode && stoppedFor('Comments need the canvas running')) return
+        const h = cmd('comments', { via: 'click', in: 'pill' })
+        if (!c.commentMode && useStore.getState().board === UNPLACED) { h.noop('unplaced'); return useStore.getState().toast(NO_COMMENTS_HERE) }
+        if (!c.commentMode && stoppedFor('Comments need the canvas running')) { h.noop('stopped'); return }
         if (!c.commentMode) useStore.getState().setLaser(false)
         c.setMode(!c.commentMode)
         useStore.getState().toast(c.commentMode ? 'comment mode off' : 'comment mode - click an element in a frame')
@@ -161,7 +167,7 @@ export function HideUIButton() {
   const on = useHideUI()
   return (
     <Tip side="bottom" label={<><b>Hide all UI</b><span>press H to reveal</span></>}>
-      <button className={`sh-pill-btn${on ? ' on' : ''}`} onClick={toggleHideUI}><EyeSlashIcon size={16} /></button>
+      <button className={`sh-pill-btn${on ? ' on' : ''}`} onClick={() => { cmd('hide-ui', { via: 'click', in: 'pill' }); toggleHideUI() }}><EyeSlashIcon size={16} /></button>
     </Tip>
   )
 }

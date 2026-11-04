@@ -29,8 +29,8 @@
  */
 import { contextBridge, ipcRenderer } from 'electron'
 import {
-  APP_API_VERSION, BOUNDS, CANVAS_CHANNELS, CAPTURE_WHY, OPEN_RESULTS, PERF_BOUNDS,
-  type AppState, type CaptureAnswer, type CaptureAsk, type CaptureWhy, type DocAnswer, type MarverAppV1, type MenuClick, type OpenItem, type OpenResult,
+  APP_API_VERSION, BOUNDS, CANVAS_CHANNELS, CAPTURE_WHY, MENU_IN, OPEN_RESULTS, PERF_BOUNDS,
+  type AppState, type CaptureAnswer, type CaptureAsk, type CaptureWhy, type DocAnswer, type MarverAppV1, type MenuClick, type MenuIn, type OpenItem, type OpenResult,
   type PerfMsg, type PerfProbeAsk, type Present, type Presented,
 } from '../../../src/shared/app-api.ts'
 import { checkOpenItem } from '../shared/open-item.ts'
@@ -82,9 +82,11 @@ ipcRenderer.on(CANVAS_CHANNELS.appState, (_e, m: { doc?: unknown; s?: unknown } 
   const s = m.s
   for (const fn of [...stateFns]) { try { fn(s) } catch { /* the page's own */ } }
 })
-ipcRenderer.on(CANVAS_CHANNELS.menuClick, (_e, m: { doc?: unknown; id?: unknown } | null) => {
+ipcRenderer.on(CANVAS_CHANNELS.menuClick, (_e, m: { doc?: unknown; id?: unknown; in?: unknown } | null) => {
   if (!m || !doc || m.doc !== doc || typeof m.id !== 'string' || !BOUNDS.menuId.test(m.id)) return
-  const p = { id: m.id }
+  // the menu it came from (spec 30 #51), absent or unknown: not passed on, and the shell records `in: 'app'`
+  const where = (MENU_IN as readonly unknown[]).includes(m.in) ? { in: m.in as MenuIn } : {}
+  const p = { id: m.id, ...where }
   for (const fn of [...clickFns]) { try { fn(p) } catch { /* the page's own */ } }
 })
 

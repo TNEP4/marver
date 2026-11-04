@@ -44,6 +44,10 @@
  * - The pressure a record quotes outside a sample (a flash's, a `gone`'s) is the last reading only while it is at
  *   most two ticks old (`freshPressure`); older - the recorder off and nothing to unload, so nothing reads it - it is
  *   unknown, never hours stale.
+ *
+ * Spec 30 (commands, R12): `cmd` lines go through this file's `record`, connected at `start` (commands.ts `connectCmds`,
+ * so that file stays free of the window and of Electron); `shown` names the command that caused it (`by`, taken in the
+ * turn it was asked) and ends it as it is written; `flushSync` also writes the starts and the drops still held.
  */
 import { app, powerMonitor, screen, webContents as allContents, type BaseWindow, type ProcessMetric, type RenderProcessGoneDetails, type WebContents } from 'electron'
 import type { AppBody, AppKind, Flavour, GpuIdentity, PressureReading, ProcId, RingEvent, Role, Sample, Sampler, TabIdent, ThermalState } from '../../../src/shared/app-perf.ts'
@@ -58,6 +62,7 @@ import { append, flushSync as flushLog, startPerflog } from './perflog.ts'
 import { markFlash as flashTransaction, quitFlashes, type FlashPorts } from './flashes.ts'
 import { flashPorts as composeFlashPorts, perfDirOf } from './flash-ports.ts'
 import { contentView, coverContents, mainWindow, pageView, stripContents, windowVisible } from './window.ts'
+import { cmdShown, connectCmds, flushCmds } from './commands.ts'
 import { mainFrameOf, safely } from './frames.ts'
 import { note } from './testing/index.ts'
 import { T } from './timings.ts'
@@ -144,7 +149,7 @@ let visibleAnswer: (TabIdent & { privateMB: number; heapMB: number; at: number }
 let visibleDoc = ''
 interface MemAsk { tick: number; tabId: string; doc: string; pid: number | undefined; ident: TabIdent; at: number; visible: boolean }
 const memAsks = new Map<string, MemAsk>()
-interface ShownAsk { tabId: string; doc: string; ident: TabIdent; mono: number }
+interface ShownAsk { tabId: string; doc: string; ident: TabIdent; mono: number; /** the command behind it (spec 30 #52) */ by?: string }
 const shownAsks = new Map<number, ShownAsk>()
 const boards = new Map<string, { doc: string; frames: number; asleep: number }>()
 const tabSeen = new Map<string, string>()
@@ -480,7 +485,8 @@ function onPerf(tabId: string, doc: string, msg: PerfMsg): void {
       // to main's receipt of the answer: the answer's IPC back to main is in it
       const ms = performance.now() - a.mono
       if (ms > T.shownAnswerMs) return
-      record('shown', a.ident, { ms: Math.round(ms * 10) / 10 })
+      record('shown', a.ident, { ms: Math.round(ms * 10) / 10, ...(a.by ? { by: a.by } : {}) })
+      if (a.by) cmdShown(a.by, tabId)
       return
     }
     case 'board':
@@ -573,6 +579,11 @@ export const recorder = {
   start(p: RecorderStart): void {
     if (P) return
     P = p
+    // a command's lines (spec 30 R12): through record, as any app kind, so `recorder: true` rules them
+    connectCmds({
+      event: (kind, who, body) => record(kind, who, body),
+      ident: (id) => { const t = getTab(id); return t ? identity(t) : null },
+    })
     // lines are stamped with a profile's hash once its file is on disk (or its write failed and said so)
     startPerflog({ home: p.home, flavour: p.flavour, config: p.config, machine: stampHash })
     startMachine({ home: p.home, window: mainWindow })
@@ -639,17 +650,22 @@ export const recorder = {
       ...(ours ? { source: t.unload ? 'unload' : 'reload-page' } : {}), pressure: freshPressure()?.level ?? null,
     })
   },
-  /** views.ts, in the turn `mv:app-state shown` is sent (tab switches only): the `shown` ask */
-  shown(t: Tab): void {
+  /**
+   * views.ts, in the turn `mv:app-state shown` is sent (tab switches only): the `shown` ask, `by` the command that
+   * caused it (spec 30 #52). True when the ask went, so a `shown` line can come; a command with nothing to wait for
+   * ends at once (commands.ts `activated`).
+   */
+  shown(t: Tab, by?: string): boolean {
     const doc = t.doc?.doc
-    if (!P || !doc || t.kind !== 'local') return
+    if (!P || !doc || t.kind !== 'local') return false
     const k = ++tickN
-    shownAsks.set(k, { tabId: t.id, doc, ident: identity(t), mono: performance.now() })
+    shownAsks.set(k, { tabId: t.id, doc, ident: identity(t), mono: performance.now(), ...(by ? { by } : {}) })
     // main's own white-out window (spec 30 #38): what a tab shows as it comes up
     noteShown(t.id)
-    if (!P.bridge.perfAsk(t.id, { kind: 'shown', tick: k })) { shownAsks.delete(k); return }
+    if (!P.bridge.perfAsk(t.id, { kind: 'shown', tick: k })) { shownAsks.delete(k); return false }
     const c = setTimeout(() => shownAsks.delete(k), T.shownAnswerMs + 100)
     c.unref?.()
+    return true
   },
   /** after each compose: `tab` lines for what changed (A3.8 #9, r4 #1); the window's display checked */
   tabsChanged(): void {
@@ -692,15 +708,25 @@ export const recorder = {
   },
   /** the ring's GPU process events (the GPU process's child-gone, gpu-restart, gpu) between two times: a flash's and a candidate's */
   gpuEvents,
-  /** runCommand('mark-flash'): flashes.ts's transaction, with flash-ports.ts's composition of this file's half */
-  markFlash(via: 'key' | 'menu'): void {
-    if (!P) return
-    void flashTransaction(via, flashPorts()).catch((err) => process.stderr.write(`marver-app: a flash mark failed (${(err as Error).message})\n`))
+  /**
+   * runCommand('mark-flash'): flashes.ts's transaction, with flash-ports.ts's composition of this file's half. It says
+   * what came of it once its `flash` line is written, the command's signal: `none` for a press inside the debounce,
+   * which marks nothing; `failed` for a mark that threw before its line.
+   */
+  markFlash(via: 'key' | 'menu'): Promise<'written' | 'none' | 'failed'> {
+    if (!P) return Promise.resolve('none')
+    const ports = flashPorts()
+    let wrote = false
+    return flashTransaction(via, { ...ports, append: (b) => { wrote = true; ports.append(b) } }).then(() => (wrote ? 'written' as const : 'none' as const), (err: unknown) => {
+      process.stderr.write(`marver-app: a flash mark failed (${(err as Error).message})\n`)
+      return wrote ? 'written' as const : 'failed' as const
+    })
   },
   /** will-quit: unfinished marks and every queued line, written now */
   flushSync(): void {
     try { quitFlashes() } catch { /* the flash stream's */ }
     try { launchQuit() } catch { /* the line's own */ }
+    try { flushCmds() } catch { /* the commands stream's */ }
     if (recorderOn() && minute.length) writeMinute()
     flushLog()
   },

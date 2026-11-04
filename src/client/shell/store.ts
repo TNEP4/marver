@@ -178,6 +178,7 @@ import { UNPLACED } from './hash.ts'
 import type { BoardType, StatusWord } from '../../shared/board-types.ts'
 import type { Phase, Status } from '../../shared/status.ts'
 import { isNew, type Marks } from '../../shared/marks.ts'
+import { cmd, type CmdOpts } from './commands.ts'
 
 /** The CAS tokens a tree write echoes: the sha256 of every board file as last seen, and of
  *  the folder registry (null = there was no file). */
@@ -302,11 +303,13 @@ const postOwner = (path: string, body: unknown) =>
  *  `marver boards pin` does. The answer is said; the file change re-reads the sidebar and the view. */
 export async function addToBoard(board: string, frames: string[]): Promise<void> {
   const { toast } = useStore.getState()
+  const h = cmd('add-to-board', { via: 'click', in: 'shell', board, frames: frames.length })
   try {
     const r = await postOwner('boards/pin', { board, frames })
     const body = await r.json().catch(() => ({})) as { added?: string[]; error?: string }
+    if (r.ok) h.done(); else h.fail('api')
     toast(r.ok ? `${body.added?.length ? 'pinned' : 'already'} on ${boardLabel(board)}` : body.error ?? `could not pin (${r.status})`)
-  } catch { toast('could not reach the dev server') }
+  } catch { h.fail('api'); toast('could not reach the dev server') }
 }
 
 const HEADER = 28
@@ -707,7 +710,7 @@ interface State {
   setScenes(scenes: Manifest['scenes']): void
   arrangeBoards(tree: TreeItem[], base: TreeBase): Promise<{ ok: true } | { ok: false; stale: boolean; error?: string }>
   pulsePath(): void
-  copyFrameImage(scale: 2 | 4): void
+  copyFrameImage(scale: 2 | 4, how: CmdOpts): void
   setScale(s: number): void
   togglePanel(): void
   setTheme(theme: string): void
@@ -1837,15 +1840,19 @@ export const useStore = create<State>((set, get) => {
     // node shows, at 2x (or 4x). The ClipboardItem takes a PROMISE: clipboard.write runs
     // inside the click/keydown gesture and the browser waits for the bytes - a plain
     // await-then-write would have lost the transient activation during the 1-4s render.
-    copyFrameImage(scale) {
+    copyFrameImage(scale, how) {
       const s = get()
-      if (PUBLISHED || s.imageBusy || s.selection.length !== 1) return
+      if (PUBLISHED) return
+      // spec 30: done when the clipboard holds it (60 s, the ceiling below); each refusal its code
+      const h = cmd('copy-image', { ...how, frames: s.selection.length, arg: `${scale}x` })
+      if (s.imageBusy) { h.noop('busy'); return }
+      if (s.selection.length !== 1) { h.noop('multi'); return }
       const node = s.nodes.find((n) => n.key === s.selection[0])
-      if (!node || node.missing) return
+      if (!node || node.missing) { h.noop('indexing'); return }
       const frame = s.frameFor(node)
-      if (!frame) { s.toast('frame is still indexing - try again in a second'); return }
+      if (!frame) { h.noop('indexing'); s.toast('frame is still indexing - try again in a second'); return }
       const CI = (globalThis as { ClipboardItem?: typeof ClipboardItem }).ClipboardItem
-      if (!CI || !navigator.clipboard?.write || (CI.supports && !CI.supports('image/png'))) { s.toast("this browser can't put images on the clipboard - use Chrome, Edge or Safari"); return }
+      if (!CI || !navigator.clipboard?.write || (CI.supports && !CI.supports('image/png'))) { h.fail('browser'); s.toast("this browser can't put images on the clipboard - use Chrome, Edge or Safari"); return }
       set({ imageBusy: true })
       void import('./jam-capture.ts').then(({ recordCopy }) => recordCopy('image', frame.id))   // a capture notes that it happened
       const done = () => set({ imageBusy: false })
@@ -1861,11 +1868,13 @@ export const useStore = create<State>((set, get) => {
         return r.blob()
       }).finally(() => clearTimeout(timer))
       let renderErr = ''
-      png.catch((e: Error) => { renderErr = e.name === 'AbortError' ? 'timed out - the renderer is busy' : e.message })
+      let renderTimedOut = false
+      png.catch((e: Error) => { renderTimedOut = e.name === 'AbortError'; renderErr = renderTimedOut ? 'timed out - the renderer is busy' : e.message })
       const fail = (err: unknown) => {
         done()
         // a prompt clipboard refusal (no gesture, focus lost) must not wait a minute on the
         // render: abandon the fetch, toast now. A render failure surfaces its own cause.
+        h.fail(renderErr ? (renderTimedOut ? 'render-timeout' : 'render-failed') : (err as Error)?.name === 'NotAllowedError' ? 'clipboard-blocked' : 'render-failed')
         if (!renderErr) ctl.abort()
         s.toast(renderErr ? `render failed - ${renderErr}` : (err as Error)?.name === 'NotAllowedError' ? 'copy blocked - click the canvas first' : `copy failed - ${(err as Error)?.message ?? err}`)
       }
@@ -1873,6 +1882,7 @@ export const useStore = create<State>((set, get) => {
         navigator.clipboard.write([new CI({ 'image/png': png })]).then(
           () => {
             done()
+            h.done()
             const used = meta.scale ?? scale
             s.toast(used < scale ? `image copied at ${used}x - frame too tall for ${scale}x` : scale === 4 ? 'image copied (4x)' : 'image copied')
             set((st) => ({ imagePulse: st.imagePulse + 1 }))

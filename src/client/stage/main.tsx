@@ -273,7 +273,7 @@ function Stage() {
       // on anything interactive, and data-goto (below) always wins
       if (slidesMode && e.target instanceof Element
         && !e.target.closest('a, button, input, textarea, select, video, .mv-video, [contenteditable], [data-goto]')) {
-        post({ type: 'sh:stage-key', key: ' ', code: 'Space' })
+        post({ type: 'sh:stage-key', key: ' ', code: 'Space', origin: 'click' })   // spec 30 #50: a click, told apart from Space
       }
       const el = e.target instanceof Element ? e.target.closest('[data-goto]') : null
       if (!el) return

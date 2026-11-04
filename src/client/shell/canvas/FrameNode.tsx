@@ -20,6 +20,7 @@ import { slideSize, stageFit } from '../../const.ts'
 import { FrameSlot, toneOf, useFrameMark } from '../marks-ui.tsx'
 import { stranded } from '../api.ts'
 import { WATCHDOG_MS } from '../../../shared/perf-records.ts'
+import { cmd, endOnReady, endOnSave, type CmdHandle } from '../commands.ts'
 
 export const HEADER = 28
 const SNAP = 12
@@ -300,7 +301,8 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     e.stopPropagation()
     if (e.button !== 0) return
     // shift-click toggles multi-selection instead of dragging (Figma convention)
-    if (e.shiftKey && mode === 'move') { select(node.key, true); return }
+    if (e.shiftKey && mode === 'move') { cmd('select', { via: 'click', in: 'shell', frame: node.frame }); select(node.key, true); return }
+    if (mode === 'move') cmd('select', { via: 'click', in: 'shell', frame: node.frame })
     if (!(selected && useStore.getState().selection.length > 1)) select(node.key)
     else useStore.getState().look([node.key])   // a click inside a group selection still looks at this one
     const el = e.currentTarget as HTMLElement
@@ -322,9 +324,12 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     // begins - a bare click otherwise promotes then demotes the compositor layer, re-rasterising
     // the frame's text at a fractional zoom = the "jiggle". A pure click now never toggles it.
     let gesturing = false
+    // spec 30: a press that became a drag - its start here, its end once the save carrying its id landed
+    let moved: CmdHandle | null = null
     const begin = () => {
       if (gesturing) return
       gesturing = true
+      moved = cmd(mode === 'move' ? 'frame-move' : 'frame-resize', { via: 'drag', in: 'shell', frame: node.frame, frames: Math.max(1, Object.keys(groupStarts).length) })
       world.classList.add('sh-gesturing')   // drops iframe pointer-events
       setGesture(true)
       if (mode !== 'move') { resizing.current = true; wake(node.key, iframeRef.current); setResizeTick((t) => t + 1) }   // awake before the first resized paint, for the whole resize
@@ -352,6 +357,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     const done = () => {
       if (finished) return
       finished = true
+      if (moved) endOnSave(moved, useStore.getState().board)
       try { el.releasePointerCapture(e.pointerId) } catch { /* already released */ }
       world.classList.remove('sh-gesturing')
       setGesture(false)
@@ -385,7 +391,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
             <b>file deleted</b>
             <span className="dim">{node.frame}</span>
             <span className="row">
-              <button className="sh-no-pan" onClick={() => useStore.getState().removeNode(node.key)}>
+              <button className="sh-no-pan" onClick={() => { endOnSave(cmd('remove-node', { via: 'click', in: 'shell', frame: node.frame }), useStore.getState().board); useStore.getState().removeNode(node.key) }}>
                 <XIcon size={12} /> remove from board
               </button>
             </span>
@@ -417,7 +423,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
       {frame.variantGroup && (
         <div className="sh-vbadge sh-no-pan" title={`${frame.variantGroup} · variant ${frame.variant?.toUpperCase()} - click to select`}
           onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { select(node.key, e.shiftKey) }}>
+          onClick={(e) => { cmd('select', { via: 'click', in: 'shell', frame: node.frame }); select(node.key, e.shiftKey) }}>
           <b>{frame.variant?.toUpperCase()}</b>
           <span>{variantName}</span>
         </div>
@@ -440,10 +446,10 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
             <span className="msg">{node.error}</span>
             <span className="dim">{frame.file}</span>
             <span className="row">
-              <button className="sh-no-pan" onClick={() => reload(false)}>
+              <button className="sh-no-pan" onClick={() => { endOnReady(cmd('frame-reload', { via: 'click', in: 'shell', frame: node.frame }), node.key); reload(false) }}>
                 <ReloadIcon size={12} /> reload
               </button>
-              <button className="sh-no-pan" onClick={() => { navigator.clipboard.writeText(`${frame.file}: ${node.error}`); toast('error copied for agent') }}>
+              <button className="sh-no-pan" onClick={() => { const h = cmd('copy-error', { via: 'click', in: 'shell', frame: node.frame }); navigator.clipboard.writeText(`${frame.file}: ${node.error}`).then(() => h.done(), () => h.fail('clipboard-blocked')); toast('error copied for agent') }}>
                 <CopyIcon size={12} /> copy for agent
               </button>
             </span>
@@ -454,7 +460,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
         {node.status === 'loading' && node.readyRetried && !away ? (
           <div className="sh-loading sh-no-pan">
             <span>still loading</span>
-            <button className="sh-no-pan" onClick={() => reload(false)}>
+            <button className="sh-no-pan" onClick={() => { endOnReady(cmd('frame-reload', { via: 'click', in: 'shell', frame: node.frame }), node.key); reload(false) }}>
               <ReloadIcon size={11} /> reload
             </button>
           </div>
@@ -476,7 +482,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
           <div
             className="sh-overlay sh-no-pan"
             onPointerDown={(e) => { downAt.current = { x: e.clientX, y: e.clientY, t: pressNow() }; if (capturing) canvasPointer(null); drag(e, 'move') }}
-            onDoubleClick={(e) => { e.stopPropagation(); setInteract(node.key) }}
+            onDoubleClick={(e) => { e.stopPropagation(); cmd('interact', { via: 'dblclick', in: 'shell', frame: node.frame }); setInteract(node.key) }}
             // a capture records canvas-mode clicks and hovers: the overlay keeps the click (drag and
             // select are unchanged) and asks the frame what is under it
             onClick={(e) => { const d = downAt.current; if (capturing && d && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 4) canvasClick(node.key, e.clientX, e.clientY, d.t) }}

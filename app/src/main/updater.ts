@@ -28,6 +28,7 @@ import { dirname, join } from 'node:path'
 import { app, autoUpdater, BaseWindow, dialog, net, powerMonitor } from 'electron'
 import type { UpdateBody } from '../../../src/shared/app-perf.ts'
 import { tilde } from '../shared/command.ts'
+import { appCmd } from './commands.ts'
 import { readUpdateFile, writeUpdateFile, type UpdateFile } from './config.ts'
 import { invalidateMenu } from './menu.ts'
 import { APP_NAME, APPS } from './mover.ts'
@@ -307,13 +308,19 @@ async function explain(why: Exclude<BlockedWhy, 'feed'>): Promise<void> {
   const a = explainAlert(why, { folder, declined })
   const choice = await ask(a)
   j('update', { explained: why, choice })
-  if (choice === 'Show in Finder' && bundle) s.reveal(bundle)
-  else if (choice === 'Download') s.openExternal(DOWNLOAD_URL)
+  // spec 30's update-alert: the answer, a fixed button name; OK backs out
+  const h = appCmd('update-alert', { via: 'click', in: 'main', arg: choice })
+  if (choice === 'OK') { h.cancel(); return }
+  if (choice === 'Show in Finder') {
+    if (!bundle) { h.noop('no-bundle'); return }                     // not run from an app: nothing to select
+    s.reveal(bundle)
+  } else if (choice === 'Download') s.openExternal(DOWNLOAD_URL)
   else if (choice === 'Move at Next Launch') {
     // #23: the one way back from a declined move - the next launch from here moves into an empty Applications slot
     const now = readUpdateFile()
     if (now.move && 'declined' in now.move) writeUpdateFile({ ...now, move: null })
   }
+  h.done()
 }
 
 async function ask(a: ExplainAlert): Promise<string> {

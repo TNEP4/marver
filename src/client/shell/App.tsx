@@ -20,6 +20,7 @@ import { frameByWindow, fromLiveDocument } from './canvas/frame-registry.ts'
 import { recorder } from './recorder.ts'
 import { perfSeams } from './recorder-seams.ts'
 import { takeNavToken } from './recorder-reloads.ts'
+import { cmd, endAfterFrames, endOnCamera, endOnLoad, endOnStage, foldsIntoSave, keysOf, shellReload, type CmdHandle, type CmdOpts } from './commands.ts'
 import { enterFocus, enterPlay, enterSlides, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, linkTargets, parseHash, retargetBoot, UNPLACED, writeHash } from './hash.ts'
 import { isLegacyLink, landLegacy } from './legacy-links.ts'
@@ -32,7 +33,7 @@ import { goTo, isLatest, navigated, revealFrame, switchFor } from './goto.ts'
 import { useNotes } from './notes.ts'
 import { contentOnly } from '../../shared/frames.ts'
 import { nextToLook } from '../../shared/marks.ts'
-import { asksNow, Bubble, MarkedRow, useRollup, useSeenOnScreen } from './marks-ui.tsx'
+import { asksNow, Bubble, MarkedRow, markSeenFrom, useRollup, useSeenOnScreen } from './marks-ui.tsx'
 import { CommentButton, DevicePicker, HideUIButton, LaserButton, Popover, ThemePicker, toggleHideUI, usePopover } from './Toolbar.tsx'
 
 const commentsStore = () => useComments.getState()
@@ -43,23 +44,24 @@ let booted = false                             // survives Fast Refresh; see the
  *  selected frame - a quiet secondary wash so ancestry survives collapsing the group.
  *  `renaming` swaps the label for an input: the scene's TITLE (its brief's front matter) -
  *  the directory never moves from here. */
-function SceneGroup({ name, label, count, held, renaming, onRename, onPick, onContextMenu, ids, children }: { name: string; label: string; count: number; held: boolean; renaming?: boolean; onRename?: (title: string | null) => void; onPick?: () => void; onContextMenu?: (e: ReactMouseEvent) => void; ids: string[]; children: ReactNode }) {
+function SceneGroup({ name, label, count, held, renaming, onRename, onPick, onContextMenu, ids, children }: { name: string; label: string; count: number; held: boolean; renaming?: boolean; onRename?: (title: string | null, h: CmdHandle) => void; onPick?: () => void; onContextMenu?: (e: ReactMouseEvent) => void; ids: string[]; children: ReactNode }) {
   const [open, setOpen] = useState(true)
   const fold = useRollup(open ? [] : ids)   // only a folded scene rolls up (spec 25)
   const done = useRef(false)   // Enter then blur: one commit
   if (renaming) { done.current = false }
-  const finish = (v: string | null) => { if (done.current) return; done.current = true; onRename?.(v) }
+  // the rename's command starts where it is decided: Enter or leaving the field saves, Esc backs out (spec 30)
+  const finish = (v: string | null, how: CmdOpts) => { if (done.current) return; done.current = true; onRename?.(v, cmd('scene-rename', how)) }
   return (
     <div>
       {renaming ? (
         <div className="it editing">
           <CaretIcon size={11} className="tw" style={{ transform: open ? undefined : 'rotate(-90deg)' }} />
           <input autoFocus defaultValue={label} spellCheck={false} onFocus={(e) => e.currentTarget.select()}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); finish(e.currentTarget.value) } else if (e.key === 'Escape') { e.preventDefault(); finish(null) } }}
-            onBlur={(e) => finish(e.currentTarget.value)} />
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); finish(e.currentTarget.value, { via: 'key', in: 'shell', keys: keysOf(e) }) } else if (e.key === 'Escape') { e.preventDefault(); finish(null, { via: 'key', in: 'shell', keys: keysOf(e) }) } }}
+            onBlur={(e) => finish(e.currentTarget.value, { via: 'click', in: 'shell' })} />
         </div>
       ) : (
-        <button className={`it${held ? ' held' : ''}`} onClick={() => setOpen(!open)} onContextMenu={onContextMenu}>
+        <button className={`it${held ? ' held' : ''}`} onClick={() => { cmd('scene-toggle', { via: 'click', in: 'shell' }); setOpen(!open) }} onContextMenu={onContextMenu}>
           <CaretIcon size={11} className="tw" style={{ transform: open ? undefined : 'rotate(-90deg)' }} />
           {/* the NAME selects every frame in the scene; the caret/row still collapses */}
           <span onClick={(e) => { if (!onPick) return; e.stopPropagation(); onPick() }}>{label || '(root)'}</span>
@@ -86,7 +88,7 @@ export class ShellBoundary extends Component<{ children: ReactNode }, { err: Err
       <div style={{ fontFamily: 'ui-monospace, monospace', padding: 32 }}>
         <b style={{ color: '#a81f16' }}>shell crashed</b>
         <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>{this.state.err.message}</pre>
-        <button onClick={() => location.reload()}>reload</button>
+        <button onClick={() => { shellReload(cmd('shell-reload', { via: 'click', in: 'shell' })); location.reload() }}>reload</button>
       </div>
     )
   }
@@ -143,11 +145,12 @@ function SelectionBar() {
   const { resizeSelected, toast } = useStore.getState()
   const multi = selection.length > 1
   const applyDevice = (name: string) => {
+    foldsIntoSave(cmd('device', { via: 'click', in: 'shell', arg: name, frames: selection.length }))
     animateLayout()
     resizeSelected(name)
     setTimeout(() => canvasCtl.fitNodes(useStore.getState().selection), 30)
   }
-  const setNodeTheme = (t: string) => useStore.getState().setSelectedTheme(t)
+  const setNodeTheme = (t: string) => { foldsIntoSave(cmd('theme', { via: 'click', in: 'shell', frames: selection.length })); useStore.getState().setSelectedTheme(t) }
   const selectedFrames = () => {
     const st = useStore.getState()
     return st.selection
@@ -206,12 +209,13 @@ function SelectionBar() {
       <Tip label={<><b>{multi ? `Copy ${selection.length} paths` : 'Copy path'}</b><span className="k">⇧P</span></>}>
         <button className="icon"
           onClick={() => {
+            const h = cmd('copy-path', { via: 'click', in: 'shell', frames: selection.length })
             const brd = useStore.getState().board
             const text = selectedFrames().map((f) => framePath(brd, f)).join('\n')
             for (const f of selectedFrames()) recordCopy('path', f.id)
             navigator.clipboard.writeText(text).then(
-              () => { toast(multi ? `${selection.length} paths copied` : 'path copied'); useStore.getState().pulsePath() },
-              () => toast('copy blocked - click the canvas first'))
+              () => { h.done(); toast(multi ? `${selection.length} paths copied` : 'path copied'); useStore.getState().pulsePath() },
+              () => { h.fail('clipboard-blocked'); toast('copy blocked - click the canvas first') })
           }}>{copied ? <CheckIcon size={15} /> : <SignpostIcon size={15} />}</button>
       </Tip>
       {/* copy as image: dev only (the renderer is the dev server's headless Chrome) and one
@@ -220,7 +224,7 @@ function SelectionBar() {
         <Tip label={multi ? 'Select one frame to copy as image' : <><b>Copy as image</b><span className="k">⇧i</span></>}>
           <button className={`icon${imageBusy ? ' busy' : ''}`} disabled={multi || imageBusy} aria-label="Copy as image"
             data-state={copiedImage ? 'copied' : imageBusy ? 'busy' : 'idle'}
-            onClick={(e) => useStore.getState().copyFrameImage(e.shiftKey ? 4 : 2)}>
+            onClick={(e) => useStore.getState().copyFrameImage(e.shiftKey ? 4 : 2, { via: 'click', in: 'shell' })}>
             {copiedImage ? <CheckIcon size={15} /> : <ImagesSquareIcon size={15} />}
           </button>
         </Tip>
@@ -238,8 +242,9 @@ function DeviceMenu() {
   const nodes = useStore((s) => s.nodes)
   const scoped = selection.length > 0
   const pick = (name: string | null) => {
-    animateLayout()
     const st = useStore.getState()
+    foldsIntoSave(cmd('device', { via: 'click', in: 'pill', arg: name ?? 'default', frames: st.selection.length }))
+    animateLayout()
     if (scoped) {
       st.resizeSelected(name)
       setTimeout(() => canvasCtl.fitNodes(useStore.getState().selection), 30)
@@ -275,8 +280,9 @@ function UpdatePill() {
   }, [])
   if (!latest || play) return null
   // init rides along so managed files (AGENTS.md, instructions/) refresh with the code
-  const cmd = `npm i -D ${PKG}@latest && npx marver init`
+  const command = `npm i -D ${PKG}@latest && npx marver init`
   const dismiss = () => {
+    cmd('update-dismiss', { via: 'click', in: 'shell' })
     try { localStorage.setItem(scoped('mv-update-seen'), latest) } catch { /* storage unavailable */ }
     setLatest(null)
   }
@@ -286,9 +292,10 @@ function UpdatePill() {
       <Tip side="top" label="Copy, then paste to your terminal or your agent">
         <button className="cmd" onClick={() => {
           const t = useStore.getState().toast
-          navigator.clipboard?.writeText(cmd).then(() => t('update command copied'), () => t('copy blocked - select it manually'))
-            ?? t('copy unavailable - select it manually')
-        }}><code>{cmd}</code></button>
+          const h = cmd('update-copy', { via: 'click', in: 'shell' })
+          navigator.clipboard?.writeText(command).then(() => { h.done(); t('update command copied') }, () => { h.fail('clipboard-blocked'); t('copy blocked - select it manually') })
+            ?? (h.fail('clipboard-blocked'), t('copy unavailable - select it manually'))
+        }}><code>{command}</code></button>
       </Tip>
       <Tip side="top" label="Dismiss this version">
         <button className="x" onClick={dismiss}><XIcon size={13} /></button>
@@ -311,15 +318,15 @@ function ZoomMenu() {
       </Tip>
       <Popover pop={pop}>
         {ZOOMS.map((z) => (
-          <button key={z} onClick={() => go(() => canvasCtl.zoomTo(z))}>
+          <button key={z} onClick={() => go(() => { cmd('zoom-to', { via: 'click', in: 'pill' }); canvasCtl.zoomTo(z) })}>
             <span>{z * 100}%</span>
             {z === 1 && <kbd>⇧0</kbd>}
             {Math.abs(scale - z) < 0.03 && <CheckIcon size={13} className="chk" />}
           </button>
         ))}
         <i className="div" />
-        <button onClick={() => go(canvasCtl.fitAll)}><span>Fit all</span><kbd>⇧1</kbd></button>
-        <button onClick={() => go(() => { const k = useStore.getState().selection; if (k.length) canvasCtl.fitNodes(k) })}>
+        <button onClick={() => go(() => { cmd('fit-all', { via: 'click', in: 'pill' }); canvasCtl.fitAll() })}><span>Fit all</span><kbd>⇧1</kbd></button>
+        <button onClick={() => go(() => { const h = cmd('fit-selection', { via: 'click', in: 'pill' }); const k = useStore.getState().selection; if (k.length) canvasCtl.fitNodes(k); else h.noop('no-selection') })}>
           <span>Fit selection</span><kbd>⇧2</kbd>
         </button>
       </Popover>
@@ -345,10 +352,30 @@ function ThemeMenu() {
   const uniform = scoped ? (scope.length && scope.every((n) => n.theme === scope[0].theme) ? scope[0].theme : null) : viewTheme
   const pick = (t: string) => {
     const st = useStore.getState()
+    foldsIntoSave(cmd('theme', { via: 'click', in: 'pill', frames: st.selection.length || undefined }))
     scoped ? st.setSelectedTheme(t) : st.setTheme(t)
   }
   const hint = scoped ? `${selection.length} selected · D` : 'all frames · D'
   return <ThemePicker value={majority} checked={uniform} onSelect={pick} hint={hint} />
+}
+
+/** P and the pill's Prototype (spec 30): `play` or `slides` as the board plays; nothing to play is a noop. */
+function enterPlayFrom(how: CmdOpts) {
+  const slides = playsAsSlides(useStore.getState().board)
+  const h = cmd(slides ? 'slides' : 'play', how)
+  if (slides) enterSlides(); else enterPlay()
+  if (!useStore.getState().play) h.noop('nothing-to-play')
+}
+/** T and the pill's Tidy (spec 30): `tidy` ends with the layout animation; a board already tidy moved nothing. */
+function tidyFrom(how: CmdOpts) {
+  const h = cmd('tidy', how)
+  foldsIntoSave(h)
+  const before = useStore.getState().nodes
+  animateLayout()
+  useStore.getState().runTidy()
+  const after = useStore.getState().nodes
+  const at = new Map(before.map((n) => [n.key, n]))
+  if (after.every((n) => { const b = at.get(n.key); return b && b.x === n.x && b.y === n.y && b.w === n.w && b.h === n.h })) h.noop('nothing-moved')
 }
 
 export function App() {
@@ -372,7 +399,7 @@ export function App() {
   // lean cover would hide them, so a body class suppresses the cover while either mode is active.
   useEffect(() => { document.body.classList.toggle('sh-laser', laser) }, [laser])
   useEffect(() => { document.body.classList.toggle('sh-commenting', commentMode) }, [commentMode])
-  const { boot, applyManifest, togglePanel, select, setInteract, runTidy, toast, spawn } = useStore.getState()
+  const { boot, applyManifest, togglePanel, select, setInteract, toast, spawn } = useStore.getState()
   const [pillOpen, setPillOpen] = useState(true)
   const cm = useContextMenu()   // shared sidebar right-click menu (boards + scenes)
   const [sceneNaming, setSceneNaming] = useState<string | null>(null)   // the scene whose title is being edited inline
@@ -469,11 +496,19 @@ export function App() {
     // fire popstate AND hashchange, and a second switch to the same board would supersede the first - a second board
     // fetch, and a load that never committed in perf --loads
     let routing: { hash: string; switches: number } | null = null
+    // the recorder's (spec 30): back/forward fires both events, a same-board one with no switch to tell them apart
+    let recorded: { hash: string; at: number; h: CmdHandle | null; run: number } = { hash: '', at: -1_000, h: null, run: 0 }
     const onPop = async () => {
       // the same hash, and no switch or cancel since this router started its own (a board picked, a goto, a newer
       // navigation): the second event of the navigation the first is carrying through - board, frame and view
       if (routing && routing.hash === location.hash && routing.switches === switchCount()) return
       const raw = location.hash
+      // the second event carries the first's command on; the first, overtaken by its own twin, does not end it
+      const again = raw === recorded.hash && performance.now() - recorded.at < 250
+      const run = recorded.run + 1
+      const nav_ = again ? recorded.h : cmd('history-nav', { via: 'click', in: 'shell' })
+      recorded = { hash: raw, at: performance.now(), h: nav_, run }
+      const giveUp = () => { if (recorded.run === run) nav_?.cancel('superseded') }
       const nav = navigated()                  // a reveal still looking up its board must not land after this
       // a lookup below still running when newer navigation lands - a link, a board picked, a step in play - is dropped
       const at = useStore.getState().board, step = useStore.getState().play?.at
@@ -486,19 +521,20 @@ export function App() {
         // once, though back/forward fires two events
         const r = await landLegacy(h)
         const board = r.hash.board ?? await landingBoard()
-        if (overtaken()) return
+        if (overtaken()) return giveUp()
         h = { ...r.hash, board }
         writeHash(h)
         if (r.notice) toast(r.notice)
       } else if (!h.board && !h.focus && !h.invite) {
         // the bare #/ opens the landing board
         const board = await landingBoard()
-        if (overtaken()) return
+        if (overtaken()) return giveUp()
         h = { ...h, board }
       }
       let s = useStore.getState()
       if (h.board && h.board !== s.board) {
         if (s.play) s.setPlay(null)            // a stale overlay must never survive into another board
+        if (nav_) endOnLoad(nav_, h.board)     // another board: its load's way ends it (#49)
         const switched = switchFor(h.board, nav)
         const mine = routing = { hash: raw, switches: switchCount() }
         const landed = await switched
@@ -506,11 +542,14 @@ export function App() {
         // the switch failed (the projection effect re-syncs the URL), or a newer navigation came while this one's board
         // was read - a link, a goto, a board picked - and may have landed on this same board first: the board is the
         // newer one's then, and so are the selection, the mode and the camera
-        if (!landed) return
+        if (!landed) return giveUp()
         s = useStore.getState()
       }
+      // the same board: where it leads ends it; another board's load already does
+      const here = nav_ && h.board === at ? nav_ : null
       // the thread an old link names (Comments.tsx opens every other link's): now, or once the new board's comments load
       if (legacy && h.c) { if (s.board !== at) parkThread(h.c); else revealThread(h.c) }
+      if (here) { if (h.focus || h.play) endOnStage(here, h.play?.at ?? h.focus?.at); else endOnCamera(here) }
       if (h.focus) {
         enterFocus(h.focus.at, { ...h.focus, deep: true })
       } else if (h.play) {
@@ -656,7 +695,7 @@ export function App() {
       perfSeams.frameMessage.emit(nodeKey, data)
       // Jam (spec 27): a capture's trail, handshake, probes and flushes; a key the shell owns
       if (onFrameMessage(nodeKey, data)) return
-      if (data.type === 'sh:key') { if (typeof data.key === 'string') jamKey({ key: data.key, shift: !!data.shift, alt: !!data.alt, meta: !!data.meta, ctrl: !!data.ctrl }); return }
+      if (data.type === 'sh:key') { if (typeof data.key === 'string') jamKey({ key: data.key, shift: !!data.shift, alt: !!data.alt, meta: !!data.meta, ctrl: !!data.ctrl }, 'frame'); return }
 
       if (data.type === 'sh:ready') {
         // a WindowProxy survives navigation, so a ready queued by a SUPERSEDED document (one the
@@ -685,7 +724,7 @@ export function App() {
       } else if (data.type === 'sh:boot') {
         recorder.booted(nodeKey, data)   // a new document: its node's outcome starts over (spec 28 A1.7)
       } else if (data.type === 'sh:exit-interact') {
-        if (s.interact === nodeKey) setInteract(null)
+        if (s.interact === nodeKey) { cmd('interact-off', { via: 'key', in: 'frame', keys: 'Escape' }); setInteract(null) }
       } else if (data.type === 'sh:theme-applied') {
         if (typeof data.theme === 'string') s.setThemeOn(nodeKey, data.theme)
       } else if (data.type === 'sh:hmr') {
@@ -709,29 +748,30 @@ export function App() {
         // drop a stale post that outran a frame swap (the sender echoes its frame id)
         if (f && String(data.id ?? '') === f.id) {
           const addr = `[${s.board} ▸ ${f.scene || '(root)'}]  ${f.file} · ${String(data.path ?? '')}${data.source ? ` (${String(data.source)})` : ''}`
+          const h = cmd('laser-copy', { via: 'click', in: 'frame', frame: f.id })
           // success confirms IN the frame's hover label (right where the eyes are);
           // only failure needs the toast
           navigator.clipboard.writeText(addr).then(
-            () => el.contentWindow?.postMessage({ type: 'sh:copy-ok', seq: data.seq }, location.origin),
-            () => toast('copy blocked - click the canvas first'))
+            () => { h.done(); el.contentWindow?.postMessage({ type: 'sh:copy-ok', seq: data.seq }, location.origin) },
+            () => { h.fail('clipboard-blocked'); toast('copy blocked - click the canvas first') })
         }
       } else if (data.type === 'sh:frame-down') {
         // clicks INSIDE a frame never reach the shell document - the frame reports
         // them so an open thread card dismisses modal-style from anywhere
         const c = commentsStore()
-        if (c.active) c.setActive(null)
-        letGoOfTile()   // and a lane tile selected with nothing open for it, as a canvas click does
+        if (c.active) { cmd('thread-close', { via: 'click', in: 'frame' }); c.setActive(null) }
+        letGoOfTile({ via: 'click', in: 'frame' })   // and a lane tile selected with nothing open for it, as a canvas click does
       } else if (data.type === 'sh:picked') {
         // comment mode: the frame reports the picked element - stage the draft on
         // that node (picking while a thread is open replaces it, modal-style);
         // the CommentLayer opens the composer at the pin
         const c = commentsStore()
         if (c.active) c.setActive(null)
-        if (c.commentMode) c.setDraft({ nodeKey, frame: String(data.id ?? ''), anchor: data.anchor })
+        if (c.commentMode) { cmd('comment-pick', { via: 'click', in: 'frame', frame: String(data.id ?? '') }); c.setDraft({ nodeKey, frame: String(data.id ?? ''), anchor: data.anchor }) }
       } else if (data.type === 'sh:go') {
         // a goto from inside an interacting frame CARRIES interact mode to the target - walking
         // a flow must not eject you to design mode at every hop (and must survive a board switch)
-        goTo(String(data.target ?? ''), s.interact === nodeKey)
+        goTo(String(data.target ?? ''), s.interact === nodeKey, cmd('goto', { via: 'click', in: 'frame' }))
       } else if (data.type === 'sh:wheel') {
         // B0.2: a passive frame forwarded a wheel event; the canvas owns it. Never for the
         // interact target or play (the app scrolls itself - the parent stays authoritative).
@@ -775,64 +815,77 @@ export function App() {
       // with Option a Mac types a symbol (⌥L is "¬"): an Alt shortcut is named by the key pressed
       const key = e.altKey && /^Key[A-Z]$/.test(e.code) ? e.code.slice(3).toLowerCase() : e.key
       if (!e.repeat && jamKey({ key, shift: e.shiftKey, alt: e.altKey, meta: e.metaKey, ctrl: e.ctrlKey })) { e.preventDefault(); return }
-      if ((e.metaKey || e.ctrlKey) && e.key === '\\') { e.preventDefault(); togglePanel(); return }
-      if ((e.metaKey || e.ctrlKey) && e.key === '/') { e.preventDefault(); setPillOpen((o) => !o); return }
-      if ((e.metaKey || e.ctrlKey) && e.key === 'a') { e.preventDefault(); s.selectAll(); return }
+      // how this input arrived, for each command below (#50); a relayed menu item (#51) is told apart by cmd() itself
+      const how = (k = e.key): CmdOpts => ({ via: 'key', in: 'shell', keys: keysOf(e, k) })
+      if ((e.metaKey || e.ctrlKey) && e.key === '\\') { e.preventDefault(); cmd('panel', how()); togglePanel(); return }
+      if ((e.metaKey || e.ctrlKey) && e.key === '/') { e.preventDefault(); cmd('toolbar', how()); setPillOpen((o) => !o); return }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'a') { e.preventDefault(); cmd('select-all', how()); s.selectAll(); return }
       if (e.metaKey || e.ctrlKey) return
       if (e.key === 'Escape') {
         const c = commentsStore()
-        if (c.commentMode || c.active || c.draft) { c.setMode(false); c.setActive(null); c.setDraft(null) }
-        else if (s.laser) s.setLaser(false)          // Escape also exits laser mode (parity with comment)
-        else s.interact ? setInteract(null) : select(null)
+        const h = cmd('escape', how())
+        if (c.commentMode || c.active || c.draft) { h.step('comments-off'); c.setMode(false); c.setActive(null); c.setDraft(null) }
+        else if (s.laser) { h.step('laser-off'); s.setLaser(false) }          // Escape also exits laser mode (parity with comment)
+        else if (s.interact) { h.step('interact-off'); setInteract(null) }
+        else { h.step('deselect'); select(null) }
+        endAfterFrames(h)
       }
       // a slides board PLAYS as slides even when its landing is the canvas -
       // the deck is what the board IS; landing only says where viewers arrive
-      if (e.key === 'p') { if (playsAsSlides(useStore.getState().board)) enterSlides(); else enterPlay() }
+      if (e.key === 'p') enterPlayFrom(how())
       // H hides all chrome (shared binary Hide-UI); press again to reveal. Not persisted,
       // so a refresh always restores it (the safety net for a forgotten toggle).
-      if (e.key === 'h') { toggleHideUI(); return }
-      if (e.key === 't') { animateLayout(); runTidy() }
+      if (e.key === 'h') { cmd('hide-ui', how()); toggleHideUI(); return }
+      if (e.key === 't') tidyFrom(how())
       // laser and comment mode are one-at-a-time: comment mode already highlights
       // what you'd click, so stacking the full rainbow on top only adds noise
       // L: the pointer laser (the element under the cursor); ⌥L: inspect (every element outlined)
-      if (key === 'l' && !e.shiftKey && SOURCE_REVEALED) {
-        e.preventDefault()
-        commentsStore().setMode(false)
-        s.toggleLaser(e.altKey)
+      if (key === 'l' && !e.shiftKey) {
+        const h = cmd(e.altKey ? 'inspect' : 'laser', how(key))
+        if (!SOURCE_REVEALED) h.noop('stripped')
+        else {
+          e.preventDefault()
+          commentsStore().setMode(false)
+          s.toggleLaser(e.altKey)
+        }
       }
       // C = comment mode (the Figma/Miro convention) · Shift+C = hide/show
       // pins · Shift+P = copy file path(s) (P alone is play; D6, changelog 0.4.0)
       if (e.key === 'c' && !e.shiftKey) {
         const c = commentsStore()
-        if (!c.commentMode && s.board === UNPLACED) return void toast(NO_COMMENTS_HERE)
-        if (!c.commentMode && stoppedFor('Comments need the canvas running')) return
+        const h = cmd('comments', how())
+        if (!c.commentMode && s.board === UNPLACED) { h.noop('unplaced'); return void toast(NO_COMMENTS_HERE) }
+        if (!c.commentMode && stoppedFor('Comments need the canvas running')) { h.noop('stopped'); return }
         if (!c.commentMode) s.setLaser(false)
         c.setMode(!c.commentMode)
         toast(c.commentMode ? 'comment mode off' : 'comment mode - click an element in a frame')
       }
-      if (e.key === 'C' && e.shiftKey) { const c = commentsStore(); c.setShow(!c.show) }
+      if (e.key === 'C' && e.shiftKey) { const c = commentsStore(); cmd('pins', how()); c.setShow(!c.show) }
       // sticky notes (spec 18): any note visible -> hide all; none -> show all
       // U: the next frame that needs you, else the next new one (spec 25)
       if (e.key === 'u' && !e.shiftKey && !PUBLISHED) {
+        const h = cmd('next-new', how())
         const live = s.nodes.filter((n) => !n.missing).sort((a, b) => a.y - b.y || a.x - b.x)
         const from = s.selection.length ? s.nodes.find((n) => n.key === s.selection[s.selection.length - 1])?.frame ?? null : null
         const id = nextToLook(s.marks, asksNow(), [...new Set(live.map((n) => n.frame))], from)
         const n = id ? live.find((x) => x.frame === id) : null
-        if (n) { s.select(n.key); canvasCtl.fitNode(n.key) } else toast('nothing new on this board')
+        if (n) { s.select(n.key); canvasCtl.fitNode(n.key) } else { h.noop('nothing-new'); toast('nothing new on this board') }
         return
       }
-      if (e.key === 'n' && !e.shiftKey) { const visible = document.querySelectorAll('.sh-notes:not(.off)').length > 0; useNotes.getState().toggleAll(visible); toast(visible ? 'notes hidden' : 'notes shown'); return }
+      if (e.key === 'n' && !e.shiftKey) { cmd('notes', how()); const visible = document.querySelectorAll('.sh-notes:not(.off)').length > 0; useNotes.getState().toggleAll(visible); toast(visible ? 'notes hidden' : 'notes shown'); return }
       // Shift+L = laser comment: the laser-sharp lighting on the element a comment tags
       // (pick hover, compose lock, open-thread highlight). Pins and cards stay - this
       // only dims the lighting inside the artwork.
       if (e.key === 'L' && e.shiftKey) {
         const c = commentsStore()
+        cmd('laser-comment', how())
         c.setShowAnchor(!c.showAnchor)
         toast(c.showAnchor ? 'laser comment off' : 'laser comment on')
       }
       // I = copy the selected frame as a 2x PNG · Shift+I = 4x (dev only; one frame at a time)
-      if ((e.key === 'i' || e.key === 'I') && !PUBLISHED && !e.altKey && !e.repeat) { s.copyFrameImage(e.shiftKey ? 4 : 2); return }
-      if (e.key === 'P' && e.shiftKey && s.selection.length) {
+      if ((e.key === 'i' || e.key === 'I') && !PUBLISHED && !e.altKey && !e.repeat) { s.copyFrameImage(e.shiftKey ? 4 : 2, how()); return }
+      if (e.key === 'P' && e.shiftKey) {
+        const h = cmd('copy-path', { ...how(), frames: s.selection.length })
         const paths = s.selection
           .map((k) => { const n = s.nodes.find((x) => x.key === k); const f = n && s.frameFor(n); return f ? framePath(s.board, f) : undefined })
           .filter((p): p is string => !!p)
@@ -840,14 +893,17 @@ export function App() {
           // pulse the toolbar icon into a check ONLY on a real copy success
           for (const k of s.selection) { const f = s.frameFor(s.nodes.find((x) => x.key === k)!); if (f) recordCopy('path', f.id) }
           navigator.clipboard.writeText(paths.join('\n')).then(
-            () => { toast(paths.length > 1 ? `${paths.length} paths copied` : 'path copied'); s.pulsePath() },
-            () => toast('copy blocked - click the canvas first'))
-        }
+            () => { h.done(); toast(paths.length > 1 ? `${paths.length} paths copied` : 'path copied'); s.pulsePath() },
+            () => { h.fail('clipboard-blocked'); toast('copy blocked - click the canvas first') })
+        } else h.noop('no-selection')
       }
-      if (e.key === 'd' && CONFIG.themes.length > 1) {
+      if (e.key === 'd') {
+        const h = cmd('theme', { ...how(), frames: s.selection.length || undefined })
+        foldsIntoSave(h)
+        if (CONFIG.themes.length <= 1) h.noop('one-theme')
         // scoped like the device digits: selection pins those frames; no selection cycles
         // the global VIEW theme (sticky across boards - the user's preference)
-        if (s.selection.length) {
+        else if (s.selection.length) {
           const scope = s.nodes.filter((n) => s.selection.includes(n.key))
           const cur = scope.length && scope.every((n) => n.theme === scope[0].theme) ? scope[0].theme : CONFIG.themes[0]
           s.setSelectedTheme(CONFIG.themes[(CONFIG.themes.indexOf(cur) + 1) % CONFIG.themes.length])
@@ -855,15 +911,17 @@ export function App() {
           s.setTheme(CONFIG.themes[(CONFIG.themes.indexOf(s.viewTheme) + 1) % CONFIG.themes.length])
         }
       }
-      if (e.shiftKey && e.code === 'Digit0') canvasCtl.zoom100()
-      if (e.shiftKey && e.code === 'Digit1') canvasCtl.fitAll()
-      if (e.shiftKey && e.code === 'Digit2' && s.selection.length) canvasCtl.fitNodes(s.selection)
+      if (e.shiftKey && e.code === 'Digit0') { cmd('zoom-100', how('0')); canvasCtl.zoom100() }
+      if (e.shiftKey && e.code === 'Digit1') { cmd('fit-all', how('1')); canvasCtl.fitAll() }
+      if (e.shiftKey && e.code === 'Digit2') { const h = cmd('fit-selection', how('2')); if (s.selection.length) canvasCtl.fitNodes(s.selection); else h.noop('no-selection') }
       // plain digits: 0 = default, 1..n = devices. Scoped to the selection when one
       // exists, board-wide otherwise. Every path tidies - presets never scramble layout.
       if (!e.shiftKey && /^Digit[0-9]$/.test(e.code)) {
         const idx = Number(e.code.slice(5))
         const names = Object.keys(CONFIG.viewports)
-        if (idx !== 0 && !names[idx - 1]) return
+        const h = cmd('device', { ...how(String(idx)), frames: s.selection.length || undefined })
+        if (idx !== 0 && !names[idx - 1]) { h.noop('unknown-device'); return }
+        foldsIntoSave(h)
         const name = idx === 0 ? null : names[idx - 1]
         animateLayout()
         if (s.selection.length) {
@@ -943,7 +1001,7 @@ export function App() {
               </a>
             </Tip>
             <span className="name" title={CONFIG.projectName || 'Marver'}>{CANVAS_NAME}</span>
-            <Tip side="bottom" label={<><b>Collapse panel</b><span>⌘\</span></>}><button className="sh-ibtn" onClick={togglePanel} tabIndex={panelOpen ? 0 : -1}><PanelFilledIcon size={17} /></button></Tip>
+            <Tip side="bottom" label={<><b>Collapse panel</b><span>⌘\</span></>}><button className="sh-ibtn" onClick={() => { cmd('panel', { via: 'click', in: 'shell' }); togglePanel() }} tabIndex={panelOpen ? 0 : -1}><PanelFilledIcon size={17} /></button></Tip>
           </div>
           <div className="sh-panel-scroll">
             <BoardList onMenu={cm.open} />
@@ -953,24 +1011,25 @@ export function App() {
                 ids={frames.filter((f) => f.scene === sc.name).map((f) => f.id)}
                 held={frames.some((f) => f.scene === sc.name && selFrames.has(f.id))}
                 renaming={sceneNaming === sc.name}
-                onRename={(raw) => {
+                onRename={(raw, h) => {
                   setSceneNaming(null)
                   const title = raw === null ? undefined : readTitle(raw)
-                  if (!title || title === sceneLabel(sc.name)) return                    // Escape, empty, or unchanged = never mind
-                  if (scenes.some((o) => o.name !== sc.name && sceneLabel(o.name) === title)) { toast(`a scene called "${title}" already exists`); return }
+                  if (!title || title === sceneLabel(sc.name)) { h.cancel(); return }                    // Escape, empty, or unchanged = never mind
+                  if (scenes.some((o) => o.name !== sc.name && sceneLabel(o.name) === title)) { h.fail('exists'); toast(`a scene called "${title}" already exists`); return }
                   // typing what the directory reads as anyway clears the title - the brief stays clean
-                  useStore.getState().renameScene(sc.name, title === slugLabel(sc.name) ? '' : title).then((r) => { if (!r.ok) toast(r.error ?? 'rename failed') })
+                  useStore.getState().renameScene(sc.name, title === slugLabel(sc.name) ? '' : title).then((r) => { if (r.ok) h.done(); else { h.fail('api'); toast(r.error ?? 'rename failed') } }, () => h.fail('api'))
                 }}
                 onContextMenu={(e) => cm.open(e, [{
                   label: 'Copy path',
                   icon: <SignpostIcon size={15} />,
                   onClick: () => copyToClipboard(sc.name
                     ? `board: ${useStore.getState().board} · scene: ${sc.name}  (design/scenes/${sc.name}/)`
-                    : `board: ${useStore.getState().board} · scene: (root)`, 'path copied'),
+                    : `board: ${useStore.getState().board} · scene: (root)`, 'path copied', cmd('copy-path', { via: 'context', in: 'shell' })),
                 }, ...(!PUBLISHED && sc.name ? [{ label: 'Rename', icon: <PencilSimpleIcon size={15} />, onClick: () => setSceneNaming(sc.name) }] : []),
-                ...(!PUBLISHED ? [{ label: 'Mark all as seen', icon: <CheckIcon size={15} />, onClick: () => useStore.getState().markSeen(frames.filter((f) => f.scene === sc.name).map((f) => f.id)) }] : [])])}
+                ...(!PUBLISHED ? [{ label: 'Mark all as seen', icon: <CheckIcon size={15} />, onClick: () => markSeenFrom({ via: 'context', in: 'shell' }, frames.filter((f) => f.scene === sc.name).map((f) => f.id)) }] : [])])}
                 onPick={() => {
                   const keys = nodes.filter((n) => frames.some((f) => f.scene === sc.name && f.id === n.frame) && !n.missing).map((n) => n.key)
+                  cmd('scene-pick', { via: 'click', in: 'shell', frames: keys.length })
                   if (!keys.length) return
                   useStore.getState().selectMany(keys)
                   canvasCtl.fitNodes(keys)
@@ -998,11 +1057,12 @@ export function App() {
                   const go = (id: string, shift: boolean) => {
                     const n = nodeFor(id)
                     if (!n) return
+                    cmd('frame-pick', { via: 'click', in: 'shell', frame: id })
                     select(n.key, shift)
                     if (!shift) canvasCtl.fitNode(n.key)
                   }
                   const frameMenu = (fr: FrameEntry): MenuItem[] => [
-                    { label: 'Copy path', icon: <SignpostIcon size={15} />, onClick: () => { recordCopy('path', fr.id); copyToClipboard(framePath(useStore.getState().board, fr), 'path copied') } },
+                    { label: 'Copy path', icon: <SignpostIcon size={15} />, onClick: () => { recordCopy('path', fr.id); copyToClipboard(framePath(useStore.getState().board, fr), 'path copied', cmd('copy-path', { via: 'context', in: 'shell', frame: fr.id })) } },
                     // the Not on a board view (spec 26): put the frame where it belongs
                     ...(useStore.getState().board === UNPLACED ? [{ label: 'Add to board…', icon: <PlusIcon size={15} />, panel: (close: () => void) => <AddToBoard frame={fr.id} close={close} /> }] : []),
                   ]
@@ -1027,7 +1087,7 @@ export function App() {
                         rows.push(
                           <div key={`g:${f.variantGroup}`} className={`sub vgroup${allOn ? ' on' : ''}${held ? ' held' : ''}`}
                             title="Select all variants"
-                            onClick={() => { useStore.getState().selectMany(memberKeys); canvasCtl.fitNodes(memberKeys) }}>
+                            onClick={() => { cmd('group-fit', { via: 'click', in: 'shell', frames: memberKeys.length }); useStore.getState().selectMany(memberKeys); canvasCtl.fitNodes(memberKeys) }}>
                             <VariantsIcon size={13} className="iicon" />
                             <span className="glabel">{rel}</span>
                           </div>,
@@ -1071,7 +1131,7 @@ export function App() {
           </div>
       </aside>
       <Tip side="bottom" label={<><b>Open panel</b><span>⌘\</span></>}>
-        <button className={`sh-fab${panelOpen ? ' hidden' : ''}`} onClick={togglePanel}
+        <button className={`sh-fab${panelOpen ? ' hidden' : ''}`} onClick={() => { cmd('panel', { via: 'click', in: 'shell' }); togglePanel() }}
           aria-hidden={panelOpen} tabIndex={panelOpen ? -1 : 0}><PanelHollowIcon size={18} /></button>
       </Tip>
 
@@ -1083,7 +1143,7 @@ export function App() {
         {/* Jam V2 (spec 27 Part 5): the session - between Laser and Tidy */}
         {!PUBLISHED && CONFIG.jam && <JamButton />}
         <Tip side="bottom" label={<><b>Tidy layout</b><span>T</span></>}>
-          <button className="sh-pill-btn" onClick={() => { animateLayout(); runTidy() }}><ColumnsIcon size={16} /></button>
+          <button className="sh-pill-btn" onClick={() => tidyFrom({ via: 'click', in: 'pill' })}><ColumnsIcon size={16} /></button>
         </Tip>
         <i className="sep" />
         <DeviceMenu />
@@ -1093,17 +1153,17 @@ export function App() {
         <i className="sep" />
         {/* far right: view management - prototype, hide, collapse */}
         <Tip side="bottom" label={<><b>Prototype view</b><span>P</span></>}>
-          <button className="sh-pill-btn" onClick={() => (playsAsSlides(useStore.getState().board) ? enterSlides() : enterPlay())}><PlayIcon size={15} /></button>
+          <button className="sh-pill-btn" onClick={() => enterPlayFrom({ via: 'click', in: 'pill' })}><PlayIcon size={15} /></button>
         </Tip>
         <HideUIButton />
         <Tip side="bottom" label={<><b>Collapse toolbar</b><span>⌘/</span></>}>
-          <button className="sh-pill-btn" onClick={() => setPillOpen(false)} tabIndex={pillOpen ? 0 : -1}>
+          <button className="sh-pill-btn" onClick={() => { cmd('toolbar', { via: 'click', in: 'pill' }); setPillOpen(false) }} tabIndex={pillOpen ? 0 : -1}>
             <PanelFilledIcon size={17} style={{ transform: 'rotate(90deg)' }} />
           </button>
         </Tip>
       </nav>
       <Tip side="bottom" label={<><b>Open toolbar</b><span>⌘/</span></>}>
-        <button className={`sh-pill-fab${pillOpen ? ' hidden' : ''}`} onClick={() => setPillOpen(true)}
+        <button className={`sh-pill-fab${pillOpen ? ' hidden' : ''}`} onClick={() => { cmd('toolbar', { via: 'click', in: 'pill' }); setPillOpen(true) }}
           aria-hidden={pillOpen} tabIndex={pillOpen ? -1 : 0}><PanelHollowIcon size={18} style={{ transform: 'rotate(90deg)' }} />{recording && <i className="jm-live-dot jm-fab-dot" />}</button>
       </Tip>
 
@@ -1261,15 +1321,15 @@ function JamToasts({ toasts }: { toasts: import('./store.ts').Toast[] }) {
         <div className="sh-jam-list">
           <div className="sh-jam-listhead">
             <span>{jams.length} NOTIFICATIONS</span>
-            <button onClick={() => { useStore.getState().clearJamToasts(); setExpanded(false) }}>Clear all</button>
-            <button aria-label="Collapse" onClick={() => setExpanded(false)}><XIcon size={12} /></button>
+            <button onClick={() => { cmd('notices-clear', { via: 'click', in: 'shell' }); useStore.getState().clearJamToasts(); setExpanded(false) }}>Clear all</button>
+            <button aria-label="Collapse" onClick={() => { cmd('notices-collapse', { via: 'click', in: 'shell' }); setExpanded(false) }}><XIcon size={12} /></button>
           </div>
           {[...jams].reverse().map((t) => <JamToast key={t.id} id={t.id} note={t.jam!} />)}
         </div>
       )}
       {!expanded && (deck
         ? (
-          <div className="sh-jam-deck" onClick={() => setExpanded(true)} role="button" aria-label={`${jams.length} notifications - expand`}>
+          <div className="sh-jam-deck" onClick={() => { cmd('notices-expand', { via: 'click', in: 'shell' }); setExpanded(true) }} role="button" aria-label={`${jams.length} notifications - expand`}>
             <div className="sh-jam-ghost g2" />
             <div className="sh-jam-ghost g1" />
             {newest?.jam && <JamToast id={newest.id} note={newest.jam} badge={jams.length - 1} inert />}
@@ -1293,27 +1353,30 @@ function JamAvatar({ author }: { author: { name?: string; avatar?: string; id?: 
  *  (the current board may show the thread's frame); only when it doesn't, switch to the
  *  note's origin board and retry while its comments load. Dismiss only on success: a
  *  cross-board note must never be a destructive no-op. */
-async function viewNote(note: import('./store.ts').JamNote, dismiss: () => void) {
-  if (revealThread(note.threadId)) { dismiss(); return }
+async function viewNote(note: import('./store.ts').JamNote, dismiss: () => void, h: CmdHandle) {
+  if (revealThread(note.threadId)) { h.done(); dismiss(); return }
   const s = useStore.getState()
   // a navigation: a link still finding its board gives way to it - and it to a newer one, wherever this one has got to
   const nav = navigated()
   // a thread in the old all-scenes log has no board of its own: its frame's board shows it (spec 26)
   if (note.board === ALL_SCENES) { if (note.frame) await revealFrame(note.frame, nav) }
-  else if (note.board && s.board !== note.board && !await switchFor(note.board, nav)) return
+  else if (note.board && s.board !== note.board && !await switchFor(note.board, nav)) return h.fail('missing')
   for (let i = 0; i < 12 && isLatest(nav); i++) {
-    if (revealThread(note.threadId)) { dismiss(); return }
+    if (revealThread(note.threadId)) { h.done(); dismiss(); return }
     await new Promise((r) => setTimeout(r, 250))
   }
+  h.fail('missing')
 }
 
 /** Retry a batch's failed jam cards from their notice - each one still failed (a newer change wins). */
-async function retryNote(failed: { card: string; rev: number }[]) {
+async function retryNote(failed: { card: string; rev: number }[], h: CmdHandle) {
   const { useJamQueue } = await import('./jam-queue.ts')
+  let found = false, refused = false
   for (const f of failed) {
     const card = useJamQueue.getState().cards?.find((c) => c.id === f.card)
-    if (card && card.state === 'failed') await useJamQueue.getState().act(card, 'retry')
+    if (card && card.state === 'failed') { found = true; if (!await useJamQueue.getState().act(card, 'retry')) refused = true }
   }
+  if (refused) h.fail('refused'); else if (!found) h.fail('missing'); else h.done()
 }
 
 /** One jam pill, frame-first: row 1 = intent icon + FRAME TITLE (blue) · age; row 2 = Marver · preview.
@@ -1339,9 +1402,9 @@ function JamToast({ id, note, badge, inert }: { id: number; note: import('./stor
       {badge != null
         ? <span className="sh-jam-badge">+{badge}</span>
         : !inert && <>
-            {note.failed && <button className="sh-jam-view" onClick={() => { void retryNote(note.failed!); dismiss() }}>Retry</button>}
-            {note.threadId && <button className="sh-jam-view" onClick={() => void viewNote(note, () => useStore.getState().advanceToast(id))}>View</button>}
-            <button className="sh-jam-x" aria-label="Dismiss" onClick={dismiss}><XIcon size={13} /></button>
+            {note.failed && <button className="sh-jam-view" onClick={() => { void retryNote(note.failed!, cmd('notice-retry', { via: 'click', in: 'shell' })); dismiss() }}>Retry</button>}
+            {note.threadId && <button className="sh-jam-view" onClick={() => void viewNote(note, () => useStore.getState().advanceToast(id), cmd('notice-view', { via: 'click', in: 'shell' }))}>View</button>}
+            <button className="sh-jam-x" aria-label="Dismiss" onClick={() => { cmd('notice-dismiss', { via: 'click', in: 'shell' }); dismiss() }}><XIcon size={13} /></button>
           </>}
     </div>
   )

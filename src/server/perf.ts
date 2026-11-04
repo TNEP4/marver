@@ -14,7 +14,7 @@
 import { appendFileSync, chmodSync, lstatSync, mkdirSync, readdirSync } from 'node:fs'
 import { isAbsolute, join, relative } from 'node:path'
 import { checkRealDirs } from './boards.ts'
-import { DEDUPE, DROP_REASONS as R30_DROP_REASONS, ERROR_SOURCES, HELD_BY, LOAD_TRIGGERS, LOAF, MODES, PAGE_KINDS as R30_PAGE_KINDS, RELOAD_BOUNDS, RENDERS, RESOURCE_TAGS, SELF_HOOKS, SHELL_RELOAD_KINDS, THEME_SCOPES, TRANSITION_OUTCOMES, WARNINGS, WRITER_ATTRIBUTION, type BatchAnswer, type BatchFailed, type SegmentedFile, type ShellReloadKind } from '../shared/perf-records.ts'
+import { CMD_IN, CMD_OUTCOMES, CMD_PHASES, CMD_VIA, DEDUPE, DROP_REASONS as R30_DROP_REASONS, ERROR_SOURCES, HELD_BY, LOAD_TRIGGERS, LOAF, MODES, PAGE_KINDS as R30_PAGE_KINDS, RELOAD_BOUNDS, RENDERS, RESOURCE_TAGS, SELF_HOOKS, SHELL_RELOAD_KINDS, THEME_SCOPES, TRANSITION_OUTCOMES, WARNINGS, WRITER_ATTRIBUTION, type BatchAnswer, type BatchFailed, type SegmentedFile, type ShellReloadKind } from '../shared/perf-records.ts'
 import { adoptLive, closeLive, dueToClose, enforceCap, lineTs, pruneAged, readSegmentedRecords, type LiveState } from './perf-segments.ts'
 import { tidyJam } from './perf-jam.ts'
 
@@ -217,6 +217,37 @@ const loafs = (v: unknown) => {
   return out.length ? out : undefined
 }
 
+// ---- commands (spec 30 R12 #48-#52): names, key combinations, ids, counts and times - never a value (#4) -------------
+
+/** A command's name or a code (its `why`, a step), as commands.ts writes them. */
+const NAME = /^[a-z][a-z0-9-]{0,31}$/
+/** `descriptor()`'s combination (jam-keys.ts:33): modifiers, then one key - one character or a named key. */
+const KEYS = /^(?:Ctrl\+)?(?:Meta\+)?(?:Alt\+)?(?:Shift\+)?(?:[^\s]|[A-Z][A-Za-z0-9]{1,15})$/
+/** A frame id (`scene/name`) or a node key. */
+const FRAME = /^[A-Za-z0-9_~.:/-]{1,160}$/
+const cmdName = (v: unknown) => (typeof v === 'string' && NAME.test(v) ? v : undefined)
+/** `arg`: a fixed identifier (a setting's key, a Jam switch, a device, `2x`) - never a value (#4). */
+const ARG = /^[a-z0-9][a-z0-9-]{0,31}$/
+function cleanCmd(r: Record<string, unknown>): Record<string, unknown> | null {
+  const phase = oneOf(r.phase, CMD_PHASES), cid = id(r.id), c = cmdName(r.cmd)
+  if (!phase || !cid || !c) return null
+  const via = oneOf(r.via, CMD_VIA), where = oneOf(r.in, CMD_IN)
+  if (phase !== 'end' && (!via || !where)) return null
+  const input = phase === 'end' ? {} : {
+    via, in: where,
+    keys: typeof r.keys === 'string' && KEYS.test(r.keys) ? r.keys : undefined,
+    arg: typeof r.arg === 'string' && ARG.test(r.arg) ? r.arg : undefined, board: typeof r.board === 'string' && BOARD.test(r.board) ? r.board : undefined,
+    frames: count(r.frames), frame: typeof r.frame === 'string' && FRAME.test(r.frame) ? r.frame : undefined,
+  }
+  if (phase === 'start') return { phase, id: cid, cmd: c, ...input }
+  const outcome = oneOf(r.outcome, CMD_OUTCOMES)
+  if (!outcome) return null
+  const steps = Array.isArray(r.steps)
+    ? r.steps.slice(0, 16).flatMap((x) => { const o = obj(x), n = cmdName(o.name), m = ms(o.ms); return n && m !== undefined ? [{ name: n, ms: m }] : [] })
+    : []
+  return { phase, id: cid, cmd: c, ...input, outcome, why: cmdName(r.why), ms: ms(r.ms) ?? 0, steps: steps.length ? steps : undefined, late: flag(r.late) }
+}
+
 /** Each kind's fields, rebuilt from what the page sent - anything else is left out; null = the record is dropped.
  *  `root`, the canvas's own folder, for the one field that names a file (#29). */
 const BODY: Record<typeof PAGE_KINDS[number], (r: Record<string, unknown>, root?: string) => Record<string, unknown> | null> = {
@@ -297,7 +328,7 @@ const BODY: Record<typeof PAGE_KINDS[number], (r: Record<string, unknown>, root?
   },
   hmr: (r) => { const phase = oneOf(r.phase, ['lost', 'back'] as const); return phase ? { phase, downMs: ms(r.downMs) } : null },
   // commands (R12)
-  cmd: () => null,
+  cmd: (r) => cleanCmd(r),
   // app-store (R15 #58): the recorder's own cost over 5 minutes
   self: (r) => {
     const cpuMs = tenth(r.cpuMs), hooks = obj(r.hookMs)

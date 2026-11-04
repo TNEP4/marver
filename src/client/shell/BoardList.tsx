@@ -9,9 +9,10 @@ import { PHASE_LABEL, STATUS_LABEL } from '../../shared/status.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
 import { isLatest, navigated, switchFor } from './goto.ts'
 import { rollup } from '../../shared/marks.ts'
-import { Bubble, useAsks } from './marks-ui.tsx'
+import { Bubble, markSeenFrom, useAsks } from './marks-ui.tsx'
 import { Tip } from './Tip.tsx'
 import { copyToClipboard, type MenuItem, type MenuOpener } from './ContextMenu.tsx'
+import { cmd, keysOf, type CmdHandle, type CmdOpts } from './commands.ts'
 import { ArrowLineUpIcon, CardsIcon, CheckIcon, FolderIcon, FrameCornersIcon, FolderMinusIcon, FolderOpenIcon, FolderPlusIcon, PencilSimpleIcon, SignpostIcon } from './icons.tsx'
 import {
   applyDrop, boardsIn, createFolder, deleteFolder, depthOf, folderEntries, folderIn, folderOf, foldersIn, holdsFolders, humanize, INDENT, isOwnSlot, labelOf, listIn, moveBoard, moveFolderToRoot, newFolderSlot, parentOf, readTitle,
@@ -63,6 +64,12 @@ export function AddToBoard({ frame, close }: { frame: string; close: () => void 
 type Naming = { kind: 'board' | 'folder'; name: string } | { kind: 'new'; index: number; board?: string; parent: string | null }
 /** A mutation as intent: applied to whichever tree is current, so a 409 can replay it. */
 type Intent = (tree: TreeItem[]) => TreeItem[] | null
+/** An intent in the queue, and the command behind it (spec 30): it ends on the tree write that carries it. */
+type Queued = { intent: Intent; h: CmdHandle }
+/** A name write's refusal as its code (spec 30) - the answer's own words never reach a record. */
+const nameCode = (error?: string): 'exists' | 'invalid' | 'api' => (/already exists/i.test(error ?? '') ? 'exists' : /^invalid\b/i.test(error ?? '') ? 'invalid' : 'api')
+/** The board whose status picker is open (StatusPicker's `data-board`). */
+const statusPicking = (): string | undefined => document.querySelector<HTMLElement>('[data-status-picker]')?.dataset.board
 
 export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   const board = useStore((s) => s.board)
@@ -73,7 +80,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   const marks = useStore((s) => s.marks)
   const asks = useAsks()
   const framesOf = (boards: string[]) => boards.flatMap((b) => marks?.boards[b] ?? [])
-  const seeAll = (boards: string[]): MenuItem[] => (!PUBLISHED ? [{ label: 'Mark all as seen', icon: <CheckIcon size={15} />, onClick: () => useStore.getState().markSeen(framesOf(boards)) }] : [])                           // board slug → type and status (spec 20)
+  const seeAll = (boards: string[]): MenuItem[] => (!PUBLISHED ? [{ label: 'Mark all as seen', icon: <CheckIcon size={15} />, onClick: () => markSeenFrom({ via: 'context', in: 'shell' }, framesOf(boards)) }] : [])                           // board slug → type and status (spec 20)
   const label = (n: string) => labelOf(n, titles[n])                  // a board's label; a folder's is labelOf(name, item.title)
   const [tree, setTree] = useState<TreeItem[]>([])
   const [read, setRead] = useState(false)                             // the first tree read has answered
@@ -87,7 +94,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   // unconfirmed state - only ever to the files. Reads are latest-wins by sequence.
   const confirmedRef = useRef<TreeItem[]>([])
   const baseRef = useRef<TreeBase>({ boards: {}, folders: null })     // the hashes the confirmed tree was read from
-  const queueRef = useRef<Intent[]>([])                                // applied on screen, not yet written
+  const queueRef = useRef<Queued[]>([])                                // applied on screen, not yet written
   const flushing = useRef(false)
   const loadSeq = useRef(0)
   const commitBusy = useRef(false)                                    // guards Enter+blur firing two commits
@@ -95,7 +102,8 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   // drag runs on pointer events, NOT native drag-and-drop: native DnD hands the cursor to
   // the OS (arrow/move), so a grabbing hand can't persist. Owning the gesture lets us hold
   // the grabbing cursor for the whole drag via a body class.
-  const gestureRef = useRef<{ pointerId: number; startX: number; startY: number; item: Drag; dragging: boolean; el: HTMLElement; x: number; y: number } | null>(null)
+  // `h`: the press became a drag (spec 30) - its `board-move` or `folder-move`, which its release takes, else cancelled
+  const gestureRef = useRef<{ pointerId: number; startX: number; startY: number; item: Drag; dragging: boolean; h?: CmdHandle; el: HTMLElement; x: number; y: number } | null>(null)
   const treeRef = useRef(tree)
   treeRef.current = tree
   const namingRef = useRef(naming)                                   // commit reads the LIVE naming state, never a stale closure (Escape, then a late blur)
@@ -104,7 +112,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   /** The confirmed tree with the queue projected on top - what the human sees. */
   const show = () => {
     let t = confirmedRef.current
-    for (const intent of queueRef.current) t = intent(t) ?? t
+    for (const q of queueRef.current) t = q.intent(t) ?? t
     treeRef.current = t
     setTree(t)
   }
@@ -170,8 +178,10 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
       return next
     })
   }
+  const toggleFolder = (folder: string, open: boolean) => { cmd('folder-toggle', { via: 'click', in: 'shell' }); setOpen(folder, open) }
   const pick = async (name: string) => {
     if (name === useStore.getState().board) return
+    cmd('board-open', { via: 'click', in: 'shell', board: name })    // ends on this board's load: its steps, `settled`, a cut (#49)
     const nav = navigated()                                          // a link still finding its board gives way
     if (await switchFor(name, nav)) setTimeout(() => { if (isLatest(nav)) canvasCtl.fitAll() }, 60)   // unless a newer one has the camera
   }
@@ -181,10 +191,10 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
    *  concurrent agent or tab wrote first) re-reads the files and replays the whole batch on
    *  what is there now, once. A terminal failure drops the batch, says so, and re-reads -
    *  the screen returns to the files, never to another unconfirmed state. Returns false when
-   *  the intent cannot apply to what is shown (nothing queued). */
-  const mutate = (intent: Intent): boolean => {
-    if (!intent(treeRef.current)) return false
-    queueRef.current.push(intent)
+   *  the intent cannot apply to what is shown (nothing queued; a tree change took over from `h`). */
+  const mutate = (intent: Intent, h: CmdHandle): boolean => {
+    if (!intent(treeRef.current)) { h.cancel('edited'); return false }
+    queueRef.current.push({ intent, h })
     show()
     void flush()
     return true
@@ -197,23 +207,33 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
         const batch = [...queueRef.current]
         // an intent the fresh tree no longer admits (its board or folder vanished) is dropped
         // and said out loud, never silently counted as done
+        let dropped = new Set<Queued>()
         const reduce = (t: TreeItem[]) => {
-          let dropped = 0
-          const tree = batch.reduce<TreeItem[]>((acc, i) => { const n = i(acc); if (!n) dropped++; return n ?? acc }, t)
-          if (dropped) useStore.getState().toast(dropped === batch.length ? 'that move no longer applies' : 'some moves no longer apply')
+          dropped = new Set()
+          const tree = batch.reduce<TreeItem[]>((acc, q) => { const n = q.intent(acc); if (!n) dropped.add(q); return n ?? acc }, t)
+          if (dropped.size) useStore.getState().toast(dropped.size === batch.length ? 'that move no longer applies' : 'some moves no longer apply')
           return tree
         }
         const done = () => { queueRef.current.splice(0, batch.length); show() }   // written, or given up on - off the screen's projection either way
+        // the commands this batch carries end on its write's answer (spec 30); a dropped intent wrote nothing, a tree change took over
+        const answered = (ok: boolean, error?: string) => {
+          for (const q of batch) {
+            if (!ok) q.h.fail(q.h.name === 'folder-rename' ? nameCode(error) : 'api')
+            else if (dropped.has(q)) q.h.cancel('edited')
+            else q.h.done()
+          }
+        }
         try {
           let r = await useStore.getState().arrangeBoards(reduce(confirmedRef.current), baseRef.current)
           if (!r.ok && r.stale) {
-            if (!(await load())) { done(); useStore.getState().toast('boards changed - try again'); break }
+            if (!(await load())) { done(); answered(false); useStore.getState().toast('boards changed - try again'); break }
             r = await useStore.getState().arrangeBoards(reduce(confirmedRef.current), baseRef.current)
           }
           done()
+          answered(r.ok, r.ok ? undefined : r.error)
           if (!r.ok) { useStore.getState().toast(r.error ?? 'could not save order'); await load(); break }
           await load()                                          // the write moved the hashes on; the next batch needs the true base
-        } catch { done(); useStore.getState().toast('could not save order'); await load(); break }
+        } catch { done(); answered(false); useStore.getState().toast('could not save order'); await load(); break }
       }
     } finally {
       flushing.current = false
@@ -229,22 +249,26 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   // never moves it. A new folder mints its slug from the title once. Typing exactly what the
   // slug reads as anyway ("Research" for `research`) clears the title - the file stays clean.
   // An empty entry, or the label unchanged, means never mind.
-  const commit = async (raw: string) => {
+  // The command starts where the name is DECIDED (spec 30): Enter or leaving the field saves, Esc backs out.
+  const namingCmd = (n: Naming, how: CmdOpts) => cmd(n.kind === 'board' ? 'board-rename' : n.kind === 'folder' ? 'folder-rename' : 'folder-new', { ...how, ...(n.kind === 'board' ? { board: n.name } : {}) })
+  const commit = async (raw: string, how: CmdOpts) => {
     const n = namingRef.current
     if (!n || commitBusy.current) return                      // Enter already fired this (or Escape cancelled); ignore the follow-up blur
     commitBusy.current = true
+    const h = namingCmd(n, how)
     try {
       const title = readTitle(raw)
-      if (!title) { setNaming(null); return }
+      if (!title) { h.cancel(); setNaming(null); return }
       // two rows reading alike would be a trap: a name another board (folder) already shows stays editing
-      const taken = (kind: 'board' | 'folder') => useStore.getState().toast(`a ${kind} called "${title}" already exists`)
+      const taken = (kind: 'board' | 'folder') => { h.fail('exists'); useStore.getState().toast(`a ${kind} called "${title}" already exists`) }
       const stored = (slug: string) => (title === humanize(slug) ? '' : title)
       if (n.kind === 'board') {
-        if (title === label(n.name)) { setNaming(null); return }
+        if (title === label(n.name)) { h.cancel(); setNaming(null); return }
         if (boardsIn(tree).some((b) => b !== n.name && label(b) === title)) { taken('board'); return }
         let r = await useStore.getState().renameBoard(n.name, stored(n.name), baseRef.current.boards[n.name])
         if (!r.ok && r.stale && await load()) r = await useStore.getState().renameBoard(n.name, stored(n.name), baseRef.current.boards[n.name])   // the file moved on (a drag just before, an agent): re-read, once more
-        if (!r.ok) { useStore.getState().toast(r.error ?? 'rename failed'); return }   // stay editing
+        if (!r.ok) { h.fail(nameCode(r.error)); useStore.getState().toast(r.error ?? 'rename failed'); return }   // stay editing
+        h.done()
         setNaming(null)
         refresh()
         return
@@ -252,10 +276,10 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
       const folderLabels = folderEntries(tree).map((e) => e.folder).filter((f) => n.kind !== 'folder' || f.name !== n.name).map((f) => labelOf(f.name, f.title))
       if (n.kind === 'folder') {
         const current = folderIn(tree, n.name)
-        if (!current || title === labelOf(n.name, current.title)) { setNaming(null); return }
+        if (!current || title === labelOf(n.name, current.title)) { h.cancel(); setNaming(null); return }
         if (folderLabels.includes(title)) { taken('folder'); return }
         setNaming(null)
-        mutate((t) => retitleFolder(t, n.name, stored(n.name)))
+        mutate((t) => retitleFolder(t, n.name, stored(n.name)), h)
         return
       }
       if (n.kind !== 'new') return
@@ -264,8 +288,9 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
       const slug = slugFor(title, foldersIn(tree))                                // "Old stuff" → old-stuff (-2 past a namesake); "🚀" alone → folder
       setNaming(null)
       setOpen(slug, true)                                                       // a new folder opens, whatever an old namesake left behind
-      if (!mutate((t) => createFolder(t, slug, index, withBoard, stored(slug) || undefined, parent))) useStore.getState().toast(withBoard ? 'that board is gone - nothing changed' : 'that folder is gone - nothing changed')
-    } finally { commitBusy.current = false }
+      if (!mutate((t) => createFolder(t, slug, index, withBoard, stored(slug) || undefined, parent), h)) useStore.getState().toast(withBoard ? 'that board is gone - nothing changed' : 'that folder is gone - nothing changed')
+    } catch (e) { h.fail('api'); throw e }
+    finally { commitBusy.current = false }
   }
 
   // ---- drag and drop: one pointer gesture for board rows and folder rows ----
@@ -294,6 +319,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
     const g = gestureRef.current
     gestureRef.current = null
     if (g) { try { g.el.releasePointerCapture(g.pointerId) } catch { /* already released */ } }
+    g?.h?.cancel()                                                 // a drag given up: Esc, focus lost, the pointer lost (a release took its handle)
     document.body.classList.remove('sh-board-dragging')
     setDrag(null)
     showDrop(null)
@@ -311,6 +337,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
     if (!g.dragging) {
       if (Math.hypot(e.clientX - g.startX, e.clientY - g.startY) < 5) return   // click vs drag threshold
       g.dragging = true
+      g.h = cmd(g.item.kind === 'board' ? 'board-move' : 'folder-move', { via: 'drag', in: 'shell', ...(g.item.kind === 'board' ? { board: g.item.name } : {}) })
       setDrag(g.item)
       document.body.classList.add('sh-board-dragging')            // holds the grabbing cursor for the whole drag
     }
@@ -336,22 +363,36 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
     const panel = rootRef.current?.closest('.sh-panel')?.getBoundingClientRect()
     const inside = !!panel && e.clientX >= panel.left && e.clientX < panel.right && e.clientY >= panel.top && e.clientY < panel.bottom
     const target = dragged && inside ? dropRef.current : null
+    const h = g.h
+    g.h = undefined                                               // this release ends it, not the reset
     resetPointer()
-    if (dragged) {
-      if (!target) return
+    if (h) {
+      if (!target) { h.cancel(); return }
       if ('into' in target) setOpen(target.into, true)          // show where it landed
-      mutate((t) => applyDrop(t, item, target))
+      mutate((t) => applyDrop(t, item, target), h)
     }
     else if (item.kind === 'board') void pick(item.name)          // a tap switches boards (the trailing mouse click is ignored)
-    else setOpen(item.name, !!closed[item.name])                   // a tap on a folder toggles it
+    else toggleFolder(item.name, !!closed[item.name])              // a tap on a folder toggles it
   }
   // cancel a drag on Escape (capture phase, so the app's global Escape never sees it) or focus loss
+  // ...and a status picker closed with nothing chosen (spec 30): ContextMenu's own Esc and press close it, and these
+  // run first, added at mount where its are added when a menu opens
   useEffect(() => {
-    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape' && gestureRef.current?.dragging) { e.preventDefault(); e.stopPropagation(); resetPointer() } }
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (gestureRef.current?.dragging) { e.preventDefault(); e.stopPropagation(); resetPointer(); return }
+      const board = statusPicking()
+      if (board) cmd('board-status', { via: 'key', in: 'shell', keys: keysOf(e), board }).cancel()
+    }
+    const onPress = (e: PointerEvent) => {
+      const board = statusPicking()
+      if (board && !(e.target instanceof Element && e.target.closest('.sh-ctxmenu'))) cmd('board-status', { via: 'click', in: 'shell', board }).cancel()
+    }
     const onBlur = () => { if (gestureRef.current) resetPointer() }
     window.addEventListener('keydown', onEsc, true)
+    window.addEventListener('pointerdown', onPress)
     window.addEventListener('blur', onBlur)
-    return () => { window.removeEventListener('keydown', onEsc, true); window.removeEventListener('blur', onBlur); resetPointer() }
+    return () => { window.removeEventListener('keydown', onEsc, true); window.removeEventListener('pointerdown', onPress); window.removeEventListener('blur', onBlur); resetPointer() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -362,20 +403,23 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   }
   /** A person's status decision (the picker): written into the board file, its hash checked - a
    *  write that lost a race re-reads and tries once more, like a rename. */
-  const setStatus = async (n: string, status: StatusWord | null, reason?: string) => {
-    let r = await useStore.getState().setBoardStatus(n, status, reason, baseRef.current.boards[n])
-    if (!r.ok && r.stale && await load()) r = await useStore.getState().setBoardStatus(n, status, reason, baseRef.current.boards[n])
-    if (!r.ok) { useStore.getState().toast(r.error ?? 'status not saved'); return }
-    refresh()                                                        // a clear: what the evidence says now
+  const setStatus = async (n: string, status: StatusWord | null, reason: string | undefined, h: CmdHandle) => {
+    try {
+      let r = await useStore.getState().setBoardStatus(n, status, reason, baseRef.current.boards[n])
+      if (!r.ok && r.stale && await load()) r = await useStore.getState().setBoardStatus(n, status, reason, baseRef.current.boards[n])
+      if (!r.ok) { h.fail('api'); useStore.getState().toast(r.error ?? 'status not saved'); return }
+      h.done()
+      refresh()                                                      // a clear: what the evidence says now
+    } catch (e) { h.fail('api'); throw e }
   }
   const boardMenu = (n: string, parent: string | null): MenuItem[] => {
-    const items: MenuItem[] = [{ label: 'Copy path', icon: <SignpostIcon size={15} />, onClick: () => copyToClipboard(`board: ${n}`, 'path copied') }, ...seeAll([n])]
+    const items: MenuItem[] = [{ label: 'Copy path', icon: <SignpostIcon size={15} />, onClick: () => copyToClipboard(`board: ${n}`, 'path copied', cmd('copy-path', { via: 'context', in: 'shell', board: n })) }, ...seeAll([n])]
     if (PUBLISHED) return items
     // a feature or project board: its status first, as Linear puts it - the picker opens in place
     const m = useStore.getState().boardMeta[n]
     if (m?.status && m.settable?.length) items.unshift({
       label: 'Change status…', icon: <StatusIcon status={m.status.status} fill={m.status.fill} />,
-      panel: (close) => <StatusPicker meta={m} onPick={(s, reason) => { close(); void setStatus(n, s, reason) }} />,
+      panel: (close) => <StatusPicker board={n} meta={m} close={close} onPick={setStatus} />,
     })
     items.push({ label: 'Rename', icon: <PencilSimpleIcon size={15} />, onClick: () => setNaming({ kind: 'board', name: n }) })
     // the new folder takes the board's own slot at its own level (a sub-folder inside a top-level
@@ -386,11 +430,11 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
       const p = folderOf(t, n)
       const top = p ? parentOf(t, p) ?? p : null                     // lands right after the top-level folder it was in
       return moveBoard(t, n, null, top ? rootIndex(t, 'folder', top) + 1 : undefined)
-    }) })
+    }, cmd('board-move', { via: 'context', in: 'shell', board: n })) })
     return items
   }
   const folderMenu = (f: string, boards: string[], parent: string | null): MenuItem[] => {
-    const items: MenuItem[] = [{ label: 'Copy path', icon: <SignpostIcon size={15} />, onClick: () => copyToClipboard(`folder: ${f}${parent ? ` (in ${parent})` : ''}  (boards: ${boards.join(', ') || 'none'})`, 'path copied') }]
+    const items: MenuItem[] = [{ label: 'Copy path', icon: <SignpostIcon size={15} />, onClick: () => copyToClipboard(`folder: ${f}${parent ? ` (in ${parent})` : ''}  (boards: ${boards.join(', ') || 'none'})`, 'path copied', cmd('copy-path', { via: 'context', in: 'shell' })) }]
     if (PUBLISHED) return items
     items.push({ label: 'Rename', icon: <PencilSimpleIcon size={15} />, onClick: () => setNaming({ kind: 'folder', name: f }) }, ...seeAll(boards))
     // two levels: a top-level folder can hold folders; a sub-folder can leave its parent
@@ -398,9 +442,9 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
     else items.push({ label: 'Move to top level', icon: <ArrowLineUpIcon size={15} />, onClick: () => mutate((t) => {
       const p = parentOf(t, f)
       return moveFolderToRoot(t, f, p ? rootIndex(t, 'folder', p) + 1 : undefined)
-    }) })
+    }, cmd('folder-move', { via: 'context', in: 'shell' })) })
     // folders organise, never own: deleting one moves what it holds up one level, into its place, in order
-    items.push({ label: 'Delete folder', icon: <FolderMinusIcon size={15} />, onClick: () => { setOpen(f, true); mutate((t) => deleteFolder(t, f)) } })
+    items.push({ label: 'Delete folder', icon: <FolderMinusIcon size={15} />, onClick: () => { const h = cmd('folder-delete', { via: 'context', in: 'shell' }); setOpen(f, true); mutate((t) => deleteFolder(t, f), h) } })
     return items
   }
   /** Right-click on the sidebar itself (the Boards header, gaps between rows, the blank space
@@ -436,10 +480,14 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
     <input autoFocus defaultValue={defaultValue} placeholder={placeholder} spellCheck={false}
       onFocus={(e) => e.currentTarget.select()}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') { e.preventDefault(); void commit(e.currentTarget.value) }
-        else if (e.key === 'Escape') { e.preventDefault(); setNaming(null) }
+        if (e.key === 'Enter') { e.preventDefault(); void commit(e.currentTarget.value, { via: 'key', in: 'shell', keys: keysOf(e) }) }
+        else if (e.key === 'Escape') {
+          e.preventDefault()
+          if (namingRef.current && !commitBusy.current) namingCmd(namingRef.current, { via: 'key', in: 'shell', keys: keysOf(e) }).cancel()   // a save in flight keeps its own end
+          setNaming(null)
+        }
       }}
-      onBlur={(e) => { if (namingRef.current) void commit(e.currentTarget.value) }} />
+      onBlur={(e) => { if (namingRef.current) void commit(e.currentTarget.value, { via: 'click', in: 'shell' }) }} />
   )
   // a new folder being named is drawn at its future slot, its board (if any) already inside;
   // that board leaves its usual row for the duration. A draft whose parent vanished or can no
@@ -551,7 +599,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
       rows.push(
         <button key={`f:${f}`} data-folder-row={f} data-parent={parent ?? undefined} data-depth={depth} data-open={open ? '1' : '0'} data-reorderable={!PUBLISHED || undefined}
           className={`it folder${indent(depth)}${boards.includes(board) ? ' held' : ''}${dragging ? ' dragging' : ''}${into ? ' drop-into' : ''}${sc.cls}`} style={sc.style}
-          onClick={(e) => { if (PUBLISHED || e.detail === 0) setOpen(f, !open) }}
+          onClick={(e) => { if (PUBLISHED || e.detail === 0) toggleFolder(f, !open) }}
           onContextMenu={(e) => onMenu(e, folderMenu(f, boards, parent))}
           onPointerDown={!PUBLISHED ? (e) => onPointerDown(e, item) : undefined}
           onPointerMove={!PUBLISHED ? onPointerMove : undefined}

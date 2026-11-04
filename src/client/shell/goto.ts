@@ -6,10 +6,11 @@
 import { fetchMembership, useStore } from './store.ts'
 import { UNPLACED } from './hash.ts'
 import { canvasCtl } from './canvas/ctl.ts'
+import { endOnCamera, endOnLoad, type CmdHandle } from './commands.ts'
 
 /** Navigate to a frame id. `carry` keeps interact mode across the hop (a link inside an
  *  interacting frame walks a flow - it must not eject you to design mode). */
-export function goTo(target: string, carry = false): void {
+export function goTo(target: string, carry = false, h?: CmdHandle): void {
   const s = useStore.getState()
   const existing = s.nodes.find((n) => n.frame === target && !n.missing)
   if (existing) {
@@ -17,7 +18,8 @@ export function goTo(target: string, carry = false): void {
     s.select(existing.key)
     if (carry) s.setInteract(existing.key)
     fitLater(existing.key, seq)
-  } else void gotoAcrossBoards(target, carry)
+    if (h) endOnCamera(h)                      // the recorder's (spec 30): the camera lands
+  } else void gotoAcrossBoards(target, carry, h)
 }
 
 /** A data-goto whose target frame is not on the current board follows the frame HOME:
@@ -27,12 +29,12 @@ export function goTo(target: string, carry = false): void {
  *  for unpinned targets); an id the manifest doesn't know stays a toast. Every goto
  *  bumps `gotoSeq` so a slow older resolution can never override newer navigation. */
 let gotoSeq = 0
-async function gotoAcrossBoards(target: string, carry: boolean) {
+async function gotoAcrossBoards(target: string, carry: boolean, h?: CmdHandle) {
   const s = useStore.getState()
   const from = s.board
   // an id the manifest doesn't know resolves NOWHERE - a tombstone pin on some board
   // must not send us on a trip that ends in a silent timeout
-  if (!s.manifest?.frames.some((f) => f.id === target)) return s.toast(`unknown goto target "${target}"`)
+  if (!s.manifest?.frames.some((f) => f.id === target)) { h?.fail('no-target'); return s.toast(`unknown goto target "${target}"`) }
   const seq = navigated()
   let home: string | null = null
   try {
@@ -40,19 +42,22 @@ async function gotoAcrossBoards(target: string, carry: boolean) {
   } catch {
     // a transport failure is NOT proof the frame is unpinned - spawning here would
     // recreate the board mutation this function exists to prevent
+    h?.fail('no-target')
     return useStore.getState().toast(`goto: could not read the boards - try again`)
   }
-  if (seq !== gotoSeq) return                        // superseded by newer navigation
+  if (seq !== gotoSeq) { h?.cancel('superseded'); return }   // superseded by newer navigation
   if (!home) {
     // no curated board pins it - the original prototype behavior: spawn beside you
     const st = useStore.getState()
     const node = st.spawn(target)
-    if (!node) return st.toast(`unknown goto target "${target}"`)
+    if (!node) { h?.fail('no-target'); return st.toast(`unknown goto target "${target}"`) }
     st.select(node.key)
     if (carry) st.setInteract(node.key)
     fitLater(node.key, seq)
+    if (h) endOnCamera(h)
     return
   }
+  if (h) endOnLoad(h, home, 'visible')               // the recorder's (spec 30): the target board's `visible`
   await landOn(home, target, carry, seq, from)
 }
 

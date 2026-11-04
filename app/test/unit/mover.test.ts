@@ -111,6 +111,9 @@ function rig(o: { version?: string; file?: Partial<UpdateFile> } = {}): Rig {
 }
 const whys = (r: Rig) => r.records.filter((b) => b.phase === 'move').map((b) => b.why)
 
+/** What an alert's answer writes (spec 30 R12's `move-to-apps`): `move.cmd` alone, nothing of the move's own. */
+const onlyHandoff = (f: { staging: unknown; move: object | null }): boolean => f.staging === null && Object.keys(f.move ?? {}).join() === 'cmd'
+
 describe('what is at the destination decides (#23)', () => {
   it('nothing, in a writable Applications: installed silently - no question, the moved note written, relaunched, quit', async () => {
     expect(moveAsks).toBe(false)
@@ -129,7 +132,7 @@ describe('what is at the destination decides (#23)', () => {
     expect(existsSync(join(src, 'Contents', 'Info.plist'))).toBe(true)
   })
 
-  it('a Marver of this version or newer: Open It (the default) relaunches into it and quits; Cancel goes on; nothing written either way', async () => {
+  it('a Marver of this version or newer: Open It (the default) relaunches into it and quits; Cancel goes on; nothing written either way but spec 30\'s handoff of the answer', async () => {
     for (const v of ['1.0.1', '1.2.0']) {
       bundle(dest(), v)
       const before = tree(dest())
@@ -145,7 +148,7 @@ describe('what is at the destination decides (#23)', () => {
       expect(await offerMove(c.p, { feed: 'f', inApplications: false })).toBe('go-on')
       expect(c.quits).toBe(0)
       expect(whys(c)).toEqual(['offered', 'cancelled'])
-      for (const x of [r, c]) expect(x.writes).toEqual([])
+      for (const x of [r, c]) expect(x.writes.every(onlyHandoff)).toBe(true)
       expect(stagings()).toEqual([])
       expect(tree(dest())).toBe(before)
       rmSync(dest(), { recursive: true })
@@ -199,7 +202,7 @@ describe('what is at the destination decides (#23)', () => {
       expect(r.asked[0]!.message, what).toMatch(message)
       expect(r.asked[0]!.buttons, what).toEqual(['Show Both', 'Cancel'])
       expect(r.revealed, what).toEqual([what === 'an unwritable Applications' ? [src, apps] : [src, dest()]])
-      expect(r.writes, what).toEqual([])
+      expect(r.writes.every(onlyHandoff), what).toBe(true)
       expect(r.quits, what).toBe(0)
       expect(whys(r), what).toEqual(['finder'])
       if (before) expect(tree(dest()), what).toBe(before)

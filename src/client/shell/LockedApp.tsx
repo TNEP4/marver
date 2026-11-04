@@ -16,6 +16,7 @@ import { UNPLACED, bootHash, parseHash, retargetBoot, writeHash } from './hash.t
 import { isLegacyLink, landLegacy } from './legacy-links.ts'
 import { useComments } from './comments-store.ts'
 import { isLatest, navigated, switchFor } from './goto.ts'
+import { cmd, endAfterFrames, endOnLoad, endOnStage, shellReload, type CmdHandle } from './commands.ts'
 
 /** App.tsx's headless-run probe (perf-run-probe.ts): a run's page is always a dev canvas, never a locked bundle. */
 export function startPerfRunProbe(): void {}
@@ -29,7 +30,7 @@ export class ShellBoundary extends Component<{ children: ReactNode }, { err: Err
       <div style={{ fontFamily: 'ui-monospace, monospace', padding: 32 }}>
         <b style={{ color: '#a81f16' }}>shell crashed</b>
         <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>{this.state.err.message}</pre>
-        <button onClick={() => location.reload()}>reload</button>
+        <button onClick={() => { shellReload(cmd('shell-reload', { via: 'click', in: 'shell' })); location.reload() }}>reload</button>
       </div>
     )
   }
@@ -100,9 +101,17 @@ export function App() {
 
   // back/forward + pasted links, within what the lock allows
   useEffect(() => {
+    let recorded: { hash: string; at: number; h: CmdHandle | null; run: number } = { hash: '', at: -1_000, h: null, run: 0 }
     const onPop = async () => {
       // a lookup newer navigation overtook - a link, a goto, a step on the stage - is dropped
       const nav = navigated(), was = useStore.getState()
+      // spec 30: back/forward fires popstate AND hashchange; the second carries the first's command on
+      const hash = location.hash
+      const again = hash === recorded.hash && performance.now() - recorded.at < 250
+      const run = recorded.run + 1
+      const nav_ = again ? recorded.h : cmd('history-nav', { via: 'click', in: 'shell' })
+      recorded = { hash, at: performance.now(), h: nav_, run }
+      const giveUp = () => { if (recorded.run === run) nav_?.cancel('superseded') }
       const parsed = parseHash()
       const raw = parsed.board === UNPLACED ? {} : parsed   // dev's view, and what it names: not here
       // an old All Scenes link lands on a real board; it, and the bare #/, with no board: the landing one
@@ -110,17 +119,24 @@ export function App() {
       const h = r.hash
       const board = h.board ?? (h.focus ? undefined : await landingBoard())
       const s = useStore.getState()
-      if (!isLatest(nav) || s.board !== was.board || s.play?.at !== was.play?.at) return
+      if (!isLatest(nav) || s.board !== was.board || s.play?.at !== was.play?.at) return giveUp()
       if (r.notice) s.toast(r.notice)
       if (h.c) pendingThread = h.c
       if (board && board !== s.board) {
-        if (!await switchFor(board, nav)) return         // failed, or a newer navigation's board and stage by now
+        if (nav_) endOnLoad(nav_, board)                 // another board: its load's way ends it (#49)
+        if (!await switchFor(board, nav)) return giveUp()   // failed, or a newer navigation's board and stage by now
         useStore.getState().setPlay(null)                // the stage restarts on the board the link names, at its frame
         if (h.play?.slides) enterSlides(h.play)
         else if (h.play) enterPlay(h.play)
         else land(h.f?.[0])
         return
       }
+      // the same board: the stage's next screen when it moves, else the change once drawn (#49)
+      const toStage = (at?: string) => { if (nav_) { if (s.play && (!at || at === s.play.at)) endAfterFrames(nav_); else endOnStage(nav_, at) } }
+      if (h.f?.length && s.play) toStage(h.f[0])
+      else if (h.focus) toStage(h.focus.at)
+      else if (h.play) toStage(h.play.at)
+      else if (nav_) endAfterFrames(nav_)                // a thread link, or the board itself: nothing else moves
       openPending()                                      // same board: its comments are here already
       if (h.f?.length && s.play) return playCtl.setAt(h.f[0])   // the stage on screen steps to the frame named
       if (h.focus) enterFocus(h.focus.at, { ...h.focus, deep: true })

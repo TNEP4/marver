@@ -38,12 +38,22 @@
  *   then the quit - Electron's own script without its `xattr` line. Open It relaunches the same way, so the copy it
  *   opens never meets this one's single-instance lock.
  *
+ * Spec 30's `move-to-apps` (R12): no recorder exists before this runs, and two of its ends quit, so an alert's answer is
+ * made durable in the file every next launch reads: `move.cmd`, `pending` before it acts, then the result it observed
+ * (`moved`, `opened-existing`, `revealed` - Show Both asked Finder; what the person does there is not observed -,
+ * `declined`, `failed`). The next recorder to start, this process's or the one it opened, writes the `cmd` lines once
+ * and clears it (`takeMoveCmd`); one still `pending` then ended mid-move: `unobserved`, why `unknown`. The silent install
+ * asks nobody (#40.1): no answer, no command; its record is the `move` it always wrote. One slot: a second alert in the
+ * same launch (the name taken since the look, the copy changed under Open It) replaces the first answer, a race bounded
+ * by that launch's alerts.
+ *
  * No Electron import: main.ts gives it the alerts, Finder and the quit (`nodeMoverPorts`).
  */
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { accessSync, constants, lstatSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmdirSync, rmSync, statSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import type { UpdateBody } from '../../../src/shared/app-perf.ts'
+import { newCmdId, writeMoveCmd, type MoveCmd } from './commands.ts'
 import type { UpdateFile } from './config.ts'
 
 /** #40.1: the one switch. False since 2 Nov 2026 (Nic): an empty slot is filled without a question. */
@@ -360,6 +370,40 @@ export function cleanLeftover(p: MoverPorts): boolean {
   return removed
 }
 
+// ---- `move-to-apps`' handoff (spec 30 R12) -------------------------------------------------------------------------
+
+function putCmd(p: MoverPorts, c: MoveCmd): void {
+  const f = p.read()
+  // a move's note or a declined answer keeps its own fields; alone, the cmd is all `move` holds until it is taken
+  if (!p.write({ ...f, move: { ...(f.move ?? {}), cmd: c } as UpdateFile['move'] })) p.log?.('move', { cmd: 'not written' })
+}
+/** The answer, durable before anything is acted on. */
+function cmdAsked(p: MoverPorts, answer: string): MoveCmd {
+  const c: MoveCmd = { id: newCmdId(), at: p.now(), answer, state: 'pending' }
+  putCmd(p, c)
+  return c
+}
+/** The result this process observed, durable before it can quit. */
+function cmdEnded(p: MoverPorts, c: MoveCmd, state: MoveCmd['state']): void {
+  putCmd(p, { ...c, state, doneAt: p.now() })
+}
+
+/**
+ * The next recorder's half: main.ts, right after `recorder.start`, in this process or whichever copy launches next.
+ * Cleared before it is written, so it is written once: a write that does not land leaves it for the next launch, and
+ * nothing is written now. Answers the handoff's `MoveCmd` when one was taken (tests).
+ */
+export function takeMoveCmd(read: () => UpdateFile, write: (f: UpdateFile) => boolean, now: () => number = Date.now): MoveCmd | null {
+  const f = read()
+  const c = f.move?.cmd
+  if (!c) return null
+  const { cmd: _gone, ...rest } = f.move!
+  const left = 'declined' in rest || 'moved' in rest ? rest as UpdateFile['move'] : null
+  if (!write({ ...f, move: left })) return null
+  writeMoveCmd(c, now())
+  return c
+}
+
 // ---- the offer --------------------------------------------------------------------------------------------------
 
 /**
@@ -380,16 +424,20 @@ async function decide(p: MoverPorts, first: boolean): Promise<'go-on' | 'quit'> 
   const a = answerFor(d)
   p.log?.('move', { look: d, answer: a })
   if (a === 'install') {
+    let cmd: MoveCmd | null = null
     if (moveAsks) {
       p.record({ phase: 'move', why: 'offered' })
       const r = await p.ask(MOVE_QUESTION)
+      cmd = cmdAsked(p, r.button)
       if (r.button !== 'Move') {
-        if (r.checked) p.write({ ...p.read(), move: { declined: true, at: p.now() } })
+        if (r.checked) p.write({ ...p.read(), move: { declined: true, at: p.now(), cmd } })
+        cmdEnded(p, cmd, 'declined')
         p.record({ phase: 'move', why: r.checked ? 'declined' : 'cancelled' })
         return 'go-on'
       }
     }
     const r = install(p)
+    if (cmd) cmdEnded(p, cmd, r === 'moved' ? 'moved' : 'failed')
     if (r === 'moved') { p.relaunch(relaunchScript(p.pid, destOf(p))); p.quit(); return 'quit' }
     // the name taken since the look, or the publish refused: what is there now decides, once
     return first && r !== 'failed' ? decide(p, false) : 'go-on'
@@ -397,25 +445,35 @@ async function decide(p: MoverPorts, first: boolean): Promise<'go-on' | 'quit'> 
   if (a === 'open-existing' && d.kind === 'marver') {
     p.record({ phase: 'move', why: 'offered', version: d.version })
     const r = await p.ask(openItAlert(d.version))
+    const cmd = cmdAsked(p, r.button)
     if (r.button === 'Open It') {
       // the answer was given for the copy read before the alert (code review r1 P2): read again, and only that same
       // copy - its identity and its version - is opened; anything else there now decides afresh, once
       const now = look(p)
       if (!(now.kind === 'marver' && now.version === d.version && now.dev === d.dev && now.ino === d.ino)) {
         p.log?.('move', { changed: now.kind })
+        cmdEnded(p, cmd, 'failed')   // that copy did not open; what is there now decides
         return first ? decide(p, false) : 'go-on'
       }
+      cmdEnded(p, cmd, 'opened-existing')
       p.record({ phase: 'move', why: 'opened-existing', version: d.version })
       p.relaunch(relaunchScript(p.pid, destOf(p)))
       p.quit()
       return 'quit'
     }
+    cmdEnded(p, cmd, 'declined')
     p.record({ phase: 'move', why: 'cancelled' })
     return 'go-on'
   }
   p.record({ phase: 'move', why: 'finder', ...(d.kind === 'marver' ? { version: d.version } : {}) })
   const r = await p.ask(finderAlert(d))
-  if (r.button === 'Show Both') p.reveal(d.kind === 'empty' ? [p.bundle, p.apps] : [p.bundle, destOf(p)])
-  else p.record({ phase: 'move', why: 'cancelled' })
+  const cmd = cmdAsked(p, r.button)
+  if (r.button === 'Show Both') {
+    p.reveal(d.kind === 'empty' ? [p.bundle, p.apps] : [p.bundle, destOf(p)])
+    cmdEnded(p, cmd, 'revealed')
+  } else {
+    cmdEnded(p, cmd, 'declined')
+    p.record({ phase: 'move', why: 'cancelled' })
+  }
   return 'go-on'
 }

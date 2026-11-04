@@ -50,6 +50,7 @@ import { installBridge } from './bridge.ts'
 import { createRegistry, type RegistryEntry } from './registry.ts'
 import { fetchLogo, installDispatcher, probeProof } from './proof.ts'
 import { attachNav } from './nav.ts'
+import { appCmd } from './commands.ts'
 import { contentView, focusWindow, onCompose, onFront, pageView, refreshTabs, windowInFront, windowVisible } from './window.ts'
 import { activeTab, getTab, liveDoc, openForNotice, setMarksSource, setOpenSender, startTabs, type Tab } from './tabs.ts'
 import { createLive } from './live.ts'
@@ -71,7 +72,7 @@ import { genOf, quitting as presentQuitting } from './present.ts'
 import { readAgx } from './machine.ts'
 import { openOutside, openSameCanvas, showOutside, startViews, windowPorts, type TrustPort } from './views.ts'
 import { bundleOf, startUpdater } from './updater.ts'
-import { nodeMoverPorts, offerMove } from './mover.ts'
+import { nodeMoverPorts, offerMove, takeMoveCmd } from './mover.ts'
 import type { UpdateBody } from '../../../src/shared/app-perf.ts'
 import { fakeTrust } from './testing/fake-trust.ts'
 import { installErrorPolicy, setErrorHome } from './errors.ts'
@@ -136,7 +137,7 @@ function start(): void {
   const files = readFiles(home)
   startHome()
 
-  app.on('second-instance', () => focusWindow())
+  app.on('second-instance', () => { const h = appCmd('relaunch', { via: 'click', in: 'main' }); focusWindow(); h.done() })   // spec 30 R12
 
   // 10. at ready
   void app.whenReady().then(async () => {
@@ -188,6 +189,7 @@ function start(): void {
     recorder.start({ bridge, home, flavour: __MARVER_RELEASE__ ? 'release' : 'dev', config: () => values().config })
     for (const b of moveRecords) recorder.event('update', null, b)
     launchWriter((b) => recorder.event('launch', null, b))
+    takeMoveCmd(readUpdateFile, writeUpdateFile)                     // spec 30's move-to-apps, durable until a recorder exists
     if (__MV_TEST__ && testMode()) { provideRecorderHooks(); provideFlashHooks(home) }
     app.on('will-quit', () => recorder.flushSync())
 
@@ -218,7 +220,7 @@ function start(): void {
       onRegistry: (fn) => registry.on(fn),
       onReport: (fn) => bridge.onReport(fn),
       appState: (tabId, s) => s === 'untrusted' ? false : bridge.appState(tabId, s),   // untrusted: the bridge sends it itself
-      menuClick: (tabId, id) => bridge.menuClick(tabId, id),
+      menuClick: (tabId, id, where) => bridge.menuClick(tabId, id, where),
       reopenNext: (tabId) => bridge.reopenNext(tabId),
       reopenCancel: (tabId) => bridge.reopenCancel(tabId),
       present: (tabId, doc, r) => bridge.present(tabId, doc, r),

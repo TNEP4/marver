@@ -12,6 +12,7 @@ import { ROUTE } from '../const.ts'
 import { ALL_SCENES } from '../../shared/board-tree.ts'
 import { UNPLACED } from './hash.ts'
 import { api as request, canvasStopped, scoped, stoppedLink, useLink } from './api.ts'
+import type { CmdHandle } from './commands.ts'
 
 /** What the Not on a board view says when asked for a comment: a note needs a board to live on. */
 export const NO_COMMENTS_HERE = 'pin it on a board to comment'
@@ -64,20 +65,21 @@ interface CommentsState {
   refresh(board: string): Promise<boolean>
   /** A thread by id, from any board's log - one sweep first when it is not loaded yet. */
   findThread(id: string): Promise<Thread | null>
-  /** `board` routes the write to a thread's ORIGIN log; default = the active board. */
-  send(events: CommentEvent[], board?: string): Promise<boolean>
-  create(body: string): Promise<void>
+  /** `board` routes the write to a thread's ORIGIN log; default = the active board. `h` (spec 30): the command behind the
+   *  write, ended here on its answer - `done`, `failed signed-out` on a 401, else `failed send-failed`. */
+  send(events: CommentEvent[], board?: string, h?: CmdHandle): Promise<boolean>
+  create(body: string, h?: CmdHandle): Promise<void>
   reply(threadId: string, body: string): Promise<void>
-  replyOk(threadId: string, body: string): Promise<boolean>
-  resolve(threadId: string, reopen?: boolean): Promise<void>
+  replyOk(threadId: string, body: string, h?: CmdHandle): Promise<boolean>
+  resolve(threadId: string, reopen?: boolean, h?: CmdHandle): Promise<void>
   setMode(on: boolean): void
   setShow(show: boolean): void
   setShowAnchor(on: boolean): void
   setActive(id: string | null): void
   setDraft(d: CommentsState['draft']): void
-  signIn(email: string, password: string): Promise<string | null>
-  claim(token: string, password: string, name: string, avatar?: string): Promise<string | null>
-  saveProfile(patch: Partial<Me>): Promise<string | null>
+  signIn(email: string, password: string, h?: CmdHandle): Promise<string | null>
+  claim(token: string, password: string, name: string, avatar?: string, h?: CmdHandle): Promise<string | null>
+  saveProfile(patch: Partial<Me>, h?: CmdHandle): Promise<string | null>
   dismissIdentity(): void
   /** The admitted viewer's "Ask to comment" - one request into the owner's queue. */
   askToComment(): Promise<boolean>
@@ -94,6 +96,15 @@ const api = async (path: string, body?: unknown) => {
     body: JSON.stringify(body),
   })
   return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) }
+}
+/** An identity write and the command behind it (spec 30's `sign-in`, `claim`, `profile-save`): ok → done, the answer
+ *  said no → `rejected`, no answer → `api`. */
+const identityWrite = async (path: string, body: unknown, h?: CmdHandle) => {
+  try {
+    const res = await api(path, body)
+    if (res.ok) h?.done(); else h?.fail(res.status < 500 ? 'rejected' : 'api')
+    return res
+  } catch (e) { h?.fail('api'); throw e }
 }
 
 export const useComments = create<CommentsState>((set, get) => {
@@ -315,45 +326,46 @@ export const useComments = create<CommentsState>((set, get) => {
       return () => stops.forEach((f) => f())
     },
 
-    async send(events, board) {
+    async send(events, board, h) {
       const target = board ?? get().board
-      if (!target) return false
+      if (!target) { h?.fail('send-failed'); return false }
       // stamp the origin board BEFORE the POST: the dev server fills it at origin, but
       // the published server stores events as sent - an unstamped event would come back
       // board-less on the next load and its replies could then route to the wrong log.
       // Stamping client-side keeps the stored bytes and the optimistic copy identical.
       const stamped = events.map((e) => ({ ...e, board: e.board ?? target }))
-      const res = await api(`comments/${target}`, { events: stamped })
-      if (res.status === 401) { set({ needsIdentity: true }); return false }
+      const res = await api(`comments/${target}`, { events: stamped }).catch((e: unknown) => { h?.fail('send-failed'); throw e })
+      if (res.status === 401) { h?.fail('signed-out'); set({ needsIdentity: true }); return false }
       // any other refusal gets said out loud - a silent dead Enter key reads as a bug
       // (the canonical case: a signed-in viewer on a read-only board)
       if (!res.ok) {
+        h?.fail('send-failed')
         const { useStore } = await import('./store.ts')
         useStore.getState().toast(String((res.data as any)?.error ?? 'comment rejected'))
       }
       // union only what the server took - a rejected send must not leave phantoms; the
       // store is global now, so an accepted write lands regardless of the viewed board
       // (client ids keep the eventual SSE/poll echo idempotent)
-      if (res.ok) union(stamped)
+      if (res.ok) { union(stamped); h?.done() }
       return res.ok
     },
 
-    async create(body) {
+    async create(body, h) {
       const { draft, me } = get()
-      if (!draft || !body.trim()) return
+      if (!draft || !body.trim()) { h?.fail('send-failed'); return }
       const id = uuid()
       const mentions = mentionsIn(body.trim(), mentionPeople(get().events, me ?? undefined))
       const ok = await get().send([{
         id: uuid(), ts: Date.now(), type: 'create', commentId: id,
         nodeKey: draft.nodeKey, frame: draft.frame, anchor: draft.anchor,
         author: postAuthor(me), body: body.trim(), ...(mentions ? { mentions } : {}),
-      }], draft.board)
+      }], draft.board, h)
       if (ok) set({ draft: null, active: id, commentMode: false })
     },
 
     async reply(threadId, body) { await get().replyOk(threadId, body) },
-    async replyOk(threadId, body) {
-      if (!body.trim()) return false
+    async replyOk(threadId, body, h) {
+      if (!body.trim()) { h?.fail('send-failed'); return false }
       // route to the thread's ORIGIN log - the viewer may be reading it from another
       // board (frame-scoped display); a reply landing in the wrong log would fork it
       const origin = get().threads.find((t) => t.id === threadId)?.board
@@ -361,12 +373,15 @@ export const useComments = create<CommentsState>((set, get) => {
       return get().send([{
         id: uuid(), ts: Date.now(), type: 'reply', commentId: uuid(), parentId: threadId,
         author: postAuthor(get().me), body: body.trim(), ...(mentions ? { mentions } : {}),
-      }], origin)
+      }], origin, h)
     },
 
-    async resolve(threadId, reopen = false) {
+    async resolve(threadId, reopen = false, h) {
       const origin = get().threads.find((t) => t.id === threadId)?.board
-      await get().send([{ id: uuid(), ts: Date.now(), type: reopen ? 'reopen' : 'resolve', commentId: threadId }], origin)
+      // `comment-resolve`'s one code: a resolve refused for any reason did not send
+      const sent = await get().send([{ id: uuid(), ts: Date.now(), type: reopen ? 'reopen' : 'resolve', commentId: threadId }], origin)
+        .catch((e: unknown) => { h?.fail('send-failed'); throw e })
+      if (sent) h?.done(); else h?.fail('send-failed')
     },
 
     async findThread(id) {
@@ -394,20 +409,20 @@ export const useComments = create<CommentsState>((set, get) => {
     },
     dismissIdentity() { set({ needsIdentity: false }) },   // inviteToken survives dismissal - commenting later reopens the claim
 
-    async signIn(email, password) {
-      const res = await api('auth/signin', { email, password })
+    async signIn(email, password, h) {
+      const res = await identityWrite('auth/signin', { email, password }, h)
       if (!res.ok) return res.data?.error ?? 'sign-in failed'
       set({ me: res.data.user, needsIdentity: false })
       return null
     },
-    async claim(token, password, name, avatar) {
-      const res = await api('auth/claim', { token, password, name, avatar })
+    async claim(token, password, name, avatar, h) {
+      const res = await identityWrite('auth/claim', { token, password, name, avatar }, h)
       if (!res.ok) return res.data?.error ?? 'claim failed'
       set({ me: res.data.user, needsIdentity: false, inviteToken: null })
       return null
     },
-    async saveProfile(patch) {
-      const res = await api('profile', patch)
+    async saveProfile(patch, h) {
+      const res = await identityWrite('profile', patch, h)
       if (!res.ok) return res.data?.error ?? 'could not save - try again'
       set({ me: res.data.user })
       return null

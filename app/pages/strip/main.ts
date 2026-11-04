@@ -249,7 +249,7 @@ function renderPill(): void {
 }
 
 pillEl.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && pill?.dismissible) { e.preventDefault(); api?.pillAction({ rev: pill.rev, act: 'dismiss' }) }
+  if (e.key === 'Escape' && pill?.dismissible) { e.preventDefault(); api?.pillAction({ rev: pill.rev, act: 'dismiss', via: 'key' }) }
 })
 
 // ---- the keyboard model (A2.13) ----------------------------------------------------------------------------------
@@ -278,7 +278,7 @@ tabsEl.addEventListener('keydown', (e) => {
     case 'ArrowLeft': go = vis[(i - 1 + vis.length) % vis.length]; break
     case 'Home': go = vis[0]; break
     case 'End': go = vis[vis.length - 1]; break
-    case 'Enter': case ' ': api?.activate(id); break
+    case 'Enter': case ' ': api?.activate(id, 'key'); break
     case 'Delete': case 'Backspace': if (tab && tab.kind !== 'home') api?.close(id); break
     case 'ContextMenu': menuAt(cur); break
     case 'F10': if (e.shiftKey) { menuAt(cur); break } return

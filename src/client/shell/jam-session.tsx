@@ -13,7 +13,8 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { setSessionEnding, useJamCapture } from './jam-capture.ts'
 import { laneCards, startCapture } from './jam-keys.ts'
 import { useJamQueue, type JamCard } from './jam-queue.ts'
-import { useJamUi } from './jam-state.ts'
+import { endOnOk, useJamUi } from './jam-state.ts'
+import { cmd, endAfterFrames, keysOf, type CmdHandle, type CmdOpts } from './commands.ts'
 import { JamStateIcon } from './jam-ui.tsx'
 import { Marver, moreDraftOf, setMoreDraft } from './jam-panel.tsx'
 import { useJamVoice, voiceSession, voiceSessionEnd, voiceSessionId } from './jam-voice.ts'
@@ -26,6 +27,7 @@ import { api, STOPPED_TIP, useStopped } from './api.ts'
 
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
 const now = () => performance.timeOrigin + performance.now()
+const CLICK: CmdOpts = { via: 'click', in: 'shell' }
 
 // ---- the session's moves -------------------------------------------------------------------------------
 
@@ -110,11 +112,11 @@ let endingOp = 0
 
 
 /** `J` (or the Jam button): at rest, the start sheet (again: closes it); in a session, the wrap-up - a
- *  capture recording ends first, and the wrap-up waits for its read-back to close. */
-export function pressJ() {
+ *  capture recording ends first, and the wrap-up waits for its read-back to close. `h`: its `jam-session`, from the input. */
+export function pressJ(h: CmdHandle) {
   const ui = useJamUi.getState()
   // the canvas stopped (spec 28 A1.11): a sheet open still closes; nothing new starts or wraps up
-  if (!ui.sheet && stoppedFor('Jam needs the canvas running')) return
+  if (!ui.sheet && stoppedFor('Jam needs the canvas running')) { h.noop('stopped'); return }
   if (!useJamQueue.getState().session) { ui.setSheet(ui.sheet === 'start' ? null : 'start'); return }
   if (ui.sheet === 'wrap' || ui.sheet === 'wrap-pending') { ui.setSheet(null); return }
   if (useJamCapture.getState().current) { useJamCapture.getState().end(true); ui.setSheet('wrap-pending'); return }
@@ -142,7 +144,7 @@ export function JamButton({ inPlay }: { inPlay?: boolean }) {
   return (
     <Tip side="bottom" inv={inPlay} label={label}>
       <button className={`sh-pill-btn jm-jam${state !== 'idle' ? ` ${state}` : ''}${sheet === 'start' || sheet === 'wrap' ? ' press' : ''}${stopped ? ' off' : ''}`}
-        data-jam-button={state} data-stopped={stopped ? '' : undefined} aria-disabled={stopped || undefined} aria-label={session ? 'End the Jam session' : 'Jam session'} onClick={pressJ}>
+        data-jam-button={state} data-stopped={stopped ? '' : undefined} aria-disabled={stopped || undefined} aria-label={session ? 'End the Jam session' : 'Jam session'} onClick={() => pressJ(cmd('jam-session', { via: 'click', in: 'pill' }))}>
         {/* the whole session reads as on: the dot pulses from start to end, between captures too */}
         {session || recording ? <i className="jm-live-dot" /> : <WaveformIcon size={16} />}
         {session && <span className="jm-clock">{minutes}</span>}
@@ -201,7 +203,8 @@ function WhoWorks({ fallback }: { fallback: string }) {
   const next = sessions.length > 1 ? sessions[(sessions.findIndex((x) => x.selected) + 1) % sessions.length] : undefined
   // the Codex hint only for someone who is not working in another session now: it is noise to a Claude Code user
   const trust = !sel && info?.connectors?.some((c) => c.agent === 'codex' && c.state === 'installed') && !sessions.some((x) => x.agent === 'codex')
-  const set = useJamQueue.getState().setPrefs
+  // a switch's name, never its value; the command ends on the save's answer
+  const set = (arg: string, p: Parameters<ReturnType<typeof useJamQueue.getState>['setPrefs']>[0]) => void endOnOk(cmd('jam-pref', { ...CLICK, arg }), useJamQueue.getState().setPrefs(p), 'api')
   const sw = (on: boolean) => <span className="v">{on ? 'On' : 'Off'}<i className={`jm-switch${on ? ' on' : ''}`} /></span>
   return (<>
     {(() => {
@@ -211,16 +214,16 @@ function WhoWorks({ fallback }: { fallback: string }) {
         {sel && <span className="v"><span className="jm-agent"><i /></span></span>}
       </>)
       return next
-        ? <button className="row jm-two" data-jam-who={sel ? sel.agent : 'background'} onClick={() => void set({ pick: next.id })}>{body}</button>
+        ? <button className="row jm-two" data-jam-who={sel ? sel.agent : 'background'} onClick={() => set('agent', { pick: next.id })}>{body}</button>
         : <div className="row jm-two" data-jam-who={sel ? sel.agent : 'background'}>{body}</div>
     })()}
-    <button className="row jm-two" data-jam-switch="mcp" onClick={() => void set({ mcp: !settings.mcp, skills: !settings.mcp })}>
+    <button className="row jm-two" data-jam-switch="mcp" onClick={() => set('mcp', { mcp: !settings.mcp, skills: !settings.mcp })}>
       <LinkIcon size={15} /><span>MCP servers and skills<br /><small>Background runs use yours</small></span>{sw(settings.mcp)}
     </button>
-    <button className="row jm-two" data-jam-switch="context" onClick={() => void set({ context: context ? 'fresh' : 'fork' })}>
+    <button className="row jm-two" data-jam-switch="context" onClick={() => set('context', { context: context ? 'fresh' : 'fork' })}>
       <NotebookIcon size={15} /><span>Your session's context<br /><small>Your session or a copy works</small></span>{sw(context)}
     </button>
-    <button className="row jm-two" data-jam-switch="others" onClick={() => void set({ others: !settings.others })}>
+    <button className="row jm-two" data-jam-switch="others" onClick={() => set('collaborators', { others: !settings.others })}>
       <CommentIcon size={15} /><span>Collaborators' comments<br /><small>Their words reach the agent</small></span>{sw(settings.others)}
     </button>
     {trust && <div className="note-line" style={{ margin: '4px 8px' }}><WarningIcon size={14} /><span>Codex runs go to a copy of your session. To let your open Codex session take them itself, type <code style={{ color: 'inherit' }}>/hooks</code> in Codex once and trust Marver's.</span></div>}
@@ -239,7 +242,7 @@ export function StartSheet({ style }: { style?: CSSProperties }) {
         <p>Start captures at once. Between captures the session stays on; S captures again, J wraps up.</p>
       </div>
       <div className="rows">
-        <button className="row" data-jam-mic-switch={mic ? 'on' : 'off'} onClick={() => voice.setChoice(mic ? 'no' : 'yes')}>
+        <button className="row" data-jam-mic-switch={mic ? 'on' : 'off'} onClick={() => { const h = cmd('jam-pref', { ...CLICK, arg: 'mic' }); void voice.setChoice(mic ? 'no' : 'yes'); h.done() }}>
           {mic ? <MicrophoneIcon size={15} /> : <MicrophoneSlashIcon size={15} />}
           <span>Microphone<br /><small>Transcribed on this Mac{CONFIG.jam?.names ? ' · Claude Haiku names each capture from its words, sent to Anthropic' : ''}</small></span>
           <span className="v">{mic ? 'On' : 'Off'}<i className={`jm-switch${mic ? ' on' : ''}`} /></span>
@@ -251,8 +254,8 @@ export function StartSheet({ style }: { style?: CSSProperties }) {
       <ShortcutsRow />
       <div className="actions">
         <span className="sp" />
-        <button className="jm-btn ghost" onClick={() => useJamUi.getState().setSheet(null)}>Not now</button>
-        <button className="jm-btn primary" onClick={() => void startSession()}>Start <kbd>⏎</kbd></button>
+        <button className="jm-btn ghost" onClick={() => { cmd('jam-sheet-close', CLICK); useJamUi.getState().setSheet(null) }}>Not now</button>
+        <button className="jm-btn primary" onClick={() => void endOnOk(cmd('jam-start', CLICK), startSession())}>Start <kbd>⏎</kbd></button>
       </div>
     </div>
   )
@@ -260,8 +263,8 @@ export function StartSheet({ style }: { style?: CSSProperties }) {
 
 // ---- the wrap-up ----------------------------------------------------------------------------------------------
 
-/** The open wrap-up sheet's Write the record (the key row calls it). */
-export const wrapWrite: { current: (() => void) | null } = { current: null }
+/** The open wrap-up sheet's Write the record (the key row calls it, with its `jam-wrap-send`). */
+export const wrapWrite: { current: ((h: CmdHandle) => void) | null } = { current: null }
 
 const STATE_NOTE: Partial<Record<JamCard['state'], string>> = {
   draft: 'to confirm', confirming: 'sending', queued: 'queued', working: 'with the agent', asks: 'asks you', review: 'to review',
@@ -294,15 +297,15 @@ export function WrapSheet({ style }: { style?: CSSProperties }) {
   const caps = laneCards(cards, run).filter((c) => c.kind === 'capture' && c.session === session.id && c.state !== 'dropped')
   const name = agent ? HARNESS[agent] ?? agent : 'your agent'
   // Write is busy until the server answers THIS try (an older try's late end never frees it)
-  const write = async () => {
-    if (busy) return
+  const write = async (h: CmdHandle) => {
+    if (busy) { h.noop('busy'); return }
     const n = ++tries.current
     setBusy(true)
-    await endSession({ instructions: text.trim(), includeTalk: talk }, () => { if (n === tries.current) setBusy(false) })
+    await endOnOk(h, endSession({ instructions: text.trim(), includeTalk: talk }, () => { if (n === tries.current) setBusy(false) }))
     if (n === tries.current) setBusy(false)
   }
   // ⏎ anywhere in the sheet writes the record - it never reaches a panel beneath it (jam-keys' sheet row)
-  wrapWrite.current = () => void write()
+  wrapWrite.current = (h) => void write(h)
   const summary = caps.length
     ? `${caps.length} capture${caps.length === 1 ? '' : 's'} in ${minutes} min.`
     : `No captures in ${minutes} min.`
@@ -329,12 +332,12 @@ export function WrapSheet({ style }: { style?: CSSProperties }) {
           onKeyDown={(e) => {
             e.stopPropagation()
             if ((e.nativeEvent as unknown as { isComposing?: boolean }).isComposing) return
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void write() }
-            else if (e.key === 'Escape') { e.preventDefault(); useJamUi.getState().setSheet(null) }
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void write(cmd('jam-wrap-send', { via: 'key', in: 'shell', keys: keysOf(e) })) }
+            else if (e.key === 'Escape') { e.preventDefault(); cmd('jam-sheet-close', { via: 'key', in: 'shell', keys: keysOf(e) }); useJamUi.getState().setSheet(null) }
           }} />
       </div>
       <div className="rows">
-        <button className="row" data-jam-talk={talk ? 'on' : 'off'} onClick={() => setTalk(!talk)}>
+        <button className="row" data-jam-talk={talk ? 'on' : 'off'} onClick={() => { cmd('jam-talk', CLICK); setTalk(!talk) }}>
           <span>Include what was said between captures</span>
           <span className="v">{talkMin ? <small>{talkMin} min</small> : null}<i className={`jm-switch${talk ? ' on' : ''}`} /></span>
         </button>
@@ -343,9 +346,9 @@ export function WrapSheet({ style }: { style?: CSSProperties }) {
         {name} reads your instructions, every capture you sent or kept with its reply, and your verdicts{talk ? ', and what was said between captures' : ''}. It writes one page{folder ? <> in <code>{folder}</code></> : null} and nothing else.
       </p>
       <div className="actions">
-        <button className="jm-btn ghost" onClick={() => void endSession(null)}>End without a record</button>
+        <button className="jm-btn ghost" onClick={() => void endOnOk(cmd('jam-end-bare', CLICK), endSession(null))}>End without a record</button>
         <span className="sp" />
-        <button className="jm-btn primary" disabled={busy} onClick={() => void write()}>Write the record <kbd>⏎</kbd></button>
+        <button className="jm-btn primary" disabled={busy} onClick={() => void write(cmd('jam-wrap-send', CLICK))}>Write the record <kbd>⏎</kbd></button>
       </div>
     </div>
   )
@@ -356,9 +359,10 @@ export function WrapSheet({ style }: { style?: CSSProperties }) {
 /** A session record (a wrap-up card): the page the agent wrote, its reply, and the review's moves. */
 export function RecordDetail({ card, agent, more, onMore, onMoreOpen, onGood, onLater, onRetry, onDrop, of, onPrev, onNext }: {
   card: JamCard; agent: string; more: boolean; of?: [number, number]
-  onMore(text: string): void; onMoreOpen(on: boolean): void; onGood(): void; onLater(): void
+  /** each ends the command its button started (spec 30), from the handle it is handed */
+  onMore(text: string, h: CmdHandle): void; onMoreOpen(on: boolean): void; onGood(h: CmdHandle): void; onLater(h: CmdHandle): void
   /** a record job that failed: try it again, or let it go */
-  onRetry(): void; onDrop(): void
+  onRetry(h: CmdHandle): void; onDrop(h: CmdHandle): void
   onPrev?: () => void; onNext?: () => void
 }) {
   const [rec, setRec] = useState<{ file: string; text: string | null; reply?: string } | null>(null)
@@ -384,8 +388,8 @@ export function RecordDetail({ card, agent, more, onMore, onMoreOpen, onGood, on
         <JamStateIcon state={card.state as any} />
         <h3>{card.title ?? 'Session record'}</h3>
         {of && <><span className="dim">{of[0]} of {of[1]}</span>
-          <button className="jm-iconbtn" disabled={!onPrev} onClick={onPrev} aria-label="Previous"><CaretIcon size={11} style={{ transform: 'rotate(90deg)' }} /></button>
-          <button className="jm-iconbtn" disabled={!onNext} onClick={onNext} aria-label="Next"><CaretIcon size={11} style={{ transform: 'rotate(-90deg)' }} /></button></>}
+          <button className="jm-iconbtn" disabled={!onPrev} onClick={() => { cmd('jam-step', { ...CLICK, arg: 'prev' }); onPrev?.() }} aria-label="Previous"><CaretIcon size={11} style={{ transform: 'rotate(90deg)' }} /></button>
+          <button className="jm-iconbtn" disabled={!onNext} onClick={() => { cmd('jam-step', { ...CLICK, arg: 'next' }); onNext?.() }} aria-label="Next"><CaretIcon size={11} style={{ transform: 'rotate(-90deg)' }} /></button></>}
       </div>
       <div className="meta"><span><code>{rec?.file ?? card.file ?? 'context/sessions/'}</code></span><i /><span>{agent}</span></div>
       {rec?.reply && <div className="jm-reply"><Marver size={20} /><p>{rec.reply}</p></div>}
@@ -397,8 +401,8 @@ export function RecordDetail({ card, agent, more, onMore, onMoreOpen, onGood, on
       {failed && <div className="rule" />}
       {failed && (
         <div className="actions">
-          <button className="jm-btn primary" data-jam-run-act="retry" onClick={onRetry}>Retry</button>
-          <button className="jm-btn ghost" data-jam-run-act="drop" onClick={onDrop}>Drop</button>
+          <button className="jm-btn primary" data-jam-run-act="retry" onClick={() => onRetry(cmd('jam-retry', CLICK))}>Retry</button>
+          <button className="jm-btn ghost" data-jam-run-act="drop" onClick={() => onDrop(cmd('jam-drop', CLICK))}>Drop</button>
         </div>
       )}
       {review && <div className="rule" />}
@@ -409,16 +413,16 @@ export function RecordDetail({ card, agent, more, onMore, onMoreOpen, onGood, on
             onKeyDown={(e) => {
               e.stopPropagation()
               if ((e.nativeEvent as unknown as { isComposing?: boolean }).isComposing) return
-              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (note.trim()) onMore(note.trim()) }
-              if (e.key === 'Escape') { e.preventDefault(); setNote(''); onMoreOpen(false) }
+              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (note.trim()) onMore(note.trim(), cmd('jam-more-send', { via: 'key', in: 'shell', keys: keysOf(e) })) }
+              if (e.key === 'Escape') { e.preventDefault(); cmd('jam-field-discard', { via: 'key', in: 'shell', keys: keysOf(e), arg: 'more' }); setNote(''); onMoreOpen(false) }
             }} />
-          <button className="jm-send" disabled={!note.trim()} onClick={() => onMore(note.trim())}>Send <kbd>⏎</kbd></button>
+          <button className="jm-send" disabled={!note.trim()} onClick={() => onMore(note.trim(), cmd('jam-more-send', CLICK))}>Send <kbd>⏎</kbd></button>
         </div>
       ) : (
         <div className="actions">
-          <button className="jm-btn primary" onClick={onGood}>Looks good <kbd>⏎</kbd></button>
-          <button className="jm-btn" onClick={() => onMoreOpen(true)}>More work <kbd>⇧⏎</kbd></button>
-          <button className="jm-btn ghost" onClick={onLater}>Later <kbd>→</kbd></button>
+          <button className="jm-btn primary" onClick={() => onGood(cmd('jam-good', CLICK))}>Looks good <kbd>⏎</kbd></button>
+          <button className="jm-btn" onClick={() => { const h = cmd('jam-more', CLICK); onMoreOpen(true); endAfterFrames(h) }}>More work <kbd>⇧⏎</kbd></button>
+          <button className="jm-btn ghost" onClick={() => onLater(cmd('jam-later', CLICK))}>Later <kbd>→</kbd></button>
         </div>
       ))}
     </div>
@@ -435,7 +439,7 @@ export function PlayCounter({ cards, style }: { cards: JamCard[]; style?: CSSPro
   const settled = cards.filter((c) => c.state === 'done' || c.state === 'kept').length
   if (!pairs.length && !settled) return null
   return (
-    <div className="jm-count jm-stage" data-jam-counter="" style={style} onClick={() => useJamUi.getState().setLaneKeys(true)}>
+    <div className="jm-count jm-stage" data-jam-counter="" style={style} onClick={() => { const h = cmd('jam-lane', CLICK); useJamUi.getState().setLaneKeys(true); endAfterFrames(h) }}>
       {pairs.map(([s, k]) => <span key={s}><JamStateIcon state={s as any} size={13} />{k}</span>)}
       {settled > 0 && <span key="done"><JamStateIcon state="done" size={13} />{settled}</span>}
       <i className="sep" /><span className="q">Q</span>

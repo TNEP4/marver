@@ -13,9 +13,13 @@
  * - ⌃⌥F is Mark a Flash (A3.3, A3.8 #13), matched by `input.code` like every ⌥ key, on every view: the page never
  *   sees it, and Help's item shows it.
  *
+ * Spec 30 #50: `attachKeys` tells `run()` what arrived - the combination (`keyCombo`, written as the canvas's
+ * `descriptor()`, jam-keys.ts:33) and the surface it arrived on - so a key's command says which key, on what.
+ *
  * Pure: no Electron import (unit-tested without it). The names match the home stream's `commands.ts` draft.
  */
 import type { Input, WebContents } from 'electron'
+import type { KeyFrom } from './commands.ts'
 
 export type AppCommand =
   | 'home' | 'open-link' | 'close-tab' | 'close-window' | 'reload' | 'force-reload' | 'settings' | 'quit'
@@ -64,6 +68,23 @@ export function matchKey(i: KeyInput): AppCommand | null {
   return null
 }
 
+/**
+ * The combination as `descriptor()` writes it (spec 30 #50): `[Ctrl+][Meta+][Alt+][Shift+]key`, a letter lowercase. Told
+ * apart by `input.code` where `key` is not the key's own name - the digits (AZERTY's are shifted), the shifted brackets
+ * (`key` is `{`) and anything with ⌥ (macOS changes `key` under it) - as `matchKey` reads them: ⌘2 is `Meta+2`, ⇧⌘] is
+ * `Meta+Shift+]`, ⌃Tab is `Ctrl+Tab`, F6 is `F6`.
+ */
+export function keyCombo(i: KeyInput): string {
+  const digit = /^Digit(\d)$/.exec(i.code)
+  const letter = /^Key([A-Z])$/.exec(i.code)
+  const key = digit ? digit[1]!
+    : i.code === 'BracketLeft' ? '[' : i.code === 'BracketRight' ? ']'
+      : i.code === 'Tab' || i.code === 'F6' ? i.code
+        : i.alt && letter ? letter[1]!.toLowerCase()
+          : (i.key ?? '').length === 1 ? i.key.toLowerCase() : i.key ?? ''
+  return `${i.control ? 'Ctrl+' : ''}${i.meta ? 'Meta+' : ''}${i.alt ? 'Alt+' : ''}${i.shift ? 'Shift+' : ''}${key}`
+}
+
 /** The n-th canvas key's command (1-8; 9 is the last canvas). */
 export const digitOf = (c: AppCommand): number | null => c === 'tab-last' ? 9 : /^tab-([1-8])$/.test(c) ? Number(c.slice(4)) : null
 
@@ -71,12 +92,12 @@ export const digitOf = (c: AppCommand): number | null => c === 'tab-last' ? 9 : 
  * Wire one webContents: its app keys never reach its page, and run once - a held key's repeats are swallowed too
  * (the page never sees the app's keys, and the menu's key equivalent never fires for them).
  */
-export function attachKeys(wc: WebContents, run: (c: AppCommand, from: WebContents) => void, o: { prevent?: boolean } = {}): void {
+export function attachKeys(wc: WebContents, run: (c: AppCommand, from: WebContents, key: KeyFrom) => void, o: { prevent?: boolean; in?: KeyFrom['in'] } = {}): void {
   const prevent = o.prevent !== false   // false only for the key harness's control case (test builds)
   wc.on('before-input-event', (e, input) => {
     const c = matchKey(input.isAutoRepeat ? { ...input, isAutoRepeat: false } : input)
     if (!c) return
     if (prevent) e.preventDefault()
-    if (!input.isAutoRepeat) run(c, wc)
+    if (!input.isAutoRepeat) run(c, wc, { keys: keyCombo(input), in: o.in ?? 'shell' })
   })
 }

@@ -50,7 +50,8 @@ interface VoiceStore {
   denied: boolean
   /** words heard so far, by capture - the live caption */
   heard: Record<string, Heard[]>
-  setChoice(c: 'yes' | 'no'): void
+  /** resolves once a yes's engine answered (a no at once): what `jam-voice` ends on (spec 30) */
+  setChoice(c: 'yes' | 'no'): Promise<void>
   refresh(): Promise<void>
   /** try the engine again (it failed to start before) and refresh */
   retry(): Promise<void>
@@ -66,7 +67,8 @@ export const useJamVoice = create<VoiceStore>((set, get) => ({
     // no: an opening is cancelled, an open microphone is cut now - the words said so far are kept
     if (c === 'no') void reconcile()
     // yes: an engine that failed to start is tried again, then the microphone opens for what runs now
-    if (c === 'yes') void get().retry().then(() => { if (get().server === 'ready' || get().server === 'loading') set({ asking: false }); void reconcile() })
+    if (c === 'yes') return get().retry().then(() => { if (get().server === 'ready' || get().server === 'loading') set({ asking: false }); void reconcile() })
+    return Promise.resolve()
   },
   async refresh() {
     try {

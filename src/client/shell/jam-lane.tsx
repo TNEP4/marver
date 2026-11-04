@@ -7,17 +7,21 @@
  * glyph; the selected tile alone wears the accent ring. Every tile is one width - selecting one never
  * resizes it; a title cut short shows whole in a tooltip, and a right-click opens the tile's menu.
  *
- * Presentational only - the shell decides what is on it (jam-capture.ts and App mount it).
+ * Presentational only - the shell decides what is on it (jam-capture.ts and App mount it). A tile's button names its
+ * command here (spec 30); what the shell does with it ends it, from the handle it is handed.
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { JamStateIcon, type JamGlyph } from './jam-ui.tsx'
 import { Tip } from './Tip.tsx'
 import { DONE_CLOSE, DONE_GROUP, doneFold, doneLine } from './jam-state.ts'
+import { cmd, endAfterFrames, type CmdHandle, type CmdOpts } from './commands.ts'
 import { ArrowsInLineHorizontalIcon, CursorClickIcon, FileCodeIcon, ImagesSquareIcon, LaserIcon, MicrophoneIcon, MicrophoneSlashIcon, PauseIcon, PencilSimpleIcon } from './icons.tsx'
 
 /** The lane's height with its air: the 44 px tile + 12 px. While the lane shows, the sidebar stops
  *  above it and everything else on the bottom edge (the Update pill, toasts, notices) rises this much. */
 export const LANE_H = 56
+
+const CLICK: CmdOpts = { via: 'click', in: 'shell' }
 
 export interface LaneTile {
   id: string
@@ -55,7 +59,8 @@ export interface LaneRecording {
   finishing?: boolean
   /** the microphone: hearing you (`on`), or not (`off` - a click asks again); none when never asked */
   mic?: 'on' | 'off'
-  onMic?(): void
+  /** a click asks again, once you were asked: it ends the handle when the voice state changed */
+  onMic?(h: CmdHandle): void
   onNote(): void
   onStop(): void
   onStopReview(): void
@@ -92,7 +97,8 @@ export interface LaneBetween {
   since: number
   /** the microphone hears the session's talk */
   mic: boolean
-  onCapture(): void
+  /** ends the handle: a capture recording, or refused */
+  onCapture(h: CmdHandle): void
 }
 
 export function Lane({ tiles, recording, between, selected, keyboard, onOpen, onMenu, followEnd, doneOpen = false, onDoneOpen }: {
@@ -105,7 +111,8 @@ export function Lane({ tiles, recording, between, selected, keyboard, onOpen, on
   between?: LaneBetween
   selected?: string
   keyboard?: boolean
-  onOpen(id: string): void
+  /** ends the handle once the tile's surface is drawn, or it could not be */
+  onOpen(id: string, h: CmdHandle): void
   /** a right-click on a tile: its menu */
   onMenu?(e: React.MouseEvent, id: string): void
   followEnd?: unknown
@@ -170,7 +177,7 @@ export function Lane({ tiles, recording, between, selected, keyboard, onOpen, on
         {fold && !doneOpen && (
           <button key={DONE_GROUP} data-tile={DONE_GROUP} data-state="done" data-jam-done="folded"
             className={`jm-card done group${selected === DONE_GROUP ? ' focus' : ''}`}
-            onClick={() => onDoneOpen?.(true, done.map((t) => t.id))}>
+            onClick={() => { cmd('jam-done-fold', { ...CLICK, arg: 'open' }); onDoneOpen?.(true, done.map((t) => t.id)) }}>
             <JamStateIcon state="done" />
             <span className="tx">
               <span className="t">Done</span>
@@ -181,14 +188,14 @@ export function Lane({ tiles, recording, between, selected, keyboard, onOpen, on
         {fold && doneOpen && (
           <button key={DONE_CLOSE} data-tile={DONE_CLOSE} data-jam-done="open" aria-label="Fold the done captures"
             className={`jm-card close${selected === DONE_CLOSE ? ' focus' : ''}`}
-            onClick={() => onDoneOpen?.(false, done.map((t) => t.id))}>
+            onClick={() => { cmd('jam-done-fold', { ...CLICK, arg: 'fold' }); onDoneOpen?.(false, done.map((t) => t.id)) }}>
             <ArrowsInLineHorizontalIcon size={15} /><span className="t">Done</span>
           </button>
         )}
         {shown.map((t) => (
           <button key={t.id} data-tile={t.id} data-state={t.state}
             className={`jm-card ${t.state}${selected === t.id ? ' focus' : ''}${fold && t.state === 'done' ? ' unfold' : ''}`}
-            onClick={() => onOpen(t.id)} onContextMenu={onMenu ? (e) => onMenu(e, t.id) : undefined}>
+            onClick={() => onOpen(t.id, cmd('jam-open', CLICK))} onContextMenu={onMenu ? (e) => onMenu(e, t.id) : undefined}>
             <JamStateIcon state={t.state} />
             <span className="tx">
               {/* the whole title, in the shell's own tooltip - only when the tile cuts it short */}
@@ -215,7 +222,7 @@ export function BetweenTile({ since, mic, onCapture }: LaneBetween) {
         <span className="stats">{mic ? <><MicrophoneIcon size={12} />Listening between captures</> : <><MicrophoneSlashIcon size={12} />Between captures</>}</span>
       </span>
       <i className="sep" />
-      <button className="go" onClick={onCapture}>Capture<kbd>S</kbd></button>
+      <button className="go" onClick={() => onCapture(cmd('jam-capture', CLICK))}>Capture<kbd>S</kbd></button>
     </div>
   )
 }
@@ -229,7 +236,7 @@ export function CaptureTile({ time, points, pictures = 0, picturesMax, steps, co
       {finishing ? <JamStateIcon state="confirming" /> : <i className="jm-live-dot" />}
       {mic && !finishing && (
         <Tip label={mic === 'on' ? 'Hearing you - words on this Mac' : 'Microphone off - click to use it'}>
-          <button className={`mic${mic === 'off' ? ' off' : ''}`} data-jam-mic={mic} onClick={onMic} aria-label={mic === 'on' ? 'Microphone on' : 'Microphone off'}>
+          <button className={`mic${mic === 'off' ? ' off' : ''}`} data-jam-mic={mic} onClick={() => { const h = cmd('jam-mic', CLICK); if (onMic) onMic(h); else h.noop('on') }} aria-label={mic === 'on' ? 'Microphone on' : 'Microphone off'}>
             {mic === 'on' ? <MicrophoneIcon size={13} /> : <MicrophoneSlashIcon size={13} />}
           </button>
         </Tip>
@@ -244,14 +251,14 @@ export function CaptureTile({ time, points, pictures = 0, picturesMax, steps, co
         </span>
       </span>
       <i className="sep" />
-      <button className={`notebtn${noteOn ? ' on' : ''}`} onClick={onNote} disabled={finishing} aria-pressed={noteOn}>
+      <button className={`notebtn${noteOn ? ' on' : ''}`} onClick={() => { const h = cmd('jam-notes', CLICK); onNote(); endAfterFrames(h) }} disabled={finishing} aria-pressed={noteOn}>
         <PencilSimpleIcon size={13} />Note{notes ? <b>{notes}</b> : null}<kbd>N</kbd>
       </button>
       <Tip label="Stop and queue it - the agent starts on it">
-        <button className="stop" onClick={onStop} disabled={finishing}>Stop<kbd>E</kbd></button>
+        <button className="stop" onClick={() => { const h = cmd('jam-end', CLICK); onStop(); endAfterFrames(h) }} disabled={finishing}>Stop<kbd>E</kbd></button>
       </Tip>
       <Tip label="Stop and look it over first - add notes, then queue it">
-        <button className="stop review" onClick={onStopReview} disabled={finishing}><PauseIcon size={12} />Stop to review<kbd>⇧E</kbd></button>
+        <button className="stop review" onClick={() => { const h = cmd('jam-end-review', CLICK); onStopReview(); endAfterFrames(h) }} disabled={finishing}><PauseIcon size={12} />Stop to review<kbd>⇧E</kbd></button>
       </Tip>
     </div>
   )
