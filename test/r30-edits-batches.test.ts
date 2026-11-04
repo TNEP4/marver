@@ -11,7 +11,7 @@ import { DEDUPE, SHELL_RELOAD_KINDS } from '../src/shared/perf-records.ts'
 /**
  * Delivery is acknowledged (spec 30 #7, #16): the reload batch's route and allowlist, an answer only after the append
  * returned, a 503 when it failed, and the `(page, seq)` window - best effort, so a retry past it is written twice and every
- * reader dedupes. Plus `load`'s and `cut`'s new fields (#17-#19). The page's half is r30-edits-*-browser.test.ts.
+ * reader dedupes. Plus `load`'s and `cut`'s new fields (#17-#19). The page's half is r30-edits-reloads-browser.test.ts.
  */
 
 const SENTINEL = 'PURPLE-ELEPHANT-SECRET'

@@ -13,10 +13,11 @@
  * fill the 250 entries Resource Timing keeps, and an observer still receives what the buffer refuses.
  */
 import { RELOAD_BOUNDS } from '../../shared/perf-records.ts'
+import type { InplaceMsg } from './messages.ts'
 
 interface Update { type?: string; path?: string; acceptedPath?: string; timestamp?: number }
 /** The fields only this module knows; main.tsx adds the frame and the document. */
-export interface InplaceReport { type: 'sh:inplace'; hmrTs: number; applyMs: number; nextObservedCommitMs?: number; applied: 'unknown' | false }
+export type InplaceReport = Omit<InplaceMsg, 'id' | 'boot'>
 
 let waiters: ((at: number) => void)[] = []
 /** The frame root committed (the Profiler in main.tsx). */

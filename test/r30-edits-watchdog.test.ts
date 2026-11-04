@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { canAutoReload, shouldArmReadyWatch, silenceAction, type ReadyNode } from '../src/client/shell/canvas/ready-watch.ts'
 
 /** The watchdog's silence, as a line says it (spec 30 #20): its action is what the watchdog then does - pure, beside the
- *  policy test/ready-watch.test.ts covers. The line itself is r30-edits-browser.test.ts's. */
+ *  policy test/ready-watch.test.ts covers. The line itself is r30-edits-reloads-browser.test.ts's. */
 const n = (over: Partial<ReadyNode> = {}): ReadyNode => ({ status: 'loading', ...over })
 
 describe('what a silence comes to', () => {

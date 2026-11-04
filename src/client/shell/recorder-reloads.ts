@@ -11,6 +11,7 @@
  */
 import { encodeCmds, RELOAD_BOUNDS, RELOAD_OUTBOX, WRITER_HEADERS, type HeldBy } from '../../shared/perf-records.ts'
 import { WATCH_MAX_MS } from '../../shared/app-api.ts'
+import { SH } from '../frame-host/messages.ts'
 import { api, isStopped, resumed } from './api.ts'
 import { watchWindow } from './app-perf.ts'
 import { bootOf, iframeOf } from './canvas/frame-registry.ts'
@@ -133,7 +134,7 @@ function onFrameMessage(key: string, data: Record<string, unknown>): void {
     if (!n) return
     docNav.set(data.boot, n.nav ?? 0)
     if (docNav.size > 1_024) docNav.delete(docNav.keys().next().value!)
-  } else if (data.type === 'sh:inplace') {
+  } else if (data.type === SH.inplace) {
     // #15: from the document there now; what it saw, no more
     if (typeof data.boot !== 'string' || data.boot !== bootOf(iframeOf(key))) return
     const n = nodeOf(key)
