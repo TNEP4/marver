@@ -391,7 +391,7 @@ export function takeReloadBatch(root: string, raws: unknown[], now = Date.now())
 }
 /** `POST perf/page`'s batch (#7): as `logPage`, a headless run's records stamped after the cleaner. */
 export function takePageBatch(root: string, raws: unknown[], o: { run?: string; kept?: (records: Record<string, unknown>[]) => void } = {}, now = Date.now()): BatchAnswer | BatchFailed {
-  const recs = raws.slice(0, 5_000).flatMap((x) => { const c = cleanPageRecord(x, now); return c ? [o.run ? { ...c, run: o.run } : c] : [] })
+  const recs = raws.slice(0, 5_000).flatMap((x) => { const c = cleanPageRecord(x, now, root); return c ? [o.run ? { ...c, run: o.run } : c] : [] })
   return writeBatch(root, 'page', recs, now, o.kept)
 }
 

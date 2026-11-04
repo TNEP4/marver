@@ -559,7 +559,8 @@ describe('R5: more bugs', () => {
     await browser.until(s, `window.__posted > 0`, 3_000)
     await wait(300)
     const posted = await browser.eval(s, `window.__posted`)
-    expect(posted).toBeLessThanOrEqual(5)
+    // 5 a second by the clock's own seconds: a turn that crosses one, on a busy machine, gets a second five
+    expect(posted).toBeLessThanOrEqual(10)
     expect(reads, 'formatted exactly what was posted').toBe(posted)
   }, 90_000)
 
