@@ -233,7 +233,7 @@ describe('the recorder on the real binary (A3.7)', () => {
   it('a 0.29.0 canvas (spec 30 R14 #54; VM only): `launch` names its hello\'s page, and no `watch` window opened', async (ctx) => {
     if (!real) { ctx.skip(); return }
     const launch = await until('the launch line', async () => (await of('launch'))[0], 40_000)
-    expect(launch.firstCanvas).toMatchObject({ page: PAGE1 })
+    expect(launch.firstCanvas, JSON.stringify(launch)).toMatchObject({ page: PAGE1 })
     const whys = (await of('whiteout-candidate')).flatMap((c) => c.why ?? [])
     expect(whys.filter((y) => y === 'load' || y === 'theme' || y === 'reload')).toEqual([])
   })

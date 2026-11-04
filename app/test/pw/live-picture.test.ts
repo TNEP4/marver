@@ -142,7 +142,10 @@ describe('a live picture on a real canvas (A4.6 #35)', () => {
     const wo = ls.filter((l) => l.topic === 'whiteout' && typeof l.data.capture === 'string')
     const beside = wo.filter((s) => s.data.capture === 'start' && s.i < r1!.i
       && (wo.find((e) => e.data.capture === 'end' && e.data.tick === s.data.tick && e.i > s.i)?.i ?? Infinity) > r0!.i)
-    expect(beside.length, JSON.stringify(ls.filter((l) => l.topic === 'live-picture' || l.data.capture).map((l) => [l.i, l.topic, l.data]))).toBeGreaterThan(0)
+    // spec 30 #39: a play stage covers the canvas, so a 0.30 shell's `before` answer says so and the detector takes no capture
+    // here, in a gesture's window too: the picture stands alone (a 0.29 shell still overlaps it, main's code unchanged)
+    expect(beside.length, JSON.stringify(ls.filter((l) => l.topic === 'live-picture' || l.data.capture).map((l) => [l.i, l.topic, l.data]))).toBe(0)
+    expect(ls.some((l) => l.topic === 'whiteout' && l.data.window === 'open')).toBe(true)
     await exec(`(async () => { const q = window.__mvJamQueue.getState(); const c = (q.cards ?? []).find((x) => x.id === ${JSON.stringify(cap)}); if (c) await q.act(c, 'drop'); window.__mvJamUi.getState().close(); return 1 })()`)
     await exec(`window.__mvStore.getState().setPlay(null), 1`)
   }, 120_000)
