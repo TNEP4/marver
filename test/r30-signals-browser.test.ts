@@ -605,6 +605,18 @@ describe('R5: more bugs', () => {
 })
 
 describe('R6: zoom, pan and re-renders', () => {
+  it('a minute not over yet goes with the page: the page\'s last records carry its warnings and its commits', async () => {
+    if (!browser) return
+    // no shortened period: nothing else would write this minute before the page leaves
+    const { s, page } = await open('three')
+    await browser.eval(s, `console.warn('one'); console.warn('two')`)
+    expect(of(page, 'warnings')).toEqual([])
+    await browser.go(s, 'about:blank')
+    const w = await until(() => of(page, 'warnings')[0], 10_000, 'the warnings, sent at pagehide')
+    expect(w).toMatchObject({ n: 2, top: [{ node: 'shell', n: 2 }] })
+    expect(of(page, 'renders').flatMap((r) => r.rows).some((r: Record<string, any>) => r.who === 'shell')).toBe(true)
+  }, 90_000)
+
   it('a zoom over a frame that blocks 120 ms names that frame, with the scale it went through and what was awake', async () => {
     if (!browser) return
     const { s, page } = await open('blocker')

@@ -5,6 +5,7 @@ import { App, ShellBoundary, startPerfRunProbe } from './App.tsx'
 import { useStore } from './store.ts'
 import { startRecorder } from './recorder.ts'
 import { shellRendered } from './recorder-signals.ts'
+import { fullRecorder } from '../recorder-level.ts'
 import { capturesPending, sealOnLeave } from './jam-capture.ts'
 import { startAppBridge } from './app-bridge.ts'
 import { startAppPerf } from './app-perf.ts'
@@ -26,5 +27,6 @@ startAppPerf()
 startPerfRunProbe()
 
 const app = <ShellBoundary><App /></ShellBoundary>
-// the recorder's minute of this root's commits (spec 30 #36): dev only, and it counts nothing until the recorder runs
-createRoot(document.getElementById('root')!).render(import.meta.env.DEV ? <Profiler id="shell" onRender={shellRendered}>{app}</Profiler> : app)
+// the recorder's minute of this root's commits (spec 30 #36): dev only, at the full level - it counts nothing until the
+// recorder runs, and `core` (the cost proof's other side, #58) has no Profiler at all
+createRoot(document.getElementById('root')!).render(import.meta.env.DEV && fullRecorder() ? <Profiler id="shell" onRender={shellRendered}>{app}</Profiler> : app)

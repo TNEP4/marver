@@ -11,7 +11,7 @@
  * A record never lies (R0): an ack counts only with the transition's own `t` and from the live document; what never
  * acknowledged is `late` at the timeout; a newer change makes the older one `superseded` with what it had.
  */
-import { TRANSITION, type DropReason, type ErrorFields, type ErrorSource, type ModeName, type RenderRow, type ThemeScope, type TransitionOutcome } from '../../shared/perf-records.ts'
+import { ERROR_BUDGET, TRANSITION, type DropReason, type ErrorFields, type ErrorSource, type ModeName, type RenderRow, type ThemeScope, type TransitionOutcome } from '../../shared/perf-records.ts'
 import { formatConsole, periodMs, RESOURCE_TAGS, resourceOf, stackOfArgs, viteEcho } from '../frame-host/signals.js'
 import { watchWindow } from './app-perf.ts'
 import { onMotion } from './canvas/camera-broadcast.ts'
@@ -260,7 +260,8 @@ export function errorCounted(on: readonly ModeName[]): void {
 // ---- R5: the sources -------------------------------------------------------------------------------------------------
 
 /** #33, in the shell: 5 a second each for console, api and resource, before anything is formatted. */
-const budgets = { console: createRate(5), api: createRate(5), resource: createRate(5) }
+const { perSourcePerSecond } = ERROR_BUDGET.shell
+const budgets = { console: createRate(perSourcePerSecond), api: createRate(perSourcePerSecond), resource: createRate(perSourcePerSecond) }
 function takeSource(source: keyof typeof budgets): boolean {
   if (budgets[source]()) return true
   signalSink.dropped(source, 1)

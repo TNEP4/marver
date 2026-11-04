@@ -128,7 +128,7 @@ const cause = (v: unknown) => (typeof v === 'string' && CAUSE.test(v) ? v : unde
 
 // ---- spec 30, signals: the fields' own shapes (#29-#36)
 const fixed = (v: unknown, re: RegExp) => (typeof v === 'string' && re.test(v) ? v : undefined)
-const ROUTE_RE = /^[a-z0-9:._/-]{1,64}$/i, METHOD_RE = /^[A-Z]{3,7}$/, THEME_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/i
+const ROUTE_RE = /^[a-z0-9:._/-]{1,64}$/i, METHOD_RE = /^[A-Z]{3,7}$/, THEME_RE = /^[\w][\w .-]{0,63}$/
 const status = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v < 1000 ? v : undefined)
 const epoch = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 1e12 && v < 1e14 ? Math.round(v) : undefined)
 /** #29: a file inside the repo, relative to it; anything else as given - this Mac's own path, in the owner's own file. */

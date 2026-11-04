@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { addRow, createRate, foldRows, keepLongest, nodesIn, normRoute, p50, pickLoafs, topWarnings, urlPath, type LoafEntry } from '../src/client/shell/recorder-signals-core.ts'
-import { createBudget, createCounter, formatConsole, resourceOf, resourceUrl, stackOfArgs, viteEcho } from '../src/client/frame-host/signals.js'
+import { createBudget, createCounter, FRAME_BUDGET, formatConsole, RESOURCE_TAGS as RESOURCE_TAGS_JS, resourceOf, resourceUrl, stackOfArgs, viteEcho } from '../src/client/frame-host/signals.js'
 import { cleanPageRecord } from '../src/server/perf.ts'
-import type { RenderRow } from '../src/shared/perf-records.ts'
+import { ERROR_BUDGET, RESOURCE_TAGS, type RenderRow } from '../src/shared/perf-records.ts'
 
 /**
  * Spec 30's signals, the parts with no browser (R5, R6): a request's route without its names (#31), a gesture's three
@@ -309,5 +311,24 @@ describe('the server\'s allowlist for each new kind (#4)', () => {
   })
   it('`dropped`: the new reasons', () => {
     for (const reason of ['console', 'api', 'resource', 'frame', 'theme', 'mode']) expect(cleanPageRecord(env('dropped', { n: 3, reason }))).toMatchObject({ n: 3, reason })
+  })
+})
+
+describe('a published HTML frame loads the bridge verbatim (build.ts copies it)', () => {
+  const hostDir = join(import.meta.dirname, '..', 'src', 'client', 'frame-host')
+  const copied = /for \(const f of \[([^\]]+)\]\) cpSync\(join\(clientDir, 'frame-host', f\)/.exec(readFileSync(join(import.meta.dirname, '..', 'src', 'server', 'build.ts'), 'utf8'))![1].split(',').map((x) => x.trim().replace(/'/g, ''))
+  it('every module the bridge reaches is in the copy list: a missing one stops every HTML frame', () => {
+    const seen = new Set<string>(), walk = (f: string) => {
+      if (seen.has(f)) return
+      seen.add(f)
+      for (const m of readFileSync(join(hostDir, f), 'utf8').matchAll(/^import [^\n]*from '\.\/([^']+)'/gm)) walk(m[1])
+    }
+    walk('bridge.js')
+    expect([...seen]).toContain('signals.js')
+    for (const f of seen) expect(copied, f).toContain(f)
+  })
+  it('its budget repeats the shared numbers', () => {
+    expect(FRAME_BUDGET).toEqual(ERROR_BUDGET.frame)
+    expect(RESOURCE_TAGS_JS).toEqual([...RESOURCE_TAGS])
   })
 })
