@@ -1,5 +1,11 @@
 # Changelog - the Marver Mac app
 
+## 1.0.1 - unreleased
+
+- A `launch` line per launch: ready, window shown, the first canvas uncovered and its page, what was restored.
+- `sample` and `agx` lines moved to `samples.jsonl`, rows unchanged; each log a live file plus closed segments deleted whole by age (`keepPerfDays`), never rewritten, with a safety cap per file. The 1.0.0 `app.jsonl` is closed as a segment, nothing rewritten. The report reads both, with the same numbers.
+- The white-out detector watches a tab being shown and, with marver 0.30, a board load, a theme switch and a frame's reload, under an admission budget of 3 s of capture per rolling minute. Each minute's `sample` says what it could not cover and why.
+
 ## 1.0.0 - 2026-11-02
 
 The first public release: notarised by Apple, and from now on Marver keeps itself up to date.
