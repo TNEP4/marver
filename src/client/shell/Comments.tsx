@@ -798,14 +798,13 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
           <button className={`cm-icon cm-copy${copied ? ' ok' : ''}`} onClick={() => {
             const url = `${location.origin}${location.pathname}${buildHash({ board: useStore.getState().board, c: thread.id })}`
             const h = cmd('thread-copy-link', { via: 'click', in: 'shell', frame: thread.frame })
-            const blocked = () => { h.fail('clipboard-blocked'); useStore.getState().toast('copy blocked - try again') }
             // the check means "it's on your clipboard" - only show it when that's true
-            navigator.clipboard?.writeText(url).then(() => {
+            navigator.clipboard.writeText(url).then(() => {
               h.done()
               setCopied(true)
               clearTimeout(copyTimer.current)
               copyTimer.current = setTimeout(() => setCopied(false), 1600)
-            }, blocked) ?? blocked()
+            }, () => { h.fail('clipboard-blocked'); useStore.getState().toast('copy blocked - try again') })
           }}>
             <span className="a"><LinkIcon size={15} /></span>
             <span className="b"><CheckIcon size={16} /></span>

@@ -506,8 +506,7 @@ function watch(f: Flight, cond: (st: { n: number; busy: boolean; sawBusy: boolea
  *  or one a caller sends after a short delay). */
 const cameraDone = (st: { n: number; busy: boolean; sawBusy: boolean; since: number }) => !st.busy && (st.sawBusy || performance.now() - st.since > 250) && st.n >= 2
 /** A layout animation (`animateLayout`'s `sh-preset`) ended, and the fit after it landed. */
-const layoutDone = (st: { n: number; busy: boolean; sawBusy: boolean; since: number }) =>
-  !document.getElementById('sh-world')?.classList.contains('sh-preset') && cameraDone(st)
+const layoutDone = (st: { n: number; busy: boolean; sawBusy: boolean; since: number }) => !canvasCtl.layoutBusy() && cameraDone(st)
 
 /** Ends `h` when the camera lands (`fit-*`, `zoom-*`, a pick, `next-new`, a goto on this board). */
 export function endOnCamera(h: CmdHandle): void { const f = flightOf(h); if (f) watch(f, cameraDone) }

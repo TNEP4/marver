@@ -136,12 +136,10 @@ export function CommentButton() {
           const h = cmd('ask-to-comment', { via: 'click', in: 'pill' })
           if (Date.now() - asked.current < 8000) { h.noop('too-soon'); return }
           asked.current = Date.now()
-          const refused = () => { h.fail('api'); s.toast('could not send the request - try again') }
           void commentsStore().askToComment().then((ok) => {
-            if (!ok) return refused()
-            h.done()
-            s.toast('asked the owner for comment access - they decide')
-          }, refused)
+            if (ok) h.done(); else h.fail('api')
+            s.toast(ok ? 'asked the owner for comment access - they decide' : 'could not send the request - try again')
+          }, (e: unknown) => { h.fail('api'); throw e })
         }}><CommentIcon size={16} /></button>
       </Tip>
     )

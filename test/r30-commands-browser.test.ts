@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Browser } from './browser.ts'
 import { fixtureRoot, startDev, type Dev } from './dev-server.ts'
@@ -21,11 +22,16 @@ const FRAME = (t: string) => `export const meta = { title: '${t}', viewport: 'mo
 const SENTINEL = 'SENTINEL-R30-PRIVACY'
 
 let root = ''
+let bin = ''
 let dev: Dev | null = null
 let browser: Browser | null = null
 const tabs: string[] = []
 
 beforeAll(async () => {
+  // Jam on (its keys and fields), with an agent that never runs: a `claude` that exits
+  bin = realpathSync(mkdtempSync(join(tmpdir(), 'mv-r30-cmd-bin-')))
+  writeFileSync(join(bin, 'claude'), '#!/usr/bin/env node\nprocess.exit(1)\n')
+  chmodSync(join(bin, 'claude'), 0o755)
   root = fixtureRoot('mv-r30-cmd-', {
     'design/config.ts': `export default { share: { name: 'Commands canvas' } }\n`,
     'design/scenes/demo/one.tsx': FRAME('One'),
@@ -41,14 +47,14 @@ beforeAll(async () => {
       { key: 'n-four', frame: 'other/four', x: 0, y: 0, w: 390, h: 844 },
     ] }),
   })
-  dev = await startDev(root)
+  dev = await startDev(root, { env: { PATH: `${bin}:${process.env.PATH}` } })
   browser = await Browser.launch()
 }, 120_000)
 afterEach(async () => { for (const s of tabs.splice(0)) await browser?.closeTab(s).catch(() => {}) })
 afterAll(async () => {
   browser?.close()
   await dev?.stop()
-  if (root) rmSync(root, { recursive: true, force: true })
+  for (const d of [root, bin]) if (d) rmSync(d, { recursive: true, force: true })
 })
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -113,6 +119,27 @@ async function expectOnceNoop(t: Tab, name: string, why: string, go: () => Promi
 }
 const click = (t: Tab, sel: string) => ev(t, `(() => { const el = document.querySelector(${JSON.stringify(sel)}); if (!el) throw new Error('no ' + ${JSON.stringify(sel)}); el.click(); return 1 })()`)
 const select = (t: Tab, key: string) => ev(t, `__mvStore.getState().select(${JSON.stringify(key)}), 1`)
+/** A script run inside a frame: its own document's post, as bridge.js and inspect.js make them. */
+const inFrame = (t: Tab, node: string, js: string) => ev(t, `(() => { const w = document.querySelector('[data-node="${node}"] iframe').contentWindow; const s = w.document.createElement('script'); s.textContent = ${JSON.stringify(js)}; w.document.head.appendChild(s); return 1 })()`)
+const menuOn = async (t: Tab, sel: string, item: string) => {
+  await ev(t, `(() => { const el = document.querySelector(${JSON.stringify(sel)}) ?? [...document.querySelectorAll('.sh-panel button.it')].find((b) => b.textContent.trim().toLowerCase().startsWith(${JSON.stringify(sel)})); el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 200 })); return 1 })()`)
+  await browser!.until(t.s, `!!document.querySelector('.sh-ctxmenu')`, 5_000)
+  await ev(t, `[...document.querySelectorAll('.sh-ctxmenu button')].find((b) => b.textContent.includes(${JSON.stringify(item)})).click(), 1`)
+}
+const typed = async (t: Tab, text: string) => {
+  await browser!.until(t.s, `['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)`, 5_000)
+  await browser!.send('Input.insertText', { text }, t.s)
+}
+/** A comment staged and sent, from the frame's own pick to the composer's Enter. */
+async function sendComment(t: Tab, words: string) {
+  await key(t, 'c')
+  await browser!.until(t.s, `__mvComments.getState().commentMode`, 5_000)
+  await inFrame(t, 'n-one', `parent.postMessage({ type: 'sh:picked', id: 'demo/one', anchor: { el: 'h1', x: 0.5, y: 0.5 } }, '*')`)
+  await browser!.until(t.s, `!!document.querySelector('.cm-draft textarea')`, 5_000)
+  await ev(t, `document.querySelector('.cm-draft textarea').focus(), 1`)
+  await typed(t, words)
+  await key(t, 'Enter')
+}
 const hide = `Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' }), document.dispatchEvent(new Event('visibilitychange')), 1`
 
 describe('keys: the lifecycle each declares, and how it arrived', () => {
@@ -407,34 +434,130 @@ describe('a renderer lost mid-command (#48)', () => {
   }, 60_000)
 })
 
+describe('comments', () => {
+  it('a pick, a send, a pin, a copied link, a resolve, each its command', async (ctx) => {
+    if (!browser) return ctx.skip()
+    const t = await open()
+    const sentFrom = of(t, 'comment-send').length
+    await sendComment(t, 'a comment')
+    const sent = await ended(t, 'comment-send', sentFrom)
+    expect(sent.map((r) => r.phase)).toEqual(['start', 'end'])
+    expect(sent[0]).toMatchObject({ via: 'key', keys: 'Enter', in: 'shell' })
+    expect(sent[1]).toMatchObject({ outcome: 'done' })
+    expect((await ended(t, 'comment-pick'))[0]).toMatchObject({ via: 'click', in: 'frame', frame: 'demo/one' })
+    await expectDone(t, 'comments', () => key(t, 'c'))   // off: the pin is there to press
+    await browser.until(t.s, `!!document.querySelector('.cm-pin')`, 10_000)
+    await ev(t, `__mvComments.getState().setActive(null), 1`)   // a send leaves its own thread open; a press on its pin would close it
+    await browser.until(t.s, `!document.querySelector('.cm-card') && !!document.querySelector('.cm-pin, .cm-stack')`, 5_000)
+    await expectDone(t, 'thread-open', () => click(t, '.cm-pin, .cm-stack'), { via: 'click', in: 'shell' })
+    await browser.until(t.s, `!!document.querySelector('.cm-card textarea')`, 5_000)
+    await expectDone(t, 'comment-reply', async () => { await ev(t, `document.querySelector('.cm-card textarea').focus(), 1`); await typed(t, 'a reply'); await key(t, 'Enter') }, { via: 'key', keys: 'Enter' })
+    await ev(t, `document.activeElement?.blur?.(), 1`)
+    await expectDone(t, 'comment-resolve', () => ev(t, `(() => { const b = [...document.querySelectorAll('.cm-card .cm-icon')]; b[b.length - 2].click(); return 1 })()`), { via: 'click' })
+    await expectDone(t, 'escape', () => key(t, 'Escape'))
+  }, 90_000)
+
+  it('Esc in a composer is `draft-discard`, its own command; a press outside a card with none open writes nothing', async (ctx) => {
+    if (!browser) return ctx.skip()
+    const t = await open()
+    await key(t, 'c')
+    await browser.until(t.s, `__mvComments.getState().commentMode`, 5_000)
+    await inFrame(t, 'n-one', `parent.postMessage({ type: 'sh:picked', id: 'demo/one', anchor: { el: 'h1', x: 0.5, y: 0.5 } }, '*')`)
+    await browser.until(t.s, `!!document.querySelector('.cm-draft textarea')`, 5_000)
+    await ev(t, `document.querySelector('.cm-draft textarea').focus(), 1`)
+    await expectDone(t, 'draft-discard', () => key(t, 'Escape'), { via: 'key', keys: 'Escape', in: 'shell' })
+    expect(await ev(t, `__mvComments.getState().draft`)).toBe(null)
+    await inFrame(t, 'n-one', `parent.postMessage({ type: 'sh:frame-down', id: 'demo/one' }, '*')`)
+    await wait(500)
+    await flush(t)
+    await wait(200)
+    expect(of(t, 'thread-close'), 'silence: none was open').toEqual([])
+  }, 60_000)
+})
+
+describe('Jam', () => {
+  it('J, its sheet, S, its notes and Esc, each its command, with the key that gave it', async (ctx) => {
+    if (!browser) return ctx.skip()
+    const t = await open()
+    await browser.until(t.s, `!!window.__mvJamUi`, 5_000)
+    await expectDone(t, 'jam-session', () => key(t, 'j'), { via: 'key', in: 'shell', keys: 'j' })
+    await expectDone(t, 'jam-sheet-close', () => key(t, 'Escape'), { via: 'key', keys: 'Escape' })
+    const from = of(t, 'jam-capture').length
+    await key(t, 's')
+    const started = await ended(t, 'jam-capture', from, 30_000)
+    expect(started[0]).toMatchObject({ via: 'key', in: 'shell', keys: 's' })
+    expect(started.at(-1)).toMatchObject({ outcome: 'done' })
+    await browser.until(t.s, `!!__mvJamCapture.getState().current`, 5_000)
+    await expectDone(t, 'jam-notes', () => key(t, 'n'), { keys: 'n' })
+    await typed(t, 'a note')
+    await expectDone(t, 'jam-capture-note', () => key(t, 'Enter'), { via: 'key', keys: 'Enter' })
+    await expectDone(t, 'jam-notes-close', () => key(t, 'Escape'), { via: 'key', keys: 'Escape' })
+  }, 90_000)
+})
+
+describe('the sidebar: a board, a folder', () => {
+  it('Copy path by the menu; a rename, Esc and Enter; a new folder; its row folds', async (ctx) => {
+    if (!browser) return ctx.skip()
+    const t = await open()
+    await ev(t, `(navigator.clipboard.writeText = () => Promise.resolve(), 1)`)
+    await expectDone(t, 'copy-path', () => menuOn(t, '[data-board="other"]', 'Copy path'), { via: 'context', in: 'shell' })
+    const from = of(t, 'board-rename').length
+    await menuOn(t, '[data-board="other"]', 'Rename')
+    await typed(t, 'never kept')
+    await key(t, 'Escape')
+    const off = await ended(t, 'board-rename', from)
+    expect(off.at(-1)).toMatchObject({ outcome: 'cancelled' })
+    await expectDone(t, 'folder-new', async () => { await menuOn(t, '[data-board="other"]', 'Move to new folder'); await typed(t, 'grouped'); await key(t, 'Enter') }, { in: 'shell' })
+    await browser.until(t.s, `!!document.querySelector('[data-folder-row="grouped"]')`, 10_000)
+    await expectDone(t, 'folder-toggle', () => click(t, '[data-folder-row="grouped"]'), { via: 'click', in: 'shell' })
+    await expectDone(t, 'folder-toggle', () => click(t, '[data-folder-row="grouped"]'))
+    await expectDone(t, 'scene-toggle', () => click(t, '.sh-panel-scroll > div > button.it:not([data-board-row]):not([data-folder-row])'), { via: 'click', in: 'shell' })
+  }, 90_000)
+})
+
 describe('privacy (#4)', () => {
-  it('a sentinel typed into a rename field and the composer never appears in any perf file', async (ctx) => {
+  it('a sentinel typed into a rename field, the composer, the identity card and Jam\'s notes never appears in any perf file', async (ctx) => {
     if (!browser) return ctx.skip()
     const t = await open()
     // a rename field, saved with what was typed
-    await ev(t, `(() => { const row = [...document.querySelectorAll('.sh-panel button.it')].find((b) => b.textContent.trim().toLowerCase().startsWith('demo')); row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 200 })); return 1 })()`)
-    await browser.until(t.s, `!!document.querySelector('.sh-ctxmenu')`, 5_000)
-    await ev(t, `[...document.querySelectorAll('.sh-ctxmenu button')].find((b) => b.textContent.includes('Rename')).click(), 1`)
-    await browser.until(t.s, `document.activeElement?.tagName === 'INPUT'`, 5_000)
-    await browser.send('Input.insertText', { text: SENTINEL }, t.s)
+    const rename = of(t, 'scene-rename').length
+    await menuOn(t, 'demo', 'Rename')
+    await typed(t, SENTINEL)
     await key(t, 'Enter')
-    await ended(t, 'scene-rename', 0)
-    // the composer, its draft staged and a body typed and sent
-    await ev(t, `__mvComments.getState().setMode(true), __mvComments.getState().setDraft({ nodeKey: 'n-one', frame: 'demo/one', anchor: { el: 'main', x: 0.5, y: 0.5 } }), 1`)
-    await browser.until(t.s, `!!document.querySelector('[contenteditable="true"], .cm-card textarea')`, 10_000).catch(() => null)
-    const composer = await ev(t, `(() => { const el = document.querySelector('[contenteditable="true"], .cm-card textarea'); if (!el) return false; el.focus(); return true })()`)
-    if (composer) {
-      await browser.send('Input.insertText', { text: SENTINEL }, t.s)
-      await key(t, 'Enter')
-      await wait(500)
+    await ended(t, 'scene-rename', rename)
+    // the composer, a body typed and sent
+    const send = of(t, 'comment-send').length
+    await sendComment(t, SENTINEL)
+    await ended(t, 'comment-send', send)
+    await key(t, 'c')
+    await key(t, 'Escape')
+    // the identity card: an email and a password, submitted
+    await ev(t, `__mvComments.setState({ needsIdentity: true }), 1`)
+    await browser.until(t.s, `!!document.querySelector('.cm-modal input')`, 5_000)
+    const signin = of(t, 'sign-in').length
+    for (const type of ['email', 'password']) {
+      await ev(t, `document.querySelector('.cm-modal input[type="${type}"]').focus(), 1`)
+      await typed(t, type === 'email' ? `${SENTINEL.toLowerCase()}@example.com` : SENTINEL)
     }
+    await ev(t, `document.querySelector('.cm-modal .cm-primary').click(), 1`)
+    const answered = await ended(t, 'sign-in', signin)
+    expect(answered.map((r) => r.phase)).toEqual(['start', 'end'])
+    await ev(t, `__mvComments.setState({ needsIdentity: false }), 1`)
+    // Jam: a note in the capture's card
+    await key(t, 's')
+    await browser.until(t.s, `!!__mvJamCapture.getState().current`, 10_000)
+    await key(t, 'n')
+    await typed(t, SENTINEL)
+    await expectDone(t, 'jam-capture-note', () => key(t, 'Enter'))
     await flush(t)
     await wait(800)
     await flush(t)
     await wait(300)
     const files = existsSync(perfDir()) ? readdirSync(perfDir()) : []
     expect(files).toContain('page.jsonl')
-    for (const f of files) expect(readFileSync(join(perfDir(), f), 'utf8').includes(SENTINEL), f).toBe(false)
-  }, 90_000)
+    for (const f of files) {
+      const text = readFileSync(join(perfDir(), f), 'utf8').toLowerCase()
+      expect(text.includes(SENTINEL.toLowerCase()), f).toBe(false)
+    }
+  }, 120_000)
 })
-
