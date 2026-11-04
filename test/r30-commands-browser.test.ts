@@ -97,7 +97,8 @@ async function key(t: Tab, k: string, o: { code?: string; mods?: number; text?: 
   await browser!.send('Input.dispatchKeyEvent', { type: 'keyDown', ...base, ...(o.text === false || k.length !== 1 ? {} : { text: o.text ?? k }) }, t.s)
   await browser!.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base }, t.s)
 }
-const flush = (t: Tab) => ev(t, `window.__mvRecorder.send(), 1`)
+/** Everything waiting goes now. Never awaited by `until`: one still out as its renderer goes, or the browser closes, says nothing. */
+const flush = (t: Tab) => ev(t, `window.__mvRecorder.send(), 1`).catch(() => 0)
 /** This page's records of a command, newest run last, once its records reached the file. */
 const of = (t: Tab, name: string) => lines().filter((r) => r.kind === 'cmd' && r.page === t.page && r.cmd === name)
 /** The command's records since `from` records of it: waits for its end (or its one `once`), flushing the page. */

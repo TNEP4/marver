@@ -89,7 +89,7 @@ async function underPreload(perfInfo: string, title: string) {
     await browser!.send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code: `Key${k.toUpperCase()}`, text: k, windowsVirtualKeyCode: k.toUpperCase().charCodeAt(0) }, s)
     await browser!.send('Input.dispatchKeyEvent', { type: 'keyUp', key: k, code: `Key${k.toUpperCase()}`, windowsVirtualKeyCode: k.toUpperCase().charCodeAt(0) }, s)
   }
-  const flush = () => browser!.eval(s, 'window.__mvRecorder.send(), 1')
+  const flush = () => browser!.eval(s, 'window.__mvRecorder.send(), 1').catch(() => 0)
   await key('d')
   await until(() => { void flush(); return read('page.jsonl').some((r) => r.page === page && r.kind === 'theme') }, 20_000, 'the theme record')
   await key('l')
