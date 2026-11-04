@@ -19,6 +19,7 @@ import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { frameByWindow, fromLiveDocument } from './canvas/frame-registry.ts'
 import { recorder } from './recorder.ts'
 import { perfSeams } from './recorder-seams.ts'
+import { takeNavToken } from './recorder-reloads.ts'
 import { enterFocus, enterPlay, enterSlides, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, linkTargets, parseHash, retargetBoot, UNPLACED, writeHash } from './hash.ts'
 import { isLegacyLink, landLegacy } from './legacy-links.ts'
@@ -630,7 +631,8 @@ export function App() {
       const s = useStore.getState()
       if (m?.name !== s.board || m?.sha256 === s.boardHash || s.dirty) return
       const sel = s.selection
-      s.boot().then((ok) => {
+      // who may have written it (spec 30 #18): what the dev server's write match found, never proven
+      s.boot(undefined, 'disk', m?.writer ? { writer: m.writer, candidates: m.candidates } : undefined).then((ok) => {
         if (!ok) return
         const nodes = useStore.getState().nodes
         useStore.setState({ selection: sel.filter((k) => nodes.some((n) => n.key === k)) })
@@ -662,6 +664,8 @@ export function App() {
         // dropped by generation and document before it touches anything, so a stale ready never marks
         // a reloading frame ready, frees its admission slot or counts as seen
         if (!fromLiveDocument(el, data)) return
+        // spec 30 #14: what started this document, taken before setStatus pumps the next job and setShown moves its wait
+        const nav = takeNavToken(nodeKey, data)
         // a document that loaded again on its own (a full reload) is a new source revision: the
         // sleeping override of the previous document must not be trusted for this one
         if (s.nodes.find((n) => n.key === nodeKey)?.status === 'ready') s.bumpRev(nodeKey)
@@ -672,7 +676,7 @@ export function App() {
         // than the frame's last edit reloads
         const before = s.nodes.find((n) => n.key === nodeKey)?.shown
         if (typeof data.doc === 'string') s.setShown(nodeKey, data.doc)
-        logReload({ kind: 'ready', cause: takeReloadCause(nodeKey) ?? (before === undefined ? 'first' : 'self'), node: nodeKey, frame: String(data.id ?? ''), shown: typeof data.doc === 'string' ? data.doc : undefined, ms: Number(data.phases?.commit) })
+        logReload({ kind: 'ready', cause: takeReloadCause(nodeKey) ?? (before === undefined ? 'first' : 'self'), node: nodeKey, frame: String(data.id ?? ''), shown: typeof data.doc === 'string' ? data.doc : undefined, ms: Number(data.phases?.commit), ...nav })
       } else if (data.type === 'sh:error') {
         // the same guard as sh:ready: an error from a document since replaced fails nothing and is not recorded
         if (!fromLiveDocument(el, data)) return

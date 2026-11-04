@@ -8,7 +8,8 @@
  */
 import { admit, release } from './admission.ts'
 import { canvasCtl } from './ctl.ts'
-import { frameIsLeased, useStore, type Node } from '../store.ts'
+import { frameIsLeased, reloadHooks, useStore, type Node } from '../store.ts'
+import type { HeldBy } from '../../../shared/perf-records.ts'
 
 const rect = (key: string) => document.querySelector(`[data-node="${CSS.escape(key)}"]`)?.getBoundingClientRect()
 const view = () => document.querySelector('.sh-canvas')?.getBoundingClientRect()
@@ -26,11 +27,16 @@ const rank = (key: string) => () => {
   return r && c ? Math.hypot(r.x + r.width / 2 - c.x - c.width / 2, r.y + r.height / 2 - c.y - c.height / 2) : Infinity
 }
 
-const ready = (n: Node) => {
-  const s = useStore.getState()
-  // a document to replace (ready, or errored), never one still booting for the first time
-  return !!n.stale && !n.missing && (n.status === 'ready' || n.status === 'error') && !s.play && !frameIsLeased(n.frame, s) && onScreen(n.key)
+/** Why a node's job may not start now, or null - the one list of what holds a reload (the recorder reads it too, spec 30
+ *  #13). A document to replace (ready, or errored), never one still booting for the first time. */
+export function heldBy(n: Node, s = useStore.getState()): HeldBy | null {
+  if (n.missing) return 'missing'
+  if (n.status !== 'ready' && n.status !== 'error') return 'loading'
+  if (s.play) return 'play'
+  if (frameIsLeased(n.frame, s)) return 'leased'
+  return onScreen(n.key) ? null : 'offscreen'
 }
+const ready = (n: Node) => !!n.stale && !heldBy(n)
 
 let ticker: ReturnType<typeof setInterval> | undefined
 
@@ -42,7 +48,8 @@ export function pumpUpdates(): void {
   if (!stale.length) { clearInterval(ticker); ticker = undefined; return }
   ticker ??= setInterval(pumpUpdates, 400)
   for (const n of stale) {
-    if (!ready(n)) continue
+    const why = heldBy(n, s)
+    if (why) { reloadHooks.held(n.key, why); continue }
     admit({
       key: n.key,
       rank: rank(n.key),

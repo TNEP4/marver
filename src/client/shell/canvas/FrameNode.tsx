@@ -10,13 +10,15 @@ import { registerFrame, unregisterFrame } from './frame-registry.ts'
 import { canvasClick, canvasPointer, frameGone, frameLoaded, pressNow, useJamCapture } from '../jam-capture.ts'
 import { primeCameraFor } from './camera-broadcast.ts'
 import { scheduleSleep, sleep, wake } from './sleep.ts'
-import { canAutoReload, shouldArmReadyWatch } from './ready-watch.ts'
+import { canAutoReload, silenceAction } from './ready-watch.ts'
+import { watchdogLine } from '../recorder-reloads.ts'
 import { Stickies, type NoteSpec } from './Sticky.tsx'
 import { recorder } from '../recorder.ts'
 import { noteId, sceneNoteHost } from '../notes.ts'
 import { slideSize, stageFit } from '../../const.ts'
 import { FrameSlot, toneOf, useFrameMark } from '../marks-ui.tsx'
 import { stranded } from '../api.ts'
+import { WATCHDOG_MS } from '../../../shared/perf-records.ts'
 
 export const HEADER = 28
 const SNAP = 12
@@ -282,7 +284,11 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     if (!admitted || node.status !== 'loading' || !frame || node.missing) return
     // the second silence gives the slot back, and is the recorder's never-ready (spec 28 A1.7) - the frame stays
     // loading, never a red card
-    const t = setTimeout(() => { if (shouldArmReadyWatch(node, true)) reloadRef.current(true); else { release(node.key); recorder.neverReady(node.key) } }, 10_000)
+    const t = setTimeout(() => {
+      const action = silenceAction(node, true)
+      watchdogLine(node.key, action)   // the silence is a line, before the retry (spec 30 #20)
+      if (action === 'retry') reloadRef.current(true); else { release(node.key); recorder.neverReady(node.key) }
+    }, WATCHDOG_MS)
     return () => clearTimeout(t)
     // depend on the frame's stable SIGNATURE, not the manifest object - that object is replaced on
     // every manifest reconcile, so depending on it would reset the budget on unrelated frames during

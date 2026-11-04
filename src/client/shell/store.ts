@@ -6,6 +6,8 @@ import { stableNodeKey } from './keys.ts'
 import { canvasCtl } from './canvas/ctl.ts'
 import { api, beforeResume, canvasStopped, holdsReload, lostInResume, mvFetch, noteUnsaved, onLinkNotice, savedInResume, scoped, STOPPED_WAY, withWs } from './api.ts'
 import { unsavedWhen, workChanged } from './unsaved.ts'
+import { nextSeq, PAGE_ID } from './recorder-seams.ts'
+import type { BoardWriter, HeldBy, LoadTrigger } from '../../shared/perf-records.ts'
 // @ts-expect-error virtual module provided by the plugin
 import shConfig from 'virtual:sh-config'
 // @ts-expect-error virtual module: null in dev; a published build inlines manifest+boards
@@ -272,11 +274,26 @@ const TAB = Math.random().toString(36).slice(2, 8)
  *  means a first load, or a document that reloaded itself (the reload log tells them apart). */
 const reloadCause = new Map<string, 'job' | 'manual' | 'retry'>()
 export const takeReloadCause = (key: string) => { const c = reloadCause.get(key); reloadCause.delete(key); return c }
+/** A reload line with its envelope (spec 30 #16): the tab, and the page and seq the `(page, seq)` dedupe reads. */
+export const reloadLine = (entry: Record<string, unknown>): Record<string, unknown> => ({ tab: TAB, page: PAGE_ID, seq: nextSeq(), ts: Date.now(), ...entry })
+/** The edit's way to the frames, as the recorder sees it: recorder-reloads.ts installs these at the full level (spec 30
+ *  R1). Until then, and under `core`, a line goes as 0.29's did - one unconfirmed request - and the rest do nothing. */
+export const reloadHooks = {
+  line: (l: Record<string, unknown>): void => {
+    const body = { records: [l] }
+    // a page's very first request may go before its request cookie exists: a GET primes it, then once more
+    void postOwner('perf/reload', body).then((r) => (r.status === 403 ? api('work').then(() => postOwner('perf/reload', body)) : r)).catch(() => {})
+  },
+  /** an edit reached these frames: before their nodes go stale */
+  invalidated: (_frames: ReadonlySet<string>, _revision: string): void => {},
+  /** a reload job started this navigation of a node */
+  started: (_key: string, _nav: number): void => {},
+  /** a stale node's turn was refused, and why (canvas/updates.ts) */
+  held: (_key: string, _why: HeldBy): void => {},
+}
 export const logReload = (entry: Record<string, unknown>) => {
   if (PUBLISHED) return
-  const body = { tab: TAB, ...entry }
-  // a page's very first request may go before its request cookie exists: a GET primes it, then once more
-  void postOwner('perf/reload', body).then((r) => (r.status === 403 ? api('work').then(() => postOwner('perf/reload', body)) : r)).catch(() => {})
+  reloadHooks.line(reloadLine(entry))
 }
 const postOwner = (path: string, body: unknown) =>
   api(path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify(body) })
@@ -517,7 +534,8 @@ export type RequestCut = 'superseded' | 'error' | 'edited' | 'unsaved'
  *  on a published one. A request owns the geometry from its commit, and `commit` runs right BEFORE the set that
  *  mounts the load: mounting it is never a move. */
 export const recorderHooks = {
-  request: (_board: string, _cause: LoadCause): string => '',
+  /** `trigger`, `writer`: why it read the board again, and who may have written it (spec 30 #17, #18) */
+  request: (_board: string, _cause: LoadCause, _trigger?: LoadTrigger, _writer?: BoardWriter): string => '',
   /** a request is about to commit: the load that was up ends - before the incoming sizes are installed, so it ends by
    *  the sizes it read (which frames measure), its board's nodes still in the store */
   handover: (_request: string): void => {},
@@ -633,8 +651,9 @@ interface State {
   imageBusy: boolean                                       // a copy-as-image render is in flight (one at a time)
 
   /** (re)load the open board from disk. `mayCommit`, when given, is asked again at the moment the
-   *  reload would land - a caller's own conditions (a status write's: nothing moved since its flush) */
-  boot(mayCommit?: () => boolean): Promise<boolean>
+   *  reload would land - a caller's own conditions (a status write's: nothing moved since its flush).
+   *  `trigger`, `writer`: why it reads the board again, and who may have written it - the recorder's (spec 30 #17, #18) */
+  boot(mayCommit?: () => boolean, trigger?: LoadTrigger, writer?: BoardWriter): Promise<boolean>
   applyManifest(m: Manifest): void
   frameFor(node: Node): FrameEntry | undefined
   moveNode(key: string, x: number, y: number): void
@@ -1168,12 +1187,12 @@ export const useStore = create<State>((set, get) => {
     panelOpen: true, scale: 1, toasts: [], working: [], workingSince: {}, workingBoards: [], workingSeq: -1, boardHash: null, dirty: false, boardTitles: DATA?.titles ?? {}, boardMeta: DATA?.meta ?? {},
     externalLeases: {}, playUpdateRevision: null, stageShown: null, playNav: 0, pathPulse: 0, imagePulse: 0, imageBusy: false,
 
-    async boot(mayCommit) {
+    async boot(mayCommit, trigger, writer) {
       const seq = ++loadSeq
       recorderHooks.cut(bootRequest, 'superseded')
       const boardName = get().board
       // the recorder's request (spec 28 A1.7): the page's first load, else the open board read from disk again
-      const request = bootRequest = recorderHooks.request(boardName, firstLoad ? 'boot' : 'disk-reload')
+      const request = bootRequest = recorderHooks.request(boardName, firstLoad ? 'boot' : 'disk-reload', firstLoad ? 'first' : trigger, writer)
       firstLoad = false
       const revAtStart = editRev, scenesAtStart = scenesRev
       const loaded = await loadBoardState(boardName)
@@ -1268,7 +1287,7 @@ export const useStore = create<State>((set, get) => {
           try {
             res = await send(active && get().boardHash ? get().boardHash : baseHash)
             // the open board changed on disk: reload it, then once more (setBoardStatus's reasoning)
-            if (res.status === 409 && mayReload() && await get().boot(mayReload)) res = await send(get().boardHash)
+            if (res.status === 409 && mayReload() && await get().boot(mayReload, 'save-conflict')) res = await send(get().boardHash)
           }
           catch { return { ok: false, error: 'could not reach the dev server' } }
           const body = await res.json().catch(() => ({} as { error?: string; sha256?: string }))
@@ -1306,7 +1325,7 @@ export const useStore = create<State>((set, get) => {
             // the open board changed on disk (an agent wrote it): its hash in the store is behind, and a
             // retry with it would 409 again - reload the board (layout and hash together) when nothing
             // has changed here since the flush, then try once more against what is on disk now
-            if (res.status === 409 && mayReload() && await get().boot(mayReload)) res = await send(get().boardHash)
+            if (res.status === 409 && mayReload() && await get().boot(mayReload, 'save-conflict')) res = await send(get().boardHash)
           }
           catch { return { ok: false, error: 'could not reach the dev server' } }
           const body = await res.json().catch(() => ({} as { error?: string; sha256?: string }))
@@ -1762,6 +1781,7 @@ export const useStore = create<State>((set, get) => {
       // every document of these frames is behind - one loading too (one running, one waiting): a document
       // that shows the revision the edit made clears it when it is ready (setShown)
       const want = (f: string) => (docs?.epoch && typeof docs.docs?.[f] === 'number' ? `${docs.epoch}:${docs.docs[f]}` : undefined)
+      reloadHooks.invalidated(ids, revision)
       const nodes = s.nodes.map((n) => (ids.has(n.frame) && !n.missing ? { ...n, stale: true, want: later(n.want, want(n.frame)) } : n))
       set({ nodes, ...(s.play ? { playUpdateRevision: revision } : {}) })
       pumpUpdates()
@@ -1776,6 +1796,7 @@ export const useStore = create<State>((set, get) => {
       set((s) => ({ nodes: s.nodes.map((x) => (x.key === key
         ? { ...x, stale: false, status: 'loading' as const, error: undefined, nav: (x.nav ?? 0) + 1, readyRetried: false }
         : x)) }))
+      reloadHooks.started(key, (n.nav ?? 0) + 1)
     },
     setShown(key, shown) {
       set((s) => ({ nodes: s.nodes.map((x) => {
@@ -2150,7 +2171,7 @@ export const useStore = create<State>((set, get) => {
               lostInResume('gone')   // a save while a resume is owed: the page after its reload says this, not "saved"
               return true
             }
-            const reloaded = await get().boot()   // hash advances only when the authoritative reload commits
+            const reloaded = await get().boot(undefined, 'save-conflict')   // hash advances only when the authoritative reload commits
             if (reloaded) { get().toast(DISK_WON); lostInResume('disk') }
             return reloaded   // false keeps dirty set; the next debounce retries once edits settle
           }

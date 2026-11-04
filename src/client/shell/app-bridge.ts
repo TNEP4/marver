@@ -172,7 +172,7 @@ export async function resumeReconcile(): Promise<void> {
     const now = useStore.getState()
     if (now.board !== board || now.dirty || now.gesture) return
     const disk = typeof body?.sha256 === 'string' ? body.sha256 : null
-    if (disk !== now.boardHash) await now.boot()
+    if (disk !== now.boardHash) await now.boot(undefined, 'app-shown')
   } catch { /* the next shown, or the live socket, heals it */ } finally { reconciling = false }
 }
 

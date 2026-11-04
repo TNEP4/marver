@@ -96,7 +96,7 @@ export function createChanges(o: {
     brackets.delete(t)
     if (t.hmrTs !== undefined) runs.delete(runKey(t.file, t.hmrTs))
     const q = open.get(t.file)
-    if (q) {
+    if (q?.includes(t)) {
       q.splice(q.indexOf(t), 1)
       if (!q.length) open.delete(t.file)
     }

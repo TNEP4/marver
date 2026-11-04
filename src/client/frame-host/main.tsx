@@ -3,12 +3,14 @@
  * Boot failures (theme, providers, layouts, the frame itself) render a plain-DOM error card
  * and post sh:error; an ErrorBoundary catches render-time throws the same way.
  */
-import { Component, createElement, useLayoutEffect, type ReactNode } from 'react'
+import { Component, createElement, Profiler, useLayoutEffect, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import './bridge.js'
 import { frameFile, frames, layoutChain, layouts, providers } from './registry.ts'
 import { SLIDE_DOC_CSS } from '../const.ts'
+import { fullRecorder } from '../recorder-level.ts'
+import { rootCommitted, watchInplace } from './inplace.ts'
 
 const params = new URLSearchParams(location.search)
 const id = params.get('id') ?? ''
@@ -70,7 +72,8 @@ class Boundary extends Component<{ children: ReactNode }, { err: Error | null }>
  *  outermost element runs after every child's, before the first paint of the tree). */
 function Committed({ onCommit, children }: { onCommit: () => void; children?: ReactNode }) {
   useLayoutEffect(onCommit, [])
-  return children
+  // spec 30 #15: an in-place update's next observed commit (dev, the full level; a published frame has no hot module)
+  return import.meta.hot && fullRecorder() ? createElement(Profiler, { id: 'mv-inplace', onRender: rootCommitted }, children) : children
 }
 
 async function boot() {
@@ -128,3 +131,5 @@ boot()
 if (import.meta.hot) import.meta.hot.on('vite:afterUpdate', (p: { updates?: { acceptedPath?: string; path?: string }[] }) => {
   if (p.updates?.some((u) => !(u.acceptedPath ?? u.path ?? '').includes('/frame-host/registry'))) post({ type: 'sh:hmr', id })
 })
+// spec 30 #15: what this document saw of an update applied in place, and only if it fetched it
+if (import.meta.hot && fullRecorder()) watchInplace(import.meta.hot, (m) => post({ ...m, id, boot: docId() }))

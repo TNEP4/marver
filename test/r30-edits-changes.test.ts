@@ -218,7 +218,7 @@ describe('real Vite: the bracket, under runs that truly overlap', () => {
     server = await createServer({
       configFile: false, root, logLevel: 'silent', appType: 'custom',
       optimizeDeps: { noDiscovery: true, include: [] },
-      server: { middlewareMode: true, hmr: { port: 7600 + Math.floor(Math.random() * 300) }, watch: { ignored: ['**'] } },
+      server: { middlewareMode: true, hmr: { port: 10100 + Math.floor(Math.random() * 200) }, watch: { ignored: ['**'] } },
       plugins: [watcher, tailwindLike, updatesBeginPlugin(changes), updatesPlugin(root, () => manifest, () => hooks, () => {}, changes)],
     })
     const hot = server.environments.client.hot as unknown as { on: (ev: string, fn: (p: { path?: string }) => void) => void }
