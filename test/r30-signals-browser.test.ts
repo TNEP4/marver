@@ -437,6 +437,25 @@ describe('R5: more bugs', () => {
     await browser.send('Fetch.disable', {}, s).catch(() => {})
   }, 90_000)
 
+  it('the shell limits a source to 5 a second before anything else, and what it refuses is counted under that source', async () => {
+    if (!browser) return
+    const { s, page } = await open('three')
+    await sendNow(s)
+    await wait(400)
+    const before = droppedOf(page, 'api'), kept = errorsOf(page, 'api').length
+    // twelve refusals in one turn, each its own message
+    await browser.eval(s, `${shellModule('api')}.then(async (m) => {
+      const { perfSeams } = await ${shellModule('recorder-seams')}
+      for (let i = 0; i < 12; i++) perfSeams.answered.emit({ url: '/__mv/api/route' + i, init: {}, headers: undefined, status: 500, ms: 1 })
+      return true
+    })`)
+    await until(() => errorsOf(page, 'api').length - kept + droppedOf(page, 'api') - before === 12, 10_000, 'twelve accounted for')
+    const got = errorsOf(page, 'api').length - kept
+    expect(got).toBeGreaterThanOrEqual(1)
+    expect(got).toBeLessThanOrEqual(10)   // two wall seconds at most
+    expect(droppedOf(page, 'api') - before).toBeGreaterThanOrEqual(2)
+  }, 90_000)
+
   it('a missing image: its path with no query; another origin: its origin alone; the shell\'s own too', async () => {
     if (!browser) return
     const { s, page } = await open('three')
@@ -517,6 +536,8 @@ describe('R5: more bugs', () => {
     await sendNow(s)
     const counted = () => errorsOf(page, 'console').filter((r) => r.frame).length + droppedOf(page, 'console') + droppedOf(page, 'errors')
     await until(() => counted() === calls, 15_000, 'the log to add up').catch(() => expect(counted()).toBe(calls))
+    // the shell's own limit for the source: 5 a second, over the burst's few seconds
+    expect(errorsOf(page, 'console').length).toBeLessThanOrEqual(30)
     expect(errorsOf(page, 'console').length).toBeLessThan(calls)
     expect(droppedOf(page, 'console')).toBeGreaterThan(0)
   }, 180_000)
