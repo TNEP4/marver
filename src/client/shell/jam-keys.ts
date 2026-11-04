@@ -16,10 +16,14 @@
  * The same table says which keys the shell owns right now; they are mirrored into every frame (a
  * frame consumes an owned key - before a focused button sees ⏎ - and forwards it). `Tab` is never
  * owned. A tag's card never reaches `Q`, `V`, `K` or `⌘⏎`: it lives in its thread.
+ *
+ * A key the table takes is a command (spec 30 R12), named in its row and started before what it does; one no state takes
+ * records nothing here (the shell's own handler has it). State set in the key's turn ends two frames on (`sync`); work
+ * that answers a boolean ends on the answer (`endOnOk`).
  */
 import { useJamCapture, setOwnedKeys } from './jam-capture.ts'
 import { changedShots, useJamQueue, type JamCard } from './jam-queue.ts'
-import { DONE_CLOSE, DONE_GROUP, doneFold, jamSurface, useJamUi } from './jam-state.ts'
+import { DONE_CLOSE, DONE_GROUP, doneFold, endOnOk, jamSurface, useJamUi } from './jam-state.ts'
 import { pressJ, startSession, wrapWrite } from './jam-session.tsx'
 import { clearMoreDraft } from './jam-panel.tsx'
 import { CONFIG, PUBLISHED, SOURCE_REVEALED, useStore } from './store.ts'
@@ -27,6 +31,8 @@ import { ALL_SCENES } from '../../shared/board-tree.ts'
 import { holdsReload } from './api.ts'
 import { navigated, switchFor } from './goto.ts'
 import { unsavedWhen, workChanged } from './unsaved.ts'
+import { cmd, endAfterFrames, type CmdHandle, type CmdOpts } from './commands.ts'
+import type { CmdIn } from '../../shared/perf-records.ts'
 
 export interface KeyIn { key: string; shift?: boolean; alt?: boolean; meta?: boolean; ctrl?: boolean }
 /** `[Ctrl+][Meta+][Alt+][Shift+]key`, a letter lowercase - the frames' descriptor (keys.js). */
@@ -58,18 +64,20 @@ const latest = new Map<string, number>()
 let gen = 0
 /** The words written for a card that have not saved yet - the read-back keeps showing them. */
 export const pendingEdit = (id: string): string | undefined => unsaved.get(id)
-/** Save the read-back's edit (the text stays where it is if the save fails - see `decideDraft`). */
-export function saveEdit(c: JamCard, text: string) {
+/** Save the read-back's edit (the text stays where it is if the save fails - see `decideDraft`): answers whether it saved. */
+export function saveEdit(c: JamCard, text: string): Promise<boolean> {
   const g = ++gen
   latest.set(c.id, g)
   unsaved.set(c.id, text)
   workChanged()
   const before = saving.get(c.id) ?? Promise.resolve(true)
   // saves of one card run in order, each at the card's rev as the one before left it
-  saving.set(c.id, before.then(() => {
+  const p = before.then(() => {
     const fresh = useJamQueue.getState().cards?.find((x) => x.id === c.id) ?? c
     return useJamQueue.getState().act(fresh, 'edit', text)
-  }).then((ok) => { if (ok && latest.get(c.id) === g) { unsaved.delete(c.id); workChanged() } return ok }))
+  }).then((ok) => { if (ok && latest.get(c.id) === g) { unsaved.delete(c.id); workChanged() } return ok })
+  saving.set(c.id, p)
+  return p
 }
 /** Notes added in a read-back not saved yet, per card: each with its own id - one on its way, or one that failed
  *  and waits to be sent again. Sent again (from the field, or before a decision) it keeps its id: the server
@@ -116,33 +124,34 @@ async function notesSaved(id: string): Promise<boolean> {
 
 /** Confirm or keep a draft AFTER its edit has saved - an edit that failed is saved again first, and
  *  nothing is sent while it still fails; at the card's new rev; the panel closes once the decision
- *  took, and a refusal says why. */
-export async function decideDraft(id: string, action: 'confirm' | 'keep' | 'drop') {
+ *  took, and a refusal says why. Answers whether it took. */
+export async function decideDraft(id: string, action: 'confirm' | 'keep' | 'drop'): Promise<boolean> {
   await saving.get(id)
   if (action !== 'drop' && unsaved.has(id)) {
     const c = useJamQueue.getState().cards?.find((x) => x.id === id)
     if (c) saveEdit(c, unsaved.get(id)!)
     await saving.get(id)
-    if (unsaved.has(id)) { useStore.getState().toast('your edit could not be saved - look at it again before you send it'); return }
+    if (unsaved.has(id)) { useStore.getState().toast('your edit could not be saved - look at it again before you send it'); return false }
   }
   // a note added in its read-back goes with it: one that did not save is sent again, and nothing is sent without it
-  if (action !== 'drop' && unsavedNotes.has(id) && !(await notesSaved(id))) { useStore.getState().toast('your note could not be added - try again before you send it'); return }
+  if (action !== 'drop' && unsavedNotes.has(id) && !(await notesSaved(id))) { useStore.getState().toast('your note could not be added - try again before you send it'); return false }
   if (action === 'drop') { unsaved.delete(id); unsavedNotes.delete(id); workChanged() }
   const fresh = useJamQueue.getState().cards?.find((c) => c.id === id)
-  if (!fresh) return
-  if (await useJamQueue.getState().act(fresh, action)) useJamUi.getState().close()
-  else useStore.getState().toast(`the capture could not be ${action === 'confirm' ? 'queued' : action === 'keep' ? 'kept' : 'dropped'} - look again`)
+  if (!fresh) return false
+  if (await useJamQueue.getState().act(fresh, action)) { useJamUi.getState().close(); return true }
+  useStore.getState().toast(`the capture could not be ${action === 'confirm' ? 'queued' : action === 'keep' ? 'kept' : 'dropped'} - look again`)
+  return false
 }
 
 /** Leave a field in the open panel (its words save on blur) - before anything takes the panel away. */
 const leavePanelField = () => { const a = document.activeElement; if (a instanceof HTMLElement && a.closest('.jm-focus')) a.blur() }
 
 /** Resume a draft that ended too soon: its edit saves first (the resumed capture carries it on), the
- *  read-back closes, and recording goes on where it stopped. */
-export async function resumeDraft(id: string) {
+ *  read-back closes, and recording goes on where it stopped. Answers whether it did. */
+export async function resumeDraft(id: string): Promise<boolean> {
   const cap = useJamCapture.getState()
-  if (cap.current) { useStore.getState().toast('a capture is recording - press E to end it first'); return }
-  if (cap.settling || cardById(id)?.state !== 'draft') return
+  if (cap.current) { useStore.getState().toast('a capture is recording - press E to end it first'); return false }
+  if (cap.settling || cardById(id)?.state !== 'draft') return false
   // first, at once: leave the editor (its words start saving) and lock the words - from here on nothing
   // typed can race the start; the lock holds through every wait and is let go at the end
   if (useJamUi.getState().panel?.id === id) leavePanelField()
@@ -156,14 +165,14 @@ export async function resumeDraft(id: string) {
       if (unsavedNotes.has(id) && !(await notesSaved(id))) { useStore.getState().toast('your note could not be added - try again before you resume'); return false }
       return cardById(id)?.state === 'draft'
     }
-    if (!(await settled())) return
-    if (await useJamCapture.getState().resume(id, settled)) {
-      // as the UI is NOW (another panel may have opened meanwhile): only what points at it
-      const ui = useJamUi.getState()
-      if (ui.panel?.id === id) ui.close()
-      // its tile has stepped aside: nothing points at it, and the lane gives its keys back
-      if (ui.selected === id) { ui.select(null); ui.setLaneKeys(false) }
-    }
+    if (!(await settled())) return false
+    if (!(await useJamCapture.getState().resume(id, settled))) return false
+    // as the UI is NOW (another panel may have opened meanwhile): only what points at it
+    const ui = useJamUi.getState()
+    if (ui.panel?.id === id) ui.close()
+    // its tile has stepped aside: nothing points at it, and the lane gives its keys back
+    if (ui.selected === id) { ui.select(null); ui.setLaneKeys(false) }
+    return true
   } finally { useJamCapture.setState({ settling: null }) }
 }
 
@@ -302,8 +311,8 @@ export async function openThreadAt(board: string, thread: string, o: { card?: Ja
 }
 
 /** Open a card's thread where you can see it, as a notification does (openThreadAt): a click is never a no-op. */
-export function openThread(c: JamCard) {
-  if (c.thread) void openThreadAt(c.board, c.thread, { card: c })
+export function openThread(c: JamCard): Promise<boolean> {
+  return c.thread ? openThreadAt(c.board, c.thread, { card: c }) : Promise.resolve(false)
 }
 
 /**
@@ -355,7 +364,11 @@ function nextReview(from?: string, step = 1) {
 const act = (c: JamCard | undefined, action: Parameters<ReturnType<typeof useJamQueue.getState>['act']>[1], body?: string) =>
   c ? useJamQueue.getState().act(c, action, body) : Promise.resolve(false)
 
-interface Row { on(): boolean; keys: Record<string, () => void> }
+/** A state, and what each of its keys does: given how the key arrived, each names its command (spec 30). */
+interface Row { on(): boolean; keys: Record<string, (o: CmdOpts) => void> }
+
+/** A key's effect that is state set in this turn: its `h` ends on the Jam state's transition, two frames on. */
+const sync = (h: CmdHandle, change: () => void) => { change(); endAfterFrames(h) }
 
 /** The run on screen, when a review is open: a capture started now binds it. */
 function reviewNow(): { card: string; batch: string; rev: number } | undefined {
@@ -365,12 +378,22 @@ function reviewNow(): { card: string; batch: string; rev: number } | undefined {
   return ui.panel?.kind === 'review' && c?.kind === 'capture' && c.batch ? { card: c.id, batch: c.batch, rev: c.rev } : undefined
 }
 
-/** Esc while a laser (pointer or inspect) is on turns it off, and that is all it does. */
-const laserOff = (): boolean => { const st = useStore.getState(); if (!st.laser) return false; st.setLaser(false); return true }
+/** Esc while a laser (pointer or inspect) is on turns it off, and that is all it does: the shell's `escape`. */
+const laserOff = (o: CmdOpts): boolean => {
+  const st = useStore.getState()
+  if (!st.laser) return false
+  const h = cmd('escape', o)
+  h.step('laser-off')
+  sync(h, () => st.setLaser(false))
+  return true
+}
 
 /** Start a capture, as S does: one made while a capture's review is open follows that review (its run).
  *  `session`: the session it belongs to when the queue may not show it yet (a session's Start). */
 export const startCapture = (session?: string) => useJamCapture.getState().start(reviewNow(), session)
+
+/** `jam-capture`, once it asked for one: a capture recording now, or refused - the canvas stopped, a wrap-up, no board. */
+export const endOnRecording = (h: CmdHandle) => { if (useJamCapture.getState().current) endAfterFrames(h); else h.fail('refused') }
 
 /** A laser on (pointer or inspect): its keys come first - Esc turns it off before it closes, drops or leaves anything -
  *  and are owned, so they work from inside a frame too (a laser click puts the focus there). The one row a published
@@ -378,9 +401,9 @@ export const startCapture = (session?: string) => useJamCapture.getState().start
 const laserRow: Row = {
   on: () => useStore.getState().laser,
   keys: {
-    l: () => useStore.getState().toggleLaser(false),
-    'Alt+l': () => useStore.getState().toggleLaser(true),
-    Escape: () => useStore.getState().setLaser(false),
+    l: (o) => { cmd('laser', o); useStore.getState().toggleLaser(false) },
+    'Alt+l': (o) => { cmd('inspect', o); useStore.getState().toggleLaser(true) },
+    Escape: (o) => { const h = cmd('escape', o); h.step('laser-off'); sync(h, () => useStore.getState().setLaser(false)) },
   },
 }
 const rowsNow = (): Row[] => (PUBLISHED ? (SOURCE_REVEALED ? [laserRow] : []) : rows())
@@ -389,66 +412,90 @@ const rows = (): Row[] => {
   const cap = useJamCapture.getState()
   const ui = useJamUi.getState()
   const panelCard = cardById(ui.panel?.id)
+  /** A frame tab, as far as there are tabs (⌥← ⌥→): at the ends nothing moves. */
+  const tabTo = (h: CmdHandle, i: number) => {
+    const to = Math.min(Math.max(1, changedShots(panelCard?.shots).length) - 1, Math.max(0, i))
+    if (to === ui.tab) h.noop('end'); else sync(h, () => ui.setTab(to))
+  }
   return [
     laserRow,
     { // a session sheet open: the start sheet's ⏎ starts; Esc closes either (the wrap-up's field keeps its own keys)
       on: () => ui.sheet === 'start' || ui.sheet === 'wrap',
       keys: {
-        Enter: () => { if (ui.sheet === 'start') void startSession(); else wrapWrite.current?.() },
-        Escape: () => ui.setSheet(null),
+        Enter: (o) => {
+          if (ui.sheet === 'start') { void endOnOk(cmd('jam-start', o), startSession()); return }
+          const h = cmd('jam-wrap-send', o)
+          if (wrapWrite.current) wrapWrite.current(h); else h.fail('refused')
+        },
+        Escape: (o) => { cmd('jam-sheet-close', o); ui.setSheet(null) },
         // over the wrap-up, no new capture starts (it would miss the record): close the sheet first
-        ...(ui.sheet === 'wrap' ? { s: () => useStore.getState().toast('the session is wrapping up - close the sheet (Esc) to capture again') } : {}),
+        ...(ui.sheet === 'wrap' ? { s: (o: CmdOpts) => { cmd('jam-capture', o).fail('refused'); useStore.getState().toast('the session is wrapping up - close the sheet (Esc) to capture again') } } : {}),
       },
     },
     { // a read-back open
       on: () => ui.panel?.kind === 'capture' && panelCard?.state === 'draft',
       keys: {
-        Enter: () => void decideDraft(panelCard!.id, 'confirm'),
-        k: () => void decideDraft(panelCard!.id, 'keep'),
-        r: () => void resumeDraft(panelCard!.id),
+        Enter: (o) => void endOnOk(cmd('jam-confirm', o), decideDraft(panelCard!.id, 'confirm')),
+        k: (o) => void endOnOk(cmd('jam-keep', o), decideDraft(panelCard!.id, 'keep')),
+        r: (o) => void endOnOk(cmd('jam-resume', o), resumeDraft(panelCard!.id)),
         // a laser on: Esc turns it off first - never a drop by the way
-        Escape: () => { if (laserOff()) return; void decideDraft(panelCard!.id, 'drop') },
+        Escape: (o) => { if (laserOff(o)) return; void endOnOk(cmd('jam-drop', o), decideDraft(panelCard!.id, 'drop')) },
       },
     },
     { // the notes card open (in its field, the field handles its own keys)
       on: () => cap.noteOpen,
       keys: {
-        Escape: () => cap.setNoteOpen(false),
-        n: () => window.dispatchEvent(new CustomEvent('mv-jam-note-focus')),
+        Escape: (o) => { cmd('jam-notes-close', o); cap.setNoteOpen(false) },
+        n: (o) => sync(cmd('jam-notes', o), () => window.dispatchEvent(new CustomEvent('mv-jam-note-focus'))),
       },
     },
     { // a capture open
       on: () => !!cap.current,
       keys: {
-        e: () => cap.end(),                  // straight to the queue
-        'Shift+e': () => cap.end(true),      // stop to review: its read-back opens
-        s: () => cap.start(),                // one at a time: it says to end this one first
+        e: (o) => sync(cmd('jam-end', o), () => cap.end()),                  // straight to the queue
+        'Shift+e': (o) => sync(cmd('jam-end-review', o), () => cap.end(true)),      // stop to review: its read-back opens
+        s: (o) => { const h = cmd('jam-capture', o); cap.start(); h.fail('refused') },   // one at a time: it says to end this one first
         // L: laser picks - a pick inside a capture is its pick (frames forward it while interacting)
         // L: the pointer laser; ⌥L: inspect - a laser click inside a capture is its pick either way
-        l: () => { void import('./comments-store.ts').then(({ useComments }) => useComments.getState().setMode(false)); useStore.getState().toggleLaser(false) },
-        'Alt+l': () => { void import('./comments-store.ts').then(({ useComments }) => useComments.getState().setMode(false)); useStore.getState().toggleLaser(true) },
-        n: () => { cap.setNoteOpen(true); window.dispatchEvent(new CustomEvent('mv-jam-note-focus')) },
-        i: () => cap.picture(),
+        l: (o) => { cmd('laser', o); void import('./comments-store.ts').then(({ useComments }) => useComments.getState().setMode(false)); useStore.getState().toggleLaser(false) },
+        'Alt+l': (o) => { cmd('inspect', o); void import('./comments-store.ts').then(({ useComments }) => useComments.getState().setMode(false)); useStore.getState().toggleLaser(true) },
+        n: (o) => sync(cmd('jam-notes', o), () => { cap.setNoteOpen(true); window.dispatchEvent(new CustomEvent('mv-jam-note-focus')) }),
+        // no frame to picture, or at its limit: nothing was asked for (a picture asked for moves the capture's tick)
+        i: (o) => { const h = cmd('jam-picture', o); const was = useJamCapture.getState().tick; cap.picture(); if (useJamCapture.getState().tick === was) h.fail('refused'); else endAfterFrames(h) },
         // a laser on: Esc turns it off first - the recording goes on
-        Escape: () => { if (laserOff()) return; cap.drop() },
+        Escape: (o) => { if (laserOff(o)) return; sync(cmd('jam-drop', o), () => cap.drop()) },
       },
     },
     { // a review open
       on: () => ui.panel?.kind === 'review' && !!panelCard,
       keys: {
-        Enter: () => { if (ui.moreOpen) return; void act(panelCard, 'good'); const n = nextReview(panelCard!.id); if (n && n.id !== panelCard!.id) { ui.open({ kind: 'review', id: n.id }); reveal(n) } else ui.close() },
-        'Shift+Enter': () => ui.setMoreOpen(true),
-        ArrowRight: () => { void act(panelCard, 'later'); const n = nextReview(panelCard!.id); if (n) { ui.open({ kind: 'review', id: n.id }); reveal(n); ui.follow() } },
-        ArrowLeft: () => { const n = nextReview(panelCard!.id, -1); if (n) { ui.open({ kind: 'review', id: n.id }); reveal(n) } },
-        b: () => ui.flip(),
-        'Alt+ArrowLeft': () => ui.setTab(Math.max(0, ui.tab - 1)),
-        'Alt+ArrowRight': () => ui.setTab(Math.min(Math.max(1, changedShots(panelCard?.shots).length) - 1, ui.tab + 1)),
-        Escape: () => { if (ui.moreOpen) { clearMoreDraft(panelCard!.id); ui.setMoreOpen(false) } else ui.close() },   // Esc leaves the composer: its words go
+        Enter: (o) => {
+          const h = cmd('jam-good', o)
+          if (ui.moreOpen) { h.noop('more-open'); return }
+          void endOnOk(h, act(panelCard, 'good'))
+          const n = nextReview(panelCard!.id)
+          if (n && n.id !== panelCard!.id) { ui.open({ kind: 'review', id: n.id }); reveal(n) } else ui.close()
+        },
+        'Shift+Enter': (o) => sync(cmd('jam-more', o), () => ui.setMoreOpen(true)),
+        ArrowRight: (o) => { void endOnOk(cmd('jam-later', o), act(panelCard, 'later')); const n = nextReview(panelCard!.id); if (n) { ui.open({ kind: 'review', id: n.id }); reveal(n); ui.follow() } },
+        ArrowLeft: (o) => {
+          const h = cmd('jam-back', o)
+          const n = nextReview(panelCard!.id, -1)
+          if (!n) { h.noop('end'); return }
+          sync(h, () => { ui.open({ kind: 'review', id: n.id }); reveal(n) })
+        },
+        b: (o) => sync(cmd('jam-before-after', o), () => ui.flip()),
+        'Alt+ArrowLeft': (o) => tabTo(cmd('jam-frame-tab', o), ui.tab - 1),
+        'Alt+ArrowRight': (o) => tabTo(cmd('jam-frame-tab', o), ui.tab + 1),
+        Escape: (o) => {   // Esc leaves the composer: its words go
+          if (ui.moreOpen) { cmd('jam-field-discard', { ...o, arg: 'more' }); clearMoreDraft(panelCard!.id); ui.setMoreOpen(false) }
+          else { cmd('jam-close', o); ui.close() }
+        },
       },
     },
     { // the thread panel open (a notice's thread no card can show): Esc closes it
       on: () => ui.panel?.kind === 'thread',
-      keys: { Escape: () => { if (laserOff()) return; ui.close() } },
+      keys: { Escape: (o) => { if (laserOff(o)) return; cmd('jam-close', o); ui.close() } },
     },
     { // the lane has the keyboard
       on: () => ui.laneKeys,
@@ -459,18 +506,26 @@ const rows = (): Row[] => {
         // acting keys act only on the tile you can see selected - never on a fallback
         const i = ui.selected ? stops.indexOf(ui.selected) : -1
         const sel = i >= 0 ? list.find((c) => c.id === stops[i]) : undefined
-        const move = (d: number) => { const n = i < 0 ? stops[stops.length - 1] : stops[Math.min(stops.length - 1, Math.max(0, i + d))]; if (n) ui.select(n) }
+        const move = (h: CmdHandle, d: number) => {
+          const n = i < 0 ? stops[stops.length - 1] : stops[Math.min(stops.length - 1, Math.max(0, i + d))]
+          if (!n || n === ui.selected) h.noop('end'); else sync(h, () => ui.select(n))
+        }
         return {
-          ArrowLeft: () => move(-1), ArrowRight: () => move(1),
-          Enter: () => {
-            if (stops[i] === DONE_GROUP) ui.setDoneOpen(true, done.map((c) => c.id))
-            else if (stops[i] === DONE_CLOSE) ui.setDoneOpen(false, done.map((c) => c.id))
-            else if (sel) openTile(sel.id)
+          ArrowLeft: (o: CmdOpts) => move(cmd('jam-lane-move', o), -1), ArrowRight: (o: CmdOpts) => move(cmd('jam-lane-move', o), 1),
+          Enter: (o: CmdOpts) => {
+            if (stops[i] === DONE_GROUP) { cmd('jam-done-fold', { ...o, arg: 'open' }); ui.setDoneOpen(true, done.map((c) => c.id)) }
+            else if (stops[i] === DONE_CLOSE) { cmd('jam-done-fold', { ...o, arg: 'fold' }); ui.setDoneOpen(false, done.map((c) => c.id)) }
+            else { const h = cmd('jam-open', o); if (sel) void endOnOk(h, openTile(sel.id)); else h.noop('no-selection') }
           },
-          'Meta+Enter': () => { if (sel?.state === 'queued') void act(sel, 'first') },
-          k: () => { if (sel?.state === 'draft') void decideDraft(sel.id, 'keep'); else if (sel?.state === 'queued') void act(sel, 'keep') },
-          Backspace: () => { if (sel) void act(sel, 'drop') },
-          Escape: () => ui.setLaneKeys(false),
+          'Meta+Enter': (o: CmdOpts) => { const h = cmd('jam-do-next', o); if (sel?.state === 'queued') void endOnOk(h, act(sel, 'first')); else h.noop('not-queued') },
+          k: (o: CmdOpts) => {
+            const h = cmd('jam-keep', o)
+            if (sel?.state === 'draft') void endOnOk(h, decideDraft(sel.id, 'keep'))
+            else if (sel?.state === 'queued') void endOnOk(h, act(sel, 'keep'))
+            else h.noop('not-keepable')
+          },
+          Backspace: (o: CmdOpts) => { const h = cmd('jam-drop', o); if (sel) void endOnOk(h, act(sel, 'drop')); else h.noop('no-selection') },
+          Escape: (o: CmdOpts) => { cmd('jam-close', o); ui.setLaneKeys(false) },
         }
       })(),
     },
@@ -478,22 +533,33 @@ const rows = (): Row[] => {
       // capture, and the toolbar shows no Jam button either
       on: () => !PUBLISHED && !!CONFIG.jam,
       keys: {
-        s: () => startCapture(),
-        j: () => pressJ(),
-        q: () => { const list = lane(); if (!list.length) return; ui.setLaneKeys(!ui.laneKeys); if (!ui.selected) ui.select(list[list.length - 1].id) },
-        v: () => { const n = nextReview(); if (n) { ui.open({ kind: 'review', id: n.id }); reveal(n); ui.follow() } else useStore.getState().toast('nothing to review') },
+        s: (o) => { const h = cmd('jam-capture', o); startCapture(); endOnRecording(h) },
+        j: (o) => pressJ(cmd('jam-session', o)),
+        q: (o) => {
+          const h = cmd('jam-lane', o)
+          const list = lane()
+          if (!list.length) { h.noop('empty'); return }
+          sync(h, () => { ui.setLaneKeys(!ui.laneKeys); if (!ui.selected) ui.select(list[list.length - 1].id) })
+        },
+        v: (o) => {
+          const h = cmd('jam-next-review', o)
+          const n = nextReview()
+          if (n) sync(h, () => { ui.open({ kind: 'review', id: n.id }); reveal(n); ui.follow() })
+          else { h.noop('nothing-to-review'); useStore.getState().toast('nothing to review') }
+        },
       },
     },
   ]
 }
 
-/** Apply Jam's key if a state takes it. True when it did - the caller stops there. */
-export function jamKey(k: KeyIn): boolean {
+/** Apply Jam's key if a state takes it. True when it did - the caller stops there, and its row recorded the command;
+ *  false records nothing. `from`: where the key arrived (#50): the shell, a frame's `sh:key`, the stage's. */
+export function jamKey(k: KeyIn, from: CmdIn = 'shell'): boolean {
   const d = descriptor(k)
   for (const row of rowsNow()) {
     if (!row.on()) continue
     const f = row.keys[d] ?? (d.length === 1 ? row.keys[d] : undefined)
-    if (f) { f(); syncOwned(); return true }
+    if (f) { f({ via: 'key', in: from, keys: d }); syncOwned(); return true }
   }
   return false
 }

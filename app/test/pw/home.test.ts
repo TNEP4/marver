@@ -263,7 +263,7 @@ describe('Shared canvases (A4.6 #47)', () => {
     expect(await p.calls('tab:activate')).toEqual([{ id: 't9' }])
     await p.page.click('[data-key="shared:https://tidewell.example.org/#/b/flow"]')
     await p.page.waitForTimeout(50)
-    expect(await p.calls('link:open')).toEqual([{ url: 'https://tidewell.example.org/#/b/flow' }])
+    expect(await p.calls('link:open')).toEqual([{ url: 'https://tidewell.example.org/#/b/flow', via: 'click' }])
   })
 
   it('a past link main refuses: the field takes it, selected, with its line', async () => {
@@ -300,7 +300,7 @@ describe('⌘L (A2.7, A2.13)', () => {
     await p.page.press('#link', 'Escape')
     await p.page.fill('#link', '')
     await p.page.press('#link', 'Escape')
-    expect(await p.calls('tab:activate')).toEqual([{ id: 't1' }, { id: 't1' }])
+    expect(await p.calls('tab:activate')).toEqual([{ id: 't1', via: 'key' }, { id: 't1', via: 'key' }])
   })
 
   it('if that tab has closed, Esc stays on Home: main keeps a running canvas\'s closed tab, open: false', async () => {
@@ -308,10 +308,11 @@ describe('⌘L (A2.7, A2.13)', () => {
     await tabs([home, tab('t1', 'Marver Platform', 4805, { open: false }), tab('t2', 'TMS broker', 4806)])
     expect(await text('#back')).toBe('')
     await p.page.press('#link', 'Escape')
-    expect(await p.calls('tab:activate')).toEqual([])
+    // said to main as Home itself, for its record (spec 30's link-cancel, noop no-tab); main does nothing with it
+    expect(await p.calls('tab:activate')).toEqual([{ id: 'home', via: 'key' }])
     await tabs([home, tab('t2', 'TMS broker', 4806)])   // and once main drops it
     await p.page.press('#link', 'Escape')
-    expect(await p.calls('tab:activate')).toEqual([])
+    expect(await p.calls('tab:activate')).toEqual([{ id: 'home', via: 'key' }, { id: 'home', via: 'key' }])
   })
 })
 

@@ -24,6 +24,7 @@ import { CaptureBlock } from './jam-panel.tsx'
 import { useJamQueue } from './jam-queue.ts'
 import { mentionAlerts, mentionPeople, mentionQueryAt, parseBody, type MentionPerson } from './mentions.ts'
 import { slideSize, stageFit } from '../const.ts'
+import { cmd, keysOf, type CmdHandle, type CmdOpts } from './commands.ts'
 import type { AgentMeta, Thread } from '../../shared/events.ts'
 
 /** Tint the pin / composer / thread card EDGES (border, outline, focus ring) in the anchored
@@ -153,7 +154,7 @@ export function Pins({ threads, placed, orphans, inv, active, alertIds }: {
           <div key={t.id} data-thread={t.id} className={`cm-pin sh-no-pan${t.id === active ? ' on' : ''}${orphan ? ' orphan' : ''}${alertIds?.has(t.id) ? ' mention' : ''}${working.includes(t.id) ? ' working' : ''}`}
             style={{ left: p.x, top: p.y, ...hueVars(anchorHue(t.anchor)) }}
             onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); setActive(t.id === active ? null : t.id) }}
+            onClick={(e) => { e.stopPropagation(); cmd(t.id === active ? 'thread-close' : 'thread-open', { via: 'click', in: 'shell', frame: t.frame }); setActive(t.id === active ? null : t.id) }}
             title={orphan ? 'the anchored element is gone - comment parked' : undefined}>
             <MarkerFace threads={[t]} max={2} />
           </div>,
@@ -303,7 +304,7 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
   if (!engaged && open.length) {
     return (
       <button className={`cm-stack sh-no-pan${open.some((t) => alertIds.has(t.id)) ? ' mention' : ''}`}
-        onClick={(e) => { e.stopPropagation(); useStore.getState().select(node.key); const hit = open.find((t) => alertIds.has(t.id)) ?? open[0]; if (hit) setActive(hit.id) }}>
+        onClick={(e) => { e.stopPropagation(); cmd('thread-open', { via: 'click', in: 'shell', frame: frameId }); useStore.getState().select(node.key); const hit = open.find((t) => alertIds.has(t.id)) ?? open[0]; if (hit) setActive(hit.id) }}>
         <MarkerFace threads={open} />
       </button>
     )
@@ -490,9 +491,12 @@ function MessageHead({ author, agent, agentMeta, ts, board, eventId }: { author?
 
 /** An auto-growing composer with the full keybindings: Enter send, Shift+Enter newline,
  *  Cmd/Ctrl+Enter send, Escape cancel; IME-guarded, disabled while a send is in flight. */
-function CommentInput({ value, onChange, onSubmit, onCancel, placeholder, autoFocus, sendLabel, owner }: {
-  value: string; onChange: (v: string) => void; onSubmit: () => void | Promise<unknown>
-  onCancel?: () => void; placeholder: string; autoFocus?: boolean; sendLabel: string; owner: boolean
+function CommentInput({ value, onChange, onSubmit, onCancel, placeholder, autoFocus, sendLabel, owner, sendCmd, frame }: {
+  value: string; onChange: (v: string) => void
+  /** ends `h` (spec 30): a person typing has got a draft, so the command starts here, at ⏎ or send */
+  onSubmit: (h: CmdHandle) => void | Promise<unknown>
+  onCancel: () => void; placeholder: string; autoFocus?: boolean; sendLabel: string; owner: boolean
+  sendCmd: 'comment-send' | 'comment-reply'; frame?: string
 }) {
   const ref = useRef<HTMLTextAreaElement>(null)
   const hlRef = useRef<HTMLDivElement>(null)
@@ -511,8 +515,9 @@ function CommentInput({ value, onChange, onSubmit, onCancel, placeholder, autoFo
   const listOpen = matches.length > 0
   useEffect(() => { setPick(0) }, [q?.start, q?.query])
   const track = () => setCaret(ref.current?.selectionStart ?? 0)
-  const choose = (p: MentionPerson) => {
+  const choose = (p: MentionPerson, how: CmdOpts) => {
     if (!q) return
+    cmd('mention-pick', how).done()
     const pos = q.start + p.label.length + 2                        // '@' + label + ' '
     onChange(value.slice(0, q.start) + '@' + p.label + ' ' + value.slice(caret))
     setCaret(pos)
@@ -524,10 +529,11 @@ function CommentInput({ value, onChange, onSubmit, onCancel, placeholder, autoFo
   const syncScroll = () => { if (hlRef.current && ref.current) hlRef.current.scrollTop = ref.current.scrollTop }
   useEffect(() => { if (autoFocus) ref.current?.focus() }, [autoFocus])
   useEffect(grow, [value])
-  const submit = async () => {
+  const submit = async (how: CmdOpts) => {
     if (busy || !value.trim()) return
+    const h = cmd(sendCmd, { ...how, frame })
     setBusy(true)
-    try { await onSubmit() } finally { setBusy(false) }
+    try { await onSubmit(h) } finally { setBusy(false) }
   }
   return (
     <div className="cm-inputwrap">
@@ -546,7 +552,7 @@ function CommentInput({ value, onChange, onSubmit, onCancel, placeholder, autoFo
         <div className="cm-mentionlist" role="listbox">
           {matches.map((p, i) => (
             <button key={p.id ?? p.email} type="button" className={i === pick ? 'on' : ''} role="option" aria-selected={i === pick}
-              onMouseDown={(e) => { e.preventDefault(); choose(p) }} onMouseEnter={() => setPick(i)}>
+              onMouseDown={(e) => { e.preventDefault(); choose(p, { via: 'click', in: 'shell' }) }} onMouseEnter={() => setPick(i)}>
               <Avatar author={{ ...p, name: p.label }} size={18} /><span>{p.label}</span>
             </button>
           ))}
@@ -560,18 +566,18 @@ function CommentInput({ value, onChange, onSubmit, onCancel, placeholder, autoFo
           if (listOpen) {
             if (e.key === 'ArrowDown') { e.preventDefault(); setPick((v) => (v + 1) % matches.length); return }
             if (e.key === 'ArrowUp') { e.preventDefault(); setPick((v) => (v + matches.length - 1) % matches.length); return }
-            if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); choose(matches[pick] ?? matches[0]); return }
-            if (e.key === 'Escape') { setDismissed(q!.start); return }
+            if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); choose(matches[pick] ?? matches[0], { via: 'key', in: 'shell', keys: keysOf(e) }); return }
+            if (e.key === 'Escape') { cmd('mention-dismiss', { via: 'key', in: 'shell', keys: keysOf(e) }).done(); setDismissed(q!.start); return }
           }
-          if (e.key === 'Escape') { onCancel?.(); return }
+          if (e.key === 'Escape') { cmd('draft-discard', { via: 'key', in: 'shell', keys: keysOf(e), frame }); onCancel(); return }
           if (e.key === 'Enter') {
             if ((e.nativeEvent as unknown as { isComposing?: boolean }).isComposing) return   // IME: mid-composition Enter must not send
             if (e.shiftKey) return                                                            // newline
-            e.preventDefault(); void submit()                                                 // Enter / Cmd·Ctrl+Enter send
+            e.preventDefault(); void submit({ via: 'key', in: 'shell', keys: keysOf(e) })     // Enter / Cmd·Ctrl+Enter send
           }
         }} />
       <Tip side="top" label={<b>⏎ send · ⇧⏎ new line</b>}>
-        <button className="cm-send" disabled={busy || !value.trim()} aria-label={sendLabel} onClick={() => void submit()}>
+        <button className="cm-send" disabled={busy || !value.trim()} aria-label={sendLabel} onClick={() => void submit({ via: 'click', in: 'shell' })}>
           <ArrowUpIcon size={15} />
         </button>
       </Tip>
@@ -593,19 +599,22 @@ function ProfileDialog({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const ready = connected || !!name.trim()
-  const save = async () => {
+  const save = async (how: CmdOpts) => {
     if (busy || !ready) return
+    const h = cmd('profile-save', how)
     setBusy(true)
     try {
-      const e = await useComments.getState().saveProfile({ ...(connected ? {} : { name: name.trim() }), avatar })
+      const e = await useComments.getState().saveProfile({ ...(connected ? {} : { name: name.trim() }), avatar }, h)
       if (e) return setErr(e)                  // a failed save must not close as if it worked
       onClose()
     } finally { setBusy(false) }
   }
+  // its own command, whatever a save still in flight later answers (spec 30): that save keeps its own end
+  const dismiss = (how: CmdOpts) => { cmd('profile-dismiss', how); onClose() }
   return createPortal(
-    <div className="cm-modal-wrap" onClick={onClose} onPointerDown={(e) => e.stopPropagation()}>
+    <div className="cm-modal-wrap" onClick={() => dismiss({ via: 'click', in: 'shell' })} onPointerDown={(e) => e.stopPropagation()}>
       <div className="cm-modal" onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Escape') onClose() }}>
+        onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Escape') dismiss({ via: 'key', in: 'shell', keys: keysOf(e) }) }}>
         <h2>{unset ? 'Set up your profile' : 'Edit your profile'}</h2>
         <p className="dim">
           {connected
@@ -619,13 +628,13 @@ function ProfileDialog({ onClose }: { onClose: () => void }) {
               ? <div className="cm-chip" style={{ flex: 1 }}><b>{me?.name}</b><span>CONNECT</span></div>
               : <input placeholder="Set a display name" style={{ flex: 1 }} value={name}
                   onChange={(e) => setName(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && void save()} />}
+                  onKeyDown={(e) => e.key === 'Enter' && void save({ via: 'key', in: 'shell', keys: keysOf(e) })} />}
           </div>
         </div>
         {err && <span className="cm-err">{err}</span>}
         <div className="cm-row">
-          <button className="cm-primary" disabled={busy || !ready} onClick={() => void save()}>Save</button>
-          <button onClick={onClose}>Not now</button>
+          <button className="cm-primary" disabled={busy || !ready} onClick={() => void save({ via: 'click', in: 'shell' })}>Save</button>
+          <button onClick={() => dismiss({ via: 'click', in: 'shell' })}>Not now</button>
         </div>
       </div>
     </div>,
@@ -642,7 +651,7 @@ function EditableAvatar({ author, size = 24 }: { author?: Thread['author']; size
   return (
     <span className="cm-me">
       <Tip side="top" label={<b>Edit your profile</b>}>
-        <button className="cm-mebtn" aria-label="Edit your profile" onClick={() => setOpen(true)}>
+        <button className="cm-mebtn" aria-label="Edit your profile" onClick={() => { cmd('profile-open', { via: 'click', in: 'shell' }); setOpen(true) }}>
           <Avatar author={author} size={size} />
           <span className="cm-pen-face"><PencilSimpleIcon size={Math.round(size * 0.55)} /></span>
         </button>
@@ -774,10 +783,11 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
       : { left: at.x, top: Math.min(at.y + 14, bounds.h - 40) }
   // clear only after the server took it - a failed send must not eat the words,
   // and text typed WHILE the request was in flight must survive the clear
-  const submit = async () => {
+  const submit = async (h: CmdHandle) => {
     const sent = text
-    if (sent.trim() && await useComments.getState().replyOk(thread.id, sent)) setText((cur) => (cur === sent ? '' : cur))
+    if (await useComments.getState().replyOk(thread.id, sent, h)) setText((cur) => (cur === sent ? '' : cur))
   }
+  const closeCard = () => setActive(null)
   const card = (
     <div ref={cardRef} data-sh-wheel-local data-thread={thread.id} className={`cm-card sh-no-pan${flip ? ' flip' : ''}${float ? ` parked dock-${side}` : ''}${float && flank ? ` flank-${flank}` : ''}${stage ? ' stage-dock' : ''}`} style={{ ...pos, ...hueVars(anchorHue(thread.anchor)) }}
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
@@ -787,22 +797,25 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
         <Tip side="bottom" label={<b>{copied ? 'Copied' : 'Copy link'}</b>}>
           <button className={`cm-icon cm-copy${copied ? ' ok' : ''}`} onClick={() => {
             const url = `${location.origin}${location.pathname}${buildHash({ board: useStore.getState().board, c: thread.id })}`
+            const h = cmd('thread-copy-link', { via: 'click', in: 'shell', frame: thread.frame })
+            const blocked = () => { h.fail('clipboard-blocked'); useStore.getState().toast('copy blocked - try again') }
             // the check means "it's on your clipboard" - only show it when that's true
-            navigator.clipboard.writeText(url).then(() => {
+            navigator.clipboard?.writeText(url).then(() => {
+              h.done()
               setCopied(true)
               clearTimeout(copyTimer.current)
               copyTimer.current = setTimeout(() => setCopied(false), 1600)
-            }, () => useStore.getState().toast('copy blocked - try again'))
+            }, blocked) ?? blocked()
           }}>
             <span className="a"><LinkIcon size={15} /></span>
             <span className="b"><CheckIcon size={16} /></span>
           </button>
         </Tip>
         <Tip side="bottom" label={<b>Resolve</b>}>
-          <button className="cm-icon" onClick={() => { void resolve(thread.id); setActive(null) }}><CheckSquareOffsetIcon size={16} /></button>
+          <button className="cm-icon" onClick={() => { const h = cmd('comment-resolve', { via: 'click', in: 'shell', frame: thread.frame }); void resolve(thread.id, false, h); setActive(null) }}><CheckSquareOffsetIcon size={16} /></button>
         </Tip>
         <Tip side="bottom" label={<b>Close</b>}>
-          <button className="cm-icon" onClick={() => setActive(null)}><XIcon size={15} /></button>
+          <button className="cm-icon" onClick={() => { cmd('thread-close', { via: 'click', in: 'shell', frame: thread.frame }); setActive(null) }}><XIcon size={15} /></button>
         </Tip>
       </div>
       {/* "there is more": the scroller MASKS its own content at the overflowing edge - a soft fade
@@ -826,10 +839,10 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
       {canComment ? (
         <div className="cm-compose">
           <ComposeAvatar />
-          <CommentInput value={text} onChange={setText} onSubmit={submit} onCancel={() => setActive(null)} placeholder="Reply…" sendLabel="Send" owner={local} />
+          <CommentInput value={text} onChange={setText} onSubmit={submit} onCancel={closeCard} placeholder="Reply…" sendLabel="Send" owner={local} sendCmd="comment-reply" frame={thread.frame} />
         </div>
       ) : (
-        <button className="cm-signin-cta" onClick={() => useComments.setState({ needsIdentity: true })}>
+        <button className="cm-signin-cta" onClick={() => { cmd('identity-open', { via: 'click', in: 'shell' }); useComments.setState({ needsIdentity: true }) }}>
           Sign in to comment
         </button>
       )}
@@ -843,14 +856,17 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
 export function DraftComposer({ at, bounds, hue }: { at: { x: number; y: number }; bounds: { w: number; h: number }; hue?: number }) {
   const { create, setDraft } = useComments.getState()
   const local = useComments((s) => s.local)
+  const frame = useComments((s) => s.draft?.frame)
   const [text, setText] = useState('')
   const flip = at.x > bounds.w * 0.55
+  const send = (h: CmdHandle) => create(text, h)
+  const discard = () => setDraft(null)
   return (
     <div data-sh-wheel-local className={`cm-card cm-draft sh-no-pan${flip ? ' flip' : ''}`} style={{ left: at.x, top: Math.min(at.y + 14, bounds.h - 40), ...hueVars(hue) }}
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
       {/* the draft is JUST the tight pill - no avatar chrome on a first comment */}
       <div className="cm-compose">
-        <CommentInput value={text} onChange={setText} onSubmit={() => create(text)} onCancel={() => setDraft(null)} placeholder="Comment on this element…" autoFocus sendLabel="Comment" owner={local} />
+        <CommentInput value={text} onChange={setText} onSubmit={send} onCancel={discard} placeholder="Comment on this element…" autoFocus sendLabel="Comment" owner={local} sendCmd="comment-send" frame={frame} />
       </div>
     </div>
   )
@@ -862,15 +878,20 @@ function AvatarPick({ value, onPick }: { value: string; onPick: (dataUri: string
   const fileRef = useRef<HTMLInputElement>(null)
   const pick = (file: File | undefined) => {
     if (!file) return
+    const h = cmd('avatar-pick', { via: 'click', in: 'shell' })   // never the file's name
     const img = new Image()
     img.onload = () => {
-      const s = Math.min(img.width, img.height)
-      const c = document.createElement('canvas')
-      c.width = c.height = 128
-      c.getContext('2d')!.drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, 128, 128)
-      onPick(c.toDataURL('image/jpeg', 0.85))
+      try {
+        const s = Math.min(img.width, img.height)
+        const c = document.createElement('canvas')
+        c.width = c.height = 128
+        c.getContext('2d')!.drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, 128, 128)
+        onPick(c.toDataURL('image/jpeg', 0.85))
+        h.done()
+      } catch { h.fail('unreadable') }
       URL.revokeObjectURL(img.src)
     }
+    img.onerror = () => { h.fail('unreadable'); URL.revokeObjectURL(img.src) }
     img.src = URL.createObjectURL(file)
   }
   return (
@@ -917,17 +938,20 @@ export function IdentityDialog() {
   const missing = claiming
     ? (invite ? 'Password and display name still needed' : 'Token, password, and display name still needed')
     : 'Fill in email and password'
-  const go = async () => {
+  const go = async (how: CmdOpts) => {
     if (!ready) return
+    const h = cmd(claiming ? 'claim' : 'sign-in', how)
     setErr(null)
-    const e = claiming ? await claim(invite ?? token, password, name, avatar || undefined) : await signIn(email, password)
+    const e = claiming ? await claim(invite ?? token, password, name, avatar || undefined, h) : await signIn(email, password, h)
     if (e) return setErr(e)
     // a consumed invite link leaves the URL - the hash becomes the plain board view
     if (invite) writeHash({ board: useStore.getState().board })
   }
-  const onEnter = (e: React.KeyboardEvent) => e.key === 'Enter' && void go()
+  const onEnter = (e: React.KeyboardEvent) => e.key === 'Enter' && void go({ via: 'key', in: 'shell', keys: keysOf(e) })
+  // its own command, whatever a sign-in still in flight later answers (spec 30): that one keeps its own end
+  const dismiss = () => { cmd('identity-dismiss', { via: 'click', in: 'shell' }); dismissIdentity() }
   return (
-    <div className="cm-modal-wrap" onClick={dismissIdentity}>
+    <div className="cm-modal-wrap" onClick={dismiss}>
       <div className="cm-modal" onClick={(e) => e.stopPropagation()}>
         <h2>{invite ? 'You’re invited to comment' : claiming ? 'Sign up to comment' : 'Sign in to comment'}</h2>
         <p className="dim">
@@ -964,7 +988,7 @@ export function IdentityDialog() {
         {err && <span className="cm-err">{err}</span>}
         <div className="cm-row">
           {ready ? (
-            <button className="cm-primary" onClick={() => void go()}>
+            <button className="cm-primary" onClick={() => void go({ via: 'click', in: 'shell' })}>
               {claiming ? (invite ? 'Join the canvas' : 'Create account') : 'Sign in'}
             </button>
           ) : (
@@ -974,10 +998,10 @@ export function IdentityDialog() {
               </button>
             </Tip>
           )}
-          <button onClick={dismissIdentity}>Not now</button>
+          <button onClick={dismiss}>Not now</button>
         </div>
         {!invite && (
-          <button className="cm-switch" onClick={() => { setErr(null); setMode(mode === 'signin' ? 'claim' : 'signin') }}>
+          <button className="cm-switch" onClick={() => { cmd('identity-switch', { via: 'click', in: 'shell' }); setErr(null); setMode(mode === 'signin' ? 'claim' : 'signin') }}>
             {mode === 'signin' ? 'Have an invite token instead?' : 'Already have an account? Sign in'}
           </button>
         )}
@@ -1019,6 +1043,7 @@ export function CommentsController() {
     const onDown = (e: PointerEvent) => {
       const t = e.target instanceof Element ? e.target : null
       if (t?.closest('.cm-card, .cm-pin, .cm-stack, .cm-modal')) return
+      if (useComments.getState().active) cmd('thread-close', { via: 'click', in: 'shell' })   // silent when none is open
       useComments.getState().setActive(null)
     }
     document.addEventListener('pointerdown', onDown, true)

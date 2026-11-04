@@ -3,12 +3,13 @@ import { createPortal } from 'react-dom'
 import { useStore, SOURCE_REVEALED } from './store.ts'
 import { UNPLACED } from './hash.ts'
 import { TOP } from './inset.ts'
+import type { CmdHandle } from './commands.ts'
 
 /** Copy text to the clipboard, toasting the outcome. Success is confirmed out loud; a
  *  blocked clipboard (no user gesture / permission) says so instead of failing silently. */
-export function copyToClipboard(text: string, okMsg: string) {
+export function copyToClipboard(text: string, okMsg: string, h: CmdHandle) {
   const { toast } = useStore.getState()
-  navigator.clipboard.writeText(text).then(() => toast(okMsg), () => toast('copy blocked - click the canvas first'))
+  navigator.clipboard.writeText(text).then(() => { h.done(); toast(okMsg) }, () => { h.fail('clipboard-blocked'); toast('copy blocked - click the canvas first') })
 }
 
 /** The address a frame copies - the same string from the sidebar right-click, the floating

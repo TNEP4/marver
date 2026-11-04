@@ -20,6 +20,7 @@ import { useComments } from '../comments-store.ts'
 import { goTo } from '../goto.ts'
 import { NOTE_W, SCENE_NOTE_W, noteAnchor, noteVisible, useNotes, type NoteKind } from '../notes.ts'
 import { useStore } from '../store.ts'
+import { cmd } from '../commands.ts'
 
 export interface NoteSpec { kind: NoteKind; id: string; text: string }
 
@@ -253,12 +254,13 @@ function StickyBody({ text, kind, nodeKey, frameId }: { text: string; kind: Note
       const origin = bodyEl.getBoundingClientRect()
       const s = origin.width ? origin.width / nodeEl.offsetWidth : 1     // on-screen px per world px
       const toBody = (r: DOMRect) => ({ x: (r.left - origin.left) / s, y: (r.top - origin.top) / s, w: r.width / s, h: r.height / s })
+      cmd('comment-pick', { via: 'click', in: 'shell', frame: frameId })
       if (c.active) c.setActive(null)
       c.setDraft({ nodeKey, frame: frameId, anchor: noteAnchor(pick, root, kind, e, toBody) })
       return
     }
     const link = target.closest('a[data-goto]')
-    if (link) { e.preventDefault(); e.stopPropagation(); goTo(link.getAttribute('data-goto') ?? '') }
+    if (link) { e.preventDefault(); e.stopPropagation(); goTo(link.getAttribute('data-goto') ?? '', false, cmd('goto', { via: 'click', in: 'shell' })) }
   }
   return <div ref={ref} className="sh-sticky-body" onClick={onClick} />
 }
@@ -287,7 +289,7 @@ export const Stickies = memo(function Stickies({ nodeKey, frameId, notes, underB
     <div ref={col} className={`sh-notes${on ? '' : ' off'}${underBadge ? ' below-vbadge' : ''}`} data-node-notes={nodeKey} style={{ width }}>
       <button className="sh-notes-fold sh-no-pan" type="button" aria-label={on ? 'hide notes' : 'show notes'} title={on ? 'hide notes (N: all)' : 'show notes (N: all)'}
         onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => { e.stopPropagation(); useNotes.getState().toggle(ids) }} />
+        onClick={(e) => { e.stopPropagation(); cmd('notes', { via: 'click', in: 'shell', frame: frameId }); useNotes.getState().toggle(ids) }} />
       {notes.map((n) => (
         <div key={n.id} className="sh-sticky sh-no-pan" data-sticky={n.kind} data-note={n.id} style={{ width: n.kind === 'scene' ? SCENE_NOTE_W : NOTE_W }}
           onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>

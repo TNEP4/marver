@@ -30,6 +30,7 @@ import { chmodSync, existsSync, mkdirSync, renameSync, statSync, watch, type FSW
 import { homedir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { app, nativeTheme } from 'electron'
+import type { MoveCmd } from './commands.ts'
 import type { FileProblem, FilesStatus, FileState, PillView, SettingsSetResult, SettingsView } from '../shared/channels.ts'
 import { check, defaults, FILE_MAX, judgeObject, keySpec, shownIn, shownKeys, STAGE, type FileName } from '../shared/settings-keys.ts'
 import { tilde } from '../shared/command.ts'
@@ -585,13 +586,23 @@ function provideFileHooks(): void {
 export interface UpdateFile {
   v: 1
   intent: { from: string; to: string; via: 'restart' | 'quit'; at: number } | null
-  /** `declined`: the move never runs (the smoke's seed; no alert writes it since 2 Nov); `moved`: the moved copy's note, once */
-  move: { declined: true; at: number } | { moved: true; at: number; from: 'dmg' | string } | null
+  /**
+   * `declined`: the move never runs (the smoke's seed; no alert writes it since 2 Nov); `moved`: the moved copy's note,
+   * once. `cmd` (spec 30 R12): an alert's answer waiting for the next recorder (commands.ts `MoveCmd`), beside either, or alone
+   */
+  move: ({ declined: true; at: number; cmd?: MoveCmd } | { moved: true; at: number; from: 'dmg' | string; cmd?: MoveCmd } | { cmd: MoveCmd }) | null
   staging: { path: string; dev: number; ino: number; placeholder: { dev: number; ino: number } | null; at: number } | null
 }
 export const UPDATE_FILE = 'update.json'
 
 const FINITE = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x) && x >= 0
+const MOVE_STATES = ['pending', 'moved', 'opened-existing', 'revealed', 'declined', 'failed']
+/** `move.cmd`'s shape (spec 30 R12). */
+const checkMoveCmd = (c: unknown): boolean => {
+  const m = c as Record<string, unknown> | null
+  return !!m && typeof m === 'object' && typeof m.id === 'string' && /^[0-9a-f]{12}$/.test(m.id) && FINITE(m.at) && typeof m.answer === 'string' && m.answer.length <= 64
+    && MOVE_STATES.includes(m.state as string) && (m.doneAt === undefined || FINITE(m.doneAt))
+}
 const VERSION = /^\d+\.\d+\.\d+$/
 
 /** update.json's shape, field by field (A5.1 #41): anything else is a bad file, set aside as `.bad` and read as empty. */
@@ -602,8 +613,9 @@ export function checkUpdateFile(v: unknown): v is UpdateFile {
   if (i !== null && !(i && typeof i === 'object' && typeof i.from === 'string' && VERSION.test(i.from) && typeof i.to === 'string' && VERSION.test(i.to)
     && (i.via === 'restart' || i.via === 'quit') && FINITE(i.at))) return false
   const m = f.move as Record<string, unknown> | null
-  if (m !== null && !(m && typeof m === 'object' && FINITE(m.at) && ((m.declined === true && m.moved === undefined)
-    || (m.moved === true && m.declined === undefined && typeof m.from === 'string' && m.from.length <= 255)))) return false
+  if (m !== null && !(m && typeof m === 'object' && (m.cmd === undefined || checkMoveCmd(m.cmd))
+    && ((m.cmd !== undefined && m.declined === undefined && m.moved === undefined) || (FINITE(m.at) && ((m.declined === true && m.moved === undefined)
+    || (m.moved === true && m.declined === undefined && typeof m.from === 'string' && m.from.length <= 255)))))) return false
   const s = f.staging
   if (s !== null && !(s && typeof s === 'object' && typeof s.path === 'string' && s.path.startsWith('/') && FINITE(s.dev) && FINITE(s.ino) && FINITE(s.at)
     && (s.placeholder === null || (!!s.placeholder && typeof s.placeholder === 'object' && FINITE(s.placeholder.dev) && FINITE(s.placeholder.ino))))) return false

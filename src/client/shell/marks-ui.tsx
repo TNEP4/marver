@@ -9,6 +9,17 @@ import { create } from 'zustand'
 import { useStore, PUBLISHED, shownRev } from './store.ts'
 import { useComments } from './comments-store.ts'
 import { frameMark, isNew, questions, type Ask, type FrameMark } from '../../shared/marks.ts'
+import { cmd, endOnAnswer, type CmdOpts } from './commands.ts'
+
+/** Mark all as seen (spec 30): `mark-seen` ends on the marks write's answer - the sidebar's, or the relay from the
+ *  tab's menu (#51). Nothing new to clear is a noop: no write goes. */
+export function markSeenFrom(how: CmdOpts, frames: string[]): void {
+  const s = useStore.getState(), m = s.marks
+  const h = cmd('mark-seen', { ...how, frames: frames.length })
+  if (!m || !frames.some((id) => isNew(m, id))) { h.noop('nothing-new'); return }
+  endOnAnswer(h, 'marks/seen')
+  s.markSeen(frames)
+}
 
 /** Every frame's mark, derived ONCE per change of marks, threads or manifest. Rows and headers read
  *  one string each, so a change re-renders only what it changes - never the whole shell. */

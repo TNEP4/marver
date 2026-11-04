@@ -66,6 +66,11 @@ export interface MenuActs {
   exportReport(): void
   /** build the menu again now (after any canvas item's click: the mark shows the page's state) */
   rebuild(): void
+  /**
+   * Spec 30 #49: a tab item clicked after its token stopped holding. Nothing acts - that is `tab`'s rule - but the input
+   * came and is recorded (`noop untrusted`). Optional: a menu built with no recorder (a test) has none.
+   */
+  stale?(t: MenuToken, what: 'activate' | 'open-browser' | 'reveal' | 'copy-link' | 'reload' | 'force-reload'): void
 }
 
 /** Help > Marver Help: the install page on GitHub (A5.1 #29, #30), `docs/app.md` in the marver repo. */
@@ -77,6 +82,8 @@ export function menuTemplate(m: MenuModel, acts: MenuActs): MenuItemConstructorO
   const cmd = (c: AppCommand, label: string, extra: Partial<MenuItemConstructorOptions> = {}): MenuItemConstructorOptions =>
     ({ label, ...(ACCELERATORS[c] ? { accelerator: ACCELERATORS[c] } : {}), click: () => acts.run(c), ...extra })
   const guarded = (t: MenuToken, fn: () => void) => () => { if (acts.holds(t)) fn() }
+  /** a tab item's click: its action only while its token holds; a stale click is still an input (spec 30 #49) */
+  const tabItem = (t: MenuToken, what: Parameters<MenuActs['tab']>[1]) => () => { if (acts.holds(t)) acts.tab(t, what); else acts.stale?.(t, what) }
   const header = (label: string): MenuItemConstructorOptions => m.header ? { type: 'header', label } : { label, enabled: false }
   const canvasItem = (it: MenuItem): MenuItemConstructorOptions => {
     const t = m.canvas!.token
@@ -107,13 +114,13 @@ export function menuTemplate(m: MenuModel, acts: MenuActs): MenuItemConstructorO
       cmd('home', 'Home'), cmd('open-link', 'Open Link…'), sep,
       cmd('close-tab', 'Close Tab', { enabled: a.canClose }), cmd('close-window', 'Close Window'),
       ...(local ? [sep, header(a.name),
-        { label: 'Open in Browser', enabled: a.trusted, click: guarded(a.token, () => acts.tab(a.token, 'open-browser')) },
-        { label: 'Reveal in Finder', click: guarded(a.token, () => acts.tab(a.token, 'reveal')) },
-        { label: 'Copy Local Link', enabled: a.trusted, click: guarded(a.token, () => acts.tab(a.token, 'copy-link')) },
+        { label: 'Open in Browser', enabled: a.trusted, click: tabItem(a.token, 'open-browser') },
+        { label: 'Reveal in Finder', click: tabItem(a.token, 'reveal') },
+        { label: 'Copy Local Link', enabled: a.trusted, click: tabItem(a.token, 'copy-link') },
       ] : remote ? [sep, header(a.name),
         // a shared canvas: its own link, through sessions.ts's checked openOutside; nothing of a repo
-        { label: 'Open in Browser', click: guarded(a.token, () => acts.tab(a.token, 'open-browser')) },
-        { label: 'Copy Link', click: guarded(a.token, () => acts.tab(a.token, 'copy-link')) },
+        { label: 'Open in Browser', click: tabItem(a.token, 'open-browser') },
+        { label: 'Copy Link', click: tabItem(a.token, 'copy-link') },
       ] : []),
     ] },
     { label: 'Edit', submenu: [
@@ -124,8 +131,8 @@ export function menuTemplate(m: MenuModel, acts: MenuActs): MenuItemConstructorO
       ...(viewItems.length ? [header(a.name), ...viewItems.map(canvasItem), sep] : []),
       // tab items (v1.10 r1 #10): a click reloads the tab the menu was built for, only while its document and
       // trust still hold - never whichever tab is active by then. The keys are the app's (keys.ts: the active tab)
-      cmd('reload', 'Reload Canvas', { id: 'reload', enabled: a.canReload, click: guarded(a.token, () => acts.tab(a.token, 'reload')) }),
-      cmd('force-reload', 'Force Reload', { id: 'force-reload', enabled: a.canReload, click: guarded(a.token, () => acts.tab(a.token, 'force-reload')) }), sep,
+      cmd('reload', 'Reload Canvas', { id: 'reload', enabled: a.canReload, click: tabItem(a.token, 'reload') }),
+      cmd('force-reload', 'Force Reload', { id: 'force-reload', enabled: a.canReload, click: tabItem(a.token, 'force-reload') }), sep,
       { role: 'togglefullscreen', accelerator: 'Ctrl+Cmd+F' },
       cmd('devtools', 'Developer Tools'),
     ] },
@@ -138,7 +145,7 @@ export function menuTemplate(m: MenuModel, acts: MenuActs): MenuItemConstructorO
         label: t.word ? `${t.name} - ${t.word}` : t.name,
         accessibilityLabel: t.word ? `${t.name}, ${t.word}` : t.name,
         ...(t.key ? { accelerator: `Cmd+${t.key}` } : {}),
-        click: () => { guarded(t.token, () => acts.tab(t.token, 'activate'))(); acts.rebuild() },
+        click: () => { tabItem(t.token, 'activate')(); acts.rebuild() },
       })),
       sep, { role: 'front' },
     ] },

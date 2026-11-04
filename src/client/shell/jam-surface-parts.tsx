@@ -8,9 +8,10 @@ import { Lane, type LaneBetween, type LaneRecording, type LaneTile } from './jam
 import { Caption, FocusPanel, NotesCard, ReadBack, ReviewDetail, VoiceAsk } from './jam-panel.tsx'
 import type { TimelineLine } from './jam-lines.ts'
 import type { JamCard } from './jam-queue.ts'
+import { cmd, type CmdHandle } from './commands.ts'
 
 export function CaptureLaneRow({ tiles, recording, between, selected, keyboard, followEnd, onOpen, onMenu, notes, ask, caption, doneOpen, onDoneOpen }: {
-  tiles: LaneTile[]; recording?: LaneRecording; between?: LaneBetween; selected?: string; keyboard?: boolean; followEnd?: number; onOpen(id: string): void
+  tiles: LaneTile[]; recording?: LaneRecording; between?: LaneBetween; selected?: string; keyboard?: boolean; followEnd?: number; onOpen(id: string, h: CmdHandle): void
   doneOpen?: boolean; onDoneOpen?(open: boolean, doneIds: string[]): void
   onMenu?(e: React.MouseEvent, id: string): void
   notes?: { notes: { t: string; text: string }[]; draft: string; onDraft(t: string): void; onAdd(): void; onClose(): void }
@@ -62,9 +63,10 @@ export function FocusPanelView(p: {
   shots: { frame: string; before?: string; after?: string; new?: boolean }[]; reply: string
   view: 'both' | 'before' | 'after'; tab: number; moreOpen: boolean
   onTab(i: number): void; onFlip(view: 'both' | 'before' | 'after'): void; onMoreOpen(on: boolean): void; onClose(): void
-  onEdit(text: string): void; onConfirm(): void; onKeep(): void; onDrop(): void; onResume?: () => void
-  onGood(): void; onMore(text: string): void; onLater(): void; onOpenThread(): void
-  onPrev?: () => void; onNext?: () => void; pending?: string; onRetry?: () => void; locked?: boolean
+  /** each ends the command its button started (spec 30), from the handle it is handed */
+  onEdit(text: string, h: CmdHandle): void; onConfirm(h: CmdHandle): void; onKeep(h: CmdHandle): void; onDrop(h: CmdHandle): void; onResume?: (h: CmdHandle) => void
+  onGood(h: CmdHandle): void; onMore(text: string, h: CmdHandle): void; onLater(h: CmdHandle): void; onOpenThread(h: CmdHandle): void
+  onPrev?: () => void; onNext?: () => void; pending?: string; onRetry?: (h: CmdHandle) => void; locked?: boolean
   /** a note added in the read-back (a draft) */
   onAddNote?(text: string, id: string): Promise<boolean>
   /** a card that asks, opened here (its thread cannot show on this board): its question and your answer */
@@ -81,7 +83,7 @@ export function FocusPanelView(p: {
   const [fit, setFit] = useState<number | undefined>(undefined)
   const head = p.kind === 'review' ? (
     <div className="jm-ftabs jm-panes" role="tablist" data-jam-panes="">
-      {(['review', 'capture'] as const).map((v) => <button key={v} role="tab" aria-selected={v === pane} className={v === pane ? 'on' : undefined} onClick={() => setPane(v)}>{v === 'review' ? 'Review' : 'Capture'}</button>)}
+      {(['review', 'capture'] as const).map((v) => <button key={v} role="tab" aria-selected={v === pane} className={v === pane ? 'on' : undefined} onClick={() => { cmd('jam-pane', { via: 'click', in: 'shell', arg: v }); setPane(v) }}>{v === 'review' ? 'Review' : 'Capture'}</button>)}
     </div>
   ) : undefined
   // points are picks and clicks (a picture line carries its own number, not a point)
@@ -94,7 +96,7 @@ export function FocusPanelView(p: {
     <FocusPanel left={p.left} onClose={p.onClose} width={p.kind === 'review' && pane === 'review' ? fit : undefined}>
       {p.kind === 'review' && pane === 'review' ? (
         <ReviewDetail key={c.id} title={title} head={head} of={p.of} onPrev={p.onPrev} onNext={p.onNext} frames={p.shots.map((s) => s.frame)} active={p.tab} onTab={p.onTab}
-          view={p.view} onFlip={(v) => p.onFlip(v)} onFit={setFit} reply={p.reply} shots={p.shots} agent={p.agent}
+          view={p.view} onFlip={p.onFlip} onFit={setFit} reply={p.reply} shots={p.shots} agent={p.agent}
           more={p.moreOpen} draftKey={c.id} onMore={p.onMore} onMoreOpen={p.onMoreOpen} onGood={p.onGood} onLater={p.onLater} onOpenThread={p.onOpenThread} />
       ) : (
         <ReadBack key={c.id} title={title} head={head} of={p.of} onPrev={p.onPrev} onNext={p.onNext} meta={meta} lines={p.lines} pictures={p.pictures} edited={c.edited} pending={p.pending}

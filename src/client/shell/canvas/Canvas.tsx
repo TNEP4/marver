@@ -163,6 +163,7 @@ export function animateLayout(ms = 360) {
 // dragging the canvas into a locked-shell bundle; Canvas assigns the real
 // implementations below when it mounts
 import { canvasCtl, type CanvasWheelInput } from './ctl.ts'
+import { cmd, type CmdHandle } from '../commands.ts'
 export { canvasCtl, type CanvasWheelInput }
 import { anchorNode, anchoredCamera, type Held } from './anchor.ts'
 /** The node a content-driven reflow must not move on screen (holdView -> the layout effect). */
@@ -195,7 +196,7 @@ function GroupCaptions() {
             style={{ transform: `translate(${g.x}px, ${g.y}px) translateY(calc(-100% - clamp(4px, 8px * var(--sh-inv, 1), 40px)))` }}
             title="Select all variants"
             onPointerDown={(e) => e.stopPropagation()}
-            onClick={() => { useStore.getState().selectMany(g.keys); canvasCtl.fitNodes(g.keys) }}>
+            onClick={() => { cmd('group-fit', { via: 'click', in: 'shell', frames: g.keys.length }); useStore.getState().selectMany(g.keys); canvasCtl.fitNodes(g.keys) }}>
             {id.split('/').map((s) => s[0].toUpperCase() + s.slice(1)).join(' / ')} · {g.ids.size} variants
           </div>
         )
@@ -205,6 +206,7 @@ function GroupCaptions() {
 }
 
 export function Canvas() {
+  const spacePan = useRef<{ h: CmdHandle; panned: boolean } | null>(null)   // the recorder's (spec 30): `space-pan` in flight
   const nodes = useStore((s) => s.nodes)
   const gesture = useStore((s) => s.gesture)
   const setScale = useStore((s) => s.setScale)
@@ -387,10 +389,11 @@ export function Canvas() {
       // anywhere on the canvas, a frame too: the panel closes and its tile lets go - except on a comment's
       // own controls (its pin, its card, its reply): opening one closes the panel there and keeps the
       // tile when the thread is its own (JamSurface)
-      if (!t?.closest('.cm-layer, .cm-card, .cm-pin, .cm-stack')) letGoOfTile()
+      if (!t?.closest('.cm-layer, .cm-card, .cm-pin, .cm-stack')) letGoOfTile({ via: 'click', in: 'shell' })
       if (t?.closest('.sh-node') || t?.closest('.sh-gcaption')) return
       const s = useStore.getState()
-      if (s.selection.length || s.interact) s.select(null)
+      // silent when it changes nothing (R12's silence note)
+      if (s.selection.length || s.interact) { cmd('deselect', { via: 'click', in: 'shell', frames: s.selection.length }); s.select(null) }
     }
     el.addEventListener('pointerdown', down)
     return () => el.removeEventListener('pointerdown', down)
@@ -469,9 +472,12 @@ export function Canvas() {
       if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) return
       e.preventDefault()
       document.body.classList.add('sh-space')
+      // spec 30: ends with the pan it was held for, or - let go with no drag - `no-drag`
+      spacePan.current = { h: cmd('space-pan', { via: 'key', in: 'shell', keys: 'Space' }), panned: false }
     }
-    const up = (e: KeyboardEvent) => { if (e.code === 'Space') document.body.classList.remove('sh-space') }
-    const drop = () => document.body.classList.remove('sh-space')
+    const letGo = () => { const sp = spacePan.current; if (sp && !sp.panned) { sp.h.noop('no-drag'); spacePan.current = null } }
+    const up = (e: KeyboardEvent) => { if (e.code === 'Space') { document.body.classList.remove('sh-space'); letGo() } }
+    const drop = () => { document.body.classList.remove('sh-space'); letGo() }
     window.addEventListener('keydown', down)
     window.addEventListener('keyup', up)
     window.addEventListener('blur', drop)
@@ -488,6 +494,9 @@ export function Canvas() {
   const pan = (on: boolean) => () => {
     camera(on)
     document.body.classList[on ? 'add' : 'remove']('sh-panning')
+    const sp = spacePan.current
+    if (sp && on) sp.panned = true
+    else if (sp?.panned) { sp.h.done(); spacePan.current = null }
   }
   const zoom = (on: boolean) => () => camera(on)
 

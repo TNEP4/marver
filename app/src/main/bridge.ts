@@ -55,15 +55,21 @@
  * The wire format is the channel name and its payload exactly as channels.ts types it (`ipcRenderer.send` /
  * `invoke`; `INVOKES` below are the invokes, as the app preload calls them). The IPC listeners of a channel are
  * installed when its first handler is (`handle`, `onReady`).
+ *
+ * **Spec 30 (commands, R12 #52)**: every app page's message is one command, recorded here where they all pass
+ * (`pageRun`): the handler runs as that command's turn, and what it does not end itself ends on its answer. A `via`
+ * only the page can know is allowlisted in `checkPagePayload`: `tab:activate`, `link:open` and `pill:action`.
+ * `mv:menu-click` carries the menu a relayed item came from (`in`, #51), and `mv:opened` ends its notice's command.
  */
 import { randomBytes } from 'node:crypto'
 import { ipcMain, webFrameMain, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents, type WebFrameMain } from 'electron'
 import {
   APP_MENU_IDS, BOUNDS, CANVAS_CHANNELS, FEATURE, PERF_BOUNDS, UNSAVED_WHY, WHY,
-  type AppState, type Busy, type CaptureAnswer, type CaptureRect, type DocAnswer, type Hello, type Inset, type MenuItem, type OpenItem, type PerfAsk, type PerfCam,
+  type AppState, type Busy, type CaptureAnswer, type CaptureRect, type DocAnswer, type Hello, type Inset, type MenuIn, type MenuItem, type OpenItem, type PerfAsk, type PerfCam,
   type PerfMsg, type PerfSize, type Present, type Presented, type Theme, type Why,
 } from '../../../src/shared/app-api.ts'
 import { CH, INVOKES as INVOKE_LIST, SENDERS, type PageKind } from '../shared/channels.ts'
+import { appCmd, noticeAnswered, pageCommand, pageEnd, withAppCmd } from './commands.ts'
 import { checkOpened, checkOpenItem } from '../shared/open-item.ts'
 import { mainFrameOf, safely } from './frames.ts'
 import { adapterFor, attachNav, type NavEvent } from './nav.ts'
@@ -104,8 +110,8 @@ export interface Bridge {
   reports(tabId: string): CanvasReports | undefined
   /** `mv:app-state shown | hidden` to a tab's admitted, trusted document */
   appState(tabId: string, state: Exclude<AppState, 'untrusted'>): boolean
-  /** `mv:menu-click` to a tab's admitted, trusted document, for an item its last `mv:menu` offers */
-  menuClick(tabId: string, id: string): boolean
+  /** `mv:menu-click` to a tab's admitted, trusted document, for an item its last `mv:menu` offers; `where` the menu it came from (spec 30 #51) */
+  menuClick(tabId: string, id: string, where?: MenuIn): boolean
   /** the next `mv:doc` from this tab's main frame, of a document on the tab's canvas origin, answers `reopen: true`, once (A2.11's crash reload) */
   reopenNext(tabId: string): void
   /** that flag taken back, if no `mv:doc` has taken it yet (A3: a link opened into a tab with no live document, A3.8 #42) */
@@ -295,7 +301,11 @@ export function checkPagePayload(channel: string, p: unknown): { ok: true; value
     case CH.ready: case CH.settingsGet: case CH.settingsReveal: return yes(null)
     case CH.settingsAction:
       return obj(p) && p.action === 'open-notification-settings' ? yes({ action: p.action }) : no
-    case CH.tabActivate: case CH.tabClose:
+    case CH.tabActivate:
+      // spec 30 #50: how it was chosen, which only the page knows; absent reads `click`
+      if (!obj(p) || typeof p.id !== 'string' || !TAB_ID.test(p.id) || (p.via !== undefined && !one(p.via, ['key', 'click'] as const))) return no
+      return yes({ id: p.id, ...(p.via !== undefined ? { via: p.via } : {}) })
+    case CH.tabClose:
       return obj(p) && typeof p.id === 'string' && TAB_ID.test(p.id) ? yes({ id: p.id }) : no
     case CH.tabMenu:
       return obj(p) && typeof p.id === 'string' && TAB_ID.test(p.id) && coord(p.x) && coord(p.y) ? yes({ id: p.id, x: p.x, y: p.y }) : no
@@ -303,9 +313,13 @@ export function checkPagePayload(channel: string, p: unknown): { ok: true; value
       return obj(p) && Array.isArray(p.ids) && p.ids.length <= 64 && p.ids.every((i) => typeof i === 'string' && TAB_ID.test(i)) && coord(p.x) && coord(p.y)
         ? yes({ ids: [...p.ids], x: p.x, y: p.y }) : no
     case CH.linkOpen:
-      return obj(p) && typeof p.url === 'string' && p.url.length <= 2048 ? yes({ url: p.url }) : no
+      // `via`: `click`, a past shared canvas's card; absent reads Return in the field (spec 30 #50)
+      if (!obj(p) || typeof p.url !== 'string' || p.url.length > 2048 || (p.via !== undefined && p.via !== 'click')) return no
+      return yes({ url: p.url, ...(p.via !== undefined ? { via: p.via } : {}) })
     case CH.pillAction:
-      return obj(p) && rev(p.rev) && one(p.act, ['button', 'dismiss'] as const) ? yes({ rev: p.rev, act: p.act }) : no
+      // `via`: `key`, Esc on a dismissible pill; absent reads a click (spec 30 #50)
+      if (!obj(p) || !rev(p.rev) || !one(p.act, ['button', 'dismiss'] as const) || (p.via !== undefined && p.via !== 'key')) return no
+      return yes({ rev: p.rev, act: p.act, ...(p.via !== undefined ? { via: p.via } : {}) })
     case CH.tabpageAction:
       return obj(p) && rev(p.rev) && one(p.action, ['retry', 'reload', 'copy-start', 'copy-details', 'reveal', 'open-browser', 'close', 'export-report'] as const) ? yes({ rev: p.rev, action: p.action }) : no
     case CH.homeAction:
@@ -585,6 +599,7 @@ export function installBridge(o: BridgeOptions = {}): Bridge {
     const v = checkOpened(m!.p)
     if (!v) { trace('refused', { wc: id, ch: 'opened', why: 'payload' }); return }
     trace('accepted', { wc: id, ch: 'opened', tab: who.tabId, doc: who.doc, id: v.id, result: v.result })
+    noticeAnswered(v.id, v.result)   // ends the click's command (spec 30's notice-open)
   })
 
   /** The tab's bound instance lists `feature` (A4.6 #2), as the registry has it now. */
@@ -622,6 +637,23 @@ export function installBridge(o: BridgeOptions = {}): Bridge {
     }
     return { wc: r.wc, kind: r.kind, ...(r.tabId ? { tabId: r.tabId } : {}) }
   }
+  /**
+   * The page funnel (spec 30 #52): one command per message, its handler run as that command's turn (`currentAppCmd`),
+   * and ended by the answer unless the work goes on (#49: `pageEnd`). A message refused above never gets here: nobody's
+   * input reached anything.
+   */
+  const pageRun = (channel: string, ctx: PageCtx, value: unknown): unknown => {
+    const fn = handlers.get(channel)
+    const c = pageCommand(channel, ctx, value)
+    if (!c) return fn?.(ctx, value)
+    const h = appCmd(c.name, c.o)
+    if (c.noop) { h.noop(c.noop); return undefined }
+    let out: unknown
+    try { out = withAppCmd(h, () => fn?.(ctx, value)) } catch (err) { h.fail('threw'); throw err }
+    if (out instanceof Promise) return out.then((v: unknown) => { pageEnd(h, v); return v }, (err: unknown) => { h.fail('threw'); throw err })
+    pageEnd(h, out)
+    return out
+  }
   const listen = (channel: string) => {
     if (listening.has(channel) || !SENDERS[channel]) return
     listening.add(channel)
@@ -631,7 +663,7 @@ export function installBridge(o: BridgeOptions = {}): Bridge {
         if (!ctx) throw new Error('refused')
         const p = checkPagePayload(channel, payload)
         if (!p.ok) { trace('page-refused', { wc: e.sender.id, channel, why: 'payload' }); return REFUSED_ANSWER[channel] ?? null }
-        return await handlers.get(channel)?.(ctx, p.value)
+        return await pageRun(channel, ctx, p.value)
       })
       return
     }
@@ -646,7 +678,7 @@ export function installBridge(o: BridgeOptions = {}): Bridge {
         for (const fn of [...readyFns]) { try { fn(ctx) } catch (err) { process.stderr.write(`marver-app: a ready listener threw: ${(err as Error).message}\n`) } }
         return
       }
-      try { void handlers.get(channel)?.(ctx, p.value) } catch (err) { process.stderr.write(`marver-app: ${channel} threw: ${(err as Error).message}\n`) }
+      try { void pageRun(channel, ctx, p.value) } catch (err) { process.stderr.write(`marver-app: ${channel} threw: ${(err as Error).message}\n`) }
     })
   }
 
@@ -718,13 +750,13 @@ export function installBridge(o: BridgeOptions = {}): Bridge {
       if (id === undefined || !rec?.doc || !isTrusted(id) || (state !== 'shown' && state !== 'hidden')) return false
       return sendCanvas(id, CANVAS_CHANNELS.appState, { doc: rec.doc, s: state })
     },
-    menuClick(tabId, itemId) {
+    menuClick(tabId, itemId, where) {
       const id = tabWc.get(tabId)
       const rec = id === undefined ? undefined : docs.get(id)
       // an item the page's last mv:menu offers, or one of main's own (the tab's right-click Mark All as Seen)
       const offered = rec?.menu?.some((m) => m.id === itemId) || (APP_MENU_IDS as readonly string[]).includes(itemId)
       if (id === undefined || !rec?.doc || !isTrusted(id) || !offered) return false
-      return sendCanvas(id, CANVAS_CHANNELS.menuClick, { doc: rec.doc, id: itemId })
+      return sendCanvas(id, CANVAS_CHANNELS.menuClick, { doc: rec.doc, id: itemId, ...(where ? { in: where } : {}) })
     },
     reopenNext(tabId) { reopen.add(tabId) },
     reopenCancel(tabId) { reopen.delete(tabId) },

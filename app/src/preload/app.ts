@@ -11,7 +11,7 @@
  * Whether a channel is an invoke or a send is `INVOKES`'s (src/shared/channels.ts), never this file's own choice.
  */
 import { contextBridge, ipcRenderer } from 'electron'
-import { CH, isInvoke, RECEIVES, type AppPageKind, type HomeAction, type HomeActionAnswer, type HomeApi, type InvokeChannel, type LinkOpenAnswer, type PageApi, type PillAction, type SettingsAction, type SettingsApi, type SettingsSet, type SettingsSetResult, type SettingsView, type StripApi, type TabPageAction, type TabPageApi, type TabsMore, type WindowView } from '../shared/channels.ts'
+import { CH, isInvoke, RECEIVES, type ActivateVia, type AppPageKind, type HomeAction, type HomeActionAnswer, type HomeApi, type InvokeChannel, type LinkOpenAnswer, type PageApi, type PillAction, type SettingsAction, type SettingsApi, type SettingsSet, type SettingsSetResult, type SettingsView, type StripApi, type TabPageAction, type TabPageApi, type TabsMore, type WindowView } from '../shared/channels.ts'
 
 type AppKind = AppPageKind
 const KINDS: readonly AppKind[] = ['strip', 'home', 'settings', 'tabpage']
@@ -63,10 +63,11 @@ const str = (v: unknown, max = 80) => String(v ?? '').slice(0, max)
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : 0)
 
 const tabActions = {
-  activate: (id: string) => send(CH.tabActivate, { id: str(id) }),
+  // spec 30 #50: how it was chosen, passed only when the page says (`via` absent reads a click)
+  activate: (id: string, via?: ActivateVia) => send(CH.tabActivate, { id: str(id), ...(via === 'key' || via === 'click' ? { via } : {}) }),
   close: (id: string) => send(CH.tabClose, { id: str(id) }),
   tabMenu: (id: string, x: number, y: number) => send(CH.tabMenu, { id: str(id), x: num(x), y: num(y) }),
-  openLink: (url: string) => invoke<LinkOpenAnswer>(CH.linkOpen, { url: str(url, 4096) }),
+  openLink: (url: string, via?: 'click') => invoke<LinkOpenAnswer>(CH.linkOpen, { url: str(url, 4096), ...(via === 'click' ? { via } : {}) }),
 }
 
 function build(k: AppKind): PageApi {
@@ -82,7 +83,7 @@ function build(k: AppKind): PageApi {
         more: (m: TabsMore) => send(CH.tabsMore, {
           ids: Array.isArray(m?.ids) ? m.ids.slice(0, 64).map((i) => str(i)) : [], x: num(m?.x), y: num(m?.y),
         }),
-        pillAction: (a: PillAction) => send(CH.pillAction, { rev: num(a?.rev), act: a?.act === 'dismiss' ? 'dismiss' : 'button' }),
+        pillAction: (a: PillAction) => send(CH.pillAction, { rev: num(a?.rev), act: a?.act === 'dismiss' ? 'dismiss' : 'button', ...(a?.via === 'key' ? { via: 'key' } : {}) }),
       }
       return api
     }

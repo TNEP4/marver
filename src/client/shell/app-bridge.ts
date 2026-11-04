@@ -29,7 +29,10 @@
  * at the size found; main refuses it and the tab stays covered. rAF does not run in a hidden page, so a request to a
  * page nobody sees waits by itself. App 0.1 says no inset and asks nothing: none of it runs there.
  */
-import { BOUNDS, type AppState, type Busy, type Hello, type MarverAppV1, type MenuItem, type Present } from '../../shared/app-api.ts'
+import { BOUNDS, MENU_IN, type AppState, type Busy, type Hello, type MarverAppV1, type MenuIn, type MenuItem, type Present } from '../../shared/app-api.ts'
+import type { CmdIn } from '../../shared/perf-records.ts'
+import { relayed } from './commands.ts'
+import { markSeenFrom } from './marks-ui.tsx'
 import { APP } from './marver-app.ts'
 import { TOP } from './inset.ts'
 import { api, canvasStopped } from './api.ts'
@@ -139,15 +142,18 @@ export function menuNow(): MenuItem[] {
  *  text field holding the focus does not stop it: the person chose the item). An id the page does not offer now
  *  does nothing. One id is the app's own, never in the menu: the tab's right-click Mark All as Seen clears every
  *  frame's "new" in this canvas, here and on disk, as the sidebar's Mark all as seen does for a board. */
-export function runMenuItem(id: string): void {
+export function runMenuItem(id: string, from?: unknown): void {
+  // spec 30 #51: the menu it came from, as app 1.0.1 says; app 1.0.0 says nothing, so `app`
+  const where: CmdIn = (MENU_IN as readonly unknown[]).includes(from) ? from as MenuIn : 'app'
   if (id === 'mark-all-seen') {
     const s = useStore.getState()
-    if (!PUBLISHED && s.marks) s.markSeen(Object.keys(s.marks.changed))
+    if (!PUBLISHED && s.marks) markSeenFrom({ via: 'relay', in: where }, Object.keys(s.marks.changed))
     return
   }
   const it = ITEMS.find((x) => x.id === id)
   if (!it || !offered(it)) return
-  window.dispatchEvent(new KeyboardEvent('keydown', { ...it.key, bubbles: true, cancelable: true }))
+  // recorded by the key handler that runs it, once, as the relay it is (`cmd()` reads `relayed`)
+  relayed(where, () => window.dispatchEvent(new KeyboardEvent('keydown', { ...it.key, bubbles: true, cancelable: true })))
 }
 
 // ---- coming back into view ----------------------------------------------------------------------------------
@@ -198,7 +204,7 @@ export function startAppBridge(): void {
 
   // what the app says, listened for before the page says anything
   call(() => app.onAppState((s) => onAppState(s)))
-  call(() => app.onMenuClick((p) => runMenuItem(typeof p?.id === 'string' ? p.id : '')))
+  call(() => app.onMenuClick((p) => runMenuItem(typeof p?.id === 'string' ? p.id : '', p?.in)))
   // a notice's click (A4.6 #29, #30): the exact item, resolved against fresh reads and answered
   if (typeof app.onOpen === 'function') call(() => { app.onOpen!((p) => openLiveItem(p)) })
   // the one ground's presentation requests (0.27.2): answered only when the shell took the inset - a shell that did

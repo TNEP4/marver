@@ -33,6 +33,7 @@ import type { LiveItem, OpenItem } from '../../../src/shared/app-api.ts'
 import type { TabMarks } from '../shared/channels.ts'
 import type { Held, LiveChange } from './live.ts'
 import type { RegistryEvent } from './registry.ts'
+import { activated, appCmd, waitNotice, withAppCmd } from './commands.ts'
 import { activeTab, allTabs, getTab, isActive, type Tab } from './tabs.ts'
 import { T } from './timings.ts'
 
@@ -240,7 +241,11 @@ export function createNotify(ports: NotifyPorts, o: { seenMax?: number } = {}): 
         release()
         if (!item) { stops.delete(t.id); ports.refresh() }
         log({ click: item?.id ?? `stop:${t.id}`, tab: t.id })
-        ports.open(t.id, item)
+        // spec 30's notice-open: with an item, the shell's answer ends it, or its drop in main; a stop's, its tab shown
+        const h = appCmd('notice-open', { via: 'click', in: 'main', tab: t.id })
+        if (!getTab(t.id)) h.noop('no-tab')                          // closed since it was posted: nothing to show
+        else if (item) waitNotice(h, item.id)
+        withAppCmd(h, () => { ports.open(t.id, item); if (!item) activated(h, t.id) })
       },
       onClose: release,
     })

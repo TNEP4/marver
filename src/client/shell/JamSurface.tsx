@@ -11,12 +11,13 @@ import { captureCounts, endedToReview, useJamCapture } from './jam-capture.ts'
 import { useJamVoice, voiceSession, voiceSessionEnd, voiceSessionId, type Heard } from './jam-voice.ts'
 import { holdsSessionMic, PlayCounter, RecordDetail, StartSheet, WrapSheet } from './jam-session.tsx'
 import { AsksAnswer, FocusPanel, Marver, VoiceAsk } from './jam-panel.tsx'
-import { addNote, decideDraft, laneCards, openThread, openTile, pendingEdit, resumeDraft, reveal, saveEdit, shownLane, startCapture } from './jam-keys.ts'
+import { addNote, decideDraft, endOnRecording, laneCards, openThread, openTile, pendingEdit, resumeDraft, reveal, saveEdit, shownLane, startCapture } from './jam-keys.ts'
 import { ContextMenu, useContextMenu, type MenuItem } from './ContextMenu.tsx'
 import { ArrowBendUpLeftIcon, ArrowLineUpIcon, ArrowUpIcon, CheckSquareOffsetIcon, CommentIcon, EyeIcon, NotebookIcon, PencilSimpleIcon, PlayIcon, ReloadIcon, XIcon } from './icons.tsx'
 import { laneLine, laneTip, pictureCaption, timelineLines } from './jam-lines.ts'
-import { changedShots, useJamQueue, type JamCard } from './jam-queue.ts'
-import { DONE_GROUP, doneFold, jamSurface, letGoOfTile, useJamUi } from './jam-state.ts'
+import { changedShots, useJamQueue, type JamAction, type JamCard } from './jam-queue.ts'
+import { DONE_GROUP, doneFold, endOnOk, jamSurface, letGoOfTile, useJamUi } from './jam-state.ts'
+import { cmd, COMMANDS, endAfterFrames, keysOf, type CmdHandle, type CmdName, type CmdOpts } from './commands.ts'
 import { CaptureLaneRow, FocusPanelView } from './jam-surface-parts.tsx'
 import { clearMoreDraft, EdgeRing, preloadShots } from './jam-panel.tsx'
 import { useComments } from './comments-store.ts'
@@ -29,6 +30,52 @@ import type { CaptureRecord } from '../../server/jam/types.ts'
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
 /** An <img> cannot send a header: its URL names the workspace, which the server's guard reads (A1.11). */
 const picture = (id?: string) => (id ? withWs(`${ROUTE}/api/jam/picture?id=${encodeURIComponent(id)}`) : undefined)
+
+/** A lane tile clicked: its command (spec 30) ends once its surface is drawn, or could not be. */
+const openFromLane = (id: string, h: CmdHandle) => void endOnOk(h, openTile(id))
+
+/** What a capture's panel does with what was chosen: its button named the command, each move ends it (spec 30). */
+function panelMoves(c: JamCard) {
+  const ui = useJamUi.getState()
+  const act = (card: JamCard | undefined, action: JamAction, body?: string) => (card ? useJamQueue.getState().act(card, action, body) : Promise.resolve(false))
+  return {
+    onEdit: (text: string, h: CmdHandle) => void endOnOk(h, saveEdit(c, text)),
+    onConfirm: (h: CmdHandle) => void endOnOk(h, decideDraft(c.id, 'confirm')),
+    onKeep: (h: CmdHandle) => void endOnOk(h, decideDraft(c.id, 'keep')),
+    onDrop: (h: CmdHandle) => void endOnOk(h, decideDraft(c.id, 'drop')),
+    onResume: (h: CmdHandle) => void endOnOk(h, resumeDraft(c.id)),
+    onAddNote: async (text: string, id: string) => { const ok = await addNote(c, text, id); if (!ok) useStore.getState().toast('the note was not added - try again'); return ok },
+    onGood: (h: CmdHandle) => { void endOnOk(h, act(c, 'good')); ui.close() },
+    onMore: (text: string, h: CmdHandle) => void (async () => {
+      // the composer and its words stay until the follow-up is really queued
+      if (await endOnOk(h, act(c, 'more', text))) { clearMoreDraft(c.id); ui.setMoreOpen(false); ui.close() }
+      else useStore.getState().toast('your follow-up was not sent - try again')
+    })(),
+    onLater: (h: CmdHandle) => { void endOnOk(h, act(c, 'later')); ui.close() },
+    onOpenThread: (h: CmdHandle) => void endOnOk(h, openThread(c)),
+    asks: c.thread ? { question: replyText(c), onAnswer: async (text: string) => {
+      const ok = await useComments.getState().replyOk(c.thread!, /@marver\b/i.test(text) ? text : `@marver ${text}`)
+      if (!ok) useStore.getState().toast('your answer was not sent - try again')
+      else ui.close()
+      return ok
+    } } : undefined,
+    onRetry: (h: CmdHandle) => void (async () => { if (await endOnOk(h, act(useJamQueue.getState().cards?.find((x) => x.id === c.id), 'retry'))) ui.close(); else useStore.getState().toast('the capture could not be retried - look again') })(),
+  }
+}
+
+/** The same for a session record's panel. */
+function recordMoves(c: JamCard) {
+  const ui = useJamUi.getState()
+  const act = (action: JamAction, body?: string) => useJamQueue.getState().act(c, action, body)
+  const andClose = (action: JamAction) => (h: CmdHandle) => { void endOnOk(h, act(action)); ui.close() }
+  return {
+    onGood: andClose('good'), onLater: andClose('later'), onRetry: andClose('retry'), onDrop: andClose('drop'),
+    onMore: (text: string, h: CmdHandle) => void (async () => {
+      if (await endOnOk(h, act('more', text))) { clearMoreDraft(c.id); ui.setMoreOpen(false); ui.close() }
+      else useStore.getState().toast('your note was not sent - try again')
+    })(),
+  }
+}
 
 /** Is the lane showing? While a run lasts with a capture in it, or a capture records. */
 export function useLaneShown(): boolean {
@@ -170,13 +217,13 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
     return { time: counts.time, points: c?.points.length ?? 0, pictures: c?.pictures.length ?? 0, picturesMax: (c?.pictures.length ?? 0) >= 12, steps,
       notes: counts.notes, noteOn: cap.noteOpen, onNote: () => cap.setNoteOpen(!cap.noteOpen), onStop: () => cap.end(), onStopReview: () => cap.end(true),
       // the microphone: on while it hears this capture; off once you were asked (a click asks again)
-      ...(voice.hearing === cap.current ? { mic: 'on' as const } : voice.choice !== null || voice.denied ? { mic: 'off' as const, onMic: () => useJamVoice.setState({ asking: true, choice: null }) } : {}) }
+      ...(voice.hearing === cap.current ? { mic: 'on' as const } : voice.choice !== null || voice.denied ? { mic: 'off' as const, onMic: (h: CmdHandle) => { useJamVoice.setState({ asking: true, choice: null }); endAfterFrames(h) } } : {}) }
   })() : undefined
 
   // a session between captures (none recording, none still sealing here): its own tile
   const between = session && !cap.current ? {
     since: session.since, mic: voice.live,
-    onCapture: () => startCapture(),   // as S: one started over an open review follows it
+    onCapture: (h: CmdHandle) => { startCapture(); endOnRecording(h) },   // as S: one started over an open review follows it
   } : undefined
 
   const panelCard = ui.panel && ui.panel.kind !== 'thread' ? cards?.find((c) => c.id === ui.panel!.id) : undefined
@@ -187,7 +234,6 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
   }, [cards, ui.panel])
   const rec = useRecord(ui.panel?.kind === 'capture' || ui.panel?.kind === 'review' ? ui.panel.id : undefined)
   const agentName = agent ? HARNESS[agent] ?? agent : 'your agent'
-  const act = (c: JamCard | undefined, action: Parameters<ReturnType<typeof useJamQueue.getState>['act']>[1], body?: string) => (c ? useJamQueue.getState().act(c, action, body) : Promise.resolve(false))
   /** The panel's arrows: the previous or next card of the same kind on the lane (reviews among reviews). */
   const step = (d: number) => {
     if (!ui.panel || !panelCard) return undefined
@@ -201,6 +247,9 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
     const idx = of.findIndex((c) => c.id === panelCard.id)
     return { of: [idx + 1, of.length] as [number, number] }
   }, [ui.panel, panelCard, list])
+
+  // a right-click on a tile: its menu (each item a command of its own)
+  const menuAt = (e: React.MouseEvent, id: string) => { const c = cards?.find((x) => x.id === id); if (c) { ui.select(id); cm.open(e, tileMenu(c), `tile:${id}`) } else e.preventDefault() }
 
   const sheetOpen = ui.sheet === 'start' || ui.sheet === 'wrap'
   // the microphone question in a session with no capture recording: under the Jam button
@@ -220,9 +269,9 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
       {shown && (
         <CaptureLaneRow
           tiles={folded ? [] : tiles} recording={recording} between={between} selected={ui.selected ?? undefined} keyboard={ui.laneKeys} followEnd={ui.followEnd}
-          doneOpen={ui.doneOpen} onDoneOpen={(open, ids) => ui.setDoneOpen(open, ids)}
-          onOpen={(id) => openTile(id)}
-          onMenu={(e, id) => { const c = cards?.find((x) => x.id === id); if (c) { ui.select(id); cm.open(e, tileMenu(c), `tile:${id}`) } else e.preventDefault() }}
+          doneOpen={ui.doneOpen} onDoneOpen={ui.setDoneOpen}
+          onOpen={openFromLane}
+          onMenu={menuAt}
           ask={voice.asking && cap.current ? voiceAsk(voice) : undefined}
           caption={cap.current ? captionOf(voice.heard[cap.current]) : undefined}
           notes={cap.noteOpen ? {
@@ -232,22 +281,14 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
         />
       )}
       {panel?.kind === 'thread' && (
-        <FocusPanel left={sidebarRight} onClose={() => ui.close()}>
+        <FocusPanel left={sidebarRight} onClose={ui.close}>
           <ThreadPanel key={`${panel.board}/${panel.id}`} board={panel.board} id={panel.id} />
         </FocusPanel>
       )}
       {ui.panel && panelCard && panelCard.kind === 'wrapup' && (
-        <FocusPanel left={sidebarRight} onClose={() => ui.close()}>
+        <FocusPanel left={sidebarRight} onClose={ui.close}>
           <RecordDetail key={panelCard.id} card={panelCard} agent={agentName} more={ui.moreOpen} of={detail?.of} onPrev={step(-1)} onNext={step(1)}
-            onMoreOpen={(on) => ui.setMoreOpen(on)}
-            onGood={() => { void act(panelCard, 'good'); ui.close() }}
-            onLater={() => { void act(panelCard, 'later'); ui.close() }}
-            onRetry={() => { void act(panelCard, 'retry'); ui.close() }}
-            onDrop={() => { void act(panelCard, 'drop'); ui.close() }}
-            onMore={(text) => void (async () => {
-              if (await act(panelCard, 'more', text)) { clearMoreDraft(panelCard.id); ui.setMoreOpen(false); ui.close() }
-              else useStore.getState().toast('your note was not sent - try again')
-            })()} />
+            onMoreOpen={ui.setMoreOpen} {...recordMoves(panelCard)} />
         </FocusPanel>
       )}
       {panel && panel.kind !== 'thread' && panelCard && panelCard.kind !== 'wrapup' && (
@@ -263,30 +304,10 @@ export function JamSurface({ sidebarRight }: { sidebarRight: number }) {
           shots={changedShots(panelCard.shots).map((x) => ({ frame: x.frame, before: picture(x.before), after: picture(x.after), ...(x.new ? { new: true } : {}) }))}
           reply={panelCard.reply ? replyText(panelCard) : ''}
           view={ui.view} tab={ui.tab} moreOpen={ui.moreOpen}
-          onTab={(i) => ui.setTab(i)} onFlip={(v) => ui.setView(v)} onMoreOpen={(on) => ui.setMoreOpen(on)}
-          onClose={() => ui.close()}
-          onEdit={(text) => saveEdit(panelCard, text)}
-          onConfirm={() => void decideDraft(panelCard.id, 'confirm')}
-          onKeep={() => void decideDraft(panelCard.id, 'keep')}
-          onDrop={() => void decideDraft(panelCard.id, 'drop')}
-          onResume={() => void resumeDraft(panelCard.id)}
-          onAddNote={async (text, id) => { const ok = await addNote(panelCard, text, id); if (!ok) useStore.getState().toast('the note was not added - try again'); return ok }}
-          onGood={() => { void act(panelCard, 'good'); ui.close() }}
-          onMore={(text) => void (async () => {
-            // the composer and its words stay until the follow-up is really queued
-            if (await act(panelCard, 'more', text)) { clearMoreDraft(panelCard.id); ui.setMoreOpen(false); ui.close() }
-            else useStore.getState().toast('your follow-up was not sent - try again')
-          })()}
-          onLater={() => { void act(panelCard, 'later'); ui.close() }}
-          onOpenThread={() => openThread(panelCard)}
-          asks={panelCard.thread ? { question: replyText(panelCard), onAnswer: async (text) => {
-            const ok = await useComments.getState().replyOk(panelCard.thread!, /@marver\b/i.test(text) ? text : `@marver ${text}`)
-            if (!ok) useStore.getState().toast('your answer was not sent - try again')
-            else ui.close()
-            return ok
-          } } : undefined}
+          onTab={ui.setTab} onFlip={ui.setView} onMoreOpen={ui.setMoreOpen}
+          onClose={ui.close}
+          {...panelMoves(panelCard)}
           onPrev={step(-1)} onNext={step(1)} pending={pendingEdit(panelCard.id)} locked={cap.settling === panelCard.id}
-          onRetry={() => void (async () => { if (await act(useJamQueue.getState().cards?.find((x) => x.id === panelCard.id), 'retry')) ui.close(); else useStore.getState().toast('the capture could not be retried - look again') })()}
         />
       )}
       <ContextMenu menu={cm.menu} close={cm.close} />
@@ -310,6 +331,12 @@ function ThreadPanel({ board, id }: { board: string; id: string }) {
   const onThread = (cards ?? []).filter((c) => c.board === board && c.thread === id)
   const line = (b?: string) => (b ?? '').replace(/\s+/g, ' ').trim()
   const last = t && t.replies.length ? t.replies[t.replies.length - 1] : t
+  const answer = async (text: string) => {
+    const body = onThread.length && !/@marver\b/i.test(text) ? `@marver ${text}` : text
+    const ok = await useComments.getState().replyOk(id, body)
+    if (!ok) useStore.getState().toast('your answer was not sent - try again')
+    return ok
+  }
   return (
     <div className="jm-panel jm-thread" data-jam-thread-panel={id} {...(t?.resolved ? { 'data-resolved': '' } : {})}>
       <div className="top">
@@ -333,12 +360,7 @@ function ThreadPanel({ board, id }: { board: string; id: string }) {
             <div key={c.id} className="jm-thread-status"><TagStatus board={board} eventId={c.events[c.events.length - 1]} harness={HARNESS} /></div>
           ))}
           {!t.resolved && (
-            <AsksAnswer tag={onThread.length > 0} onAnswer={async (text) => {
-              const body = onThread.length && !/@marver\b/i.test(text) ? `@marver ${text}` : text
-              const ok = await useComments.getState().replyOk(id, body)
-              if (!ok) useStore.getState().toast('your answer was not sent - try again')
-              return ok
-            }} />
+            <AsksAnswer tag={onThread.length > 0} onAnswer={answer} />
           )}
         </>}
       </div>
@@ -362,8 +384,24 @@ function voiceAsk(v: ReturnType<typeof useJamVoice.getState>) {
     : d?.state === 'failed' ? 'failed' as const : 'download' as const
   return {
     step, mb: v.mb, progress: d && d.total ? d.received / d.total : 0, error: v.server === 'unavailable' ? v.reason : d?.error,
-    onYes: () => v.setChoice('yes'), onNo: () => v.setChoice('no'), onDownload: () => void v.startDownload(),
+    // `jam-voice` ends when the consent or the download state changed; "Not now" backed out, "Typed notes only" chose
+    onYes: (h: CmdHandle) => void v.setChoice('yes').then(() => h.done(), () => h.done()),
+    onNo: (h: CmdHandle) => { void v.setChoice('no'); if (step === 'unavailable') h.done(); else h.cancel() },
+    onDownload: (h: CmdHandle) => void v.startDownload().then(() => endOnDownload(h)),
   }
+}
+
+/** `jam-voice`'s Download or Try again: ends with the download, as the poll sees it after the request was answered - each
+ *  answer's `download` is a new object, so a failure from before it never counts. The listener goes once nothing more can
+ *  be written: the command's deadline, and as long again for a late end. */
+function endOnDownload(h: CmdHandle) {
+  const stop = useJamVoice.subscribe((s, p) => {
+    if (s.download === p.download && s.server === p.server) return
+    const d = s.download?.state
+    if (d === 'failed' || s.server === 'unavailable') { stop(); h.fail('download-failed') }
+    else if (d === 'done' || s.server === 'ready' || s.server === 'loading') { stop(); h.done() }
+  })
+  setTimeout(stop, 2 * COMMANDS['jam-voice'].deadlineMs)
 }
 
 /** The caption's words: the newest phrase in ink, a little of what came before it dim. */
@@ -375,10 +413,10 @@ function captionOf(heard: Heard[] | undefined): { old: string; live: string } | 
   return { old: old.join(' '), live: live.join(' ') }
 }
 
-/** Open a card's thread with the caret in its reply field - to add to the conversation. */
-function replyIn(c: JamCard) {
-  if (!c.thread) return
-  openThread(c)
+/** Open a card's thread with the caret in its reply field - to add to the conversation. `h` ends once the thread is drawn. */
+function replyIn(c: JamCard, h: CmdHandle) {
+  if (!c.thread) { h.fail('refused'); return }
+  void endOnOk(h, openThread(c))
   // once the thread's card has drawn (on another board, once that board has loaded)
   const until = performance.now() + 3_000
   const focus = () => {
@@ -391,30 +429,31 @@ function replyIn(c: JamCard) {
 
 /** A tile's right-click menu: what can be done with this capture now. */
 function tileMenu(c: JamCard): MenuItem[] {
-  const q = useJamQueue.getState()
-  const act = (a: Parameters<typeof q.act>[1], body?: string) => { const fresh = useJamQueue.getState().cards?.find((x) => x.id === c.id); if (fresh) void useJamQueue.getState().act(fresh, a, body) }
-  const item = (label: string, icon: ReactNode, onClick: () => void): MenuItem => ({ label, icon, onClick })
+  const fresh = () => useJamQueue.getState().cards?.find((x) => x.id === c.id)
+  const act = (a: JamAction) => (h: CmdHandle) => { const card = fresh(); if (card) void endOnOk(h, useJamQueue.getState().act(card, a)); else h.fail('refused') }
+  // each item is its command: named at its click, ended by what it runs
+  const item = (label: string, icon: ReactNode, name: CmdName, run: (h: CmdHandle) => void): MenuItem => ({ label, icon, onClick: () => run(cmd(name, { via: 'context', in: 'shell' })) })
   // one icon per action, never two alike in a menu: open (eye), review (checklist), resume (play), rename
   // (pencil), add to queue (send arrow), keep (notebook), do next (to the top), retry, reply, thread, drop
-  const open = item(c.state === 'review' ? 'Review' : c.state === 'draft' ? 'Open read-back' : 'Open', c.state === 'review' ? <CheckSquareOffsetIcon size={14} /> : <EyeIcon size={14} />, () => openTile(c.id))
+  const open = item(c.state === 'review' ? 'Review' : c.state === 'draft' ? 'Open read-back' : 'Open', c.state === 'review' ? <CheckSquareOffsetIcon size={14} /> : <EyeIcon size={14} />, 'jam-open', (h) => void endOnOk(h, openTile(c.id)))
   const rename: MenuItem = { label: 'Rename', icon: <PencilSimpleIcon size={14} />, panel: (close) => <RenameField card={c} close={close} /> }
-  const reply = c.thread ? [item('Reply in thread', <ArrowBendUpLeftIcon size={14} />, () => replyIn(c))] : []
-  const thread = c.thread ? [item('Open thread', <CommentIcon size={14} />, () => openThread(c))] : []
+  const reply = c.thread ? [item('Reply in thread', <ArrowBendUpLeftIcon size={14} />, 'jam-reply', (h) => replyIn(c, h))] : []
+  const thread = c.thread ? [item('Open thread', <CommentIcon size={14} />, 'jam-thread', (h) => void endOnOk(h, openThread(c)))] : []
   switch (c.state) {
-    case 'draft': return [open, item('Resume capture', <PlayIcon size={14} />, () => void resumeDraft(c.id)), rename,
-      item('Add to queue', <ArrowUpIcon size={14} />, () => void decideDraft(c.id, 'confirm')), item('Keep, do not send', <NotebookIcon size={14} />, () => void decideDraft(c.id, 'keep')),
-      item('Drop', <XIcon size={14} />, () => void decideDraft(c.id, 'drop'))]
+    case 'draft': return [open, item('Resume capture', <PlayIcon size={14} />, 'jam-resume', (h) => void endOnOk(h, resumeDraft(c.id))), rename,
+      item('Add to queue', <ArrowUpIcon size={14} />, 'jam-confirm', (h) => void endOnOk(h, decideDraft(c.id, 'confirm'))), item('Keep, do not send', <NotebookIcon size={14} />, 'jam-keep', (h) => void endOnOk(h, decideDraft(c.id, 'keep'))),
+      item('Drop', <XIcon size={14} />, 'jam-drop', (h) => void endOnOk(h, decideDraft(c.id, 'drop')))]
     case 'queued': return c.kind === 'capture'
-      ? [open, rename, item('Do next', <ArrowLineUpIcon size={14} />, () => act('first')), item('Keep, do not send', <NotebookIcon size={14} />, () => act('keep')), item('Drop', <XIcon size={14} />, () => act('drop'))]
-      : [open, item('Drop', <XIcon size={14} />, () => act('drop'))]   // a queued record: open or drop it
+      ? [open, rename, item('Do next', <ArrowLineUpIcon size={14} />, 'jam-do-next', act('first')), item('Keep, do not send', <NotebookIcon size={14} />, 'jam-keep', act('keep')), item('Drop', <XIcon size={14} />, 'jam-drop', act('drop'))]
+      : [open, item('Drop', <XIcon size={14} />, 'jam-drop', act('drop'))]   // a queued record: open or drop it
     case 'review': return [open, ...reply, ...thread, rename]
     case 'asks': return [...reply, open, rename]
-    case 'failed': return [item('Retry', <ReloadIcon size={14} />, () => act('retry')), open, ...thread, item('Drop', <XIcon size={14} />, () => act('drop'))]
+    case 'failed': return [item('Retry', <ReloadIcon size={14} />, 'jam-retry', act('retry')), open, ...thread, item('Drop', <XIcon size={14} />, 'jam-drop', act('drop'))]
     case 'working': {
       // a run your session went quiet on (spec 29b): give it back, run it in the background, or drop it
       if (c.runner?.kind !== 'session' || c.runner.state !== 'stalled') return [open, ...reply, ...thread, rename]
-      const run = (a: 'again' | 'background' | 'drop') => () => { const fresh = useJamQueue.getState().cards?.find((x) => x.id === c.id); if (fresh) void useJamQueue.getState().runAct(fresh, a) }
-      return [item('Give it back to your session', <ReloadIcon size={14} />, run('again')), item('Run it in the background', <ArrowUpIcon size={14} />, run('background')), open, ...thread, item('Drop it', <XIcon size={14} />, run('drop'))]
+      const run = (a: 'again' | 'background' | 'drop') => (h: CmdHandle) => { const card = fresh(); if (card) void endOnOk(h, useJamQueue.getState().runAct(card, a)); else h.fail('refused') }
+      return [item('Give it back to your session', <ReloadIcon size={14} />, 'jam-again', run('again')), item('Run it in the background', <ArrowUpIcon size={14} />, 'jam-background', run('background')), open, ...thread, item('Drop it', <XIcon size={14} />, 'jam-drop', run('drop'))]
     }
     default: return [open, ...reply, ...thread, rename]
   }
@@ -425,16 +464,22 @@ function RenameField({ card, close }: { card: JamCard; close: () => void }) {
   const [text, setText] = useState(card.named ? card.title ?? '' : card.title === 'Capture' ? '' : card.title ?? '')
   const ref = useRef<HTMLInputElement>(null)
   useEffect(() => { requestAnimationFrame(() => ref.current?.select()) }, [])
-  const save = async () => {
+  const save = async (h: CmdHandle) => {
     const fresh = useJamQueue.getState().cards?.find((x) => x.id === card.id)
-    if (fresh && !(await useJamQueue.getState().act(fresh, 'rename', text))) useStore.getState().toast('the capture could not be renamed - look again')
+    if (!fresh) h.fail('refused')
+    else if (!(await endOnOk(h, useJamQueue.getState().act(fresh, 'rename', text)))) useStore.getState().toast('the capture could not be renamed - look again')
     close()
   }
   return (
     <div className="jm-rename">
       <input ref={ref} value={text} maxLength={80} placeholder="Name this capture" aria-label="Capture name"
         onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') void save(); if (e.key === 'Escape') close() }} />
+        onKeyDown={(e) => {
+          e.stopPropagation()
+          const how: CmdOpts = { via: 'key', in: 'shell', keys: keysOf(e) }
+          if (e.key === 'Enter') void save(cmd('jam-rename', how))
+          if (e.key === 'Escape') { cmd('jam-rename', how).cancel(); close() }
+        }} />
     </div>
   )
 }

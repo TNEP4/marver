@@ -37,6 +37,7 @@ import type { DisplayState, TabKind, TabMarks, TabPageProbe, TabView } from '../
 import type { AppState, Busy, Hello, Inset, MenuItem, OpenItem, Theme, Why } from '../../../src/shared/app-api.ts'
 import { FEATURE, UNSAVED_WHY, WHY_WORDS } from '../../../src/shared/app-api.ts'
 import type { AppBody, AppKind, TabIdent, UnloadReason } from '../../../src/shared/app-perf.ts'
+import { noticeDropped } from './commands.ts'
 import { commitLayout } from './layout.ts'
 import { bumpGen } from './present.ts'
 import { T } from './timings.ts'
@@ -1197,7 +1198,7 @@ export function openForNotice(id: string, item: OpenItem | null): void {
   else activate(id)
   if (!item) return
   const p = P()
-  if (!t.reg?.features.includes(FEATURE.open)) { p.log?.('open', { tab: t.id, id: item.id, held: false, why: 'no-open' }); return }
+  if (!t.reg?.features.includes(FEATURE.open)) { p.log?.('open', { tab: t.id, id: item.id, held: false, why: 'no-open' }); noticeDropped(item.id, 'no-open'); return }
   const o = { item, at: p.now() }
   t.pendingOpen = o
   p.log?.('open', { tab: t.id, id: item.id, held: true })
@@ -1209,7 +1210,7 @@ export function openForNotice(id: string, item: OpenItem | null): void {
 function dropOpen(t: Tab, why: string): void {
   const o = t.pendingOpen
   t.pendingOpen = undefined
-  if (o) P().log?.('open', { tab: t.id, id: o.item.id, dropped: why })
+  if (o) { P().log?.('open', { tab: t.id, id: o.item.id, dropped: why }); noticeDropped(o.item.id, why) }
 }
 
 /**
@@ -1224,6 +1225,7 @@ function deliverOpen(t: Tab): void {
   t.pendingOpen = undefined
   const sent = openSender?.(t, o.item) ?? false
   P().log?.('open', { tab: t.id, id: o.item.id, doc: t.doc.doc, sent })
+  if (!sent) noticeDropped(o.item.id, 'not-sent')
 }
 
 // ---------------------------------------------------------------------------------------------------------------

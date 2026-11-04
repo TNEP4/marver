@@ -59,6 +59,7 @@ import { appMetrics, identity, recorder } from './recorder.ts'
 import type { TabIdent } from '../../../src/shared/app-perf.ts'
 import { coverReady, makeCover, type Cover } from './cover.ts'
 import { isQuitting } from './shutdown.ts'
+import { appCmd } from './commands.ts'
 
 export { STRIP_HEIGHT }
 
@@ -753,8 +754,10 @@ export function openWindow(d?: WindowDeps): BaseWindow {
     // Update, whose quitAndInstall() would otherwise wait for good on a close cancelled here (A5.1 #16) - it closes:
     // the shutdown coordinator's one flag (shutdown.ts), set before either
     if (isQuitting()) return
+    const h = appCmd('window-close-button', { via: 'click', in: 'main' })   // spec 30 R12
     e.preventDefault()
     win?.hide()
+    h.done()
   })
   win.on('closed', () => { win = null })
   nativeTheme.on('updated', () => compose())

@@ -4,7 +4,8 @@
  * capture's marks on the canvas (the teal edge ring, numbered points).
  *
  * Presentational only: every component takes what it shows and calls back what was chosen. The shell
- * (jam-capture.ts, App) owns state, keys and the API.
+ * (jam-capture.ts, App) owns state, keys and the API. A button names its command here (spec 30) and hands the handle to
+ * the callback, whose work ends it. Never a note's, an answer's or a read-back's words in a command.
  */
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { JamStateIcon } from './jam-ui.tsx'
@@ -20,6 +21,10 @@ import { Tip } from './Tip.tsx'
 import { useJamQueue } from './jam-queue.ts'
 import { holdsReload } from './api.ts'
 import { unsavedWhen, workChanged } from './unsaved.ts'
+import { endOnOk } from './jam-state.ts'
+import { cmd, endAfterFrames, keysOf, type CmdHandle, type CmdOpts } from './commands.ts'
+
+const CLICK: CmdOpts = { via: 'click', in: 'shell' }
 
 /** A heading cut short by its ellipsis: its tooltip shows it whole (one that fits shows none). */
 const cutShort = (el: HTMLElement) => el.scrollWidth > el.clientWidth + 1
@@ -47,7 +52,7 @@ export function FocusPanel({ children, left, width = 580, onClose }: { children:
   return (
     <div className="jm-focus" data-jam-focus="" style={{ left, width: w, bottom: `calc(var(--edge) + ${LANE_H + 2}px)` }}>
       {children}
-      {onClose && <button className="jm-iconbtn jm-focus-x" aria-label="Close" onClick={onClose}><XIcon size={13} /></button>}
+      {onClose && <button className="jm-iconbtn jm-focus-x" aria-label="Close" onClick={() => { cmd('jam-close', CLICK); onClose() }}><XIcon size={13} /></button>}
     </div>
   )
 }
@@ -111,11 +116,12 @@ function AddedNotes({ added, onAdd }: { added: { at: number; text: string }[]; o
   const [busy, setBusy] = useState(false)
   // the note in the field: one id until it saves (a failed one sent again is the same note)
   const nid = useRef(newNoteId())
-  const add = async () => {
+  const add = async (o: CmdOpts) => {
     const t = text.trim()
     if (!t || busy || !onAdd) return
+    const h = cmd('jam-note-add', o)
     setBusy(true)
-    const ok = await onAdd(t, nid.current)
+    const ok = await endOnOk(h, onAdd(t, nid.current))
     setBusy(false)
     if (ok) { setText(''); nid.current = newNoteId() }
   }
@@ -136,10 +142,10 @@ function AddedNotes({ added, onAdd }: { added: { at: number; text: string }[]; o
             onKeyDown={(e) => {
               e.stopPropagation()
               if ((e.nativeEvent as unknown as { isComposing?: boolean }).isComposing) return
-              if (e.key === 'Enter') { e.preventDefault(); void add() }
-              else if (e.key === 'Escape') { e.preventDefault(); setText(''); (e.target as HTMLInputElement).blur() }
+              if (e.key === 'Enter') { e.preventDefault(); void add({ via: 'key', in: 'shell', keys: keysOf(e) }) }
+              else if (e.key === 'Escape') { e.preventDefault(); cmd('jam-field-discard', { via: 'key', in: 'shell', keys: keysOf(e), arg: 'note' }); setText(''); (e.target as HTMLInputElement).blur() }
             }} />
-          <button className="jm-btn" disabled={!text.trim() || busy} onClick={() => void add()}>Add note</button>
+          <button className="jm-btn" disabled={!text.trim() || busy} onClick={() => void add(CLICK)}>Add note</button>
         </div>
       )}
     </div>
@@ -180,8 +186,8 @@ export function Shot({ url, cap, alt, onSize }: { url?: string; cap?: ReactNode;
 const Walk = ({ of, onPrev, onNext }: { of?: [number, number]; onPrev?: () => void; onNext?: () => void }) => of ? (
   <>
     <span className="dim">{of[0]} of {of[1]}</span>
-    <button className="jm-iconbtn" disabled={of[0] <= 1 || !onPrev} onClick={onPrev} aria-label="Previous"><ArrowLeftIcon size={13} /></button>
-    <button className="jm-iconbtn" disabled={of[0] >= of[1] || !onNext} onClick={onNext} aria-label="Next"><ArrowRightIcon size={13} /></button>
+    <button className="jm-iconbtn" disabled={of[0] <= 1 || !onPrev} onClick={() => { cmd('jam-step', { ...CLICK, arg: 'prev' }); onPrev?.() }} aria-label="Previous"><ArrowLeftIcon size={13} /></button>
+    <button className="jm-iconbtn" disabled={of[0] >= of[1] || !onNext} onClick={() => { cmd('jam-step', { ...CLICK, arg: 'next' }); onNext?.() }} aria-label="Next"><ArrowRightIcon size={13} /></button>
   </>
 ) : null
 
@@ -217,20 +223,20 @@ export function ReadBack({ title, head, of, onPrev, onNext, meta, lines, picture
   /** words written that have not saved yet - they win over `edited` */
   pending?: string
   /** a failed capture: its Retry (with Drop beside it) in the read-only footer */
-  onRetry?: () => void
+  onRetry?: (h: CmdHandle) => void
   editing?: boolean
-  onEdit?: (text: string) => void
-  onConfirm?: () => void
-  onKeep?: () => void
-  onDrop?: () => void
+  onEdit?: (text: string, h: CmdHandle) => void
+  onConfirm?: (h: CmdHandle) => void
+  onKeep?: (h: CmdHandle) => void
+  onDrop?: (h: CmdHandle) => void
   /** ended too soon: recording goes on where it stopped (R) */
-  onResume?: () => void
+  onResume?: (h: CmdHandle) => void
   agent?: string | null
   follows?: string
   readOnly?: boolean
   /** the words cannot be edited for now (its Resume is starting) - the rest stays as it is */
   locked?: boolean
-  onOpenThread?: () => void
+  onOpenThread?: (h: CmdHandle) => void
   /** notes written here after it ended - under a divider, as the timeline shows its own */
   added?: { at: number; text: string }[]
   /** the title came from Claude Haiku (jam.names): its tooltip says so, and where the words went */
@@ -259,7 +265,8 @@ export function ReadBack({ title, head, of, onPrev, onNext, meta, lines, picture
   const lastSent = useRef<string | undefined>(undefined)
   const save = () => {
     setOpen(false)
-    if (text !== (lastSent.current ?? pending ?? edited ?? words)) { lastSent.current = text; onEdit?.(text) }
+    // blur: its words save (`jam-edit`), whatever took the focus
+    if (text !== (lastSent.current ?? pending ?? edited ?? words)) { lastSent.current = text; onEdit?.(text, cmd('jam-edit', CLICK)) }
   }
   // once the saved edit is what was last sent, the intent is settled
   useEffect(() => { if (lastSent.current !== undefined && edited === lastSent.current && pending === undefined) lastSent.current = undefined }, [edited, pending])
@@ -281,7 +288,7 @@ export function ReadBack({ title, head, of, onPrev, onNext, meta, lines, picture
         {open && !readOnly && !locked ? (
           <textarea ref={field} className="jm-edit" value={text} rows={Math.min(10, Math.max(3, Math.ceil(text.length / 60)))}
             onChange={(e) => setText(e.target.value)} onBlur={save}
-            onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Escape') { setText(edited ?? words); setOpen(false) } }} />
+            onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Escape') { cmd('jam-field-discard', { via: 'key', in: 'shell', keys: keysOf(e), arg: 'words' }); setText(edited ?? words); setOpen(false) } }} />
         ) : (
           <div className={readOnly || locked ? undefined : 'jm-editable'} title={readOnly || locked ? undefined : 'Click to edit the words'} onClick={readOnly || locked ? undefined : () => setOpen(true)}>
             {edited !== undefined && !readOnly && <div className="jm-edited"><PencilSimpleIcon size={12} />Your edit</div>}
@@ -293,16 +300,16 @@ export function ReadBack({ title, head, of, onPrev, onNext, meta, lines, picture
       <div className="rule" />
       <div className="actions">
         {readOnly ? (
-          <><span className="sp" />{onOpenThread && <button className="jm-btn" onClick={onOpenThread}>Open thread</button>}
-            {onRetry && <><button className="jm-btn ghost" data-jam-run-act="drop" onClick={onDrop}>Drop</button><button className="jm-btn primary" data-jam-run-act="retry" onClick={onRetry}>Retry</button></>}</>
+          <><span className="sp" />{onOpenThread && <button className="jm-btn" onClick={() => onOpenThread(cmd('jam-thread', CLICK))}>Open thread</button>}
+            {onRetry && <><button className="jm-btn ghost" data-jam-run-act="drop" onClick={() => onDrop?.(cmd('jam-drop', CLICK))}>Drop</button><button className="jm-btn primary" data-jam-run-act="retry" onClick={() => onRetry(cmd('jam-retry', CLICK))}>Retry</button></>}</>
         ) : (
           <>
             <span className="dim">{agent ? <>For <b style={{ color: 'var(--glass-ink-2)', fontWeight: 600 }}>{agent}</b></> : 'No agent yet - it waits in the queue'}</span>
             <span className="sp" />
-            {onResume && <button className="jm-btn ghost" onClick={onResume}>Resume <kbd>R</kbd></button>}
-            <button className="jm-btn ghost" onClick={onDrop}>Drop <kbd>esc</kbd></button>
-            <button className="jm-btn ghost" onClick={onKeep}>Keep <kbd>K</kbd></button>
-            <button className="jm-btn primary" onClick={onConfirm}>Add to queue <kbd>⏎</kbd></button>
+            {onResume && <button className="jm-btn ghost" onClick={() => onResume(cmd('jam-resume', CLICK))}>Resume <kbd>R</kbd></button>}
+            <button className="jm-btn ghost" onClick={() => onDrop?.(cmd('jam-drop', CLICK))}>Drop <kbd>esc</kbd></button>
+            <button className="jm-btn ghost" onClick={() => onKeep?.(cmd('jam-keep', CLICK))}>Keep <kbd>K</kbd></button>
+            <button className="jm-btn primary" onClick={() => onConfirm?.(cmd('jam-confirm', CLICK))}>Add to queue <kbd>⏎</kbd></button>
           </>
         )}
       </div>
@@ -317,10 +324,11 @@ export function ReadBack({ title, head, of, onPrev, onNext, meta, lines, picture
 export function AsksAnswer({ question, onAnswer, tag = true }: { question?: string; onAnswer(text: string): Promise<boolean>; tag?: boolean }) {
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
-  const send = () => {
+  const send = (o: CmdOpts) => {
     if (!text.trim() || sending) return
+    const h = cmd('jam-answer', o)
     setSending(true)
-    void onAnswer(text.trim()).then((ok) => { setSending(false); if (ok) setText('') })
+    void endOnOk(h, onAnswer(text.trim()), 'send-failed').then((ok) => { setSending(false); if (ok) setText('') })
   }
   return (
     <div className="jm-asks" data-jam-asks="" style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
@@ -334,9 +342,9 @@ export function AsksAnswer({ question, onAnswer, tag = true }: { question?: stri
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             e.stopPropagation()
-            if (e.key === 'Enter' && !e.shiftKey && !(e.nativeEvent as unknown as { isComposing?: boolean }).isComposing) { e.preventDefault(); send() }
+            if (e.key === 'Enter' && !e.shiftKey && !(e.nativeEvent as unknown as { isComposing?: boolean }).isComposing) { e.preventDefault(); send({ via: 'key', in: 'shell', keys: keysOf(e) }) }
           }} />
-        <button className="jm-send" disabled={!text.trim() || sending} onClick={send}>Send <kbd>⏎</kbd></button>
+        <button className="jm-send" disabled={!text.trim() || sending} onClick={() => send(CLICK)}>Send <kbd>⏎</kbd></button>
       </div>
     </div>
   )
@@ -375,11 +383,11 @@ export function ReviewDetail({ title, head, of, onPrev, onNext, frames, active, 
   agent?: string
   when?: string
   more?: boolean
-  onMore(text: string): void
+  onMore(text: string, h: CmdHandle): void
   onMoreOpen(open: boolean): void
-  onGood(): void
-  onLater(): void
-  onOpenThread?: () => void
+  onGood(h: CmdHandle): void
+  onLater(h: CmdHandle): void
+  onOpenThread?: (h: CmdHandle) => void
   /** the card the More work words belong to (kept across the panel closing) */
   draftKey?: string
   style?: CSSProperties
@@ -433,7 +441,7 @@ export function ReviewDetail({ title, head, of, onPrev, onNext, frames, active, 
   // elsewhere, the map still holds them
   useEffect(() => { if (more) field.current?.focus(); else if (draftKey && !moreDrafts.has(draftKey)) setTextState('') }, [more])
   // sent as More work, always: the canvas settles a note that only approves ("looks good") as Looks good
-  const send = () => { if (text.trim()) onMore(text.trim()) }
+  const send = (o: CmdOpts) => { if (text.trim()) onMore(text.trim(), cmd('jam-more-send', o)) }
   return (
     <div className="jm-panel jm-review" data-jam-review="" style={style}>
       <div className="top">
@@ -447,19 +455,19 @@ export function ReviewDetail({ title, head, of, onPrev, onNext, frames, active, 
         <Marver size={20} />
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
           <p>{reply}</p>
-          {onOpenThread && <button className="jm-link" onClick={onOpenThread}>Open thread</button>}
+          {onOpenThread && <button className="jm-link" onClick={() => onOpenThread(cmd('jam-thread', CLICK))}>Open thread</button>}
         </div>
       </div>
       {names.length > 0 && (
         <div className="jm-fbar">
           {names.length > 1
-            ? <div className="jm-ftabs" role="tablist">{names.map((f, i) => <button key={f} role="tab" aria-selected={i === active} className={i === active ? 'on' : undefined} onClick={() => onTab(i)}><FrameRectIcon size={12} />{label(f)}{isNew(f) && <span className="jm-newtag">New</span>}</button>)}</div>
+            ? <div className="jm-ftabs" role="tablist">{names.map((f, i) => <button key={f} role="tab" aria-selected={i === active} className={i === active ? 'on' : undefined} onClick={() => { const h = cmd('jam-frame-tab', CLICK); onTab(i); endAfterFrames(h) }}><FrameRectIcon size={12} />{label(f)}{isNew(f) && <span className="jm-newtag">New</span>}</button>)}</div>
             : <span className="jm-framehd"><FrameRectIcon size={12} />{label(names[0])}{isNew(names[0]) && <span className="jm-newtag">New</span>}</span>}
           <span className="sp" />
           {/* a frame the run made has nothing before it: no switch */}
           {shot?.new ? <span className="dim" data-jam-new="">New frame</span> : (
             <Tip side="bottom" label={<span>Both / Before / After<kbd style={{ marginLeft: 8 }}>B</kbd></span>}>
-              <div className="jm-ftabs" data-jam-flip="">{(['both', 'before', 'after'] as const).map((v) => <button key={v} className={v === view ? 'on' : undefined} aria-pressed={v === view} onClick={() => onFlip(v)}>{v === 'both' ? 'Both' : v === 'before' ? 'Before' : 'After'}</button>)}</div>
+              <div className="jm-ftabs" data-jam-flip="">{(['both', 'before', 'after'] as const).map((v) => <button key={v} className={v === view ? 'on' : undefined} aria-pressed={v === view} onClick={() => { const h = cmd('jam-before-after', { ...CLICK, arg: v }); onFlip(v); endAfterFrames(h) }}>{v === 'both' ? 'Both' : v === 'before' ? 'Before' : 'After'}</button>)}</div>
             </Tip>
           )}
         </div>
@@ -482,18 +490,18 @@ export function ReviewDetail({ title, head, of, onPrev, onNext, frames, active, 
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => {
                 e.stopPropagation()
-                if (e.key === 'Escape') { e.preventDefault(); setText(''); onMoreOpen(false) }
-                else if (e.key === 'Enter' && !e.shiftKey && !(e.nativeEvent as unknown as { isComposing?: boolean }).isComposing) { e.preventDefault(); send() }
+                if (e.key === 'Escape') { e.preventDefault(); cmd('jam-field-discard', { via: 'key', in: 'shell', keys: keysOf(e), arg: 'more' }); setText(''); onMoreOpen(false) }
+                else if (e.key === 'Enter' && !e.shiftKey && !(e.nativeEvent as unknown as { isComposing?: boolean }).isComposing) { e.preventDefault(); send({ via: 'key', in: 'shell', keys: keysOf(e) }) }
               }} />
-            <button className="jm-send" disabled={!text.trim()} onClick={send}>Send <kbd>⏎</kbd></button>
+            <button className="jm-send" disabled={!text.trim()} onClick={() => send(CLICK)}>Send <kbd>⏎</kbd></button>
           </div>
           <span className="dim" style={{ paddingLeft: 4 }}>Back to the agent, next in line - the tile keeps its place · esc to cancel</span>
         </div>
       ) : (
         <div className="actions">
-          <button className="jm-btn primary" onClick={onGood}>Looks good <kbd>⏎</kbd></button>
-          <button className="jm-btn" onClick={() => onMoreOpen(true)}>More work <kbd>⇧⏎</kbd></button>
-          <button className="jm-btn ghost" onClick={onLater}>Later <kbd>→</kbd></button>
+          <button className="jm-btn primary" onClick={() => onGood(cmd('jam-good', CLICK))}>Looks good <kbd>⏎</kbd></button>
+          <button className="jm-btn" onClick={() => { const h = cmd('jam-more', CLICK); onMoreOpen(true); endAfterFrames(h) }}>More work <kbd>⇧⏎</kbd></button>
+          <button className="jm-btn ghost" onClick={() => onLater(cmd('jam-later', CLICK))}>Later <kbd>→</kbd></button>
           <span className="sp" /><kbd>esc</kbd>
         </div>
       )}
@@ -529,8 +537,9 @@ export function NotesCard({ notes, draft, onDraft, onAdd, onClose, style }: {
         onKeyDown={(e) => {
           e.stopPropagation()
           if ((e.nativeEvent as unknown as { isComposing?: boolean }).isComposing) return
-          if (e.key === 'Escape') { e.preventDefault(); onClose() }
-          else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (draft.trim()) onAdd() }
+          if (e.key === 'Escape') { e.preventDefault(); cmd('jam-notes-close', { via: 'key', in: 'shell', keys: keysOf(e) }); onClose() }
+          // the note step is added in this turn
+          else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (draft.trim()) { const h = cmd('jam-capture-note', { via: 'key', in: 'shell', keys: keysOf(e) }); onAdd(); h.done() } }
         }} />
       <div className="foot"><span>⏎ add</span><span>esc close</span></div>
     </div>
@@ -546,6 +555,10 @@ export const Caption = ({ old, live, style }: { old?: string; live?: string; sty
   </div>
 )
 
+/** The microphone question's choices (the fixed name, spec 30): the callback ends the command when the consent or the
+ *  download state changed. */
+const voiceChoice = (arg: 'use-mic' | 'download' | 'try-again' | 'not-now' | 'typed-only') => cmd('jam-voice', { ...CLICK, arg })
+
 /** The one question words need (first `S` on a canvas), then the model's download if it is missing:
  *  a header that says what is happening, a line on why, then what the model is (trial 3: "Words on this
  *  Mac" said neither). */
@@ -554,7 +567,7 @@ export function VoiceAsk({ step, mb, progress, error, onYes, onNo, onDownload, s
   mb: number
   progress?: number
   error?: string
-  onYes(): void; onNo(): void; onDownload(): void
+  onYes(h: CmdHandle): void; onNo(h: CmdHandle): void; onDownload(h: CmdHandle): void
   style?: CSSProperties
 }) {
   const pct = Math.round((progress ?? 0) * 100)
@@ -582,9 +595,9 @@ export function VoiceAsk({ step, mb, progress, error, onYes, onNo, onDownload, s
       {step === 'checking' && <div className="jm-progress busy"><i /></div>}
       <div className="actions">
         <span className="sp" />
-        {step === 'ask' && <><button className="jm-btn ghost" onClick={onNo}>Not now</button><button className="jm-btn primary" onClick={onYes}>Use the microphone</button></>}
-        {(step === 'download' || step === 'failed') && <><button className="jm-btn ghost" onClick={onNo}>Not now</button><button className="jm-btn primary" onClick={onDownload}>{step === 'failed' ? 'Try again' : `Download ${mb} MB`}</button></>}
-        {step === 'unavailable' && <><button className="jm-btn ghost" onClick={onNo}>Typed notes only</button><button className="jm-btn primary" onClick={onYes}>Try again</button></>}
+        {step === 'ask' && <><button className="jm-btn ghost" onClick={() => onNo(voiceChoice('not-now'))}>Not now</button><button className="jm-btn primary" onClick={() => onYes(voiceChoice('use-mic'))}>Use the microphone</button></>}
+        {(step === 'download' || step === 'failed') && <><button className="jm-btn ghost" onClick={() => onNo(voiceChoice('not-now'))}>Not now</button><button className="jm-btn primary" onClick={() => onDownload(voiceChoice(step === 'failed' ? 'try-again' : 'download'))}>{step === 'failed' ? 'Try again' : `Download ${mb} MB`}</button></>}
+        {step === 'unavailable' && <><button className="jm-btn ghost" onClick={() => onNo(voiceChoice('typed-only'))}>Typed notes only</button><button className="jm-btn primary" onClick={() => onYes(voiceChoice('try-again'))}>Try again</button></>}
       </div>
     </div>
   )

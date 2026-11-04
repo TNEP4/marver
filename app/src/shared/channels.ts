@@ -122,7 +122,8 @@ export interface PillView {
   tooltip?: string
   dismissible?: boolean
 }
-export interface PillAction { rev: number; act: 'button' | 'dismiss' }
+/** `via` (spec 30 #50): `key`, Esc on a dismissible pill; absent reads a click. */
+export interface PillAction { rev: number; act: 'button' | 'dismiss'; via?: 'key' }
 
 /**
  * What main's probe of a failed tab's address last found (A2.11, v1.14 r3 #3, #4): A2.3's retries, A2.11's 5 s
@@ -183,7 +184,10 @@ export type HomeAction =
 /** `home:action`'s answer: false when there was nothing to do (a recent id main no longer holds). */
 export interface HomeActionAnswer { ok: boolean }
 
-/** `link:open` (strip, home; an invoke). An https link opens a shared canvas's tab (A4.6 #39): never `later` from A4. */
+/**
+ * `link:open` (strip, home; an invoke). An https link opens a shared canvas's tab (A4.6 #39): never `later` from A4. Its
+ * message may say `via: 'click'` (spec 30 #50: a past shared canvas's card); absent reads Return in the field.
+ */
 export type LinkOpenAnswer = { ok: true } | { ok: false; why: 'bad' | 'nothing' | 'not-canvas' | 'refused' }
 
 /**
@@ -345,7 +349,7 @@ export interface StripApi extends PageApiBase {
   tabMenu(id: string, x: number, y: number): void
   more(m: TabsMore): void
   pillAction(a: PillAction): void
-  openLink(url: string): Promise<LinkOpenAnswer>
+  openLink(url: string, via?: 'click'): Promise<LinkOpenAnswer>
 }
 export interface HomeApi extends PageApiBase {
   readonly kind: 'home'
@@ -358,7 +362,7 @@ export interface HomeApi extends PageApiBase {
   activate(id: string, via?: ActivateVia): void
   close(id: string): void
   tabMenu(id: string, x: number, y: number): void
-  openLink(url: string): Promise<LinkOpenAnswer>
+  openLink(url: string, via?: 'click'): Promise<LinkOpenAnswer>
   action(a: HomeAction): Promise<HomeActionAnswer>
 }
 export interface SettingsApi extends PageApiBase {

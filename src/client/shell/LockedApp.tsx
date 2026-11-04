@@ -10,12 +10,13 @@
  * within what the lock allows.
  */
 import { Component, useEffect, useRef, type ReactNode } from 'react'
-import { useStore, landingBoard, landingMode, tabTitle } from './store.ts'
+import { useStore, landingBoard, landingMode, switchCount, tabTitle } from './store.ts'
 import { enterFocus, enterPlay, enterSlides, PlayOverlay, playCtl } from './Play.tsx'
 import { UNPLACED, bootHash, parseHash, retargetBoot, writeHash } from './hash.ts'
 import { isLegacyLink, landLegacy } from './legacy-links.ts'
 import { useComments } from './comments-store.ts'
 import { isLatest, navigated, switchFor } from './goto.ts'
+import { cmd, endAfterFrames, endOnLoad, endOnStage, shellReload } from './commands.ts'
 
 /** App.tsx's headless-run probe (perf-run-probe.ts): a run's page is always a dev canvas, never a locked bundle. */
 export function startPerfRunProbe(): void {}
@@ -29,7 +30,7 @@ export class ShellBoundary extends Component<{ children: ReactNode }, { err: Err
       <div style={{ fontFamily: 'ui-monospace, monospace', padding: 32 }}>
         <b style={{ color: '#a81f16' }}>shell crashed</b>
         <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>{this.state.err.message}</pre>
-        <button onClick={() => location.reload()}>reload</button>
+        <button onClick={() => { shellReload(cmd('shell-reload', { via: 'click', in: 'shell' })); location.reload() }}>reload</button>
       </div>
     )
   }
@@ -100,35 +101,58 @@ export function App() {
 
   // back/forward + pasted links, within what the lock allows
   useEffect(() => {
+    // App.tsx's two guards (spec 30): back/forward fires popstate AND hashchange. While a navigation is still on its way
+    // the second event stays out - a second switch would cut the first's load, and its `history-nav` with it. Once the
+    // first has finished, the second runs again, harmless, and is not a second command.
+    let routing: { hash: string; switches: number } | null = null
+    let recorded = { hash: '', at: -1_000 }
     const onPop = async () => {
+      if (routing && routing.hash === location.hash && routing.switches === switchCount()) return
+      const hash = location.hash
+      const again = hash === recorded.hash && performance.now() - recorded.at < 250
+      recorded = { hash, at: performance.now() }
+      const nav_ = again ? null : cmd('history-nav', { via: 'click', in: 'shell' })
       // a lookup newer navigation overtook - a link, a goto, a step on the stage - is dropped
       const nav = navigated(), was = useStore.getState()
-      const parsed = parseHash()
-      const raw = parsed.board === UNPLACED ? {} : parsed   // dev's view, and what it names: not here
-      // an old All Scenes link lands on a real board; it, and the bare #/, with no board: the landing one
-      const r = isLegacyLink(raw) ? await landLegacy(raw) : { hash: raw, notice: null }
-      const h = r.hash
-      const board = h.board ?? (h.focus ? undefined : await landingBoard())
-      const s = useStore.getState()
-      if (!isLatest(nav) || s.board !== was.board || s.play?.at !== was.play?.at) return
-      if (r.notice) s.toast(r.notice)
-      if (h.c) pendingThread = h.c
-      if (board && board !== s.board) {
-        if (!await switchFor(board, nav)) return         // failed, or a newer navigation's board and stage by now
-        useStore.getState().setPlay(null)                // the stage restarts on the board the link names, at its frame
-        if (h.play?.slides) enterSlides(h.play)
-        else if (h.play) enterPlay(h.play)
-        else land(h.f?.[0])
-        return
-      }
-      openPending()                                      // same board: its comments are here already
-      if (h.f?.length && s.play) return playCtl.setAt(h.f[0])   // the stage on screen steps to the frame named
-      if (h.focus) enterFocus(h.focus.at, { ...h.focus, deep: true })
-      // sync only holds WITHIN a mode: same-mode restores drive the MOUNTED
-      // stage (sh:stage-set); crossing present↔slides re-enters and remounts
-      else if (h.play && s.play && !!h.play.slides === !!s.play.slides) playCtl.sync(h.play)
-      else if (h.play?.slides) enterSlides(h.play)
-      else if (h.play) enterPlay(h.play)
+      const mine = routing = { hash, switches: switchCount() }
+      try {
+        const parsed = parseHash()
+        const raw = parsed.board === UNPLACED ? {} : parsed   // dev's view, and what it names: not here
+        // an old All Scenes link lands on a real board; it, and the bare #/, with no board: the landing one
+        const r = isLegacyLink(raw) ? await landLegacy(raw) : { hash: raw, notice: null }
+        const h = r.hash
+        const board = h.board ?? (h.focus ? undefined : await landingBoard())
+        const s = useStore.getState()
+        if (!isLatest(nav) || s.board !== was.board || s.play?.at !== was.play?.at) return nav_?.cancel('superseded')
+        if (r.notice) s.toast(r.notice)
+        if (h.c) pendingThread = h.c
+        if (board && board !== s.board) {
+          if (nav_) endOnLoad(nav_, board)                 // another board: its load's way ends it (#49)
+          const switched = switchFor(board, nav)
+          mine.switches = switchCount()
+          // failed, or a newer navigation's board and stage by now
+          if (!await switched) return nav_?.cancel('superseded')   // a load that failed has already ended it, with its code
+          useStore.getState().setPlay(null)                // the stage restarts on the board the link names, at its frame
+          if (h.play?.slides) enterSlides(h.play)
+          else if (h.play) enterPlay(h.play)
+          else land(h.f?.[0])
+          return
+        }
+        // the same board: where it leads ends it (#49) - the stage's next screen when it moves, else the change once drawn
+        const toStage = (at?: string) => { if (nav_) { if (s.play && (!at || at === s.play.at)) endAfterFrames(nav_); else endOnStage(nav_, at) } }
+        openPending()                                      // same board: its comments are here already
+        if (h.f?.length && s.play) { toStage(h.f[0]); return playCtl.setAt(h.f[0]) }   // the stage on screen steps to the frame named
+        if (h.focus) { toStage(h.focus.at); enterFocus(h.focus.at, { ...h.focus, deep: true }) }
+        // sync only holds WITHIN a mode: same-mode restores drive the MOUNTED
+        // stage (sh:stage-set); crossing present↔slides re-enters and remounts
+        else if (h.play && s.play && !!h.play.slides === !!s.play.slides) { toStage(h.play.at); playCtl.sync(h.play) }
+        else if (h.play) {
+          if (nav_) endOnStage(nav_, h.play.at)
+          if (h.play.slides) enterSlides(h.play)
+          else enterPlay(h.play)
+        } else if (nav_) endAfterFrames(nav_)              // a thread link, or the board itself: nothing else moves
+      } catch (e) { nav_?.fail('load-error'); throw e }
+      finally { if (routing === mine) routing = null }
     }
     window.addEventListener('popstate', onPop)
     window.addEventListener('hashchange', onPop)

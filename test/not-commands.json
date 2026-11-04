@@ -1,0 +1,275 @@
+[
+  {
+    "file": "src/client/shell/App.tsx",
+    "fn": "ZoomMenu",
+    "prop": "onClick",
+    "label": "%",
+    "reason": "only opens the zoom menu; each preset records zoom-to, fit-all, fit-selection"
+  },
+  {
+    "file": "src/client/shell/App.tsx",
+    "fn": "App",
+    "prop": "addEventListener:keydown",
+    "label": "",
+    "reason": "the focus ring (R12 Not commands): Tab arms body.sh-kbd"
+  },
+  {
+    "file": "src/client/shell/App.tsx",
+    "fn": "App",
+    "prop": "addEventListener:pointerdown",
+    "label": "",
+    "reason": "the focus ring (R12 Not commands): any pointer disarms it"
+  },
+  {
+    "file": "src/client/shell/App.tsx",
+    "fn": "App",
+    "prop": "item:onClick",
+    "label": "Rename",
+    "reason": "opens the scene name field; its commit or Esc records scene-rename"
+  },
+  {
+    "file": "src/client/shell/BoardList.tsx",
+    "fn": "boardMenu",
+    "prop": "item:onClick",
+    "label": "Rename",
+    "reason": "opens the name field; its commit or Esc records board-rename"
+  },
+  {
+    "file": "src/client/shell/BoardList.tsx",
+    "fn": "boardMenu",
+    "prop": "item:onClick",
+    "label": "Move to new folder",
+    "reason": "opens the name field; its commit or Esc records folder-new"
+  },
+  {
+    "file": "src/client/shell/BoardList.tsx",
+    "fn": "folderMenu",
+    "prop": "item:onClick",
+    "label": "Rename",
+    "reason": "opens the name field; its commit or Esc records folder-rename"
+  },
+  {
+    "file": "src/client/shell/BoardList.tsx",
+    "fn": "folderMenu",
+    "prop": "item:onClick",
+    "label": "New folder inside",
+    "reason": "opens the name field; its commit or Esc records folder-new"
+  },
+  {
+    "file": "src/client/shell/BoardList.tsx",
+    "fn": "blankMenu",
+    "prop": "item:onClick",
+    "label": "New folder",
+    "reason": "opens the name field; its commit or Esc records folder-new"
+  },
+  {
+    "file": "src/client/shell/BoardList.tsx",
+    "fn": "boardRow",
+    "prop": "onPointerDown",
+    "label": "data-board-row=",
+    "reason": "arms the row gesture; the move records board-move, the tap board-open"
+  },
+  {
+    "file": "src/client/shell/BoardList.tsx",
+    "fn": "folderRows",
+    "prop": "onPointerDown",
+    "label": "data-folder-row=f",
+    "reason": "arms the row gesture; the move records folder-move, the tap folder-toggle"
+  },
+  {
+    "file": "src/client/shell/BoardList.tsx",
+    "fn": "BoardList",
+    "prop": "onClick",
+    "label": "New folder",
+    "reason": "opens the name field; its commit or Esc records folder-new"
+  },
+  {
+    "file": "src/client/shell/BoardList.tsx",
+    "fn": "BoardList",
+    "prop": "onKeyDown",
+    "label": "New folder",
+    "reason": "the same button by key; opens the name field"
+  },
+  {
+    "file": "src/client/shell/Comments.tsx",
+    "fn": "CommentInput",
+    "prop": "onClick",
+    "label": "",
+    "reason": "caret tracking for the @ list, not a command"
+  },
+  {
+    "file": "src/client/shell/Comments.tsx",
+    "fn": "ProfileDialog",
+    "prop": "onPick",
+    "label": "",
+    "reason": "keeps the picture; the picker's onChange records avatar-pick"
+  },
+  {
+    "file": "src/client/shell/Comments.tsx",
+    "fn": "IdentityDialog",
+    "prop": "onPick",
+    "label": "",
+    "reason": "keeps the picture; the picker's onChange records avatar-pick"
+  },
+  {
+    "file": "src/client/shell/Comments.tsx",
+    "fn": "EditableAvatar",
+    "prop": "onClose",
+    "label": "",
+    "reason": "closes the dialog; the dialog's own controls record profile-dismiss"
+  },
+  {
+    "file": "src/client/shell/Comments.tsx",
+    "fn": "ThreadCard",
+    "prop": "onCancel",
+    "label": "",
+    "reason": "the composer's Esc records draft-discard before calling it"
+  },
+  {
+    "file": "src/client/shell/Comments.tsx",
+    "fn": "DraftComposer",
+    "prop": "onCancel",
+    "label": "",
+    "reason": "the composer's Esc records draft-discard before calling it"
+  },
+  {
+    "file": "src/client/shell/Comments.tsx",
+    "fn": "AvatarPick",
+    "prop": "onClick",
+    "label": "Select or upload a profile picture",
+    "reason": "opens the file picker; its onChange records avatar-pick"
+  },
+  {
+    "file": "src/client/shell/Comments.tsx",
+    "fn": "CommentsController",
+    "prop": "addEventListener:hashchange",
+    "label": "",
+    "reason": "opens the thread a link names; App.tsx's history-nav owns the same navigation"
+  },
+  {
+    "file": "src/client/shell/ContextMenu.tsx",
+    "fn": "ContextMenu",
+    "prop": "addEventListener:pointerdown",
+    "label": "",
+    "reason": "a press outside closes the transient menu, no vocabulary row"
+  },
+  {
+    "file": "src/client/shell/ContextMenu.tsx",
+    "fn": "ContextMenu",
+    "prop": "addEventListener:keydown",
+    "label": "",
+    "reason": "Esc closes the transient menu, no vocabulary row"
+  },
+  {
+    "file": "src/client/shell/JamSurface.tsx",
+    "fn": "JamSurface",
+    "prop": "onDoneOpen",
+    "label": "",
+    "reason": "the lane's fold records jam-done-fold before calling it"
+  },
+  {
+    "file": "src/client/shell/JamSurface.tsx",
+    "fn": "JamSurface",
+    "prop": "onClose",
+    "label": "",
+    "reason": "the panel's controls record jam-close before calling it"
+  },
+  {
+    "file": "src/client/shell/JamSurface.tsx",
+    "fn": "JamSurface",
+    "prop": "onMoreOpen",
+    "label": "",
+    "reason": "the field's Esc and buttons record jam-field-discard or jam-more before calling it"
+  },
+  {
+    "file": "src/client/shell/JamSurface.tsx",
+    "fn": "JamSurface",
+    "prop": "onTab",
+    "label": "",
+    "reason": "the tab row records jam-frame-tab before calling it"
+  },
+  {
+    "file": "src/client/shell/JamSurface.tsx",
+    "fn": "JamSurface",
+    "prop": "onFlip",
+    "label": "",
+    "reason": "the flip records jam-before-after before calling it"
+  },
+  {
+    "file": "src/client/shell/JamSurface.tsx",
+    "fn": "ThreadPanel",
+    "prop": "onAnswer",
+    "label": "",
+    "reason": "AsksAnswer records jam-answer and passes the text; this sends it"
+  },
+  {
+    "file": "src/client/shell/Play.tsx",
+    "fn": "BoardMenu",
+    "prop": "onClick",
+    "label": "",
+    "reason": "only opens the board menu; each row records play-board"
+  },
+  {
+    "file": "src/client/shell/Tip.tsx",
+    "fn": "Tip",
+    "prop": "item:onClick",
+    "label": "",
+    "reason": "cloneElement wraps the child's own onClick, which is a site of its own"
+  },
+  {
+    "file": "src/client/shell/Toolbar.tsx",
+    "fn": "usePopover",
+    "prop": "addEventListener:pointerdown",
+    "label": "",
+    "reason": "a press outside closes the transient popover, no vocabulary row"
+  },
+  {
+    "file": "src/client/shell/Toolbar.tsx",
+    "fn": "DevicePicker",
+    "prop": "onClick",
+    "label": "",
+    "reason": "only opens the device menu; its items call onSelect"
+  },
+  {
+    "file": "src/client/shell/Toolbar.tsx",
+    "fn": "ThemePicker",
+    "prop": "onClick",
+    "label": "",
+    "reason": "only opens the theme menu; its items call onSelect"
+  },
+  {
+    "file": "src/client/shell/canvas/Canvas.tsx",
+    "fn": "Canvas",
+    "prop": "addEventListener:keyup",
+    "label": "",
+    "reason": "ends the space-pan its keydown started: no-drag, or the pan's end"
+  },
+  {
+    "file": "src/client/shell/canvas/FrameNode.tsx",
+    "fn": "(top)",
+    "prop": "onClick",
+    "label": "",
+    "reason": "the capture trail (R12 Not commands: jam.jsonl): the overlay asks the frame what is under the click"
+  },
+  {
+    "file": "src/client/shell/jam-panel.tsx",
+    "fn": "ReadBack",
+    "prop": "onClick",
+    "label": "readOnly || locked ? undefined : 'Click to edit the words'",
+    "reason": "opens the words field; its blur records jam-edit, its Esc jam-field-discard"
+  },
+  {
+    "file": "src/client/shell/jam-session.tsx",
+    "fn": "ShortcutsRow",
+    "prop": "onBlur",
+    "label": "data-jam-shortcuts=",
+    "reason": "closes a focus tooltip, not a command"
+  },
+  {
+    "file": "src/client/shell/jam-surface-parts.tsx",
+    "fn": "FocusPanelView",
+    "prop": "onFit",
+    "label": "title",
+    "reason": "sizes the panel to its picture, no input"
+  }
+]

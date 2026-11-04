@@ -11,7 +11,10 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } f
 import { Tip } from './Tip.tsx'
 import { cardForEvent, useJamQueue, type JamCardState } from './jam-queue.ts'
 import { statusLines } from './jam-lines.ts'
-import { useJamUi } from './jam-state.ts'
+import { endOnOk, useJamUi } from './jam-state.ts'
+import { cmd, type CmdOpts } from './commands.ts'
+
+const CLICK: CmdOpts = { via: 'click', in: 'shell' }
 
 const GRAY = 'var(--glass-ink-3)'
 const RED = '#e5484d'              // board-icons.tsx RED - errors and failures only
@@ -67,7 +70,7 @@ export function TagStatus({ board, eventId, harness }: { board?: string; eventId
   }, [card?.state])
   useEffect(() => {
     if (!open) return
-    const away = (e: PointerEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false) }
+    const away = (e: PointerEvent) => { if (!ref.current?.contains(e.target as Node)) { cmd('jam-status-close', CLICK); setOpen(false) } }
     window.addEventListener('pointerdown', away, true)
     return () => window.removeEventListener('pointerdown', away, true)
   }, [open])
@@ -93,18 +96,18 @@ export function TagStatus({ board, eventId, harness }: { board?: string; eventId
   return (
     <span className={`cm-tstat${open ? ' on' : ''}`} ref={ref} data-jam-card={card.id} data-jam-state={card.state}>
       {open ? (
-        <button className="cm-tstat-btn" aria-expanded aria-label={head} onClick={() => setOpen(false)}><JamStateIcon state={card.state} size={13} /></button>
+        <button className="cm-tstat-btn" aria-expanded aria-label={head} onClick={() => { cmd('jam-status-close', CLICK); setOpen(false) }}><JamStateIcon state={card.state} size={13} /></button>
       ) : (
         <Tip side="top" label={lines}>
-          <button className="cm-tstat-btn" aria-label={head} onClick={() => setOpen(true)}><JamStateIcon state={card.state} size={13} /></button>
+          <button className="cm-tstat-btn" aria-label={head} onClick={() => { cmd('jam-status-open', CLICK); setOpen(true) }}><JamStateIcon state={card.state} size={13} /></button>
         </Tip>
       )}
       {open && (
         <span className={`cm-tstat-pop${stalled ? ' many' : ''}`} role="dialog" aria-label={head} ref={popRef}>
           {lines}
-          {move && <button className="cm-tstat-act" onClick={() => { void useJamQueue.getState().act(card, move); setOpen(false) }}>{move === 'drop' ? 'Drop' : 'Retry'}</button>}
+          {move && <button className="cm-tstat-act" onClick={() => { void endOnOk(cmd('jam-status-act', { ...CLICK, arg: move }), useJamQueue.getState().act(card, move)); setOpen(false) }}>{move === 'drop' ? 'Drop' : 'Retry'}</button>}
           {stalled && ([['again', 'Give it back'], ['background', 'Run in the background'], ['drop', 'Drop it']] as const).map(([a, label]) => (
-            <button key={a} className="cm-tstat-act" data-jam-run-act={a} onClick={() => { void useJamQueue.getState().runAct(card, a); setOpen(false) }}>{label}</button>
+            <button key={a} className="cm-tstat-act" data-jam-run-act={a} onClick={() => { void endOnOk(cmd('jam-status-act', { ...CLICK, arg: a }), useJamQueue.getState().runAct(card, a)); setOpen(false) }}>{label}</button>
           ))}
         </span>
       )}

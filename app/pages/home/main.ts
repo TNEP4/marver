@@ -229,7 +229,7 @@ async function open(sent: string, fromField: boolean): Promise<void> {
   const p = parseLink(sent)
   submitting = true
   let a: LinkOpenAnswer
-  try { a = await api.openLink(sent) } catch { a = { ok: false, why: 'bad' } } finally { submitting = false }
+  try { a = await api.openLink(sent, fromField ? undefined : 'click') } catch { a = { ok: false, why: 'bad' } } finally { submitting = false }
   if (a.ok) {
     if (input.value === sent) input.value = ''
     answer = null
@@ -248,9 +248,10 @@ input.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); void submit() }
   else if (e.key === 'Escape') {
     e.preventDefault()
-    // back to the tab ⌘L came from, whatever the field holds; if that tab has closed, stay on Home
+    // back to the tab ⌘L came from, whatever the field holds; if that tab has closed, stay on Home - said to main all
+    // the same, as Home itself, for the record (spec 30's link-cancel, noop no-tab): main does nothing with it
     const b = backTab()
-    if (b) api?.activate(b.id)
+    api?.activate(b ? b.id : 'home', 'key')
   }
 })
 

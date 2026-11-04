@@ -124,7 +124,7 @@ describe('the tab list (A2.13)', () => {
     await p.page.keyboard.press('Enter')
     await p.page.keyboard.press('ArrowRight')
     await p.page.keyboard.press(' ')
-    expect(await p.calls('tab:activate')).toEqual([{ id: 't1' }, { id: 't2' }])
+    expect(await p.calls('tab:activate')).toEqual([{ id: 't1', via: 'key' }, { id: 't2', via: 'key' }])
   })
 
   it('Delete and Backspace close the focused tab, never Home; ⇧F10 and the context-menu key open its menu at the tab', async () => {
@@ -261,7 +261,7 @@ describe('the one pill (A2.2)', () => {
     await p.page.click('#pill [aria-label="Not now"]')
     await p.page.focus('#pill .pill-btn')
     await p.page.keyboard.press('Escape')
-    expect(await p.calls('pill:action')).toEqual([{ rev: 5, act: 'dismiss' }, { rev: 5, act: 'dismiss' }])
+    expect(await p.calls('pill:action')).toEqual([{ rev: 5, act: 'dismiss' }, { rev: 5, act: 'dismiss', via: 'key' }])
   })
 
   it('below 960 px each pill shows its short form, never an empty capsule; it never covers a tab', async () => {

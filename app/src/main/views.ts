@@ -32,6 +32,12 @@
  * and nothing lifted too (`onRemoteAbort`) - its probe a `HEAD` of its origin (sessions.ts `probeRemote`), and
  * `net.isOnline()` turning true looks again at once (polled only while one is unreachable). `openRemote` is ⌘L's,
  * Home's and the front door's: one tab per origin, a hash-only change unasked, any other through the guard.
+ *
+ * Spec 30 (commands, R12) records here: `runCommand` and `tabAct`, one `appCmd` per input with `via` and `in`, each case
+ * ending on its work (#49) - a tab's `shown` or `reopen`, the new document's accepted hello, a window event; `by` on
+ * `shown` and `reopen`; the page handlers end what the bridge's funnel started (`currentAppCmd`); the Dock and the hang
+ * sheet are inputs of their own; the window's own events (#53). Mark All as Seen and a canvas's items are relays (#51):
+ * nothing recorded here, `in` passed on with `mv:menu-click`.
  */
 import { execFile } from 'node:child_process'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
@@ -45,8 +51,9 @@ import { startCommand } from '../shared/command.ts'
 import { parseLink, remoteFaviconPick, remoteStart } from '../shared/links.ts'
 import { LOGO_MAX, LOGO_MIME, sniffLogo } from '../../../src/shared/logo-sniff.ts'
 import { effects, provideEffectHooks } from './effects.ts'
-import type { AppState, MenuItem, Present, Presented } from '../../../src/shared/app-api.ts'
-import type { AppBody, AppKind, TabIdent } from '../../../src/shared/app-perf.ts'
+import type { AppState, MenuIn, MenuItem, Present, Presented } from '../../../src/shared/app-api.ts'
+import { WINDOW_EVENTS, type AppBody, type AppKind, type TabIdent } from '../../../src/shared/app-perf.ts'
+import type { CmdIn, CmdVia } from '../../../src/shared/perf-records.ts'
 import { docProof } from '../../../src/server/proof.ts'
 import { readAtMost } from './proof.ts'
 import { values, type Files, type Home } from './config.ts'
@@ -55,6 +62,7 @@ import { attachNav, type NavAdapter, type NavEvent } from './nav.ts'
 import type { RegistryEntry, RegistryEvent } from './registry.ts'
 import { mainFrameOf, safely } from './frames.ts'
 import { attachKeys, digitOf, type AppCommand } from './keys.ts'
+import { activated, appCmd, askedLoad, askedShown, cmdTabsChanged, cmdWindowGone, currentAppCmd, expectWindow, holdCmd, tabDocument, tabFailed, waitForDoc, windowCause, type AppCmdHandle, type KeyFrom } from './commands.ts'
 import { focusOwner, f6, track } from './focus.ts'
 import { buildNow, HELP_URL, invalidateMenu, startMenu, type MenuModel, type MenuToken } from './menu.ts'
 import { crashReloaded, currentPill, onPillAction, setCondition, setPillPorts } from './pill.ts'
@@ -104,8 +112,8 @@ export interface TrustPort {
   onReport(fn: (tabId: string, doc: string, r: CanvasReports) => void): () => void
   /** `mv:app-state` to the tab's admitted, trusted document (stamped with its `doc`); `untrusted` is the bridge's own */
   appState(tabId: string, s: AppState): boolean
-  /** `mv:menu-click` to the tab's admitted, trusted document, for an item its last `mv:menu` offers */
-  menuClick(tabId: string, id: string): boolean
+  /** `mv:menu-click` to the tab's admitted, trusted document, for an item its last `mv:menu` offers; `where` the menu it came from (spec 30 #51) */
+  menuClick(tabId: string, id: string, where?: MenuIn): boolean
   /** the tab's next `mv:doc` answers `{ reopen: true }`, once (`recover`'s reload, A2.14 #9) */
   reopenNext(tabId: string): void
   /** A3: that flag taken back, if no document has taken it yet: a link opened into a tab with no live document (A3.8 #42) */
@@ -182,8 +190,8 @@ function forward(): void {
 }
 
 /** The app's keys on one view; the key harness's control case (test builds only) leaves the menu its key equivalents. */
-const keys = (wc: WebContents) => attachKeys(wc, (c) => runCommand(c, 'key'),
-  { prevent: !(__MV_TEST__ && testMode() && process.env.MARVER_APP_KEYS_NO_PREVENT === '1') })
+const keys = (wc: WebContents, surface: KeyFrom['in'] = 'shell') => attachKeys(wc, (c, _from, key) => runCommand(c, 'key', key),
+  { prevent: !(__MV_TEST__ && testMode() && process.env.MARVER_APP_KEYS_NO_PREVENT === '1'), in: surface })
 
 let trust: TrustPort
 let homeDir: Home
@@ -268,6 +276,7 @@ function wireCanvas(t: Tab, view: WebContentsView): void {
     const app = !!t.appEnding
     j('gone', { tab: t.id, reason: d.reason, app })
     recorder.processGone(t, d, app)
+    if (!app) tabFailed(t.id, 'gone')   // a renderer lost under a command (#49); one main ended is that command's own work
     clearHang(t)
     recover(t, app ? { kind: 'app' } : { kind: 'crash', reason: d.reason, exitCode: d.exitCode })
     compose()
@@ -324,6 +333,7 @@ function forgetCanvas(t: Tab, view: WebContentsView): void {
 function load(t: Tab): void {
   if (!canLoad(t)) return
   beginReopen(t)
+  askedLoad()
   t.needsLoad = false
   t.loadAt = Date.now()
   clearUnattributed(t)   // this load replaces the reload an unattributed commit had waiting
@@ -380,6 +390,7 @@ function onNav(t: Tab, wc: WebContents, e: NavEvent): void {
       try { errorPage = wc.mainFrame?.origin === 'null' } catch { /* the frame went */ }
       abortLogo(t)
       onFail(t, { why: e.why, code: e.code, errorPage, gen: e.gen })
+      tabFailed(t.id, 'refused')   // the load a command waits on failed (#49); the tab's own retries are not that command
       onAttemptFailed(t)
       scheduleRetry(t)
       compose()
@@ -414,6 +425,7 @@ function onRemoteNav(t: Tab, wc: WebContents, e: NavEvent): void {
       void wc.insertCSS(NO_DRAG, { cssOrigin: 'user' }).catch(() => {})
       clearUnattributed(t)
       onLifted(t)
+      tabDocument(t.id, docToken(t))   // a shared canvas says no hello: its commit is the signal (#49)
       faviconAgain(t, wc)
       pollOnline()
       compose()
@@ -425,6 +437,7 @@ function onRemoteNav(t: Tab, wc: WebContents, e: NavEvent): void {
       try { errorPage = wc.mainFrame?.origin === 'null' } catch { /* the frame went */ }
       abortLogo(t)
       onFail(t, { why: 'unreachable', code: e.code, errorPage, gen: e.gen })
+      tabFailed(t.id, 'refused')
       onAttemptFailed(t)
       scheduleRetry(t)
       pollOnline()
@@ -617,13 +630,32 @@ function unloadGone(t: Tab, d: Electron.RenderProcessGoneDetails): boolean {
  * first load like any (A3.8 #24): its start reads the instance's features.
  */
 function beginReopen(t: Tab): void {
-  if (startReopen(t) === 'camera') trust.reopenNext(t.id)
+  const kept = startReopen(t)
+  // the command this reopen is for (spec 30 #52): its `reopen` record, written at the hello, names it
+  const by = currentAppCmd()?.id
+  if (kept && by) reopenBy.set(t.id, by)
+  if (kept === 'camera') trust.reopenNext(t.id)
 }
+/** The command behind each tab's reopen under way, until its `reopen` record. */
+const reopenBy = new Map<string, string>()
 
 /** A record through the recorder (app.jsonl only with the recorder on), and the journal's `record` line in test builds (A3.8 #45). */
 function record<K extends AppKind>(kind: K, who: Tab | TabIdent | null, body: Omit<AppBody<K>, keyof TabIdent>): void {
   if (__MV_TEST__) j('record', { kind, ...(who ? { tab: 'id' in who ? who.id : who.tab } : {}), ...(body as object) })
-  recorder.event(kind, who, body)
+  // the reopen ends the activation that asked for it, and names it (spec 30 #49, #52)
+  const tab = kind === 'reopen' && who ? ('id' in who ? who.id : who.tab) : undefined
+  const by = tab ? reopenBy.get(tab) : undefined
+  if (tab) reopenBy.delete(tab)
+  recorder.event(kind, who, (by ? { ...body, by } : body) as Omit<AppBody<K>, keyof TabIdent>)
+  if (tab) tabDocument(tab)
+}
+
+/** The tabs whose guard sheet the person just declined: a guard's `refused` says only that nothing was replaced (spec 30 #49). */
+const declined = new Set<string>()
+/** A guard's `refused`, on the command that asked: `cancelled` for a sheet the person declined, else the page or its unsaved work refused. */
+function endRefused(h: AppCmdHandle | undefined, tabId: string): void {
+  if (declined.delete(tabId)) h?.cancel('sheet')
+  else h?.fail('refused')
 }
 
 /** Sheets for test builds: answered by a hook (no automation presses a native sheet; A2.14 #22's `ask()` seam). */
@@ -661,11 +693,17 @@ async function ask(s: Sheet): Promise<boolean> {
   const words = sheetText(s)
   // a sheet on a hidden window is a question nobody sees (a quit from the Dock, the menu's Close Tab after ⇧⌘W)
   forward()
-  if (__MV_TEST__ && seamed()) return testSheet({ kind: 'guard', action: s.action.kind, tabs: s.tabs.map((x) => x.id), ...words })
+  if (__MV_TEST__ && seamed()) {
+    const ok = await testSheet({ kind: 'guard', action: s.action.kind, tabs: s.tabs.map((x) => x.id), ...words })
+    if (!ok) for (const x of s.tabs) declined.add(x.id)
+    return ok
+  }
   const win = mainWindow()
   if (!win) return false
   const r = await dialog.showMessageBox(win, sheetBox(words))
-  return sheetConfirmed(r.response)
+  const ok = sheetConfirmed(r.response)
+  if (!ok) for (const x of s.tabs) declined.add(x.id)
+  return ok
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -748,19 +786,23 @@ async function notResponding(t: Tab): Promise<void> {
         reload = sheetConfirmed(r.response) && !ac.signal.aborted
       }
     } finally { hangSheetOpen = false; h.abort = undefined }
-    if (!reload) return
+    // the page answered and main took the sheet away: nobody chose anything (spec 30's hang-reload is the person's answer)
+    if (ac.signal.aborted) return
+    const hangCmd = appCmd('hang-reload', { via: 'click', in: 'main', tab: t.id })
+    if (!reload) { hangCmd.cancel('wait'); return }
     // checked again before ending anything: the same frame, process and documents, still silent
     const now = processOf(h.pid)
     const c = canvases.get(t.id)
     const samePid = !!c && safely(() => mainFrameOf(c.view.webContents)?.osProcessId) === h.pid
     const d = hangDecision({ hung: !!t.hung, current: hangs.get(t.id) === h, samePid, answered: h.answered, commit: t.doc?.commits ?? 0, named, now, before: snap })
-    if (d === 'nothing') { j('hang', { tab: t.id, recheck: 'nothing' }); return }
-    if (d === 'again') { j('hang', { tab: t.id, recheck: 'again', tabs: now.tabs }); continue }   // the sheet again, with the new list
+    if (d === 'nothing') { j('hang', { tab: t.id, recheck: 'nothing' }); hangCmd.noop('answered'); return }
+    if (d === 'again') { j('hang', { tab: t.id, recheck: 'again', tabs: now.tabs }); hangCmd.cancel('again'); continue }   // the sheet again, with the new list
     for (const x of now.tabs) {
       const tab = getTab(x.id)!
       if (x.main) { tab.appEnding = true; tab.crash.inFlight = 'force' }
     }
     j('hang', { tab: t.id, ended: h.pid, tabs: now.tabs })
+    waitForDoc(hangCmd, t.id, docToken(t))   // ends at the new document's accepted hello (R12's row)
     c!.view.webContents.forcefullyCrashRenderer()   // once, through the tab whose main frame lives there
     for (const x of now.tabs) if (!x.main) canvases.get(x.id)?.view.webContents.reload()   // only a frame of it lived there
     return
@@ -819,13 +861,31 @@ function pollOnline(): void {
 // ---------------------------------------------------------------------------------------------------------------
 // Commands: one path for the keys and the menu (A2.4, A2.7, A2.14 #25)
 
-/** ⌘R, ⇧⌘R and the menu's Reload: the person's crash reload on a crashed or latched tab with no live page, else the guard's. */
-function reloadTab(t: Tab | undefined, force: boolean): void {
-  if (!t || !isCanvasTab(t)) return
-  if (reloadIsPersons(t)) { personReload(t); compose(); return }
-  void guard(t, { kind: force ? 'forceReload' : 'reload' })
+/** What identifies the tab's document now: only a hello of another one ends a reload that replaces it (spec 30 #49). */
+const docToken = (t: Tab): string => `${t.doc?.doc ?? ''}:${t.doc?.commits ?? 0}`
+
+/**
+ * ⌘R, ⇧⌘R and the menu's Reload: the person's crash reload on a crashed or latched tab with no live page, else the
+ * guard's. It ends on the new document's accepted hello (#49), never on the guard answering: `done` from the guard
+ * says only that the navigation began.
+ */
+function reloadTab(h: AppCmdHandle, t: Tab | undefined, force: boolean): void {
+  if (!t || !isCanvasTab(t)) { h.noop('no-tab'); return }
+  waitForDoc(h, t.id, docToken(t))
+  if (reloadIsPersons(t)) {
+    if (!canLoad(t)) { h.fail('refused'); return }
+    personReload(t)
+    compose()
+    return
+  }
+  void guard(t, { kind: force ? 'forceReload' : 'reload' }).then((a) => { if (a === 'refused') endRefused(h, t.id) }, () => h.fail('refused'))
 }
-const reloadActive = (force: boolean): void => reloadTab(activeTab(), force)
+
+/** ⌘W, a tab's Close, the strip's Delete: it ends on the tab gone or the sheet refused (#49: closeTab returns before them). */
+function closing(h: AppCmdHandle | undefined, id: string): void {
+  holdCmd(h)
+  void closeTab(id).then((r) => { if (r === 'closed') h?.done(); else endRefused(h, id) }, () => h?.fail('refused'))
+}
 
 /** ⌘L: Home with its link field, `back` the tab it came from (A2.7). The home stream's page does the rest. */
 let linkBack: string | undefined
@@ -838,33 +898,69 @@ function openLink(): void {
   if (home) sendHeld(home.webContents, CH.homeFocus, { field: 'link', ...(linkBack ? { back: linkBack } : {}) })
 }
 
-export function runCommand(c: AppCommand, via: 'key' | 'menu'): void {
-  j('command', { cmd: c, via })
-  const win = mainWindow()
+/** The tab a key or menu command acts on (spec 30: its identity on the record), read before it acts. */
+function targetOf(c: AppCommand): Tab | undefined {
   const d = digitOf(c)
-  if (d !== null) { const t = forDigit(d); if (t) { showWindow(); activate(t.id) } return }
+  if (d !== null) return forDigit(d)
   switch (c) {
-    case 'home': showWindow(); activate('home'); return
-    case 'open-link': showWindow(); openLink(); return
-    case 'close-tab': { const t = activeTab(); if (t && t.kind !== 'home') void closeTab(t.id); return }
-    case 'close-window': hideWindow(); return
-    case 'reload': reloadActive(false); return
-    case 'force-reload': reloadActive(true); return
-    case 'settings': showWindow(); openSettingsTab(); return
-    case 'quit': shutdownRequest('quit'); return
-    case 'hide': app.hide(); return
-    case 'hide-others': Menu.sendActionToFirstResponder('hideOtherApplications:'); return
-    case 'minimize': win?.minimize(); return
-    case 'fullscreen': win?.setFullScreen(!win.isFullScreen()); return
-    case 'next-tab': case 'prev-tab': { const t = cycleFrom(activeTab()?.id ?? 'home', c === 'next-tab' ? 1 : -1); if (t) activate(t.id); return }
+    case 'home': return getTab('home')
+    case 'settings': return getTab('settings')
+    case 'next-tab': return cycleFrom(activeTab()?.id ?? 'home', 1)
+    case 'prev-tab': return cycleFrom(activeTab()?.id ?? 'home', -1)
+    case 'close-tab': case 'reload': case 'force-reload': case 'devtools': return activeTab()
+    default: return undefined
+  }
+}
+
+/** Each case ends on what it did (#49): the keys' and the menu's one path, told apart by `via` and `in` (#50). */
+export function runCommand(c: AppCommand, via: 'key' | 'menu', key?: KeyFrom): void {
+  j('command', { cmd: c, via })
+  const target = targetOf(c)
+  const h = appCmd(c, { via, in: via === 'menu' ? 'menu' : key?.in ?? 'shell', ...(via === 'key' && key ? { keys: key.keys } : {}), ...(target ? { tab: target.id } : {}) })
+  const win = mainWindow()
+  if (digitOf(c) !== null) {
+    if (!target) { h.noop('no-tab'); return }
+    showWindow(); activate(target.id); activated(h, target.id)
+    return
+  }
+  switch (c) {
+    case 'home': showWindow(); activate('home'); activated(h, 'home'); return
+    case 'open-link': showWindow(); openLink(); activated(h, 'home'); return
+    case 'close-tab': if (target && target.kind !== 'home') closing(h, target.id); else h.noop('no-tab'); return
+    case 'close-window': hideWindow(); h.done(); return
+    case 'reload': reloadTab(h, target, false); return
+    case 'force-reload': reloadTab(h, target, true); return
+    case 'settings': showWindow(); activated(h, openSettingsTab().id); return
+    case 'quit': if (shutdownRequest('quit')) h.done(); else h.noop('in-flight'); return
+    case 'hide': app.hide(); h.done(); return
+    case 'hide-others': Menu.sendActionToFirstResponder('hideOtherApplications:'); h.done(); return
+    case 'minimize':
+      if (!win) { h.noop('no-tab'); return }
+      expectWindow(h, ['minimize'])
+      win.minimize()
+      return
+    case 'fullscreen':
+      if (!win) { h.noop('no-tab'); return }
+      expectWindow(h, [win.isFullScreen() ? 'leave-full-screen' : 'enter-full-screen'])
+      win.setFullScreen(!win.isFullScreen())
+      return
+    case 'next-tab': case 'prev-tab':
+      if (!target) { h.noop('no-tab'); return }
+      activate(target.id)
+      activated(h, target.id)
+      return
     case 'devtools': {
-      const t = activeTab()
-      const v = t ? (pageView(t.id) && !keptDoc(t) ? pageView(t.id) : contentView(t.id)) : undefined
-      v?.webContents.openDevTools({ mode: 'detach' })
+      const v = target ? (pageView(target.id) && !keptDoc(target) ? pageView(target.id) : contentView(target.id)) : undefined
+      if (!v) { h.noop('no-tab'); return }
+      v.webContents.openDevTools({ mode: 'detach' })
+      h.done()
       return
     }
-    case 'focus-strip': case 'focus-strip-back': f6(); return
-    case 'mark-flash': recorder.markFlash(via); return
+    case 'focus-strip': case 'focus-strip-back': f6(); h.done(); return
+    case 'mark-flash':
+      holdCmd(h)
+      void recorder.markFlash(via).then((r) => { if (r === 'written') h.done(); else if (r === 'failed') h.fail('mark-failed'); else h.noop('debounced') })
+      return
   }
 }
 
@@ -1055,24 +1151,53 @@ function holds(k: MenuToken): boolean {
   return !!t && (t.doc?.commits ?? 0) === k.commit && !!t.doc?.trusted === k.trusted
 }
 
-function tabAct(k: MenuToken, what: 'activate' | 'open-browser' | 'reveal' | 'copy-link' | 'close' | 'mark-all-seen' | 'reload' | 'force-reload'): void {
+/** Where a tab action's input came from (#50): the tab's right-click, the File, View and Window menus, the » overflow. */
+interface TabFrom { via: CmdVia; in: CmdIn }
+const TAB_MENU: TabFrom = { via: 'context', in: 'tab-menu' }
+const APP_MENU: TabFrom = { via: 'menu', in: 'menu' }
+const OVERFLOW: TabFrom = { via: 'menu', in: 'strip' }
+
+/** Mark All as Seen is a relay (#51): the shell executes it and records it, `in` telling it which menu; nothing here. */
+function markAllSeen(k: MenuToken): void {
   const t = getTab(k.tab)
-  if (!t || !holds(k)) { j('tab-act', { what, tab: k.tab, stale: true }); return }
+  if (!t || !holds(k)) { j('tab-act', { what: 'mark-all-seen', tab: k.tab, stale: true }); return }
+  if (t.doc?.trusted && hasBridge(t)) { const sent = trust.menuClick(t.id, 'mark-all-seen', 'tab-menu'); j('tab-act', { what: 'mark-all-seen', tab: t.id, sent }) }
+}
+
+function tabAct(k: MenuToken, what: 'activate' | 'open-browser' | 'reveal' | 'copy-link' | 'close' | 'reload' | 'force-reload', from: TabFrom): void {
+  const h = appCmd(what, { ...from, tab: k.tab })
+  const t = getTab(k.tab)
+  if (!t) { j('tab-act', { what, tab: k.tab, stale: true }); h.noop('no-tab'); return }
+  if (!holds(k)) { j('tab-act', { what, tab: k.tab, stale: true }); h.noop('untrusted'); return }
   j('tab-act', { what, tab: t.id })
   // the people link (the slot file's `url`): what a browser opens and a person shares - never the bound origin
   const link = t.reg ? `http://localhost:${t.reg.port}${safePath(t.path)}` : undefined
   // a shared canvas's own place (A4.6 #49): its link to share, opened through sessions.ts's checked openOutside
   const shared = t.kind === 'remote' ? t.remote?.url : undefined
   switch (what) {
-    case 'activate': if (t.kind === 'local' && !t.open) reopenTab(t.id); else activate(t.id); return
-    case 'open-browser': if (shared) sessions.openOutside(shared); else if (link && t.doc?.trusted) openOutside(link); return
-    case 'reveal': reveal(t); return
-    case 'copy-link': if (shared) effects.copy(shared); else if (link && t.doc?.trusted) effects.copy(link); return
-    case 'close': void closeTab(t.id); return
-    case 'mark-all-seen': if (t.doc?.trusted && hasBridge(t)) { const sent = trust.menuClick(t.id, 'mark-all-seen'); j('tab-act', { what, tab: t.id, sent }) } return
+    case 'activate':
+      if (t.kind === 'local' && !t.open) reopenTab(t.id); else activate(t.id)
+      activated(h, t.id)
+      return
+    case 'open-browser':
+      if (shared) { sessions.openOutside(shared); h.done() }
+      else if (link && t.doc?.trusted) { openOutside(link); h.done() }
+      else h.noop('untrusted')
+      return
+    case 'reveal':
+      if (!t.root) { h.noop('untrusted'); return }
+      reveal(t)
+      h.done()
+      return
+    case 'copy-link':
+      if (shared) { effects.copy(shared); h.done() }
+      else if (link && t.doc?.trusted) { effects.copy(link); h.done() }
+      else h.noop('untrusted')
+      return
+    case 'close': closing(h, t.id); return
     // the menu's Reload Canvas and Force Reload: the tab the menu was built for, its document and trust unchanged
-    case 'reload': reloadTab(t, false); return
-    case 'force-reload': reloadTab(t, true); return
+    case 'reload': reloadTab(h, t, false); return
+    case 'force-reload': reloadTab(h, t, true); return
   }
 }
 
@@ -1102,7 +1227,7 @@ let lastPopup: MenuItemConstructorOptions[] = []
 
 function popup(items: MenuItemConstructorOptions[], x: number, y: number): void {
   const win = mainWindow()
-  if (!win || !items.length) return
+  if (!win || !items.length) { currentAppCmd()?.noop('no-tab'); return }
   if (__MV_TEST__ && testMode()) {
     lastPopup = items
     j('popup', { x: Math.round(x), y: Math.round(y), items: items.filter((i) => i.type !== 'separator').map((i) => ({ label: i.label, enabled: i.enabled !== false, ...(i.type === 'checkbox' ? { checked: !!i.checked } : {}) })) })
@@ -1114,42 +1239,47 @@ function popup(items: MenuItemConstructorOptions[], x: number, y: number): void 
 export const pageHandlers = {
   /** `app:ready` */
   ready(wc: WebContents): void { onAppReady(wc) },
-  /** `tab:activate { id }` (a closed canvas's Home card reopens it) */
+  /** `tab:activate { id }` (a closed canvas's Home card reopens it); ends at its tab's `shown` or `reopen` */
   tabActivate(id: string): void {
+    const h = currentAppCmd()
     const t = getTab(id)
-    if (!t) return
+    if (!t) { h?.noop('no-tab'); return }
     if (t.kind === 'local' && !t.open) reopenTab(id)
     else activate(id)
+    if (h) activated(h, id)
   },
   /** `tab:close { id }` */
-  tabClose(id: string): void { if (getTab(id)) void closeTab(id) },
+  tabClose(id: string): void {
+    if (getTab(id)) closing(currentAppCmd(), id)
+    else currentAppCmd()?.noop('no-tab')
+  },
   /** `tab:menu { id, x, y }`: the tab's right-click menu, built from main's record (A2.4, A2.7) */
   tabMenu(id: string, x: number, y: number): void {
     const t = getTab(id)
-    if (!t) return
+    if (!t) { currentAppCmd()?.noop('no-tab'); return }
     const k = tokenOf(t)
     const items: MenuItemConstructorOptions[] = []
     if (t.kind === 'local') {
       items.push(
-        { label: 'Open in Browser', enabled: !!t.doc?.trusted, click: () => tabAct(k, 'open-browser') },
-        { label: 'Reveal in Finder', enabled: !!t.root, click: () => tabAct(k, 'reveal') },
-        { label: 'Copy Local Link', enabled: !!t.doc?.trusted, click: () => tabAct(k, 'copy-link') },
+        { label: 'Open in Browser', enabled: !!t.doc?.trusted, click: () => tabAct(k, 'open-browser', TAB_MENU) },
+        { label: 'Reveal in Finder', enabled: !!t.root, click: () => tabAct(k, 'reveal', TAB_MENU) },
+        { label: 'Copy Local Link', enabled: !!t.doc?.trusted, click: () => tabAct(k, 'copy-link', TAB_MENU) },
         // main's own mv:menu-click (app-api.ts APP_MENU_IDS): only a canvas with the bridge (0.27.1) hears it
-        { label: 'Mark All as Seen', enabled: !!t.doc?.trusted && hasBridge(t), click: () => tabAct(k, 'mark-all-seen') },
+        { label: 'Mark All as Seen', enabled: !!t.doc?.trusted && hasBridge(t), click: () => markAllSeen(k) },
         { type: 'separator' },
       )
     } else if (t.kind === 'remote') {
       // a shared canvas (A4.6 #49): no Reveal in Finder, no Mark All as Seen, no canvas items
       items.push(
-        { label: 'Open in Browser', click: () => tabAct(k, 'open-browser') },
-        { label: 'Copy Link', click: () => tabAct(k, 'copy-link') },
+        { label: 'Open in Browser', click: () => tabAct(k, 'open-browser', TAB_MENU) },
+        { label: 'Copy Link', click: () => tabAct(k, 'copy-link', TAB_MENU) },
         { type: 'separator' },
-        { label: 'Reload', click: () => tabAct(k, 'reload') },
-        { label: 'Force Reload', click: () => tabAct(k, 'force-reload') },
+        { label: 'Reload', click: () => tabAct(k, 'reload', TAB_MENU) },
+        { label: 'Force Reload', click: () => tabAct(k, 'force-reload', TAB_MENU) },
         { type: 'separator' },
       )
     }
-    if (t.kind !== 'home') items.push({ label: 'Close Tab', click: () => tabAct(k, 'close') })
+    if (t.kind !== 'home') items.push({ label: 'Close Tab', click: () => tabAct(k, 'close', TAB_MENU) })
     popup(items, x, y)
   },
   /** `tabs:more { ids, x, y }`: the tabs behind », each with its state, the active one checked (A2.14 #19) */
@@ -1158,7 +1288,7 @@ export const pageHandlers = {
     const items = ids.map((id) => getTab(id)).filter((t): t is Tab => !!t).map((t): MenuItemConstructorOptions => {
       const word = STATE_WORD[displayState(t, t === a)]
       const k = tokenOf(t)
-      return { label: word ? `${tabName(t)} - ${word}` : tabName(t), type: 'checkbox', checked: t === a, click: () => tabAct(k, 'activate') }
+      return { label: word ? `${tabName(t)} - ${word}` : tabName(t), type: 'checkbox', checked: t === a, click: () => tabAct(k, 'activate', OVERFLOW) }
     })
     popup(items, x, y)
   },
@@ -1172,21 +1302,31 @@ export const pageHandlers = {
     const b = pg.body
     if (!pageOffers(b, t.kind === 'remote').includes(action)) { j('tabpage', { refused: action, page: b.page }); return false }
     j('tabpage', { tab: t.id, action })
+    // what the funnel started (bridge.ts): undefined for a test hook's direct call. #49: each ends on its work, a copy
+    // or a reveal as this turn does it, a retry or a reload on the new document's hello, an export on its file
+    const h = currentAppCmd()
     switch (action) {
       case 'retry':
+        waitForDoc(h, t.id, docToken(t))
         // a page retained beneath: Try Again is the only way to replace it, through the guard (it asks first)
-        if (t.retained && keptDoc(t)) void guard(t, { kind: 'tryAgain' })
-        else load(t)
+        if (t.retained && keptDoc(t)) void guard(t, { kind: 'tryAgain' }).then((a) => { if (a === 'refused') endRefused(h, t.id) }, () => h?.fail('refused'))
+        else if (canLoad(t)) load(t)
+        else h?.fail('refused')   // nothing to load it from: no hello will ever come
         return true
       // a shared canvas's Open in Browser (A2.11's unreachable page, A4.6 #42): its place, through openOutside's checks
-      case 'open-browser': if (t.kind === 'remote' && t.remote) sessions.openOutside(t.remote.url); return true
-      case 'reload': personReload(t); compose(); return true
-      case 'copy-start': if (t.root) effects.copy(startCommand({ root: t.root, port: t.reg?.slot == null ? t.reg?.port : null })); return true
+      case 'open-browser': if (t.kind === 'remote' && t.remote) sessions.openOutside(t.remote.url); else h?.noop('no-tab'); return true
+      case 'reload':
+        waitForDoc(h, t.id, docToken(t))
+        if (!canLoad(t)) h?.fail('refused')
+        personReload(t)
+        compose()
+        return true
+      case 'copy-start': if (t.root) effects.copy(startCommand({ root: t.root, port: t.reg?.slot == null ? t.reg?.port : null })); else h?.noop('no-tab'); return true
       case 'copy-details': effects.copy(details(t)); return true
       // A5.1 #28: the latched page's Export Performance Report…, the menu's own export (the report names no canvas)
-      case 'export-report': void exportNow('tabpage'); return true
-      case 'reveal': reveal(t); return true
-      case 'close': void closeTab(t.id); return true
+      case 'export-report': holdCmd(h); void exportNow('tabpage').then((r) => endExport(h, r)); return true
+      case 'reveal': if (t.root) reveal(t); else h?.noop('no-tab'); return true
+      case 'close': closing(h, t.id); return true
       default: return false
     }
   },
@@ -1237,11 +1377,19 @@ function exportNow(via: 'menu' | 'tabpage'): Promise<ExportResult> {
   }).then((r) => { j('report', { via, ...r }); return r })
 }
 
-/** `mv:menu-click` for the active canvas's own items, only while its token holds. */
+/** An export's end (#49): saved is the file written; a failure its stage (never the path, or the code's text); cancelled the panel's; one at a time. */
+function endExport(h: AppCmdHandle | undefined, r: ExportResult): void {
+  if (r.result === 'saved') h?.done()
+  else if (r.result === 'cancelled') h?.cancel()
+  else if (r.result === 'busy') h?.noop('busy')
+  else h?.fail(r.stage)
+}
+
+/** `mv:menu-click` for the active canvas's own items, only while its token holds. A relay (#51): the shell records it, told it came from the menu. */
 function canvasClick(k: MenuToken, id: string): void {
   const t = getTab(k.tab)
   if (!t || !holds(k) || !t.doc?.trusted || !t.reports.menu?.some((m: MenuItem) => m.id === id)) return
-  trust.menuClick(t.id, id)
+  trust.menuClick(t.id, id, 'menu')
   j('menu', { click: id, tab: t.id })
 }
 
@@ -1380,12 +1528,13 @@ export function startViews(i: StartInput): void {
   const sendState = (t: Tab, s: AppState) => {
     if (!canvases.has(t.id)) return
     trust.appState(t.id, s)
-    if (s === 'shown') recorder.shown(t)
+    // the command behind this switch, if this turn is one (spec 30 #52): the `shown` names it and ends it
+    if (s === 'shown' && recorder.shown(t, currentAppCmd()?.id)) askedShown()
   }
   setTabsPorts({
     now: () => Date.now(), home, appDark: () => nativeTheme.shouldUseDarkColors,
     // a waiting update looks at its tab after every change: closed, or its document changed (A5.1 #21)
-    changed: (o) => { ensureAppViews(); compose(o); updaterTabs() }, load, appState: sendState, act, ask, forget, save: saveSoon,
+    changed: (o) => { ensureAppViews(); compose(o); updaterTabs(); cmdTabsChanged(activeTab()?.id) }, load, appState: sendState, act, ask, forget, save: saveSoon,
     shown: (t) => { onShown(t); refreshLogo(t) }, forward,
     recheck: (t) => scheduleRetry(t, { now: true }),
     // Home's Shared canvases (A4.6 #47): the place, never a sign-in URL (tabs.ts moves it only to a shell page)
@@ -1419,11 +1568,12 @@ export function startViews(i: StartInput): void {
 
   openWindow({
     register: (wc, kind, tabId) => trust.register(wc, kind, tabId),
-    wire: (wc) => keys(wc),
+    wire: (wc, kind) => keys(wc, kind === 'strip' || kind === 'home' || kind === 'settings' || kind === 'tabpage' ? kind : 'shell'),
     ...(trust.pages ? { send: trust.pages.send } : {}),
     present: (tabId, doc, r) => trust.present?.(tabId, doc, r) ?? false,
     afterCompose: () => recorder.tabsChanged(),
   })
+  watchWindowEvents()
   // the presentation (A3.8 #27): an accepted answer, judged with the GPU identity read in its turn; the GPU
   // process gone or replaced covers every view until each presents again
   trust.onPresented?.((tabId, doc, r) => { const v = presentAnswer(tabId, doc, r, Date.now(), gpuIdentity()); if (v === 'ok' || v === 'lost') compose() })
@@ -1449,18 +1599,32 @@ export function startViews(i: StartInput): void {
   // A2.4: a local tab's logo is fetched once its entry is ready - for the canvases running at launch too, so a tab
   // not yet shown wears its logo in the strip and on Home rather than its initials until its first showing
   for (const t of allTabs()) if (t.kind === 'local' && t.reg?.state === 'ready') refreshLogo(t)
-  trust.onReport((tabId, doc, r) => { onReport(tabId, doc, r); invalidateMenu(); updaterTabs(tabId) })
+  trust.onReport((tabId, doc, r) => {
+    onReport(tabId, doc, r)
+    invalidateMenu()
+    updaterTabs(tabId)
+    // its document's accepted hello ends what waited on it (spec 30 #49); onReport accepts one per document
+    const t = getTab(tabId)
+    if (t?.reports.hello) tabDocument(tabId, docToken(t))
+  })
 
   startMenu({
     model: menuModel,
     apply: (t) => Menu.setApplicationMenu(Menu.buildFromTemplate(t)),
     acts: {
       run: (c) => runCommand(c, 'menu'), holds, canvasClick,
-      tab: (k, what) => tabAct(k, what),
-      help: () => openOutside(HELP_URL),
-      perfFiles: () => effects.openPath(join(homeDir.dir, 'perf')),
-      update: (t) => { updateAct(t) },                                 // A5.1 #22: the pill's entry too; acts only while its token holds
-      exportReport: () => { void exportNow('menu') },                  // A5.1 #28
+      tab: (k, what) => tabAct(k, what, APP_MENU),
+      stale: (k, what) => tabAct(k, what, APP_MENU),                   // spec 30 #49: tabAct says its token no longer holds
+      help: () => { const h = appCmd('help', APP_MENU); openOutside(HELP_URL); h.done() },
+      perfFiles: () => { const h = appCmd('show-perf-files', APP_MENU); effects.openPath(join(homeDir.dir, 'perf')); h.done() },
+      update: (t) => {                                                 // A5.1 #22: the pill's entry too; acts only while its token holds
+        const h = appCmd('update', { ...APP_MENU, arg: t.act })
+        if (updateAct(t)) h.done(); else h.noop('stale')
+      },
+      exportReport: () => {                                            // A5.1 #28
+        const h = appCmd('export-report', APP_MENU)
+        void exportNow('menu').then((r) => endExport(h, r))
+      },
       rebuild: () => buildNow(true),
     },
   })
@@ -1482,7 +1646,7 @@ export function startViews(i: StartInput): void {
   strip?.once('did-fail-load', show)
   setTimeout(show, 300)
 
-  app.on('activate', () => showWindow())   // the Dock icon
+  app.on('activate', () => { const h = appCmd('dock-activate', { via: 'click', in: 'main' }); showWindow(); h.done() })   // the Dock icon
   powerMonitor.on('resume', onResume)
   execFile('/usr/sbin/sysctl', ['-n', 'hw.model'], { timeout: 2000 }, (err, out) => { if (!err) macModel = String(out).trim() })
 
@@ -1534,6 +1698,19 @@ async function restartAlertBox(a: RestartAlert): Promise<void> {
     return
   }
   await dialog.showMessageBox({ type: 'warning', message: a.message, detail: a.detail, buttons: [...a.buttons], defaultId: 0, noLink: true })
+}
+
+/**
+ * What macOS lets main observe of the native roles (#53): each a `window` line, `cause: 'app'` when a command asked for
+ * it. Hide and show are not recorded - macOS sends them for occlusion too (present.ts's note) - but a window that hides
+ * or minimizes ends the wait of a command on a `shown` it can no longer draw (#49).
+ */
+function watchWindowEvents(): void {
+  const win = mainWindow()
+  if (!win) return
+  for (const event of WINDOW_EVENTS) win.on(event as 'minimize', () => record('window', null, { event, cause: windowCause(event) }))
+  win.on('hide', cmdWindowGone)
+  win.on('minimize', cmdWindowGone)
 }
 
 /** The Mac woke: every failed tab looks again at once (A2.11: a check on `powerMonitor` `resume`). */

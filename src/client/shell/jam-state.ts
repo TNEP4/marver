@@ -3,6 +3,7 @@
  * review, a wrap-up, a thread), the lane's selection and its keyboard (`Q`), the review's picture view.
  */
 import { create } from 'zustand'
+import { cmd, type CmdHandle, type CmdOpts } from './commands.ts'
 
 /** The focus panel. `thread` (spec 28 A4.6 #30, r1 #3): a thread no frame on its board can show - frameless, its
  *  frame gone, resolved - opened where it can be read and answered; `id` is the thread's, on `board`. */
@@ -79,13 +80,20 @@ export const useJamUi = create<JamUi>((set, get) => ({
  *  closes, its tile lets go, and the lane gives the keys back (trial 1: "anywhere on the canvas should
  *  close the review card and deselect the capture card"). Words being edited in the read-back save first:
  *  the field is left before the panel goes. */
-export function letGoOfTile() {
+export function letGoOfTile(from?: Pick<CmdOpts, 'via' | 'in'>) {
   const s = useJamUi.getState()
   if (!s.panel && !s.selected && !s.laneKeys) return
+  // an input's press: it changed something, so it is a `jam-close` (R12's silence: the return above writes nothing)
+  if (from) cmd('jam-close', from)
   const a = document.activeElement
   if (a instanceof HTMLElement && a.closest('.jm-focus')) a.blur()
   useJamUi.setState({ panel: null, moreOpen: false, selected: null, laneKeys: false })
 }
+
+/** A command whose work answers a boolean - `act`, `runAct`, a session's move, a tile's surface drawn (spec 30): true ends
+ *  it `done`; false, or a rejection, `failed` with `code`. Hands the answer on (a rejection reads false). */
+export const endOnOk = (h: CmdHandle, answer: Promise<boolean>, code = 'refused'): Promise<boolean> =>
+  answer.then((ok) => { if (ok) h.done(); else h.fail(code); return ok }, () => { h.fail(code); return false })
 
 /** What JamSurface lends the helpers that open things (jam-keys.ts): a tile's menu opened at the tile, as a right-click
  *  opens it (spec 28 A4.6 #30) - false when the tile is not drawn. */
