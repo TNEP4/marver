@@ -10,17 +10,18 @@
 // touches laser/pick/anchor/highlight. It self-installs the pointer + message
 // listeners and returns { modeActive } so the host can guard its own nav clicks.
 //
-//   createInspect({ post, getId, onModeChange?, onLaserPick? })
+//   createInspect({ post, getId, getBoot?, onModeChange?, onLaserPick? })
 //     post(msg)        send a message up to the shell (parent)
 //     getId()          the frame id to stamp on posts (static on canvas, the
 //                      current stage frame in play - it swaps without reload)
+//     getBoot?()       this document's boot id, echoed in sh:mode-applied (spec 30 #26)
 //     onModeChange?()  called after any laser/pick flip (the canvas bridge uses it
 //                      to report its interaction lease; the stage ignores it)
 //     onLaserPick?(el, e)  a laser click; returning true means a capture took it as its pick
 //                      (trail.js) - no sh:laser-copy then
 //
 //   shell -> frame : sh:laser · sh:pick · sh:copy-ok · sh:resolve-anchors · sh:highlight-anchor
-//   frame -> shell : sh:frame-down · sh:picked · sh:laser-copy · sh:anchor-rects
+//   frame -> shell : sh:frame-down · sh:picked · sh:laser-copy · sh:anchor-rects · sh:mode-applied
 //
 // Anchors (spec 26): only VISIBLE elements ever match, a pin attaches at the end of its element's
 // first rendered line (a person's pin: where they clicked), and `window.__mvAnchorCheck` is the
@@ -323,7 +324,7 @@ const checkTarget = ({ on, at, nth } = {}, others = []) => {
 }
 if (typeof window !== 'undefined') window.__mvAnchorCheck = checkTarget
 
-export function createInspect({ post, getId, onModeChange, onLaserPick }) {
+export function createInspect({ post, getId, getBoot, onModeChange, onLaserPick }) {
   let laserOn = false, pickOn = false
   // the laser as inspect (⌥L): every element outlined. Off, the laser is a pointer - the element under the cursor lit,
   // as comment mode lights it
@@ -526,13 +527,20 @@ body [data-mv-hover] { outline: 2px solid hsl(var(--mv-hue) 95% 45%); outline-of
     applyLock(resolveAnchor(highlightAnchor), highlightAnchor?.el?.hue)
   }
 
+  // spec 30 #26: a mode change that names its transition is acknowledged two animation frames after it applied - this
+  // document's modes as they stand then. A shell that records nothing sends no `t`, and hears nothing back.
+  const ackMode = (t) => {
+    if (typeof t !== 'string') return
+    requestAnimationFrame(() => requestAnimationFrame(() => post({ type: 'sh:mode-applied', id: getId(), t, boot: getBoot?.() ?? '', laser: laserOn, inspect: inspectOn, pick: pickOn })))
+  }
+
   const onMessage = (e) => {
     if (e.source !== window.parent || window.parent === window) return
     if (e.origin && e.origin !== location.origin) return   // a navigated frame must not spoof shell commands
     const m = e?.data
     if (!m || typeof m !== 'object') return
     // (a shell from before 0.26.1 sends no `inspect`: its laser is the outlined one)
-    if (m.type === 'sh:laser') { laserOn = !!m.on; inspectOn = laserOn && (m.inspect === undefined ? true : !!m.inspect); applyModes(); onModeChange?.(laserOn, pickOn) }
+    if (m.type === 'sh:laser') { laserOn = !!m.on; inspectOn = laserOn && (m.inspect === undefined ? true : !!m.inspect); applyModes(); onModeChange?.(laserOn, pickOn); ackMode(m.t) }
     else if (m.type === 'sh:pick') {
       pickOn = !!m.on; pickQuiet = !!m.quiet; applyModes()
       if (pickQuiet) clearHover()   // a hover lit before the toggle landed must not linger
@@ -540,6 +548,7 @@ body [data-mv-hover] { outline: 2px solid hsl(var(--mv-hue) 95% 45%); outline-of
       // a shell-owned highlight (highlightAnchor set, e.g. #5) survives
       if (!pickOn && !highlightAnchor) clearLock()
       onModeChange?.(laserOn, pickOn)
+      ackMode(m.t)
     }
     else if (m.type === 'sh:copy-ok') showCopied(m.seq)
     else if (m.type === 'sh:highlight-anchor') {

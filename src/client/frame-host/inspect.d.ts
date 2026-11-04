@@ -2,6 +2,7 @@
 export function createInspect(opts: {
   post: (msg: Record<string, unknown>) => void
   getId: () => string
+  getBoot?: () => string | undefined
   onModeChange?: (laser: boolean, pick: boolean) => void
   onLaserPick?: (el: Element, e: MouseEvent) => boolean
 }): { modeActive: () => boolean; isLaser: () => boolean; isPick: () => boolean; dispose: () => void }

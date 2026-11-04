@@ -15,6 +15,12 @@ import { onMotion, type Motion } from './canvas/camera-broadcast.ts'
 import { gestureOff, gestureOn } from './app-perf.ts'
 import { recorder } from './recorder.ts'
 import { gestureStats } from './recorder-core.ts'
+import { canvasCtl } from './canvas/ctl.ts'
+import { frameByWindow } from './canvas/frame-registry.ts'
+import { currentCmd } from './commands.ts'
+import { fullRecorder } from '../recorder-level.ts'
+import { keepLongest, pickLoafs, type LoafEntry } from './recorder-signals-core.ts'
+import { useStore } from './store.ts'
 
 const LOAF = typeof PerformanceObserver !== 'undefined' && (PerformanceObserver.supportedEntryTypes ?? []).includes('long-animation-frame')
 const frames: number[] = []   // inter-frame intervals (ms) across gestures, for report()
@@ -32,7 +38,30 @@ const enabled = (): boolean => {
   } catch { return false }
 }
 
-interface Run { t0: number; last: number; dts: number[]; pan: boolean; zoom: boolean; layout: boolean; longs: number[]; obs?: PerformanceObserver; raf: number }
+interface Run {
+  t0: number; last: number; dts: number[]; pan: boolean; zoom: boolean; layout: boolean; longs: number[]; obs?: PerformanceObserver; raf: number
+  // spec 30 #34, #35: at the full level, the camera's scale over its frames, the longest frames, the command behind it
+  scale?: { from: number; to: number; min: number; max: number }; top: LoafEntry[]; by?: string
+}
+const FULL = fullRecorder()
+const scaleNow = (): number | undefined => { const s = canvasCtl.transform()?.s; return typeof s === 'number' && s > 0 ? s : undefined }
+function readScale(run: Run): void {
+  const s = FULL ? scaleNow() : undefined
+  if (s === undefined) return
+  if (!run.scale) { run.scale = { from: s, to: s, min: s, max: s }; return }
+  run.scale.to = s
+  if (s < run.scale.min) run.scale.min = s
+  if (s > run.scale.max) run.scale.max = s
+}
+/** What a script's path or window names (#35): a frame's module, else the frame whose document ran it. */
+function frameOf(src: string, win: unknown): string | undefined {
+  const s = useStore.getState()
+  const byPath = src ? s.manifest?.frames.find((f) => `/${f.file}` === src)?.id : undefined
+  if (byPath) return byPath
+  const reg = frameByWindow(win)
+  return reg ? s.nodes.find((n) => n.key === reg.key)?.frame : undefined
+}
+const r3 = (x: number) => Math.round(x * 1000) / 1000
 /** the gesture running now */
 let g: Run | null = null
 /** gestures ended so far, every one (a headless perf run waits for each of its three, spec 28 A3.8 #20) */
@@ -49,13 +78,14 @@ function note(m: Motion) {
 }
 
 function begin(m: Motion) {
-  const run: Run = { t0: performance.now(), last: 0, dts: [], pan: false, zoom: false, layout: false, longs: [], raf: 0 }
+  const run: Run = { t0: performance.now(), last: 0, dts: [], pan: false, zoom: false, layout: false, longs: [], raf: 0, top: [], ...(FULL ? { by: currentCmd() } : {}) }
   g = run
   note(m)
+  readScale(run)
   // the Mac app's recorder hears it start (the white-out detector's window, spec 28 A3.8 #15); nothing elsewhere
   gestureOn(run.pan ? 'pan' : run.zoom ? 'zoom' : run.layout ? 'layout' : undefined)
   try {
-    run.obs = new PerformanceObserver((l) => { for (const e of l.getEntries()) if (e.startTime >= run.t0) run.longs.push(e.duration) })
+    run.obs = new PerformanceObserver((l) => { for (const e of l.getEntries()) if (e.startTime >= run.t0) { run.longs.push(e.duration); if (FULL) keepLongest(run.top, e as unknown as LoafEntry) } })
     run.obs.observe({ type: LOAF ? 'long-animation-frame' : 'longtask', buffered: false })
   } catch { /* neither entry type (Safari): the intervals still sample */ }
   // this gesture's own loop: a frame of an earlier one that is still queued finds another run and stops
@@ -63,6 +93,7 @@ function begin(m: Motion) {
     if (g !== run) return
     if (run.last) run.dts.push(t - run.last)
     run.last = t
+    readScale(run)
     run.raf = requestAnimationFrame(tick)
   }
   run.raf = requestAnimationFrame(tick)
@@ -74,13 +105,20 @@ function end() {
   ended++
   cancelAnimationFrame(run.raf)
   const t1 = performance.now()
-  for (const e of run.obs?.takeRecords() ?? []) if (e.startTime >= run.t0 && e.startTime <= t1) run.longs.push(e.duration)
+  for (const e of run.obs?.takeRecords() ?? []) if (e.startTime >= run.t0 && e.startTime <= t1) { run.longs.push(e.duration); if (FULL) keepLongest(run.top, e as unknown as LoafEntry) }
   run.obs?.disconnect()
   gestureOff()
   for (const d of run.dts) { frames.push(d); if (frames.length > MAX) frames.shift() }
   for (const d of run.longs) { longs.push(d); if (longs.length > MAX) longs.shift() }
   if (run.dts.length < 2) return   // a press that never moved the camera
-  recorder.gesture({ type: run.pan ? 'pan' : run.zoom ? 'zoom' : 'layout', ms: Math.round(t1 - run.t0), ...gestureStats(run.dts, run.longs.length) })
+  readScale(run)
+  const c = run.scale
+  recorder.gesture({
+    type: run.pan ? 'pan' : run.zoom ? 'zoom' : 'layout', ms: Math.round(t1 - run.t0), ...gestureStats(run.dts, run.longs.length),
+    ...(c ? { scale: { from: r3(c.from), to: r3(c.to), min: r3(c.min), max: r3(c.max) } } : {}),
+    ...(run.top.length ? { loaf: pickLoafs(run.top, frameOf) } : {}),
+    ...(run.by ? { by: run.by } : {}),
+  })
 }
 
 /** One-shot event later stages record (e.g. a blank frame, or warm-promotion latency). */

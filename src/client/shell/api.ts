@@ -13,6 +13,7 @@ import { PERF_RUN, perfRunGate, RUN_HEADER, RUN_PARAM } from './perf-run.ts'
 import { RECORDER_LEVEL } from '../recorder-level.ts'
 import { RECORDER_PARAM } from '../../shared/perf-records.ts'
 import { perfSeams } from './recorder-seams.ts'
+import { hmrBack, hmrLost as recordHmrLost } from './recorder-hmr.ts'
 // @ts-expect-error virtual module provided by the plugin
 import shConfig from 'virtual:sh-config'
 // @ts-expect-error virtual module: null in dev; a published build inlines manifest+boards
@@ -138,6 +139,8 @@ async function resume() {
   if (back) useLink.setState({ link: 'resuming' })     // requests flow again: the flushers use them
   let ok = true
   for (const fn of flushers) ok = (await fn().catch(() => false)) && ok
+  // the socket's way back (spec 30 #30): said before anything below decides, a second at most - the holds are asked after it
+  await hmrBack()
   const now = useLink.getState().link
   if (now !== 'resuming' && now !== 'live') return     // lost again while saving: the probe goes on
   // asked here, with nothing awaited between the answer and the reload: words typed or an edit made while a
@@ -240,7 +243,7 @@ if (typeof window !== 'undefined' && !PERF_RUN) guardLeaving(window)
 // Vite - not into another project that took the port, and not into this one's next run before it has
 // saved what it holds - and its socket stays closed, so no other project's broadcast reaches it. It
 // reloads itself in resume(). Frames keep Vite's own reload: their URLs name the workspace.
-if (WS && import.meta.hot) import.meta.hot.on('vite:ws:disconnect', () => { hmrLost = true; lost('down'); return new Promise<never>(() => {}) })
+if (WS && import.meta.hot) import.meta.hot.on('vite:ws:disconnect', () => { hmrLost = true; recordHmrLost(); lost('down'); return new Promise<never>(() => {}) })
 
 // dev-only inspection hook for tests (never installed in published builds)
 if (WS && import.meta.env.DEV) (window as unknown as { __mvLink: unknown }).__mvLink = useLink

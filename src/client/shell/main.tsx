@@ -1,8 +1,10 @@
+import { Profiler } from 'react'
 import { createRoot } from 'react-dom/client'
 // an all-boards-locked build gives LockedApp.tsx in App.tsx's place: what only the canvas uses comes through it
 import { App, ShellBoundary, startPerfRunProbe } from './App.tsx'
 import { useStore } from './store.ts'
 import { startRecorder } from './recorder.ts'
+import { shellRendered } from './recorder-signals.ts'
 import { capturesPending, sealOnLeave } from './jam-capture.ts'
 import { startAppBridge } from './app-bridge.ts'
 import { startAppPerf } from './app-perf.ts'
@@ -23,4 +25,6 @@ startAppPerf()
 // a headless perf run (spec 28 A3.8 #17): what its driver reads and asks, through CDP - nothing without ?mvperfrun
 startPerfRunProbe()
 
-createRoot(document.getElementById('root')!).render(<ShellBoundary><App /></ShellBoundary>)
+const app = <ShellBoundary><App /></ShellBoundary>
+// the recorder's minute of this root's commits (spec 30 #36): dev only, and it counts nothing until the recorder runs
+createRoot(document.getElementById('root')!).render(import.meta.env.DEV ? <Profiler id="shell" onRender={shellRendered}>{app}</Profiler> : app)

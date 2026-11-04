@@ -12,7 +12,7 @@
  * Jam captures (spec 27) speak the same messages here as in a canvas frame: the keys the shell owns
  * (`sh:keys` -> `sh:key`, frame-host/keys.js) and the recorder (frame-host/trail.js, mode 'play').
  */
-import { Component, createElement, useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react'
+import { Component, createElement, Profiler, useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import { frameFile, frames, layoutChain, layouts, providers } from '../frame-host/registry.ts'
@@ -20,6 +20,7 @@ import { SLIDE_DOC_CSS } from '../const.ts'
 import { createInspect } from '../frame-host/inspect.js'
 import { createKeys, keyAllowed } from '../frame-host/keys.js'
 import { createRecorder } from '../frame-host/trail.js'
+import { frameRenders } from '../frame-host/signals.js'
 
 const params = new URLSearchParams(location.search)
 // Both signals, always - same pair as the frame host: [data-theme] for attribute-keyed
@@ -149,7 +150,7 @@ function Shown({ id, commit }: { id: string; commit?: number }) {
   // follows every commit (A4.6 #34), so the same frame committed again is shown again from then
   useEffect(() => {
     const t = setTimeout(() => {
-      if (!said.current) { said.current = true; post({ type: 'sh:stage-shown', at: id, nav: params.get('r') ?? '', epoch: stamps?.epoch ?? '', doc: stamps?.doc[id] ?? 0 }) }
+      if (!said.current) { said.current = true; post({ type: 'sh:stage-shown', at: id, nav: params.get('r') ?? '', epoch: stamps?.epoch ?? '', doc: stamps?.doc[id] ?? 0, boot: stageRecord.boot }) }
       stageRecord.at = id; stageRecord.t = Date.now()
     }, 0)
     return () => clearTimeout(t)
@@ -261,7 +262,7 @@ function Stage() {
     recorder.current = createRecorder({ post, getFrame: () => current.current, mode: 'play', trusted })
     // the keys the shell owns right now: consumed here, ahead of the frame, and forwarded as sh:key
     const keys = createKeys({ post, trusted })
-    const inspect = createInspect({ post, getId: () => current.current, onLaserPick: (el, e) => recorder.current?.pick(el, e) ?? false })
+    const inspect = createInspect({ post, getId: () => current.current, getBoot: () => stageRecord.boot, onLaserPick: (el, e) => recorder.current?.pick(el, e) ?? false })
 
     // data-goto is handled HERE, in place - never posted up as sh:go (capture phase
     // beats any frame handler; preventDefault stops real <a href> navigations). A
@@ -310,6 +311,8 @@ function Stage() {
       if (data?.type === 'sh:set-theme') {
         document.documentElement.dataset.theme = data.theme
         document.documentElement.classList.toggle('dark', data.theme === 'dark')
+        // spec 30 #21: a switch that names its transition is acknowledged two animation frames after, as a frame's is
+        if (typeof data.t === 'string') requestAnimationFrame(() => requestAnimationFrame(() => post({ type: 'sh:theme-applied', id: 'stage', theme: data.theme, t: data.t, boot: stageRecord.boot })))
       }
       else if (data?.type === 'sh:stage-set' && typeof data.at === 'string') goto(data.at, false)
     }
@@ -338,7 +341,9 @@ function Stage() {
 async function boot() {
   try {
     await import('virtual:sh-theme' as string)
-    createRoot(document.getElementById('root')!).render(createElement(Stage))
+    // the recorder's minute of this root's commits (spec 30 #36): none where nothing records
+    const onRender = frameRenders(post, 'stage', () => stageRecord.boot)
+    createRoot(document.getElementById('root')!).render(onRender ? createElement(Profiler, { id: 'stage', onRender }, createElement(Stage)) : createElement(Stage))
   } catch (err) {
     post({ type: 'sh:stage-error', message: (err as Error).message })
     document.getElementById('root')!.innerHTML =

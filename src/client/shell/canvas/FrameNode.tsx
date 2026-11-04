@@ -13,6 +13,7 @@ import { scheduleSleep, sleep, wake } from './sleep.ts'
 import { canAutoReload, shouldArmReadyWatch } from './ready-watch.ts'
 import { Stickies, type NoteSpec } from './Sticky.tsx'
 import { recorder } from '../recorder.ts'
+import { perfSeams } from '../recorder-seams.ts'
 import { noteId, sceneNoteHost } from '../notes.ts'
 import { slideSize, stageFit } from '../../const.ts'
 import { FrameSlot, toneOf, useFrameMark } from '../marks-ui.tsx'
@@ -136,7 +137,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   useEffect(() => {
     if (themeRef.current !== node.theme) {
       themeRef.current = node.theme
-      iframeRef.current?.contentWindow?.postMessage({ type: 'sh:set-theme', theme: node.theme }, '*')
+      iframeRef.current?.contentWindow?.postMessage({ type: 'sh:set-theme', theme: node.theme, t: perfSeams.transition('theme') }, '*')
     }
   }, [node.theme, node.key])
 
@@ -177,14 +178,14 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
       t.id === s.active && !t.resolved && threadHostKey(t, useStore.getState().nodes) === node.key)) || s.draft?.nodeKey === node.key)
   useEffect(() => {
     if (node.status === 'ready' || !laser)
-      iframeRef.current?.contentWindow?.postMessage({ type: 'sh:laser', on: laser, inspect: laserInspect }, location.origin)
+      iframeRef.current?.contentWindow?.postMessage({ type: 'sh:laser', on: laser, inspect: laserInspect, t: perfSeams.transition('mode') }, location.origin)
   }, [laser, laserInspect, node.status])
   // comment mode = pick mode in the frame (late loaders join like laser does); quiet when
   // laser comment (⇧L) is off - clicks still anchor, no lighting in the artwork
   const showAnchor = useComments((s) => s.showAnchor)
   useEffect(() => {
     if (node.status === 'ready' || !commentMode)
-      iframeRef.current?.contentWindow?.postMessage({ type: 'sh:pick', on: commentMode, quiet: !showAnchor }, location.origin)
+      iframeRef.current?.contentWindow?.postMessage({ type: 'sh:pick', on: commentMode, quiet: !showAnchor, t: perfSeams.transition('mode') }, location.origin)
   }, [commentMode, showAnchor, node.status])
   // B0.2: the interact target owns its own wheel (app scrolls); passive frames forward
   // wheel to the canvas. Replayed on ready like laser/pick so a reload restores truth.

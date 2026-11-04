@@ -19,9 +19,10 @@ import { adopt, bound, fitWithin, KEEPALIVE_BYTES, LOAD_MAX_MS, newId, Outbox, o
 import { PERF_RUN, type PerfRunStatus } from './perf-run.ts'
 import { displayHz } from './app-perf.ts'
 import { nextSeq, PAGE_ID, perfSeams, type LoadPhase } from './recorder-seams.ts'
+import type { DropReason, GestureFields } from '../../shared/perf-records.ts'
 import { fullRecorder } from '../recorder-level.ts'
 import { startReloads } from './recorder-reloads.ts'
-import { startSignals } from './recorder-signals.ts'
+import { errorCounted, modesOn, signalSink, startSignals, type SignalError } from './recorder-signals.ts'
 import { startCommands } from './commands.ts'
 import { startSelf } from './recorder-self.ts'
 
@@ -31,7 +32,7 @@ export { PAGE_ID }
 
 type State = ReturnType<typeof useStore.getState>
 type View = { x: number; y: number; w: number; h: number }
-type Gesture = { type: 'pan' | 'zoom' | 'layout'; ms: number; frames: number; p50: number; p95: number; max: number; over17ms: number; over33ms: number; longFrames: number }
+type Gesture = { type: 'pan' | 'zoom' | 'layout'; ms: number; frames: number; p50: number; p95: number; max: number; over17ms: number; over33ms: number; longFrames: number } & Pick<GestureFields, 'scale' | 'loaf' | 'by'>
 
 interface Load {
   id: string; board: string; cause: LoadCause; t0: number
@@ -431,31 +432,39 @@ function ensureVisible(L: Load): void {
 // ---- errors -----------------------------------------------------------------------------------------------------
 
 let inError = false
-/** the errors past a load's 50, counted in one `dropped` record while it waits to be sent (the next one adds to it) */
-let over: PerfRecord | null = null
-/** ≤ 50 per load (those past it counted), the same one at most once a second; messages and stack lines cut to 200
- *  characters. An error after the load settled or was cut is `late` - the load owns the geometry for as long as its
- *  board stays open. */
-function logError(e: { source: 'shell' | 'frame' | 'stage'; frame?: string; component?: string; message: unknown; stack?: unknown }): void {
+/** each reason's `dropped` record while it waits to be sent (the next one adds to it): the errors past a load's 50, and
+ *  what a source's rate or a frame's budget refused (spec 30 #33) */
+const drops = new Map<DropReason, PerfRecord>()
+function drop(reason: DropReason, n: number): void {
+  const d = drops.get(reason)
+  if (d && d.load === ownerId() && outbox.has(d)) { d.n = (d.n as number) + n; outbox.touch(d) }
+  else drops.set(reason, rec('dropped', ownerId(), { n, reason }))
+}
+/** Every source (spec 30 #27-#33): <= 50 per load (those past it counted), the same one at most once a second; messages and
+ *  stack lines cut to 200 characters; the modes on with it. An error after the load settled or was cut is `late` - the
+ *  load owns the geometry for as long as its board stays open. At the `core` level, what 0.29 did. */
+function logError(e: SignalError): void {
   if (inError) return
   inError = true
   try {
     const message = bound(typeof e.message === 'string' ? e.message : String(e.message ?? ''))
     if (!message) return
     const L = owner, mine = L ?? unowned
+    const full = fullRecorder()
     const key = `${e.source}|${e.frame ?? ''}|${message}`, now = performance.now()
-    if (now - (mine.errAt.get(key) ?? -Infinity) < 1000) return
-    if (mine.errors >= 50) {
-      if (over && over.load === ownerId() && outbox.has(over)) { over.n = (over.n as number) + 1; outbox.touch(over) }
-      else over = rec('dropped', ownerId(), { n: 1, reason: 'errors' })
-      return
-    }
+    if (now - (mine.errAt.get(key) ?? -Infinity) < 1000) { if (full) drop(e.source, 1); return }
+    if (mine.errors >= 50) { drop('errors', 1); return }
     mine.errors++
     mine.errAt.set(key, now)
     const stack = Array.isArray(e.stack) ? e.stack.slice(0, 3).map((l) => bound(l)).filter((l): l is string => !!l) : stackLines(e.stack)
-    rec('error', ownerId(), { source: e.source, frame: bound(e.frame), component: bound(e.component), message, ...(stack?.length ? { stack } : {}), ...(L?.done ? { late: true } : {}) })
+    const modes = full ? modesOn() : []
+    rec('error', ownerId(), { source: e.source, frame: bound(e.frame), component: bound(e.component), message, ...(stack?.length ? { stack } : {}), ...(L?.done ? { late: true } : {}), ...(full ? e.fields : {}), ...(modes.length ? { modes } : {}) })
+    if (modes.length) errorCounted(modes)
   } finally { inError = false }
 }
+// the signals stream's way in (recorder-signals.ts never imports this module)
+signalSink.error = (e) => { if (on) logError(e) }
+signalSink.dropped = (reason, n) => { if (on) drop(reason, n) }
 
 // ---- sending ----------------------------------------------------------------------------------------------------
 
@@ -621,7 +630,16 @@ export const recorder = {
     phase({ phase: 'visible', load: L.id, nodes: L.cohort.size })
   }),
   /** A pan, zoom or layout animation ended (perf.ts). */
-  gesture: guard((g: Gesture) => { rec('gesture', ownerId(), { ...g, hz: displayHz() ?? undefined }); settleSoon() }),
+  gesture: guard((g: Gesture) => {
+    let seen = {}
+    // spec 30 #34: what it ended showing, and the documents awake then (iframes minus asleep, as `weight()`)
+    if (fullRecorder()) {
+      const v = canvasCtl.view()
+      seen = { ...(v ? { visible: cohortIn(v).size } : {}), awake: Math.max(0, document.querySelectorAll('iframe.sh-live[src]').length - sleeping()) }
+    }
+    rec('gesture', ownerId(), { ...g, hz: displayHz() ?? undefined, ...seen })
+    settleSoon()
+  }),
   /** An error the shell saw: its own (window, ShellBoundary) or the play stage's. A shell error goes out at once. */
   error: guard((e: { source: 'shell' | 'stage'; message: unknown; stack?: unknown; component?: string }) => {
     logError(e)

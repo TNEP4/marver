@@ -3,10 +3,11 @@
  * Boot failures (theme, providers, layouts, the frame itself) render a plain-DOM error card
  * and post sh:error; an ErrorBoundary catches render-time throws the same way.
  */
-import { Component, createElement, useLayoutEffect, type ReactNode } from 'react'
+import { Component, createElement, Profiler, useLayoutEffect, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import './bridge.js'
+import { frameRenders } from './signals.js'
 import { frameFile, frames, layoutChain, layouts, providers } from './registry.ts'
 import { SLIDE_DOC_CSS } from '../const.ts'
 
@@ -113,7 +114,10 @@ async function boot() {
     // by a superseded document (one it auto-renavigated past) - a WindowProxy survives navigation, so
     // a stale ready could otherwise mark a reloading frame ready. Mirrors the sh:measure generation guard.
     const ready = () => { phases.commit = Math.round(performance.now()); post({ type: 'sh:ready', id, gen, boot: docId(), doc: document.querySelector('meta[name="mv-doc"]')?.getAttribute('content') ?? '', meta: frameMod.meta && typeof frameMod.meta === 'object' ? frameMod.meta : undefined, phases }) }
-    createRoot(document.getElementById('root')!).render(createElement(Boundary, null, createElement(Committed, { onCommit: ready }, tree)))
+    const app = createElement(Boundary, null, createElement(Committed, { onCommit: ready }, tree))
+    // the recorder's minute of this root's commits (spec 30 #36): none where nothing records
+    const onRender = frameRenders(post, id, docId)
+    createRoot(document.getElementById('root')!).render(onRender ? createElement(Profiler, { id: 'frame', onRender }, app) : app)
   } catch (err) {
     fail((err as Error).message, err)
   }

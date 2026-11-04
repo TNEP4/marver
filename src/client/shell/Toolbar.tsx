@@ -63,6 +63,8 @@ export function toggleHideUI() {
   document.body.classList.toggle('sh-hide-ui', !isHideUI())
   hideListeners.forEach((f) => f())
 }
+/** Told at every toggle, in its own turn (the recorder's `hide-ui` mode, spec 30 #25). Returns the unsubscribe. */
+export const onHideUI = (f: () => void) => { hideListeners.add(f); return () => { hideListeners.delete(f) } }
 export function useHideUI() {
   const [on, setOn] = useState(isHideUI)
   useEffect(() => {
