@@ -138,6 +138,24 @@ describe('the windows (#38, #40)', () => {
     expect(takeWhiteoutMinute()!.byWhy).toEqual({ shown: 1 })
   })
 
+  it('a 0.29 shell, which sends no `watch` (#54): what it does send opens nothing; its windows are a gesture\'s and `shown`', async () => {
+    const r = rig()
+    r.o.captureMs = 5
+    r.send({ kind: 'board', frames: 12, asleep: 0 })
+    r.send({ kind: 'shown', tick: 1 })
+    r.send({ kind: 'mem', tick: 1, privateKB: 1, heapUsedKB: 1, heapTotalKB: 1 })
+    await run(1000)
+    expect(whiteoutStats().windows).toBe(0)
+    noteShown('t1')
+    await run(WATCH_MAX_MS + 1000)
+    expect(takeWhiteoutMinute()!.byWhy).toEqual({ shown: 1 })
+    r.send({ kind: 'gesture', on: true, seq: 1, type: 'pan' })
+    await run(500)
+    r.send({ kind: 'gesture', on: false, seq: 1 })
+    await run(T.whiteoutTailMs + 1000)
+    expect(takeWhiteoutMinute()!.byWhy).toEqual({ gesture: 1 })
+  })
+
   it('a tab not on screen opens nothing; with the recorder off nothing opens', async () => {
     const r = rig()
     r.send(watch(true, 1), 't2')

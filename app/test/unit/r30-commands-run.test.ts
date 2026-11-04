@@ -163,7 +163,9 @@ const cmds = await import('../../src/main/commands.ts')
 const { keyCombo, attachKeys } = await import('../../src/main/keys.ts')
 const { offerMove, takeMoveCmd } = await import('../../src/main/mover.ts')
 const { CH } = await import('../../src/shared/channels.ts')
-const { checkPagePayload } = await import('../../src/main/bridge.ts')
+const { checkHello, checkPagePayload } = await import('../../src/main/bridge.ts')
+const { identity } = await import('../../src/main/recorder.ts')
+const { launchFirstCanvas, launchReady, launchWriter, resetLaunch } = await import('../../src/main/launch.ts')
 
 // ---- the run -----------------------------------------------------------------------------------------------------------
 
@@ -230,20 +232,20 @@ beforeEach(() => { cmds.resetCmds(); asks.length = 0; menuClicks.length = 0; rec
 
 /** A canvas tab on its first document: registered, shown, committed, said hello. */
 let n = 0
-async function canvas(): Promise<ReturnType<typeof tabs.getTab> & object> {
+async function canvas(hello?: Record<string, unknown>): Promise<ReturnType<typeof tabs.getTab> & object> {
   const e = makeEntry(++n)
   entries.push(e)
   tabs.onRegistry({ kind: 'entry', entry: e as never })
   const t = tabs.allTabs().find((x) => x.reg?.instance === e.instance)!
   tabs.activate(t.id)
   await tick()
-  await commit(t.id, e.origin)
+  await commit(t.id, e.origin, hello)
   return t
 }
-async function commit(id: string, origin?: string): Promise<void> {
+async function commit(id: string, origin?: string, hello?: Record<string, unknown>): Promise<void> {
   const t = tabs.getTab(id)!
   navFns.get(id)!({ kind: 'commit', gen: 1, url: `${origin ?? t.reg!.origin}/`, attributed: true, instance: t.reg!.instance })
-  reportFn!(id, docs.get(id)!, { hello: { version: '0.30.0', board: null, page: `PAGE_${docs.get(id)}` }, safety: 'fresh', busy: { busy: false, unsaved: false, why: [] } })
+  reportFn!(id, docs.get(id)!, { hello: hello ?? { version: '0.30.0', board: null, page: `PAGE_${docs.get(id)}` }, safety: 'fresh', busy: { busy: false, unsaved: false, why: [] } })
   await tick()
 }
 const answerShown = (tab: string) => {
@@ -963,5 +965,69 @@ describe('privacy (#4)', () => {
     expect(text).not.toContain(SENTINEL)
     expect(text).not.toContain('x.example')
     expect(cmdLines().find((l) => l.cmd === 'setting')).toMatchObject({ arg: 'someKey' })
+  })
+})
+
+/**
+ * R14 #54, R16's second compatibility case: a 0.29 canvas in app 1.0.1. A 0.29 shell says what `helloNow()` said in 0.29.0
+ * (91a12283), asks for no window, knows nothing of a relay's `in`. window.ts is faked here, so the launch's one line of
+ * it (`launchFirstCanvas` from `identity`, at the first uncovered `cover`) is repeated; the real one, with a real window:
+ * app/test/prod/recorder.test.ts, VM only.
+ */
+describe('a 0.29.0 canvas in app 1.0.1 (#54)', () => {
+  const PAGE = '90879e227f04'
+  const HELLO_029 = { version: '0.29.0', board: 'main', page: PAGE, inset: 0 }
+
+  it('its hello passes the bridge\'s own check whole, and the tab knows its page', async () => {
+    expect(checkHello(HELLO_029)).toEqual(HELLO_029)
+    const t = await canvas(checkHello(HELLO_029)!)
+    expect(identity(tabs.getTab(t.id)!)).toMatchObject({ tab: t.id, page: PAGE })
+  })
+
+  it('the launch line names the page its hello gave: what joins its boot `load` in page.jsonl', async () => {
+    resetLaunch()
+    const at = Date.now()
+    try {
+      launchReady(at, at - 500)
+      launchWriter((b) => recorder.event('launch', null, b))
+      const t = await canvas(HELLO_029)
+      const now = identity(tabs.getTab(t.id)!)
+      launchFirstCanvas({ tab: t.id, ws: now.ws, page: now.page, commit: now.commit, cause: 'doc' }, at + 900)
+      const launches = lines().filter((l) => l.kind === 'launch')
+      expect(launches).toHaveLength(1)
+      expect(launches[0]).toMatchObject({ readyMs: 500, firstCanvas: { tab: t.id, page: PAGE, uncoveredMs: 1400, cause: 'doc' } })
+    } finally { resetLaunch() }
+  })
+
+  it('the app\'s commands are recorded, and name its page: ⌘2\'s `shown` ends one, ⌘R ends on its next hello', async () => {
+    const a = await canvas(HELLO_029)
+    const b = await canvas({ ...HELLO_029, page: '90879e227f05' })
+    tabs.activate(a.id)
+    await tick()
+    flushNow(); writeFileSync(file(), '')
+    const d = tabs.keyOf(b)!
+    const name = d === 9 ? 'tab-last' : `tab-${d}`
+    runCommand(name as never, 'key', { keys: `Meta+${d}`, in: 'shell' })
+    await tick()
+    answerShown(b.id)
+    const [start, end] = cmdLines()
+    expect(start).toMatchObject({ phase: 'start', cmd: name, via: 'key', tab: b.id, page: '90879e227f05' })
+    expect(end).toMatchObject({ phase: 'end', id: start!.id, outcome: 'done' })
+    expect(lines().find((l) => l.kind === 'shown')).toMatchObject({ tab: b.id, page: '90879e227f05', by: start!.id })
+    flushNow(); writeFileSync(file(), '')
+    runCommand('reload', 'key', { keys: 'Meta+r', in: 'shell' })
+    await tick()
+    await commit(b.id, undefined, { ...HELLO_029, page: '90879e227f06' })
+    expect(cmdLines().filter((l) => l.phase === 'end')).toEqual([expect.objectContaining({ cmd: 'reload', outcome: 'done', tab: b.id, page: '90879e227f06' })])
+  })
+
+  it('a relay to it is not recorded: no owner here, and a 0.29 shell does not record it either (#51)', async () => {
+    const t = await canvas(HELLO_029)
+    flushNow(); writeFileSync(file(), '')
+    pageHandlers.tabMenu(t.id, 1, 1)
+    ;(m.popup as { label?: string; click?: () => void }[]).find((i) => i.label === 'Mark All as Seen')!.click!()
+    await tick()
+    expect(cmdLines()).toEqual([])
+    expect(menuClicks.at(-1)).toEqual([t.id, 'mark-all-seen', 'tab-menu'])
   })
 })

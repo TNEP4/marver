@@ -21,6 +21,12 @@
  * - the GPU process killed: `child-gone { type: 'GPU', reason: 'killed' }`, then a sample with a new GPU process.
  * Needs the trust stream's bridge and preload built in (on a branch without them the cases that need a document
  * are skipped and say so).
+ *
+ * Spec 30 R16's compatibility cases - NEEDS A REAL WINDOW: run in the VM, not with the headless suites. Here, a 0.29.0
+ * canvas in app 1.0.1: `launch` written with its hello's page and no `watch`. The headless halves run with the suites:
+ * app/test/unit/r30-commands-run.test.ts (this case with its window faked, and the app's commands, which real keys prove
+ * in r30-commands-keys-native.test.ts) and test/r30-compat-browser.test.ts (a 0.30.0 page under a 1.0.0-shaped preload:
+ * the app builds its preload in, so that one has no window of its own).
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
@@ -34,7 +40,8 @@ import type { RawMetric } from '../../src/main/recorder.ts'
 const DAY = 86_400_000
 const TIMINGS = { sampleMs: 500, sampleDiskMs: 3000, writeBatchMs: 250, agxMs: 1500, memServesMs: 3000, retentionDelayMs: 200 }
 const PAGE1 = 'rec0page0001', PAGE2 = 'rec0page0002'
-const HELLO = (page: string) => `var ma = window.marverApp; if (ma) { ma.hello({ version: '0.27.2', board: 'main', page: '${page}' }); ma.busy({ busy: false, unsaved: false, why: [] }) } say('script');`
+// a 0.29.0 canvas as far as the app can tell (spec 30 R14 #54): what its `helloNow()` said, no `mv:perf watch`, ever
+const HELLO = (page: string) => `var ma = window.marverApp; if (ma) { ma.hello({ version: '0.29.0', board: 'main', page: '${page}', inset: 0 }); ma.busy({ busy: false, unsaved: false, why: [] }) } say('script');`
 
 let w: WindowRun
 let real = false
@@ -221,6 +228,14 @@ describe('the recorder on the real binary (A3.7)', () => {
     await lifted(id)
     const tabs = (await of('tab')).filter((x) => x.tab === id)
     expect(new Set(tabs.map((x) => x.commit)).size).toBeGreaterThan(1)
+  })
+
+  it('a 0.29.0 canvas (spec 30 R14 #54; VM only): `launch` names its hello\'s page, and no `watch` window opened', async (ctx) => {
+    if (!real) { ctx.skip(); return }
+    const launch = await until('the launch line', async () => (await of('launch'))[0], 40_000)
+    expect(launch.firstCanvas).toMatchObject({ page: PAGE1 })
+    const whys = (await of('whiteout-candidate')).flatMap((c) => c.why ?? [])
+    expect(whys.filter((y) => y === 'load' || y === 'theme' || y === 'reload')).toEqual([])
   })
 
   it('recorder: false set live: no sample line and no getAppMetrics; memory.ts wanting it samples again, still nothing on disk', async () => {
