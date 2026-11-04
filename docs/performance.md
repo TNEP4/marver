@@ -8,8 +8,8 @@ agent. A published canvas records nothing.
 
 | Log | What | Read with |
 |---|---|---|
-| `design/.local/perf/reloads.jsonl` | each edit and the frames it reached; page-wide reloads, sent or dropped; each frame document that booted, and how long it took | `npx marver perf` |
-| `design/.local/perf/page.jsonl` | each board load, as the page saw it: every frame's outcome, every move and why, when the board settled; gestures; errors | `npx marver perf --loads` |
+| `design/.local/perf/reloads.jsonl` | each file change and what it came to: the frames it reached, each one's wait and redraw, in-place updates; page-wide reloads, sent or dropped, and the file behind them; each frame document that booted, and how long it took | `npx marver perf` |
+| `design/.local/perf/page.jsonl` | each board load, as the page saw it: what triggered it, every frame's outcome, every move and why, when the board settled; gestures and what held them up; theme switches, modes, every command you gave, re-renders; errors | `npx marver perf --loads` |
 | `design/.local/perf/jam.jsonl` | Jam's timings: numbers and fixed codes only, never your words | `npx marver perf --jam` |
 | `design/.local/perf/runs.jsonl` | each headless run of a board (`npx marver perf run <board>`): one line, its numbers and whether it is valid | `npx marver perf --runs` |
 
@@ -25,8 +25,9 @@ measured day meets its safety cap (128 MB for `page.jsonl`, 48 MB for `reloads.j
 oldest segments go, and a `dropped` record with `reason: "retention-cap"` says how many records. A file an earlier
 version left is closed as a segment as it stands once it is due. `npx marver perf` reads every segment and the live file as one log.
 
-`page.jsonl` holds frame names, node keys and numbers. Error messages and stack lines can hold file paths,
-so, like the rest, they stay on this Mac.
+`page.jsonl` holds frame names, node keys, command names, key combinations and numbers. It never holds what you type, a
+comment's words, a setting's value, your clipboard or a request's body. Error and console-error messages are kept as the code
+produced them, 200 characters, and can hold file paths or, in rare cases, text you typed, so, like the rest, they stay on this Mac.
 
 ## A board load
 
@@ -216,11 +217,42 @@ it (long tasks, where the browser has no long-animation-frame). There is no "mis
 against the median: it would call a steady half-rate gesture smooth. The sampler runs only from a gesture's
 start to its end; at rest it asks for no frames.
 
+From 0.30 it also says what the gesture went through and what held it up: `scale` (`from`, `to`, `min`, `max`), `visible` and
+`awake` (frames on screen, and how many were live documents), `by` (the command behind it, if any), and `loaf`, the three
+longest long animation frames, each with its blocking time and the script behind it (its path, or the frame it belongs to).
+
+## One edit, followed
+
+Each file change the dev server's watcher sees gets an id, `change`, and `reloads.jsonl` carries it through. `change`: the
+file, when it was seen, what it came to (`reloadN`, `inPlaceN`, `fullReload`). `invalidate`: the send to the page, as a
+`revision`. `invalidated`: what each page found for that revision - how many of the board's nodes were awake, asleep, or held,
+and why (`offscreen`, `leased`, `play`, `loading`, `missing`). Each redraw's `ready`: `queuedMs` (its wait), `bootMs` (its
+redraw), `heldBy` (what kept it waiting). `inplace`: a document that fetched an update in place, with `applied` `false` when Vite
+said it failed and `unknown` otherwise - a fetch does not prove an update applied, and the record does not claim it.
+
+A `full-reload` names its file and how it knows (`fileBy`): the one run open, `ambiguous` with `candidates` when several
+overlap, `unknown` when none is. Attribution the code cannot establish is said to be unknown, never guessed; that is a correct
+answer, not a gap.
+
+## Commands
+
+Every command you give writes a `cmd` record, however you give it: `cmd` (its name), `via` (`key`, `click`, `menu`, `context`,
+`drag`, `dblclick`, `relay`), `keys` (the combination), `in` (where it arrived), `board`, `frame`, `frames`. A command decided at
+once writes one record, `phase: once`; the others a `start` at the input and an `end` with the same `id`: `outcome` (`done`,
+`failed`, `noop`, `cancelled`, `unobserved`), `why` (a fixed code), `ms`, `steps` (milestones). `done` is bound to the effect:
+C ends when comments mode has reached every visible frame, copy image when the clipboard holds it, opening a board when
+it settled. `unobserved` says only that no signal came by the command's deadline; a later completion is written with `late`.
+A `start` with no `end` reads as `interrupted` when something shows its page or the app ended, otherwise `unmatched`. What a
+command caused (`mode`, `theme`, `load`, `gesture`) names it in `by`. Names and key combinations only: never a value.
+
 ## Errors
 
 The page records the errors it sees - its own (an uncaught error or rejection, a crash the shell caught,
 with the component), a frame's, and the play stage's - with the message and up to three stack lines, 200
-characters each. At most 50 per load, the same one at most once a second; those past 50 are counted, not
+characters each. From 0.30 also console errors (`console`; warnings are counted, in `warnings`, with no text), build errors
+(`vite`, with its file and plugin), failed requests (`api`: `route`, `method`, `status`, `ms`, never a query) and elements that
+would not load (`resource`: `tag`, `url` without its query). Each error says the `modes` that were on. A frame limits its noisy
+sources itself, before formatting anything, and counts what it refused. At most 50 per load, the same one at most once a second; those past 50 are counted, not
 recorded. An error after its load settled or was cut is `late`: a load owns its board for as long as the
 board stays open. Errors from before the first board mounted are kept apart (`unowned` in the JSON).
 
@@ -242,6 +274,13 @@ owns the board then; `-` before the first), `seq` (its place in the page's order
 | `cut` | a load, or a request, ended early | `reason`, `ms`, `lastMove` (as `settled`'s); on a load that mounted, `frames` (on its board then) and `ready` (how many of those were settled or ready); `request` for a request cut before it mounted |
 | `gesture` | a pan, zoom or layout animation ends | `type` (`pan` / `zoom` / `layout`), `ms`, `frames`, `p50`, `p95`, `max`, `over17ms`, `over33ms`, `longFrames` |
 | `error` | an error the page sees | `source` (`shell` / `frame` / `stage`), `frame`, `component`, `message`, `stack`, `late` |
+| `theme` | a theme switch ended | `scope` (`view` / `selection` / `play`), `to`, `frames`, `applied`, `p50Ms`, `maxMs`, `late`, `outcome`, `by` |
+| `mode` | a mode was entered or left | `mode`, `phase`, `shownMs` or `firstFrameMs`, `frames`, `outcome`; on exit `heldMs`, `errors`; `by` |
+| `cmd` | a command ([Commands](#commands)) | `phase`, `id`, `cmd`, `via`, `keys`, `in`, `board`, `frame`, `frames`, `arg`; `outcome`, `why`, `ms`, `steps`, `late` |
+| `renders` | a minute's React commits | `minute`, `rows`: `who` (shell, stage, a frame), `commits`, `ms`, `maxMs`, `inGesture` |
+| `warnings` | console warnings counted | `n`, `top` (by node) |
+| `hmr` | the dev server's socket | `phase` (`lost` / `back`), `downMs` |
+| `self` | every 5 minutes it recorded anything | `cpuMs`, `hookMs`, `records`, `bytes`, `dropped`: the recorder's own cost |
 | `dropped` | records were lost | `n`; `reason: "errors"` for errors past a load's 50 - with no reason, a full queue or a failed send |
 
 Times are ms from the load's request. Frame records stop once the load has settled or been cut. `settled.moves`

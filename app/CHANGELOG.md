@@ -2,9 +2,18 @@
 
 ## 1.0.1 - unreleased
 
-- A `launch` line per launch: ready, window shown, the first canvas uncovered and its page, what was restored.
-- `sample` and `agx` lines moved to `samples.jsonl`, rows unchanged; each log a live file plus closed segments deleted whole by age (`keepPerfDays`), never rewritten, with a safety cap per file. The 1.0.0 `app.jsonl` is closed as a segment, nothing rewritten. The report reads both, with the same numbers.
-- The white-out detector watches a tab being shown and, with marver 0.30, a board load, a theme switch and a frame's reload, under an admission budget of 3 s of capture per rolling minute. Each minute's `sample` says what it could not cover and why.
+Marver now records what the app does and what you ask of it, closely enough to explain a slow launch, a white flash or a
+command that did not take. It changes no behaviour. Use it with canvases on marver 0.30.0 for the full picture; older
+canvases keep working and record what they did.
+
+- **Every command, however you give it:** keys, menus, the tab strip and its menu, Home, Settings, the update pill, a clicked
+  notice, the Dock, the app's dialogs - what it was, how you gave it, whether it worked, how long it took. Names and key
+  combinations only, never what you type or a setting's value. Help > Show Performance Files shows them.
+- **A launch line for each launch:** ready, window shown, the first canvas uncovered and its page, what was restored.
+- **White flashes are watched in more places:** a tab being shown and, with marver 0.30, a board load, a theme switch and a
+  frame's reload, under a budget of 3 s of capture a minute. Each minute's `sample` says what was and was not covered.
+- **Fourteen days of history.** Samples moved to `samples.jsonl`, rows unchanged; each log is a live file plus closed segments
+  deleted whole by age (`keepPerfDays`), never rewritten, with a safety cap per file. The file 1.0.0 left is kept until it ages out.
 
 ## 1.0.0 - 2026-11-02
 

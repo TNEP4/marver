@@ -4,19 +4,47 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 
 ## 0.30.0 - unreleased
 
-### The complete recorder (spec 30)
+### Highlights
 
-Added:
+- **Marver now records what happens on your canvas closely enough to explain it.** This release changes no behaviour and
+  fixes no slowness; it makes slowness measurable. It all stays on your Mac, in `design/.local/perf/`.
+- **One edit, followed to the frames it redrew.** Each file change gets an id, carried from the save to every frame:
+  which frames were asked to redraw, which were awake, off screen or asleep, how long each waited in line and how long it
+  took. A page-wide reload now names the file behind it - or says `ambiguous` and lists the candidates when two saves
+  overlap. Records say what is known, never a guess.
+- **Why a board loaded again:** what triggered it, who may have written the file, and what was ready when a load was cut off.
+- **Every command you give, however you give it.** C for comments, I for a picture, ⇧P for a path, a menu item, a button,
+  a right-click: what it was, how you gave it, whether it worked or why not, and how long until its effect showed. C is
+  done when comments mode has reached every visible frame; copy image when the clipboard holds the image. Names and key
+  combinations only: never what you type, a comment's words, or what is on your clipboard.
+- **Theme switches and modes, timed:** from the key press to the last visible frame repainted, for the theme, comments,
+  laser, inspect, interact, play, slides and Jam, with the errors that happened in each.
+- **Re-renders:** how often each frame's React tree committed, per minute, and how much of that was during a gesture.
+- **What held up a zoom:** the three longest stalls of each gesture and the script behind them, the zoom level, and how many
+  frames were awake.
+- **More kinds of bugs:** console errors (warnings are counted only), build errors, a lost dev-server connection, failed
+  requests, images and files that would not load, frames that went silent.
+- **`npx marver perf --all`:** one summary of every canvas on this Mac, no repo needed. **`npx marver perf --live`:** the
+  records as they happen, in a terminal. Details: [Performance](docs/performance.md).
 
-- `npx marver perf --all`: every canvas the Mac knows, one summary, no repo needed. `npx marver perf --live`: a tail in the terminal.
-- `npx marver perf run <board> --recorder core|full`, and a `self` record every 5 minutes: the recorder's own cost.
-- With app 1.0.1, white-out windows around a board load, a theme switch and a frame's reload.
+### Added
 
-Changed:
+- `npx marver perf run <board> --recorder core|full`, and a `self` record every 5 minutes: what the recorder itself costs.
+  Its budget: a board's load within 5 % with everything on, a gesture's p95 within 0.5 ms.
+- With the Mac app 1.0.1: white-out windows around a board load, a theme switch and a frame's reload, not only gestures.
 
-- Every perf log keeps 14 days, whole: a live file plus closed segments deleted by age, never rewritten, with a safety cap per file.
+### Changed
 
-Compatibility: 0.30 reads 0.29's records in every view, with the same output. **marver 0.29 reading 0.30's data** skips the new kinds, reads only each live file (so it shows less history), and its `--crashes` loses "the minute before", since samples moved to `samples.jsonl`.
+- Every perf log keeps 14 days, whole: a live file plus closed segments deleted by age, never rewritten, with a safety cap
+  per file. On a very heavy canvas that can reach about 85 MB (`page.jsonl` and `reloads.jsonl`), 176 MB at the caps.
+- Error and console-error messages are kept as the code produced them, 200 characters, on this Mac. In rare cases one
+  can hold text you typed; the recorder's own hooks never read input values, the clipboard or request bodies.
+
+### Upgrading
+
+Nothing to do. 0.30 reads 0.29's records in every view, with the same output. **marver 0.29 reading 0.30's data** skips the
+new kinds, reads only each live file (so it shows less history), and its `--crashes` loses "the minute before" with app
+1.0.1, since samples moved to `samples.jsonl`.
 
 ## 0.29.0 - 2026-10-31
 
