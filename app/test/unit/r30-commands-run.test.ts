@@ -980,7 +980,7 @@ describe('a 0.29.0 canvas in app 1.0.1 (#54)', () => {
 
   it('its hello passes the bridge\'s own check whole, and the tab knows its page', async () => {
     expect(checkHello(HELLO_029)).toEqual(HELLO_029)
-    const t = await canvas(checkHello(HELLO_029)!)
+    const t = await canvas({ ...checkHello(HELLO_029)! })
     expect(identity(tabs.getTab(t.id)!)).toMatchObject({ tab: t.id, page: PAGE })
   })
 
