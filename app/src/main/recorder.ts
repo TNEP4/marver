@@ -62,6 +62,7 @@ import { mainFrameOf, safely } from './frames.ts'
 import { note } from './testing/index.ts'
 import { T } from './timings.ts'
 import { noteShown, takeWhiteoutMinute } from './whiteout.ts'
+import { launchQuit } from './launch.ts'
 import type { PerfMsg } from '../../../src/shared/app-api.ts'
 
 export type { ProcSample, ProcType, Role, Sample, Sampler, TabIdent } from '../../../src/shared/app-perf.ts'
@@ -681,8 +682,8 @@ export const recorder = {
    */
   event<K extends AppKind>(kind: K, who: Tab | TabIdent | null, body: Omit<AppBody<K>, keyof TabIdent>): void {
     const ident = who === null ? null : isTab(who) ? identity(who) : { ...who }
-    // the updater's records are written whatever `recorder` says, as a flash's and main's errors are (A5.1 #25)
-    record(kind, ident, body as unknown as Record<string, unknown>, kind === 'update')
+    // the updater's records and the launch are written whatever `recorder` says, as a flash's and main's errors are (A5.1 #25, spec 30 #6)
+    record(kind, ident, body as unknown as Record<string, unknown>, kind === 'update' || kind === 'launch')
   },
   /** the shell's last `board` for the tab's current document (Copy Details' frame count, A3.8 #9), or null */
   boardOf(tabId: string): { frames: number; asleep: number } | null {
@@ -699,6 +700,7 @@ export const recorder = {
   /** will-quit: unfinished marks and every queued line, written now */
   flushSync(): void {
     try { quitFlashes() } catch { /* the flash stream's */ }
+    try { launchQuit() } catch { /* the line's own */ }
     if (recorderOn() && minute.length) writeMinute()
     flushLog()
   },

@@ -79,6 +79,8 @@ export const T = {
   flashGpuWindowMs: 1000,
   /** the white-out detector (A3.8 #15, #16): its tick (250 ms; 500 ms at 2 Hz), the tail after a gesture, the
    *  longest gesture, a capture abandoned past this, a probe answer later than this inconclusive */
+  /** spec 30 #37: the `launch` line, at the latest this long after ready */
+  launchLineMs: 30_000,
   whiteoutTickMs: 250,
   whiteoutTailMs: 500,
   whiteoutMaxMs: 30_000,

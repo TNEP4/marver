@@ -512,3 +512,17 @@ describe('a shared canvas (A4.6 #48)', () => {
     }
   })
 })
+
+describe('spec 30 R7 #37, #6', () => {
+  it('the launch line is written whatever `recorder` says; other records are not', () => {
+    const was = recording
+    recording = false
+    try {
+      const before = kinds().filter((k) => k === 'launch').length
+      recorder.event('launch', null, { readyMs: 150, why: 'home', tabs: { restored: 0, local: 0, remote: 0, active: 'home' } })
+      recorder.event('cover', { tab: 't1' }, { epoch: 1, cause: 'doc', outcome: 'uncovered' } as never)
+      expect(kinds().filter((k) => k === 'launch').length).toBe(before + 1)
+      expect(lines().filter((l) => l.kind === 'cover' && l.epoch === 1 && l.cause === 'doc').length).toBe(0)
+    } finally { recording = was }
+  })
+})
