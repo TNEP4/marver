@@ -300,6 +300,9 @@ describe('a 0.29.0 canvas at launch', () => {
       const f = join(w0.env.home, 'perf', 'app-dev.jsonl')
       return (existsSync(f) ? readFileSync(f, 'utf8').split('\n').filter(Boolean).map((l) => parseAppLine(l)).filter((r): r is AppRecord => !!r) : [])
     }
+    // restored behind Home: the line's moment is that tab first uncovered
+    const up = await w0.until((x) => x.tabs.some((t) => t.reg?.state === 'ready'), 15_000, 'the restored canvas')
+    await w0.run.call('activate', { id: up.tabs.find((t) => t.reg?.state === 'ready')!.id })
     const launch = await until('the launch line', async () => (await read()).find((r) => r.kind === 'launch') as Extract<AppRecord, { kind: 'launch' }> | undefined, 40_000)
     expect(launch.firstCanvas, JSON.stringify(launch)).toMatchObject({ page: PAGE1 })
     expect(launch.tabs.restored).toBeGreaterThan(0)
