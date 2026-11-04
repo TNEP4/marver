@@ -1,7 +1,7 @@
 import type { Plugin, ViteDevServer } from 'vite'
 import { boardsChanged, workActivity } from './work.ts'
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, watch, writeFileSync } from 'node:fs'
-import { basename, join, relative, sep } from 'node:path'
+import { basename, join, sep } from 'node:path'
 import { hash } from './manifest.ts'
 import { NAME, PKG, ROUTE } from '../cli/name.ts'
 import { loadConfig, type ShConfig } from './config.ts'
@@ -10,8 +10,10 @@ import { checkBoardsDir, isRegularFile, listBoardFiles, nodeExists, parseBoard, 
 import { ALL_SCENES } from '../shared/board-tree.ts'
 import { contentOnly } from '../shared/frames.ts'
 import { docRev, docRevs, freshFrames, initMarks, observe, recordChanged } from './marks.ts'
-import { guardUpdates, updatesPlugin, type Touched, type UpdateHooks } from './updates.ts'
-import { logReload, tidyPerfDir } from './perf.ts'
+import { guardUpdates, updatesBeginPlugin, updatesPlugin, type Touched, type UpdateHooks } from './updates.ts'
+import { createChanges, type Attribution, type UpdateCause } from './changes.ts'
+import { logReloadLines, tidyPerfDir } from './perf.ts'
+import { writerOf } from './board-writes.ts'
 import { apiMiddleware } from './api.ts'
 import { SIZES_FILE } from './sizes.ts'
 import { routesMiddleware } from './routes.ts'
@@ -88,12 +90,16 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
   const bootId = String(process.hrtime.bigint())   // opaque, boot-scoped: a restart never mints a "lower" rev
   let invRev = 0
   const pendingInv = new Set<string>()
+  const pendingChanges = new Set<string>()   // the changes those frames' next send carries (spec 30 #12)
   const flushInv = debounce(() => {
     if (!devServer || !pendingInv.size) return
     const frameIds = [...pendingInv]; pendingInv.clear()
+    const carried = [...pendingChanges]; pendingChanges.clear()
+    const revision = `${bootId}:${++invRev}`
     // with each frame's doc revision: a node waits until a document of it shows that one
     const docs = docRevs(root, manifest.frames)
-    devServer.ws.send('sh:frame-invalidated', { frameIds, revision: `${bootId}:${++invRev}`, epoch: docs?.epoch, docs: docs ? Object.fromEntries(frameIds.map((id) => [id, docs.doc[id] ?? 0])) : undefined })
+    devServer.ws.send('sh:frame-invalidated', { frameIds, revision, epoch: docs?.epoch, docs: docs ? Object.fromEntries(frameIds.map((id) => [id, docs.doc[id] ?? 0])) : undefined })
+    changes.invalidate(revision, frameIds.length, carried)
   }, 120)
 
   // Calm updates (spec 26): an edit reached these frames. The marks look first (the static index
@@ -108,6 +114,8 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
   const inFlight = new Map<string, { events: number; hits: number; timer: ReturnType<typeof setTimeout> }>()
   const late = new Map<string, number>()   // hooks still owed by events that timed out: never credited to a newer one
   const envs = () => Object.keys(devServer?.environments ?? { client: 1 }).length
+  // spec 30 #8: one immutable token per watcher event, its line at its end; this state outlives a server, as inFlight does
+  const changes = createChanges({ root, envs, write: (lines) => logReloadLines(root, lines) })
   const waiting: (() => void)[] = []
   const settled = () => inFlight.size === 0
   const whenSettled = (fn: () => void) => { if (settled()) fn(); else waiting.push(fn) }
@@ -130,7 +138,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       // lists it, anything - so every module is invalidated before it lets go. Rare, and only slower.
       for (const env of Object.values(devServer?.environments ?? {})) env.moduleGraph.invalidateAll()
       late.set(file, (late.get(file) ?? 0) + f.events * envs() - f.hits)
-      inFlight.delete(file); drain()
+      inFlight.delete(file); changes.expire(file); drain()
     }, 10_000)
     inFlight.set(file, f)
   }
@@ -151,13 +159,15 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
   const observeLater = () => whenSettled(() => { if (observeMarks()) { devServer?.ws.send('sh:marks', {}); liveChanged() } })
   const hooks: UpdateHooks = {
     // a tick later: Vite finishes this update after the hooks (it invalidates the modules it walks), so
-    // a revision is published - and a document stamped with it - only once its code is there to serve
-    onFrames: (t: Touched, cause) => { setTimeout(() => whenSettled(() => record(t, cause)), 0) },
-    onReload(p, passed) {
-      logReload(root, { kind: 'full-reload', passed, triggeredBy: p.triggeredBy ?? null, path: p.path ?? null })
+    // a revision is published - and a document stamped with it - only once its code is there to serve.
+    // `at` stays in this closure (spec 30 #8): the deferred line writes what it was given, never a lookup
+    onFrames: (t: Touched, cause, at) => {
+      const release = changes.hold(at)
+      setTimeout(() => whenSettled(() => { try { record(t, cause, at) } finally { release() } }), 0)
     },
+    onReload(p, passed, at) { changes.fullReload(p, passed, at) },
   }
-  function record(t: Touched, cause: string) {
+  function record(t: Touched, cause: UpdateCause, at: Attribution) {
     const seen = observe(root, manifest.frames, t.file ? { file: t.file } : {})   // this edit's frames only
     // an unattributed reload reloads what is loaded, and leaves the marks to the look at the disk above
     const doc = t.unattributed ? [] : t.doc.filter((id) => !seen.doc.includes(id))
@@ -166,9 +176,10 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
     if (touched.length) recordChanged(root, manifest.frames, touched, { doc: false })
     const reload = [...new Set([...seen.doc, ...t.doc])]
     for (const id of reload) pendingInv.add(id)
+    if (reload.length && at.token) pendingChanges.add(at.token.change)
     flushInv()
     if (reload.length || touched.length || seen.note.length) { devServer?.ws.send('sh:marks', {}); liveChanged() }
-    logReload(root, { kind: 'update', cause, file: t.file ? relative(root, t.file).split(sep).join('/') : null, reload, inPlace: t.touched })
+    changes.update(cause, t.file, reload, t.touched, at)
   }
 
   /** No theme is only a problem for app frames: a canvas made of content frames alone (Doc, Md,
@@ -187,7 +198,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
 
   const main: Plugin = {
     name: 'marver',
-    watchChange(id) { if (devServer) flying(id) },
+    watchChange(id, change) { if (devServer) { flying(id); changes.watch(id, change.event) } },
     // A7: run our handleHotUpdate BEFORE @vitejs/plugin-react's. A marver frame exports `meta`
     // (a non-component) alongside its component, so React Fast Refresh refuses to hot-update it
     // and broadcasts a GLOBAL full-reload (the shell "white zap") as a side effect. By emptying
@@ -352,7 +363,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       const before = devServer
       devServer = server
       onClose(() => { if (devServer === server) devServer = before })
-      guardUpdates(server, root, () => manifest, hooks)
+      guardUpdates(server, root, () => manifest, hooks, changes)
       // Boot manifest + watcher (scenes/components only; boards, .local, manifest.json excluded by scope).
       // Broadcast only when the FRAMES changed - plain content edits ride HMR alone (spec
       // §5.6), and a board/folder/description edit (the manifest carries those now) must
@@ -509,7 +520,9 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
             const { error } = parseBoard(content)
             if (error) { if (!checkBoardsDir(root, boardsDir)) reportBad(file, content, error); return }   // checked per read: the folder can change under us
             badBoards.delete(file)
-            server.ws.send('sh:board', { name: file.replace(/\.json$/, ''), sha256: hash(content) })
+            const name = file.replace(/\.json$/, ''), sha256 = hash(content)
+            // what the writes this server saw say of who wrote it: never proven (spec 30 #18)
+            server.ws.send('sh:board', { name, sha256, ...writerOf(root, name, sha256) })
           }, 120))
         }))
         onClose(() => { watcher.close(); clearTimeout(listTimer); for (const t of timers.values()) clearTimeout(t) })
@@ -593,7 +606,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       } catch { /* no inbox watcher - the HTTP/CLI transport still serves shell-ful agents */ }
     },
   }
-  return [main, updatesPlugin(root, () => manifest, () => devServer && hooks, landed)]
+  return [main, updatesBeginPlugin(changes), updatesPlugin(root, () => manifest, () => devServer && hooks, landed, changes)]
 }
 
 /**

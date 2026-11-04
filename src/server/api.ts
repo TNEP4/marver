@@ -11,7 +11,8 @@ import { HAS_STATUS, readCapability, readReason, readStatusWord, readType, resol
 import { annotateBoards, planNames, planWithStage, readContextFacts } from './board-status.ts'
 import { autoWidthOf, keptSizes, measuringFrames, mergeSizes, readSizes, readSizesFile, serializeSizes, sizesPath, SIZES_BATCH_MAX } from './sizes.ts'
 import { workspaceId } from './workspace.ts'
-import { logPage, PAGE_BODY_MAX } from './perf.ts'
+import { PAGE_BODY_MAX, takePageBatch, takeReloadBatch } from './perf.ts'
+import { noteWrite, writerFrom } from './board-writes.ts'
 import { RUN_PARAM, runIdOf, runs } from './perf-run.ts'
 import type { InputsWatch } from './perf-inputs.ts'
 const BODY_LIMIT = 1_000_000
@@ -170,6 +171,13 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
   const nodeExists = nodeAt
 
   let sizesWarned = false   // a conflicted _sizes.json is said once per server, not once per settled frame
+
+  /** A board file this request wrote (spec 30 #18), with the page and commands it names - the watcher's `sh:board`
+   *  matches these bytes against it, as a candidate, never as proof. */
+  const wroteBoard = (req: any, board: string, content: string) => {
+    const who = writerFrom(req.headers)
+    if (who) noteWrite(root, board, hash(content), who)
+  }
 
   // boot: sweep temp files abandoned by a killed process
   try {
@@ -377,6 +385,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
             }
             renameSync(tmp, w.file)
             done.push(w)
+            if (!w.plan) wroteBoard(req, name, w.next)
           } catch (err) {
             if (tmp) discard(tmp)
             // a rename either happened or threw: this one did not, so the destination is not ours to
@@ -406,17 +415,17 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           return Array.isArray(m?.frames) ? m.frames : null
         } catch { return null }
       }
-      // the reload log (spec 26 Part 1): a document the page saw boot, or a height that settled
+      // the reload log, the shell's half (spec 26 Part 1, spec 30 #16): what the page saw of an edit, in a batch - each
+      // line rebuilt from its kind's allowlist, answered only after the append returned (#7): a 503 when it failed, which
+      // the page's sender tries again
       if (path === 'perf/reload' && req.method === 'POST') {
         if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
-        const raw = await readBody(req)
+        const raw = await readBody(req, PAGE_BODY_MAX)
         if (raw == null) return json(res, 400, { error: 'body too large or unreadable' })
         let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
-        const str = (v: unknown) => (typeof v === 'string' ? v.slice(0, 200) : undefined)
-        const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : undefined)
-        if (!str(b?.kind)) return json(res, 400, { error: 'kind required' })
-        ;(await import('./perf.ts')).logReload(root, { kind: str(b.kind), tab: str(b.tab), node: str(b.node), frame: str(b.frame), cause: str(b.cause), shown: str(b.shown), ms: num(b.ms) })
-        return json(res, 200, { ok: true })
+        if (!Array.isArray(b?.records)) return json(res, 400, { error: 'expected { records: [...] }' })
+        const answer = takeReloadBatch(root, b.records)
+        return json(res, 'error' in answer ? 503 : 200, answer)
       }
       // Jam timings from the page (spec 27a Part D): a capture's and an upload's numbers - rebuilt from an allowlist
       if (path === 'perf/jam' && req.method === 'POST') {
@@ -440,7 +449,9 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         if (raw == null) return json(res, 400, { error: 'body too large or unreadable' })
         let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
         if (!Array.isArray(b?.records)) return json(res, 400, { error: 'expected { records: [...] }' })
-        return json(res, 200, { ok: true, accepted: logPage(root, b.records, run ? { run, kept: (recs) => runs.records(run, recs) } : {}) })
+        // acknowledged after the append returned (spec 30 #7): a 503 when it failed, which the page's sender tries again
+        const answer = takePageBatch(root, b.records, run ? { run, kept: (recs) => runs.records(run, recs) } : {})
+        return json(res, 'error' in answer ? 503 : 200, answer)
       }
       // headless perf runs (spec 28 A3.4, A3.8 #20-#22): run a board's script in this canvas's own headless Chrome and
       // stream its progress and lines; or read the inputs' fingerprint alone. Gated like `shot` (it spawns a browser)
@@ -531,7 +542,11 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const live = scanFrames(root).frames.map((f) => f.id)
         const frames = Array.isArray(parsed?.frames) ? parsed.frames.filter((f): f is string => typeof f === 'string' && live.includes(f)) : []
         if (!validName(parsed?.board) || !frames.length) return json(res, 400, { error: 'a board and frames on this canvas' })
-        try { return json(res, 200, pinFrames(root, parsed.board, frames, live)) }
+        try {
+          const pinned = pinFrames(root, parsed.board, frames, live)
+          if (pinned.added.length) wroteBoard(req, parsed.board, readFileSync(join(boardsDir, `${parsed.board}.json`), 'utf8'))
+          return json(res, 200, pinned)
+        }
         catch (err) { return json(res, 409, { error: (err as Error).message }) }
       }
 
@@ -613,9 +628,11 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
             return json(res, 200, { name: to })
           }
           rmSync(fromPath)
+          if (next !== undefined) wroteBoard(req, to, next)
           return json(res, 200, { name: to, ...(next !== undefined ? { sha256: hash(next) } : {}) })
         }
         atomicWrite(toPath, next!)
+        wroteBoard(req, to, next!)
         return json(res, 200, { name: to, sha256: hash(next!) })
         } finally { unlock() }
       }
@@ -747,6 +764,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
             if (w.folder) w.obj.folder = w.folder; else delete w.obj.folder
             const next = JSON.stringify(w.obj, null, 2) + '\n'
             atomicWrite(w.path, next)
+            wroteBoard(req, w.name, next)
             sha256[w.name] = hash(next)
           }
           mkdirSync(boardsDir, { recursive: true })
@@ -822,6 +840,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           }
           const next2 = JSON.stringify(body.board, null, 2) + '\n'
           atomicWrite(p, next2)
+          wroteBoard(req, boardMatch[1], next2)
           return json(res, 200, { sha256: hash(next2) })
           } finally { unlock() }
         }

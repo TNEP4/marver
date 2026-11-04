@@ -244,7 +244,7 @@ describe('POST /api/perf/page', () => {
 
   it('answers how many it kept, and writes those', async () => {
     const r = await drive({ records: [env('quiet', VALID.quiet, 0), env('quiet', { ms: -1 }, 1), env('dropped', VALID.dropped, 2)] })
-    expect(r).toEqual({ status: 200, json: { ok: true, accepted: 2 } })
+    expect(r).toEqual({ status: 200, json: { ok: true, accepted: 2, duplicates: 0 } })
     expect(readFileSync(pageLog(root), 'utf8').trim().split('\n')).toHaveLength(2)
   })
 })
