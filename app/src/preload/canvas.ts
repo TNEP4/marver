@@ -189,7 +189,8 @@ const api: MarverAppV1 = {
   presented: (p: Presented) => { const c = copy(p); if (c !== undefined) now('presented', c) },
   perf: (p: PerfMsg) => { const c = copy(p); if (c !== undefined) now('perf', c) },
   onPerfAsk: listen(probeFns),
-  perfInfo: () => ({ hz }),
+  // spec 30 #38: `watch` true - main takes `mv:perf watch`, so a 0.30 shell may send it
+  perfInfo: () => ({ hz, watch: true }),
   onOpen: (fn) => {
     if (typeof fn !== 'function') return () => {}
     openFns.add(fn)

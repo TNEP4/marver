@@ -1,0 +1,113 @@
+{
+  "days": 14,
+  "workspaces": [
+    "ROOTWS",
+    "163cf821d349d94a"
+  ],
+  "marks": [
+    {
+      "at": 1793704800500,
+      "id": "20261103-112000-ab12",
+      "via": "key",
+      "flavour": "release",
+      "tab": "t2",
+      "ws": "163cf821d349d94a",
+      "mine": true,
+      "recorder": true,
+      "gpuEvents": [
+        {
+          "kind": "child-gone",
+          "ts": 1793704800400
+        }
+      ],
+      "pressure": 2,
+      "pressureAgeMs": 1000,
+      "thermal": "nominal",
+      "gpuProcessRssMB": 512.4,
+      "agx": {
+        "gpuSystemMemoryMB": 608.4,
+        "allocMB": 6515.5,
+        "utilPct": 1,
+        "rendererPct": 1,
+        "tilerPct": 1,
+        "recoveryCount": 0,
+        "machineWide": true
+      },
+      "picture": "HOME/perf/flashes/20261103-112000-ab12.png",
+      "picturePruned": true,
+      "join": "page",
+      "page": "90879e227f04",
+      "load": {
+        "id": "a51d669160cf",
+        "cause": "boot",
+        "settled": false,
+        "state": "settled"
+      },
+      "board": "main"
+    },
+    {
+      "at": 1793704920000,
+      "id": "20261103-112200-cd34",
+      "via": "key",
+      "flavour": "release",
+      "tab": "t9",
+      "ws": "6db75c4deeea0498",
+      "mine": false,
+      "recorder": true,
+      "gpuEvents": [],
+      "pressure": null,
+      "thermal": "nominal",
+      "gpuProcessRssMB": null,
+      "agx": {
+        "gpuSystemMemoryMB": 608.4,
+        "allocMB": 6515.5,
+        "utilPct": 1,
+        "rendererPct": 1,
+        "tilerPct": 1,
+        "recoveryCount": 0,
+        "machineWide": true
+      },
+      "picture": null,
+      "pictureWhy": "write failed",
+      "join": "page-unrecorded",
+      "page": "cea843bc6700"
+    }
+  ],
+  "others": 1,
+  "candidates": [
+    {
+      "at": 1793704860060,
+      "flavour": "release",
+      "tab": "t2",
+      "ws": "163cf821d349d94a",
+      "gestureSeq": 7,
+      "observedAt": [
+        1793704860060,
+        1793704860310
+      ],
+      "rateHz": 4,
+      "samples": 6,
+      "skipped": 0,
+      "inconclusive": 1,
+      "gpuEvents": 1,
+      "join": "page",
+      "page": "90879e227f04",
+      "load": {
+        "id": "a51d669160cf",
+        "cause": "boot",
+        "settled": true,
+        "settledMs": 2600,
+        "state": "settled"
+      },
+      "board": "main",
+      "gesture": {
+        "type": "zoom",
+        "ms": 500,
+        "p95": 25.8,
+        "during": false,
+        "startedMsBefore": 560,
+        "endedMsBefore": 60
+      }
+    }
+  ]
+}

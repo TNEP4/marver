@@ -1,0 +1,12 @@
+headless runs, last 14 days - design/.local/perf/runs.jsonl
+
+  The Main Board · Chrome 156 · bakes warm · 3 valid runs
+    latest aaaaaaaaaaaaaaa3: load to settled 3.90 s · p95 21 ms · 4 over 33 ms · inputs fedcba98…
+    after a change, against aaaaaaaaaaaaaaa2: load +26 %, p95 +24 %, over 33 ms +3
+
+  --against aaaaaaaaaaaaaaa1: aaaaaaaaaaaaaaa3 differs - load +30 %, p95 +26 %
+
+  1 overlapped (another run at the same time): never compared - aaaaaaaaaaaaaaa4
+
+  invalid (1)
+    D T  aaaaaaaaaaaaaaa5  The Main Board  invalid: cut (timeout)

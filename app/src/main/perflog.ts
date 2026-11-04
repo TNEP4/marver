@@ -5,8 +5,8 @@
  * carry `-dev`), so no rotation needs locking between processes. `append` stamps the envelope (`app`, `seq` counted
  * per launch, `flavour`, `machine`) and queues the line (2,000 at most, then a `dropped` line); the queue is flushed
  * every 2 s with `appendFile` (mode 600) and at once at `will-quit`. Appends are exempt from A2.12's whole-write
- * rule; rotation (past 5 MB a file keeps its newest half, whole lines) and pruning are whole writes (fsx). At launch
- * and daily `keepPerfDays` prunes `~/.marver/perf/` only: this flavour's old lines; flash pictures (the newest 50 of
+ * rule; nothing is rewritten (spec 30: segments, below). At launch and daily `keepPerfDays` prunes `~/.marver/perf/`
+ * only: this flavour's segments past it (spec 30); flash pictures (the newest 50 of
  * both flavours kept); in `crashpad/` only `completed/` reports (the newest 10) and `pending/` ones older than
  * `keepPerfDays`, each deleted only under Crashpad's own report lock (`O_EXLOCK`, skipped when held); machine
  * profiles no retained line names. Folders 700, files 600. errors.ts's `main-error` lines go through `append` once
@@ -15,12 +15,6 @@
  * As built:
  * - The appends are synchronous (one `O_APPEND` descriptor, `writeSync` until the batch is down, a few KB every 2 s):
  *   no append is ever in flight across a turn, and a failed one knows to the byte what landed.
- * - A whole rewrite (rotation, pruning) never blocks main on a large write: the file is read off the main thread
- *   (bytes, cut at the last newline byte, so a multi-byte character is never split), then in one synchronous turn
- *   what was appended since is taken as raw bytes and appends pause; the new file is written off the main thread
- *   (fsx `writeWhole`: a temp file, fsync, rename) and appends resume after its rename. Lines meanwhile wait in the
- *   queue. A quit (or main's error, below) during that write writes the new file with the queue at once
- *   (`writeWholeSync`, which the write in flight then never renames over), so no batch is lost or torn.
  * - Retention's launch pass runs `retentionDelayMs` after ready, past the launch budget's window (A3.8 #50).
  * - Lines at launch are held until the machine profile's first hash exists - its file written, or its write failed
  *   (machine.ts `stampHash`) - or `profileHoldMs` passed (then `machine: null`), and stamped then (A3.8 #11): the
@@ -37,19 +31,40 @@
  * - The test hook's flush (`flushQueued`) is the 2 s timer's, run now: it never ends the hold at launch.
  *
  * FROZEN signatures (A3.8 #53).
+ *
+ * Spec 30 R9 (app 1.0.1, #42-#45) - the rotation and the line-by-line pruning above, both whole rewrites, are gone:
+ * - **Two files a flavour, one seq.** `sample` and `agx` lines go to `samples.jsonl` (Marver Dev `samples-dev.jsonl`),
+ *   rows unchanged (#44); everything else to `app.jsonl`. One `seq` per launch runs across both; readers merge them by
+ *   `app` and `seq` (perf-segments.ts `appLogFiles` lists what they read).
+ * - **Segments, deleted whole.** Each file is a live file plus closed segments `<name>.<openedAt>-<bound>.jsonl`
+ *   (src/server/perf-segments.ts): the live file is closed - a rename - before an append once it was opened 24 h ago,
+ *   and right after the append that passes its size (app 4 MB, samples 8 MB). `bound` is the later of the close and the
+ *   largest `ts` written into it; a file this writer did not open (the 1.0.0 `app.jsonl` at the first 1.0.1 launch,
+ *   #45, or a live file after a restart) has its first line's `ts` as `openedAt` and its mtime + 24 h as `bound`.
+ *   Retention unlinks a segment once its bound is `keepPerfDays` old - never a read or a rewrite - at launch, hourly in
+ *   the flush's own turn, and daily with the rest of the prune.
+ * - **The safety cap** (#43; app 16 MB, samples 128 MB): past it the oldest segments go and a counted `dropped
+ *   {reason: 'retention-cap'}` line says how many lines, in the file they went from. A segment opened before this
+ *   version's first samples line (1.0.0's `app.jsonl`, samples and all, at most 28 MB) is left to retention: the app
+ *   file's cap counts what 1.0.1 writes there, without samples.
+ * - **The machine-profile pass** reads every segment of both files of both flavours, off the main thread (#44).
  */
 import { randomBytes } from 'node:crypto'
-import { chmodSync, closeSync, constants, existsSync, fstatSync, mkdirSync, openSync, readSync, statSync, writeSync } from 'node:fs'
+import { chmodSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readSync, writeSync } from 'node:fs'
 import { open, readdir, readFile, rm, stat, unlink, chmod, utimes } from 'node:fs/promises'
 import { join } from 'node:path'
-import { APP_LOG, type AppBody, type AppKind, type Flavour } from '../../../src/shared/app-perf.ts'
+import { APP_LOG, APP_SAMPLES_LOG, SAMPLE_KINDS, type AppBody, type AppKind, type Flavour } from '../../../src/shared/app-perf.ts'
+import { SEGMENTS, type SegmentedFile } from '../../../src/shared/perf-records.ts'
+import { adoptLive, appLogFiles, closeLive, dueToClose, enforceCap, lineTs, pruneAged, segmentsOf, type LiveState, type Segment } from '../../../src/server/perf-segments.ts'
 import type { Config, Home } from './config.ts'
-import { faults, sweepTemps, writeWhole, writeWholeSync } from './fsx.ts'
+import { faults, sweepTemps } from './fsx.ts'
 import { note } from './testing/index.ts'
 import { T } from './timings.ts'
 
-/** The file a flavour writes. */
+/** The file a flavour writes its events to. */
 export const appLogFile = (home: Pick<Home, 'dir'>, flavour: Flavour): string => join(home.dir, 'perf', APP_LOG[flavour])
+/** Spec 30 #44: the file a flavour writes its `sample` and `agx` lines to. */
+export const samplesLogFile = (home: Pick<Home, 'dir'>, flavour: Flavour): string => join(home.dir, 'perf', APP_SAMPLES_LOG[flavour])
 
 export interface PerflogStart {
   home: Home
@@ -61,11 +76,8 @@ export interface PerflogStart {
 
 /** The queue's bound: past it the oldest lines go, and a `dropped` line says how many (A3.8 #12). */
 export const QUEUE_MAX = 2000
-/** Past this a file keeps its newest half, whole lines (A3.6). */
-export const ROTATE_BYTES = 5 * 1024 * 1024
-/** The size a log may reach before it keeps its newest half: 2 MB for every day kept, never under ROTATE_BYTES - so the
- *  days kept are the real limit (about 1.3 MB a day on Nic's Mac, 26 Oct: 5 MB alone held only 2-4 days). */
-export const rotateBytes = (): number => Math.max(ROTATE_BYTES, days() * 2 * 1024 * 1024)
+/** Spec 30 #42: segment retention runs in the flush's own turn once an hour has passed since it last ran. */
+export const SEGMENT_PRUNE_MS = 3_600_000
 /** Flash pictures kept, both flavours (A3.3). */
 export const PICTURES_KEPT = 50
 /** Completed Crashpad reports kept (A3.6). */
@@ -78,29 +90,36 @@ const DAY = 86_400_000
 
 interface Held { ts: number; kind: AppKind; seq: number; body: Record<string, unknown> }
 
+/** Where a line goes (#44): `sample` and `agx` to the samples file, every other kind to the app file. */
+type To = 'app' | 'samples'
+const toOf = (kind: AppKind): To => ((SAMPLE_KINDS as readonly string[]).includes(kind) ? 'samples' : 'app')
+interface Queued { to: To; line: string }
+/** One of the two files: its path, its name among the segmented files, its live file as this writer knows it, and
+ *  whether it may end inside a line (a failed append, or a launch's first write after an earlier launch's file). */
+interface Out { path: string; name: SegmentedFile; live: LiveState | null; torn: boolean }
+
 let s: PerflogStart | null = null
-let file = ''
+let outs: Record<To, Out> | null = null
 let perfDir = ''
 let id = ''
 let seq = 0
 let startedAt = 0
 let held: Held[] = []
 let holding = false
-let queue: string[] = []
+let queue: Queued[] = []
 let lost = 0
-let torn = false
 let flushTimer: NodeJS.Timeout | null = null
 let pruneTimer: NodeJS.Timeout | null = null
 let launchPrune: NodeJS.Timeout | null = null
-let rewriting: Promise<void> | null = null
 let pruning: Promise<PruneReport> | null = null
-let rotateWanted = false
-/** a whole rewrite whose new file is being written off the main thread: its bytes; appends wait meanwhile */
-let swap: { data: Buffer } | null = null
+/** when segment retention last ran (the launch's pass, then hourly in a flush) */
+let segmentsPrunedAt = 0
 /** waiting for the hold at launch to end (retention's profile pass) */
 let released: (() => void)[] = []
 /** test builds: the next append lands this many bytes, then fails with `code` (a disk filling mid-batch) */
 let partial: { bytes: number; code: string } | null = null
+/** test builds: the writer's clock (the 24 h close and retention read it) */
+let clockFn: () => number = Date.now
 
 const days = (): number => {
   const d = Number(s?.config().keepPerfDays)
@@ -114,8 +133,8 @@ function lineOf(h: Held, machine: string | null): string {
   return JSON.stringify(o) + '\n'
 }
 
-function enqueue(line: string): void {
-  queue.push(line)
+function enqueue(to: To, line: string): void {
+  queue.push({ to, line })
   while (queue.length > QUEUE_MAX) { queue.shift(); lost += 1 }
 }
 
@@ -127,7 +146,7 @@ function release(force = false): void {
   holding = false
   // test builds: how the hold ended - by the hash, past profileHoldMs, or forced (a quit, main's error) - and over what
   if (__MV_TEST__) note('perflog', { hold: { by: m !== null ? 'hash' : force ? 'forced' : 'timeout', machine: m, lines: held.length, startedAt, waitedMs: Date.now() - startedAt } })
-  for (const h of held) enqueue(lineOf(h, m))
+  for (const h of held) enqueue(toOf(h.kind), lineOf(h, m))
   held = []
   for (const f of released.splice(0)) f()
 }
@@ -146,12 +165,17 @@ export function startPerflog(o: PerflogStart): void {
   seq = 0
   startedAt = Date.now()
   holding = true
-  // an earlier launch may have left the file ending inside a line (a full disk, a power loss): this launch's first
-  // write checks, and starts on a line of its own
-  torn = true
   if (!o.home.writable) return
   perfDir = join(o.home.dir, 'perf')
-  file = appLogFile(o.home, o.flavour)
+  // an earlier launch may have left a file ending inside a line (a full disk, a power loss): this launch's first
+  // write to it checks, and starts on a line of its own
+  outs = {
+    app: { path: appLogFile(o.home, o.flavour), name: APP_LOG[o.flavour] as SegmentedFile, live: null, torn: true },
+    samples: { path: samplesLogFile(o.home, o.flavour), name: APP_SAMPLES_LOG[o.flavour] as SegmentedFile, live: null, torn: true },
+  }
+  // #45: a file opened over a day ago (1.0.0's app.jsonl at the first 1.0.1 launch) is closed as a segment now - a
+  // rename, nothing rewritten; a younger one is adopted and closed when it is due
+  for (const out of Object.values(outs)) { try { if (liveOf(out) && dueToClose(out.name, out.live!, clockFn())) close(out) } catch { /* the next write says */ } }
   flushTimer = setInterval(() => flush(), T.writeBatchMs)
   flushTimer.unref?.()
   // retention at launch - a moment after ready, out of the launch's way - then daily; keepPerfDays read at each pass
@@ -165,12 +189,12 @@ export function startPerflog(o: PerflogStart): void {
 /** This launch's id (12 hex), stamped as every line's `app`. */
 export function launchId(): string { return id }
 
-/** A line for app.jsonl: the envelope stamped now, queued. */
+/** A line for app.jsonl (`sample` and `agx`: samples.jsonl): the envelope stamped now, queued. */
 export function append<K extends AppKind>(kind: K, body: AppBody<K>): void {
-  if (!s || !file) return
+  if (!s || !outs) return
   const h: Held = { ts: Date.now(), kind, seq: seq++, body: body as unknown as Record<string, unknown> }
   if (holding) { held.push(h); release(); return }
-  enqueue(lineOf(h, s.machine()))
+  enqueue(toOf(kind), lineOf(h, s.machine()))
 }
 
 /**
@@ -179,15 +203,15 @@ export function append<K extends AppKind>(kind: K, body: AppBody<K>): void {
  * process's end (a native crash, a SIGKILL, a hang), where a line still in the 2 s queue would be lost.
  */
 export function appendNow<K extends AppKind>(kind: K, body: AppBody<K>): void {
-  if (!s || !file) return
+  if (!s || !outs) return
   append(kind, body)
   flush(true)
 }
 
 /** Whether a line could be written at all (a writable home, the writer started). */
-export const writing = (): boolean => !!s && !!file
+export const writing = (): boolean => !!s && !!outs
 
-/** The bytes of `lines` past the first `landed` (the lines wholly written are not queued again; one cut short is, whole). */
+/** The lines past the first `landed` bytes (the lines wholly written are not queued again; one cut short is, whole). */
 function linesPast(lines: string[], landed: number): string[] {
   let end = 0
   for (const [i, l] of lines.entries()) {
@@ -197,35 +221,77 @@ function linesPast(lines: string[], landed: number): string[] {
   return []
 }
 
+/** The live file as this writer knows it, else adopted from the disk (#42, #45); a file replaced behind its back is
+ *  adopted again. Throws for a path that is not a regular file. */
+function liveOf(out: Out): LiveState | null {
+  let st
+  try { st = lstatSync(out.path) } catch { out.live = null; return null }
+  if (!st.isFile()) throw new Error('not a regular file')
+  if (out.live && out.live.ino === st.ino) { out.live.size = st.size; return out.live }
+  return (out.live = adoptLive(out.path))
+}
+
+/** The live file closed as a segment: a rename; the next append opens a new one, on a line of its own. */
+function close(out: Out): void {
+  if (!out.live) return
+  closeLive(perfDir, out.name, out.live, clockFn())
+  out.live = null
+  out.torn = false
+}
+
 /**
- * One flush: the queue appended now, a `dropped` line for what the bound let go. While a whole rewrite is being
- * written the lines wait for it; a forced flush (the quit, an error) writes them with it instead.
+ * One flush: the queue appended now, each line to its file, a `dropped` line for what the bound let go. A file whose
+ * append fails keeps its lines past what landed for the next flush, before what came since; the other file is
+ * written all the same.
  */
 function flush(force = false): boolean {
-  if (!s || !file) return false
+  if (!s || !outs) return false
   release(force)
   if (lost > 0) {
     // after what the bound kept, outside the bound: it says how many went
     const n = lost
     lost = 0
-    queue.push(lineOf({ ts: Date.now(), kind: 'dropped', seq: seq++, body: { n } }, s.machine()))
+    queue.push({ to: 'app', line: lineOf({ ts: Date.now(), kind: 'dropped', seq: seq++, body: { n } }, s.machine()) })
   }
+  // segment retention, hourly, in this turn: between two appends (#42)
+  if (clockFn() - segmentsPrunedAt >= SEGMENT_PRUNE_MS && segmentsPrunedAt > 0) pruneSegments()
   if (!queue.length) return true
-  if (swap && !force) return true
-  const lines = queue
+  const batch = queue
   queue = []
-  if (swap) return writeWithSwap(swap, lines)
+  let ok = true
+  const again: Queued[] = []
+  for (const to of ['app', 'samples'] as const) {
+    const lines = batch.filter((q) => q.to === to).map((q) => q.line)
+    if (!lines.length) continue
+    const rest = writeTo(outs[to], lines)
+    if (rest.length) { ok = false; for (const line of rest) again.push({ to, line }) }
+  }
+  if (again.length) {
+    queue = [...again, ...queue]
+    while (queue.length > QUEUE_MAX) { queue.shift(); lost += 1 }
+  }
+  // a forced flush may be the last (a quit): the cap's line, queued while it wrote, goes with it
+  if (force && ok && queue.length) return flush(true)
+  return ok
+}
+
+/** Appends `lines` to one file: a due close first, the lines, a close past its size after. The lines not landed. */
+function writeTo(out: Out, lines: string[]): string[] {
   let landed = 0
   let prefix = ''
+  const now = clockFn()
   try {
     mkdirSync(perfDir, { recursive: true, mode: 0o700 })
-    if (__MV_TEST__) faults.check(file, 'write')
-    const fresh = !existsSync(file)
+    if (__MV_TEST__) faults.check(out.path, 'write')
+    // opened 24 h ago: closed before this append (#42)
+    const was = liveOf(out)
+    if (was && dueToClose(out.name, was, now)) { close(out); capCheck(out) }
+    const fresh = !existsSync(out.path)
     // after a failed append, or at a launch's first write, the file may end inside a torn line: ours starts on a line
     // of its own
-    prefix = torn && !fresh && !endsWithNewline(file) ? '\n' : ''
+    prefix = out.torn && !fresh && !endsWithNewline(out.path) ? '\n' : ''
     const data = Buffer.from(prefix + lines.join(''))
-    const fd = openSync(file, 'a', 0o600)
+    const fd = openSync(out.path, 'a', 0o600)
     try {
       while (landed < data.length) {
         let n = data.length - landed
@@ -234,43 +300,61 @@ function flush(force = false): boolean {
           partial = null
           n = Math.max(0, p.bytes - landed)
           if (n > 0) landed += writeSync(fd, data, landed, n)
-          throw Object.assign(new Error(`${p.code}: injected after ${p.bytes} bytes for ${file}`), { code: p.code })
+          throw Object.assign(new Error(`${p.code}: injected after ${p.bytes} bytes for ${out.path}`), { code: p.code })
         }
         landed += writeSync(fd, data, landed, n)
       }
+      const st = fstatSync(fd)
+      let max = 0
+      for (const l of lines) { const t = lineTs(l); if (t !== null && t > max) max = t }
+      if (out.live && out.live.ino === st.ino) { out.live.size = st.size; out.live.maxTs = Math.max(out.live.maxTs, max) }
+      else out.live = { openedAt: now, maxTs: max, adopted: false, size: st.size, ino: st.ino }
     } finally { closeSync(fd) }
-    if (fresh) chmodSync(file, 0o600)
-    torn = false
+    if (fresh) chmodSync(out.path, 0o600)
+    out.torn = false
   } catch (err) {
-    torn = true
-    // what landed stays; the lines past it are kept for the next flush, before what came since, within the bound
-    queue = [...linesPast(lines, Math.max(0, landed - Buffer.byteLength(prefix))), ...queue]
-    while (queue.length > QUEUE_MAX) { queue.shift(); lost += 1 }
+    out.torn = true
     if (__MV_TEST__) note('perflog', { error: (err as NodeJS.ErrnoException).code ?? String(err), landed })
-    return false
+    // what landed stays; the lines past it are kept for the next flush
+    return linesPast(lines, Math.max(0, landed - Buffer.byteLength(prefix)))
   }
-  try { if (statSync(file).size > rotateBytes()) { rotateWanted = true; void rotate() } } catch { /* gone */ }
-  return true
+  // past its segment size: closed at once (#42)
+  try { if (out.live && out.live.size >= SEGMENTS[out.name].segmentBytes) { close(out); capCheck(out) } } catch { /* the next write closes it */ }
+  return []
 }
 
-/**
- * A forced flush while a rewrite's new file is being written: that file and these lines, written whole now. fsx's
- * write in flight then never renames over it (a sync write that landed is newer), so neither the rewrite nor the
- * lines are lost.
- */
-function writeWithSwap(w: { data: Buffer }, lines: string[]): boolean {
-  try {
-    const sep = w.data.length && w.data[w.data.length - 1] !== 0x0a ? '\n' : ''
-    writeWholeSync(file, Buffer.concat([w.data, Buffer.from(sep + lines.join(''))]), 0o600)
-    if (swap === w) swap = null
-    torn = false
-    return true
-  } catch (err) {
-    queue = [...lines, ...queue]
-    while (queue.length > QUEUE_MAX) { queue.shift(); lost += 1 }
-    if (__MV_TEST__) note('perflog', { error: (err as NodeJS.ErrnoException).code ?? String(err), swap: true })
-    return false
+/** The samples file's first `openedAt`: what this version wrote first (none yet: Infinity). */
+function samplesSince(): number {
+  if (!outs) return Infinity
+  const segs = segmentsOf(perfDir, outs.samples.name)
+  return Math.min(segs[0]?.openedAt ?? Infinity, outs.samples.live?.openedAt ?? (existsSync(outs.samples.path) ? liveOf(outs.samples)?.openedAt ?? Infinity : Infinity))
+}
+
+/** The safety cap (#43): the oldest segments past it unlinked, and a counted `dropped` line queued for the same file.
+ *  The app file's cap leaves 1.0.0's segments (opened before this version's first samples line) to retention. */
+function capCheck(out: Out): void {
+  if (!s || !outs) return
+  const since = out === outs.app ? samplesSince() : -Infinity
+  const went = enforceCap(perfDir, out.name, out.live?.size ?? 0, SEGMENTS[out.name].capBytes, (g: Segment) => g.openedAt >= since)
+  if (!went.segments) return
+  if (__MV_TEST__) note('perflog', { cap: out.name, ...went })
+  queue.push({ to: out === outs.app ? 'app' : 'samples', line: lineOf({ ts: Date.now(), kind: 'dropped', seq: seq++, body: { n: went.lines, reason: 'retention-cap' } }, s.machine()) })
+}
+
+/** Segment retention (#42): every segment of both files whose bound is `keepPerfDays` old unlinked - never read - then
+ *  the cap. Synchronous: one turn, between two appends. How many went. */
+function pruneSegments(now = clockFn()): number {
+  if (!outs) return 0
+  segmentsPrunedAt = now
+  let n = 0
+  for (const out of Object.values(outs)) {
+    try {
+      n += pruneAged(perfDir, out.name, now, days())
+      liveOf(out)
+      capCheck(out)
+    } catch { /* the next pass */ }
   }
+  return n
 }
 
 function endsWithNewline(f: string): boolean {
@@ -292,95 +376,15 @@ export function flushSync(): void { flush(true) }
 export const flushNow = (): boolean => flush(true)
 
 /**
- * Test builds (`recorder:flush`): what the 2 s timer does, now, once a rewrite under way has ended - the queue
- * appended, the hold at launch kept (it ends at the first hash or after profileHoldMs, as it would without the hook).
+ * Test builds (`recorder:flush`): what the 2 s timer does, now - the queue appended, the hold at launch kept (it ends
+ * at the first hash or after profileHoldMs, as it would without the hook).
  */
 export async function flushQueued(): Promise<boolean> {
-  for (let i = 0; i < 20 && rewriting; i++) await rewriting
   return flush(false)
 }
 
 /** Whether lines at launch are still held for the first hash. */
 export const holdingAtLaunch = (): boolean => holding
-
-// ---- whole rewrites: rotation and pruning --------------------------------------------------------------------
-
-/** The file's bytes from `from` to `to`, read now. */
-function readRange(f: string, from: number, to: number): Buffer {
-  const b = Buffer.alloc(to - from)
-  const fd = openSync(f, 'r')
-  try {
-    let off = 0
-    while (off < b.length) {
-      const n = readSync(fd, b, off, b.length - off, from + off)
-      if (n <= 0) break
-      off += n
-    }
-    return off === b.length ? b : b.subarray(0, off)
-  } finally { closeSync(fd) }
-}
-
-/**
- * Rewrites this flavour's file: `keep` chooses from its whole lines. The file is read off the main thread as bytes and
- * cut at its last newline byte (a line being torn, or a character split by a read that met an append, is never
- * judged or decoded: its bytes are kept as they are). Then, in one synchronous turn, what was appended since is taken
- * as raw bytes from where the read ended and appends pause; the new file is written off the main thread (fsx
- * `writeWhole`) and appends resume once it is renamed into place, or once it failed (the old file stays). One at a
- * time.
- */
-function rewrite(keep: (lines: string[]) => string[]): Promise<void> {
-  const run = async (): Promise<void> => {
-    if (!file) return
-    let buf: Buffer
-    try { buf = await readFile(file) } catch { return }
-    const cut = buf.lastIndexOf(0x0a) + 1
-    const whole = buf.subarray(0, cut).toString('utf8').split('\n').filter(Boolean)
-    const kept = keep(whole)
-    if (kept.length === whole.length || !s || !file) return
-    let mine: { data: Buffer }
-    try {
-      const size = statSync(file).size
-      // shorter than what was read: not the file read (never rewritten over)
-      if (size < buf.length) return
-      const since = size > buf.length ? readRange(file, buf.length, size) : Buffer.alloc(0)
-      mine = { data: Buffer.concat([Buffer.from(kept.length ? kept.join('\n') + '\n' : ''), buf.subarray(cut), since]) }
-    } catch (err) {
-      if (__MV_TEST__) note('perflog', { rewrite: (err as NodeJS.ErrnoException).code ?? String(err) })
-      return
-    }
-    swap = mine
-    try {
-      await writeWhole(file, mine.data, 0o600)
-    } catch (err) {
-      if (__MV_TEST__) note('perflog', { rewrite: (err as NodeJS.ErrnoException).code ?? String(err) })
-    } finally {
-      // a forced flush meanwhile wrote this file and its lines itself, and took the swap down
-      if (swap === mine) { swap = null; flush() }
-    }
-  }
-  const p = (rewriting ?? Promise.resolve()).then(run, run)
-  const tracked: Promise<void> = p.finally(() => { if (rewriting === tracked) rewriting = null })
-  rewriting = tracked
-  return p
-}
-
-/**
- * Past 5 MB: the newest half of the file's bytes, whole lines only (A3.6) - and always at least the newest line, so
- * one line larger than half the file never leaves none.
- */
-export function newestHalf(lines: string[]): string[] {
-  const total = lines.reduce((n, l) => n + Buffer.byteLength(l) + 1, 0)
-  let kept = 0
-  let i = lines.length
-  while (i > 0 && kept + Buffer.byteLength(lines[i - 1]!) + 1 <= total / 2) { kept += Buffer.byteLength(lines[i - 1]!) + 1; i-- }
-  return lines.slice(Math.min(i, Math.max(0, lines.length - 1)))
-}
-
-function rotate(): Promise<void> {
-  if (!rotateWanted) return Promise.resolve()
-  rotateWanted = false
-  return rewrite((lines) => (lines.reduce((n, l) => n + Buffer.byteLength(l) + 1, 0) > rotateBytes() ? newestHalf(lines) : lines))
-}
 
 const TS = /^\{"v":1,"ts":(\d{10,16})[,}]/
 /** A line's time, read without parsing it all (the envelope comes first); else from the parsed line; null for garbage. */
@@ -389,9 +393,10 @@ export function tsOf(line: string): number | null {
   if (m) return Number(m[1])
   try { const o = JSON.parse(line) as { ts?: unknown }; return typeof o?.ts === 'number' && Number.isFinite(o.ts) ? o.ts : null } catch { return null }
 }
-const MACHINE = /"machine":"([0-9a-f]{16})"/
+const MACHINES = /"machine":"([0-9a-f]{16})"/g
 
-export interface PruneReport { lines: number; pictures: number; dumps: number; skippedLocked: number; profiles: number }
+/** `lines` is 0 from spec 30 (no line is pruned on its own); `segments`: the segments retention unlinked. */
+export interface PruneReport { lines: number; pictures: number; dumps: number; skippedLocked: number; profiles: number; segments?: number }
 
 /** Retention now (A3.6, A3.8 #12): at launch, daily, and from the test hook. */
 export function prune(now = Date.now()): Promise<PruneReport> {
@@ -473,18 +478,15 @@ export function prunePictures(now = Date.now()): Promise<number> {
 const UUID_DMP =/^([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})\.dmp$/
 
 async function pruneOnce(now: number): Promise<PruneReport> {
-  const r: PruneReport = { lines: 0, pictures: 0, dumps: 0, skippedLocked: 0, profiles: 0 }
-  if (!s || !file) return r
+  const r: PruneReport = { lines: 0, pictures: 0, dumps: 0, skippedLocked: 0, profiles: 0, segments: 0 }
+  if (!s || !outs) return r
   const cutoff = now - days() * DAY
   if (!(await mode700(perfDir))) return r
 
-  // this flavour's lines older than keepPerfDays (the other flavour's file is never touched)
-  await rewrite((lines) => {
-    const kept = lines.filter((l) => { const t = tsOf(l); return t !== null && t >= cutoff })
-    r.lines = lines.length - kept.length
-    return kept
-  })
-  await mode600(file)
+  // this flavour's segments whose bound is past keepPerfDays, unlinked in one turn (#42; the other flavour's files are
+  // its own writer's)
+  r.segments = pruneSegments(Math.max(now, clockFn()))
+  for (const out of Object.values(outs)) await mode600(out.path)
 
   r.pictures = await picturesPass(cutoff)
 
@@ -515,10 +517,13 @@ async function pruneOnce(now: number): Promise<PruneReport> {
     const named = new Set<string>()
     const cur = s.machine()
     if (cur) named.add(cur)
-    for (const f of Object.values(APP_LOG)) {
-      let text = ''
-      try { text = await readFile(join(perfDir, f), 'utf8') } catch { continue }
-      for (const l of text.split('\n')) { const m = MACHINE.exec(l); if (m) named.add(m[1]!) }
+    // every segment of both files of both flavours (#44), one at a time, off the main thread
+    for (const f of Object.keys(APP_LOG) as Flavour[]) {
+      for (const path of appLogFiles(perfDir, f)) {
+        let text = ''
+        try { text = await readFile(path, 'utf8') } catch { continue }
+        for (const m of text.matchAll(MACHINES)) named.add(m[1]!)
+      }
     }
     const profiles = (await listed(machine)).filter((f) => /^[0-9a-f]{16}\.json$/.test(f.name))
     // a headless run touches its profile at each run; only runs.jsonl lines, kept 14 days in the repos, name it
@@ -540,11 +545,14 @@ async function profileKind(f: string): Promise<string | null> {
   try { const k = (JSON.parse(await readFile(f, 'utf8')) as { kind?: unknown }).kind; return typeof k === 'string' ? k : null } catch { return null }
 }
 
-/** Tests: retention's launch pass, if it is still waiting, run now; then once every rewrite and prune under way has ended. */
+/** Tests: retention's launch pass, if it is still waiting, run now; then once the prune under way has ended. */
 export async function idle(): Promise<void> {
   if (launchPrune) { clearTimeout(launchPrune); launchPrune = null; void prune() }
-  for (let i = 0; i < 20 && (rewriting || pruning); i++) await Promise.all([rewriting, pruning])
+  for (let i = 0; i < 20 && pruning; i++) await pruning
 }
+
+/** Unit tests: the writer's clock (the 24 h close and retention read it); none, Date.now. */
+export function setPerflogClock(fn: (() => number) | null): void { clockFn = fn ?? Date.now }
 
 /** Test builds: the next append lands `bytes` bytes, then fails with `code` (ENOSPC partway through a batch). */
 export function failAppendAfter(bytes: number, code = 'ENOSPC'): void { if (__MV_TEST__) partial = { bytes, code } }
@@ -556,6 +564,6 @@ export function resetPerflog(): void {
   if (launchPrune) clearTimeout(launchPrune)
   flushTimer = pruneTimer = launchPrune = null
   for (const f of released.splice(0)) f()
-  s = null; file = ''; perfDir = ''; id = ''; seq = 0; startedAt = 0; held = []; holding = false; queue = []; lost = 0; torn = false
-  rewriting = null; pruning = null; rotateWanted = false; swap = null; partial = null
+  s = null; outs = null; perfDir = ''; id = ''; seq = 0; startedAt = 0; held = []; holding = false; queue = []; lost = 0
+  pruning = null; partial = null; segmentsPrunedAt = 0; clockFn = Date.now
 }

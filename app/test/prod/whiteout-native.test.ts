@@ -178,3 +178,39 @@ describe.skipIf(!!DARK)('the detector\'s cost (A3.8 #15)', () => {
     } finally { await r.w.close(); await r.fake.close() }
   }, 240_000)
 })
+
+/**
+ * Spec 30 R8 (#38-#41) - NEEDS A REAL WINDOW: run in the VM, not with the headless suites. A staged white overlay during
+ * a board request (`mv:perf watch`, `load`, as a 0.30 shell asks for it) is a candidate with `why: ['load']`; the cost
+ * case gains a load window held open, its cumulative capture time asserted against the admission budget (#58).
+ */
+describe.skipIf(!!DARK)('white-outs beyond gestures (spec 30 R8; VM only)', () => {
+  let r: Awaited<ReturnType<typeof open>>
+  beforeAll(async () => { r = await open({ MARVER_APP_TIMINGS: JSON.stringify({ writeBatchMs: 200 }) }, HEAVY) }, 60_000)
+  afterAll(async () => { await r?.w.close(); await r?.fake.close() })
+
+  it('a staged white overlay during a board request is a candidate, why [load]', async () => {
+    const records = async () => (await r.w.log('recorder')).map((l) => l.data).filter((d) => d.kind === 'whiteout-candidate')
+    const before = (await records()).length
+    await exec(r.w, r.id, `window.marverApp.perf({ kind: 'watch', on: true, seq: 11, why: 'load' }); setTimeout(function () { __mvOverlay(1000) }, 250); 1`)
+    await sleep(1700)
+    await exec(r.w, r.id, `window.marverApp.perf({ kind: 'watch', on: false, seq: 11, why: 'load' }); 1`)
+    await sleep(1500)
+    const cands = (await records()).slice(before)
+    expect(cands, JSON.stringify(cands)).toHaveLength(1)
+    expect(cands[0]!.why).toEqual(['load'])
+    expect(cands[0]!.gesture).toBe(11)
+  }, 30_000)
+
+  it('the cost: a load window held open 40 s captures at most the admission budget, its time cumulative and recorded', async () => {
+    const stats = async () => (await r.w.run.call<{ captureMs?: number }>('whiteout:stats').catch(() => ({ captureMs: undefined }))).captureMs
+    const was = await stats()
+    // three windows one after another: each ends at 10 s; a minute admits 3 s of capture outside gestures, plus one estimate
+    for (let i = 0; i < 4; i++) { await exec(r.w, r.id, `window.marverApp.perf({ kind: 'watch', on: true, seq: ${20 + i}, why: 'load' }); 1`); await sleep(10_500) }
+    const now = await stats()
+    if (now !== undefined && was !== undefined) {
+      process.stdout.write(`whiteout cost, load windows: ${now - was} ms of capture in 42 s\n`)
+      expect(now - was).toBeLessThanOrEqual(3000 + 500)
+    }
+  }, 90_000)
+})

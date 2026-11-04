@@ -30,6 +30,7 @@ import { createHash } from 'node:crypto'
 import { lstatSync, readdirSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
+import type { RecorderLevel } from '../shared/perf-records.ts'
 
 /** What the fingerprint reads of the dev server's watcher (plugin.ts supplies it). */
 export interface InputsWatch {
@@ -119,7 +120,7 @@ export async function inputPaths(root: string, w: InputsWatch, urls?: readonly s
 
 /** These paths' fingerprint: each file's path from the root (`../` for one outside it), size and mtime. A path that
  *  is gone or no file counts for nothing - so one deleted since changes it. */
-export async function hashInputs(root: string, paths: readonly string[]): Promise<Inputs> {
+export async function hashInputs(root: string, paths: readonly string[], level: RecorderLevel = 'full'): Promise<Inputs> {
   const lines: string[] = []
   // a few at a time: a large repo watches thousands of files
   for (let i = 0; i < paths.length; i += 64) {
@@ -130,7 +131,9 @@ export async function hashInputs(root: string, paths: readonly string[]): Promis
     for (const l of got) if (l) lines.push(l)
   }
   lines.sort()
-  return { hash: createHash('sha256').update(lines.join('\n')).digest('hex').slice(0, 16), files: lines.length }
+  // spec 30 #58: the recorder's level is one of a run's inputs: `core` hashes apart, so the two never compare as one
+  if (level === 'core') lines.push('\0recorder\0core')
+  return { hash: createHash('sha256').update(lines.join('\n')).digest('hex').slice(0, 16), files: lines.length - (level === 'core' ? 1 : 0) }
 }
 
 /** The fingerprint of every watched file, plus the board files and `_sizes.json`; null before the watcher is ready. */

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apiMiddleware } from '../src/server/api.ts'
@@ -109,25 +109,16 @@ describe('the page log', () => {
     if (posix) expect(mode(reloadLog(root))).toBe(0o600)
   })
 
-  it('the page log holds 8 MB before its oldest half goes; the reload log 2 MB', () => {
+  // spec 30 R9: no log loses lines to a rewrite - a live file past its segment size closes whole (r30-store-segments.test.ts)
+  it('past 8 MB the page log closes as a segment, every line kept; the reload log the same', () => {
     mkdirSync(perfDir(root), { recursive: true })
     const line = JSON.stringify(cleanPageRecord(env('quiet', VALID.quiet))) + '\n'
-    // past 2 MB, under 8: a heavy board's loads are kept whole
-    writeFileSync(pageLog(root), line.repeat(Math.ceil(2_100_000 / line.length)))
+    writeFileSync(pageLog(root), line.repeat(Math.ceil(8_400_000 / line.length)))
+    const n = readPage(root).length
     logPage(root, [env('dropped', VALID.dropped, 9)])
-    expect(statSync(pageLog(root)).size).toBeGreaterThan(2_100_000)
-    // past 8 MB: the oldest half goes
-    writeFileSync(pageLog(root), line.repeat(Math.ceil(8_100_000 / line.length)))
-    logPage(root, [env('dropped', VALID.dropped, 9)])
-    const size = statSync(pageLog(root)).size
-    expect(size).toBeGreaterThan(3_900_000)
-    expect(size).toBeLessThan(4_200_000)
+    expect(readPage(root)).toHaveLength(n + 1)
     expect(readPage(root).at(-1)!.kind).toBe('dropped')
-    // the reload log keeps its 2 MB
-    const reload = JSON.stringify({ ts: Date.now(), kind: 'ready', frame: 'kit/a' }) + '\n'
-    writeFileSync(reloadLog(root), reload.repeat(Math.ceil(2_100_000 / reload.length)))
-    logReload(root, { kind: 'shell-boot' })
-    expect(statSync(reloadLog(root)).size).toBeLessThan(1_200_000)
+    expect(readdirSync(perfDir(root)).filter((f) => /^page\.\d+-\d+\.jsonl$/.test(f))).toHaveLength(1)
   })
 
   it('never writes through a linked design/.local', () => {
@@ -161,34 +152,20 @@ describe('the perf directory at start', () => {
     for (const f of ['reloads.jsonl', 'jam.jsonl', 'notes.txt']) expect(mode(join(perfDir(root), f)), f).toBe(0o600)
   })
 
-  it('lines older than 14 days go from every log that ages out - the reload, page and Jam logs alike', () => {
+  // spec 30 R9 (#42, #45): a 0.29 log is closed whole as a segment at start, never rewritten; segments go by their bound
+  it('a log opened over a day ago is closed as a segment at start, every line kept; nothing is rewritten', () => {
     mkdirSync(perfDir(root), { recursive: true })
     const now = Date.now(), old = now - 15 * 86_400_000, fresh = now - 86_400_000
-    for (const f of ['reloads.jsonl', 'page.jsonl', 'jam.jsonl']) writeFileSync(join(perfDir(root), f), [JSON.stringify({ ts: old, kind: 'old' }), JSON.stringify({ ts: fresh, kind: 'fresh' }), 'garbage', ''].join('\n'))
+    const text = [JSON.stringify({ ts: old, kind: 'old' }), JSON.stringify({ ts: fresh, kind: 'fresh' }), 'garbage', ''].join('\n')
+    for (const f of ['reloads.jsonl', 'page.jsonl']) writeFileSync(join(perfDir(root), f), text)
     writeFileSync(join(perfDir(root), 'keep.json'), JSON.stringify({ ts: old }))
     tidyPerfDir(root, now)
-    for (const f of ['reloads.jsonl', 'page.jsonl', 'jam.jsonl']) expect(readFileSync(join(perfDir(root), f), 'utf8'), f).toBe(JSON.stringify({ ts: fresh, kind: 'fresh' }) + '\n')
-    expect(readFileSync(join(perfDir(root), 'keep.json'), 'utf8')).toBe(JSON.stringify({ ts: old }))   // not a log of lines
-  })
-
-  it('a log still past its cap loses its oldest half: 2 MB, and 8 MB for the page log', () => {
-    mkdirSync(perfDir(root), { recursive: true })
-    const line = JSON.stringify({ ts: Date.now(), kind: 'x', pad: 'p'.repeat(200) })
-    const fill = (f: string, bytes: number) => writeFileSync(join(perfDir(root), f), (line + '\n').repeat(Math.ceil(bytes / line.length)))
-    const size = (f: string) => statSync(join(perfDir(root), f)).size
-    fill('reloads.jsonl', 2_500_000)
-    fill('jam.jsonl', 2_500_000)
-    fill('page.jsonl', 2_500_000)
-    tidyPerfDir(root)
-    for (const f of ['reloads.jsonl', 'jam.jsonl']) {
-      expect(size(f), f).toBeGreaterThan(1_100_000)
-      expect(size(f), f).toBeLessThan(1_400_000)
+    for (const f of ['reloads', 'page']) {
+      const seg = readdirSync(perfDir(root)).find((x) => x.startsWith(`${f}.`) && x !== `${f}.jsonl`)!
+      expect(seg, f).toMatch(new RegExp(`^${f}\\.${old}-\\d+\\.jsonl$`))
+      expect(readFileSync(join(perfDir(root), seg), 'utf8'), f).toBe(text)
     }
-    expect(size('page.jsonl')).toBeGreaterThan(2_400_000)   // under its 8 MB: whole
-    fill('page.jsonl', 8_500_000)
-    tidyPerfDir(root)
-    expect(size('page.jsonl')).toBeGreaterThan(4_000_000)
-    expect(size('page.jsonl')).toBeLessThan(4_500_000)
+    expect(readFileSync(join(perfDir(root), 'keep.json'), 'utf8')).toBe(JSON.stringify({ ts: old }))   // not a log of lines
   })
 
   it.skipIf(!posix)('a link inside perf/ is neither followed nor changed; no perf/ yet - nothing is made', () => {

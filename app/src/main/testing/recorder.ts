@@ -33,6 +33,7 @@ import { currentFile, currentProfile, machineStats } from '../machine.ts'
 import { appLogFile, flushQueued, holdingAtLaunch, prune } from '../perflog.ts'
 import { injectPressure, pressureSpawns, type PressureLevel } from '../pressure.ts'
 import { appMetrics, recorderTesting, sampler } from '../recorder.ts'
+import { whiteoutStats } from '../whiteout.ts'
 import { currentHome } from '../config.ts'
 import { provide } from './index.ts'
 
@@ -57,6 +58,8 @@ export function provideRecorderHooks(): void {
     if (x.event) recorderTesting.event(x.event.kind, x.event.ident ?? null, x.event.body ?? {})
     return true
   })
+  // spec 30 #58: the detector's counters, its cumulative capture time among them (the native cost case's)
+  provide('whiteout:stats', () => whiteoutStats())
   provide('recorder:machine', () => ({ ...machineStats(), profile: currentProfile(), file: currentFile() }))
   provide('recorder:prune', () => prune())
   provide('recorder:process', (a) => {

@@ -16,7 +16,7 @@ import type { BoardWriter, LoadTrigger } from '../../shared/perf-records.ts'
 import { admissionIdle, onAdmissionIdle } from './canvas/admission.ts'
 import { canvasCtl } from './canvas/ctl.ts'
 import { bootOf, iframeOf } from './canvas/frame-registry.ts'
-import { adopt, bound, fitWithin, KEEPALIVE_BYTES, LOAD_MAX_MS, newId, Outbox, outcomeOf, QUIET_MS, SEND_MS, stackLines, type Kind, type Outcome, type PerfRecord, type Track } from './recorder-core.ts'
+import { adopt, bound, bytesOf, fitWithin, KEEPALIVE_BYTES, LOAD_MAX_MS, newId, Outbox, outcomeOf, QUIET_MS, SEND_MS, stackLines, type Kind, type Outcome, type PerfRecord, type Track } from './recorder-core.ts'
 import { PERF_RUN, type PerfRunStatus } from './perf-run.ts'
 import { displayHz } from './app-perf.ts'
 import { nextSeq, PAGE_ID, perfSeams, type LoadPhase } from './recorder-seams.ts'
@@ -25,7 +25,7 @@ import { fullRecorder } from '../recorder-level.ts'
 import { startReloads } from './recorder-reloads.ts'
 import { errorCounted, modesOn, signalSink, startSignals, type SignalError } from './recorder-signals.ts'
 import { currentCmd, startCommands } from './commands.ts'
-import { startSelf } from './recorder-self.ts'
+import { selfCounts, startSelf } from './recorder-self.ts'
 
 /** This document, in every record (and, in the app, in its hello: the app's records about this tab carry it). Minted in
  *  recorder-seams.ts, which the spec 30 streams read without importing this module. */
@@ -95,10 +95,12 @@ const unowned = { errors: 0, errAt: new Map<string, number>() }
 const env = (kind: Kind, load: string, body: Record<string, unknown>): PerfRecord =>
   ({ ...Object.fromEntries(Object.entries(body).filter(([, x]) => x !== undefined)), v: 1, ws, page: PAGE_ID, load, seq: nextSeq(), ts: Date.now(), kind })
 function rec(kind: Kind, load: string, body: Record<string, unknown>): PerfRecord {
+  const t0 = selfCounts.on ? performance.now() : 0   // spec 30 #58: the page's `self`
   if (kind !== 'move') open.clear()   // a merged drag ends at the next record of another kind
   const r = env(kind, load, body)
   outbox.push(r)
   armSend()
+  if (selfCounts.on) selfCounts.record(performance.now() - t0)
   return r
 }
 const ownerId = () => owner?.id ?? '-'
@@ -482,12 +484,18 @@ signalSink.dropped = (reason, n) => { if (on) drop(reason, n) }
 
 const armSend = () => { if (!sending && sendTimer === undefined && outbox.size) sendTimer = setTimeout(() => { sendTimer = undefined; void send() }, SEND_MS) }
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
-const post = (records: PerfRecord[], keepalive = false) => api('perf/page', {
-  method: 'POST',
-  headers: { 'content-type': 'application/json', 'x-mv-c': csrf() },
-  body: JSON.stringify({ records }),
-  ...(keepalive ? { keepalive: true } : {}),
-})
+const post = (records: PerfRecord[], keepalive = false) => {
+  const t0 = selfCounts.on ? performance.now() : 0   // spec 30 #58: `send`'s own work, and the bytes
+  const body = JSON.stringify({ records })
+  const sent = api('perf/page', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-mv-c': csrf() },
+    body,
+    ...(keepalive ? { keepalive: true } : {}),
+  })
+  if (selfCounts.on) { selfCounts.bytes += bytesOf(body); perfSeams.selfCost('send', performance.now() - t0) }
+  return sent
+}
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 /** The `dropped` record that says how many went, when any did (the count starts over). */
 const droppedNow = (more = 0): PerfRecord[] => {
@@ -524,6 +532,8 @@ async function send(): Promise<void> {
     }
   } catch { /* never in the way: what it held is counted below */ }
   if (!ok) { failedSends++; outbox.dropped += batch.filter((r) => r.kind !== 'dropped').length + batch.filter((r) => r.kind === 'dropped').reduce((n, r) => n + (r.n as number), 0) }
+  // spec 30 #58: every drop said by a `dropped` record that landed, whatever its reason
+  else if (selfCounts.on) selfCounts.dropped += batch.reduce((n, r) => n + (r.kind === 'dropped' ? (r.n as number) || 0 : 0), 0)
   inFlight = []
   sending = false
   armSend()

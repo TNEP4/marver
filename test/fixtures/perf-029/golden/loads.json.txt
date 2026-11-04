@@ -1,0 +1,224 @@
+{
+  "minutes": 120,
+  "loads": [
+    {
+      "ws": "163cf821d349d94a",
+      "page": "90879e227f04",
+      "load": "a51d669160cf",
+      "at": 1793704800000,
+      "board": "main",
+      "cause": "boot",
+      "state": "settled",
+      "committed": true,
+      "commitMs": 400,
+      "frames": 7,
+      "byKind": {
+        "hifi": 3,
+        "content": 3,
+        "html": 1
+      },
+      "measuring": 3,
+      "savedHeights": 2,
+      "visible": 4,
+      "visibleMs": 500,
+      "visibleReadyMs": 1100,
+      "allReadyMs": 1400,
+      "settledMs": 2600,
+      "weight": {
+        "domNodes": 13881,
+        "iframes": 75,
+        "awake": 12,
+        "asleep": 63,
+        "heapMB": 2356.3
+      },
+      "quietMs": 1500,
+      "lastMoveMs": 1600,
+      "moves": {
+        "count": 2,
+        "distance": 600,
+        "causes": [
+          [
+            "measure-height",
+            1
+          ],
+          [
+            "reflow:measured",
+            1
+          ]
+        ],
+        "late": {
+          "count": 1,
+          "causes": [
+            [
+              "reflow:stale",
+              1
+            ]
+          ]
+        }
+      },
+      "slowest": [
+        {
+          "node": "n_1",
+          "frame": "docs/a",
+          "ms": 1600,
+          "outcome": "settled",
+          "admittedMs": 350,
+          "readyMs": 700
+        },
+        {
+          "node": "n_2",
+          "frame": "docs/b",
+          "ms": 1200,
+          "outcome": "settled",
+          "readyMs": 600
+        }
+      ],
+      "firstStartedMs": 350,
+      "errors": [
+        {
+          "source": "frame",
+          "frame": "docs/a",
+          "message": "Failed to fetch dynamically imported module"
+        }
+      ],
+      "errorsNotRecorded": 0,
+      "neverReady": [
+        "kit/f"
+      ],
+      "missing": [
+        "kit/g"
+      ],
+      "unfinished": 0,
+      "gestures": {
+        "n": 1,
+        "worstP95": 25.8,
+        "over33ms": 2
+      }
+    },
+    {
+      "ws": "163cf821d349d94a",
+      "page": "90879e227f04",
+      "load": "b0aac0bfea3a",
+      "at": 1793705400000,
+      "board": "main",
+      "cause": "disk-reload",
+      "state": "cut",
+      "cut": {
+        "reason": "reload",
+        "ms": 8338
+      },
+      "committed": true,
+      "commitMs": 1000,
+      "frames": 75,
+      "byKind": {
+        "hifi": 68,
+        "content": 7,
+        "html": 0
+      },
+      "measuring": 7,
+      "savedHeights": 7,
+      "lastMoveMs": 1867,
+      "moves": {
+        "count": 0,
+        "distance": 0,
+        "causes": [],
+        "late": {
+          "count": 0,
+          "causes": []
+        }
+      },
+      "slowest": [],
+      "framesAtCut": 75,
+      "readyByCut": 10,
+      "errors": [],
+      "errorsNotRecorded": 0,
+      "neverReady": [],
+      "missing": [],
+      "unfinished": 1
+    },
+    {
+      "ws": "163cf821d349d94a",
+      "page": "90879e227f04",
+      "load": "c4ba412bd856",
+      "at": 1793706000000,
+      "board": "other-board",
+      "cause": "switch",
+      "state": "cut",
+      "cut": {
+        "reason": "hidden",
+        "ms": 500,
+        "request": true
+      },
+      "committed": true,
+      "mountedAfterCut": true,
+      "commitMs": 3000,
+      "frames": 2,
+      "byKind": {
+        "hifi": 2
+      },
+      "moves": {
+        "count": 0,
+        "distance": 0,
+        "causes": [],
+        "late": {
+          "count": 0,
+          "causes": []
+        }
+      },
+      "slowest": [],
+      "errors": [],
+      "errorsNotRecorded": 25,
+      "neverReady": [],
+      "missing": [],
+      "unfinished": 0
+    },
+    {
+      "ws": "163cf821d349d94a",
+      "page": "3f6975886743",
+      "load": "dccb75adf7fb",
+      "at": 1793706600000,
+      "board": "main",
+      "cause": "boot",
+      "state": "settled",
+      "committed": true,
+      "commitMs": 300,
+      "frames": 12,
+      "byKind": {
+        "hifi": 12
+      },
+      "visibleReadyMs": 0,
+      "allReadyMs": 400,
+      "settledMs": 1500,
+      "weight": {
+        "domNodes": 900,
+        "iframes": 12,
+        "awake": 12,
+        "asleep": 0,
+        "heapMB": 47
+      },
+      "lastMoveMs": 500,
+      "moves": {
+        "count": 0,
+        "distance": 0,
+        "causes": [],
+        "late": {
+          "count": 0,
+          "causes": []
+        }
+      },
+      "slowest": [],
+      "errors": [],
+      "errorsNotRecorded": 0,
+      "neverReady": [],
+      "missing": [],
+      "unfinished": 0
+    }
+  ],
+  "unowned": {
+    "errors": [],
+    "errorsNotRecorded": 0,
+    "gestures": 1
+  },
+  "dropped": 4,
+  "runLoads": 1
+}

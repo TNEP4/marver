@@ -1,0 +1,126 @@
+{
+  "minutes": 1440,
+  "startsAt": 1793689200000,
+  "steps": {
+    "capture: E to sealed": {
+      "n": 1,
+      "median": 812,
+      "p90": 812,
+      "max": 812
+    },
+    "capture: last words": {
+      "n": 1,
+      "median": 300,
+      "p90": 300,
+      "max": 300
+    },
+    "capture: a picture": {
+      "n": 2,
+      "median": 400,
+      "p90": 900,
+      "max": 900
+    },
+    "upload": {
+      "n": 1,
+      "median": 1200,
+      "p90": 1200,
+      "max": 1200
+    },
+    "naming": {
+      "n": 1,
+      "median": 3900,
+      "p90": 3900,
+      "max": 3900
+    },
+    "words: wait": {
+      "n": 1,
+      "median": 200,
+      "p90": 200,
+      "max": 200
+    },
+    "words: transcription": {
+      "n": 1,
+      "median": 1100,
+      "p90": 1100,
+      "max": 1100
+    },
+    "words: model load": {
+      "n": 1,
+      "median": 4000,
+      "p90": 4000,
+      "max": 4000
+    },
+    "run: queued": {
+      "n": 2,
+      "median": 300,
+      "p90": 500,
+      "max": 500
+    },
+    "run: pictures before": {
+      "n": 1,
+      "median": 2100,
+      "p90": 2100,
+      "max": 2100
+    },
+    "run: agent": {
+      "n": 1,
+      "median": 62000,
+      "p90": 62000,
+      "max": 62000
+    },
+    "run: pictures after": {
+      "n": 1,
+      "median": 1900,
+      "p90": 1900,
+      "max": 1900
+    },
+    "run: delivery": {
+      "n": 2,
+      "median": 40,
+      "p90": 90,
+      "max": 90
+    },
+    "shot": {
+      "n": 1,
+      "median": 640,
+      "p90": 640,
+      "max": 640
+    }
+  },
+  "outcomes": {
+    "review": 1,
+    "done": 1
+  },
+  "problems": [
+    {
+      "ts": 1793696400001,
+      "what": "3 event(s) dropped (the log was busy)"
+    },
+    {
+      "ts": 1793696400000,
+      "what": "shot demo/hero: stale after 2 retakes"
+    },
+    {
+      "ts": 1793692800001,
+      "what": "run e751e77e could not post its replies"
+    },
+    {
+      "ts": 1793689200002,
+      "what": "naming cap-1793361005698-bhfnus gave no name"
+    },
+    {
+      "ts": 1793689200000,
+      "what": "capture cap-1793361005698-bhfnus: 1 picture(s) too late, 1 failed"
+    },
+    {
+      "ts": 1793689200000,
+      "what": "capture cap-1793361005698-bhfnus: 1 live picture(s) failed, 1 rendered instead"
+    }
+  ],
+  "retakes": 2,
+  "live": {
+    "count": 1,
+    "failed": 1,
+    "fellBack": 1
+  }
+}

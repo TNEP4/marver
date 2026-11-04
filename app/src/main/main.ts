@@ -61,6 +61,7 @@ import { effects } from './effects.ts'
 import { CH } from '../shared/channels.ts'
 import { docInset } from './layout.ts'
 import { identity, recorder, sampler } from './recorder.ts'
+import { launchReady, launchWriter } from './launch.ts'
 import { provideRecorderHooks } from './testing/recorder.ts'
 import { provideFlashHooks } from './testing/flash.ts'
 import { startMemory } from './memory.ts'
@@ -139,6 +140,7 @@ function start(): void {
 
   // 10. at ready
   void app.whenReady().then(async () => {
+    launchReady()   // spec 30 #37: ms from process start
     applyTheme(files)
     startFiles()
 
@@ -185,6 +187,7 @@ function start(): void {
     // the recorder: after the bridge, before the views (A3.8 #53)
     recorder.start({ bridge, home, flavour: __MARVER_RELEASE__ ? 'release' : 'dev', config: () => values().config })
     for (const b of moveRecords) recorder.event('update', null, b)
+    launchWriter((b) => recorder.event('launch', null, b))
     if (__MV_TEST__ && testMode()) { provideRecorderHooks(); provideFlashHooks(home) }
     app.on('will-quit', () => recorder.flushSync())
 

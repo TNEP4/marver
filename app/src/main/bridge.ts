@@ -59,7 +59,7 @@
 import { randomBytes } from 'node:crypto'
 import { ipcMain, webFrameMain, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents, type WebFrameMain } from 'electron'
 import {
-  APP_MENU_IDS, BOUNDS, CANVAS_CHANNELS, FEATURE, PERF_BOUNDS, UNSAVED_WHY, WHY,
+  APP_MENU_IDS, BOUNDS, CANVAS_CHANNELS, FEATURE, PERF_BOUNDS, UNSAVED_WHY, WATCH_WHY, WHY, type WatchWhy,
   type AppState, type Busy, type CaptureAnswer, type CaptureRect, type DocAnswer, type Hello, type Inset, type MenuItem, type OpenItem, type PerfAsk, type PerfCam,
   type PerfMsg, type PerfSize, type Present, type Presented, type Theme, type Why,
 } from '../../../src/shared/app-api.ts'
@@ -228,7 +228,7 @@ export function checkPerf(p: unknown): PerfMsg | null {
           if (!Array.isArray(q) || q.length !== 2 || !within(q[0], PERF_BOUNDS.coord) || !within(q[1], PERF_BOUNDS.coord)) return null
           points.push([q[0], q[1]])
         }
-        return { kind: 'probes', tick: p.tick, at: 'before', points, cam, view }
+        return { kind: 'probes', tick: p.tick, at: 'before', points, cam, view, ...(p.stage === true ? { stage: true as const } : {}) }
       }
       if (p.at === 'after') {
         if (!Array.isArray(p.valid) || p.valid.length > PERF_BOUNDS.points || !p.valid.every((b) => typeof b === 'boolean')) return null
@@ -243,6 +243,10 @@ export function checkPerf(p: unknown): PerfMsg | null {
       return whole(p.tick, C) ? { kind: 'shown', tick: p.tick } : null
     case 'board':
       return whole(p.frames, PERF_BOUNDS.frames) && whole(p.asleep, PERF_BOUNDS.frames) ? { kind: 'board', frames: p.frames, asleep: p.asleep } : null
+    case 'watch':
+      // spec 30 #38: a white-out window a 0.30 shell opens or closes
+      if (typeof p.on !== 'boolean' || !whole(p.seq, C) || !(WATCH_WHY as readonly unknown[]).includes(p.why)) return null
+      return { kind: 'watch', on: p.on, seq: p.seq, why: p.why as WatchWhy }
     default:
       return null
   }

@@ -56,6 +56,7 @@ import { T } from './timings.ts'
 import { coverCovers, groundOn, onLayoutChange, placed, rectFor, seeThrough, setCoverReady, setGround, setInsetOff } from './layout.ts'
 import { bumpAll, bumpGen, epochOf, flush as presentFlush, genOf, gpuGone, liftAt, noteGpu, observe, onCoverRecord, onPresentLog, quitting as presentQuitting, showing, uncovered, windowHidden, windowShown } from './present.ts'
 import { appMetrics, identity, recorder } from './recorder.ts'
+import { launchFirstCanvas, launchWindowShown } from './launch.ts'
 import type { TabIdent } from '../../../src/shared/app-perf.ts'
 import { coverReady, makeCover, type Cover } from './cover.ts'
 import { isQuitting } from './shutdown.ts'
@@ -701,6 +702,8 @@ export function openWindow(d?: WindowDeps): BaseWindow {
     const who = kept?.epoch === epoch ? kept.who : t ? identity(t) : { tab }
     if (__MV_TEST__) note('cover-record', { ...who, ...body })
     try { recorder.event('cover', who, body) } catch { /* the recorder's to keep; the window goes on */ }
+    // spec 30 #37: the launch's first local canvas uncovered; its page as the tab knows it now (its hello may be newer than the epoch)
+    if (body.outcome === 'uncovered' && t?.kind === 'local') { const now = identity(t); launchFirstCanvas({ tab, ws: now.ws, page: now.page, commit: now.commit, cause: body.cause }) }
   })
   registerApp(strip.webContents, 'strip')
   track(strip.webContents, { part: 'strip' })
@@ -873,6 +876,7 @@ export function showWindow(o: { focus?: boolean } = {}): void {
   if (win.isMinimized()) win.restore()
   if (o.focus === false) win.showInactive()
   else { win.show(); win.focus() }
+  launchWindowShown()   // spec 30 #37: the first counts
   onVisibility()
   // in front now, so it can draw: requests held while it could not go out (present.ts), the first show at launch too
   if (windowShown(Date.now())) compose()

@@ -1,0 +1,16 @@
+crashes, last 14 days - HOME/perf/app.jsonl and app-dev.jsonl, joined to design/.local/perf/page.jsonl by page
+
+canvas crashes: 1
+  D T  crashed (exit 11) · pid 57221 · pressure warn
+    The Main Board · its load had not settled · last gesture a zoom, ended 1140.0 s before
+    the minute before (by time, machine-wide): pressure normal, thermal nominal, canvases 822 MB, the GPU process 512 MB, this renderer 822 MB
+
+not responding: 1
+  D T  pid 57221, answered again after 4.0 s · The Main Board · its load had not settled · last gesture a zoom, ended 600.0 s before
+
+by time (machine-wide): 3
+  D T  the GPU process ended: crashed (exit 5)
+  D T  a new GPU process (pid 102) with no ending reported, after pid 101
+  D T  the app's strip page's renderer ended: crashed (exit 1)
+
+crash reports: 1 in HOME/perf/crashpad/completed

@@ -15,10 +15,27 @@
  * FROZEN (A3.8 #53): `Verdict`, `classify`, `WhiteoutPorts`, `startWhiteout`. The rate is `T.whiteoutTickMs` (250
  * for 4 Hz; 500 is 2 Hz, the cost case's fallback). A run of white samples is one record, written when it ends; the
  * pixel tests are pure (`wholeWhite`, `probeWhite`) and the loop runs on the ports, so both are unit-tested.
+ *
+ * Spec 30 R8 (app 1.0.1):
+ * - **Five windows, one per tab** (#38): `gesture` as above; `shown`, main's own, from a tab's show (`noteShown`,
+ *   recorder.ts); and `load`, `theme`, `reload`, which a 0.30 shell asks for with `mv:perf watch`. A new reason extends
+ *   the window: a window with no gesture on ends 10 s after its last reason came (`WATCH_MAX_MS`), or a tail after its
+ *   last reason closed, whichever is first; a gesture inside it keeps A3.8 #15's rules. `gesture` on the record stays
+ *   the window's seq, and `why` says every reason it had.
+ * - **Coverage is honest** (#39): outside gestures a tick with the window hidden takes no capture and counts as
+ *   `uncoveredMs.hidden`; one whose `before` answer says a play stage covers the canvas (its probes would read nothing)
+ *   as `uncoveredMs.stage`; one refused admission as `uncoveredMs.budget`.
+ * - **The admission budget** (#40): 3 s of capture per rolling minute outside gestures. Before each tick of a
+ *   non-gesture window a capture is admitted only while the capture time of the last 60 s plus an estimate of the next
+ *   (the last capture's length, 500 ms at most, expiring with that capture's place in the window) stays under 3 s;
+ *   else the tick is skipped and counted. `capturePage()` cannot be cancelled, so a capture's true length is recorded
+ *   when its promise settles (`captureMs`, the part past 500 ms in `overrunMs`) and charged from then: a slow capture
+ *   holds admission only until it leaves the window, and admission always resumes. No maximum is claimed beyond that.
+ * - **The minute** (#41): `takeWhiteoutMinute()` hands the recorder each `sample`'s `whiteout`.
  */
 import type { NativeImage, WebContents } from 'electron'
-import type { AgxReading, AppBody, RingEvent, TabIdent } from '../../../src/shared/app-perf.ts'
-import { PERF_BOUNDS, type PerfMsg, type PerfProbeAsk } from '../../../src/shared/app-api.ts'
+import type { AgxReading, AppBody, RingEvent, TabIdent, WhiteoutMinute, WhiteoutWhy } from '../../../src/shared/app-perf.ts'
+import { PERF_BOUNDS, WATCH_MAX_MS, type PerfMsg, type PerfProbeAsk } from '../../../src/shared/app-api.ts'
 import { note } from './testing/index.ts'
 import { T } from './timings.ts'
 
@@ -89,10 +106,28 @@ let nextTick = 0
 const takeTick = (): number => { const k = nextTick; nextTick = (nextTick + 1) % PERF_BOUNDS.counter; return k }
 
 /** Counters, for the cost case and the journal. */
-export interface WhiteoutStats { windows: number; ticks: number; captures: number; skipped: number; abandoned: number; inconclusive: number; white: number; clear: number; candidates: number; probed: number }
-const zero = (): WhiteoutStats => ({ windows: 0, ticks: 0, captures: 0, skipped: 0, abandoned: 0, inconclusive: 0, white: 0, clear: 0, candidates: 0, probed: 0 })
+export interface WhiteoutStats { windows: number; ticks: number; captures: number; skipped: number; abandoned: number; inconclusive: number; white: number; clear: number; candidates: number; probed: number; /** spec 30 #58: every capture's true length, summed: the cost case's cumulative capture time */ captureMs: number }
+const zero = (): WhiteoutStats => ({ windows: 0, ticks: 0, captures: 0, skipped: 0, abandoned: 0, inconclusive: 0, white: 0, clear: 0, candidates: 0, probed: 0, captureMs: 0 })
 let stats = zero()
 export const whiteoutStats = (): WhiteoutStats => ({ ...stats })
+
+/** #40: capture time admitted per rolling minute outside gestures. */
+export const ADMIT_MS = 3000
+export const ADMIT_WINDOW_MS = 60_000
+
+const zeroMinute = (): WhiteoutMinute => ({ windows: 0, captures: 0, captureMs: 0, overrunMs: 0, skipped: 0, uncoveredMs: { stage: 0, budget: 0, hidden: 0 }, byWhy: {} })
+let minute = zeroMinute()
+let running = false
+/** The minute's figures, and a new minute started (#41): null while the detector is not running. */
+export function takeWhiteoutMinute(): WhiteoutMinute | null {
+  if (!running) return null
+  const m = minute
+  minute = zeroMinute()
+  return { ...m, captureMs: Math.round(m.captureMs), overrunMs: Math.round(m.overrunMs) }
+}
+/** recorder.ts `shown`: the tab was shown (#38): main's own window. */
+let shownFn: ((tabId: string) => void) | null = null
+export function noteShown(tabId: string): void { try { shownFn?.(tabId) } catch { /* never in the way */ } }
 
 const j = (data: unknown) => { if (__MV_TEST__) note('whiteout', data) }
 const sameIdent = (a: TabIdent, b: TabIdent) => a.tab === b.tab && a.commit === b.commit && a.page === b.page && a.ws === b.ws
@@ -103,39 +138,87 @@ let stop: (() => void) | null = null
 export function startWhiteout(p: WhiteoutPorts): void {
   stop?.()
   stats = zero()
+  minute = zeroMinute()
+  running = true
   const waiting = new Map<string, { resolve(m: Before | After, doc: string): void }>()
-  /** the gesture window: its tab, the gesture's seq, when it ends (Infinity while the gesture is on), its hard end */
-  let win: { tabId: string; seq: number; until: number; hardEnd: number; timer?: ReturnType<typeof setTimeout>; counts: { samples: number; skipped: number; inconclusive: number } } | null = null
+  /**
+   * The window: its tab, its seq (the gesture's, else its first reason's), every reason it had; the gesture inside it,
+   * when it ends (Infinity while the gesture is on) and its hard end; the reasons still open (`why:seq`) and when the
+   * non-gesture part ends (0: none).
+   */
+  let win: {
+    tabId: string; seq: number; why: Set<WhiteoutWhy>
+    gesture: { until: number; hardEnd: number } | null
+    open: Set<string>; watchUntil: number
+    timer?: ReturnType<typeof setTimeout>; counts: { samples: number; skipped: number; inconclusive: number }
+  } | null = null
+  /** captures outside gestures, when each settled and how long it truly took (#40) */
+  let charged: { at: number; ms: number }[] = []
+  let shownSeq = 0
   /** one sample at a time, and at most one capture outstanding (A3.8 #15): an abandoned capture keeps the slot until
    *  its promise settles (r1 #5), so captures never pile up */
   let sampling = false
   let capturing = false
   /** the white run in progress, and the tick before (for pairing) */
-  let run: { ident: TabIdent; doc: string; gesture: number; observedAt: number[]; lastTick: number } | null = null
+  let run: { ident: TabIdent; doc: string; gesture: number; why: WhiteoutWhy[]; observedAt: number[]; lastTick: number } | null = null
   let last: Done | null = null
 
   const tickMs = () => T.whiteoutTickMs
   const rateHz = (): 4 | 2 => (tickMs() <= 250 ? 4 : 2)
+
+  /** Is the gesture part of the window running at `now`? */
+  const gestureLive = (w: NonNullable<typeof win>, now: number) => !!w.gesture && now < w.gesture.until && now < w.gesture.hardEnd
+
+  /** The window for `tabId`, opened when none is (another tab's ended first), with this reason added and counted. */
+  function join(tabId: string, seq: number, why: WhiteoutWhy): NonNullable<typeof win> {
+    if (!win || win.tabId !== tabId) {
+      endWindow()
+      win = { tabId, seq, why: new Set(), gesture: null, open: new Set(), watchUntil: 0, counts: { samples: 0, skipped: 0, inconclusive: 0 } }
+      stats.windows++
+      minute.windows++
+      j({ window: 'open', tab: tabId, seq, why })
+      schedule(0)
+    }
+    if (!win.why.has(why)) { win.why.add(why); minute.byWhy[why] = (minute.byWhy[why] ?? 0) + 1 }
+    return win
+  }
+
+  /** A non-gesture reason (#38): the window opened or extended to 10 s from now. Only the tab on screen, or none. */
+  function openReason(tabId: string, seq: number, why: Exclude<WhiteoutWhy, 'gesture'>): void {
+    if (!p.recorderOn()) return
+    const t = p.target()
+    if (t && t.tabId !== tabId) return
+    const w = join(tabId, seq, why)
+    w.open.add(`${why}:${seq}`)
+    w.watchUntil = p.now() + WATCH_MAX_MS
+  }
+
+  shownFn = (tabId) => openReason(tabId, ++shownSeq, 'shown')
 
   const off = p.onPerf((tabId, doc, msg) => {
     if (msg.kind === 'probes') {
       waiting.get(`${tabId}:${msg.tick}:${msg.at}`)?.resolve(msg, doc)
       return
     }
-    if (msg.kind !== 'gesture') return
     const now = p.now()
+    if (msg.kind === 'watch') {
+      if (msg.on) { openReason(tabId, msg.seq, msg.why); return }
+      if (!win || win.tabId !== tabId || !win.open.delete(`${msg.why}:${msg.seq}`)) return
+      // the last reason closed: a tail, as a gesture's, and no later than its 10 s
+      if (!win.open.size) win.watchUntil = Math.min(win.watchUntil, now + T.whiteoutTailMs)
+      return
+    }
+    if (msg.kind !== 'gesture') return
     if (msg.on) {
       if (!p.recorderOn()) return
       const t = p.target()
       if (!t || t.tabId !== tabId) return
-      if (win && win.tabId === tabId) { win.seq = msg.seq; win.until = Infinity; return }
-      endWindow()
-      win = { tabId, seq: msg.seq, until: Infinity, hardEnd: now + T.whiteoutMaxMs, counts: { samples: 0, skipped: 0, inconclusive: 0 } }
-      stats.windows++
-      j({ window: 'open', tab: tabId, seq: msg.seq })
-      schedule(0)
-    } else if (win && win.tabId === tabId) {
-      win.until = now + T.whiteoutTailMs
+      const w = join(tabId, msg.seq, 'gesture')
+      w.seq = msg.seq
+      // a gesture still running keeps its hard end; one long over, in a window a watch kept open, is no part of this one
+      w.gesture = { until: Infinity, hardEnd: gestureLive(w, now) ? w.gesture!.hardEnd : now + T.whiteoutMaxMs }
+    } else if (win && win.tabId === tabId && win.gesture) {
+      win.gesture.until = now + T.whiteoutTailMs
     }
   })
 
@@ -154,22 +237,44 @@ export function startWhiteout(p: WhiteoutPorts): void {
     last = null
   }
 
+  /** #40: may a capture start now? The capture time of the last 60 s plus an estimate of the next stays under 3 s. */
+  function admitted(now: number): boolean {
+    charged = charged.filter((c) => c.at > now - ADMIT_WINDOW_MS)
+    const spent = charged.reduce((n, c) => n + c.ms, 0)
+    const estimate = charged.length ? Math.min(charged.at(-1)!.ms, T.whiteoutCaptureMs) : 0
+    return spent + estimate < ADMIT_MS
+  }
+
   function tick() {
     const w = win
     if (!w) return
     const now = p.now()
-    if (now >= w.until || now >= w.hardEnd || !p.recorderOn()) { endWindow(); return }
+    const onGesture = gestureLive(w, now)
+    if ((!onGesture && now >= w.watchUntil) || !p.recorderOn()) { endWindow(); return }
     const k = takeTick()
     stats.ticks++
     schedule(tickMs())
+    if (!onGesture) {
+      // #39: no capture of what cannot be seen - said, not guessed
+      const t = p.target()
+      if (!t || t.tabId !== w.tabId) { minute.uncoveredMs.hidden += tickMs(); settle(w, { tick: k, verdict: 'skipped', at: now }); return }
+    }
     if (sampling || capturing) {
       stats.skipped++
       w.counts.skipped++
       settle(w, { tick: k, verdict: 'skipped', at: now })
       return
     }
+    if (!onGesture && !admitted(now)) {
+      stats.skipped++
+      w.counts.skipped++
+      minute.skipped++
+      minute.uncoveredMs.budget += tickMs()
+      settle(w, { tick: k, verdict: 'skipped', at: now })
+      return
+    }
     sampling = true
-    void sampleOnce(w, k).finally(() => { sampling = false })
+    void sampleOnce(w, k, onGesture).finally(() => { sampling = false })
   }
 
   /** A probes ask; its answer within probeAnswerMs, with the document the bridge says sent it, else null. */
@@ -182,22 +287,34 @@ export function startWhiteout(p: WhiteoutPorts): void {
     })
   }
 
-  async function sampleOnce(w: NonNullable<typeof win>, k: number): Promise<void> {
+  async function sampleOnce(w: NonNullable<typeof win>, k: number, onGesture: boolean): Promise<void> {
     const t = p.target()
     const at = p.now()
     if (!t || t.tabId !== w.tabId) { inconclusive(w, k, at, 'target'); return }
     const ident = t.ident
     const before = await ask(t.tabId, k, 'before') as { msg: Before; doc: string } | null
     if (!before || before.msg.kind !== 'probes' || before.msg.at !== 'before') { inconclusive(w, k, at, 'before'); return }
+    // #39: a covering play stage leaves no ground to probe: no capture, its time said
+    if (before.msg.stage) { minute.uncoveredMs.stage += tickMs(); settle(w, { tick: k, verdict: 'skipped', at }); return }
     // the capture: one at a time; past whiteoutCaptureMs abandoned, its slot kept until it settles
     capturing = true
     stats.captures++
+    minute.captures++
     const capAt = p.now()
     let img: NativeImage | null = null
     let late = false
     // its start and its settling journaled: a case can tell what overlapped it (a live picture's readback, A4.6 #52)
     j({ tick: k, capture: 'start' })
-    const cap = t.wc.capturePage().then((x) => x, () => null).finally(() => { capturing = false; j({ tick: k, capture: 'end' }) })
+    // #40: its true length when its promise settles - an abandoned one too - in the minute, and outside gestures charged
+    const settled = () => {
+      const at2 = p.now()
+      const ms = Math.max(0, at2 - capAt)
+      minute.captureMs += ms
+      minute.overrunMs += Math.max(0, ms - T.whiteoutCaptureMs)
+      stats.captureMs += ms
+      if (!onGesture) charged.push({ at: at2, ms })
+    }
+    const cap = t.wc.capturePage().then((x) => x, () => null).finally(() => { capturing = false; settled(); j({ tick: k, capture: 'end' }) })
     const res = await Promise.race([cap, new Promise<'late'>((r) => setTimeout(() => r('late'), T.whiteoutCaptureMs))])
     if (res === 'late') { late = true; stats.abandoned++ } else img = res
     if (late || !img || img.isEmpty()) { inconclusive(w, k, capAt, late ? 'abandoned' : 'empty'); return }
@@ -251,7 +368,7 @@ export function startWhiteout(p: WhiteoutPorts): void {
       && d.at - prev.at <= tickMs() * 1.6
     if (run && run.lastTick === d.tick - 1 && pairs) { run.observedAt.push(d.at); run.lastTick = d.tick; return }
     void flushRun()
-    if (pairs) run = { ident: prev!.ident!, doc: d.doc!, gesture: w.seq, observedAt: [prev!.at, d.at], lastTick: d.tick }
+    if (pairs) run = { ident: prev!.ident!, doc: d.doc!, gesture: w.seq, why: [...w.why], observedAt: [prev!.at, d.at], lastTick: d.tick }
   }
 
   async function flushRun() {
@@ -265,13 +382,13 @@ export function startWhiteout(p: WhiteoutPorts): void {
     const agx = await p.readAgx(T.spawnTimeoutMs).catch(() => null)
     j({ candidate: r.observedAt.length, gesture: r.gesture })
     p.record(r.ident, {
-      gesture: r.gesture, observedAt: r.observedAt, rateHz: rateHz(), samples: c.samples, skipped: c.skipped,
+      gesture: r.gesture, why: r.why, observedAt: r.observedAt, rateHz: rateHz(), samples: c.samples, skipped: c.skipped,
       inconclusive: c.inconclusive, gpuEvents,
       agx: agx ?? { gpuSystemMemoryMB: 'unknown', allocMB: 'unknown', utilPct: 'unknown', rendererPct: 'unknown', tilerPct: 'unknown', recoveryCount: 'unknown', machineWide: true },
     })
   }
 
-  stop = () => { off(); endWindow(); waiting.clear() }
+  stop = () => { off(); endWindow(); waiting.clear(); shownFn = null; running = false }
 }
 
 /** Tests: the detector off. */

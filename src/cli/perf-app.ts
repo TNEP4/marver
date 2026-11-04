@@ -32,23 +32,33 @@ import { join } from 'node:path'
 import { APP_LOG, parseAppLine, type AppRecord, type Flavour } from '../shared/app-perf.ts'
 import type { RunLine } from '../shared/perf-run.ts'
 import { workspaceId } from '../server/workspace.ts'
+import { appLogFiles } from '../server/perf-segments.ts'
 import { loadsSummary, type LoadSummary } from './perf.ts'
 
-/** Both flavours' app records from `since` (epoch ms), in file order per flavour; a line without the envelope skipped; a line written twice (its launch, flavour and seq) once. */
+/**
+ * Both flavours' app records from `since` (epoch ms): each flavour's `app.jsonl` and, from app 1.0.1, `samples.jsonl`,
+ * every segment of both (spec 30 #42, #44) merged by time and `seq`; a line without the envelope skipped; a line
+ * written twice (its launch, flavour and seq) once. A 1.0.0 log - samples in `app.jsonl`, one file - reads the same.
+ */
 export function readAppLog(home: string, since = 0): AppRecord[] {
   const out: AppRecord[] = []
   const seen = new Set<string>()
   for (const f of Object.keys(APP_LOG) as Flavour[]) {
-    let text = ''
-    try { text = readFileSync(join(home, 'perf', APP_LOG[f]), 'utf8') } catch { continue }
-    for (const l of text.split('\n')) {
-      const r = l ? parseAppLine(l) : null
-      if (!r || r.ts < since) continue
-      const k = `${r.flavour}/${r.app}/${r.seq}`
-      if (seen.has(k)) continue
-      seen.add(k)
-      out.push(r)
+    const mine: AppRecord[] = []
+    for (const path of appLogFiles(join(home, 'perf'), f, since)) {
+      let text = ''
+      try { text = readFileSync(path, 'utf8') } catch { continue }
+      for (const l of text.split('\n')) {
+        const r = l ? parseAppLine(l) : null
+        if (!r || r.ts < since) continue
+        const k = `${r.flavour}/${r.app}/${r.seq}`
+        if (seen.has(k)) continue
+        seen.add(k)
+        mine.push(r)
+      }
     }
+    mine.sort((a, b) => a.ts - b.ts || a.seq - b.seq)
+    for (const r of mine) out.push(r)
   }
   return out
 }
@@ -207,7 +217,7 @@ export interface FlashItem extends PageMoment {
   /** the picture's absolute path, or null with why; `picturePruned` when the file is gone since (50 are kept) */
   picture: string | null; pictureWhy?: string; picturePruned?: true
 }
-export interface CandidateItem extends PageMoment { at: number; flavour: Flavour; tab?: string; ws?: string; gestureSeq?: number; observedAt: number[]; rateHz?: number; samples?: number; skipped?: number; inconclusive?: number; gpuEvents: number }
+export interface CandidateItem extends PageMoment { at: number; flavour: Flavour; tab?: string; ws?: string; gestureSeq?: number; observedAt: number[]; rateHz?: number; samples?: number; skipped?: number; inconclusive?: number; gpuEvents: number; /** spec 30 #41: its window's reasons; absent before app 1.0.1 (a gesture's) */ why?: string[] }
 export interface FlashesSummary { marks: FlashItem[]; others: number; candidates: CandidateItem[] }
 export interface ProfileItem {
   hash: string; kind: 'app' | 'headless' | 'unknown'; hostHash: string | null; current: boolean
@@ -293,6 +303,7 @@ export function flashesSummary(app: AppRecord[], page: Record<string, any>[], wo
         ...(typeof x.gesture === 'number' ? { gestureSeq: x.gesture } : {}),
         observedAt, rateHz: x.rateHz, samples: x.samples, skipped: x.skipped, inconclusive: x.inconclusive,
         gpuEvents: Array.isArray(x.gpuEvents) ? x.gpuEvents.filter(isGpuProcessEvent).length : 0,
+        ...(Array.isArray(x.why) ? { why: x.why as string[] } : {}),
         ...momentOf(x, page, observedAt[0] ?? r.ts),
       })
     }
@@ -341,7 +352,7 @@ export function machineSummary(home: string, app: AppRecord[], runs: RunLine[]):
   return { profiles, byHost: [...byHost].map(([hostHash, ps]) => ({ hostHash, profiles: ps })) }
 }
 
-/** `--runs`: comparisons inside one cohort (script, board, chrome, flags, machine, power, slow, bakes), by inputs; `against` two runs of one cohort. */
+/** `--runs`: comparisons inside one cohort (script, board, chrome, flags, machine, power, slow, bakes, the recorder's level), by inputs; `against` two runs of one cohort. */
 export function runsSummary(runs: RunLine[], o: { against?: string } = {}): RunsSummary {
   const ordered = [...runs].sort((a, b) => a.ts - b.ts)
   const comparable = (r: RunLine) => r.valid && !r.overlapped
@@ -370,7 +381,7 @@ export function runsSummary(runs: RunLine[], o: { against?: string } = {}): Runs
       const latest = [...ordered].reverse().find((r) => r.run !== base.run && r.ts > base.ts && cohortKey(r) === cohortKey(base) && comparable(r))
       out.against = latest && comparable(base)
         ? { run: base.run, ...compare(base, latest), within10: within(base, latest) }
-        : { run: base.run, error: !comparable(base) ? `run ${base.run} is ${base.valid ? 'overlapped' : `invalid (${base.invalidReason})`}: never compared` : 'no later valid run of its cohort (script, board, Chrome, flags, machine, power, --slow, bakes) - pass the earlier run' }
+        : { run: base.run, error: !comparable(base) ? `run ${base.run} is ${base.valid ? 'overlapped' : `invalid (${base.invalidReason})`}: never compared` : 'no later valid run of its cohort (script, board, Chrome, flags, machine, power, --slow, bakes, --recorder) - pass the earlier run' }
     }
   }
   return out
@@ -390,7 +401,7 @@ export interface RunBrief { run: string; ts: number; inputs: string | null; load
 export interface RunCompare { from: RunBrief; to: RunBrief; deltas: { loadToSettledMs: number | null; p95: number | null; over33ms: number | null; heapPeakMB: number | null } }
 
 /** Runs compare only inside one cohort (A3.8 #22). */
-export const cohortOf = (r: RunLine) => ({ script: r.script, board: r.board, chrome: r.chrome, flags: r.flags, machine: r.machine, power: r.power, slow: r.slow, bakes: r.bakes })
+export const cohortOf = (r: RunLine) => ({ script: r.script, board: r.board, chrome: r.chrome, flags: r.flags, machine: r.machine, power: r.power, slow: r.slow, bakes: r.bakes, recorder: r.recorder })
 const cohortKey = (r: RunLine) => JSON.stringify(cohortOf(r))
 const brief = (r: RunLine): RunBrief => ({ run: r.run, ts: r.ts, inputs: r.inputs?.hash ?? null, loadToSettledMs: r.loadToSettledMs, p50: r.p50, p95: r.p95, over33ms: r.over33ms, heapPeakMB: r.heapPeakMB, moves: r.moves })
 const diff = (a: number | null, b: number | null) => (a === null || b === null ? null : Math.round((b - a) * 10) / 10)

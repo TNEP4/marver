@@ -335,7 +335,7 @@ cli
   })
 
 cli
-  .command('perf [action] [board]', 'The reload log: what each edit reloaded, page-wide reloads, the slowest frames to settle, one line per board load; --loads: what each board load did; --jam: Jam\'s timings; `perf run <board>`: a headless run of the board, read-only (needs `dev` running); --runs: those runs compared; --crashes, --flashes, --machine: the Mac app\'s records')
+  .command('perf [action] [board]', 'The reload log: what each edit reloaded, page-wide reloads, the slowest frames to settle, one line per board load; --loads: what each board load did; --jam: Jam\'s timings; `perf run <board>`: a headless run of the board, read-only (needs `dev` running); --runs: those runs compared; --crashes, --flashes, --machine: the Mac app\'s records; --all: every canvas this Mac knows, one summary; --live: a tail in the terminal')
   .option('--root <dir>', 'Host repo root', { default: '.' })
   .option('--minutes <n>', 'How far back to read (default 60; 24 h with --jam)')
   .option('--loads', 'Board loads, from the page, each board by its title: time to the visible frames ready and all ready (each frame\'s first render), still from the last move and settled (a second still after it) - or why it was cut, and how many frames were ready by then - how many moves and their causes, when the first frame started, the slowest frames to settle (their last height) and how long each waited for its turn to start, errors (design/.local/perf/page.jsonl)')
@@ -345,10 +345,13 @@ cli
   .option('--crashes', 'The Mac app\'s crashes and hangs of this repo\'s canvases, each joined to its board load by page (what had settled, the last gesture), the minute before it, and the GPU and utility processes\' ends by time (~/.marver/perf/app.jsonl, app-dev.jsonl)')
   .option('--flashes', 'The flashes marked in the Mac app (⌃⌥F) on this repo\'s canvases: the board, the gesture the mark fell in (or the one ending within 2 s of it), the GPU process\'s events, pressure at the mark, the GPU figures and the picture\'s path; the white-out detector\'s candidates apart, automatic and not verified')
   .option('--machine', 'The machine profiles the Mac app and headless runs wrote (~/.marver/perf/machine), by host, which is current, and how many records and runs name each')
-  .option('--all', 'With --flashes: also the marks made on other canvases or on Home')
-  .option('--days <n>', 'How far back --runs, --crashes, --flashes and --machine read (default 14)')
+  .option('--all', 'Every canvas this Mac knows (running, or that the app remembers): one summary per canvas and the Mac app\'s, no repo needed; with --live, every known canvas\'s live files; with --flashes, also the marks made on other canvases or on Home')
+  .option('--live', 'A tail in the terminal: the live files of this repo (--all: every known canvas) and the app\'s app.jsonl, from now, one line per record - about 3 s behind (Ctrl-C ends it)')
+  .option('--kinds <list>', 'With --live: only these kinds, comma-separated (load,cmd,error, ...)')
+  .option('--days <n>', 'How far back --all, --runs, --crashes, --flashes and --machine read (default 14)')
   .option('--slow', 'With `run`: the CPU throttled 4x (a stand-in for a slower Mac\'s CPU, not its GPU or memory)')
   .option('--repeat <n>', 'With `run`: how many runs, one after another (1-5, default 1)')
+  .option('--recorder <level>', 'With `run`: core (only what the run\'s driver reads, 0.29\'s load tracking) or full (everything the recorder records, the default); the two never compare as one')
   .option('--json', 'Machine-readable output')
   .action(async (action: string | undefined, board: string | undefined, opts) => {
     if (action !== undefined && action !== 'run') {

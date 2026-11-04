@@ -97,7 +97,12 @@ let recording = false
 const asks: { tab: string; ask: PerfAsk }[] = []
 let perfFn: ((tabId: string, doc: string, msg: PerfMsg) => void) | null = null
 const file = () => join(base, 'home', 'perf', 'app-dev.jsonl')
-const lines = () => { flushNow(); return existsSync(file()) ? readFileSync(file(), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, any>) : [] }
+/** Spec 30 #44: `sample` and `agx` lines are in samples-dev.jsonl beside it; both files, merged by `seq` */
+const lines = () => {
+  flushNow()
+  const read = (f: string) => (existsSync(f) ? readFileSync(f, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, any>) : [])
+  return [...read(file()), ...read(file().replace('app-dev.jsonl', 'samples-dev.jsonl').replace('app.jsonl', 'samples.jsonl'))].sort((a, b) => a.seq - b.seq)
+}
 const kinds = () => lines().map((l) => l.kind)
 
 beforeAll(() => {
@@ -505,5 +510,19 @@ describe('a shared canvas (A4.6 #48)', () => {
       expect('ws' in l, l.kind).toBe(false)
       expect(JSON.stringify(l), l.kind).not.toMatch(/token|secret|#\/b\/main/)
     }
+  })
+})
+
+describe('spec 30 R7 #37, #6', () => {
+  it('the launch line is written whatever `recorder` says; other records are not', () => {
+    const was = recording
+    recording = false
+    try {
+      const before = kinds().filter((k) => k === 'launch').length
+      recorder.event('launch', null, { readyMs: 150, why: 'home', tabs: { restored: 0, local: 0, remote: 0, active: 'home' } })
+      recorder.event('cover', { tab: 't1' }, { epoch: 1, cause: 'doc', outcome: 'uncovered' } as never)
+      expect(kinds().filter((k) => k === 'launch').length).toBe(before + 1)
+      expect(lines().filter((l) => l.kind === 'cover' && l.epoch === 1 && l.cause === 'doc').length).toBe(0)
+    } finally { recording = was }
   })
 })

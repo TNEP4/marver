@@ -109,7 +109,7 @@ export interface PerfSize { w: number; h: number }
  */
 export type PerfMsg =
   | { kind: 'gesture'; on: boolean; seq: number; type?: 'pan' | 'zoom' | 'layout' }
-  | { kind: 'probes'; tick: number; at: 'before'; points: [number, number][]; cam: PerfCam | null; view: PerfSize }
+  | { kind: 'probes'; tick: number; at: 'before'; points: [number, number][]; cam: PerfCam | null; view: PerfSize; /** spec 30 #39: a play stage covers the canvas - no ground to probe, no capture taken */ stage?: true }
   | { kind: 'probes'; tick: number; at: 'after'; valid: boolean[]; cam: PerfCam | null; view: PerfSize }
   | { kind: 'mem'; tick: number; privateKB: number; heapUsedKB: number; heapTotalKB: number }
   | { kind: 'shown'; tick: number }

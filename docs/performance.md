@@ -15,10 +15,15 @@ agent. A published canvas records nothing.
 
 `design/.local/` is gitignored, and `marver dev` never serves it. The perf folder is yours alone: mode 700,
 each file 600 from the moment it is made - and files an earlier version made are tightened when `marver dev`
-starts. At start, each log loses its lines older than 14 days, and past its cap its oldest half; a log that
-passes its cap while the canvas runs loses its oldest half too. The cap is 2 MB, and 8 MB for `page.jsonl`:
-one load of a 120-frame board writes about 140 KB there, most of it moves, so 2 MB held about fourteen such
-loads - hours of work, not days. 8 MB holds four times as many.
+starts.
+
+Each log keeps 14 days, whole. It is a live file plus closed segments, `page.<opened>-<newest>.jsonl`: the live file is
+closed - a rename - 24 hours after it was opened or once it passes its size (8 MB for `page.jsonl` and `reloads.jsonl`,
+2 MB for `jam.jsonl` and `runs.jsonl`). `<newest>` is a safe upper bound on the newest record in it, and a segment is
+deleted once that is 14 days old, at start and hourly: never read, never rewritten. A log whose rate is far past any
+measured day meets its safety cap (128 MB for `page.jsonl`, 48 MB for `reloads.jsonl`, 8 MB each for the others): its
+oldest segments go, and a `dropped` record with `reason: "retention-cap"` says how many records. A file an earlier
+version left is closed as a segment as it stands once it is due. `npx marver perf` reads every segment and the live file as one log.
 
 `page.jsonl` holds frame names, node keys and numbers. Error messages and stack lines can hold file paths,
 so, like the rest, they stay on this Mac.
@@ -284,6 +289,12 @@ otherwise its last records go with `keepalive`, 16 KB at most.
 The dev server takes them only from the canvas's own page, rebuilds each from the fields its kind allows -
 strings cut to 200 characters, 512 KB a request - and appends them to `page.jsonl`.
 
+The recorder measures itself. Every 5 minutes in which it recorded anything, the page writes a `self` record: `cpuMs`,
+`hookMs` by hook (`console`, `theme`, `mode`, `cmd`, `renders`, `send`), `records`, `bytes` and `dropped`. A page's clock
+is coarse (100 µs), so these are sums of coarse readings: right on average, never to the microsecond. To measure the
+cost itself, `npx marver perf run <board> --recorder core` turns off everything but the load tracking a run reads
+([Headless runs](#headless-runs)); `core` and `full` runs never compare as one, since the level is one of a run's inputs.
+
 ## Headless runs
 
 `npx marver perf run <board>` measures a board the same way every time, in the canvas's own headless Chrome
@@ -358,25 +369,45 @@ their reason. `--days <n>` (14 by default) and `--json` as elsewhere.
 |---|---|
 | `--loads` | each board load in full |
 | `--jam` | Jam's timings; with the Mac app, its live pictures kept, failed and rendered instead |
-| `run <board>` | a headless run of the board ([Headless runs](#headless-runs)); with `--slow` and `--repeat <n>` (1-5) |
+| `run <board>` | a headless run of the board ([Headless runs](#headless-runs)); with `--slow`, `--repeat <n>` (1-5) and `--recorder core\|full` (`full`) |
 | `--runs` | the headless runs, compared inside their cohorts; with `--against <run>` and `--days <n>` (14) |
 | `--crashes` | the Mac app's crashes and hangs of this repo's canvases (below) |
 | `--flashes` | the flashes marked in the Mac app, and the white-out candidates (below) |
 | `--machine` | the machine profiles (below) |
-| `--all` | with `--flashes`: also the marks on other canvases or on Home |
-| `--days <n>` | how far back `--runs`, `--crashes`, `--flashes` and `--machine` read: 14 by default |
+| `--all` | every canvas this Mac knows, one summary ([below](#every-canvas)); with `--live`, their live files; with `--flashes`, also the marks on other canvases or on Home |
+| `--live` | a tail in the terminal ([below](#a-tail)); with `--kinds a,b` only those kinds, with `--json` the raw lines |
+| `--days <n>` | how far back `--all`, `--runs`, `--crashes`, `--flashes` and `--machine` read: 14 by default |
 | `--json` | machine-readable |
 | `--minutes <n>` | how far back to read: 60 by default (24 h with `--jam`) |
 | `--root <dir>` | the project (default: here) |
 
 Plain `npx marver perf` reads the reload log and ends with one line per board load. It and `--loads` leave out a
-headless run's loads (`marver perf run`): they say how many.
+headless run's loads (`marver perf run`): they say how many. From 0.30 an edit is its change id, so several lines of one
+change are one edit; older lines, which have none, count as they always did. A record written twice - a retry can do that
+past the server's own check - is read once, by its `page` and `seq`, in every view.
+
+### Every canvas
+
+`npx marver perf --all` needs no repo. It lists every canvas this Mac knows - those running, and those the Mac app
+remembers, one per real path - and for each, over `--days`: board loads, how many came after an edit, how many settled,
+all-ready p50 / p90 / max, the most frames, the largest heap, the worst gesture p95 (p50 / max), edit to last redraw,
+page-wide reloads whose file is ambiguous or unknown, re-renders (React's render work only, not layout or paint), the
+longest theme switch, comments mode's shown p50, errors by source, and commands failed, unobserved or interrupted. A canvas
+with no records says so. Then the app's: launches and the time to the first canvas, crashes, hangs, flashes, white-out
+candidates by what they happened during, and the window time the detector could not cover, and why. `--json` emits the same.
+
+### A tail
+
+`npx marver perf --live` follows this repo's live files (`--all`: every known canvas's) and the app's `app.jsonl` from now,
+one line per record, until Ctrl-C. It is about 3 s behind: the page's 2 s batch and the app's 2 s flush. A file that closes
+as a segment is read to its end before the new one is opened, so nothing is skipped or read twice.
 
 ## The Mac app's half
 
 The Mac app (0.2 and later) records what only the app can see, in `~/.marver/perf/`: `app.jsonl` (Marver Dev writes
 `app-dev.jsonl`; one writer per file), one line per event with `{ v, ts, kind, app, seq, flavour, machine }` - `app`
-names the launch, `seq` counts its lines, `machine` the profile the line was written on. Every 5 s the app samples its
+names the launch, `seq` counts its lines, `machine` the profile the line was written on. From app 1.0.1 the `sample` and
+`agx` lines are in `samples.jsonl` (`samples-dev.jsonl`), their rows unchanged, and one `seq` runs across both files. Every 5 s the app samples its
 processes (`getAppMetrics()`: CPU from cumulative time, memory as each process's working set, a canvas renderer's own
 footprint from its page, the memory pressure level), keeps the last minute in memory and writes one `sample` line a
 minute; and it records renderer and GPU process ends, hangs, GPU changes, power and thermal events, each tab's state
@@ -388,9 +419,19 @@ its `tab`, `ws`, `commit` and `page` - the page id the shell's hello sent, which
 error main did not catch: a `main-error` line, in `app-dev.jsonl` for Marver Dev, written the moment it happens).
 `machine/<hash>.json` holds one profile per distinct machine state (the chip, the displays and their rates, the
 GPU's renderer, power): a display change, the window moved to another display, or a GPU fallback makes a new one, and
-old lines keep theirs. The app keeps 14 days of it (`keepPerfDays`, pruned a few seconds after launch and then
-daily), at most 5 MB a file, 50 flash pictures and 10 crash reports; a profile a headless run wrote stays at least 14
-days, as long as a repo's `runs.jsonl` may name it.
+old lines keep theirs. The app keeps 14 days of it (`keepPerfDays`), each file a live file plus closed segments as above
+(4 MB or 24 h for `app.jsonl`, cap 16 MB; 8 MB or 24 h for `samples.jsonl`, cap 128 MB), checked a few seconds after
+launch and then hourly; 50 flash pictures and 10 crash reports; a profile a headless run wrote stays at least 14 days, as
+long as a repo's `runs.jsonl` may name it.
+
+Each launch writes one `launch` line, whatever the recorder setting: ms from process start to ready, to the window shown,
+and to the first local canvas uncovered, with that canvas's `page`, which joins its boot `load`; what was restored; and with
+no canvas after 30 s, why (`home`, `none-restored`, `timeout`).
+
+The white-out detector watches more than gestures: a tab being shown, and with a 0.30 canvas a board load, a theme switch
+and an on-screen frame's reload. Outside gestures it takes at most 3 s of capture per rolling minute, each capture charged at
+its true length, and a window ends at 10 s. A minute's `sample` carries `whiteout`: its windows, captures, capture time, and
+the time it could not cover, by why (`stage`, a play stage covering the canvas; `budget`; `hidden`). A candidate says `why`.
 
 `marver perf` joins the two halves by `page`, so each app event lands on the board load it happened in:
 
@@ -407,7 +448,7 @@ days, as long as a repo's `runs.jsonl` may name it.
   that it was pruned since. A mark is dated by the moment you pressed it (the state the app took then), not by its
   line, which is written a second or two later, once the picture and the GPU figures are in. The picture is the app's views as the app stacks them, not the screen: it holds no traffic
   lights and may miss a flash that happens in the compositor. Marks on Home or other canvases are counted (`--all`
-  shows them). White-out candidates, found automatically during gestures, are listed apart: automatic, not verified.
+  shows them). White-out candidates, found automatically, are listed apart with what they happened during: automatic, not verified.
 - `--machine`: the profiles, grouped by host (the app and a headless run of one Mac share its `hostHash`), which is
   current, and how many records and runs name each.
 

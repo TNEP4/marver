@@ -79,6 +79,7 @@ import { T } from './timings.ts'
 import { commitLayout } from './layout.ts'
 import { answer as presentAnswer, forget as presentForget, gpuGone, noteGpu } from './present.ts'
 import { appMetrics, gpuIdentity, recorder, sampler } from './recorder.ts'
+import { launchRestored } from './launch.ts'
 import { lastPressure } from './pressure.ts'
 import { actUnload as unloadAct, forceUnload, takeAct, unloadGone as actGone, type ActPorts } from './unload-act.ts'
 import { isQuitting, request as shutdownRequest, shutdownState, startShutdown, type RestartAlert } from './shutdown.ts'
@@ -1435,10 +1436,16 @@ export function startViews(i: StartInput): void {
   // restore (v1.12 r1 #5): only the active tab loads; the others when first shown. The file is read whatever
   // restoreTabs says, but restores only with it on: off, it is still written - keeping the saved boards of the
   // canvases not running (snapshotFile) - so turning it back on restores (A2.14 #23)
+  const restoreAt = performance.now()   // spec 30 #37: what main spent restoring, and what came back
   tabsFile = store.read() ?? null
   const plan = restorePlan(tabsFile, trust.entries(), { restore: i.files.config.restoreTabs, firstLaunch: !!i.firstLaunch })
   applyRestore(plan)
   ensureAppViews()
+  {
+    const restored = allTabs().filter((t) => (t.kind === 'local' || t.kind === 'remote') && t.open)
+    const front = activeTab()?.kind
+    launchRestored({ restored: restored.length, local: restored.filter((t) => t.kind === 'local').length, remote: restored.filter((t) => t.kind === 'remote').length, active: front ?? null }, performance.now() - restoreAt)
+  }
   trust.onRegistry((e) => {
     const t = e.kind === 'gone' ? allTabs().find((x) => x.reg?.instance === e.instance) : undefined
     onRegistry(e)

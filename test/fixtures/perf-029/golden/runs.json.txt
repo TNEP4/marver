@@ -1,0 +1,471 @@
+{
+  "days": 14,
+  "runs": [
+    {
+      "v": 1,
+      "script": 1,
+      "run": "aaaaaaaaaaaaaaa1",
+      "where": "headless",
+      "ts": 1793692800000,
+      "board": "main",
+      "inputs": {
+        "hash": "0123456789abcdef",
+        "files": 1234
+      },
+      "inputsEnd": "0123456789abcdef",
+      "frames": 7,
+      "marver": "0.29.0",
+      "chrome": "156.0.8078.48",
+      "flags": [
+        "--headless=new"
+      ],
+      "renderer": {
+        "gpuCompositing": "enabled"
+      },
+      "machine": "7b2b481bec96d801",
+      "host": {
+        "chip": "Apple M3 Max",
+        "cores": {
+          "total": 16,
+          "p": 12,
+          "e": 4
+        },
+        "model": "Mac15,9",
+        "memGB": 64,
+        "os": "26.1",
+        "arch": "arm64"
+      },
+      "power": "ac",
+      "slow": false,
+      "bakes": "warm",
+      "postersMissing": 0,
+      "saved": {
+        "measuring": 3,
+        "savedHeights": 2
+      },
+      "loadToSettledMs": 3000,
+      "settledMs": 2600,
+      "moves": 3,
+      "lateMoves": 0,
+      "gestures": 3,
+      "p50": 8.3,
+      "p95": 16.7,
+      "over33ms": 1,
+      "heapPeakMB": 120,
+      "errors": 0,
+      "forbidden": 0,
+      "refusedInPage": 0,
+      "overlapped": false,
+      "valid": true
+    },
+    {
+      "v": 1,
+      "script": 1,
+      "run": "aaaaaaaaaaaaaaa2",
+      "where": "headless",
+      "ts": 1793696400000,
+      "board": "main",
+      "inputs": {
+        "hash": "0123456789abcdef",
+        "files": 1234
+      },
+      "inputsEnd": "0123456789abcdef",
+      "frames": 7,
+      "marver": "0.29.0",
+      "chrome": "156.0.8078.48",
+      "flags": [
+        "--headless=new"
+      ],
+      "renderer": {
+        "gpuCompositing": "enabled"
+      },
+      "machine": "7b2b481bec96d801",
+      "host": {
+        "chip": "Apple M3 Max",
+        "cores": {
+          "total": 16,
+          "p": 12,
+          "e": 4
+        },
+        "model": "Mac15,9",
+        "memGB": 64,
+        "os": "26.1",
+        "arch": "arm64"
+      },
+      "power": "ac",
+      "slow": false,
+      "bakes": "warm",
+      "postersMissing": 0,
+      "saved": {
+        "measuring": 3,
+        "savedHeights": 2
+      },
+      "loadToSettledMs": 3100,
+      "settledMs": 2600,
+      "moves": 3,
+      "lateMoves": 0,
+      "gestures": 3,
+      "p50": 8.3,
+      "p95": 17,
+      "over33ms": 1,
+      "heapPeakMB": 120,
+      "errors": 0,
+      "forbidden": 0,
+      "refusedInPage": 0,
+      "overlapped": false,
+      "valid": true
+    },
+    {
+      "v": 1,
+      "script": 1,
+      "run": "aaaaaaaaaaaaaaa3",
+      "where": "headless",
+      "ts": 1793700000000,
+      "board": "main",
+      "inputs": {
+        "hash": "fedcba9876543210",
+        "files": 1235
+      },
+      "inputsEnd": "fedcba9876543210",
+      "frames": 7,
+      "marver": "0.29.0",
+      "chrome": "156.0.8078.48",
+      "flags": [
+        "--headless=new"
+      ],
+      "renderer": {
+        "gpuCompositing": "enabled"
+      },
+      "machine": "7b2b481bec96d801",
+      "host": {
+        "chip": "Apple M3 Max",
+        "cores": {
+          "total": 16,
+          "p": 12,
+          "e": 4
+        },
+        "model": "Mac15,9",
+        "memGB": 64,
+        "os": "26.1",
+        "arch": "arm64"
+      },
+      "power": "ac",
+      "slow": false,
+      "bakes": "warm",
+      "postersMissing": 0,
+      "saved": {
+        "measuring": 3,
+        "savedHeights": 2
+      },
+      "loadToSettledMs": 3900,
+      "settledMs": 2600,
+      "moves": 3,
+      "lateMoves": 0,
+      "gestures": 3,
+      "p50": 8.3,
+      "p95": 21,
+      "over33ms": 4,
+      "heapPeakMB": 120,
+      "errors": 0,
+      "forbidden": 0,
+      "refusedInPage": 0,
+      "overlapped": false,
+      "valid": true
+    },
+    {
+      "v": 1,
+      "script": 1,
+      "run": "aaaaaaaaaaaaaaa4",
+      "where": "headless",
+      "ts": 1793703600000,
+      "board": "main",
+      "inputs": {
+        "hash": "0123456789abcdef",
+        "files": 1234
+      },
+      "inputsEnd": "0123456789abcdef",
+      "frames": 7,
+      "marver": "0.29.0",
+      "chrome": "156.0.8078.48",
+      "flags": [
+        "--headless=new"
+      ],
+      "renderer": {
+        "gpuCompositing": "enabled"
+      },
+      "machine": "7b2b481bec96d801",
+      "host": {
+        "chip": "Apple M3 Max",
+        "cores": {
+          "total": 16,
+          "p": 12,
+          "e": 4
+        },
+        "model": "Mac15,9",
+        "memGB": 64,
+        "os": "26.1",
+        "arch": "arm64"
+      },
+      "power": "ac",
+      "slow": false,
+      "bakes": "warm",
+      "postersMissing": 0,
+      "saved": {
+        "measuring": 3,
+        "savedHeights": 2
+      },
+      "loadToSettledMs": 3000,
+      "settledMs": 2600,
+      "moves": 3,
+      "lateMoves": 0,
+      "gestures": 3,
+      "p50": 8.3,
+      "p95": 16.7,
+      "over33ms": 1,
+      "heapPeakMB": 120,
+      "errors": 0,
+      "forbidden": 0,
+      "refusedInPage": 0,
+      "overlapped": true,
+      "valid": true
+    },
+    {
+      "v": 1,
+      "script": 1,
+      "run": "aaaaaaaaaaaaaaa5",
+      "where": "headless",
+      "ts": 1793705400000,
+      "board": "main",
+      "inputs": {
+        "hash": "0123456789abcdef",
+        "files": 1234
+      },
+      "inputsEnd": "0123456789abcdef",
+      "frames": 7,
+      "marver": "0.29.0",
+      "chrome": "156.0.8078.48",
+      "flags": [
+        "--headless=new"
+      ],
+      "renderer": {
+        "gpuCompositing": "enabled"
+      },
+      "machine": "7b2b481bec96d801",
+      "host": {
+        "chip": "Apple M3 Max",
+        "cores": {
+          "total": 16,
+          "p": 12,
+          "e": 4
+        },
+        "model": "Mac15,9",
+        "memGB": 64,
+        "os": "26.1",
+        "arch": "arm64"
+      },
+      "power": "ac",
+      "slow": false,
+      "bakes": "warm",
+      "postersMissing": 0,
+      "saved": {
+        "measuring": 3,
+        "savedHeights": 2
+      },
+      "loadToSettledMs": null,
+      "settledMs": 2600,
+      "moves": 3,
+      "lateMoves": 0,
+      "gestures": 3,
+      "p50": 8.3,
+      "p95": 16.7,
+      "over33ms": 1,
+      "heapPeakMB": 120,
+      "errors": 0,
+      "forbidden": 0,
+      "refusedInPage": 0,
+      "overlapped": false,
+      "valid": false,
+      "invalidReason": "cut",
+      "cut": "timeout"
+    }
+  ],
+  "boards": [
+    {
+      "board": "main",
+      "cohort": {
+        "script": 1,
+        "board": "main",
+        "chrome": "156.0.8078.48",
+        "flags": [
+          "--headless=new"
+        ],
+        "machine": "7b2b481bec96d801",
+        "power": "ac",
+        "slow": false,
+        "bakes": "warm"
+      },
+      "runs": 3,
+      "latest": {
+        "run": "aaaaaaaaaaaaaaa3",
+        "ts": 1793700000000,
+        "inputs": "fedcba9876543210",
+        "loadToSettledMs": 3900,
+        "p50": 8.3,
+        "p95": 21,
+        "over33ms": 4,
+        "heapPeakMB": 120,
+        "moves": 3
+      },
+      "afterChange": {
+        "from": {
+          "run": "aaaaaaaaaaaaaaa2",
+          "ts": 1793696400000,
+          "inputs": "0123456789abcdef",
+          "loadToSettledMs": 3100,
+          "p50": 8.3,
+          "p95": 17,
+          "over33ms": 1,
+          "heapPeakMB": 120,
+          "moves": 3
+        },
+        "to": {
+          "run": "aaaaaaaaaaaaaaa3",
+          "ts": 1793700000000,
+          "inputs": "fedcba9876543210",
+          "loadToSettledMs": 3900,
+          "p50": 8.3,
+          "p95": 21,
+          "over33ms": 4,
+          "heapPeakMB": 120,
+          "moves": 3
+        },
+        "deltas": {
+          "loadToSettledMs": 800,
+          "p95": 4,
+          "over33ms": 3,
+          "heapPeakMB": 0
+        }
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "v": 1,
+      "script": 1,
+      "run": "aaaaaaaaaaaaaaa5",
+      "where": "headless",
+      "ts": 1793705400000,
+      "board": "main",
+      "inputs": {
+        "hash": "0123456789abcdef",
+        "files": 1234
+      },
+      "inputsEnd": "0123456789abcdef",
+      "frames": 7,
+      "marver": "0.29.0",
+      "chrome": "156.0.8078.48",
+      "flags": [
+        "--headless=new"
+      ],
+      "renderer": {
+        "gpuCompositing": "enabled"
+      },
+      "machine": "7b2b481bec96d801",
+      "host": {
+        "chip": "Apple M3 Max",
+        "cores": {
+          "total": 16,
+          "p": 12,
+          "e": 4
+        },
+        "model": "Mac15,9",
+        "memGB": 64,
+        "os": "26.1",
+        "arch": "arm64"
+      },
+      "power": "ac",
+      "slow": false,
+      "bakes": "warm",
+      "postersMissing": 0,
+      "saved": {
+        "measuring": 3,
+        "savedHeights": 2
+      },
+      "loadToSettledMs": null,
+      "settledMs": 2600,
+      "moves": 3,
+      "lateMoves": 0,
+      "gestures": 3,
+      "p50": 8.3,
+      "p95": 16.7,
+      "over33ms": 1,
+      "heapPeakMB": 120,
+      "errors": 0,
+      "forbidden": 0,
+      "refusedInPage": 0,
+      "overlapped": false,
+      "valid": false,
+      "invalidReason": "cut",
+      "cut": "timeout"
+    }
+  ],
+  "overlapped": [
+    {
+      "v": 1,
+      "script": 1,
+      "run": "aaaaaaaaaaaaaaa4",
+      "where": "headless",
+      "ts": 1793703600000,
+      "board": "main",
+      "inputs": {
+        "hash": "0123456789abcdef",
+        "files": 1234
+      },
+      "inputsEnd": "0123456789abcdef",
+      "frames": 7,
+      "marver": "0.29.0",
+      "chrome": "156.0.8078.48",
+      "flags": [
+        "--headless=new"
+      ],
+      "renderer": {
+        "gpuCompositing": "enabled"
+      },
+      "machine": "7b2b481bec96d801",
+      "host": {
+        "chip": "Apple M3 Max",
+        "cores": {
+          "total": 16,
+          "p": 12,
+          "e": 4
+        },
+        "model": "Mac15,9",
+        "memGB": 64,
+        "os": "26.1",
+        "arch": "arm64"
+      },
+      "power": "ac",
+      "slow": false,
+      "bakes": "warm",
+      "postersMissing": 0,
+      "saved": {
+        "measuring": 3,
+        "savedHeights": 2
+      },
+      "loadToSettledMs": 3000,
+      "settledMs": 2600,
+      "moves": 3,
+      "lateMoves": 0,
+      "gestures": 3,
+      "p50": 8.3,
+      "p95": 16.7,
+      "over33ms": 1,
+      "heapPeakMB": 120,
+      "errors": 0,
+      "forbidden": 0,
+      "refusedInPage": 0,
+      "overlapped": true,
+      "valid": true
+    }
+  ]
+}

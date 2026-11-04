@@ -13,7 +13,7 @@
  * holds two); `board` is sent when the frame count or the sleeping count changed, read at each change of the board's
  * nodes and again at each gesture's end (frames fall asleep without the store moving), never more.
  */
-import type { PerfMsg, WatchWhy } from '../../shared/app-api.ts'
+import { PERF_BOUNDS, type PerfMsg, type WatchWhy } from '../../shared/app-api.ts'
 import { APP } from './marver-app.ts'
 import { useStore } from './store.ts'
 import { sleepingCount } from './canvas/sleep.ts'
@@ -91,13 +91,29 @@ export function watchSupported(): boolean {
   try { return PERF_ON && APP?.perfInfo?.().watch === true } catch { return false }
 }
 
+/** The windows this page has open, oldest first, by reason: each its `seq` (#38). */
+const watching: Record<WatchWhy, number[]> = { load: [], theme: [], reload: [] }
+let watchSeq = 0
 /**
  * Spec 30 R8 #38: a white-out window this page opens (`on`) or closes - `load` from the request to settled or cut,
- * `theme` from a switch to its outcome, `reload` from an on-screen job's `startReload` to its ready. Callers: the
- * app-store stream (`load`, from recorder-seams.ts `load`), signals (`theme`), edits (`reload`). A stub until the
- * app-store stream fills it: one `seq` per window, sent only when `watchSupported()`.
+ * `theme` from a switch to its outcome, `reload` from an on-screen job's `startReload` to its ready. Callers: recorder-
+ * self.ts (`load`), signals (`theme`), edits (`reload`). One `seq` per window, its oldest of that reason closed first;
+ * sent only when `watchSupported()`. Main ends a window at 10 s whatever is said here.
  */
-export function watchWindow(_why: WatchWhy, _on: boolean): void {}
+export function watchWindow(why: WatchWhy, on: boolean): void {
+  if (!watchSupported()) return
+  const open = watching[why]
+  if (on) {
+    watchSeq = watchSeq >= PERF_BOUNDS.counter - 1 ? 1 : watchSeq + 1
+    open.push(watchSeq)
+    // a window never closed (its caller's page state lost) goes on main's 10 s: never a list without end
+    if (open.length > 64) open.shift()
+    sendPerf({ kind: 'watch', on: true, seq: watchSeq, why })
+    return
+  }
+  const seq = open.shift()
+  if (seq !== undefined) sendPerf({ kind: 'watch', on: false, seq, why })
+}
 
 /** One message to the app, never throwing. */
 export function sendPerf(p: PerfMsg): void {

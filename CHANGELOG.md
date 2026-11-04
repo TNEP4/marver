@@ -2,6 +2,22 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## 0.30.0 - unreleased
+
+### The complete recorder (spec 30)
+
+Added:
+
+- `npx marver perf --all`: every canvas the Mac knows, one summary, no repo needed. `npx marver perf --live`: a tail in the terminal.
+- `npx marver perf run <board> --recorder core|full`, and a `self` record every 5 minutes: the recorder's own cost.
+- With app 1.0.1, white-out windows around a board load, a theme switch and a frame's reload.
+
+Changed:
+
+- Every perf log keeps 14 days, whole: a live file plus closed segments deleted by age, never rewritten, with a safety cap per file.
+
+Compatibility: 0.30 reads 0.29's records in every view, with the same output. **marver 0.29 reading 0.30's data** skips the new kinds, reads only each live file (so it shows less history), and its `--crashes` loses "the minute before", since samples moved to `samples.jsonl`.
+
 ## 0.29.0 - 2026-10-31
 
 ### Highlights

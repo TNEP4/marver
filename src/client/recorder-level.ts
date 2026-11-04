@@ -11,7 +11,7 @@
  * Owner: app-store (R15) - the run's `--recorder` input, `self` records and the cost test. Every other stream calls
  * `fullRecorder()` (or starts from recorder.ts's stream starters, which are not called under `core`).
  */
-import { RECORDER_PARAM, type RecorderLevel } from '../shared/perf-records.ts'
+import { RECORDER_PARAM, SELF_HOOKS, type RecorderLevel, type SelfHook } from '../shared/perf-records.ts'
 
 /** This document's level, read once at module load. */
 export const RECORDER_LEVEL: RecorderLevel = (() => {
@@ -23,3 +23,19 @@ export const RECORDER_LEVEL: RecorderLevel = (() => {
 export const recorderLevel = (): RecorderLevel => RECORDER_LEVEL
 /** Does this document record what spec 30 adds? */
 export const fullRecorder = (): boolean => RECORDER_LEVEL === 'full'
+
+/**
+ * Test-only (#58): `?mvslowhook=<hook>` on the shell's URL adds a 5 ms busy wait to that hook, so the cost run has a
+ * cost to find: the run must fail with it, or the run measures nothing. Dev only, set only by a test.
+ */
+export const SLOW_HOOK_PARAM = 'mvslowhook'
+export const SLOW_HOOK_MS = 5
+export const SLOW_HOOK: SelfHook | null = (() => {
+  if (!import.meta.env.DEV) return null
+  try { const h = new URLSearchParams(location.search).get(SLOW_HOOK_PARAM); return (SELF_HOOKS as readonly string[]).includes(h ?? '') ? h as SelfHook : null } catch { return null }
+})()
+/** The wait itself: this thread held, as a hook's work would hold it. */
+export function busyWait(ms: number): void {
+  const end = performance.now() + ms
+  while (performance.now() < end) { /* the point */ }
+}
