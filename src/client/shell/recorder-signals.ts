@@ -292,6 +292,8 @@ function onAnswered(a: Answered): void {
   if (status === 0 && a.init.signal?.aborted) return
   const route = normRoute(a.url), method = (a.init.method ?? 'GET').toUpperCase()
   if (status === 409 && method === 'PUT' && route === 'boards/:board') return
+  // a fresh page's first ask: the refusal primes the double-submit cookie and the caller asks again (store.ts `syncWorking`)
+  if (status === 403 && method === 'GET' && route === 'work') return
   if (!takeSource('api')) return
   signalSink.error({ source: 'api', message: `${method} ${route} ${status}`, fields: { route, method, status, ms: Math.round(a.ms) } })
 }

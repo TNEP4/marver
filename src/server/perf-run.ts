@@ -71,6 +71,10 @@ export const RUN_T = {
   runMs: 420_000,
 } as const
 /** The page's own bound on `flush()` (recorder.ts): the driver waits that long, and `callMs` more. */
+/** Spec 30's error sources that do not make a run invalid (above), and the drops under a source's own limit: none of them is
+ *  a frame, a move or an error the run counts. */
+const SOFT_SOURCES = new Set<unknown>(['console', 'api', 'resource'])
+const OWN_LIMITS = new Set<unknown>(['errors', 'console', 'api', 'resource', 'cmd', 'theme', 'mode'])
 const FLUSH_MS = 15_000
 
 /** A run while it is registered. */
@@ -461,11 +465,13 @@ export function runLine(reg: RunReg, s: RunSeen): RunLine {
   const own = load ? recs.filter((r) => r.load === load.request) : []
   const commit = own.find((r) => r.kind === 'commit'), settled = own.find((r) => r.kind === 'settled')
   const moves = own.filter((r) => r.kind === 'move')
-  const errors = recs.filter((r) => r.kind === 'error').length
+  // a console error, a failed request or a missing image is on record, and the run still measured what it measures (spec 30
+  // R5's sources); what breaks a frame, the shell or the build is not a measurement
+  const errors = recs.filter((r) => r.kind === 'error' && !SOFT_SOURCES.has(r.source)).length
   const badFrames = settled ? (settled.missing ?? 0) + (settled.neverReady ?? 0) : 0
   // records the page lost on its side - its queue's bound, a send that never landed - said by a `dropped` record (the
   // errors past a load's 50 are `errors`' own); the count may undercount moves, frames or errors (review of a3-runs)
-  const lost = recs.filter((r) => r.kind === 'dropped' && r.reason !== 'errors').reduce((n, r) => n + (typeof r.n === 'number' && r.n > 0 ? r.n : 1), 0)
+  const lost = recs.filter((r) => r.kind === 'dropped' && !OWN_LIMITS.has(r.reason)).reduce((n, r) => n + (typeof r.n === 'number' && r.n > 0 ? r.n : 1), 0)
     + (reg.overflow ?? 0)   // and the server's: records past the collector's bound
   const reasons: [InvalidReason, boolean][] = [
     ['cancelled', s.cancelled],
