@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { CMD_DEADLINE_MAX_MS, commandsSummary } from '../src/cli/perf-commands.ts'
 import { Browser } from './browser.ts'
 import { fixtureRoot, startDev, type Dev } from './dev-server.ts'
 
@@ -529,20 +530,46 @@ describe('a key forwarded by a frame (#51)', () => {
 })
 
 describe('a renderer lost mid-command (#48)', () => {
-  it('leaves its start with no end: what a reader calls interrupted', async (ctx) => {
-    if (!browser) return ctx.skip()
-    const t = await open()
+  const reloads = (): Record<string, any>[] => {
+    try { return readFileSync(join(perfDir(), 'reloads.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) } catch { return [] }
+  }
+  /** A copy-image whose render never answers: its end cannot come before the page goes. */
+  const hung = async (t: Tab) => {
     await select(t, 'n-one')
-    // a render that never answers: its end cannot come before the renderer goes
     await ev(t, `(() => { const f = window.fetch; window.fetch = (u, i) => (String(u).includes('/api/shot') ? new Promise(() => {}) : f(u, i)); return 1 })()`)
-    await browser.grant(t.s, dev!.origin, ['clipboardReadWrite', 'clipboardSanitizedWrite'])
+    await browser!.grant(t.s, dev!.origin, ['clipboardReadWrite', 'clipboardSanitizedWrite'])
     const from = of(t, 'copy-image').length
     await key(t, 'i')
-    const start = await until(() => { void flush(t); return of(t, 'copy-image').slice(from).find((r) => r.phase === 'start') }, 10_000, 'the start on file')
+    return until(() => { void flush(t); return of(t, 'copy-image').slice(from).find((r) => r.phase === 'start') }, 10_000, 'the start on file')
+  }
+
+  it('a reload in its tab: the next page names the one it replaced, and that start reads `interrupted` from then', async (ctx) => {
+    if (!browser) return ctx.skip()
+    const t = await open()
+    const start = await hung(t)
+    const mine = (rs: Record<string, any>[]) => rs.filter((r) => r.kind !== 'cmd' || r.id === start.id)
+    expect(commandsSummary(mine(lines()), Date.now(), reloads()), 'its page may still answer').toMatchObject({ interrupted: 0, unmatched: 0 })
+    await browser.send('Page.reload', {}, t.s)
+    await browser.until(t.s, `!!window.__mvRecorder && window.__mvRecorder.page !== ${JSON.stringify(t.page)}`, 30_000)
+    const page = await ev(t, 'window.__mvRecorder.page')
+    const boot = await until(() => reloads().find((l) => l.kind === 'shell-boot' && l.page === page), 20_000, 'the next page\'s shell-boot')
+    expect(boot.prev).toBe(t.page)
+    expect(commandsSummary(mine(lines()), Date.now(), reloads())).toMatchObject({ interrupted: 1, unmatched: 0 })
+  }, 90_000)
+
+  it('leaves its start with no end, and with nothing to say the page went a reader says `unmatched`, never `interrupted`', async (ctx) => {
+    if (!browser) return ctx.skip()
+    const t = await open()
+    const start = await hung(t)
     void browser.send('Page.crash', {}, t.s).catch(() => { /* the renderer goes, the session with it */ })   // never answered
     tabs.splice(tabs.indexOf(t.s), 1)
     await wait(1_500)
-    expect(lines().filter((r) => r.kind === 'cmd' && r.id === start.id).map((r) => r.phase)).toEqual(['start'])
+    const rs = lines().filter((r) => r.kind === 'cmd' && r.id === start.id)
+    expect(rs.map((r) => r.phase)).toEqual(['start'])
+    expect(commandsSummary(rs, start.ts + CMD_DEADLINE_MAX_MS + 1, reloads())).toMatchObject({ interrupted: 0, unmatched: 1 })
+    // the app's word for the same renderer is the evidence (test/r30-store-all.test.ts has the rest)
+    const gone = { v: 1, ts: Date.now(), kind: 'gone', app: 'a00000000001', seq: 1, flavour: 'dev', page: t.page, role: 'canvas', reason: 'killed', ours: false }
+    expect(commandsSummary(rs, Date.now(), [...reloads(), gone])).toMatchObject({ interrupted: 1, unmatched: 0 })
   }, 60_000)
 })
 

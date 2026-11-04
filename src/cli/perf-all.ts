@@ -102,8 +102,8 @@ export function editToRedraw(reloads: readonly Rec[]): number[] {
   return out
 }
 
-/** One canvas's figures from what it recorded since `since`. */
-export function canvasSummary(c: KnownCanvas, since: number, now = Date.now()): CanvasSummary {
+/** One canvas's figures from what it recorded since `since`; `app`: the app's records, for what they say of its pages. */
+export function canvasSummary(c: KnownCanvas, since: number, now = Date.now(), app: readonly AppRecord[] = []): CanvasSummary {
   const page = dedupeSeq(ownLoads(readPage(c.root, since)).records)
   const reloads = dedupeSeq(readReloads(c.root, since))
   const loads: LoadSummary[] = loadsSummary(page)
@@ -128,7 +128,7 @@ export function canvasSummary(c: KnownCanvas, since: number, now = Date.now()): 
     themeMaxMs: quantile(nums(page.filter((r) => r.kind === 'theme').map((r) => r.maxMs)), 1),
     commentsShownP50Ms: quantile(nums(page.filter((r) => r.kind === 'mode' && r.mode === 'comments' && r.phase === 'enter').map((r) => r.shownMs)), 0.5),
     errors,
-    commands: commandsSummary(page, now),
+    commands: commandsSummary(page, now, [...reloads, ...app]),
     retentionCap: [...page, ...reloads].filter((r) => r.kind === 'dropped' && r.reason === 'retention-cap').reduce((n, r) => n + (Number(r.n) || 0), 0),
   }
 }
@@ -185,7 +185,8 @@ export function allSummary(o: { days?: number | string; home?: string; now?: num
   const now = o.now ?? Date.now()
   const since = now - days * 86_400_000
   const home = o.home ?? marverHome()
-  return { days, canvases: knownCanvases(home).map((c) => canvasSummary(c, since, now)), app: appSummary(readAppLog(home, since), now) }
+  const app = readAppLog(home, since)
+  return { days, canvases: knownCanvases(home).map((c) => canvasSummary(c, since, now, app)), app: appSummary(app, now) }
 }
 
 // ---- the words -----------------------------------------------------------------------------------------------------
@@ -196,12 +197,13 @@ const tilde = (p: string) => { const h = homedir(); return p === h ? '~' : p.sta
 const list = (o: Record<string, number>) => Object.entries(o).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([k, n]) => `${k} ${n}`).join(', ')
 const num1 = (v: number | null) => (v === null ? '-' : String(Math.round(v * 10) / 10))
 
-/** A command's lines: failed and unobserved by code, interrupted. */
+/** A command's lines: failed and unobserved by code, interrupted, and a start nothing explains. */
 function commandsWords(c: CommandsSummary): string[] {
   return [
     ...(Object.keys(c.failed).length ? [`commands failed: ${list(c.failed)}`] : []),
     ...(Object.keys(c.unobserved).length ? [`unobserved: ${list(c.unobserved)}`] : []),
     ...(c.interrupted ? [`interrupted: ${c.interrupted}`] : []),
+    ...(c.unmatched ? [`no end, nothing says why: ${c.unmatched}`] : []),
   ]
 }
 

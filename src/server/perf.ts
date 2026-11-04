@@ -381,7 +381,7 @@ const strings = (v: unknown, n = RELOAD_BOUNDS.idsPerLine) => (Array.isArray(v) 
 
 /** A shell line's fields by kind; null = dropped. `dropped` is R13's own: what the reload Outbox lost, counted (#5). */
 const SHELL_BODY: Record<ShellReloadKind | 'dropped', (r: Record<string, unknown>) => Record<string, unknown> | null> = {
-  'shell-boot': (r) => ({ nav: oneOf(r.nav, NAV_TYPES), resumed: flag(r.resumed) }),
+  'shell-boot': (r) => ({ nav: oneOf(r.nav, NAV_TYPES), resumed: flag(r.resumed), prev: typeof r.prev === 'string' && ID.test(r.prev) ? r.prev : undefined }),
   ready: (r) => {
     const node = str(r.node)
     if (!node) return null

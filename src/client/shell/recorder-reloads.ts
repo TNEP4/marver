@@ -228,12 +228,20 @@ function leave(): void {
   try { void post([...fit, ...droppedNow(lost)], true).catch(() => {}) } catch { /* going anyway */ }
 }
 
+const TAB_PAGE = 'mv-tab-page'
 /** A line, as `logReload` built it. `shell-boot` adds what only the page knows (#16). */
 function take(line: Record<string, unknown>): void {
   if (line.kind === 'shell-boot') {
     const nav = (performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined)?.type
     if (nav) line.nav = bound(nav, 16)
     if (resumed) line.resumed = true
+    // the page this tab showed before this one (sessionStorage is the tab's, and outlives a reload): what says it ended,
+    // a start of its with no end is interrupted (#48)
+    try {
+      const prev = sessionStorage.getItem(TAB_PAGE)
+      if (prev && prev !== PAGE_ID) line.prev = prev
+      sessionStorage.setItem(TAB_PAGE, PAGE_ID)
+    } catch { /* storage off: no evidence, and the reader says so */ }
   }
   outbox.push(line as PerfRecord)
   armSend()

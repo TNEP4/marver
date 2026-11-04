@@ -21,7 +21,7 @@ const temp = () => { const r = mkdtempSync(join(tmpdir(), 'mv-batches-')); mkdir
 
 /** One valid line per kind, as the shell sends them. */
 const VALID: Record<string, Record<string, unknown>> = {
-  'shell-boot': { nav: 'reload', resumed: true },
+  'shell-boot': { nav: 'reload', resumed: true, prev: 'bbbbbbbbbbbb' },
   ready: { cause: 'job', node: 'k-a', frame: 's/a', shown: 'e:3', ms: 412.4, revisions: [REV, '123456789012345:8'], queuedMs: 12.2, bootMs: 301.7, heldBy: 'offscreen', asleep: true },
   settled: { node: 'k-a', frame: 's/a', ms: 88.4 },
   invalidated: { revision: REV, asked: 3, offBoard: 1, onBoard: 4, awake: 3, asleep: 1, held: { offscreen: 2, leased: 1 }, parts: 1 },
@@ -32,6 +32,11 @@ const VALID: Record<string, Record<string, unknown>> = {
 }
 
 describe('a shell reload line', () => {
+  it('`shell-boot` keeps the page its tab showed before, only as a page id', () => {
+    expect(cleanReloadRecord(line('shell-boot', { prev: OTHER }))).toMatchObject({ prev: OTHER })
+    expect(cleanReloadRecord(line('shell-boot', { prev: SENTINEL }))).not.toHaveProperty('prev')
+    expect(cleanReloadRecord(line('shell-boot', {}))).not.toHaveProperty('prev')
+  })
   it('each kind round-trips through its allowlist; what is not on it never gets in', () => {
     for (const kind of [...SHELL_RELOAD_KINDS, 'dropped']) {
       const c = cleanReloadRecord(line(kind, { ...VALID[kind], extra: SENTINEL, note: SENTINEL }))

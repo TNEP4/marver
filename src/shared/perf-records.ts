@@ -250,8 +250,9 @@ export type CmdIn = (typeof CMD_IN)[number]
 /** #49: what a command came to. `unobserved` says only that no signal came by its deadline. */
 export const CMD_OUTCOMES = ['done', 'failed', 'noop', 'cancelled', 'unobserved'] as const
 export type CmdOutcome = (typeof CMD_OUTCOMES)[number]
-/** What a reader makes of a start with no end whose page or app is gone (#48): never written. */
-export type CmdReadOutcome = CmdOutcome | 'interrupted'
+/** What a reader makes of a start with no end (#48), never written: `interrupted` with evidence its page or app ended,
+ *  `unmatched` past its longest deadline with none. */
+export type CmdReadOutcome = CmdOutcome | 'interrupted' | 'unmatched'
 /** #48: a start and an end, or one `once` record for a command decided in its input's own turn. */
 export const CMD_PHASES = ['start', 'end', 'once'] as const
 export type CmdPhase = (typeof CMD_PHASES)[number]
@@ -378,7 +379,8 @@ export type HeldBy = (typeof HELD_BY)[number]
 
 /** Every shell line's envelope (#16): today's `tab`, and the page and seq the `(page, seq)` dedupe reads. */
 export interface ShellLineEnvelope { kind: ShellReloadKind; tab: string; page: string; seq: number; ts?: number }
-export interface ShellBootLine extends ShellLineEnvelope { kind: 'shell-boot'; nav?: 'navigate' | 'reload' | 'back_forward' | 'prerender'; resumed?: true }
+/** `prev`: the page this tab showed before this one - the reader's evidence that it ended (#48). */
+export interface ShellBootLine extends ShellLineEnvelope { kind: 'shell-boot'; nav?: 'navigate' | 'reload' | 'back_forward' | 'prerender'; resumed?: true; prev?: string }
 /** #14: today's `ready` (cause, node, frame, shown, ms) plus the token frozen at its navigation's start. */
 export interface ReadyLine extends ShellLineEnvelope {
   kind: 'ready'

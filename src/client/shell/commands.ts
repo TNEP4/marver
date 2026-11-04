@@ -720,7 +720,7 @@ export function shellReload(h: CmdHandle): void {
   const f = flightOf(h)
   if (!f) return
   writeStart(f)
-  try { sessionStorage.setItem(RELOAD_KEY, JSON.stringify({ id: f.id, cmd: f.name, at: Date.now() - ms(f) })) } catch { /* storage off: the reader says interrupted */ }
+  try { sessionStorage.setItem(RELOAD_KEY, JSON.stringify({ id: f.id, cmd: f.name, at: Date.now() - ms(f) })) } catch { /* storage off: its end cannot come, and the reader says so */ }
 }
 function reloaded(): void {
   try {

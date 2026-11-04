@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { allPerf, allSummary, appSummary, editToRedraw, knownCanvases, quantile } from '../src/cli/perf-all.ts'
+import { commandsSummary } from '../src/cli/perf-commands.ts'
 import { perfCommand } from '../src/cli/perf.ts'
 
 /**
@@ -94,7 +95,7 @@ describe('one summary per canvas (#46)', () => {
       env('cmd', 3 * MIN, { phase: 'once', id: 'aaaaaaaaaaa1', cmd: 'copy-image', via: 'key', in: 'shell', outcome: 'failed', why: 'clipboard-blocked', ms: 3 }),
       env('cmd', 3 * MIN, { phase: 'end', id: 'aaaaaaaaaaa2', cmd: 'board-open', outcome: 'unobserved', why: 'hidden', ms: 3 }),
       env('cmd', 3 * MIN, { phase: 'end', id: 'aaaaaaaaaaa2', cmd: 'board-open', outcome: 'done', ms: 30, late: true }),
-      // a start with no end: interrupted once its longest deadline has passed, not before
+      // a start with no end and nothing to say its page ended: unmatched once its longest deadline has passed, not before
       env('cmd', 10 * MIN, { phase: 'start', id: 'aaaaaaaaaaa3', cmd: 'reload', via: 'key', in: 'shell' }),
       env('cmd', 60_000, { phase: 'start', id: 'aaaaaaaaaaa4', cmd: 'reload', via: 'key', in: 'shell' }),
       { v: 1, ts: NOW - 1000, kind: 'dropped', n: 12, reason: 'retention-cap' },
@@ -121,7 +122,7 @@ describe('one summary per canvas (#46)', () => {
     expect(c.themeMaxMs).toBe(420)
     expect(c.commentsShownP50Ms).toBe(300)
     expect(c.errors).toEqual({ console: 2, frame: 1 })
-    expect(c.commands).toEqual({ failed: { 'clipboard-blocked': 1 }, unobserved: { hidden: 1 }, interrupted: 1 })
+    expect(c.commands).toEqual({ failed: { 'clipboard-blocked': 1 }, unobserved: { hidden: 1 }, interrupted: 0, unmatched: 1 })
     expect(c.retentionCap).toBe(12)
   })
 
@@ -145,6 +146,64 @@ describe('one summary per canvas (#46)', () => {
     writeFileSync(join(perf(one), `page.${NOW - 3 * DAY}-${NOW - 2 * DAY}.jsonl`), ln(load('a00000000006', 3 * DAY)))
     writeFileSync(join(perf(one), 'page.jsonl'), ln(load('a00000000007', 2 * DAY)))
     expect(allSummary({ now: NOW, home }).canvases[0]!.loads).toBe(2)
+  })
+})
+
+describe('a start with no end (#48): interrupted takes evidence, elapsed time alone says unmatched', () => {
+  const PAGE = 'p00000000001', OTHER = 'p00000000002', ID1 = 'c00000000001'
+  const pageStart = (ago: number) => ({ v: 1, ws: WS, page: PAGE, load: '-', seq: 1, ts: NOW - ago, kind: 'cmd', phase: 'start', id: ID1, cmd: 'copy-image', via: 'key', in: 'shell' })
+  const appLine = (kind: string, ago: number, o: Record<string, unknown> = {}) => ({ v: 1, ts: NOW - ago, kind, app: 'a00000000001', seq: 0, flavour: 'release', machine: null, ...o })
+  const LATE = 10 * MIN
+  const read = (records: Record<string, any>[], lifecycle?: Record<string, any>[]) => { const { interrupted, unmatched } = commandsSummary(records, NOW, lifecycle); return { interrupted, unmatched } }
+
+  it('a hung or suspended renderer, or a lost end: past its deadline, unmatched, never interrupted', () => {
+    expect(read([pageStart(LATE)], [])).toEqual({ interrupted: 0, unmatched: 1 })
+    expect(read([pageStart(LATE - 1), { ...pageStart(LATE), phase: 'end', outcome: 'done', ms: 1 }], [])).toEqual({ interrupted: 0, unmatched: 0 })
+  })
+  it('under its deadline, with nothing else: still going, neither', () => {
+    expect(read([pageStart(60_000)], [])).toEqual({ interrupted: 0, unmatched: 0 })
+  })
+  it('its tab booted another page: interrupted, at once', () => {
+    const boot = { ts: NOW - 1000, kind: 'shell-boot', tab: 's', page: OTHER, seq: 1, prev: PAGE }
+    expect(read([pageStart(2000)], [boot])).toEqual({ interrupted: 1, unmatched: 0 })
+  })
+  it('another tab\'s boot says nothing of this page', () => {
+    const boots = [{ ts: NOW - 1000, kind: 'shell-boot', tab: 't', page: OTHER, seq: 1 }, { ts: NOW - 900, kind: 'shell-boot', tab: 'u', page: 'p00000000003', seq: 1, prev: OTHER }]
+    expect(read([pageStart(LATE)], boots)).toEqual({ interrupted: 0, unmatched: 1 })
+  })
+  it('the app says its renderer is gone: interrupted', () => {
+    expect(read([pageStart(LATE)], [appLine('gone', 1000, { tab: 't1', page: PAGE, role: 'canvas', reason: 'killed', ours: false })])).toEqual({ interrupted: 1, unmatched: 0 })
+    expect(read([pageStart(LATE)], [appLine('gone', 1000, { tab: 't2', page: OTHER, role: 'canvas', reason: 'killed', ours: false })])).toEqual({ interrupted: 0, unmatched: 1 })
+  })
+  it('the app that held its page launched again after it: interrupted; a launch before it, or the other flavour\'s, says nothing', () => {
+    const held = appLine('shown', LATE + 1000, { tab: 't1', page: PAGE, ms: 3 })
+    const next = appLine('start', 1000, { app: 'a00000000002', seq: 0 })
+    expect(read([pageStart(LATE)], [held, next])).toEqual({ interrupted: 1, unmatched: 0 })
+    expect(read([pageStart(LATE)], [held, { ...next, ts: NOW - LATE - 500 }])).toEqual({ interrupted: 0, unmatched: 1 })
+    expect(read([pageStart(LATE)], [held, { ...next, flavour: 'dev' }])).toEqual({ interrupted: 0, unmatched: 1 })
+    expect(read([pageStart(LATE)], [next]), 'nothing ties this page to an app').toEqual({ interrupted: 0, unmatched: 1 })
+    const first = appLine('launch', LATE + 1000, { firstCanvas: { tab: 't1', page: PAGE, uncoveredMs: 900, cause: 'doc' } })
+    expect(read([pageStart(LATE)], [first, next]), 'the launch line names its first page').toEqual({ interrupted: 1, unmatched: 0 })
+  })
+  it('an app command: a later launch of its flavour is the evidence; its own start, or the other flavour\'s, is not', () => {
+    const start = appLine('cmd', LATE, { phase: 'start', id: ID1, cmd: 'reload', via: 'key', in: 'main' })
+    const own = appLine('start', LATE + 2000)
+    const next = appLine('start', 1000, { app: 'a00000000002' })
+    expect(read([own, start])).toEqual({ interrupted: 0, unmatched: 1 })
+    expect(read([own, start, { ...next, flavour: 'dev' }])).toEqual({ interrupted: 0, unmatched: 1 })
+    expect(read([own, start, next])).toEqual({ interrupted: 1, unmatched: 0 })
+  })
+  it('--all reads them together: a canvas\'s starts against its reload lines and the app\'s; the words tell them apart', () => {
+    const start = (id: string, page: string, seq: number) => ({ ...pageStart(LATE), id, page, seq })
+    writeFileSync(join(perf(one), 'page.jsonl'), ln([start('c00000000001', 'p00000000011', 1), start('c00000000002', 'p00000000012', 2), start('c00000000003', 'p00000000013', 3)]))
+    writeFileSync(join(perf(one), 'reloads.jsonl'), ln([{ ts: NOW - 1000, kind: 'shell-boot', tab: 's', page: 'p00000000099', seq: 1, prev: 'p00000000011' }]))
+    writeFileSync(join(home, 'perf', 'app.jsonl'), ln([appLine('gone', 1000, { tab: 't1', page: 'p00000000012', role: 'canvas', reason: 'killed', ours: false })]))
+    const c = allSummary({ now: NOW, home }).canvases.find((x) => x.name === 'One Canvas')!
+    expect(c.commands).toMatchObject({ interrupted: 2, unmatched: 1 })
+    const out: string[] = []
+    const log = vi.spyOn(console, 'log').mockImplementation((...a) => { out.push(a.join(' ')) })
+    try { allPerf({}) } finally { log.mockRestore() }
+    expect(out.join('\n')).toContain('interrupted: 2 · no end, nothing says why: 1')
   })
 })
 
