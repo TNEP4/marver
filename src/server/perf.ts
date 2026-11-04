@@ -11,63 +11,33 @@
  * stream reimplements with segments, retention by age and the safety cap, behind the same two calls; the records'
  * shapes and bounds are src/shared/perf-records.ts's. Each stream fills its own kinds' cleaners in `BODY`.
  */
-import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { appendFileSync, chmodSync, lstatSync, mkdirSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { checkRealDirs } from './boards.ts'
-import { DROP_REASONS as R30_DROP_REASONS, PAGE_KINDS as R30_PAGE_KINDS } from '../shared/perf-records.ts'
-
-const MAX = 2_000_000   // past this the oldest half goes: the log answers "what happened lately"
-/** page.jsonl's: one load of a 120-frame board writes ~140 KB (two thirds of it moves), so 2 MB held about fourteen
- *  such loads - hours, not the 14 days the lines may stay. 8 MB holds four times as many. */
-const PAGE_MAX = 8_000_000
-const maxOf = (file: string) => (basename(file) === 'page.jsonl' ? PAGE_MAX : MAX)
-const KEEP_MS = 14 * 86_400_000
-/** The logs whose lines age out and whose size is held at start (spec 28 A1.7, A1.13): every one with a `ts` per line. */
-const AGED = ['reloads.jsonl', 'page.jsonl', 'runs.jsonl', 'jam.jsonl']
+import { DROP_REASONS as R30_DROP_REASONS, PAGE_KINDS as R30_PAGE_KINDS, SELF_HOOKS, type SegmentedFile } from '../shared/perf-records.ts'
+import { adoptLive, closeLive, dueToClose, enforceCap, lineTs, pruneAged, readSegmentedRecords, type LiveState } from './perf-segments.ts'
+import { tidyJam } from './perf-jam.ts'
 
 export const perfDir = (root: string) => join(root, 'design', '.local', 'perf')
 export const reloadLog = (root: string) => join(perfDir(root), 'reloads.jsonl')
 export const pageLog = (root: string) => join(perfDir(root), 'page.jsonl')
-/** runs.jsonl, the headless runs' lines (spec 28 A3.4, A3.8 #22): 2 MB, 14 days, in tidyPerfDir like the others. */
+/** runs.jsonl, the headless runs' lines (spec 28 A3.4, A3.8 #22): segments and 14 days like the others (spec 30 R9). */
 export const runsLog = (root: string) => join(perfDir(root), 'runs.jsonl')
 
 /** design/, design/.local and its perf/ must be real directories inside the project: a log is never written through a link. */
 const unsafe = (root: string) => checkRealDirs(root, [[join(root, 'design'), 'design'], [join(root, 'design', '.local'), 'design/.local'], [perfDir(root), 'design/.local/perf']])
 
-/** One append to a perf log: the directory 700 and the file 600 from their creation, never through a link, the
- *  oldest half gone past its cap (maxOf). Throws - callers swallow. */
-function appendLog(root: string, file: string, text: string): void {
-  const why = unsafe(root)
-  if (why) throw new Error(why)
-  mkdirSync(join(root, 'design', '.local'), { recursive: true })
-  mkdirSync(perfDir(root), { recursive: true, mode: 0o700 })
-  if (existsSync(file)) {
-    if (!lstatSync(file).isFile()) throw new Error('not a regular file')
-    if (statSync(file).size > maxOf(file)) {
-      const lines = readFileSync(file, 'utf8').split('\n')
-      writeFileSync(file, lines.slice(Math.floor(lines.length / 2)).join('\n'))
-    }
-  }
-  appendFileSync(file, text, { mode: 0o600 })
-}
-
-const readLines = (file: string, since: number): Record<string, any>[] => {
-  try {
-    return readFileSync(file, 'utf8').split('\n').flatMap((l) => {
-      try { const e = JSON.parse(l); return typeof e?.ts === 'number' && e.ts >= since ? [e] : [] } catch { return [] }
-    })
-  } catch { return [] }
-}
-
 // ---- the writer and the reader (spec 30 #1, #42) ------------------------------------------------------------------
 
 /** The logs this writer owns, by name; jam.jsonl has its own (perf-jam.ts), under the same rules. */
 export type PerfLog = 'page' | 'reloads' | 'runs'
-const fileOf = (root: string, log: PerfLog) => (log === 'page' ? pageLog(root) : log === 'reloads' ? reloadLog(root) : runsLog(root))
+const FILE: Record<PerfLog, SegmentedFile> = { page: 'page.jsonl', reloads: 'reloads.jsonl', runs: 'runs.jsonl' }
+const LOGS = Object.keys(FILE) as PerfLog[]
+/** Retention runs at start and then hourly, in the writer's own turn (an append), never on a timer of its own. */
+export const PRUNE_EVERY_MS = 3_600_000
 
 /**
- * The one way a perf log is written and read back. Today: one file each, its oldest half gone past its cap. The
- * app-store stream reimplements both behind these signatures (R9): a live file plus closed segments named
+ * The one way a perf log is written and read back (spec 30 R9): a live file plus closed segments named
  * `<name>.<openedAt>-<bound>.jsonl` (perf-records.ts `segmentName`), deleted whole by age in the writer's own order,
  * the safety cap's counted drop - so no caller ever names a file or knows about segments.
  */
@@ -79,9 +49,83 @@ export interface PerfLogs {
    *  file; malformed lines skipped. Readers dedupe page and shell lines by `(page, seq)` themselves (#7). */
   read(root: string, log: PerfLog, since?: number): Record<string, any>[]
 }
+
+/**
+ * The writer's state: each live file it knows (when it was opened, the largest `ts` written into it, its size) and
+ * when each directory was last pruned. Synchronous, so every close, prune and cap runs between two appends - the
+ * writer's own queue (#42). One writer per root: the dev server.
+ */
+const lives = new Map<string, LiveState>()
+const prunedAt = new Map<string, number>()
+
+/** Test seam: the writer's clock (retention and the 24 h close read it), and its state forgotten (a restart). */
+export const perfLogSeams: { now?: () => number; reset(): void } = { reset() { lives.clear(); prunedAt.clear() } }
+const clock = () => (perfLogSeams.now ?? Date.now)()
+
+/** The live file's state: what this writer tracked, else adopted from the disk (#42, #45), else none. A file replaced
+ *  behind the writer's back (another inode) is adopted again. */
+function liveOf(path: string): LiveState | null {
+  const known = lives.get(path)
+  let st
+  try { st = lstatSync(path) } catch { lives.delete(path); return null }
+  if (!st.isFile()) throw new Error('not a regular file')
+  if (known && known.ino === st.ino) { known.size = st.size; return known }
+  const s = adoptLive(path)
+  if (s) lives.set(path, s); else lives.delete(path)
+  return s
+}
+
+/** One log's upkeep (#42, #43): a live file opened 24 h ago or past its size closed; segments past the days kept
+ *  unlinked; the oldest gone while the file passes its cap, then a counted `dropped` line. Never throws. */
+function upkeep(root: string, log: PerfLog, now: number, prune: boolean): void {
+  const dir = perfDir(root), file = FILE[log], path = join(dir, file)
+  try {
+    const s = liveOf(path)
+    let closed = false
+    if (s && dueToClose(file, s, now)) { closeLive(dir, file, s, now); lives.delete(path); closed = true }
+    if (prune) pruneAged(dir, file, now)
+    if (prune || closed) {
+      const went = enforceCap(dir, file, lives.get(path)?.size ?? 0)
+      if (went.segments) write(root, log, [JSON.stringify(droppedLine(log, went.lines, now))], now)
+    }
+  } catch { /* the log never stands in the way of the canvas */ }
+}
+
+/** The safety cap's line (#43): page.jsonl's names no page (it is the server's), runs.jsonl's no run. */
+const droppedLine = (log: PerfLog, n: number, now: number) => (log === 'reloads' ? { ts: now, kind: 'dropped', n, reason: 'retention-cap' } : { v: 1, ts: now, kind: 'dropped', n, reason: 'retention-cap' })
+
+/** The append itself: the directory 700 and the file 600 from their creation, never through a link. */
+function write(root: string, log: PerfLog, lines: readonly string[], now: number): void {
+  const dir = perfDir(root), path = join(dir, FILE[log])
+  const s = liveOf(path)
+  const text = lines.join('\n') + '\n'
+  appendFileSync(path, text, { mode: 0o600 })
+  let max = 0
+  for (const l of lines) { const t = lineTs(l); if (t !== null && t > max) max = t }
+  const st = lstatSync(path)
+  if (s && s.ino === st.ino) { s.size = st.size; s.maxTs = Math.max(s.maxTs, max) }
+  else lives.set(path, { openedAt: now, maxTs: max, adopted: false, size: st.size, ino: st.ino })
+}
+
+/** One append to a perf log (#42): a due close first, retention hourly, then the lines; past its segment size the live
+ *  file closes at once. Throws when the append failed - callers swallow, or answer 503. */
+function appendLog(root: string, log: PerfLog, lines: readonly string[]): void {
+  const why = unsafe(root)
+  if (why) throw new Error(why)
+  mkdirSync(join(root, 'design', '.local'), { recursive: true })
+  mkdirSync(perfDir(root), { recursive: true, mode: 0o700 })
+  const now = clock()
+  const dir = perfDir(root)
+  const prune = now - (prunedAt.get(dir) ?? 0) >= PRUNE_EVERY_MS
+  if (prune) { prunedAt.set(dir, now); for (const l of LOGS) upkeep(root, l, now, true) }
+  else upkeep(root, log, now, false)
+  write(root, log, lines, now)
+  upkeep(root, log, now, false)
+}
+
 export const perfLogs: PerfLogs = {
-  append(root, log, lines) { if (lines.length) appendLog(root, fileOf(root, log), lines.join('\n') + '\n') },
-  read(root, log, since = 0) { return readLines(fileOf(root, log), since) },
+  append(root, log, lines) { if (lines.length) appendLog(root, log, lines) },
+  read(root, log, since = 0) { return readSegmentedRecords(perfDir(root), FILE[log], since) },
 }
 
 export function logReload(root: string, entry: Record<string, unknown>): void {
@@ -218,13 +262,17 @@ export function appendRun(root: string, line: Record<string, unknown>): boolean 
   try { perfLogs.append(root, 'runs', [JSON.stringify(line)]); return true } catch { return false }
 }
 /** The run lines from `since` (epoch ms): malformed lines skipped. */
-export const readRuns = (root: string, since = 0): Record<string, any>[] => perfLogs.read(root, 'runs', since)
+export const readRuns = (root: string, since = 0): Record<string, any>[] => perfLogs.read(root, 'runs', since).filter((l) => typeof l.run === 'string')
 
-/** At start (spec 28 A1.7): design/.local/perf/ is the owner's alone - the directory 700 and every file in it 600,
- *  those earlier versions created without modes included - and the logs whose lines age out lose the ones older than
- *  14 days and, still past their cap (2 MB; page.jsonl 8 MB), their oldest half. Synchronous, before the server
- *  listens: no append of this process interleaves. Best effort; a link is never followed. */
-export function tidyPerfDir(root: string, now = Date.now()): void {
+/**
+ * At start (spec 28 A1.7, spec 30 R9): design/.local/perf/ is the owner's alone - the directory 700 and every file in it
+ * 600, those earlier versions created without modes included. Then each log's upkeep, as the writer does it hourly: a
+ * live file opened 24 h ago or past its size closed - a 0.29 file is closed as a segment, `openedAt` its first line's
+ * `ts` and `bound` its mtime + 24 h (#45) - segments past 14 days unlinked, the safety cap. Nothing is rewritten.
+ * jam.jsonl's upkeep is queued in its own writer (perf-jam.ts). Synchronous, before the server listens. Best effort; a
+ * link is never followed.
+ */
+export function tidyPerfDir(root: string, now = clock()): void {
   try {
     if (unsafe(root)) return
     const dir = perfDir(root)
@@ -234,19 +282,10 @@ export function tidyPerfDir(root: string, now = Date.now()): void {
     chmodSync(dir, 0o700)
     for (const name of readdirSync(dir)) {
       const f = join(dir, name)
-      try {
-        if (!lstatSync(f).isFile()) continue
-        chmodSync(f, 0o600)
-        if (!AGED.includes(name)) continue
-        const text = readFileSync(f, 'utf8')
-        let lines = text.split('\n').filter((l) => { try { const e = JSON.parse(l); return typeof e?.ts === 'number' && e.ts >= now - KEEP_MS } catch { return false } })
-        if (Buffer.byteLength(lines.join('\n')) > maxOf(name)) lines = lines.slice(Math.floor(lines.length / 2))
-        const next = lines.length ? lines.join('\n') + '\n' : ''
-        if (next === text) continue
-        const tmp = `${f}.${process.pid}.tmp`
-        writeFileSync(tmp, next, { mode: 0o600 })
-        renameSync(tmp, f)
-      } catch { /* the next file */ }
+      try { if (lstatSync(f).isFile()) chmodSync(f, 0o600) } catch { /* the next file */ }
     }
+    prunedAt.set(dir, now)
+    for (const log of LOGS) upkeep(root, log, now, true)
+    tidyJam(root, now)
   } catch { /* never in the way of the canvas */ }
 }
