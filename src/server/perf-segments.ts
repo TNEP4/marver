@@ -17,6 +17,7 @@
 import { closeSync, existsSync, fstatSync, lstatSync, openSync, readdirSync, readFileSync, readSync, renameSync, statSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { KEEP_DAYS, parseSegmentName, SEGMENT_MAX_AGE_MS, SEGMENTS, segmentName, type SegmentedFile } from '../shared/perf-records.ts'
+import { APP_LOG, APP_SAMPLES_LOG, type Flavour } from '../shared/app-perf.ts'
 
 const DAY = 86_400_000
 /** #42: an adopted file's bound - its mtime plus the clock skew a line's `ts` may carry. */
@@ -118,9 +119,10 @@ function countLines(path: string): number {
 }
 
 /** The safety cap (#43): while the file's segments and live file pass `cap` bytes, its oldest segment goes. The
- *  segments and lines that went (zero when it held). */
-export function enforceCap(dir: string, file: SegmentedFile, liveSize: number, cap = SEGMENTS[file].capBytes): { segments: number; lines: number } {
-  const segs = segmentsOf(dir, file)
+ *  segments and lines that went (zero when it held). `subject`: the segments the cap counts (the app's leaves 1.0.0's
+ *  to retention). */
+export function enforceCap(dir: string, file: SegmentedFile, liveSize: number, cap = SEGMENTS[file].capBytes, subject: (s: Segment) => boolean = () => true): { segments: number; lines: number } {
+  const segs = segmentsOf(dir, file).filter(subject)
   let total = liveSize + segs.reduce((n, s) => n + s.size, 0)
   const out = { segments: 0, lines: 0 }
   for (const s of segs) {
@@ -186,4 +188,18 @@ export function readSegmentedRecords(dir: string, file: SegmentedFile, since = 0
   return readSegmented(dir, file, since).flatMap((l) => {
     try { const e = JSON.parse(l); return e && typeof e === 'object' && typeof e.ts === 'number' && e.ts >= since ? [e] : [] } catch { return [] }
   })
+}
+
+/**
+ * Every file an app flavour's records are in (#42, #44): its app file's segments in `openedAt` order then its live
+ * file, then its samples file's the same - the paths that exist now. A segment whose bound is before `since` holds
+ * nothing from then. The report, the CLI's views and the machine-profile pass read these.
+ */
+export function appLogFiles(dir: string, flavour: Flavour, since = 0): string[] {
+  const out: string[] = []
+  for (const name of [APP_LOG[flavour], APP_SAMPLES_LOG[flavour]] as SegmentedFile[]) {
+    for (const s of segmentsOf(dir, name)) if (s.bound >= since) out.push(s.path)
+    if (existsSync(join(dir, name))) out.push(join(dir, name))
+  }
+  return out
 }

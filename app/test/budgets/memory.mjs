@@ -40,6 +40,7 @@ import { appProcesses, footprintMB, rssMB } from '../harness/outside.ts'
 import { nativeTool, responsibleApp } from '../harness/capture.ts'
 import { launchStarted, rolesSample } from './evidence.ts'
 import { parseAppLine } from '../../../src/shared/app-perf.ts'
+import { appLogFiles } from '../../../src/server/perf-segments.ts'
 
 const argv = process.argv.slice(2)
 const val = (n) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : undefined }
@@ -60,10 +61,9 @@ async function fakes(w) {
   return out
 }
 
-/** The signed build's log, parsed (perf/app.jsonl); [] when there is none yet. */
+/** The signed build's logs, parsed (perf/app.jsonl and samples.jsonl, every segment of both: spec 30 #44); [] when there are none yet. */
 function appLines(w) {
-  const f = join(w.home, 'perf', 'app.jsonl')
-  return existsSync(f) ? readFileSync(f, 'utf8').split('\n').map(parseAppLine).filter(Boolean) : []
+  return appLogFiles(join(w.home, 'perf'), 'release').flatMap((f) => readFileSync(f, 'utf8').split('\n')).map(parseAppLine).filter(Boolean)
 }
 
 /** Polls `f` every second until it gives something, `ms` at most: that, or null. */

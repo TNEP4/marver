@@ -66,9 +66,12 @@ afterAll(async () => {
 })
 
 const file = () => join(w.env.home, 'perf', 'app-dev.jsonl')
+/** Spec 30 #44: `sample` and `agx` lines are in samples-dev.jsonl; both files' lines, merged by `seq` (one launch's) */
+const samplesFile = () => join(w.env.home, 'perf', 'samples-dev.jsonl')
 const lines = async (): Promise<AppRecord[]> => {
   await w.run.call('recorder:flush')
-  return existsSync(file()) ? readFileSync(file(), 'utf8').split('\n').filter(Boolean).map((l) => parseAppLine(l)).filter((r): r is AppRecord => !!r) : []
+  const read = (f: string) => (existsSync(f) ? readFileSync(f, 'utf8').split('\n').filter(Boolean).map((l) => parseAppLine(l)).filter((r): r is AppRecord => !!r) : [])
+  return [...read(file()), ...read(samplesFile())].sort((a, b) => a.ts - b.ts || a.seq - b.seq)
 }
 const of = async <K extends AppRecord['kind']>(kind: K) => (await lines()).filter((r) => r.kind === kind) as Extract<AppRecord, { kind: K }>[]
 async function until<T>(what: string, f: () => Promise<T | null | undefined | false>, ms = 10_000): Promise<T> {

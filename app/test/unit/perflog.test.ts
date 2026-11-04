@@ -1,13 +1,11 @@
 /**
  * The app's JSONL writer and its retention (spec 28 A3.6, A3.7, A3.8 #12), on a temporary MARVER_HOME: one writer
  * per file (the release app.jsonl, Marver Dev app-dev.jsonl), folders 700 and files 600, the envelope, the hold for
- * the machine's first hash, the 2,000-line bound and its `dropped` line, an ENOSPC that loses no earlier line,
- * rotation past 5 MB to the newest half of whole lines, and retention at launch: old lines, the newest 50 pictures,
- * the newest 10 completed Crashpad reports (each under its lock; new/ and settings.dat untouched; a locked one
- * skipped), machine profiles kept while a retained line names them. The review of a3-recorder: an append cut short
- * queues again only what did not land; a launch after a torn file starts on a line of its own; a rewrite cut at a
- * byte, never inside a character; a rewrite's new file written off the main thread while appends wait, and a quit
- * during it losing nothing; one line larger than half the file kept; main's error written in its own turn. The second
+ * the machine's first hash, the 2,000-line bound and its `dropped` line, an ENOSPC that loses no earlier line, and
+ * retention at launch: segments past keepPerfDays (spec 30: r30-store-perflog.test.ts has the segments), the newest
+ * 50 pictures, the newest 10 completed Crashpad reports (each under its lock; new/ and settings.dat untouched; a locked
+ * one skipped), machine profiles kept while a retained line names them. The review of a3-recorder: an append cut short
+ * queues again only what did not land; a launch after a torn file starts on a line of its own; main's error written in its own turn. The second
  * review: the test hook's flush keeps the hold at launch (its lines stamped with the hash once it exists, never
  * null); a headless run's profile kept as long as runs.jsonl's lines may name it (14 days) whatever keepPerfDays says.
  */
@@ -16,7 +14,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Config, Home } from '../../src/main/config.ts'
-import { T } from '../../src/main/timings.ts'
 import { parseAppLine } from '../../../src/shared/app-perf.ts'
 
 type Perflog = typeof import('../../src/main/perflog.ts')
@@ -123,41 +120,6 @@ describe('the writer (A3.8 #12)', () => {
     expect(all.map((l) => (parseAppLine(l) as unknown as { n?: number } | null)?.n ?? 'torn')).toEqual([1, 'torn', 2, 3])
   })
 
-  it('the size a log may reach follows the days kept: 2 MB a day, never under 5 MB', () => {
-    let days = 1
-    L.startPerflog({ home, flavour: 'release', config: () => config({ keepPerfDays: days }), machine: () => H1 })
-    expect(L.rotateBytes()).toBe(5 * 1024 * 1024)
-    days = 14
-    expect(L.rotateBytes()).toBe(28 * 1024 * 1024)
-    days = 90
-    expect(L.rotateBytes()).toBe(180 * 1024 * 1024)
-  })
-
-  it('past its size (5 MB at one day kept) the file keeps its newest half, whole lines only', async () => {
-    mkdirSync(join(home.dir, 'perf'), { mode: 0o700 })
-    L.startPerflog({ home, flavour: 'release', config: () => config({ keepPerfDays: 1 }), machine: () => H1 })
-    await L.idle()
-    const f = join(home.dir, 'perf', 'app.jsonl')
-    const now = Date.now()
-    const pad = 'x'.repeat(500)
-    const old = Array.from({ length: 10_400 }, (_, i) => JSON.stringify({ v: 1, ts: now - 1000 + (i % 100), kind: 'dropped', app: 'aaaaaaaaaaaa', seq: i, flavour: 'release', machine: H1, n: i, pad }))
-    writeFileSync(f, old.join('\n') + '\n', { mode: 0o600 })
-    const before = statSync(f).size
-    expect(before).toBeGreaterThan(5.2 * 1024 * 1024)
-    L.append('dropped', { n: -1 })
-    L.flushNow()
-    await L.idle()
-    const after = lines(f)
-    const size = statSync(f).size
-    // the newest half of the bytes, to within a line
-    expect(Math.abs(size - before / 2)).toBeLessThan(1500)
-    for (const l of after) expect(() => JSON.parse(l)).not.toThrow()
-    // the newest kept, the last one the line just written
-    expect((JSON.parse(after.at(-1)!) as { n: number }).n).toBe(-1)
-    expect((JSON.parse(after.at(-2)!) as { n: number }).n).toBe(10_399)
-    expect(L.newestHalf(['aa', 'bb', 'cc', 'dd'])).toEqual(['cc', 'dd'])
-  })
-
   it('two flavours\' writers on one perf/, interleaved in one process (two module copies): two files, every line whole and parsed', async () => {
     L.startPerflog({ home, flavour: 'release', config: () => config(), machine: () => H1 })
     vi.resetModules()
@@ -197,7 +159,7 @@ describe('retention at launch (A3.6, A3.8 #12, r1 #7)', () => {
   }
   const uuid = (i: number) => `0000000${i.toString(16)}-1111-2222-3333-444444444444`.slice(-36).replace(/^.{8}/, i.toString(16).padStart(8, '0'))
 
-  it('old lines, the 51st picture, the 11th completed dump and stale pending ones go; new/, settings.dat and the other flavour\'s file stay', async () => {
+  it('a segment past keepPerfDays, the 51st picture, the 11th completed dump and stale pending ones go; new/, settings.dat and the other flavour\'s file stay', async () => {
     const now = Date.now()
     mkdirSync(join(perf(), 'flashes'), { recursive: true, mode: 0o755 })
     mkdirSync(join(perf(), 'crashpad', 'completed'), { recursive: true })
@@ -206,7 +168,10 @@ describe('retention at launch (A3.6, A3.8 #12, r1 #7)', () => {
     mkdirSync(join(perf(), 'machine'), { recursive: true })
     const H_OLD_NAMED = 'aaaaaaaaaaaaaaaa', H_OLD = 'bbbbbbbbbbbbbbbb', H_NEW = 'cccccccccccccccc', H_OTHER = 'dddddddddddddddd'
     const line = (ts: number, machine: string, n: number) => JSON.stringify({ v: 1, ts, kind: 'dropped', app: 'aaaaaaaaaaaa', seq: n, flavour: 'release', machine, n })
-    writeFileSync(join(perf(), 'app.jsonl'), [line(now - 20 * DAY, H_OLD, 0), 'garbage', line(now - DAY, H_OLD_NAMED, 1)].join('\n') + '\n', { mode: 0o644 })
+    // a segment past 14 days, whose line alone named H_OLD; the live file adopted with what it holds
+    const gone = join(perf(), `app.${now - 20 * DAY}-${now - 15 * DAY}.jsonl`)
+    writeFileSync(gone, line(now - 20 * DAY, H_OLD, 0) + '\n', { mode: 0o600 })
+    writeFileSync(join(perf(), 'app.jsonl'), [line(now - 3_600_000, H_OLD_NAMED, 1), 'garbage'].join('\n') + '\n', { mode: 0o644 })
     const devText = [line(now - 30 * DAY, H_OTHER, 0)].join('\n') + '\n'
     writeFileSync(join(perf(), 'app-dev.jsonl'), devText, { mode: 0o600 })
     for (let i = 0; i < 51; i++) touch(join(perf(), 'flashes', `20261020-0000${String(i).padStart(2, '0')}-ab12.png`), (60 - i) * 60_000)
@@ -228,8 +193,9 @@ describe('retention at launch (A3.6, A3.8 #12, r1 #7)', () => {
     L.startPerflog({ home, flavour: 'release', config: () => config(), machine: () => H1 })
     await L.idle()
 
-    // this flavour's lines: the 20-day-old one and the garbage gone; the other flavour's file untouched
-    expect(lines(join(perf(), 'app.jsonl')).map((l) => (JSON.parse(l) as { n: number }).n)).toEqual([1])
+    // this flavour's segment past keepPerfDays gone whole, its live file kept as it was; the other flavour's file untouched
+    expect(existsSync(gone)).toBe(false)
+    expect(lines(join(perf(), 'app.jsonl'))).toHaveLength(2)
     expect(mode(join(perf(), 'app.jsonl'))).toBe(0o600)
     expect(readFileSync(join(perf(), 'app-dev.jsonl'), 'utf8')).toBe(devText)
     // pictures: the newest 50, the oldest and the 20-day-old one gone; the folder 700, the files 600
@@ -315,12 +281,6 @@ describe('the review of a3-recorder (A3.8 #12)', () => {
     expect((recs.at(-1) as unknown as { app: string }).app).toBe(L.launchId())
   })
 
-  it('one line larger than half the file is kept on its own; no lines keep none', () => {
-    expect(L.newestHalf(['a', 'x'.repeat(100)])).toEqual(['x'.repeat(100)])
-    expect(L.newestHalf(['x'.repeat(100), 'b', 'c'])).toEqual(['b', 'c'])
-    expect(L.newestHalf([])).toEqual([])
-  })
-
   it('main\'s error is on disk in its own turn - the hold at launch ended for it, machine null with no hash yet', () => {
     L.startPerflog({ home, flavour: 'release', config: () => config(), machine: () => null })
     L.append('dropped', { n: 1 })
@@ -328,96 +288,6 @@ describe('the review of a3-recorder (A3.8 #12)', () => {
     L.appendNow('main-error', { what: 'exception', name: 'Error', message: 'boom', stack: [] })
     const recs = lines(f()).map((l) => parseAppLine(l)! as unknown as { kind: string; machine: string | null; seq: number })
     expect(recs.map((r) => [r.seq, r.kind, r.machine])).toEqual([[0, 'dropped', null], [1, 'main-error', null]])
-  })
-})
-
-describe('whole rewrites, off the main thread (A3.8 #12, #50)', () => {
-  const perfFile = () => join(home.dir, 'perf', 'app.jsonl')
-  const old = (n: number, ts: number, extra: Record<string, unknown> = {}) => JSON.stringify({ v: 1, ts, kind: 'dropped', app: 'aaaaaaaaaaaa', seq: n, flavour: 'release', machine: H1, n, ...extra })
-
-  /** perflog with node:fs/promises wrapped: `afterRead` runs once a read of app.jsonl ended; a temp file of app.jsonl opens only when `gate` is opened */
-  async function wrapped() {
-    const hooks: { afterRead: (() => void) | null; gated: boolean; reached: () => void; open: () => void } = { afterRead: null, gated: false, reached: () => {}, open: () => {} }
-    let reachedP!: Promise<void>
-    let gateP: Promise<void> = Promise.resolve()
-    const arm = () => {
-      reachedP = new Promise((r) => { hooks.reached = r })
-      gateP = new Promise((r) => { hooks.open = r })
-      hooks.gated = true
-    }
-    vi.resetModules()
-    vi.doMock('node:fs/promises', async (orig) => {
-      const m = await orig<typeof import('node:fs/promises')>()
-      return {
-        ...m,
-        readFile: async (...a: Parameters<typeof m.readFile>) => {
-          const r = await m.readFile(...a)
-          if (String(a[0]).endsWith('app.jsonl') && hooks.afterRead) { const f = hooks.afterRead; hooks.afterRead = null; f() }
-          return r
-        },
-        open: async (...a: Parameters<typeof m.open>) => {
-          if (hooks.gated && /app\.jsonl\.[0-9a-f]{12}\.tmp$/.test(String(a[0]))) { hooks.gated = false; hooks.reached(); await gateP }
-          return m.open(...a)
-        },
-      }
-    })
-    const P = await import('../../src/main/perflog.ts')
-    vi.doUnmock('node:fs/promises')
-    return { P, hooks, arm, reached: () => reachedP }
-  }
-
-  it('a rewrite cuts at the last newline byte: a read that ends inside a character, then an append, loses and doubles no byte', async () => {
-    mkdirSync(join(home.dir, 'perf'), { recursive: true, mode: 0o700 })
-    const now = Date.now()
-    const dot = Buffer.from('·')   // two bytes
-    // an old line to prune, a kept one with a non-ASCII message, and a line torn inside the '·'
-    const torn = Buffer.concat([Buffer.from('{"v":1,"ts":5,"kind":"dropped","m":"a'), dot.subarray(0, 1)])
-    writeFileSync(perfFile(), Buffer.concat([Buffer.from(old(0, now - 20 * DAY) + '\n' + old(1, now - DAY, { m: 'Reload · Page' }) + '\n'), torn]), { mode: 0o600 })
-    const { P, hooks } = await wrapped()
-    try {
-      P.startPerflog({ home, flavour: 'release', config: () => config(), machine: () => H1 })
-      // an append lands between the rewrite's read and its turn
-      hooks.afterRead = () => { P.append('dropped', { n: 7, m: 'après · coup' } as never); P.flushNow() }
-      await P.idle()
-      const bytes = readFileSync(perfFile())
-      const text = bytes.toString('utf8').split('\n')
-      expect(JSON.parse(text[0]!)).toMatchObject({ n: 1, m: 'Reload · Page' })
-      // the torn piece kept byte for byte, then the appended line whole on its own line
-      expect(bytes.includes(torn)).toBe(true)
-      expect(JSON.parse(text[2]!)).toMatchObject({ n: 7, m: 'après · coup', seq: 0 })
-      expect(text.filter(Boolean)).toHaveLength(3)
-    } finally { await P.idle(); P.resetPerflog() }
-  })
-
-  it('appends wait while the new file is written, then land in it; a quit meanwhile writes both at once and the rewrite stands down', async () => {
-    mkdirSync(join(home.dir, 'perf'), { recursive: true, mode: 0o700 })
-    const now = Date.now()
-    const seed = old(0, now - 20 * DAY) + '\n' + old(1, now - DAY) + '\n'
-    for (const quit of [false, true]) {
-      writeFileSync(perfFile(), seed, { mode: 0o600 })
-      const { P, arm, hooks, reached } = await wrapped()
-      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] })
-      try {
-        P.startPerflog({ home, flavour: 'release', config: () => config(), machine: () => H1 })
-        arm()
-        const pruned = P.prune()
-        await reached()
-        // the rewrite's new file is being written: a flush keeps its lines queued; the old file is as it was
-        P.append('dropped', { n: 5 })
-        vi.advanceTimersByTime(T.writeBatchMs)
-        expect(readFileSync(perfFile(), 'utf8')).toBe(seed)
-        if (quit) {
-          P.flushSync()
-          const atQuit = lines(perfFile()).map((l) => (JSON.parse(l) as { n: number }).n)
-          expect(atQuit).toEqual([1, 5])
-        }
-        hooks.open()
-        await pruned
-        await P.idle()
-        // the old line gone, the kept one, and the line that waited - once
-        expect(lines(perfFile()).map((l) => (JSON.parse(l) as { n: number }).n)).toEqual([1, 5])
-      } finally { vi.useRealTimers(); hooks.open(); await P.idle(); P.resetPerflog() }
-    }
   })
 })
 

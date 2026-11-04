@@ -35,7 +35,7 @@
  *   node app/test/budgets/hidden-cpu.mjs [--app <Marver.app>] [--minutes 5] [--settle 60] [--scene hidden|home|minimised] [--ballast] [--out <dir>]
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { launch, sleep, world } from './launcher.ts'
 import { startFakeCanvas } from '../harness/fake-canvas.ts'
@@ -43,6 +43,7 @@ import { appProcesses, cpuPass, cpuWindow, crashpadOf } from '../harness/outside
 import { churn, cpuGate, crossCheck, releaseEvidence } from './evidence.ts'
 import { nativeTool, responsibleApp } from '../harness/capture.ts'
 import { parseAppLine } from '../../../src/shared/app-perf.ts'
+import { appLogFiles } from '../../../src/server/perf-segments.ts'
 
 const argv = process.argv.slice(2)
 const val = (n) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : undefined }
@@ -55,11 +56,11 @@ const BALLAST = argv.includes('--ballast')
 const BUDGET = 0.01
 const SAY = "if (window.marverApp) { marverApp.hello({ version: '0.27.1', board: null, page: 'cpu-' + Math.random().toString(36).slice(2, 10) }); marverApp.busy({ busy: false, unsaved: false, why: [] }) }"
 
-/** The measured launch's lines of app.jsonl (or app-dev.jsonl), parsed; null when there is no file. */
+/** The measured launch's lines of app.jsonl and samples.jsonl (or Marver Dev's), every segment of both, parsed (spec 30 #44); null when there are none. */
 function appLines(home) {
-  const f = join(home, 'perf', APP ? 'app.jsonl' : 'app-dev.jsonl')
-  if (!existsSync(f)) return null
-  return readFileSync(f, 'utf8').split('\n').map(parseAppLine).filter(Boolean)
+  const files = appLogFiles(join(home, 'perf'), APP ? 'release' : 'dev')
+  if (!files.length) return null
+  return files.flatMap((f) => readFileSync(f, 'utf8').split('\n')).map(parseAppLine).filter(Boolean)
 }
 
 /** The release log's evidence for a window (r4 #1): evidence.ts's, for the flavour measured. */

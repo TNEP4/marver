@@ -4,15 +4,16 @@
  * the one file. Electron is never imported here: the save panel, Finder and the alert are views.ts's ports
  * (effects.ts), so the whole flow runs in unit tests on temporary folders.
  *
- * **Sources** (#26): `~/.marver/perf/` only - this flavour's log (`app.jsonl`, Marver Dev's `app-dev.jsonl`), the
- * machine profiles its lines name (`machine/<hash>.json`, the hash checked by the envelope's pattern) and
+ * **Sources** (#26): `~/.marver/perf/` only - this flavour's logs (`app.jsonl` and `samples.jsonl`, Marver Dev's
+ * `app-dev.jsonl` and `samples-dev.jsonl`, every closed segment of both: spec 30 #44, #56 - the same projection, so the
+ * same numbers as when samples lived in `app.jsonl`), the machine profiles its lines name (`machine/<hash>.json`, the hash checked by the envelope's pattern) and
  * `crashpad/`'s `completed/` and `pending/` reports, counted by their file's time. Never a repo's `.marver/perf/`:
  * board loads and run lines are `npx marver perf`'s, in that repo.
  *
  * **Never blocking main on a whole file**: the log is read as a stream (`readline` over a read stream), a line outside
- * the window skipped by its envelope's `ts` before it is parsed; a rotation renaming a new file over it meanwhile
- * leaves this read on the old one, whole. A read that fails after some lines gives what it read, `partial`; one that
- * fails before any, `unreadable`.
+ * the window skipped by its envelope's `ts` before it is parsed; a close renaming it to a segment meanwhile leaves
+ * this read on the same file, whole. A read that fails after some lines gives what it read, `partial`; one that fails
+ * before any, `unreadable`.
  *
  * **Where it is offered** (#28): Help > Export Performance Report… and the crashed tab page's latched state, both
  * `exportReport`. A save panel on `~/Downloads/Marver-report-YYYY-MM-DD.json` (the person's local date); the report
@@ -24,7 +25,8 @@
 import { open, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
-import { APP_LOG, type Flavour } from '../../../src/shared/app-perf.ts'
+import type { Flavour } from '../../../src/shared/app-perf.ts'
+import { appLogFiles } from '../../../src/server/perf-segments.ts'
 import { ReportFold, reportDays, type CrashpadSection, type LogRead, type PerfReport, type ProfileRead, type SectionStatus } from '../../../src/shared/app-report.ts'
 import { readCapped, writeWhole } from './fsx.ts'
 
@@ -72,6 +74,17 @@ async function readLog(file: string, fold: ReportFold): Promise<LogRead> {
   return failed ? (lines > 0 ? 'stopped' : 'unreadable') : 'ok'
 }
 
+/** Every file of the flavour's logs into the fold (spec 30 #44), one after another: `missing` when none was there. */
+async function readLogs(files: readonly string[], fold: ReportFold): Promise<LogRead> {
+  let read = false, failed = false
+  for (const f of files) {
+    const r = await readLog(f, fold)
+    if (r === 'ok' || r === 'stopped') read = true
+    if (r === 'stopped' || r === 'unreadable') failed = true
+  }
+  return failed ? (read ? 'stopped' : 'unreadable') : read ? 'ok' : 'missing'
+}
+
 /** A named profile's file: its JSON, absent, or unreadable (an error, past 64 KB, or no JSON). */
 async function readProfile(file: string): Promise<ProfileRead> {
   const b = await readCapped(file, PROFILE_MAX)
@@ -107,7 +120,7 @@ export async function buildReport(i: ReportInput): Promise<{ report: PerfReport;
   const end = i.now
   const start = end - reportDays(i.keepPerfDays) * DAY
   const fold = new ReportFold(start, end)
-  const log = await readLog(join(i.perfDir, APP_LOG[i.flavour]), fold)
+  const log = await readLogs(appLogFiles(i.perfDir, i.flavour, start), fold)
   // the hash is the envelope's, 16 hex (readEnvelope): a file name, never a path
   for (const hash of fold.wanted()) fold.profile(hash, await readProfile(join(i.perfDir, 'machine', `${hash}.json`)))
   const crashpad = await crashpadCounts(join(i.perfDir, 'crashpad'), start, end)
