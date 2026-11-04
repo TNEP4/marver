@@ -271,6 +271,15 @@ describe('real Vite: the bracket, under runs that truly overlap', () => {
     expect(lines.filter((l) => l.kind === 'change').map((l) => l.change).sort()).toEqual([first.change, second.change].sort())
   })
 
+  it('two saves in one tick: both tokens are open as the first run begins, and it takes the older', async () => {
+    fire(f('a.tsx')); fire(f('a.tsx'))
+    await quiet(); await settle()
+    expect(frames).toHaveLength(2)
+    const [older, newer] = frames.map((x) => x.at.token!).sort((x, y) => Number(x.change.split(':')[1]) - Number(y.change.split(':')[1]))
+    expect(older.change).not.toBe(newer.change)
+    expect(older.hmrTs).toBeLessThan(newer.hmrTs!)             // FIFO: the first run (the earlier timestamp) took the first event
+  })
+
   it('two files whose hooks overlap each keep their own change', async () => {
     const a = hold(f('a.tsx')), b = hold(f('b.tsx'))
     fire(f('a.tsx')); fire(f('b.tsx'))

@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync,
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Browser } from './browser.ts'
-import { WRITE_MATCH_MS } from '../src/shared/perf-records.ts'
+import { RELOAD_OUTBOX, WRITE_MATCH_MS } from '../src/shared/perf-records.ts'
 
 /**
  * Edit to redraw, joined end to end, and why a board loaded again (spec 30 R1, R2), where they happen: a REAL dev server,
@@ -418,7 +418,7 @@ describe('delivery (#7, #16)', () => {
     await close(tab)
   }, 60_000)
 
-  it('at pagehide what waits goes with keepalive', async () => {
+  it('leaving under the 2 s a line waits: it still reaches the log', async () => {
     if (!browser) return
     const tab = await open('#/b/main?f=kit/one')
     await browser.until(tab.s, `${nodeOf('k-away')}?.status === 'ready'`, 30_000)
@@ -428,7 +428,44 @@ describe('delivery (#7, #16)', () => {
     await browser.until(tab.s, `${nodeOf('k-away')}?.stale === true`, 15_000)
     await browser.go(tab.s, 'about:blank')                       // under the 2 s its line would wait
     const j = await until(() => joined('design/scenes/kit/away.tsx', since))
-    await until(() => invalidatedFor(tab.page, j.revision), 10_000, 'the line sent at pagehide')
+    await until(() => invalidatedFor(tab.page, j.revision), 10_000, 'the line sent on the way out')
+    await close(tab)
+  }, 60_000)
+
+  it('at pagehide: keepalive, this log\'s 8 KB at most, and what does not fit counted in the last line that does', async () => {
+    if (!browser) return
+    // the sends as the page makes them: `pagehide` fired by hand, so the path is this one and no `visibilitychange`'s
+    const SPY = `(() => {
+      if (window.parent !== window) return
+      window.__sends = []
+      const orig = window.fetch
+      window.fetch = function (url, init) {
+        if (String(url).includes('/perf/reload')) window.__sends.push({ keepalive: init?.keepalive === true, body: String(init?.body ?? '') })
+        return orig.apply(this, arguments)
+      }
+    })()`
+    const tab = await open('#/b/lone', [SPY])
+    await allReady(tab.s, ['k-lone'])
+    await browser.until(tab.s, 'window.__sends.length > 0', 15_000)      // the first batch is gone: what follows is all that waits
+    await sleep(200)
+    const out = await browser.eval(tab.s, `(() => {
+      const before = window.__sends.length, st = window.__mvStore.getState()
+      for (let i = 0; i < 300; i++) st.invalidateFrames(['kit/lone'], '1:' + (1000 + i), {})
+      window.dispatchEvent(new Event('pagehide'))
+      return window.__sends.slice(before)
+    })()`)
+    expect(out).toHaveLength(1)
+    expect(out[0].keepalive).toBe(true)
+    expect(Buffer.byteLength(out[0].body)).toBeLessThanOrEqual(RELOAD_OUTBOX.keepaliveBytes)
+    const records: Line[] = JSON.parse(out[0].body).records
+    const counted = records.filter((r) => r.kind === 'dropped')
+    expect(counted).toHaveLength(1)
+    expect(records.at(-1)!.kind).toBe('dropped')
+    expect(counted[0].n).toBeGreaterThan(0)
+    expect(records.length - 1 + counted[0].n).toBe(600)                  // every line it had: sent, or counted
+    const seqs = records.filter((r) => r.kind !== 'dropped').map((r) => r.seq as number)
+    expect(seqs).toEqual([...seqs].sort((a, b) => a - b))                // the oldest first
+    await until(() => eachPage(reloads(), tab.page).find((l) => l.kind === 'dropped' && l.n === counted[0].n), 10_000, 'the count reaching the log')
     await close(tab)
   }, 60_000)
 })
