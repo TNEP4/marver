@@ -114,7 +114,7 @@ export function editsByFile(log: readonly Record<string, any>[]): Map<string, { 
   /** the refused refresh whose parts may come next */
   let refused: { key: string; parts: unknown } | null = null
   for (const e of log) {
-    if (e.kind === 'update-ids' && e.change === UNKNOWN_CHANGE && refused?.parts === e.parts) { union(put(refused.key), e); continue }
+    if (refused && e.kind === 'update-ids' && e.change === UNKNOWN_CHANGE && refused.parts === e.parts) { union(put(refused.key), e); continue }
     refused = null
     if (e.kind !== 'update') continue
     const key = e.file ?? '(no file)', id = change(e)
