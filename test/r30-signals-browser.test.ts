@@ -524,37 +524,25 @@ describe('R5: more bugs', () => {
   it('the budget comes before formatting or posting: past it, a frame reads no argument and posts nothing', async () => {
     if (!browser) return
     const { s } = await open('three')
-    const r = await inFrame(s, 'k-a', `(() => {
-      // a budget of its own: this document has used nothing yet
-      const sent = []
-      const realPost = window.parent.postMessage.bind(window.parent)
-      window.parent.__sent = 0
-      addEventListener('message', () => {})
-      let reads = 0
-      const e = new Error('x')
-      Object.defineProperty(e, 'message', { get() { reads++; return 'formatted' } })
-      const before = reads
-      const silent = console.log
-      for (let i = 0; i < 40; i++) console.error(e)
-      return { reads: reads - before, realPost: typeof realPost, sent: sent.length, silent: typeof silent }
-    })()`)
-    // Chrome's console may read the message of what it prints; our formatting reads it once per post: at most the budget more
-    await inFrame(s, 'k-b', `(() => {
+    await browser.eval(s, `(() => { window.__posted = 0; addEventListener('message', (e) => { if (e.data?.type === 'sh:console') __posted++ }); return true })()`)
+    // forty calls in one turn; only formatting reads the message more than Chrome's own console does
+    const reads = await inFrame(s, 'k-b', `(() => {
       let reads = 0
       const e = new Error('y')
       Object.defineProperty(e, 'message', { get() { reads++; return 'formatted' } })
-      const orig = console.error
-      window.__readsPerCall = []
-      for (let i = 0; i < 40; i++) { const r0 = reads; console.error(e); window.__readsPerCall.push(reads - r0) }
-      return true
-    })()`)
-    const perCall = await inFrame(s, 'k-b', `window.__readsPerCall`) as number[]
-    // the same call reads the message more (it was formatted) until the budget ran out, and no more after it
-    const first = perCall[0]
-    const last = perCall[perCall.length - 1]
-    expect(first).toBeGreaterThan(last)
-    expect(perCall.filter((x) => x === first).length).toBeLessThanOrEqual(5)
-    expect(r.realPost).toBe('function')
+      const perCall = []
+      for (let i = 0; i < 40; i++) { const r0 = reads; console.error(e); perCall.push(reads - r0) }
+      return perCall
+    })()`) as number[]
+    await wait(300)
+    const posted = await browser.eval(s, `window.__posted`)
+    expect(posted).toBeLessThanOrEqual(5)
+    expect(posted).toBeGreaterThan(0)
+    // the calls past the budget read less than the ones it formatted, and each of them the same
+    const past = reads.slice(-5)
+    expect(new Set(past).size).toBe(1)
+    expect(reads[0]).toBeGreaterThan(past[0])
+    expect(reads.filter((r) => r > past[0]).length).toBe(posted)
   }, 90_000)
 
   it('60 errors in one load: every source shares the load\'s 50, the rest counted; a document\'s first window error always goes', async () => {
@@ -625,17 +613,20 @@ describe('R6: zoom, pan and re-renders', () => {
     expect(g.awake).toBeGreaterThanOrEqual(0)
   }, 90_000)
 
-  it('`by` names the command that started a gesture, while its turn lasts', async () => {
+  it('`by` names the command that started a layout animation', async () => {
     if (!browser) return
     const { s, page } = await open('three')
-    // a command whose camera move starts in its own turn
-    const id = await browser.eval(s, `${shellModule('commands')}.then((m) => { const h = m.cmd('zoom-100', { via: 'key', in: 'shell' }); m.withCmd(h.id, () => { document.getElementById('sh-world').classList.add('sh-preset') }); return h.id })`)
+    const id = await browser.eval(s, `Promise.all([${shellModule('commands')}, ${shellModule('canvas/Canvas')}]).then(([c, v]) => { const h = c.cmd('tidy', { via: 'key', in: 'shell' }); v.animateLayout(500); return h.id })`)
+    expect(id).toMatch(/^[0-9a-f]{12}$/)
+    const g = await until(() => of(page, 'gesture')[0], 15_000, 'the gesture')
+    expect(g).toMatchObject({ type: 'layout', by: id })
+    // and a gesture no command started names none
+    await wait(100)
+    await browser.eval(s, `document.getElementById('sh-world').classList.add('sh-preset')`)
     await wait(400)
     await browser.eval(s, `document.getElementById('sh-world').classList.remove('sh-preset')`)
-    const g = await until(() => of(page, 'gesture')[0], 15_000, 'the gesture')
-    // the observer runs after the turn: the id the sampler can read is whatever commands.ts keeps current then
-    if (g.by !== undefined) expect(g.by).toBe(id)
-    expect(g.type).toBe('layout')
+    const next = await until(() => of(page, 'gesture')[1], 15_000, 'the second gesture')
+    expect(next.by).toBeUndefined()
   }, 90_000)
 
   it('a button that re-renders a frame 10 times gives `commits: 10` in that minute, and none in a still one; a gesture\'s commits count `inGesture`', async () => {

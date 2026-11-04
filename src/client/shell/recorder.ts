@@ -440,7 +440,7 @@ function drop(reason: DropReason, n: number): void {
   if (d && d.load === ownerId() && outbox.has(d)) { d.n = (d.n as number) + n; outbox.touch(d) }
   else drops.set(reason, rec('dropped', ownerId(), { n, reason }))
 }
-/** Every source (spec 30 #27-#33): <= 50 per load (those past it counted), the same one at most once a second; messages and
+/** Every source (spec 30 #27-#33): ≤ 50 per load (those past it counted), the same one at most once a second; messages and
  *  stack lines cut to 200 characters; the modes on with it. An error after the load settled or was cut is `late` - the
  *  load owns the geometry for as long as its board stays open. At the `core` level, what 0.29 did. */
 function logError(e: SignalError): void {

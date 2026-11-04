@@ -62,6 +62,14 @@ function frameOf(src: string, win: unknown): string | undefined {
   return reg ? s.nodes.find((n) => n.key === reg.key)?.frame : undefined
 }
 const r3 = (x: number) => Math.round(x * 1000) / 1000
+/** The command behind a layout animation (#34), read in the turn that starts it - the sampler hears of it a microtask
+ *  later, from the observer, and a command's name lasts its turn - and kept only that long. */
+let nextBy: string | undefined
+export function noteGestureCmd(): void {
+  if (!FULL) return
+  nextBy = currentCmd()
+  if (nextBy) queueMicrotask(() => queueMicrotask(() => { nextBy = undefined }))
+}
 /** the gesture running now */
 let g: Run | null = null
 /** gestures ended so far, every one (a headless perf run waits for each of its three, spec 28 A3.8 #20) */
@@ -78,7 +86,7 @@ function note(m: Motion) {
 }
 
 function begin(m: Motion) {
-  const run: Run = { t0: performance.now(), last: 0, dts: [], pan: false, zoom: false, layout: false, longs: [], raf: 0, top: [], ...(FULL ? { by: currentCmd() } : {}) }
+  const run: Run = { t0: performance.now(), last: 0, dts: [], pan: false, zoom: false, layout: false, longs: [], raf: 0, top: [], ...(FULL ? { by: nextBy ?? currentCmd() } : {}) }
   g = run
   note(m)
   readScale(run)

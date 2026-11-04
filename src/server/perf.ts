@@ -206,7 +206,7 @@ const BODY: Record<typeof PAGE_KINDS[number], (r: Record<string, unknown>, root?
     return {
       source, frame: str(r.frame), component: str(r.component), message, stack: stack.length ? stack : undefined, late: flag(r.late),
       route: fixed(r.route, ROUTE_RE), method: fixed(r.method, METHOD_RE), status: r.status === 'timeout' ? 'timeout' : status(r.status), ms: ms(r.ms),
-      tag: oneOf(r.tag, RESOURCE_TAGS), url: str(r.url), file: repoFile(r.file, root), plugin: str(r.plugin, 64), modes: modes.length ? modes : undefined,
+      tag: oneOf(r.tag, RESOURCE_TAGS), url: str(r.url)?.split(/[?#]/)[0], file: repoFile(str(r.file)?.split(/[?#]/)[0], root), plugin: str(r.plugin, 64), modes: modes.length ? modes : undefined,
     }
   },
   dropped: (r) => (count(r.n) === undefined ? null : { n: count(r.n), reason: oneOf(r.reason, DROP_REASONS) }),

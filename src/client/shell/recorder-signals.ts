@@ -181,7 +181,7 @@ function enterEnd(e: Enter, outcome: TransitionOutcome): void {
   if (waiting === e) waiting = null
   const ms = Math.round(now() - e.at)
   const firstFrame = e.shown === 'first-frame'
-  const frames = e.shown === 'two-frames' ? undefined : firstFrame || e.stage ? 1 : e.cohort.size
+  const frames = SHOWN[e.mode] === 'two-frames' ? undefined : firstFrame || e.stage ? 1 : e.cohort.size
   transitionRecord('mode', {
     mode: e.mode, phase: 'enter', t: e.t, by: e.by,
     ...(outcome === 'done' ? (firstFrame ? { firstFrameMs: ms } : { shownMs: ms }) : {}),
