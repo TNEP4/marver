@@ -379,7 +379,8 @@ export type HeldBy = (typeof HELD_BY)[number]
 
 /** Every shell line's envelope (#16): today's `tab`, and the page and seq the `(page, seq)` dedupe reads. */
 export interface ShellLineEnvelope { kind: ShellReloadKind; tab: string; page: string; seq: number; ts?: number }
-/** `prev`: the page this tab showed before this one - the reader's evidence that it ended (#48). */
+/** `prev`: the page that ended in this tab (its `pagehide`, not kept for back and forward) before this one - the reader's
+ *  evidence (#48). Never read from a page still alive: a duplicated tab has none to copy. */
 export interface ShellBootLine extends ShellLineEnvelope { kind: 'shell-boot'; nav?: 'navigate' | 'reload' | 'back_forward' | 'prerender'; resumed?: true; prev?: string }
 /** #14: today's `ready` (cause, node, frame, shown, ms) plus the token frozen at its navigation's start. */
 export interface ReadyLine extends ShellLineEnvelope {

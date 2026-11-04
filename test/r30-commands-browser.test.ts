@@ -544,7 +544,30 @@ describe('a renderer lost mid-command (#48)', () => {
     return until(() => { void flush(t); return of(t, 'copy-image').slice(from).find((r) => r.phase === 'start') }, 10_000, 'the start on file')
   }
 
-  it('a reload in its tab: the next page names the one it replaced, and that start reads `interrupted` from then', async (ctx) => {
+  it('a duplicated tab copies this tab\'s storage while the page lives: it names nothing, and the start stays `unmatched`', async (ctx) => {
+    if (!browser) return ctx.skip()
+    const t = await open()
+    const start = await hung(t)
+    // what a duplicate gets: the storage as it stands now, there before any of its own scripts
+    const copied = await ev(t, 'JSON.stringify(Object.fromEntries(Object.entries(sessionStorage)))')
+    const dup = await open('#/b/main', `for (const [k, v] of Object.entries(${copied})) sessionStorage.setItem(k, v)`)
+    expect(dup.page).not.toBe(t.page)
+    const boot = await until(() => reloads().find((l) => l.kind === 'shell-boot' && l.page === dup.page), 20_000, 'the duplicate\'s shell-boot')
+    expect(boot).not.toHaveProperty('prev')
+    const mine = lines().filter((r) => r.kind === 'cmd' && r.id === start.id)
+    expect(commandsSummary(mine, start.ts + CMD_DEADLINE_MAX_MS + 1, reloads())).toMatchObject({ interrupted: 0, unmatched: 1 })
+    expect(await ev(t, 'window.__mvRecorder.page'), 'the original lives on').toBe(t.page)
+  }, 90_000)
+
+  it('a page kept for back and forward has not ended: its `pagehide` writes nothing for the next page to name', async (ctx) => {
+    if (!browser) return ctx.skip()
+    const t = await open()
+    expect(await ev(t, `(dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })), sessionStorage.getItem('mv-page-left'))`)).toBe(null)
+    expect(await ev(t, `(dispatchEvent(new PageTransitionEvent('pagehide', { persisted: false })), sessionStorage.getItem('mv-page-left'))`)).toBe(t.page)
+    await ev(t, `(sessionStorage.removeItem('mv-page-left'), 1)`)
+  }, 60_000)
+
+  it('a reload in its tab: the page said it left, the next one names it, and that start reads `interrupted` from then', async (ctx) => {
     if (!browser) return ctx.skip()
     const t = await open()
     const start = await hung(t)

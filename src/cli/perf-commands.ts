@@ -2,9 +2,10 @@
  * The `cmd` records read back (spec 30 R12 #48, #49, for R10's summary): commands failed or unobserved by code, and a
  * start with no end, which is never written, only read. Page and app alike.
  *
- * `interrupted` takes evidence that its page or app ended, read from the lifecycle lines: a page its tab replaced
- * (`shell-boot`'s `prev`), a page the app says is gone (`gone`), a launch of the app after the one that ran it - or that
- * held its page (a later `start` of that flavour). Elapsed time alone proves nothing: past its longest deadline a live
+ * `interrupted` takes evidence that its page or app ended, read from the lifecycle lines: a page that said it left its
+ * tab, named by the next one there (`shell-boot`'s `prev`), a page the app says is gone (`gone`), a launch of the app
+ * after the one that ran it - or that held its page (a later `start` of that flavour). A boot of any other tab, a
+ * duplicate of this one among them, says nothing. Elapsed time alone proves nothing: past its longest deadline a live
  * page has written an end, so what is left is `unmatched` - a renderer hung, a Mac asleep, a batch lost, a tab closed -
  * and the records do not say which (R0). Under that deadline with no evidence, it may still be going, and is neither.
  */

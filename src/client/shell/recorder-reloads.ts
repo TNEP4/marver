@@ -228,19 +228,19 @@ function leave(): void {
   try { void post([...fit, ...droppedNow(lost)], true).catch(() => {}) } catch { /* going anyway */ }
 }
 
-const TAB_PAGE = 'mv-tab-page'
+/** The page that left this tab for good, in the tab's own storage until the next page there names it (#48). A page writes
+ *  it only as it ends: a duplicated tab copies this storage from a live page, which has written nothing, so a copy can
+ *  never say its original ended. A crash writes nothing either: the app's `gone`, or nothing at all. */
+const LEFT_TAB = 'mv-page-left'
 /** A line, as `logReload` built it. `shell-boot` adds what only the page knows (#16). */
 function take(line: Record<string, unknown>): void {
   if (line.kind === 'shell-boot') {
     const nav = (performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined)?.type
     if (nav) line.nav = bound(nav, 16)
     if (resumed) line.resumed = true
-    // the page this tab showed before this one (sessionStorage is the tab's, and outlives a reload): what says it ended,
-    // a start of its with no end is interrupted (#48)
     try {
-      const prev = sessionStorage.getItem(TAB_PAGE)
-      if (prev && prev !== PAGE_ID) line.prev = prev
-      sessionStorage.setItem(TAB_PAGE, PAGE_ID)
+      const prev = sessionStorage.getItem(LEFT_TAB)
+      if (prev) { line.prev = prev; sessionStorage.removeItem(LEFT_TAB) }
     } catch { /* storage off: no evidence, and the reader says so */ }
   }
   outbox.push(line as PerfRecord)
@@ -256,6 +256,8 @@ export function startReloads(): void {
   reloadHooks.started = guard(started)
   reloadHooks.held = guard(held)
   perfSeams.requestHeaders = (url, init) => { try { return writeHeaders(url, init) } catch { return undefined } }
+  // kept for back and forward (`persisted`), this page may yet come back: it has not ended
+  addEventListener('pagehide', (e) => { if (!e.persisted) { try { sessionStorage.setItem(LEFT_TAB, PAGE_ID) } catch { /* storage off */ } } })
   perfSeams.frameMessage.on(guard(onFrameMessage))
   perfSeams.leaving.on(guard(leave))
   document.addEventListener('visibilitychange', guard(() => { if (document.visibilityState === 'hidden') void send() }))
