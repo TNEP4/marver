@@ -161,14 +161,69 @@ describe('signals (#49)', () => {
     seamsNow.stageMessage.emit({ type: 'sh:stage-error', message: 'boom' })
     expect(seen('play').at(-1)).toMatchObject({ phase: 'end', outcome: 'failed', why: 'stage-error' })
   })
-  it('a frame reload: its node\'s next `sh:ready` is done, its `sh:error` fails, another node\'s says nothing', async () => {
-    const h = C.cmd('frame-reload', CLICK)
-    C.endOnReady(h, 'n1')
-    await turn()
-    seamsNow.frameMessage.emit('n2', { type: 'sh:ready' })
-    expect(seen().map((r) => r.phase)).toEqual(['start'])
-    seamsNow.frameMessage.emit('n1', { type: 'sh:error' })
-    expect(seen().at(-1)).toMatchObject({ outcome: 'failed', why: 'error' })
+  describe('a frame reload (#49)', () => {
+    /** A node's iframe, as FrameNode registers it: the URL revision the shell gave it, its live document's id. */
+    const frameAt = async (key: string, gen: string, boot: string) => {
+      const { registerFrame } = await import('../src/client/shell/canvas/frame-registry.ts')
+      const iframe = { src: `http://x/__mv/frame/?id=a&r=${gen}`, contentWindow: { __mvBoot: boot } }
+      registerFrame({} as WindowProxy, { key, iframe: iframe as unknown as HTMLIFrameElement })
+      /** The reload: a fresh URL at once, the new document's id when it runs its bridge. */
+      return { navigate: (g: string) => { iframe.src = `http://x/__mv/frame/?id=a&r=${g}` }, booted: (b: string) => { iframe.contentWindow.__mvBoot = b } }
+    }
+    const started = async () => {
+      const h = C.cmd('frame-reload', CLICK)
+      C.endOnReady(h, 'n1')
+      await turn()
+      return h
+    }
+    const phases = () => seen('frame-reload').map((r) => r.phase)
+
+    it('the new document\'s `sh:ready` is done; another node\'s says nothing', async () => {
+      const f = await frameAt('n1', '1', 'old')
+      await frameAt('n2', '1', 'other')
+      await started()
+      f.navigate('2'); f.booted('new')
+      seamsNow.frameMessage.emit('n2', { type: 'sh:ready', gen: '1', boot: 'other' })
+      expect(phases()).toEqual(['start'])
+      seamsNow.frameMessage.emit('n1', { type: 'sh:ready', gen: '2', boot: 'new' })
+      expect(seen('frame-reload').at(-1)).toMatchObject({ phase: 'end', outcome: 'done' })
+    })
+    it('the new document\'s `sh:error` fails it', async () => {
+      const f = await frameAt('n1', '1', 'old')
+      await started()
+      f.navigate('2'); f.booted('new')
+      seamsNow.frameMessage.emit('n1', { type: 'sh:error', gen: '2', boot: 'new' })
+      expect(seen('frame-reload').at(-1)).toMatchObject({ outcome: 'failed', why: 'error' })
+    })
+    it('a ready or error still queued from the old document ends nothing, before or after the new one runs', async () => {
+      const f = await frameAt('n1', '1', 'old')
+      await started()
+      // App.tsx tells the seam before its own guard: these reach the engine
+      f.navigate('2')
+      seamsNow.frameMessage.emit('n1', { type: 'sh:ready', gen: '1', boot: 'old' })
+      seamsNow.frameMessage.emit('n1', { type: 'sh:error', gen: '1', boot: 'old' })
+      f.booted('new')
+      seamsNow.frameMessage.emit('n1', { type: 'sh:ready', gen: '1', boot: 'old' })
+      expect(phases()).toEqual(['start'])
+      seamsNow.frameMessage.emit('n1', { type: 'sh:ready', gen: '2', boot: 'new' })
+      expect(phases()).toEqual(['start', 'end'])
+    })
+    it('a reload whose URL keeps its revision: the document it asked to replace, still live, says nothing of it', async () => {
+      const f = await frameAt('n1', '1', 'old')
+      await started()
+      seamsNow.frameMessage.emit('n1', { type: 'sh:ready', gen: '1', boot: 'old' })
+      expect(phases()).toEqual(['start'])
+      f.booted('new')
+      seamsNow.frameMessage.emit('n1', { type: 'sh:ready', gen: '1', boot: 'new' })
+      expect(seen('frame-reload').at(-1)).toMatchObject({ phase: 'end', outcome: 'done' })
+    })
+    it('a node with no live iframe: nothing to believe, and the deadline says so', async () => {
+      await started()
+      seamsNow.frameMessage.emit('n1', { type: 'sh:ready', gen: '1', boot: 'x' })
+      expect(phases()).toEqual(['start'])
+      vi.advanceTimersByTime(30_000)
+      expect(seen('frame-reload').at(-1)).toMatchObject({ outcome: 'unobserved', why: 'deadline' })
+    })
   })
   it('`shell-reload`: the next page writes the end with the id it kept', async () => {
     C.shellReload(C.cmd('shell-reload', CLICK))

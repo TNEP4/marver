@@ -26,6 +26,7 @@ import { fullRecorder } from '../recorder-level.ts'
 import { newId } from './recorder-core.ts'
 import { hooked, perfSeams, type Answered, type LoadPhase } from './recorder-seams.ts'
 import { canvasCtl } from './canvas/ctl.ts'
+import { bootOf, fromLiveDocument, iframeOf } from './canvas/frame-registry.ts'
 
 /** `once`: decided in its input's own turn, one record. `start-end`: a start at the input, an end after its signal. */
 export type Lifecycle = 'once' | 'start-end'
@@ -283,7 +284,7 @@ type Wait =
   | { on: 'stage'; at?: string }
   | { on: 'load'; board: string; until: 'settled' | 'visible'; load?: string }
   | { on: 'save'; board: string }
-  | { on: 'ready'; node: string }
+  | { on: 'ready'; node: string; was?: string }
   | { on: 'answer'; path: string; failed: string }
 
 interface Flight {
@@ -529,8 +530,9 @@ export function endOnStage(h: CmdHandle, at?: string): void {
   f.waits = f.waits.filter((w) => w.on !== 'stage')
   f.waits.push({ on: 'stage', at })
 }
-/** Ends `h` on node `node`'s next `ready` (a reload by hand), or fails it on its `sh:error`. */
-export function endOnReady(h: CmdHandle, node: string): void { const f = flightOf(h); if (f) f.waits.push({ on: 'ready', node }) }
+/** Ends `h` on the `ready` of the document that replaces the one node `node` shows now (a reload by hand, asked before it
+ *  navigates), or fails it on that document's `sh:error`. */
+export function endOnReady(h: CmdHandle, node: string): void { const f = flightOf(h); if (f) f.waits.push({ on: 'ready', node, was: bootOf(iframeOf(node)) }) }
 /** `h` changed `board`: it ends when the save carrying its id landed (#18, #49) - `save-conflict` on a 409. */
 export function endOnSave(h: CmdHandle, board: string): void {
   const f = flightOf(h)
@@ -647,7 +649,11 @@ function message(node: string | null, data: Record<string, unknown>): void {
       if (f.posts && f.acked.size >= f.posts) end(f, 'done')
     }
   } else if (node && (type === 'sh:ready' || type === 'sh:error')) {
-    for (const [f, w] of waiting('ready')) if (w.node === node) (type === 'sh:ready' ? end(f, 'done') : end(f, 'failed', 'error'))
+    // told before App.tsx's own guard: a message still on its way from the document since replaced, or from the one
+    // being replaced until its navigation commits, says nothing of the reload
+    const iframe = iframeOf(node)
+    if (!iframe || !fromLiveDocument(iframe, data)) return
+    for (const [f, w] of waiting('ready')) if (w.node === node && data.boot !== w.was) (type === 'sh:ready' ? end(f, 'done') : end(f, 'failed', 'error'))
   } else if (!node && type === 'sh:stage-shown') {
     const at = String(data.at ?? '')
     for (const [f, w] of waiting('stage')) if (!w.at || w.at === at) end(f, 'done')
