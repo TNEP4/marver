@@ -97,7 +97,12 @@ let recording = false
 const asks: { tab: string; ask: PerfAsk }[] = []
 let perfFn: ((tabId: string, doc: string, msg: PerfMsg) => void) | null = null
 const file = () => join(base, 'home', 'perf', 'app-dev.jsonl')
-const lines = () => { flushNow(); return existsSync(file()) ? readFileSync(file(), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, any>) : [] }
+/** Spec 30 #44: `sample` and `agx` lines are in samples-dev.jsonl beside it; both files, merged by `seq` */
+const lines = () => {
+  flushNow()
+  const read = (f: string) => (existsSync(f) ? readFileSync(f, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, any>) : [])
+  return [...read(file()), ...read(file().replace('app-dev.jsonl', 'samples-dev.jsonl').replace('app.jsonl', 'samples.jsonl'))].sort((a, b) => a.seq - b.seq)
+}
 const kinds = () => lines().map((l) => l.kind)
 
 beforeAll(() => {
