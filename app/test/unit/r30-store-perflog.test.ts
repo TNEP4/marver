@@ -158,10 +158,10 @@ describe('segments (#42)', () => {
   })
 
   it('the safety cap (#43): past it the oldest segments go, and a counted dropped line in that file says how many lines', async () => {
-    const now = Date.now()
     mkdirSync(perf(), { recursive: true, mode: 0o700 })
     start()
-    L.append('dropped', { n: 1 })                         // the samples file exists from here: see the 1.0.0 case
+    const now = Date.now()                                // what this version opens: see the 1.0.0 case
+    L.append('dropped', { n: 1 })
     L.append('sample', SAMPLE)
     L.flushNow()
     const line = old(0, now, { pad: 'p'.repeat(1000) }) + '\n'
@@ -178,10 +178,10 @@ describe('segments (#42)', () => {
 
 describe('the last flush (#43)', () => {
   it('a close at quit that trips the cap writes its counted line in the same flush', () => {
-    const now = Date.now()
     mkdirSync(perf(), { recursive: true, mode: 0o700 })
     start()
-    L.append('sample', SAMPLE)                            // this version's first samples line: the app file's cap applies from here
+    const now = Date.now()
+    L.append('sample', SAMPLE)
     L.flushNow()
     const line = old(0, now, { pad: 'p'.repeat(1000) }) + '\n'
     const per = Math.ceil(5 * 2 ** 20 / line.length)
@@ -234,6 +234,58 @@ describe('migration (#45)', () => {
     L.flushNow()
     expect(segs('app')).toHaveLength(1)                   // not gone, though past the app file's 16 MB
     expect(appLogFiles(perf(), 'release').flatMap((f) => lines(f)).filter((l) => l.includes('retention-cap'))).toEqual([])
+  })
+})
+
+describe('the app file\'s cap, whatever `recorder` says (#43)', () => {
+  const FIVE_MB = () => { const line = old(0, Date.now(), { pad: 'p'.repeat(1000) }) + '\n'; return { line, per: Math.ceil(5 * 2 ** 20 / line.length) } }
+  const seed = (from: number, n: number) => { const { line, per } = FIVE_MB(); for (let i = 0; i < n; i++) writeFileSync(join(perf(), segmentName('app.jsonl', from + i, from + i + 1)), line.repeat(per)) }
+  const counted = () => appLogFiles(perf(), 'release').flatMap((f) => lines(f)).filter((l) => l.includes('"retention-cap"'))
+
+  it('`recorder: false` and no samples file: the events it still writes are capped, counted', async () => {
+    start({ recorder: false })
+    const now = Date.now()
+    L.append('dropped', { n: 1 })
+    L.flushNow()
+    expect(existsSync(L.samplesLogFile(home, 'release')), 'the case: nothing sampled').toBe(false)
+    seed(now + 1, 4)                                       // 20 MB past the 16 MB cap
+    await L.prune()
+    L.flushNow()
+    expect(segs('app')).toHaveLength(3)
+    expect(counted()).toHaveLength(1)
+  })
+
+  it('only what came before the first launch is exempt, on every launch after it; what this version opened is capped beside it', async () => {
+    mkdirSync(perf(), { recursive: true, mode: 0o700 })
+    const legacy = segmentName('app.jsonl', Date.now() - 3 * DAY, Date.now() + DAY)
+    const { line } = FIVE_MB()
+    writeFileSync(join(perf(), legacy), line.repeat(Math.ceil(28 * 2 ** 20 / line.length)))
+    start({ recorder: false })
+    await L.prune()
+    L.flushNow()
+    expect(segs('app')).toEqual([legacy])
+    await L.idle()
+    L.resetPerflog()
+    await new Promise((r) => setTimeout(r, 5))
+    // the next launch: the boundary is the first one's, not this one's
+    const first = Date.now()
+    start({ recorder: false })
+    seed(first - 2, 2)                                     // opened after the first launch, before this one
+    seed(first + 1, 2)
+    await L.prune()
+    L.flushNow()
+    expect(segs('app')).toContain(legacy)
+    expect(segs('app')).toHaveLength(1 + 3)
+    expect(counted()).toHaveLength(1)
+  })
+
+  it('an unreadable boundary starts from now: nothing newly written goes uncapped', async () => {
+    mkdirSync(join(perf(), 'cap-since-release'), { recursive: true, mode: 0o700 })   // a folder where the file goes
+    start({ recorder: false })
+    seed(Date.now() + 1, 4)
+    await L.prune()
+    L.flushNow()
+    expect(segs('app')).toHaveLength(3)
   })
 })
 

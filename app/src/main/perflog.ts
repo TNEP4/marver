@@ -50,12 +50,12 @@
  * - **The machine-profile pass** reads every segment of both files of both flavours, off the main thread (#44).
  */
 import { randomBytes } from 'node:crypto'
-import { chmodSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readSync, writeSync } from 'node:fs'
+import { chmodSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync, writeSync } from 'node:fs'
 import { open, readdir, readFile, rm, stat, unlink, chmod, utimes } from 'node:fs/promises'
 import { join } from 'node:path'
 import { APP_LOG, APP_SAMPLES_LOG, SAMPLE_KINDS, type AppBody, type AppKind, type Flavour } from '../../../src/shared/app-perf.ts'
 import { SEGMENTS, type SegmentedFile } from '../../../src/shared/perf-records.ts'
-import { adoptLive, appLogFiles, closeLive, dueToClose, enforceCap, lineTs, pruneAged, segmentsOf, type LiveState, type Segment } from '../../../src/server/perf-segments.ts'
+import { adoptLive, appLogFiles, closeLive, dueToClose, enforceCap, lineTs, pruneAged, type LiveState, type Segment } from '../../../src/server/perf-segments.ts'
 import type { Config, Home } from './config.ts'
 import { faults, sweepTemps } from './fsx.ts'
 import { note } from './testing/index.ts'
@@ -120,6 +120,8 @@ let released: (() => void)[] = []
 let partial: { bytes: number; code: string } | null = null
 /** test builds: the writer's clock (the 24 h close and retention read it) */
 let clockFn: () => number = Date.now
+/** an app segment opened before this is 1.0.0's: `readCapSince` */
+let capSince = Infinity
 
 const days = (): number => {
   const d = Number(s?.config().keepPerfDays)
@@ -167,6 +169,7 @@ export function startPerflog(o: PerflogStart): void {
   holding = true
   if (!o.home.writable) return
   perfDir = join(o.home.dir, 'perf')
+  capSince = readCapSince(o.flavour)
   // an earlier launch may have left a file ending inside a line (a full disk, a power loss): this launch's first
   // write to it checks, and starts on a line of its own
   outs = {
@@ -323,18 +326,26 @@ function writeTo(out: Out, lines: string[]): string[] {
   return []
 }
 
-/** The samples file's first `openedAt`: what this version wrote first (none yet: Infinity). */
-function samplesSince(): number {
-  if (!outs) return Infinity
-  const segs = segmentsOf(perfDir, outs.samples.name)
-  return Math.min(segs[0]?.openedAt ?? Infinity, outs.samples.live?.openedAt ?? (existsSync(outs.samples.path) ? liveOf(outs.samples)?.openedAt ?? Infinity : Infinity))
+/**
+ * Where the app file's cap starts (#43): the first launch of a version with one, on the disk for every launch after it.
+ * A segment opened before then is 1.0.0's, samples and all, up to 28 MB, and retention's; whatever this version opens is
+ * capped, whatever `recorder` says. Unreadable or unwritten: from now, so nothing new goes uncapped.
+ */
+function readCapSince(flavour: Flavour): number {
+  const f = join(perfDir, `cap-since-${flavour}`)
+  try { const n = Number(readFileSync(f, 'utf8')); if (Number.isSafeInteger(n) && n > 0) return n } catch { /* the first launch */ }
+  const now = clockFn()
+  try {
+    mkdirSync(perfDir, { recursive: true, mode: 0o700 })
+    writeFileSync(f, String(now), { mode: 0o600 })
+  } catch { /* the next launch tries again */ }
+  return now
 }
 
-/** The safety cap (#43): the oldest segments past it unlinked, and a counted `dropped` line queued for the same file.
- *  The app file's cap leaves 1.0.0's segments (opened before this version's first samples line) to retention. */
+/** The safety cap (#43): the oldest segments past it unlinked, and a counted `dropped` line queued for the same file. */
 function capCheck(out: Out): void {
   if (!s || !outs) return
-  const since = out === outs.app ? samplesSince() : -Infinity
+  const since = out === outs.app ? capSince : -Infinity
   const went = enforceCap(perfDir, out.name, out.live?.size ?? 0, SEGMENTS[out.name].capBytes, (g: Segment) => g.openedAt >= since)
   if (!went.segments) return
   if (__MV_TEST__) note('perflog', { cap: out.name, ...went })
@@ -565,5 +576,5 @@ export function resetPerflog(): void {
   flushTimer = pruneTimer = launchPrune = null
   for (const f of released.splice(0)) f()
   s = null; outs = null; perfDir = ''; id = ''; seq = 0; startedAt = 0; held = []; holding = false; queue = []; lost = 0
-  pruning = null; partial = null; segmentsPrunedAt = 0; clockFn = Date.now
+  pruning = null; partial = null; segmentsPrunedAt = 0; clockFn = Date.now; capSince = Infinity
 }
