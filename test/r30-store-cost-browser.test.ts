@@ -114,7 +114,7 @@ function pastBudget(full: Pick<Figures, 'ops'> & Partial<Figures>, core: Pick<Fi
   return out
 }
 async function opsMedian(query: string, n = 3): Promise<{ ops: Ops; kinds: string[] }> {
-  const all = []
+  const all: { ops: Ops; kinds: string[] }[] = []
   for (let i = 0; i < n; i++) all.push(await opsAt(query))
   return { ops: Object.fromEntries(OP_NAMES.map((k) => [k, median(all.map((a) => a.ops[k]))])) as unknown as Ops, kinds: [...new Set(all.flatMap((a) => a.kinds))] }
 }
