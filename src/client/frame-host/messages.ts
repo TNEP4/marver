@@ -9,7 +9,7 @@
  * must be added to build.ts's copy list, or every published HTML frame stops.
  *
  * FROZEN before the spec 30 streams split. Owners: signals (theme and mode acks, `sh:gesture`, `sh:console`,
- * `sh:resource-error`, `sh:dropped`, `sh:renders`), edits (`sh:inplace`), commands (`sh:stage-key`'s `origin`).
+ * `sh:resource-error`, `sh:dropped`, `sh:warnings`, `sh:renders`), edits (`sh:inplace`), commands (`sh:stage-key`'s `origin`).
  */
 import type { ResourceTag } from '../../shared/perf-records.ts'
 
@@ -19,6 +19,7 @@ export const SH = {
   console: 'sh:console',
   resourceError: 'sh:resource-error',
   dropped: 'sh:dropped',
+  warnings: 'sh:warnings',
   renders: 'sh:renders',
   gesture: 'sh:gesture',
   inplace: 'sh:inplace',
@@ -61,6 +62,9 @@ export type FrameDropSource = 'frame' | 'console' | 'resource'
 /** #33: counter-only, independent of the detail budget, at most one a second, a final one at `pagehide`. Counts since
  *  the document's previous `sh:dropped`: the shell adds them to `dropped { reason: <source>, n }`. */
 export interface DroppedMsg { type: 'sh:dropped'; id: string; boot: string; counts: Partial<Record<FrameDropSource, number>>; final?: true }
+/** #28: a frame's `console.warn` calls, counted - no text. Counter-only, at most one a second, a final one at
+ *  `pagehide`; the shell adds them up by node into the minute's `warnings` record. */
+export interface WarningsMsg { type: 'sh:warnings'; id: string; boot: string; n: number; final?: true }
 /** #36: a document's minute of React commits (the frame root's, or the stage root's: `id` 'stage'). `minute`: the
  *  minute's start, epoch ms. */
 export interface RendersMsg { type: 'sh:renders'; id: string; boot: string; minute: number; commits: number; ms: number; maxMs: number; inGesture: number }
@@ -76,5 +80,5 @@ export interface StageKeyMsg { type: 'sh:stage-key'; key: string; code: string; 
  *  fields (stage/main.tsx:152), with the stage's boot id so an old stage's never counts. */
 export interface StageShownMsg { type: 'sh:stage-shown'; at: string; nav: string; epoch: string; doc: number; boot?: string }
 
-export type DocMsg = ThemeAppliedMsg | ModeAppliedMsg | ConsoleMsg | ResourceErrorMsg | DroppedMsg | RendersMsg | HmrMsg | InplaceMsg | StageKeyMsg | StageShownMsg
+export type DocMsg = ThemeAppliedMsg | ModeAppliedMsg | ConsoleMsg | ResourceErrorMsg | DroppedMsg | WarningsMsg | RendersMsg | HmrMsg | InplaceMsg | StageKeyMsg | StageShownMsg
 export type ShellMsg = SetThemeMsg | LaserMsg | PickMsg | GestureMsg

@@ -4,7 +4,7 @@ import { CONFIG, useStore } from '../store.ts'
 import { letGoOfTile } from '../jam-state.ts'
 import { bootHash, linkTargets } from '../hash.ts'
 import { revealFrame } from '../goto.ts'
-import { startPerf } from '../perf.ts'
+import { noteGestureCmd, startPerf } from '../perf.ts'
 import { FrameNode, HEADER } from './FrameNode.tsx'
 import { NOTE_GAP } from '../notes.ts'
 import { onMotion, startCameraBroadcast, setCameraScale } from './camera-broadcast.ts'
@@ -154,6 +154,7 @@ let presetTimer = 0
 export function animateLayout(ms = 360) {
   const w = document.getElementById('sh-world')
   if (!w) return
+  noteGestureCmd()
   w.classList.add('sh-preset')
   clearTimeout(presetTimer)
   presetTimer = window.setTimeout(() => w.classList.remove('sh-preset'), ms)

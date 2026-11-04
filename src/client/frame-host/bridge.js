@@ -8,6 +8,7 @@
 import { createInspect } from './inspect.js'
 import { createKeys } from './keys.js'
 import { createRecorder } from './trail.js'
+import { startDocumentSignals } from './signals.js'
 
 const isHtmlFrame = new URL(import.meta.url).searchParams.get('html') === '1'
 // same-origin parent (the shell): a fixed target origin keeps posts (incl. picked anchor
@@ -23,6 +24,9 @@ window.__mvBoot = BOOT
 // the URL revision the shell gave this document (its generation guard)
 const GEN = new URLSearchParams(location.search).get('r') ?? ''
 post({ type: 'sh:boot', id, gen: GEN, boot: BOOT })
+// the recorder's hooks in this document (spec 30 #28, #32, #33: console, element errors, their budget), before anything
+// the frame's own code runs; null where nothing records (a published canvas, a `core` run)
+const signals = startDocumentSignals({ post, id, gen: GEN, boot: BOOT })
 /** An error's first three stack lines (Chrome's "at …", else "fn@url:line:col"), when it has them. */
 const stackOf = (err) => {
   if (typeof err?.stack !== 'string') return undefined
@@ -33,14 +37,15 @@ const stackOf = (err) => {
 }
 
 // theme lands as BOTH signals: [data-theme] plus the `dark` class Tailwind/shadcn key on
-const setTheme = (theme) => {
+const setTheme = (theme, t) => {
   document.documentElement.dataset.theme = theme
   document.documentElement.classList.toggle('dark', theme === 'dark')
-  // the shell sleeps a frame only under the theme it has actually painted: report it, two frames later
-  requestAnimationFrame(() => requestAnimationFrame(() => post({ type: 'sh:theme-applied', id, theme })))
+  // the shell sleeps a frame only under the theme it has actually painted: report it, two frames later - with the
+  // switch's transition and this document's id (spec 30 #21)
+  requestAnimationFrame(() => requestAnimationFrame(() => post({ type: 'sh:theme-applied', id, theme, boot: BOOT, ...(typeof t === 'string' ? { t } : {}) })))
 }
 // the theme this document booted with (the URL's) counts as applied
-requestAnimationFrame(() => requestAnimationFrame(() => post({ type: 'sh:theme-applied', id, theme: new URLSearchParams(location.search).get('theme') ?? 'light' })))
+requestAnimationFrame(() => requestAnimationFrame(() => post({ type: 'sh:theme-applied', id, theme: new URLSearchParams(location.search).get('theme') ?? 'light', boot: BOOT })))
 
 if (isHtmlFrame) {
   const theme = new URLSearchParams(location.search).get('theme')
@@ -66,7 +71,7 @@ const keys = createKeys({ post, trusted })
 // laser / pick / anchor / highlight - one shared controller (see inspect.js). The id is
 // static here (one iframe per frame); onModeChange re-reports the lease when a mode flips.
 // Inside a capture a laser click is the capture's pick, not a path copy.
-const inspect = createInspect({ post, getId: () => id, onModeChange: () => reportInteraction(), onLaserPick: (el, e) => recorder.pick(el, e) })
+const inspect = createInspect({ post, getId: () => id, getBoot: () => BOOT, onModeChange: () => reportInteraction(), onLaserPick: (el, e) => recorder.pick(el, e) })
 
 document.addEventListener('mouseover', () => { if (!pointerInside) { pointerInside = true; reportInteraction() } })
 document.addEventListener('mouseout', (e) => { if (!e.relatedTarget) { pointerInside = false; reportInteraction() } })
@@ -87,14 +92,18 @@ document.addEventListener('click', (e) => {
 // consumed and forwarded it already, so this never sees it
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') post({ type: 'sh:exit-interact' }) })
 
-window.addEventListener('error', (e) => post({ type: 'sh:error', id, gen: GEN, boot: BOOT, message: String(e.message || e.error), stack: stackOf(e.error) }))
-window.addEventListener('unhandledrejection', (e) => post({ type: 'sh:error', id, gen: GEN, boot: BOOT, message: `unhandled rejection: ${e.reason}`, stack: stackOf(e.reason) }))
+// (spec 30 #33) the shared budget, before anything is formatted or posted - but a document's first window error always
+// goes: it is what marks the frame failed, and the recorder never stands in the way of that (#5)
+let windowErrors = 0
+const errorGoes = () => !signals || signals.take('frame', ++windowErrors === 1)
+window.addEventListener('error', (e) => { if (errorGoes()) post({ type: 'sh:error', id, gen: GEN, boot: BOOT, message: String(e.message || e.error), stack: stackOf(e.error) }) })
+window.addEventListener('unhandledrejection', (e) => { if (errorGoes()) post({ type: 'sh:error', id, gen: GEN, boot: BOOT, message: `unhandled rejection: ${e.reason}`, stack: stackOf(e.reason) }) })
 
 window.addEventListener('message', (e) => {
   // commands come from the SHELL (parent) only - embedded app content must not flip the theme
   if (e.source !== window.parent || window.parent === window) return
   if (e.origin && e.origin !== location.origin) return   // a navigated frame must not spoof commands
-  if (e?.data?.type === 'sh:set-theme') setTheme(e.data.theme)
+  if (e?.data?.type === 'sh:set-theme') setTheme(e.data.theme, e.data.t)
   // B0.2: interact/play target owns its own wheel; passive frames forward it to the canvas
   if (e?.data?.type === 'sh:interactive') {
     interactiveOn = !!e.data.on

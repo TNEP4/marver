@@ -354,8 +354,8 @@ function PlayInner() {
   // laser / comment ride the same rail as canvas frames, broadcast to the stage iframe.
   // Re-sent on stage-ready (below) so a stage reload restores the mode.
   const laserInspect = useStore((s) => s.laserInspect)
-  useEffect(() => { postStage({ type: 'sh:laser', on: laser, inspect: laserInspect }) }, [laser, laserInspect])
-  useEffect(() => { postStage({ type: 'sh:pick', on: commentMode, quiet: !useComments.getState().showAnchor }) }, [commentMode, playShowAnchor])
+  useEffect(() => { postStage({ type: 'sh:laser', on: laser, inspect: laserInspect, t: perfSeams.transition('mode') }) }, [laser, laserInspect])
+  useEffect(() => { postStage({ type: 'sh:pick', on: commentMode, quiet: !useComments.getState().showAnchor, t: perfSeams.transition('mode') }) }, [commentMode, playShowAnchor])
 
   /** Play torn down, nothing more: false where there is no way out */
   const leave = (): boolean => {
@@ -388,7 +388,7 @@ function PlayInner() {
     const p = useStore.getState().play
     if (!p) return
     useStore.getState().setPlay({ ...p, theme: t })
-    postStage({ type: 'sh:set-theme', theme: t })
+    postStage({ type: 'sh:set-theme', theme: t, t: perfSeams.transition('theme') })
   }
   /** Walk to a frame: the stage swaps silently; state + URL follow via the projection. */
   const goTo = (at: string) => playCtl.setAt(at)

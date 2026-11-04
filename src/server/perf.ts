@@ -12,9 +12,9 @@
  * shapes and bounds are src/shared/perf-records.ts's. Each stream fills its own kinds' cleaners in `BODY`.
  */
 import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { basename, isAbsolute, join, relative } from 'node:path'
 import { checkRealDirs } from './boards.ts'
-import { DEDUPE, DROP_REASONS as R30_DROP_REASONS, HELD_BY, LOAD_TRIGGERS, PAGE_KINDS as R30_PAGE_KINDS, RELOAD_BOUNDS, SHELL_RELOAD_KINDS, WRITER_ATTRIBUTION, type BatchAnswer, type BatchFailed, type ShellReloadKind } from '../shared/perf-records.ts'
+import { DEDUPE, DROP_REASONS as R30_DROP_REASONS, ERROR_SOURCES, HELD_BY, LOAD_TRIGGERS, LOAF, MODES, PAGE_KINDS as R30_PAGE_KINDS, RELOAD_BOUNDS, RENDERS, RESOURCE_TAGS, SHELL_RELOAD_KINDS, THEME_SCOPES, TRANSITION_OUTCOMES, WARNINGS, WRITER_ATTRIBUTION, type BatchAnswer, type BatchFailed, type ShellReloadKind } from '../shared/perf-records.ts'
 
 const MAX = 2_000_000   // past this the oldest half goes: the log answers "what happened lately"
 /** page.jsonl's: one load of a 120-frame board writes ~140 KB (two thirds of it moves), so 2 MB held about fourteen
@@ -108,7 +108,8 @@ export const LOAD_CAUSES = ['boot', 'switch', 'disk-reload'] as const
 export const CUT_REASONS = ['switch', 'reload', 'hidden', 'timeout', 'superseded', 'error', 'edited', 'unsaved'] as const
 export const OUTCOMES = ['settled', 'ready', 'missing', 'error', 'never-ready', 'cut'] as const
 export const GESTURES = ['pan', 'zoom', 'layout'] as const
-export const SOURCES = ['shell', 'frame', 'stage'] as const
+/** 0.29's sources and spec 30's (perf-records.ts) */
+export const SOURCES = ERROR_SOURCES
 /** why records were dropped, when it is not the queue's bound or a failed send: errors past a load's 50, and spec 30's
  *  sources, commands, transitions and the safety cap (perf-records.ts) */
 export const DROP_REASONS = R30_DROP_REASONS
@@ -141,8 +142,40 @@ const writers = (v: unknown) => {
   return out.length ? out : undefined
 }
 
-/** Each kind's fields, rebuilt from what the page sent - anything else is left out; null = the record is dropped. */
-const BODY: Record<typeof PAGE_KINDS[number], (r: Record<string, unknown>) => Record<string, unknown> | null> = {
+// ---- spec 30, signals: the fields' own shapes (#29-#36)
+const fixed = (v: unknown, re: RegExp) => (typeof v === 'string' && re.test(v) ? v : undefined)
+const ROUTE_RE = /^[a-z0-9:._/-]{1,64}$/i, METHOD_RE = /^[A-Z]{3,7}$/, THEME_RE = /^[\w][\w .-]{0,63}$/
+const status = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v < 1000 ? v : undefined)
+const epoch = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 1e12 && v < 1e14 ? Math.round(v) : undefined)
+/** #29: a file inside the repo, relative to it; anything else as given - this Mac's own path, in the owner's own file. */
+const repoFile = (v: unknown, root?: string) => {
+  const f = str(v)
+  if (!f || !root || !isAbsolute(f)) return f
+  const rel = relative(root, f)
+  return rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel : f
+}
+/** #34 */
+const scaleOf = (v: unknown) => {
+  const o = obj(v), num = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) && x > 0 && x < 1e4 ? Math.round(x * 1000) / 1000 : undefined)
+  const from = num(o.from), to = num(o.to), min = num(o.min), max = num(o.max)
+  return from !== undefined && to !== undefined && min !== undefined && max !== undefined ? { from, to, min, max } : undefined
+}
+/** #35: at most 3; a script's `src` a path (`/...`), never a query */
+const loafs = (v: unknown) => {
+  if (!Array.isArray(v)) return undefined
+  const out = v.slice(0, LOAF.kept).flatMap((x) => {
+    const o = obj(x), m = ms(o.ms)
+    if (m === undefined) return []
+    const c = obj(o.script), src = typeof c.src === 'string' && c.src.startsWith('/') ? c.src.split('?')[0].slice(0, 200) : undefined
+    const script = o.script && ms(c.ms) !== undefined ? prune({ src, frame: str(c.frame), fn: str(c.fn, LOAF.fn), invoker: str(c.invoker, LOAF.fn), ms: ms(c.ms), where: str(c.where, 32) }) : undefined
+    return [prune({ ms: m, blockMs: ms(o.blockMs), script })]
+  })
+  return out.length ? out : undefined
+}
+
+/** Each kind's fields, rebuilt from what the page sent - anything else is left out; null = the record is dropped.
+ *  `root`, the canvas's own folder, for the one field that names a file (#29). */
+const BODY: Record<typeof PAGE_KINDS[number], (r: Record<string, unknown>, root?: string) => Record<string, unknown> | null> = {
   load: (r) => {
     const board = typeof r.board === 'string' && BOARD.test(r.board) ? r.board : undefined, c = oneOf(r.cause, LOAD_CAUSES), request = id(r.request)
     return board && c && request ? { board, cause: c, request, sinceNav: ms(r.sinceNav), trigger: oneOf(r.trigger, LOAD_TRIGGERS), writer: oneOf(r.writer, WRITER_ATTRIBUTION), candidates: writers(r.candidates), by: id(r.by) } : null
@@ -176,22 +209,49 @@ const BODY: Record<typeof PAGE_KINDS[number], (r: Record<string, unknown>) => Re
   // stream's (#27-#35)
   gesture: (r) => {
     const type = oneOf(r.type, GESTURES)
-    return type ? { type, ms: ms(r.ms), frames: count(r.frames), p50: tenth(r.p50), p95: tenth(r.p95), max: tenth(r.max), over17ms: count(r.over17ms), over33ms: count(r.over33ms), longFrames: count(r.longFrames), hz: hz(r.hz) } : null
+    return type ? {
+      type, ms: ms(r.ms), frames: count(r.frames), p50: tenth(r.p50), p95: tenth(r.p95), max: tenth(r.max), over17ms: count(r.over17ms), over33ms: count(r.over33ms), longFrames: count(r.longFrames), hz: hz(r.hz),
+      scale: scaleOf(r.scale), visible: count(r.visible), awake: count(r.awake), loaf: loafs(r.loaf), by: id(r.by),
+    } : null
   },
-  error: (r) => {
-    const source = oneOf(r.source, SOURCES), message = str(r.message)
+  error: (r, root) => {
+    const source = oneOf(r.source, ERROR_SOURCES), message = str(r.message)
     const stack = Array.isArray(r.stack) ? r.stack.slice(0, 3).map((l) => str(l)).filter((l): l is string => !!l) : []
-    return source && message ? { source, frame: str(r.frame), component: str(r.component), message, stack: stack.length ? stack : undefined, late: flag(r.late) } : null
+    if (!source || !message) return null
+    const modes = Array.isArray(r.modes) ? [...new Set(r.modes.flatMap((m) => oneOf(m, MODES) ?? []))] : []
+    return {
+      source, frame: str(r.frame), component: str(r.component), message, stack: stack.length ? stack : undefined, late: flag(r.late),
+      route: fixed(r.route, ROUTE_RE), method: fixed(r.method, METHOD_RE), status: r.status === 'timeout' ? 'timeout' : status(r.status), ms: ms(r.ms),
+      tag: oneOf(r.tag, RESOURCE_TAGS), url: str(r.url)?.split(/[?#]/)[0], file: repoFile(str(r.file)?.split(/[?#]/)[0], root), plugin: str(r.plugin, 64), modes: modes.length ? modes : undefined,
+    }
   },
   dropped: (r) => (count(r.n) === undefined ? null : { n: count(r.n), reason: oneOf(r.reason, DROP_REASONS) }),
 
   // ---- spec 30: each stream fills its own kinds (perf-records.ts has their fields); null drops the record until then
   // signals (R3-R6)
-  renders: () => null,
-  warnings: () => null,
-  theme: () => null,
-  mode: () => null,
-  hmr: () => null,
+  renders: (r) => {
+    const rows = Array.isArray(r.rows) ? r.rows.slice(0, RENDERS.rows + 1).flatMap((x) => {
+      const o = obj(x), who = str(o.who, 64)
+      return who ? [prune({ who, frame: str(o.frame), commits: count(o.commits), ms: tenth(o.ms), maxMs: tenth(o.maxMs), inGesture: count(o.inGesture), rows: count(o.rows) })] : []
+    }) : []
+    return rows.length && epoch(r.minute) !== undefined ? { minute: epoch(r.minute), rows } : null
+  },
+  warnings: (r) => {
+    const top = Array.isArray(r.top) ? r.top.slice(0, WARNINGS.top).flatMap((x) => {
+      const o = obj(x), node = str(o.node, 64), n = count(o.n)
+      return node && n !== undefined ? [{ node, n }] : []
+    }) : []
+    return count(r.n) === undefined ? null : { n: count(r.n), top }
+  },
+  theme: (r) => {
+    const t = id(r.t), scope = oneOf(r.scope, THEME_SCOPES), to = fixed(r.to, THEME_RE), outcome = oneOf(r.outcome, TRANSITION_OUTCOMES)
+    return t && scope && to && outcome ? { t, scope, to, by: id(r.by), frames: count(r.frames), applied: count(r.applied), p50Ms: ms(r.p50Ms), maxMs: ms(r.maxMs), late: count(r.late), outcome } : null
+  },
+  mode: (r) => {
+    const mode = oneOf(r.mode, MODES), phase = oneOf(r.phase, ['enter', 'exit'] as const), t = id(r.t)
+    return mode && phase && t ? { mode, phase, t, by: id(r.by), shownMs: ms(r.shownMs), firstFrameMs: ms(r.firstFrameMs), frames: count(r.frames), outcome: oneOf(r.outcome, TRANSITION_OUTCOMES), heldMs: ms(r.heldMs), errors: count(r.errors) } : null
+  },
+  hmr: (r) => { const phase = oneOf(r.phase, ['lost', 'back'] as const); return phase ? { phase, downMs: ms(r.downMs) } : null },
   // commands (R12)
   cmd: () => null,
   // app-store (R15)
@@ -199,14 +259,14 @@ const BODY: Record<typeof PAGE_KINDS[number], (r: Record<string, unknown>) => Re
 }
 
 /** A page record rebuilt from the envelope and its kind's allowlist, or null. Strings are cut to 200 characters. */
-export function cleanPageRecord(raw: unknown, now = Date.now()): Record<string, unknown> | null {
+export function cleanPageRecord(raw: unknown, now = Date.now(), root?: string): Record<string, unknown> | null {
   const r = obj(raw)
   if (r.v !== 1) return null
   const kind = oneOf(r.kind, PAGE_KINDS)
   const ws = typeof r.ws === 'string' && WS.test(r.ws) ? r.ws : undefined
   const page = id(r.page), load = r.load === '-' ? '-' : id(r.load), seq = count(r.seq)
   if (!kind || !ws || !page || !load || seq === undefined) return null
-  const body = BODY[kind](r)
+  const body = BODY[kind](r, root)
   if (!body) return null
   // the page's clock is this Mac's: when the event happened, kept across a send that waited - a value far off is
   // the server's receipt instead
@@ -222,7 +282,7 @@ export function cleanPageRecord(raw: unknown, now = Date.now()): Record<string, 
  */
 export function logPage(root: string, raws: unknown[], o: { run?: string; kept?: (records: Record<string, unknown>[]) => void } = {}): number {
   const now = Date.now()
-  const recs = raws.slice(0, 5_000).flatMap((x) => { const c = cleanPageRecord(x, now); return c ? [o.run ? { ...c, run: o.run } : c] : [] })
+  const recs = raws.slice(0, 5_000).flatMap((x) => { const c = cleanPageRecord(x, now, root); return c ? [o.run ? { ...c, run: o.run } : c] : [] })
   if (!recs.length) return 0
   try { perfLogs.append(root, 'page', recs.map((c) => JSON.stringify(c))) } catch { return 0 }
   o.kept?.(recs)
