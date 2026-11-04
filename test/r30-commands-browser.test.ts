@@ -46,6 +46,14 @@ beforeAll(async () => {
     'design/boards/other.json': JSON.stringify({ version: 1, name: 'other', order: 1, auto: false, nodes: [
       { key: 'n-four', frame: 'other/four', x: 0, y: 0, w: 390, h: 844 },
     ] }),
+    // a feature board: its status can be set from its menu
+    'design/boards/_folders.json': JSON.stringify({ version: 2, folders: [{ name: 'features', order: 2, type: 'feature' }] }),
+    'design/boards/feat.json': JSON.stringify({ version: 1, name: 'feat', folder: 'features', order: 0, auto: false, nodes: [
+      { key: 'n-feat', frame: 'other/four', x: 0, y: 0, w: 390, h: 844 },
+    ] }),
+    'design/boards/plan.json': JSON.stringify({ version: 1, name: 'plan', folder: 'features', order: 1, auto: false, nodes: [
+      { key: 'n-plan', frame: 'other/four', x: 0, y: 0, w: 390, h: 844 },
+    ] }),
   })
   dev = await startDev(root, { env: { PATH: `${bin}:${process.env.PATH}` } })
   browser = await Browser.launch()
@@ -354,6 +362,104 @@ describe('a board (#49)', () => {
     const rs = await ended(t, 'scene-rename', from)
     expect(rs.map((r) => [r.phase, r.outcome])).toEqual([['start', undefined], ['end', 'cancelled']])
     expect(rs[0]).toMatchObject({ via: 'key', keys: 'Escape' })
+  }, 60_000)
+})
+
+describe('a board write names its command, however late it goes (#18)', () => {
+  /** Every board write this page sends from now on, as the wire sees it. `refuse`: this route answers 409 the first time. */
+  const watchWrites = (t: Tab, refuse?: string) => ev(t, `(() => {
+    window.__writes = []
+    let refused = ${JSON.stringify(refuse ?? null)}
+    const f = window.fetch
+    window.fetch = (u, i) => {
+      const route = String(u).split(/[?#]/)[0].split('/api/')[1] ?? ''
+      if (!route.startsWith('boards/') || !i?.method || i.method === 'GET') return f(u, i)
+      window.__writes.push({ route, cmds: new Headers(i.headers).get('x-mv-cmds') })
+      if (refused === route) { refused = null; return Promise.resolve(new Response('{"error":"stale"}', { status: 409 })) }
+      return f(u, i)
+    }
+    return 1
+  })()`)
+  const writes = (t: Tab): Promise<{ route: string; cmds: string | null }[]> => ev(t, `window.__writes`)
+  const dirty = async (t: Tab, key: string) => {
+    await ev(t, `__mvStore.getState().moveNode(${JSON.stringify(key)}, 700, 300), 1`)
+    expect(await ev(t, `__mvStore.getState().dirty`)).toBe(true)
+  }
+  /** The real picker: the board's menu, its second row (Paused, a decision anywhere). */
+  const pickStatus = async (t: Tab, board: string) => {
+    await menuOn(t, `[data-board="${board}"]`, 'Change status')
+    await browser!.until(t.s, `!!document.querySelector('[data-status-picker="list"]')`, 5_000)
+    await ev(t, `document.querySelector('[data-status-option="paused"]').click(), 1`)
+  }
+  const reset = (board: string) => {
+    const f = join(root, 'design', 'boards', `${board}.json`)
+    const b = JSON.parse(readFileSync(f, 'utf8'))
+    delete b.status
+    writeFileSync(f, JSON.stringify(b))
+  }
+
+  it('Change status with the board dirty: its write goes after the flush, and still names `board-status`; so does its go again after a 409', async (ctx) => {
+    if (!browser) return ctx.skip()
+    const t = await open('#/b/feat')
+    await browser.until(t.s, `!!__mvStore.getState().boardMeta.feat?.settable?.length`, 15_000)
+    await watchWrites(t, 'boards/status')
+    await dirty(t, 'n-feat')
+    const from = of(t, 'board-status').length
+    await pickStatus(t, 'feat')
+    const rs = await ended(t, 'board-status', from, 30_000)
+    expect(rs.find((r) => r.phase === 'end')).toMatchObject({ outcome: 'done' })
+    const w = await writes(t)
+    const first = w.findIndex((x) => x.route === 'boards/status')
+    expect(first, 'the flush went first').toBeGreaterThan(0)
+    expect(w[0].route).toBe('boards/feat')
+    expect(w.filter((x) => x.route === 'boards/status').map((x) => x.cmds)).toEqual([rs[0].id, rs[0].id])
+    reset('feat')
+  }, 90_000)
+
+  it('another board\'s status: the sidebar re-reads after a 409 and goes again, still named', async (ctx) => {
+    if (!browser) return ctx.skip()
+    const t = await open()
+    await browser.until(t.s, `!!__mvStore.getState().boardMeta.plan?.settable?.length`, 15_000)
+    await watchWrites(t, 'boards/status')
+    const from = of(t, 'board-status').length
+    await pickStatus(t, 'plan')
+    const rs = await ended(t, 'board-status', from, 30_000)
+    expect(rs.find((r) => r.phase === 'end')).toMatchObject({ outcome: 'done' })
+    expect((await writes(t)).filter((x) => x.route === 'boards/status').map((x) => x.cmds)).toEqual([rs[0].id, rs[0].id])
+    reset('plan')
+  }, 90_000)
+
+  it('a rename of the dirty board, and a tree write after its flush, each name theirs', async (ctx) => {
+    if (!browser) return ctx.skip()
+    const t = await open()
+    await watchWrites(t)
+    await dirty(t, 'n-two')
+    const fromRename = of(t, 'board-rename').length
+    await menuOn(t, '[data-board="main"]', 'Rename')
+    await typed(t, 'Main again')
+    await key(t, 'Enter')
+    const renamed = await ended(t, 'board-rename', fromRename, 30_000)
+    expect(renamed.find((r) => r.phase === 'end')).toMatchObject({ outcome: 'done' })
+    expect((await writes(t)).find((x) => x.route === 'boards/rename')?.cmds).toBe(renamed[0].id)
+    await dirty(t, 'n-three')
+    const fromNew = of(t, 'folder-new').length
+    await menuOn(t, '[data-board="other"]', 'Move to new folder')
+    await typed(t, 'kept apart')
+    await key(t, 'Enter')
+    const made = await ended(t, 'folder-new', fromNew, 30_000)
+    expect(made.find((r) => r.phase === 'end')).toMatchObject({ outcome: 'done' })
+    expect((await writes(t)).find((x) => x.route === 'boards/reorder')?.cmds).toBe(made[0].id)
+  }, 90_000)
+})
+
+describe('`frame-reload` (#49)', () => {
+  it('the reload button on a failed frame: done at the new document\'s ready, and the frame is back', async (ctx) => {
+    if (!browser) return ctx.skip()
+    const t = await open()
+    await inFrame(t, 'n-three', `setTimeout(() => { throw new Error('to reload') }, 0)`)
+    await browser.until(t.s, `__mvStore.getState().nodes.find((n) => n.key === 'n-three').status === 'error'`, 8_000)
+    await expectDone(t, 'frame-reload', () => click(t, '[data-node="n-three"] .sh-card.err button'), { via: 'click', in: 'shell', frame: 'demo/three' })
+    expect(await ev(t, `__mvStore.getState().nodes.find((n) => n.key === 'n-three').status`)).toBe('ready')
   }, 60_000)
 })
 

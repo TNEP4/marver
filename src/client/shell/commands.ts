@@ -15,7 +15,7 @@
  * - Provenance from the handler that received it (#50): `via`, `keys` (jam-keys.ts `descriptor()`, key inputs only)
  *   and `in`. A relay is recorded once, by the side that executes it (#51).
  * - Effects name the command behind them (`by`): one started in the command's turn reads `currentCmd()`; one started
- *   later in its chain runs under `withCmd(id, fn)`.
+ *   later in its chain runs under `withCmd(id, fn)`, and a write that waits or retries keeps them with `keepCmds()`.
  * - Silence (the R12 note): `deselect`, `thread-close` and `jam-close` write nothing when they change nothing.
  *
  * Owner: the commands stream. Everything here is gated by the recorder being on at the `full` level (recorder-level.ts) -
@@ -428,6 +428,25 @@ export function withCmd<T>(id: string | undefined, fn: () => T): T {
   try { return fn() } finally { current = was }
 }
 
+/** The commands one request names when it carries a batch (the sidebar's queue, one tree write); else `current`. */
+let carried: readonly string[] | undefined
+const named = (): readonly string[] => carried ?? (current ? [current] : [])
+/** `fn`'s requests name these commands (#18), and no other that happens to be current. */
+export function withCmds<T>(ids: readonly string[], fn: () => T): T {
+  const was = carried
+  carried = ids
+  try { return fn() } finally { carried = was }
+}
+/**
+ * A write that waits its turn (a queue, a flush first) or goes again (a 409): the commands behind it, read now - in its
+ * command's own turn, or under `withCmd`/`withCmds` further along its chain - and put back around each request it
+ * sends, long after `current` has cleared (#18).
+ */
+export function keepCmds(): <T>(send: () => T) => T {
+  const ids = named()
+  return (send) => withCmds(ids, send)
+}
+
 /** #51: a menu item relayed from the app (`runMenuItem`): the key handler that runs it records `via: 'relay'` with the
  *  menu it came from - `in: 'app'` from an app that does not say (1.0.0). */
 export function relayed(from: CmdIn, fn: () => void): void {
@@ -473,7 +492,7 @@ function autoWait(f: Flight, o: CmdOpts): void {
       // without the stream that writes `mode` records and mints transitions, two frames after the change is the signal
       // #26 itself uses for the modes no document acknowledges; with it, the acks or the record - and a change that
       // posted to no document (none displayed) is applied once it rendered
-      frames(2, () => { if (!f.ended && (!signalsOn() || (!modes && !f.posts))) end(f, 'done') })
+      frames(2, () => { if (!f.ended && (!signalsOn() || (!own && !f.posts))) end(f, 'done') })
       return
     }
     case 'theme':
@@ -571,10 +590,10 @@ const SAVE_URL = /\/api\/boards\/([^/?#]+)(?:[?#]|$)/
  * list, and ends those waiting on the write from `perfSeams.answered` (its headers carry the ids).
  */
 export function cmdsForWrite(board: string, route: string): Candidates {
-  // any other write: the command behind it
+  // any other write: the commands behind it
   if (!(route === 'save' || route === 'boards/:board' || route.endsWith(`boards/${board}`) || route.endsWith(`boards/${encodeURIComponent(board)}`))) {
-    const c = currentCmd()
-    return c ? { ids: [c], n: 1 } : { ids: [], n: 0 }
+    const c = named()
+    return { ids: c.slice(0, CMD_BOUNDS.writeIds), n: c.length }
   }
   // the board's own save: every command since the last one
   const ids = [...new Set([...(pendingSave.get(board) ?? []), ...folded])]

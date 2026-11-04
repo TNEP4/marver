@@ -12,7 +12,7 @@ import { rollup } from '../../shared/marks.ts'
 import { Bubble, markSeenFrom, useAsks } from './marks-ui.tsx'
 import { Tip } from './Tip.tsx'
 import { copyToClipboard, type MenuItem, type MenuOpener } from './ContextMenu.tsx'
-import { cmd, keysOf, type CmdHandle, type CmdOpts } from './commands.ts'
+import { cmd, keysOf, withCmd, withCmds, type CmdHandle, type CmdOpts } from './commands.ts'
 import { ArrowLineUpIcon, CardsIcon, CheckIcon, FolderIcon, FrameCornersIcon, FolderMinusIcon, FolderOpenIcon, FolderPlusIcon, PencilSimpleIcon, SignpostIcon } from './icons.tsx'
 import {
   applyDrop, boardsIn, createFolder, deleteFolder, depthOf, folderEntries, folderIn, folderOf, foldersIn, holdsFolders, humanize, INDENT, isOwnSlot, labelOf, listIn, moveBoard, moveFolderToRoot, newFolderSlot, parentOf, readTitle,
@@ -223,11 +223,16 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
             else q.h.done()
           }
         }
+        // the write names the commands it carries (spec 30 #18), long after their turns - a dropped intent is not in it
+        const arrange = () => {
+          const tree = reduce(confirmedRef.current)
+          return withCmds(batch.flatMap((q) => (q.h.id && !dropped.has(q) ? [q.h.id] : [])), () => useStore.getState().arrangeBoards(tree, baseRef.current))
+        }
         try {
-          let r = await useStore.getState().arrangeBoards(reduce(confirmedRef.current), baseRef.current)
+          let r = await arrange()
           if (!r.ok && r.stale) {
             if (!(await load())) { done(); answered(false); useStore.getState().toast('boards changed - try again'); break }
-            r = await useStore.getState().arrangeBoards(reduce(confirmedRef.current), baseRef.current)
+            r = await arrange()
           }
           done()
           answered(r.ok, r.ok ? undefined : r.error)
@@ -265,8 +270,9 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
       if (n.kind === 'board') {
         if (title === label(n.name)) { h.cancel(); setNaming(null); return }
         if (boardsIn(tree).some((b) => b !== n.name && label(b) === title)) { taken('board'); return }
-        let r = await useStore.getState().renameBoard(n.name, stored(n.name), baseRef.current.boards[n.name])
-        if (!r.ok && r.stale && await load()) r = await useStore.getState().renameBoard(n.name, stored(n.name), baseRef.current.boards[n.name])   // the file moved on (a drag just before, an agent): re-read, once more
+        const rename = () => withCmd(h.id, () => useStore.getState().renameBoard(n.name, stored(n.name), baseRef.current.boards[n.name]))
+        let r = await rename()
+        if (!r.ok && r.stale && await load()) r = await rename()   // the file moved on (a drag just before, an agent): re-read, once more
         if (!r.ok) { h.fail(nameCode(r.error)); useStore.getState().toast(r.error ?? 'rename failed'); return }   // stay editing
         h.done()
         setNaming(null)
@@ -405,8 +411,9 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
    *  write that lost a race re-reads and tries once more, like a rename. */
   const setStatus = async (n: string, status: StatusWord | null, reason: string | undefined, h: CmdHandle) => {
     try {
-      let r = await useStore.getState().setBoardStatus(n, status, reason, baseRef.current.boards[n])
-      if (!r.ok && r.stale && await load()) r = await useStore.getState().setBoardStatus(n, status, reason, baseRef.current.boards[n])
+      const write = () => withCmd(h.id, () => useStore.getState().setBoardStatus(n, status, reason, baseRef.current.boards[n]))
+      let r = await write()
+      if (!r.ok && r.stale && await load()) r = await write()
       if (!r.ok) { h.fail('api'); useStore.getState().toast(r.error ?? 'status not saved'); return }
       h.done()
       refresh()                                                      // a clear: what the evidence says now

@@ -178,7 +178,7 @@ import { UNPLACED } from './hash.ts'
 import type { BoardType, StatusWord } from '../../shared/board-types.ts'
 import type { Phase, Status } from '../../shared/status.ts'
 import { isNew, type Marks } from '../../shared/marks.ts'
-import { cmd, type CmdOpts } from './commands.ts'
+import { cmd, keepCmds, type CmdOpts } from './commands.ts'
 
 /** The CAS tokens a tree write echoes: the sha256 of every board file as last seen, and of
  *  the folder registry (null = there was no file). */
@@ -1267,6 +1267,7 @@ export const useStore = create<State>((set, get) => {
     },
 
     renameBoard(name, title, baseHash) {
+      const sending = keepCmds()   // spec 30 #18: this write names its command however long it waits for its turn and the flush
       return structural(async () => {
         const from = name
         const active = from === get().board
@@ -1285,7 +1286,7 @@ export const useStore = create<State>((set, get) => {
         try {
           // the active board's hash is freshest in the store (an autosave may have landed since
           // the sidebar looked); every other board's is the sidebar's
-          const send = (base: string | null | undefined) => postOwner('boards/rename', { from, title, ...(base ? { baseHash: base } : {}) })
+          const send = (base: string | null | undefined) => sending(() => postOwner('boards/rename', { from, title, ...(base ? { baseHash: base } : {}) }))
           let res: Response
           try {
             res = await send(active && get().boardHash ? get().boardHash : baseHash)
@@ -1307,6 +1308,7 @@ export const useStore = create<State>((set, get) => {
     },
 
     setBoardStatus(name, status, reason, baseHash) {
+      const sending = keepCmds()   // renameBoard's
       return structural(async () => {
         const active = name === get().board
         // the active board's file is rewritten under the autosave: flush first, hold across (renameBoard's pattern)
@@ -1321,7 +1323,7 @@ export const useStore = create<State>((set, get) => {
         const rev = editRev
         const mayReload = () => active && get().board === name && editRev === rev && !get().gesture
         try {
-          const send = (base: string | null | undefined) => postOwner('boards/status', { name, status, ...(reason ? { reason } : {}), ...(base ? { baseHash: base } : {}) })
+          const send = (base: string | null | undefined) => sending(() => postOwner('boards/status', { name, status, ...(reason ? { reason } : {}), ...(base ? { baseHash: base } : {}) }))
           let res: Response
           try {
             res = await send(active && get().boardHash ? get().boardHash : baseHash)
@@ -1376,6 +1378,7 @@ export const useStore = create<State>((set, get) => {
     // true and the watcher's echo is filtered as our own. `base` carries the hashes the
     // sidebar last saw; a 409 (`stale`) means someone else wrote first - refetch and replay.
     arrangeBoards(tree, base) {
+      const sending = keepCmds()   // renameBoard's
       return structural(async () => {
         let ok = true
         for (let i = 0; i < 5 && get().dirty && ok; i++) { clearTimeout(saveTimer); ok = await get().save() }
@@ -1387,7 +1390,7 @@ export const useStore = create<State>((set, get) => {
           const active = get().board
           const boards = { ...base.boards, ...(get().boardHash && base.boards[active] !== undefined ? { [active]: get().boardHash } : {}) }
           let res: Response
-          try { res = await postOwner('boards/reorder', { tree: toWire(tree), base: { boards, folders: base.folders }, protocol: TREE_PROTOCOL }) }
+          try { res = await sending(() => postOwner('boards/reorder', { tree: toWire(tree), base: { boards, folders: base.folders }, protocol: TREE_PROTOCOL })) }
           catch { return { ok: false as const, stale: false, error: 'could not reach the dev server' } }
           const body = await res.json().catch(() => ({} as { error?: string; sha256?: { boards?: Record<string, string> } }))
           if (!res.ok) return { ok: false as const, stale: res.status === 409, error: body?.error }

@@ -427,6 +427,43 @@ describe('board writes (#18, #49)', () => {
     expect(C.cmdsForWrite('main', 'boards/status').ids).toEqual([h.id])
     expect(C.cmdsForWrite('main', 'boards/main').n, 'the save carries the move, not the status change').toBe(1)
   })
+  describe('a write that waits or goes again keeps its commands', () => {
+    const STATUS = 'boards/status'
+    it('read in its command\'s turn, put back around each request, long after that turn', () => {
+      const h = C.cmd('board-status', CLICK)
+      const sending = C.keepCmds()
+      vi.advanceTimersByTime(5_000)                          // a flush, its queue
+      expect(C.currentCmd()).toBeUndefined()
+      expect(C.cmdsForWrite('', STATUS), 'outside it: nothing to name').toEqual({ ids: [], n: 0 })
+      expect(sending(() => C.cmdsForWrite('', STATUS))).toEqual({ ids: [h.id], n: 1 })
+      expect(sending(() => C.cmdsForWrite('', STATUS)), 'its retry too').toEqual({ ids: [h.id], n: 1 })
+      expect(C.cmdsForWrite('', STATUS)).toEqual({ ids: [], n: 0 })
+    })
+    it('a later attempt, far from the turn: `withCmd` names it for the write to keep', () => {
+      const h = C.cmd('board-rename', CLICK)
+      vi.advanceTimersByTime(5_000)
+      const sending = C.withCmd(h.id, () => C.keepCmds())
+      vi.advanceTimersByTime(5_000)
+      expect(sending(() => C.cmdsForWrite('', 'boards/rename')).ids).toEqual([h.id])
+    })
+    it('a batch: one write names them all, at most 8 and their count', () => {
+      const ids = Array.from({ length: 10 }, (_, i) => `aaaaaaaaaa${String(i).padStart(2, '0')}`)
+      const sending = C.withCmds(ids, () => C.keepCmds())
+      expect(sending(() => C.cmdsForWrite('', 'boards/reorder'))).toEqual({ ids: ids.slice(0, CMD_BOUNDS.writeIds), n: 10 })
+    })
+    it('a write with no command behind it names none, whatever is current as it goes', () => {
+      const sending = C.keepCmds()
+      C.cmd('panel', CLICK)                                   // another input, in the turn the queue reaches it
+      expect(sending(() => C.cmdsForWrite('', STATUS))).toEqual({ ids: [], n: 0 })
+    })
+    it('the board\'s own save still carries what it carries, inside a kept write\'s chain', async () => {
+      const m = await moved()
+      const h = C.cmd('board-status', CLICK)
+      const sending = C.keepCmds()
+      expect(sending(() => C.cmdsForWrite('main', 'boards/main'))).toEqual({ ids: [m.id], n: 1 })
+      expect(sending(() => C.cmdsForWrite('', STATUS)).ids).toEqual([h.id])
+    })
+  })
   it('a command that ends elsewhere is still named by the save that carries it', async () => {
     const h = C.cmd('tidy', KEY)
     C.foldsIntoSave(h)
