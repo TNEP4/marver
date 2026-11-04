@@ -277,7 +277,7 @@ const NOTHING: CmdHandle = { id: '', name: 'escape', done() {}, fail() {}, noop(
 
 /** What a flight waits for, beside its own call site's ending: set from its signal (auto) or by a helper below. */
 type Wait =
-  | { on: 'mode'; modes: readonly ModeName[] }
+  | { on: 'mode'; mode: ModeName; phase?: 'enter' | 'exit' }
   | { on: 'acks' }
   | { on: 'theme' }
   | { on: 'stage'; at?: string }
@@ -444,9 +444,13 @@ export function keysOf(e: { key: string; shiftKey?: boolean; altKey?: boolean; m
 
 // ---- signals: what ends a command (#49) ---------------------------------------------------------------------------
 
-/** The modes whose `mode` record (signals, #25) ends each mode-applied or mode command. */
-const MODE_OF: Partial<Record<CmdName, readonly ModeName[]>> = {
-  comments: ['comments'], laser: ['laser', 'inspect'], inspect: ['inspect', 'laser'], interact: ['interact'], 'interact-off': ['interact'],
+/**
+ * The `mode` record (signals, #25) that ends each mode-applied or mode command: its own mode's transition, never the
+ * exit a switch makes on its way (⌥L with the laser on: `laser` exits, then `inspect` enters, and only that is applied).
+ * No `phase` for a toggle: the one record its press writes for that mode, enter or exit, is the one it meant.
+ */
+const MODE_OF: Partial<Record<CmdName, { mode: ModeName; phase?: 'enter' | 'exit' }>> = {
+  comments: { mode: 'comments' }, laser: { mode: 'laser' }, inspect: { mode: 'inspect' }, interact: { mode: 'interact', phase: 'enter' }, 'interact-off': { mode: 'interact', phase: 'exit' },
 }
 /** The signals stream's transition ids (#21, #26): its `perfSeams.transition` replaces this default when it runs. */
 const NO_TRANSITIONS = perfSeams.transition
@@ -462,8 +466,8 @@ function autoWait(f: Flight, o: CmdOpts): void {
     case 'camera': endOnCamera(handle(f)); return
     case 'layout': watch(f, layoutDone); return
     case 'mode-applied': case 'mode': {
-      const modes = MODE_OF[f.name]
-      if (modes) f.waits.push({ on: 'mode', modes })
+      const own = MODE_OF[f.name]
+      if (own) f.waits.push({ on: 'mode', ...own })
       if (f.spec.done === 'mode-applied') f.waits.push({ on: 'acks' })
       // without the stream that writes `mode` records and mints transitions, two frames after the change is the signal
       // #26 itself uses for the modes no document acknowledges; with it, the acks or the record - and a change that
@@ -626,8 +630,7 @@ function observed(kind: string, body: Record<string, unknown>): void {
     if (f) finish(f)
     return
   }
-  const mode = body.mode as ModeName
-  const ws = waiting('mode').filter(([, w]) => w.modes.includes(mode))
+  const ws = waiting('mode').filter(([, w]) => w.mode === body.mode && (!w.phase || w.phase === body.phase))
   const f = by ? ws.find(([x]) => x.id === by)?.[0] : ws.length === 1 ? ws[0][0] : undefined
   if (f) finish(f)
 }
