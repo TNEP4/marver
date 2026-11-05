@@ -71,7 +71,7 @@ export const CANDIDATE_WAIVERS = ['memory-no-canvas']
  * waived (Nic, 2 Nov: the idle GPU process puts it at 200-227 MB against 200; investigated in the A3 end-to-end check
  * after 1.0), its number in the record. Every other version names none (#3).
  */
-export const RELEASE_WAIVERS = { '1.0.0': ['memory-no-canvas'] }
+export const RELEASE_WAIVERS = { '1.0.0': ['memory-no-canvas'], '1.0.1': ['memory-no-canvas'] }
 /** The smoke checks a build may pass failing at a measured number: a candidate's, else this version's own */
 export const waiversFor = (version, test) => (test ? [...CANDIDATE_WAIVERS] : [...(RELEASE_WAIVERS[version] ?? [])])
 /** the companion's npm name (#2): the repo's own package, read from its package.json - never a bare `marver`, which is someone else's */

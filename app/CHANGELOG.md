@@ -1,6 +1,6 @@
 # Changelog - the Marver Mac app
 
-## 1.0.1 - unreleased
+## 1.0.1 - 2026-11-05
 
 Marver now records what the app does and what you ask of it, closely enough to explain a slow launch, a white flash or a
 command that did not take. It changes no behaviour. Use it with canvases on marver 0.30.0 for the full picture; older
