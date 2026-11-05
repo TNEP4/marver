@@ -145,6 +145,10 @@ export function createChanges(o: {
       if (brackets.size > 1) return { by: 'ambiguous', candidates: bounded(ids(brackets)) }
       return { by: 'unknown', candidates: bounded(ids(flying)) }
     },
+    /** The files whose hot update is running right now: a pathless reload was sent for one of these. */
+    handling(): string[] {
+      return [...brackets].map((t) => t.file)
+    },
     /** A page-wide reload that names its file (Vite's dead end, an HTML page), sent after the file's hooks: that file's
      *  token still in flight - no time-window guess. */
     ofFile(file: string): Attribution {

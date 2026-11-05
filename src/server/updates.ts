@@ -14,8 +14,11 @@
  * has been applied in place: the frames past it are touched (marked) but not reloaded.
  *
  * Every other `full-reload` Vite or Tailwind sends is dropped and becomes reloads of the frames it
- * names (or every frame, when it names none) - the shell never reloads for a design edit. The one
- * that passes is the dependency optimiser's: module URLs changed, every document must reload.
+ * names - the shell never reloads for a design edit. One that names nothing, sent while a file no
+ * document imports is being handled, is Tailwind's for a file it only scans (a note, app code): the
+ * stylesheet is pushed in place and only the frames the marks find changed reload. Named nothing
+ * otherwise, every frame reloads: the sender is unknown. The one that passes is the dependency
+ * optimiser's: module URLs changed, every document must reload.
  */
 import { realpathSync } from 'node:fs'
 import { join } from 'node:path'
@@ -25,8 +28,8 @@ import { affectedFrameIds, type FrameEntry, type Manifest } from './manifest.ts'
 
 const safeReal = (p: string) => { try { return realpathSync(p) } catch { return p } }
 
-/** `unattributed`: a page-wide reload that named no file - its frames reload, but nothing is marked
- *  changed on its word (the marks' own look at the disk decides what is new). */
+/** `unattributed`: a page-wide reload that named no file - nothing is marked changed on its word (the
+ *  marks' own look at the disk decides what is new, and those frames reload whatever `doc` says). */
 export interface Touched { file: string; doc: string[]; touched: string[]; unattributed?: boolean }
 
 /** The frames an edit reaches: `doc` must reload to show it; `touched` saw it applied in place. */
@@ -67,6 +70,8 @@ export interface UpdateHooks {
   /** every full-reload Vite tried to send, whether it went out, and what is known of its change (#11; none for one
    *  that passes, the optimiser's) */
   onReload(payload: { triggeredBy?: string; path?: string }, passed: boolean, at?: Attribution): void
+  /** a scanned file changed that no document imports: the stylesheet may have new classes, no frame needs a reload */
+  onStyles(): void
 }
 
 /** The hook that runs first on every hot update (spec 30 #8): this run takes its file's oldest open token, and its
@@ -105,6 +110,8 @@ export function updatesPlugin(root: string, manifest: () => Manifest, hooks: () 
 /** Wraps the client's hot channel: the reload guard and refused refreshes. */
 export function guardUpdates(server: ViteDevServer, root: string, manifest: () => Manifest, hooks: UpdateHooks, changes: Changes): void {
   const env = server.environments.client
+  // Tailwind's own test for a file it reloads for: known to the graph as a watched file at most, imported by no document
+  const notImported = (file: string) => [...env.moduleGraph.getModulesByFile(file) ?? []].every((m) => m.id == null || m.type === 'asset')
   const wrap = (ch: { send: (...a: any[]) => void }) => {
     const send = ch.send.bind(ch)
     ch.send = (...a: any[]) => {
@@ -122,9 +129,11 @@ export function guardUpdates(server: ViteDevServer, root: string, manifest: () =
         hooks.onReload({ triggeredBy: p.triggeredBy, path: p.path }, passed, at)
         if (!passed) {
           const mods = by ? env.moduleGraph.getModulesByFile(by) : undefined
-          const all = manifest().frames.map((f: FrameEntry) => f.id)
-          const t: Touched = by ? framesFor(root, manifest(), by, mods ?? []) : { file: '', doc: all, touched: [], unattributed: true }
-          if (t.doc.length || t.touched.length) hooks.onFrames(t, 'reload', at!)   // a file no frame reads reloads nothing
+          const scanned = !by && changes.handling().some(notImported)
+          const all = () => manifest().frames.map((f: FrameEntry) => f.id)
+          const t: Touched = by ? framesFor(root, manifest(), by, mods ?? []) : { file: '', doc: scanned ? [] : all(), touched: [], unattributed: true }
+          if (scanned) hooks.onStyles()
+          if (t.doc.length || t.touched.length || scanned) hooks.onFrames(t, 'reload', at!)   // a file no frame reads reloads nothing
           return
         }
       }

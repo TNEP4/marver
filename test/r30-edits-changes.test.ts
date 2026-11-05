@@ -203,6 +203,7 @@ describe('real Vite: the bracket, under runs that truly overlap', () => {
   const lines: Line[] = []
   const frames: { t: Touched; cause: string; at: Attribution }[] = []
   const reloads: { passed: boolean; at?: Attribution }[] = []
+  let styles = 0
   const refusals: ((p: { path?: string }) => void)[] = []
   /** a plugin's own hook holds a run open until released; `reloadIn` sends Tailwind's bare full-reload from inside it */
   const gates = new Map<string, { open: Promise<void>; go: () => void; inside: Promise<void>; entered: () => void }>()
@@ -221,10 +222,12 @@ describe('real Vite: the bracket, under runs that truly overlap', () => {
   beforeAll(async () => {
     root = realpathSync(mkdtempSync(join(tmpdir(), 'mv-chg-')))
     for (const n of ['a.tsx', 'b.tsx']) { mkdirSync(join(root, 'design/scenes/s'), { recursive: true }); writeFileSync(f(n), 'export default () => null\n') }
+    writeFileSync(f('_kit.tsx'), 'export const Kit = () => null\n')
     const manifest = scanFrames(root)
     const hooks: UpdateHooks = {
       onFrames: (t, cause, at) => { frames.push({ t, cause, at }) },
       onReload: (_p, passed, at) => { reloads.push({ passed, at }) },
+      onStyles: () => { styles++ },
     }
     // as Tailwind's generate:serve: `enforce: 'pre'` and an unordered hook - our `order: 'pre'` still runs before it
     const tailwindLike: Plugin = {
@@ -254,7 +257,7 @@ describe('real Vite: the bracket, under runs that truly overlap', () => {
     for (const g of gates.values()) g.go()
     gates.clear()
     await settle()
-    lines.length = 0; frames.length = 0; reloads.length = 0
+    lines.length = 0; frames.length = 0; reloads.length = 0; styles = 0
   })
 
   it('Vite has more than one environment here: the rules below are not trivially true', () => {
@@ -328,8 +331,19 @@ describe('real Vite: the bracket, under runs that truly overlap', () => {
     expect(reloads[0].at?.token?.file).toBe(f('a.tsx'))
     const dropped = frames.find((x) => x.cause === 'reload')!
     expect(dropped.t.unattributed).toBe(true)
-    expect(dropped.t.doc.sort()).toEqual(['s/a', 's/b'])   // R17: every frame, still
+    expect(dropped.t.doc).toEqual([])                      // no document imports the file: the stylesheet, no frame
+    expect(styles).toBe(1)
     expect(dropped.at.token).toBe(reloads[0].at?.token)
+  })
+
+  it('a pathless reload for a file a document imports reloads every frame: its sender is not Tailwind for a scanned file', async () => {
+    await server.environments.client.moduleGraph.ensureEntryFromUrl('/design/scenes/s/_kit.tsx')
+    reloadIn.add(f('_kit.tsx'))
+    fire(f('_kit.tsx'))
+    await quiet(); await settle()
+    const dropped = frames.find((x) => x.cause === 'reload')!
+    expect(dropped.t.doc.sort()).toEqual(['s/a', 's/b'])
+    expect(styles).toBe(0)
   })
 
   it('a pathless reload inside two brackets is ambiguous, with both candidates - never one of them', async () => {
@@ -352,6 +366,7 @@ describe('real Vite: the bracket, under runs that truly overlap', () => {
     expect([...reloads[0].at!.candidates!.ids].sort()).toEqual([...both].sort())
     const dropped = frames.find((x) => x.cause === 'reload')!
     expect(dropped.at.token).toBeUndefined()                     // its update line names no change
+    expect(dropped.t.doc).toEqual([])                            // neither file is imported by a document
     // and neither change claims the reload
     expect(lines.filter((l) => l.kind === 'change').every((l) => !('fullReload' in l))).toBe(true)
   })
@@ -359,6 +374,8 @@ describe('real Vite: the bracket, under runs that truly overlap', () => {
   it('a pathless reload outside any bracket is unknown: the tokens in flight are candidates, no time-window guess', async () => {
     server.environments.client.hot.send({ type: 'full-reload' })
     expect(reloads[0].at).toEqual({ by: 'unknown', candidates: { ids: [], n: 0 } })   // nothing in flight: nothing named
+    expect(frames.find((x) => x.cause === 'reload')!.t.doc.sort()).toEqual(['s/a', 's/b'])   // no file to judge: every frame
+    expect(styles).toBe(0)
     // an event minted, its hooks not begun: in flight, but no bracket
     const t = changes.watch(f('b.tsx'), 'update')
     server.environments.client.hot.send({ type: 'full-reload' })

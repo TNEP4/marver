@@ -55,6 +55,7 @@ beforeAll(async () => {
   if (tw) symlinkSync(join(repoNm, '.pnpm', tw, 'node_modules', 'tailwindcss'), join(root, 'node_modules', 'tailwindcss'))
   put('design/config.ts', 'export default { jam: false }\n')
   put('design/theme.css', '@import "tailwindcss";\n')
+  put('plan.md', 'a file Tailwind scans and no frame imports\n')
   put('design/scenes/kit/_kit.tsx', 'export const Kit = () => <p>kit v1</p>\n')
   for (let n = 1; n <= 8; n++) put(`design/scenes/kit/f${n}.tsx`, kitFrame(n))
   put('design/scenes/kit/solo.tsx', `export const meta = { viewport: 'desktop' }\nexport default () => <main><h1>solo</h1></main>\n`)
@@ -225,6 +226,25 @@ describe('calm updates (spec 26)', () => {
     const was = JSON.parse(before), now = JSON.parse(await ev(`JSON.stringify(window.__mvStore.getState().marks.changed)`))
     const moved = Object.keys(now).filter((id) => (now[id] ?? 0) !== (was[id] ?? 0))
     expect(moved).toEqual(['far/page'])
+  }, 60_000)
+
+  it('a save of a file no frame imports reloads no frame and never the page, and the stylesheet still takes its classes', async () => {
+    if (!browser) return
+    await ev(`location.hash = '#/b/main?f=kit/f1', 1`)
+    await until(`${node('kit/f1')}?.status === 'ready'`)
+    await sleep(800)
+    const boot = await ev('window.__boot')
+    const navs = `JSON.stringify(window.__mvStore.getState().nodes.map((n) => [n.key, n.nav ?? 0]))`
+    const before = await ev(navs)
+    const sheet = `[...(document.querySelector('.sh-node[data-node="' + ${node('kit/f1')}?.key + '"] iframe')?.contentDocument?.querySelectorAll('style') ?? [])].some((s) => s.textContent.includes('321px'))`
+    expect(await ev(sheet)).toBe(false)
+    put('plan.md', 'now naming w-[321px]\n')
+    await until(sheet)
+    await sleep(1500)                                                         // a reload of the frames would have shown by now
+    expect(await ev(navs)).toBe(before)
+    expect(await ev('window.__boot')).toBe(boot)
+    const lines = readFileSync(join(root, 'design/.local/perf/reloads.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+    expect(lines.filter((l) => l.kind === 'full-reload' && l.file === 'plan.md').map((l) => l.passed)).toContain(false)
   }, 60_000)
 
   it('the reload log says what happened, and the CLI reads it', async () => {
