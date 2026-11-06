@@ -340,15 +340,21 @@ export const bumpManifestRev = () => { manifestRev++ }
 
 /** The board read again over itself: a frame still on it keeps its live document, so the node keeps what is known of
  *  that document. Read fresh it would wait for a ready that document sent long ago - the watchdog then reloads every
- *  frame - and its `nav`, back to none, would read as a request to navigate. An auto height is that document's measure. */
-function keepDocuments(mounted: Node[], nodes: Node[]): Node[] {
+ *  frame - and its `nav`, back to none, would read as a request to navigate. Only a healthy document is kept: one that
+ *  failed, one silent past its retry, and one whose sizing changed (a measure it will never send again) are asked anew.
+ *  `kept`: the nodes whose document stands. */
+function keepDocuments(mounted: Node[], nodes: Node[]): { nodes: Node[]; kept: Set<string> } {
   const was = new Map(mounted.map((n) => [n.key, n]))
-  return nodes.map((n) => {
+  const kept = new Set<string>()
+  const next = nodes.map((n) => {
     const o = was.get(n.key)
     if (!o || o.frame !== n.frame || o.missing || n.missing) return n
     const { status, error, nav, rev, themeOn, readyRetried, stale, shown, want } = o
-    return { ...n, status, error, nav, rev, themeOn, readyRetried, stale, shown, want, ...(n.sizeMode === 'auto' && o.sizeMode === 'auto' && n.w === o.w ? { h: o.h } : {}) }
+    if (status === 'error' || (status === 'loading' && readyRetried) || o.sizeMode !== n.sizeMode) return { ...n, nav: (nav ?? 0) + 1, stale, want }
+    kept.add(n.key)
+    return { ...n, status, error, nav, rev, themeOn, readyRetried, stale, shown, want }
   })
+  return { nodes: next, kept }
 }
 
 /** ws= binds the document to this canvas (spec 28 A1.11): another project on this port later answers a
@@ -1216,14 +1222,15 @@ export const useStore = create<State>((set, get) => {
       if (!loaded) { recorderHooks.cut(request, 'error'); get().toast(`board "${boardName}" failed to load${whyNot(boardName)}`); return false }
       // the user kept editing while we fetched - their newer state wins over the reload
       if (get().board !== boardName || editRev !== revAtStart || (mayCommit && !mayCommit())) { recorderHooks.cut(request, 'edited'); return false }
-      const next = { ...loaded.state, nodes: keepDocuments(get().nodes, loaded.state.nodes as Node[]) }
+      const { nodes, kept } = keepDocuments(get().nodes, loaded.state.nodes as Node[])
+      const next = { ...loaded.state, nodes }
       const live = get().manifest             // a WS manifest update may have landed mid-fetch
       recorderHooks.handover(request)         // the load that was up ends by its own sizes
       installSizes(loaded.sizes)              // the sizes this load read are the page's from its commit
       recorderHooks.commit(request, next.nodes, next.manifest as Manifest)   // before the set: mounting is not a move
       set(next)
       cancelReflow(); dropHolds()
-      for (const k of [...reloadCause.keys()]) if (!next.nodes.some((n) => n.key === k)) reloadCause.delete(k)   // a document still loading keeps its cause
+      for (const k of [...reloadCause.keys()]) if (!kept.has(k)) reloadCause.delete(k)   // a document still loading keeps its cause
       if (next.dirty) scheduleSave()          // load-time prune must reach the disk
       if (live && manifestKey(live) !== manifestKey(next.manifest as Manifest)) get().applyManifest(live)
       else if (scenesRev !== scenesAtStart && liveScenes) set({ manifest: { ...get().manifest!, scenes: liveScenes } })   // an sh:scenes that landed mid-fetch outranks the file we read

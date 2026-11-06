@@ -297,6 +297,16 @@ describe('the page recorder: board loads', () => {
     await moved(3700)
     await wait(1500)
     expect(await docs()).toBe(reloaded)
+    // a document that failed is no document to keep: the read asks it anew, as it always did
+    await browser.eval(s, `window.__mvStore.getState().setStatus('k-sh', 'error', 'probe')`)
+    write(3800)
+    await moved(3800)
+    await poll(async () => (await docs()) !== reloaded && (await browser!.eval(s, `window.__mvStore.getState().nodes.find((n) => n.key === 'k-sh').status === 'ready'`)), 'the failed frame loaded anew')
+    // nor one whose sizing changed: it measures for a mode it will not report again unless it loads
+    const kept = await docs()
+    board('still', [{ key: 'k-sb', frame: 'docs/b', x: 0, y: 0, w: 900, h: 700, sizeMode: 'manual' }, { key: 'k-sh', frame: 'kit/hifi', x: 3800, y: 0 }])
+    await poll(async () => (await docs()) !== kept && (await browser!.eval(s, `window.__mvStore.getState().nodes.every((n) => n.status === 'ready')`)), 'the frame with new sizing loaded anew')
+    expect((await docs()).split(',')[1], 'the other frame stays').toBe(kept.split(',')[1])
   }, 60_000)
 
   it('a frame that measures provisionally for 3 s keeps the load from settling until its settled report', async () => {
