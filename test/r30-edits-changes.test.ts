@@ -203,7 +203,7 @@ describe('real Vite: the bracket, under runs that truly overlap', () => {
   const lines: Line[] = []
   const frames: { t: Touched; cause: string; at: Attribution }[] = []
   const reloads: { passed: boolean; at?: Attribution }[] = []
-  let styles = 0
+  let styles = 0, sheets: string[] = []
   const refusals: ((p: { path?: string }) => void)[] = []
   /** a plugin's own hook holds a run open until released; `reloadIn` sends Tailwind's bare full-reload from inside it */
   const gates = new Map<string, { open: Promise<void>; go: () => void; inside: Promise<void>; entered: () => void }>()
@@ -227,7 +227,6 @@ describe('real Vite: the bracket, under runs that truly overlap', () => {
     const hooks: UpdateHooks = {
       onFrames: (t, cause, at) => { frames.push({ t, cause, at }) },
       onReload: (_p, passed, at) => { reloads.push({ passed, at }) },
-      onStyles: () => { styles++ },
     }
     // as Tailwind's generate:serve: `enforce: 'pre'` and an unordered hook - our `order: 'pre'` still runs before it
     const tailwindLike: Plugin = {
@@ -250,14 +249,14 @@ describe('real Vite: the bracket, under runs that truly overlap', () => {
     const hot = server.environments.client.hot as unknown as { on: (ev: string, fn: (p: { path?: string }) => void) => void }
     const on = hot.on.bind(hot)
     hot.on = (ev, fn) => { if (ev === 'vite:invalidate') refusals.push(fn); else on(ev, fn) }
-    guardUpdates(server, root, () => manifest, hooks, changes)
+    guardUpdates(server, root, () => manifest, hooks, changes, (s) => { styles++; sheets = s })
   }, 60_000)
   afterAll(async () => { await server?.close(); if (root) rmSync(root, { recursive: true, force: true }) })
   afterEach(async () => {
     for (const g of gates.values()) g.go()
     gates.clear()
     await settle()
-    lines.length = 0; frames.length = 0; reloads.length = 0; styles = 0
+    lines.length = 0; frames.length = 0; reloads.length = 0; styles = 0; sheets = []
   })
 
   it('Vite has more than one environment here: the rules below are not trivially true', () => {
@@ -334,6 +333,21 @@ describe('real Vite: the bracket, under runs that truly overlap', () => {
     expect(dropped.t.doc).toEqual([])                      // no document imports the file: the stylesheet, no frame
     expect(styles).toBe(1)
     expect(dropped.at.token).toBe(reloads[0].at?.token)
+  })
+
+  it('a pathless reload for a scanned file names the stylesheets that scan it, up the importers, past the file\'s own entry', async () => {
+    const graph = server.environments.client.moduleGraph
+    const note = f('scanned.md')
+    writeFileSync(note, 'a note\n')
+    const entry = graph.createFileOnlyEntry(note)   // what a watched file is to the graph: no id, imported by no document
+    const css = await graph.ensureEntryFromUrl('/design/scenes/s/own.css'), wrap = await graph.ensureEntryFromUrl('/design/scenes/s/outer.css'), doc = await graph.ensureEntryFromUrl('/design/scenes/s/uses-it.tsx')
+    entry.importers.add(css); css.importers.add(wrap); wrap.importers.add(doc)
+    reloadIn.add(note)
+    fire(note)
+    await quiet()
+    await settle()
+    expect(styles).toBe(1)
+    expect(sheets.sort()).toEqual([wrap.file, css.file].sort())   // the page that imports them is no stylesheet
   })
 
   it('a pathless reload for a file a document imports reloads every frame: its sender is not Tailwind for a scanned file', async () => {

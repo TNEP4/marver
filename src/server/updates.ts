@@ -22,7 +22,7 @@
  */
 import { realpathSync } from 'node:fs'
 import { join } from 'node:path'
-import type { EnvironmentModuleNode, HotPayload, Plugin, ViteDevServer } from 'vite'
+import { isCSSRequest, type EnvironmentModuleNode, type HotPayload, type Plugin, type ViteDevServer } from 'vite'
 import type { Attribution, Changes } from './changes.ts'
 import { affectedFrameIds, type FrameEntry, type Manifest } from './manifest.ts'
 
@@ -70,8 +70,6 @@ export interface UpdateHooks {
   /** every full-reload Vite tried to send, whether it went out, and what is known of its change (#11; none for one
    *  that passes, the optimiser's) */
   onReload(payload: { triggeredBy?: string; path?: string }, passed: boolean, at?: Attribution): void
-  /** a scanned file changed that no document imports: the stylesheet may have new classes, no frame needs a reload */
-  onStyles(): void
 }
 
 /** The hook that runs first on every hot update (spec 30 #8): this run takes its file's oldest open token, and its
@@ -107,11 +105,24 @@ export function updatesPlugin(root: string, manifest: () => Manifest, hooks: () 
   }
 }
 
-/** Wraps the client's hot channel: the reload guard and refused refreshes. */
-export function guardUpdates(server: ViteDevServer, root: string, manifest: () => Manifest, hooks: UpdateHooks, changes: Changes): void {
+/** Wraps the client's hot channel: the reload guard and refused refreshes. `onStyles`: this server's, for a scanned file no
+ *  document imports - it names the stylesheets that scan it, any of which may have new classes; no frame needs a reload. */
+export function guardUpdates(server: ViteDevServer, root: string, manifest: () => Manifest, hooks: UpdateHooks, changes: Changes, onStyles: (sheets: string[]) => void): void {
   const env = server.environments.client
   // Tailwind's own test for a file it reloads for: known to the graph as a watched file at most, imported by no document
   const notImported = (file: string) => [...env.moduleGraph.getModulesByFile(file) ?? []].every((m) => m.id == null || m.type === 'asset')
+  // the stylesheets a scanned file feeds, walked as Tailwind walks to the root it invalidates: up the importers
+  const sheetsOf = (files: string[]) => {
+    const sheets = new Set<string>(), seen = new Set<EnvironmentModuleNode>()
+    const up = [...files.flatMap((f) => [...env.moduleGraph.getModulesByFile(f) ?? []])]
+    while (up.length) {
+      const m = up.shift()!
+      if (seen.has(m)) continue
+      seen.add(m)
+      for (const by of m.importers) if (by.file && isCSSRequest(by.file)) { sheets.add(by.file); up.push(by) }
+    }
+    return [...sheets]
+  }
   const wrap = (ch: { send: (...a: any[]) => void }) => {
     const send = ch.send.bind(ch)
     ch.send = (...a: any[]) => {
@@ -129,11 +140,11 @@ export function guardUpdates(server: ViteDevServer, root: string, manifest: () =
         hooks.onReload({ triggeredBy: p.triggeredBy, path: p.path }, passed, at)
         if (!passed) {
           const mods = by ? env.moduleGraph.getModulesByFile(by) : undefined
-          const scanned = !by && changes.handling().some(notImported)
+          const scanned = by ? [] : changes.handling().filter(notImported)
           const all = () => manifest().frames.map((f: FrameEntry) => f.id)
-          const t: Touched = by ? framesFor(root, manifest(), by, mods ?? []) : { file: '', doc: scanned ? [] : all(), touched: [], unattributed: true }
-          if (scanned) hooks.onStyles()
-          if (t.doc.length || t.touched.length || scanned) hooks.onFrames(t, 'reload', at!)   // a file no frame reads reloads nothing
+          const t: Touched = by ? framesFor(root, manifest(), by, mods ?? []) : { file: '', doc: scanned.length ? [] : all(), touched: [], unattributed: true }
+          if (scanned.length) onStyles(sheetsOf(scanned))
+          if (t.doc.length || t.touched.length || scanned.length) hooks.onFrames(t, 'reload', at!)   // a file no frame reads reloads nothing
           return
         }
       }

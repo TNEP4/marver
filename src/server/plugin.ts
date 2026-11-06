@@ -155,7 +155,6 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
     f.hits = 0
     setTimeout(() => done(file), 0)
   }
-  let rescanTheme: (() => void) | undefined   // the server's, once it has one
   const observeMarks = () => observed(observe(root, manifest.frames))
   const observeLater = () => whenSettled(() => { if (observeMarks()) { devServer?.ws.send('sh:marks', {}); liveChanged() } })
   const hooks: UpdateHooks = {
@@ -167,7 +166,6 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       setTimeout(() => whenSettled(() => { try { record(t, cause, at) } finally { release() } }), 0)
     },
     onReload(p, passed, at) { changes.fullReload(p, passed, at) },
-    onStyles() { rescanTheme?.() },
   }
   function record(t: Touched, cause: UpdateCause, at: Attribution) {
     const seen = observe(root, manifest.frames, t.file ? { file: t.file } : {})   // this edit's frames only
@@ -365,7 +363,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       const before = devServer
       devServer = server
       onClose(() => { if (devServer === server) devServer = before })
-      guardUpdates(server, root, () => manifest, hooks, changes)
+      guardUpdates(server, root, () => manifest, hooks, changes, (sheets) => rescanTheme(sheets))   // this server's: a restart that fails leaves the old one its own
       // Boot manifest + watcher (scenes/components only; boards, .local, manifest.json excluded by scope).
       // Broadcast only when the FRAMES changed - plain content edits ride HMR alone (spec
       // §5.6), and a board/folder/description edit (the manifest carries those now) must
@@ -419,12 +417,16 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
         for (const mod of server.moduleGraph.getModulesByFile(f) ?? []) walk(mod)
         return out
       }
+      const owed = new Set<string>()   // stylesheets of a frame's own that scan what changed: Tailwind has invalidated them
       const pushTheme = debounce(() => {
-        for (const mod of themeModules()) server.reloadModule(mod).catch(() => { /* gone mid-reload */ })
+        const sheets = [...owed].flatMap((f) => [...server.moduleGraph.getModulesByFile(f) ?? []])
+        owed.clear()
+        for (const mod of new Set([...themeModules(), ...sheets])) server.reloadModule(mod).catch(() => { /* gone mid-reload */ })
       }, 150)
       onClose(pushTheme.cancel)
-      rescanTheme = () => {
+      const rescanTheme = (sheets: string[] = []) => {
         for (const mod of themeModules()) server.moduleGraph.invalidateModule(mod)
+        for (const f of sheets) owed.add(f)
         pushTheme()
       }
 
@@ -446,8 +448,8 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       onClose(() => { for (const t of pruning) clearTimeout(t) })
       prune()   // a previous server's generation is dead on arrival
       server.watcher.on('add', bumpGen); server.watcher.on('unlink', bumpGen); server.watcher.on('change', bumpGen)
-      server.watcher.on('add', (f) => { if (inScope(f)) { regen(); rescanTheme?.() } })
-      server.watcher.on('unlink', (f) => { if (inScope(f)) { regen(); rescanTheme?.() } })
+      server.watcher.on('add', (f) => { if (inScope(f)) { regen(); rescanTheme() } })
+      server.watcher.on('unlink', (f) => { if (inScope(f)) { regen(); rescanTheme() } })
       // spec 20: statuses are read from context/ (the shipped record, contracts, plans) and from
       // the briefs' `phase`. A change there re-reads the sidebar (`sh:boards`) and the manifest -
       // coalesced per burst, like the boards watcher. context/'s JSON never reaches here (Vite's

@@ -247,6 +247,29 @@ describe('calm updates (spec 26)', () => {
     expect(lines.filter((l) => l.kind === 'full-reload' && l.file === 'plan.md').map((l) => l.passed)).toContain(false)
   }, 60_000)
 
+  it('a stylesheet of a frame\'s own takes the classes of a file it scans, the frame not reloaded', async () => {
+    if (!browser) return
+    // a stylesheet of a frame's own, outside the theme's tree: the theme plain CSS, nothing of Tailwind's reaches it
+    put('design/theme.css', 'body { margin: 0 }\n')
+    put('design/scenes/own/own.css', '@import "tailwindcss";\n@theme { --color-brandish: #123456; }\n')
+    put('design/scenes/own/page.tsx', `import './own.css'\nexport const meta = { viewport: 'desktop' }\nexport default () => <main><h1>own</h1></main>\n`)
+    put('own-plan.md', 'a second file Tailwind scans\n')
+    await sleep(1000)
+    put('design/boards/own.json', { version: 1, name: 'own', auto: false, nodes: [{ key: 'k-own', frame: 'own/page', x: 0, y: 0, w: 1440, h: 900 }] })
+    await ev(`location.hash = '#/b/own', 1`)
+    await until(`${node('own/page')}?.status === 'ready'`)
+    await sleep(800)
+    const sheet = `[...(document.querySelector('.sh-node[data-node="k-own"] iframe')?.contentDocument?.querySelectorAll('style') ?? [])].some((s) => s.textContent.includes('bg-brandish'))`
+    const nav = `${node('own/page')}?.nav ?? 0`
+    expect(await ev(sheet)).toBe(false)
+    const before = await ev(nav)
+    put('own-plan.md', 'now naming bg-brandish\n')
+    await until(sheet)
+    expect(await ev(nav)).toBe(before)
+    put('design/theme.css', '@import "tailwindcss";\n')
+    await ev(`location.hash = '#/b/main', 1`)
+  }, 60_000)
+
   it('the reload log says what happened, and the CLI reads it', async () => {
     if (!browser) return
     const lines = readFileSync(join(root, 'design/.local/perf/reloads.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
