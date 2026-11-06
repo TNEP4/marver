@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Browser } from './browser.ts'
 import { loadsSummary } from '../src/cli/perf.ts'
+import { WATCHDOG_MS } from '../src/shared/perf-records.ts'
 
 /**
  * The recorder's page half (spec 28 A1.7), proven where it happens: a REAL dev server, a REAL browser, and the
@@ -272,6 +273,30 @@ describe('the page recorder: board loads', () => {
     expect(l.frame('k-sb')!.outcome).toBe('settled')
     expect(l.frame('k-sh')!.outcome).toBe('ready')
     expect(l.of('visible')[0]).toMatchObject({ assumed: true })   // no fit: the camera as it was
+  }, 60_000)
+
+  it('a board written from outside reloads no frame: the documents outlive the watchdog, and one reloaded earlier stays put', async () => {
+    if (!browser) return
+    const { s, page } = await open('#/b/still')
+    await ended(page, 'still')
+    const docs = () => browser!.eval(s, `[...document.querySelectorAll('iframe.sh-live')].map((f) => f.contentWindow.__mvBoot).join()`) as Promise<string>
+    const poll = async (f: () => Promise<unknown>, what: string) => { for (let i = 0; i < 200; i++) { if (await f()) return; await wait(100) } throw new Error(`timed out waiting for ${what}`) }
+    const moved = (x: number) => poll(async () => (await browser!.eval(s, `window.__mvStore.getState().nodes.find((n) => n.key === 'k-sh').x`)) === x, 'the board read again')
+    const write = (x: number) => board('still', [{ key: 'k-sb', frame: 'docs/b', x: 0, y: 0 }, { key: 'k-sh', frame: 'kit/hifi', x, y: 0 }])
+    const before = await docs()
+    write(3600)
+    await moved(3600)
+    await wait(WATCHDOG_MS + 1500)
+    expect(await docs()).toBe(before)
+    expect(await browser.eval(s, `window.__mvStore.getState().nodes.map((n) => n.status).join()`)).toBe('ready,ready')
+    // a frame reloaded by hand has a navigation behind it: a read that forgot it would navigate again at once
+    await browser.eval(s, `window.__mvStore.getState().reloadFrame('k-sh')`)
+    await poll(async () => (await docs()) !== before && (await browser!.eval(s, `window.__mvStore.getState().nodes.every((n) => n.status === 'ready')`)), 'the frame reloaded')
+    const reloaded = await docs()
+    write(3700)
+    await moved(3700)
+    await wait(1500)
+    expect(await docs()).toBe(reloaded)
   }, 60_000)
 
   it('a frame that measures provisionally for 3 s keeps the load from settling until its settled report', async () => {
