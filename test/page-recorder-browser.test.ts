@@ -299,9 +299,13 @@ describe('the page recorder: board loads', () => {
     expect(await docs()).toBe(reloaded)
     // a document that failed is no document to keep: the read asks it anew, as it always did
     await browser.eval(s, `window.__mvStore.getState().setStatus('k-sh', 'error', 'probe')`)
+    const failedAt = Date.now()
     write(3800)
     await moved(3800)
     await poll(async () => (await docs()) !== reloaded && (await browser!.eval(s, `window.__mvStore.getState().nodes.find((n) => n.key === 'k-sh').status === 'ready'`)), 'the failed frame loaded anew')
+    const anew = await until(() => { const x = loadOf(page, 'still'); return x && x.load.ts >= failedAt && x.frame('k-sh')?.outcome === 'ready' && x.frame('k-sb') ? x : null }, 20_000, 'the load to say so')
+    expect(anew.frame('k-sh'), 'a document asked anew is no kept one').not.toHaveProperty('kept')
+    expect(anew.frame('k-sb'), 'the frame beside it stands').toMatchObject({ kept: true })
     // nor one whose sizing changed: it measures for a mode it will not report again unless it loads
     const kept = await docs()
     board('still', [{ key: 'k-sb', frame: 'docs/b', x: 0, y: 0, w: 900, h: 700, sizeMode: 'manual' }, { key: 'k-sh', frame: 'kit/hifi', x: 3800, y: 0 }])

@@ -220,7 +220,8 @@ function handover(id: string): void {
   if (L && owner && owner !== L && !owner.done) cut(owner, owner.board === L.board ? 'reload' : 'switch')
 }
 
-function commit(id: string, nodes: readonly Node[], manifest: Manifest): void {
+/** `kept`: the board read again, the nodes whose document stands - any other starts its record over, whatever it held */
+function commit(id: string, nodes: readonly Node[], manifest: Manifest, kept?: ReadonlySet<string>): void {
   const L = pending.get(id) ?? lapsed.get(id)
   if (!L) return
   const late = !pending.has(id)
@@ -232,7 +233,7 @@ function commit(id: string, nodes: readonly Node[], manifest: Manifest): void {
   // mounting is never a move: the baseline is the nodes about to mount
   baseline = new Map(nodes.map((n) => [n.key, { x: n.x, y: n.y, w: n.w, h: n.h }]))
   const keys = new Set(nodes.map((n) => n.key))
-  for (const k of [...tracks.keys()]) if (!keys.has(k)) tracks.delete(k)
+  for (const k of [...tracks.keys()]) if (!(kept ?? keys).has(k)) tracks.delete(k)
   // a request already cut (its deadline passed, the page hid) mounts all the same: said, its cut kept - its board's
   // geometry is its own from here, every move late
   rec('commit', id, { request: id, ms: Math.round(L.committedAt - L.t0), ...facts(nodes, manifest), ...(late ? { late: true } : {}) })

@@ -561,7 +561,7 @@ export const recorderHooks = {
   /** a request is about to commit: the load that was up ends - before the incoming sizes are installed, so it ends by
    *  the sizes it read (which frames measure), its board's nodes still in the store */
   handover: (_request: string): void => {},
-  commit: (_request: string, _nodes: readonly Node[], _manifest: Manifest): void => {},
+  commit: (_request: string, _nodes: readonly Node[], _manifest: Manifest, _kept?: ReadonlySet<string>): void => {},
   cut: (_request: string, _reason: RequestCut): void => {},
   /** nothing of the reflow story is left: no reflow pending, no height held, none owed */
   reflowIdle: (): void => {},
@@ -1227,7 +1227,7 @@ export const useStore = create<State>((set, get) => {
       const live = get().manifest             // a WS manifest update may have landed mid-fetch
       recorderHooks.handover(request)         // the load that was up ends by its own sizes
       installSizes(loaded.sizes)              // the sizes this load read are the page's from its commit
-      recorderHooks.commit(request, next.nodes, next.manifest as Manifest)   // before the set: mounting is not a move
+      recorderHooks.commit(request, next.nodes, next.manifest as Manifest, kept)   // before the set: mounting is not a move
       set(next)
       cancelReflow(); dropHolds()
       for (const k of [...reloadCause.keys()]) if (!kept.has(k)) reloadCause.delete(k)   // a document still loading keeps its cause
