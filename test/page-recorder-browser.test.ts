@@ -365,6 +365,26 @@ describe('the page recorder: board loads', () => {
     expect(await clear(), JSON.stringify(await geo())).toBe(true)
   }, 60_000)
 
+  it('rows a board read laid out at the file\'s heights are laid out again at the kept ones - none too close, none far apart', async () => {
+    if (!browser) return
+    board('stack', STACK_NODES, { layout: STACK_LAYOUT })
+    const { s, page } = await open('#/b/stack')
+    await ended(page, 'stack')
+    const geo = () => browser!.eval(s, `(() => { const ns = window.__mvStore.getState().nodes; const g = (k) => { const n = ns.find((n) => n.key === k); return { y: n.y, h: n.h } }; return { a: g('k-ta'), b: g('k-tb') } })()`) as Promise<{ a: { y: number; h: number }; b: { y: number; h: number } }>
+    const poll = async (f: () => Promise<unknown>, what: string, ms = 20_000) => { for (let i = 0; i < ms / 100; i++) { if (await f()) return; await wait(100) } throw new Error(`timed out waiting for ${what}: ${JSON.stringify(await geo())}`) }
+    await poll(async () => { const g = await geo(); return g.a.h > 200 && g.b.y >= g.a.y + g.a.h }, 'the Doc to fit and the row below to make room')
+    await wait(1000)
+    const right = await geo()   // the recipe at the Doc's fitted height
+    // an agent rewrites the board, positions left to the recipe, the Doc a little short (nothing overlaps), then far too tall
+    for (const h of [right.a.h - 50, right.a.h + 600]) {
+      const since = Date.now()
+      board('stack', STACK_NODES.map((n) => (n.key === 'k-ta' ? { ...n, h } : { ...n })).reverse(), { layout: STACK_LAYOUT })
+      await until(() => { const l = loadOf(page, 'stack'); return l && l.load.cause === 'disk-reload' && l.load.ts >= since }, 20_000, 'the board read again')
+      await poll(async () => Math.abs((await geo()).b.y - right.b.y) <= 1, `the row below back at y ${right.b.y} (file height ${h})`, 5_000)
+      expect((await geo()).a.h).toBe(right.a.h)
+    }
+  }, 60_000)
+
   it('a kept size the layout was made around moves nothing: a frame the human placed stays where they put it', async () => {
     if (!browser) return
     board('stack', STACK_NODES, { layout: STACK_LAYOUT })

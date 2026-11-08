@@ -1017,7 +1017,9 @@ export const useStore = create<State>((set, get) => {
    *  mounted board reads: those it read come back with it, for the commit to install (installSizes).
    *  null = failure (transport, malformed manifest, non-404 board error) - the caller
    *  keeps whatever board is currently mounted. */
-  const loadBoardState = async (boardName: string): Promise<{ state: Partial<State>; sizes: SizeRead | null } | null> => {
+  /** `tidied`: this load laid the rows out itself (no positions, a cramped note) - every position is the recipe's, made
+   *  around the sizes it read */
+  const loadBoardState = async (boardName: string): Promise<{ state: Partial<State>; sizes: SizeRead | null; tidied: boolean } | null> => {
     clearNoteHeights()                     // heights are per column drawn; a key shared by two board files carries none across
     loadErrors.delete(boardName)
     try {
@@ -1203,7 +1205,8 @@ export const useStore = create<State>((set, get) => {
       // a note that landed while this board was closed has no room in the saved positions:
       // a board with a recipe re-applies it (spec 18 - room is the layout's job)
       const cramped = !!boardHash && !needTidy && !!(layout || sceneRows?.length || boardAuto) && notesCramped(nodes, manifest)
-      if ((!boardHash || needTidy || cramped) && nodes.length) {
+      const tidied = (!boardHash || needTidy || cramped) && nodes.length > 0
+      if (tidied) {
         const placedAll = tidy(tidyInput(nodes, manifest), effectiveLayout(layout, sceneRows), layoutWarn, knownScenes(manifest))
         for (const pl of placedAll) { const n = nodes.find((x) => x.key === pl.key)!; n.x = pl.x; n.y = pl.y }
         laidOut = sizeRecord(nodes)
@@ -1216,7 +1219,7 @@ export const useStore = create<State>((set, get) => {
       if (layout && boardHash && !needTidy && !cramped && nodes.length) {
         tidy(tidyInput(nodes, manifest), layout, layoutWarn, knownScenes(manifest))
       }
-      return { state: { manifest, nodes, boardHash, boardAuto, deviceView, sceneRows, layout, layoutRaw, baseLayout, laidOut, baseLaidOut, selection: [], dirty: prunedAtLoad || cramped }, sizes }
+      return { state: { manifest, nodes, boardHash, boardAuto, deviceView, sceneRows, layout, layoutRaw, baseLayout, laidOut, baseLaidOut, selection: [], dirty: prunedAtLoad || cramped }, sizes, tidied }
     } catch { return null } finally { preparing = null }
   }
 
@@ -1248,9 +1251,10 @@ export const useStore = create<State>((set, get) => {
       recorderHooks.commit(request, next.nodes, next.manifest as Manifest, kept)   // before the set: mounting is not a move
       set(next)
       cancelReflow(); dropHolds(kept)
-      // a kept size the file did not hold: the rows move once more if the layout was not made around it - judged as a
-      // known height is (a human's placement at the sizes it recorded stays)
-      if (carried.size && composed(get())) scheduleReflow('stale', () => layoutStale(carried))
+      // a kept size the file did not hold: rows this load laid out around the file's sizes are laid out again around the
+      // kept ones; positions read from the file move only if the layout was not made around it - judged as a known
+      // height is (a human's placement at the sizes it recorded stays)
+      if (carried.size && composed(get())) scheduleReflow('stale', loaded.tidied ? undefined : () => layoutStale(carried))
       for (const k of [...reloadCause.keys()]) if (!kept.has(k)) reloadCause.delete(k)   // a document still loading keeps its cause
       if (next.dirty) scheduleSave()          // load-time prune must reach the disk
       if (live && manifestKey(live) !== manifestKey(next.manifest as Manifest)) get().applyManifest(live)
