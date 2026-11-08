@@ -182,7 +182,8 @@ Each frame of a load ends at one outcome:
 
 An outcome counts only from the document the frame shows now: a message from a document since replaced, or
 from one a reload is replacing, never counts. When the same board is read again its frames keep their
-documents, and a frame whose document is older than the load is marked `kept`. A load with missing or
+documents, and a frame whose document is older than the load is marked `kept` - all but a frame that had failed, one
+silent past its retry, and one whose sizing the file changed: those load again, and are not `kept`. A load with missing or
 never-ready frames settles anyway, and says so.
 
 ## Moves and why

@@ -2,6 +2,22 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## Unreleased
+
+### Fixed
+
+- **Your board no longer reloads when an agent changes it.** When the board file changed on disk (an agent moving or
+  adding a frame, `boards place`), every frame on the board reloaded about ten seconds later, and all at once on a second
+  write. Now the frames stay as they are and only what the file changed moves: on a 53-frame board, one outside write
+  reloaded all 53 frames, now none. A frame that had failed or never answered still loads once more, and one whose
+  width the file changed loads again at it.
+- **Saving a note no longer redraws your board.** With Tailwind v4, saving a file Tailwind only scans for classes - a
+  `.md` note, a `_brief.md`, `context/`, `design/publish.json`, app code no frame imports - redrew every frame on the
+  board. Now nothing redraws, and new classes still reach open frames in place. A frame whose stylesheet cannot take
+  them in place (one imported with `?inline`, an HTML frame) still reloads.
+- **[Performance](docs/performance.md) records tell a frame loaded again from one that stayed:** only a frame whose
+  document stood through a board read is marked `kept`.
+
 ## 0.30.0 - 2026-11-04
 
 ### Highlights
