@@ -349,6 +349,7 @@ describe('the page recorder: board loads', () => {
 
   it('a kept size the file does not hold moves the rows once more: a recipe board read again lays nothing over a Doc', async () => {
     if (!browser) return
+    board('stack', STACK_NODES, { layout: STACK_LAYOUT })
     const { s, page } = await open('#/b/stack')
     await ended(page, 'stack')
     const geo = () => browser!.eval(s, `(() => { const ns = window.__mvStore.getState().nodes; const g = (k) => { const n = ns.find((n) => n.key === k); return { y: n.y, h: n.h } }; return { a: g('k-ta'), b: g('k-tb') } })()`) as Promise<{ a: { y: number; h: number }; b: { y: number; h: number } }>
@@ -362,6 +363,31 @@ describe('the page recorder: board loads', () => {
     await poll(clear, 'the rows laid out at the Doc\'s kept height', 5_000)
     await wait(1000)
     expect(await clear(), JSON.stringify(await geo())).toBe(true)
+  }, 60_000)
+
+  it('a kept size the layout was made around moves nothing: a frame the human placed stays where they put it', async () => {
+    if (!browser) return
+    board('stack', STACK_NODES, { layout: STACK_LAYOUT })
+    const { s, page } = await open('#/b/stack')
+    await ended(page, 'stack')
+    const node = (k: string) => browser!.eval(s, `(() => { const n = window.__mvStore.getState().nodes.find((n) => n.key === '${k}'); return { x: n.x, y: n.y, h: n.h } })()`) as Promise<{ x: number; y: number; h: number }>
+    const poll = async (f: () => Promise<unknown>, what: string) => { for (let i = 0; i < 200; i++) { if (await f()) return; await wait(100) } throw new Error(`timed out waiting for ${what}`) }
+    await poll(async () => (await node('k-ta')).h > 200, 'the Doc to fit')
+    const file = join(root, 'design/boards/stack.json')
+    const saved = () => JSON.parse(readFileSync(file, 'utf8'))
+    // the human drags the lower Doc away; the board saves it, the Doc above at its fitted height
+    await browser.eval(s, `(() => { window.__mvStore.getState().moveNode('k-tb', 2000, 1500); return 1 })()`)
+    await poll(async () => { const b = saved(); const n = b.nodes.find((n: any) => n.key === 'k-tb'); return n?.x === 2000 && n?.y === 1500 && b.nodes.find((n: any) => n.key === 'k-ta')?.h > 200 }, 'the board saved')
+    const H = (await node('k-ta')).h
+    // an agent writes the board from an older copy: the Doc above at the height it had before it fitted
+    const b = saved()
+    b.nodes.find((n: any) => n.key === 'k-ta').h = 200
+    const since = Date.now()
+    writeFileSync(file, JSON.stringify(b, null, 4) + '\n')
+    await until(() => { const l = loadOf(page, 'stack'); return l && l.load.cause === 'disk-reload' && l.load.ts >= since }, 20_000, 'the board read again')
+    await wait(1500)
+    expect(await node('k-ta')).toMatchObject({ h: H })
+    expect(await node('k-tb')).toMatchObject({ x: 2000, y: 1500 })
   }, 60_000)
 
   it('a frame that never measures takes the size its board is given: a bare Md resized on disk is resized', async () => {

@@ -345,11 +345,10 @@ export const bumpManifestRev = () => { manifestRev++ }
  *  measure it will never send again) - are asked anew.
  *  A kept content frame keeps the size it measured: the file holds none (auto) or the width alone is the human's
  *  (manual), and a document that stays never measures again unless its width changes. `kept`: the nodes whose
- *  document stands; `carried`: a kept size differs from the file's - the rows were laid out at the file's. */
-function keepDocuments(mounted: Node[], nodes: Node[]): { nodes: Node[]; kept: Set<string>; carried: boolean } {
+ *  document stands; `carried`: the nodes whose kept size differs from the file's. */
+function keepDocuments(mounted: Node[], nodes: Node[]): { nodes: Node[]; kept: Set<string>; carried: Set<string> } {
   const was = new Map(mounted.map((n) => [n.key, n]))
-  const kept = new Set<string>()
-  let carried = false
+  const kept = new Set<string>(), carried = new Set<string>()
   const next = nodes.map((n) => {
     const o = was.get(n.key)
     if (!o || o.frame !== n.frame || o.missing || n.missing) return n
@@ -363,7 +362,7 @@ function keepDocuments(mounted: Node[], nodes: Node[]): { nodes: Node[]; kept: S
     // auto: the whole size is measured; manual: the height, at the width it has
     const w = fits && o.sizeMode === 'auto' ? o.w : n.w
     const h = fits && (o.sizeMode === 'auto' || o.sizeMode === 'manual') ? o.h : n.h
-    if (Math.round(w) !== Math.round(n.w) || Math.round(h) !== Math.round(n.h)) carried = true
+    if (Math.round(w) !== Math.round(n.w) || Math.round(h) !== Math.round(n.h)) carried.add(n.key)
     return { ...n, w, h, status, error, nav, rev, themeOn, readyRetried, stale, shown, want }
   })
   return { nodes: next, kept, carried }
@@ -951,10 +950,11 @@ export const useStore = create<State>((set, get) => {
    *  it: it already equals the committed one. So once the board is up, the recipe re-runs if the
    *  known heights differ from the ones its positions were laid out around (`laidOut`). A frame the
    *  human dragged, at heights that did not change, stays where they put it. */
-  const layoutStale = () => {
+  const layoutStale = (kept?: ReadonlySet<string>) => {
     const { nodes, laidOut } = get()
     const record = laidOut ?? {}
-    const known = (n: Node) => n.sizeMode === 'auto' && hasKnownHeight(n.frame, Math.round(n.w))
+    // `kept`: nodes whose size a board read kept from their live document - known as surely as a measured one
+    const known = (n: Node) => (n.sizeMode === 'auto' && hasKnownHeight(n.frame, Math.round(n.w))) || !!kept?.has(n.key)
     const has = (n: Node) => Object.prototype.hasOwnProperty.call(record, n.key)
     // a node the layout recorded, at another size now
     if (nodes.some((n) => known(n) && has(n) && sizeOf(n) !== record[n.key])) return true
@@ -1248,7 +1248,9 @@ export const useStore = create<State>((set, get) => {
       recorderHooks.commit(request, next.nodes, next.manifest as Manifest, kept)   // before the set: mounting is not a move
       set(next)
       cancelReflow(); dropHolds(kept)
-      if (carried) reflowAfterHolds()         // laid out at the file's sizes: the rows move once more, at the kept ones
+      // a kept size the file did not hold: the rows move once more if the layout was not made around it - judged as a
+      // known height is (a human's placement at the sizes it recorded stays)
+      if (carried.size && composed(get())) scheduleReflow('stale', () => layoutStale(carried))
       for (const k of [...reloadCause.keys()]) if (!kept.has(k)) reloadCause.delete(k)   // a document still loading keeps its cause
       if (next.dirty) scheduleSave()          // load-time prune must reach the disk
       if (live && manifestKey(live) !== manifestKey(next.manifest as Manifest)) get().applyManifest(live)
