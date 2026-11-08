@@ -341,8 +341,11 @@ export const bumpManifestRev = () => { manifestRev++ }
 /** The board read again over itself: a frame still on it keeps its live document, so the node keeps what is known of
  *  that document. Read fresh it would wait for a ready that document sent long ago - the watchdog then reloads every
  *  frame - and its `nav`, back to none, would read as a request to navigate. Only a healthy document is kept: one that
- *  failed, one silent past its retry, and one whose sizing changed (a measure it will never send again) are asked anew.
- *  `kept`: the nodes whose document stands. */
+ *  failed, one silent past its retry, and one whose sizing changed - its mode, or a content frame's human width (a
+ *  measure it will never send again) - are asked anew.
+ *  A kept content frame keeps the size it measured: the file holds none (auto) or the width alone is the human's
+ *  (manual), and a document that stays never measures again unless its width changes. `kept`: the nodes whose
+ *  document stands. */
 function keepDocuments(mounted: Node[], nodes: Node[]): { nodes: Node[]; kept: Set<string> } {
   const was = new Map(mounted.map((n) => [n.key, n]))
   const kept = new Set<string>()
@@ -350,9 +353,13 @@ function keepDocuments(mounted: Node[], nodes: Node[]): { nodes: Node[]; kept: S
     const o = was.get(n.key)
     if (!o || o.frame !== n.frame || o.missing || n.missing) return n
     const { status, error, nav, rev, themeOn, readyRetried, stale, shown, want } = o
-    if (status === 'error' || (status === 'loading' && readyRetried) || o.sizeMode !== n.sizeMode) return { ...n, nav: (nav ?? 0) + 1, stale, want }
+    // a human width the file changed is sizing too: the document fits its height at a width only once it loads there
+    const resized = n.sizeMode === 'manual' && Math.round(o.w) !== Math.round(n.w)
+    if (status === 'error' || (status === 'loading' && readyRetried) || o.sizeMode !== n.sizeMode || resized) return { ...n, nav: (nav ?? 0) + 1, stale, want }
     kept.add(n.key)
-    return { ...n, status, error, nav, rev, themeOn, readyRetried, stale, shown, want }
+    // auto: the whole size is measured; manual: the height, at the width it has
+    const fit = o.sizeMode === 'auto' ? { w: o.w, h: o.h } : o.sizeMode === 'manual' ? { h: o.h } : {}
+    return { ...n, ...fit, status, error, nav, rev, themeOn, readyRetried, stale, shown, want }
   })
   return { nodes: next, kept }
 }
@@ -884,7 +891,12 @@ export const useStore = create<State>((set, get) => {
     if (!holds.size && reflowOwed) { reflowOwed = false; scheduleReflow(null) }
     else reflowSettled()
   }
-  const dropHolds = () => { for (const h of holds.values()) clearTimeout(h.timer); holds.clear(); reflowOwed = false }
+  /** `keep`: nodes whose document a board read kept - a reload of theirs still on its way keeps its hold and the
+   *  measure it held back (an image still loading lands when the hold lets go) */
+  const dropHolds = (keep?: ReadonlySet<string>) => {
+    for (const [k, h] of holds) if (!keep?.has(k)) { clearTimeout(h.timer); holds.delete(k) }
+    reflowOwed = false
+  }
   /** A content measure moved the rows: once, after the last held node lets go. */
   const reflowAfterHolds = () => { reflowReasons.add('measured'); if (holds.size) reflowOwed = true; else scheduleReflow('measured') }
   /** The recorder hears when nothing of the reflow story is left (spec 28 A1.7): no timer, no held height, none owed. */
@@ -1229,7 +1241,7 @@ export const useStore = create<State>((set, get) => {
       installSizes(loaded.sizes)              // the sizes this load read are the page's from its commit
       recorderHooks.commit(request, next.nodes, next.manifest as Manifest, kept)   // before the set: mounting is not a move
       set(next)
-      cancelReflow(); dropHolds()
+      cancelReflow(); dropHolds(kept)
       for (const k of [...reloadCause.keys()]) if (!kept.has(k)) reloadCause.delete(k)   // a document still loading keeps its cause
       if (next.dirty) scheduleSave()          // load-time prune must reach the disk
       if (live && manifestKey(live) !== manifestKey(next.manifest as Manifest)) get().applyManifest(live)

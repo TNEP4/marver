@@ -185,12 +185,16 @@ beforeAll(async () => {
   put('design/scenes/kit/boom.tsx', 'export default function Boom(): never { throw new Error(\'boom in render\') }\n')
   put('design/scenes/kit/hang.tsx', 'export default () => <main><h1>hang</h1></main>\n')
   put('design/scenes/pages/p.html', '<!doctype html><html><body><h1>page</h1><img src="/design/assets/slow2.png" width="64" height="64"></body></html>\n')
-  for (const f of ['slow.png', 'slow2.png']) put(`design/assets/${f}`, PNG)
+  for (const f of ['slow.png', 'slow2.png', 'grow.png']) put(`design/assets/${f}`, PNG)
+  put('design/scenes/growdocs/grow.tsx', doc(2))
+  put('design/scenes/growdocs/fit.tsx', doc(6))
   // a recipe, no positions, no heights known: the shell lays it out, then the Docs report
   board('late', [{ key: 'k-a', frame: 'docs/a' }, { key: 'k-b', frame: 'docs/b' }], { layout: { rows: [['docs']], scenes: { docs: { rows: [['a'], ['b']] } } } })
   // placed by hand: nothing lays it out
   board('still', [{ key: 'k-sb', frame: 'docs/b', x: 0, y: 0 }, { key: 'k-sh', frame: 'kit/hifi', x: 3000, y: 0 }])
   board('slow', [{ key: 'k-slow', frame: 'slowdocs/slow', x: 0, y: 0 }])
+  board('grow', [{ key: 'k-g', frame: 'growdocs/grow', x: 0, y: 0 }, { key: 'k-gh', frame: 'kit/hifi', x: 3000, y: 0 }])
+  board('fit', [{ key: 'k-f', frame: 'growdocs/fit', x: 0, y: 0, w: 900, h: 200, sizeMode: 'manual' }, { key: 'k-fh', frame: 'kit/hifi', x: 3000, y: 0 }])
   board('wide', [{ key: 'k-w', frame: 'widedocs/wide', x: 0, y: 0, w: 900 }])
   board('hifi', [{ key: 'k-h', frame: 'kit/hifi', x: 0, y: 0 }])
   board('missing', [{ key: 'k-m', frame: 'kit/nope', x: 0, y: 0, w: 390, h: 844 }, { key: 'k-mh', frame: 'kit/hifi', x: 600, y: 0 }])
@@ -311,6 +315,51 @@ describe('the page recorder: board loads', () => {
     board('still', [{ key: 'k-sb', frame: 'docs/b', x: 0, y: 0, w: 900, h: 700, sizeMode: 'manual' }, { key: 'k-sh', frame: 'kit/hifi', x: 3800, y: 0 }])
     await poll(async () => (await docs()) !== kept && (await browser!.eval(s, `window.__mvStore.getState().nodes.every((n) => n.status === 'ready')`)), 'the frame with new sizing loaded anew')
     expect((await docs()).split(',')[1], 'the other frame stays').toBe(kept.split(',')[1])
+  }, 60_000)
+
+  it('a kept content frame keeps the height it measured: a board read whose file holds an older one does not clip it', async () => {
+    if (!browser) return
+    const { s, page } = await open('#/b/fit')
+    await ended(page, 'fit')
+    const node = (k: string) => browser!.eval(s, `(() => { const n = window.__mvStore.getState().nodes.find((n) => n.key === '${k}'); return { x: n.x, w: n.w, h: n.h, status: n.status } })()`) as Promise<{ x: number; w: number; h: number; status: string }>
+    const poll = async (f: () => Promise<unknown>, what: string) => { for (let i = 0; i < 200; i++) { if (await f()) return; await wait(100) } throw new Error(`timed out waiting for ${what}`) }
+    await poll(async () => (await node('k-f')).h !== 200, 'the Doc to fit its height')
+    const fitted = await node('k-f')
+    expect(fitted.w).toBe(900)   // the human's width
+    // an agent moves the frame beside it; the file still says 200 for this one, as it did when the page read it
+    board('fit', [{ key: 'k-f', frame: 'growdocs/fit', x: 0, y: 0, w: 900, h: 200, sizeMode: 'manual' }, { key: 'k-fh', frame: 'kit/hifi', x: 3400, y: 0 }])
+    await poll(async () => (await node('k-fh')).x === 3400, 'the board read again')
+    await wait(1500)
+    expect(await node('k-f')).toMatchObject({ w: 900, h: fitted.h, status: 'ready' })
+    // a new width from the file is the human's: the document loads again and fits its height at it, not at the file's
+    const nav = () => browser!.eval(s, `window.__mvStore.getState().nodes.find((n) => n.key === 'k-f').nav ?? 0`) as Promise<number>
+    const navBefore = await nav()
+    board('fit', [{ key: 'k-f', frame: 'growdocs/fit', x: 0, y: 0, w: 500, h: 200, sizeMode: 'manual' }, { key: 'k-fh', frame: 'kit/hifi', x: 3400, y: 0 }])
+    await poll(async () => (await nav()) > navBefore, 'the Doc asked anew')
+    await poll(async () => { const n = await node('k-f'); return n.w === 500 && n.h !== 200 && n.status === 'ready' }, 'the Doc to fit its height at the new width')
+  }, 60_000)
+
+  it('a board read keeps the hold of a kept frame still reloading: the height it held back lands when the hold lets go', async () => {
+    if (!browser) return
+    const { s, page, held } = await open('#/b/grow', ['*grow.png*'])
+    await ended(page, 'grow')
+    const node = (k: string) => browser!.eval(s, `(() => { const n = window.__mvStore.getState().nodes.find((n) => n.key === '${k}'); return { x: n.x, h: n.h, status: n.status } })()`) as Promise<{ x: number; h: number; status: string }>
+    const poll = async (f: () => Promise<unknown>, what: string) => { for (let i = 0; i < 200; i++) { if (await f()) return; await wait(100) } throw new Error(`timed out waiting for ${what}`) }
+    const before = (await node('k-g')).h
+    // what the Doc reports: a provisional measure comes SETTLE_CAP (2 s) into its load, inside the 4 s hold
+    await browser.eval(s, `(() => { window.__measures = []; addEventListener('message', (e) => { if (e.data?.type === 'sh:measure') window.__measures.push(e.data) }); return 1 })()`)
+    // an edit makes the Doc much taller; its image stays on its way, so every measure it sends is provisional: held
+    put('design/scenes/growdocs/grow.tsx', doc(12, { extra: '    <Img src="grow.png" caption="slow to arrive" />' }))
+    await until(() => held.paused('*grow.png*') > 0, 20_000, 'the reloaded Doc to ask for its image')
+    await poll(async () => browser!.eval(s, `window.__measures.some((m) => m.settled === false && m.height > ${before + 200})`), 'the provisional measure')
+    expect((await node('k-g')).h, 'held while it reloads').toBe(before)
+    // an agent moves the frame beside it before the hold lets go; the Doc, its image still on its way, sends no more
+    board('grow', [{ key: 'k-g', frame: 'growdocs/grow', x: 0, y: 0 }, { key: 'k-gh', frame: 'kit/hifi', x: 3400, y: 0 }])
+    await poll(async () => (await node('k-gh')).x === 3400, 'the board read again')
+    expect((await node('k-g')).h, 'read inside the hold').toBe(before)
+    // the hold lets go and the measure it held lands - the frame is not left clipped
+    await poll(async () => (await node('k-g')).h > before + 200, 'the held height to land')
+    held.stop()
   }, 60_000)
 
   it('a frame that measures provisionally for 3 s keeps the load from settling until its settled report', async () => {

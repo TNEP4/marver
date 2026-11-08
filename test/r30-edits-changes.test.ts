@@ -204,6 +204,7 @@ describe('real Vite: the bracket, under runs that truly overlap', () => {
   const frames: { t: Touched; cause: string; at: Attribution }[] = []
   const reloads: { passed: boolean; at?: Attribution }[] = []
   let styles = 0, sheets: string[] = []
+  let manifest: ReturnType<typeof scanFrames>
   const refusals: ((p: { path?: string }) => void)[] = []
   /** a plugin's own hook holds a run open until released; `reloadIn` sends Tailwind's bare full-reload from inside it */
   const gates = new Map<string, { open: Promise<void>; go: () => void; inside: Promise<void>; entered: () => void }>()
@@ -223,7 +224,7 @@ describe('real Vite: the bracket, under runs that truly overlap', () => {
     root = realpathSync(mkdtempSync(join(tmpdir(), 'mv-chg-')))
     for (const n of ['a.tsx', 'b.tsx']) { mkdirSync(join(root, 'design/scenes/s'), { recursive: true }); writeFileSync(f(n), 'export default () => null\n') }
     writeFileSync(f('_kit.tsx'), 'export const Kit = () => null\n')
-    const manifest = scanFrames(root)
+    manifest = scanFrames(root)
     const hooks: UpdateHooks = {
       onFrames: (t, cause, at) => { frames.push({ t, cause, at }) },
       onReload: (_p, passed, at) => { reloads.push({ passed, at }) },
@@ -342,12 +343,77 @@ describe('real Vite: the bracket, under runs that truly overlap', () => {
     const entry = graph.createFileOnlyEntry(note)   // what a watched file is to the graph: no id, imported by no document
     const css = await graph.ensureEntryFromUrl('/design/scenes/s/own.css'), wrap = await graph.ensureEntryFromUrl('/design/scenes/s/outer.css'), doc = await graph.ensureEntryFromUrl('/design/scenes/s/uses-it.tsx')
     entry.importers.add(css); css.importers.add(wrap); wrap.importers.add(doc)
+    css.isSelfAccepting = wrap.isSelfAccepting = true   // what Vite makes of a stylesheet a document imports
     reloadIn.add(note)
     fire(note)
     await quiet()
     await settle()
     expect(styles).toBe(1)
     expect(sheets.sort()).toEqual([wrap.file, css.file].sort())   // the page that imports them is no stylesheet
+    expect(frames.find((x) => x.cause === 'reload')!.t.doc).toEqual([])   // pushed in place: no frame reloads
+  })
+
+  it('a stylesheet a frame imports `?inline` cannot take the push - it stops at the registry: that frame reloads, nothing is pushed', async () => {
+    const saved = manifest
+    try {
+      // a frame of its own: a.tsx and b.tsx stay out of the graph for the tests below
+      writeFileSync(f('c.tsx'), 'export default () => null\n')
+      manifest = { ...saved, frames: [...saved.frames, { ...saved.frames[0], id: 's/c', file: 'design/scenes/s/c.tsx' }] }
+      const graph = server.environments.client.moduleGraph
+      const note = f('scanned-inline.md')
+      writeFileSync(note, 'a note\n')
+      const entry = graph.createFileOnlyEntry(note)
+      const inline = await graph.ensureEntryFromUrl('/design/scenes/s/inline.css?inline'), frame = await graph.ensureEntryFromUrl('/design/scenes/s/c.tsx')
+      inline.isSelfAccepting = false   // a string export: no accept of its own
+      entry.importers.add(inline); inline.importers.add(frame)
+      reloadIn.add(note)
+      fire(note)
+      await quiet(); await settle()
+      expect(sheets).toEqual([])
+      const dropped = frames.find((x) => x.cause === 'reload')!
+      expect(dropped.t.doc).toEqual(['s/c'])
+      expect(dropped.t.unattributed).toBe(true)   // reloaded, not marked changed
+    } finally { manifest = saved }
+  })
+
+  it('an HTML page\'s own <style> is a stylesheet by its id, not its file; every HTML frame reloads - none hears of a push', async () => {
+    const saved = manifest
+    try {
+      writeFileSync(f('page.html'), '<style>@import "tailwindcss";</style>\n')
+      manifest = { ...saved, frames: [...saved.frames, { ...saved.frames[0], id: 's/page', file: 'design/scenes/s/page.html', kind: 'html' }] }
+      const graph = server.environments.client.moduleGraph
+      const note = f('scanned-html.md')
+      writeFileSync(note, 'a note\n')
+      const entry = graph.createFileOnlyEntry(note)
+      const style = await graph.ensureEntryFromUrl('/design/scenes/s/page.html?html-proxy&direct&index=0.css')
+      expect(style.file).toBe(f('page.html'))   // the trap: told by its file it is no stylesheet
+      entry.importers.add(style)
+      reloadIn.add(note)
+      fire(note)
+      await quiet(); await settle()
+      expect(sheets).toEqual([])
+      expect(frames.find((x) => x.cause === 'reload')!.t.doc).toEqual(['s/page'])
+    } finally { manifest = saved }
+  })
+
+  it('an HTML frame that only links the theme reloads when a scanned file feeds it: its <link> is no edge and it hears of no push', async () => {
+    const saved = manifest
+    try {
+      writeFileSync(f('linked.html'), '<link rel="stylesheet" href="/design/theme.css">\n')
+      manifest = { ...saved, frames: [...saved.frames, { ...saved.frames[0], id: 's/linked', file: 'design/scenes/s/linked.html', kind: 'html' }] }
+      const graph = server.environments.client.moduleGraph
+      const note = f('scanned-linked.md')
+      writeFileSync(note, 'a note\n')
+      const entry = graph.createFileOnlyEntry(note)
+      const theme = await graph.ensureEntryFromUrl('/design/scenes/s/theme-linked.css')
+      theme.isSelfAccepting = true
+      entry.importers.add(theme)
+      reloadIn.add(note)
+      fire(note)
+      await quiet(); await settle()
+      expect(sheets).toEqual([theme.file])   // the TSX frames take it in place
+      expect(frames.find((x) => x.cause === 'reload')!.t.doc).toEqual(['s/linked'])
+    } finally { manifest = saved }
   })
 
   it('a pathless reload for a file a document imports reloads every frame: its sender is not Tailwind for a scanned file', async () => {

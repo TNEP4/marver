@@ -16,7 +16,8 @@
  * Every other `full-reload` Vite or Tailwind sends is dropped and becomes reloads of the frames it
  * names - the shell never reloads for a design edit. One that names nothing, sent while a file no
  * document imports is being handled, is Tailwind's for a file it only scans (a note, app code): the
- * stylesheet is pushed in place and only the frames the marks find changed reload. Named nothing
+ * stylesheet is pushed in place and only the frames the marks find changed reload - with the frames of
+ * a stylesheet that cannot take its update in place, and every HTML frame. Named nothing
  * otherwise, every frame reloads: the sender is unknown. The one that passes is the dependency
  * optimiser's: module URLs changed, every document must reload.
  */
@@ -111,18 +112,31 @@ export function guardUpdates(server: ViteDevServer, root: string, manifest: () =
   const env = server.environments.client
   // Tailwind's own test for a file it reloads for: known to the graph as a watched file at most, imported by no document
   const notImported = (file: string) => [...env.moduleGraph.getModulesByFile(file) ?? []].every((m) => m.id == null || m.type === 'asset')
-  // the stylesheets a scanned file feeds, walked as Tailwind walks to the root it invalidates: up the importers
+  // the stylesheets a scanned file feeds, walked as Tailwind walks to the root it invalidates: up the importers. Told
+  // by the module's id, not its file: an HTML page's own <style> is a module of the page's file. A sheet that accepts
+  // its own update is pushed in place; one that does not (imported `?inline`, an HTML page's <style>, one no document
+  // has loaded yet) would stop at the frame host's registry, which ignores updates - the frames that import it reload
   const sheetsOf = (files: string[]) => {
-    const sheets = new Set<string>(), seen = new Set<EnvironmentModuleNode>()
-    const up = [...files.flatMap((f) => [...env.moduleGraph.getModulesByFile(f) ?? []])]
+    const push = new Set<string>(), refused = new Set<EnvironmentModuleNode>(), seen = new Set<EnvironmentModuleNode>()
+    const up = files.flatMap((f) => [...env.moduleGraph.getModulesByFile(f) ?? []])
     while (up.length) {
       const m = up.shift()!
       if (seen.has(m)) continue
       seen.add(m)
-      for (const by of m.importers) if (by.file && isCSSRequest(by.file)) { sheets.add(by.file); up.push(by) }
+      for (const by of m.importers) {
+        if (!isCSSRequest(by.id ?? by.url)) continue
+        if (by.isSelfAccepting === true && by.file) push.add(by.file)
+        else refused.add(by)
+        up.push(by)
+      }
     }
-    return [...sheets]
+    const reload = new Set<string>()
+    for (const m of refused) { const t = framesFor(root, manifest(), m.file ?? '', [m]); for (const id of [...t.doc, ...t.touched]) reload.add(id) }
+    return { push: [...push], reload }
   }
+  // an HTML frame hears of no stylesheet update (the TSX frame host turns one into a revision, waking a sleeping
+  // frame; the HTML bridge does not) and its <link>s are no edges of the graph: every one reloads, as before
+  const htmlFrames = () => manifest().frames.filter((f: FrameEntry) => f.kind === 'html').map((f: FrameEntry) => f.id)
   const wrap = (ch: { send: (...a: any[]) => void }) => {
     const send = ch.send.bind(ch)
     ch.send = (...a: any[]) => {
@@ -142,8 +156,10 @@ export function guardUpdates(server: ViteDevServer, root: string, manifest: () =
           const mods = by ? env.moduleGraph.getModulesByFile(by) : undefined
           const scanned = by ? [] : changes.handling().filter(notImported)
           const all = () => manifest().frames.map((f: FrameEntry) => f.id)
-          const t: Touched = by ? framesFor(root, manifest(), by, mods ?? []) : { file: '', doc: scanned.length ? [] : all(), touched: [], unattributed: true }
-          if (scanned.length) onStyles(sheetsOf(scanned))
+          const sheets = scanned.length ? sheetsOf(scanned) : null
+          const doc = sheets ? [...new Set([...sheets.reload, ...htmlFrames()])] : all()
+          const t: Touched = by ? framesFor(root, manifest(), by, mods ?? []) : { file: '', doc, touched: [], unattributed: true }
+          if (sheets) onStyles(sheets.push)
           if (t.doc.length || t.touched.length || scanned.length) hooks.onFrames(t, 'reload', at!)   // a file no frame reads reloads nothing
           return
         }
