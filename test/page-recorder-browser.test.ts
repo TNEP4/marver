@@ -40,6 +40,9 @@ const put = (rel: string, body: string | Buffer | object) => {
 }
 const board = (name: string, nodes: object[], extra: object = {}) => put(`design/boards/${name}.json`, { version: 1, name, auto: false, ...extra, nodes })
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+// a recipe: the shell lays the rows out; the Doc above has a human width and the file a height it outgrows
+const STACK_LAYOUT = { rows: [['stack']], scenes: { stack: { rows: [['a'], ['b']] } } }
+const STACK_NODES = [{ key: 'k-ta', frame: 'stack/a', w: 900, h: 200, sizeMode: 'manual' }, { key: 'k-tb', frame: 'stack/b' }]
 
 // ---- the log ----------------------------------------------------------------------------------------------------
 const pageLog = () => join(root, 'design', '.local', 'perf', 'page.jsonl')
@@ -188,12 +191,17 @@ beforeAll(async () => {
   for (const f of ['slow.png', 'slow2.png', 'grow.png']) put(`design/assets/${f}`, PNG)
   put('design/scenes/growdocs/grow.tsx', doc(2))
   put('design/scenes/growdocs/fit.tsx', doc(6))
+  put('design/scenes/stack/a.tsx', doc(8))
+  put('design/scenes/stack/b.tsx', doc(2))
+  put('design/scenes/bare/md.tsx', `import { Md } from '@marver-design/marver/content'\nexport default () => <Md>{'# bare\\n\\nNo Doc around it: it never measures.'}</Md>\n`)
   // a recipe, no positions, no heights known: the shell lays it out, then the Docs report
   board('late', [{ key: 'k-a', frame: 'docs/a' }, { key: 'k-b', frame: 'docs/b' }], { layout: { rows: [['docs']], scenes: { docs: { rows: [['a'], ['b']] } } } })
   // placed by hand: nothing lays it out
   board('still', [{ key: 'k-sb', frame: 'docs/b', x: 0, y: 0 }, { key: 'k-sh', frame: 'kit/hifi', x: 3000, y: 0 }])
   board('slow', [{ key: 'k-slow', frame: 'slowdocs/slow', x: 0, y: 0 }])
   board('grow', [{ key: 'k-g', frame: 'growdocs/grow', x: 0, y: 0 }, { key: 'k-gh', frame: 'kit/hifi', x: 3000, y: 0 }])
+  board('stack', STACK_NODES, { layout: STACK_LAYOUT })
+  board('bare', [{ key: 'k-md', frame: 'bare/md', x: 0, y: 0, w: 900, h: 200 }, { key: 'k-mdh', frame: 'kit/hifi', x: 3000, y: 0 }])
   board('fit', [{ key: 'k-f', frame: 'growdocs/fit', x: 0, y: 0, w: 900, h: 200, sizeMode: 'manual' }, { key: 'k-fh', frame: 'kit/hifi', x: 3000, y: 0 }])
   board('wide', [{ key: 'k-w', frame: 'widedocs/wide', x: 0, y: 0, w: 900 }])
   board('hifi', [{ key: 'k-h', frame: 'kit/hifi', x: 0, y: 0 }])
@@ -337,6 +345,34 @@ describe('the page recorder: board loads', () => {
     board('fit', [{ key: 'k-f', frame: 'growdocs/fit', x: 0, y: 0, w: 500, h: 200, sizeMode: 'manual' }, { key: 'k-fh', frame: 'kit/hifi', x: 3400, y: 0 }])
     await poll(async () => (await nav()) > navBefore, 'the Doc asked anew')
     await poll(async () => { const n = await node('k-f'); return n.w === 500 && n.h !== 200 && n.status === 'ready' }, 'the Doc to fit its height at the new width')
+  }, 60_000)
+
+  it('a kept size the file does not hold moves the rows once more: a recipe board read again lays nothing over a Doc', async () => {
+    if (!browser) return
+    const { s, page } = await open('#/b/stack')
+    await ended(page, 'stack')
+    const geo = () => browser!.eval(s, `(() => { const ns = window.__mvStore.getState().nodes; const g = (k) => { const n = ns.find((n) => n.key === k); return { y: n.y, h: n.h } }; return { a: g('k-ta'), b: g('k-tb') } })()`) as Promise<{ a: { y: number; h: number }; b: { y: number; h: number } }>
+    const poll = async (f: () => Promise<unknown>, what: string, ms = 20_000) => { for (let i = 0; i < ms / 100; i++) { if (await f()) return; await wait(100) } throw new Error(`timed out waiting for ${what}: ${JSON.stringify(await geo())}`) }
+    const clear = async () => { const g = await geo(); return g.a.h > 200 && g.b.y >= g.a.y + g.a.h }
+    await poll(clear, 'the Doc to fit and the row below to make room')
+    // an agent writes the board again, its positions left to the recipe, the Doc at the file's height
+    const since = Date.now()
+    board('stack', STACK_NODES.map((n) => ({ ...n })).reverse(), { layout: STACK_LAYOUT })
+    await until(() => { const l = loadOf(page, 'stack'); return l && l.load.cause === 'disk-reload' && l.load.ts >= since }, 20_000, 'the board read again')
+    await poll(clear, 'the rows laid out at the Doc\'s kept height', 5_000)
+    await wait(1000)
+    expect(await clear(), JSON.stringify(await geo())).toBe(true)
+  }, 60_000)
+
+  it('a frame that never measures takes the size its board is given: a bare Md resized on disk is resized', async () => {
+    if (!browser) return
+    const { s, page } = await open('#/b/bare')
+    await ended(page, 'bare')
+    const node = () => browser!.eval(s, `(() => { const n = window.__mvStore.getState().nodes.find((n) => n.key === 'k-md'); return { w: n.w, h: n.h, status: n.status } })()`) as Promise<{ w: number; h: number; status: string }>
+    expect(await node()).toMatchObject({ w: 900, h: 200 })
+    board('bare', [{ key: 'k-md', frame: 'bare/md', x: 0, y: 0, w: 1200, h: 600 }, { key: 'k-mdh', frame: 'kit/hifi', x: 3000, y: 0 }])
+    for (let i = 0; i < 100 && (await node()).w !== 1200; i++) await wait(100)
+    expect(await node()).toMatchObject({ w: 1200, h: 600, status: 'ready' })
   }, 60_000)
 
   it('a board read keeps the hold of a kept frame still reloading: the height it held back lands when the hold lets go', async () => {

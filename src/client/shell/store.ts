@@ -345,23 +345,28 @@ export const bumpManifestRev = () => { manifestRev++ }
  *  measure it will never send again) - are asked anew.
  *  A kept content frame keeps the size it measured: the file holds none (auto) or the width alone is the human's
  *  (manual), and a document that stays never measures again unless its width changes. `kept`: the nodes whose
- *  document stands. */
-function keepDocuments(mounted: Node[], nodes: Node[]): { nodes: Node[]; kept: Set<string> } {
+ *  document stands; `carried`: a kept size differs from the file's - the rows were laid out at the file's. */
+function keepDocuments(mounted: Node[], nodes: Node[]): { nodes: Node[]; kept: Set<string>; carried: boolean } {
   const was = new Map(mounted.map((n) => [n.key, n]))
   const kept = new Set<string>()
+  let carried = false
   const next = nodes.map((n) => {
     const o = was.get(n.key)
     if (!o || o.frame !== n.frame || o.missing || n.missing) return n
     const { status, error, nav, rev, themeOn, readyRetried, stale, shown, want } = o
+    // only a frame that measures (renders a Doc) has a size of its own to keep; a bare Md or Img is the size its board says
+    const fits = measures(n.frame)
     // a human width the file changed is sizing too: the document fits its height at a width only once it loads there
-    const resized = n.sizeMode === 'manual' && Math.round(o.w) !== Math.round(n.w)
+    const resized = fits && n.sizeMode === 'manual' && Math.round(o.w) !== Math.round(n.w)
     if (status === 'error' || (status === 'loading' && readyRetried) || o.sizeMode !== n.sizeMode || resized) return { ...n, nav: (nav ?? 0) + 1, stale, want }
     kept.add(n.key)
     // auto: the whole size is measured; manual: the height, at the width it has
-    const fit = o.sizeMode === 'auto' ? { w: o.w, h: o.h } : o.sizeMode === 'manual' ? { h: o.h } : {}
-    return { ...n, ...fit, status, error, nav, rev, themeOn, readyRetried, stale, shown, want }
+    const w = fits && o.sizeMode === 'auto' ? o.w : n.w
+    const h = fits && (o.sizeMode === 'auto' || o.sizeMode === 'manual') ? o.h : n.h
+    if (Math.round(w) !== Math.round(n.w) || Math.round(h) !== Math.round(n.h)) carried = true
+    return { ...n, w, h, status, error, nav, rev, themeOn, readyRetried, stale, shown, want }
   })
-  return { nodes: next, kept }
+  return { nodes: next, kept, carried }
 }
 
 /** ws= binds the document to this canvas (spec 28 A1.11): another project on this port later answers a
@@ -895,7 +900,7 @@ export const useStore = create<State>((set, get) => {
    *  measure it held back (an image still loading lands when the hold lets go) */
   const dropHolds = (keep?: ReadonlySet<string>) => {
     for (const [k, h] of holds) if (!keep?.has(k)) { clearTimeout(h.timer); holds.delete(k) }
-    reflowOwed = false
+    reflowOwed = reflowOwed && holds.size > 0   // a reflow owed to a hold that stays is still owed when it lets go
   }
   /** A content measure moved the rows: once, after the last held node lets go. */
   const reflowAfterHolds = () => { reflowReasons.add('measured'); if (holds.size) reflowOwed = true; else scheduleReflow('measured') }
@@ -1234,14 +1239,16 @@ export const useStore = create<State>((set, get) => {
       if (!loaded) { recorderHooks.cut(request, 'error'); get().toast(`board "${boardName}" failed to load${whyNot(boardName)}`); return false }
       // the user kept editing while we fetched - their newer state wins over the reload
       if (get().board !== boardName || editRev !== revAtStart || (mayCommit && !mayCommit())) { recorderHooks.cut(request, 'edited'); return false }
-      const { nodes, kept } = keepDocuments(get().nodes, loaded.state.nodes as Node[])
-      const next = { ...loaded.state, nodes }
       const live = get().manifest             // a WS manifest update may have landed mid-fetch
       recorderHooks.handover(request)         // the load that was up ends by its own sizes
       installSizes(loaded.sizes)              // the sizes this load read are the page's from its commit
+      // after the install: which frames measure is this load's word
+      const { nodes, kept, carried } = keepDocuments(get().nodes, loaded.state.nodes as Node[])
+      const next = { ...loaded.state, nodes }
       recorderHooks.commit(request, next.nodes, next.manifest as Manifest, kept)   // before the set: mounting is not a move
       set(next)
       cancelReflow(); dropHolds(kept)
+      if (carried) reflowAfterHolds()         // laid out at the file's sizes: the rows move once more, at the kept ones
       for (const k of [...reloadCause.keys()]) if (!kept.has(k)) reloadCause.delete(k)   // a document still loading keeps its cause
       if (next.dirty) scheduleSave()          // load-time prune must reach the disk
       if (live && manifestKey(live) !== manifestKey(next.manifest as Manifest)) get().applyManifest(live)
