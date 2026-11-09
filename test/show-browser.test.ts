@@ -139,8 +139,12 @@ describe('sh:show in the tab (D3)', () => {
   it('a newer show supersedes an older one still on its way; a seq already taken is never taken again', async () => {
     if (!browser) return
     const t = await open('#/b/main')
-    // two at once: the board switch of the first is still reading when the second lands
-    await Promise.all([show({ board: 'other', f: ['demo/three'] }), show({ board: 'main', n: ['n-two'] })])
+    // the board switch of the first is still reading when the second lands (its board held until then)
+    await t.ev(`__hold('other')`)
+    await show({ board: 'other', f: ['demo/three'] })
+    await t.until(`__gate.asked`)
+    await show({ board: 'main', n: ['n-two'] })
+    await t.ev(`__gate.release()`)
     await t.until(settled('main', ['n-two']))
     await new Promise((r) => setTimeout(r, 800))
     expect(await t.ev(VIEW)).toMatchObject({ board: 'main', sel: ['n-two'] })
