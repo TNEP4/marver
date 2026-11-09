@@ -107,7 +107,7 @@ export const laneTip = (c: LaneCard, name: (agent: string) => string | undefined
 /** One line of a capture's detail: its time in the capture, the kind of step, the words, the element's
  *  source (file:line) and point number when it has them. */
 export interface TimelineLine { t: string; kind: string; text: string; source?: string; point?: number
-  /** a device step's viewport name, as configured - the panel shows its label and icon (spec 31 F.3) */
+  /** a device or view step's viewport name, as configured - the panel shows its label and icon (spec 31 F.3) */
   device?: string }
 
 /** `<span> "Save 20%"` - an element as a line names it; a secret stays "•••". */
@@ -147,7 +147,7 @@ export function timelineLines(r: CaptureRecord, edited?: string): TimelineLine[]
         const v = s.view
         const where = v.board ? (v.frames?.length ? `${v.board} / ${v.frames.map(frameName).join(', ')}` : v.board) : v.frames?.map(frameName).join(', ')
         const size = v.viewport ? `${v.viewport}${v.width ? ` ${v.width}×${v.height}` : ''}` : ''
-        out.push({ t, kind: 'view', text: [where, size, v.theme].filter(Boolean).join(' · ') || 'the canvas' }); break
+        out.push({ t, kind: 'view', text: [where, size, v.theme].filter(Boolean).join(' · ') || 'the canvas', ...(v.viewport ? { device: v.viewport } : {}) }); break
       }
       case 'select': out.push({ t, kind: 'select', text: s.frames.map(frameName).join(', ') || 'nothing' }); break
       case 'device': out.push({ t, kind: 'device', text: `${frameName(s.frame)} · ${s.viewport}${s.width ? ` ${s.width}` : ''}`, device: s.viewport }); break

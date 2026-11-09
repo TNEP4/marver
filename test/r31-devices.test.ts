@@ -204,5 +204,8 @@ describe('a Jam device step names its viewport for the panel (F.3)', () => {
     const [l] = timelineLines(r)
     expect(l).toMatchObject({ kind: 'device', device: 'ipad-landscape', text: 'Reader · ipad-landscape 1180' })
     expect(lineText(l)).toBe('[0:00] (device) Reader · ipad-landscape 1180')
+    // ...and a view step (a capture's start in Play) names it too (round 1 P3)
+    const v = timelineLines({ timeline: [{ at: 0, event: 'view', view: { board: 'main', frames: ['demo/reader'], viewport: 'ipad-landscape', width: 1180, height: 820, theme: 'light' } }] } as unknown as Parameters<typeof timelineLines>[0])[0]
+    expect(v).toMatchObject({ kind: 'view', device: 'ipad-landscape', text: 'main / Reader · ipad-landscape 1180×820 · light' })
   })
 })

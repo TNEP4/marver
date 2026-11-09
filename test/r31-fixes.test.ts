@@ -24,6 +24,13 @@ describe('extractMeta reads escaped quotes (H.1)', () => {
     expect(extractMeta(`export const meta = { title: 'Nic\\'s ' + name }`)).toEqual({})
     expect(extractMeta(`export const meta = { title: "it's fine", viewport: 'laptop' }`)).toEqual({ title: "it's fine", viewport: 'laptop' })
   })
+
+  it('the meta block ends at its own brace: past quotes in comments, multiline templates and their holes (round 1 P2)', () => {
+    expect(extractMeta(`export const meta = { title: "Welcome", viewport: "tablet", slide: true /* author's note */ }`)).toEqual({ title: 'Welcome', viewport: 'tablet', slide: true })
+    expect(extractMeta(`export const meta = {\n  // the owner's pick\n  title: 'Home',\n  viewport: 'mobile',\n}`)).toEqual({ title: 'Home', viewport: 'mobile' })
+    expect(extractMeta('export const meta = {\n  description: `two\nlines {x}`,\n  title: "After",\n  viewport: "laptop" }')).toEqual({ title: 'After', viewport: 'laptop' })
+    expect(extractMeta('export const meta = { note: `a ${ { b: 1 }.b } c`, title: "Held", theme: "dark" }')).toEqual({ title: 'Held', theme: 'dark' })
+  })
 })
 
 describe('the Marver ID finish page wears the canvas\'s logo (H.2)', () => {

@@ -2066,3 +2066,5 @@ textarea.jm-field:focus { border-color: transparent; box-shadow: 0 0 0 1px var(-
 .sh-dev-mask { display: inline-block; flex: none; background-color: currentColor;
   -webkit-mask-size: contain; mask-size: contain; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
   -webkit-mask-position: center; mask-position: center }
+/* a Jam view line's device, as it reads, with its icon */
+.jm-dev { display: inline-flex; align-items: center; gap: 3px; vertical-align: -2px }

@@ -80,7 +80,16 @@ function LineRow({ l }: { l: TimelineLine }) {
   switch (l.kind) {
     case 'words': glyph = <MicrophoneIcon size={13} />; body = <span className="words">“{unquote(l.text)}”</span>; break
     case 'note': glyph = <PencilSimpleIcon size={13} />; body = <span className="words">{unquote(l.text)}</span>; break
-    case 'view': glyph = <EyeIcon size={13} />; break
+    case 'view': {
+      glyph = <EyeIcon size={13} />
+      // the viewport part says the device as it reads, with its icon: "iPad landscape 1180×820" (spec 31 F.3)
+      const dev = l.device
+      if (dev) body = <>{l.text.split(' · ').map((seg, i) => {
+        const own = seg === dev || seg.startsWith(`${dev} `)
+        return <span key={i}>{i ? ' · ' : ''}{own ? <span className="jm-dev">{deviceIcon(dev, 12)}{deviceLabel(dev)}{seg.slice(dev.length)}</span> : seg}</span>
+      })}</>
+      break
+    }
     case 'pick': glyph = <LaserIcon size={13} />; body = <>{l.point != null && <span className="pt pick">{l.point}</span>}{l.text}{code}</>; break
     case 'click': glyph = <CursorClickIcon size={13} />; body = <>{l.point != null && <span className="pt click">{l.point}</span>}{l.text}{code}</>; break
     case 'hover': glyph = <CursorIcon size={13} />; body = <>{l.text}{code}</>; break

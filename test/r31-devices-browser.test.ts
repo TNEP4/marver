@@ -165,4 +165,29 @@ describe('your own breakpoints in the shell (spec 31 F)', () => {
       rmSync(bare, { recursive: true, force: true })
     }
   }, 120_000)
+
+  it('the Jam panel\'s lines say a device as it reads, with its icon - a device step and a view step (F.3)', async (ctx) => {
+    if (!browser) return ctx.skip()
+    const s = await open()
+    const html = await ev(s, `(async () => {
+      const res = performance.getEntriesByType('resource').map((e) => e.name)
+      const mod = (re) => res.find((n) => re.test(n))
+      const R = await import(mod(/\\/deps\\/react\\.js/)), D = await import(mod(/\\/deps\\/react-dom_client\\.js/))
+      const createElement = R.createElement ?? R.default.createElement, createRoot = D.createRoot ?? D.default.createRoot
+      const shell = mod(/\\/shell\\/store\\.ts/).replace(/store\\.ts.*$/, '')
+      const { Lines } = await import(shell + 'jam-panel.tsx')
+      const div = document.createElement('div'); document.body.appendChild(div)
+      const lines = [
+        { t: '0:01', kind: 'device', text: 'Reader · boox-full 1240', device: 'boox-full' },
+        { t: '0:02', kind: 'view', text: 'main / Reader · ipad-landscape 1180×820 · light', device: 'ipad-landscape' },
+      ]
+      createRoot(div).render(createElement(Lines, { lines }))
+      await new Promise((r) => setTimeout(r, 200))
+      return div.innerHTML
+    })()`)
+    expect(html).toContain('viewed at <b class="ui">Boox full 1240</b>')
+    expect(html).toMatch(/<span class="jm-dev"><svg[^>]*style="transform: rotate\(90deg\);"[^>]*>.*?<\/svg>iPad landscape 1180×820<\/span>/)
+    expect(html).toContain('data-mv-device-mask')
+    await browser.closeTab(s)
+  }, 120_000)
 })

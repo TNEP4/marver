@@ -89,16 +89,32 @@ export function unescapeJs(s: string): string {
 export function extractMeta(src: string): FrameMeta {
   const m = /export\s+const\s+meta\s*=\s*\{/.exec(src)
   if (!m) return {}
-  // the object's body runs to its first `}` outside a string literal - a brace inside one (`'a {b}'`, `'\u{e9}'`) is text
+  // the object's body runs to its first `}` outside a string literal and a comment - a brace inside one (`'a {b}'`,
+  // `'\u{e9}'`) is text, and so is a quote in a comment (`/* author's note */`). A template literal spans lines, and
+  // its `${...}` holes nest braces of their own
   let end = m.index + m[0].length
-  for (let q = ''; end < src.length; end++) {
+  let q = '', holes = 0
+  const comments: [number, number][] = []
+  for (; end < src.length; end++) {
     const ch = src[end]
-    if (q) { if (ch === '\\') end++; else if (ch === q || ch === '\n') q = '' }
+    if (q === '`') {
+      if (ch === '\\') end++
+      else if (ch === '`') q = ''
+      else if (ch === '$' && src[end + 1] === '{') { holes = 1; q = '${'; end++ }
+    } else if (q === '${') {
+      if (ch === '{') holes++
+      else if (ch === '}' && --holes === 0) q = '`'
+    } else if (q) { if (ch === '\\') end++; else if (ch === q || ch === '\n') q = '' }
+    else if (ch === '/' && src[end + 1] === '/') { const nl = src.indexOf('\n', end); const to = nl < 0 ? src.length : nl; comments.push([end, to]); end = to }
+    else if (ch === '/' && src[end + 1] === '*') { const e = src.indexOf('*/', end + 2); const to = e < 0 ? src.length : e + 2; comments.push([end, to]); end = to - 1 }
     else if (ch === "'" || ch === '"' || ch === '`') q = ch
     else if (ch === '}') break
   }
   if (end >= src.length) return {}
-  const body = src.slice(m.index + m[0].length, end)
+  // ...and its comments blanked, so a property after one still starts where the picker looks (after `{`, `,`, a newline)
+  let body = src.slice(m.index + m[0].length, end)
+  const at = m.index + m[0].length
+  for (const [a, b] of comments.reverse()) body = body.slice(0, a - at) + ' '.repeat(b - a).replace(/ /g, (_c, i: number) => (src[a + i] === '\n' ? '\n' : ' ')) + body.slice(b - at)
   const pick = (key: string) => {
     // boundary required: `covariant:` must not match `variant:` (property suffixes). Each
     // quote style closes on its own kind, so an apostrophe inside "…" is prose, not an end

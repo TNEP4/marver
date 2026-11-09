@@ -23,19 +23,19 @@ const chunk = (type: string, data: Buffer) => {
   return Buffer.concat([len, td, c])
 }
 
-/** A w x h RGBA PNG of one colour, with the profile (if any) as its iCCP. */
-function png(rgb: [number, number, number], icc?: Buffer, w = 5, h = 3): Uint8Array {
+type RGBA = [number, number, number, number]
+/** A w x h RGBA PNG whose pixel (x, y) is `px(x, y)`, with the profile (if any) as its iCCP. Row y uses filter y % 5,
+ *  so every PNG filter - None, Sub, Up, Average, Paeth - is undone by the converter. */
+function pngOf(w: number, h: number, px: (x: number, y: number) => RGBA, icc?: Buffer): Uint8Array {
   const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 6
   const rows: number[] = []
-  // filters of every kind, so the decoder's unfiltering is exercised: row y uses filter y % 5 over raw bytes
-  // computed back from the pixels
-  const px = Array.from({ length: h }, () => Array.from({ length: w }, () => [...rgb, 255]).flat())
+  const img = Array.from({ length: h }, (_, y) => Array.from({ length: w }, (_, x) => px(x, y)).flat())
   for (let y = 0; y < h; y++) {
     const f = y % 5
     rows.push(f)
     for (let x = 0; x < w * 4; x++) {
-      const v = px[y][x], a = x >= 4 ? px[y][x - 4] : 0, b = y ? px[y - 1][x] : 0, c = y && x >= 4 ? px[y - 1][x - 4] : 0
-      const pa = Math.abs(a + b - c - a), pb = Math.abs(a + b - c - b), pc = Math.abs(a + b - c - c)
+      const v = img[y][x], a = x >= 4 ? img[y][x - 4] : 0, b = y ? img[y - 1][x] : 0, c = y && x >= 4 ? img[y - 1][x - 4] : 0
+      const pa = Math.abs(b - c), pb = Math.abs(a - c), pc = Math.abs(a + b - c - c)
       const pred = f === 0 ? 0 : f === 1 ? a : f === 2 ? b : f === 3 ? (a + b) >> 1 : pa <= pb && pa <= pc ? a : pb <= pc ? b : c
       rows.push((v - pred) & 0xff)
     }
@@ -45,25 +45,35 @@ function png(rgb: [number, number, number], icc?: Buffer, w = 5, h = 3): Uint8Ar
   parts.push(chunk('IDAT', deflateSync(Buffer.from(rows))), chunk('IEND', Buffer.alloc(0)))
   return new Uint8Array(Buffer.concat(parts))
 }
+/** One colour, opaque. */
+const png = (rgb: [number, number, number], icc?: Buffer, w = 5, h = 3) => pngOf(w, h, () => [...rgb, 255], icc)
 
-/** The PNG's chunk types, and its first pixel. */
-function read(b: Uint8Array): { chunks: string[]; first: number[] } {
+/** A PNG decoded whole - its chunk types and every pixel - by an unfiltering of the test's own. */
+function decode(b: Uint8Array): { chunks: string[]; w: number; h: number; at(x: number, y: number): RGBA } {
   const buf = Buffer.from(b)
   const chunks: string[] = []
   const idat: Buffer[] = []
-  let w = 0
+  let w = 0, h = 0
   for (let o = 8; o < buf.length;) {
     const len = buf.readUInt32BE(o), type = buf.toString('latin1', o + 4, o + 8)
     chunks.push(type)
-    if (type === 'IHDR') w = buf.readUInt32BE(o + 8)
+    if (type === 'IHDR') { w = buf.readUInt32BE(o + 8); h = buf.readUInt32BE(o + 12); expect(buf[o + 8 + 9]).toBe(6) }
     if (type === 'IDAT') idat.push(buf.subarray(o + 8, o + 8 + len))
     o += 12 + len
   }
-  const raw = inflateSync(Buffer.concat(idat))
-  expect(raw[0]).toBe(0)   // the first row is unfiltered (None): its first pixel is its bytes
-  void w
-  return { chunks, first: [raw[1], raw[2], raw[3]] }
+  const raw = inflateSync(Buffer.concat(idat)), stride = w * 4
+  const out = Buffer.alloc(stride * h)
+  for (let y = 0; y < h; y++) {
+    const f = raw[y * (stride + 1)]
+    for (let x = 0; x < stride; x++) {
+      const v = raw[y * (stride + 1) + 1 + x], a = x >= 4 ? out[y * stride + x - 4] : 0, u = y ? out[(y - 1) * stride + x] : 0, c = y && x >= 4 ? out[(y - 1) * stride + x - 4] : 0
+      const pa = Math.abs(u - c), pb = Math.abs(a - c), pc = Math.abs(a + u - c - c)
+      out[y * stride + x] = (v + (f === 0 ? 0 : f === 1 ? a : f === 2 ? u : f === 3 ? (a + u) >> 1 : pa <= pb && pa <= pc ? a : pb <= pc ? u : c)) & 0xff
+    }
+  }
+  return { chunks, w, h, at: (x, y) => [...out.subarray(y * stride + x * 4, y * stride + x * 4 + 4)] as RGBA }
 }
+const read = (b: Uint8Array) => { const d = decode(b); return { chunks: d.chunks, first: d.at(0, 0).slice(0, 3) } }
 
 /** A matrix/TRC display profile: these primaries (D50, columns) and the sRGB curve as a `para` type 3. */
 function profile(prim: [number, number, number][]): Buffer {
@@ -106,6 +116,26 @@ describe('live pictures in sRGB (spec 31 H.4)', () => {
     const r = toSrgb(png([59, 134, 247], readFileSync(SYSTEM_P3)))
     expect(r.converted).toBe(true)
     near(read(r.png).first, [0, 136, 255])
+  })
+
+  it('every pixel of a varied image, every filter, alpha kept: each colour to its sRGB value', () => {
+    // P3 values in, their sRGB values out: #0088ff; white, black and grey stay; P3's red and green clip to sRGB's
+    const cols: [RGBA, RGBA][] = [
+      [[59, 134, 247, 255], [0, 136, 255, 255]], [[255, 255, 255, 255], [255, 255, 255, 255]], [[0, 0, 0, 255], [0, 0, 0, 255]],
+      [[128, 128, 128, 255], [128, 128, 128, 255]], [[255, 0, 0, 255], [255, 0, 0, 255]], [[0, 255, 0, 255], [0, 255, 0, 255]],
+    ]
+    const alpha = [255, 200, 128, 64, 1, 0, 255]
+    const W = 13, H = 7
+    const pick = (x: number, y: number): [RGBA, RGBA] => { const [i, o] = cols[(x + y) % cols.length]; return [[i[0], i[1], i[2], alpha[y]], [o[0], o[1], o[2], alpha[y]]] }
+    const r = toSrgb(pngOf(W, H, (x, y) => pick(x, y)[0], P3))
+    expect(r.converted).toBe(true)
+    const d = decode(r.png)
+    expect([d.w, d.h]).toEqual([W, H])
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const got = d.at(x, y), want = pick(x, y)[1]
+      near(got.slice(0, 3), want.slice(0, 3))
+      expect(got[3], `alpha at ${x},${y}`).toBe(want[3])
+    }
   })
 
   it('white and black stay white and black; a grey keeps its value', () => {
