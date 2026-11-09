@@ -308,6 +308,16 @@ describe('sh:show in the tab (D3)', () => {
     expect(await t.ev(`__mvStore.getState().board`)).toBe('main')
   }, 60_000)
 
+  it('a node or scene the board does not show is never answered shown', async () => {
+    if (!browser) return
+    const t = await open('#/b/main')
+    const a = await show({ board: 'main', n: ['n-nope'] })
+    const b = await show({ board: 'main', s: ['nowhere'] })
+    await new Promise((r) => setTimeout(r, 1500))
+    expect([await acks(a), await acks(b)]).toEqual([{ shown: 0, notice: 0 }, { shown: 0, notice: 0 }])
+    expect(await t.ev(`__mvStore.getState().board`)).toBe('main')
+  }, 60_000)
+
   it('a target off the grammar, or a board that does not exist, is refused by the server: nothing is broadcast', async () => {
     if (!browser) return
     const post = (body: unknown, headers: Record<string, string> = { 'x-mv-work': token() }) => fetch(`${dev!.origin}/__mv/api/show`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) }).then((r) => r.status)
