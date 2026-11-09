@@ -17,6 +17,8 @@
  *                 --ask when the reply asks the human something
  * move <thread>   re-pin a thread on another element (--on / --at) - its author's only
  * resolve <thread>  mark addressed (--addressed-in <frame> records WHICH variant)
+ * resolve --all   every open thread in one scope (--board | --folder | --scene | --canvas; --dry-run counts) -
+ *                 never what Jam is at work on; --undo <op> reopens what it resolved. Only on the human's yes.
  * invite <email>  mint a single-use invite link (owner only, needs connect first)
  * revoke <email>  revoke an account and its sessions (owner only)
  */
@@ -93,7 +95,7 @@ export async function commentsCommand(root: string, action: string, value: strin
       if (!threads.length) return void console.log(`  no ${opts.open ? 'open ' : ''}comments`)
       for (const t of threads) {
         const anchor = t.frame ? ` on ${t.frame}` : ''
-        console.log(`  ${t.resolved ? '✓' : '○'} ${t.id}${anchor} - ${t.agent ? 'Marver' : t.author?.name ?? '?'}: ${t.body ?? ''}${t.replies.length ? ` (+${t.replies.length})` : ''}${t.addressedIn ? ` → ${t.addressedIn}` : ''}`)
+        console.log(`  ${t.resolved ? '✓' : '○'} ${t.id}${anchor} - ${t.deleted ? '(comment deleted)' : `${t.agent ? 'Marver' : t.author?.name ?? '?'}: ${t.body ?? ''}`}${t.replies.length ? ` (+${t.replies.length})` : ''}${t.addressedIn ? ` → ${t.addressedIn}` : ''}`)
       }
       return
     }
@@ -161,7 +163,9 @@ export async function commentsCommand(root: string, action: string, value: strin
       return void console.log(`  moved ${t.id} on ${t.frame}`)
     }
     case 'resolve': {
-      if (!value) throw new Error('usage: comments resolve <thread-id> [--addressed-in <frame>]')
+      if (opts.undo !== undefined) return resolveUndo(root, String(opts.undo))
+      if (opts.all) return resolveAllCli(root, value, opts)
+      if (!value) throw new Error('usage: comments resolve <thread-id> [--addressed-in <frame>] | --all (--board b | --folder f | --scene s | --canvas) [--dry-run]')
       const t = allThreads(root).find((t) => t.id === value)
       if (!t) throw new Error(`no thread ${value} in design/comments/`)
       appendEvents(join(root, 'design', 'comments'), t.board, [{
@@ -197,8 +201,73 @@ export async function commentsCommand(root: string, action: string, value: strin
       return void console.log(`  revoked ${value} - their sessions are dead`)
     }
     default:
-      throw new Error(`unknown action "${action}" - connect | sync | list | new | reply | move | resolve | invite | revoke`)
+      throw new Error(`unknown action "${action}" - connect | sync | list | new | reply | move | resolve (--all) | invite | revoke`)
   }
+}
+
+/** `comments resolve --all` (spec 31 B.5): every open thread in one scope - through the running \`dev\` (its Jam queue in
+ *  memory is the one checked, in the same step as the writes), else here, against the journal on disk. Never decided by
+ *  an agent alone: the guide says to ask, with the counts \`--dry-run\` prints. */
+const resolveAllCli = async (root: string, value: string | undefined, opts: any) => {
+  if (value) throw new Error(`resolve --all takes no thread id - name a scope: --board, --folder, --scene or --canvas`)
+  const ca = await import('../server/comment-actions.ts')
+  const named = [opts.board !== undefined && { board: String(opts.board) }, opts.folder !== undefined && { folder: String(opts.folder) },
+    opts.scene !== undefined && { scene: String(opts.scene) }, opts.canvas && { canvas: true }].filter(Boolean)
+  if (named.length !== 1) throw new Error('resolve --all needs exactly one scope: --board <b> | --folder <f> | --scene <s> | --canvas')
+  const scope = ca.parseScope(named[0])
+  if (typeof scope === 'string') throw new Error(scope)
+  const op = randomUUID()
+  const dryRun = !!opts.dryRun
+  const info = readDevInfo(root)
+  let r: Awaited<ReturnType<typeof ca.resolveAll>> | null = null
+  if (info) {
+    try {
+      const res = await fetch(`http://localhost:${info.port}/__mv/api/comment-actions/resolve-all`, {
+        method: 'POST', headers: { 'x-mv-work': info.token, 'content-type': 'application/json' },
+        body: JSON.stringify({ op, scope, dryRun }), signal: AbortSignal.timeout(30_000),
+      })
+      const data = await res.json().catch(() => null) as any
+      if (res.status === 404 && data?.error && !/unknown endpoint/.test(data.error)) throw new Error(data.error)
+      if (res.ok || res.status === 207) r = data
+      else if (data?.error && res.status < 500 && !/unknown endpoint/.test(data.error)) throw new Error(data.error)
+    } catch (err) { if ((err as Error).name !== 'TypeError' && (err as Error).name !== 'TimeoutError') throw err }
+  }
+  // dev is not running (or is older than 0.31): the same core here, Jam's queued work read from its journal on disk
+  r ??= ca.resolveAll(root, op, scope, { dryRun })
+  if ('error' in r) throw new Error(r.error)
+  if (dryRun) {
+    const per = new Map<string, number>()
+    for (const t of r.resolved) per.set(t.board, (per.get(t.board) ?? 0) + 1)
+    console.log(`  ${ca.scopeLabel(scope)}: ${r.resolved.length} open conversation${r.resolved.length === 1 ? '' : 's'} would be resolved${r.skipped.length ? `, ${r.skipped.length} left open (work in progress)` : ''}`)
+    for (const [b, n] of per) console.log(`    ${b}: ${n}`)
+    return
+  }
+  console.log(`  ${ca.resolveSummary(r)} (${ca.scopeLabel(scope)})`)
+  if (r.resolved.length) console.log(`  undo: ${NAME} comments resolve --undo ${op}`)
+  if (r.resolved.length) await pushIfConnected(root)
+  if (r.failed.length) process.exitCode = 1
+}
+
+const resolveUndo = async (root: string, op: string) => {
+  const ca = await import('../server/comment-actions.ts')
+  const info = readDevInfo(root)
+  let u: Awaited<ReturnType<typeof ca.undoResolveAll>> | null = null
+  if (info) {
+    try {
+      const res = await fetch(`http://localhost:${info.port}/__mv/api/comment-actions/undo`, {
+        method: 'POST', headers: { 'x-mv-work': info.token, 'content-type': 'application/json' },
+        body: JSON.stringify({ op }), signal: AbortSignal.timeout(30_000),
+      })
+      const data = await res.json().catch(() => null) as any
+      if (res.ok || res.status === 207) u = data
+      else if (data?.error && res.status < 500 && !/unknown endpoint/.test(data.error)) throw new Error(data.error)
+    } catch (err) { if ((err as Error).name !== 'TypeError' && (err as Error).name !== 'TimeoutError') throw err }
+  }
+  u ??= ca.undoResolveAll(root, op)
+  if ('error' in u) throw new Error(u.error)
+  console.log(`  ${ca.undoSummary(u)}`)
+  if (u.reopened.length) await pushIfConnected(root)
+  if (u.failed.length) process.exitCode = 1
 }
 
 /** `comments new --thread <id>`: one thread per topic - a follow-up joins the open thread, as

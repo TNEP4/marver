@@ -132,8 +132,9 @@ function asRecord(v: unknown): SlotFile | null {
  *  is a promise the app acts on (it opens a stream, sends `mv:open`, answers `mv:capture`), so each A4 stream adds its
  *  own name here once its half works, never before: `live` (app-live.ts), `open` (the shell's open-item.ts) and
  *  `capture` (the shell asks for live pictures in play and the server takes `POST /api/jam/picture/live`:
- *  live-picture.ts, api.ts). */
-export const FEATURES: readonly string[] = [FEATURE.bridge, FEATURE.inset, FEATURE.live, FEATURE.open, FEATURE.capture]
+ *  live-picture.ts, api.ts). 0.31 adds `resolve-all` (spec 31 B.1: the shell's runMenuItem, the dev server's
+ *  comment-actions routes). */
+export const FEATURES: readonly string[] = [FEATURE.bridge, FEATURE.inset, FEATURE.live, FEATURE.open, FEATURE.capture, FEATURE.resolveAll]
 
 export interface Claim {
   slot: number | null

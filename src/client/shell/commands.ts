@@ -137,6 +137,10 @@ export const COMMANDS = {
   'board-status': se('answer', { deadlineMs: S30, cancelled: true, failed: ['api'] }),
   // `nothing-new` (not in R12's table): no write goes, so no answer can come
   'mark-seen': se('answer', { noop: ['nothing-new'], failed: ['api'] }),
+  // spec 31 B: resolve every open thread in a scope; its notice's Undo. `nothing-open` (not in R12's table): no thread
+  // to resolve, or every one is Jam's work in progress
+  'resolve-all': se('answer', { deadlineMs: S30, noop: ['nothing-open', 'published'], failed: ['api'] }),
+  'resolve-undo': se('answer', { deadlineMs: S30, failed: ['api'] }),
   'add-to-board': se('answer', { failed: ['api'] }),
   'update-copy': se('clipboard', { failed: CLIP }),
   'update-dismiss': se('2raf'),
@@ -154,6 +158,13 @@ export const COMMANDS = {
   'comment-reply': se('answer', { deadlineMs: S30, failed: ['send-failed', 'signed-out'] }),
   'draft-discard': se('2raf'),
   'comment-resolve': se('answer', { deadlineMs: S30, failed: ['send-failed'] }),
+  // spec 31 C: your own message - open its editor, save the words, delete it (asked first, then for real); ⌘A in a card
+  'comment-edit': se('2raf'),
+  'comment-edit-save': se('answer', { deadlineMs: S30, failed: ['send-failed', 'signed-out'] }),
+  'comment-delete-cancel': se('2raf'),
+  'comment-delete-ask': se('2raf'),
+  'comment-delete': se('answer', { deadlineMs: S30, failed: ['send-failed', 'signed-out'] }),
+  'thread-select-all': se('selection'),
   'mention-pick': once(),
   'mention-dismiss': once(),
   'thread-open': se('2raf'),
@@ -762,4 +773,5 @@ export const RELAYS: readonly Relay[] = [
   { from: "the stage's post({ type }) (stage/main.tsx)", owner: "Play.tsx's stage message branch for that type", why: 'the shell executes it' },
   { from: 'app-bridge.ts runMenuItem (a synthetic keydown)', owner: "App.tsx's key handler branch", why: "#51: via 'relay', in 'menu', 'tab-menu' or 'app'" },
   { from: "app-bridge.ts runMenuItem('mark-all-seen')", owner: 'mark-seen', why: "#51: via 'relay', in 'tab-menu'" },
+  { from: "app-bridge.ts runMenuItem('resolve-all-comments')", owner: 'resolve-all', why: "#51: via 'relay', in 'tab-menu' (spec 31 B.1)" },
 ]

@@ -53,6 +53,11 @@ interface CommentsState {
   draft: { nodeKey: string; frame: string; anchor: unknown; board?: string } | null
   needsIdentity: boolean              // published viewer tried to comment while signed out
   inviteToken: string | null          // arrived via an invite link - claim flow, token known
+  /** dev (spec 31 C.2): the messages this machine's human wrote, per board - the server's record (own.json), never
+   *  the email. null until read (or on a published canvas, where the opaque author id decides) */
+  ownership: Record<string, Set<string>> | null
+  /** what the server's comment API takes (spec 31 C.6): an older published server has no `delete` - the shell hides it */
+  caps: { delete: boolean }
 
   load(board: string): Promise<void>
   live(board: string): () => void
@@ -72,6 +77,15 @@ interface CommentsState {
   reply(threadId: string, body: string): Promise<void>
   replyOk(threadId: string, body: string, h?: CmdHandle): Promise<boolean>
   resolve(threadId: string, reopen?: boolean, h?: CmdHandle): Promise<void>
+  /** Is this message mine to edit or delete (spec 31 C.2)? Never an agent's; locally the server's record decides, on a
+   *  published canvas the original message's opaque author id against /me's. */
+  isMine(board: string | undefined, msg: { id: string; author?: { id?: string }; agent?: boolean }): boolean
+  /** Edit one of my messages (spec 31 C.3): an `edit` event with the new words, to the thread's own log. */
+  edit(threadId: string, msgId: string, body: string, h?: CmdHandle): Promise<boolean>
+  /** Delete one of my messages (spec 31 C.4): a `delete` tombstone, to the thread's own log. */
+  remove(threadId: string, msgId: string, h?: CmdHandle): Promise<boolean>
+  /** One sweep of every board's log now (after a resolve-all or its Undo). */
+  sweep(): Promise<void>
   setMode(on: boolean): void
   setShow(show: boolean): void
   setShowAnchor(on: boolean): void
@@ -250,12 +264,37 @@ export const useComments = create<CommentsState>((set, get) => {
       })))
     union(results.flatMap((evs) => evs ?? []))
     names.forEach((n, i) => { if (results[i] !== null) baselinedBoards.add(n) })
+    if (get().local) await readOwnership()
+  }
+  /** dev: the messages this machine's human wrote (spec 31 C.2) - read with each sweep; a 404 (an older server) leaves
+   *  none mine, so nothing offers an edit the server would refuse */
+  const readOwnership = async () => {
+    try {
+      const r = await request('comment-ownership', { headers: { 'x-mv-c': csrf() } })
+      if (!r.ok) return
+      const b = await r.json() as { boards?: Record<string, string[]> }
+      const next: Record<string, Set<string>> = {}
+      for (const [k, ids] of Object.entries(b.boards ?? {})) if (Array.isArray(ids)) next[k] = new Set(ids)
+      // what this page wrote since stays mine (its sweep may have read the file a moment before the write)
+      for (const [k, ids] of Object.entries(get().ownership ?? {})) for (const id of ids) (next[k] ??= new Set()).add(id)
+      set({ ownership: next })
+    } catch { /* the next sweep */ }
+  }
+  /** The server's capabilities (spec 31 C.6): only a JSON answer that says `delete` counts - an older server's 404 or
+   *  gate page is an older server. */
+  const readCaps = async () => {
+    try {
+      const r = await request('capabilities')
+      const b = r.ok && (r.headers.get('content-type') ?? '').includes('application/json') ? await r.json() as { delete?: unknown } : null
+      set({ caps: { delete: b?.delete === true } })
+    } catch { /* keep what we have */ }
   }
 
   return {
     events: [], threads: [], board: null, me: null, myBoards: null, local: false, connected: false,
     mentionSeen: loadMentionSeen(),
     commentMode: false, show: true, showAnchor: true, active: null, draft: null, needsIdentity: false, inviteToken: null,
+    ownership: null, caps: { delete: false },
 
     poke(board) {
       const b = board ?? get().board
@@ -290,6 +329,7 @@ export const useComments = create<CommentsState>((set, get) => {
         myBoards: me.data.boards && typeof me.data.boards === 'object' ? me.data.boards : null,
         local: !!me.data.local, connected: !!me.data.connected,
       })
+      await readCaps()
       await fetchAll()
       // mark-seen: the board was actually PRESENTED (load runs on open, never
       // from the background poll), so the viewer's unread mark advances - the
@@ -346,7 +386,19 @@ export const useComments = create<CommentsState>((set, get) => {
       // union only what the server took - a rejected send must not leave phantoms; the
       // store is global now, so an accepted write lands regardless of the viewed board
       // (client ids keep the eventual SSE/poll echo idempotent)
-      if (res.ok) { union(stamped); h?.done() }
+      if (res.ok) {
+        union(stamped)
+        // a message this page just wrote is mine (spec 31 C.2) - the server recorded it with the write
+        if (get().local) {
+          const mine = stamped.filter((e) => (e.type === 'create' || e.type === 'reply') && e.commentId)
+          if (mine.length) {
+            const own = { ...(get().ownership ?? {}) }
+            own[target] = new Set([...(own[target] ?? []), ...mine.map((e) => e.commentId!)])
+            set({ ownership: own })
+          }
+        }
+        h?.done()
+      }
       return res.ok
     },
 
@@ -383,6 +435,30 @@ export const useComments = create<CommentsState>((set, get) => {
         .catch((e: unknown) => { h?.fail('send-failed'); throw e })
       if (sent) h?.done(); else h?.fail('send-failed')
     },
+
+    isMine(board, msg) {
+      if (msg.agent) return false
+      const { local, ownership, me } = get()
+      if (local) return !!board && !!ownership?.[board]?.has(msg.id)
+      return !!me?.id && !!msg.author?.id && msg.author.id === me.id
+    },
+
+    async edit(threadId, msgId, body, h) {
+      const words = body.trim()
+      if (!words) { h?.fail('send-failed'); return false }
+      const origin = get().threads.find((t) => t.id === threadId)?.board
+      return get().send([{ id: uuid(), ts: Date.now(), type: 'edit', commentId: msgId, author: postAuthor(get().me), body: words }], origin, h)
+    },
+
+    async remove(threadId, msgId, h) {
+      const origin = get().threads.find((t) => t.id === threadId)?.board
+      const ok = await get().send([{ id: uuid(), ts: Date.now(), type: 'delete', commentId: msgId, author: postAuthor(get().me) }], origin, h)
+      // a deleted first comment with nothing under it is gone: its card closes
+      if (ok && get().active === threadId && !get().threads.some((t) => t.id === threadId)) set({ active: null })
+      return ok
+    },
+
+    async sweep() { await fetchAll() },
 
     async findThread(id) {
       if (!get().threads.some((t) => t.id === id)) await fetchAll()

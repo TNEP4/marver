@@ -9,7 +9,8 @@ import { create } from 'zustand'
 import { useStore, PUBLISHED, shownRev } from './store.ts'
 import { useComments } from './comments-store.ts'
 import { frameMark, isNew, questions, type Ask, type FrameMark } from '../../shared/marks.ts'
-import { cmd, endOnAnswer, type CmdOpts } from './commands.ts'
+import { cmd, endOnAnswer, type CmdHandle, type CmdOpts } from './commands.ts'
+import { api } from './api.ts'
 
 /** Mark all as seen (spec 30): `mark-seen` ends on the marks write's answer - the sidebar's, or the relay from the
  *  tab's menu (#51). Nothing new to clear is a noop: no write goes. */
@@ -19,6 +20,49 @@ export function markSeenFrom(how: CmdOpts, frames: string[]): void {
   if (!m || !frames.some((id) => isNew(m, id))) { h.noop('nothing-new'); return }
   endOnAnswer(h, 'marks/seen')
   s.markSeen(frames)
+}
+
+/** A resolve-all scope (spec 31 B.1): what you see - a board, a folder, a scene, or the whole canvas (the app's tab). */
+export type ResolveScope = { board: string } | { folder: string } | { scene: string } | { canvas: true }
+
+/** One POST to the dev server's comment actions, tried once more with the same op on no answer (a retry returns the
+ *  same receipt). */
+async function commentAction(path: 'resolve-all' | 'undo', body: Record<string, unknown>): Promise<{ ok: boolean; status: number; data: any }> {
+  const csrf = /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
+  const once = async () => {
+    const r = await api(`comment-actions/${path}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf }, body: JSON.stringify(body) })
+    return { ok: r.ok || r.status === 207, status: r.status, data: await r.json().catch(() => ({})) }
+  }
+  try { return await once() } catch { return await once() }
+}
+
+/** Resolve all comments (spec 31 B.1-B.3): every open thread in `scope` but what Jam is at work on, then a notice
+ *  that says how many, with Undo - which reopens what is unchanged since, and says Jam's finished items stay finished. */
+export async function resolveAllFrom(how: CmdOpts, scope: ResolveScope): Promise<void> {
+  const h = cmd('resolve-all', how)
+  const s = useStore.getState()
+  if (PUBLISHED) { h.noop('published'); return }
+  const op = crypto.randomUUID()
+  let r: Awaited<ReturnType<typeof commentAction>>
+  try { r = await commentAction('resolve-all', { op, scope }) } catch { h.fail('api'); s.toast('could not reach the dev server'); return }
+  if (!r.ok) { h.fail('api'); s.toast(String(r.data?.error ?? `resolve-all failed (${r.status})`)); return }
+  await useComments.getState().sweep()
+  const n = Array.isArray(r.data?.resolved) ? r.data.resolved.length : 0
+  if (!n && !r.data?.failed?.length) { h.noop('nothing-open'); s.toast(String(r.data?.summary ?? 'Nothing to resolve')); return }
+  if (r.data?.failed?.length) h.fail('api'); else h.done()
+  const summary = String(r.data?.summary ?? `Resolved ${n}`)
+  if (!n) { s.toast(summary, undefined, 8000); return }
+  s.toast(summary, { label: 'Undo', cmd: 'resolve-undo', run: (u) => { void undoResolveAll(op, u) } }, 10_000)
+}
+
+async function undoResolveAll(op: string, h: CmdHandle): Promise<void> {
+  const s = useStore.getState()
+  let r: Awaited<ReturnType<typeof commentAction>>
+  try { r = await commentAction('undo', { op }) } catch { h.fail('api'); s.toast('could not reach the dev server'); return }
+  if (!r.ok) { h.fail('api'); s.toast(String(r.data?.error ?? `undo failed (${r.status})`)); return }
+  await useComments.getState().sweep()
+  if (r.data?.failed?.length) h.fail('api'); else h.done()
+  s.toast(String(r.data?.summary ?? 'Reopened'), undefined, 6000)
 }
 
 /** Every frame's mark, derived ONCE per change of marks, threads or manifest. Rows and headers read

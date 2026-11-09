@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { listBoards, readLog, replay, type CommentEvent } from '../comments.ts'
+import { deletedMessages } from '../../shared/events.ts'
 import { owned as ownedSet } from './ledger.ts'
 import { localProfile } from '../profile.ts'
 import { fresh, readRaw, write } from './journal.ts'
@@ -80,6 +81,7 @@ export function ingest(j: Journal, ctx: Ctx, now = Date.now()): boolean {
       // agent events never move a card: the daemon moves its own cards when it posts
       if (ev.agent) { seen.add(k); continue }
       if (ev.type === 'resolve') { seen.add(k); changed = resolved(j, board, ev.commentId ?? '', now) || changed; continue }
+      if (ev.type === 'delete') { seen.add(k); changed = deleted(j, board, events, ev.commentId ?? '', now) || changed; continue }
       if (ev.type !== 'create' && ev.type !== 'reply' && ev.type !== 'edit') { seen.add(k); continue }
       if (!isOwned(ctx, board, ev.id)) continue
       seen.add(k)
@@ -97,6 +99,21 @@ export function ingest(j: Journal, ctx: Ctx, now = Date.now()): boolean {
   }
   if (seen.size !== before) j.seen = [...seen]
   return changed
+}
+
+/** The threads Jam is at work on, as `board\tthread` (spec 31 B.2): a card queued or working there, or an owner's
+ *  tag already in its log and not ingested yet - work about to be queued. Synchronous and read-only: resolve-all
+ *  reads it and appends its resolves in the same step, so no ingest can slip a card in between. */
+export function liveThreads(j: Journal, ctx: Ctx): Set<string> {
+  const out = new Set<string>()
+  for (const c of j.cards) if ((c.state === 'queued' || c.state === 'working') && c.thread) out.add(`${c.board}\t${c.thread}`)
+  const seen = new Set(j.seen)
+  for (const board of listBoards(ctx.dir)) for (const ev of readLog(ctx.dir, board)) {
+    if (ev.agent || (ev.type !== 'create' && ev.type !== 'reply') || seen.has(seenKey(board, ev.id)) || !isOwned(ctx, board, ev.id)) continue
+    if (ev.capture || ev.id.startsWith('mw-') || ev.id.startsWith('cap-') || !MENTION.test(ev.body ?? '')) continue
+    out.add(`${board}\t${threadId(ev)}`)
+  }
+  return out
 }
 
 /** An owner comment or reply that tags @marver. */
@@ -145,6 +162,21 @@ function edited(j: Journal, board: string, events: CommentEvent[], ev: CommentEv
   if (!target) return false
   let changed = false
   for (const c of j.cards) if (c.board === board && c.state === 'queued' && c.events.includes(target.id)) { c.rev += 1; c.at = now; changed = true }
+  return changed
+}
+
+/** A message deleted (spec 31 C.5): a queued card lets go of it, and one with no request left is dropped. A working
+ *  card is the run's to settle - before its hand-off the daemon takes the message out (daemon.ts), after it the
+ *  agent has read it. */
+function deleted(j: Journal, board: string, events: CommentEvent[], message: string, now: number): boolean {
+  const ids = new Set(events.filter((e) => (e.type === 'create' || e.type === 'reply') && e.commentId === message).map((e) => e.id))
+  let changed = false
+  for (const c of j.cards) {
+    if (c.board !== board || c.state !== 'queued' || !c.events.some((id) => ids.has(id))) continue
+    c.events = c.events.filter((id) => !ids.has(id)); c.rev += 1; c.at = now
+    if (c.kind === 'comment' && !c.events.length) set(c, 'dropped', now, 'deleted')
+    changed = true
+  }
   return changed
 }
 
@@ -271,6 +303,26 @@ export function act(j: Journal, id: string, rev: number, action: string, now = D
 /** The text of one message as the owner wrote it: for an owner event, its body or its latest
  *  LEDGERED edit (an edit that arrived by sync is never the owner's text); for anyone else, the
  *  latest edit as replay shows it. */
+/** The create and reply EVENTS (their ids - what a card and a brief name) whose message a tombstone names (spec 31
+ *  C.5). Every place a request becomes agent input filters by it, per message. */
+export function deletedEvents(events: readonly CommentEvent[]): Set<string> {
+  const gone = deletedMessages(events)
+  return gone.size ? new Set(events.filter((e) => (e.type === 'create' || e.type === 'reply') && !!e.commentId && gone.has(e.commentId)).map((e) => e.id)) : gone
+}
+
+/** A frozen brief with every deleted message taken out (spec 31 C.5) - its asks, its history, the asks it follows
+ *  and the run a capture reviewed. The same object when nothing was deleted. */
+export function dropDeleted(brief: Brief | undefined, gone: ReadonlySet<string>): Brief | undefined {
+  if (!brief || !gone.size) return brief
+  const keep = (l: Msg[]) => l.filter((m) => !gone.has(m.id))
+  const cap = brief.capture
+  return {
+    ...brief, asks: keep(brief.asks), history: keep(brief.history),
+    ...(brief.follows ? { follows: { ...brief.follows, asks: keep(brief.follows.asks) } } : {}),
+    ...(cap?.reviewed ? { capture: { ...cap, reviewed: { ...cap.reviewed, asks: keep(cap.reviewed.asks) } } } : {}),
+  }
+}
+
 export function textOf(ctx: Ctx, board: string, events: CommentEvent[], ev: CommentEvent, owner: boolean): { body: string; rev: string } {
   let body = ev.body ?? ''
   let rev = ev.id
@@ -304,7 +356,9 @@ const resultText = (j: Journal, batchId: string | undefined, card: string, fallb
 /** Freeze a card's brief as text, from the logs as they stand at claim. Covers every owner event it
  *  copies (the `covered` record that takes a plain reply off `marver marks`). */
 export function freezeBrief(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[], others = true): Brief {
-  const inThread = c.thread ? events.filter((e) => (e.type === 'create' && e.commentId === c.thread) || (e.type === 'reply' && e.parentId === c.thread)) : []
+  // a deleted message never reaches the agent, as an ask or as history (spec 31 C.5)
+  const gone = deletedEvents(events)
+  const inThread = c.thread ? events.filter((e) => !gone.has(e.id) && ((e.type === 'create' && e.commentId === c.thread) || (e.type === 'reply' && e.parentId === c.thread))) : []
   // owner-only (spec 29b, Part 8; `jam.others: false`): every runner has the shell, MCP servers and skills
   // now, so only the owner's own words reach it - their ledgered messages and Marver's own replies (written
   // as this machine's owner). Left out here, before anything is frozen, so nothing left out is ever marked
@@ -326,7 +380,7 @@ export function freezeBrief(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[
       body: sanitize(body, Infinity), ts: e.ts, ...(note ? { note } : {}) }   // whole: the packet is a file, and a cut ask can lose its last constraint
   }
   const brief: Brief = {
-    asks: c.events.map((id) => msgs.find((e) => e.id === id) ?? events.find((e) => e.id === id)).filter((e): e is CommentEvent => !!e).map(toMsg),
+    asks: c.events.filter((id) => !gone.has(id)).map((id) => msgs.find((e) => e.id === id) ?? events.find((e) => e.id === id)).filter((e): e is CommentEvent => !!e).map(toMsg),
     history: msgs.filter((e) => !asks.has(e.id)).map(toMsg),
   }
   // every card on a capture's thread carries the capture: its record, your edit, the run it reviewed -
@@ -337,7 +391,7 @@ export function freezeBrief(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[
     if (cap && capCard?.payload) {
       const note = capCard !== c && capCard.state === 'kept' ? 'kept - not an ask' : capCard !== c && capCard.state === 'dropped' ? 'dropped - not an ask' : undefined
       brief.capture = { record: cap.record, recordHash: cap.hash, ...(capCard.payload.edited !== undefined ? { edited: capCard.payload.edited, ...(capCard.payload.editedAt ? { editedAt: capCard.payload.editedAt } : {}) } : {}), ...(capCard.payload.added?.length ? { added: capCard.payload.added } : {}),
-        ...(capCard.payload.reviewed ? { reviewed: capCard.payload.reviewed } : {}), ...(note ? { note } : {}) }
+        ...(capCard.payload.reviewed ? { reviewed: { ...capCard.payload.reviewed, asks: capCard.payload.reviewed.asks.filter((a) => !gone.has(a.id)) } } : {}), ...(note ? { note } : {}) }
     }
   }
   if (c.kind === 'wrapup') {
@@ -349,7 +403,7 @@ export function freezeBrief(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[
   const lastRun = (x: Card) => x.batch ?? x.ran?.[x.ran.length - 1]
   // the earlier asks a follow-up copies are checked again, now: a ledger that lost one, or a revision
   // that is not that message's, never reaches the agent through `follows`
-  const keep = (asks: Msg[] | undefined) => (asks ?? []).filter((a) => stillOwned(ctx, c.board, events, a))
+  const keep = (asks: Msg[] | undefined) => (asks ?? []).filter((a) => !gone.has(a.id) && stillOwned(ctx, c.board, events, a))
   // a card run again (Retry, More work) reads its OWN previous run first; a first run reads what it follows
   if (followed && !c.ran?.length) {
     const b = lastRun(followed)
@@ -400,6 +454,12 @@ function validate(ctx: Ctx, c: Card, events: CommentEvent[], now: number, j: Jou
   if (c.capture && !captureIntact(j, ctx, c.capture)) {
     failCard(j, c, 'the capture changed after it was confirmed - capture it again', now)
     return false
+  }
+  // a deleted request is taken off the card, whatever its kind (spec 31 C.5): not handed yet, nothing has read it
+  const gone = deletedEvents(events)
+  if (c.events.some((id) => gone.has(id))) {
+    c.events = c.events.filter((id) => !gone.has(id)); c.rev += 1; c.at = now
+    if (c.kind === 'comment' && !c.events.length) { set(c, 'dropped', now, 'deleted'); return false }
   }
   if (c.kind === 'capture') {
     const ok = c.events.every((id) => isOwned(ctx, c.board, id) && events.some((e) => e.id === id))

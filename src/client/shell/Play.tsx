@@ -33,7 +33,7 @@ import { revealFrame, switchFor } from './goto.ts'
 import { Tip } from './Tip.tsx'
 import { keyAllowed } from '../frame-host/keys.js'
 import { CommentButton, DevicePicker, HideUIButton, isHideUI, LaserButton, Popover, ThemePicker, toggleHideUI, usePopover } from './Toolbar.tsx'
-import { DraftComposer, Pins, placePins, ThreadCard } from './Comments.tsx'
+import { cardSelectAll, DraftComposer, Pins, placePins, ThreadCard } from './Comments.tsx'
 import { ArrowLeftIcon, ArrowRightIcon, BrowsersIcon, CaretIcon, CheckIcon, GridIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ReloadIcon, SpecDocIcon } from './icons.tsx'
 
 const commentsStore = () => useComments.getState()
@@ -623,6 +623,8 @@ function PlayInner() {
       const key = e.altKey && /^Key[A-Z]$/.test(e.code) ? e.code.slice(3).toLowerCase() : e.key
       if (!e.repeat && jamKey({ key, shift: e.shiftKey, alt: e.altKey, meta: e.metaKey, ctrl: e.ctrlKey })) { e.preventDefault(); return }
       if ((e.metaKey || e.ctrlKey) && e.key === '/') { e.preventDefault(); cmd('toolbar', { via: 'key', in: 'shell', keys: keysOf(e) }); toggleCollapse(); return }
+      // ⌘A in the open thread's card selects its words, never the whole page (spec 31 C.1)
+      if ((e.metaKey || e.ctrlKey) && e.key === 'a' && cardSelectAll()) { e.preventDefault(); cmd('thread-select-all', { via: 'key', in: 'shell', keys: keysOf(e) }); return }
       if (e.metaKey || e.ctrlKey) return
       handleKey(key, e.code, e.altKey, { via: 'key', in: 'shell', keys: keysOf(e, key) })
     }

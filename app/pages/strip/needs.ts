@@ -28,3 +28,12 @@ export function needsRisen(seen: NeedsSeen, shown: TabView[], now: number, basel
   }
   return say
 }
+
+/** A tab's one mark slot (A4.6 #19, spec 31 B.7), as data: orange with its count (99+) when something needs you, else
+ *  a blue dot - no number - for frames new since you looked, else nothing. Pure, so the unit suite holds it. */
+export function markSlot(m: TabView['marks']): { cls: 'mk ask'; text: string } | { cls: 'mk new dot' } | null {
+  if (!m) return null
+  if (m.needs > 0) return { cls: 'mk ask', text: m.needs > 99 ? '99+' : String(m.needs) }
+  if (m.unseen > 0) return { cls: 'mk new dot' }
+  return null
+}

@@ -719,6 +719,10 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-toast { display: flex; align-items: center; gap: 6px; font: 500 12px -apple-system, system-ui, sans-serif;
   color: var(--glass-ink-2); border-radius: 999px; padding: 7px 13px }
 .sh-toast svg { color: var(--glass-good); flex: none }
+/* a notice's one action (spec 31 B.3: Undo) */
+.sh-toast-act { margin-left: 6px; padding: 2px 9px; border: 0; border-radius: 999px; cursor: pointer;
+  background: var(--glass-hover); color: var(--glass-ink); font: 600 12px -apple-system, system-ui, sans-serif }
+.sh-toast-act:hover { background: color-mix(in srgb, var(--glass-ink) 14%, transparent) }
 /* the jam pill's svgs are NOT the toast checkmark: the mark stays white/90 on blue, the X keeps
    its own muted ink - undo the blanket green above */
 .sh-toast.jam svg { color: currentColor }
@@ -1184,6 +1188,23 @@ body.sh-hide-ui .sh-play-nav { display: none !important }
   color: var(--glass-ink); white-space: pre-wrap; overflow-wrap: break-word }
 .cm-scroll > .cm-body { margin-top: -10px }  /* pulls against the scroller's 12px gap -> the same 2px replies get */
 .cm-msg { display: flex; flex-direction: column; gap: 2px }
+/* spec 31 C.1: a card's words can be selected and copied - the pan/zoom wrapper sets user-select: none on everything
+   inside it (Canvas.tsx), and Play's stage overlay too; the card's own controls stay unselectable */
+.cm-card, .sh-play-comments .cm-card { user-select: text; -webkit-user-select: text; cursor: auto }
+.cm-card button, .cm-card .cm-actions, .cm-card header .dim, .cm-card .cm-tools { user-select: none; -webkit-user-select: none }
+/* spec 31 C.3-C.4: your own message's Edit and Delete - quiet until the message is hovered */
+.cm-card .cm-tools { margin-left: auto; display: inline-flex; gap: 2px; opacity: 0; transition: opacity .12s }
+.cm-card header:hover .cm-tools, .cm-card .cm-tools:focus-within, .cm-msg:hover .cm-tools { opacity: 1 }
+@media (hover: none) { .cm-card .cm-tools { opacity: 1 } }
+.cm-tool { height: 20px; padding: 0 6px; border: 0; border-radius: 6px; background: none; cursor: pointer;
+  color: var(--glass-ink-3); font: 500 11.5px -apple-system, system-ui, sans-serif }
+.cm-tool:hover { background: var(--glass-hover); color: var(--glass-ink) }
+.cm-tool.danger { color: var(--mk-ask) }
+.cm-card .cm-edited { font-style: italic }
+.cm-editing { padding-left: 33px }
+.cm-confirm { display: flex; align-items: center; gap: 4px; padding-left: 33px; font-size: 12px; color: var(--glass-ink-2) }
+.cm-confirm span { flex: 1 }
+.cm-card .cm-deleted { color: var(--glass-ink-3); font-style: italic; padding-left: 0 }
 .cm-icon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
   border: 0; border-radius: 8px; background: none; color: var(--glass-ink-3); cursor: pointer;
   transition: background .12s, color .12s }

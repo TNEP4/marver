@@ -5,7 +5,8 @@
  */
 
 // 'reanchor' (Live Jam): re-pin a thread to a new element after the agent moved it.
-export type EventType = 'create' | 'reply' | 'edit' | 'resolve' | 'reopen' | 'react' | 'profile' | 'reanchor'
+// 'delete' (0.31, spec 31 C.4): a terminal tombstone on one message - its author's only.
+export type EventType = 'create' | 'reply' | 'edit' | 'resolve' | 'reopen' | 'react' | 'profile' | 'reanchor' | 'delete'
 
 // Live Jam: provenance stamped by the daemon on agent-authored events (who orchestrated the change).
 export interface AgentMeta { devUser?: string; harness?: string; model?: string; effort?: string; /** who ran it (spec 29b): the owner's session, a copy of it, or a fresh agent */ runner?: 'session' | 'fork' | 'fresh' }
@@ -49,6 +50,8 @@ export interface CommentEvent {
   capture?: string
   facts?: string
   origin?: string                 // server-stamped 'local' on dev-owner writes; the daemon's owner-trigger key
+  /** resolve and reopen events (0.31, spec 31 B.3): the resolve-all operation that wrote it - what its Undo matches */
+  op?: string
 }
 
 export interface Thread {
@@ -66,7 +69,11 @@ export interface Thread {
   asks?: boolean
   capture?: string                // a capture's comment (0.26)
   facts?: string
-  replies: { id: string; author?: CommentEvent['author']; body?: string; ts: number; agent?: boolean; agentMeta?: AgentMeta; mentions?: Mention[]; asks?: boolean; alsoChanged?: string[] }[]
+  /** the first comment was deleted (0.31): its replies stay under a "Comment deleted" placeholder - no body, author or mentions */
+  deleted?: true
+  /** when its words were last edited (0.31: "edited" is shown) - an edit that changes only a flag does not count */
+  edited?: number
+  replies: { id: string; author?: CommentEvent['author']; body?: string; ts: number; agent?: boolean; agentMeta?: AgentMeta; mentions?: Mention[]; asks?: boolean; alsoChanged?: string[]; edited?: number }[]
   reactions: Record<string, string[]>   // emoji -> author emails (toggle semantics)
 }
 
@@ -82,10 +89,20 @@ export function diffEvents(mine: CommentEvent[], theirIds: Iterable<string>): Co
   return mine.filter((e) => !have.has(e.id))
 }
 
+/** The messages (create or reply comment ids) a log's tombstones name (spec 31 C.4): terminal, whatever came
+ *  before or after them. Every reader that turns a request into agent input filters by it, per message. */
+export function deletedMessages(events: readonly CommentEvent[]): Set<string> {
+  const out = new Set<string>()
+  for (const e of events) if (e.type === 'delete' && typeof e.commentId === 'string' && e.commentId) out.add(e.commentId)
+  return out
+}
+
 /** Replay a board's events into current thread state. Deterministic: replay order is
  *  (ts, id) so two stores holding the same event SET always derive the same state.
  *  TWO passes - creates first, then everything else - so a reply whose author's clock
- *  ran ahead of the creator's still lands instead of being dropped forever. */
+ *  ran ahead of the creator's still lands instead of being dropped forever. Deletes (0.31)
+ *  apply after both, whatever their time: a deleted reply is gone; a deleted first comment
+ *  keeps its surviving replies under a placeholder, and with none the thread is gone. */
 export function replay(events: CommentEvent[]): Thread[] {
   const ordered = [...events].sort((a, b) => a.ts - b.ts || (a.id < b.id ? -1 : 1))
   const threads = new Map<string, Thread>()
@@ -112,7 +129,7 @@ export function replay(events: CommentEvent[]): Thread[] {
         if (!ev.commentId || (ev.body === undefined && ev.asks === undefined && ev.alsoChanged === undefined)) break
         const m = threads.get(ev.commentId) ?? [...threads.values()].flatMap((th) => th.replies).find((r) => r.id === ev.commentId)
         if (!m) break
-        if (ev.body !== undefined) m.body = ev.body
+        if (ev.body !== undefined) { if (ev.body !== m.body) m.edited = ev.ts; m.body = ev.body }
         if (ev.asks !== undefined) m.asks = ev.asks
         if (ev.alsoChanged !== undefined && !('replies' in m)) (m as { alsoChanged?: string[] }).alsoChanged = ev.alsoChanged   // a reply's
         break
@@ -152,7 +169,22 @@ export function replay(events: CommentEvent[]): Thread[] {
         break
       }
       // 'profile' events update author snapshots at write time on the client - replay ignores them
+      // 'delete' events are applied below, after everything else
     }
   }
-  return [...threads.values()]
+  const gone = deletedMessages(ordered)
+  if (!gone.size) return [...threads.values()]
+  const out: Thread[] = []
+  for (const t of threads.values()) {
+    t.replies = t.replies.filter((r) => !gone.has(r.id))
+    if (gone.has(t.id)) {
+      if (!t.replies.length) continue
+      // the placeholder carries nothing of what was said, nor who said it
+      t.deleted = true
+      t.body = undefined; t.author = undefined; t.mentions = undefined; t.asks = undefined; t.edited = undefined
+      delete t.capture; delete t.facts
+    }
+    out.push(t)
+  }
+  return out
 }

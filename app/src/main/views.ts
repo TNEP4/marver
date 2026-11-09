@@ -52,6 +52,7 @@ import { parseLink, remoteFaviconPick, remoteStart } from '../shared/links.ts'
 import { LOGO_MAX, LOGO_MIME, sniffLogo } from '../../../src/shared/logo-sniff.ts'
 import { effects, provideEffectHooks } from './effects.ts'
 import type { AppState, MenuIn, MenuItem, Present, Presented } from '../../../src/shared/app-api.ts'
+import { FEATURE } from '../../../src/shared/app-api.ts'
 import { WINDOW_EVENTS, type AppBody, type AppKind, type TabIdent } from '../../../src/shared/app-perf.ts'
 import type { CmdIn, CmdVia } from '../../../src/shared/perf-records.ts'
 import { docProof } from '../../../src/server/proof.ts'
@@ -1165,6 +1166,16 @@ function markAllSeen(k: MenuToken): void {
   if (t.doc?.trusted && hasBridge(t)) { const sent = trust.menuClick(t.id, 'mark-all-seen', 'tab-menu'); j('tab-act', { what: 'mark-all-seen', tab: t.id, sent }) }
 }
 
+/** Resolve All Comments (spec 31 B.1) is a relay too, like Mark All as Seen: the shell resolves every open thread on
+ *  the canvas, records it and shows its Undo; nothing here. Only a canvas whose features list `resolve-all` hears it. */
+function resolveAllComments(k: MenuToken): void {
+  const t = getTab(k.tab)
+  if (!t || !holds(k)) { j('tab-act', { what: 'resolve-all-comments', tab: k.tab, stale: true }); return }
+  if (t.doc?.trusted && canResolveAll(t)) { const sent = trust.menuClick(t.id, 'resolve-all-comments', 'tab-menu'); j('tab-act', { what: 'resolve-all-comments', tab: t.id, sent }) }
+}
+/** A canvas that handles the tab's Resolve All Comments: the bridge, and `resolve-all` in its features (0.31). */
+const canResolveAll = (t: Tab): boolean => hasBridge(t) && !!t.reg?.features.includes(FEATURE.resolveAll)
+
 function tabAct(k: MenuToken, what: 'activate' | 'open-browser' | 'reveal' | 'copy-link' | 'close' | 'reload' | 'force-reload', from: TabFrom): void {
   const h = appCmd(what, { ...from, tab: k.tab })
   const t = getTab(k.tab)
@@ -1267,6 +1278,7 @@ export const pageHandlers = {
         { label: 'Copy Local Link', enabled: !!t.doc?.trusted, click: () => tabAct(k, 'copy-link', TAB_MENU) },
         // main's own mv:menu-click (app-api.ts APP_MENU_IDS): only a canvas with the bridge (0.27.1) hears it
         { label: 'Mark All as Seen', enabled: !!t.doc?.trusted && hasBridge(t), click: () => markAllSeen(k) },
+        { label: 'Resolve All Comments', enabled: !!t.doc?.trusted && canResolveAll(t), click: () => resolveAllComments(k) },
         { type: 'separator' },
       )
     } else if (t.kind === 'remote') {

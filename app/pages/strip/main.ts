@@ -18,7 +18,7 @@
  *   pill main sends with it at `app:ready` (null when none; a pill within a second of that first snapshot counts as
  *   found at launch when main sent no null). Words that arrive together are said together.
  * - **Marks** (A4, A4.6 #19; `TabView.marks`): one slot after the name - an orange count of what needs you (99+), else
- *   a blue count of new frames, else a light sweeping the bubble while an agent works (a still wash under Reduce
+ *   a blue dot for new frames (no number: spec 31 B.7), else a light sweeping the bubble while an agent works (a still wash under Reduce
  *   Motion) - and a teal dot on the logo's corner while a Jam session runs. A stream that has been down draws the mark
  *   dimmed. The tab's name says them ("Pilot, 2 need you, Jam session on"); the live region says "<name> needs you"
  *   when its count rises, at most once per tab per minute, never for the first marks the strip sees of a tab - a tab
@@ -26,7 +26,7 @@
  */
 import type { PillView, TabsSnapshot, TabView, WindowView } from '../../src/shared/channels.ts'
 import { cmdButton, fill, h, hostOf, icon, logo, pageApi, say, setLook, shown } from '../../src/pages/dom.ts'
-import { needsRisen, needsSeen } from './needs.ts'
+import { markSlot, needsRisen, needsSeen } from './needs.ts'
 
 const api = pageApi('strip')
 const tabsEl = document.getElementById('tabs') as HTMLElement
@@ -64,7 +64,7 @@ function marksWords(t: TabView): string[] {
   if (!m) return []
   const out: string[] = []
   if (m.needs > 0) out.push(`${m.needs} ${m.needs === 1 ? 'needs' : 'need'} you`)
-  else if (m.unseen > 0) out.push(`${m.unseen} new ${m.unseen === 1 ? 'frame' : 'frames'}`)
+  else if (m.unseen > 0) out.push('new since you looked')
   else if (m.working) out.push('agent working')
   if (m.session) out.push('Jam session on')
   if (m.stale) out.push('may be out of date')
@@ -90,14 +90,13 @@ function slotFor(t: TabView): HTMLElement {
   return slot
 }
 
-/** The one mark slot (A4.6 #19): needs you (orange), else new frames (blue); the shimmer is the bubble's own class. */
+/** The one mark slot (A4.6 #19): needs you (orange, its count), else new frames (a blue dot - spec 31 B.7); the shimmer
+ *  is the bubble's own class. */
 function markOf(t: TabView): HTMLElement | null {
-  const m = t.marks
-  if (!m) return null
-  const count = (n: number) => (n > 99 ? '99+' : String(n))
-  if (m.needs > 0) return h('span', { class: 'mk ask', 'aria-hidden': 'true' }, count(m.needs))
-  if (m.unseen > 0) return h('span', { class: 'mk new', 'aria-hidden': 'true' }, count(m.unseen))
-  return null
+  // spec 31 B.7: new since you looked is not a to-do count - a blue dot, no number (needs.ts markSlot)
+  const k = markSlot(t.marks)
+  if (!k) return null
+  return 'text' in k ? h('span', { class: k.cls, 'aria-hidden': 'true' }, k.text) : h('span', { class: k.cls, 'aria-hidden': 'true' })
 }
 
 function paintTab(el: HTMLElement, t: TabView, active: boolean): void {

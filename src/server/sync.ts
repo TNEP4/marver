@@ -133,6 +133,10 @@ export async function syncOnce(root: string, collab: Collab): Promise<Record<str
   // published board shows - a canvas built before 0.25 names none
   const { rights, legacy } = await bres.json() as { rights: Record<string, 'read' | 'comment'>; legacy?: { board: string; frames: string[] } }
 
+  // what the server takes (spec 31 C.6): an older one has no `delete` - its validator refuses the type and with it the
+  // whole batch, so a delete is held back here (never sent) until the server says it takes them
+  const caps = await serverCapabilities(base, auth)
+
   const boards = [...new Set([...Object.keys(rights), ...listBoards(dir), ...(legacy ? [legacy.board] : [])])]
   const out: Record<string, { pulled: number; pushed: number }> = {}
   const failures: string[] = []
@@ -153,7 +157,7 @@ export async function syncOnce(root: string, collab: Collab): Promise<Record<str
       const local = readLog(dir, board)
       const marverThreads = localOnlyThreads(local)
       const shipped = old ? threadIds(local, (e) => legacy!.frames.includes(e.frame ?? '')) : null
-      const missing = diffEvents(local, remote.map((e) => e.id)).filter((e) => !(e as { agent?: boolean }).agent && !marverThreads.has(threadOf(e)) && (!shipped || shipped.has(threadOf(e))))
+      const missing = diffEvents(local, remote.map((e) => e.id)).filter((e) => !(e as { agent?: boolean }).agent && !marverThreads.has(threadOf(e)) && (!shipped || shipped.has(threadOf(e))) && (caps.delete || e.type !== 'delete'))
       for (let i = 0; i < missing.length; i += 100) {
         const r = await fetch(`${base}/__mv/api/comments/${board}`, {
           method: 'POST', headers: { ...auth, 'content-type': 'application/json' },
@@ -168,6 +172,17 @@ export async function syncOnce(root: string, collab: Collab): Promise<Record<str
   // a partial exchange must never read as a clean one - the caller decides retry vs surface
   if (failures.length) throw new Error(`sync incomplete - ${failures.join(' · ')}`)
   return out
+}
+
+/** What a server's comment API takes (`GET /__mv/api/capabilities`, 0.31): anything but a JSON answer that says so
+ *  (an older server's 404, its gate page) is an older server - nothing new is sent to it. */
+export async function serverCapabilities(base: string, headers: Record<string, string> = {}): Promise<{ delete: boolean }> {
+  try {
+    const r = await fetch(`${base.replace(/\/+$/, '')}/__mv/api/capabilities`, { headers })
+    if (!r.ok || !(r.headers.get('content-type') ?? '').includes('application/json')) return { delete: false }
+    const b = await r.json() as { delete?: unknown }
+    return { delete: b?.delete === true }
+  } catch { return { delete: false } }
 }
 
 /** The account endpoints live BEHIND the canvas gate (the outer READ boundary), so

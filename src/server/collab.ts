@@ -46,7 +46,7 @@ export function can(user: User | null, rights: Rights, board: string, action: 'r
   return commentAllowed(dataDir, user, board, ceilingsFromRights(rights))
 }
 
-const EVENT_TYPES = new Set(['create', 'reply', 'edit', 'resolve', 'reopen', 'react', 'profile', 'reanchor'])
+const EVENT_TYPES = new Set(['create', 'reply', 'edit', 'resolve', 'reopen', 'react', 'profile', 'reanchor', 'delete'])
 const ID_RE = /^[\w-]{8,64}$/
 const MAX_BODY_TEXT = 10_000
 
@@ -103,7 +103,9 @@ export function validateEvents(incoming: CommentEvent[], log: CommentEvent[], u:
   const creates = new Map<string, CommentEvent>()
   const comments = new Set<string>()                      // every create + reply commentId in the log
   const authors = new Map<string, string>()               // commentId -> author email (create + reply)
+  const deleted = new Set<string>()                       // messages a tombstone names (0.31)
   for (const ev of log) {
+    if (ev.type === 'delete' && ev.commentId) deleted.add(ev.commentId)
     if (ev.type === 'create' && ev.commentId && !creates.has(ev.commentId)) creates.set(ev.commentId, ev)
     if ((ev.type === 'create' || ev.type === 'reply') && ev.commentId) {
       comments.add(ev.commentId)
@@ -135,9 +137,11 @@ export function validateEvents(incoming: CommentEvent[], log: CommentEvent[], u:
     if ((ev.type === 'create' || ev.type === 'reply') && !ev.body?.trim()) return 'a comment needs a body'
     if (badMentions(ev, !!opts.operator)) return 'invalid mentions'
     if (ev.asks !== undefined && (typeof ev.asks !== 'boolean' || !['create', 'reply', 'edit'].includes(ev.type))) return 'asks is a flag on a comment'
+    // a resolve-all's operation id (0.31, spec 31 B.3) rides its resolves and their Undo's reopens only
+    if (ev.op !== undefined && (typeof ev.op !== 'string' || !ID_RE.test(ev.op) || (ev.type !== 'resolve' && ev.type !== 'reopen'))) return 'op is a resolve-all\'s id on a resolve or reopen'
     // `profile` is in this set deliberately: an unbound author on a profile event let a
     // browser submit arbitrary emails and read their opaque ids off the projection
-    const needsAuthor = ev.type === 'create' || ev.type === 'reply' || ev.type === 'react' || ev.type === 'edit' || ev.type === 'reanchor' || ev.type === 'profile'
+    const needsAuthor = ev.type === 'create' || ev.type === 'reply' || ev.type === 'react' || ev.type === 'edit' || ev.type === 'reanchor' || ev.type === 'profile' || ev.type === 'delete'
     if (needsAuthor && ev.author?.email?.toLowerCase() !== me)
       return 'event author must be the signed-in account'
     if (typeof ev.commentId !== 'string' || !ID_RE.test(ev.commentId)) {
@@ -163,6 +167,17 @@ export function validateEvents(incoming: CommentEvent[], log: CommentEvent[], u:
         const owner = authors.get(ev.commentId!)
         if (!owner) return 'cannot edit a comment that does not exist'
         if (owner !== me) return 'only the author can edit a comment'
+        // a tombstone is terminal (spec 31 C.4): replay would ignore the edit, so the log never takes it
+        if (deleted.has(ev.commentId!)) return 'that comment was deleted'
+        break
+      }
+      case 'delete': {
+        // the author of the original create or reply, as for an edit - the canonical email decides
+        const owner = authors.get(ev.commentId!)
+        if (!owner) return 'cannot delete a comment that does not exist'
+        if (owner !== me) return 'only the author can delete a comment'
+        if (ev.body !== undefined || ev.mentions !== undefined) return 'a delete carries no words'
+        deleted.add(ev.commentId!)
         break
       }
       case 'resolve':
@@ -759,6 +774,9 @@ export function collabHandler(dataDir: string, distDir: string) {
       }
 
       if (req.method === 'GET') {
+        // what this server's comment API takes (spec 31 C.6) - a client that finds no `delete` (an older server) holds
+        // its deletes back. Resolve-all is the dev server's alone: here a thread is resolved one at a time
+        if (path === 'capabilities') return json(res, 200, { delete: true }), true
         if (path === 'me') {
           // the session response carries the viewer's OWN opaque id once -
           // "is this mine" is a client-side id comparison from then on - plus
