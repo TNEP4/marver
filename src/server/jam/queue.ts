@@ -171,11 +171,12 @@ function edited(j: Journal, board: string, events: CommentEvent[], ev: CommentEv
 function deleted(j: Journal, board: string, events: CommentEvent[], message: string, now: number): boolean {
   const ids = new Set(events.filter((e) => (e.type === 'create' || e.type === 'reply') && e.commentId === message).map((e) => e.id))
   let changed = false
-  // a capture's own comment deleted: the capture is your request - not sent yet (a draft, waiting), it is dropped
+  // a capture's own comment deleted: the capture is your request - not sent yet (a draft, waiting) and with no tag left
+  // on it, it is dropped; a tag that joined it still stands (its brief no longer carries the capture: freezeBrief)
   for (const e of events) {
     if (e.type !== 'create' || e.commentId !== message || !e.capture) continue
     const cap = j.cards.find((c) => c.id === e.capture && c.kind === 'capture')
-    if (cap && (cap.state === 'draft' || cap.state === 'confirming' || cap.state === 'queued')) { set(cap, 'dropped', now, 'deleted'); changed = true }
+    if (cap && (cap.state === 'draft' || cap.state === 'confirming' || cap.state === 'queued') && !cap.events.some((id) => !ids.has(id))) { set(cap, 'dropped', now, 'deleted'); changed = true }
   }
   for (const c of j.cards) {
     if (c.board !== board || c.state !== 'queued' || !c.events.some((id) => ids.has(id))) continue
@@ -316,16 +317,27 @@ export function deletedEvents(events: readonly CommentEvent[]): Set<string> {
   return gone.size ? new Set(events.filter((e) => (e.type === 'create' || e.type === 'reply') && !!e.commentId && gone.has(e.commentId)).map((e) => e.id)) : gone
 }
 
+/** The captures whose own comment was deleted (spec 31 C.5): what they said - the record, your edit, its notes - is
+ *  withdrawn with it, wherever a brief copied it. */
+export function deletedCaptures(events: readonly CommentEvent[]): Set<string> {
+  const gone = deletedMessages(events)
+  return new Set(events.filter((e) => e.type === 'create' && !!e.capture && !!e.commentId && gone.has(e.commentId)).map((e) => e.capture!))
+}
+
 /** A frozen brief with every deleted message taken out (spec 31 C.5) - its asks, its history, the asks it follows
- *  and the run a capture reviewed. The same object when nothing was deleted. */
-export function dropDeleted(brief: Brief | undefined, gone: ReadonlySet<string>): Brief | undefined {
-  if (!brief || !gone.size) return brief
+ *  and the run a capture reviewed - and every capture withdrawn (`caps`: deletedCaptures) left out, nested ones too.
+ *  The same object when nothing was deleted. */
+export function dropDeleted(brief: Brief | undefined, gone: ReadonlySet<string>, caps: ReadonlySet<string> = new Set()): Brief | undefined {
+  if (!brief || (!gone.size && !caps.size)) return brief
   const keep = (l: Msg[]) => l.filter((m) => !gone.has(m.id))
-  const cap = brief.capture
+  const cap = brief.capture && !caps.has(brief.capture.record.id) ? brief.capture : undefined
+  const reviewed = cap?.reviewed ? { ...cap.reviewed, asks: keep(cap.reviewed.asks) } : undefined
+  if (reviewed?.capture && caps.has(reviewed.capture.record.id)) delete reviewed.capture
+  const { capture: _c, ...rest } = brief
   return {
-    ...brief, asks: keep(brief.asks), history: keep(brief.history),
+    ...rest, asks: keep(brief.asks), history: keep(brief.history),
     ...(brief.follows ? { follows: { ...brief.follows, asks: keep(brief.follows.asks) } } : {}),
-    ...(cap?.reviewed ? { capture: { ...cap, reviewed: { ...cap.reviewed, asks: keep(cap.reviewed.asks) } } } : {}),
+    ...(cap ? { capture: reviewed ? { ...cap, reviewed } : cap } : {}),
   }
 }
 
@@ -391,7 +403,7 @@ export function freezeBrief(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[
   }
   // every card on a capture's thread carries the capture: its record, your edit, the run it reviewed -
   // as context ("kept - not an ask") once the capture itself was kept or dropped
-  if (c.capture) {
+  if (c.capture && !deletedCaptures(events).has(c.capture)) {
     const capCard = j.cards.find((x) => x.id === c.capture)
     const cap = readCapture(ctx.root, c.capture)
     if (cap && capCard?.payload) {

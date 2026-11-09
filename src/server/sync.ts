@@ -147,7 +147,7 @@ export async function syncOnce(root: string, collab: Collab): Promise<Record<str
     const res = await fetch(`${base}/__mv/api/comments/${board}`, { headers: auth })
     if (!res.ok) { failures.push(`${board}: pull ${res.status}`); continue }
     const { events: remote } = await res.json() as { events: CommentEvent[] }
-    const pulled = appendEvents(dir, board, remote).length
+    const pulled = appendEvents(dir, board, admitted(readLog(dir, board), remote)).length
     let pushed = 0
     if (rights[board] === 'comment' || old) {
       // Live Jam: agent-authored events are dev-local in v1 - never pushed to the published canvas
@@ -186,6 +186,33 @@ export async function serverCapabilities(base: string, headers: Record<string, s
     const b = await r.json() as { delete?: unknown }
     return { delete: b?.delete === true }
   } catch { return { delete: false } }
+}
+
+/** What of a pull may join the local log (spec 31, Codex r4): the server validated each event against ITS log, which
+ *  never held this machine's own messages (Marver's notes, captures - never pushed). So a message id already here is
+ *  one message's: another event claiming it as a new message is refused, and an edit or a delete of it must come from
+ *  its original author - never touching Marver's or a local-only message at all. */
+export function admitted(local: CommentEvent[], remote: CommentEvent[]): CommentEvent[] {
+  const msgs = new Map<string, CommentEvent>()
+  for (const e of local) if ((e.type === 'create' || e.type === 'reply') && e.commentId && !msgs.has(e.commentId)) msgs.set(e.commentId, e)
+  const localIds = new Set(local.map((e) => e.id))
+  const offLimits = localOnlyThreads(local)
+  const out: CommentEvent[] = []
+  for (const e of remote) {
+    if (!e || typeof e.id !== 'string' || localIds.has(e.id)) { out.push(e); continue }   // already here: appendEvents keeps one
+    if ((e.type === 'create' || e.type === 'reply') && e.commentId) {
+      if (msgs.has(e.commentId)) continue
+      msgs.set(e.commentId, e)
+    } else if ((e.type === 'edit' || e.type === 'delete') && e.commentId) {
+      const orig = msgs.get(e.commentId)
+      if (!orig) continue
+      if (orig.agent || offLimits.has(e.commentId)) continue
+      const by = (e.author?.email ?? '').toLowerCase(), was = (orig.author?.email ?? '').toLowerCase()
+      if (!by || by !== was) continue
+    }
+    out.push(e)
+  }
+  return out
 }
 
 /** The account endpoints live BEHIND the canvas gate (the outer READ boundary), so

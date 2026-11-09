@@ -30,7 +30,7 @@ import { workActivity } from '../work.ts'
 import { acquireLock, releaseLock } from './journal.ts'
 import { buildPacket, goalText, packetPath, parseAgentText, parseMembers, refusedAsk, sharedWhy } from './packet.ts'
 import { uncheckedAnchor, type AnchorCheck, type AnchorLook, type AnchorTarget } from '../../shared/anchor.ts'
-import { deletedEvents, dropDeleted, liveThreads, ownerOnly, act, addCapture, addWrapup, endSession, moreWrapup, startSession, textOf, wrapupIntact, wrapupOf, answeredSince, captureIntact, beginStep, captureComment, conflictStep, createQueue, ctxFor, endStep, looksGood, payloadKey, redelivering, requeue, joinAlone, runsAlone, sameComment, stillOwned, undelivered, fail, failCard, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
+import { deletedCaptures, deletedEvents, dropDeleted, liveThreads, ownerOnly, act, addCapture, addWrapup, endSession, moreWrapup, startSession, textOf, wrapupIntact, wrapupOf, answeredSince, captureIntact, beginStep, captureComment, conflictStep, createQueue, ctxFor, endStep, looksGood, payloadKey, redelivering, requeue, joinAlone, runsAlone, sameComment, stillOwned, undelivered, fail, failCard, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
 import { jamReservations, restoreHolds } from './reserve.ts'
 import { jamLive, type QueueView } from './live.ts'
 import type { Batch, Brief, Card, JamAdapter, JobPacket, Journal, Msg, Reanchor, Result } from './types.ts'
@@ -426,6 +426,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
    *  with none the caller ends the run (`ended`). The packet is changed in place; the caller writes it. */
   /** A board's deleted create and reply events, read now. */
   const goneOf = (board: string): Set<string> => deletedEvents(readLog(commentsDir, board))
+  /** ...and its captures whose own comment was deleted */
+  const capsOf = (board: string): Set<string> => deletedCaptures(readLog(commentsDir, board))
   /** The words of a board's deleted More work replies, as a record keeps them (the tag gone) - for records sealed before 0.31 */
   const goneWords = (board: string): Set<string> => {
     const log = readLog(commentsDir, board), g = deletedEvents(log)
@@ -445,19 +447,22 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   function scrubDeleted(j: Journal, b: Batch, packet: JobPacket | null): { changed: boolean; left: number } {
     const gone = new Map<string, Set<string>>()
     const goneIn = (board: string) => { let g = gone.get(board); if (!g) gone.set(board, (g = goneOf(board))); return g }
+    const capsSeen = new Map<string, Set<string>>()
+    const capsIn = (board: string) => { let g = capsSeen.get(board); if (!g) capsSeen.set(board, (g = capsOf(board))); return g }
     let changed = false
     for (const m of b.members) {
       const c = j.cards.find((x) => x.id === m.card)
-      const g = goneIn(m.board)
-      if (!c || !g.size) continue
-      const brief = dropDeleted(m.brief, g)
-      if (JSON.stringify(brief) !== JSON.stringify(m.brief)) { m.brief = brief; c.brief = dropDeleted(c.brief, g); changed = true }
+      const g = goneIn(m.board), k = capsIn(m.board)
+      if (!c || (!g.size && !k.size)) continue
+      const brief = dropDeleted(m.brief, g, k)
+      if (JSON.stringify(brief) !== JSON.stringify(m.brief)) { m.brief = brief; c.brief = dropDeleted(c.brief, g, k); changed = true }
       const pm = packet?.members.find((x) => x.card === m.card)
-      if (pm && JSON.stringify(dropDeleted(pm.brief, g)) !== JSON.stringify(pm.brief)) changed = true
+      if (pm && JSON.stringify(dropDeleted(pm.brief, g, k)) !== JSON.stringify(pm.brief)) changed = true
       if (c.events.some((id) => g.has(id))) { c.events = c.events.filter((id) => !g.has(id)); changed = true }
       const briefAsks = (m.brief ?? pm?.brief)?.asks.length ?? 0
       // a capture whose own comment was deleted is a request withdrawn, like a tag's
-      const capGone = c.kind === 'capture' && readLog(commentsDir, m.board).some((e) => e.type === 'create' && e.capture === c.id && g.has(e.id))
+      // a capture whose own comment was deleted is a request withdrawn, like a tag's - dropped once no tag is left on it
+      const capGone = c.kind === 'capture' && k.has(c.id) && !c.events.length
       if (c.state === 'working' && ((c.kind === 'comment' && (!c.events.length || !briefAsks)) || capGone)) { c.state = 'dropped'; c.note = 'deleted'; c.rev += 1; c.at = Date.now(); changed = true }
     }
     if (changed) {
@@ -470,8 +475,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     if (packet) {
       const ids = new Map(b.members.map((m) => [m.card, m.id]))
       const next = packet.members.filter((x) => ids.has(x.card)).map((x) => {
-        const brief = dropDeleted(x.brief, goneIn(x.board))!
-        return { ...x, id: ids.get(x.card)!, brief: brief.wrapup ? { ...brief, wrapup: { ...brief.wrapup, content: wrapupWithoutDeleted(brief.wrapup.content, goneIn, goneWords) } } : brief }
+        const brief = dropDeleted(x.brief, goneIn(x.board), capsIn(x.board))!
+        return { ...x, id: ids.get(x.card)!, brief: brief.wrapup ? { ...brief, wrapup: { ...brief.wrapup, content: wrapupWithoutDeleted(brief.wrapup.content, goneIn, goneWords, capsOf) } } : brief }
       })
       if (JSON.stringify(next) !== JSON.stringify(packet.members)) { packet.members = next; changed = true }
     }
@@ -785,7 +790,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       if (c.kind === 'wrapup') {
         const w = readWrapup(root, wrapupOf(c))
         if (!w || !wrapupIntact(q.ctx(), c) || recordPathProblem(root, w.wrapup.file)) { bad.push(m.card); continue }
-        brief = { ...brief, wrapup: { content: wrapupWithoutDeleted(w.wrapup, goneOf, goneWords), hash: w.hash } }
+        brief = { ...brief, wrapup: { content: wrapupWithoutDeleted(w.wrapup, goneOf, goneWords, capsOf), hash: w.hash } }
       } else if (brief.wrapup) { const { wrapup: _w, ...rest } = brief; brief = rest }   // only a record carries one
       // owner-only (spec 29b v2, 7): a brief frozen with other people's words - before 0.28, when it carries no policy
       // of its own - is cleaned before any runner reads it, and kept cleaned
@@ -983,7 +988,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
             const c = q.j.cards.find((x) => x.id === m.card)
             const w = c && readWrapup(root, wrapupOf(c))
             if (!c || !w || !wrapupIntact(q.ctx(), c) || recordPathProblem(root, w.wrapup.file)) throw new Error('the session record changed after it was written - write it again')
-            m.brief = { ...m.brief, wrapup: { content: wrapupWithoutDeleted(w.wrapup, goneOf, goneWords), hash: w.hash } }
+            m.brief = { ...m.brief, wrapup: { content: wrapupWithoutDeleted(w.wrapup, goneOf, goneWords, capsOf), hash: w.hash } }
           }
           writePacket()
           const beat = setInterval(followWork, 2_000)
@@ -1386,12 +1391,12 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         const goneOf = new Map<string, Set<string>>()
         const gone = (board: string) => { let g = goneOf.get(board); if (!g) goneOf.set(board, (g = deletedEvents(logOf(board)))); return g }
         const askOk = (board: string, a: Msg) => !gone(board).has(a.id) && stillOwned(ctx, board, logOf(board), a)
-        const clean = (board: string, brief: Brief | undefined, comment: boolean): Brief | undefined => !brief || !comment ? dropDeleted(brief, gone(board)) : dropDeleted({
+        const clean = (board: string, brief: Brief | undefined, comment: boolean): Brief | undefined => !brief || !comment ? dropDeleted(brief, gone(board), capsOf(board)) : dropDeleted({
           ...brief,
           asks: brief.asks.filter((a) => askOk(board, a)),
           history: brief.history.map((m) => (m.owner && !askOk(board, m) ? { id: m.id, ...(m.author ? { author: m.author } : {}), body: m.body, ts: m.ts, note: 'someone else - context only' } : m)),
           ...(brief.follows ? { follows: { ...brief.follows, asks: brief.follows.asks.filter((a) => askOk(board, a)) } } : {}),
-        }, gone(board))
+        }, gone(board), capsOf(board))
         for (const m of b.members) {
           const c = j.cards.find((x) => x.id === m.card)
           if (!c) continue
