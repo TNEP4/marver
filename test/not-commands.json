@@ -271,5 +271,26 @@
     "prop": "onFit",
     "label": "title",
     "reason": "sizes the panel to its picture, no input"
+  },
+  {
+    "file": "src/client/shell/Comments.tsx",
+    "fn": "words",
+    "prop": "onChange",
+    "label": "",
+    "reason": "typing an edit: keeps the words; the editor's send records comment-edit-save"
+  },
+  {
+    "file": "src/client/shell/Comments.tsx",
+    "fn": "words",
+    "prop": "onCancel",
+    "label": "",
+    "reason": "the editor's Esc records draft-discard before calling it"
+  },
+  {
+    "file": "src/client/shell/App.tsx",
+    "fn": "JamToasts",
+    "prop": "onClick",
+    "label": "",
+    "reason": "a notice's action (Undo) records its own command - resolve-undo in marks-ui.tsx undoResolveAll"
   }
 ]

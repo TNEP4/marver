@@ -30,7 +30,7 @@ import { workActivity } from '../work.ts'
 import { acquireLock, releaseLock } from './journal.ts'
 import { buildPacket, goalText, packetPath, parseAgentText, parseMembers, refusedAsk, sharedWhy } from './packet.ts'
 import { uncheckedAnchor, type AnchorCheck, type AnchorLook, type AnchorTarget } from '../../shared/anchor.ts'
-import { ownerOnly, act, addCapture, addWrapup, endSession, moreWrapup, startSession, textOf, wrapupIntact, wrapupOf, answeredSince, captureIntact, beginStep, captureComment, conflictStep, createQueue, ctxFor, endStep, looksGood, payloadKey, redelivering, requeue, joinAlone, runsAlone, sameComment, stillOwned, undelivered, fail, failCard, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
+import { deletedEvents, dropDeleted, liveThreads, tombstonesOf, withdrawnCaptures, ownerOnly, act, addCapture, addWrapup, endSession, moreWrapup, startSession, textOf, wrapupIntact, wrapupOf, answeredSince, captureIntact, beginStep, captureComment, conflictStep, createQueue, ctxFor, endStep, looksGood, payloadKey, redelivering, requeue, joinAlone, runsAlone, sameComment, stillOwned, undelivered, fail, failCard, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
 import { jamReservations, restoreHolds } from './reserve.ts'
 import { jamLive, type QueueView } from './live.ts'
 import type { Batch, Brief, Card, JamAdapter, JobPacket, Journal, Msg, Reanchor, Result } from './types.ts'
@@ -39,7 +39,8 @@ import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { logJam } from '../perf-jam.ts'
 import { has as ledgerHas, record as ledgerRecord } from './ledger.ts'
-import { buildWrapup, moreOf, readWrapup, recordFile, recordPathProblem, SESSION_ID, storeWrapup } from './session.ts'
+import { recordOwn } from '../own.ts'
+import { buildWrapup, moreOf, readWrapup, wrapupWithoutDeleted, recordFile, recordPathProblem, SESSION_ID, storeWrapup } from './session.ts'
 import { sessionBrief } from './session-brief.ts'
 import { isApproval } from '../../shared/approval.ts'
 import { createRuns, handleOf, type AgentRun, type Choice, type Runs } from './runs.ts'
@@ -63,6 +64,8 @@ export interface JamCore {
   stop(): void
   snapshot(): Journal
   view(): QueueView
+  /** the threads at work now (queue.ts liveThreads), read synchronously */
+  busy(): Set<string>
   act(id: string, rev: number, action: string, body?: string): Promise<{ ok: boolean; card?: Card; error?: string }>
   /** A sealed capture from the page (POST /jam/capture): stored once - ended with E, its card made queued; with ⇧E, a
    *  draft. `held`: an E capture the queue would not take, left a draft (why, in words). */
@@ -357,12 +360,21 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       const as = conn.agent === 'cursor' ? conn.id : undefined
       let packet: JobPacket | null = null
       try { packet = JSON.parse(readFileSync(join(root, packetPath(b.batchId)), 'utf8')) as JobPacket } catch { packet = null }
+      // the hand-off to your session (spec 31 C.5): a message deleted while it was offered never reaches it (under the lock)
+      if (packet) {
+        const x = scrubDeleted(q.j, b, packet)
+        if (x.changed) writeFileSync(join(root, packetPath(b.batchId)), JSON.stringify(packet, null, 1), { mode: 0o600 })
+        // (it stays claimed until released; the run then ends at its next hand-off - nothing is left to hand)
+        if (!x.left) return `Everything this run asked for was deleted - nothing to do. Release it: \`npx marver jam release ${handle}${as ? ` --as ${as}` : ''}\`.`
+      }
       // the frames it holds now: one an earlier session run of it was given (`boards pin --run`) and let go of is its own to
       // finish - the brief, and the packet its subagent reads, say so (Codex's review: they said it reserves no frame)
       if (packet && packet.frames.join('\n') !== b.frames.join('\n')) { packet.frames = [...b.frames]; writeFileSync(join(root, packetPath(b.batchId)), JSON.stringify(packet, null, 1), { mode: 0o600 }) }
       return packet ? sessionBrief(packet, handle, as, { agent: conn.agent, conn: conn.id, overlaps: overlapsOf(b, conn) }) : `The packet of this run is missing (${packetPath(b.batchId)}) - release it: \`npx marver jam release ${handle}${as ? ` --as ${as}` : ''}\`.`
     },
     say: (b) => ensureEarly(b),
+    gone: (board) => goneCached(board),
+    withdrawn: () => withdrawnCaptures(q.j, commentsDir),
     ready: () => ready,
     // the session record a wrap-up queues belongs to the session it closes: it goes to your session too
     // a Jam session runs (its own record, written once it ended, is offered to your session by runs.ts - nothing else)
@@ -408,6 +420,73 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     .filter((x) => x.batchId !== b.batchId && x.state === 'claimed' && !x.results && x.frames.some((f) => b.frames.includes(f))
       && ((x.claim && x.claim.conn === conn.id && x.claim.inc === conn.inc) || (x.offer && x.offer.conn === conn.id && x.offer.inc === conn.inc)))
     .map((x) => ({ handle: x.claim ? handleOf(x, x.claim.gen) : `${x.batchId.slice(0, 8)} (offered, not taken yet)`, frames: x.frames.filter((f) => b.frames.includes(f)), title: runs.title(x) }))
+
+  /** Spec 31 C.5, at every hand-off: each message deleted since the claim is taken out of the run's briefs and its packet,
+   *  per message, history included; a tag's card with no request left is dropped, and the members left are numbered
+   *  from m1 again. Synchronous - the caller holds the queue lock (or is runs' goal, under it). `left`: the members left;
+   *  with none the caller ends the run (`ended`). The packet is changed in place; the caller writes it. */
+  /** A board's deleted create and reply events, read now. */
+  const goneOf = (board: string): Set<string> => deletedEvents(readLog(commentsDir, board))
+  /** the journal's captures whose own comment was deleted (by the card, never a field in a comment) */
+  const capsNow = (): Set<string> => withdrawnCaptures(q.j, commentsDir)
+  /** The words of a board's deleted More work replies, as a record keeps them (the tag gone) - for records sealed before 0.31 */
+  const goneWords = (board: string): Set<string> => {
+    const log = readLog(commentsDir, board), g = deletedEvents(log)
+    return new Set(log.filter((e) => e.id.startsWith('mw-') && g.has(e.id)).map((e) => (e.body ?? '').replace(/^@marver\s*/i, '').trim()))
+  }
+  /** ...and read again only when its log changed (titles are asked for on every view of the queue) */
+  const goneSeen = new Map<string, { key: string; gone: Set<string> }>()
+  const goneCached = (board: string): Set<string> => {
+    let key = ''
+    try { const st = statSync(join(commentsDir, `${board}.jsonl`)); key = `${st.size}:${st.mtimeMs}` } catch { return new Set() }
+    const hit = goneSeen.get(board)
+    if (hit?.key === key) return hit.gone
+    const gone = goneOf(board)
+    goneSeen.set(board, { key, gone })
+    return gone
+  }
+  function scrubDeleted(j: Journal, b: Batch, packet: JobPacket | null): { changed: boolean; left: number } {
+    const gone = new Map<string, Set<string>>()
+    // each board's own (Codex r6): a nested copy is matched against the board it came from, never every board's ids
+    const ts = tombstonesOf(j, commentsDir)
+    const goneIn = (board: string) => { let g = gone.get(board); if (!g) gone.set(board, (g = new Set(ts.gone(board)))); return g }
+    const caps = ts.captures
+    let changed = false
+    for (const m of b.members) {
+      const c = j.cards.find((x) => x.id === m.card)
+      const g = goneIn(m.board)
+      if (!c) continue
+      // what THIS card lost to a tombstone, if anything - a card nothing was taken from is never dropped here
+      let lost = false
+      const brief = dropDeleted(m.brief, m.board, ts)
+      if (brief !== m.brief) { m.brief = brief; c.brief = dropDeleted(c.brief, m.board, ts); changed = lost = true }
+      const pm = packet?.members.find((x) => x.card === m.card)
+      if (pm && dropDeleted(pm.brief, m.board, ts) !== pm.brief) changed = lost = true
+      if (c.events.some((id) => g.has(id))) { c.events = c.events.filter((id) => !g.has(id)); changed = lost = true }
+      const briefAsks = (m.brief ?? pm?.brief)?.asks.length ?? 0
+      // a capture whose own comment was deleted is a request withdrawn, like a tag's - dropped once no tag is left on it
+      const capGone = c.kind === 'capture' && caps.has(c.id) && !c.events.length
+      if (c.state === 'working' && ((lost && c.kind === 'comment' && (!c.events.length || !briefAsks)) || capGone)) { c.state = 'dropped'; c.note = 'deleted'; c.rev += 1; c.at = Date.now(); changed = true }
+    }
+    if (changed) {
+      const survivors = b.members.filter((m) => j.cards.find((x) => x.id === m.card)?.state === 'working')
+      const ids = new Map(survivors.map((m, i) => [m.card, `m${i + 1}`]))
+      b.members = survivors.map((m) => ({ ...m, id: ids.get(m.card)! }))
+    }
+    // the packet always follows the batch as it stands - a copy held in memory may predate a claim that renumbered it
+    // (Codex r2): only its members, by their ids now, each brief without what was deleted
+    if (packet) {
+      const ids = new Map(b.members.map((m) => [m.card, m.id]))
+      const next = packet.members.filter((x) => ids.has(x.card)).map((x) => {
+        const brief = dropDeleted(x.brief, x.board, ts)!
+        return { ...x, id: ids.get(x.card)!, brief: brief.wrapup ? { ...brief, wrapup: { ...brief.wrapup, content: wrapupWithoutDeleted(brief.wrapup.content, goneIn, goneWords, () => caps) } } : brief }
+      })
+      if (JSON.stringify(next) !== JSON.stringify(packet.members)) { packet.members = next; changed = true }
+    }
+    return { changed, left: b.members.length }
+  }
+  /** A run whose every request was deleted before its hand-off: done, nothing ran (under the lock). */
+  const ended = (b: Batch) => { b.state = 'done'; b.at = Date.now(); b.note = 'its requests were deleted' }
 
   /** A session's early line (`marver jam say`), journaled on the batch before it is posted: posted with the id it
    *  names, once - an id already in the log is not posted again (a restart between the two posts it then). */
@@ -714,7 +793,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       if (c.kind === 'wrapup') {
         const w = readWrapup(root, wrapupOf(c))
         if (!w || !wrapupIntact(q.ctx(), c) || recordPathProblem(root, w.wrapup.file)) { bad.push(m.card); continue }
-        brief = { ...brief, wrapup: { content: w.wrapup, hash: w.hash } }
+        brief = { ...brief, wrapup: { content: wrapupWithoutDeleted(w.wrapup, goneOf, goneWords, capsNow), hash: w.hash } }
       } else if (brief.wrapup) { const { wrapup: _w, ...rest } = brief; brief = rest }   // only a record carries one
       // owner-only (spec 29b v2, 7): a brief frozen with other people's words - before 0.28, when it carries no policy
       // of its own - is cleaned before any runner reads it, and kept cleaned
@@ -798,6 +877,13 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     let early: { body: string; asks: boolean; commentId: string; ts: number } | undefined
     let run: Awaited<ReturnType<typeof runAgent>> = { reply: '', asks: false, ok: false, reanchors: [] }
     try {
+      // The hand-off (spec 31 C.5): a message deleted since the claim - while the pictures were taken, say - never reaches
+      // the agent; checked again before every spawned attempt and as your session claims the run (runs' goal, above)
+      if (!b.claim) {
+        const r = await q.lock((j) => { const x = scrubDeleted(j, b, packet); if (!x.left) ended(b); if (x.changed || !x.left) q.persist(); return x })
+        if (!r.left) { runs.delivered(b.batchId, false, 'its requests were deleted'); queueChanged(); timeRun(); return }
+        if (r.changed) writePacket()
+      }
       // Who runs it (spec 29b): the owner's session when it can take it - or already holds it (a restart keeps a
       // session's run its own) - else a copy of that session, else a fresh agent; every one with full power.
       // What a spawned run may use is fixed with the batch the first time it runs (a restart runs it the same way).
@@ -897,13 +983,15 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         const permit = await takePermit()
         try {
         while (!stopped && b.attempts < MAX_ATTEMPTS) {
-          await q.lock(() => { b.attempts += 1; b.leaseUntil = Date.now() + LEASE_MS; q.persist() })
+          // (spec 31 C.5: what was deleted while it waited for a slot, or since a failed attempt, is out of this one)
+          const left = await q.lock((j) => { b.attempts += 1; b.leaseUntil = Date.now() + LEASE_MS; const x = scrubDeleted(j, b, packet); if (!x.left) ended(b); q.persist(); return x.left })
+          if (!left) { runs.delivered(b.batchId, false, 'its requests were deleted'); queueChanged(); timeRun(); return }
           // every spawn reads the packet the journal makes, written again now (a record's seal checked again)
           for (const m of packet.members) if (m.kind === 'wrapup') {
             const c = q.j.cards.find((x) => x.id === m.card)
             const w = c && readWrapup(root, wrapupOf(c))
             if (!c || !w || !wrapupIntact(q.ctx(), c) || recordPathProblem(root, w.wrapup.file)) throw new Error('the session record changed after it was written - write it again')
-            m.brief = { ...m.brief, wrapup: { content: w.wrapup, hash: w.hash } }
+            m.brief = { ...m.brief, wrapup: { content: wrapupWithoutDeleted(w.wrapup, goneOf, goneWords, capsNow), hash: w.hash } }
           }
           writePacket()
           const beat = setInterval(followWork, 2_000)
@@ -1018,6 +1106,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     if (there && !sameComment(there, p.event)) { conflictStep(j, c); q.persist(); return }
     if (!there) appendEvents(commentsDir, c.board, [p.event])
     ledgerRecord(root, c.board, p.event.id)
+    // the owner's own words (a capture's comment, a More work reply): theirs to edit or delete (spec 31 C.2)
+    if ((p.event.type === 'create' || p.event.type === 'reply') && !p.event.agent && p.event.commentId) recordOwn(root, c.board, [p.event.commentId])
     if (p.op === 'confirm') ledgerRecord(root, c.board, payloadKey(c))
     settled(endStep(j, c))
     q.persist()
@@ -1300,13 +1390,17 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         const logs = new Map<string, CommentEvent[]>()
         const logOf = (board: string) => { let l = logs.get(board); if (!l) logs.set(board, (l = readLog(commentsDir, board))); return l }
         const owned = (board: string, id: string) => ctx.owned.has(`${board}\t${id}`) && logOf(board).some((e) => e.id === id)
-        const askOk = (board: string, a: Msg) => stillOwned(ctx, board, logOf(board), a)
-        const clean = (board: string, brief: Brief | undefined, comment: boolean): Brief | undefined => !brief || !comment ? brief : {
+        // ...and nothing deleted since (spec 31 C.5): taken out of every brief, per message, before the packet is reused
+        const goneOf = new Map<string, Set<string>>()
+        const ts = tombstonesOf(j, commentsDir)   // each nested copy against the board it came from (Codex r6)
+        const gone = (board: string) => { let g = goneOf.get(board); if (!g) goneOf.set(board, (g = deletedEvents(logOf(board)))); return g }
+        const askOk = (board: string, a: Msg) => !gone(board).has(a.id) && stillOwned(ctx, board, logOf(board), a)
+        const clean = (board: string, brief: Brief | undefined, comment: boolean): Brief | undefined => !brief || !comment ? dropDeleted(brief, board, ts) : dropDeleted({
           ...brief,
           asks: brief.asks.filter((a) => askOk(board, a)),
           history: brief.history.map((m) => (m.owner && !askOk(board, m) ? { id: m.id, ...(m.author ? { author: m.author } : {}), body: m.body, ts: m.ts, note: 'someone else - context only' } : m)),
           ...(brief.follows ? { follows: { ...brief.follows, asks: brief.follows.asks.filter((a) => askOk(board, a)) } } : {}),
-        }
+        }, board, ts)
         for (const m of b.members) {
           const c = j.cards.find((x) => x.id === m.card)
           if (!c) continue
@@ -1320,11 +1414,11 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           const had = c.brief?.asks.length ?? 0
           c.brief = clean(c.board, c.brief, true)
           m.brief = clean(m.board, m.brief, true)
-          const events = c.events.filter((id) => owned(c.board, id))
+          const events = c.events.filter((id) => owned(c.board, id) && !gone(c.board).has(id))
           // a surviving card keeps only its authorized asks; a dropped one keeps what it was, for the record
           if (events.length !== c.events.length && (events.length || !comment)) c.events = events
           // dropped when none of its asks is the owner's any more - by its events, or by the frozen brief
-          if (comment && (!events.length || (had > 0 && !c.brief?.asks.length))) { c.state = 'dropped'; c.note = 'no longer authorized'; c.rev += 1; c.at = Date.now() }
+          if (comment && (!events.length || (had > 0 && !c.brief?.asks.length))) { c.state = 'dropped'; c.note = c.events.some((id) => gone(c.board).has(id)) ? 'deleted' : 'no longer authorized'; c.rev += 1; c.at = Date.now() }
         }
         const survivors = b.members.filter((m) => j.cards.find((x) => x.id === m.card)?.state === 'working')
         if (!survivors.length) { b.state = 'done'; continue }
@@ -1407,15 +1501,17 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
 
   /** A capture's More work asks (its events after the confirm - each ledgered as yours), in order, each
    *  with the result of the run that took it (none yet for one still queued or working). */
-  const moreAsks = (j: Journal, ctx: ReturnType<Queue['ctx']>, c: Card): { ask: string; result?: string }[] => {
+  const moreAsks = (j: Journal, ctx: ReturnType<Queue['ctx']>, c: Card): { ask: string; result?: string; event?: string }[] => {
     if (!c.events.length) return []
     const log = readLog(commentsDir, c.board)
+    // a More work reply you deleted is never sealed into a record (spec 31 C.5)
+    const gone = deletedEvents(log)
     // its runs, oldest first: a More work ask may have run more than once (Retry, a shared-file rerun)
     const runs = [...(c.ran ?? []), ...(c.batch ? [c.batch] : [])].map((id) => j.batches.find((b) => b.batchId === id)).filter((b): b is Batch => !!b)
     // your More work replies only - a tag that joined the card is answered in its thread, not in the record
     return c.events.filter((id) => id.startsWith('mw-')).flatMap((id) => {
       const ev = log.find((e) => e.id === id)
-      if (!ev || !ctx.owned.has(`${c.board}\t${id}`)) return []
+      if (!ev || gone.has(id) || !ctx.owned.has(`${c.board}\t${id}`)) return []
       const took = runs.flatMap((b) => { const m = b.members.find((x) => x.card === c.id && x.brief?.asks.some((a) => a.id === id)); return m ? [{ b, m }] : [] })
       // the words as the agent got them (the last run's frozen ask), else - not run yet - your latest ledgered edit
       const last = took[took.length - 1]
@@ -1425,7 +1521,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       const answered = [...took].reverse().find(({ b, m }) => { const r = b.results?.[m.id]; return !!r && 'body' in r })
       const r = answered?.b.results?.[answered.m.id]
       const failed = !answered && took.length > 0 && took.every(({ b }) => b.state === 'done' || b.state === 'failed')
-      return [{ ask, ...(r && 'body' in r ? { result: r.body } : failed ? { result: '(the run failed - not done)' } : {}) }]
+      return [{ ask, event: id, ...(r && 'body' in r ? { result: r.body } : failed ? { result: '(the run failed - not done)' } : {}) }]
     })
   }
 
@@ -1520,6 +1616,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       ...(c.session ? { session: c.session } : {}),
       ...(readWrapup(root, wrapupOf(c)) ? { file: readWrapup(root, wrapupOf(c))!.wrapup.file } : {}),
     }
+    // withdrawn (its own comment deleted - Codex r8): the page gets none of its words, nor a name made from them
+    if (withdrawnCaptures(q.j, commentsDir).has(c.id)) return { title: 'Withdrawn capture', notes: 0, ...(c.name ? { named: true, name: c.name } : {}), inRun: false, ...(c.session ? { session: c.session } : {}) }
     let t = titles.get(c.id)
     if (!t) {
       const rec = readCapture(root, c.id)?.record
@@ -1602,6 +1700,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     },
     snapshot() { return q.j },
     view,
+    busy: () => liveThreads(q.j, ctxFor(root)),
     sealed: (id) => sourceIntact(id),
     async session(op) {
       if (!SESSION_ID.test(op.id)) return { ok: false, error: 'bad session id' }
@@ -1796,10 +1895,21 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
   void core.tick()
   jamLive.poke = () => void core.poke()
   jamLive.view = () => core.view()
-  jamLive.act = (id, rev, action, body) => core.act(id, rev, action, body)
-  jamLive.capture = (record) => core.capture(record)
+  jamLive.busy = () => core.busy()
+  jamLive.withdrawn = (id) => withdrawnCaptures(core.snapshot(), commentsDir).has(id)
+  // what a page gets of a card (Codex r10): the queue view's projection - never the journal's card, whose brief and
+  // payload keep words a deletion withdrew - on every answer, a refusal included
+  const asPage = <R extends { card?: unknown }>(r: R): R => {
+    const id = (r.card as { id?: unknown } | undefined)?.id
+    if (typeof id !== 'string') return r
+    const { card: _c, ...rest } = r
+    const shown = core.view().cards.find((c) => c.id === id)
+    return { ...rest, ...(shown ? { card: shown } : {}) } as R
+  }
+  jamLive.act = async (id, rev, action, body) => asPage(await core.act(id, rev, action, body))
+  jamLive.capture = async (record) => asPage(await core.capture(record))
   jamLive.sealed = (id) => core.sealed(id)
-  jamLive.session = (op) => core.session(op)
+  jamLive.session = async (op) => asPage(await core.session(op))
   jamLive.record = (id) => core.record(id)
   jamLive.canWrap = (id) => core.canWrap(id)
   jamLive.captureOpen = (c, ses, on) => core.captureOpen(c, ses, on)
@@ -1820,7 +1930,7 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
       watcher?.close()
       for (const w of sessionWatchers) w.close()
       core.stop()
-      delete jamLive.poke; delete jamLive.view; delete jamLive.act; delete jamLive.capture
+      delete jamLive.poke; delete jamLive.view; delete jamLive.busy; delete jamLive.withdrawn; delete jamLive.act; delete jamLive.capture
       jamReservations.frames.clear(); jamReservations.exclusive = null; jamReservations.settling = false
       releaseLock(root)
     },

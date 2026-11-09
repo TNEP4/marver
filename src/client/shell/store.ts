@@ -129,7 +129,10 @@ export interface JamNote {
   /** earlier notices folded under this one - View walks through them */
   stack?: JamNote[]
 }
-export interface Toast { id: number; text: string; jam?: JamNote }
+/** A plain notice's one action (spec 31 B.3: "Resolved 31 conversations · Undo"): what its click runs - which records
+ *  its own command (`resolve-undo`). `id` names it on the notice (`data-toast`). */
+export interface ToastAction { label: string; id: string; run: () => void }
+export interface Toast { id: number; text: string; jam?: JamNote; action?: ToastAction }
 
 export const CONFIG: { viewports: Record<string, { width: number; height: number }>; devices?: Record<string, DeviceLook>; themes: string[]; zoomSpeed?: number; noTheme: boolean; setup?: boolean; projectName?: string; branding?: boolean; jam?: { chime: boolean; capture: 'confirm' | 'at-once'; names?: boolean } | null; workspace?: string; version?: string } = shConfig
 
@@ -746,7 +749,10 @@ interface State {
   togglePanel(): void
   setTheme(theme: string): void
   runTidy(): void
-  toast(text: string): void
+  /** a plain notice, gone after 4 s - or `ms`; one with an `action` (Undo) stays its own while it shows */
+  toast(text: string, action?: ToastAction, ms?: number): void
+  /** take a plain notice down now (its action ran) */
+  dropToast(id: number): void
   jamToast(note: JamNote): void
   /** a jam card failed - one notice, with Retry (spec 27: only a question or a failure interrupts) */
   jamFailed(cards: { id: string; rev: number; board: string; thread?: string; frames: string[]; note?: string; batch?: string }[]): void
@@ -1969,11 +1975,12 @@ export const useStore = create<State>((set, get) => {
       })))
       scheduleSave()
     },
-    toast(text) {
+    toast(text, action, ms) {
       const id = ++toastSeq
-      set((s) => ({ toasts: [...s.toasts, { id, text }] }))
-      setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), 4000)
+      set((s) => ({ toasts: [...s.toasts, { id, text, ...(action ? { action } : {}) }] }))
+      setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), ms ?? 4000)
     },
+    dropToast(id) { set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })) },
     /** A Live Jam reply notification: persistent (no auto-dismiss), one per thread (a newer reply
      *  supersedes), capped so the stack stays small. */
     jamToast(note) {

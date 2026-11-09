@@ -6,7 +6,7 @@
  * overlap (pin-layout.ts places them).
  */
 import { TOP } from './inset.ts'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { avatarFallback, useComments } from './comments-store.ts'
 import { api } from './api.ts'
@@ -461,7 +461,7 @@ function AgentMetaTip({ meta }: { meta?: AgentMeta }) {
  *  human messages keep their avatar + name. While the dev profile is still UNSET, every own
  *  message avatar invites editing on hover (discoverability); once set, only the composer's
  *  avatar is the door. */
-function MessageHead({ author, agent, agentMeta, ts, board, eventId }: { author?: Thread['author']; agent?: boolean; agentMeta?: AgentMeta; ts: number; board?: string; eventId?: string }) {
+function MessageHead({ author, agent, agentMeta, ts, board, eventId, edited, tools }: { author?: Thread['author']; agent?: boolean; agentMeta?: AgentMeta; ts: number; board?: string; eventId?: string; edited?: number; tools?: ReactNode }) {
   const me = useComments((s) => s.me)
   const local = useComments((s) => s.local)
   const connected = useComments((s) => s.connected)
@@ -484,7 +484,9 @@ function MessageHead({ author, agent, agentMeta, ts, board, eventId }: { author?
       {unset && own ? <EditableAvatar author={author} size={24} /> : <Avatar author={author} size={24} />}
       <b>{shown?.name ?? 'Someone'}</b>
       <span className="dim">{rel(ts)}</span>
+      {edited ? <span className="dim cm-edited" title={new Date(edited).toLocaleString()}>edited</span> : null}
       <TagStatus board={board} eventId={eventId} harness={HARNESS} />
+      {tools}
     </header>
   )
 }
@@ -496,7 +498,7 @@ function CommentInput({ value, onChange, onSubmit, onCancel, placeholder, autoFo
   /** ends `h` (spec 30): a person typing has got a draft, so the command starts here, at ⏎ or send */
   onSubmit: (h: CmdHandle) => void | Promise<unknown>
   onCancel: () => void; placeholder: string; autoFocus?: boolean; sendLabel: string; owner: boolean
-  sendCmd: 'comment-send' | 'comment-reply'; frame?: string
+  sendCmd: 'comment-send' | 'comment-reply' | 'comment-edit-save'; frame?: string
 }) {
   const ref = useRef<HTMLTextAreaElement>(null)
   const hlRef = useRef<HTMLDivElement>(null)
@@ -685,6 +687,40 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
   const [text, setText] = useState('')
   const [copied, setCopied] = useState(false)
   const copyTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  // your own messages (spec 31 C.3-C.4): the one being edited, with its words; the one asking "delete?"
+  const [editing, setEditing] = useState<{ id: string; text: string } | null>(null)
+  const [asking, setAsking] = useState<string | null>(null)
+  useComments((s) => s.ownership)                         // a read of who owns what redraws the tools
+  const canDelete = useComments((s) => s.local || s.caps.delete)   // an older published server takes no delete
+  const mine = (m: { id: string; author?: { id?: string }; agent?: boolean }) => canComment && useComments.getState().isMine(thread.board, m)
+  const how = (): CmdOpts => ({ via: 'click', in: 'shell', frame: thread.frame })
+  const tools = (m: { id: string; author?: { id?: string }; agent?: boolean; body?: string }) => !mine(m) || editing?.id === m.id ? null : (
+    <span className="cm-tools">
+      {!(m.id === thread.id && thread.capture) && <button className="cm-tool" data-edit={m.id} onClick={() => { cmd('comment-edit', how()); setAsking(null); setEditing({ id: m.id, text: m.body ?? '' }) }}>Edit</button>}
+      {canDelete && <button className="cm-tool" data-delete={m.id} onClick={() => { cmd('comment-delete-ask', how()); setEditing(null); setAsking(m.id) }}>Delete</button>}
+    </span>
+  )
+  /** A message's words: as they are, in their editor, or under the "delete?" question. */
+  const words = (m: { id: string; body?: string; author?: Thread['author'] }, root: boolean, shown: ReactNode) => {
+    if (editing?.id === m.id) return (
+      <div className="cm-editing">
+        <CommentInput value={editing.text} onChange={(v) => setEditing({ id: m.id, text: v })} placeholder="Edit your comment…" autoFocus sendLabel="Save" owner={local} sendCmd="comment-edit-save" frame={thread.frame}
+          onSubmit={async (h) => { const sent = editing.text; if (sent.trim() === (m.body ?? '').trim()) { h.done(); setEditing(null); return } if (await useComments.getState().edit(thread.id, m.id, sent, h)) setEditing((cur) => (cur?.id === m.id ? null : cur)) }}
+          onCancel={() => setEditing(null)} />
+      </div>
+    )
+    if (asking !== m.id) return shown
+    return (
+      <>
+        {shown}
+        <div className="cm-confirm" data-confirm-delete={m.id}>
+          <span>Delete this {root ? 'comment' : 'reply'}?{root && thread.replies.length ? ' Its replies stay.' : ''}</span>
+          <button className="cm-tool danger" onClick={() => { const h = cmd('comment-delete', how()); setAsking(null); void useComments.getState().remove(thread.id, m.id, h) }}>Delete</button>
+          <button className="cm-tool" onClick={() => { cmd('comment-delete-cancel', how()); setAsking(null) }}>Cancel</button>
+        </div>
+      </>
+    )
+  }
   useEffect(() => () => clearTimeout(copyTimer.current), [])
   // Canvas: the card is a WORLD OBJECT parked beside its frame - it stays put (panning moves
   // frame + card together, never following the viewport). Zoom scales it with a CLAMP
@@ -820,16 +856,23 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
       {/* "there is more": the scroller MASKS its own content at the overflowing edge - a soft fade
           of the text itself, not a paint layer over the glass */}
       <div className={`cm-scroll${shadows.top ? ' fade-top' : ''}${shadows.bot ? ' fade-bot' : ''}`} ref={scrollRef} onScroll={syncShadows}>
-        <MessageHead author={thread.author} agent={thread.agent} agentMeta={thread.agentMeta} ts={thread.ts} board={thread.board} eventId={eventOf(thread.id)} />
-        {/* a capture's comment reads as a capture: a labelled block, never a typed comment (spec 27) */}
-        {thread.capture
-          ? <CaptureBlock id={thread.capture} facts={thread.facts} words={thread.body ?? ''} />
-          : <CommentBody body={thread.body} owner={isOwner(thread.author)} />}
+        {/* a deleted first comment keeps its replies under a placeholder: nothing of what was said, nor who said it */}
+        {thread.deleted
+          ? <p className="cm-body cm-deleted" data-deleted>Comment deleted</p>
+          : <>
+            <MessageHead author={thread.author} agent={thread.agent} agentMeta={thread.agentMeta} ts={thread.ts} board={thread.board} eventId={eventOf(thread.id)}
+              edited={thread.edited} tools={tools(thread)} />
+            {/* a capture's comment reads as a capture: a labelled block, never a typed comment (spec 27) - yours to edit or
+                delete like any message (deleting it withdraws a capture not sent yet) */}
+            {words(thread, true, thread.capture
+              ? <CaptureBlock id={thread.capture} facts={thread.facts} words={thread.body ?? ''} />
+              : <CommentBody body={thread.body} owner={isOwner(thread.author)} />)}
+          </>}
         {/* replies repeat the root's exact message shape (Figma's pattern) - only the icons differ */}
         {thread.replies.map((r) => (
-          <div key={r.id} className="cm-msg">
-            <MessageHead author={r.author} agent={r.agent} agentMeta={r.agentMeta} ts={r.ts} board={thread.board} eventId={eventOf(r.id)} />
-            <CommentBody body={r.body} owner={isOwner(r.author)} />
+          <div key={r.id} className="cm-msg" data-msg={r.id}>
+            <MessageHead author={r.author} agent={r.agent} agentMeta={r.agentMeta} ts={r.ts} board={thread.board} eventId={eventOf(r.id)} edited={r.edited} tools={tools(r)} />
+            {words(r, false, <CommentBody body={r.body} owner={isOwner(r.author)} />)}
             {/* a jam job changed a shared file it was not given: one line, so the reply says it (spec 27) */}
             {r.agent && r.alsoChanged?.length ? <div className="cm-also">Also changed {r.alsoChanged.map((f) => f.split('/').pop()).join(', ')}</div> : null}
           </div>
@@ -1103,4 +1146,19 @@ export function CommentsController() {
   }, [commentMode, ctlShowAnchor])
 
   return <IdentityDialog />
+}
+
+/** ⌘A inside a comment card (spec 31 C.1): its messages' text, never every frame - when the selection or the focus is
+ *  in a card (not in its composer, which keeps the field's own ⌘A). True when it took the key. */
+export function cardSelectAll(): boolean {
+  const sel = window.getSelection()
+  const at = (n: globalThis.Node | null | undefined) => (n instanceof Element ? n : n?.parentElement)?.closest('.cm-card') ?? null
+  const card = at(document.activeElement !== document.body ? document.activeElement : null) ?? at(sel?.anchorNode)
+  const text = card?.querySelector('.cm-scroll')
+  if (!card || !text || !sel) return false
+  const range = document.createRange()
+  range.selectNodeContents(text)
+  sel.removeAllRanges()
+  sel.addRange(range)
+  return true
 }

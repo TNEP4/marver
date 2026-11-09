@@ -715,6 +715,10 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
     } catch { /* the 30s poll is the backstop */ }
   }
 
+  // who owns which message here (spec 31 C.2): the once-only migration runs at the first 0.31 start, before any
+  // connect or profile change can move what the email says
+  try { (await import('./own.ts')).migrateOwnership(root) } catch (err) { console.log(`  comments: could not record who wrote what here - ${(err as Error).message}`) }
+
   // Live Jam: the dev server IS the daemon. On by default - a resolved jam block means armed.
   if (config.jam) {
     const { startJam } = await import('./jam/daemon.ts')

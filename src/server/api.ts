@@ -1337,6 +1337,10 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const cap = readCapture(root, id)
         if (!cap) return json(res, 404, { error: 'no such capture' })
         const { jamLive } = await import('./jam/live.ts')
+        // its own comment deleted: withdrawn, and what it said is nobody's to read again (Codex r8) - read from the files
+        // too, so it holds with Jam off or another server running it (Codex r9)
+        const { captureWithdrawn } = await import('./jam/queue.ts')
+        if (jamLive.withdrawn?.(id) || captureWithdrawn(root, id, cap.record.context.board)) return json(res, 410, { error: 'this capture was withdrawn - its comment was deleted' })
         const card = jamLive.view?.().cards.find((c) => c.id === id)
         // `sealed`: the record is still the one sealed - Resume starts only from one that is
         return json(res, 200, { record: cap.record, ...(card?.edited !== undefined ? { edited: card.edited } : {}), pictures: cap.record.pictures, sealed: jamLive.sealed?.(id) ?? false })
@@ -1395,11 +1399,53 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const stored = listBoards(join(root, 'design', 'comments'))
         return json(res, 200, { local: true, stored })
       }
+      // what this server's comment API can do (spec 31 C.6): the published side answers the same route, an older one
+      // none - a client that finds no `delete` holds its deletes back
+      if (path === 'capabilities' && req.method === 'GET') return json(res, 200, { delete: true, resolveAll: true })
+      // who owns which message here (spec 31 C.2): this machine's record, never the email (own.ts). Outside
+      // `comments/<board>`, so a board called `own` is safe
+      if (path === 'comment-ownership' && req.method === 'GET') {
+        if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+        const { ownership } = await import('./own.ts')
+        return json(res, 200, { boards: ownership(root) })
+      }
+      // Resolve all comments, and its Undo (spec 31 B.4): owner-gated, dev only; the CLI comes with the dev token.
+      // Routes of their own, so no board name can collide with them
+      if ((path === 'comment-actions/resolve-all' || path === 'comment-actions/undo') && req.method === 'POST') {
+        const { readDevInfo } = await import('./work.ts')
+        const token = readDevInfo(root)?.token
+        if (!ownerGated(req) && !(token && req.headers['x-mv-work'] === token)) return json(res, 403, { error: 'forbidden' })
+        const raw = await readBody(req)
+        if (raw == null) return json(res, 400, { error: 'body too large' })
+        let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+        const ca = await import('./comment-actions.ts')
+        const { jamLive } = await import('./jam/live.ts')
+        if (typeof b?.op !== 'string' || !ca.OP_RE.test(b.op)) return json(res, 400, { error: 'expected { op: <8-64 char token>, ... }' })
+        if (path === 'comment-actions/undo') {
+          const u = ca.undoResolveAll(root, b.op)
+          if ('error' in u) return json(res, u.status, { error: u.error })
+          jamLive.poke?.()
+          void backgroundPush(root)
+          return json(res, u.failed.length ? 207 : 200, { ...u, summary: ca.undoSummary(u) })
+        }
+        const scope = ca.parseScope(b.scope)
+        if (typeof scope === 'string') return json(res, 400, { error: scope })
+        // the Jam check and the appends: one synchronous call, nothing awaited between (comment-actions.ts)
+        const r = ca.resolveAll(root, b.op, scope, { busy: jamLive.busy, dryRun: b.dryRun === true })
+        if ('error' in r) return json(res, r.status, { error: r.error })
+        if (b.dryRun !== true) {
+          // the queue ingests the resolves at once: its asks, review and failed items on them complete
+          jamLive.poke?.()
+          void backgroundPush(root)
+        }
+        return json(res, r.failed.length ? 207 : 200, { ...r, summary: ca.resolveSummary(r) })
+      }
       const cm = /^comments\/([a-z0-9][a-z0-9-]*)$/.exec(path)
       if (cm) {
         const { appendEvents, readLog } = await import('./comments.ts')
         const dir = join(root, 'design', 'comments')
-        if (req.method === 'GET') return json(res, 200, { events: readLog(dir, cm[1]) })
+        // the page never gets a deleted message's words back (spec 31 C.4) - the log keeps them; agents read neither
+        if (req.method === 'GET') { const { deletedMessages, withoutDeletedWords } = await import('../shared/events.ts'); const evs = readLog(dir, cm[1]); const gone = deletedMessages(evs); return json(res, 200, { events: evs.map((e) => withoutDeletedWords(e, gone)) }) }
         if (req.method === 'POST') {
           // Owner gate: only a same-origin, cookie-proving POST may write - and be ledgered as
           // an authorization for the Live Jam daemon.
@@ -1409,6 +1455,39 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
           const incoming = Array.isArray(b.events) ? b.events : []
           const me = localProfile(root)
+          // an event names the log it is written to, or none (Codex r5): one naming another board would pass the checks
+          // below against this log and be read by the shell as that board's - refused
+          if (incoming.some((ev: any) => ev?.board !== undefined && ev.board !== cm[1])) return json(res, 400, { error: 'event board does not match the endpoint' })
+          // a message id is one message's (spec 31 C.2): a new create or reply reusing one already in the log would make
+          // this machine record someone else's (or Marver's) message as yours. A retry of the same event is fine.
+          {
+            const have = readLog(dir, cm[1])
+            const evIds = new Set(have.map((e) => e.id))
+            const msgIds = new Set(have.filter((e) => (e.type === 'create' || e.type === 'reply') && e.commentId).map((e) => e.commentId!))
+            for (const ev of incoming) {
+              if ((ev?.type !== 'create' && ev?.type !== 'reply') || evIds.has(ev.id)) continue
+              if (typeof ev.commentId !== 'string' || msgIds.has(ev.commentId)) return json(res, 409, { error: 'a comment with that id already exists' })
+              msgIds.add(ev.commentId)
+            }
+          }
+          // edit and delete are the author's own (spec 31 C.2-C.4): here, this machine's record decides (own.ts) -
+          // never the email, which a connect or a profile change moves. A deleted message is not edited.
+          if (incoming.some((ev: any) => ev?.type === 'edit' || ev?.type === 'delete')) {
+            const { ownsMessage } = await import('./own.ts')
+            const { deletedMessages } = await import('../shared/events.ts')
+            const log = readLog(dir, cm[1])
+            const gone = deletedMessages(log)
+            // a capture's own comment is sealed into its Jam card: an edit here would change what you see, never what
+            // the agent gets - its words are edited in Jam's lane, so here it can only be deleted
+            const captures = new Set(log.filter((e: any) => e?.type === 'create' && e.capture && e.commentId).map((e: any) => e.commentId))
+            for (const ev of incoming) {
+              if (ev?.type !== 'edit' && ev?.type !== 'delete') continue
+              if (typeof ev.commentId !== 'string' || !ownsMessage(root, cm[1], ev.commentId)) return json(res, 403, { error: `only its author can ${ev.type} a comment` })
+              if (ev.type === 'edit' && gone.has(ev.commentId)) return json(res, 409, { error: 'that comment was deleted' })
+              if (ev.type === 'edit' && captures.has(ev.commentId)) return json(res, 409, { error: 'a capture is edited in Jam - here it can only be deleted' })
+              if (ev.type === 'edit' && (typeof ev.body !== 'string' || !ev.body.trim())) return json(res, 400, { error: 'an edit needs words - delete the comment instead' })
+            }
+          }
           // fill-at-origin, never rewrite: this endpoint is where dev-born events are
           // CREATED, so completing them here is fine - but an event that already
           // carries board/author must pass through byte-identical, or the id-keyed
@@ -1421,9 +1500,13 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
             return {
               ...clean,
               board: clean.board ?? cm[1],
-              author: clean.author ?? (['create', 'reply', 'react', 'edit'].includes(clean.type) ? me : undefined),
+              author: clean.author ?? (['create', 'reply', 'react', 'edit', 'delete'].includes(clean.type) ? me : undefined),
             }
           })
+          // loaded BEFORE the append (Codex r3): from the append to the ledger line below nothing is awaited, so a
+          // resolve-all (one synchronous step too) never sees an owner's tag in the log that is not yet ledgered as one
+          const { record } = await import('./jam/ledger.ts')
+          const { recordOwn } = await import('./own.ts')
           const fresh = appendEvents(dir, cm[1], stamped)
           // Authorize the owner's fresh create/reply events for the Live Jam daemon. Order is the
           // contract: appendEvents fsync'd the event FIRST (above), then we ledger it - a crash
@@ -1432,8 +1515,10 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           // ledger only ever holds owner input - the fail-closed direction of atomicity.
           // Edits are ledgered too (0.26): an event's text is its body or its latest LEDGERED edit, so an
           // edit that arrived by sync is never the owner's words. An edit never starts work.
-          const { record } = await import('./jam/ledger.ts')
           for (const ev of fresh) if (ev.type === 'create' || ev.type === 'reply' || ev.type === 'edit') record(root, cm[1], ev.id)
+          // ...and the messages are this machine's human's (spec 31 C.2): what lets them edit or delete one later
+          const mine = fresh.filter((ev) => (ev.type === 'create' || ev.type === 'reply') && typeof ev.commentId === 'string').map((ev) => ev.commentId!)
+          if (mine.length) recordOwn(root, cm[1], mine)
           // the queue ingests at once - a tag is a card before the watcher wakes
           ;(await import('./jam/live.ts')).jamLive.poke?.()
           // push in the background - the periodic sync catches anything this drops

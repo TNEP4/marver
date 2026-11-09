@@ -65,7 +65,7 @@ export interface WrapupCapture {
   /** your verdict on its review: looks good, more work */
   verdict?: string
   /** what you asked after it (More work), in order, with what came of each - the last may still be open */
-  more?: { ask: string; result?: string }[]
+  more?: { ask: string; result?: string; /** the More work reply it is (0.31): a deleted one never reaches a run */ event?: string }[]
 }
 export interface Wrapup {
   format: 'marver.jam.wrapup'; v: 1
@@ -119,7 +119,7 @@ export function recordPathProblem(root: string, file: string): string | null {
 }
 
 /** What the wrap-up says of the session, at this moment ("as of"). */
-export function buildWrapup(j: Journal, root: string, o: { session: string; since: number; instructions: string; includeTalk: boolean; tags: number; title?: (c: Card) => string; reply?: (c: Card) => string | undefined; intact?: (c: Card) => boolean; more?: (c: Card) => { ask: string; result?: string }[]; now?: number }): Wrapup | { error: string } {
+export function buildWrapup(j: Journal, root: string, o: { session: string; since: number; instructions: string; includeTalk: boolean; tags: number; title?: (c: Card) => string; reply?: (c: Card) => string | undefined; intact?: (c: Card) => boolean; more?: (c: Card) => { ask: string; result?: string; event?: string }[]; now?: number }): Wrapup | { error: string } {
   const now = o.now ?? Date.now()
   const caps: WrapupCapture[] = []
   for (const c of j.cards.filter((x) => x.kind === 'capture' && x.session === o.session).sort((a, b) => a.made - b.made)) {
@@ -173,3 +173,25 @@ export function readWrapup(root: string, id: string): { wrapup: Wrapup; hash: st
 
 /** The words of a capture in the record, as you read them (the same rule as its thread comment). */
 export const captureText = (c: WrapupCapture): string => [c.edited ?? speechLines(c.record.timeline.flatMap((s) => (s.event === 'words' || s.event === 'note' ? [{ kind: s.event, text: s.text }] : []))), ...(c.added ?? []).map((a) => a.text)].filter(Boolean).join('\n')
+
+/** A sealed wrap-up's content as a run may read it (spec 31 C.5): each More work ask whose reply was deleted is left out
+ *  (`gone`: a capture's board -> its deleted events; `words`: -> the words of its deleted More work replies, for a record
+ *  sealed before 0.31, whose asks name no event). The sealed file is untouched - its hash still proves it. */
+export function wrapupWithoutDeleted(w: Wrapup, gone: (board: string) => ReadonlySet<string>, words?: (board: string) => ReadonlySet<string>, caps?: () => ReadonlySet<string>): Wrapup {
+  let changed = false
+  // a capture whose own comment was deleted is withdrawn from what the run reads, whole
+  const withdrawn = caps?.()
+  const kept = withdrawn ? w.captures.filter((c) => !withdrawn.has(c.id)) : w.captures
+  if (kept.length !== w.captures.length) changed = true
+  const captures = kept.map((c) => {
+    if (!c.more?.length) return c
+    const g = gone(c.record.context.board)
+    // a record sealed before 0.31 names no event: its ask is matched by its words against the deleted More work replies
+    const said = words?.(c.record.context.board)
+    const more = c.more.filter((m) => (m.event ? !g.has(m.event) : !said?.has(m.ask.trim())))
+    if (more.length === c.more.length) return c
+    changed = true
+    return { ...c, ...(more.length ? { more } : { more: undefined }) }
+  })
+  return changed ? { ...w, captures } : w
+}

@@ -25,10 +25,10 @@ import { cmd, endAfterFrames, endOnCamera, endOnLoad, endOnStage, foldsIntoSave,
 import { enterFocus, enterPlay, enterSlides, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, linkTargets, parseHash, retargetBoot, UNPLACED, writeHash } from './hash.ts'
 import { isLegacyLink, landLegacy } from './legacy-links.ts'
-import { CaretIcon, CheckIcon, ColumnsIcon, FrameRectIcon, ImagesSquareIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ParallelogramFillIcon, PencilSimpleIcon, PlayIcon, PlusIcon, SignpostIcon, SlideFrameIcon, SunIcon, VariantsIcon, XIcon } from './icons.tsx'
+import { CaretIcon, CheckIcon, CheckSquareOffsetIcon, ColumnsIcon, FrameRectIcon, ImagesSquareIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ParallelogramFillIcon, PencilSimpleIcon, PlayIcon, PlusIcon, SignpostIcon, SlideFrameIcon, SunIcon, VariantsIcon, XIcon } from './icons.tsx'
 import { deviceIcon, deviceLabel } from './devices.tsx'
 import { ALL_SCENES, humanize as slugLabel, readTitle } from '../../shared/board-tree.ts'
-import { CommentsController, parkThread, revealThread } from './Comments.tsx'
+import { cardSelectAll, CommentsController, parkThread, revealThread } from './Comments.tsx'
 import { poweredByUrl } from '../../shared/utm.ts'
 import { avatarFallback, NO_COMMENTS_HERE, useComments } from './comments-store.ts'
 import { goTo, isLatest, navigated, navNow, revealFrame, switchFor } from './goto.ts'
@@ -37,7 +37,7 @@ import { newerVersion } from '../../shared/deep-link.ts'
 import { useNotes } from './notes.ts'
 import { contentOnly } from '../../shared/frames.ts'
 import { nextToLook } from '../../shared/marks.ts'
-import { asksNow, Bubble, MarkedRow, markSeenFrom, useRollup, useSeenOnScreen } from './marks-ui.tsx'
+import { asksNow, Bubble, MarkedRow, markSeenFrom, resolveAllFrom, useRollup, useSeenOnScreen } from './marks-ui.tsx'
 import { CommentButton, DevicePicker, HideUIButton, LaserButton, Popover, ThemePicker, toggleHideUI, usePopover } from './Toolbar.tsx'
 
 const commentsStore = () => useComments.getState()
@@ -845,6 +845,8 @@ export function App() {
       const how = (k = e.key): CmdOpts => ({ via: 'key', in: 'shell', keys: keysOf(e, k) })
       if ((e.metaKey || e.ctrlKey) && e.key === '\\') { e.preventDefault(); cmd('panel', how()); togglePanel(); return }
       if ((e.metaKey || e.ctrlKey) && e.key === '/') { e.preventDefault(); cmd('toolbar', how()); setPillOpen((o) => !o); return }
+      // ⌘A in a comment card selects its words, not every frame (spec 31 C.1)
+      if ((e.metaKey || e.ctrlKey) && e.key === 'a' && cardSelectAll()) { e.preventDefault(); cmd('thread-select-all', how()); return }
       if ((e.metaKey || e.ctrlKey) && e.key === 'a') { e.preventDefault(); cmd('select-all', how()); s.selectAll(); return }
       if (e.metaKey || e.ctrlKey) return
       if (e.key === 'Escape') {
@@ -1053,7 +1055,9 @@ export function App() {
                     ? `board: ${useStore.getState().board} · scene: ${sc.name}  (design/scenes/${sc.name}/)`
                     : `board: ${useStore.getState().board} · scene: (root)`, 'path copied', cmd('copy-path', { via: 'context', in: 'shell' })),
                 }, ...(!PUBLISHED && sc.name ? [{ label: 'Rename', icon: <PencilSimpleIcon size={15} />, onClick: () => setSceneNaming(sc.name) }] : []),
-                ...(!PUBLISHED ? [{ label: 'Mark all as seen', icon: <CheckIcon size={15} />, onClick: () => markSeenFrom({ via: 'context', in: 'shell' }, frames.filter((f) => f.scene === sc.name).map((f) => f.id)) }] : [])])}
+                ...(!PUBLISHED ? [{ label: 'Mark all as seen', icon: <CheckIcon size={15} />, onClick: () => markSeenFrom({ via: 'context', in: 'shell' }, frames.filter((f) => f.scene === sc.name).map((f) => f.id)) }] : []),
+                // ...and Resolve all comments on that scene's frames (spec 31 B.1) - the root scene's ('') too
+                ...(!PUBLISHED ? [{ label: 'Resolve all comments', icon: <CheckSquareOffsetIcon size={15} />, onClick: () => void resolveAllFrom({ via: 'context', in: 'shell' }, { scene: sc.name }) }] : [])])}
                 onPick={() => {
                   const keys = nodes.filter((n) => frames.some((f) => f.scene === sc.name && f.id === n.frame) && !n.missing).map((n) => n.key)
                   cmd('scene-pick', { via: 'click', in: 'shell', frames: keys.length })
@@ -1346,7 +1350,12 @@ function JamToasts({ toasts }: { toasts: import('./store.ts').Toast[] }) {
   const newest = jams[jams.length - 1]
   return (
     <div className="sh-toasts">
-      {plain.slice(-2).map((t) => <div key={t.id} className="sh-toast"><CheckIcon size={12} /> {t.text}</div>)}
+      {/* the last two - and a notice with an action (Undo) stays among them while it lasts */}
+      {(() => { const act = plain.filter((t) => t.action).slice(-1); return [...plain.filter((t) => !t.action).slice(act.length ? -1 : -2), ...act].sort((a, b) => a.id - b.id) })().map((t) => (
+        <div key={t.id} className="sh-toast" data-toast={t.action?.id}><CheckIcon size={12} /> {t.text}
+          {t.action && <button className="sh-toast-act" onClick={() => { const a = t.action!; useStore.getState().dropToast(t.id); a.run() }}>{t.action.label}</button>}
+        </div>
+      ))}
       {expanded && jams.length > 2 && (
         <div className="sh-jam-list">
           <div className="sh-jam-listhead">

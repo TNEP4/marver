@@ -22,7 +22,7 @@ import { claimInvite, createInvite, inviteInfo, issueDeviceSession, loadStore, n
 import { ceilingsFromRights, commentAllowed, entryAllowed, loadRequests, loadShare, operativeMode, provisionVerdict, putRequest, reconfirmGrant, removeGrant, resolveAccess, resolveRequest, rosterEtag, setBlocked, setGeneralMode, shareState, upsertGrant } from './share.ts'
 import { canvasIdentity, deriveThreads, loadSeen, markSeen, signCanvasJws, unreadCount, verifyCanvasJws, type BoardThreads } from './summary.ts'
 import { notifyCommentActivity, relayNotify, transitionId, type NotifyCtx } from './notify.ts'
-import type { Mention } from '../shared/events.ts'
+import { deletedMessages, withoutDeletedWords, type Mention } from '../shared/events.ts'
 import { ALL_SCENES } from '../shared/board-tree.ts'
 import { secureSuffix } from './secure-cookie.ts'
 
@@ -46,7 +46,7 @@ export function can(user: User | null, rights: Rights, board: string, action: 'r
   return commentAllowed(dataDir, user, board, ceilingsFromRights(rights))
 }
 
-const EVENT_TYPES = new Set(['create', 'reply', 'edit', 'resolve', 'reopen', 'react', 'profile', 'reanchor'])
+const EVENT_TYPES = new Set(['create', 'reply', 'edit', 'resolve', 'reopen', 'react', 'profile', 'reanchor', 'delete'])
 const ID_RE = /^[\w-]{8,64}$/
 const MAX_BODY_TEXT = 10_000
 
@@ -103,7 +103,9 @@ export function validateEvents(incoming: CommentEvent[], log: CommentEvent[], u:
   const creates = new Map<string, CommentEvent>()
   const comments = new Set<string>()                      // every create + reply commentId in the log
   const authors = new Map<string, string>()               // commentId -> author email (create + reply)
+  const deleted = new Set<string>()                       // messages a tombstone names (0.31)
   for (const ev of log) {
+    if (ev.type === 'delete' && ev.commentId) deleted.add(ev.commentId)
     if (ev.type === 'create' && ev.commentId && !creates.has(ev.commentId)) creates.set(ev.commentId, ev)
     if ((ev.type === 'create' || ev.type === 'reply') && ev.commentId) {
       comments.add(ev.commentId)
@@ -135,9 +137,11 @@ export function validateEvents(incoming: CommentEvent[], log: CommentEvent[], u:
     if ((ev.type === 'create' || ev.type === 'reply') && !ev.body?.trim()) return 'a comment needs a body'
     if (badMentions(ev, !!opts.operator)) return 'invalid mentions'
     if (ev.asks !== undefined && (typeof ev.asks !== 'boolean' || !['create', 'reply', 'edit'].includes(ev.type))) return 'asks is a flag on a comment'
+    // a resolve-all's operation id (0.31, spec 31 B.3) rides its resolves and their Undo's reopens only
+    if (ev.op !== undefined && (typeof ev.op !== 'string' || !ID_RE.test(ev.op) || (ev.type !== 'resolve' && ev.type !== 'reopen'))) return 'op is a resolve-all\'s id on a resolve or reopen'
     // `profile` is in this set deliberately: an unbound author on a profile event let a
     // browser submit arbitrary emails and read their opaque ids off the projection
-    const needsAuthor = ev.type === 'create' || ev.type === 'reply' || ev.type === 'react' || ev.type === 'edit' || ev.type === 'reanchor' || ev.type === 'profile'
+    const needsAuthor = ev.type === 'create' || ev.type === 'reply' || ev.type === 'react' || ev.type === 'edit' || ev.type === 'reanchor' || ev.type === 'profile' || ev.type === 'delete'
     if (needsAuthor && ev.author?.email?.toLowerCase() !== me)
       return 'event author must be the signed-in account'
     if (typeof ev.commentId !== 'string' || !ID_RE.test(ev.commentId)) {
@@ -146,6 +150,9 @@ export function validateEvents(incoming: CommentEvent[], log: CommentEvent[], u:
     switch (ev.type) {
       case 'create':
         if (creates.has(ev.commentId!)) return 'a thread with that id already exists'
+        // a message id is unique across threads AND replies (spec 31, Codex r1): a create reusing a reply's id would
+        // claim that reply's authorship - and with it the right to edit or delete it
+        if (comments.has(ev.commentId!)) return 'a comment with that id already exists'
         creates.set(ev.commentId!, ev)
         comments.add(ev.commentId!)
         if (ev.author?.email) authors.set(ev.commentId!, ev.author.email.toLowerCase())
@@ -163,6 +170,17 @@ export function validateEvents(incoming: CommentEvent[], log: CommentEvent[], u:
         const owner = authors.get(ev.commentId!)
         if (!owner) return 'cannot edit a comment that does not exist'
         if (owner !== me) return 'only the author can edit a comment'
+        // a tombstone is terminal (spec 31 C.4): replay would ignore the edit, so the log never takes it
+        if (deleted.has(ev.commentId!)) return 'that comment was deleted'
+        break
+      }
+      case 'delete': {
+        // the author of the original create or reply, as for an edit - the canonical email decides
+        const owner = authors.get(ev.commentId!)
+        if (!owner) return 'cannot delete a comment that does not exist'
+        if (owner !== me) return 'only the author can delete a comment'
+        if (ev.body !== undefined || ev.mentions !== undefined) return 'a delete carries no words'
+        deleted.add(ev.commentId!)
         break
       }
       case 'resolve':
@@ -186,6 +204,13 @@ export function validateEvents(incoming: CommentEvent[], log: CommentEvent[], u:
     }
   }
   return null
+}
+
+/** What of a push may be mailed (spec 31 C.4, Codex r8): never a message deleted by then - an offline create and its
+ *  delete arriving together mail nothing. */
+export function mailable(fresh: CommentEvent[], log: CommentEvent[]): CommentEvent[] {
+  const gone = deletedMessages([...log, ...fresh])
+  return fresh.filter((e) => !((e.type === 'create' || e.type === 'reply' || e.type === 'edit') && e.commentId && gone.has(e.commentId)))
 }
 
 export function collabHandler(dataDir: string, distDir: string) {
@@ -230,14 +255,23 @@ export function collabHandler(dataDir: string, distDir: string) {
   // miss the gap (its Last-Event-ID carries the old epoch → resync)
   const bootEpoch = randomBytes(4).toString('hex')
   let seq = 0
-  const ring: { seq: number; data: string }[] = []          // last 500 broadcast frames
+  const ring: { seq: number; data: string; board: string; ev: CommentEvent }[] = []          // last 500 broadcast frames
   // each client keeps the token it connected with, so the stream can be
   // re-authorized long after the gate let it in
   const clients = new Map<ServerResponse, { tok: string | null }>()
-  const broadcast = (board: string, events: CommentEvent[]) => {
-    for (const ev of events) {
-      const frame = `id: ${bootEpoch}-${++seq}\nevent: comment\ndata: ${JSON.stringify({ board, ev })}\n\n`
-      ring.push({ seq, data: frame })
+  const frameOf = (s: number, board: string, ev: CommentEvent) => `id: ${bootEpoch}-${s}\nevent: comment\ndata: ${JSON.stringify({ board, ev })}\n\n`
+  /** `gone` (spec 31 C.4): the board's deleted messages - their words never go out, and a frame the replay ring still
+   *  holds for one is made again without them, so a reconnect cannot read what was deleted since */
+  const broadcast = (board: string, events: CommentEvent[], gone: ReadonlySet<string> = new Set()) => {
+    if (gone.size && events.some((e) => e.type === 'delete')) for (const r of ring) {
+      if (r.board !== board) continue
+      const ev = withoutDeletedWords(r.ev, gone)
+      if (ev !== r.ev) { r.ev = ev; r.data = frameOf(r.seq, board, ev) }
+    }
+    for (const raw of events) {
+      const ev = withoutDeletedWords(raw, gone)
+      const frame = frameOf(++seq, board, ev)
+      ring.push({ seq, data: frame, board, ev })
       if (ring.length > 500) ring.shift()
       for (const res of clients.keys()) res.write(frame)
     }
@@ -759,6 +793,9 @@ export function collabHandler(dataDir: string, distDir: string) {
       }
 
       if (req.method === 'GET') {
+        // what this server's comment API takes (spec 31 C.6) - a client that finds no `delete` (an older server) holds
+        // its deletes back. Resolve-all is the dev server's alone: here a thread is resolved one at a time
+        if (path === 'capabilities') return json(res, 200, { delete: true }), true
         if (path === 'me') {
           // the session response carries the viewer's OWN opaque id once -
           // "is this mine" is a client-side id comparison from then on - plus
@@ -784,7 +821,11 @@ export function collabHandler(dataDir: string, distDir: string) {
           if (!legacy && !can(currentUser(req), rights, m[1], 'read')) return json(res, 404, { error: 'no such board' }), true
           let events = readLog(commentsDir, m[1])
           if (legacy) { const exposed = legacyExposure(events, rights, shows!); events = events.filter((e) => exposed(e).length) }
-          return json(res, 200, { events: rawTransport(req) ? events : events.map(project) }), true
+          if (rawTransport(req)) return json(res, 200, { events }), true
+          // a deleted message's words never travel to a browser again (spec 31 C.4): the log keeps the event (sync is
+          // by id), the transport carries it without its body or mentions - as replay would show it anyway
+          const gone = deletedMessages(events)
+          return json(res, 200, { events: events.map((e) => project(withoutDeletedWords(e, gone))) }), true
         }
         if (path === 'invite-info') {
           if (limited(`ip:${ip}`)) return json(res, 429, { error: 'too many attempts - wait a minute' }), true
@@ -954,11 +995,13 @@ export function collabHandler(dataDir: string, distDir: string) {
           const st = threads.get(m[1])
           threads.set(m[1], deriveThreads([...(st?.events ?? []), ...fresh]))
         }
-        broadcast(m[1], fresh.map(project))   // the stream is a browser transport
+        broadcast(m[1], fresh.map(project), deletedMessages([...log, ...fresh]))   // the stream is a browser transport
         // activity mail (07-v1.1 §A/§B): a fresh reply pulls its thread back, a
         // mention pulls its person - history imports never mail (freshness gate)
         // (the old all-scenes log: its threads' readers are everyone a published board admits)
-        if (fresh.length) notifyCommentActivity(notifyCtx, m[1], fresh, legacy ? [...log, ...fresh] : threads.get(m[1])?.events ?? [],
+        // nothing deleted in the same push (an offline create, then its delete) is ever mailed (Codex r8)
+        const mail = mailable(fresh, log)
+        if (mail.length) notifyCommentActivity(notifyCtx, m[1], mail, legacy ? [...log, ...fresh] : threads.get(m[1])?.events ?? [],
           (email) => (legacy ? Object.keys(rights).some((b) => mailAllowed(b, email)) : mailAllowed(m[1], email)))
         return json(res, 200, { accepted: fresh.length }), true
       }

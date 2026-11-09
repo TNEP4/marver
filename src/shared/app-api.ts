@@ -71,10 +71,11 @@ export type MenuIn = (typeof MENU_IN)[number]
 export interface MenuClick { id: string; in?: MenuIn }
 /**
  * The ids main sends of its own, never in the page's `mv:menu`: the tab's right-click Mark All as Seen (A2.4's
- * channels table: "Mark all as seen sends `mv:menu-click mark-all-seen` to the canvas"). A shell that does not know
- * one does nothing with it.
+ * channels table: "Mark all as seen sends `mv:menu-click mark-all-seen` to the canvas") and Resolve All Comments
+ * (0.31, spec 31 B.1: sent only to a canvas whose features list `resolve-all`). A shell that does not know one does
+ * nothing with it.
  */
-export const APP_MENU_IDS = ['mark-all-seen'] as const
+export const APP_MENU_IDS = ['mark-all-seen', 'resolve-all-comments'] as const
 
 /**
  * `mv:present` (main to canvas; on the wire `{ doc, ...Present }`, stamped by main like `mv:app-state`): show the
@@ -223,6 +224,9 @@ export const FEATURE = {
   /** 0.31.0 (spec 31 D1, D3): the shell takes `mv:show` (a deep link's place, moved to or noticed over unsent words)
    *  and asks `mv:front` once it showed a `marver show` */
   show: 'show',
+  /** 0.31.0 (spec 31 B.1): the shell handles `mv:menu-click resolve-all-comments` - every open thread on the canvas resolved,
+   *  but what Jam is at work on, with its Undo. The app offers the tab menu's Resolve All Comments only to a canvas that says so */
+  resolveAll: 'resolve-all',
 } as const
 export type Feature = (typeof FEATURE)[keyof typeof FEATURE]
 

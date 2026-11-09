@@ -29,7 +29,7 @@ import { CH, type PageKind } from '../shared/channels.ts'
 import type { AppCommand } from './keys.ts'
 
 /** The tab actions (`tabAct`, views.ts:1058): the tab's right-click, the File and View menus, the Window menu's tabs,
- *  the » overflow. Its `mark-all-seen` is a relay, recorded by the shell. */
+ *  the » overflow. Its `mark-all-seen` and `resolve-all-comments` are relays, recorded by the shell. */
 export const TAB_ACTIONS = ['activate', 'open-browser', 'reveal', 'copy-link', 'reload', 'force-reload', 'close'] as const
 /** The strip (views.ts:1199-1204), by key or click. */
 export const STRIP_COMMANDS = ['tab-activate', 'tab-close', 'tab-menu', 'tabs-more', 'link-open'] as const
@@ -118,7 +118,7 @@ export const APP_RELAYS: readonly AppRelay[] = [
   { from: 'a tab menu item (views.ts:1127-1152), the View menu Reload items, the Window menu tabs, the » overflow', owner: 'tabAct (views.ts:1058)', why: 'one recording owner', calls: ['acts.tab', 'tabAct'], ownerFile: 'src/main/views.ts', ownerFn: 'tabAct' },
   { from: 'the Marver and Help menus\' own items', owner: "the menu's acts (views.ts startViews)", why: 'each act records its own name', calls: ['acts.help', 'acts.perfFiles', 'acts.update', 'acts.exportReport'], ownerFile: 'src/main/views.ts', ownerFn: 'startViews' },
   { from: "an app page's button (api.activate, api.action, ...)", owner: "main's channel handler (bridge.ts:625-650)", why: 'the page funnel records', calls: ['api.'], ownerFile: 'src/main/bridge.ts', ownerFn: 'installBridge' },
-  { from: 'a View or Jam menu item, the tab menu Mark All as Seen (mv:menu-click)', owner: 'the shell (app-bridge.ts runMenuItem)', why: '#51: the executing side records; the app records nothing', calls: ['acts.canvasClick', 'markAllSeen'], ownerFile: '../src/client/shell/app-bridge.ts', ownerFn: 'runMenuItem' },
+  { from: 'a View or Jam menu item, the tab menu Mark All as Seen and Resolve All Comments (mv:menu-click)', owner: 'the shell (app-bridge.ts runMenuItem)', why: '#51: the executing side records; the app records nothing', calls: ['acts.canvasClick', 'markAllSeen', 'resolveAllComments'], ownerFile: '../src/client/shell/app-bridge.ts', ownerFn: 'runMenuItem' },
   { from: 'the Move to Applications dialog (main.ts, the mover\'s ask port)', owner: 'the mover\'s handoff (mover.ts offerMove), written by the next recorder (writeMoveCmd)', why: 'no recorder exists yet: the answer is durable first', calls: ['ask'], fromFile: 'src/main/main.ts', ownerFile: 'src/main/mover.ts', ownerFn: 'takeMoveCmd' },
 ]
 

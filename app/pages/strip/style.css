@@ -64,6 +64,8 @@ body.dots .strip { background: radial-gradient(var(--dot) 1px, transparent 1px) 
   font: 700 10px/15px -apple-system, system-ui, sans-serif; font-variant-numeric: tabular-nums }
 .mk.ask { background: var(--mk-ask) }
 .mk.new { background: var(--mk-new) }
+/* spec 31 B.7: new frames are a dot, not a to-do count */
+.mk.new.dot { min-width: 0; width: 7px; height: 7px; padding: 0; border-radius: 50%; align-self: center }
 .tab.stale .mk, .tab.stale .sess { opacity: .45 }
 .sess { position: absolute; right: -2px; bottom: -2px; width: 6px; height: 6px; border-radius: 50%; background: #00c3d0;
   box-shadow: 0 0 0 1.5px var(--ground) }

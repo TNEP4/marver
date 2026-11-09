@@ -339,6 +339,9 @@ Rules (first line and the marver-reply block):
 - **Concise and clear, always.** Cut every filler word. Lead with what changed. Apply the copy
   principles in instructions/reference/copy.md (active voice, specific, no fluff).
 Do NOT resolve the thread; the human resolves after reviewing.
+A message the owner deleted never reaches you: it is taken out of the packet before the hand-off (and a
+request with nothing left is dropped). Once a packet is in your hands nothing can unread it - so never
+quote a message back that the thread no longer shows.
 
 ## Working in parallel (when enabled)
 Two kinds of parallelism stack, and they are not the same knob: the daemon runs up to

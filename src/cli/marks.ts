@@ -8,6 +8,7 @@
  */
 import { join } from 'node:path'
 import { scanFrames } from '../server/manifest.ts'
+import { readMembership } from '../server/boards.ts'
 import { projectMarks } from '../server/marks.ts'
 import { listBoards, readLog, replay } from '../server/comments.ts'
 import { isNew } from '../shared/marks.ts'
@@ -25,9 +26,14 @@ export function marksCommand(root: string, opts: { json?: boolean; all?: boolean
     return [{ frame: t.frame, thread: t.id, board: b, asks: asks(last, last === t), body: (last.body ?? '').replace(/\s+/g, ' ').trim() }]
   })).sort((a, b) => Number(b.asks) - Number(a.asks))
   const fresh = m ? manifest.frames.map((f) => f.id).filter((id) => isNew(m, id)) : []
+  // every open conversation, per board that shows it (spec 31 B.6): past ten, the agent OFFERS \`comments resolve --all\`
+  // with these counts - and runs it only on a yes
+  const openFrames = listBoards(dir).flatMap((b) => replay(readLog(dir, b)).filter((t) => !t.resolved).map((t) => t.frame))
+  const perBoard = readMembership(root, manifest.frames.map((f) => f.id)).boards
+    .map((b) => ({ board: b.name, open: openFrames.filter((f) => !!f && b.frames.includes(f)).length })).filter((b) => b.open > 0)
   const { answered, earlier } = answers(root)
   const said = (a: { board: string; thread: string; frame?: string; body: string }) => ({ frame: a.frame, thread: a.thread, board: a.board, body: a.body })
-  if (opts.json) { console.log(JSON.stringify({ started: !!m, waiting, answered: answered.map(said), earlier: earlier.map(said), new: fresh }, null, 2)); return }
+  if (opts.json) { console.log(JSON.stringify({ started: !!m, waiting, answered: answered.map(said), earlier: earlier.map(said), new: fresh, open: { total: openFrames.length, boards: perBoard } }, null, 2)); return }
   if (!m) console.log('  (marks start with the next `marver dev` - nothing is new until then)')
   const pad = (s: string, n: number) => (s.length >= n ? s + ' ' : s + ' '.repeat(n - s.length))
   const w = Math.max(0, ...waiting.map((x) => x.frame.length)) + 2
@@ -45,4 +51,7 @@ export function marksCommand(root: string, opts: { json?: boolean; all?: boolean
   else if (earlier.length) console.log(`${pad('earlier, maybe handled', 21)}${earlier.length} from before 0.26 - \`--all\` lists them`)
   const shown = fresh.slice(0, 6).join(', ') + (fresh.length > 6 ? `, ... (+${fresh.length - 6})` : '')
   console.log(`${pad(fresh.length ? `new (${fresh.length})` : 'new', 21)}${fresh.length ? shown : 'nothing'}`)
+  const per = perBoard.map((b) => `${b.board} ${b.open}`).join(', ')
+  console.log(`${pad(`open (${openFrames.length})`, 21)}${openFrames.length ? per || 'on no board' : 'nothing'}`)
+  if (openFrames.length > 10) console.log(`${pad('', 21)}more than 10 open: ask the human whether to resolve them (\`comments resolve --all --board <b> --dry-run\` counts) - never on your own`)
 }

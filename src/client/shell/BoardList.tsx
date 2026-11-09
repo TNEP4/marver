@@ -9,11 +9,11 @@ import { PHASE_LABEL, STATUS_LABEL } from '../../shared/status.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
 import { isLatest, navigated, switchFor } from './goto.ts'
 import { rollup } from '../../shared/marks.ts'
-import { Bubble, markSeenFrom, useAsks } from './marks-ui.tsx'
+import { Bubble, markSeenFrom, resolveAllFrom, useAsks, type ResolveScope } from './marks-ui.tsx'
 import { Tip } from './Tip.tsx'
 import { copyToClipboard, type MenuItem, type MenuOpener } from './ContextMenu.tsx'
 import { cmd, keysOf, withCmd, withCmds, type CmdHandle, type CmdOpts } from './commands.ts'
-import { ArrowLineUpIcon, CardsIcon, CheckIcon, FolderIcon, FrameCornersIcon, FolderMinusIcon, FolderOpenIcon, FolderPlusIcon, PencilSimpleIcon, SignpostIcon } from './icons.tsx'
+import { ArrowLineUpIcon, CardsIcon, CheckIcon, CheckSquareOffsetIcon, FolderIcon, FrameCornersIcon, FolderMinusIcon, FolderOpenIcon, FolderPlusIcon, PencilSimpleIcon, SignpostIcon } from './icons.tsx'
 import {
   applyDrop, boardsIn, createFolder, deleteFolder, depthOf, folderEntries, folderIn, folderOf, foldersIn, holdsFolders, humanize, INDENT, isOwnSlot, labelOf, listIn, moveBoard, moveFolderToRoot, newFolderSlot, parentOf, readTitle,
   resolveDrop, retitleFolder, rootIndex, slugFor,
@@ -80,7 +80,11 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   const marks = useStore((s) => s.marks)
   const asks = useAsks()
   const framesOf = (boards: string[]) => boards.flatMap((b) => marks?.boards[b] ?? [])
-  const seeAll = (boards: string[]): MenuItem[] => (!PUBLISHED ? [{ label: 'Mark all as seen', icon: <CheckIcon size={15} />, onClick: () => markSeenFrom({ via: 'context', in: 'shell' }, framesOf(boards)) }] : [])                           // board slug → type and status (spec 20)
+  // Mark all as seen, and beside it Resolve all comments (spec 31 B.1) - for what the row stands for: a board, a folder
+  const seeAll = (boards: string[], scope: ResolveScope): MenuItem[] => (!PUBLISHED ? [
+    { label: 'Mark all as seen', icon: <CheckIcon size={15} />, onClick: () => markSeenFrom({ via: 'context', in: 'shell' }, framesOf(boards)) },
+    { label: 'Resolve all comments', icon: <CheckSquareOffsetIcon size={15} />, onClick: () => void resolveAllFrom({ via: 'context', in: 'shell', ...('board' in scope ? { board: scope.board } : {}) }, scope) },
+  ] : [])                           // board slug → type and status (spec 20)
   const label = (n: string) => labelOf(n, titles[n])                  // a board's label; a folder's is labelOf(name, item.title)
   const [tree, setTree] = useState<TreeItem[]>([])
   const [read, setRead] = useState(false)                             // the first tree read has answered
@@ -420,7 +424,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
     } catch (e) { h.fail('api'); throw e }
   }
   const boardMenu = (n: string, parent: string | null): MenuItem[] => {
-    const items: MenuItem[] = [{ label: 'Copy path', icon: <SignpostIcon size={15} />, onClick: () => copyToClipboard(`board: ${n}`, 'path copied', cmd('copy-path', { via: 'context', in: 'shell', board: n })) }, ...seeAll([n])]
+    const items: MenuItem[] = [{ label: 'Copy path', icon: <SignpostIcon size={15} />, onClick: () => copyToClipboard(`board: ${n}`, 'path copied', cmd('copy-path', { via: 'context', in: 'shell', board: n })) }, ...seeAll([n], { board: n })]
     if (PUBLISHED) return items
     // a feature or project board: its status first, as Linear puts it - the picker opens in place
     const m = useStore.getState().boardMeta[n]
@@ -443,7 +447,7 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   const folderMenu = (f: string, boards: string[], parent: string | null): MenuItem[] => {
     const items: MenuItem[] = [{ label: 'Copy path', icon: <SignpostIcon size={15} />, onClick: () => copyToClipboard(`folder: ${f}${parent ? ` (in ${parent})` : ''}  (boards: ${boards.join(', ') || 'none'})`, 'path copied', cmd('copy-path', { via: 'context', in: 'shell' })) }]
     if (PUBLISHED) return items
-    items.push({ label: 'Rename', icon: <PencilSimpleIcon size={15} />, onClick: () => setNaming({ kind: 'folder', name: f }) }, ...seeAll(boards))
+    items.push({ label: 'Rename', icon: <PencilSimpleIcon size={15} />, onClick: () => setNaming({ kind: 'folder', name: f }) }, ...seeAll(boards, { folder: f }))
     // two levels: a top-level folder can hold folders; a sub-folder can leave its parent
     if (!parent) items.push({ label: 'New folder inside', icon: <FolderPlusIcon size={15} />, onClick: () => newFolderAt(listIn(treeRef.current, f)?.length ?? 0, undefined, f) })
     else items.push({ label: 'Move to top level', icon: <ArrowLineUpIcon size={15} />, onClick: () => mutate((t) => {
@@ -618,8 +622,10 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
           <span>{labelOf(f, it.title)}</span>
           {(() => {
             // a closed folder's one slot rolls up what it hides: a question first, else a blue count
-            const r = open ? { asks: 0, fresh: 0 } : rollup(marks, asks, framesOf(boards))
-            return r.asks ? <Bubble n={r.asks} /> : <small className={r.fresh ? 'mk-fresh' : undefined}>{boards.length}</small>
+            // spec 31 B.7: closed, its number is its asks only - new is a blue dot, never a count; open, its board count
+            if (open) return <small>{boards.length}</small>
+            const r = rollup(marks, asks, framesOf(boards))
+            return r.asks ? <Bubble n={r.asks} /> : r.fresh ? <i className="mk-slot"><i className="mk-dot" data-mark="new" aria-label="new inside" /></i> : null
           })()}
         </button>,
       )

@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createJam } from '../src/server/jam/daemon.ts'
-import { appendEvents } from '../src/server/comments.ts'
+import { appendEvents, readLog } from '../src/server/comments.ts'
 import { record } from '../src/server/jam/ledger.ts'
 import { claudeAdapter } from '../src/server/jam/adapter/claude.ts'
 import { appendTalk, readTalk, recordFile, recordPathProblem, talkMinutes } from '../src/server/jam/session.ts'
@@ -147,8 +147,46 @@ describe('sessions: review fixes', () => {
     const w = await a3.session({ action: 'wrapup', id: SES, instructions: 'x', includeTalk: false, tags: 0, board: 'home' })
     expect(w.ok).toBe(true)
     const stored = JSON.parse(readFileSync(join(root, 'design', '.local', 'jam', 'wrapups', `${w.card!.id}.json`), 'utf8'))
-    expect(stored.captures[0].more).toEqual([{ ask: 'actually make it red' }])
+    expect(stored.captures[0].more).toEqual([{ ask: 'actually make it red', event: expect.stringMatching(/^mw-/) }])
     expect(stored.captures[0].verdict).toBe('more work')
+    a3.stop()
+    done()
+  })
+
+  it('spec 31 C.5: a More work ask you deleted is never sealed into the record', async () => {
+    const { root, done } = setup()
+    const commentsDir = join(root, 'design', 'comments')
+    const toReview = async (words: string) => {
+      const jam = createJam(root, { ...CFG, concurrency: 1 }, agent('ok', { hang: true }))
+      const r = rec(words, SES)
+      await jam.capture(r)
+      jam.stop()
+      const a2 = createJam(root, { ...CFG, concurrency: 1 }, agent())
+      await a2.act(r.id, card(a2, r.id).rev, 'confirm')
+      await a2.tick()
+      a2.stop()
+      return r
+    }
+    const j0 = createJam(root, { ...CFG, concurrency: 1 }, agent('ok', { hang: true }))
+    await j0.session({ action: 'start', id: SES })
+    j0.stop()
+    const r1 = await toReview('make it blue')
+    const a4 = createJam(root, { ...CFG, concurrency: 1 }, agent('ok', { hang: true }))
+    expect((await a4.act(r1.id, card(a4, r1.id).rev, 'more', 'the secret more work')).ok).toBe(true)
+    a4.stop()
+    // the More work runs, and the capture is back in review - its ask is on the card, done
+    const a5 = createJam(root, { ...CFG, concurrency: 1 }, agent())
+    await a5.tick()
+    expect(card(a5, r1.id).state).toBe('review')
+    a5.stop()
+    const a3 = createJam(root, { ...CFG, concurrency: 1 }, agent('ok', { hang: true }))
+    const mw = readLog(commentsDir, 'home').find((e) => e.id.startsWith('mw-'))!
+    appendEvents(commentsDir, 'home', [{ id: `del-${mw.id}`, ts: Date.now(), type: 'delete', commentId: mw.commentId, board: 'home', author: { email: 'nic@local', name: 'Nic' } }])
+    const w = await a3.session({ action: 'wrapup', id: SES, instructions: 'x', includeTalk: false, tags: 0, board: 'home' })
+    expect(w.ok).toBe(true)
+    // (the agent's reply to it was written by the run that read it - that is its own words, and stays)
+    const stored = JSON.parse(readFileSync(join(root, 'design', '.local', 'jam', 'wrapups', `${w.card!.id}.json`), 'utf8'))
+    expect(JSON.stringify(stored.captures[0].more ?? [])).not.toContain('the secret more work')
     a3.stop()
     done()
   })

@@ -121,7 +121,7 @@ export interface Payload { record: CaptureRecord; recordHash: string; edited?: s
   /** notes written in its read-back after it ended, in order */
   added?: { at: number; text: string; id?: string }[] }
 /** The run a capture was made while reviewing: its ask (and, for a capture, its own record and edit) and the result. */
-export interface Reviewed { asks: Msg[]; result: string; capture?: { record: CaptureRecord; recordHash: string; edited?: string; added?: { at: number; text: string; id?: string }[] } }
+export interface Reviewed { asks: Msg[]; result: string; /** the board its asks were written on (0.31): their tombstones are that board's */ board?: string; capture?: { record: CaptureRecord; recordHash: string; edited?: string; added?: { at: number; text: string; id?: string }[] } }
 
 export interface Card {
   id: string                 // 'c-' + the first event id, or the capture / wrap-up id

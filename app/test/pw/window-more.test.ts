@@ -55,7 +55,9 @@ describe('the strip\'s menus, from main\'s record (A2.4, A2.7, A2.14 #19, #24)',
     await w.run.call('tabMenu', { id })
     expect(await lastPopup()).toEqual([
       { label: 'Open in Browser', enabled: true }, { label: 'Reveal in Finder', enabled: true },
-      { label: 'Copy Local Link', enabled: true }, { label: 'Mark All as Seen', enabled: true }, { label: 'Close Tab', enabled: true },
+      { label: 'Copy Local Link', enabled: true }, { label: 'Mark All as Seen', enabled: true },
+      // spec 31 B.1: beside it, for a canvas whose features say `resolve-all` (the fake's do not: greyed)
+      { label: 'Resolve All Comments', enabled: false }, { label: 'Close Tab', enabled: true },
     ])
     const before = (await effects()).copies.length
     expect(await w.run.call('popup:click', { label: 'Copy Local Link' })).toBe(true)
