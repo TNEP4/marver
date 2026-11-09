@@ -3,7 +3,7 @@ import { TransformWrapper, TransformComponent, type ReactZoomPanPinchContentRef 
 import { CONFIG, useStore } from '../store.ts'
 import { letGoOfTile } from '../jam-state.ts'
 import { bootHash, linkTargets } from '../hash.ts'
-import { isLatest, navigated, navNow, revealFrame } from '../goto.ts'
+import { isLatest, navigated, navigatedByHand, navNow, revealFrame } from '../goto.ts'
 import { noteGestureCmd, startPerf } from '../perf.ts'
 import { FrameNode, HEADER } from './FrameNode.tsx'
 import { NOTE_GAP } from '../notes.ts'
@@ -447,6 +447,7 @@ export function Canvas() {
     if (!app || !canvas) return
     let settle = 0
     const beginGesture = (panning: boolean) => {
+      navigatedByHand()   // a person's pan or zoom: a show or link still loading gives way (spec 31 D3)
       // sh-camera = a CANVAS pan/zoom (the image-LOD freeze signal); sh-gesturing also drops iframe
       // pointer-events. A frame click/drag sets only sh-gesturing.
       document.getElementById('sh-world')?.classList.add('sh-gesturing', 'sh-camera')
@@ -514,13 +515,14 @@ export function Canvas() {
     document.getElementById('sh-world')?.classList[on ? 'add' : 'remove']('sh-gesturing', 'sh-camera')
   }
   const pan = (on: boolean) => () => {
+    if (on) navigatedByHand()   // a person's drag-pan (spec 31 D3)
     camera(on)
     document.body.classList[on ? 'add' : 'remove']('sh-panning')
     const sp = spacePan.current
     if (sp && on) sp.panned = true
     else if (sp?.panned) { sp.h.done(); spacePan.current = null }
   }
-  const zoom = (on: boolean) => () => camera(on)
+  const zoom = (on: boolean) => () => { if (on) navigatedByHand(); camera(on) }   // a person's pinch (spec 31 D3)
 
   // no initialPosition props on the wrapper: rzpp applies them ASYNC after mount and
   // stomps the boot fit when data is inlined (published builds) - the boot fit owns

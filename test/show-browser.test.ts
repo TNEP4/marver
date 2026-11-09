@@ -92,7 +92,7 @@ const FAKE_APP = `(() => {
   const shows = new Set()
   window.__app = { fronts: 0, show: (t) => { for (const fn of shows) fn(t); return shows.size } }
   window.marverApp = Object.freeze({ v: 1, topInset: 0, hello() {}, theme() {}, busy() {}, menu() {},
-    onAppState: () => () => {}, onMenuClick: () => () => {},
+    onAppState: () => () => {}, onMenuClick: (fn) => { window.__app.menu = fn; return () => {} },
     onShow: (fn) => { shows.add(fn); return () => shows.delete(fn) },
     front: () => { window.__app.fronts++ } })
 })()`
@@ -411,6 +411,166 @@ describe('a show and the boot', () => {
     expect(await t.ev(VIEW)).toMatchObject({ board: 'main', sel: ['n-two'] })
     expect(await acks(seq)).toEqual({ shown: 0, notice: 0 })
   }, 60_000)
+
+  const byHand = (name: string, act: (t: Awaited<ReturnType<typeof open>>) => Promise<void>, sel: string[] | null) => it(name, async () => {
+    if (!browser) return
+    const t = await open('#/b/main')
+    await show({ board: 'main', n: ['n-two'] })
+    await t.until(settled('main', ['n-two']))
+    await t.ev(`__hold('other')`)
+    const seq = await show({ board: 'other', n: ['n-three'] })
+    await t.until(`__gate.asked`)
+    await act(t)
+    await t.ev(`__gate.release()`)
+    await new Promise((r) => setTimeout(r, 1500))
+    const v = await t.ev(VIEW)
+    expect(v.board).toBe('main')
+    if (sel) expect(v.sel).toEqual(sel)
+    expect(await acks(seq)).toEqual({ shown: 0, notice: 0 })
+  }, 60_000)
+  /** a real mouse press and release at a node's middle, Shift held when asked */
+  const press = async (t: Awaited<ReturnType<typeof open>>, key: string, shift = false) => {
+    const r = await t.ev(`(() => { const b = document.querySelector('.sh-node[data-node="${key}"]').getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + 12 } })()`)
+    for (const type of ['mousePressed', 'mouseReleased']) await browser!.send('Input.dispatchMouseEvent', { type, x: r.x, y: r.y, button: 'left', clickCount: 1, modifiers: shift ? 8 : 0 }, t.s)
+  }
+  byHand('a person clicking a frame on the canvas while a show loads its board: the show gives way', (t) => press(t, 'n-two'), ['n-two'])
+  byHand('a person Shift-clicking a frame on the canvas while a show loads its board: the show gives way', (t) => press(t, 'n-two', true), null)
+  /** a trusted key press (CDP), with its modifiers (1 alt, 2 ctrl, 4 meta, 8 shift) */
+  const key = async (t: Awaited<ReturnType<typeof open>>, k: string, code: string, vk: number, modifiers = 0) => {
+    for (const type of ['keyDown', 'keyUp']) await browser!.send('Input.dispatchKeyEvent', { type, key: k, code, windowsVirtualKeyCode: vk, modifiers }, t.s)
+  }
+  byHand('⌘A while a show loads its board: the show gives way', (t) => key(t, 'a', 'KeyA', 65, 4), ['n-one', 'n-one-b', 'n-two'])
+  byHand('Escape (deselect) while a show loads its board: the show gives way', (t) => key(t, 'Escape', 'Escape', 27), [])
+  byHand('⇧1 (fit all) while a show loads its board: the show gives way', (t) => key(t, '!', 'Digit1', 49, 8), ['n-two'])
+  byHand('⇧0 (actual size) while a show loads its board: the show gives way', (t) => key(t, ')', 'Digit0', 48, 8), ['n-two'])
+  // any key counts (goto.ts watchHands) - a device preset's digit included; F13 here, since a preset would tidy and
+  // rewrite this fixture's board for the cases after it
+  byHand('any other key while a show loads its board: the show gives way', (t) => key(t, 'F13', 'F13', 124), ['n-two'])
+  byHand('Play and back (P, then Escape) while a show loads its board: the show gives way', async (t) => {
+    await key(t, 'p', 'KeyP', 80)
+    await t.until(`!!__mvStore.getState().play`)
+    await key(t, 'Escape', 'Escape', 27)
+    await t.until(`!__mvStore.getState().play`)
+  }, null)
+  byHand('a press on the empty canvas while a show loads its board: the show gives way', async (t) => {
+    for (const type of ['mousePressed', 'mouseReleased']) await browser!.send('Input.dispatchMouseEvent', { type, x: 1300, y: 860, button: 'left', clickCount: 1 }, t.s)
+  }, null)
+
+  it('real typing in a field while a show loads its board is words, not navigation: the notice, the draft kept', async () => {
+    if (!browser) return
+    const t = await open('#/b/main')
+    await t.ev(`__hold('other')`)
+    const seq = await show({ board: 'other', n: ['n-three'] })
+    await t.until(`__gate.asked`)
+    await t.ev(`(() => { const ta = document.createElement('textarea'); ta.id = 'draft'; document.body.append(ta); ta.focus(); return 1 })()`)
+    for (const type of ['keyDown', 'keyUp']) await browser.send('Input.dispatchKeyEvent', { type, key: 'h', code: 'KeyH', windowsVirtualKeyCode: 72, ...(type === 'keyDown' ? { text: 'h' } : {}) }, t.s)
+    await t.until(`document.getElementById('draft').value === 'h'`)
+    await t.ev(`__gate.release()`)
+    await t.until(`!!document.querySelector('.sh-show-notice')`)
+    expect(await t.ev(`__mvStore.getState().board`)).toBe('main')
+    await expect.poll(() => acks(seq), { timeout: 5000 }).toEqual({ shown: 0, notice: 1 })
+  }, 60_000)
+
+  it('an app menu item chosen while a show loads its board: the show gives way (its replayed key is untrusted)', async () => {
+    if (!browser) return
+    const t = await open('#/b/main', { app: true })
+    await t.ev(`__hold('other')`)
+    const seq = await show({ board: 'other', n: ['n-three'] })
+    await t.until(`__gate.asked`)
+    await t.ev(`__app.menu({ id: 'play' }), 1`)   // Play: its key handler counts nothing of its own
+    await t.ev(`__gate.release()`)
+    await new Promise((r) => setTimeout(r, 1500))
+    expect((await t.ev(VIEW)).board).toBe('main')
+    expect(await acks(seq)).toEqual({ shown: 0, notice: 0 })
+  }, 60_000)
+
+  it('the app\'s own menu action (Mark All as Seen) chosen while a show loads its board: the show gives way', async () => {
+    if (!browser) return
+    const t = await open('#/b/main', { app: true })
+    await t.ev(`__hold('other')`)
+    const seq = await show({ board: 'other', n: ['n-three'] })
+    await t.until(`__gate.asked`)
+    await t.ev(`__app.menu({ id: 'mark-all-seen' }), 1`)   // not Resolve All Comments: it would resolve this fixture's threads for the cases after it
+    await t.ev(`__gate.release()`)
+    await new Promise((r) => setTimeout(r, 1500))
+    expect((await t.ev(VIEW)).board).toBe('main')
+    expect(await acks(seq)).toEqual({ shown: 0, notice: 0 })
+  }, 60_000)
+
+  it('a key a frame forwards (sh:key) while a show loads its board: the show gives way', async () => {
+    if (!browser) return
+    const t = await open('#/b/main')
+    await t.ev(`__hold('other')`)
+    const seq = await show({ board: 'other', n: ['n-three'] })
+    await t.until(`__gate.asked`)
+    await t.ev(`document.querySelector('.sh-node[data-node="n-one"] iframe').contentWindow.eval("parent.postMessage({ type: 'sh:key', key: 'F13' }, '*')"), 1`)
+    await new Promise((r) => setTimeout(r, 200))
+    await t.ev(`__gate.release()`)
+    await new Promise((r) => setTimeout(r, 1500))
+    expect((await t.ev(VIEW)).board).toBe('main')
+    expect(await acks(seq)).toEqual({ shown: 0, notice: 0 })
+  }, 60_000)
+
+  it('Enter held on the notice\'s Go: the Go goes, its own key repeat never cancels it', async () => {
+    if (!browser) return
+    const t = await open('#/b/main')
+    await t.ev(TYPE)
+    await show({ board: 'other', n: ['n-three'] })
+    await t.until(`!!document.querySelector('.sh-show-notice .cmd')`)
+    await t.ev(`__hold('other')`)
+    await t.ev(`document.querySelector('.sh-show-notice .cmd').focus(), 1`)
+    await browser.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' }, t.s)
+    await t.until(`__gate.asked`)
+    for (let i = 0; i < 3; i++) await browser.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, autoRepeat: true }, t.s)
+    await browser.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 }, t.s)
+    await t.ev(`__gate.release()`)
+    await t.until(settled('other', ['n-three']))
+  }, 60_000)
+
+  byHand('a comment stack clicked on a frame while a show loads its board: the show gives way', async (t) => {
+    await t.until(`!!document.querySelector('.sh-node[data-node="n-one"] .cm-stack, .cm-stack')`)
+    await t.ev(`document.querySelector('.cm-stack').click(), 1`)
+  }, null)
+
+  it('a person\'s own board switch, panned while it loads, still lands fitted', async () => {
+    if (!browser) return
+    const t = await open('#/b/main')
+    await show({ board: 'main', n: ['n-two'] })
+    await t.until(settled('main', ['n-two']))
+    await t.ev(`__hold('other')`)
+    await t.ev(`[...document.querySelectorAll('.sh-panel *')].find((el) => !el.children.length && el.textContent.trim() === 'Other').click(), 1`)
+    await t.until(`__gate.asked`)
+    await browser.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 700, y: 450, deltaX: 3000, deltaY: 0 }, t.s)
+    await t.ev(`__gate.release()`)
+    await t.until(`(() => { const v = ${VIEW}; return v.board === 'other' && v.visible.join() === 'n-three' })()`)
+  }, 60_000)
+
+  byHand('a person panning with the wheel while a show loads its board: the show gives way', async (t) => {
+    await browser!.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 700, y: 450, deltaX: 400, deltaY: 0 }, t.s)
+  }, ['n-two'])
+
+  for (const shift of [false, true]) {
+    for (const via of ['server', 'app'] as const) {
+      it(`a person ${shift ? 'Shift-' : ''}clicking a variant badge while a ${via === 'server' ? 'show' : 'link'} loads another board: it gives way`, async () => {
+        if (!browser) return
+        const t = await open('#/b/vars', { app: via === 'app' })
+        await t.until(`!!document.querySelector('.sh-node[data-node="v-b"] .sh-vbadge')`)
+        // the badge at rest (the boot's camera landed): the click goes where it was measured
+        const at = `JSON.stringify(document.querySelector('.sh-node[data-node="v-b"] .sh-vbadge').getBoundingClientRect())`
+        await t.until(`(async () => { const a = ${at}; await new Promise((r) => setTimeout(r, 250)); return a === ${at} })()`)
+        await t.ev(`__hold('other')`)
+        const seq = via === 'server' ? await show({ board: 'other', n: ['n-three'] }) : (await t.ev(`__app.show({ board: 'other', n: ['n-three'] })`), 0)
+        await t.until(`__gate.asked`)
+        const r = await t.ev(`(() => { const b = document.querySelector('.sh-node[data-node="v-b"] .sh-vbadge').getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 } })()`)
+        for (const type of ['mousePressed', 'mouseReleased']) await browser.send('Input.dispatchMouseEvent', { type, x: r.x, y: r.y, button: 'left', clickCount: 1, modifiers: shift ? 8 : 0 }, t.s)
+        await t.ev(`__gate.release()`)
+        await new Promise((r) => setTimeout(r, 1500))
+        expect((await t.ev(VIEW)).board).toBe('vars')
+        expect(await t.ev(`__mvStore.getState().selection`)).toContain('v-b')
+        if (via === 'server') expect(await acks(seq)).toEqual({ shown: 0, notice: 0 })
+      }, 60_000)
+    }
+  }
 
   it('a person clicking a variant group\'s caption while a show loads its board: the show gives way', async () => {
     if (!browser) return

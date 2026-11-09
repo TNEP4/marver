@@ -292,5 +292,19 @@
     "prop": "onClick",
     "label": "",
     "reason": "a notice's action (Undo) records its own command - resolve-undo in marks-ui.tsx undoResolveAll"
+  },
+  {
+    "file": "src/client/shell/goto.ts",
+    "fn": "watchHands",
+    "prop": "addEventListener:pointerdown",
+    "label": "",
+    "reason": "not an input of its own: it notes that the person acted (spec 31 D3), so a marver show or app link still loading gives way; the input itself records its command where it is handled"
+  },
+  {
+    "file": "src/client/shell/goto.ts",
+    "fn": "watchHands",
+    "prop": "addEventListener:keydown",
+    "label": "",
+    "reason": "not an input of its own: it notes that the person acted (spec 31 D3), so a marver show or app link still loading gives way; the input itself records its command where it is handled"
   }
 ]

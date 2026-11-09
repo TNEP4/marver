@@ -71,6 +71,48 @@ export function navigated(): number {
   if (s.board) void s.switchBoard(s.board)
   return ++gotoSeq
 }
+/**
+ * A person acted on the canvas or its camera themselves - a frame, a badge or a comment stack clicked, ⌘A, Escape, a pan,
+ * a zoom, a fit or zoom key, the zoom menu, a notification's View (spec 31 D3): a `marver show` or an app link still on
+ * its way gives way, its board never committed over what they did (show.ts reads `handNow`). Its own counter, apart
+ * from the navigation number: nothing the person started themselves - a board switch, its fit - is cancelled by it.
+ * Programmatic selection and fits (the show's own) never call it, so a show never cancels itself.
+ *
+ * Accepted limits for this release: a click or Escape inside a frame the person is interacting with arrives as a message
+ * (`sh:frame-down`, `sh:exit-interact`) and is not counted - a show still loading then lands over it; and a frame's own
+ * script that synthesizes keys is forwarded and counted like the person's - a show still loading then does not land,
+ * and nothing else changes.
+ */
+let handSeq = 0
+export function navigatedByHand(): void { ++handSeq }
+export const handNow = (): number => handSeq
+
+const TEXT = 'textarea, input, select, [contenteditable=""], [contenteditable="true"]'
+const MODIFIERS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Fn'])
+/**
+ * Every input the person makes in the shell counts (spec 31 D3) - a pointer pressed, a key, a wheel - so no handler can
+ * be missed: a device preset, a Jam tile, Play and back, a toolbar button. Not words typed into a field (they make a
+ * show the notice instead, show.ts) nor a modifier key alone; never a synthetic event (`isTrusted`). Input inside a
+ * frame's own document never reaches here: its wheel is forwarded and counted by the canvas (Canvas.tsx beginGesture),
+ * a click on its node by FrameNode, a key it forwards (`sh:key`, the stage's `sh:stage-key`) where the shell takes it;
+ * the app menu's items replay their key untrusted and count at their relay (app-bridge.ts runMenuItem). Installed once
+ * by App.tsx; answers what removes it.
+ */
+export function watchHands(target: Window = window): () => void {
+  const inText = (e: Event) => { const t = e.target as Element | null; return !!t?.closest?.(TEXT) }
+  const press = (e: PointerEvent) => { if (e.isTrusted && !inText(e)) navigatedByHand() }
+  // a key held down repeats: one choice, counted once (a held Enter on the show notice's Go never cancels the Go)
+  const key = (e: KeyboardEvent) => { if (e.isTrusted && !e.repeat && !MODIFIERS.has(e.key) && !inText(e)) navigatedByHand() }
+  const wheel = (e: WheelEvent) => { if (e.isTrusted) navigatedByHand() }
+  target.addEventListener('pointerdown', press, true)
+  target.addEventListener('keydown', key, true)
+  target.addEventListener('wheel', wheel, { capture: true, passive: true })
+  return () => {
+    target.removeEventListener('pointerdown', press, true)
+    target.removeEventListener('keydown', key, true)
+    target.removeEventListener('wheel', wheel, { capture: true })
+  }
+}
 /** The navigation now, without starting one: a caller that waits (`marver show` for the boot) reads it first, and
  *  gives way if a person navigated meanwhile (`isLatest`). */
 export const navNow = (): number => gotoSeq

@@ -110,6 +110,13 @@ describe('marver link: the app\'s link only while the app is in use with this ca
     expect(await link()).toBe(`http://localhost:${PORT}/#/b/main?f=demo/one`)
   }, 120_000)
 
+  it('a place the app would not take (65 frames, past TARGET_LIST_MAX) is the web link, never a marver:// one it would drop', () => {
+    const hash = `#/b/main?f=${Array.from({ length: 65 }, (_, i) => `demo/f${i}`).join(',')}`
+    expect(linkFor(root, `http://localhost:${PORT}/`, hash, { app: true })).toBe(`http://localhost:${PORT}/${hash}`)
+    const ok = `#/b/main?f=${Array.from({ length: 64 }, (_, i) => `demo/f${i}`).join(',')}`
+    expect(linkFor(root, `http://localhost:${PORT}/`, ok, { app: true }).startsWith('marver://open?')).toBe(true)
+  })
+
   it('linkFor and the file rule, as functions', () => {
     expect(linkFor(root, `http://localhost:${PORT}/`, '#/b/main', { app: true })).toBe(`marver://open?ws=${encodeURIComponent(root)}&to=${encodeURIComponent('#/b/main')}&port=${PORT}`)
     expect(linkFor(root, `http://localhost:${PORT}/`, '#/b/main', { app: true, web: true })).toBe(`http://localhost:${PORT}/#/b/main`)

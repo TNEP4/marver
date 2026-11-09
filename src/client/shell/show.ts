@@ -19,7 +19,7 @@ import { checkShowTarget, type ShowTarget } from '../../shared/deep-link.ts'
 import { api, typedUnsent } from './api.ts'
 import { bootLanded, cancelBoot, canvasCtl } from './canvas/ctl.ts'
 import { openThreadAt } from './jam-keys.ts'
-import { isLatest, navigated, navNow, revealFrame, switchFor } from './goto.ts'
+import { handNow, isLatest, navigated, navNow, revealFrame, switchFor } from './goto.ts'
 import { linkTargets } from './hash.ts'
 import { useJamCapture } from './jam-capture.ts'
 import { APP } from './marver-app.ts'
@@ -46,7 +46,7 @@ const holdsWords = (): boolean => typedUnsent() || !!useJamCapture.getState().cu
 let booting = true
 /** The board the boot failed to load, while the tab still names it: a show to it loads it again, never takes it as shown */
 let failedBoard: string | null = null
-let deferred: { t: ShowTarget | 'landing'; seq?: number; from: ShowFrom; n: number; nav: number } | null = null
+let deferred: { t: ShowTarget | 'landing'; seq?: number; from: ShowFrom; n: number; nav: number; hand: number } | null = null
 
 /** App.tsx, once `boot()` answered: a board that failed or has no nodes is settled now; one with nodes once its first
  *  camera is applied (Canvas.tsx), or two seconds at most. */
@@ -58,7 +58,7 @@ export function bootSettled(ok: boolean): void {
     const d = deferred
     deferred = null
     // the newest show, and no navigation of a person's since it came: applied now
-    if (d && d.n === current && isLatest(d.nav)) void apply(d.t, d.seq, d.from, d.n)
+    if (d && d.n === current && isLatest(d.nav) && d.hand === handNow()) void apply(d.t, d.seq, d.from, d.n)
   }
   if (!ok || !useStore.getState().nodes.length) settle()
   else void Promise.race([bootLanded, new Promise((r) => setTimeout(r, 2000))]).then(settle)
@@ -92,7 +92,9 @@ const LANDING = 'the board this canvas opens on'
  */
 async function go(t: ShowTarget | 'landing', n: number, force: boolean): Promise<ShowResult | 'blocked'> {
   const nav = navigated()
-  const owned = () => n === current && isLatest(nav)
+  const hand = handNow()
+  // the newest show, no navigation since, and nothing the person did on the canvas since (goto.ts navigatedByHand)
+  const owned = () => n === current && isLatest(nav) && hand === handNow()
   const words = () => !force && holdsWords()
   const alive = () => owned() && !words()
   const ended = (): 'blocked' | 'stale' => (owned() && words() ? 'blocked' : 'stale')
@@ -204,7 +206,7 @@ export async function showTarget(raw: unknown, from: ShowFrom): Promise<ShowResu
   const n = ++current
   if (booting) {
     // the newest alone waits for the boot (an older deferred one is superseded: never answered)
-    deferred = { t, ...(typeof seq === 'number' ? { seq } : {}), from, n, nav: navNow() }
+    deferred = { t, ...(typeof seq === 'number' ? { seq } : {}), from, n, nav: navNow(), hand: handNow() }
     return 'deferred'
   }
   return apply(t, typeof seq === "number" ? seq : undefined, from, n)

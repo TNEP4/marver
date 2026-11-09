@@ -1,3 +1,4 @@
+import { navigatedByHand } from '../goto.ts'
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { cap, frameUrl, shownRev, useStore, CONFIG, type Node } from '../store.ts'
 import { admit, release } from './admission.ts'
@@ -300,6 +301,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   const drag = (e: React.PointerEvent, mode: 'move' | 'e' | 's' | 'se') => {
     e.stopPropagation()
     if (e.button !== 0) return
+    navigatedByHand()   // the person's own selection: a show or link still loading gives way (spec 31 D3)
     // shift-click toggles multi-selection instead of dragging (Figma convention)
     if (e.shiftKey && mode === 'move') { cmd('select', { via: 'click', in: 'shell', frame: node.frame }); select(node.key, true); return }
     if (mode === 'move') cmd('select', { via: 'click', in: 'shell', frame: node.frame })
@@ -423,7 +425,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
       {frame.variantGroup && (
         <div className="sh-vbadge sh-no-pan" title={`${frame.variantGroup} · variant ${frame.variant?.toUpperCase()} - click to select`}
           onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { cmd('select', { via: 'click', in: 'shell', frame: node.frame }); select(node.key, e.shiftKey) }}>
+          onClick={(e) => { cmd('select', { via: 'click', in: 'shell', frame: node.frame }); navigatedByHand(); select(node.key, e.shiftKey) }}>
           <b>{frame.variant?.toUpperCase()}</b>
           <span>{variantName}</span>
         </div>
