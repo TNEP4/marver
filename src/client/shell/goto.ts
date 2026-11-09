@@ -77,6 +77,11 @@ export function navigated(): number {
  * its way gives way, its board never committed over what they did (show.ts reads `handNow`). Its own counter, apart
  * from the navigation number: nothing the person started themselves - a board switch, its fit - is cancelled by it.
  * Programmatic selection and fits (the show's own) never call it, so a show never cancels itself.
+ *
+ * Accepted limits for this release: a click or Escape inside a frame the person is interacting with arrives as a message
+ * (`sh:frame-down`, `sh:exit-interact`) and is not counted - a show still loading then lands over it; and a frame's own
+ * script that synthesizes keys is forwarded and counted like the person's - a show still loading then does not land,
+ * and nothing else changes.
  */
 let handSeq = 0
 export function navigatedByHand(): void { ++handSeq }

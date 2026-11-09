@@ -484,6 +484,19 @@ describe('a show and the boot', () => {
     expect(await acks(seq)).toEqual({ shown: 0, notice: 0 })
   }, 60_000)
 
+  it('the app\'s own menu action (Resolve All Comments) chosen while a show loads its board: the show gives way', async () => {
+    if (!browser) return
+    const t = await open('#/b/main', { app: true })
+    await t.ev(`__hold('other')`)
+    const seq = await show({ board: 'other', n: ['n-three'] })
+    await t.until(`__gate.asked`)
+    await t.ev(`__app.menu({ id: 'resolve-all-comments' }), 1`)
+    await t.ev(`__gate.release()`)
+    await new Promise((r) => setTimeout(r, 1500))
+    expect((await t.ev(VIEW)).board).toBe('main')
+    expect(await acks(seq)).toEqual({ shown: 0, notice: 0 })
+  }, 60_000)
+
   it('a key a frame forwards (sh:key) while a show loads its board: the show gives way', async () => {
     if (!browser) return
     const t = await open('#/b/main')
