@@ -84,7 +84,9 @@ export function jamBusy(root: string, live?: () => Set<string>): Set<string> {
   return raw.v2 ? liveThreads(raw.v2, ctxFor(root)) : new Set()
 }
 
-export interface Resolved { board: string; thread: string; event: string }
+/** `board` is the log the event is written to; `stamp`, when it differs, the board its thread's own events name (a log
+ *  copied from another board's keeps their `board`) - the event carries it, so every reader groups it with its thread. */
+export interface Resolved { board: string; thread: string; event: string; stamp?: string }
 export interface Receipt {
   op: string
   scope: Scope
@@ -122,14 +124,14 @@ const idFor = (kind: 'ra' | 'ru', op: string, board: string, thread: string) =>
 export const readReceipt = (root: string, op: string): Receipt | null => (OP_RE.test(op) ? readJson<Receipt>(receiptFile(root, op)) : null)
 
 /** The open threads a scope covers, each with its own log - shown threads only (a deleted one is not). */
-export function threadsIn(root: string, frames: Set<string> | null): { board: string; thread: string; frame?: string }[] {
+export function threadsIn(root: string, frames: Set<string> | null): { board: string; thread: string; frame?: string; stamp?: string }[] {
   const dir = join(root, 'design', 'comments')
-  const out: { board: string; thread: string; frame?: string }[] = []
+  const out: { board: string; thread: string; frame?: string; stamp?: string }[] = []
   for (const board of listBoards(dir)) {
     for (const t of replay(readLog(dir, board))) {
       if (t.resolved) continue
       if (frames && (!t.frame || !frames.has(t.frame))) continue
-      out.push({ board, thread: t.id, ...(t.frame ? { frame: t.frame } : {}) })
+      out.push({ board, thread: t.id, ...(t.frame ? { frame: t.frame } : {}), ...(t.board && t.board !== board ? { stamp: t.board } : {}) })
     }
   }
   return out
@@ -179,7 +181,7 @@ export function resolveAll(root: string, op: string, scope: Scope, o: ResolveAll
     plan = []
     for (const t of threadsIn(root, where.frames)) {
       if (busy.has(`${t.board}\t${t.thread}`)) { skipped.push({ board: t.board, thread: t.thread, why: 'working' }); continue }
-      plan.push({ board: t.board, thread: t.thread, event: idFor('ra', op, t.board, t.thread) })
+      plan.push({ board: t.board, thread: t.thread, event: idFor('ra', op, t.board, t.thread), ...(t.stamp ? { stamp: t.stamp } : {}) })
     }
   }
   const receipt: Receipt = { op, scope, at: had?.at ?? at, state: 'pending', resolved: plan, skipped, failed: [] }
@@ -187,7 +189,7 @@ export function resolveAll(root: string, op: string, scope: Scope, o: ResolveAll
   save(file, receipt)
   const byBoard = new Map<string, CommentEvent[]>()
   for (const r of plan) {
-    const ev: CommentEvent = { id: r.event, ts: at, type: 'resolve', commentId: r.thread, board: r.board, op }
+    const ev: CommentEvent = { id: r.event, ts: at, type: 'resolve', commentId: r.thread, board: r.stamp ?? r.board, op }
     byBoard.set(r.board, [...(byBoard.get(r.board) ?? []), ev])
   }
   receipt.failed = appendAll(dir, byBoard)
@@ -219,7 +221,7 @@ export function undoResolveAll(root: string, op: string, o: { now?: number } = {
     const latest = events.filter((e) => (e.type === 'resolve' || e.type === 'reopen') && e.commentId === r.thread)
       .sort((a, b) => a.ts - b.ts || (a.id < b.id ? -1 : 1)).pop()
     const shown = replay(events).some((t) => t.id === r.thread)
-    if (shown && (latest?.id === r.event || latest?.id === reopen)) reopened.push({ board: r.board, thread: r.thread, event: reopen })
+    if (shown && (latest?.id === r.event || latest?.id === reopen)) reopened.push({ board: r.board, thread: r.thread, event: reopen, ...(r.stamp ? { stamp: r.stamp } : {}) })
     else changed.push({ board: r.board, thread: r.thread })
   }
   const receipt: UndoReceipt = { op, at: had?.at ?? at, state: 'pending', reopened, changed, failed: [] }
@@ -228,7 +230,7 @@ export function undoResolveAll(root: string, op: string, o: { now?: number } = {
   for (const r of reopened) {
     // never before the resolve it undoes, whatever this clock says (replay orders by time)
     const resolveTs = logOf(r.board).find((e) => e.id === idFor('ra', op, r.board, r.thread))?.ts ?? 0
-    byBoard.set(r.board, [...(byBoard.get(r.board) ?? []), { id: r.event, ts: Math.max(at, resolveTs + 1), type: 'reopen', commentId: r.thread, board: r.board, op }])
+    byBoard.set(r.board, [...(byBoard.get(r.board) ?? []), { id: r.event, ts: Math.max(at, resolveTs + 1), type: 'reopen', commentId: r.thread, board: r.stamp ?? r.board, op }])
   }
   receipt.failed = appendAll(dir, byBoard)
   const lost = new Set(receipt.failed.flatMap((f) => f.threads.map((t) => `${f.board}\t${t}`)))

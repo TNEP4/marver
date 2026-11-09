@@ -22,7 +22,7 @@ import { claimInvite, createInvite, inviteInfo, issueDeviceSession, loadStore, n
 import { ceilingsFromRights, commentAllowed, entryAllowed, loadRequests, loadShare, operativeMode, provisionVerdict, putRequest, reconfirmGrant, removeGrant, resolveAccess, resolveRequest, rosterEtag, setBlocked, setGeneralMode, shareState, upsertGrant } from './share.ts'
 import { canvasIdentity, deriveThreads, loadSeen, markSeen, signCanvasJws, unreadCount, verifyCanvasJws, type BoardThreads } from './summary.ts'
 import { notifyCommentActivity, relayNotify, transitionId, type NotifyCtx } from './notify.ts'
-import type { Mention } from '../shared/events.ts'
+import { deletedMessages, type Mention } from '../shared/events.ts'
 import { ALL_SCENES } from '../shared/board-tree.ts'
 import { secureSuffix } from './secure-cookie.ts'
 
@@ -802,7 +802,12 @@ export function collabHandler(dataDir: string, distDir: string) {
           if (!legacy && !can(currentUser(req), rights, m[1], 'read')) return json(res, 404, { error: 'no such board' }), true
           let events = readLog(commentsDir, m[1])
           if (legacy) { const exposed = legacyExposure(events, rights, shows!); events = events.filter((e) => exposed(e).length) }
-          return json(res, 200, { events: rawTransport(req) ? events : events.map(project) }), true
+          if (rawTransport(req)) return json(res, 200, { events }), true
+          // a deleted message's words never travel to a browser again (spec 31 C.4): the log keeps the event (sync is
+          // by id), the transport carries it without its body or mentions - as replay would show it anyway
+          const gone = deletedMessages(events)
+          const shown = gone.size ? events.map((e) => ((e.type === 'create' || e.type === 'reply' || e.type === 'edit') && e.commentId && gone.has(e.commentId) ? { ...e, body: '', mentions: undefined } : e)) : events
+          return json(res, 200, { events: shown.map(project) }), true
         }
         if (path === 'invite-info') {
           if (limited(`ip:${ip}`)) return json(res, 429, { error: 'too many attempts - wait a minute' }), true
