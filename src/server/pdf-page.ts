@@ -253,9 +253,9 @@ ${clip ? `body { max-height: ${Math.max(0, room)}px !important; overflow: hidden
               if (kind === 'whole' || target !== k) continue
             } else if (kind === 'whole') continue
           }
-          // into an html element, or an outer svg (an effect inside it is the svg's, above)
-          if (!(k instanceof SVGElement) || (k.tagName === 'svg' && !(k as SVGElement).ownerSVGElement)) visit(k)
-          else if (k instanceof SVGElement) visitSvg(k)
+          // into an html element; inside an svg, every element is looked at and an effect is the outer svg's (visitSvg)
+          if (!(k instanceof SVGElement)) visit(k)
+          else visitSvg(k)
         }
       }
       // inside an svg every element is looked at (an effect makes its outer svg a whole patch, once)
