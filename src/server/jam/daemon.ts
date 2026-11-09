@@ -456,16 +456,17 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       const c = j.cards.find((x) => x.id === m.card)
       const g = goneIn(m.board)
       if (!c) continue
+      // what THIS card lost to a tombstone, if anything - a card nothing was taken from is never dropped here
+      let lost = false
       const brief = dropDeleted(m.brief, m.board, ts)
-      if (brief !== m.brief) { m.brief = brief; c.brief = dropDeleted(c.brief, m.board, ts); changed = true }
+      if (brief !== m.brief) { m.brief = brief; c.brief = dropDeleted(c.brief, m.board, ts); changed = lost = true }
       const pm = packet?.members.find((x) => x.card === m.card)
-      if (pm && dropDeleted(pm.brief, m.board, ts) !== pm.brief) changed = true
-      if (c.events.some((id) => g.has(id))) { c.events = c.events.filter((id) => !g.has(id)); changed = true }
+      if (pm && dropDeleted(pm.brief, m.board, ts) !== pm.brief) changed = lost = true
+      if (c.events.some((id) => g.has(id))) { c.events = c.events.filter((id) => !g.has(id)); changed = lost = true }
       const briefAsks = (m.brief ?? pm?.brief)?.asks.length ?? 0
-      // a capture whose own comment was deleted is a request withdrawn, like a tag's
       // a capture whose own comment was deleted is a request withdrawn, like a tag's - dropped once no tag is left on it
       const capGone = c.kind === 'capture' && caps.has(c.id) && !c.events.length
-      if (c.state === 'working' && ((c.kind === 'comment' && (!c.events.length || !briefAsks)) || capGone)) { c.state = 'dropped'; c.note = 'deleted'; c.rev += 1; c.at = Date.now(); changed = true }
+      if (c.state === 'working' && ((lost && c.kind === 'comment' && (!c.events.length || !briefAsks)) || capGone)) { c.state = 'dropped'; c.note = 'deleted'; c.rev += 1; c.at = Date.now(); changed = true }
     }
     if (changed) {
       const survivors = b.members.filter((m) => j.cards.find((x) => x.id === m.card)?.state === 'working')
