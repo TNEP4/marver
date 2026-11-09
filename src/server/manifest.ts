@@ -85,61 +85,95 @@ export function unescapeJs(s: string): string {
   })
 }
 
-/** Where the code from `i` closes its brace: the index of the `}` matching an already-open `{`, past strings,
- *  comments and template literals (whose `${...}` holes are code again); `src.length` when it never closes. The
- *  comments met at this level go into `comments` (start, end), for the caller to blank. */
-function codeEnd(src: string, i: number, comments?: [number, number][]): number {
+/** One token of the code a `meta` object is written in: a string or template literal (`text` its raw inside; `holes`
+ *  for a template with an unescaped `${...}`), a regex literal, a word or number, or one punctuator. */
+type Tok = { k: 'str'; raw: string } | { k: 'tpl'; raw: string; holes: boolean } | { k: 're' } | { k: 'word'; v: string } | { k: 'punct'; v: string }
+
+/** Can a `/` here start a regex literal? After a value (a word that is not a keyword, a literal, `)`, `]`, `}`) it
+ *  divides; anywhere else it starts a regex. */
+const REGEX_AFTER_WORD = new Set(['return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'throw', 'case', 'do', 'else', 'yield', 'await'])
+const regexCan = (prev: Tok | undefined): boolean => !prev
+  || (prev.k === 'punct' && prev.v !== ')' && prev.v !== ']' && prev.v !== '}')
+  || (prev.k === 'word' && REGEX_AFTER_WORD.has(prev.v))
+
+/**
+ * The JS tokens from `i` to the `}` that closes an already-open `{` (spec 31 H.1, review rounds 1-3): strings, template
+ * literals (their `${...}` holes tokenized as code of their own), regex literals and comments are read whole, so a
+ * brace, a quote or a slash inside one is text. `emit` hears each token at this object's own level (depth 0) and the
+ * `}` that ends it; the index of that `}`, or -1 when the code never closes or a literal is unterminated.
+ */
+function tokens(src: string, i: number, emit?: (t: Tok, depth: number) => void): number {
   let depth = 0
-  for (; i < src.length; i++) {
+  let prev: Tok | undefined
+  const out = (t: Tok) => { prev = t; if (emit) emit(t, depth) }
+  while (i < src.length) {
     const ch = src[i]
+    if (/\s/.test(ch)) { i++; continue }
+    if (ch === '/' && src[i + 1] === '/') { const nl = src.indexOf('\n', i); i = nl < 0 ? src.length : nl; continue }
+    if (ch === '/' && src[i + 1] === '*') { const e = src.indexOf('*/', i + 2); if (e < 0) return -1; i = e + 2; continue }
     if (ch === "'" || ch === '"') {
-      for (i++; i < src.length && src[i] !== ch && src[i] !== '\n'; i++) if (src[i] === '\\') i++
-    } else if (ch === '`') {
-      for (i++; i < src.length && src[i] !== '`'; i++) {
-        if (src[i] === '\\') i++
-        else if (src[i] === '$' && src[i + 1] === '{') i = codeEnd(src, i + 2)
+      let j = i + 1
+      for (; j < src.length && src[j] !== ch; j++) { if (src[j] === '\n') return -1; if (src[j] === '\\') j++ }
+      if (j >= src.length) return -1
+      out({ k: 'str', raw: src.slice(i + 1, j) }); i = j + 1; continue
+    }
+    if (ch === '`') {
+      let j = i + 1, holes = false
+      for (; j < src.length && src[j] !== '`'; j++) {
+        if (src[j] === '\\') j++
+        else if (src[j] === '$' && src[j + 1] === '{') { holes = true; j = tokens(src, j + 2); if (j < 0) return -1 }
       }
-    } else if (ch === '/' && src[i + 1] === '/') {
-      const nl = src.indexOf('\n', i), to = nl < 0 ? src.length : nl
-      comments?.push([i, to]); i = to - 1
-    } else if (ch === '/' && src[i + 1] === '*') {
-      const e = src.indexOf('*/', i + 2), to = e < 0 ? src.length : e + 2
-      comments?.push([i, to]); i = to - 1
-    } else if (ch === '{') depth++
-    else if (ch === '}') { if (!depth) return i; depth-- }
+      if (j >= src.length) return -1
+      out({ k: 'tpl', raw: src.slice(i + 1, j), holes }); i = j + 1; continue
+    }
+    if (ch === '/' && regexCan(prev)) {
+      let j = i + 1, cls = false
+      for (; j < src.length; j++) {
+        const c = src[j]
+        if (c === '\n') return -1
+        if (c === '\\') { j++; continue }
+        if (cls) { if (c === ']') cls = false } else if (c === '[') cls = true; else if (c === '/') break
+      }
+      if (j >= src.length) return -1
+      j++
+      while (j < src.length && /[A-Za-z]/.test(src[j])) j++
+      out({ k: 're' }); i = j; continue
+    }
+    const w = /^(?:[A-Za-z_$][\w$]*|\d[\w.]*)/.exec(src.slice(i, i + 256))
+    if (w) { out({ k: 'word', v: w[0] }); i += w[0].length; continue }
+    if (ch === '}' && depth === 0) { if (emit) emit({ k: 'punct', v: '}' }, 0); return i }
+    if (ch === '{' || ch === '[' || ch === '(') { out({ k: 'punct', v: ch }); depth++; i++; continue }
+    if (ch === '}' || ch === ']' || ch === ')') { depth--; out({ k: 'punct', v: ch }); i++; continue }
+    out({ k: 'punct', v: ch }); i++
   }
-  return src.length
+  return -1
 }
 
-/** Extract `export const meta = {...}` with literal string values only. Anything else is silently omitted. */
+/** Extract `export const meta = {...}` with literal string values only. Anything else is silently omitted.
+ *  Only the object's own top-level properties count, each value a lone literal: `title: "Draft" + phase` is computed,
+ *  a template with a `${...}` too, and words inside a string (`"... slide: true ..."`) are only words. */
 export function extractMeta(src: string): FrameMeta {
   const m = /export\s+const\s+meta\s*=\s*\{/.exec(src)
   if (!m) return {}
-  // the object's body runs to its own closing `}`: strings, comments and template literals - with their `${...}`
-  // holes, each code of its own - are skipped whole, so a brace or a quote inside one (`'a {b}'`, `'\u{e9}'`,
-  // `/* author's note */`, `${"{"}`) is text (spec 31 H.1, review rounds 1-2)
-  const comments: [number, number][] = []
-  const end = codeEnd(src, m.index + m[0].length, comments)
-  if (end >= src.length) return {}
-  // ...and its comments blanked, so a property after one still starts where the picker looks (after `{`, `,`, a newline)
-  let body = src.slice(m.index + m[0].length, end)
-  const at = m.index + m[0].length
-  for (const [a, b] of comments.reverse()) body = body.slice(0, a - at) + ' '.repeat(b - a).replace(/ /g, (_c, i: number) => (src[a + i] === '\n' ? '\n' : ' ')) + body.slice(b - at)
-  const pick = (key: string) => {
-    // boundary required: `covariant:` must not match `variant:` (property suffixes). Each
-    // quote style closes on its own kind, so an apostrophe inside "…" is prose, not an end
-    // ...and the literal must END the value: `"Draft" + phase` is computed, not a literal
-    // ...and a backslash escapes in each quote style: 'Nic\'s board' is a literal too (spec 31 H.1), read unescaped
-    const r = new RegExp(`(?:^|[{,])\\s*${key}\\s*:\\s*(?:'((?:[^'\\\\\\n]|\\\\.)*)'|"((?:[^"\\\\\\n]|\\\\.)*)"|\`((?:[^\`\\\\\\n]|\\\\.)*)\`)\\s*(?=[,}\\n]|$)`).exec(body)
-    // a template with an unescaped `${...}` is computed, not a literal
-    if (r && r[3] !== undefined && /(^|[^\\])(\\\\)*\$\{/.test(r[3])) return undefined
-    return r ? unescapeJs(r[1] ?? r[2] ?? r[3]) : undefined
+  // each top-level property as its tokens: `key : value...`, split on the commas at depth 0
+  const props: Tok[][] = [[]]
+  const end = tokens(src, m.index + m[0].length, (t, depth) => {
+    if (depth > 0) { props[props.length - 1].push({ k: 'punct', v: 'nested' }); return }
+    if (t.k === 'punct' && t.v === ',') props.push([])
+    else if (!(t.k === 'punct' && t.v === '}')) props[props.length - 1].push(t)
+  })
+  if (end < 0) return {}
+  const strings = new Map<string, string>()
+  const bools = new Map<string, boolean>()
+  for (const p of props) {
+    if (p.length !== 3 || p[1].k !== 'punct' || p[1].v !== ':') continue
+    const [k, , v] = p
+    const key = k.k === 'word' ? k.v : k.k === 'str' ? unescapeJs(k.raw) : null
+    if (key === null) continue
+    if (v.k === 'str' || (v.k === 'tpl' && !v.holes)) strings.set(key, unescapeJs(v.raw))
+    else if (v.k === 'word' && (v.v === 'true' || v.v === 'false')) bools.set(key, v.v === 'true')
   }
-  // literal booleans, same boundary discipline as the string picker
-  const pickBool = (key: string) => {
-    const r = new RegExp(`(?:^|[{,])\\s*${key}\\s*:\\s*(true|false)\\b`).exec(body)
-    return r ? r[1] === 'true' : undefined
-  }
+  const pick = (key: string) => strings.get(key)
   const out: FrameMeta = {}
   const title = pick('title'); if (title) out.title = title
   const viewport = pick('viewport'); if (viewport) out.viewport = viewport
@@ -147,7 +181,7 @@ export function extractMeta(src: string): FrameMeta {
   const of = pick('of'); if (of) out.of = of
   const variant = pick('variant'); if (variant) out.variant = variant
   const intent = pick('intent'); if (intent) out.intent = intent
-  const slide = pickBool('slide'); if (slide !== undefined) out.slide = slide
+  const slide = bools.get('slide'); if (slide !== undefined) out.slide = slide
   const description = readDescription(pick('description')); if (description) out.description = description
   return out
 }
