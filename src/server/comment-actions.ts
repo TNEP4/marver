@@ -243,8 +243,16 @@ export function undoResolveAll(root: string, op: string, o: { now?: number } = {
   const logOf = (b: string) => { let l = logs.get(b); if (!l) logs.set(b, (l = readLog(dir, b))); return l }
   let reopened: Resolved[] = [], changed: UndoReceipt['changed'] = []
   if (had) {
-    // a pending undo (a crash between its appends and its end): the same reopens, at the same times
-    reopened = had.reopened; changed = had.changed
+    // a pending undo (a crash between its appends and its end): the same reopens, at the same times - each one not
+    // written yet checked again, as the first time: anything since, and it is left as it is (Codex r2)
+    changed = [...had.changed]
+    for (const r of had.reopened) {
+      const events = logOf(r.board)
+      if (events.some((e) => e.id === r.event)) { reopened.push(r); continue }
+      const latest = threadEvents(events, r.thread).at(-1)
+      if (latest?.id === idFor('ra', op, r.board, r.thread)) reopened.push(r)
+      else changed.push({ board: r.board, thread: r.thread })
+    }
   } else for (const r of done.resolved) {
     const events = logOf(r.board)
     // its latest event must still be the op's resolve: a reply, an edit, a reaction, a reopen since - anything - and it

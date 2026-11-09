@@ -387,7 +387,10 @@ export const useComments = create<CommentsState>((set, get) => {
       // store is global now, so an accepted write lands regardless of the viewed board
       // (client ids keep the eventual SSE/poll echo idempotent)
       if (res.ok) {
-        union(stamped)
+        // published: the copy kept here wears my opaque id, as the server's projection of it will (spec 31 C.2, Codex
+        // r2) - the echo is a duplicate by id and dropped, so without it this message would not be mine until a reload
+        const myId = get().me?.id
+        union(get().local || !myId ? stamped : stamped.map((e) => (e.author && !e.author.id ? { ...e, author: { ...e.author, id: myId } } : e)))
         // a message this page just wrote is mine (spec 31 C.2) - the server recorded it with the write
         if (get().local) {
           const mine = stamped.filter((e) => (e.type === 'create' || e.type === 'reply') && e.commentId)

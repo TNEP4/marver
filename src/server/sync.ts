@@ -17,6 +17,7 @@ import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, re
 import { createHash, randomBytes } from 'node:crypto'
 import { join } from 'node:path'
 import { appendEvents, diffEvents, listBoards, readLog, type CommentEvent } from './comments.ts'
+import { deletedMessages } from '../shared/events.ts'
 import { CLI_TOKEN_CHARS, MIN_CLI_TOKEN } from './auth.ts'
 import { marverHome } from './slots.ts'
 
@@ -157,7 +158,9 @@ export async function syncOnce(root: string, collab: Collab): Promise<Record<str
       const local = readLog(dir, board)
       const marverThreads = localOnlyThreads(local)
       const shipped = old ? threadIds(local, (e) => legacy!.frames.includes(e.frame ?? '')) : null
-      const missing = diffEvents(local, remote.map((e) => e.id)).filter((e) => !(e as { agent?: boolean }).agent && !marverThreads.has(threadOf(e)) && (!shipped || shipped.has(threadOf(e))) && (caps.delete || e.type !== 'delete'))
+      // an edit of a message deleted since (here or there) is never sent: the server refuses it, and with it the batch
+      const gone = deletedMessages([...local, ...remote])
+      const missing = diffEvents(local, remote.map((e) => e.id)).filter((e) => !(e as { agent?: boolean }).agent && !marverThreads.has(threadOf(e)) && (!shipped || shipped.has(threadOf(e))) && (caps.delete || e.type !== 'delete') && !(e.type === 'edit' && gone.has(e.commentId ?? '')))
       for (let i = 0; i < missing.length; i += 100) {
         const r = await fetch(`${base}/__mv/api/comments/${board}`, {
           method: 'POST', headers: { ...auth, 'content-type': 'application/json' },
