@@ -19,6 +19,7 @@ import { JamButton } from './jam-session.tsx'
 import { useEffect, useRef, useState } from 'react'
 import { useStore, BOARD_POLICY, BRANDING, CONFIG, PUBLISHED, SOURCE_REVEALED, boardLabel, boardLocked, cap, fetchBoardNames, modeAllowed, playsAsSlides, SLIDE_INTRINSIC, stoppedFor, type Node } from './store.ts'
 import { deckOrder } from './play-order.ts'
+import { boardOrder, presentDevice } from '../../shared/export-plan.ts'
 import { NO_COMMENTS_HERE, useComments } from './comments-store.ts'
 import { UNPLACED } from './hash.ts'
 import { isNoteAnchor } from './notes.ts'
@@ -42,16 +43,8 @@ const commentsStore = () => useComments.getState()
  *  documents and cannot mount into the persistent chain), deduped. */
 function playList(): string[] {
   const s = useStore.getState()
-  const seen = new Set<string>()
-  const out: string[] = []
-  for (const n of s.nodes) {
-    if (n.missing || seen.has(n.frame)) continue
-    const f = s.frameFor(n)
-    if (!f || f.kind !== 'tsx') continue
-    seen.add(n.frame)
-    out.push(n.frame)
-  }
-  return out
+  // the export plan's board order (spec 31 #2): the PDF prints the same list, html frames included
+  return boardOrder(s.nodes, (n) => s.frameFor(n), { html: false }).map((n) => n.frame)
 }
 
 /** Slides mode (v1.5): the deck's play order is the BOARD's reading order -
@@ -108,11 +101,10 @@ export function enterPlay(over?: { at?: string; device?: string; theme?: string 
     ?? (overAt ? undefined : selNode ?? s.nodes.find((n) => list.includes(n.frame)))
   const at = overAt ?? node!.frame
   const frame = s.manifest?.frames.find((f) => f.id === at)
-  // device: the link's; else the node's width names it; else the frame's declared viewport
-  const names = Object.keys(CONFIG.viewports)
+  // device: the link's; else the export plan's rule (spec 31 #2) - the node's width names it, else the frame's
+  // declared viewport, else the first
   const device = (over?.device && (CONFIG.viewports[over.device] || over.device === 'fill') ? over.device : undefined)
-    ?? (node ? names.find((v) => CONFIG.viewports[v].width === node.w) : undefined)
-    ?? (frame?.viewport && CONFIG.viewports[frame.viewport] ? frame.viewport : names[0])
+    ?? presentDevice(node, frame, CONFIG.viewports)!
   const theme = (over?.theme && CONFIG.themes.includes(over.theme) ? over.theme : undefined)
     ?? node?.theme ?? frame?.theme ?? s.viewTheme
   s.setPlay({ at, device, theme })
@@ -137,10 +129,8 @@ export function enterFocus(at?: string, over?: { device?: string; theme?: string
   if (!target) { s.toast('nothing to focus here'); return }
   const frame = s.manifest?.frames.find((f) => f.id === target)
   const node = s.nodes.find((n) => n.frame === target && !n.missing)
-  const names = Object.keys(CONFIG.viewports)
   const device = (over?.device && (CONFIG.viewports[over.device] || over.device === 'fill') ? over.device : undefined)
-    ?? (node ? names.find((v) => CONFIG.viewports[v].width === node.w) : undefined)
-    ?? (frame?.viewport && CONFIG.viewports[frame.viewport] ? frame.viewport : names[0])
+    ?? presentDevice(node, frame, CONFIG.viewports)!
   const theme = (over?.theme && CONFIG.themes.includes(over.theme) ? over.theme : undefined)
     ?? node?.theme ?? frame?.theme ?? s.viewTheme
   s.setPlay({ at: target, device, theme, focus: true, ...(over?.deep ? { deep: true } : {}) })
