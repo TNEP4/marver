@@ -140,6 +140,9 @@ export const COMMANDS = {
   'add-to-board': se('answer', { failed: ['api'] }),
   'update-copy': se('clipboard', { failed: CLIP }),
   'update-dismiss': se('2raf'),
+  // `marver show` over unsent words (spec 31 D3): the notice's Go moves the tab (the camera lands), × leaves it be
+  'show-go': se('camera', { cancelled: true }),
+  'show-dismiss': se('2raf'),
   'notice-view': se('thread', { failed: ['missing'] }),
   'notice-retry': se('answer', { deadlineMs: S30, failed: ['refused', 'missing'] }),
   'notice-dismiss': se('2raf'),

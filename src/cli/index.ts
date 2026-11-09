@@ -211,12 +211,28 @@ cli
   })
 
 cli
-  .command('link [...targets]', 'The canvas link that lands on frames: link <scene/frame | scene ...> - their board, in canvas mode, selected and fitted')
+  .command('link [...targets]', 'The canvas link that lands on frames: link <scene/frame | scene ...> - their board, in canvas mode, selected and fitted. A marver:// link when the Mac app has this canvas open, else localhost')
   .option('--root <dir>', 'Host repo root', { default: '.' })
   .option('--board <board>', 'The board to open (default: the first board that shows them all, else one link per board)')
+  .option('--web', 'The localhost link even when the Mac app has this canvas open')
   .action(async (targets: string[], opts) => {
     const { linkCommand } = await import('./link.ts')
     try { await linkCommand(resolve(opts.root), targets ?? [], opts) }
+    catch (err) {
+      console.error(`[${NAME}] ${(err as Error).message}`)
+      process.exit(1)
+    }
+  })
+
+cli
+  .command('show [...targets]', 'Show the human a place - only when they ask to be shown: show <scene/frame | scene ... | board> - every open tab of this canvas goes there, selected and fitted (a tab holding unsent words shows a notice instead); then the link')
+  .option('--root <dir>', 'Host repo root', { default: '.' })
+  .option('--board <board>', 'The board to show them on (default: the first board that shows them all)')
+  .option('--thread <id>', 'A comment thread to open there too')
+  .option('--web', 'Print the localhost link even when the Mac app has this canvas open')
+  .action(async (targets: string[], opts) => {
+    const { showCommand } = await import('./show.ts')
+    try { await showCommand(resolve(opts.root), targets ?? [], opts) }
     catch (err) {
       console.error(`[${NAME}] ${(err as Error).message}`)
       process.exit(1)

@@ -157,6 +157,10 @@ export const CANVAS_CHANNELS = {
   opened: 'mv:opened',
   /** A4: a live picture of the document's own view - an invoke (A4.6 #35) */
   capture: 'mv:capture',
+  /** spec 31 D1: a `marver://` link into a tab already open - the navigation command (main to canvas), never a reload */
+  show: 'mv:show',
+  /** spec 31 D3: the shell showed what `marver show` asked - its tab to the front of the window (canvas to main) */
+  front: 'mv:front',
 } as const
 
 /** Bounds main checks again (A2.14 #19): unknown fields are stripped, a known one of the wrong type or past its bound refuses the message. */
@@ -216,6 +220,9 @@ export const FEATURE = {
   open: 'open',
   /** 0.29.0 (A4.6 #33-#37): the shell asks `mv:capture` for live pictures and the server takes `POST /api/jam/picture/live` */
   capture: 'capture',
+  /** 0.31.0 (spec 31 D1, D3): the shell takes `mv:show` (a deep link's place, moved to or noticed over unsent words)
+   *  and asks `mv:front` once it showed a `marver show` */
+  show: 'show',
 } as const
 export type Feature = (typeof FEATURE)[keyof typeof FEATURE]
 
@@ -382,7 +389,16 @@ export interface MarverAppV1 {
    * answers `untrusted` with no IPC; main answers `hidden`, `busy`, `bounds`, `empty`, `timeout` or `stale` otherwise
    */
   capture?(a: CaptureAsk): Promise<CaptureAnswer>
+  /**
+   * spec 31 D1 (app 1.1): main's navigation command for a `marver://` link into this tab - the hash's own targets
+   * (shared/deep-link.ts `ShowTarget`), checked by the preload; never a reload or a hash replaced under the page
+   */
+  onShow?(fn: (t: ShowTarget) => void): () => void
+  /** spec 31 D3 (app 1.1): this document showed a `marver show` - main brings its tab and the window forward */
+  front?(): void
 }
+
+import type { ShowTarget } from './deep-link.ts'
 
 /** Main's words for a reason (the hang sheet, the unsaved pill); `heights` is never named (A2.14 #18). */
 export const WHY_WORDS: Record<Why, string | null> = {

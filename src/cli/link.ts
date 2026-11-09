@@ -10,8 +10,12 @@
  * board, each frame on the first board that shows it. A frame on no board gets a hint instead of a
  * link (spec 26, Part 7): every frame goes on the board it belongs to.
  */
+import { readFileSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { NAME } from './name.ts'
+import { APP_LIVE_FILE, appTakesLink, buildDeepLink, checkAppLive } from '../shared/deep-link.ts'
+import { marverHome } from '../server/slots.ts'
+import { pidRuns } from '../server/exclusive.ts'
 import { checkBoardsDir, listBoardFiles, readMembership, unplacedHint, type Membership } from '../server/boards.ts'
 import { scanFrames } from '../server/manifest.ts'
 import { readDevInfo } from '../server/work.ts'
@@ -127,16 +131,46 @@ export async function devOrigin(root: string): Promise<string | null> {
  *  the first one's lock. */
 export const unreachable = (pid: number): string => `\`${NAME} dev\` runs (pid ${pid}) but cannot be reached from here - a sandbox?`
 
-const NOT_RUNNING = `\`${NAME} dev\` is not running in this repo - start it (\`npx ${NAME} dev\`), then run this again: the link carries its port`
+export const NOT_RUNNING = `\`${NAME} dev\` is not running in this repo - start it (\`npx ${NAME} dev\`), then run this again: the link carries its port`
 
-export async function linkCommand(root: string, targets: string[], opts: { board?: string }): Promise<void> {
+
+/**
+ * Whether the Mac app takes this canvas's links now (spec 31 D2): `~/.marver/state/app-live.json` (MARVER_HOME
+ * honoured) names a pid that runs, is under 90 s old, says `scheme: 1`, and lists this canvas's real folder among its
+ * open tabs. Anything else - an older app, a stale file, the canvas not open there - is the localhost link.
+ */
+export function appLive(root: string, now = Date.now()): boolean {
+  let file
+  try { file = checkAppLive(JSON.parse(readFileSync(join(marverHome(), 'state', APP_LIVE_FILE), 'utf8'))) } catch { return false }
+  let real = root
+  try { real = realpathSync(root) } catch { /* as given */ }
+  return appTakesLink(file, real, now, pidRuns)
+}
+
+/**
+ * The link for one hash (spec 31 D1, D2): the app's `marver://open?ws=<folder>&to=<hash>&port=<p>` when the app is in
+ * use with this canvas open (and `web` is not asked), else `<origin><hash>`.
+ */
+export function linkFor(root: string, origin: string, hash: string, o: { web?: boolean; app?: boolean } = {}): string {
+  if (!o.web && (o.app ?? appLive(root))) {
+    let real = root
+    try { real = realpathSync(root) } catch { /* as given */ }
+    const port = Number(new URL(origin).port) || undefined
+    const deep = buildDeepLink({ ws: real, to: hash, port })
+    if (deep) return deep
+  }
+  return `${origin}${hash}`
+}
+
+export async function linkCommand(root: string, targets: string[], opts: { board?: string; web?: boolean }): Promise<void> {
   const r = resolveLink(root, targets, opts.board)
   if (!r.links.length) throw new Error(r.hints.join('\n'))
   const found = await findDev(root)
   if (!found) throw new Error(NOT_RUNNING)
   // a link needs only the port, and dev.json has it: out of reach from here, the canvas still serves the person's browser
   const origin = 'origin' in found ? found.origin : `http://localhost:${found.unreachable.port}/`
-  for (const l of r.links) console.log(`${origin}${l.hash}`)
+  const app = !opts.web && appLive(root)
+  for (const l of r.links) console.log(linkFor(root, origin, l.hash, { web: opts.web, app }))
   if ('unreachable' in found) console.error(`  ${unreachable(found.unreachable.pid)} The link is its port, from design/.local/dev.json - the person's browser reaches it`)
   for (const h of r.hints) console.error(`  ${h}`)
 }
@@ -151,6 +185,7 @@ export async function handBack(root: string, targets: string[]): Promise<{ links
   try {
     const r = resolveLink(root, targets)
     const origin = await devOrigin(root)
-    return { links: origin ? r.links.map((l) => `${origin}${l.hash}`) : [], hints: r.hints }
+    const app = !!origin && appLive(root)
+    return { links: origin ? r.links.map((l) => linkFor(root, origin, l.hash, { app })) : [], hints: r.hints }
   } catch { return { links: [], hints: [] } }
 }

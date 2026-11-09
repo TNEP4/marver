@@ -15,6 +15,8 @@ import { PAGE_BODY_MAX, takePageBatch, takeReloadBatch } from './perf.ts'
 import { noteWrite, writerFrom } from './board-writes.ts'
 import { RUN_PARAM, runIdOf, runs } from './perf-run.ts'
 import type { InputsWatch } from './perf-inputs.ts'
+import { checkShowTarget, UNPLACED_BOARD } from '../shared/deep-link.ts'
+import { createShows } from './show.ts'
 const BODY_LIMIT = 1_000_000
 const CSRF_MAX_AGE = 30 * 24 * 3600
 
@@ -135,6 +137,8 @@ function contained(target: string, base: string): boolean {
 }
 
 export function apiMiddleware(root: string, opts: { viewports?: Record<string, { width: number; height: number }>; origin?: () => string | null; bakeGen?: () => number; notify?: (event: string) => void; manifest?: () => Manifest; settled?: () => boolean; workspace?: string; inputs?: InputsWatch
+  /** an event with its payload to every open shell tab (spec 31 D3: `sh:show`) */
+  broadcast?: (event: string, payload: unknown) => void
   /** a live picture's whole upload, read and checked, at most (A4.6 #37: 10 s; shorter in tests) */
   livePictureMs?: number } = {}): Connect.NextHandleFunction {
   // the run's workspace (spec 28 A1.6): a --recover run serves under an earlier address's key
@@ -171,6 +175,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
   const nodeExists = nodeAt
 
   let sizesWarned = false   // a conflicted _sizes.json is said once per server, not once per settled frame
+  const shows = createShows()   // `marver show` (spec 31 D3): its seq and each tab's answer
 
   /** A board file this request wrote (spec 30 #18), with the page and commands it names - the watcher's `sh:board`
    *  matches these bytes against it, as a candidate, never as proof. */
@@ -1058,6 +1063,38 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           if (!markSeen(root, manifest.frames, b.epoch, b.frames)) return json(res, 409, { error: 'the marks started over - read them again' })
           opts.notify?.('sh:marks')                                  // every other open tab clears it too
           return json(res, 200, { ok: true })
+        }
+        return json(res, 405, { error: 'method not allowed' })
+      }
+      // ---- show (spec 31 D3): `marver show` puts a place in front of the human - every open tab moves to it, or, holding
+      // unsent words, says so with a notice. The dev token (the CLI) or the owner; the target checked against the hash
+      // grammar (never a raw hash), its board one that exists. The tabs answer on show/ack; the CLI reads show/acks
+      if (path === 'show' || path === 'show/ack' || path === 'show/acks') {
+        const { readDevInfo } = await import('./work.ts')
+        const token = readDevInfo(root)?.token
+        const tokenOk = !!token && req.headers['x-mv-work'] === token
+        if (path === 'show' && req.method === 'POST') {
+          if (!ownerGated(req) && !tokenOk) return json(res, 403, { error: 'forbidden' })
+          const raw = await readBody(req, 16 * 1024)
+          if (raw == null) return json(res, 400, { error: 'body too large or unreadable' })
+          let b: unknown; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+          const t = checkShowTarget(b)
+          if (!t) return json(res, 400, { error: 'not a show target: { board, n?, f?, s?, c? } in the link grammar' })
+          if (t.board !== UNPLACED_BOARD && (dirError() || !listBoardFiles(boardsDir).boards.some((x) => x.name === t.board))) return json(res, 404, { error: `no board "${t.board}"` })
+          const { seq, cmd } = shows.start(t)
+          opts.broadcast?.('sh:show', cmd)
+          return json(res, 200, { seq })
+        }
+        if (path === 'show/ack' && req.method === 'POST') {
+          if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
+          const raw = await readBody(req, 4096)
+          let b: any = null; try { b = raw == null ? null : JSON.parse(raw) } catch { /* below */ }
+          return shows.ack(b?.seq, b?.page, b?.outcome) ? json(res, 200, { ok: true }) : json(res, 400, { error: 'not an answer to a show kept here' })
+        }
+        if (path === 'show/acks' && req.method === 'GET') {
+          if (!ownerGated(req) && !tokenOk) return json(res, 403, { error: 'forbidden' })
+          const a = shows.acks(Number(url.searchParams.get('seq')))
+          return a ? json(res, 200, a) : json(res, 404, { error: 'no such show' })
         }
         return json(res, 405, { error: 'method not allowed' })
       }

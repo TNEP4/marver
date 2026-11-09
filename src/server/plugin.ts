@@ -19,7 +19,7 @@ import { SIZES_FILE } from './sizes.ts'
 import { routesMiddleware } from './routes.ts'
 import { logoRoute } from './logo.ts'
 import { guardMiddleware } from './guard.ts'
-import { checkUpdate, installedVersion } from './update.ts'
+import { checkUpdate, installedVersion, updateStatus } from './update.ts'
 import { workspaceId } from './workspace.ts'
 import { originOf } from './slots.ts'
 import { perfRunBarrier, runs, runT } from './perf-run.ts'
@@ -333,11 +333,13 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       server.middlewares.use((req, res, next) => {
         const url = new URL(req.url ?? '/', 'http://x')
         if (url.pathname !== `${ROUTE}/api/update`) return next()
-        update.then((latest) => {
+        // spec 31 E4: always an answer - { current, latest, checkedAt, state } - read afresh under the daily TTL, so
+        // a canvas that runs for days still learns of a release (the Mac app's Home card asks it too)
+        void update.then(() => updateStatus(root)).then((u) => {
           res.setHeader('content-type', 'application/json')
           res.setHeader('cache-control', 'no-store')
-          res.end(JSON.stringify({ latest, current: installedVersion() }))
-        })
+          res.end(JSON.stringify(u))
+        }, () => { res.statusCode = 500; res.end('{}') })
       })
 
       // The dev server may bind IPv6 (localhost -> ::1); a hardcoded 127.0.0.1 would be refused.
@@ -350,7 +352,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       // the marks start with the dev server, before any page asks (spec 26)
       initMarks(root, manifest.frames)
       tidyPerfDir(root)   // the perf logs are the owner's alone, and age out (spec 28 A1.7)
-      server.middlewares.use(apiMiddleware(root, { viewports: config.viewports, origin: listeningOrigin, bakeGen: () => bakeGen, notify: (event) => { server.ws.send(event, {} as any); liveChanged() }, manifest: () => manifest, settled, workspace: ws, inputs }))
+      server.middlewares.use(apiMiddleware(root, { viewports: config.viewports, origin: listeningOrigin, bakeGen: () => bakeGen, notify: (event) => { server.ws.send(event, {} as any); liveChanged() }, broadcast: (event, payload) => server.ws.send(event, payload as any), manifest: () => manifest, settled, workspace: ws, inputs }))
       // the canvas's logo for the Mac app's tab (spec 28 A2.4, A2.9): proved like the document when asked with a nonce
       server.middlewares.use(logoRoute(root, () => config.share.logo, ctx.proof))
       server.middlewares.use(routesMiddleware(server, clientDir, {

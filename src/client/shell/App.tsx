@@ -30,6 +30,8 @@ import { CommentsController, parkThread, revealThread } from './Comments.tsx'
 import { poweredByUrl } from '../../shared/utm.ts'
 import { avatarFallback, NO_COMMENTS_HERE, useComments } from './comments-store.ts'
 import { goTo, isLatest, navigated, revealFrame, switchFor } from './goto.ts'
+import { dismissShow, goNow, showTarget, useShowNotice } from './show.ts'
+import { newerVersion } from '../../shared/deep-link.ts'
 import { useNotes } from './notes.ts'
 import { contentOnly } from '../../shared/frames.ts'
 import { nextToLook } from '../../shared/marks.ts'
@@ -274,7 +276,8 @@ function UpdatePill() {
     api('update')
       .then((r) => (r.ok ? r.json() : null))
       .then((u) => {
-        if (u?.latest && localStorage.getItem(scoped('mv-update-seen')) !== u.latest) setLatest(u.latest)
+        // spec 31 E4: the endpoint answers whatever the registry said - the pill only for a strictly newer release
+        if (u?.latest && newerVersion(u.latest, u.current) && localStorage.getItem(scoped('mv-update-seen')) !== u.latest) setLatest(u.latest)
       })
       .catch(() => { /* dev server gone or endpoint absent - stay quiet */ })
   }, [])
@@ -299,6 +302,22 @@ function UpdatePill() {
       </Tip>
       <Tip side="top" label="Dismiss this version">
         <button className="x" onClick={dismiss}><XIcon size={13} /></button>
+      </Tip>
+    </div>
+  )
+}
+
+/** `marver show` over unsent words (spec 31 D3): the tab did not move - Go moves it, × leaves it be. */
+function ShowNotice() {
+  const notice = useShowNotice((s) => s.notice)
+  const play = useStore((s) => !!s.play)
+  if (!notice || play) return null
+  return (
+    <div className="sh-update sh-show-notice" role="status">
+      <span>Your agent wants to show you <b>{notice.title}</b></span>
+      <button className="cmd" onClick={() => { const h = cmd('show-go', { via: 'click', in: 'shell' }); void goNow().then((r) => { if (r !== 'shown') h.cancel() }) }}><code>Go</code></button>
+      <Tip side="top" label="Stay here">
+        <button className="x" onClick={() => { cmd('show-dismiss', { via: 'click', in: 'shell' }); dismissShow() }}><XIcon size={13} /></button>
       </Tip>
     </div>
   )
@@ -633,6 +652,8 @@ export function App() {
   useEffect(() => {
     if (!import.meta.hot) return
     import.meta.hot.on('sh:manifest', (m: any) => applyManifest(m))
+    // `marver show` (spec 31 D3): the place an agent shows the human - moved to, or a notice over unsent words
+    import.meta.hot.on('sh:show', (m: any) => { void showTarget(m, 'server') })
     // a brief's title or description changed with the frames intact: relabel, never re-key
     import.meta.hot.on('sh:scenes', (m: any) => useStore.getState().setScenes(m?.scenes))
     // Live Jam presence: the daemon broadcasts the set of frames Marver is editing.
@@ -1176,6 +1197,7 @@ export function App() {
         : CONFIG.noTheme && !contentOnly(manifest?.frames ?? []) && <div className="sh-banner">no theme configured - frames render unstyled. Create design/theme.css importing your app's stylesheet (or set theme in design/config.ts)</div>}
       {stopped && <StoppedBanner />}
       <UpdatePill />
+      <ShowNotice />
 
       {/* Jam V2 (spec 27): the lane, the focus panel, the notes card, the recording ring */}
       {!PUBLISHED && <JamSurface sidebarRight={panelOpen ? 236 + 2 * 10 : 10} />}

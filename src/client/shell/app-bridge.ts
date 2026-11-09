@@ -21,6 +21,8 @@
  *   hand (A4.6 #30);
  * - `mv:open` (app 0.3, A4.6 #29, #30): a notice's click, opened by open-item.ts and answered as `mv:opened`. An app
  *   without `onOpen` never sends one, and nothing here waits for it.
+ * - `mv:show` (app 1.1, spec 31 D1): a `marver://` link into this tab, shown by show.ts as `marver show` is; and
+ *   show.ts asks `front()` once it showed a `marver show`.
  *
  * The one ground (0.27.2, A3.8 #27, #31): `mv:hello` says the inset the shell applied (inset.ts's `TOP`: 44 only when
  * the app said so and gave the whole presentation contract), and each `mv:present { epoch, w, h, frames }` is answered
@@ -47,6 +49,7 @@ import { useJamQueue } from './jam-queue.ts'
 import { useJamUi } from './jam-state.ts'
 import { useJamVoice, voiceUntrusted } from './jam-voice.ts'
 import { endOpen, openLiveItem } from './open-item.ts'
+import { showTarget } from './show.ts'
 
 /** The ground under the strip (A2.14 #26): the shell's own - never a frame's pinned theme. */
 export const shellDark = (): boolean => { const s = useStore.getState(); return !!s.play || s.viewTheme === 'dark' }
@@ -207,6 +210,9 @@ export function startAppBridge(): void {
   call(() => app.onMenuClick((p) => runMenuItem(typeof p?.id === 'string' ? p.id : '', p?.in)))
   // a notice's click (A4.6 #29, #30): the exact item, resolved against fresh reads and answered
   if (typeof app.onOpen === 'function') call(() => { app.onOpen!((p) => openLiveItem(p)) })
+  // a `marver://` link into this open tab (spec 31 D1): the same navigation command `marver show` sends - moved to, or
+  // a notice over unsent words; never a reload or a hash replaced under the page
+  if (typeof app.onShow === 'function') call(() => { app.onShow!((t) => { void showTarget(t, 'app') }) })
   // the one ground's presentation requests (0.27.2): answered only when the shell took the inset - a shell that did
   // not is placed below the strip and never asked (A3.8 #31)
   if (TOP) call(() => { answerPresents(app, call) })
