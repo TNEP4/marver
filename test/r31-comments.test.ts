@@ -4,6 +4,7 @@ import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { appendEvents, readLog, replay, type CommentEvent } from '../src/server/comments.ts'
+import { asSentBy } from '../src/shared/events.ts'
 import { validateEvents } from '../src/server/collab.ts'
 import { migrateOwnership, ownsMessage, recordOwn } from '../src/server/own.ts'
 import { record } from '../src/server/jam/ledger.ts'
@@ -12,6 +13,7 @@ import { fresh, write as writeJournal } from '../src/server/jam/journal.ts'
 import { answers, ctxFor, form, freezeBrief, ingest, liveThreads } from '../src/server/jam/queue.ts'
 import { syncOnce } from '../src/server/sync.ts'
 import { markSlot } from '../app/pages/strip/needs.ts'
+import { wrapupWithoutDeleted, type Wrapup } from '../src/server/jam/session.ts'
 import type { Card } from '../src/server/jam/types.ts'
 
 /**
@@ -279,6 +281,25 @@ describe('resolve all (spec 31 B.1-B.4)', () => {
     } finally { done() }
   })
 
+  it('an interrupted Undo checks each reopen not written yet again: a reply since, and it is left as it is', () => {
+    const { root, dir, done } = canvas()
+    try {
+      ok(resolveAll(root, 'op-undo-int', { board: 'main' }))
+      const before = readFileSync(join(dir, 'main.jsonl'), 'utf8')
+      const u = ok(undoResolveAll(root, 'op-undo-int'))
+      expect(u.reopened.map((x) => x.thread).sort()).toEqual(['alpha1', 'bravo1'])
+      // as if it crashed after its receipt, before its appends: the reopens are not in the log
+      writeFileSync(join(dir, 'main.jsonl'), before)
+      const f = join(root, 'design', '.local', 'comment-ops', 'op-undo-int.undo.json')
+      writeFileSync(f, JSON.stringify({ ...JSON.parse(readFileSync(f, 'utf8')), state: 'pending' }))
+      appendEvents(dir, 'main', [{ id: 'since-reply', ts: Date.now() + 5000, type: 'reply', commentId: 'since-r', parentId: 'alpha1', board: 'main', author: OWNER, body: 'meanwhile' }])
+      const again = ok(undoResolveAll(root, 'op-undo-int'))
+      expect(again.reopened.map((x) => x.thread)).toEqual(['bravo1'])
+      expect(again.changed.map((x) => x.thread)).toEqual(['alpha1'])
+      expect(open(dir, 'main')).toEqual(['bravo1', 'delta2', 'zulu1'])
+    } finally { done() }
+  })
+
   it('the root scene is a scope of its own, named', () => {
     const { root, done } = canvas()
     try {
@@ -369,6 +390,26 @@ describe('Jam never reads a deleted message (spec 31 C.5)', () => {
   })
 })
 
+describe('my own published message (spec 31 C.2)', () => {
+  it('the copy a page keeps of what it sent wears my opaque id - mine at once, before any echo', () => {
+    const sent = [create('m1', { author: { email: OWNER.email, name: 'Nic' } })]
+    expect(asSentBy(sent, 'a'.repeat(24))[0].author).toEqual({ email: OWNER.email, name: 'Nic', id: 'a'.repeat(24) })
+    expect(asSentBy(sent, undefined)).toBe(sent)
+  })
+})
+
+describe('a sealed record read by a run (spec 31 C.5)', () => {
+  it('leaves out each More work ask deleted after the seal; the sealed content itself is untouched', () => {
+    const w = { format: 'marver.jam.wrapup', v: 1, id: 'wrap-1', session: 's', since: 0, until: 1, instructions: 'x', file: 'f.md', tags: 0,
+      captures: [{ id: 'cap1', title: 't', state: 'review', record: { context: { board: 'home' } }, more: [{ ask: 'keep this', event: 'mw-a' }, { ask: 'the deleted ask', event: 'mw-b' }] }] } as unknown as Wrapup
+    const out = wrapupWithoutDeleted(w, (b) => new Set(b === 'home' ? ['mw-b'] : []))
+    expect(JSON.stringify(out)).not.toContain('the deleted ask')
+    expect(out.captures[0].more).toEqual([{ ask: 'keep this', event: 'mw-a' }])
+    expect(JSON.stringify(w)).toContain('the deleted ask')
+    expect(wrapupWithoutDeleted(w, () => new Set())).toBe(w)
+  })
+})
+
 describe('marks never show a deleted answer (spec 31 C.5)', () => {
   it('a deleted plain reply under a Marver note is not "answered by you", its words nowhere', () => {
     const { root, dir, done } = canvas()
@@ -385,7 +426,7 @@ describe('marks never show a deleted answer (spec 31 C.5)', () => {
 
 describe('sync against old and new servers (spec 31 C.6)', () => {
   /** A published server, enough of one: `old` has no capabilities route and refuses the type `delete` - the whole batch. */
-  async function server(old: boolean) {
+  async function server(old: boolean, validate = false) {
     const store: CommentEvent[] = [{ ...create('pub1'), ts: Date.now() - 5000 }]
     const got: CommentEvent[][] = []
     const srv: Server = createServer((req, res) => {
@@ -401,6 +442,8 @@ describe('sync against old and new servers (spec 31 C.6)', () => {
           const { events } = JSON.parse(raw) as { events: CommentEvent[] }
           got.push(events)
           if (old && events.some((e) => e.type === 'delete')) return send(400, { error: 'unknown event type "delete"' })
+          const bad = validate ? validateEvents(events, store, { email: OWNER.email, name: 'Nic', role: 'owner', createdAt: 0 } as never, 'main', { operator: true }) : null
+          if (bad) return send(400, { error: bad })
           store.push(...events)
           send(200, { accepted: events.length })
         })
@@ -412,6 +455,20 @@ describe('sync against old and new servers (spec 31 C.6)', () => {
     const port = (srv.address() as { port: number }).port
     return { url: `http://127.0.0.1:${port}`, got, store, close: () => new Promise<void>((r) => srv.close(() => r())) }
   }
+
+  it('an edit of a message deleted since is never sent - the rest of the batch goes (the real validator)', async () => {
+    const { root, dir, done } = temp('mv-r31-syncedit-')
+    const srv = await server(false, true)
+    try {
+      const mine = { ...create('mine0002x'), ts: Date.now() - 4000 }
+      srv.store.push(mine, { id: 'del-remote', ts: Date.now() - 3000, type: 'delete', commentId: 'mine0002x', board: 'main', author: { email: OWNER.email } })
+      appendEvents(dir, 'main', [mine, { ...edit('mine0002x', 'offline words'), ts: Date.now() - 3500 }, { ...create('fresh001x'), ts: Date.now() - 1000 }])
+      const r = await syncOnce(root, { url: srv.url, token: 't' })
+      expect(r.main.pushed).toBe(1)
+      expect(srv.got.flat().some((e) => e.type === 'edit')).toBe(false)
+      expect(srv.store.some((e) => e.commentId === 'fresh001x')).toBe(true)
+    } finally { await srv.close(); done() }
+  })
 
   it('to an older server a delete is held back - never sent, never blocking the batch; to a new one it goes; once upgraded, it follows', async () => {
     const { root, dir, done } = temp('mv-r31-syncold-')

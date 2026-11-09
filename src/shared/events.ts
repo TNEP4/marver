@@ -102,6 +102,12 @@ export function deletedMessages(events: readonly CommentEvent[]): Set<string> {
 export const withoutDeletedWords = (e: CommentEvent, gone: ReadonlySet<string>): CommentEvent =>
   gone.size && (e.type === 'create' || e.type === 'reply' || e.type === 'edit') && !!e.commentId && gone.has(e.commentId) ? { ...e, body: '', mentions: undefined } : e
 
+/** The copy a published page keeps of what it just sent (spec 31 C.2): its author wears the viewer's own opaque id, as
+ *  the server's projection of it will - the echo is a duplicate by id and dropped, so without it a message just written
+ *  would not be "mine" (no Edit, no Delete) until a reload. Never sent: the server assigns ids. */
+export const asSentBy = (events: CommentEvent[], myId: string | undefined): CommentEvent[] =>
+  !myId ? events : events.map((e) => (e.author && !e.author.id ? { ...e, author: { ...e.author, id: myId } } : e))
+
 /** Replay a board's events into current thread state. Deterministic: replay order is
  *  (ts, id) so two stores holding the same event SET always derive the same state.
  *  TWO passes - creates first, then everything else - so a reply whose author's clock
