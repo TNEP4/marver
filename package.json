@@ -53,6 +53,7 @@
     "magic-string": "^0.30.21",
     "marked": "^16.0.0",
     "mermaid": "^11.6.0",
+    "pdf-lib": "1.17.1",
     "react-zoom-pan-pinch": "^3.6.1",
     "roughjs": "^4.6.6",
     "vite": "~8.2.1",
@@ -68,6 +69,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/ws": "^8.18.2",
+    "pdfjs-dist": "4.10.38",
     "tsdown": "^0.22.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
