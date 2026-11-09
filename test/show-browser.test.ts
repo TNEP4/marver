@@ -412,6 +412,33 @@ describe('a show and the boot', () => {
     expect(await acks(seq)).toEqual({ shown: 0, notice: 0 })
   }, 60_000)
 
+  const byHand = (name: string, act: (t: Awaited<ReturnType<typeof open>>) => Promise<void>, sel: string[] | null) => it(name, async () => {
+    if (!browser) return
+    const t = await open('#/b/main')
+    await show({ board: 'main', n: ['n-two'] })
+    await t.until(settled('main', ['n-two']))
+    await t.ev(`__hold('other')`)
+    const seq = await show({ board: 'other', n: ['n-three'] })
+    await t.until(`__gate.asked`)
+    await act(t)
+    await t.ev(`__gate.release()`)
+    await new Promise((r) => setTimeout(r, 1500))
+    const v = await t.ev(VIEW)
+    expect(v.board).toBe('main')
+    if (sel) expect(v.sel).toEqual(sel)
+    expect(await acks(seq)).toEqual({ shown: 0, notice: 0 })
+  }, 60_000)
+  /** a real mouse press and release at a node's middle, Shift held when asked */
+  const press = async (t: Awaited<ReturnType<typeof open>>, key: string, shift = false) => {
+    const r = await t.ev(`(() => { const b = document.querySelector('.sh-node[data-node="${key}"]').getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + 12 } })()`)
+    for (const type of ['mousePressed', 'mouseReleased']) await browser!.send('Input.dispatchMouseEvent', { type, x: r.x, y: r.y, button: 'left', clickCount: 1, modifiers: shift ? 8 : 0 }, t.s)
+  }
+  byHand('a person clicking a frame on the canvas while a show loads its board: the show gives way', (t) => press(t, 'n-two'), ['n-two'])
+  byHand('a person Shift-clicking a frame on the canvas while a show loads its board: the show gives way', (t) => press(t, 'n-two', true), null)
+  byHand('a person panning with the wheel while a show loads its board: the show gives way', async (t) => {
+    await browser!.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 700, y: 450, deltaX: 400, deltaY: 0 }, t.s)
+  }, ['n-two'])
+
   it('a person clicking a variant group\'s caption while a show loads its board: the show gives way', async () => {
     if (!browser) return
     const t = await open('#/b/vars')

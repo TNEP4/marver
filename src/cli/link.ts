@@ -13,7 +13,7 @@
 import { readFileSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { NAME } from './name.ts'
-import { APP_LIVE_FILE, appTakesLink, buildDeepLink, checkAppLive } from '../shared/deep-link.ts'
+import { APP_LIVE_FILE, appTakesLink, buildDeepLink, checkAppLive, targetFromHash } from '../shared/deep-link.ts'
 import { marverHome } from '../server/slots.ts'
 import { pidRuns } from '../server/exclusive.ts'
 import { checkBoardsDir, listBoardFiles, readMembership, unplacedHint, type Membership } from '../server/boards.ts'
@@ -152,7 +152,9 @@ export function appLive(root: string, now = Date.now()): boolean {
  * use with this canvas open (and `web` is not asked), else `<origin><hash>`.
  */
 export function linkFor(root: string, origin: string, hash: string, o: { web?: boolean; app?: boolean } = {}): string {
-  if (!o.web && (o.app ?? appLive(root))) {
+  // only a place the app takes (shared/deep-link.ts's grammar and bounds, as parseDeepLink reads it): else the app would
+  // drop it and open the canvas's own board - the web link carries it whole
+  if (!o.web && targetFromHash(hash) && (o.app ?? appLive(root))) {
     let real = root
     try { real = realpathSync(root) } catch { /* as given */ }
     const port = Number(new URL(origin).port) || undefined

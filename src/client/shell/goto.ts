@@ -71,6 +71,13 @@ export function navigated(): number {
   if (s.board) void s.switchBoard(s.board)
   return ++gotoSeq
 }
+/**
+ * A person acted on the canvas itself - a frame clicked or Shift-clicked, a pan, a zoom (spec 31 D3): any navigation
+ * still on its way (a `marver show`, an app link, a reveal) gives way, its board never committed over what they did.
+ * Unlike `navigated()` it cancels no board switch: one the person started still lands. Programmatic selection and fits
+ * (the show's own) never call it, so a show never cancels itself.
+ */
+export function navigatedByHand(): void { ++gotoSeq }
 /** The navigation now, without starting one: a caller that waits (`marver show` for the boot) reads it first, and
  *  gives way if a person navigated meanwhile (`isLatest`). */
 export const navNow = (): number => gotoSeq

@@ -1,3 +1,4 @@
+import { navigatedByHand } from '../goto.ts'
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { cap, frameUrl, shownRev, useStore, CONFIG, type Node } from '../store.ts'
 import { admit, release } from './admission.ts'
@@ -300,6 +301,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   const drag = (e: React.PointerEvent, mode: 'move' | 'e' | 's' | 'se') => {
     e.stopPropagation()
     if (e.button !== 0) return
+    navigatedByHand()   // the person's own selection: a show or link still loading gives way (spec 31 D3)
     // shift-click toggles multi-selection instead of dragging (Figma convention)
     if (e.shiftKey && mode === 'move') { cmd('select', { via: 'click', in: 'shell', frame: node.frame }); select(node.key, true); return }
     if (mode === 'move') cmd('select', { via: 'click', in: 'shell', frame: node.frame })
