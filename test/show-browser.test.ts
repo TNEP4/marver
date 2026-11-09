@@ -373,6 +373,8 @@ describe('a show and the boot', () => {
     const t = await openRaw('#/b/other', `window.__gate.failOnce = 'other'`)
     await t.until(`__mvStore.getState().board === 'other' && !__mvStore.getState().nodes.length`)
     await new Promise((r) => setTimeout(r, 500))
+    // in the background: the show's fit lands at once, and a boot fit queued after it would be the last word
+    await t.ev(`Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' }), 1`)
     const seq = await show({ board: 'main', n: ['n-two'] })
     await expect.poll(() => acks(seq), { timeout: 5000 }).toEqual({ shown: 1, notice: 0 })
     await new Promise((r) => setTimeout(r, 1200))
