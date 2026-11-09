@@ -1,0 +1,267 @@
+import { afterEach, describe, expect, it } from 'vitest'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { PDFDocument } from 'pdf-lib'
+import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { boardOrder, exportPlan, presentDevice, titleOf, type PlanFrame } from '../src/shared/export-plan.ts'
+import {
+  boardNodes, cancelPdfJob, captureScale, clearPdfJobs, exportUrl, getJob, handoutHtml, jobsDir, jobStatus, JOB_ID, mergePages, PDF_BUDGET, planFor, playsAsSlides,
+  startPdfJob, sweepPdfJobs, writeOutline, writeWhole, type PdfCtx,
+} from '../src/server/pdf.ts'
+import { reportLines } from '../src/cli/pdf.ts'
+import { knownType, resolveType } from '../src/shared/board-types.ts'
+
+/**
+ * Spec 31 Part A, the parts that need no browser: the export plan (both board kinds, duplicates, missing frames, sizes,
+ * themes), the board's positions when it has none, the budgets, the job lifecycle (409, cancel, cleanup, the atomic
+ * write), the merge's bookmarks and metadata and a raster page's links (read back with pdfjs-dist), the report, the
+ * handout's escaping, and the `slides` type alias.
+ */
+
+const VP = { mobile: { width: 390, height: 844 }, laptop: { width: 1280, height: 800 }, monitor: { width: 1920, height: 1080 } }
+const f = (id: string, o: Partial<PlanFrame> = {}): PlanFrame => ({ id, kind: 'tsx', ...o })
+
+describe('the export plan (#2)', () => {
+  const frames = [
+    f('d/01', { slide: true, title: 'Opening' }), f('d/02', { slide: true, viewport: 'laptop' }), f('d/03', { slide: true, theme: 'dark' }),
+    f('d/page'), f('d/doc', { kind: 'html', viewport: 'monitor' }), f('d/wide', { viewport: 'monitor' }),
+  ]
+  it('a slides board: slide frames in reading order (y, then x), deduped; a non-slide frame skipped and named; a missing one too', () => {
+    const p = exportPlan({ slides: true, frames, viewports: VP, nodes: [
+      { frame: 'd/02', x: 900, y: 0 }, { frame: 'd/01', x: 0, y: 0 }, { frame: 'd/03', x: 0, y: 500 }, { frame: 'd/01', x: 0, y: 900 },
+      { frame: 'd/page', x: 1800, y: 0 }, { frame: 'd/gone', x: 0, y: 0 },
+    ] })
+    expect(p.pages.map((x) => x.frame)).toEqual(['d/01', 'd/02', 'd/03'])
+    expect(p.skipped).toEqual([{ frame: 'd/gone', why: 'missing' }, { frame: 'd/page', why: 'not a slide' }])
+    // sizes: the slide stage - its declared viewport, else 1280x720
+    expect(p.pages.map((x) => [x.width, x.height])).toEqual([[1280, 720], [1280, 800], [1280, 720]])
+    expect(p.pages[0].title).toBe('Opening')
+    expect(p.pages[1].title).toBe('02')
+  })
+  it('a present board: the board\'s own order, html frames included, deduped; sizes by the device Play picks', () => {
+    const p = exportPlan({ slides: false, frames, viewports: VP, nodes: [
+      { frame: 'd/page', x: 5000, y: 0, w: 1280 }, { frame: 'd/doc', x: 0, y: 0, w: 777 }, { frame: 'd/01', x: 0, y: 0, w: 640 },
+      { frame: 'd/wide', x: 0, y: 0, w: 333 }, { frame: 'd/page', x: 0, y: 0, w: 390 }, { frame: 'd/nope', x: 0, y: 0 },
+    ] })
+    expect(p.pages.map((x) => x.frame)).toEqual(['d/page', 'd/doc', 'd/01', 'd/wide'])
+    // the node's width names the device (laptop); else the frame's viewport (monitor); a slide is its stage on any board
+    expect(p.pages.map((x) => [x.width, x.height, x.device])).toEqual([[1280, 800, 'laptop'], [1920, 1080, 'monitor'], [1280, 720, undefined], [1920, 1080, 'monitor']])
+    expect(p.pages[1].kind).toBe('html')
+    expect(p.skipped).toEqual([{ frame: 'd/nope', why: 'missing' }])
+  })
+  it('no width match and no viewport: the first viewport, at its height', () => {
+    const p = exportPlan({ slides: false, frames: [f('x/a')], viewports: VP, nodes: [{ frame: 'x/a', x: 0, y: 0, w: 1 }] })
+    expect([p.pages[0].width, p.pages[0].height, p.pages[0].device]).toEqual([390, 844, 'mobile'])
+  })
+  it('theme: the export\'s own, else the node\'s, else the frame\'s, else light', () => {
+    const nodes = [{ frame: 'd/01', x: 0, y: 0, theme: 'sepia' }, { frame: 'd/03', x: 0, y: 1 }, { frame: 'd/02', x: 0, y: 2 }]
+    expect(exportPlan({ slides: true, frames, viewports: VP, nodes }).pages.map((x) => x.theme)).toEqual(['sepia', 'dark', 'light'])
+    expect(exportPlan({ slides: true, frames, viewports: VP, nodes, theme: 'dark' }).pages.map((x) => x.theme)).toEqual(['dark', 'dark', 'dark'])
+  })
+  it('Play reads the same rules: its list is the board order without html, its device the plan\'s', () => {
+    const nodes = [{ frame: 'd/doc', w: 1 }, { frame: 'd/page', w: 1280 }, { frame: 'd/page', w: 390 }, { frame: 'd/01', missing: true }]
+    const byId = new Map(frames.map((x) => [x.id, x]))
+    expect(boardOrder(nodes, (n) => byId.get(n.frame), { html: false }).map((n) => n.frame)).toEqual(['d/page'])
+    expect(boardOrder(nodes, (n) => byId.get(n.frame), { html: true }).map((n) => n.frame)).toEqual(['d/doc', 'd/page'])
+    expect(presentDevice({ w: 1920 }, { viewport: 'laptop' }, VP)).toBe('monitor')
+    expect(presentDevice({ w: 1 }, { viewport: 'laptop' }, VP)).toBe('laptop')
+    expect(presentDevice(undefined, undefined, VP)).toBe('mobile')
+    expect(titleOf({ id: 'mark-ii/12-chat' })).toBe('12 chat')
+  })
+})
+
+describe('the board a job reads', () => {
+  let root = ''
+  afterEach(() => { if (root) rmSync(root, { recursive: true, force: true }); root = '' })
+  const canvas = (board: Record<string, unknown>, publish?: Record<string, unknown>) => {
+    root = mkdtempSync(join(tmpdir(), 'mv-pdfunit-'))
+    mkdirSync(join(root, 'design', 'boards'), { recursive: true })
+    writeFileSync(join(root, 'design', 'boards', 'deck.json'), JSON.stringify(board))
+    if (publish) writeFileSync(join(root, 'design', 'publish.json'), JSON.stringify(publish))
+    return root
+  }
+  const frames = ['a', 'b', 'c'].map((n) => ({ ...f(`s/${n}`, { slide: true }), scene: 's', file: `design/scenes/s/${n}.tsx` }))
+  it('plays as slides only when its publish policy says so (type or open: slides)', () => {
+    canvas({ nodes: [] }, { boards: { deck: { type: 'slides' }, other: { open: 'slides' }, third: { type: 'design', open: 'present' } } })
+    expect([playsAsSlides(root, 'deck'), playsAsSlides(root, 'other'), playsAsSlides(root, 'third'), playsAsSlides(root, 'none')]).toEqual([true, true, false, false])
+  })
+  it('a board written as a frame list is laid out as the canvas would: its recipe\'s order', async () => {
+    canvas({ nodes: [{ frame: 's/a' }, { frame: 's/b' }, { frame: 's/c' }], layout: { rows: [['s']], scenes: { s: { rows: [['c', 'a', 'b']] } } } }, { boards: { deck: { type: 'slides' } } })
+    const b = await boardNodes(root, 'deck', frames, VP, ['light', 'dark'])
+    const plan = exportPlan({ slides: true, nodes: b!.nodes, frames, viewports: VP })
+    expect(plan.pages.map((p) => p.frame)).toEqual(['s/c', 's/a', 's/b'])
+  })
+  it('a node\'s theme: its own pin, else a legacy stored theme that differs from the frame\'s default', async () => {
+    canvas({ nodes: [{ frame: 's/a', x: 0, y: 0, themeUser: 'dark' }, { frame: 's/b', x: 1, y: 0, theme: 'light' }, { frame: 's/c', x: 2, y: 0, theme: 'dark' }] })
+    const b = await boardNodes(root, 'deck', frames, VP, ['light', 'dark'])
+    expect(b!.nodes.map((n) => n.theme)).toEqual(['dark', undefined, 'dark'])
+  })
+  it('budgets: a missing board is a 404, an empty one, past 300 pages or a side past 4096 px a 400 with the reason', async () => {
+    canvas({ nodes: [] })
+    const ctx = { root, viewports: VP, themes: ['light'], frames: () => frames }
+    expect(await planFor(ctx, 'nope')).toMatchObject({ ok: false, status: 404 })
+    expect(await planFor(ctx, 'deck')).toMatchObject({ ok: false, status: 400, error: expect.stringContaining('nothing to print') })
+    const many = Array.from({ length: PDF_BUDGET.pages + 1 }, (_, i) => ({ ...f(`m/${i}`, { slide: true }), scene: 'm', file: `design/scenes/m/${i}.tsx` }))
+    writeFileSync(join(root, 'design', 'boards', 'deck.json'), JSON.stringify({ nodes: many.map((m, i) => ({ frame: m.id, x: i, y: 0 })) }))
+    expect(await planFor({ ...ctx, frames: () => many }, 'deck')).toMatchObject({ ok: false, status: 400, error: expect.stringContaining('300 at most') })
+    const huge = [{ ...f('h/x', { slide: true, viewport: 'huge' }), scene: 'h', file: 'design/scenes/h/x.tsx' }]
+    writeFileSync(join(root, 'design', 'boards', 'deck.json'), JSON.stringify({ nodes: [{ frame: 'h/x', x: 0, y: 0 }] }))
+    expect(await planFor({ ...ctx, viewports: { huge: { width: 5000, height: 800 } }, frames: () => huge }, 'deck')).toMatchObject({ ok: false, status: 400, error: expect.stringContaining('4096') })
+  })
+})
+
+describe('jobs (spec 31 How)', () => {
+  let root = ''
+  afterEach(() => { if (root) { clearPdfJobs(root); rmSync(root, { recursive: true, force: true }) } root = '' })
+  const ctxFor = (): PdfCtx => {
+    root = mkdtempSync(join(tmpdir(), 'mv-pdfjobs-'))
+    mkdirSync(join(root, 'design', 'boards'), { recursive: true })
+    writeFileSync(join(root, 'design', 'boards', 'deck.json'), JSON.stringify({ nodes: [{ frame: 's/a', x: 0, y: 0 }] }))
+    return { root, origin: 'http://localhost:1', viewports: VP, themes: ['light'], canvasName: 'Canvas', version: '0.31.0', frames: () => [{ ...f('s/a', { slide: true }), file: 'design/scenes/s/a.tsx' }], settled: () => true, docRev: () => '1' }
+  }
+  it('one job per canvas: a second gets 409 with the running one\'s id; a finished job keeps only its PDF', async () => {
+    const ctx = ctxFor()
+    let release!: () => void
+    const run = (j: { dir: string; file?: string; filename: string }) => new Promise<void>((res) => { release = () => { writeFileSync(join(j.dir, 'scratch.pdf'), 'x'); j.file = join(j.dir, j.filename); writeFileSync(j.file, '%PDF-1.7'); res() } })
+    const a = await startPdfJob(ctx, { board: 'deck' }, { run })
+    expect(a.ok).toBe(true)
+    const id = (a as { job: { id: string } }).job.id
+    expect(JOB_ID.test(id)).toBe(true)
+    const b = await startPdfJob(ctx, { board: 'deck' }, { run })
+    expect(b).toMatchObject({ ok: false, status: 409, job: id })
+    release()
+    await new Promise((r) => setTimeout(r, 20))
+    const j = getJob(id)!
+    expect(jobStatus(j)).toMatchObject({ job: id, board: 'deck', state: 'done', filename: 'deck.pdf' })
+    expect(readdirSync(j.dir)).toEqual(['deck.pdf'])
+    // done: the canvas takes a new job
+    expect((await startPdfJob(ctx, { board: 'deck' }, { run: async () => {} })).ok).toBe(true)
+  })
+  it('cancel: the job ends cancelled, its folder and id gone; an invalid theme is refused', async () => {
+    const ctx = ctxFor()
+    const a = await startPdfJob(ctx, { board: 'deck' }, { run: (j) => new Promise((_, rej) => j.abort.signal.addEventListener('abort', () => rej(new Error('stopped')))) })
+    const j = (a as { job: { id: string; dir: string } }).job
+    expect(existsSync(j.dir)).toBe(true)
+    expect(cancelPdfJob(j.id)).toBe(true)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(getJob(j.id)).toBeUndefined()
+    expect(existsSync(j.dir)).toBe(false)
+    expect(await startPdfJob(ctx, { board: 'deck', theme: '../x' })).toMatchObject({ ok: false, status: 400 })
+    expect(getJob('../../etc')).toBeUndefined()
+  })
+  it('a failure is reported with its reason (and the deadline\'s reason when it fires)', async () => {
+    const ctx = ctxFor()
+    const a = await startPdfJob(ctx, { board: 'deck' }, { run: async () => { throw new Error('s/a: the frame never rendered') } })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(jobStatus(getJob((a as { job: { id: string } }).job.id)!)).toMatchObject({ state: 'failed', error: 's/a: the frame never rendered' })
+  })
+  it('cleanup: past its hour a job and its folder go; a folder no job knows goes too; dev start clears them all', async () => {
+    const ctx = ctxFor()
+    const a = await startPdfJob(ctx, { board: 'deck' }, { run: async (j) => { j.file = join(j.dir, j.filename); writeFileSync(j.file, '%PDF') } })
+    const j = (a as { job: { id: string; dir: string } }).job
+    await new Promise((r) => setTimeout(r, 20))
+    const stray = join(jobsDir(root), 'stray-folder')
+    mkdirSync(stray)
+    const old = (Date.now() - 2 * PDF_BUDGET.keepMs) / 1000
+    utimesSync(stray, old, old)
+    sweepPdfJobs(root)
+    expect([existsSync(j.dir), existsSync(stray)]).toEqual([true, false])
+    sweepPdfJobs(root, Date.now() + PDF_BUDGET.keepMs + 1000)
+    expect([existsSync(j.dir), getJob(j.id)]).toEqual([false, undefined])
+    const b = await startPdfJob(ctx, { board: 'deck' }, { run: async () => {} })
+    await new Promise((r) => setTimeout(r, 20))
+    clearPdfJobs(root)
+    expect([existsSync(jobsDir(root)), getJob((b as { job: { id: string } }).job.id)]).toEqual([false, undefined])
+  })
+  it('the file is written whole: a temp beside it, then a rename over the old one; nothing left behind', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mv-pdfwhole-'))
+    try {
+      const file = join(dir, 'deck.pdf')
+      writeFileSync(file, 'old')
+      writeWhole(file, Buffer.from('%PDF-new'))
+      expect(readFileSync(file, 'utf8')).toBe('%PDF-new')
+      expect(readdirSync(dir)).toEqual(['deck.pdf'])
+      expect(() => writeWhole(join(dir, 'missing', 'deck.pdf'), Buffer.from('x'))).toThrow()
+      expect(readdirSync(dir)).toEqual(['deck.pdf'])
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})
+
+describe('the merge: bookmarks, metadata, raster pages (#8)', () => {
+  // a red 1x1 JPEG
+  const JPEG = Buffer.from('/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=', 'base64')
+  it('one bookmark per page titled by its frame, each pointing at its page; Title, Author, Creator; a raster page keeps its links', async () => {
+    const one = async (w: number, h: number) => { const d = await PDFDocument.create(); d.addPage([w * 0.75, h * 0.75]); return Buffer.from(await d.save()) }
+    const pages = [
+      { page: { frame: 'd/01', kind: 'tsx' as const, width: 1280, height: 720, theme: 'light', title: 'Café ✓ opening' }, out: { status: 'vector' as const, pdf: await one(1280, 720) } },
+      { page: { frame: 'd/02', kind: 'tsx' as const, width: 1280, height: 800, theme: 'light', title: 'Glass' }, out: { status: 'raster' as const, raster: { jpeg: JPEG, dsf: 3, links: [{ href: 'https://example.com/x', rects: [{ x: 100, y: 50, w: 200, h: 40 }] }] } } },
+      { page: { frame: 'd/03', kind: 'tsx' as const, width: 1280, height: 720, theme: 'light', title: 'Failed' }, out: { status: 'failed' as const, error: 'boom' } },
+    ]
+    const bytes = await mergePages(pages, { title: 'Mark II', author: 'Aperture', version: '0.31.0', chrome: '142.0' })
+    const doc = await getDocument({ data: new Uint8Array(bytes), isEvalSupported: false, disableFontFace: true }).promise
+    expect(doc.numPages).toBe(3)
+    const sizes = await Promise.all([1, 2, 3].map(async (n) => (await doc.getPage(n)).view.slice(2)))
+    expect(sizes).toEqual([[960, 540], [960, 600], [960, 540]])
+    const outline = await doc.getOutline()
+    expect(outline.map((o) => o.title)).toEqual(['Café ✓ opening', 'Glass', 'Failed'])
+    const idx = await Promise.all(outline.map(async (o) => doc.getPageIndex((o.dest as unknown[])[0] as never)))
+    expect(idx).toEqual([0, 1, 2])
+    const meta = await doc.getMetadata()
+    expect(meta.info).toMatchObject({ Title: 'Mark II', Author: 'Aperture', Creator: 'Marver 0.31.0' })
+    const annots = await (await doc.getPage(2)).getAnnotations()
+    expect(annots).toEqual([expect.objectContaining({ subtype: 'Link', url: 'https://example.com/x' })])
+    // the link's box in PDF space: x 100-300 px, y 50-90 px from the top of an 800 px page
+    expect(annots[0].rect.map((v: number) => Math.round(v))).toEqual([75, 533, 225, 563])
+    await doc.destroy()
+  })
+  it('writeOutline on a document with no pages writes nothing', async () => {
+    const d = await PDFDocument.create()
+    writeOutline(d, ['x'])
+    expect(d.catalog.get(d.context.obj('Outlines') as never)).toBeUndefined()
+  })
+})
+
+describe('the report, the handout, the URLs', () => {
+  it('reportLines names every slide that needs a look, and the certification', () => {
+    const lines = reportLines({ board: 'deck', notes: false, pages: 3, bytes: 3_300_000, ms: 12_345, chrome: '142', certified: 'print', skipped: [{ frame: 'd/x', why: 'not a slide' }], slides: [
+      { page: 1, frame: 'd/01', title: 'a', width: 1280, height: 720, theme: 'light', status: 'patched', patches: ['backdrop-filter', 'backdrop-filter', 'box-shadow'], ms: 1, clipped: true },
+      { page: 2, frame: 'd/02', title: 'b', width: 1280, height: 720, theme: 'light', status: 'raster', raster: 'a patch differed', ms: 1, unsettled: true, changed: true },
+      { page: 3, frame: 'd/03', title: 'c', width: 1280, height: 720, theme: 'light', status: 'failed', error: 'boom', ms: 1, spilled: true },
+    ] }, 'design/exports/deck.pdf')
+    expect(lines).toEqual([
+      'design/exports/deck.pdf - 3 pages, 3.1 MB, 12.3 s',
+      '  skipped: d/x (not a slide)', '  failed: d/03 (boom)', '  patched: d/01 (backdrop-filter; box-shadow)', '  raster: d/02 (a patch differed)',
+      '  unsettled: d/02', '  clipped: d/01', '  spilled: d/03', '  changed while printing: d/02',
+      '  every page print-certified (rasterised and compared with the screen)',
+    ])
+  })
+  it('the handout escapes titles and keeps notes as given (md.ts renders them inert), "No notes" where there are none', () => {
+    const html = handoutHtml({ title: '<b>x</b>', canvas: 'c', paper: 'a4', slides: [{ title: '<script>alert(1)</script>', picture: '0.jpg', html: '<p>ok</p>' }, { title: 't', html: '' }] }, (n) => `/p/${n}.jpg?job=x"`)
+    expect(html).not.toContain('<script>alert(1)')
+    expect(html).toContain('&#60;script&#62;')
+    expect(html).toContain('src="/p/0.jpg?job=x&#34;"')
+    expect(html).toContain('<div class="notes"><p>ok</p></div>')
+    expect(html).toContain('<p class="none">No notes</p>')
+    expect(html).toContain('size: 11.69in 8.27in')
+  })
+  it('a page renders with export=1 - its frame host or its html file', () => {
+    expect(exportUrl('http://o', { frame: 'd/a b', kind: 'tsx', theme: 'dark' })).toBe('http://o/__mv/frame/?id=d%2Fa%20b&theme=dark&export=1')
+    expect(exportUrl('http://o', { frame: 'd/p', kind: 'html', theme: 'light' }, 'design/scenes/d/p q.html')).toBe('http://o/design/scenes/d/p%20q.html?theme=light&export=1')
+  })
+  it('captures at 3x, lowered in quarter steps under 16 MP', () => {
+    expect(captureScale(1280, 720)).toBe(3)
+    expect(captureScale(1920, 1080)).toBe(2.75)
+    expect(1920 * 1080 * captureScale(1920, 1080) ** 2).toBeLessThan(16e6)
+    expect(captureScale(4096, 4096)).toBe(1)
+  })
+})
+
+describe('the board type `slides` (spec 31 How)', () => {
+  it('reads as a deck for the type only; a stored word stays as written, and the CLI still names the known types', () => {
+    expect(resolveType('slides')).toBe('deck')
+    expect(resolveType(undefined, 'slides')).toBe('deck')
+    expect(resolveType('constructor')).toBe('plain')
+    expect(knownType('slides')).toBeUndefined()
+  })
+})

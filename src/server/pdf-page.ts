@@ -149,6 +149,25 @@ function install(): boolean {
     }
     return x1 - x0 >= 1 && y1 - y0 >= 1 ? { x: r.left, y: r.top, w: r.width, h: r.height } : null
   }
+  /** How far past its border box an element's effect draws (CSS px): a blur's falloff, a drop-shadow, its own outer
+   *  box-shadow - a whole patch captures that much around it, and paints it back from an overlay that may reach as far */
+  const reachOf = (cs: CSSStyleDeclaration): number => {
+    let e = 0
+    const f = cs.filter || ''
+    for (const m of f.matchAll(/(^|[\s)])blur\(([\d.]+)px\)/g)) e = Math.max(e, 3 * parseFloat(m[2]))
+    for (const m of f.matchAll(/drop-shadow\(((?:[^()]|\([^()]*\))*)\)/g)) {
+      const n = [...m[1].matchAll(/(-?[\d.]+)px/g)].map((x) => parseFloat(x[1]))
+      e = Math.max(e, Math.max(Math.abs(n[0] || 0), Math.abs(n[1] || 0)) + 1.5 * (n[2] || 0))
+    }
+    if (cs.boxShadow && cs.boxShadow !== 'none') for (const part of splitTop(cs.boxShadow)) {
+      if (/\binset\b/.test(part)) continue
+      const n = [...part.matchAll(/(-?[\d.]+)px/g)].map((x) => parseFloat(x[1]))
+      e = Math.max(e, Math.max(Math.abs(n[0] || 0), Math.abs(n[1] || 0)) + (n[2] || 0) + Math.max(0, n[3] || 0))
+    }
+    return e > 0 ? Math.ceil(e) + 2 : 0
+  }
+  /** per whole patch drawn by an overlay: how far its capture reaches past its border box on each side (CSS px, viewport) */
+  const reaches = new Map<number, { l: number; t: number; r: number; b: number }>()
   const REPLACED = new Set(['IMG', 'CANVAS', 'VIDEO', 'IFRAME', 'OBJECT', 'EMBED', 'INPUT', 'SELECT', 'TEXTAREA', 'svg'])
 
   const api = {
@@ -174,11 +193,16 @@ function install(): boolean {
       const d = document.documentElement, b = document.body
       return Math.max(d.scrollHeight, b ? b.scrollHeight : 0) > H + 1 || Math.max(d.scrollWidth, b ? b.scrollWidth : 0) > W + 1
     },
-    stage(W: number, H: number): void {
+    stage(W: number, H: number, clip: boolean): void {
       let st = document.getElementById('mv-pdf-stage')
       if (!st) { st = document.createElement('style'); st.id = 'mv-pdf-stage'; document.head.appendChild(st) }
+      // the root's overflow is the page's, which Chrome paginates past: a document taller than its stage is clipped by its
+      // body instead, at the stage's height (max-height: a body that fits is left exactly as it lays out)
+      const b = document.body ? getComputedStyle(document.body) : null
+      const room = b ? H - (parseFloat(b.marginTop) || 0) - (parseFloat(b.marginBottom) || 0) : H
       st.textContent = `@page { size: ${W}px ${H}px; margin: 0 }
 html { width: ${W}px !important; height: ${H}px !important; overflow: hidden !important }
+${clip ? `body { max-height: ${Math.max(0, room)}px !important; overflow: hidden !important }` : ''}
 *, *::before, *::after { break-before: auto !important; break-after: auto !important; break-inside: auto !important;
   page-break-before: auto !important; page-break-after: auto !important; page-break-inside: auto !important;
   -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important }`
@@ -187,7 +211,7 @@ html { width: ${W}px !important; height: ${H}px !important; overflow: hidden !im
       const out: Hit[] = []
       for (const el of Array.from(document.querySelectorAll('[data-mv-pdf]'))) el.removeAttribute('data-mv-pdf')
       for (const el of Array.from(document.querySelectorAll('[data-mv-pdf-sh]'))) el.removeAttribute('data-mv-pdf-sh')
-      hits.clear(); shadowFix.clear()
+      hits.clear(); shadowFix.clear(); reaches.clear()
       const visit = (el: Element) => {
         for (const k of Array.from(el.children)) {
           if (k.id === 'mv-pdf-links') continue
@@ -213,7 +237,15 @@ html { width: ${W}px !important; height: ${H}px !important; overflow: hidden !im
               const i = out.length
               target.setAttribute('data-mv-pdf', String(i))
               hits.set(i, target as HTMLElement)
-              out.push({ i, kind, why: whole || media || 'backdrop-filter', rect, transformed: transformed(target), replaced: REPLACED.has(target.tagName) })
+              let box = rect
+              const tcs = getComputedStyle(target)
+              if (kind === 'whole' && !REPLACED.has(target.tagName) && tcs.display !== 'inline' && tcs.overflowX === 'visible' && tcs.overflowY === 'visible') {
+                const e = Math.max(reachOf(tcs), reachOf(getComputedStyle(target, '::before')), reachOf(getComputedStyle(target, '::after')))
+                const x0 = Math.max(0, rect.x - e), y0 = Math.max(0, rect.y - e), x1 = Math.min(W, rect.x + rect.w + e), y1 = Math.min(H, rect.y + rect.h + e)
+                reaches.set(i, { l: rect.x - x0, t: rect.y - y0, r: x1 - rect.x - rect.w, b: y1 - rect.y - rect.h })
+                box = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
+              }
+              out.push({ i, kind, why: whole || media || 'backdrop-filter', rect: box, transformed: transformed(target), replaced: REPLACED.has(target.tagName) })
               if (kind === 'whole' || target !== k) continue
             } else if (kind === 'whole') continue
           }
@@ -264,7 +296,17 @@ html { width: ${W}px !important; height: ${H}px !important; overflow: hidden !im
       const el = hits.get(i)
       if (!el) return null
       const r = el.getBoundingClientRect()
-      const box = { x: r.left, y: r.top, w: r.width, h: r.height }
+      const reach = reaches.get(i)
+      const box = reach ? { x: r.left - reach.l, y: r.top - reach.t, w: r.width + reach.l + reach.r, h: r.height + reach.t + reach.b } : { x: r.left, y: r.top, w: r.width, h: r.height }
+      // an image is patched by its source: what it draws is its content box (its own border and padding stay live)
+      if (el.tagName === 'IMG' && (kinds.get(i) ?? '') === 'whole') {
+        const c = getComputedStyle(el)
+        const px = (v: string) => parseFloat(v) || 0
+        const l = px(c.borderLeftWidth) + px(c.paddingLeft), t = px(c.borderTopWidth) + px(c.paddingTop)
+        const rr = px(c.borderRightWidth) + px(c.paddingRight), bb = px(c.borderBottomWidth) + px(c.paddingBottom)
+        const k = (el as HTMLElement).offsetWidth ? r.width / ((el as HTMLElement).offsetWidth || 1) : 1
+        box.x += l * k; box.y += t * k; box.w -= (l + rr) * k; box.h -= (t + bb) * k
+      }
       const over = (b: DOMRect) => b.left < box.x + box.w && box.x < b.right && b.top < box.y + box.h && box.y < b.bottom
       for (const o of Array.from(document.body.querySelectorAll('*'))) {
         if (o === el || el.contains(o) || o.contains(el)) continue
@@ -321,16 +363,20 @@ html { width: ${W}px !important; height: ${H}px !important; overflow: hidden !im
         }
         const r = el.getBoundingClientRect()
         if (el.tagName === 'IMG') {
+          // its geometry pinned as laid out (a new source must not resize it), then only its source swapped
           const img = el as HTMLImageElement
-          const W = img.offsetWidth, H = img.offsetHeight
+          keep(img, 'width', cs.width); keep(img, 'height', cs.height)
+          if (img.parentElement?.tagName === 'PICTURE') for (const so of Array.from(img.parentElement.querySelectorAll('source'))) so.remove()
           img.removeAttribute('srcset'); img.removeAttribute('sizes'); img.loading = 'eager'
           img.src = p.url
-          keep(img, 'box-sizing', 'border-box'); keep(img, 'width', `${W}px`); keep(img, 'height', `${H}px`)
-          keep(img, 'padding', '0'); keep(img, 'border-width', '0'); keep(img, 'object-fit', 'fill'); keep(img, 'object-position', '0 0')
+          keep(img, 'object-fit', 'fill'); keep(img, 'object-position', '0 0')
           keep(img, 'filter', 'none'); keep(img, 'mix-blend-mode', 'normal'); keep(img, 'box-shadow', 'none'); keep(img, 'mask', 'none'); keep(img, '-webkit-mask', 'none')
         } else if (REPLACED.has(el.tagName)) {
           const img = document.createElement('img')
-          const W = (el as HTMLElement).offsetWidth ?? r.width, H = (el as HTMLElement).offsetHeight ?? r.height
+          // its border box as laid out (fractional), which the capture fills
+          const px = (v: string) => parseFloat(v) || 0
+          const extra = cs.boxSizing === 'border-box' ? [0, 0] : [px(cs.paddingLeft) + px(cs.paddingRight) + px(cs.borderLeftWidth) + px(cs.borderRightWidth), px(cs.paddingTop) + px(cs.paddingBottom) + px(cs.borderTopWidth) + px(cs.borderBottomWidth)]
+          const W = px(cs.width) + extra[0], H = px(cs.height) + extra[1]
           const cls = el.getAttribute('class'); if (cls) img.setAttribute('class', cls)
           const sty = el.getAttribute('style'); if (sty) img.setAttribute('style', sty)
           img.setAttribute('data-mv-pdf', String(p.i))
@@ -345,17 +391,32 @@ html { width: ${W}px !important; height: ${H}px !important; overflow: hidden !im
           el.replaceWith(img)
           hits.set(p.i, img)
         } else {
-          // a box with children: it keeps its place in layout and in paint order; what it drew is the capture, as an
-          // image filling its border box; its own children and pseudo-elements are hidden, its effect taken off
+          // a box with children: it keeps its place in layout and in paint order; its effect is taken off, its own
+          // children and pseudo-elements hidden, and what it drew comes back as the capture - from an overlay (its
+          // ::after, absolutely placed over its border box and as far past it as the effect reached), else as its own
+          // background
           keep(el, 'filter', 'none'); keep(el, 'mix-blend-mode', 'normal'); keep(el, 'backdrop-filter', 'none'); keep(el, '-webkit-backdrop-filter', 'none')
           keep(el, 'mask', 'none'); keep(el, '-webkit-mask', 'none')
           keep(el, 'isolation', 'isolate')
           keep(el, 'color', 'transparent'); keep(el, '-webkit-text-fill-color', 'transparent'); keep(el, 'text-shadow', 'none')
           keep(el, 'border-color', 'transparent')
-          if (/inset/.test(cs.boxShadow)) keep(el, 'box-shadow', 'none')
+          const reach = reaches.get(p.i)
           // hidden, not merely transparent: Chrome's PDF backend still draws a transparent descendant's filter (a grey box)
-          rules += `[data-mv-pdf="${p.i}"] *, [data-mv-pdf="${p.i}"] *::before, [data-mv-pdf="${p.i}"] *::after, [data-mv-pdf="${p.i}"]::before, [data-mv-pdf="${p.i}"]::after { visibility: hidden !important; opacity: 0 !important; filter: none !important; backdrop-filter: none !important; transition: none !important }\n`
-          bg(el)
+          rules += `[data-mv-pdf="${p.i}"] *, [data-mv-pdf="${p.i}"] *::before, [data-mv-pdf="${p.i}"] *::after, [data-mv-pdf="${p.i}"]::before${reach ? '' : `, [data-mv-pdf="${p.i}"]::after`} { visibility: hidden !important; opacity: 0 !important; filter: none !important; backdrop-filter: none !important; transition: none !important }\n`
+          if (reach) {
+            // in the element's own units (an ancestor's scale divides them), from its padding box's corner
+            const he = el as HTMLElement
+            const k = he.offsetWidth ? r.width / he.offsetWidth : 1
+            const px = (v: string) => parseFloat(v) || 0
+            if (cs.position === 'static') keep(el, 'position', 'relative')
+            keep(el, 'box-shadow', 'none'); keep(el, 'background', 'none')
+            const L = -(px(cs.borderLeftWidth) + reach.l / k), T = -(px(cs.borderTopWidth) + reach.t / k)
+            const Wd = (r.width + reach.l + reach.r) / k, Hd = (r.height + reach.t + reach.b) / k
+            rules += `[data-mv-pdf="${p.i}"]::after { content: "" !important; display: block !important; position: absolute !important; left: ${L}px !important; top: ${T}px !important; right: auto !important; bottom: auto !important; width: ${Wd}px !important; height: ${Hd}px !important; margin: 0 !important; padding: 0 !important; border: 0 !important; box-sizing: border-box !important; background: url("${p.url}") 0 0 / 100% 100% no-repeat !important; visibility: visible !important; opacity: 1 !important; filter: none !important; mix-blend-mode: normal !important; backdrop-filter: none !important; transform: none !important; clip-path: none !important; mask: none !important; -webkit-mask: none !important; box-shadow: none !important; z-index: auto !important; pointer-events: none !important; animation: none !important; transition: none !important }\n`
+          } else {
+            if (/inset/.test(cs.boxShadow)) keep(el, 'box-shadow', 'none')
+            bg(el)
+          }
         }
         if (p.links.length) {
           if (!layer) {
@@ -421,8 +482,9 @@ async function crop(shot: string, dsf: number, boxes: { x: number; y: number; w:
   im.src = 'data:image/png;base64,' + shot
   await im.decode()
   return boxes.map((b) => {
+    // edges rounded to device pixels, as Chrome snaps a box's edges
     const sx = Math.max(0, Math.round(b.x * dsf)), sy = Math.max(0, Math.round(b.y * dsf))
-    const sw = Math.max(1, Math.min(im.width - sx, Math.round(b.w * dsf))), sh = Math.max(1, Math.min(im.height - sy, Math.round(b.h * dsf)))
+    const sw = Math.max(1, Math.min(im.width - sx, Math.round((b.x + b.w) * dsf) - sx)), sh = Math.max(1, Math.min(im.height - sy, Math.round((b.y + b.h) * dsf) - sy))
     const c = document.createElement('canvas'); c.width = sw; c.height = sh
     c.getContext('2d')!.drawImage(im, sx, sy, sw, sh, 0, 0, sw, sh)
     return { png: c.toDataURL('image/png'), jpeg: c.toDataURL('image/jpeg', 0.92) }
@@ -454,8 +516,22 @@ async function compare(a: string, b: string, dsf: number, boxes: { x: number; y:
   const inBoxes = boxes.map((bx) => {
     const x0 = Math.max(0, Math.floor(bx.x * dsf)), y0 = Math.max(0, Math.floor(bx.y * dsf))
     const x1 = Math.min(W, Math.ceil((bx.x + bx.w) * dsf)), y1 = Math.min(H, Math.ceil((bx.y + bx.h) * dsf))
+    // a pixel differs only when no pixel of the other picture within one device pixel matches it: a box snapped a device
+    // pixel apart (a third of a CSS px at 3x) is the same picture
+    const near = (x: number, y: number) => {
+      const i = (y * W + x) * 4
+      let best = 255
+      for (let dy = -1; dy <= 1 && best > tol; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const xx = x + dx, yy = y + dy
+        if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue
+        const j = (yy * W + xx) * 4
+        const v = Math.max(Math.abs(A[i] - B[j]), Math.abs(A[i + 1] - B[j + 1]), Math.abs(A[i + 2] - B[j + 2]))
+        if (v < best) best = v
+      }
+      return best
+    }
     let bad = 0, n = 0
-    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const p = y * W + x; owned[p] = 1; n++; if (d(p) > tol) bad++ }
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const p = y * W + x; owned[p] = 1; n++; if (d(p) > tol && near(x, y) > tol) bad++ }
     return n ? bad / n : 0
   })
   const cols = Math.ceil(W / 16), blocks = new Uint16Array(cols * Math.ceil(H / 16))

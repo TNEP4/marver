@@ -304,7 +304,7 @@ export async function renderSlide(b: Browser, helper: Helper, page: PlanPage, o:
       await bounded(ev(TWO_FRAMES, true), 1000)
       const out: SlideOut = { status: 'vector', ...(settled ? {} : { unsettled: true as const }) }
       if (await ev<boolean>(`window.__mvPdf.clipped(${W}, ${H})`)) out.clipped = true
-      await ev(`window.__mvPdf.stage(${W}, ${H})`)
+      await ev(`window.__mvPdf.stage(${W}, ${H}, ${!!out.clipped})`)
       await bounded(ev(TWO_FRAMES, true), 1000)
 
       // a screenshot of exactly the native view (never a clip): retaken when Chrome hands back its old surface tiled
@@ -437,7 +437,8 @@ export function writeOutline(doc: PDFDocument, titles: string[]): void {
 async function addRaster(doc: PDFDocument, page: PlanPage, r: NonNullable<SlideOut['raster']>): Promise<void> {
   const k = 0.75   // CSS px -> pt
   const p = doc.addPage([page.width * k, page.height * k])
-  const img = await doc.embedJpg(r.jpeg)
+  // a copy: pdf-lib's JPEG reader reads the bytes' whole ArrayBuffer from 0, and a small Buffer sits inside a shared pool
+  const img = await doc.embedJpg(new Uint8Array(r.jpeg))
   p.drawImage(img, { x: 0, y: 0, width: page.width * k, height: page.height * k })
   const annots = []
   for (const l of r.links) for (const b of l.rects) {
@@ -613,16 +614,20 @@ async function runJob(ctx: PdfCtx, job: Job, plan: Plan, title: string): Promise
   const pages = plan.pages
   const frames = new Map(ctx.frames().map((f) => [f.id, f]))
   let revs = revisions(ctx, pages.map((p) => p.frame))
+  if (signal.aborted) throw new Error('the export was cancelled')
   const b = await Browser.launch('mv-shot-')
   const owner = {}
   const kill = () => { void b.close() }
   signal.addEventListener('abort', kill)
   try {
+    // cancelled while the browser started: the listener came too late to close it
+    if (signal.aborted) throw new Error('the export was cancelled')
     const chrome = String((await b.send('Browser.getVersion')).product ?? '').replace(/^[^/]*\//, '')
     const helper = await Helper.open(b, owner)
     job.phase = 'rendering'
     let bytes = 0
     const outs = await pool(PDF_LANES, pages, async (page, n) => {
+      if (signal.aborted) throw new Error('the export was cancelled')
       const t = Date.now()
       const url = exportUrl(ctx.origin, page, frames.get(page.frame)?.file)
       const once = () => renderSlide(b, helper, page, { url, dir: job.dir, n, mode: job.ask.mode ?? 'auto', notes: !!job.ask.notes, signal })
@@ -740,7 +745,8 @@ async function printHandout(b: Browser, ctx: PdfCtx, job: Job, slides: { page: P
       paperWidth: p.w, paperHeight: p.h, marginTop: 0.45, marginBottom: 0.6, marginLeft: 0.5, marginRight: 0.5, printBackground: true, preferCSSPageSize: true,
       displayHeaderFooter: true, headerTemplate: '<span></span>',
       footerTemplate: `<div style="width:100%;font:8px -apple-system,Helvetica,Arial,sans-serif;color:#86868b;padding:0 0.5in;display:flex;justify-content:space-between"><span>${esc(ctx.canvasName)} · ${esc(job.board)}</span><span><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>`,
-      generateDocumentOutline: true, generateTaggedPDF: false, transferMode: 'ReturnAsBase64',
+      // Chrome builds the outline from the document's structure, which only a tagged print has
+      generateDocumentOutline: true, generateTaggedPDF: true, transferMode: 'ReturnAsBase64',
     })
     const doc = await PDFDocument.load(Buffer.from(String(pr.data), 'base64'), { updateMetadata: false })
     doc.setTitle(`${job.board.replace(/-/g, ' ')} - notes`, { showInWindowTitleBar: true })
