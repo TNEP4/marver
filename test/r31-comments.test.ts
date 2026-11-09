@@ -11,8 +11,8 @@ import { record } from '../src/server/jam/ledger.ts'
 import { parseScope, resolveAll, scopeFrames, undoResolveAll, type Receipt, type UndoReceipt } from '../src/server/comment-actions.ts'
 import { fresh, write as writeJournal } from '../src/server/jam/journal.ts'
 import { createJam } from '../src/server/jam/daemon.ts'
-import { answers, ctxFor, form, freezeBrief, ingest, liveThreads } from '../src/server/jam/queue.ts'
-import { syncOnce } from '../src/server/sync.ts'
+import { answers, ctxFor, dropDeleted, form, freezeBrief, ingest, liveThreads } from '../src/server/jam/queue.ts'
+import { admitted, syncOnce } from '../src/server/sync.ts'
 import { markSlot } from '../app/pages/strip/needs.ts'
 import { wrapupWithoutDeleted, type Wrapup } from '../src/server/jam/session.ts'
 import type { Card } from '../src/server/jam/types.ts'
@@ -454,6 +454,29 @@ describe('older records, titles and captures (spec 31 C.5)', () => {
     } finally { done() }
   })
 
+  it('a capture whose comment was deleted: no brief carries what it said, nested ones included', () => {
+    const cap = { record: { id: 'cap-a' }, recordHash: 'h' }
+    const brief = { asks: [], history: [], capture: { ...cap, reviewed: { asks: [], result: 'r', capture: { record: { id: 'cap-b' }, recordHash: 'h2' } } } } as never
+    expect(dropDeleted(brief, new Set(), new Set(['cap-a']))).not.toHaveProperty('capture')
+    expect((dropDeleted(brief, new Set(), new Set(['cap-b'])) as any).capture.reviewed).not.toHaveProperty('capture')
+    const w = { captures: [{ id: 'cap-a', record: { context: { board: 'home' } } }, { id: 'cap-c', record: { context: { board: 'home' } } }] } as unknown as Wrapup
+    expect(wrapupWithoutDeleted(w, () => new Set(), undefined, () => new Set(['cap-a'])).captures.map((c) => c.id)).toEqual(['cap-c'])
+  })
+
+  it('...a tag that joined the capture still stands', () => {
+    const { root, dir, done } = temp('mv-r31-cap2-')
+    try {
+      const j = fresh()
+      j.cards.push({ id: 'cap-test02', kind: 'capture', board: 'home', frames: [], thread: 'capth02', events: ['tag-ev'], state: 'queued', made: 1, order: 1, rev: 1, at: 1 } as Card)
+      const c = create('capth02', { board: 'home', capture: 'cap-test02', body: 'what I said' })
+      appendEvents(dir, 'home', [c, { ...reply('tagr01', 'capth02', { board: 'home', body: '@marver and this' }), id: 'tag-ev' }])
+      j.seen = readLog(dir, 'home').map((e) => `home|${e.id}`)
+      appendEvents(dir, 'home', [del('capth02', { board: 'home' })])
+      ingest(j, ctxFor(root))
+      expect(j.cards[0].state).toBe('queued')
+    } finally { done() }
+  })
+
   it('a capture\'s own comment deleted before it is sent: the capture is withdrawn', () => {
     const { root, dir, done } = temp('mv-r31-cap-')
     try {
@@ -480,6 +503,24 @@ describe('marks never show a deleted answer (spec 31 C.5)', () => {
       appendEvents(dir, 'main', [del('ans1')])
       expect(JSON.stringify(answers(root))).not.toContain('secretly')
     } finally { done() }
+  })
+})
+
+describe('what a pull may do here (spec 31 C.4, Codex r4)', () => {
+  it('a remote message reusing a local id, and a delete or edit not by the original author, never land', () => {
+    const note = create('marvnote1', { agent: true, body: 'Marver note' })
+    const mine = create('mymsg0001', { body: 'mine' })
+    const local = [note, mine]
+    const remote: CommentEvent[] = [
+      create('marvnote1', { id: 'hijack-c', author: OTHER, body: 'claimed' }),
+      { id: 'hijack-d', ts: t(), type: 'delete', commentId: 'marvnote1', board: 'main', author: OTHER },
+      { id: 'other-del', ts: t(), type: 'delete', commentId: 'mymsg0001', board: 'main', author: OTHER },
+      { id: 'other-ed', ts: t(), type: 'edit', commentId: 'mymsg0001', board: 'main', author: OTHER, body: 'x' },
+      { id: 'own-ed', ts: t(), type: 'edit', commentId: 'mymsg0001', board: 'main', author: { email: OWNER.email }, body: 'mine, again' },
+      create('theirs001', { author: OTHER }),
+      { id: 'their-del', ts: t(), type: 'delete', commentId: 'theirs001', board: 'main', author: OTHER },
+    ]
+    expect(admitted(local, remote).map((e) => e.id)).toEqual(['own-ed', create('theirs001').id, 'their-del'])
   })
 })
 
