@@ -894,7 +894,8 @@ export function App() {
         const from = s.selection.length ? s.nodes.find((n) => n.key === s.selection[s.selection.length - 1])?.frame ?? null : null
         const id = nextToLook(s.marks, asksNow(), [...new Set(live.map((n) => n.frame))], from)
         const n = id ? live.find((x) => x.frame === id) : null
-        if (n) { s.select(n.key); canvasCtl.fitNode(n.key) } else { h.noop('nothing-new'); toast('nothing new on this board') }
+        // a person's navigation: a show still waiting or loading gives way (spec 31 D3)
+        if (n) { navigated(); s.select(n.key); canvasCtl.fitNode(n.key) } else { h.noop('nothing-new'); toast('nothing new on this board') }
         return
       }
       if (e.key === 'n' && !e.shiftKey) { cmd('notes', how()); const visible = document.querySelectorAll('.sh-notes:not(.off)').length > 0; useNotes.getState().toggleAll(visible); toast(visible ? 'notes hidden' : 'notes shown'); return }

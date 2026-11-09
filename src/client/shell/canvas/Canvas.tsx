@@ -3,7 +3,7 @@ import { TransformWrapper, TransformComponent, type ReactZoomPanPinchContentRef 
 import { CONFIG, useStore } from '../store.ts'
 import { letGoOfTile } from '../jam-state.ts'
 import { bootHash, linkTargets } from '../hash.ts'
-import { isLatest, navNow, revealFrame } from '../goto.ts'
+import { isLatest, navigated, navNow, revealFrame } from '../goto.ts'
 import { noteGestureCmd, startPerf } from '../perf.ts'
 import { FrameNode, HEADER } from './FrameNode.tsx'
 import { NOTE_GAP } from '../notes.ts'
@@ -199,7 +199,7 @@ function GroupCaptions() {
             style={{ transform: `translate(${g.x}px, ${g.y}px) translateY(calc(-100% - clamp(4px, 8px * var(--sh-inv, 1), 40px)))` }}
             title="Select all variants"
             onPointerDown={(e) => e.stopPropagation()}
-            onClick={() => { cmd('group-fit', { via: 'click', in: 'shell', frames: g.keys.length }); useStore.getState().selectMany(g.keys); canvasCtl.fitNodes(g.keys) }}>
+            onClick={() => { cmd('group-fit', { via: 'click', in: 'shell', frames: g.keys.length }); navigated(); useStore.getState().selectMany(g.keys); canvasCtl.fitNodes(g.keys) }}>
             {id.split('/').map((s) => s[0].toUpperCase() + s.slice(1)).join(' / ')} · {g.ids.size} variants
           </div>
         )

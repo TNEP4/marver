@@ -39,6 +39,12 @@ beforeAll(async () => {
     ] }),
     'design/boards/other.json': JSON.stringify({ version: 1, name: 'other', order: 1, auto: false, nodes: [{ key: 'n-three', frame: 'demo/three', x: 0, y: 0, w: 390, h: 844 }] }),
     'design/boards/empty.json': JSON.stringify({ version: 1, name: 'empty', order: 2, auto: false, nodes: [] }),
+    // a variant group (meta.of): its caption on the canvas selects and fits both
+    'design/scenes/vs/a.tsx': `export const meta = { title: 'Pick A', viewport: 'mobile', of: 'vs/pick', variant: 'a' }\nexport default () => <main><h1>A</h1></main>\n`,
+    'design/scenes/vs/b.tsx': `export const meta = { title: 'Pick B', viewport: 'mobile', of: 'vs/pick', variant: 'b' }\nexport default () => <main><h1>B</h1></main>\n`,
+    'design/boards/vars.json': JSON.stringify({ version: 1, name: 'vars', order: 3, auto: false, nodes: [
+      { key: 'v-a', frame: 'vs/a', x: 0, y: 0, w: 390, h: 844 }, { key: 'v-b', frame: 'vs/b', x: 450, y: 0, w: 390, h: 844 },
+    ] }),
   })
   dev = await startDev(root, { args: ['--port', String(PORT)] })
   browser = await Browser.launch()
@@ -403,6 +409,20 @@ describe('a show and the boot', () => {
     await t.ev(`__gate.release()`)
     await new Promise((r) => setTimeout(r, 1500))
     expect(await t.ev(VIEW)).toMatchObject({ board: 'main', sel: ['n-two'] })
+    expect(await acks(seq)).toEqual({ shown: 0, notice: 0 })
+  }, 60_000)
+
+  it('a person clicking a variant group\'s caption while a show loads its board: the show gives way', async () => {
+    if (!browser) return
+    const t = await open('#/b/vars')
+    await t.until(`!!document.querySelector('.sh-gcaption')`)
+    await t.ev(`__hold('other')`)
+    const seq = await show({ board: 'other', n: ['n-three'] })
+    await t.until(`__gate.asked`)
+    await t.ev(`document.querySelector('.sh-gcaption').click(), 1`)
+    await t.ev(`__gate.release()`)
+    await new Promise((r) => setTimeout(r, 1500))
+    expect(await t.ev(VIEW)).toMatchObject({ board: 'vars', sel: ['v-a', 'v-b'] })
     expect(await acks(seq)).toEqual({ shown: 0, notice: 0 })
   }, 60_000)
 
