@@ -696,7 +696,7 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
   const how = (): CmdOpts => ({ via: 'click', in: 'shell', frame: thread.frame })
   const tools = (m: { id: string; author?: { id?: string }; agent?: boolean; body?: string }) => !mine(m) || editing?.id === m.id ? null : (
     <span className="cm-tools">
-      <button className="cm-tool" data-edit={m.id} onClick={() => { cmd('comment-edit', how()); setAsking(null); setEditing({ id: m.id, text: m.body ?? '' }) }}>Edit</button>
+      {!(m.id === thread.id && thread.capture) && <button className="cm-tool" data-edit={m.id} onClick={() => { cmd('comment-edit', how()); setAsking(null); setEditing({ id: m.id, text: m.body ?? '' }) }}>Edit</button>}
       {canDelete && <button className="cm-tool" data-delete={m.id} onClick={() => { cmd('comment-delete-ask', how()); setEditing(null); setAsking(m.id) }}>Delete</button>}
     </span>
   )

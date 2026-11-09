@@ -1438,11 +1438,16 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           if (incoming.some((ev: any) => ev?.type === 'edit' || ev?.type === 'delete')) {
             const { ownsMessage } = await import('./own.ts')
             const { deletedMessages } = await import('../shared/events.ts')
-            const gone = deletedMessages(readLog(dir, cm[1]))
+            const log = readLog(dir, cm[1])
+            const gone = deletedMessages(log)
+            // a capture's own comment is sealed into its Jam card: an edit here would change what you see, never what
+            // the agent gets - its words are edited in Jam's lane, so here it can only be deleted
+            const captures = new Set(log.filter((e: any) => e?.type === 'create' && e.capture && e.commentId).map((e: any) => e.commentId))
             for (const ev of incoming) {
               if (ev?.type !== 'edit' && ev?.type !== 'delete') continue
               if (typeof ev.commentId !== 'string' || !ownsMessage(root, cm[1], ev.commentId)) return json(res, 403, { error: `only its author can ${ev.type} a comment` })
               if (ev.type === 'edit' && gone.has(ev.commentId)) return json(res, 409, { error: 'that comment was deleted' })
+              if (ev.type === 'edit' && captures.has(ev.commentId)) return json(res, 409, { error: 'a capture is edited in Jam - here it can only be deleted' })
               if (ev.type === 'edit' && (typeof ev.body !== 'string' || !ev.body.trim())) return json(res, 400, { error: 'an edit needs words - delete the comment instead' })
             }
           }

@@ -88,6 +88,16 @@ describe('the dev server (spec 31 B.4, C.2-C.6)', () => {
     expect(replay(readLog(dir(), 'main')).some((t) => t.id === 'old-mine')).toBe(false)
   })
 
+  it('a capture\'s own comment is never edited here - Jam holds its words; it can still be deleted', async () => {
+    const c = id('capc')
+    expect((await api('comments/main', { events: [{ id: id('e'), ts: Date.now(), type: 'create', commentId: c, frame: 'spec/alpha', capture: 'cap-1700000000001-beef', body: 'what I said' }] })).status).toBe(200)
+    expect(readLog(dir(), 'main').find((e) => e.commentId === c && e.type === 'create')).toMatchObject({ capture: 'cap-1700000000001-beef' })
+    const r = await api('comments/main', { events: [{ id: id('ed'), ts: Date.now(), type: 'edit', commentId: c, body: 'not what the agent gets' }] })
+    expect(r.status).toBe(409)
+    expect(replay(readLog(dir(), 'main')).find((t) => t.id === c)?.body).toBe('what I said')
+    expect((await api('comments/main', { events: [{ id: id('dl'), ts: Date.now(), type: 'delete', commentId: c }] })).status).toBe(200)
+  })
+
   it('with Jam off, a withdrawn capture\'s record is not served (its own comment deleted - read from the files)', async () => {
     const capId = 'cap-1700000000000-abcd'
     put(`design/.local/jam/captures/${capId}.json`, { format: 'marver.jam.capture', v: 1, id: capId, context: { canvas: 'x', board: 'main' }, view: {}, timeline: [{ at: 1, event: 'words', text: 'the withdrawn words' }], pictures: [] })
