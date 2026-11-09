@@ -16,7 +16,7 @@ import type { Plugin, Rollup } from 'vite'
 import react from '@vitejs/plugin-react'
 import { createHash, randomBytes } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { basename, dirname, join, sep } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { NAME, ROUTE } from '../cli/name.ts'
 import { loadConfig } from './config.ts'
@@ -32,6 +32,7 @@ import { boardFields, checkBoardsDir, isRegularFile, listBoardFiles, readRegistr
 import { appendEvents, legacyExposure, readLog, shareable } from './comments.ts'
 import { autoWidthOf, keptSizes, measuringFrames, readSizes } from './sizes.ts'
 import { logoIcons, publishLogo } from './logo.ts'
+import { canvasIdentity } from './identity.ts'
 
 const posix = (p: string) => p.split(sep).join('/')
 
@@ -434,7 +435,8 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   const outDir = join(root, 'design', '.dist')
 
   // ---- data: manifest + boards, gated by the publish policy (the privacy boundary) ----
-  const manifest = scanFrames(root, { name: config.share.name || basename(root), description: config.description })
+  const identity = canvasIdentity(root, config)
+  const manifest = scanFrames(root, { name: identity.local, description: config.description })
   const allBoards = readBoards(root)
   const policy = resolvePolicy(root, allBoards, boardsFlag, allBoardsFlag)
   // spec 20: a board's type suggests how it presents when its row names no type - said once per
@@ -768,10 +770,9 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   // exists (agent-native convention: design/logo.svg|png; host public/ as fallback). The ladder and
   // its checks are logo.ts's (spec 28 A2.9): a regular file inside the repo, an image by its bytes -
   // never a link followed, never a share.logo from outside the repo
-  let name = basename(root)
-  try { name = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).name ?? name } catch { /* keep basename */ }
-  if (config.share.name) name = config.share.name
-  const logo = publishLogo(root, config.share.logo, outDir, (m) => console.warn(`  ${m}`))
+  // the published name and the logo: one resolver (identity.ts) - config `name`, share.name, package.json, the folder
+  const name = identity.published
+  const logo = publishLogo(root, identity.logos, outDir, (m) => console.warn(`  ${m}`))
   // the published shell's only tab icon (spec 28 A4.6 #46): a browser tab and the Mac app's shared tab wear it
   if (logo) writeFileSync(join(outDir, 'index.html'), logoIcons(readFileSync(join(outDir, 'index.html'), 'utf8'), logo))
   // rights ride in meta.json so serve can enforce the policy on comment APIs without parsing the bundle - hiding UI controls is not authorization;

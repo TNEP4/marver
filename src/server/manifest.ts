@@ -75,6 +75,16 @@ export function readNote(abs: string): string | undefined {
   } catch { return undefined }
 }
 
+/** A JS string literal's escapes, read: a backslash before a quote, a backtick or a backslash; \n \t \r; \xHH,
+ *  \uHHHH, \u{H...}; any other escaped character is itself (\$ is $). */
+export function unescapeJs(s: string): string {
+  return s.replace(/\\(u\{([0-9a-fA-F]{1,6})\}|u([0-9a-fA-F]{4})|x([0-9a-fA-F]{2})|[\s\S])/g, (_m, e: string, cp?: string, u?: string, x?: string) => {
+    const hex = cp ?? u ?? x
+    if (hex) { const n = parseInt(hex, 16); return n <= 0x10ffff ? String.fromCodePoint(n) : '' }
+    return e === 'n' ? '\n' : e === 't' ? '\t' : e === 'r' ? '\r' : e === 'b' ? '\b' : e === 'f' ? '\f' : e === 'v' ? '\v' : e === '0' ? '\0' : e === '\n' ? '' : e
+  })
+}
+
 /** Extract `export const meta = {...}` with literal string values only. Anything else is silently omitted. */
 export function extractMeta(src: string): FrameMeta {
   const m = /export\s+const\s+meta\s*=\s*\{([\s\S]*?)\}/.exec(src)
@@ -84,8 +94,9 @@ export function extractMeta(src: string): FrameMeta {
     // boundary required: `covariant:` must not match `variant:` (property suffixes). Each
     // quote style closes on its own kind, so an apostrophe inside "…" is prose, not an end
     // ...and the literal must END the value: `"Draft" + phase` is computed, not a literal
-    const r = new RegExp(`(?:^|[{,])\\s*${key}\\s*:\\s*(?:'([^'\\n]*)'|"([^"\\n]*)"|\`([^\`\\n]*)\`)\\s*(?=[,}\\n]|$)`).exec(body)
-    return r ? (r[1] ?? r[2] ?? r[3]) : undefined
+    // ...and a backslash escapes in each quote style: 'Nic\'s board' is a literal too (spec 31 H.1), read unescaped
+    const r = new RegExp(`(?:^|[{,])\\s*${key}\\s*:\\s*(?:'((?:[^'\\\\\\n]|\\\\.)*)'|"((?:[^"\\\\\\n]|\\\\.)*)"|\`((?:[^\`\\\\\\n]|\\\\.)*)\`)\\s*(?=[,}\\n]|$)`).exec(body)
+    return r ? unescapeJs(r[1] ?? r[2] ?? r[3]) : undefined
   }
   // literal booleans, same boundary discipline as the string picker
   const pickBool = (key: string) => {

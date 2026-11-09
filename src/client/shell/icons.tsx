@@ -85,10 +85,15 @@ export const ArrowRightIcon = icon(<path d="M221.66,133.66l-72,72a8,8,0,0,1-11.3
 export const VariantsIcon = icon(<path d="M223.45,208.19,168,101.11V40h8a8,8,0,0,0,0-16H80a8,8,0,0,0,0,16h8v61.11L32.55,208.19A16,16,0,0,0,46.86,232H209.14a16,16,0,0,0,14.31-23.81ZM102.13,108.5A8,8,0,0,0,104,103.35V40h48v63.35a8,8,0,0,0,1.87,5.15L179.36,157c-11.71,2.87-26.5.66-44.16-6.64-14.08-5.82-27.34-8.53-39.66-8.16ZM46.86,216,84.36,143.6c11.68-2.9,26.47-.68,44.13,6.61,13.09,5.42,25.36,8.11,36.65,8.11a67.86,67.86,0,0,0,22.53-3.72L209.14,216Z" />)
 /** The board glyph, for a board with no type. */
 export const CardsIcon = icon(<path d="M184,72H40A16,16,0,0,0,24,88V200a16,16,0,0,0,16,16H184a16,16,0,0,0,16-16V88A16,16,0,0,0,184,72Zm0,128H40V88H184V200ZM232,56V176a8,8,0,0,1-16,0V56H64a8,8,0,0,1,0-16H216A16,16,0,0,1,232,56Z" />)
-/** Viewport-name -> device glyph; unknown custom names fall back to the generic Devices. */
-export function deviceIcon(name: string | null, size = 14) {
-  const Icon = ({ mobile: DeviceMobileIcon, tablet: DeviceTabletIcon, laptop: LaptopIcon, monitor: MonitorIcon, tv: TvIcon } as Record<string, typeof DevicesIcon>)[name ?? ''] ?? DevicesIcon
-  return <Icon size={size} />
+/* spec 31 F.1: the built-in glyphs beyond Phosphor's devices, drawn in the same 256-space and stroke. */
+export const WatchIcon = icon(<><rect x="64" y="64" width="128" height="128" rx="32" fill="none" stroke="currentColor" strokeWidth="16" /><path d="M92 64 L100 24 H156 L164 64 M92 192 L100 232 H156 L164 192" fill="none" stroke="currentColor" strokeWidth="16" strokeLinejoin="round" /><path d="M128 104 V128 H148" fill="none" stroke="currentColor" strokeWidth="14" strokeLinecap="round" strokeLinejoin="round" /></>)
+export const DesktopIcon = icon(<><rect x="24" y="40" width="208" height="144" rx="16" fill="none" stroke="currentColor" strokeWidth="16" /><path d="M24 152 H232 M128 184 V216 M88 216 H168" fill="none" stroke="currentColor" strokeWidth="16" strokeLinecap="round" /></>)
+export const EreaderIcon = icon(<><rect x="52" y="24" width="152" height="208" rx="20" fill="none" stroke="currentColor" strokeWidth="16" /><path d="M88 72 H168 M88 104 H168 M88 136 H144" fill="none" stroke="currentColor" strokeWidth="14" strokeLinecap="round" /><path d="M112 196 H144" fill="none" stroke="currentColor" strokeWidth="14" strokeLinecap="round" /></>)
+
+/** A built-in device glyph's icon; an unknown or absent one is the generic Devices. */
+export const DEVICE_GLYPH_ICONS: Record<string, typeof DevicesIcon> = {
+  mobile: DeviceMobileIcon, tablet: DeviceTabletIcon, laptop: LaptopIcon, monitor: MonitorIcon, tv: TvIcon,
+  watch: WatchIcon, desktop: DesktopIcon, ereader: EreaderIcon,
 }
 
 export const BrowsersIcon = icon(<path d="M216,40H72A16,16,0,0,0,56,56V72H40A16,16,0,0,0,24,88V200a16,16,0,0,0,16,16H184a16,16,0,0,0,16-16V184h16a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40ZM184,88v16H40V88Zm0,112H40V120H184v80Zm32-32H200V88a16,16,0,0,0-16-16H72V56H216Z" />)

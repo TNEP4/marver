@@ -193,7 +193,7 @@ export async function serve(root: string, portFlag?: number) {
     // way the gate shows it, so the two read as the same canvas.
     const canvasName = humanName(meta.name)
     const { ceilingsFromRights } = await import('./share.ts')
-    idHandler = marverIdHandler(dataDir(), idIssuer, canvasName, meta.branding, ceilingsFromRights(meta.rights ?? {}))
+    idHandler = marverIdHandler(dataDir(), idIssuer, canvasName, meta.branding, ceilingsFromRights(meta.rights ?? {}), meta.logo)
   }
 
   // Both set: the issuer wins and the password is ignored - said once, out

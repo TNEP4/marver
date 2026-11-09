@@ -106,7 +106,9 @@ export const laneTip = (c: LaneCard, name: (agent: string) => string | undefined
 
 /** One line of a capture's detail: its time in the capture, the kind of step, the words, the element's
  *  source (file:line) and point number when it has them. */
-export interface TimelineLine { t: string; kind: string; text: string; source?: string; point?: number }
+export interface TimelineLine { t: string; kind: string; text: string; source?: string; point?: number
+  /** a device step's viewport name, as configured - the panel shows its label and icon (spec 31 F.3) */
+  device?: string }
 
 /** `<span> "Save 20%"` - an element as a line names it; a secret stays "•••". */
 const el = (b: Bundle): string =>
@@ -148,7 +150,7 @@ export function timelineLines(r: CaptureRecord, edited?: string): TimelineLine[]
         out.push({ t, kind: 'view', text: [where, size, v.theme].filter(Boolean).join(' · ') || 'the canvas' }); break
       }
       case 'select': out.push({ t, kind: 'select', text: s.frames.map(frameName).join(', ') || 'nothing' }); break
-      case 'device': out.push({ t, kind: 'device', text: `${frameName(s.frame)} · ${s.viewport}${s.width ? ` ${s.width}` : ''}` }); break
+      case 'device': out.push({ t, kind: 'device', text: `${frameName(s.frame)} · ${s.viewport}${s.width ? ` ${s.width}` : ''}`, device: s.viewport }); break
       case 'theme': out.push({ t, kind: 'theme', text: s.theme }); break
       case 'copied': out.push({ t, kind: 'copied', text: `${s.what} of ${frameName(s.frame)}` }); break
       case 'interact': out.push({ t, kind: 'interact', text: s.on ? 'on' : 'off' }); break

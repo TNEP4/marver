@@ -24,7 +24,8 @@ import { cmd, endAfterFrames, endOnCamera, endOnLoad, endOnStage, foldsIntoSave,
 import { enterFocus, enterPlay, enterSlides, playCtl, PlayOverlay } from './Play.tsx'
 import { bootHash, linkTargets, parseHash, retargetBoot, UNPLACED, writeHash } from './hash.ts'
 import { isLegacyLink, landLegacy } from './legacy-links.ts'
-import { CaretIcon, CheckIcon, ColumnsIcon, FrameRectIcon, ImagesSquareIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ParallelogramFillIcon, PencilSimpleIcon, PlayIcon, PlusIcon, SignpostIcon, SlideFrameIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
+import { CaretIcon, CheckIcon, ColumnsIcon, FrameRectIcon, ImagesSquareIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ParallelogramFillIcon, PencilSimpleIcon, PlayIcon, PlusIcon, SignpostIcon, SlideFrameIcon, SunIcon, VariantsIcon, XIcon } from './icons.tsx'
+import { deviceIcon, deviceLabel } from './devices.tsx'
 import { ALL_SCENES, humanize as slugLabel, readTitle } from '../../shared/board-tree.ts'
 import { CommentsController, parkThread, revealThread } from './Comments.tsx'
 import { poweredByUrl } from '../../shared/utm.ts'
@@ -190,9 +191,9 @@ function SelectionBar() {
       {Object.entries(CONFIG.viewports).map(([name, vp], vi) => {
         const active = node.w === vp.width
         return (
-          <Tip key={name} label={<><b>{cap(name)}</b><span>{vp.width} × {vp.height}</span><span className="k">{vi + 1}</span></>}>
-            <button className={active ? 'on' : 'icon'} onClick={() => applyDevice(name)}>
-              {deviceIcon(name, 15)}{active && <span>{cap(name)}</span>}
+          <Tip key={name} label={<><b>{deviceLabel(name)}</b><span>{vp.width} × {vp.height}</span><span className="k">{vi + 1}</span></>}>
+            <button className={active ? 'on' : 'icon'} onClick={() => applyDevice(name)} aria-label={deviceLabel(name)}>
+              {deviceIcon(name, 15)}{active && <span>{deviceLabel(name)}</span>}
             </button>
           </Tip>
         )
@@ -259,7 +260,7 @@ function DeviceMenu() {
   const active = scoped
     ? entries.find(([, vp]) => selNodes.length > 0 && selNodes.every((n) => n.w === vp.width))?.[0] ?? null
     : deviceView
-  const hint = scoped ? `${selection.length} selected` : deviceView ? cap(deviceView) : `keys 1-${entries.length}`
+  const hint = scoped ? `${selection.length} selected` : deviceView ? deviceLabel(deviceView) : `keys 1-${entries.length}`
   return <DevicePicker value={active} onSelect={pick} includeDefault hint={hint} />
 }
 

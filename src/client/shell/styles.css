@@ -2059,3 +2059,8 @@ textarea.jm-field:focus { border-color: transparent; box-shadow: 0 0 0 1px var(-
 .jm-count { cursor: pointer }
 /* in play the Jam button's crossed microphone wears the dark pill's ink (the canvas grey would vanish) */
 .sh-play-pill .sh-pill-btn.jm-jam .jm-nomic { color: inherit }
+
+/* spec 31 F.1: a device's own icon - its sanitized SVG as a mask, filled with the ink it sits in */
+.sh-dev-mask { display: inline-block; flex: none; background-color: currentColor;
+  -webkit-mask-size: contain; mask-size: contain; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center }

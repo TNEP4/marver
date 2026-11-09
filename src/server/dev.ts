@@ -6,6 +6,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve as resolvePath }
 import { fileURLToPath } from 'node:url'
 import { NAME, PKG } from '../cli/name.ts'
 import { loadConfig } from './config.ts'
+import { canvasIdentity, identityNudge } from './identity.ts'
 import { detectHost } from './detect.ts'
 import { marverPlugin, tailwind3Css, tailwind4Plugin } from './plugin.ts'
 import { liveChanged } from './app-live.ts'
@@ -316,7 +317,7 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
   const explicitPort = opts.port ?? fromConfig
   const placed = await place({
     // the name the shell shows (spec 28 A2.14 #23): the app's tab and Home card wear it, "TMS broker" not "tms-broker"
-    root: run.root, name: config.share.name || basename(run.root), version: installedVersion() ?? '0.0.0', id: run.id, ws: run.ws, instance,
+    root: run.root, name: canvasIdentity(run.root, config).local, version: installedVersion() ?? '0.0.0', id: run.id, ws: run.ws, instance,
     onHold: (release) => t.claim(release),
     ...(opts.recover ? { recover: { port: opts.recover.port } }
       : explicitPort !== undefined ? { explicit: { port: explicitPort, from: fromConfig !== undefined ? 'config' as const : 'flag' as const } } : {}),
@@ -611,6 +612,9 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
   // projects can never be confused (a tab bookmarked to one silently serving the other)
   if (placed.fellBackFrom) console.log(`\n  port ${placed.fellBackFrom} is in use - serving "${projectName}" on slot ${claim.slot} instead`)
   console.log(`\n  ${NAME} · ${projectName} → http://localhost:${port}/\n`)
+  // spec 31 G.2: a canvas still on its folder's name or the Marver mark looks like every other one in the app
+  const nudge = identityNudge(root, config)
+  if (nudge) console.log(`  ${nudge}\n`)
   // where it ran before (A1.6): a tab still open at another address holds its unsaved edits until this canvas runs
   // there again, and a Jam capture left unsent - if one was - waits there, in that browser. Nothing here knows
   // whether one was, so the hint says if. A --recover run replays an entry, so it records nothing

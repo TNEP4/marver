@@ -14,9 +14,10 @@ import { speechLines } from '../../shared/speech.ts'
 import {
   ArrowBendUpLeftIcon, ArrowLeftIcon, ArrowRightIcon, ArrowUpIcon, CopyIcon, CursorClickIcon, CursorIcon, EyeIcon, FileCodeIcon,
   FrameRectIcon, ImagesSquareIcon, LaserIcon, MicrophoneIcon, MoonIcon, PencilSimpleIcon, SignpostIcon, SunIcon, TextboxIcon,
-  ParallelogramFillIcon, WarningIcon, WaveformIcon, XIcon, deviceIcon,
+  ParallelogramFillIcon, WarningIcon, WaveformIcon, XIcon,
 } from './icons.tsx'
 import { LANE_H } from './jam-lane.tsx'
+import { deviceIcon, deviceLabel } from './devices.tsx'
 import { Tip } from './Tip.tsx'
 import { useJamQueue } from './jam-queue.ts'
 import { holdsReload } from './api.ts'
@@ -70,7 +71,6 @@ holdsReload(() => moreDrafts.size > 0)
 unsavedWhen('typing', () => moreDrafts.size > 0)
 
 const unquote = (s: string) => s.replace(/^"(.*)"$/s, '$1')
-const DEVICE: Record<string, string> = { phone: 'mobile', mobile: 'mobile', tablet: 'tablet', laptop: 'laptop', desktop: 'monitor', monitor: 'monitor', tv: 'tv' }
 
 /** One line: time | glyph | what happened (the read-back's merged timeline, jam-lines.ts). */
 function LineRow({ l }: { l: TimelineLine }) {
@@ -89,8 +89,11 @@ function LineRow({ l }: { l: TimelineLine }) {
     case 'scroll': glyph = <ArrowUpIcon size={13} style={{ transform: 'rotate(180deg)' }} />; break
     case 'select': glyph = <FrameRectIcon size={13} />; body = <>selected {ui(l.text)}</>; break
     case 'device': {
-      const name = (l.text.split(' · ')[1] ?? '').split(' ')[0].toLowerCase()
-      glyph = deviceIcon(DEVICE[name] ?? null, 13); body = <>viewed at {ui(l.text.split(' · ').slice(1).join(' · ') || l.text)}</>; break
+      // the viewport as configured: its own label and icon (spec 31 F.3) - "viewed at iPad landscape 1180"
+      const name = l.device ?? (l.text.split(' · ')[1] ?? '').split(' ')[0]
+      const width = /\s(\d+)$/.exec(l.text)?.[1]
+      glyph = name ? deviceIcon(name, 13) : deviceIcon(null, 13)
+      body = <>viewed at {ui(name ? `${deviceLabel(name)}${width ? ` ${width}` : ''}` : l.text)}</>; break
     }
     case 'theme': glyph = l.text === 'dark' ? <MoonIcon size={13} /> : <SunIcon size={13} />; body = <>switched to {ui(l.text)}</>; break
     case 'copied': {

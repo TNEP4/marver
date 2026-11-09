@@ -8,13 +8,14 @@
  */
 import { createPortal } from 'react-dom'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { useStore, CONFIG, SOURCE_REVEALED, cap, stoppedFor } from './store.ts'
+import { useStore, CONFIG, SOURCE_REVEALED, stoppedFor } from './store.ts'
 import { STOPPED_TIP, useStopped } from './api.ts'
 import { NO_COMMENTS_HERE, useComments } from './comments-store.ts'
 import { UNPLACED } from './hash.ts'
 import { Tip } from './Tip.tsx'
 import { cmd } from './commands.ts'
-import { CaretIcon, CheckIcon, CommentIcon, DevicesIcon, EyeSlashIcon, FrameCornersIcon, LaserIcon, MoonIcon, SlideFrameIcon, SunIcon, deviceIcon } from './icons.tsx'
+import { CaretIcon, CheckIcon, CommentIcon, DevicesIcon, EyeSlashIcon, FrameCornersIcon, LaserIcon, MoonIcon, SlideFrameIcon, SunIcon } from './icons.tsx'
+import { deviceIcon, deviceLabel } from './devices.tsx'
 
 const commentsStore = () => useComments.getState()
 
@@ -216,7 +217,7 @@ export function DevicePicker({ value, onSelect, includeDefault, includeFill, inc
         </>}
         {entries.map(([name, vp], i) => (
           <button key={name} onClick={() => pick(name)} title={`${vp.width} × ${vp.height}`}>
-            {deviceIcon(name)}<span>{cap(name)}</span><kbd>{i < 9 ? i + 1 : ''}</kbd>
+            {deviceIcon(name)}<span>{deviceLabel(name)}</span><kbd>{i < 9 ? i + 1 : ''}</kbd>
             {value === name && <CheckIcon size={13} className="chk" />}
           </button>
         ))}

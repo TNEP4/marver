@@ -35,6 +35,7 @@ import { keyAllowed } from '../frame-host/keys.js'
 import { CommentButton, DevicePicker, HideUIButton, isHideUI, LaserButton, Popover, ThemePicker, toggleHideUI, usePopover } from './Toolbar.tsx'
 import { DraftComposer, Pins, placePins, ThreadCard } from './Comments.tsx'
 import { ArrowLeftIcon, ArrowRightIcon, BrowsersIcon, CaretIcon, CheckIcon, GridIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ReloadIcon, SpecDocIcon } from './icons.tsx'
+import { deviceLabel } from './devices.tsx'
 
 const commentsStore = () => useComments.getState()
 
@@ -671,7 +672,7 @@ function PlayInner() {
   const dw = Math.round(vp.width * scale)
   const dh = Math.round(vp.height * scale)
   const deviceHint = stage ? `${vp.width} × ${vp.height} stage · ${fill ? 'edge to edge' : 'fit to the window'}`
-    : fill ? 'Fill window' : `${vp.width} × ${vp.height} · keys 1-${names.length + 1}`
+    : fill ? 'Fill window' : `${CONFIG.viewports[play.device] ? `${deviceLabel(play.device)} · ` : ''}${vp.width} × ${vp.height} · keys 1-${names.length + 1}`
 
   return (
     <div className={`sh-play${fill || docPreset ? ' fill' : ''}${docPreset ? ` doc t-${play.theme}` : ''}`}>

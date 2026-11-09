@@ -2,14 +2,14 @@
  * The canvas's own logo (spec 28 A2.4, A2.9): one ladder, one set of checks, for `marver build` (which publishes it
  * beside the gate) and for `marver dev`'s `GET /__mv/logo` (which the Mac app shows on the canvas's tab and Home card).
  *
- * The ladder: `share.logo`, `design/logo.svg`, `design/logo.png`, `public/logo.svg`, `public/logo.png`,
+ * The ladder: config `logo`, `share.logo`, `design/logo.svg`, `design/logo.png`, `public/logo.svg`, `public/logo.png`,
  * `public/favicon.svg`, `public/favicon.png`, `public/favicon.ico`. A candidate counts only if `lstat` says it is a
  * regular file (a symlink never counts, even one inside the repo: `design/logo.svg -> ../.env` would otherwise serve
  * the env file), its real path is inside the repo's real path (a symlinked folder on the way out is caught here), its
  * extension is `.svg`, `.png` or `.ico`, it weighs at most 256 KB, and its bytes are one of the three image types
  * (`src/shared/logo-sniff.ts`, the sniff the app runs too). The type served and published comes from the bytes, never
- * the name: a PNG named `.svg` is the PNG it is. A `share.logo` that fails any check is ignored with one warning
- * naming why.
+ * the name: a PNG named `.svg` is the PNG it is. A `logo` or `share.logo` that fails any check is ignored with one
+ * warning naming why.
  */
 import type { Connect } from 'vite'
 import { createHash } from 'node:crypto'
@@ -23,52 +23,71 @@ export const LOGO_LADDER = ['design/logo.svg', 'design/logo.png', 'public/logo.s
 
 export interface Logo { type: LogoType; bytes: Buffer; from: string }
 
-/** The first candidate that passes every check, read whole; null when none does. `warn` hears why a `share.logo`
- *  was ignored (the ladder's own entries are tried quietly: most repos have none of them). */
-export function findLogo(root: string, shareLogo?: string, warn?: (m: string) => void): Logo | null {
+/** A logo the config names, and the key it is named under (`logo`, `share.logo`) - its warning says which. */
+export interface OwnLogo { key: string; path: string | undefined }
+
+/** The first candidate that passes every check, read whole; null when none does. The config's own come first, in
+ *  the order given (`canvasIdentity`: config `logo`, then `share.logo` - a bare string is a `share.logo`), then the
+ *  ladder. `warn` hears why one the config names was ignored (the ladder's own entries are tried quietly: most repos
+ *  have none of them). */
+export function findLogo(root: string, own?: string | readonly OwnLogo[], warn?: (m: string) => void): Logo | null {
   let realRoot: string
   try { realRoot = realpathSync(root) } catch { return null }
-  const own = typeof shareLogo === 'string' && shareLogo !== '' ? shareLogo : null
-  for (const cand of new Set(own ? [own, ...LOGO_LADDER] : LOGO_LADDER)) {
+  const named = (typeof own === 'string' || own === undefined ? [{ key: 'share.logo', path: own }] : own)
+    .filter((o): o is { key: string; path: string } => typeof o.path === 'string' && o.path !== '')
+  const keyOf = new Map<string, string>()
+  for (const o of named) if (!keyOf.has(o.path)) keyOf.set(o.path, o.key)
+  for (const cand of new Set([...named.map((o) => o.path), ...LOGO_LADDER])) {
     const r = readLogo(realRoot, resolve(realRoot, cand))
     if (typeof r !== 'string') return { ...r, from: cand }
-    if (cand === own) warn?.(`share.logo ${own} is ignored: ${r}`)
+    const key = keyOf.get(cand)
+    if (key) warn?.(`${key} ${cand} is ignored: ${r}`)
   }
   return null
 }
 
 /** One candidate: its bytes and type, or why it does not count. */
 function readLogo(realRoot: string, file: string): { type: LogoType; bytes: Buffer } | string {
+  const r = readInside(realRoot, file, LOGO_MAX, /\.(svg|png|ico)$/i, 'not .svg, .png or .ico', 'over 256 KB')
+  if (typeof r === 'string') return r
+  const type = sniffLogo(r)
+  return type ? { type, bytes: r } : 'not an image (PNG, ICO or SVG)'
+}
+
+/**
+ * A file inside the repo, read whole - or why not: a regular file by `lstat` (never a symlink, even one inside the
+ * repo), its extension `ext`, at most `max` bytes, its real path inside the repo's real path (a symlinked folder on the
+ * way out is caught here), and read as checked: no symlink swapped in since (O_NOFOLLOW), the same file (device and
+ * inode), never more than one byte past the limit whatever it grew to meanwhile. The logo's checks (spec 28 A2.9), and
+ * a device's own icon's (spec 31 F.1).
+ */
+export function readInside(realRoot: string, file: string, max: number, ext: RegExp, badExt: string, tooBig: string): Buffer | string {
   let st
   try { st = lstatSync(file) } catch (e) { return (e as NodeJS.ErrnoException).code === 'ENOENT' || (e as NodeJS.ErrnoException).code === 'ENOTDIR' ? 'no such file' : 'unreadable' }
   if (st.isSymbolicLink()) return 'a symlink'
   if (!st.isFile()) return 'not a file'
-  if (!/\.(svg|png|ico)$/i.test(file)) return 'not .svg, .png or .ico'
-  if (st.size > LOGO_MAX) return 'over 256 KB'
+  if (!ext.test(file)) return badExt
+  if (st.size > max) return tooBig
   let real: string
   try { real = realpathSync(file) } catch { return 'unreadable' }
   if (!real.startsWith(realRoot + sep)) return 'outside the repo'
-  // read what was checked: no symlink swapped in since (O_NOFOLLOW), the same file (device and inode), and never
-  // more than one byte past the limit, whatever the file grew to meanwhile
   let fd: number
   try { fd = openSync(real, constants.O_RDONLY | constants.O_NOFOLLOW) } catch { return 'unreadable' }
   try {
     const f = fstatSync(fd)
     if (!f.isFile() || f.ino !== st.ino || f.dev !== st.dev) return 'changed while it was read'
-    const buf = Buffer.alloc(LOGO_MAX + 1)
+    const buf = Buffer.alloc(max + 1)
     let n = 0
     for (let k = 1; k > 0 && n < buf.length; n += k) k = readSync(fd, buf, n, buf.length - n, null)
-    if (n > LOGO_MAX) return 'over 256 KB'
-    const bytes = Buffer.from(buf.subarray(0, n))
-    const type = sniffLogo(bytes)
-    return type ? { type, bytes } : 'not an image (PNG, ICO or SVG)'
+    if (n > max) return tooBig
+    return Buffer.from(buf.subarray(0, n))
   } catch { return 'unreadable' } finally { closeSync(fd) }
 }
 
 /** `marver build`: the logo into `<outDir>/__mv/logo.<type>` (an `.ico` as `logo.ico`), by its bytes - never a copy
  *  that follows a link. Its published path, or undefined when the repo has none. */
-export function publishLogo(root: string, shareLogo: string | undefined, outDir: string, warn?: (m: string) => void): string | undefined {
-  const logo = findLogo(root, shareLogo, warn)
+export function publishLogo(root: string, own: string | readonly OwnLogo[] | undefined, outDir: string, warn?: (m: string) => void): string | undefined {
+  const logo = findLogo(root, own, warn)
   if (!logo) return undefined
   const dir = join(outDir, ROUTE.slice(1))
   mkdirSync(dir, { recursive: true })
@@ -125,7 +144,7 @@ function matches(header: string | string[] | undefined, tag: string): boolean {
  * SVG opened as a page is a picture. A request carrying a well-formed `x-mv-nonce` gets the logo proof
  * (`x-mv-instance`, `x-mv-proof` over `logo|<nonce>|<port>`), on a 200 and a 304 alike. 404 when the repo has none.
  */
-export function logoRoute(root: string, shareLogo: () => string | undefined, proof?: DocProof): Connect.NextHandleFunction {
+export function logoRoute(root: string, own: () => string | readonly OwnLogo[] | undefined, proof?: DocProof): Connect.NextHandleFunction {
   const warned = new Set<string>()
   const warn = (m: string) => { if (warned.has(m)) return; warned.add(m); console.warn(`  marver: ${m}`) }
   return (req, res, next) => {
@@ -137,7 +156,7 @@ export function logoRoute(root: string, shareLogo: () => string | undefined, pro
       res.setHeader('allow', 'GET, HEAD')
       return res.end()
     }
-    const logo = findLogo(root, shareLogo(), warn)
+    const logo = findLogo(root, own(), warn)
     if (!logo) {
       res.statusCode = 404
       res.setHeader('cache-control', 'no-store')

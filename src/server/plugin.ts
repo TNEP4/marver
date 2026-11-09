@@ -1,7 +1,7 @@
 import type { Plugin, ViteDevServer } from 'vite'
 import { boardsChanged, workActivity } from './work.ts'
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, watch, writeFileSync } from 'node:fs'
-import { basename, join, sep } from 'node:path'
+import { join, sep } from 'node:path'
 import { hash } from './manifest.ts'
 import { NAME, PKG, ROUTE } from '../cli/name.ts'
 import { loadConfig, type ShConfig } from './config.ts'
@@ -18,6 +18,7 @@ import { apiMiddleware } from './api.ts'
 import { SIZES_FILE } from './sizes.ts'
 import { routesMiddleware } from './routes.ts'
 import { logoRoute } from './logo.ts'
+import { canvasIdentity } from './identity.ts'
 import { guardMiddleware } from './guard.ts'
 import { checkUpdate, installedVersion } from './update.ts'
 import { workspaceId } from './workspace.ts'
@@ -64,7 +65,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
 
   // the project's line in the manifest; re-read from design/config.ts when that file changes
   // (the rest of the config still needs a restart - only the two orientation fields are live)
-  let project = { name: config.share.name || basename(root), description: config.description }
+  let project = { name: canvasIdentity(root, config).local, description: config.description }
   const projectInfo = () => project
   let manifest: Manifest = scanFrames(root, projectInfo())
   let devServer: ViteDevServer | null = null
@@ -232,9 +233,9 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
             return s.startsWith('# Setup required') && s.includes('marver init')
           } catch { return false }
         })()
-        // wordmark: a declared share.name wins over the repo dir - deploy hosts build
-        // from anonymous paths (/app), and the gate already wears the declared name
-        return `export default ${JSON.stringify({ viewports: config.viewports, themes: config.themes, zoomSpeed: config.zoomSpeed, noTheme: themeFile() == null, setup: setupPending, projectName: config.share.name || basename(root), branding: config.share.branding, jam: config.jam ? { chime: config.jam.chime, capture: config.jam.capture, names: config.jam.names && config.jam.agent === 'claude' } : null, workspace: ws, version: installedVersion() ?? '0.0.0' })}`
+        // wordmark: a declared name (config `name`, else share.name) wins over the repo dir - deploy hosts build
+        // from anonymous paths (/app), and the gate already wears the declared name (identity.ts)
+        return `export default ${JSON.stringify({ viewports: config.viewports, themes: config.themes, zoomSpeed: config.zoomSpeed, noTheme: themeFile() == null, setup: setupPending, devices: config.devices, projectName: canvasIdentity(root, config).local, branding: config.share.branding, jam: config.jam ? { chime: config.jam.chime, capture: config.jam.capture, names: config.jam.names && config.jam.agent === 'claude' } : null, workspace: ws, version: installedVersion() ?? '0.0.0' })}`
       }
       // null in dev - the shell fetches live. Builds provide the real module (build.ts).
       if (id === '\0' + VIRTUAL_DATA) return 'export default null'
@@ -352,7 +353,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       tidyPerfDir(root)   // the perf logs are the owner's alone, and age out (spec 28 A1.7)
       server.middlewares.use(apiMiddleware(root, { viewports: config.viewports, origin: listeningOrigin, bakeGen: () => bakeGen, notify: (event) => { server.ws.send(event, {} as any); liveChanged() }, manifest: () => manifest, settled, workspace: ws, inputs }))
       // the canvas's logo for the Mac app's tab (spec 28 A2.4, A2.9): proved like the document when asked with a nonce
-      server.middlewares.use(logoRoute(root, () => config.share.logo, ctx.proof))
+      server.middlewares.use(logoRoute(root, () => canvasIdentity(root, config).logos, ctx.proof))
       server.middlewares.use(routesMiddleware(server, clientDir, {
         doc: (id) => docRev(root, manifest.frames, id),
         docs: () => docRevs(root, manifest.frames),
@@ -475,7 +476,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       const configFile = join(root, 'design', 'config.ts')
       server.watcher.on('change', (f) => {
         if (f !== configFile) return
-        loadConfig(root).then((c) => { project = { name: c.share.name || basename(root), description: c.description }; regen() }).catch(() => { /* unreadable mid-edit; the next save tries again */ })
+        loadConfig(root).then((c) => { project = { name: canvasIdentity(root, c).local, description: c.description }; regen() }).catch(() => { /* unreadable mid-edit; the next save tries again */ })
       })
 
       writeManifest(root, manifest)

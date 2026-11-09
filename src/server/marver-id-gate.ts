@@ -36,6 +36,7 @@ import { attachAvatar, avatarSourceFor, provisionFromMarverId } from './auth.ts'
 import { fetchAvatar } from './avatar.ts'
 import { TransactionStore, browserBinding, verifyAssertion } from './marver-id.ts'
 import { poweredByUrl } from '../shared/utm.ts'
+import { logoIconLink } from './logo.ts'
 
 /**
  * Names the browser across the two requests. Not a session - just a handle.
@@ -111,7 +112,7 @@ export function safeHash(raw: string | null): string | null {
   return value
 }
 
-export function marverIdHandler(dir: string, issuer: string, canvasName?: string, branding = true, ceilings: Record<string, 'none' | 'view' | 'comment'> = {}) {
+export function marverIdHandler(dir: string, issuer: string, canvasName?: string, branding = true, ceilings: Record<string, 'none' | 'view' | 'comment'> = {}, logo?: string) {
   const transactions = new TransactionStore()
 
   // The canvas's own origin, pinned by the operator.
@@ -230,7 +231,7 @@ export function marverIdHandler(dir: string, issuer: string, canvasName?: string
       res.setHeader('content-security-policy', "frame-ancestors 'none'")
       res.setHeader('x-frame-options', 'DENY')
       res.end(finishPage(canvasName, new URL(origin).host,
-        `${issuer}/switch?origin=${encodeURIComponent(origin)}`, branding))
+        `${issuer}/switch?origin=${encodeURIComponent(origin)}`, branding, logo))
       return true
     }
 
@@ -420,15 +421,19 @@ const esc = (s: string) =>
  * still wearing the footer an operator had explicitly turned off. A setting that
  * holds almost everywhere is a setting you cannot rely on.
  */
-function finishPage(canvasName: string | undefined, host: string, switchUrl: string, branding = true): string {
+function finishPage(canvasName: string | undefined, host: string, switchUrl: string, branding = true, logo?: string): string {
   const name = esc(canvasName || 'this canvas')
   const where = esc(host)
+  // the canvas's own logo (spec 31 H.2), as the gate wears it: its tab icon and the card's mark - `logoIconLink` takes
+  // only the build's own published path, so nothing else is ever written into the page. No logo: Marver's
+  const icon = logoIconLink(logo)
+  const mark = icon ? `<img src="${esc(logo!)}" alt="" width="24" height="24" />` : MARK_LG
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex" />
 <title>Signing in - ${name}</title>
-<link rel="icon" href="/__mv/favicon/favicon.ico" sizes="48x48" />
+${icon || '<link rel="icon" href="/__mv/favicon/favicon.ico" sizes="48x48" />'}
 <style>
   /* The gate's own tokens. This page is the last thing somebody sees before the
      canvas opens - or the only thing, if they are refused - so it belongs to
@@ -448,6 +453,7 @@ function finishPage(canvasName: string | undefined, host: string, switchUrl: str
           display: flex; flex-direction: column; gap: 14px }
   header { display: flex; align-items: center; gap: 9px }
   header svg { color: #0088ff; flex: none }
+  header img { flex: none; border-radius: 6px; object-fit: contain }
   h1 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.01em }
   /* Pulled up against the address below it: the state line introduces that
      chip rather than floating between it and the canvas name. */
@@ -509,7 +515,7 @@ function finishPage(canvasName: string | undefined, host: string, switchUrl: str
 <body>
   <div class="wait" id="wait" role="status" aria-label="Signing you in" hidden></div>
   <div class="card" id="card" hidden>
-    <header>${MARK_LG}<h1 id="t">${name}</h1></header>
+    <header>${mark}<h1 id="t">${name}</h1></header>
     <p class="state" id="s"></p>
     <div class="chip">${where}</div>
     <p class="lead" id="m"></p>

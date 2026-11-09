@@ -12,13 +12,15 @@
  * (a revoke at a stop or a rebind keeps the document id), the same tab active with a live document, the same document
  * and gen, the window and the view as before; else `stale` - and an empty image is `empty`. No resampling but down to
  * a `BOUNDS.captureLong` long side; Electron 45's `capturePage()` gives device pixels, so `getSize()` is the PNG's size
- * (A4.6 #1: read again at any upgrade). Main writes nothing to disk: the page uploads what it gets.
+ * (A4.6 #1: read again at any upgrade). Its pixels are then converted to sRGB (srgb.ts, spec 31 H.4). Main writes nothing
+ * to disk: the page uploads what it gets.
  *
  * No Electron import: main.ts passes the ports (tabs.ts, window.ts, present.ts), so the rules are unit-tested.
  */
 import { BOUNDS, type CaptureAnswer, type CaptureRect, type CaptureWhy } from '../../../src/shared/app-api.ts'
 import type { CaptureHandler } from './bridge.ts'
 import { note } from './testing/index.ts'
+import { toSrgb } from './srgb.ts'
 
 /** A readback, as much of Electron's `NativeImage` as is used here. */
 export interface PictureImage {
@@ -103,8 +105,10 @@ export function livePictures(p: LivePicturePorts): CaptureHandler {
       pic = pic.resize({ width: Math.max(1, Math.round(size.width * k)), height: Math.max(1, Math.round(size.height * k)), quality: 'best' })
     }
     const out = pic.getSize()
-    const png = new Uint8Array(pic.toPNG())
-    j({ tab: tabId, ok: true, rect: at, width: out.width, height: out.height, bytes: png.length })
+    // sRGB pixels (spec 31 H.4): the readback is in the display's colour space, its PNG tagged with the display's
+    // profile - converted here, so an agent reading the raw numbers reads what the page asked for
+    const { png, converted } = toSrgb(new Uint8Array(pic.toPNG()))
+    j({ tab: tabId, ok: true, rect: at, width: out.width, height: out.height, bytes: png.length, srgb: converted })
     return { ok: true, png, width: out.width, height: out.height }
   }
 }

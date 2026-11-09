@@ -1353,9 +1353,18 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     // replies are in the journal and nothing pretends the work was not done.
     for (const { b } of leftover.filter((x) => x.results)) {
       await q.lock((j) => { redelivering(j, b); q.persist() })   // one a previous boot gave up on, too
+      // spec 31 H.3: a batch none of whose cards is left in the journal (pruned, or never written back) has no Retry
+      // and nothing to show a failure on - its failed post retires it, once, instead of being tried at every start
+      const cardless = () => b.members.every((m) => !q.j.cards.some((c) => c.id === m.card))
       for (let n = 1; ; n++) {
         const tDeliver = performance.now()
         try { await deliver(b); logJam(root, { kind: 'run', batch: b.batchId, redelivered: true, deliverMs: performance.now() - tDeliver }); break } catch (err) {
+          if (cardless()) {
+            log(`  jam: a recovered batch whose cards are gone could not be posted - ${(err as Error).message}; retired`)
+            logJam(root, { kind: 'run', batch: b.batchId, redelivered: true, failure: 'delivery' })
+            await q.lock(() => { b.state = 'failed'; b.at = Date.now(); b.note = 'its cards are gone'; q.persist() })
+            break
+          }
           if (n >= 4 || stopped) {
             log(`  jam: could not post a recovered batch - ${(err as Error).message}; its cards fail, Retry posts them`)
             logJam(root, { kind: 'run', batch: b.batchId, redelivered: true, failure: 'delivery' })

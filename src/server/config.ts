@@ -3,7 +3,11 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { AGENT_BIN, AGENT_NAMES, detectAgent, onPath, type JamAgent } from './jam/agent.ts'
 import { readDescription } from '../shared/board-tree.ts'
+import { lookFromName, type DeviceLook } from '../shared/devices.ts'
+import { resolveDevices } from './device-icons.ts'
 
+/** A breakpoint's size. design/config.ts may also give it a `label` and an `icon` (spec 31 Part F) - resolved into
+ *  `ShConfig.devices`, never carried here, so every size reader keeps reading two numbers. */
 export interface Viewport { width: number; height: number }
 /** Live Jam: the dev-server daemon config, already RESOLVED - present means armed.
  *  It arms itself: see `resolveJam`. */
@@ -27,11 +31,17 @@ export interface JamConfig {
 }
 export interface ShConfig {
   mode: 'studio' | 'embedded'
+  /** The canvas's name for people ("TMS broker"): the app's tab, the sidebar, the gate (spec 31 G.1, identity.ts). */
+  name?: string
+  /** The canvas's logo, a repo-relative SVG, PNG or ICO (spec 31 G.1; before `share.logo` and the ladder, logo.ts). */
+  logo?: string
   /** One sentence on what this product is and for whom - the project's description in
    *  design/manifest.json, the first thing a new agent session reads. */
   description?: string
   theme: string | null
   viewports: Record<string, Viewport>
+  /** Each viewport's look - its label and glyph, or its own sanitized SVG (spec 31 Part F, device-icons.ts). */
+  devices: Record<string, DeviceLook>
   themes: string[]
   port: number
   /** Canvas zoom multiplier: 1 = default feel, 1.2 = 20% faster, 0.8 = 20% slower. */
@@ -66,6 +76,7 @@ export const DEFAULTS: ShConfig = {
     monitor: { width: 1920, height: 1080 },
     // tv intentionally not a default - the scaffolded config ships it commented out
   },
+  devices: Object.fromEntries(['mobile', 'tablet', 'laptop', 'monitor'].map((n) => [n, lookFromName(n)])),
   themes: ['light', 'dark'],
   port: 5199,
   zoomSpeed: 1,
@@ -80,10 +91,15 @@ export async function loadConfig(root: string): Promise<ShConfig> {
     // Cache-bust so a restart after edits picks up changes.
     const mod = await import(`${pathToFileURL(file).href}?t=${Date.now()}`)
     const user = (mod.default ?? {}) as Partial<ShConfig>
+    const viewports = validViewports(user.viewports) ?? DEFAULTS.viewports
     const cfg: ShConfig = {
       ...DEFAULTS,
       ...user,
-      viewports: validViewports(user.viewports) ?? DEFAULTS.viewports,
+      name: text(user.name, 'name', 80),
+      logo: text(user.logo, 'logo', 1024),
+      viewports,
+      devices: viewports === DEFAULTS.viewports ? DEFAULTS.devices
+        : resolveDevices(root, user.viewports, Object.keys(viewports), (m) => console.warn(`[marver] ${m}`)),
       themes: Array.isArray(user.themes) && user.themes.length ? user.themes.map(String) : DEFAULTS.themes,
       port: validPort(user.port) ?? DEFAULTS.port,
       zoomSpeed: validZoom(user.zoomSpeed) ?? DEFAULTS.zoomSpeed,
@@ -105,6 +121,15 @@ export async function loadConfig(root: string): Promise<ShConfig> {
     // read is the one wrong-way error worth avoiding. Fix the file and it comes back.
     return { ...DEFAULTS, jamOff: 'unreadable' }
   }
+}
+
+/** A config string: trimmed, present only when it says something; a non-string or an overlong one says so once. */
+function text(v: unknown, key: string, max: number): string | undefined {
+  if (v === undefined) return undefined
+  const t = typeof v === 'string' ? v.trim() : ''
+  if (t && t.length <= max) return t
+  if (typeof v !== 'string' || t) console.warn(`[marver] design/config.ts: ${key} must be text of at most ${max} characters - got ${show(v)}. Ignored.`)
+  return undefined
 }
 
 const validDim = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 1 && n <= 20000

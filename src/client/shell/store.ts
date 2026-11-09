@@ -8,6 +8,7 @@ import { api, beforeResume, canvasStopped, holdsReload, lostInResume, mvFetch, n
 import { unsavedWhen, workChanged } from './unsaved.ts'
 import { nextSeq, PAGE_ID } from './recorder-seams.ts'
 import type { BoardWriter, HeldBy, LoadTrigger } from '../../shared/perf-records.ts'
+import type { DeviceLook } from '../../shared/devices.ts'
 // @ts-expect-error virtual module provided by the plugin
 import shConfig from 'virtual:sh-config'
 // @ts-expect-error virtual module: null in dev; a published build inlines manifest+boards
@@ -130,7 +131,7 @@ export interface JamNote {
 }
 export interface Toast { id: number; text: string; jam?: JamNote }
 
-export const CONFIG: { viewports: Record<string, { width: number; height: number }>; themes: string[]; zoomSpeed?: number; noTheme: boolean; setup?: boolean; projectName?: string; branding?: boolean; jam?: { chime: boolean; capture: 'confirm' | 'at-once'; names?: boolean } | null; workspace?: string; version?: string } = shConfig
+export const CONFIG: { viewports: Record<string, { width: number; height: number }>; devices?: Record<string, DeviceLook>; themes: string[]; zoomSpeed?: number; noTheme: boolean; setup?: boolean; projectName?: string; branding?: boolean; jam?: { chime: boolean; capture: 'confirm' | 'at-once'; names?: boolean } | null; workspace?: string; version?: string } = shConfig
 
 /** Invariant: `branding: false` strips every Marver mention - new chrome included. */
 export const BRANDING = CONFIG.branding !== false

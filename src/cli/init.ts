@@ -1,6 +1,7 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, relative } from 'node:path'
 import { NAME } from './name.ts'
+import { labelFromName } from '../shared/devices.ts'
 import { detectHost, readJson, type HostInfo } from '../server/detect.ts'
 import { detectAgent } from '../server/jam/agent.ts'
 import { connectorLine, ensureConnectors } from '../server/jam/connectors.ts'
@@ -63,7 +64,7 @@ export function init(root: string, opts: InitOpts) {
   // anyone will get to "which tool is this human using" - and a visible line is one the
   // human can correct, which a silent default is not.
   const jamAgent = detectAgent()
-  write('config.ts', configTemplate(opts.mode, jamAgent))
+  write('config.ts', configTemplate(opts.mode, jamAgent, initialName(root)))
 
   // theme wrapper (spec §5.4) - the host CSS build stays byte-identical
   if (host.themeCss) {
@@ -667,22 +668,40 @@ const jamBlock = (agent?: string) => agent
   // itself, or name one here. \`jam: false\` turns it off.
   // jam: { agent: "claude", concurrency: 6 },`
 
-const configTemplate = (mode: string, jamAgent?: string) => `// ${NAME} config - OPTIONAL. Delete this file and everything still works on defaults.
+/** The name a new config starts with (spec 31 G.2): the package's (its scope dropped), else the folder's, written
+ *  for people - "tms-broker" -> "Tms broker". A starting point the agent's identity step makes real. */
+export function initialName(root: string): string {
+  let raw = basename(root)
+  try { const n = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).name; if (typeof n === 'string' && n.trim()) raw = n.trim().replace(/^@[^/]+\//, '') } catch { /* the folder's */ }
+  return labelFromName(raw).slice(0, 80) || raw
+}
+
+const configTemplate = (mode: string, jamAgent?: string, name?: string) => `// ${NAME} config - OPTIONAL. Delete this file and everything still works on defaults.
 // Theme lives in design/theme.css (it imports your app's real stylesheet) - not here.
 // Sharp edges (native Node TS import): erasable syntax only (no enums/namespaces),
 // relative imports need extensions, tsconfig paths are ignored here.
 export default {
+  // The canvas's name for people - the app's tab and Home card, the sidebar, the published
+  // gate. Write the product's real name ("TMS Broker", not "tms-broker").
+  name: ${JSON.stringify(name ?? 'My Product')},
+  // Its logo: the product's real mark, a repo-relative SVG, PNG or ICO. Unset, the first of
+  // design/logo.svg|png, public/logo.svg|png, public/favicon.svg|png|ico; else Marver's mark.
+  // logo: "design/logo.svg",
   mode: ${JSON.stringify(mode)},
   // One sentence on what this product is and for whom. It lands in design/manifest.json
   // as the project's description - the first thing a new agent session reads.
   // description: "Analytics for indie SaaS - the founder's Monday-morning read",
-  // Device widths for frames and the Devices view. Rename, retune, or uncomment tv.
+  // Device widths for frames and the Devices view. Rename, retune, add your own, or uncomment tv.
+  // Each may carry a label (40 characters) and an icon: a glyph - mobile, tablet, laptop, monitor,
+  // tv, watch, desktop, ereader; "-landscape" turns it - or a repo-relative .svg (paths and shapes
+  // only, 32 KB). Without them both come from the name: "ipad-landscape" shows as "iPad landscape".
   viewports: {
     mobile: { width: 390, height: 844 },
     tablet: { width: 768, height: 1024 },
     laptop: { width: 1280, height: 800 },
     monitor: { width: 1920, height: 1080 },
     // tv: { width: 3840, height: 2160 },
+    // "ipad-landscape": { width: 1180, height: 820, label: "iPad landscape", icon: "tablet-landscape" },
   },
   themes: ["light", "dark"],
   // A port of its own. Without one, \`${NAME} dev\` takes a free slot (localhost:4805-4824),
@@ -692,7 +711,7 @@ export default {
   // zoomSpeed: 1,
 ${jamBlock(jamAgent)}
   // Publishing (\`${NAME} build\` + \`${NAME} serve\`): gate identity + branding footer.
-  // name/logo default to the host package.json name and design/logo.svg (then public/).
+  // The gate wears name and logo above; share.name / share.logo still work beneath them.
   // branding is the small "Powered by Marver.design" line under the gate. Marver is
   // free, and that line is how it spreads - we'd love it if you leave it on, but it
   // is yours to remove, no strings: share: { branding: false }.
