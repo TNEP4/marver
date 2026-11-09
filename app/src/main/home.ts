@@ -25,12 +25,12 @@
  * and, in the quit path, `flushRecent`; the bridge mounts `homeAction` and `openLink` as invokes; the home page's
  * `recent` and `home:info` come from `recentViews()` and `homeInfo()`, pushed again on `onRecentChange`.
  */
-import { existsSync, statSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { existsSync, realpathSync, statSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
+import { basename, join } from 'node:path'
 import { app } from 'electron'
 import { CH, type HomeActionAnswer, type HomeInfo, type LinkOpenAnswer, type RecentView, type SharedLink } from '../shared/channels.ts'
-import { FIXED_COMMANDS, startCommand, tilde } from '../shared/command.ts'
+import { FIXED_COMMANDS, startCommand, tilde, updateCommand } from '../shared/command.ts'
 import { hueOf } from '../shared/hue.ts'
 import { LINK_MAX, parseLink, remoteStart, shellPath } from '../shared/links.ts'
 import { currentHome, filesStatus, noteWrite, onPill, onStatus, settingsReveal, settingsSet, settingsView, stateDir, stateFileWriter } from './config.ts'
@@ -39,6 +39,7 @@ import { readState, writeWhole, type StateWriter } from './fsx.ts'
 import type { HomePorts, PageBridge, WindowPorts } from './ports.ts'
 import { provide } from './testing/index.ts'
 import { T } from './timings.ts'
+import { createLogoStore, siteKey, wsKey } from './logos.ts'
 
 export interface RecentEntry {
   /** the slot file's `ws`, 16 hex */
@@ -89,12 +90,29 @@ export function tidyRecent(list: RecentEntry[]): RecentEntry[] {
 /** A Recently here card's id: `r_` and the workspace - within the bridge's id pattern (`[A-Za-z0-9_-]{1,32}`). */
 export const recentId = (ws: string): string => `r_${ws}`
 
-/** Recently here as Home draws it: every recorded canvas not running now, newest first. Pure. */
-export function recentViewsOf(list: RecentEntry[], running: Iterable<string>, home = homedir()): RecentView[] {
+/**
+ * The temp folders (spec 31 E1): a canvas whose folder is under one is a test's or a scratch copy, never one to come
+ * back to - `os.tmpdir()` (and its real path: `/var/folders/...` is `/private/var/folders/...`), `/tmp`, `/private/tmp`,
+ * `/var/folders`, `/private/var/folders`.
+ */
+export function tempFolders(): string[] {
+  const t = tmpdir()
+  let real = t
+  try { real = realpathSync(t) } catch { /* as it is */ }
+  return [...new Set([t, real, '/tmp', '/private/tmp', '/var/folders', '/private/var/folders'].map((d) => d.replace(/\/+$/, '')).filter(Boolean))]
+}
+/** Under one of `temps` (pure). */
+export const inTemp = (root: string, temps: readonly string[]): boolean => temps.some((d) => root === d || root.startsWith(`${d}/`))
+
+/** Recently here as Home draws it: every recorded canvas not running now and not in a temp folder, newest first, each
+ *  with the logo kept for it (`logoOf`). Pure. */
+export function recentViewsOf(list: RecentEntry[], running: Iterable<string>, home = homedir(), o: { temps?: readonly string[]; logoOf?: (ws: string) => string | undefined } = {}): RecentView[] {
   const now = new Set(running)
-  return tidyRecent(list).filter((e) => !now.has(e.workspace)).map((e) => ({
-    id: recentId(e.workspace), name: e.name, folder: tilde(e.root, home), lastSeen: e.lastSeen, hue: hueOf(e.workspace),
-  }))
+  const temps = o.temps ?? tempFolders()
+  return tidyRecent(list).filter((e) => !now.has(e.workspace) && !inTemp(e.root, temps)).map((e) => {
+    const logo = o.logoOf?.(e.workspace)
+    return { id: recentId(e.workspace), name: e.name, folder: tilde(e.root, home), lastSeen: e.lastSeen, hue: hueOf(e.workspace), ...(logo ? { logo } : {}) }
+  })
 }
 
 // ---- Shared canvases (A4.6 #47) ---------------------------------------------------------------------------------
@@ -152,7 +170,35 @@ function sharedChanged(): void {
 /** At quit: what waits, written now. */
 export function flushShared(): void { sharedWriter?.flushSync() }
 
-export const sharedLinks = (): SharedLink[] => shared.map((l) => ({ ...l }))
+/**
+ * A shared canvas's name and logo (spec 31 E3), read through its remote tab's own session (views.ts) and kept by origin,
+ * only on success: the name in `sites.json` (at most `SHARED_MAX`, newest first), the logo in `logos/`.
+ */
+export interface SiteFile { v: 1; sites: { origin: string; name: string; at: number }[] }
+export const checkSiteFile = (v: unknown): v is SiteFile => {
+  const f = v as SiteFile | null
+  return !!f && typeof f === 'object' && f.v === 1 && Array.isArray(f.sites)
+    && f.sites.every((x) => !!x && typeof x.origin === 'string' && /^https:\/\/[^/]+$/.test(x.origin) && typeof x.name === 'string' && x.name.length > 0 && x.name.length <= 120 && typeof x.at === 'number')
+}
+let sites: SiteFile['sites'] = []
+let sitesWriter: StateWriter<SiteFile> | undefined
+export const logos = createLogoStore(() => { const d = stateDir(); return d ? join(d, 'logos') : undefined })
+
+/** What a shared canvas's `meta.json` said: kept for its origin. Its name, its logo when one came. */
+export function noteSite(origin: string, name: string, logo: string | undefined): void {
+  if (!/^https:\/\/[^/]+$/.test(origin) || typeof name !== 'string' || !name.trim() || name.length > 120) return
+  const was = sites.find((x) => x.origin === origin)
+  sites = [{ origin, name: name.trim(), at: Date.now() }, ...sites.filter((x) => x.origin !== origin)].slice(0, SHARED_MAX)
+  sitesWriter?.set({ v: 1, sites })
+  if (logo) logos.keep(siteKey(origin), logo)
+  if (!was || was.name !== name.trim() || logo) sharedChanged()
+}
+const siteOf = (url: string) => { try { const o = new URL(url).origin; return { site: sites.find((x) => x.origin === o), logo: logos.get(siteKey(o)) } } catch { return { site: undefined, logo: undefined } } }
+
+export const sharedLinks = (): SharedLink[] => shared.map((l) => {
+  const { site, logo } = siteOf(l.url)
+  return { ...l, ...(site ? { name: site.name } : {}), ...(logo ? { logo } : {}) }
+})
 export function onSharedChange(fn: () => void): () => void { sharedFns.add(fn); return () => sharedFns.delete(fn) }
 
 let recent: RecentEntry[] = []
@@ -176,6 +222,11 @@ export function startHome(): void {
   shared = tidyShared(links.filter(checkSharedLink))
   sharedWriter = state ? stateFileWriter<SharedFile>('shared.json') : undefined
   if (shared.length !== links.length) sharedWriter?.set({ v: 1, links: shared })
+  const siteFile = state ? readState(join(state, 'sites.json'), checkSiteFile) : undefined
+  sites = (siteFile?.sites ?? []).slice(0, SHARED_MAX)
+  sitesWriter = state ? stateFileWriter<SiteFile>('sites.json') : undefined
+  // the logos of canvases and sites no longer listed go
+  logos.prune([...recent.map((e) => wsKey(e.workspace)).filter((k): k is string => !!k), ...sites.map((x) => siteKey(x.origin))])
   if (__MV_TEST__) provideHomeHooks()
 }
 
@@ -233,11 +284,44 @@ export function flushRecent(running: Iterable<string>): void {
   writer?.flushSync()
 }
 
-export const recentViews = (running: Iterable<string>): RecentView[] => recentViewsOf(recent, running)
+export const recentViews = (running: Iterable<string>): RecentView[] => {
+  const run = [...running]
+  const views = recentViewsOf(recent, run, homedir(), { logoOf: (ws) => { const k = wsKey(ws); return k ? logos.get(k) : undefined } })
+  // a `marver://` link to a canvas that is not running (spec 31 D1): its card first - recorded or not - highlighted
+  if (linked && !run.includes(linked.ws)) {
+    const i = views.findIndex((v) => v.id === recentId(linked!.ws))
+    if (i >= 0) views.unshift({ ...views.splice(i, 1)[0]!, linked: true })
+    else views.unshift({ id: recentId(linked.ws), name: basename(linked.root) || linked.root, folder: tilde(linked.root, homedir()), lastSeen: 0, hue: hueOf(linked.ws), linked: true })
+  }
+  return views
+}
+
+/** A local canvas's logo, as its tab proved and fetched it (views.ts refreshLogo): kept for its Recently here card. */
+export function noteLogo(ws: string, dataUrl: string): void {
+  const k = wsKey(ws)
+  if (k && recent.some((e) => e.workspace === ws)) logos.keep(k, dataUrl)
+}
+
+/** The canvas a `marver://` link named while it does not run (spec 31 D1): its card leads Recently here, highlighted. */
+let linked: { ws: string; root: string } | null = null
+/**
+ * Home's card for that folder: its Recently here card, or - for a folder that exists and never ran here - a card of its
+ * own with its start command. Answers the card's id for `home:focus`, or null (a folder that does not exist).
+ */
+export function showLinked(root: string, ws: string, exists: boolean): string | null {
+  if (!exists && !recent.some((e) => e.workspace === ws)) { linked = null; return null }
+  linked = { ws, root: recent.find((e) => e.workspace === ws)?.root ?? root }
+  for (const fn of recentFns) fn()
+  return recentId(ws)
+}
 export const recentEntries = (): RecentEntry[] => recent.map((e) => ({ ...e }))
 export function onRecentChange(fn: () => void): () => void { recentFns.add(fn); return () => recentFns.delete(fn) }
 
 // ---- home:action ------------------------------------------------------------------------------------------------
+
+/** The folder of a running canvas's tab whose card offers an update (views.ts sets it): `copy-update`'s. */
+let updateRootOf: ((tabId: string) => string | undefined) | null = null
+export function setUpdateRoots(fn: ((tabId: string) => string | undefined) | null): void { updateRootOf = fn }
 
 /** `home:action`: main copies its own command, or opens the folder. Checked again here. */
 export async function homeAction(raw: unknown): Promise<HomeActionAnswer> {
@@ -249,8 +333,16 @@ export async function homeAction(raw: unknown): Promise<HomeActionAnswer> {
   }
   if (a.action === 'copy-start' && typeof a.id === 'string' && a.id.length < 80 && a.id.startsWith('r_')) {
     const e = recent.find((r) => recentId(r.workspace) === a.id)
-    if (!e) return { ok: false }
-    effects.copy(startCommand({ root: e.root, port: e.port }))
+    const root = e?.root ?? (linked && recentId(linked.ws) === a.id ? linked.root : undefined)
+    if (!root) return { ok: false }
+    effects.copy(startCommand({ root, port: e?.port }))
+    return { ok: true }
+  }
+  // spec 31 E4: a running canvas's update, in its own folder - main's record of the tab, never a path from Home
+  if (a.action === 'copy-update' && typeof a.id === 'string' && a.id.length < 80) {
+    const root = updateRootOf?.(a.id)
+    if (!root) return { ok: false }
+    effects.copy(updateCommand(root))
     return { ok: true }
   }
   if (a.action === 'show-files') { settingsReveal(); return { ok: true } }

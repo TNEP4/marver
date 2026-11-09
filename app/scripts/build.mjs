@@ -54,6 +54,8 @@ export const IDENTITY = process.env.MARVER_SIGN_IDENTITY || 'Developer ID Applic
 /** The Team ID in the identity's name, which every Mach-O part of a signed build carries. */
 export const TEAM = /\(([A-Z0-9]{10})\)$/.exec(IDENTITY)?.[1] ?? null
 export const MIC = 'Marver uses the microphone only during a Jam session you start.'
+/** The URL schemes the packaged app's Info.plist claims (spec 31 D1): `marver://open?ws=...&to=...`. */
+export const URL_TYPES = [{ CFBundleURLName: 'design.marver.app.link', CFBundleURLSchemes: ['marver'] }]
 export const MIN_MACOS = '13.0'
 /**
  * Strings only the dev flavour's test hooks hold (testing/index.ts): the release bundle must have none. A4: the fake
@@ -314,7 +316,8 @@ export async function buildRelease({ adhoc, smoke, tamper, knownFail, feed = '',
     // ElectronSquirrelPreventDowngrades (A5.1 #8): Squirrel refuses a bundle whose CFBundleShortVersionString is lower
     // than the running one's - downgrade prevention, nothing more (an equal one passes); "strictly higher" is
     // release.mjs's version floor
-    extendInfo: { LSMinimumSystemVersion: MIN_MACOS, CFBundleDisplayName: PRODUCT, LSArchitecturePriority: ['arm64'], ElectronSquirrelPreventDowngrades: true },
+    // CFBundleURLTypes (spec 31 D1): the packaged app takes `marver://` links (main.ts also claims it at launch)
+    extendInfo: { LSMinimumSystemVersion: MIN_MACOS, CFBundleDisplayName: PRODUCT, LSArchitecturePriority: ['arm64'], ElectronSquirrelPreventDowngrades: true, CFBundleURLTypes: URL_TYPES },
   })
   const app = join(dir, `${PRODUCT}.app`)
 

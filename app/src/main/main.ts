@@ -52,7 +52,7 @@ import { fetchLogo, installDispatcher, probeProof } from './proof.ts'
 import { attachNav } from './nav.ts'
 import { appCmd } from './commands.ts'
 import { contentView, focusWindow, onCompose, onFront, pageView, refreshTabs, windowInFront, windowVisible } from './window.ts'
-import { activeTab, getTab, liveDoc, openForNotice, setMarksSource, setOpenSender, startTabs, type Tab } from './tabs.ts'
+import { activeTab, getTab, liveDoc, openForNotice, setMarksSource, setOpenSender, setShowSender, showForLink, startTabs, type Tab } from './tabs.ts'
 import { createLive } from './live.ts'
 import { createNotify, type Notify } from './notify.ts'
 import { presenter } from './notify-mac.ts'
@@ -76,6 +76,13 @@ import { nodeMoverPorts, offerMove, takeMoveCmd } from './mover.ts'
 import type { UpdateBody } from '../../../src/shared/app-perf.ts'
 import { fakeTrust } from './testing/fake-trust.ts'
 import { installErrorPolicy, setErrorHome } from './errors.ts'
+import { createLinkQueue } from './deep-link.ts'
+import { DEEP_LINK_SCHEME, deepLinkArg } from '../../../src/shared/deep-link.ts'
+import { startAppLive } from './app-live.ts'
+import { fetchUpdate } from './canvas-fetch.ts'
+import { openDeepLink } from './views.ts'
+import { allTabs } from './tabs.ts'
+import { realpathSync } from 'node:fs'
 
 /** The app's own scheme for its pages (A2.5). */
 export const APP_SCHEME = 'marver-app'
@@ -137,7 +144,17 @@ function start(): void {
   const files = readFiles(home)
   startHome()
 
-  app.on('second-instance', () => { const h = appCmd('relaunch', { via: 'click', in: 'main' }); focusWindow(); h.done() })   // spec 30 R12
+  // spec 31 D1: `marver://` links - the scheme claimed by the release app alone (a dev build never takes it from the app
+  // in use), each link heard (open-url, also before ready at a cold start; a second launch's argv) held until the
+  // registry and the tabs are ready, then routed (views.ts openDeepLink)
+  const links = createLinkQueue()
+  if (__MARVER_RELEASE__) { try { app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME) } catch { /* the Info.plist's claim stands */ } }
+  app.on('open-url', (e, url) => { e.preventDefault(); links.push(url) })
+  app.on('second-instance', (_e, argv) => {
+    const link = deepLinkArg(argv)
+    if (link) { links.push(link); return }
+    const h = appCmd('relaunch', { via: 'click', in: 'main' }); focusWindow(); h.done()   // spec 30 R12
+  })
 
   // 10. at ready
   void app.whenReady().then(async () => {
@@ -227,6 +244,13 @@ function start(): void {
       onPresented: (fn) => bridge.onPresented(fn),
       probe: async (t) => { const e = entryOf(t); return e ? probeProof(e) : 'silent' },
       fetchLogo: async (t, signal) => { const e = entryOf(t); return e ? ((await fetchLogo(e, signal))?.dataUrl ?? null) : null },
+      // spec 31 E4: through the canvas's own partition, no redirect, bounded (canvas-fetch.ts)
+      fetchUpdate: async (t, signal) => {
+        const e = entryOf(t)
+        if (!e || e.state !== 'ready' || !e.origin) return null
+        const ses = await localSession(e.ws)
+        return fetchUpdate((url, init) => ses.fetch(url, init), e.origin, signal)
+      },
       pages: {
         onReady: (fn) => { bridge.onReady((ctx) => fn(ctx.wc)) },
         handle: (ch, fn) => bridge.handle(ch, (ctx, p) => fn(ctx.wc, p)),
@@ -288,6 +312,22 @@ function start(): void {
         }
       },
     }))
+    // spec 31 D2: app-live.json, for `marver link` - the release app's state/ folder, every 30 s and soon after a change
+    const realOf = (p: string) => { try { return realpathSync(p) } catch { return p } }
+    const live = startAppLive({
+      dir: () => (home.writable ? home.state : undefined), pid: process.pid, version: app.getVersion(), now: () => Date.now(),
+      scheme: () => { try { return __MARVER_RELEASE__ && app.isDefaultProtocolClient(DEEP_LINK_SCHEME) } catch { return false } },
+      workspaces: () => allTabs().filter((t) => t.kind === 'local' && t.open && !!t.root && t.reg?.state !== 'gone').map((t) => realOf(t.root!)),
+    })
+    trust.onRegistry(() => live.changed())
+    onCompose(() => live.changed())
+    app.on('will-quit', () => live.stop())
+    // spec 31 D1: the registry and the tabs exist - the links held since launch go now, and each later one at once
+    links.ready((raw) => {
+      const h = appCmd('deep-link', { via: 'click', in: 'main' })
+      if (openDeepLink(raw) === 'bad') h.noop('bad'); else h.done()
+    })
+    if (__MV_TEST__ && testMode()) provide('deep-link', (a) => { links.push((a as { url?: unknown } | null)?.url); return true })
     // the pages exist: an uncaught error is recorded (perf/app.jsonl) and the app goes on (errors.ts)
     setErrorHome(home)
     installErrorPolicy()
@@ -335,6 +375,9 @@ function startNotices(trust: TrustPort, bridge: ReturnType<typeof installBridge>
   const n = notify
   setMarksSource((t) => n.marksOf(t))
   setOpenSender((t, item) => bridge.openItem(t.id, item))
+  // spec 31 D1, D3: a link's place to an open tab's document; a `marver show` the shell showed brings its tab forward
+  setShowSender((t, target) => bridge.showItem(t.id, target))
+  bridge.onFront((tabId) => { if (getTab(tabId)?.kind !== 'local') return; focusWindow(); showForLink(tabId, null) })
   setOfferActions({ turnOn: () => { void n.offerTurnOn() }, dismissed: () => n.offerDismissed() })
   bridge.handle(CH.settingsAction, () => effects.openNotificationSettings())
   // after views.ts's listener: the tabs have heard the event first (a stop reads whether its tab is open)

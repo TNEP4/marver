@@ -143,7 +143,9 @@ function plist(file) { return JSON.parse(sh('plutil', ['-convert', 'json', '-o',
   const iconFile = String(p.CFBundleIconFile ?? '')
   if (!iconFile || !(existsSync(join(res, iconFile)) || existsSync(join(res, `${iconFile}.icns`)))) bad.push(`CFBundleIconFile ${iconFile} names no file`)
   if (!p.ElectronAsarIntegrity?.['Resources/app.asar']?.hash) bad.push('no ElectronAsarIntegrity for Resources/app.asar')
-  bad.length ? fail('info-plist', bad.join('; ')) : pass('info-plist', `${BUNDLE_ID} ${VERSION} (both versions), macOS ${MIN_MACOS}+, ElectronSquirrelPreventDowngrades, microphone line, icon ${iconFile}`)
+  // spec 31 D1: the packaged app takes marver:// links
+  if (!(Array.isArray(p.CFBundleURLTypes) && p.CFBundleURLTypes.some((t) => Array.isArray(t?.CFBundleURLSchemes) && t.CFBundleURLSchemes.includes('marver')))) bad.push('CFBundleURLTypes does not claim marver://')
+  bad.length ? fail('info-plist', bad.join('; ')) : pass('info-plist', `${BUNDLE_ID} ${VERSION} (both versions), macOS ${MIN_MACOS}+, ElectronSquirrelPreventDowngrades, microphone line, marver:// claimed, icon ${iconFile}`)
   const iconComposer = existsSync(join(APP_DIR, 'build', 'Marver.icon', 'icon.json'))
   if (!iconComposer) warn('icon-composer', 'build/Marver.icon not made yet (Icon Composer, by hand): macOS 26 shows Marver.icns')
   else if (p.CFBundleIconName === 'Icon' && existsSync(join(res, 'Assets.car'))) pass('icon-composer', 'Assets.car and CFBundleIconName')

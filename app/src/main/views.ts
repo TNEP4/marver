@@ -41,14 +41,14 @@
  */
 import { execFile } from 'node:child_process'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
-import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync, writeSync } from 'node:fs'
+import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, writeFileSync, writeSync } from 'node:fs'
 import { homedir, totalmem } from 'node:os'
 import { join } from 'node:path'
 import { app, dialog, Menu, nativeTheme, net, powerMonitor, shell, WebContentsView, type MenuItemConstructorOptions, type Session, type WebContents, type WebPreferences } from 'electron'
 import * as sessions from './sessions.ts'
 import { CH, type LinkOpenAnswer, type PageKind, type TabPageAction } from '../shared/channels.ts'
 import { startCommand } from '../shared/command.ts'
-import { parseLink, remoteFaviconPick, remoteStart } from '../shared/links.ts'
+import { parseLink, remoteFaviconPick, remoteStart, shellDestination } from '../shared/links.ts'
 import { LOGO_MAX, LOGO_MIME, sniffLogo } from '../../../src/shared/logo-sniff.ts'
 import { effects, provideEffectHooks } from './effects.ts'
 import type { AppState, MenuIn, MenuItem, Present, Presented } from '../../../src/shared/app-api.ts'
@@ -69,7 +69,7 @@ import { crashReloaded, currentPill, onPillAction, setCondition, setPillPorts } 
 import {
   activate, activeTab, addressOf, allTabs, applyRestore, cameraKept, canLoad, canvasOrder, closeTab, cycleFrom, displayState, forDigit, getTab, guard,
   guardAll, hasBridge, hashOnly, isActive, isCanvasTab, keptDoc, keyOf, linkOpens, liveDoc, onCommit, onDocumentGone, onFail, onInPage, onRegistry, onRemoteAbort, onRemoteCommit, onReport, onUnloaded, openRemoteTab, openSettingsTab,
-  ordered, parseTabsFile, remoteLinkPlan, remoteTab, reopenTab, restorePlan, safePath, savedPathIn, setTabsPorts, sheetBox, sheetConfirmed, sheetText, snapshotFile, startReopen, stuckUnloads, tabName,
+  ordered, parseTabsFile, remoteLinkPlan, remoteTab, reopenTab, restorePlan, safePath, savedPathIn, setTabsPorts, sheetBox, showForLink, sheetConfirmed, sheetText, snapshotFile, startReopen, stuckUnloads, tabName,
   unloadClosing, viewlessAct, type GuardAction, type GuardAnswer, type Sheet, type Tab, type TabsFile,
 } from './tabs.ts'
 import {
@@ -80,7 +80,7 @@ import { exportReport, type ExportResult } from './report.ts'
 import { flushQueued } from './perflog.ts'
 import {
   appPrefs, APP_ORIGIN, attachContent, captureWindow, compose, contentView, detachContent, hideWindow, mainWindow, onAppReady, openWindow,
-  pageOf, pageView, sendHeld, sendPill, showWindow, stripContents, viewsNow, windowVisible,
+  focusWindow, pageOf, pageView, sendHeld, sendPill, showWindow, stripContents, viewsNow, windowVisible,
 } from './window.ts'
 import { note, provide, testMode } from './testing/index.ts'
 import { T } from './timings.ts'
@@ -92,6 +92,10 @@ import { lastPressure } from './pressure.ts'
 import { actUnload as unloadAct, forceUnload, takeAct, unloadGone as actGone, type ActPorts } from './unload-act.ts'
 import { isQuitting, request as shutdownRequest, shutdownState, startShutdown, type RestartAlert } from './shutdown.ts'
 import { updateAct, updateMenu, updaterTabs } from './updater.ts'
+import { planDeepLink, type LinkCanvas } from './deep-link.ts'
+import { hashOfTarget, parseDeepLink } from '../../../src/shared/deep-link.ts'
+import { noteLogo, noteSite, setUpdateRoots, showLinked } from './home.ts'
+import { fetchSite } from './canvas-fetch.ts'
 
 export const PRELOAD_CANVAS = join(__dirname, 'preload-canvas.cjs')
 
@@ -136,6 +140,8 @@ export interface TrustPort {
   present?(tabId: string, doc: string, r: Present): boolean
   /** A3: accepted `mv:presented` answers (bridge.ts `onPresented`) */
   onPresented?(fn: (tabId: string, doc: string, r: Presented) => void): () => void
+  /** spec 31 E4: the canvas's update through its own session (canvas-fetch.ts `fetchUpdate`): newer, or null */
+  fetchUpdate?(t: Tab, signal: AbortSignal): Promise<{ current: string; latest: string } | null>
 }
 
 /**
@@ -428,6 +434,7 @@ function onRemoteNav(t: Tab, wc: WebContents, e: NavEvent): void {
       onLifted(t)
       tabDocument(t.id, docToken(t))   // a shared canvas says no hello: its commit is the signal (#49)
       faviconAgain(t, wc)
+      refreshSite(t, wc)
       pollOnline()
       compose()
       return
@@ -1015,6 +1022,43 @@ export async function openInTab(e: LinkTarget, url: string | null, rest: string)
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// A `marver://` link (spec 31 D1; deep-link.ts): parsed, bound to a running canvas of that real folder, and opened -
+// a tab with no live document loads the place through openInTab; one already open is shown the place over the bridge
+
+const realOf = (p: string): string | null => { try { return realpathSync(p) } catch { return null } }
+
+/** One link, routed. Answers what it did (journaled in a test build). */
+export function openDeepLink(raw: string): 'bad' | 'home' | 'opened' | 'shown' {
+  const link = parseDeepLink(raw)
+  if (!link) { j('deep-link', { refused: 'bad' }); return 'bad' }
+  const entries: LinkCanvas[] = trust.entries().map((e) => ({ ws: e.ws, root: realOf(e.root) ?? e.root, port: e.port, slot: e.slot, state: e.state, origin: e.origin ?? null, name: e.name }))
+  const plan = planDeepLink(link, realOf(link.ws), entries)
+  focusWindow()
+  if (plan.kind === 'home') {
+    activate('home')
+    const id = showLinked(plan.root, plan.ws, plan.exists)
+    const home = contentView('home')
+    if (home && id) sendHeld(home.webContents, CH.homeFocus, { field: 'recent', id })
+    j('deep-link', { home: true, card: id ?? null })
+    return 'home'
+  }
+  const e = plan.entry
+  const locals = allTabs().filter((t) => t.kind === 'local' && t.reg?.ws === e.ws)
+  const t = locals.find((x) => e.origin ? x.reg!.origin === e.origin : x.reg!.port === e.port) ?? locals.find((x) => x.reg!.port === e.port)
+  if (t && liveDoc(t) && t.fail?.why !== 'unverified') {
+    // open already: never reloaded, never a hash replaced under it - the shell gets the place and keeps any draft
+    const r = showForLink(t.id, link.to)
+    j('deep-link', { tab: t.id, show: r })
+    return 'shown'
+  }
+  const hash = link.to ? hashOfTarget(link.to) : ''
+  const rest = `/${hash}`
+  const url = e.state === 'ready' && e.origin ? `${new URL(e.origin).origin}${rest}` : null
+  void openInTab({ state: e.state, origin: e.origin, port: e.port, ws: e.ws, name: e.name }, url, rest).then((a) => j('deep-link', { opened: a }))
+  return 'opened'
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // A shared canvas's link (A4.6 #39, #41, #43): ⌘L's, Home's and the front door's - home.ts's `LinkPorts.openRemote`
 
 /**
@@ -1083,8 +1127,49 @@ function refreshLogo(t: Tab): void {
     settle()
     if (!getTab(t.id) || t.reg?.instance !== at.instance || (t.doc?.commits ?? 0) !== at.commits || t.fail?.why === 'unverified') return
     j('logo', { tab: t.id, applied: !!url })
+    if (url && t.reg) noteLogo(t.reg.ws, url)   // spec 31 E2: its Recently here card keeps it once it stops
     if (t.logo !== (url ?? undefined)) { t.logo = url ?? undefined; compose() }
   }, settle)
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Spec 31 E4: a running canvas's update, read through its own session (canvas-fetch.ts) once its entry is ready, then
+// every six hours - the server answers under its daily TTL. Applied only to the same tab and instance.
+
+const updateFetch = new Map<string, AbortController>()
+const UPDATE_EVERY_MS = 6 * 3600 * 1000
+function refreshUpdate(t: Tab): void {
+  if (!trust.fetchUpdate || t.kind !== 'local' || t.reg?.state !== 'ready' || t.fail?.why === 'unverified') return
+  updateFetch.get(t.id)?.abort()
+  const ac = new AbortController()
+  updateFetch.set(t.id, ac)
+  const instance = t.reg.instance
+  void trust.fetchUpdate(t, ac.signal).then((u) => {
+    if (updateFetch.get(t.id) !== ac) return
+    updateFetch.delete(t.id)
+    if (ac.signal.aborted || getTab(t.id) !== t || t.reg?.instance !== instance) return
+    const latest = u?.latest
+    j('update', { tab: t.id, latest: latest ?? null })
+    if (t.update !== latest) { t.update = latest; compose() }
+  }, () => { if (updateFetch.get(t.id) === ac) updateFetch.delete(t.id) })
+}
+
+// Spec 31 E3: a shared canvas's name and logo, read through its tab's own session (the gate's cookie applies) once its
+// commit lands on its origin, once per origin per run while it succeeds; kept by origin only on success (home.ts)
+const siteRead = new Map<string, 'reading' | 'done'>()
+function refreshSite(t: Tab, wc: WebContents): void {
+  const origin = t.remote?.origin
+  if (!origin || siteRead.has(origin)) return
+  const committed = safely(() => wc.getURL()) ?? ''
+  if (!shellDestination(origin, committed)) return
+  siteRead.set(origin, 'reading')
+  const ses = sessions.remoteSession()
+  void fetchSite((url, init) => ses.fetch(url, init), origin).then((m) => {
+    j('site', { tab: t.id, name: m?.name ?? null, logo: !!m?.logo })
+    if (!m) { siteRead.delete(origin); return }
+    siteRead.set(origin, 'done')
+    noteSite(origin, m.name, m.logo)
+  }, () => { siteRead.delete(origin) })
 }
 
 /**
@@ -1600,12 +1685,15 @@ export function startViews(i: StartInput): void {
     const t = e.kind === 'gone' ? allTabs().find((x) => x.reg?.instance === e.instance) : undefined
     onRegistry(e)
     if (t?.reg) notes?.gone(t.reg.ws)
-    if (e.kind === 'entry' && e.entry.state === 'ready') { const x = allTabs().find((y) => y.reg?.instance === e.entry.instance); if (x) refreshLogo(x) }
+    if (e.kind === 'entry' && e.entry.state === 'ready') { const x = allTabs().find((y) => y.reg?.instance === e.entry.instance); if (x) { refreshLogo(x); refreshUpdate(x) } }
   })
   for (const entry of trust.entries()) onRegistry({ kind: 'entry', entry })
   // A2.4: a local tab's logo is fetched once its entry is ready - for the canvases running at launch too, so a tab
   // not yet shown wears its logo in the strip and on Home rather than its initials until its first showing
-  for (const t of allTabs()) if (t.kind === 'local' && t.reg?.state === 'ready') refreshLogo(t)
+  for (const t of allTabs()) if (t.kind === 'local' && t.reg?.state === 'ready') { refreshLogo(t); refreshUpdate(t) }
+  setInterval(() => { for (const t of allTabs()) if (t.kind === 'local' && t.reg?.state === 'ready') refreshUpdate(t) }, UPDATE_EVERY_MS).unref()
+  // Home's copy-update: the folder of that tab, from main's own record (spec 31 E4)
+  setUpdateRoots((id) => { const t = getTab(id); return t?.kind === 'local' && t.update && t.root ? t.root : undefined })
   trust.onReport((tabId, doc, r) => {
     onReport(tabId, doc, r)
     invalidateMenu()
