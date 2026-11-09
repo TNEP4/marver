@@ -42,6 +42,13 @@ describe('extractMeta reads escaped quotes (H.1)', () => {
     expect(extractMeta(`export const meta = { description: "set viewport: 'mobile', then", viewport: "tablet" }`)).toEqual({ description: "set viewport: 'mobile', then", viewport: 'tablet' })
     expect(extractMeta(`export const meta = { size: { title: 'inner' }, title: 'outer', ratio: 4 / 3, theme: 'dark' }`)).toEqual({ title: 'outer', theme: 'dark' })
     expect(extractMeta(`export const meta = { title: 'x' as const, viewport: 'mobile', slide: true && on }`)).toEqual({ viewport: 'mobile' })
+    // round 4: a slash after a postfix ++, a property named by a keyword, a control condition; and code it cannot
+    // follow reads as leniently as r31 did - never fewer fields
+    expect(extractMeta('export const meta = {\n  title: "Home", viewport: "tablet", slide: true,\n  description: count++ / 2\n}')).toEqual({ title: 'Home', viewport: 'tablet', slide: true })
+    expect(extractMeta('export const meta = { title: "Home", n: values.in / 2, viewport: "tablet" }')).toEqual({ title: 'Home', viewport: 'tablet' })
+    expect(extractMeta(`export const meta = { title: "Home", get x() { if (ready) /'}/.test(t); return 1 }, viewport: "tablet" }`)).toEqual({ title: 'Home', viewport: 'tablet' })
+    expect(extractMeta('export const meta = { title: "Home", viewport: "tablet", n: a / b / c }')).toEqual({ title: 'Home', viewport: 'tablet' })
+    expect(extractMeta(`export const meta = { title: 'Nic\\'s', viewport: 'mobile', odd: x ? /"/ : 1 }`)).toEqual({ title: "Nic's", viewport: 'mobile' })
   })
 })
 

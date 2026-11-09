@@ -87,14 +87,17 @@ export function unescapeJs(s: string): string {
 
 /** One token of the code a `meta` object is written in: a string or template literal (`text` its raw inside; `holes`
  *  for a template with an unescaped `${...}`), a regex literal, a word or number, or one punctuator. */
-type Tok = { k: 'str'; raw: string } | { k: 'tpl'; raw: string; holes: boolean } | { k: 're' } | { k: 'word'; v: string } | { k: 'punct'; v: string }
+type Tok = { k: 'str'; raw: string } | { k: 'tpl'; raw: string; holes: boolean } | { k: 're' }
+  | { k: 'word'; v: string; prop?: boolean } | { k: 'punct'; v: string; ctrl?: boolean }
 
-/** Can a `/` here start a regex literal? After a value (a word that is not a keyword, a literal, `)`, `]`, `}`) it
- *  divides; anywhere else it starts a regex. */
+/** Can a `/` here start a regex literal? After a value it divides: a literal, a name (a keyword after `.` is a
+ *  property's name: `values.in / 2`), `]`, `}`, a postfix `++`/`--` (`count++ / 2`), a `)` - unless that `)` closes
+ *  an `if`/`while`/`for`/`with` condition (`if (ready) /'/.test(t)`). After an operator or a keyword it starts one. */
 const REGEX_AFTER_WORD = new Set(['return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'throw', 'case', 'do', 'else', 'yield', 'await'])
+const CONTROL = new Set(['if', 'while', 'for', 'with'])
 const regexCan = (prev: Tok | undefined): boolean => !prev
-  || (prev.k === 'punct' && prev.v !== ')' && prev.v !== ']' && prev.v !== '}')
-  || (prev.k === 'word' && REGEX_AFTER_WORD.has(prev.v))
+  || (prev.k === 'punct' && (prev.v === ')' ? !!prev.ctrl : ![']', '}', '++', '--'].includes(prev.v)))
+  || (prev.k === 'word' && !prev.prop && REGEX_AFTER_WORD.has(prev.v))
 
 /**
  * The JS tokens from `i` to the `}` that closes an already-open `{` (spec 31 H.1, review rounds 1-3): strings, template
@@ -105,6 +108,8 @@ const regexCan = (prev: Tok | undefined): boolean => !prev
 function tokens(src: string, i: number, emit?: (t: Tok, depth: number) => void): number {
   let depth = 0
   let prev: Tok | undefined
+  /** each open `(`: whether it opens a control statement's condition */
+  const parens: boolean[] = []
   const out = (t: Tok) => { prev = t; if (emit) emit(t, depth) }
   while (i < src.length) {
     const ch = src[i]
@@ -140,13 +145,47 @@ function tokens(src: string, i: number, emit?: (t: Tok, depth: number) => void):
       out({ k: 're' }); i = j; continue
     }
     const w = /^(?:[A-Za-z_$][\w$]*|\d[\w.]*)/.exec(src.slice(i, i + 256))
-    if (w) { out({ k: 'word', v: w[0] }); i += w[0].length; continue }
+    if (w) { out({ k: 'word', v: w[0], prop: prev?.k === 'punct' && (prev.v === '.' || prev.v === '?.') }); i += w[0].length; continue }
     if (ch === '}' && depth === 0) { if (emit) emit({ k: 'punct', v: '}' }, 0); return i }
-    if (ch === '{' || ch === '[' || ch === '(') { out({ k: 'punct', v: ch }); depth++; i++; continue }
-    if (ch === '}' || ch === ']' || ch === ')') { depth--; out({ k: 'punct', v: ch }); i++; continue }
+    if (ch === '(') { parens.push(prev?.k === 'word' && !prev.prop && CONTROL.has(prev.v)); out({ k: 'punct', v: ch }); depth++; i++; continue }
+    if (ch === '{' || ch === '[') { out({ k: 'punct', v: ch }); depth++; i++; continue }
+    if (ch === ')') { depth--; out({ k: 'punct', v: ch, ctrl: parens.pop() === true }); i++; continue }
+    if (ch === '}' || ch === ']') { depth--; out({ k: 'punct', v: ch }); i++; continue }
+    const op = /^(?:\+\+|--|\?\.(?!\d)|=>|\.\.\.)/.exec(src.slice(i, i + 3))
+    if (op) { out({ k: 'punct', v: op[0] }); i += op[0].length; continue }
     out({ k: 'punct', v: ch }); i++
   }
   return -1
+}
+
+/** The lenient reading, for a meta the tokenizer cannot follow: r31's - the body to its first `}`, each key's literal
+ *  found where a property starts - with its quotes read escape-aware (spec 31 H.1). Never worse than r31 was. */
+function lenientMeta(src: string): FrameMeta {
+  const m = /export\s+const\s+meta\s*=\s*\{([\s\S]*?)\}/.exec(src)
+  if (!m) return {}
+  const body = m[1]
+  const strings = new Map<string, string>()
+  for (const key of ['title', 'viewport', 'theme', 'of', 'variant', 'intent', 'description']) {
+    const r = new RegExp(`(?:^|[{,])\\s*${key}\\s*:\\s*(?:'((?:[^'\\\\\\n]|\\\\.)*)'|"((?:[^"\\\\\\n]|\\\\.)*)"|\`((?:[^\`\\\\\\n]|\\\\.)*)\`)\\s*(?=[,}\\n]|$)`).exec(body)
+    if (r && !(r[3] !== undefined && /(^|[^\\])(\\\\)*\$\{/.test(r[3]))) strings.set(key, unescapeJs(r[1] ?? r[2] ?? r[3]))
+  }
+  const b = /(?:^|[{,])\s*slide\s*:\s*(true|false)\b/.exec(body)
+  return metaOf(strings, new Map(b ? [['slide', b[1] === 'true']] : []))
+}
+
+/** The meta from its literal properties. */
+function metaOf(strings: Map<string, string>, bools: Map<string, boolean>): FrameMeta {
+  const pick = (key: string) => strings.get(key)
+  const out: FrameMeta = {}
+  const title = pick('title'); if (title) out.title = title
+  const viewport = pick('viewport'); if (viewport) out.viewport = viewport
+  const theme = pick('theme'); if (theme) out.theme = theme
+  const of = pick('of'); if (of) out.of = of
+  const variant = pick('variant'); if (variant) out.variant = variant
+  const intent = pick('intent'); if (intent) out.intent = intent
+  const slide = bools.get('slide'); if (slide !== undefined) out.slide = slide
+  const description = readDescription(pick('description')); if (description) out.description = description
+  return out
 }
 
 /** Extract `export const meta = {...}` with literal string values only. Anything else is silently omitted.
@@ -162,7 +201,8 @@ export function extractMeta(src: string): FrameMeta {
     if (t.k === 'punct' && t.v === ',') props.push([])
     else if (!(t.k === 'punct' && t.v === '}')) props[props.length - 1].push(t)
   })
-  if (end < 0) return {}
+  // code it cannot follow (an unterminated literal, a slash it read the wrong way): the lenient reading
+  if (end < 0) return lenientMeta(src)
   const strings = new Map<string, string>()
   const bools = new Map<string, boolean>()
   for (const p of props) {
@@ -173,17 +213,7 @@ export function extractMeta(src: string): FrameMeta {
     if (v.k === 'str' || (v.k === 'tpl' && !v.holes)) strings.set(key, unescapeJs(v.raw))
     else if (v.k === 'word' && (v.v === 'true' || v.v === 'false')) bools.set(key, v.v === 'true')
   }
-  const pick = (key: string) => strings.get(key)
-  const out: FrameMeta = {}
-  const title = pick('title'); if (title) out.title = title
-  const viewport = pick('viewport'); if (viewport) out.viewport = viewport
-  const theme = pick('theme'); if (theme) out.theme = theme
-  const of = pick('of'); if (of) out.of = of
-  const variant = pick('variant'); if (variant) out.variant = variant
-  const intent = pick('intent'); if (intent) out.intent = intent
-  const slide = bools.get('slide'); if (slide !== undefined) out.slide = slide
-  const description = readDescription(pick('description')); if (description) out.description = description
-  return out
+  return metaOf(strings, bools)
 }
 
 /** Content-frame detection: LEXICAL by convention - the frame file itself imports
