@@ -53,7 +53,10 @@ describe('the dev server (spec 31 B.4, C.2-C.6)', () => {
   it('says what it takes, and who wrote what here: the migration at start, then every write', async () => {
     expect((await api('capabilities', undefined, {})).data).toEqual({ delete: true, resolveAll: true })
     expect((await api('comment-ownership', undefined, {})).status).toBe(403)
+    // the profile changes after the start (a connect, a new email): what the start recorded stands
+    put('design/.local/profile.json', { email: 'someone@new', name: 'Nic' })
     const own = (await api('comment-ownership')).data.boards
+    put('design/.local/profile.json', OWNER)
     expect(own.main).toEqual(['old-mine'])
     const c = id('c')
     expect((await api('comments/main', { events: [{ id: id('e'), ts: Date.now(), type: 'create', commentId: c, frame: 'spec/alpha', body: 'new one' }] })).status).toBe(200)

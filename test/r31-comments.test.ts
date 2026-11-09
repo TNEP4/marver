@@ -299,7 +299,7 @@ describe('Jam never reads a deleted message (spec 31 C.5)', () => {
       appendEvents(dir, 'main', [del('ask3')])
       const out = form(j, ctxFor(root), { free: 3, running: new Set(), exclusiveRunning: false, held: () => false, anyHold: () => false })
       expect(out.batches).toEqual([])
-      expect(j.cards.find((x) => x.thread === 'alpha1')).toMatchObject({ state: 'dropped' })
+      expect(j.cards.find((x) => x.thread === 'alpha1')).toMatchObject({ state: 'dropped', note: 'deleted' })
     } finally { done() }
   })
 })
