@@ -162,8 +162,8 @@ export function resolveAll(root: string, op: string, scope: Scope, o: ResolveAll
   const dir = join(root, 'design', 'comments')
   const file = receiptFile(root, op)
   const had = o.dryRun ? null : readJson<Receipt>(file)
-  if (had?.state === 'done') return had
   if (had && JSON.stringify(had.scope) !== JSON.stringify(scope)) return { error: 'that op was used for another scope', status: 409 }
+  if (had?.state === 'done') return had
   const at = o.now ?? Date.now()
   const busy = jamBusy(root, o.busy)
   const skipped: Receipt['skipped'] = []

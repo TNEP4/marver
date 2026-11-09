@@ -9,7 +9,7 @@ import { create } from 'zustand'
 import { useStore, PUBLISHED, shownRev } from './store.ts'
 import { useComments } from './comments-store.ts'
 import { frameMark, isNew, questions, type Ask, type FrameMark } from '../../shared/marks.ts'
-import { cmd, endOnAnswer, type CmdHandle, type CmdOpts } from './commands.ts'
+import { cmd, endOnAnswer, type CmdOpts } from './commands.ts'
 import { api } from './api.ts'
 
 /** Mark all as seen (spec 30): `mark-seen` ends on the marks write's answer - the sidebar's, or the relay from the
@@ -52,10 +52,12 @@ export async function resolveAllFrom(how: CmdOpts, scope: ResolveScope): Promise
   if (r.data?.failed?.length) h.fail('api'); else h.done()
   const summary = String(r.data?.summary ?? `Resolved ${n}`)
   if (!n) { s.toast(summary, undefined, 8000); return }
-  s.toast(summary, { label: 'Undo', cmd: 'resolve-undo', run: (u) => { void undoResolveAll(op, u) } }, 10_000)
+  s.toast(summary, { label: 'Undo', id: 'resolve-undo', run: () => { void undoResolveAll(op) } }, 10_000)
 }
 
-async function undoResolveAll(op: string, h: CmdHandle): Promise<void> {
+/** The notice's Undo (spec 31 B.3): records `resolve-undo` itself - the notice's button only runs it. */
+async function undoResolveAll(op: string): Promise<void> {
+  const h = cmd('resolve-undo', { via: 'click', in: 'shell' })
   const s = useStore.getState()
   let r: Awaited<ReturnType<typeof commentAction>>
   try { r = await commentAction('undo', { op }) } catch { h.fail('api'); s.toast('could not reach the dev server'); return }

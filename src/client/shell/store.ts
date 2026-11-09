@@ -128,9 +128,9 @@ export interface JamNote {
   /** earlier notices folded under this one - View walks through them */
   stack?: JamNote[]
 }
-/** A plain notice's one action (spec 31 B.3: "Resolved 31 conversations · Undo"): the command its click records, and
- *  what it runs with that command's handle. */
-export interface ToastAction { label: string; cmd: import('./commands.ts').CmdName; run: (h: import('./commands.ts').CmdHandle) => void }
+/** A plain notice's one action (spec 31 B.3: "Resolved 31 conversations · Undo"): what its click runs - which records
+ *  its own command (`resolve-undo`). `id` names it on the notice (`data-toast`). */
+export interface ToastAction { label: string; id: string; run: () => void }
 export interface Toast { id: number; text: string; jam?: JamNote; action?: ToastAction }
 
 export const CONFIG: { viewports: Record<string, { width: number; height: number }>; themes: string[]; zoomSpeed?: number; noTheme: boolean; setup?: boolean; projectName?: string; branding?: boolean; jam?: { chime: boolean; capture: 'confirm' | 'at-once'; names?: boolean } | null; workspace?: string; version?: string } = shConfig

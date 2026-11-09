@@ -1321,8 +1321,8 @@ function JamToasts({ toasts }: { toasts: import('./store.ts').Toast[] }) {
   return (
     <div className="sh-toasts">
       {plain.slice(-2).map((t) => (
-        <div key={t.id} className="sh-toast" data-toast={t.action ? t.action.cmd : undefined}><CheckIcon size={12} /> {t.text}
-          {t.action && <button className="sh-toast-act" onClick={() => { const a = t.action!; useStore.getState().dropToast(t.id); a.run(cmd(a.cmd, { via: 'click', in: 'shell' })) }}>{t.action.label}</button>}
+        <div key={t.id} className="sh-toast" data-toast={t.action?.id}><CheckIcon size={12} /> {t.text}
+          {t.action && <button className="sh-toast-act" onClick={() => { const a = t.action!; useStore.getState().dropToast(t.id); a.run() }}>{t.action.label}</button>}
         </div>
       ))}
       {expanded && jams.length > 2 && (

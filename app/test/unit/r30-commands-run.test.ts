@@ -535,6 +535,26 @@ describe('tabAct (#49, #50, #51)', () => {
     expect(cmdLines()).toEqual([])
     expect(menuClicks).toEqual([[t.id, 'mark-all-seen', 'tab-menu']])
   })
+  it('Resolve All Comments (spec 31 B.1) sits beside Mark All as Seen: a relay too, `in: tab-menu`, for a canvas that says `resolve-all`', async () => {
+    const t = await canvas()
+    ;(t.reg!.features as string[]).push('resolve-all')
+    flushNow(); writeFileSync(file(), '')
+    const items = menuOf(t.id)
+    const at = items.findIndex((i) => i.label === 'Mark All as Seen')
+    expect(items[at + 1]).toMatchObject({ label: 'Resolve All Comments', enabled: true })
+    items[at + 1].click!()
+    await tick()
+    expect(cmdLines()).toEqual([])
+    expect(menuClicks).toEqual([[t.id, 'resolve-all-comments', 'tab-menu']])
+  })
+  it('an older canvas (no `resolve-all`): Resolve All Comments is there, greyed, and sends nothing', async () => {
+    const t = await canvas()
+    const item = menuOf(t.id).find((i) => i.label === 'Resolve All Comments')!
+    expect((item as Item & { enabled?: boolean }).enabled).toBe(false)
+    item.click!()
+    await tick()
+    expect(menuClicks).toEqual([])
+  })
   it('a stale token: noop untrusted', async () => {
     const t = await canvas()
     const items = menuOf(t.id)
