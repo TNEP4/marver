@@ -72,12 +72,15 @@ export function navigated(): number {
   return ++gotoSeq
 }
 /**
- * A person acted on the canvas itself - a frame clicked or Shift-clicked, a pan, a zoom (spec 31 D3): any navigation
- * still on its way (a `marver show`, an app link, a reveal) gives way, its board never committed over what they did.
- * Unlike `navigated()` it cancels no board switch: one the person started still lands. Programmatic selection and fits
- * (the show's own) never call it, so a show never cancels itself.
+ * A person acted on the canvas or its camera themselves - a frame, a badge or a comment stack clicked, ⌘A, Escape, a pan,
+ * a zoom, a fit or zoom key, the zoom menu, a notification's View (spec 31 D3): a `marver show` or an app link still on
+ * its way gives way, its board never committed over what they did (show.ts reads `handNow`). Its own counter, apart
+ * from the navigation number: nothing the person started themselves - a board switch, its fit - is cancelled by it.
+ * Programmatic selection and fits (the show's own) never call it, so a show never cancels itself.
  */
-export function navigatedByHand(): void { ++gotoSeq }
+let handSeq = 0
+export function navigatedByHand(): void { ++handSeq }
+export const handNow = (): number => handSeq
 /** The navigation now, without starting one: a caller that waits (`marver show` for the boot) reads it first, and
  *  gives way if a person navigated meanwhile (`isLatest`). */
 export const navNow = (): number => gotoSeq

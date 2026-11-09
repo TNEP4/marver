@@ -32,7 +32,7 @@ import { ALL_SCENES, humanize as slugLabel, readTitle } from '../../shared/board
 import { cardSelectAll, CommentsController, parkThread, revealThread } from './Comments.tsx'
 import { poweredByUrl } from '../../shared/utm.ts'
 import { avatarFallback, NO_COMMENTS_HERE, useComments } from './comments-store.ts'
-import { goTo, isLatest, navigated, navNow, revealFrame, switchFor } from './goto.ts'
+import { goTo, isLatest, navigated, navigatedByHand, navNow, revealFrame, switchFor } from './goto.ts'
 import { bootSettled, dismissShow, goNow, showTarget, useShowNotice } from './show.ts'
 import { newerVersion } from '../../shared/deep-link.ts'
 import { useNotes } from './notes.ts'
@@ -340,15 +340,15 @@ function ZoomMenu() {
       </Tip>
       <Popover pop={pop}>
         {ZOOMS.map((z) => (
-          <button key={z} onClick={() => go(() => { cmd('zoom-to', { via: 'click', in: 'pill' }); canvasCtl.zoomTo(z) })}>
+          <button key={z} onClick={() => go(() => { cmd('zoom-to', { via: 'click', in: 'pill' }); navigatedByHand(); canvasCtl.zoomTo(z) })}>
             <span>{z * 100}%</span>
             {z === 1 && <kbd>⇧0</kbd>}
             {Math.abs(scale - z) < 0.03 && <CheckIcon size={13} className="chk" />}
           </button>
         ))}
         <i className="div" />
-        <button onClick={() => go(() => { cmd('fit-all', { via: 'click', in: 'pill' }); canvasCtl.fitAll() })}><span>Fit all</span><kbd>⇧1</kbd></button>
-        <button onClick={() => go(() => { const h = cmd('fit-selection', { via: 'click', in: 'pill' }); const k = useStore.getState().selection; if (k.length) canvasCtl.fitNodes(k); else h.noop('no-selection') })}>
+        <button onClick={() => go(() => { cmd('fit-all', { via: 'click', in: 'pill' }); navigatedByHand(); canvasCtl.fitAll() })}><span>Fit all</span><kbd>⇧1</kbd></button>
+        <button onClick={() => go(() => { const h = cmd('fit-selection', { via: 'click', in: 'pill' }); const k = useStore.getState().selection; navigatedByHand(); if (k.length) canvasCtl.fitNodes(k); else h.noop('no-selection') })}>
           <span>Fit selection</span><kbd>⇧2</kbd>
         </button>
       </Popover>
@@ -848,7 +848,7 @@ export function App() {
       if ((e.metaKey || e.ctrlKey) && e.key === '/') { e.preventDefault(); cmd('toolbar', how()); setPillOpen((o) => !o); return }
       // ⌘A in a comment card selects its words, not every frame (spec 31 C.1)
       if ((e.metaKey || e.ctrlKey) && e.key === 'a' && cardSelectAll()) { e.preventDefault(); cmd('thread-select-all', how()); return }
-      if ((e.metaKey || e.ctrlKey) && e.key === 'a') { e.preventDefault(); cmd('select-all', how()); s.selectAll(); return }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'a') { e.preventDefault(); cmd('select-all', how()); navigatedByHand(); s.selectAll(); return }
       if (e.metaKey || e.ctrlKey) return
       if (e.key === 'Escape') {
         const c = commentsStore()
@@ -856,7 +856,7 @@ export function App() {
         if (c.commentMode || c.active || c.draft) { h.step('comments-off'); c.setMode(false); c.setActive(null); c.setDraft(null) }
         else if (s.laser) { h.step('laser-off'); s.setLaser(false) }          // Escape also exits laser mode (parity with comment)
         else if (s.interact) { h.step('interact-off'); setInteract(null) }
-        else { h.step('deselect'); select(null) }
+        else { h.step('deselect'); navigatedByHand(); select(null) }
         endAfterFrames(h)
       }
       // a slides board PLAYS as slides even when its landing is the canvas -
@@ -941,9 +941,10 @@ export function App() {
           s.setTheme(CONFIG.themes[(CONFIG.themes.indexOf(s.viewTheme) + 1) % CONFIG.themes.length])
         }
       }
-      if (e.shiftKey && e.code === 'Digit0') { cmd('zoom-100', how('0')); canvasCtl.zoom100() }
-      if (e.shiftKey && e.code === 'Digit1') { cmd('fit-all', how('1')); canvasCtl.fitAll() }
-      if (e.shiftKey && e.code === 'Digit2') { const h = cmd('fit-selection', how('2')); if (s.selection.length) canvasCtl.fitNodes(s.selection); else h.noop('no-selection') }
+      // a person's camera (spec 31 D3): a show or link still loading gives way
+      if (e.shiftKey && e.code === 'Digit0') { cmd('zoom-100', how('0')); navigatedByHand(); canvasCtl.zoom100() }
+      if (e.shiftKey && e.code === 'Digit1') { cmd('fit-all', how('1')); navigatedByHand(); canvasCtl.fitAll() }
+      if (e.shiftKey && e.code === 'Digit2') { const h = cmd('fit-selection', how('2')); navigatedByHand(); if (s.selection.length) canvasCtl.fitNodes(s.selection); else h.noop('no-selection') }
       // plain digits: 0 = default, 1..n = devices. Scoped to the selection when one
       // exists, board-wide otherwise. Every path tidies - presets never scramble layout.
       if (!e.shiftKey && /^Digit[0-9]$/.test(e.code)) {
@@ -1395,6 +1396,7 @@ function JamAvatar({ author }: { author: { name?: string; avatar?: string; id?: 
  *  note's origin board and retry while its comments load. Dismiss only on success: a
  *  cross-board note must never be a destructive no-op. */
 async function viewNote(note: import('./store.ts').JamNote, dismiss: () => void, h: CmdHandle) {
+  navigatedByHand()   // the person chose View (spec 31 D3): a show or link still loading gives way
   if (revealThread(note.threadId)) { h.done(); dismiss(); return }
   const s = useStore.getState()
   // a navigation: a link still finding its board gives way to it - and it to a newer one, wherever this one has got to

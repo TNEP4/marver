@@ -435,6 +435,32 @@ describe('a show and the boot', () => {
   }
   byHand('a person clicking a frame on the canvas while a show loads its board: the show gives way', (t) => press(t, 'n-two'), ['n-two'])
   byHand('a person Shift-clicking a frame on the canvas while a show loads its board: the show gives way', (t) => press(t, 'n-two', true), null)
+  /** a trusted key press (CDP), with its modifiers (1 alt, 2 ctrl, 4 meta, 8 shift) */
+  const key = async (t: Awaited<ReturnType<typeof open>>, k: string, code: string, vk: number, modifiers = 0) => {
+    for (const type of ['keyDown', 'keyUp']) await browser!.send('Input.dispatchKeyEvent', { type, key: k, code, windowsVirtualKeyCode: vk, modifiers }, t.s)
+  }
+  byHand('⌘A while a show loads its board: the show gives way', (t) => key(t, 'a', 'KeyA', 65, 4), ['n-one', 'n-one-b', 'n-two'])
+  byHand('Escape (deselect) while a show loads its board: the show gives way', (t) => key(t, 'Escape', 'Escape', 27), [])
+  byHand('⇧1 (fit all) while a show loads its board: the show gives way', (t) => key(t, '!', 'Digit1', 49, 8), ['n-two'])
+  byHand('⇧0 (actual size) while a show loads its board: the show gives way', (t) => key(t, ')', 'Digit0', 48, 8), ['n-two'])
+  byHand('a comment stack clicked on a frame while a show loads its board: the show gives way', async (t) => {
+    await t.until(`!!document.querySelector('.sh-node[data-node="n-one"] .cm-stack, .cm-stack')`)
+    await t.ev(`document.querySelector('.cm-stack').click(), 1`)
+  }, null)
+
+  it('a person\'s own board switch, panned while it loads, still lands fitted', async () => {
+    if (!browser) return
+    const t = await open('#/b/main')
+    await show({ board: 'main', n: ['n-two'] })
+    await t.until(settled('main', ['n-two']))
+    await t.ev(`__hold('other')`)
+    await t.ev(`[...document.querySelectorAll('.sh-panel *')].find((el) => !el.children.length && el.textContent.trim() === 'Other').click(), 1`)
+    await t.until(`__gate.asked`)
+    await browser.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 700, y: 450, deltaX: 3000, deltaY: 0 }, t.s)
+    await t.ev(`__gate.release()`)
+    await t.until(`(() => { const v = ${VIEW}; return v.board === 'other' && v.visible.join() === 'n-three' })()`)
+  }, 60_000)
+
   byHand('a person panning with the wheel while a show loads its board: the show gives way', async (t) => {
     await browser!.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 700, y: 450, deltaX: 400, deltaY: 0 }, t.s)
   }, ['n-two'])

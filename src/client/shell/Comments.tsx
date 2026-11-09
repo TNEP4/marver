@@ -14,6 +14,7 @@ import { CONFIG, useStore, type Node } from './store.ts'
 import { threadHostKey } from './keys.ts'
 import { isNoteAnchor, resolveNoteAnchor, useNotes } from './notes.ts'
 import { bootCancelled, canvasCtl } from './canvas/ctl.ts'
+import { navigatedByHand } from './goto.ts'
 import { MARKER, placeMarkers, type Placed } from './pin-layout.ts'
 import { bootHash, buildHash, parseHash, writeHash } from './hash.ts'
 import { isLegacyLink } from './legacy-links.ts'
@@ -304,7 +305,7 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
   if (!engaged && open.length) {
     return (
       <button className={`cm-stack sh-no-pan${open.some((t) => alertIds.has(t.id)) ? ' mention' : ''}`}
-        onClick={(e) => { e.stopPropagation(); cmd('thread-open', { via: 'click', in: 'shell', frame: frameId }); useStore.getState().select(node.key); const hit = open.find((t) => alertIds.has(t.id)) ?? open[0]; if (hit) setActive(hit.id) }}>
+        onClick={(e) => { e.stopPropagation(); cmd('thread-open', { via: 'click', in: 'shell', frame: frameId }); navigatedByHand(); useStore.getState().select(node.key); const hit = open.find((t) => alertIds.has(t.id)) ?? open[0]; if (hit) setActive(hit.id) }}>
         <MarkerFace threads={open} />
       </button>
     )
