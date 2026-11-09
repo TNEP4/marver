@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path'
 import { glyphFromName, isLandscape, labelFromName, lookFromName, parseGlyph } from '../src/shared/devices.ts'
 import { DEVICE_ICON_MAX, readDeviceIcon, resolveDevices, sanitizeSvg } from '../src/server/device-icons.ts'
 import { loadConfig } from '../src/server/config.ts'
+import { lineText, timelineLines } from '../src/client/shell/jam-lines.ts'
 
 /**
  * Your own breakpoints (spec 31 Part F): a device's glyph and label from its name - the brand casing ("ipad-landscape"
@@ -194,5 +195,14 @@ describe('each device\'s look, resolved (F.1-F.2)', () => {
     const d = await loadConfig(repo())
     expect(d.devices.mobile).toEqual({ label: 'Mobile', glyph: 'mobile', rotate: false })
     expect(Object.keys(d.devices)).toEqual(Object.keys(d.viewports))
+  })
+})
+
+describe('a Jam device step names its viewport for the panel (F.3)', () => {
+  it('the line carries the configured name - the panel shows its label and icon - and its text for the agent stays the name', () => {
+    const r = { timeline: [{ at: 0, event: 'device', frame: 'demo/reader', viewport: 'ipad-landscape', width: 1180, height: 820 }] } as unknown as Parameters<typeof timelineLines>[0]
+    const [l] = timelineLines(r)
+    expect(l).toMatchObject({ kind: 'device', device: 'ipad-landscape', text: 'Reader · ipad-landscape 1180' })
+    expect(lineText(l)).toBe('[0:00] (device) Reader · ipad-landscape 1180')
   })
 })

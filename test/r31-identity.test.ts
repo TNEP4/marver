@@ -7,6 +7,10 @@ import { loadConfig } from '../src/server/config.ts'
 import { findLogo, publishLogo } from '../src/server/logo.ts'
 import { init, initialName } from '../src/cli/init.ts'
 import { png } from './png-fixture.ts'
+import { execFileSync } from 'node:child_process'
+import { readdirSync, symlinkSync } from 'node:fs'
+import { CLI } from './dev-server.ts'
+import { sanitizeSvg, svgDataUri } from '../src/server/device-icons.ts'
 
 /**
  * A canvas that looks right in the app (spec 31 Part G): one identity resolver with the spec's precedence - local
@@ -128,4 +132,38 @@ describe('init writes a name (G.2)', () => {
     const r = repo({}, 'ipad-')
     expect(initialName(r)).toMatch(/^iPad /)
   })
+})
+
+describe('marver build: the published name and logo, and the devices\' own icons (G.1, F.1)', () => {
+  const site = (files: Record<string, string | Buffer>, pkgName = 'tms-broker') => {
+    const root = repo({
+      'package.json': JSON.stringify({ name: pkgName, private: true, type: 'module' }),
+      'design/scenes/demo/a.tsx': `export default function A() { return <div>a</div> }\n`,
+      'design/boards/main.json': JSON.stringify({ version: 1, name: 'main', nodes: [{ key: 'n1', frame: 'demo/a', x: 0, y: 0, w: 400, h: 300 }] }),
+      'design/publish.json': JSON.stringify({ boards: { main: 'comment' } }),
+      ...files,
+    })
+    symlinkSync(join(import.meta.dirname, '..', 'node_modules'), join(root, 'node_modules'))
+    execFileSync(process.execPath, [CLI, 'build', '--root', root, '--no-textures'], { stdio: 'pipe' })
+    return { root, meta: JSON.parse(readFileSync(join(root, 'design', '.dist', 'meta.json'), 'utf8')) }
+  }
+
+  it('config name and logo win; a canvas setting neither publishes as before (package.json name, the ladder)', () => {
+    const icon = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><script>alert(1)</script><rect width="20" height="20"/></svg>'
+    const a = site({
+      'design/config.ts': `export default { name: 'Tidewell', logo: 'brand/mark.png', share: { name: 'old name' }, viewports: { 'boox-full': { width: 1240, height: 1860, icon: 'design/icons/boox.svg' } } }\n`,
+      'brand/mark.png': PNG, 'design/logo.svg': SVG, 'design/icons/boox.svg': icon,
+    })
+    expect([a.meta.name, a.meta.logo]).toEqual(['Tidewell', '/__mv/logo.png'])
+    // the published shell carries the sanitized icon, never the source
+    const assets = readdirSync(join(a.root, 'design', '.dist', 'assets')).map((f) => readFileSync(join(a.root, 'design', '.dist', 'assets', f), 'utf8')).join('\n')
+    const clean = sanitizeSvg(icon)
+    expect('svg' in clean).toBe(true)
+    if ('svg' in clean) expect(assets).toContain(svgDataUri(clean.svg))
+    expect(assets).not.toContain(Buffer.from(icon).toString('base64'))
+    const b = site({ 'design/logo.svg': SVG })
+    expect([b.meta.name, b.meta.logo]).toEqual(['tms-broker', '/__mv/logo.svg'])
+    const c = site({ 'design/config.ts': `export default { share: { name: 'Shared' } }\n` })
+    expect([c.meta.name, c.meta.logo]).toEqual(['Shared', undefined])
+  }, 300_000)
 })
