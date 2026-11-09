@@ -36,6 +36,11 @@ export function startCommandShown(t: StartTarget, home: string): string {
   return `cd ${dir} && ${tail(t)}`
 }
 
+/** A canvas's update, in its own folder (spec 31 E4): the package at its latest, then `init` for its managed files. */
+export function updateCommand(root: string): string {
+  return `cd ${shq(root)} && npm i -D @marver-design/marver@latest && npx marver init`
+}
+
 /** The three fixed commands Home copies (A2.12), named by id: Home never sends a command's text. */
 export const FIXED_COMMANDS = {
   dev: 'npx marver dev',

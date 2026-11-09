@@ -3,7 +3,7 @@ import { TransformWrapper, TransformComponent, type ReactZoomPanPinchContentRef 
 import { CONFIG, useStore } from '../store.ts'
 import { letGoOfTile } from '../jam-state.ts'
 import { bootHash, linkTargets } from '../hash.ts'
-import { revealFrame } from '../goto.ts'
+import { isLatest, navigated, navNow, revealFrame } from '../goto.ts'
 import { noteGestureCmd, startPerf } from '../perf.ts'
 import { FrameNode, HEADER } from './FrameNode.tsx'
 import { NOTE_GAP } from '../notes.ts'
@@ -61,6 +61,8 @@ let keepTimer: ReturnType<typeof setTimeout> | undefined
 let keepPending: (() => void) | undefined
 /** Where the camera's flight lands (a fit, a zoom), for canvasCtl.landing: read only while rzpp animates. */
 let flight: Camera | null = null
+/** Each flight's number: a background tab's landing re-applies itself only while it is still the newest */
+let flyGen = 0
 function keepCamera(x: number, y: number, scale: number) {
   if (!WS) return
   const board = useStore.getState().board
@@ -163,7 +165,7 @@ export function animateLayout(ms = 360) {
 // the control channel lives in ctl.ts so play/focus can import it without
 // dragging the canvas into a locked-shell bundle; Canvas assigns the real
 // implementations below when it mounts
-import { canvasCtl, type CanvasWheelInput } from './ctl.ts'
+import { bootCancelled, canvasCtl, markBootLanded, type CanvasWheelInput } from './ctl.ts'
 import { cmd, type CmdHandle } from '../commands.ts'
 export { canvasCtl, type CanvasWheelInput }
 import { anchorNode, anchoredCamera, type Held } from './anchor.ts'
@@ -197,7 +199,7 @@ function GroupCaptions() {
             style={{ transform: `translate(${g.x}px, ${g.y}px) translateY(calc(-100% - clamp(4px, 8px * var(--sh-inv, 1), 40px)))` }}
             title="Select all variants"
             onPointerDown={(e) => e.stopPropagation()}
-            onClick={() => { cmd('group-fit', { via: 'click', in: 'shell', frames: g.keys.length }); useStore.getState().selectMany(g.keys); canvasCtl.fitNodes(g.keys) }}>
+            onClick={() => { cmd('group-fit', { via: 'click', in: 'shell', frames: g.keys.length }); navigated(); useStore.getState().selectMany(g.keys); canvasCtl.fitNodes(g.keys) }}>
             {id.split('/').map((s) => s[0].toUpperCase() + s.slice(1)).join(' / ')} · {g.ids.size} variants
           </div>
         )
@@ -214,9 +216,19 @@ export function Canvas() {
   const ref = useRef<ReactZoomPanPinchContentRef>(null)
   // every camera move the canvas aims (a fit, a zoom, a camera restored): where it lands, while rzpp flies there, and the
   // boot queue told - the first frame of a board starts now, ranked on that view, not once the flight is over
-  const fly = (x: number, y: number, scale: number, ms: number) => {
+  const fly = (x: number, y: number, scale: number, msAsked: number) => {
+    // a tab in the background draws no frames: its camera lands at once, where a flight nobody sees would wait for it
+    // to come forward (`marver show` to a background tab, spec 31 D3)
+    const hidden = document.visibilityState === 'hidden'
+    const ms = hidden ? 0 : msAsked
+    const gen = ++flyGen
     flight = ms ? { x, y, scale } : null
+    // an older flight still in the air no longer counts: the camera is landed now
+    if (hidden && ref.current) ref.current.instance.animation = null
     ref.current?.setTransform(x, y, scale, ms, 'easeOut')
+    // ...but its frame queued before the tab went to the background still lands its own end when frames resume (the
+    // library cannot cancel it): this landing goes again right after it, unless a newer flight came since
+    if (hidden) requestAnimationFrame(() => { if (gen === flyGen) ref.current?.setTransform(x, y, scale, 0) })
     aimed()
   }
   const scaleTimer = useRef(0)
@@ -340,7 +352,8 @@ export function Canvas() {
   // refit through their own path.
   const booted = useRef(false)
   useEffect(() => {
-    if (booted.current || nodes.length === 0) return
+    // the boot's camera, once: never for a later board load once the boot is over (an empty board boots with none)
+    if (booted.current || nodes.length === 0 || bootCancelled()) return
     let revealed = false
     booted.current = true
     // the page before this one reloaded itself when its canvas came back: its camera, on the board it showed
@@ -350,7 +363,10 @@ export function Canvas() {
     // reloaded this tab after a crash
     const named = !!(bootHash.n?.length || bootHash.f?.length || bootHash.s?.length)
     const cam = carried ?? (!named || APP_REOPEN ? savedCamera(board) : null)
+    // a navigation after this point (a person's, a show's) owns the camera: the boot's fit gives way to it
+    const nav = navNow()
     const fit = () => {
+      if (!isLatest(nav) || bootCancelled()) return
       const keys = linkTargets(bootHash, useStore.getState().nodes)
       if (keys.length) {
         useStore.setState({ selection: keys })
@@ -366,16 +382,20 @@ export function Canvas() {
       } else {
         canvasCtl.fitAll()
         // a link naming a frame this board does not show follows the frame where it lives
-        if (bootHash.f?.length && !revealed) { revealed = true; void revealFrame(bootHash.f[0]) }
+        // under the boot's own navigation (no new one: a person's, or an applied show, supersedes it)
+        if (bootHash.f?.length && !revealed) { revealed = true; void revealFrame(bootHash.f[0], nav, () => !bootCancelled()) }
       }
     }
-    requestAnimationFrame(() => {
+    // a frame, or at once in a tab in the background (it draws none until it comes forward)
+    const soon = (fn: () => void) => { if (document.visibilityState === 'hidden') setTimeout(fn, 0); else requestAnimationFrame(fn) }
+    soon(() => {
       fit()
       // published builds boot fast enough that rzpp's own init can land AFTER this fit
       // and stomp it back to the identity transform - one verification pass re-fits
       setTimeout(() => {
         const st = ref.current?.instance.transformState
         if (st && st.scale === 1 && st.positionX === 0 && st.positionY === 0) fit()
+        markBootLanded()   // spec 31 D3: a show waits for this
       }, 150)
     })
   }, [nodes])

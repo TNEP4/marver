@@ -94,33 +94,56 @@ function card(t: TabView): HTMLElement {
   noBridge(t) ? h('span', { class: 'note' }, 'Update to Marver 0.27.2 for the full unsaved-work guard') : null)
 }
 
+/** A running canvas's card, with its update under it when its server says a newer Marver is out (spec 31 E4): a row
+ *  beside the card's button, never inside it (a button holds no button), with the command for its own folder. */
+function runningCard(t: TabView): HTMLElement {
+  const c = card(t)
+  if (!t.update || t.state === 'unverified') return c
+  c.classList.add('has-update')
+  return h('div', { class: 'card-wrap', 'data-update': t.update }, c,
+    h('div', { class: 'update' },
+      h('span', {}, h('b', {}, t.update), ' available'),
+      cmdButton('npm i -D @marver-design/marver@latest && npx marver init', `Copy the update command for ${nameOf(t)}`, async () => (await api?.action({ action: 'copy-update', id: t.id }))?.ok === true)))
+}
+
 function recentCard(r: RecentView): HTMLElement {
-  return h('div', { class: 'card stopped', 'data-key': `recent:${r.id}` },
+  // a `marver://` link named it while it does not run (spec 31 D1): first, highlighted, its start command focused
+  return h('div', { class: `card stopped${r.linked ? ' linked' : ''}`, 'data-key': `recent:${r.id}` },
     h('span', { class: 'card-hd' }, logo(r, 30, 'grey'), h('span', {}, r.name)),
     h('small', {}, r.folder),
-    h('small', { class: 'ran' }, `Ran ${ago(r.lastSeen)}`),
+    r.linked ? h('small', { class: 'linked-why' }, 'Not running - start it to open the link') : null,
+    r.lastSeen > 0 ? h('small', { class: 'ran' }, `Ran ${ago(r.lastSeen)}`) : null,
     cmdButton('npx marver dev', `Copy the start command for ${r.name}`, async () => (await api?.action({ action: 'copy-start', id: r.id }))?.ok === true))
 }
 
-/** An open shared canvas: a click shows its tab (A4.6 #47). */
+/** What a shared canvas's `meta.json` named it, as main kept it for its origin (spec 31 E3). */
+const siteOf = (url?: string): SharedLink | undefined => { const o = originOf(url); return o ? shared.find((l) => originOf(l.url) === o) : undefined }
+
+/** An open shared canvas: a click shows its tab (A4.6 #47); its name, when its site said one (spec 31 E3). */
 function remoteCard(t: TabView): HTMLElement {
   const word = STATE_WORDS[t.state]
+  const site = siteOf(t.link)
+  const name = site?.name ?? t.name
   return h('button', {
-    class: `card is-${t.state}`, type: 'button', 'data-key': `tab:${t.id}`, 'aria-label': `${t.name}, shared canvas, ${word.charAt(0).toLowerCase() + word.slice(1)}`,
+    class: `card is-${t.state}`, type: 'button', 'data-key': `tab:${t.id}`, 'aria-label': `${name}, shared canvas, ${word.charAt(0).toLowerCase() + word.slice(1)}`,
     onclick: () => api?.activate(t.id),
   },
-  h('span', { class: 'card-hd' }, logo(t, 30, t.state === 'unreachable' ? 'grey' : undefined), h('span', {}, t.name)),
+  h('span', { class: 'card-hd' }, logo({ ...t, name, logo: t.logo ?? site?.logo }, 30, t.state === 'unreachable' ? 'grey' : undefined), h('span', {}, name)),
+  site?.name ? h('small', {}, t.name) : null,
   h('small', {}, 'Shared canvas'),
   h('span', { class: 'state' }, t.state === 'starting' ? h('i', { class: 'spin', 'aria-hidden': 'true' }) : null, t.state === 'starting' ? 'Opening' : word))
 }
 
 /** A shared canvas opened before (A4.6 #47): its host's initials; a click opens it again through main's checks. */
 function sharedCard(l: SharedLink): HTMLElement {
+  // its name and logo, as its site said them (spec 31 E3); its host's initials until then
+  const name = l.name ?? l.host
   return h('button', {
-    class: 'card stopped', type: 'button', 'data-key': `shared:${l.url}`, 'aria-label': `${l.host}, shared canvas, opened ${ago(l.lastSeen)}`,
+    class: 'card stopped', type: 'button', 'data-key': `shared:${l.url}`, 'aria-label': `${name}, shared canvas, opened ${ago(l.lastSeen)}`,
     onclick: () => { void open(l.url, false) },
   },
-  h('span', { class: 'card-hd' }, logo({ name: l.host, hue: hueOf(l.host) }, 30, 'grey'), h('span', {}, l.host)),
+  h('span', { class: 'card-hd' }, logo({ name, logo: l.logo, hue: hueOf(l.host) }, 30, 'grey'), h('span', {}, name)),
+  l.name ? h('small', {}, l.host) : null,
   h('small', { class: 'ran', 'data-seen': String(l.lastSeen) }, `Opened ${ago(l.lastSeen)}`))
 }
 
@@ -153,7 +176,7 @@ function renderBody(): void {
   const sharedCards = [...open.map(remoteCard), ...past.map(sharedCard)]
   fill(bodyEl,
     info.welcome ? h('h2', { class: 'h2' }, 'On this Mac') : null,
-    running.length ? h('div', { class: 'cards' }, ...running.map(card)) : h('div', { class: 'cards' }, ...emptyCard()),
+    running.length ? h('div', { class: 'cards' }, ...running.map(runningCard)) : h('div', { class: 'cards' }, ...emptyCard()),
     recent.length ? h('h2', { class: 'h2' }, 'Recently here') : null,
     recent.length ? h('div', { class: 'cards' }, ...recent.map(recentCard)) : null,
     sharedCards.length ? h('h2', { class: 'h2' }, 'Shared canvases') : null,
@@ -277,6 +300,13 @@ if (api) {
   api.onShared((l) => { shared = Array.isArray(l) ? l : []; renderBody() })
   api.onHomeInfo((i) => { info = i; renderTitle(); renderBody(); renderFoot() })
   api.onHomeFocus((f) => {
+    if (f.field === 'recent') {
+      // a `marver://` link to a canvas not running (spec 31 D1): its card, shown and its start command focused
+      const el = bodyEl.querySelector<HTMLElement>(`[data-key="${CSS.escape(`recent:${f.id}`)}"]`)
+      el?.scrollIntoView({ block: 'nearest' })
+      el?.querySelector<HTMLElement>('.cmd')?.focus()
+      return
+    }
     if (f.field !== 'link') return
     back = f.back
     input.focus()

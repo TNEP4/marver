@@ -71,6 +71,9 @@ export function navigated(): number {
   if (s.board) void s.switchBoard(s.board)
   return ++gotoSeq
 }
+/** The navigation now, without starting one: a caller that waits (`marver show` for the boot) reads it first, and
+ *  gives way if a person navigated meanwhile (`isLatest`). */
+export const navNow = (): number => gotoSeq
 /** Is this still the latest navigation - nothing newer since `navigated()` handed it out? */
 export const isLatest = (seq: number): boolean => seq === gotoSeq
 /** The one way a navigation changes boards - a link, a goto, a reveal, a board picked in the sidebar or the play pill, a
@@ -84,22 +87,22 @@ export async function switchFor(board: string, nav: number = navigated(), mayCom
   return isLatest(nav) && useStore.getState().board === board
 }
 /** The camera to a node once it is drawn - unless a newer navigation has it by then. */
-const fitLater = (key: string, seq: number) => setTimeout(() => { if (isLatest(seq)) canvasCtl.fitNode(key) }, 50)
+const fitLater = (key: string, seq: number, mayCommit?: () => boolean) => setTimeout(() => { if (isLatest(seq) && (!mayCommit || mayCommit())) canvasCtl.fitNode(key) }, 50)
 
 /** Switch to `home` and select + fit `target` there once the board commits - unless the human has
  *  moved on: newer navigation, or a board they switched to themselves while the lookup ran. */
-async function landOn(home: string, target: string, carry: boolean, seq: number, from: string) {
+async function landOn(home: string, target: string, carry: boolean, seq: number, from: string, mayCommit?: () => boolean) {
   if (seq !== gotoSeq || useStore.getState().board !== from) return
-  if (!await switchFor(home, seq)) return
+  if (!await switchFor(home, seq, mayCommit)) return
   for (let i = 0; i < 12; i++) {                     // the board commits async - retry like viewNote
-    if (seq !== gotoSeq) return
+    if (seq !== gotoSeq || (mayCommit && !mayCommit())) return
     const st = useStore.getState()
     if (st.board === home) {                         // a cancelled/failed switch must not select here
       const node = st.nodes.find((n) => n.frame === target && !n.missing)
       if (node) {
         st.select(node.key)
         if (carry) st.setInteract(node.key)
-        fitLater(node.key, seq)
+        fitLater(node.key, seq, mayCommit)
         return
       }
     }
@@ -111,13 +114,14 @@ async function landOn(home: string, target: string, carry: boolean, seq: number,
  *  not show, the way back from a focus link): this board, else the first board that shows it
  *  (archive boards last), else - a frame on no board - the Not on a board view. Unlike a goto it
  *  never spawns - opening a link must not edit a board. */
-export async function revealFrame(target: string, nav?: number): Promise<void> {   // `nav`: a caller's navigation, else its own
+export async function revealFrame(target: string, nav?: number, mayCommit?: () => boolean): Promise<void> {   // `nav`: a caller's navigation, else its own; `mayCommit`: its own condition, read before the board commits and before it selects (`marver show`'s: no words typed meanwhile)
   const s = useStore.getState()
+  if (mayCommit && !mayCommit()) return
   const here = s.nodes.find((n) => n.frame === target && !n.missing)
   if (here) {
     const seq = nav ?? navigated()
     s.select(here.key)
-    fitLater(here.key, seq)
+    fitLater(here.key, seq, mayCommit)
     return
   }
   if (!s.manifest?.frames.some((f) => f.id === target)) return s.toast(`no frame "${target}" on this canvas`)
@@ -130,7 +134,7 @@ export async function revealFrame(target: string, nav?: number): Promise<void> {
   } catch {
     return useStore.getState().toast(`could not read the boards - try again`)
   }
-  if (seq !== gotoSeq) return
+  if (seq !== gotoSeq || (mayCommit && !mayCommit())) return
   if (!home) return useStore.getState().toast(`"${target}" is not on any board`)
-  await landOn(home, target, false, seq, from)
+  await landOn(home, target, false, seq, from, mayCommit)
 }

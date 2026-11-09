@@ -49,6 +49,17 @@ button.card:hover { box-shadow: inset 0 0 0 .5px var(--glass-brd), 0 2px 8px rgb
 .slot-warn { flex: none; display: grid; place-items: center; width: 30px; height: 30px; color: #d97706 }
 .card.stopped .cmd { margin-top: 6px; justify-self: start }
 .card.is-gone .state, .card.is-unreachable .state { color: var(--glass-ink-3) }
+/* spec 31 D1: the canvas a marver:// link named, not running - its card leads, ringed in the accent */
+.card.linked { box-shadow: inset 0 0 0 1.5px var(--accent), 0 1px 3px rgba(0, 0, 0, .05) }
+.card .linked-why { color: var(--glass-ink-2) }
+/* spec 31 E4: a running canvas's update, under its card's button (a button holds no button) */
+.card-wrap { position: relative; display: grid; min-width: 0 }
+.card-wrap > .card.has-update { padding-bottom: 50px }
+.card-wrap > .update { position: absolute; left: 14px; right: 14px; bottom: 12px; display: flex; align-items: center; gap: 8px; min-width: 0;
+  font-size: 11.5px; color: var(--glass-ink-2) }
+.card-wrap > .update b { font-weight: 650; color: var(--glass-ink) }
+.card-wrap > .update .cmd { height: 24px; padding: 0 9px; min-width: 0; flex: 1 }
+.card-wrap > .update .cmd code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 
 /* nothing running: how to start one */
 .empty { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 12px 14px 12px 18px }

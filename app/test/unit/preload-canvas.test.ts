@@ -171,3 +171,24 @@ describe('the canvas preload: capture (A4.6 #35)', () => {
     expect(await api.capture({ rect: RECT })).toEqual({ ok: false, why: 'untrusted' })
   })
 })
+
+describe('the canvas preload: a deep link\'s place and front (spec 31 D1, D3)', () => {
+  interface ShowApi { onShow(fn: (t: unknown) => void): () => void; front(): void }
+  it('mv:show reaches onShow only for this document\'s admitted doc, the target checked and stripped; front() sends mv:front with that doc, nothing before', async () => {
+    const api = await load({ reopen: false }) as unknown as ShowApi
+    const heard: unknown[] = []
+    api.onShow((t) => heard.push(t))
+    api.front()
+    expect(wire.sent.filter((s) => s.ch === CANVAS_CHANNELS.front)).toEqual([])
+    main(CANVAS_CHANNELS.show, { doc: DOC, p: { board: 'main' } })                    // before the admit: not this document's
+    main(CANVAS_CHANNELS.admit, { doc: DOC })
+    main(CANVAS_CHANNELS.show, { doc: DOC, p: { board: 'main', f: ['demo/one'], url: 'javascript:x' } })
+    main(CANVAS_CHANNELS.show, { doc: 'B'.repeat(22), p: { board: 'main' } })
+    main(CANVAS_CHANNELS.show, { doc: DOC, p: { board: 'main', f: ['../../etc'] } })
+    main(CANVAS_CHANNELS.show, { doc: DOC, p: '#/b/main' })
+    main(CANVAS_CHANNELS.show, { doc: DOC, p: null })                                // the canvas's own board
+    expect(heard).toEqual([{ board: 'main', f: ['demo/one'] }, null])
+    api.front()
+    expect(wire.sent.filter((s) => s.ch === CANVAS_CHANNELS.front)).toEqual([{ ch: CANVAS_CHANNELS.front, msg: { doc: DOC } }])
+  })
+})

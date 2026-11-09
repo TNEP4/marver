@@ -14,8 +14,8 @@ import type { Bridge } from '../../src/main/bridge.ts'
 import { overrideTimings, T } from '../../src/main/timings.ts'
 
 describe('the features a slot file lists (A4.6 #2)', () => {
-  it('five names, each its own: bridge and inset, and A4\'s live, open and capture', () => {
-    expect(FEATURE).toEqual({ bridge: 'bridge', inset: 'inset', live: 'live', open: 'open', capture: 'capture' })
+  it('six names, each its own: bridge and inset, A4\'s live, open and capture, and spec 31\'s show', () => {
+    expect(FEATURE).toEqual({ bridge: 'bridge', inset: 'inset', live: 'live', open: 'open', capture: 'capture', show: 'show' })
   })
 })
 

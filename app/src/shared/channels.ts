@@ -85,6 +85,8 @@ export interface TabView {
   hue?: number
   /** A4 (A4.6 #19): what waits on the owner in this local canvas */
   marks?: TabMarks
+  /** spec 31 E4: a newer release of Marver than this canvas runs (Home's card: "<update> available" and its command) */
+  update?: string
 }
 
 /** `tabs` (main to strip, home). */
@@ -169,16 +171,25 @@ export type TabPageAction = 'retry' | 'reload' | 'copy-start' | 'copy-details' |
  * `recent` (main to home): Recently here (A2.12). `id` is main's (`r_` and the workspace, within the bridge's id
  * pattern `[A-Za-z0-9_-]{1,32}`); `folder` with `~`. `hue` as `TabView.hue`.
  */
-export interface RecentView { id: string; name: string; folder: string; lastSeen: number; logo?: string; hue?: number }
+export interface RecentView {
+  id: string; name: string; folder: string; lastSeen: number; logo?: string; hue?: number
+  /** spec 31 D1: the canvas a `marver://` link named while it does not run - first, highlighted, with its start command */
+  linked?: true
+}
 
 /** `home:info` (main to home). */
 export interface HomeInfo { welcome: boolean; writable: boolean }
 /** `home:focus` (main to home). */
-export interface HomeFocus { field: 'link'; back?: string }
+export type HomeFocus =
+  | { field: 'link'; back?: string }
+  /** spec 31 D1: a `marver://` link to a canvas not running - its card, highlighted and its start command focused */
+  | { field: 'recent'; id: string }
 /** `home:action` (home to main; an invoke, `INVOKES`, answering `HomeActionAnswer`). */
 export type HomeAction =
   | { action: 'copy'; id: 'dev' | 'init' | 'update' }
   | { action: 'copy-start'; id: string }
+  /** spec 31 E4: a running canvas's update command, in its folder - `id` its tab */
+  | { action: 'copy-update'; id: string }
   | { action: 'show-files' }
 
 /** `home:action`'s answer: false when there was nothing to do (a recent id main no longer holds). */
@@ -194,7 +205,12 @@ export type LinkOpenAnswer = { ok: true } | { ok: false; why: 'bad' | 'nothing' 
  * `shared` (main to home, A4.6 #47): Home's Shared canvases - links opened before, newest first, at most 12, each `url`
  * a shell destination of its origin (never a sign-in URL); a card's click sends `link:open` with its `url`.
  */
-export interface SharedLink { url: string; host: string; lastSeen: number }
+export interface SharedLink {
+  url: string; host: string; lastSeen: number
+  /** spec 31 E3: what its `meta.json` named it, and its logo - read through its tab's session, kept by origin (Home's view only) */
+  name?: string
+  logo?: string
+}
 
 /**
  * Settings, a view of the files (A2.7, A2.12; the home-and-files stream). `settings:get` answers a `SettingsView`;

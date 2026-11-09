@@ -45,7 +45,8 @@ export function testEnv(slotBase: number, extra: Record<string, string> = {}): T
   const control = join(dir, 'c.sock')
   return {
     dir, home, userData, slotBase, control,
-    env: { MARVER_APP_TEST: '1', MARVER_HOME: home, MARVER_APP_USER_DATA: userData, MARVER_SLOT_BASE: String(slotBase), ...extra },
+    // the fixtures' canvases live in the temp folder Recently here hides (spec 31 E1): a test launch hides none unless it says
+    env: { MARVER_APP_TEST: '1', MARVER_HOME: home, MARVER_APP_USER_DATA: userData, MARVER_SLOT_BASE: String(slotBase), MARVER_APP_TEMP_DIRS: '', ...extra },
     cleanup: () => rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
   }
 }

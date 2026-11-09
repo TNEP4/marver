@@ -16,6 +16,7 @@ import { Tip } from './Tip.tsx'
 import { PKG, ROUTE } from '../const.ts'
 import { api, resumed, scoped, useLink } from './api.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
+import { bootCancelled } from './canvas/ctl.ts'
 import { frameByWindow, fromLiveDocument } from './canvas/frame-registry.ts'
 import { recorder } from './recorder.ts'
 import { perfSeams } from './recorder-seams.ts'
@@ -30,7 +31,9 @@ import { ALL_SCENES, humanize as slugLabel, readTitle } from '../../shared/board
 import { CommentsController, parkThread, revealThread } from './Comments.tsx'
 import { poweredByUrl } from '../../shared/utm.ts'
 import { avatarFallback, NO_COMMENTS_HERE, useComments } from './comments-store.ts'
-import { goTo, isLatest, navigated, revealFrame, switchFor } from './goto.ts'
+import { goTo, isLatest, navigated, navNow, revealFrame, switchFor } from './goto.ts'
+import { bootSettled, dismissShow, goNow, showTarget, useShowNotice } from './show.ts'
+import { newerVersion } from '../../shared/deep-link.ts'
 import { useNotes } from './notes.ts'
 import { contentOnly } from '../../shared/frames.ts'
 import { nextToLook } from '../../shared/marks.ts'
@@ -275,7 +278,8 @@ function UpdatePill() {
     api('update')
       .then((r) => (r.ok ? r.json() : null))
       .then((u) => {
-        if (u?.latest && localStorage.getItem(scoped('mv-update-seen')) !== u.latest) setLatest(u.latest)
+        // spec 31 E4: the endpoint answers whatever the registry said - the pill only for a strictly newer release
+        if (u?.latest && newerVersion(u.latest, u.current) && localStorage.getItem(scoped('mv-update-seen')) !== u.latest) setLatest(u.latest)
       })
       .catch(() => { /* dev server gone or endpoint absent - stay quiet */ })
   }, [])
@@ -300,6 +304,22 @@ function UpdatePill() {
       </Tip>
       <Tip side="top" label="Dismiss this version">
         <button className="x" onClick={dismiss}><XIcon size={13} /></button>
+      </Tip>
+    </div>
+  )
+}
+
+/** `marver show` over unsent words (spec 31 D3): the tab did not move - Go moves it, × leaves it be. */
+function ShowNotice() {
+  const notice = useShowNotice((s) => s.notice)
+  // in Play too: a draft typed there keeps the canvas where it is, and the notice says why (it sits over Play)
+  if (!notice) return null
+  return (
+    <div className="sh-update sh-show-notice" role="status">
+      <span>Your agent wants to show you <b>{notice.title}</b></span>
+      <button className="cmd" onClick={() => { const h = cmd('show-go', { via: 'click', in: 'shell' }); void goNow().then((r) => { if (r !== 'shown') h.cancel() }) }}><code>Go</code></button>
+      <Tip side="top" label="Stay here">
+        <button className="x" onClick={() => { cmd('show-dismiss', { via: 'click', in: 'shell' }); dismissShow() }}><XIcon size={13} /></button>
       </Tip>
     </div>
   )
@@ -446,8 +466,8 @@ export function App() {
       else if (resumed?.outcome === 'gone') toast(BOARD_GONE)
       urlReady.current = true
       // a link naming frames on a board with NO nodes: the canvas's boot fit never runs (it waits
-      // for the first frame) - follow the frame to where it lives from here
-      if (ok && bootHash.f?.length && !bootHash.focus && !useStore.getState().nodes.length) void revealFrame(bootHash.f[0])
+      // for the first frame) - follow the frame to where it lives from here, under the boot's own navigation
+      if (ok && bootHash.f?.length && !bootHash.focus && !useStore.getState().nodes.length) void revealFrame(bootHash.f[0], navNow(), () => !bootCancelled())
       if (ok && bootHash.focus) {
         // a frame deep link forces focus for that visit, over every other rule
         // (01-sharing §6.1 step 3) - the stage mounts any manifest frame, so no
@@ -464,6 +484,9 @@ export function App() {
         else if (mode === 'focus') enterFocus()
         else if (mode === 'slides') enterSlides()
       }
+      // a show that came during the boot applies once it settled - loaded or failed, its mode (focus, play, slides)
+      // entered first, so nothing of the boot lands after it (spec 31 D3)
+      bootSettled(ok)
     }
     void start()
   }, [])
@@ -634,6 +657,8 @@ export function App() {
   useEffect(() => {
     if (!import.meta.hot) return
     import.meta.hot.on('sh:manifest', (m: any) => applyManifest(m))
+    // `marver show` (spec 31 D3): the place an agent shows the human - moved to, or a notice over unsent words
+    import.meta.hot.on('sh:show', (m: any) => { void showTarget(m, 'server') })
     // a brief's title or description changed with the frames intact: relabel, never re-key
     import.meta.hot.on('sh:scenes', (m: any) => useStore.getState().setScenes(m?.scenes))
     // Live Jam presence: the daemon broadcasts the set of frames Marver is editing.
@@ -870,7 +895,8 @@ export function App() {
         const from = s.selection.length ? s.nodes.find((n) => n.key === s.selection[s.selection.length - 1])?.frame ?? null : null
         const id = nextToLook(s.marks, asksNow(), [...new Set(live.map((n) => n.frame))], from)
         const n = id ? live.find((x) => x.frame === id) : null
-        if (n) { s.select(n.key); canvasCtl.fitNode(n.key) } else { h.noop('nothing-new'); toast('nothing new on this board') }
+        // a person's navigation: a show still waiting or loading gives way (spec 31 D3)
+        if (n) { navigated(); s.select(n.key); canvasCtl.fitNode(n.key) } else { h.noop('nothing-new'); toast('nothing new on this board') }
         return
       }
       if (e.key === 'n' && !e.shiftKey) { cmd('notes', how()); const visible = document.querySelectorAll('.sh-notes:not(.off)').length > 0; useNotes.getState().toggleAll(visible); toast(visible ? 'notes hidden' : 'notes shown'); return }
@@ -1032,6 +1058,7 @@ export function App() {
                   const keys = nodes.filter((n) => frames.some((f) => f.scene === sc.name && f.id === n.frame) && !n.missing).map((n) => n.key)
                   cmd('scene-pick', { via: 'click', in: 'shell', frames: keys.length })
                   if (!keys.length) return
+                  navigated()   // a person's navigation: a show still waiting or loading gives way (spec 31 D3)
                   useStore.getState().selectMany(keys)
                   canvasCtl.fitNodes(keys)
                 }}>
@@ -1059,6 +1086,7 @@ export function App() {
                     const n = nodeFor(id)
                     if (!n) return
                     cmd('frame-pick', { via: 'click', in: 'shell', frame: id })
+                    navigated()   // a person's navigation: a show still waiting or loading gives way (spec 31 D3)
                     select(n.key, shift)
                     if (!shift) canvasCtl.fitNode(n.key)
                   }
@@ -1088,7 +1116,7 @@ export function App() {
                         rows.push(
                           <div key={`g:${f.variantGroup}`} className={`sub vgroup${allOn ? ' on' : ''}${held ? ' held' : ''}`}
                             title="Select all variants"
-                            onClick={() => { cmd('group-fit', { via: 'click', in: 'shell', frames: memberKeys.length }); useStore.getState().selectMany(memberKeys); canvasCtl.fitNodes(memberKeys) }}>
+                            onClick={() => { cmd('group-fit', { via: 'click', in: 'shell', frames: memberKeys.length }); navigated(); useStore.getState().selectMany(memberKeys); canvasCtl.fitNodes(memberKeys) }}>
                             <VariantsIcon size={13} className="iicon" />
                             <span className="glabel">{rel}</span>
                           </div>,
@@ -1177,6 +1205,7 @@ export function App() {
         : CONFIG.noTheme && !contentOnly(manifest?.frames ?? []) && <div className="sh-banner">no theme configured - frames render unstyled. Create design/theme.css importing your app's stylesheet (or set theme in design/config.ts)</div>}
       {stopped && <StoppedBanner />}
       <UpdatePill />
+      <ShowNotice />
 
       {/* Jam V2 (spec 27): the lane, the focus panel, the notes card, the recording ring */}
       {!PUBLISHED && <JamSurface sidebarRight={panelOpen ? 236 + 2 * 10 : 10} />}

@@ -714,6 +714,9 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
   border: 0; background: none; border-radius: 999px; color: var(--glass-ink-3); cursor: pointer;
   transition: color .15s, background .15s }
 .sh-update .x:hover { background: var(--glass-hover); color: var(--glass-ink) }
+/* `marver show` over unsent words (spec 31 D3): above the update pill, so both can be up */
+.sh-show-notice { bottom: calc(var(--edge) + 50px); z-index: 33 }   /* over Play (30, 31) and the toasts (32): a draft typed in Play keeps its notice in view */
+.sh-show-notice .cmd code { color: var(--glass-ink) }
 
 /* bottom-RIGHT now: jam reply pills live here; plain toasts ride along */
 .sh-toasts { position: absolute; right: var(--edge); bottom: var(--edge); z-index: 32; display: flex;

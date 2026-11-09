@@ -34,7 +34,7 @@ export const TAB_ACTIONS = ['activate', 'open-browser', 'reveal', 'copy-link', '
 /** The strip (views.ts:1199-1204), by key or click. */
 export const STRIP_COMMANDS = ['tab-activate', 'tab-close', 'tab-menu', 'tabs-more', 'link-open'] as const
 /** Home (channels.ts:178-181; pages/home/main.ts): `copy`'s `arg` is `dev`, `init` or `update` (FIXED_COMMANDS). */
-export const HOME_COMMANDS = ['copy', 'copy-start', 'show-files', 'tab-activate', 'link-open', 'link-cancel'] as const
+export const HOME_COMMANDS = ['copy', 'copy-start', 'copy-update', 'show-files', 'tab-activate', 'link-open', 'link-cancel'] as const
 /** Settings, the pill and the tab page (channels.ts:165, :253): `setting`'s `arg` is the key, never the value. */
 export const PAGE_COMMANDS = [
   'setting', 'settings-reveal', 'notification-settings', 'pill-button', 'pill-dismiss',
@@ -44,7 +44,7 @@ export const PAGE_COMMANDS = [
 export const MENU_COMMANDS = ['help', 'show-perf-files', 'export-report', 'update'] as const
 /** Inputs that reach main by another way: a notification's click, the Dock, a second launch, the red button, the hang
  *  sheet, the Move to Applications dialog, the updater's alert. */
-export const OTHER_COMMANDS = ['notice-open', 'dock-activate', 'relaunch', 'window-close-button', 'hang-reload', 'move-to-apps', 'update-alert'] as const
+export const OTHER_COMMANDS = ['notice-open', 'dock-activate', 'relaunch', 'deep-link', 'window-close-button', 'hang-reload', 'move-to-apps', 'update-alert'] as const
 
 /** Every app command name. The same name on two paths (a tab action's `reload` and ⌘R's) is told apart by `in` and `via`. */
 export type AppCmdName =
@@ -168,6 +168,8 @@ export const APP_COMMANDS: Record<AppCmdName, AppCmdSpec> = {
   'link-open': se({ failed: ['bad', 'nothing', 'not-canvas', 'refused'] }),
   copy: se({ failed: ['refused'] }),
   'copy-start': se({ noop: ['no-tab'], failed: ['missing'] }),
+  // spec 31 E4: a running canvas's update command, in its folder
+  'copy-update': se({ failed: ['missing'] }),
   'show-files': se(),
   'link-cancel': se({ noop: ['no-tab'], failed: ['refused', 'gone'] }),
   // ---- Settings, the pill, the tab page
@@ -187,6 +189,8 @@ export const APP_COMMANDS: Record<AppCmdName, AppCmdSpec> = {
   'notice-open': se({ noop: ['busy', 'no-tab'], failed: ['stale', 'missing', 'unsupported', 'not-sent', 'refused', 'gone'], cancelled: true }),
   'dock-activate': se(),
   relaunch: se(),
+  // spec 31 D1: a marver:// link (open-url, a second launch's argv), routed once the app is ready
+  'deep-link': se({ noop: ['bad'] }),
   'window-close-button': se(),
   'hang-reload': se({ deadlineMs: S30, noop: ['answered'], failed: ['refused', 'gone'], cancelled: true }),
   'move-to-apps': se({ failed: ['move-failed'], cancelled: true }),
@@ -544,6 +548,7 @@ export function pageCommand(channel: string, ctx: { kind: PageKind; tabId?: stri
     case CH.homeAction:
       if (v.action === 'copy') return { name: 'copy', o: { via: 'click', in: 'home', ...(id ? { arg: id } : {}) } }
       if (v.action === 'copy-start') return { name: 'copy-start', o: { via: 'click', in: 'home' } }
+      if (v.action === 'copy-update') return { name: 'copy-update', o: { via: 'click', in: 'home' } }
       if (v.action === 'show-files') return { name: 'show-files', o: { via: 'click', in: 'home' } }
       return null
     case CH.settingsSet: return { name: 'setting', o: { via: 'click', in: 'settings', ...(typeof v.key === 'string' ? { arg: v.key } : {}) } }

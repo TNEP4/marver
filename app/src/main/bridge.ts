@@ -71,6 +71,7 @@ import {
 import { CH, INVOKES as INVOKE_LIST, SENDERS, type PageKind } from '../shared/channels.ts'
 import { appCmd, noticeAnswered, pageCommand, pageEnd, withAppCmd } from './commands.ts'
 import { checkOpened, checkOpenItem } from '../shared/open-item.ts'
+import { checkShowTarget, type ShowTarget } from '../../../src/shared/deep-link.ts'
 import { mainFrameOf, safely } from './frames.ts'
 import { adapterFor, attachNav, type NavEvent } from './nav.ts'
 import { isTrusted, targetOf, unsafePrefs } from './proof.ts'
@@ -145,6 +146,13 @@ export interface Bridge {
   /** main's handler for accepted `mv:capture` asks (live-picture.ts, A4.6 #35); null takes it away. The live pictures
    *  stream installs the invoke itself */
   onCapture(fn: CaptureHandler | null): void
+
+  // ---- spec 31 (app 1.1; D1, D3) ----
+  /** `mv:show { doc, p }` to the tab's admitted, trusted document whose instance lists `show`, the target checked
+   *  (shared/deep-link.ts `checkShowTarget`); false when there is none, or the target fails the check */
+  showItem(tabId: string, target: ShowTarget | 'landing'): boolean
+  /** an accepted `mv:front`: the tab's admitted, trusted document, its instance listing `show`, at most once a second */
+  onFront(fn: (tabId: string) => void): () => void
 }
 
 /** What the bridge asks of the rest of main (main.ts passes them at install). */
@@ -331,6 +339,8 @@ export function checkPagePayload(channel: string, p: unknown): { ok: true; value
       if (p.action === 'copy') return one(p.id, ['dev', 'init', 'update'] as const) ? yes({ action: 'copy', id: p.id }) : no
       if (p.action === 'copy-start') return typeof p.id === 'string' && TAB_ID.test(p.id) ? yes({ action: 'copy-start', id: p.id }) : no
       if (p.action === 'show-files') return yes({ action: 'show-files' })
+      // spec 31 E4: a running canvas's update, named by its tab (main reads its folder from its own record)
+      if (p.action === 'copy-update') return typeof p.id === 'string' && TAB_ID.test(p.id) ? yes({ action: 'copy-update', id: p.id }) : no
       return no
     case CH.settingsSet:
       return obj(p) && one(p.file, ['config', 'theme'] as const) && typeof p.key === 'string' && /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(p.key)
@@ -424,6 +434,9 @@ export function installBridge(o: BridgeOptions = {}): Bridge {
   const listening = new Set<string>()
   /** A4: main's capture handler (A4.6 #35), read by the `mv:capture` invoke the live pictures stream adds */
   let captureFn: CaptureHandler | null = null
+  const frontFns = new Set<(tabId: string) => void>()
+  /** when each webContents last had its `mv:front` taken: once a second at most, so no page can hold the window */
+  const frontAt = new Map<number, number>()
   let watched: Registry | null = null
   let unwatch: (() => void) | null = null
 
@@ -630,6 +643,21 @@ export function installBridge(o: BridgeOptions = {}): Bridge {
     try { return await captureFn(who.tabId, who.doc, rect, still) } catch { return { ok: false, why: 'empty' } }
   })
 
+  // spec 31 D3: the shell showed a `marver show` - its tab and the window forward. Admitted as the reports are, its
+  // instance listing `show`, at most once a second per webContents; main acts on its own records alone (the tab id)
+  ipcMain.on(CANVAS_CHANNELS.front, (e: IpcMainEvent, msg: unknown) => {
+    const id = e.sender.id
+    const m = obj(msg) ? msg : null
+    const who = admittedSender(e, m)
+    if (typeof who === 'string') { trace('refused', { wc: id, ch: 'front', why: who }); return }
+    if (!lists(id, FEATURE.show)) { trace('refused', { wc: id, ch: 'front', why: 'no show' }); return }
+    const now = Date.now()
+    if (now - (frontAt.get(id) ?? -Infinity) < 1000) { trace('refused', { wc: id, ch: 'front', why: 'rate' }); return }
+    frontAt.set(id, now)
+    trace('accepted', { wc: id, ch: 'front', tab: who.tabId })
+    for (const fn of [...frontFns]) { try { fn(who.tabId) } catch (err) { process.stderr.write(`marver-app: a front listener threw: ${(err as Error).message}\n`) } }
+  })
+
   // app pages
   const pageCtx = (e: IpcMainEvent | IpcMainInvokeEvent, channel: string): PageCtx | null => {
     const r = regs.get(e.sender.id)
@@ -709,7 +737,7 @@ export function installBridge(o: BridgeOptions = {}): Bridge {
         const r = regs.get(id)
         regs.delete(id)
         docs.delete(id)
-        buckets.delete(id)
+        buckets.delete(id); frontAt.delete(id)
         if (r?.tabId && tabWc.get(r.tabId) === id) tabWc.delete(r.tabId)
       })
       // a shared canvas: recorded for kindOf (its permissions), nothing more - no channel, no document (A4.6 r1 #8)
@@ -816,6 +844,20 @@ export function installBridge(o: BridgeOptions = {}): Bridge {
       return sent
     },
     onCapture(fn) { captureFn = fn; trace('capture-handler', { set: !!captureFn }) },
+    // spec 31 D1: to the admitted, trusted document of an instance that lists `show`, the target checked as the preload checks it
+    showItem(tabId, target) {
+      const id = tabWc.get(tabId)
+      const rec = id === undefined ? undefined : docs.get(id)
+      if (id === undefined || !rec?.doc || !isTrusted(id)) { trace('show', { tab: tabId, sent: false, why: 'not admitted' }); return false }
+      if (!lists(id, FEATURE.show)) { trace('show', { wc: id, tab: tabId, sent: false, why: 'no show' }); return false }
+      // `landing`: the canvas's own board, on the wire as `p: null`
+      const t = target === 'landing' ? null : checkShowTarget(target)
+      if (target !== 'landing' && !t) { trace('show', { wc: id, tab: tabId, sent: false, why: 'payload' }); return false }
+      const sent = sendCanvas(id, CANVAS_CHANNELS.show, { doc: rec.doc, p: t })
+      trace('show', { wc: id, tab: tabId, board: t?.board ?? null, sent })
+      return sent
+    },
+    onFront(fn) { frontFns.add(fn); return () => { frontFns.delete(fn) } },
   }
   return installed
 }

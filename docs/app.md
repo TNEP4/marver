@@ -77,6 +77,32 @@ the folder's name) and `logo` (else `share.logo`, else the first of `design/logo
 `public/favicon.svg|png|ico`, else Marver's mark). A canvas still on its folder's name or Marver's mark looks like
 every other one in the strip, so `marver dev` says so on its boot line.
 
+## Links into the app
+
+When Marver is open with a canvas in a tab, `npx marver link` prints a `marver://` link for that canvas instead of its
+localhost one, and an agent hands you that. Click it anywhere - the terminal, a chat, a note - and Marver comes forward
+on that board, the frames selected and in view:
+
+- **The canvas's tab is already open:** Marver never reloads it. The tab moves to the place the link names, as
+  `marver show` does - and if you were typing a comment or a Jam edit there, it stays put and says "Your agent wants
+  to show you <the frame> · Go" instead, so nothing you typed is lost.
+- **It has no tab yet:** a tab opens on that place.
+- **The canvas is not running:** Home opens with its card first, highlighted, and its start command ready to copy.
+
+A link names its canvas by its folder, and only a canvas running from that same folder opens it - never another canvas
+that took the same port later. A link that names no place Marver understands opens the canvas on its board.
+`marver link` gives the `marver://` link only while Marver is in use (it keeps `~/.marver/state/app-live.json` fresh
+every 30 seconds) with that canvas open in a tab; otherwise, and with `--web`, the localhost link.
+
+## Home
+
+- **Running canvases** each have a card; one whose Marver has a newer release says "0.31.0 available" with the command
+  that updates it, in its own folder, ready to copy.
+- **Recently here** lists the canvases that ran before, with their logo and start command - not those in a temporary
+  folder (`/tmp`, `/private/tmp`, `/var/folders`), which are tests and scratch copies.
+- **Shared canvases** show their name and logo once Marver has opened them once (read from the canvas's own
+  `meta.json`, through that tab's sign-in).
+
 ## What it asks, and when
 
 - **Notices.** Nothing touches macOS's notices or the Dock before you choose. The first time a canvas needs you while

@@ -13,7 +13,7 @@ import { api } from './api.ts'
 import { CONFIG, useStore, type Node } from './store.ts'
 import { threadHostKey } from './keys.ts'
 import { isNoteAnchor, resolveNoteAnchor, useNotes } from './notes.ts'
-import { canvasCtl } from './canvas/ctl.ts'
+import { bootCancelled, canvasCtl } from './canvas/ctl.ts'
 import { MARKER, placeMarkers, type Placed } from './pin-layout.ts'
 import { bootHash, buildHash, parseHash, writeHash } from './hash.ts'
 import { isLegacyLink } from './legacy-links.ts'
@@ -1041,7 +1041,8 @@ export function CommentsController() {
     if (!active) return
     const onDown = (e: PointerEvent) => {
       const t = e.target instanceof Element ? e.target : null
-      if (t?.closest('.cm-card, .cm-pin, .cm-stack, .cm-modal')) return
+      // the show notice (spec 31 D3) too: it is up because words wait unsent here - its Go and × never close them
+      if (t?.closest('.cm-card, .cm-pin, .cm-stack, .cm-modal, .sh-show-notice')) return
       if (useComments.getState().active) cmd('thread-close', { via: 'click', in: 'shell' })   // silent when none is open
       useComments.getState().setActive(null)
     }
@@ -1064,8 +1065,9 @@ export function CommentsController() {
       // Consumed only on a successful find: the controller's first effect fires with
       // the pre-boot board (child effects run before the parent's boot effect), and
       // burning the flag on that empty pass would eat the link.
-      if (bootThreadConsumed || !bootHash.c) return
-      if (revealThread(bootHash.c)) bootThreadConsumed = true
+      // ...unless a show applied meanwhile (spec 31 D3): the camera is the show's, the boot link's thread gives way
+      if (bootThreadConsumed || !bootHash.c || bootCancelled()) return
+      if (revealThread(bootHash.c, () => !bootCancelled())) bootThreadConsumed = true
     })
     return live(board)
   }, [board])

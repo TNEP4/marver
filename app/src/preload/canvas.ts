@@ -23,6 +23,10 @@
  * and its item passes open-item.ts's check; only the known fields reach `onOpen`'s listener, and the first listener's
  * answer goes back as `mv:opened { doc, p: { id, result } }`, for the document that was asked alone.
  *
+ * Spec 31 (app 1.1; D1, D3): `mv:show` - a `marver://` link into this open tab - reaches `onShow`'s listeners only for
+ * this document's admitted `doc` and a target `checkShowTarget` takes; `front()` sends `mv:front { doc }` once the
+ * shell showed a `marver show` (main admits it as it admits the reports, and acts at most once a second).
+ *
  * A4 (app 0.3; A4.6 #35): `capture` asks main for a picture of this document's own view - before an admit it answers
  * `untrusted` with no IPC; after, `mv:capture { doc, p }` is invoked, and main's answer reaches the page only as the
  * contract types it (the bytes a `Uint8Array`, the size within `BOUNDS.captureLong`), anything else `untrusted`.
@@ -34,6 +38,7 @@ import {
   type PerfMsg, type PerfProbeAsk, type Present, type Presented,
 } from '../../../src/shared/app-api.ts'
 import { checkOpenItem } from '../shared/open-item.ts'
+import { checkShowTarget, type ShowTarget } from '../../../src/shared/deep-link.ts'
 
 type Report = 'hello' | 'theme' | 'busy' | 'menu'
 const ORDER: readonly Report[] = ['hello', 'theme', 'busy', 'menu']
@@ -55,6 +60,7 @@ const clickFns = new Set<(p: MenuClick) => void>()
 const presentFns = new Set<(r: Present) => void>()
 const probeFns = new Set<(a: PerfProbeAsk) => void>()
 const openFns = new Set<(p: OpenItem) => OpenResult | Promise<OpenResult>>()
+const showFns = new Set<(t: ShowTarget | null) => void>()
 /** the display's rate main last said (`display` ask) */
 let hz: number | null = null
 
@@ -153,6 +159,15 @@ ipcRenderer.on(CANVAS_CHANNELS.open, (_e, m: Record<string, unknown> | null) => 
   }, () => { /* the page's own */ })
 })
 
+// spec 31 D1: a `marver://` link into this open tab - main's navigation command, for this document alone, checked again
+ipcRenderer.on(CANVAS_CHANNELS.show, (_e, m: Record<string, unknown> | null) => {
+  if (!m || !doc || m.doc !== doc) return
+  // null: the canvas's own board (a link whose place the app could not take)
+  const t = m.p === null ? null : checkShowTarget(m.p)
+  if (m.p !== null && !t) return
+  for (const fn of [...showFns]) { try { fn(t ? { ...t } : null) } catch { /* the page's own */ } }
+})
+
 // A4: a live picture of this document's view (A4.6 #35)
 const WHYS = new Set<string>(CAPTURE_WHY)
 const side = (v: unknown): v is number => whole(v, BOUNDS.captureLong) && v >= 1
@@ -199,5 +214,8 @@ const api: MarverAppV1 = {
     return () => { openFns.delete(fn) }
   },
   capture,
+  onShow: listen(showFns),
+  // spec 31 D3: this document showed a `marver show` - main judges the sender and brings its tab forward
+  front: () => { if (doc) ipcRenderer.send(CANVAS_CHANNELS.front, { doc }) },
 }
 contextBridge.exposeInMainWorld('marverApp', api)

@@ -46,6 +46,7 @@ import type { RegistryEntry, RegistryEvent } from './registry.ts'
 import { tilde } from '../shared/command.ts'
 import { hueOf } from '../shared/hue.ts'
 import { remoteStart, shellDestination } from '../shared/links.ts'
+import type { ShowTarget } from '../../../src/shared/deep-link.ts'
 
 /** A tab's kind is channels.ts's (A4.6 #39: `remote` from A4, a shared canvas - the remote stream builds it). */
 export type { TabKind }
@@ -234,6 +235,10 @@ export interface Tab {
   // ---- A4 (app 0.3; A4.6 #29, #39) ----
   /** a notice's click, held for this tab's next admitted document's hello; a later click replaces it */
   pendingOpen?: { item: OpenItem; at: number }
+  /** spec 31 E4: the release its server says is newer than the one it runs (Home's card offers the update) */
+  update?: string
+  /** spec 31 D1: a `marver://` link's place, held for this tab's next admitted document's hello; a later link replaces it */
+  pendingShow?: { target: ShowTarget | 'landing'; at: number }
   /** a shared canvas's place: only on a `remote` tab */
   remote?: TabRemote
 }
@@ -533,6 +538,7 @@ export function viewOf(t: Tab, active: boolean, home: string, list: Tab[] = allT
   if (t.logo && t.fail?.why !== 'unverified') v.logo = t.logo
   if (t.look !== undefined) v.dark = t.look
   if (t.reg) v.hue = hueOf(t.reg.ws)   // the same initials hue as its Recently here card and its tab page
+  if (t.update && t.reg?.version) v.update = t.update
   const m = marksSource?.(t)
   if (m) v.marks = m
   return v
@@ -1101,6 +1107,7 @@ export function activate(id: string): void {
     prev.hiddenAt = now
     prev.held = undefined   // the unsaved pill lasts while its tab is active (A2.14 #33)
     if (prev.pendingOpen) dropOpen(prev, 'another tab')   // a notice's click is for the tab it showed (A4.6 #29)
+    if (prev.pendingShow) dropShow(prev, 'another tab')   // a link's place is for the tab it showed (spec 31 D1)
     if (prev.kind === 'local' && prev.doc?.trusted) p.appState(prev, 'hidden')
   }
   activeId = next.id
@@ -1226,6 +1233,54 @@ function deliverOpen(t: Tab): void {
   const sent = openSender?.(t, o.item) ?? false
   P().log?.('open', { tab: t.id, id: o.item.id, doc: t.doc.doc, sent })
   if (!sent) noticeDropped(o.item.id, 'not-sent')
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// A `marver://` link into a tab already open (spec 31 D1): main never reloads it or replaces its hash - that would skip
+// the unsaved-work guard - it hands the shell the navigation command `marver show` sends, over the bridge
+
+/** `mv:show { doc, p }` to the tab's admitted document (bridge.ts `showItem`, which checks it all again). */
+let showSender: ((t: Tab, target: ShowTarget | 'landing') => boolean) | null = null
+export function setShowSender(fn: ((t: Tab, target: ShowTarget | 'landing') => boolean) | null): void { showSender = fn }
+
+/**
+ * A link's place for a canvas whose tab holds a live document: the tab shown - reopened when it was closed - and, for an
+ * instance listing `show`, the target held as `pendingShow` until the tab's current document is admitted, trusted and
+ * said hello, then sent once. A later link replaces it; it is dropped after `openWaitMs` or when another tab is
+ * activated. A canvas that does not list `show` (before 0.31) is only shown: its page is never navigated under it.
+ * `target` null (a link naming no place) only shows the tab. Answers what it did.
+ */
+export function showForLink(id: string, target: ShowTarget | 'landing' | null): 'held' | 'sent' | 'shown' | 'no-show' | 'none' {
+  const t = tabs.get(id)
+  if (!t || t.kind !== 'local') return 'none'
+  dropShow(t, 'superseded')
+  if (!t.open) reopenTab(id)
+  else activate(id)
+  if (!target) return 'shown'
+  const p = P()
+  if (!t.reg?.features.includes(FEATURE.show)) { p.log?.('show', { tab: t.id, held: false, why: 'no-show' }); return 'no-show' }
+  const o = { target, at: p.now() }
+  t.pendingShow = o
+  p.log?.('show', { tab: t.id, board: target === 'landing' ? null : target.board, held: true })
+  const timer = setTimeout(() => { if (t.pendingShow === o) dropShow(t, 'wait') }, T.openWaitMs)
+  ;(timer as { unref?: () => void }).unref?.()
+  deliverShow(t)
+  return t.pendingShow === o ? 'held' : 'sent'
+}
+
+function dropShow(t: Tab, why: string): void {
+  const o = t.pendingShow
+  t.pendingShow = undefined
+  if (o) P().log?.('show', { tab: t.id, board: o.target === 'landing' ? null : o.target.board, dropped: why })
+}
+
+/** The held place goes, once, to the tab's current document - admitted, trusted, said hello - never while an unload closes it. */
+function deliverShow(t: Tab): void {
+  const o = t.pendingShow
+  if (!o || !isActive(t) || unloadClosing(t) || !t.doc?.trusted || !t.doc.doc || !t.reports.hello) return
+  t.pendingShow = undefined
+  const sent = showSender?.(t, o.target) ?? false
+  P().log?.('show', { tab: t.id, board: o.target === 'landing' ? null : o.target.board, doc: t.doc.doc, sent })
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1575,6 +1630,7 @@ async function unloadOp(tab: Tab, op: GuardOperation, a: Extract<GuardAction, { 
     if (tab.doc?.trusted) p.appState(tab, 'shown')
     p.changed({ focus: 'shown' })
     deliverOpen(tab)   // a notice clicked while it closed (A4.6 #29)
+    deliverShow(tab)   // a link opened while it closed (spec 31 D1)
   }
   return 'refused'
 }
@@ -1709,7 +1765,7 @@ function writeReopen(t: Tab, hello: boolean): void {
 
 /** The first accepted hello of a document: a reopened one writes its `reopen` record now (A3.8 #45); a notice's held
  *  click goes to it (A4.6 #29). */
-function onDocHello(t: Tab): void { writeReopen(t, true); deliverOpen(t) }
+function onDocHello(t: Tab): void { writeReopen(t, true); deliverOpen(t); deliverShow(t) }
 
 /** A quit or an update was refused: the active unloaded tab reopens now (A3.8 #42). */
 function sweepRefused(): void {
