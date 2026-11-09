@@ -39,7 +39,8 @@ to save it.
 
 Some CSS effects come out wrong when Chrome prints: a frosted-glass `backdrop-filter` prints transparent, a `filter`,
 `mix-blend-mode` or a CSS `mask` prints as a grey box, a large soft `box-shadow` prints as a hard grey rectangle, and a
-`<canvas>` or `<video>` may print blank. Marver fixes each one element by element, and checks its own work:
+`<canvas>` or `<video>` may print blank. (A `filter` that is only `drop-shadow()` prints right, and is left as it is.)
+Marver fixes each one element by element, and checks its own work:
 
 - **Glass** keeps its children live (text, links, icons stay vector and selectable); only the blurred backdrop behind it
   becomes a picture, taken at 3x.
