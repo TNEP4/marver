@@ -1638,4 +1638,25 @@ describe('spec 31 C.5: a message deleted while your session is offered the run',
     s.jam.stop(); await t.catch(() => {}); s.done()
     void b
   })
+
+  it('...and when your session lets it go, the spawned run that takes it reads the packet as it stands - never an older copy', async () => {
+    // the spawned agent keeps the packet its prompt names
+    const keeper: JamAdapter = { ...spawned, spawnArgs(goal) {
+      const file = /design\/\.local\/jam\/packets\/[\w-]+\.json/.exec(goal)![0]
+      return { cmd: process.execPath, args: ['-e', `const fs=require('fs');fs.writeFileSync('spawned-packet.json',fs.readFileSync(${JSON.stringify(file)}));process.stdout.write(JSON.stringify({result:'A background agent did it.'}))`] }
+    } }
+    const s = await setup({ adapter: keeper })
+    const a = tag(s.root, s.dir, '@marver make it say Hello')
+    const b = tag(s.root, s.dir, '@marver and the footer says Bye')
+    const t = s.jam.tick()
+    expect(await until(() => (readOffers(s.root, s.conn.id)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
+    appendEvents(s.dir, 'home', [{ id: randomUUID(), ts: Date.now(), type: 'delete', commentId: a.commentId, board: 'home', author: { email: 'nic@local', name: 'Nic' } }])
+    const handle = String((await s.ask('next')).handle)
+    expect((await s.ask('release', { handle })).ok).toBe(true)
+    expect(await until(() => existsSync(join(s.root, 'spawned-packet.json')), 15_000, () => s.jam.runs.tick())).toBe(true)
+    const p = JSON.parse(readFileSync(join(s.root, 'spawned-packet.json'), 'utf8')) as JobPacket
+    expect(JSON.stringify(p)).not.toContain('say Hello')
+    expect(p.members.map((m) => [m.id, m.card])).toEqual([['m1', `c-${b.id}`]])
+    s.jam.stop(); await t.catch(() => {}); s.done()
+  })
 })
