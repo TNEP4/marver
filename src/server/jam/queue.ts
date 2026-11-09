@@ -175,7 +175,8 @@ function deleted(j: Journal, board: string, events: CommentEvent[], message: str
   // on it, it is dropped; a tag that joined it still stands (its brief no longer carries the capture: freezeBrief)
   for (const e of events) {
     if (e.type !== 'create' || e.commentId !== message || !e.capture) continue
-    const cap = j.cards.find((c) => c.id === e.capture && c.kind === 'capture')
+    // the capture's own comment: its card's thread, on its board - a comment merely naming it is not (Codex r6)
+    const cap = j.cards.find((c) => c.id === e.capture && c.kind === 'capture' && c.board === board && c.thread === message)
     if (cap && (cap.state === 'draft' || cap.state === 'confirming' || cap.state === 'queued') && !cap.events.some((id) => !ids.has(id))) { set(cap, 'dropped', now, 'deleted'); changed = true }
   }
   for (const c of j.cards) {
@@ -319,34 +320,48 @@ export function deletedEvents(events: readonly CommentEvent[]): Set<string> {
 
 /** The captures whose own comment was deleted (spec 31 C.5): what they said - the record, your edit, its notes - is
  *  withdrawn with it, wherever a brief copied it. */
-/** Every board's deleted events and withdrawn captures at once (Codex r5): a brief can copy what another board said - a
- *  capture reviewing a run on another board - so a nested copy is filtered against every log. */
-export function deletedEverywhere(dir: string): { events: Set<string>; captures: Set<string> } {
-  const events = new Set<string>(), captures = new Set<string>()
-  for (const b of listBoards(dir)) { const log = readLog(dir, b); for (const x of deletedEvents(log)) events.add(x); for (const x of deletedCaptures(log)) captures.add(x) }
-  return { events, captures }
+/** The captures withdrawn (spec 31 C.5): a capture card whose OWN comment - its thread's first message, on its own
+ *  board - was deleted. By the card, never by a `capture` field anyone could write into a comment (Codex r6). */
+export function withdrawnCaptures(j: Journal, dir: string): Set<string> {
+  const out = new Set<string>()
+  const logs = new Map<string, Set<string>>()
+  for (const c of j.cards) {
+    if (c.kind !== 'capture' || !c.thread) continue
+    let g = logs.get(c.board)
+    if (!g) logs.set(c.board, (g = deletedMessages(readLog(dir, c.board))))
+    if (g.has(c.thread)) out.add(c.id)
+  }
+  return out
 }
 
-export function deletedCaptures(events: readonly CommentEvent[]): Set<string> {
-  const gone = deletedMessages(events)
-  return new Set(events.filter((e) => e.type === 'create' && !!e.capture && !!e.commentId && gone.has(e.commentId)).map((e) => e.capture!))
-}
+/** Where a nested copy came from (Codex r6): a tombstone counts only on the board its event was written on - an event id
+ *  is a client's, and another board's log may hold the same one. `gone(board)`: that board's deleted events. */
+export interface Tombstones { gone(board: string): ReadonlySet<string>; captures: ReadonlySet<string> }
 
 /** A frozen brief with every deleted message taken out (spec 31 C.5) - its asks, its history, the asks it follows
- *  and the run a capture reviewed - and every capture withdrawn (`caps`: deletedCaptures) left out, nested ones too.
+ *  (all on `board`), the run a capture reviewed (on ITS board) - and every withdrawn capture left out, nested ones too.
  *  The same object when nothing was deleted. */
-export function dropDeleted(brief: Brief | undefined, gone: ReadonlySet<string>, caps: ReadonlySet<string> = new Set()): Brief | undefined {
-  if (!brief || (!gone.size && !caps.size)) return brief
-  const keep = (l: Msg[]) => l.filter((m) => !gone.has(m.id))
-  const cap = brief.capture && !caps.has(brief.capture.record.id) ? brief.capture : undefined
-  const reviewed = cap?.reviewed ? { ...cap.reviewed, asks: keep(cap.reviewed.asks) } : undefined
-  if (reviewed?.capture && caps.has(reviewed.capture.record.id)) delete reviewed.capture
+export function dropDeleted(brief: Brief | undefined, board: string, t: Tombstones): Brief | undefined {
+  if (!brief) return brief
+  const here = t.gone(board)
+  const keep = (l: Msg[], g: ReadonlySet<string> = here) => l.filter((m) => !g.has(m.id))
+  const cap = brief.capture && !t.captures.has(brief.capture.record.id) ? brief.capture : undefined
+  // a run reviewed before 0.31 names no board: its asks are matched on this one (the capture's own, as a rule)
+  const reviewed = cap?.reviewed ? { ...cap.reviewed, asks: keep(cap.reviewed.asks, cap.reviewed.board ? t.gone(cap.reviewed.board) : here) } : undefined
+  if (reviewed?.capture && t.captures.has(reviewed.capture.record.id)) delete reviewed.capture
   const { capture: _c, ...rest } = brief
-  return {
+  const out: Brief = {
     ...rest, asks: keep(brief.asks), history: keep(brief.history),
     ...(brief.follows ? { follows: { ...brief.follows, asks: keep(brief.follows.asks) } } : {}),
     ...(cap ? { capture: reviewed ? { ...cap, reviewed } : cap } : {}),
   }
+  return JSON.stringify(out) === JSON.stringify(brief) ? brief : out
+}
+
+/** The tombstones of the logs under `dir`, read once per board as asked, and the journal's withdrawn captures. */
+export function tombstonesOf(j: Journal, dir: string): Tombstones {
+  const seen = new Map<string, Set<string>>()
+  return { gone: (b) => { let g = seen.get(b); if (!g) seen.set(b, (g = deletedEvents(readLog(dir, b)))); return g }, captures: withdrawnCaptures(j, dir) }
 }
 
 export function textOf(ctx: Ctx, board: string, events: CommentEvent[], ev: CommentEvent, owner: boolean): { body: string; rev: string } {
@@ -382,9 +397,9 @@ const resultText = (j: Journal, batchId: string | undefined, card: string, fallb
 /** Freeze a card's brief as text, from the logs as they stand at claim. Covers every owner event it
  *  copies (the `covered` record that takes a plain reply off `marver marks`). */
 export function freezeBrief(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[], others = true): Brief {
-  // a deleted message never reaches the agent, as an ask or as history (spec 31 C.5) - on any board a brief copies from
-  const everywhere = deletedEverywhere(ctx.dir)
-  const gone = new Set([...deletedEvents(events), ...everywhere.events])
+  // a deleted message never reaches the agent, as an ask or as history (spec 31 C.5) - each copy against ITS board
+  const ts = tombstonesOf(j, ctx.dir)
+  const gone = deletedEvents(events)
   const inThread = c.thread ? events.filter((e) => !gone.has(e.id) && ((e.type === 'create' && e.commentId === c.thread) || (e.type === 'reply' && e.parentId === c.thread))) : []
   // owner-only (spec 29b, Part 8; `jam.others: false`): every runner has the shell, MCP servers and skills
   // now, so only the owner's own words reach it - their ledgered messages and Marver's own replies (written
@@ -412,13 +427,13 @@ export function freezeBrief(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[
   }
   // every card on a capture's thread carries the capture: its record, your edit, the run it reviewed -
   // as context ("kept - not an ask") once the capture itself was kept or dropped
-  if (c.capture && !deletedCaptures(events).has(c.capture) && !everywhere.captures.has(c.capture)) {
+  if (c.capture && !ts.captures.has(c.capture)) {
     const capCard = j.cards.find((x) => x.id === c.capture)
     const cap = readCapture(ctx.root, c.capture)
     if (cap && capCard?.payload) {
       const note = capCard !== c && capCard.state === 'kept' ? 'kept - not an ask' : capCard !== c && capCard.state === 'dropped' ? 'dropped - not an ask' : undefined
       brief.capture = { record: cap.record, recordHash: cap.hash, ...(capCard.payload.edited !== undefined ? { edited: capCard.payload.edited, ...(capCard.payload.editedAt ? { editedAt: capCard.payload.editedAt } : {}) } : {}), ...(capCard.payload.added?.length ? { added: capCard.payload.added } : {}),
-        ...(capCard.payload.reviewed ? { reviewed: (() => { const r = { ...capCard.payload.reviewed!, asks: capCard.payload.reviewed!.asks.filter((a) => !gone.has(a.id)) }; if (r.capture && everywhere.captures.has(r.capture.record.id)) delete r.capture; return r })() } : {}), ...(note ? { note } : {}) }
+        ...(capCard.payload.reviewed ? { reviewed: (() => { const rv = capCard.payload.reviewed!; const r = { ...rv, asks: rv.asks.filter((a) => !(rv.board ? ts.gone(rv.board) : gone).has(a.id)) }; if (r.capture && ts.captures.has(r.capture.record.id)) delete r.capture; return r })() } : {}), ...(note ? { note } : {}) }
     }
   }
   if (c.kind === 'wrapup') {
@@ -951,7 +966,7 @@ export function beginStep(j: Journal, c: Card, op: 'confirm' | 'more', event: Co
     // the run this capture reviewed, frozen once into its payload (`payload.reviewed`)
     const r = c.reviewing && j.batches.find((b) => b.batchId === c.reviewing!.batch)
     const m = r && r.members.find((x) => x.card === c.reviewing!.card)
-    if (m && !c.payload?.reviewed) c.payload = { ...c.payload!, reviewed: { asks: m.brief?.asks ?? [], result: resultText(j, r!.batchId, m.card, r!.note ?? ''),
+    if (m && !c.payload?.reviewed) c.payload = { ...c.payload!, reviewed: { asks: m.brief?.asks ?? [], board: m.board, result: resultText(j, r!.batchId, m.card, r!.note ?? ''),
       ...(m.brief?.capture ? { capture: { record: m.brief.capture.record, recordHash: m.brief.capture.recordHash, ...(m.brief.capture.edited !== undefined ? { edited: m.brief.capture.edited } : {}), ...(m.brief.capture.added?.length ? { added: m.brief.capture.added } : {}) } } : {}) } }
   }
   c.rev += 1; c.at = now

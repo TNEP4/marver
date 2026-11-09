@@ -30,7 +30,7 @@ import { workActivity } from '../work.ts'
 import { acquireLock, releaseLock } from './journal.ts'
 import { buildPacket, goalText, packetPath, parseAgentText, parseMembers, refusedAsk, sharedWhy } from './packet.ts'
 import { uncheckedAnchor, type AnchorCheck, type AnchorLook, type AnchorTarget } from '../../shared/anchor.ts'
-import { deletedCaptures, deletedEvents, deletedEverywhere, dropDeleted, liveThreads, ownerOnly, act, addCapture, addWrapup, endSession, moreWrapup, startSession, textOf, wrapupIntact, wrapupOf, answeredSince, captureIntact, beginStep, captureComment, conflictStep, createQueue, ctxFor, endStep, looksGood, payloadKey, redelivering, requeue, joinAlone, runsAlone, sameComment, stillOwned, undelivered, fail, failCard, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
+import { deletedEvents, dropDeleted, liveThreads, tombstonesOf, withdrawnCaptures, ownerOnly, act, addCapture, addWrapup, endSession, moreWrapup, startSession, textOf, wrapupIntact, wrapupOf, answeredSince, captureIntact, beginStep, captureComment, conflictStep, createQueue, ctxFor, endStep, looksGood, payloadKey, redelivering, requeue, joinAlone, runsAlone, sameComment, stillOwned, undelivered, fail, failCard, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
 import { jamReservations, restoreHolds } from './reserve.ts'
 import { jamLive, type QueueView } from './live.ts'
 import type { Batch, Brief, Card, JamAdapter, JobPacket, Journal, Msg, Reanchor, Result } from './types.ts'
@@ -374,7 +374,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     },
     say: (b) => ensureEarly(b),
     gone: (board) => goneCached(board),
-    withdrawn: (board) => deletedCaptures(readLog(commentsDir, board)),
+    withdrawn: () => withdrawnCaptures(q.j, commentsDir),
     ready: () => ready,
     // the session record a wrap-up queues belongs to the session it closes: it goes to your session too
     // a Jam session runs (its own record, written once it ended, is offered to your session by runs.ts - nothing else)
@@ -427,8 +427,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
    *  with none the caller ends the run (`ended`). The packet is changed in place; the caller writes it. */
   /** A board's deleted create and reply events, read now. */
   const goneOf = (board: string): Set<string> => deletedEvents(readLog(commentsDir, board))
-  /** ...and its captures whose own comment was deleted */
-  const capsOf = (board: string): Set<string> => deletedCaptures(readLog(commentsDir, board))
+  /** the journal's captures whose own comment was deleted (by the card, never a field in a comment) */
+  const capsNow = (): Set<string> => withdrawnCaptures(q.j, commentsDir)
   /** The words of a board's deleted More work replies, as a record keeps them (the tag gone) - for records sealed before 0.31 */
   const goneWords = (board: string): Set<string> => {
     const log = readLog(commentsDir, board), g = deletedEvents(log)
@@ -447,24 +447,24 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   }
   function scrubDeleted(j: Journal, b: Batch, packet: JobPacket | null): { changed: boolean; left: number } {
     const gone = new Map<string, Set<string>>()
-    // every board's (Codex r5): a brief copies from other boards too - a capture reviewing a run elsewhere
-    const all = deletedEverywhere(commentsDir)
-    const goneIn = (board: string) => { let g = gone.get(board); if (!g) gone.set(board, (g = new Set([...goneOf(board), ...all.events]))); return g }
-    const capsIn = (_board: string) => all.captures
+    // each board's own (Codex r6): a nested copy is matched against the board it came from, never every board's ids
+    const ts = tombstonesOf(j, commentsDir)
+    const goneIn = (board: string) => { let g = gone.get(board); if (!g) gone.set(board, (g = new Set(ts.gone(board)))); return g }
+    const caps = ts.captures
     let changed = false
     for (const m of b.members) {
       const c = j.cards.find((x) => x.id === m.card)
-      const g = goneIn(m.board), k = capsIn(m.board)
-      if (!c || (!g.size && !k.size)) continue
-      const brief = dropDeleted(m.brief, g, k)
-      if (JSON.stringify(brief) !== JSON.stringify(m.brief)) { m.brief = brief; c.brief = dropDeleted(c.brief, g, k); changed = true }
+      const g = goneIn(m.board)
+      if (!c) continue
+      const brief = dropDeleted(m.brief, m.board, ts)
+      if (brief !== m.brief) { m.brief = brief; c.brief = dropDeleted(c.brief, m.board, ts); changed = true }
       const pm = packet?.members.find((x) => x.card === m.card)
-      if (pm && JSON.stringify(dropDeleted(pm.brief, g, k)) !== JSON.stringify(pm.brief)) changed = true
+      if (pm && dropDeleted(pm.brief, m.board, ts) !== pm.brief) changed = true
       if (c.events.some((id) => g.has(id))) { c.events = c.events.filter((id) => !g.has(id)); changed = true }
       const briefAsks = (m.brief ?? pm?.brief)?.asks.length ?? 0
       // a capture whose own comment was deleted is a request withdrawn, like a tag's
       // a capture whose own comment was deleted is a request withdrawn, like a tag's - dropped once no tag is left on it
-      const capGone = c.kind === 'capture' && k.has(c.id) && !c.events.length
+      const capGone = c.kind === 'capture' && caps.has(c.id) && !c.events.length
       if (c.state === 'working' && ((c.kind === 'comment' && (!c.events.length || !briefAsks)) || capGone)) { c.state = 'dropped'; c.note = 'deleted'; c.rev += 1; c.at = Date.now(); changed = true }
     }
     if (changed) {
@@ -477,8 +477,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     if (packet) {
       const ids = new Map(b.members.map((m) => [m.card, m.id]))
       const next = packet.members.filter((x) => ids.has(x.card)).map((x) => {
-        const brief = dropDeleted(x.brief, goneIn(x.board), capsIn(x.board))!
-        return { ...x, id: ids.get(x.card)!, brief: brief.wrapup ? { ...brief, wrapup: { ...brief.wrapup, content: wrapupWithoutDeleted(brief.wrapup.content, goneIn, goneWords, capsOf) } } : brief }
+        const brief = dropDeleted(x.brief, x.board, ts)!
+        return { ...x, id: ids.get(x.card)!, brief: brief.wrapup ? { ...brief, wrapup: { ...brief.wrapup, content: wrapupWithoutDeleted(brief.wrapup.content, goneIn, goneWords, () => caps) } } : brief }
       })
       if (JSON.stringify(next) !== JSON.stringify(packet.members)) { packet.members = next; changed = true }
     }
@@ -792,7 +792,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       if (c.kind === 'wrapup') {
         const w = readWrapup(root, wrapupOf(c))
         if (!w || !wrapupIntact(q.ctx(), c) || recordPathProblem(root, w.wrapup.file)) { bad.push(m.card); continue }
-        brief = { ...brief, wrapup: { content: wrapupWithoutDeleted(w.wrapup, goneOf, goneWords, capsOf), hash: w.hash } }
+        brief = { ...brief, wrapup: { content: wrapupWithoutDeleted(w.wrapup, goneOf, goneWords, capsNow), hash: w.hash } }
       } else if (brief.wrapup) { const { wrapup: _w, ...rest } = brief; brief = rest }   // only a record carries one
       // owner-only (spec 29b v2, 7): a brief frozen with other people's words - before 0.28, when it carries no policy
       // of its own - is cleaned before any runner reads it, and kept cleaned
@@ -990,7 +990,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
             const c = q.j.cards.find((x) => x.id === m.card)
             const w = c && readWrapup(root, wrapupOf(c))
             if (!c || !w || !wrapupIntact(q.ctx(), c) || recordPathProblem(root, w.wrapup.file)) throw new Error('the session record changed after it was written - write it again')
-            m.brief = { ...m.brief, wrapup: { content: wrapupWithoutDeleted(w.wrapup, goneOf, goneWords, capsOf), hash: w.hash } }
+            m.brief = { ...m.brief, wrapup: { content: wrapupWithoutDeleted(w.wrapup, goneOf, goneWords, capsNow), hash: w.hash } }
           }
           writePacket()
           const beat = setInterval(followWork, 2_000)
@@ -1391,15 +1391,15 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         const owned = (board: string, id: string) => ctx.owned.has(`${board}\t${id}`) && logOf(board).some((e) => e.id === id)
         // ...and nothing deleted since (spec 31 C.5): taken out of every brief, per message, before the packet is reused
         const goneOf = new Map<string, Set<string>>()
-        const all = deletedEverywhere(commentsDir)   // a nested copy may be another board's (Codex r5)
-        const gone = (board: string) => { let g = goneOf.get(board); if (!g) goneOf.set(board, (g = new Set([...deletedEvents(logOf(board)), ...all.events]))); return g }
+        const ts = tombstonesOf(j, commentsDir)   // each nested copy against the board it came from (Codex r6)
+        const gone = (board: string) => { let g = goneOf.get(board); if (!g) goneOf.set(board, (g = deletedEvents(logOf(board)))); return g }
         const askOk = (board: string, a: Msg) => !gone(board).has(a.id) && stillOwned(ctx, board, logOf(board), a)
-        const clean = (board: string, brief: Brief | undefined, comment: boolean): Brief | undefined => !brief || !comment ? dropDeleted(brief, gone(board), all.captures) : dropDeleted({
+        const clean = (board: string, brief: Brief | undefined, comment: boolean): Brief | undefined => !brief || !comment ? dropDeleted(brief, board, ts) : dropDeleted({
           ...brief,
           asks: brief.asks.filter((a) => askOk(board, a)),
           history: brief.history.map((m) => (m.owner && !askOk(board, m) ? { id: m.id, ...(m.author ? { author: m.author } : {}), body: m.body, ts: m.ts, note: 'someone else - context only' } : m)),
           ...(brief.follows ? { follows: { ...brief.follows, asks: brief.follows.asks.filter((a) => askOk(board, a)) } } : {}),
-        }, gone(board), all.captures)
+        }, board, ts)
         for (const m of b.members) {
           const c = j.cards.find((x) => x.id === m.card)
           if (!c) continue

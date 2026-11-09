@@ -90,7 +90,7 @@ export interface RunsDeps {
   /** a board's deleted create and reply events (spec 31 C.5): a run's title never shows one's words */
   gone?(board: string): ReadonlySet<string>
   /** a board's captures whose own comment was deleted: a title never shows their words either */
-  withdrawn?(board: string): ReadonlySet<string>
+  withdrawn?(): ReadonlySet<string>
   /** post a session's early line on a one-member run, with its journaled id (once: an id already in the log is not posted again) */
   say(b: Batch): boolean
   /** the agents this machine can spawn (on PATH) */
@@ -234,7 +234,7 @@ export function createRuns(d: RunsDeps): Runs {
     const m0 = b.members[0]
     const g = m0 ? d.gone?.(m0.board) : undefined
     // a capture withdrawn (its comment deleted): neither its words nor a name made from them - a name you gave stays
-    const off = !!c && (c.kind === 'capture' || !!c.capture) && !!m0 && !!d.withdrawn?.(m0.board).has(c.kind === 'capture' ? c.id : c.capture!)
+    const off = !!c && (c.kind === 'capture' || !!c.capture) && !!m0 && !!d.withdrawn?.().has(c.kind === 'capture' ? c.id : c.capture!)
     const brief0 = off ? { ...m0!.brief, capture: undefined } : m0?.brief
     const words = c?.name ?? (off ? undefined : c?.autoName) ?? brief0?.asks?.find((a) => !g?.has(a.id))?.body ?? (brief0?.capture ? requestWords(brief0.capture, ' ') || undefined : undefined) ?? (c?.kind === 'wrapup' ? 'Session record' : 'a request')
     // as the brief cleans words: no escape or control character reaches the session's inbox

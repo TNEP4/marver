@@ -177,10 +177,11 @@ export const captureText = (c: WrapupCapture): string => [c.edited ?? speechLine
 /** A sealed wrap-up's content as a run may read it (spec 31 C.5): each More work ask whose reply was deleted is left out
  *  (`gone`: a capture's board -> its deleted events; `words`: -> the words of its deleted More work replies, for a record
  *  sealed before 0.31, whose asks name no event). The sealed file is untouched - its hash still proves it. */
-export function wrapupWithoutDeleted(w: Wrapup, gone: (board: string) => ReadonlySet<string>, words?: (board: string) => ReadonlySet<string>, caps?: (board: string) => ReadonlySet<string>): Wrapup {
+export function wrapupWithoutDeleted(w: Wrapup, gone: (board: string) => ReadonlySet<string>, words?: (board: string) => ReadonlySet<string>, caps?: () => ReadonlySet<string>): Wrapup {
   let changed = false
   // a capture whose own comment was deleted is withdrawn from what the run reads, whole
-  const kept = caps ? w.captures.filter((c) => !caps(c.record.context.board).has(c.id)) : w.captures
+  const withdrawn = caps?.()
+  const kept = withdrawn ? w.captures.filter((c) => !withdrawn.has(c.id)) : w.captures
   if (kept.length !== w.captures.length) changed = true
   const captures = kept.map((c) => {
     if (!c.more?.length) return c

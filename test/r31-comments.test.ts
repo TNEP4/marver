@@ -11,7 +11,7 @@ import { record } from '../src/server/jam/ledger.ts'
 import { parseScope, resolveAll, scopeFrames, undoResolveAll, type Receipt, type UndoReceipt } from '../src/server/comment-actions.ts'
 import { fresh, write as writeJournal } from '../src/server/jam/journal.ts'
 import { createJam } from '../src/server/jam/daemon.ts'
-import { answers, ctxFor, deletedEverywhere, dropDeleted, form, freezeBrief, ingest, liveThreads } from '../src/server/jam/queue.ts'
+import { answers, ctxFor, dropDeleted, form, freezeBrief, ingest, liveThreads, tombstonesOf } from '../src/server/jam/queue.ts'
 import { admitted, syncOnce } from '../src/server/sync.ts'
 import { markSlot } from '../app/pages/strip/needs.ts'
 import { wrapupWithoutDeleted, type Wrapup } from '../src/server/jam/session.ts'
@@ -457,25 +457,53 @@ describe('older records, titles and captures (spec 31 C.5)', () => {
   it('a capture whose comment was deleted: no brief carries what it said, nested ones included', () => {
     const cap = { record: { id: 'cap-a' }, recordHash: 'h' }
     const brief = { asks: [], history: [], capture: { ...cap, reviewed: { asks: [], result: 'r', capture: { record: { id: 'cap-b' }, recordHash: 'h2' } } } } as never
-    expect(dropDeleted(brief, new Set(), new Set(['cap-a']))).not.toHaveProperty('capture')
-    expect((dropDeleted(brief, new Set(), new Set(['cap-b'])) as any).capture.reviewed).not.toHaveProperty('capture')
+    const t = (caps: string[]) => ({ gone: () => new Set<string>(), captures: new Set(caps) })
+    expect(dropDeleted(brief, 'home', t(['cap-a']))).not.toHaveProperty('capture')
+    expect((dropDeleted(brief, 'home', t(['cap-b'])) as any).capture.reviewed).not.toHaveProperty('capture')
     const w = { captures: [{ id: 'cap-a', record: { context: { board: 'home' } } }, { id: 'cap-c', record: { context: { board: 'home' } } }] } as unknown as Wrapup
     expect(wrapupWithoutDeleted(w, () => new Set(), undefined, () => new Set(['cap-a'])).captures.map((c) => c.id)).toEqual(['cap-c'])
   })
 
-  it('a nested copy from another board (a capture reviewing a run there) is filtered against that board too', () => {
+  it('a nested copy from another board (a capture reviewing a run there) is filtered against THAT board', () => {
     const { root, dir, done } = temp('mv-r31-xboard-')
     try {
       const askA = reply('askA001', 'thA00001', { board: 'alpha', body: '@marver alpha secret' })
       appendEvents(dir, 'alpha', [create('thA00001', { board: 'alpha', capture: 'cap-alpha1', body: 'alpha words' }), askA, del('askA001', { board: 'alpha' }), del('thA00001', { board: 'alpha' })])
       appendEvents(dir, 'beta', [create('thB00001', { board: 'beta' })])
-      const all = deletedEverywhere(dir)
-      const brief = { asks: [], history: [], capture: { record: { id: 'cap-beta1' }, recordHash: 'h', reviewed: { asks: [{ id: askA.id, body: 'alpha secret', ts: 1 }], result: 'r', capture: { record: { id: 'cap-alpha1' }, recordHash: 'h' } } } } as never
-      const out = JSON.stringify(dropDeleted(brief, new Set([...all.events]), all.captures))
+      const j = fresh()
+      j.cards.push({ id: 'cap-alpha1', kind: 'capture', board: 'alpha', frames: [], thread: 'thA00001', events: [], state: 'review', made: 1, order: 1, rev: 1, at: 1 } as Card)
+      const brief = { asks: [], history: [], capture: { record: { id: 'cap-beta1' }, recordHash: 'h', reviewed: { board: 'alpha', asks: [{ id: askA.id, body: 'alpha secret', ts: 1 }], result: 'r', capture: { record: { id: 'cap-alpha1' }, recordHash: 'h' } } } } as never
+      const out = JSON.stringify(dropDeleted(brief, 'beta', tombstonesOf(j, dir)))
       expect(out).not.toContain('alpha secret')
       expect(out).not.toContain('cap-alpha1')
       expect(out).toContain('cap-beta1')
       void root
+    } finally { done() }
+  })
+
+  it('the attack (Codex r6): a message on another board reusing a request\'s event id, then deleted, cancels nothing', () => {
+    const { root, dir, done } = temp('mv-r31-xcancel-')
+    try {
+      const j = fresh()
+      const ask = reply('reqA0001', 'thrA0001', { board: 'alpha', body: '@marver the owner request' })
+      appendEvents(dir, 'alpha', [create('thrA0001', { board: 'alpha' }), ask]); record(root, 'alpha', ask.id)
+      ingest(j, ctxFor(root))
+      const card = j.cards.find((c) => c.thread === 'thrA0001')!
+      expect(card.events).toEqual([ask.id])
+      // a published commenter's own message on beta, with the same EVENT id, then deleted (both pass validation and admission)
+      appendEvents(dir, 'beta', [{ id: ask.id, ts: t(), type: 'create', commentId: 'theirs-b01', frame: 'demo/x', board: 'beta', author: OTHER, body: 'mine' }, del('theirs-b01', { board: 'beta', author: OTHER })])
+      ingest(j, ctxFor(root))
+      expect(card.events).toEqual([ask.id])
+      const brief = freezeBrief(j, ctxFor(root), card, readLog(dir, 'alpha'))
+      expect(brief.asks.map((a) => a.body)).toEqual(['@marver the owner request'])
+      // ...and at the hand-off: a frozen copy of it survives the filter
+      expect(dropDeleted(brief, 'alpha', tombstonesOf(j, dir))).toBe(brief)
+      // nor can a comment on that board that only NAMES a capture withdraw it
+      j.cards.push({ id: 'cap-real01', kind: 'capture', board: 'alpha', frames: [], thread: 'capth-own', events: [], state: 'queued', made: 1, order: 1, rev: 1, at: 1 } as Card)
+      appendEvents(dir, 'alpha', [create('capth-own', { board: 'alpha', capture: 'cap-real01' }), create('fake-cap1', { board: 'alpha', author: OTHER, capture: 'cap-real01' }), del('fake-cap1', { board: 'alpha', author: OTHER })])
+      ingest(j, ctxFor(root))
+      expect(j.cards.find((c) => c.id === 'cap-real01')!.state).toBe('queued')
+      expect(tombstonesOf(j, dir).captures.has('cap-real01')).toBe(false)
     } finally { done() }
   })
 
