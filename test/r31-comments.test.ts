@@ -224,6 +224,22 @@ describe('resolve all (spec 31 B.1-B.4)', () => {
     } finally { done() }
   })
 
+  it('a log copied from another board\'s: the resolve names the board its thread\'s events name, so every reader applies it', () => {
+    const { root, dir, done } = canvas()
+    try {
+      appendEvents(dir, 'undo', [create('copied1', { board: 'elsewhere', frame: 'lofi/echo' })])
+      // the shell replays by each event's own board (comments-store derive), the server by the file
+      const shell = () => { const by = new Map<string, CommentEvent[]>(); for (const e of readLog(dir, 'undo')) by.set(e.board ?? 'undo', [...(by.get(e.board ?? 'undo') ?? []), e]); return [...by.values()].flatMap((evs) => replay(evs)) }
+      const r = ok(resolveAll(root, 'op-copied-1', { board: 'undo' }))
+      expect(r.resolved.find((x) => x.thread === 'copied1')).toMatchObject({ board: 'undo', stamp: 'elsewhere' })
+      expect(shell().find((x) => x.id === 'copied1')!.resolved).toBe(true)
+      expect(open(dir, 'undo')).not.toContain('copied1')
+      ok(undoResolveAll(root, 'op-copied-1'))
+      expect(shell().find((x) => x.id === 'copied1')!.resolved).toBe(false)
+      expect(open(dir, 'undo')).toContain('copied1')
+    } finally { done() }
+  })
+
   it('a log that cannot be written is reported with its threads; the other logs still land', () => {
     const { root, dir, done } = canvas()
     try {
