@@ -30,7 +30,7 @@ import { CommentsController, parkThread, revealThread } from './Comments.tsx'
 import { poweredByUrl } from '../../shared/utm.ts'
 import { avatarFallback, NO_COMMENTS_HERE, useComments } from './comments-store.ts'
 import { goTo, isLatest, navigated, revealFrame, switchFor } from './goto.ts'
-import { dismissShow, goNow, showTarget, useShowNotice } from './show.ts'
+import { dismissShow, goNow, showsMayGo, showTarget, useShowNotice } from './show.ts'
 import { newerVersion } from '../../shared/deep-link.ts'
 import { useNotes } from './notes.ts'
 import { contentOnly } from '../../shared/frames.ts'
@@ -463,6 +463,7 @@ export function App() {
       else if (resumed?.outcome === 'disk') toast(DISK_WON)
       else if (resumed?.outcome === 'gone') toast(BOARD_GONE)
       urlReady.current = true
+      showsMayGo()   // `marver show` and a deep link's place, held until the board and its camera are restored (spec 31)
       // a link naming frames on a board with NO nodes: the canvas's boot fit never runs (it waits
       // for the first frame) - follow the frame to where it lives from here
       if (ok && bootHash.f?.length && !bootHash.focus && !useStore.getState().nodes.length) void revealFrame(bootHash.f[0])

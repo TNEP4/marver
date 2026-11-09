@@ -15,9 +15,8 @@ import { isBoardName } from '../shared/board-tree.ts'
 import { hashOfTarget, type ShowTarget } from '../shared/deep-link.ts'
 import { join } from 'node:path'
 
-/** How long the CLI listens for the tabs' answers, and how long a quiet spell after the first one ends it sooner. */
+/** How long the CLI listens for the tabs' answers: all of it, every time. */
 export const SHOW_WAIT_MS = 3000
-const QUIET_MS = 600
 
 /** What to show (pure of the network): one board's target, or why not. */
 export function showPlan(root: string, targets: string[], opts: { board?: string; thread?: string } = {}): { target: ShowTarget; hints: string[] } {
@@ -68,19 +67,13 @@ export async function showCommand(root: string, targets: string[], opts: { board
   if (!res.ok || typeof body?.seq !== 'number') throw new Error(`the canvas did not take it: ${body?.error ?? res.status}`)
   const seq = body.seq
   const until = Date.now() + SHOW_WAIT_MS
+  // the whole window: the server cannot know how many tabs are open, so a quiet spell is no "every tab answered"
   let last: { shown: number; notice: number } | null = null
-  let quietSince = 0
   while (Date.now() < until) {
-    await new Promise((r) => setTimeout(r, 150))
+    await new Promise((r) => setTimeout(r, 250))
     const a = await fetch(`${found.origin}__mv/api/show/acks?seq=${seq}`, { headers, signal: AbortSignal.timeout(1000) })
       .then((r) => (r.ok ? r.json() : null), () => null) as { shown: number; notice: number } | null
-    if (!a) continue
-    const same = last && last.shown === a.shown && last.notice === a.notice
-    last = a
-    const any = a.shown + a.notice > 0
-    if (!any) continue
-    if (!same) quietSince = Date.now()
-    else if (Date.now() - quietSince >= QUIET_MS) break
+    if (a) last = a
   }
   console.log(showWords(last))
   console.log(linkFor(root, found.origin, hash, { web: opts.web }))

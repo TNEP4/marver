@@ -303,6 +303,18 @@ describe('marver show (the CLI)', () => {
 })
 
 describe('in the app (a fake window.marverApp)', () => {
+  it('a link\'s place delivered before the shell has booted (right after its hello) waits for the boot, then lands', async () => {
+    if (!browser) return
+    const s = await browser.tab({ width: 1400, height: 900 })
+    tabs.push(s)
+    // as the app does: the held place goes the moment the page listens, before its first render
+    await browser.send('Page.addScriptToEvaluateOnNewDocument', { source: FAKE_APP.replace('onShow: (fn) => { shows.add(fn);', "onShow: (fn) => { shows.add(fn); fn({ board: 'other', n: ['n-three'] });") }, s)
+    await browser.go(s, `${dev!.origin}/#/b/main?n=n-one`)
+    await browser.until(s, settled('other', ['n-three']), 30_000)
+    await new Promise((r) => setTimeout(r, 800))
+    expect(await browser.eval(s, VIEW)).toEqual({ board: 'other', sel: ['n-three'], visible: ['n-three'] })
+  }, 60_000)
+
   it('a server show asks front() once it is shown; the app\'s own onShow moves the tab the same way, without front()', async () => {
     if (!browser) return
     const t = await open('#/b/main', { app: true })

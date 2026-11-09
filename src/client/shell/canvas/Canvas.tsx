@@ -61,6 +61,8 @@ let keepTimer: ReturnType<typeof setTimeout> | undefined
 let keepPending: (() => void) | undefined
 /** Where the camera's flight lands (a fit, a zoom), for canvasCtl.landing: read only while rzpp animates. */
 let flight: Camera | null = null
+/** Each flight's number: a background tab's landing re-applies itself only while it is still the newest */
+let flyGen = 0
 function keepCamera(x: number, y: number, scale: number) {
   if (!WS) return
   const board = useStore.getState().board
@@ -217,9 +219,16 @@ export function Canvas() {
   const fly = (x: number, y: number, scale: number, msAsked: number) => {
     // a tab in the background draws no frames: its camera lands at once, where a flight nobody sees would wait for it
     // to come forward (`marver show` to a background tab, spec 31 D3)
-    const ms = document.visibilityState === 'hidden' ? 0 : msAsked
+    const hidden = document.visibilityState === 'hidden'
+    const ms = hidden ? 0 : msAsked
+    const gen = ++flyGen
     flight = ms ? { x, y, scale } : null
+    // an older flight still in the air no longer counts: the camera is landed now
+    if (hidden && ref.current) ref.current.instance.animation = null
     ref.current?.setTransform(x, y, scale, ms, 'easeOut')
+    // ...but its frame queued before the tab went to the background still lands its own end when frames resume (the
+    // library cannot cancel it): this landing goes again right after it, unless a newer flight came since
+    if (hidden) requestAnimationFrame(() => { if (gen === flyGen) ref.current?.setTransform(x, y, scale, 0) })
     aimed()
   }
   const scaleTimer = useRef(0)

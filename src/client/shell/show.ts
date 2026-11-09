@@ -36,6 +36,13 @@ export const useShowNotice = create<{ notice: ShowNotice | null }>(() => ({ noti
 /** Words a move would lose, or a capture it would cut: the same reasons a notice's click reads (open-item.ts). */
 const holdsWords = (): boolean => typedUnsent() || !!useJamCapture.getState().current
 
+/** The shell's boot - the board and its camera restored from the URL (App.tsx) - is done: shows go from now. A show
+ *  that comes earlier (the app delivers a link's place after the page's hello, before its first render) waits for it,
+ *  so the boot's own navigation never lands over it, and it never resolves against a board not loaded yet. */
+let bootDone: () => void = () => {}
+const booted = new Promise<void>((r) => { bootDone = r })
+export function showsMayGo(): void { bootDone() }
+
 /** The newest command's number: an older one still on its way stops at its next step. */
 let current = 0
 /** The last server seq this page took: the same one again (a reconnect's replay) is never taken twice. */
@@ -156,6 +163,10 @@ export async function showTarget(raw: unknown, from: ShowFrom): Promise<ShowResu
     if (from === 'server') front()
     return 'notice'
   }
+  await booted
+  // the boot's camera at rest first: its fit is not this show's to count
+  await cameraLanded(() => n === current)
+  if (n !== current) return 'stale'
   if (holdsWords()) return notice()
   useShowNotice.setState({ notice: null })
   const r = await go(t, n, false)
