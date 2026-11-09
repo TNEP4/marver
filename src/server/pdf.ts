@@ -38,6 +38,7 @@ import { COMPARE, CROP, PDF_EARLY, PDF_INSTALL, SETTLED, SVG_IMAGES, TO_JPEG, TW
 import { onPdfReset } from './pdf-reset.ts'
 import { checkRealDirs } from './boards.ts'
 import { placeNewcomers } from '../shared/auto-place.ts'
+import { slideSize } from '../client/const.ts'
 
 // ---- the contract ------------------------------------------------------------------------------------------------
 
@@ -123,7 +124,7 @@ export function playsAsSlides(root: string, board: string): boolean {
 
 /** The board file's nodes with the positions the canvas would give them: its own, else its layout's (a board an agent
  *  wrote as a frame list is laid out by the canvas when it opens - the same pure layout). */
-export async function boardNodes(root: string, board: string, frames: (PlanFrame & { note?: string; scene?: string; variantGroup?: string; variant?: string; contentWidth?: number })[], viewports: Viewports, themes: string[], scenes: readonly { name: string; note?: string }[] = []): Promise<{ nodes: PlanNode[]; title?: string } | null> {
+export async function boardNodes(root: string, board: string, frames: (PlanFrame & { note?: string; scene?: string; variantGroup?: string; variant?: string; contentWidth?: number; kind?: string })[], viewports: Viewports, themes: string[], scenes: readonly { name: string; note?: string }[] = []): Promise<{ nodes: PlanNode[]; title?: string } | null> {
   if (!BOARD_NAME.test(board) || board.length > 64) return null
   const { checkBoardsDir, isRegularFile } = await import('./boards.ts')
   const dir = join(root, 'design', 'boards'), file = join(dir, `${board}.json`)
@@ -133,7 +134,7 @@ export async function boardNodes(root: string, board: string, frames: (PlanFrame
   try { b = JSON.parse(readFileSync(file, 'utf8')) } catch { return null }
   if (!b || typeof b !== 'object') return null
   const byId = new Map(frames.map((f) => [f.id, f]))
-  type Raw = { frame: string; x?: unknown; y?: unknown; w?: unknown; h?: unknown; theme?: unknown; themeUser?: unknown }
+  type Raw = { frame: string; x?: unknown; y?: unknown; w?: unknown; h?: unknown; theme?: unknown; themeUser?: unknown; sizeMode?: unknown }
   const auto = b.auto === true
   const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
   const saved: Raw[] = (Array.isArray(b.nodes) ? b.nodes : []).filter((n): n is Raw => !!n && typeof (n as Raw).frame === 'string')
@@ -149,22 +150,38 @@ export async function boardNodes(root: string, board: string, frames: (PlanFrame
     const f = byId.get(n.frame)
     return typeof n.theme === 'string' && themes.includes(n.theme) && n.theme !== (f?.theme ?? first) ? n.theme : undefined
   }
-  // a node with no saved size is the size the canvas gives it (store.ts defaultSize): a slide its stage, a Doc its width
-  // (its viewport's, else its content width), anything else its viewport, else mobile
+  // the committed heights a board load is handed (api.ts GET sizes): a measuring content frame's, at its own width
+  const { autoWidthOf, keptSizes, measuringFrames, readSizes } = await import('./sizes.ts')
+  const heights = keptSizes(readSizes(root), autoWidthOf(frames, viewports), measuringFrames(root, frames))
+  // the size the canvas gives a frame (store.ts defaultSize): a slide its stage, a Doc its width (its viewport's, else
+  // its content width) and its committed height, anything else its viewport, else mobile; a frame gone, a phone
+  const def = (f: (typeof frames)[number] | undefined): { w: number; h: number; known?: boolean } => {
+    if (!f) return { w: 390, h: 844 }
+    const sl = slideSize(f, viewports)
+    if (sl) return { w: sl.width, h: sl.height }
+    if (f.contentWidth) {
+      const vp = viewports[f.viewport ?? '']
+      const w = vp?.width ?? f.contentWidth
+      const known = heights[`${f.id}@${w}`]
+      return { w, h: known ?? vp?.height ?? Math.round(w * 0.75), known: known !== undefined }
+    }
+    const vp = viewports[f.viewport ?? ''] ?? viewports.mobile ?? { width: 390, height: 844 }
+    return { w: vp.width, h: vp.height }
+  }
+  // a node's size as the canvas hydrates it (store.ts): its saved one - except an auto-sized Doc whose height is known,
+  // which opens at that (a saved w/h there is a guess the first measurement overrides)
   const size = (n: Raw) => {
     const f = byId.get(n.frame)
-    const vp = f?.viewport ? viewports[f.viewport] : undefined
-    const d = f?.slide ? (vp ?? { width: 1280, height: 720 })
-      : num(f?.contentWidth) ? { width: vp?.width ?? f!.contentWidth!, height: vp?.height ?? Math.round((vp?.width ?? f!.contentWidth!) * 0.75) }
-      : (vp ?? viewports.mobile ?? { width: 390, height: 844 })
-    return { w: num(n.w) ? n.w : d.width, h: num(n.h) ? n.h : d.height }
+    const d = def(f)
+    const own = !!f?.contentWidth && n.sizeMode !== 'manual' && n.sizeMode !== 'device' && !!d.known
+    return { w: !own && num(n.w) ? n.w : d.w, h: !own && num(n.h) ? n.h : d.h }
   }
   const nodes: PlanNode[] = raw.map((n) => ({ frame: n.frame, x: num(n.x) ? n.x : 0, y: num(n.y) ? n.y : 0, w: size(n).w, ...(themeOf(n) ? { theme: themeOf(n) } : {}), ...(byId.has(n.frame) ? {} : { missing: true }) }))
   if (auto) {
     // frames not on the board yet, placed by the canvas's own rule (src/shared/auto-place.ts), at its device view's size
     const dv = typeof b.deviceView === 'string' ? viewports[b.deviceView] : undefined
-    placeNewcomers(nodes as (PlanNode & { w: number })[], frames, (f) => { const d = size({ frame: f.id }); return { w: dv?.width ?? d.w, h: dv?.height ?? d.h } },
-      (f, x, y, w, h) => { raw.push({ frame: f.id, w, h }); return { frame: f.id, x, y, w } })
+    placeNewcomers(nodes as (PlanNode & { w: number })[], frames, (f) => { const d = def(f); return { w: dv?.width ?? d.w, h: dv?.height ?? d.h } },
+      (f, x, y, w, h) => { raw.push({ frame: f.id, w, h, sizeMode: dv ? 'device' : 'auto' }); return { frame: f.id, x, y, w } })
   }
   // and when a note has no room (store.ts cramped): a board the canvas composes - a recipe, or auto - makes way for a note
   // that landed beside saved positions; a load starts with no column measured yet (store.ts clearNoteHeights)

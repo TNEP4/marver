@@ -91,10 +91,21 @@ describe('a finished PDF in the shell', () => {
       const run2 = m.exportPdf('deck', {}, { via: 'click', in: 'shell' })
       await vi.advanceTimersByTimeAsync(600); await run2
       expect(m.usePdfExport.getState().state).toBe('ready')
+      // it waits as long as the person takes: nothing frees it before the click
+      await vi.advanceTimersByTimeAsync(120_000)
+      expect(h.revoked).toEqual([])
+      const first = `blob:pdf-${h.urls}`
       m.downloadPdf({ via: 'click', in: 'shell' })
       expect(h.revoked).toEqual([])
+      // a newer PDF held while the first one's cleanup is still to run: that cleanup frees only the first
+      const run3 = m.exportPdf('deck', {}, { via: 'click', in: 'shell' })
+      await vi.advanceTimersByTimeAsync(600); await run3
+      expect(m.usePdfExport.getState().state).toBe('ready')
       await vi.advanceTimersByTimeAsync(60_000)
-      expect(h.revoked).toEqual([`blob:pdf-${h.urls}`])
+      expect(h.revoked).toEqual([first])
+      m.downloadPdf({ via: 'click', in: 'shell' })
+      expect(h.clicks).toEqual(['deck.pdf', 'deck.pdf'])
+      expect(h.revoked).toEqual([first])
     } finally { vi.useRealTimers() }
   })
 })

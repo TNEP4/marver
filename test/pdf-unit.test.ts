@@ -123,6 +123,22 @@ describe('the board a job reads', () => {
     const far = await boardNodes(root, 'deck', frames, VP, ['light'], [{ name: 's' }])
     expect(far!.nodes.map((n) => [n.frame, n.y])).toEqual([['s/a', 1000], ['s/b', 0], ['s/c', 0]])
   })
+  it('a Doc\'s committed height is the one the cramped rule sees, as the canvas hydrates it: no phantom overlap, saved positions kept', async () => {
+    const fr = [
+      { ...f('s/a', { slide: true }), scene: 's', file: 'design/scenes/s/a.tsx', note: 'why' },
+      { ...f('s/b', { slide: true }), scene: 's', file: 'design/scenes/s/b.tsx' },
+      { ...f('s/doc', { viewport: undefined }), scene: 's', file: 'design/scenes/s/doc.tsx', contentWidth: 1500 },
+    ]
+    // the Doc's saved h is a stale guess; at its placeholder (1500 x 0.75) its card would run into A's note
+    canvas({ auto: true, nodes: [{ frame: 's/doc', x: 1500, y: -1100, w: 1500, h: 1125 }, { frame: 's/a', x: 1700, y: 0, w: 1280, h: 720 }, { frame: 's/b', x: 0, y: 2000, w: 1280, h: 720 }] }, { boards: { deck: { type: 'slides' } } })
+    writeFileSync(join(root, 'design', 'boards', '_sizes.json'), JSON.stringify({ heights: { 's/doc@1500': 100 } }))
+    const b = await boardNodes(root, 'deck', fr, VP, ['light'], [{ name: 's' }])
+    expect(b!.nodes.map((n) => [n.frame, n.x, n.y])).toEqual([['s/doc', 1500, -1100], ['s/a', 1700, 0], ['s/b', 0, 2000]])
+    // no committed height: the placeholder does run into the note, and the board is laid out again, as the canvas does
+    rmSync(join(root, 'design', 'boards', '_sizes.json'))
+    const placeholder = await boardNodes(root, 'deck', fr, VP, ['light'], [{ name: 's' }])
+    expect(placeholder!.nodes.find((n) => n.frame === 's/b')!.y).not.toBe(2000)
+  })
   it('a node\'s theme: its own pin, else a legacy stored theme that differs from the frame\'s default', async () => {
     canvas({ nodes: [{ frame: 's/a', x: 0, y: 0, themeUser: 'dark' }, { frame: 's/b', x: 1, y: 0, theme: 'light' }, { frame: 's/c', x: 2, y: 0, theme: 'dark' }] })
     const b = await boardNodes(root, 'deck', frames, VP, ['light', 'dark'])
