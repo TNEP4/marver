@@ -85,31 +85,41 @@ export function unescapeJs(s: string): string {
   })
 }
 
+/** Where the code from `i` closes its brace: the index of the `}` matching an already-open `{`, past strings,
+ *  comments and template literals (whose `${...}` holes are code again); `src.length` when it never closes. The
+ *  comments met at this level go into `comments` (start, end), for the caller to blank. */
+function codeEnd(src: string, i: number, comments?: [number, number][]): number {
+  let depth = 0
+  for (; i < src.length; i++) {
+    const ch = src[i]
+    if (ch === "'" || ch === '"') {
+      for (i++; i < src.length && src[i] !== ch && src[i] !== '\n'; i++) if (src[i] === '\\') i++
+    } else if (ch === '`') {
+      for (i++; i < src.length && src[i] !== '`'; i++) {
+        if (src[i] === '\\') i++
+        else if (src[i] === '$' && src[i + 1] === '{') i = codeEnd(src, i + 2)
+      }
+    } else if (ch === '/' && src[i + 1] === '/') {
+      const nl = src.indexOf('\n', i), to = nl < 0 ? src.length : nl
+      comments?.push([i, to]); i = to - 1
+    } else if (ch === '/' && src[i + 1] === '*') {
+      const e = src.indexOf('*/', i + 2), to = e < 0 ? src.length : e + 2
+      comments?.push([i, to]); i = to - 1
+    } else if (ch === '{') depth++
+    else if (ch === '}') { if (!depth) return i; depth-- }
+  }
+  return src.length
+}
+
 /** Extract `export const meta = {...}` with literal string values only. Anything else is silently omitted. */
 export function extractMeta(src: string): FrameMeta {
   const m = /export\s+const\s+meta\s*=\s*\{/.exec(src)
   if (!m) return {}
-  // the object's body runs to its first `}` outside a string literal and a comment - a brace inside one (`'a {b}'`,
-  // `'\u{e9}'`) is text, and so is a quote in a comment (`/* author's note */`). A template literal spans lines, and
-  // its `${...}` holes nest braces of their own
-  let end = m.index + m[0].length
-  let q = '', holes = 0
+  // the object's body runs to its own closing `}`: strings, comments and template literals - with their `${...}`
+  // holes, each code of its own - are skipped whole, so a brace or a quote inside one (`'a {b}'`, `'\u{e9}'`,
+  // `/* author's note */`, `${"{"}`) is text (spec 31 H.1, review rounds 1-2)
   const comments: [number, number][] = []
-  for (; end < src.length; end++) {
-    const ch = src[end]
-    if (q === '`') {
-      if (ch === '\\') end++
-      else if (ch === '`') q = ''
-      else if (ch === '$' && src[end + 1] === '{') { holes = 1; q = '${'; end++ }
-    } else if (q === '${') {
-      if (ch === '{') holes++
-      else if (ch === '}' && --holes === 0) q = '`'
-    } else if (q) { if (ch === '\\') end++; else if (ch === q || ch === '\n') q = '' }
-    else if (ch === '/' && src[end + 1] === '/') { const nl = src.indexOf('\n', end); const to = nl < 0 ? src.length : nl; comments.push([end, to]); end = to }
-    else if (ch === '/' && src[end + 1] === '*') { const e = src.indexOf('*/', end + 2); const to = e < 0 ? src.length : e + 2; comments.push([end, to]); end = to - 1 }
-    else if (ch === "'" || ch === '"' || ch === '`') q = ch
-    else if (ch === '}') break
-  }
+  const end = codeEnd(src, m.index + m[0].length, comments)
   if (end >= src.length) return {}
   // ...and its comments blanked, so a property after one still starts where the picker looks (after `{`, `,`, a newline)
   let body = src.slice(m.index + m[0].length, end)
@@ -121,6 +131,8 @@ export function extractMeta(src: string): FrameMeta {
     // ...and the literal must END the value: `"Draft" + phase` is computed, not a literal
     // ...and a backslash escapes in each quote style: 'Nic\'s board' is a literal too (spec 31 H.1), read unescaped
     const r = new RegExp(`(?:^|[{,])\\s*${key}\\s*:\\s*(?:'((?:[^'\\\\\\n]|\\\\.)*)'|"((?:[^"\\\\\\n]|\\\\.)*)"|\`((?:[^\`\\\\\\n]|\\\\.)*)\`)\\s*(?=[,}\\n]|$)`).exec(body)
+    // a template with an unescaped `${...}` is computed, not a literal
+    if (r && r[3] !== undefined && /(^|[^\\])(\\\\)*\$\{/.test(r[3])) return undefined
     return r ? unescapeJs(r[1] ?? r[2] ?? r[3]) : undefined
   }
   // literal booleans, same boundary discipline as the string picker

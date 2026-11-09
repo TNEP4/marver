@@ -30,6 +30,11 @@ describe('extractMeta reads escaped quotes (H.1)', () => {
     expect(extractMeta(`export const meta = {\n  // the owner's pick\n  title: 'Home',\n  viewport: 'mobile',\n}`)).toEqual({ title: 'Home', viewport: 'mobile' })
     expect(extractMeta('export const meta = {\n  description: `two\nlines {x}`,\n  title: "After",\n  viewport: "laptop" }')).toEqual({ title: 'After', viewport: 'laptop' })
     expect(extractMeta('export const meta = { note: `a ${ { b: 1 }.b } c`, title: "Held", theme: "dark" }')).toEqual({ title: 'Held', theme: 'dark' })
+    // round 2: braces and quotes inside a hole's own strings and comments; a computed template is no literal
+    expect(extractMeta('export const meta = { title: "Home", viewport: "tablet", note: `prefix ${"{"} suffix` }')).toEqual({ title: 'Home', viewport: 'tablet' })
+    expect(extractMeta('export const meta = { note: `a ${ /* } */ x + \'}\' } b`, title: "Kept" }')).toEqual({ title: 'Kept' })
+    expect(extractMeta('export const meta = { title: `Hello ${name}`, viewport: "mobile" }')).toEqual({ viewport: 'mobile' })
+    expect(extractMeta('export const meta = { title: `Price \\${5}` }')).toEqual({ title: 'Price ${5}' })
   })
 })
 
