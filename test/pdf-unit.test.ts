@@ -210,6 +210,22 @@ describe('jobs (spec 31 How)', () => {
       expect(await startPdfJob(ctx, { board: 'deck' }, { run: async () => {} })).toMatchObject({ ok: false, status: 422 })
     } finally { rmSync(outside, { recursive: true, force: true }) }
   })
+  it('a job folder swapped for a link while it ran: nothing behind the link is enumerated or removed, now or on DELETE', async () => {
+    const ctx = ctxFor()
+    const outside = mkdtempSync(join(tmpdir(), 'mv-pdf-outside-'))
+    try {
+      writeFileSync(join(outside, 'precious.txt'), 'theirs')
+      const { symlinkSync } = await import('node:fs')
+      const a = await startPdfJob(ctx, { board: 'deck' }, { run: async (j) => { rmSync(j.dir, { recursive: true, force: true }); symlinkSync(outside, j.dir) } })
+      const id = (a as { job: { id: string } }).job.id
+      await new Promise((r) => setTimeout(r, 20))
+      expect(readFileSync(join(outside, 'precious.txt'), 'utf8')).toBe('theirs')
+      cancelPdfJob(id)
+      expect(readFileSync(join(outside, 'precious.txt'), 'utf8')).toBe('theirs')
+      sweepPdfJobs(root, Date.now() + 10 * PDF_BUDGET.keepMs)
+      expect(readFileSync(join(outside, 'precious.txt'), 'utf8')).toBe('theirs')
+    } finally { rmSync(outside, { recursive: true, force: true }) }
+  })
   it('cleanup: past its hour a job and its folder go; a folder no job knows goes too; dev start clears them all', async () => {
     const ctx = ctxFor()
     const a = await startPdfJob(ctx, { board: 'deck' }, { run: async (j) => { j.file = join(j.dir, j.filename); writeFileSync(j.file, '%PDF') } })

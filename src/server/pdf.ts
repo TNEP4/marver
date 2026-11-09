@@ -24,8 +24,8 @@
  */
 import { execFile } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { join, sep } from 'node:path'
 import { PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFString, type PDFRef } from 'pdf-lib'
 import { ROUTE } from '../cli/name.ts'
 import { Browser } from './cdp.ts'
@@ -183,7 +183,7 @@ export async function planFor(ctx: Pick<PdfCtx, 'root' | 'viewports' | 'themes' 
 
 type Rect = { x: number; y: number; w: number; h: number }
 type Link = { href: string; rects: Rect[] }
-type Hit = { i: number; kind: 'glass' | 'whole' | 'shadow'; why: string; rect: Rect; transformed: boolean; replaced: boolean }
+type Hit = { i: number; kind: 'glass' | 'whole' | 'shadow' | 'root'; why: string; rect: Rect; transformed: boolean; replaced: boolean }
 
 export interface SlideOut {
   status: SlideStatus
@@ -255,7 +255,7 @@ export function sipsRaster(pdfPath: string, side: number): Promise<Buffer | null
 }
 
 /** Render, patch, certify and print one page. Throws only when the browser itself is gone. */
-export async function renderSlide(b: Browser, helper: Helper, page: PlanPage, o: { url: string; dir: string; n: number; mode: Mode; notes: boolean; signal: AbortSignal; slideMs?: number }): Promise<SlideOut> {
+export async function renderSlide(b: Browser, helper: Helper, page: PlanPage, o: { url: string; dir: string; n: number; mode: Mode; notes: boolean; signal: AbortSignal; slideMs?: number; dirOk: () => boolean }): Promise<SlideOut> {
   const W = page.width, H = page.height
   const dsf = captureScale(W, H)
   const owner = {}
@@ -351,6 +351,8 @@ export async function renderSlide(b: Browser, helper: Helper, page: PlanPage, o:
 
       // effects (#7): detected, captured in the unpatched page, applied together, certified
       const hits = o.mode === 'vector' ? [] : await ev<Hit[]>(`window.__mvPdf.detect(${W}, ${H}, ${DROP_SHADOW_PRINTS})`)
+      const rootFx = hits.find((h) => h.kind === 'root')
+      if (rootFx) return toRaster(`an effect on the page itself (${rootFx.why}) - nothing to patch it into`)
       if (hits.some((h) => h.transformed)) return toRaster(`an effect under a transform (${hits.find((h) => h.transformed)!.why})`)
       if (hits.length) {
         const patches: { i: number; kind: 'glass' | 'whole' | 'shadow'; url: string; links: Link[] }[] = []
@@ -366,7 +368,7 @@ export async function renderSlide(b: Browser, helper: Helper, page: PlanPage, o:
           const [c] = await helper.crop(shot, dsf, [box])
           // lossless unless the JPEG is much smaller (a photo, a blur)
           const url = c.png.length <= c.jpeg.length * 1.25 ? c.png : c.jpeg
-          patches.push({ i: h.i, kind: h.kind, url, links: h.kind === 'whole' ? await ev<Link[]>(`window.__mvPdf.linksIn(${h.i})`) : [] })
+          patches.push({ i: h.i, kind: h.kind as 'glass' | 'whole', url, links: h.kind === 'whole' ? await ev<Link[]>(`window.__mvPdf.linksIn(${h.i})`) : [] })
         }
         await ev(`window.__mvPdf.apply(${JSON.stringify(patches)})`)
         await bounded(ev(`Promise.all(Array.from(document.images).map((im) => im.decode().catch(() => 1))).then(() => true)`, true), 3000)
@@ -399,7 +401,7 @@ export async function renderSlide(b: Browser, helper: Helper, page: PlanPage, o:
         pdf = Buffer.from(await one.save())
       }
       // print certification: the printed page rasterised and compared with the screen
-      if (hasSips()) {
+      if (hasSips() && o.dirOk()) {
         const file = join(o.dir, `${String(o.n).padStart(3, '0')}.pdf`)
         writeFileSync(file, pdf)
         const png = await sipsRaster(file, Math.max(W, H) * 2)
@@ -542,6 +544,26 @@ export const jobsDir = (root: string) => join(root, 'design', '.local', 'pdf')
 export function jobsDirSafe(root: string): boolean {
   return !checkRealDirs(root, [[join(root, 'design'), 'design'], [join(root, 'design', '.local'), 'design/.local'], [jobsDir(root), 'design/.local/pdf']])
 }
+/** Remove a path inside the job folder - only while the folder is a real one inside the project, and the path in it. */
+function rmInJobs(root: string, path: string): void {
+  if (!jobsDirSafe(root)) return
+  const base = jobsDir(root)
+  if (!path.startsWith(base + sep)) return
+  // every folder between the job folder and the path is a real one (a job folder swapped for a link is never entered)
+  const parts = path.slice(base.length + 1).split(sep)
+  let at = base
+  for (const part of parts.slice(0, -1)) {
+    at = join(at, part)
+    try { if (!lstatSync(at).isDirectory()) return } catch { return }
+  }
+  try { if (lstatSync(path).isSymbolicLink()) { rmSync(path, { force: true }); return } } catch { return }
+  try { rmSync(path, { recursive: true, force: true }) } catch { /* gone */ }
+}
+/** A job's own folder is still a real folder inside the project (not swapped for a link): its files may be written. */
+export const jobDirReal = (root: string, dir: string): boolean => {
+  if (!jobsDirSafe(root) || !dir.startsWith(jobsDir(root) + sep)) return false
+  try { return lstatSync(dir).isDirectory() } catch { return false }
+}
 
 /** `marver dev` start: no job survives a server (their browsers did not), so the folder starts empty. */
 export function clearPdfJobs(root: string): void {
@@ -557,14 +579,14 @@ onPdfReset(clearPdfJobs)
 export function sweepPdfJobs(root: string, now = Date.now()): void {
   for (const [id, j] of jobs) {
     if (j.root !== root || j.state === 'running') continue
-    if (now - (j.ended ?? j.created) > PDF_BUDGET.keepMs) { jobs.delete(id); try { rmSync(j.dir, { recursive: true, force: true }) } catch { /* gone */ } }
+    if (now - (j.ended ?? j.created) > PDF_BUDGET.keepMs) { jobs.delete(id); rmInJobs(root, j.dir) }
   }
   // a folder no job of this server knows (an earlier server's, a crash): past its hour, removed
   if (jobsDirSafe(root)) try {
     for (const n of readdirSync(jobsDir(root))) {
       if (jobs.has(n)) continue
       const p = join(jobsDir(root), n)
-      try { if (now - statSync(p).mtimeMs > PDF_BUDGET.keepMs) rmSync(p, { recursive: true, force: true }) } catch { /* gone */ }
+      try { if (now - statSync(p).mtimeMs > PDF_BUDGET.keepMs) rmInJobs(root, p) } catch { /* gone */ }
     }
   } catch { /* no folder yet */ }
 }
@@ -627,8 +649,8 @@ export async function startPdfJob(ctx: PdfCtx, ask: PdfAsk, seams: { run?: (j: J
       job.ended = Date.now()
       if (running.get(ctx.root) === id) running.delete(ctx.root)
       // done: the folder keeps only the final PDF; otherwise nothing
-      try { for (const n of readdirSync(dir)) if (job.state !== 'done' || join(dir, n) !== job.file) rmSync(join(dir, n), { recursive: true, force: true }) } catch { /* gone */ }
-      if (job.state === 'cancelled') { jobs.delete(id); try { rmSync(dir, { recursive: true, force: true }) } catch { /* gone */ } }
+      if (jobDirReal(ctx.root, dir)) try { for (const n of readdirSync(dir)) if (job.state !== 'done' || join(dir, n) !== job.file) rmInJobs(ctx.root, join(dir, n)) } catch { /* gone */ }
+      if (job.state === 'cancelled') { jobs.delete(id); rmInJobs(ctx.root, dir) }
     })
   return { ok: true, job }
 }
@@ -638,7 +660,7 @@ export function cancelPdfJob(id: string): boolean {
   const j = getJob(id)
   if (!j) return false
   if (j.state === 'running') j.abort.abort(CANCELLED)
-  else { jobs.delete(id); try { rmSync(j.dir, { recursive: true, force: true }) } catch { /* gone */ } }
+  else { jobs.delete(id); rmInJobs(j.root, j.dir) }
   return true
 }
 
@@ -688,20 +710,25 @@ async function runJob(ctx: PdfCtx, job: Job, plan: Plan, title: string): Promise
         for (const by = Date.now() + 5000; !ctx.settled() && Date.now() < by;) await wait(100)
         // every render reads its page from the source as it is when it starts (a slide queued behind others may have
         // changed since the job began): its size and theme (a frame's meta), its file
-        const fresh = await planFor(ctx, job.board, job.ask.theme).catch(() => null)
-        const p2 = fresh?.ok ? fresh.plan.pages.find((x) => x.frame === page.frame) : undefined
-        if (p2 && (p2.width > PDF_BUDGET.side || p2.height > PDF_BUDGET.side)) throw new Error(`${p2.frame} is now ${p2.width}x${p2.height} - a page side is ${PDF_BUDGET.side} CSS px at most`)
-        if (p2) page = p2
+        const fresh = await planFor(ctx, job.board, job.ask.theme).catch((e: Error) => ({ ok: false as const, status: 500, error: e.message }))
+        // the board can no longer be printed (gone, emptied, past a budget): the export stops and says why
+        if (!fresh.ok) throw new Error(`the board changed while printing - ${fresh.error}`)
+        const p2 = fresh.plan.pages.find((x) => x.frame === page.frame)
+        // the frame left the board meanwhile: printed as planned, and named
+        if (!p2) left = true
+        else page = p2
         url = exportUrl(ctx.origin, page, ctx.frames().find((f) => f.id === page.frame)?.file)
         const base = revisions(ctx, [page.frame]), since = Date.now()
-        const out = await renderSlide(b, helper, page, { url, dir: job.dir, n, mode: job.ask.mode ?? 'auto', notes: !!job.ask.notes, signal })
+        const out = await renderSlide(b, helper, page, { url, dir: job.dir, n, mode: job.ask.mode ?? 'auto', notes: !!job.ask.notes, signal, dirOk: () => jobDirReal(ctx.root, job.dir) })
         const now = revisions(ctx, [page.frame])
         const moved = !ctx.settled() || now.doc.get(page.frame) !== base.doc.get(page.frame) || now.global !== base.global || assetsChanged(ctx.root, out.assets ?? [], since)
         return { out, moved }
       }
+      let left = false
       let { out, moved } = await attempt()
       let changed = false
       if (out.status !== 'failed' && moved) { ({ out, moved } = await attempt()); changed = moved }
+      if (left) changed = true
       if (out.status === 'failed' && !job.ask.keepGoing) throw new Error(`${page.frame}: ${out.error}`)
       bytes += out.pdf?.length ?? out.raster?.jpeg.length ?? out.picture?.length ?? 0
       if (bytes > PDF_BUDGET.bytes) throw new Error(`the PDF passed ${PDF_BUDGET.bytes / 2 ** 20} MB - export fewer slides, or with --vector`)
@@ -725,6 +752,7 @@ async function runJob(ctx: PdfCtx, job: Job, plan: Plan, title: string): Promise
     if (signal.aborted) throw signal.reason instanceof Error ? signal.reason : new Error('the export was cancelled')
     if (pdf.length > PDF_BUDGET.bytes) throw new Error(`the PDF is ${Math.round(pdf.length / 2 ** 20)} MB - ${PDF_BUDGET.bytes / 2 ** 20} MB at most`)
     const file = join(job.dir, job.filename)
+    if (!jobDirReal(ctx.root, job.dir)) throw new Error('the job folder is no longer a folder of this project - export again')
     writeWhole(file, pdf)
     job.file = file
     job.report = {
@@ -792,6 +820,7 @@ export const unlinkGotos = (html: string): string => html.replace(/<a href="#" d
 
 async function printHandout(b: Browser, ctx: PdfCtx, job: Job, slides: { page: PlanPage; picture?: Buffer; note?: string }[]): Promise<{ pdf: Uint8Array; pages: number }> {
   const { renderMarkdown } = await import('../client/content/md.ts')
+  if (!jobDirReal(ctx.root, job.dir)) throw new Error('the job folder is no longer a folder of this project - export again')
   slides.forEach((s, i) => { if (s.picture) writeFileSync(join(job.dir, `${i}.jpg`), s.picture) })
   handouts.set(job.id, {
     title: `${job.board.replace(/-/g, ' ')} - notes`, canvas: ctx.canvasName, paper: job.ask.paper ?? 'letter',

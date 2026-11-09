@@ -20,7 +20,7 @@
 /** Runs in the slide: installs `window.__mvPdf`. */
 function install(): boolean {
   type Rect = { x: number; y: number; w: number; h: number }
-  type Hit = { i: number; kind: 'glass' | 'whole' | 'shadow'; why: string; rect: Rect; transformed: boolean; replaced: boolean }
+  type Hit = { i: number; kind: 'glass' | 'whole' | 'shadow' | 'root'; why: string; rect: Rect; transformed: boolean; replaced: boolean }
   const w = window as unknown as { __mvPdf?: unknown }
   if (w.__mvPdf) return true
   const touched: { el: HTMLElement | SVGElement; prop: string; value: string; prio: string }[] = []
@@ -132,17 +132,25 @@ function install(): boolean {
   }
   /** the element's box as the stage shows it: in the viewport, inside every clipping ancestor; null when nothing shows */
   /** the part of the stage an element can show in: the viewport, inside every clipping ancestor */
+  /** an ancestor that is the containing block of a fixed-position descendant (CSS Transforms, Filter Effects, Containment) */
+  const holdsFixed = (c: CSSStyleDeclaration): boolean => !!(
+    (c.transform && c.transform !== 'none') || (c.perspective && c.perspective !== 'none') || (c.filter && c.filter !== 'none')
+      || ((c as unknown as { backdropFilter?: string }).backdropFilter ?? 'none') !== 'none'
+      || /paint|layout|strict|content/.test(c.contain || '') || /transform|perspective|filter/.test(c.willChange || '')
+      || (c.scale && c.scale !== 'none') || (c.rotate && c.rotate !== 'none') || (c.translate && c.translate !== 'none'))
   const clipOf = (el: Element, W: number, H: number): { x0: number; y0: number; x1: number; y1: number } => {
     let x0 = 0, y0 = 0, x1 = W, y1 = H
-    if (getComputedStyle(el).position !== 'fixed') {
-      for (let a = el.parentElement; a && a !== document.body && a !== document.documentElement; a = a.parentElement) {
-        const c = getComputedStyle(a)
-        if (c.overflowX === 'visible' && c.overflowY === 'visible') continue
-        const b = a.getBoundingClientRect()
-        if (c.overflowX !== 'visible') { x0 = Math.max(x0, b.left); x1 = Math.min(x1, b.right) }
-        if (c.overflowY !== 'visible') { y0 = Math.max(y0, b.top); y1 = Math.min(y1, b.bottom) }
-        if (c.position === 'fixed') break
-      }
+    // a fixed element escapes the clips below its containing block - the viewport, unless an ancestor holds it
+    let clipping = getComputedStyle(el).position !== 'fixed'
+    for (let a = el.parentElement; a && a !== document.body && a !== document.documentElement; a = a.parentElement) {
+      const c = getComputedStyle(a)
+      if (!clipping) { if (holdsFixed(c)) clipping = true; else continue }
+      if (c.overflowX === 'visible' && c.overflowY === 'visible') { if (c.position === 'fixed') clipping = false; continue }
+      const b = a.getBoundingClientRect()
+      if (c.overflowX !== 'visible') { x0 = Math.max(x0, b.left); x1 = Math.min(x1, b.right) }
+      if (c.overflowY !== 'visible') { y0 = Math.max(y0, b.top); y1 = Math.min(y1, b.bottom) }
+      // a fixed ancestor escapes the clips above it in turn, up to its own containing block
+      if (c.position === 'fixed') clipping = false
     }
     return { x0, y0, x1, y1 }
   }
@@ -301,10 +309,20 @@ function install(): boolean {
         hits.set(i, top as SVGElement)
         out.push({ i, kind: 'whole', why: e.whole || 'backdrop-filter', rect, transformed: transformed(top), replaced: true })
       }
+      // the page itself: an effect on html or body (or their pseudo-elements) has nothing to be patched into
+      for (const r of [document.documentElement, document.body]) {
+        if (!r) continue
+        for (const ps of ['', '::before', '::after']) {
+          const c = getComputedStyle(r, ps || null)
+          if (ps && (!c.content || c.content === 'none' || c.content === 'normal')) continue
+          const e = effectOf(c, dropShadowPrints)
+          if (e.whole || e.glass) { out.push({ i: out.length, kind: 'root', why: `${r === document.body ? 'body' : 'html'}${ps} ${e.whole || 'backdrop-filter'}`, rect: { x: 0, y: 0, w: W, h: H }, transformed: false, replaced: false }); return out }
+        }
+      }
       if (document.body) visit(document.body)
       // shadows: any element shown (and its pseudo-elements), outside the boxes a whole patch pictures
       const inWhole = (el: Element) => out.some((h) => h.kind === 'whole' && hits.get(h.i) !== el && hits.get(h.i)!.contains(el))
-      for (const el of Array.from(document.body ? document.body.querySelectorAll('*') : [])) {
+      for (const el of document.body ? [document.body, ...Array.from(document.body.querySelectorAll('*'))] : []) {
         if (el.id === 'mv-pdf-links' || inWhole(el)) continue
         const r = el.getBoundingClientRect()
         if (r.width < 1 || r.height < 1) continue
@@ -550,8 +568,8 @@ export const CROP = crop.toString()
  * - outside every box: `marver`'s bake rule - changed pixels beyond 32 levels, and the worst 16x16 block;
  * - `coarse`: the share of the page whose averages over 8 CSS px blocks differ by more than 32 levels - a missing or
  *   wrong area differs in its average (print certification);
- * - `fine`: the share of pixels, of either picture, differing by more than 48 levels from every pixel within one pixel of
- *   them in the other - text drawn by another rasteriser differs only at its edges, a changed pattern everywhere.
+ * - `fine`: the share of pixels, of either picture, more than 48 levels outside the range of the other picture's pixels
+ *   within one pixel of them - text drawn by another rasteriser differs only at its edges, a changed pattern everywhere.
  */
 async function compare(a: string, b: string, dsf: number, boxes: { x: number; y: number; w: number; h: number }[], tol: number, atB = false): Promise<{ boxes: number[]; outside: { gt32: number; n: number; blockMax: number }; coarse: number; fine: number }> {
   const load = async (d: string) => { const im = new Image(); im.src = 'data:image/png;base64,' + d; await im.decode(); return im }
@@ -571,16 +589,23 @@ async function compare(a: string, b: string, dsf: number, boxes: { x: number; y:
   }
   const A = px(ia), B = px(ib)
   const d = (p: number) => { const i = p * 4; return Math.max(Math.abs(A[i] - B[i]), Math.abs(A[i + 1] - B[i + 1]), Math.abs(A[i + 2] - B[i + 2])) }
-  /** pixel (x, y) of P has no pixel of Q within one pixel of it closer than `t` levels */
+  /** pixel (x, y) of P is not a blend of Q's pixels within one pixel of it: some channel lies more than `t` levels outside
+   *  their range. A resampled or re-snapped edge is a blend of its neighbours; a line, a box or a colour that is not
+   *  there is not */
   const unmatched = (P: Uint8ClampedArray, Q: Uint8ClampedArray, x: number, y: number, t: number) => {
     const i = (y * W + x) * 4
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-      const xx = x + dx, yy = y + dy
-      if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue
-      const j = (yy * W + xx) * 4
-      if (Math.max(Math.abs(P[i] - Q[j]), Math.abs(P[i + 1] - Q[j + 1]), Math.abs(P[i + 2] - Q[j + 2])) <= t) return false
+    for (let c = 0; c < 3; c++) {
+      let lo = 255, hi = 0
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const xx = x + dx, yy = y + dy
+        if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue
+        const v = Q[(yy * W + xx) * 4 + c]
+        if (v < lo) lo = v
+        if (v > hi) hi = v
+      }
+      if (P[i + c] < lo - t || P[i + c] > hi + t) return true
     }
-    return true
+    return false
   }
   const owned = new Uint8Array(W * H)
   const inBoxes = boxes.map((bx) => {

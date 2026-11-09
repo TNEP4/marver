@@ -62,6 +62,7 @@ const FILES: Record<string, string> = {
       <svg width="240" height="40"><a href="https://example.net/svg"><text x="0" y="28" fontSize="24">an svg link</text></a></svg>
       <a href="https://example.org/invisible" style={{ visibility: 'hidden' }}>an invisible link</a>
       <div style={{ height: 0, overflow: 'hidden' }}><a href="https://example.org/clipped-away">a link clipped away</a></div>
+      <div style={{ transform: 'translateZ(0)', height: 0, overflow: 'hidden' }}><a href="https://example.org/fixed-clipped" style={{ position: 'fixed', left: 10, top: 10 }}>fixed, held and clipped</a></div>
     </div>`),
   'design/scenes/deck/04-motion.tsx': `import { useEffect, useRef } from 'react'
 export const meta = { title: 'Motion', slide: true }
@@ -118,6 +119,8 @@ export default function F() {
 }
 `,
   'design/boards/tall.json': JSON.stringify({ version: 1, name: 'tall', nodes: [{ key: 't1', frame: 'tall/01-centered', x: 0, y: 0 }] }),
+  'design/scenes/rootfx/01-body-filter.tsx': slide('Body filter', `<style>{'body { filter: saturate(1.4) }'}</style><h1 style={{ margin: 64 }}>A filter on the page itself</h1>`),
+  'design/boards/rootfx.json': JSON.stringify({ version: 1, name: 'rootfx', nodes: [{ key: 'r1', frame: 'rootfx/01-body-filter', x: 0, y: 0 }] }),
   'design/publish.json': JSON.stringify({ boards: { deck: { max: 'read', type: 'slides' }, notes: { max: 'read', type: 'slides' } } }),
 }
 
@@ -212,7 +215,7 @@ describe.skipIf(!hasChrome)('deck PDFs in real Chrome (spec 31 Part A)', () => {
     expect(inside).toContain('https://example.org/inside')
     expect(inside).toContain('https://example.net/svg')
     // a link that does not show is no link on the page
-    expect(inside.filter((u: string) => /invisible|clipped-away/.test(u ?? ''))).toEqual([])
+    expect(inside.filter((u) => /invisible|clipped-away|fixed-clipped/.test(u ?? ''))).toEqual([])
     await doc.destroy()
     expect(deck.report.slides.filter((s) => s.status === 'raster' || s.status === 'failed')).toEqual([])
     // a drop-shadow-only filter is left to Chrome, which prints it right (print-certified like every page)
@@ -241,6 +244,10 @@ describe.skipIf(!hasChrome)('deck PDFs in real Chrome (spec 31 Part A)', () => {
     expect(r.report.slides[0]).toMatchObject({ status: 'vector', clipped: true })
     expect(r.report.slides[0].spilled).toBeUndefined()
     await doc.destroy()
+  }, 120_000)
+  it('an effect on the page itself (body, html) has nothing to patch into: the page is a picture, and says why (#7)', async () => {
+    const r = await runJob({ board: 'rootfx' })
+    expect(r.report.slides[0]).toMatchObject({ status: 'raster', raster: expect.stringContaining('body filter: saturate(1.4)') })
   }, 120_000)
   it('a present board: its order, html frames printed from their own document, pages at the device Play picks (1280x800)', async () => {
     const r = await runJob({ board: 'pitch' })
@@ -399,14 +406,18 @@ describe.skipIf(!hasChrome)('the finished slide, frozen deterministically (#4)',
         // the same inside a patch box (screen certification): lines added there change the box
         const boxLines = (g) => { g.fillStyle = '#000'; for (let x = 100; x < 200; x += 4) g.fillRect(x, 50, 0.5, 100) }
         const bx = await cmp(pic(() => {}), pic(boxLines), 2, [{ x: 100, y: 50, w: 100, h: 100 }], 24)
+        // a capture drawn back a fraction of a pixel off (resampled edges) is the same picture inside its box
+        const sq = (o) => (g) => { g.fillStyle = '#e8501f'; g.fillRect(110 + o, 60 + o, 60, 70); g.fillStyle = '#123'; g.font = '20px Helvetica'; g.fillText('On', 120 + o, 100 + o) }
+        const rs = await cmp(pic(sq(0)), pic(sq(0.3)), 2, [{ x: 100, y: 50, w: 100, h: 100 }], 24)
         const t = await cmp(pic(text(0)), pic(text(0.5)), 2, [], 24, true)
-        return { stripes: [a.coarse, a.fine], text: [t.coarse, t.fine], lines: l.fine, box: bx.boxes[0] }
+        return { stripes: [a.coarse, a.fine], text: [t.coarse, t.fine], lines: l.fine, box: bx.boxes[0], resampled: rs.boxes[0] }
       })()`)
       expect(got.stripes[0]).toBe(0)                 // the average cannot see it...
       expect(got.stripes[1]).toBeGreaterThan(0.4)    // ...the pixel check does
       expect(got.text).toEqual([0, 0])               // text a device pixel apart (another rasteriser's snapping) is the same picture
       expect(got.lines).toBeGreaterThan(0.05)        // lines added where the screen has none
       expect(got.box).toBeGreaterThan(0.05)          // and inside a patch box
+      expect(got.resampled).toBeLessThan(0.01)       // while edges resampled a fraction of a pixel off pass
     } finally { await b.close() }
   }, 60_000)
   it('export=1 turns Img\'s LOD canvas off on a frame that is not a slide: a plain <img> of the original (#5)', async () => {
