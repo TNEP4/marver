@@ -147,6 +147,11 @@ describe('the board a job reads', () => {
     const b = await boardNodes(root, 'deck', fr, VP, ['light'], [{ name: 's' }])
     expect(b!.nodes.map((n) => [n.frame, n.x, n.y])).toEqual([['s/a', 0, 0], ['s/b', 300, 900]])
   })
+  it('an auto board in a device view places a newcomer at that viewport\'s size, past the right edge', async () => {
+    canvas({ auto: true, deviceView: 'monitor', nodes: [{ frame: 's/a', x: 0, y: 0, w: 1280, h: 720 }, { frame: 's/b', x: 1500, y: 0, w: 1280, h: 720 }] })
+    const b = await boardNodes(root, 'deck', frames, VP, ['light'])
+    expect(b!.nodes.at(-1)).toMatchObject({ frame: 's/c', x: 1500 + 1280 + 96, y: 0, w: VP.monitor.width })
+  })
   it('a node\'s theme: its own pin, else a legacy stored theme that differs from the frame\'s default', async () => {
     canvas({ nodes: [{ frame: 's/a', x: 0, y: 0, themeUser: 'dark' }, { frame: 's/b', x: 1, y: 0, theme: 'light' }, { frame: 's/c', x: 2, y: 0, theme: 'dark' }] })
     const b = await boardNodes(root, 'deck', frames, VP, ['light', 'dark'])
