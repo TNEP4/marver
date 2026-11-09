@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { execFile } from 'node:child_process'
-import { readFileSync, rmSync } from 'node:fs'
+import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { Browser } from './browser.ts'
@@ -70,7 +70,9 @@ const GATE = `(() => {
       const inside = (el) => { const r = el.getBoundingClientRect(); return r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight }
       window.__ackViews.push([...document.querySelectorAll('.sh-node[data-node]')].filter(inside).map((n) => n.dataset.node).sort())
     }
-    if (g.name && url.split('?')[0].endsWith('/__mv/api/boards/' + g.name) && (!init || !init.method || init.method === 'GET')) { g.asked = true; await g.held }
+    const isGet = (n) => n && url.split('?')[0].endsWith('/__mv/api/boards/' + n) && (!init || !init.method || init.method === 'GET')
+    if (isGet(g.failOnce)) { g.failOnce = null; return new Response('{"error":"down"}', { status: 500, headers: { 'content-type': 'application/json' } }) }
+    if (isGet(g.name)) { g.asked = true; await g.held }
     return realFetch(input, init)
   }
 })()`
@@ -99,6 +101,18 @@ async function open(hash = '#/b/main', o: { app?: boolean } = {}) {
     until: (js: string, ms = 15_000) => browser!.until(s, js, ms),
   }
 }
+/** A tab loading `hash` with `pre` run at document start after the gate (a board held or failed from the first fetch);
+ *  waited for only until the shell listens. */
+async function openRaw(hash: string, pre: string) {
+  const s = await browser!.tab({ width: 1400, height: 900 })
+  tabs.push(s)
+  await browser!.send('Page.addScriptToEvaluateOnNewDocument', { source: GATE }, s)
+  await browser!.send('Page.addScriptToEvaluateOnNewDocument', { source: pre }, s)
+  await browser!.go(s, `${dev!.origin}/${hash}`)
+  await browser!.until(s, `!!window.__mvStore && !!window.__mvShow`, 30_000)
+  return { s, ev: (js: string) => browser!.eval(s, js), until: (js: string, ms = 15_000) => browser!.until(s, js, ms) }
+}
+
 /** A tab on the board with no nodes (its canvas never fitted a first camera). */
 async function openEmpty() {
   const s = await browser!.tab({ width: 1400, height: 900 })
@@ -324,6 +338,60 @@ describe('in a tab in the background (the page reports hidden)', () => {
     const b = await show({ board: 'main', c: 't-bg' })
     await expect.poll(() => acks(b), { timeout: 5000 }).toEqual({ shown: 1, notice: 0 })
     expect(await t.ev(`__ackViews`)).toEqual([['n-two'], ['n-one-b']])
+  }, 60_000)
+})
+
+describe('a show and the boot', () => {
+  it('a person switching boards while the boot still loads is newer than a show that came first', async () => {
+    if (!browser) return
+    const t = await openRaw('#/b/main', `window.__hold('main')`)
+    await t.until(`__gate.asked`)
+    await new Promise((r) => setTimeout(r, 300))   // the shell listens for sh:show by now
+    const seq = await show({ board: 'other', n: ['n-three'] })
+    await new Promise((r) => setTimeout(r, 300))
+    await t.ev(`location.hash = '#/b/empty', 1`)
+    await t.ev(`__gate.release()`)
+    await t.until(`__mvStore.getState().board === 'empty'`)
+    await new Promise((r) => setTimeout(r, 1500))
+    expect(await t.ev(`__mvStore.getState().board`)).toBe('empty')
+    expect(await acks(seq)).toEqual({ shown: 0, notice: 0 })
+  }, 60_000)
+
+  it('a boot that failed keeps its camera for the reload that recovers it: the link\'s selection, fitted', async () => {
+    if (!browser) return
+    const t = await openRaw('#/b/main?n=n-two', `window.__gate.failOnce = 'main'`)
+    await t.until(`__mvStore.getState().board === 'main' && !__mvStore.getState().nodes.length`)
+    await new Promise((r) => setTimeout(r, 500))
+    // the board file written again (an agent, a person): the canvas reloads it, and it loads now
+    const f = join(root, 'design', 'boards', 'main.json')
+    writeFileSync(f, readFileSync(f, 'utf8').replace(/\n?$/, '\n'))
+    await t.until(settled('main', ['n-two']), 20_000)
+  }, 60_000)
+
+  it('a boot that failed, then a show: the show has the camera - the boot never fits over it', async () => {
+    if (!browser) return
+    const t = await openRaw('#/b/other', `window.__gate.failOnce = 'other'`)
+    await t.until(`__mvStore.getState().board === 'other' && !__mvStore.getState().nodes.length`)
+    await new Promise((r) => setTimeout(r, 500))
+    const seq = await show({ board: 'main', n: ['n-two'] })
+    await expect.poll(() => acks(seq), { timeout: 5000 }).toEqual({ shown: 1, notice: 0 })
+    await new Promise((r) => setTimeout(r, 1200))
+    expect(await t.ev(VIEW)).toEqual({ board: 'main', sel: ['n-two'], visible: ['n-two'] })
+  }, 60_000)
+
+  it('a resolved thread (in its panel, no node): its board is fitted all the same, then it is shown', async () => {
+    if (!browser) return
+    appendEvents(join(root, 'design', 'comments'), 'main', [
+      { id: 'e-show-5', ts: Date.now() - 600, type: 'create', commentId: 't-done', board: 'main', frame: 'demo/two', nodeKey: 'n-two', author: { name: 'Nic' }, body: 'old' },
+      { id: 'e-show-6', ts: Date.now() - 500, type: 'resolve', commentId: 't-done', board: 'main' },
+    ])
+    const t = await open('#/b/main')
+    await show({ board: 'main', n: ['n-two'] })
+    await t.until(settled('main', ['n-two']))
+    await t.ev(`__hold('never')`)   // only the gate's view recorder is wanted here
+    const seq = await show({ board: 'main', c: 't-done' })
+    await expect.poll(() => acks(seq), { timeout: 5000 }).toEqual({ shown: 1, notice: 0 })
+    expect((await t.ev(`__ackViews`)).at(-1)).toEqual(['n-one', 'n-one-b', 'n-two'])
   }, 60_000)
 })
 

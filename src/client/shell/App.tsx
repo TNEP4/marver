@@ -464,8 +464,9 @@ export function App() {
       else if (resumed?.outcome === 'disk') toast(DISK_WON)
       else if (resumed?.outcome === 'gone') toast(BOARD_GONE)
       urlReady.current = true
-      // a board that booted with no nodes has no first camera: its boot is over all the same (spec 31 D3)
-      if (!useStore.getState().nodes.length) markBootLanded()
+      // a board that booted with no nodes has no first camera: its boot is over all the same (spec 31 D3) - but a boot
+      // that failed keeps it, for the reload that recovers it
+      if (ok && !useStore.getState().nodes.length) markBootLanded()
       showsMayGo()   // `marver show` and a deep link's place, held until the board and its camera are restored (spec 31)
       // a link naming frames on a board with NO nodes: the canvas's boot fit never runs (it waits
       // for the first frame) - follow the frame to where it lives from here

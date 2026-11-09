@@ -18,7 +18,7 @@ import { create } from 'zustand'
 import { checkShowTarget, type ShowTarget } from '../../shared/deep-link.ts'
 import { api, typedUnsent } from './api.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
-import { bootLanded } from './canvas/ctl.ts'
+import { bootLanded, markBootLanded } from './canvas/ctl.ts'
 import { openThreadAt } from './jam-keys.ts'
 import { isLatest, navigated, navNow, revealFrame, switchFor } from './goto.ts'
 import { linkTargets } from './hash.ts'
@@ -77,6 +77,9 @@ async function go(t: ShowTarget | 'landing', n: number, force: boolean): Promise
   const alive = () => owned() && !words()
   const ended = (): 'blocked' | 'stale' => (owned() && words() ? 'blocked' : 'stale')
   if (!alive()) return ended()
+  // the camera is this show's from here: a boot still owed its first camera (one that failed, then recovers) never fits
+  // over it
+  markBootLanded()
   let target: ShowTarget
   if (t === 'landing') {
     const board = await landingBoard()
@@ -124,7 +127,8 @@ async function go(t: ShowTarget | 'landing', n: number, force: boolean): Promise
 async function fitOwn(alive: () => boolean): Promise<boolean> {
   if (!alive()) return false
   const sel = useStore.getState().selection
-  if (sel.length) canvasCtl.fitNodes([...sel])
+  // a thread with no node to fit (a resolved one, in its panel): the board it is on, fitted all the same
+  if (sel.length) canvasCtl.fitNodes([...sel]); else canvasCtl.fitAll()
   return cameraLanded(alive)
 }
 
@@ -176,9 +180,10 @@ export async function showTarget(raw: unknown, from: ShowFrom): Promise<ShowResu
     if (from === 'server') front()
     return 'notice'
   }
-  await booted
-  // the boot's own navigation is done; a person's from here on is newer than this show
+  // a person's navigation from the moment it came - while the boot still loads, too - is newer than this show (the
+  // boot's own does not count: it changes boards without starting a navigation)
   const before = navNow()
+  await booted
   // the board's first camera applied (Canvas.tsx), so the boot never lands over the show - a board with no nodes has
   // none to wait for, and a second at most whatever happens
   if (useStore.getState().nodes.length) await Promise.race([bootLanded, new Promise((r) => setTimeout(r, 1500))])
