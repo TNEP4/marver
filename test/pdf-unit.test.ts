@@ -139,6 +139,14 @@ describe('the board a job reads', () => {
     const placeholder = await boardNodes(root, 'deck', fr, VP, ['light'], [{ name: 's' }])
     expect(placeholder!.nodes.find((n) => n.frame === 's/b')!.y).not.toBe(2000)
   })
+  it('a slide that is a Doc with a committed height opens at its stage, its saved height dropped, as the canvas does', async () => {
+    const fr = [{ ...f('s/a', { slide: true }), scene: 's', file: 'design/scenes/s/a.tsx', contentWidth: 1280 }, { ...f('s/b', { slide: true }), scene: 's', file: 'design/scenes/s/b.tsx', note: 'why' }]
+    // at its saved 1000 px A's card would run into B's note (B sits 900 px below it); at its 720 px stage it does not
+    canvas({ nodes: [{ frame: 's/a', x: 0, y: 0, w: 1280, h: 1000 }, { frame: 's/b', x: 300, y: 900, w: 1280, h: 720 }], layout: { rows: [['s']] } }, { boards: { deck: { type: 'slides' } } })
+    writeFileSync(join(root, 'design', 'boards', '_sizes.json'), JSON.stringify({ heights: { 's/a@1280': 1000 } }))
+    const b = await boardNodes(root, 'deck', fr, VP, ['light'], [{ name: 's' }])
+    expect(b!.nodes.map((n) => [n.frame, n.x, n.y])).toEqual([['s/a', 0, 0], ['s/b', 300, 900]])
+  })
   it('a node\'s theme: its own pin, else a legacy stored theme that differs from the frame\'s default', async () => {
     canvas({ nodes: [{ frame: 's/a', x: 0, y: 0, themeUser: 'dark' }, { frame: 's/b', x: 1, y: 0, theme: 'light' }, { frame: 's/c', x: 2, y: 0, theme: 'dark' }] })
     const b = await boardNodes(root, 'deck', frames, VP, ['light', 'dark'])

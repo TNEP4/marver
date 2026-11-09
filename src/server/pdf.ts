@@ -155,7 +155,7 @@ export async function boardNodes(root: string, board: string, frames: (PlanFrame
   const heights = keptSizes(readSizes(root), autoWidthOf(frames, viewports), measuringFrames(root, frames))
   // the size the canvas gives a frame (store.ts defaultSize): a slide its stage, a Doc its width (its viewport's, else
   // its content width) and its committed height, anything else its viewport, else mobile; a frame gone, a phone
-  const def = (f: (typeof frames)[number] | undefined): { w: number; h: number; known?: boolean } => {
+  const def = (f: (typeof frames)[number] | undefined): { w: number; h: number } => {
     if (!f) return { w: 390, h: 844 }
     const sl = slideSize(f, viewports)
     if (sl) return { w: sl.width, h: sl.height }
@@ -163,17 +163,18 @@ export async function boardNodes(root: string, board: string, frames: (PlanFrame
       const vp = viewports[f.viewport ?? '']
       const w = vp?.width ?? f.contentWidth
       const known = heights[`${f.id}@${w}`]
-      return { w, h: known ?? vp?.height ?? Math.round(w * 0.75), known: known !== undefined }
+      return { w, h: known ?? vp?.height ?? Math.round(w * 0.75) }
     }
     const vp = viewports[f.viewport ?? ''] ?? viewports.mobile ?? { width: 390, height: 844 }
     return { w: vp.width, h: vp.height }
   }
-  // a node's size as the canvas hydrates it (store.ts): its saved one - except an auto-sized Doc whose height is known,
-  // which opens at that (a saved w/h there is a guess the first measurement overrides)
+  // a node's size as the canvas hydrates it (store.ts): its saved one - except an auto-sized Doc with a committed height at
+  // its default width (store.ts hasKnownHeight, whichever size defaultSize gave it - a slide's stage too), which opens at
+  // its default size (a saved w/h there is a guess the first measurement overrides)
   const size = (n: Raw) => {
     const f = byId.get(n.frame)
     const d = def(f)
-    const own = !!f?.contentWidth && n.sizeMode !== 'manual' && n.sizeMode !== 'device' && !!d.known
+    const own = !!f?.contentWidth && n.sizeMode !== 'manual' && n.sizeMode !== 'device' && heights[`${f.id}@${d.w}`] !== undefined
     return { w: !own && num(n.w) ? n.w : d.w, h: !own && num(n.h) ? n.h : d.h }
   }
   const nodes: PlanNode[] = raw.map((n) => ({ frame: n.frame, x: num(n.x) ? n.x : 0, y: num(n.y) ? n.y : 0, w: size(n).w, ...(themeOf(n) ? { theme: themeOf(n) } : {}), ...(byId.has(n.frame) ? {} : { missing: true }) }))
