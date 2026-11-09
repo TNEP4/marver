@@ -1320,7 +1320,8 @@ function JamToasts({ toasts }: { toasts: import('./store.ts').Toast[] }) {
   const newest = jams[jams.length - 1]
   return (
     <div className="sh-toasts">
-      {plain.slice(-2).map((t) => (
+      {/* the last two - and a notice with an action (Undo) stays among them while it lasts */}
+      {(() => { const act = plain.filter((t) => t.action).slice(-1); return [...plain.filter((t) => !t.action).slice(act.length ? -1 : -2), ...act].sort((a, b) => a.id - b.id) })().map((t) => (
         <div key={t.id} className="sh-toast" data-toast={t.action?.id}><CheckIcon size={12} /> {t.text}
           {t.action && <button className="sh-toast-act" onClick={() => { const a = t.action!; useStore.getState().dropToast(t.id); a.run() }}>{t.action.label}</button>}
         </div>

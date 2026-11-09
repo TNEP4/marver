@@ -46,7 +46,8 @@ export async function resolveAllFrom(how: CmdOpts, scope: ResolveScope): Promise
   let r: Awaited<ReturnType<typeof commentAction>>
   try { r = await commentAction('resolve-all', { op, scope }) } catch { h.fail('api'); s.toast('could not reach the dev server'); return }
   if (!r.ok) { h.fail('api'); s.toast(String(r.data?.error ?? `resolve-all failed (${r.status})`)); return }
-  await useComments.getState().sweep()
+  // the notice says it at once; the threads follow with one sweep of the logs (seconds on a canvas with many boards)
+  void useComments.getState().sweep()
   const n = Array.isArray(r.data?.resolved) ? r.data.resolved.length : 0
   if (!n && !r.data?.failed?.length) { h.noop('nothing-open'); s.toast(String(r.data?.summary ?? 'Nothing to resolve')); return }
   if (r.data?.failed?.length) h.fail('api'); else h.done()
@@ -62,7 +63,7 @@ async function undoResolveAll(op: string): Promise<void> {
   let r: Awaited<ReturnType<typeof commentAction>>
   try { r = await commentAction('undo', { op }) } catch { h.fail('api'); s.toast('could not reach the dev server'); return }
   if (!r.ok) { h.fail('api'); s.toast(String(r.data?.error ?? `undo failed (${r.status})`)); return }
-  await useComments.getState().sweep()
+  void useComments.getState().sweep()
   if (r.data?.failed?.length) h.fail('api'); else h.done()
   s.toast(String(r.data?.summary ?? 'Reopened'), undefined, 6000)
 }
