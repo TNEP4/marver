@@ -13,7 +13,7 @@
  * and ended by rotating MARVER_CLI_TOKEN - never the operator's secret itself,
  * which is traded for one and then forgotten.
  */
-import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeSync } from 'node:fs'
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync, writeSync } from 'node:fs'
 import { createHash, randomBytes } from 'node:crypto'
 import { join } from 'node:path'
 import { appendEvents, diffEvents, listBoards, readLog, type CommentEvent } from './comments.ts'
@@ -122,7 +122,7 @@ export function saveCollab(root: string, collab: Collab) {
 }
 
 /** One full exchange. Returns per-board counts, or throws on auth/network failure. */
-export async function syncOnce(root: string, collab: Collab): Promise<Record<string, { pulled: number; pushed: number }>> {
+export async function syncOnce(root: string, collab: Collab): Promise<Record<string, { pulled: number; pushed: number; held?: number }>> {
   const dir = join(root, 'design', 'comments')
   const auth = { authorization: `Bearer ${collab.token}` }
   const base = collab.url.replace(/\/+$/, '')
@@ -139,8 +139,9 @@ export async function syncOnce(root: string, collab: Collab): Promise<Record<str
   const caps = await serverCapabilities(base, auth)
 
   const boards = [...new Set([...Object.keys(rights), ...listBoards(dir), ...(legacy ? [legacy.board] : [])])]
-  const out: Record<string, { pulled: number; pushed: number }> = {}
+  const out: Record<string, { pulled: number; pushed: number; held?: number }> = {}
   const failures: string[] = []
+  const held: Record<string, Held[]> = {}
   for (const board of boards) {
     const old = legacy?.board === board
     if (!(board in rights) && !old) continue  // local-only board: nothing published to sync with
@@ -160,7 +161,12 @@ export async function syncOnce(root: string, collab: Collab): Promise<Record<str
       const shipped = old ? threadIds(local, (e) => legacy!.frames.includes(e.frame ?? '')) : null
       // an edit of a message deleted since (here or there) is never sent: the server refuses it, and with it the batch
       const gone = deletedMessages([...local, ...remote])
-      const missing = diffEvents(local, remote.map((e) => e.id)).filter((e) => !(e as { agent?: boolean }).agent && !marverThreads.has(threadOf(e)) && (!shipped || shipped.has(threadOf(e))) && (caps.delete || e.type !== 'delete') && !(e.type === 'edit' && gone.has(e.commentId ?? '')))
+      const candidates = diffEvents(local, remote.map((e) => e.id)).filter((e) => !(e as { agent?: boolean }).agent && !marverThreads.has(threadOf(e)) && (!shipped || shipped.has(threadOf(e))) && (caps.delete || e.type !== 'delete') && !(e.type === 'edit' && gone.has(e.commentId ?? '')))
+      // what the server would refuse - and with it the whole batch, every exchange - is kept here, said, never sent
+      const keptHere = unauthorized(candidates, [...local, ...remote], collab.email)
+      if (keptHere.length) held[board] = keptHere
+      const keep = new Set(keptHere.map((h) => h.id))
+      const missing = candidates.filter((e) => !keep.has(e.id))
       for (let i = 0; i < missing.length; i += 100) {
         const r = await fetch(`${base}/__mv/api/comments/${board}`, {
           method: 'POST', headers: { ...auth, 'content-type': 'application/json' },
@@ -170,11 +176,58 @@ export async function syncOnce(root: string, collab: Collab): Promise<Record<str
         else failures.push(`${board}: push ${r.status} ${((await r.json().catch(() => null)) as any)?.error ?? ''}`.trim())
       }
     }
-    out[board] = { pulled, pushed }
+    out[board] = { pulled, pushed, ...(held[board]?.length ? { held: held[board].length } : {}) }
   }
+  saveHeld(root, held)
   // a partial exchange must never read as a clean one - the caller decides retry vs surface
   if (failures.length) throw new Error(`sync incomplete - ${failures.join(' · ')}`)
   return out
+}
+
+/** Why an event stays on this machine (Codex r6): the published server checks every author against the signed-in
+ *  account and every edit, delete or re-pin against the original message's author. After connecting under another
+ *  address, an event written under the old one - or a change to a message the old one wrote, which this machine still
+ *  lets you make (own.json) - would be refused there, and with it every comment in its batch, every 30 s. */
+export interface Held { id: string; type: string; why: 'another-account' | 'message-of-another-account' | 'thread-kept-here' }
+export function unauthorized(events: CommentEvent[], log: CommentEvent[], account?: string): Held[] {
+  const me = (account ?? '').toLowerCase()
+  if (!me) return []
+  const authorOf = new Map<string, string>()
+  for (const e of log) if ((e.type === 'create' || e.type === 'reply') && e.commentId && !authorOf.has(e.commentId)) authorOf.set(e.commentId, (e.author?.email ?? '').toLowerCase())
+  const out: Held[] = []
+  const heldThreads = new Set<string>()
+  const byAuthor = new Set(['create', 'reply', 'react', 'edit', 'reanchor', 'profile', 'delete'])
+  for (const e of events) {
+    let why: Held['why'] | null = null
+    if (byAuthor.has(e.type) && (e.author?.email ?? '').toLowerCase() !== me) why = 'another-account'
+    else if ((e.type === 'edit' || e.type === 'delete') && authorOf.get(e.commentId ?? '') !== me) why = 'message-of-another-account'
+    else if (e.type === 'reanchor' && (authorOf.get(e.commentId ?? '') ?? me) !== me) why = 'message-of-another-account'
+    else if (heldThreads.has(threadOf(e))) why = 'thread-kept-here'
+    if (!why) continue
+    out.push({ id: e.id, type: e.type, why })
+    if (e.type === 'create' && e.commentId) heldThreads.add(e.commentId)
+  }
+  return out
+}
+const heldFile = (root: string) => join(root, 'design', '.local', 'sync-held.json')
+/** The last exchange's kept events, per board - what `marver comments sync` says, and what stays until you change it. */
+function saveHeld(root: string, held: Record<string, Held[]>): void {
+  try {
+    if (!Object.keys(held).length) { if (existsSync(heldFile(root))) unlinkSync(heldFile(root)); return }
+    mkdirSync(join(root, 'design', '.local'), { recursive: true })
+    writeFileSync(heldFile(root), JSON.stringify({ at: Date.now(), boards: held }, null, 1) + '\n')
+  } catch { /* the status is a convenience; the events stay in the log either way */ }
+}
+/** "1 edit kept local: written under another account" - one line per board and reason. */
+export function heldWords(held: Held[]): string[] {
+  const by = new Map<string, Held[]>()
+  for (const h of held) by.set(h.why, [...(by.get(h.why) ?? []), h])
+  const what = (hs: Held[]) => { const types = [...new Set(hs.map((h) => h.type))]; const n = hs.length; return types.length === 1 ? `${n} ${types[0]}${n === 1 ? '' : 's'}` : `${n} events` }
+  const words = { 'another-account': 'written under another account', 'message-of-another-account': 'its comment was written under another account', 'thread-kept-here': 'its thread is kept local' } as const
+  return [...by].map(([why, hs]) => `${what(hs)} kept local: ${words[why as Held['why']]}`)
+}
+export function readHeld(root: string): Record<string, Held[]> {
+  try { return JSON.parse(readFileSync(heldFile(root), 'utf8')).boards ?? {} } catch { return {} }
 }
 
 /** What a server's comment API takes (`GET /__mv/api/capabilities`, 0.31): anything but a JSON answer that says so

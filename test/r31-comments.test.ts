@@ -12,7 +12,7 @@ import { parseScope, resolveAll, scopeFrames, undoResolveAll, type Receipt, type
 import { fresh, write as writeJournal } from '../src/server/jam/journal.ts'
 import { createJam } from '../src/server/jam/daemon.ts'
 import { answers, ctxFor, dropDeleted, form, freezeBrief, ingest, liveThreads, tombstonesOf } from '../src/server/jam/queue.ts'
-import { admitted, syncOnce } from '../src/server/sync.ts'
+import { admitted, heldWords, readHeld, syncOnce } from '../src/server/sync.ts'
 import { markSlot } from '../app/pages/strip/needs.ts'
 import { wrapupWithoutDeleted, type Wrapup } from '../src/server/jam/session.ts'
 import type { Card } from '../src/server/jam/types.ts'
@@ -586,6 +586,7 @@ describe('sync against old and new servers (spec 31 C.6)', () => {
   /** A published server, enough of one: `old` has no capabilities route and refuses the type `delete` - the whole batch. */
   async function server(old: boolean, validate = false) {
     const store: CommentEvent[] = [{ ...create('pub1'), ts: Date.now() - 5000 }]
+    let account = OWNER.email
     const got: CommentEvent[][] = []
     const srv: Server = createServer((req, res) => {
       const send = (status: number, body: unknown, type = 'application/json') => { res.writeHead(status, { 'content-type': type }); res.end(typeof body === 'string' ? body : JSON.stringify(body)) }
@@ -600,7 +601,7 @@ describe('sync against old and new servers (spec 31 C.6)', () => {
           const { events } = JSON.parse(raw) as { events: CommentEvent[] }
           got.push(events)
           if (old && events.some((e) => e.type === 'delete')) return send(400, { error: 'unknown event type "delete"' })
-          const bad = validate ? validateEvents(events, store, { email: OWNER.email, name: 'Nic', role: 'owner', createdAt: 0 } as never, 'main', { operator: true }) : null
+          const bad = validate ? validateEvents(events, store, { email: account, name: 'Nic', role: 'owner', createdAt: 0 } as never, 'main', { operator: true }) : null
           if (bad) return send(400, { error: bad })
           store.push(...events)
           send(200, { accepted: events.length })
@@ -611,7 +612,7 @@ describe('sync against old and new servers (spec 31 C.6)', () => {
     })
     await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()))
     const port = (srv.address() as { port: number }).port
-    return { url: `http://127.0.0.1:${port}`, got, store, close: () => new Promise<void>((r) => srv.close(() => r())) }
+    return { url: `http://127.0.0.1:${port}`, got, store, as: (email: string) => { account = email }, close: () => new Promise<void>((r) => srv.close(() => r())) }
   }
 
   it('a pull that would delete Marver\'s note here (a remote message claiming its id) leaves it standing', async () => {
@@ -624,6 +625,27 @@ describe('sync against old and new servers (spec 31 C.6)', () => {
         { id: 'hijack-d2', ts: Date.now() - 3000, type: 'delete', commentId: 'marvnote2', board: 'main', author: OTHER })
       await syncOnce(root, { url: srv.url, token: 't' })
       expect(replay(readLog(dir, 'main')).find((x) => x.id === 'marvnote2')).toMatchObject({ body: 'Marver note', agent: true })
+    } finally { await srv.close(); done() }
+  })
+
+  it('connected under another address: a change to the old account\'s message is kept here and said - the rest still goes, exchange after exchange (the real validator)', async () => {
+    const { root, dir, done } = temp('mv-r31-syncacct-')
+    const srv = await server(false, true)
+    try {
+      const NEW = 'nic@new.test'
+      // validated as the account the token signs in: the new address
+      srv.as(NEW)
+      const old = { ...create('oldmsg001', { author: { email: OWNER.email, name: 'Nic' } }), ts: Date.now() - 9000 }
+      srv.store.push(old)
+      appendEvents(dir, 'main', [old, { ...edit('oldmsg001', 'edited after reconnecting', { author: { email: NEW } }), ts: Date.now() - 5000 }, { ...create('newmsg001', { author: { email: NEW } }), ts: Date.now() - 4000 }])
+      const a = await syncOnce(root, { url: srv.url, token: 't', email: NEW })
+      expect(a.main).toMatchObject({ pushed: 1, held: 1 })
+      expect(srv.got.flat().some((e) => e.type === 'edit')).toBe(false)
+      expect(heldWords(readHeld(root).main)).toEqual(['1 edit kept local: its comment was written under another account'])
+      appendEvents(dir, 'main', [{ ...create('newmsg002', { author: { email: NEW } }), ts: Date.now() - 1000 }])
+      const b = await syncOnce(root, { url: srv.url, token: 't', email: NEW })
+      expect(b.main).toMatchObject({ pushed: 1, held: 1 })
+      expect(srv.store.some((e) => e.commentId === 'newmsg002')).toBe(true)
     } finally { await srv.close(); done() }
   })
 

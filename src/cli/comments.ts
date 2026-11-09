@@ -84,7 +84,9 @@ export async function commentsCommand(root: string, action: string, value: strin
       const collab = loadCollab(root)
       if (!collab) throw new Error(`not connected - run \`${NAME} comments connect <url>\` first`)
       const out = await syncOnce(root, collab)
-      for (const [b, n] of Object.entries(out)) console.log(`  ${b}: pulled ${n.pulled}, pushed ${n.pushed}`)
+      const { readHeld, heldWords } = await import('../server/sync.ts')
+      const held = readHeld(root)
+      for (const [b, n] of Object.entries(out)) console.log(`  ${b}: pulled ${n.pulled}, pushed ${n.pushed}${held[b]?.length ? ` - ${heldWords(held[b]).join('; ')}` : ''}`)
       if (!Object.keys(out).length) console.log('  nothing to sync')
       return
     }
