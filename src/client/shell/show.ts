@@ -45,11 +45,14 @@ const holdsWords = (): boolean => typedUnsent() || !!useJamCapture.getState().cu
  * (canvas/ctl.ts `cancelBoot`).
  */
 let booting = true
+/** The board the boot failed to load, while the tab still names it: a show to it loads it again, never takes it as shown */
+let failedBoard: string | null = null
 let deferred: { t: ShowTarget | 'landing'; seq?: number; from: ShowFrom; n: number; nav: number } | null = null
 
 /** App.tsx, once `boot()` answered: a board that failed or has no nodes is settled now; one with nodes once its first
  *  camera is applied (Canvas.tsx), or two seconds at most. */
 export function bootSettled(ok: boolean): void {
+  if (!ok) failedBoard = useStore.getState().board
   const settle = () => {
     if (!booting) return
     booting = false
@@ -110,9 +113,16 @@ async function go(t: ShowTarget | 'landing', n: number, force: boolean): Promise
   if (target.board !== s.board) {
     if (!await switchFor(target.board, nav, alive)) return alive() ? 'missing' : ended()
     s = useStore.getState()
+  } else if (failedBoard === s.board && !s.nodes.length) {
+    // the board the boot failed to load: loaded now, or the show did not happen
+    if (!await s.boot(alive)) return alive() ? 'missing' : ended()
+    s = useStore.getState()
   }
+  failedBoard = null
   if (!alive()) return ended()
   const keys = linkTargets(target, s.nodes)
+  // nodes or a scene named, none on this board: nothing to show - never answered shown (a frame is followed below)
+  if (!keys.length && (target.n?.length || target.s?.length) && !target.f?.length) return 'missing'
   useStore.setState({ selection: keys })
   s.look(keys)
   if (target.c) {

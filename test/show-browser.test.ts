@@ -379,6 +379,37 @@ describe('a show and the boot', () => {
     await t.until(settled('main', ['n-two']))
   }, 60_000)
 
+  it('a person picking a frame in the sidebar while a show loads its board: the show gives way', async () => {
+    if (!browser) return
+    const t = await open('#/b/main')
+    await t.ev(`__hold('other')`)
+    const seq = await show({ board: 'other', n: ['n-three'] })
+    await t.until(`__gate.asked`)
+    // the sidebar's row for demo/two (its scene opened first when folded)
+    const row = `[...document.querySelectorAll('.sub .nm')].find((n) => n.textContent.trim() === 'Two')?.closest('.sub')`
+    if (!(await t.ev(`!!${row}`))) await t.ev(`[...document.querySelectorAll('.it')].find((b) => /demo/i.test(b.textContent))?.click(), 1`)
+    await t.until(`!!${row}`)
+    await t.ev(`${row}.click(), 1`)
+    await t.ev(`__gate.release()`)
+    await new Promise((r) => setTimeout(r, 1500))
+    expect(await t.ev(VIEW)).toMatchObject({ board: 'main', sel: ['n-two'] })
+    expect(await acks(seq)).toEqual({ shown: 0, notice: 0 })
+  }, 60_000)
+
+  it('a show to the board the boot failed to load loads it again; failing again, it is never answered shown', async () => {
+    if (!browser) return
+    const t = await openRaw('#/b/main', `window.__gate.failOnce = 'main'`)
+    await t.until(`__mvStore.getState().board === 'main' && !__mvStore.getState().nodes.length`)
+    await new Promise((r) => setTimeout(r, 500))
+    await t.ev(`__gate.failOnce = 'main', 1`)
+    const failed = await show({ board: 'main', n: ['n-two'] })
+    await new Promise((r) => setTimeout(r, 1500))
+    expect(await acks(failed)).toEqual({ shown: 0, notice: 0 })
+    const seq = await show({ board: 'main', n: ['n-two'] })
+    await expect.poll(() => acks(seq), { timeout: 8000 }).toEqual({ shown: 1, notice: 0 })
+    await t.until(settled('main', ['n-two']))
+  }, 60_000)
+
   it('a boot link\'s thread still loading gives way to a show applied meanwhile', async () => {
     if (!browser) return
     appendEvents(join(root, 'design', 'comments'), 'main', [{ id: 'e-show-7', ts: Date.now() - 400, type: 'create', commentId: 't-old', board: 'main', frame: 'demo/one', nodeKey: 'n-one', author: { name: 'Nic' }, body: 'the boot link\'s' }])
@@ -445,6 +476,32 @@ describe('a show and the boot', () => {
     const seq = await show({ board: 'main', c: 't-done' })
     await expect.poll(() => acks(seq), { timeout: 5000 }).toEqual({ shown: 1, notice: 0 })
     expect((await t.ev(`__ackViews`)).at(-1)).toEqual(['n-one', 'n-one-b', 'n-two'])
+  }, 60_000)
+})
+
+describe('a canvas whose landing board is empty', () => {
+  let root2 = ''
+  let dev2: Dev | null = null
+  beforeAll(async () => {
+    root2 = fixtureRoot('mv-show2-', {
+      'design/config.ts': 'export default { jam: false }\n',
+      'design/scenes/demo/one.tsx': FRAME('One', '#0b5'),
+      'design/boards/blank.json': JSON.stringify({ version: 1, name: 'blank', order: 0, auto: false, nodes: [] }),
+      'design/boards/full.json': JSON.stringify({ version: 1, name: 'full', order: 1, auto: false, nodes: [{ key: 'f-one', frame: 'demo/one', x: 0, y: 0, w: 390, h: 844 }] }),
+    })
+    dev2 = await startDev(root2, { args: ['--port', '5643'] })
+  }, 120_000)
+  afterAll(async () => { await dev2?.stop(); if (root2) rmSync(root2, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) })
+
+  it('a focus link\'s boot enters focus before a deferred show applies: the show leaves it, nothing reopens it', async () => {
+    if (!browser) return
+    const s = await browser.tab({ width: 1400, height: 900 })
+    tabs.push(s)
+    await browser.send('Page.addScriptToEvaluateOnNewDocument', { source: FAKE_APP.replace('onShow: (fn) => { shows.add(fn);', "onShow: (fn) => { shows.add(fn); fn({ board: 'full', n: ['f-one'] });") }, s)
+    await browser.go(s, `${dev2!.origin}/#/f/demo/one`)
+    await browser.until(s, `!!window.__mvStore && __mvStore.getState().board === 'full' && __mvStore.getState().selection.join() === 'f-one'`, 30_000)
+    await new Promise((r) => setTimeout(r, 1000))
+    expect(await browser.eval(s, `({ play: !!__mvStore.getState().play, overlay: !!document.querySelector('.sh-play'), board: __mvStore.getState().board })`)).toEqual({ play: false, overlay: false, board: 'full' })
   }, 60_000)
 })
 

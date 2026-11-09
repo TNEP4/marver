@@ -464,8 +464,6 @@ export function App() {
       else if (resumed?.outcome === 'disk') toast(DISK_WON)
       else if (resumed?.outcome === 'gone') toast(BOARD_GONE)
       urlReady.current = true
-      // a show that came during the boot applies once it settled - success or failure (spec 31 D3)
-      bootSettled(ok)
       // a link naming frames on a board with NO nodes: the canvas's boot fit never runs (it waits
       // for the first frame) - follow the frame to where it lives from here, under the boot's own navigation
       if (ok && bootHash.f?.length && !bootHash.focus && !useStore.getState().nodes.length) void revealFrame(bootHash.f[0], navNow(), () => !bootCancelled())
@@ -485,6 +483,9 @@ export function App() {
         else if (mode === 'focus') enterFocus()
         else if (mode === 'slides') enterSlides()
       }
+      // a show that came during the boot applies once it settled - loaded or failed, its mode (focus, play, slides)
+      // entered first, so nothing of the boot lands after it (spec 31 D3)
+      bootSettled(ok)
     }
     void start()
   }, [])
@@ -1055,6 +1056,7 @@ export function App() {
                   const keys = nodes.filter((n) => frames.some((f) => f.scene === sc.name && f.id === n.frame) && !n.missing).map((n) => n.key)
                   cmd('scene-pick', { via: 'click', in: 'shell', frames: keys.length })
                   if (!keys.length) return
+                  navigated()   // a person's navigation: a show still waiting or loading gives way (spec 31 D3)
                   useStore.getState().selectMany(keys)
                   canvasCtl.fitNodes(keys)
                 }}>
@@ -1082,6 +1084,7 @@ export function App() {
                     const n = nodeFor(id)
                     if (!n) return
                     cmd('frame-pick', { via: 'click', in: 'shell', frame: id })
+                    navigated()   // a person's navigation: a show still waiting or loading gives way (spec 31 D3)
                     select(n.key, shift)
                     if (!shift) canvasCtl.fitNode(n.key)
                   }
@@ -1111,7 +1114,7 @@ export function App() {
                         rows.push(
                           <div key={`g:${f.variantGroup}`} className={`sub vgroup${allOn ? ' on' : ''}${held ? ' held' : ''}`}
                             title="Select all variants"
-                            onClick={() => { cmd('group-fit', { via: 'click', in: 'shell', frames: memberKeys.length }); useStore.getState().selectMany(memberKeys); canvasCtl.fitNodes(memberKeys) }}>
+                            onClick={() => { cmd('group-fit', { via: 'click', in: 'shell', frames: memberKeys.length }); navigated(); useStore.getState().selectMany(memberKeys); canvasCtl.fitNodes(memberKeys) }}>
                             <VariantsIcon size={13} className="iicon" />
                             <span className="glabel">{rel}</span>
                           </div>,
