@@ -48,11 +48,14 @@ Marver fixes each one element by element, and checks its own work:
   that spills past its edge; any link inside it stays clickable.
 - **A large soft shadow** is redrawn as a stack of sharp vector shadows that follows the blur's falloff - no picture
   at all.
+- **An effect on the page itself** (a filter or blend on `body` or `html`) has nothing to be patched into: that page is
+  printed as a 3x picture, and the report says why. So is an effect under a rotation or a skew.
 
-Then the fixed page is compared with the unfixed screenshot. A fix that changes more than 1 % of its own area, or
-anything outside it, is thrown away and that page is printed as a 3x picture instead (*raster*). Every printed page is
-also rasterised (macOS `sips`) and compared with the screen, which catches anything that only goes wrong in print - such
-a page becomes a picture too. Where there is no rasteriser (not on a Mac), the report says *screen-certified only*.
+Then the fixed page is compared with the unfixed screenshot, taken before anything was prepared for print. A fix that
+changes more than 1 % of its own area, or anything outside it, is thrown away and that page is printed as a 3x picture
+instead (*raster*). Every printed page is also rasterised (macOS `sips`) and compared with the screen - pixel by pixel,
+allowing only the edge differences two renderers make, and area by area - which catches anything that only goes wrong
+in print: such a page becomes a picture too. Where there is no rasteriser (not on a Mac), the report says *screen-certified only*.
 
 `--raster` prints every page as a 3x picture (no vector text). `--vector` fixes nothing: every page exactly as Chrome
 prints it (a page whose print differs from the screen is named, and kept).
