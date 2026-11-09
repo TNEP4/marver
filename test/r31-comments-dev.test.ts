@@ -71,6 +71,8 @@ describe('the dev server (spec 31 B.4, C.2-C.6)', () => {
     expect((await edit('old-mine', 'mine, sharper')).status).toBe(200)
     expect(replay(readLog(dir(), 'main')).find((t) => t.id === 'old-mine')).toMatchObject({ body: 'mine, sharper', edited: expect.any(Number) })
     expect((await edit('old-theirs', 'hijack')).status).toBe(403)
+    // an event naming another board's log is refused (it would pass these checks here and be read as that board's)
+    expect((await api('comments/main', { events: [{ id: id('xb'), ts: Date.now(), type: 'delete', commentId: 'old-mine', board: 'resolve-all' }] })).status).toBe(400)
     expect((await del('old-theirs')).status).toBe(403)
     expect((await edit('old-mine', '   ')).status).toBe(400)
     expect((await del('old-mine')).status).toBe(200)

@@ -11,7 +11,7 @@ import { record } from '../src/server/jam/ledger.ts'
 import { parseScope, resolveAll, scopeFrames, undoResolveAll, type Receipt, type UndoReceipt } from '../src/server/comment-actions.ts'
 import { fresh, write as writeJournal } from '../src/server/jam/journal.ts'
 import { createJam } from '../src/server/jam/daemon.ts'
-import { answers, ctxFor, dropDeleted, form, freezeBrief, ingest, liveThreads } from '../src/server/jam/queue.ts'
+import { answers, ctxFor, deletedEverywhere, dropDeleted, form, freezeBrief, ingest, liveThreads } from '../src/server/jam/queue.ts'
 import { admitted, syncOnce } from '../src/server/sync.ts'
 import { markSlot } from '../app/pages/strip/needs.ts'
 import { wrapupWithoutDeleted, type Wrapup } from '../src/server/jam/session.ts'
@@ -461,6 +461,36 @@ describe('older records, titles and captures (spec 31 C.5)', () => {
     expect((dropDeleted(brief, new Set(), new Set(['cap-b'])) as any).capture.reviewed).not.toHaveProperty('capture')
     const w = { captures: [{ id: 'cap-a', record: { context: { board: 'home' } } }, { id: 'cap-c', record: { context: { board: 'home' } } }] } as unknown as Wrapup
     expect(wrapupWithoutDeleted(w, () => new Set(), undefined, () => new Set(['cap-a'])).captures.map((c) => c.id)).toEqual(['cap-c'])
+  })
+
+  it('a nested copy from another board (a capture reviewing a run there) is filtered against that board too', () => {
+    const { root, dir, done } = temp('mv-r31-xboard-')
+    try {
+      const askA = reply('askA001', 'thA00001', { board: 'alpha', body: '@marver alpha secret' })
+      appendEvents(dir, 'alpha', [create('thA00001', { board: 'alpha', capture: 'cap-alpha1', body: 'alpha words' }), askA, del('askA001', { board: 'alpha' }), del('thA00001', { board: 'alpha' })])
+      appendEvents(dir, 'beta', [create('thB00001', { board: 'beta' })])
+      const all = deletedEverywhere(dir)
+      const brief = { asks: [], history: [], capture: { record: { id: 'cap-beta1' }, recordHash: 'h', reviewed: { asks: [{ id: askA.id, body: 'alpha secret', ts: 1 }], result: 'r', capture: { record: { id: 'cap-alpha1' }, recordHash: 'h' } } } } as never
+      const out = JSON.stringify(dropDeleted(brief, new Set([...all.events]), all.captures))
+      expect(out).not.toContain('alpha secret')
+      expect(out).not.toContain('cap-alpha1')
+      expect(out).toContain('cap-beta1')
+      void root
+    } finally { done() }
+  })
+
+  it('a run\'s title never shows a withdrawn capture\'s words, nor a name made from them', () => {
+    const { root, dir, done } = temp('mv-r31-captitle-')
+    try {
+      const j = fresh()
+      j.cards.push({ id: 'cap-title1', kind: 'capture', board: 'home', frames: [], thread: 'capt0001', events: [], state: 'working', autoName: 'the secret capture', made: 1, order: 1, rev: 1, at: 1 } as Card)
+      writeJournal(root, j)
+      appendEvents(dir, 'home', [create('capt0001', { board: 'home', capture: 'cap-title1', body: 'what I said' }), del('capt0001', { board: 'home' })])
+      const jam = createJam(root, { agent: 'claude', concurrency: 1, subagents: true, proactive: false, chime: false, capture: 'confirm', loc: true, names: false, runner: 'background', session: false, context: 'fresh', mcp: true, skills: true, others: true, sessionMax: 1 } as never, { name: 'claude', supportsSubagents: true, spawnArgs: () => ({ cmd: 'true', args: [] }), parse: () => ({}) } as never)
+      const batch = { batchId: 'b2', members: [{ id: 'm1', card: 'cap-title1', board: 'home', brief: { asks: [], history: [] } }], frames: [], state: 'claimed', leaseUntil: 0, attempts: 0, at: 0 } as never
+      expect(jam.runs.title(batch)).not.toContain('secret')
+      jam.stop()
+    } finally { done() }
   })
 
   it('...a tag that joined the capture still stands', () => {
