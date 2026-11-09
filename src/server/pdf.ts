@@ -133,12 +133,13 @@ export async function boardNodes(root: string, board: string, frames: (PlanFrame
   const byId = new Map(frames.map((f) => [f.id, f]))
   type Raw = { frame: string; x?: unknown; y?: unknown; w?: unknown; h?: unknown; theme?: unknown; themeUser?: unknown }
   const auto = b.auto === true
-  // an auto board sheds the nodes whose frame is gone, as the canvas does when it loads it (store.ts)
-  const raw: Raw[] = (Array.isArray(b.nodes) ? b.nodes : []).filter((n): n is Raw => !!n && typeof (n as Raw).frame === 'string' && (!auto || byId.has((n as Raw).frame)))
   const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
-  // the canvas lays a board out again only when a node of its file has no position (store.ts needTidy) - frames an auto
-  // board gains are placed beside the saved ones, which keep theirs
-  const needTidy = raw.some((n) => !num(n.x) || !num(n.y))
+  const saved: Raw[] = (Array.isArray(b.nodes) ? b.nodes : []).filter((n): n is Raw => !!n && typeof (n as Raw).frame === 'string')
+  // the canvas lays a board out again only when a node of its file has no position (store.ts needTidy, counted before an
+  // auto board sheds its gone frames) - frames an auto board gains are placed beside the saved ones, which keep theirs
+  const needTidy = saved.some((n) => !num(n.x) || !num(n.y))
+  // an auto board sheds the nodes whose frame is gone, as the canvas does when it loads it (store.ts)
+  const raw: Raw[] = auto ? saved.filter((n) => byId.has(n.frame)) : saved
   const first = themes[0] ?? 'light'
   const themeOf = (n: Raw): string | undefined => {
     if (typeof n.themeUser === 'string' && themes.includes(n.themeUser)) return n.themeUser

@@ -108,6 +108,12 @@ describe('the board a job reads', () => {
     const plan = exportPlan({ slides: true, nodes: b!.nodes, frames, viewports: VP })
     expect(plan.pages.map((p) => p.frame)).toEqual(['s/b', 's/c', 's/a'])
   })
+  it('an auto board whose file has a node with no position is laid out again, as the canvas does - a gone frame\'s node counts, though it is shed', async () => {
+    canvas({ auto: true, nodes: [{ frame: 's/a', x: 0, y: 1000, w: 1280, h: 720 }, { frame: 's/b', x: 0, y: 0, w: 1280, h: 720 }, { frame: 's/gone' }] })
+    const b = await boardNodes(root, 'deck', frames, VP, ['light'])
+    expect(b!.nodes.map((n) => n.frame)).toEqual(['s/a', 's/b', 's/c'])
+    expect(b!.nodes.find((n) => n.frame === 's/a')!.y).not.toBe(1000)
+  })
   it('a node\'s theme: its own pin, else a legacy stored theme that differs from the frame\'s default', async () => {
     canvas({ nodes: [{ frame: 's/a', x: 0, y: 0, themeUser: 'dark' }, { frame: 's/b', x: 1, y: 0, theme: 'light' }, { frame: 's/c', x: 2, y: 0, theme: 'dark' }] })
     const b = await boardNodes(root, 'deck', frames, VP, ['light', 'dark'])
