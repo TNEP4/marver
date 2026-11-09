@@ -171,8 +171,15 @@ describe('sessions: review fixes', () => {
     await j0.session({ action: 'start', id: SES })
     j0.stop()
     const r1 = await toReview('make it blue')
+    const a4 = createJam(root, { ...CFG, concurrency: 1 }, agent('ok', { hang: true }))
+    expect((await a4.act(r1.id, card(a4, r1.id).rev, 'more', 'the secret more work')).ok).toBe(true)
+    a4.stop()
+    // the More work runs, and the capture is back in review - its ask is on the card, done
+    const a5 = createJam(root, { ...CFG, concurrency: 1 }, agent())
+    await a5.tick()
+    expect(card(a5, r1.id).state).toBe('review')
+    a5.stop()
     const a3 = createJam(root, { ...CFG, concurrency: 1 }, agent('ok', { hang: true }))
-    expect((await a3.act(r1.id, card(a3, r1.id).rev, 'more', 'the secret more work')).ok).toBe(true)
     const mw = readLog(commentsDir, 'home').find((e) => e.id.startsWith('mw-'))!
     appendEvents(commentsDir, 'home', [{ id: `del-${mw.id}`, ts: Date.now(), type: 'delete', commentId: mw.commentId, board: 'home', author: { email: 'nic@local', name: 'Nic' } }])
     const w = await a3.session({ action: 'wrapup', id: SES, instructions: 'x', includeTalk: false, tags: 0, board: 'home' })
