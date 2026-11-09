@@ -89,7 +89,9 @@ export function jamBusy(root: string, live?: () => Set<string>): Set<string> {
 
 /** `board` is the log the event is written to; `stamp`, when it differs, the board its thread's own events name (a log
  *  copied from another board's keeps their `board`) - the event carries it, so every reader groups it with its thread. */
-export interface Resolved { board: string; thread: string; event: string; stamp?: string; /** the event's time, fixed with the plan (a retry writes the same) */ ts?: number }
+export interface Resolved { board: string; thread: string; event: string; stamp?: string; /** the event's time, fixed with the plan (a retry writes the same) */ ts?: number
+  /** how many events the thread held when it was planned - Undo sees one arrived since whatever its clock said */
+  known?: number }
 export interface Receipt {
   op: string
   scope: Scope
@@ -197,7 +199,7 @@ export function resolveAll(root: string, op: string, scope: Scope, o: ResolveAll
     const logOf = (b: string) => { let l = logs.get(b); if (!l) logs.set(b, (l = readLog(dir, b))); return l }
     for (const t of threadsIn(root, where.frames)) {
       if (busy.has(`${t.board}\t${t.thread}`)) { skipped.push({ board: t.board, thread: t.thread, why: 'working' }); continue }
-      plan.push({ board: t.board, thread: t.thread, event: idFor('ra', op, t.board, t.thread), ...(t.stamp ? { stamp: t.stamp } : {}), ts: after(logOf(t.board), t.thread, at) })
+      plan.push({ board: t.board, thread: t.thread, event: idFor('ra', op, t.board, t.thread), ...(t.stamp ? { stamp: t.stamp } : {}), ts: after(logOf(t.board), t.thread, at), known: threadEvents(logOf(t.board), t.thread).length })
     }
   }
   const receipt: Receipt = { op, scope, at: had?.at ?? at, state: 'pending', resolved: plan, skipped, failed: [] }
@@ -242,6 +244,14 @@ export function undoResolveAll(root: string, op: string, o: { now?: number } = {
   const logs = new Map<string, CommentEvent[]>()
   const logOf = (b: string) => { let l = logs.get(b); if (!l) logs.set(b, (l = readLog(dir, b))); return l }
   let reopened: Resolved[] = [], changed: UndoReceipt['changed'] = []
+  /** Nothing happened in the thread since the op resolved it: its latest event is that resolve, and no event arrived
+   *  since the plan however its clock ordered it (a slower clock sorts before the resolve - Codex r3). */
+  const untouched = (r: Resolved, events: CommentEvent[]) => {
+    const evs = threadEvents(events, r.thread)
+    if (evs.at(-1)?.id !== r.event) return false
+    const reopen = idFor('ru', op, r.board, r.thread)
+    return r.known === undefined || evs.filter((e) => e.id !== r.event && e.id !== reopen).length <= r.known
+  }
   if (had) {
     // a pending undo (a crash between its appends and its end): the same reopens, at the same times - each one not
     // written yet checked again, as the first time: anything since, and it is left as it is (Codex r2)
@@ -249,17 +259,16 @@ export function undoResolveAll(root: string, op: string, o: { now?: number } = {
     for (const r of had.reopened) {
       const events = logOf(r.board)
       if (events.some((e) => e.id === r.event)) { reopened.push(r); continue }
-      const latest = threadEvents(events, r.thread).at(-1)
-      if (latest?.id === idFor('ra', op, r.board, r.thread)) reopened.push(r)
+      const planned = done.resolved.find((x) => x.board === r.board && x.thread === r.thread)
+      if (planned && untouched(planned, events)) reopened.push(r)
       else changed.push({ board: r.board, thread: r.thread })
     }
   } else for (const r of done.resolved) {
     const events = logOf(r.board)
     // its latest event must still be the op's resolve: a reply, an edit, a reaction, a reopen since - anything - and it
     // is left as it is (spec 31 B.3)
-    const latest = threadEvents(events, r.thread).at(-1)
     const shown = replay(events).some((t) => t.id === r.thread)
-    if (shown && latest?.id === r.event) reopened.push({ board: r.board, thread: r.thread, event: idFor('ru', op, r.board, r.thread), ...(r.stamp ? { stamp: r.stamp } : {}), ts: after(events, r.thread, at) })
+    if (shown && untouched(r, events)) reopened.push({ board: r.board, thread: r.thread, event: idFor('ru', op, r.board, r.thread), ...(r.stamp ? { stamp: r.stamp } : {}), ts: after(events, r.thread, at) })
     else changed.push({ board: r.board, thread: r.thread })
   }
   const receipt: UndoReceipt = { op, at: had?.at ?? at, state: 'pending', reopened, changed, failed: [] }

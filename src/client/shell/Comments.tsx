@@ -861,11 +861,12 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
           ? <p className="cm-body cm-deleted" data-deleted>Comment deleted</p>
           : <>
             <MessageHead author={thread.author} agent={thread.agent} agentMeta={thread.agentMeta} ts={thread.ts} board={thread.board} eventId={eventOf(thread.id)}
-              edited={thread.edited} tools={thread.capture ? null : tools(thread)} />
-            {/* a capture's comment reads as a capture: a labelled block, never a typed comment (spec 27) */}
-            {thread.capture
+              edited={thread.edited} tools={tools(thread)} />
+            {/* a capture's comment reads as a capture: a labelled block, never a typed comment (spec 27) - yours to edit or
+                delete like any message (deleting it withdraws a capture not sent yet) */}
+            {words(thread, true, thread.capture
               ? <CaptureBlock id={thread.capture} facts={thread.facts} words={thread.body ?? ''} />
-              : words(thread, true, <CommentBody body={thread.body} owner={isOwner(thread.author)} />)}
+              : <CommentBody body={thread.body} owner={isOwner(thread.author)} />)}
           </>}
         {/* replies repeat the root's exact message shape (Figma's pattern) - only the icons differ */}
         {thread.replies.map((r) => (

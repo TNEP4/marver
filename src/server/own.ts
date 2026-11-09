@@ -36,7 +36,7 @@ function read(root: string): OwnFile | null {
   try {
     const v = JSON.parse(readFileSync(f, 'utf8'))
     if (!v || typeof v !== 'object' || Array.isArray(v) || typeof v.boards !== 'object' || !v.boards || Array.isArray(v.boards)) return null
-    const boards: Record<string, string[]> = {}
+    const boards: Record<string, string[]> = Object.create(null)
     for (const [b, ids] of Object.entries(v.boards)) if (Array.isArray(ids)) boards[b] = ids.filter((x): x is string => typeof x === 'string' && !!x)
     return { v: 1, migrated: v.migrated === true, boards }
   } catch { return null }
@@ -55,11 +55,12 @@ function write(root: string, own: OwnFile): void {
 export function migrateOwnership(root: string): void {
   const have = read(root)
   if (have?.migrated) return
-  const boards: Record<string, string[]> = { ...(have?.boards ?? {}) }
+  // (a dictionary without a prototype: a board may be called `constructor`)
+  const boards: Record<string, string[]> = Object.assign(Object.create(null), have?.boards ?? {})
   const ledger = ledgerOwned(root)
   const me = localProfile(root).email.toLowerCase()
   for (const board of listBoards(commentsOf(root))) {
-    const ids = new Set(boards[board] ?? [])
+    const ids = new Set(Object.hasOwn(boards, board) ? boards[board] : [])
     for (const e of readLog(commentsOf(root), board)) {
       if ((e.type !== 'create' && e.type !== 'reply') || !e.commentId || e.agent || e.agentMeta) continue
       const theirs = (e.author?.email ?? '').toLowerCase()
@@ -77,7 +78,7 @@ function sets(root: string): Map<string, Set<string>> {
   const hit = cache.get(root)
   if (hit && hit.key === key && key) return hit.sets
   if (!key || !read(root)?.migrated) migrateOwnership(root)
-  const own = read(root) ?? { v: 1 as const, migrated: true, boards: {} }
+  const own = read(root) ?? { v: 1 as const, migrated: true, boards: Object.create(null) as Record<string, string[]> }
   const out = new Map(Object.entries(own.boards).map(([b, ids]) => [b, new Set(ids)]))
   try { const st = statSync(f); cache.set(root, { key: `${st.mtimeMs}:${st.size}`, own, sets: out }) } catch { /* unwritable: no cache */ }
   return out
@@ -88,8 +89,8 @@ export function recordOwn(root: string, board: string, ids: readonly string[]): 
   const fresh = ids.filter((x) => typeof x === 'string' && !!x)
   if (!board || !fresh.length) return
   sets(root)   // migrated first: a fresh file never skips the migration
-  const own = read(root) ?? { v: 1 as const, migrated: true, boards: {} }
-  const list = new Set(own.boards[board] ?? [])
+  const own = read(root) ?? { v: 1 as const, migrated: true, boards: Object.create(null) as Record<string, string[]> }
+  const list = new Set(Object.hasOwn(own.boards, board) ? own.boards[board] : [])
   const before = list.size
   for (const id of fresh) list.add(id)
   if (list.size === before) return

@@ -175,13 +175,16 @@ export function readWrapup(root: string, id: string): { wrapup: Wrapup; hash: st
 export const captureText = (c: WrapupCapture): string => [c.edited ?? speechLines(c.record.timeline.flatMap((s) => (s.event === 'words' || s.event === 'note' ? [{ kind: s.event, text: s.text }] : []))), ...(c.added ?? []).map((a) => a.text)].filter(Boolean).join('\n')
 
 /** A sealed wrap-up's content as a run may read it (spec 31 C.5): each More work ask whose reply was deleted is left out
- *  (`gone`: a capture's board -> its deleted events). The sealed file is untouched - its hash still proves it. */
-export function wrapupWithoutDeleted(w: Wrapup, gone: (board: string) => ReadonlySet<string>): Wrapup {
+ *  (`gone`: a capture's board -> its deleted events; `words`: -> the words of its deleted More work replies, for a record
+ *  sealed before 0.31, whose asks name no event). The sealed file is untouched - its hash still proves it. */
+export function wrapupWithoutDeleted(w: Wrapup, gone: (board: string) => ReadonlySet<string>, words?: (board: string) => ReadonlySet<string>): Wrapup {
   let changed = false
   const captures = w.captures.map((c) => {
     if (!c.more?.length) return c
     const g = gone(c.record.context.board)
-    const more = c.more.filter((m) => !m.event || !g.has(m.event))
+    // a record sealed before 0.31 names no event: its ask is matched by its words against the deleted More work replies
+    const said = words?.(c.record.context.board)
+    const more = c.more.filter((m) => (m.event ? !g.has(m.event) : !said?.has(m.ask.trim())))
     if (more.length === c.more.length) return c
     changed = true
     return { ...c, ...(more.length ? { more } : { more: undefined }) }

@@ -171,6 +171,12 @@ function edited(j: Journal, board: string, events: CommentEvent[], ev: CommentEv
 function deleted(j: Journal, board: string, events: CommentEvent[], message: string, now: number): boolean {
   const ids = new Set(events.filter((e) => (e.type === 'create' || e.type === 'reply') && e.commentId === message).map((e) => e.id))
   let changed = false
+  // a capture's own comment deleted: the capture is your request - not sent yet (a draft, waiting), it is dropped
+  for (const e of events) {
+    if (e.type !== 'create' || e.commentId !== message || !e.capture) continue
+    const cap = j.cards.find((c) => c.id === e.capture && c.kind === 'capture')
+    if (cap && (cap.state === 'draft' || cap.state === 'confirming' || cap.state === 'queued')) { set(cap, 'dropped', now, 'deleted'); changed = true }
+  }
   for (const c of j.cards) {
     if (c.board !== board || c.state !== 'queued' || !c.events.some((id) => ids.has(id))) continue
     c.events = c.events.filter((id) => !ids.has(id)); c.rev += 1; c.at = now

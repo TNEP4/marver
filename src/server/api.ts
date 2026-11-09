@@ -1454,6 +1454,10 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
               author: clean.author ?? (['create', 'reply', 'react', 'edit', 'delete'].includes(clean.type) ? me : undefined),
             }
           })
+          // loaded BEFORE the append (Codex r3): from the append to the ledger line below nothing is awaited, so a
+          // resolve-all (one synchronous step too) never sees an owner's tag in the log that is not yet ledgered as one
+          const { record } = await import('./jam/ledger.ts')
+          const { recordOwn } = await import('./own.ts')
           const fresh = appendEvents(dir, cm[1], stamped)
           // Authorize the owner's fresh create/reply events for the Live Jam daemon. Order is the
           // contract: appendEvents fsync'd the event FIRST (above), then we ledger it - a crash
@@ -1462,11 +1466,10 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           // ledger only ever holds owner input - the fail-closed direction of atomicity.
           // Edits are ledgered too (0.26): an event's text is its body or its latest LEDGERED edit, so an
           // edit that arrived by sync is never the owner's words. An edit never starts work.
-          const { record } = await import('./jam/ledger.ts')
           for (const ev of fresh) if (ev.type === 'create' || ev.type === 'reply' || ev.type === 'edit') record(root, cm[1], ev.id)
           // ...and the messages are this machine's human's (spec 31 C.2): what lets them edit or delete one later
           const mine = fresh.filter((ev) => (ev.type === 'create' || ev.type === 'reply') && typeof ev.commentId === 'string').map((ev) => ev.commentId!)
-          if (mine.length) (await import('./own.ts')).recordOwn(root, cm[1], mine)
+          if (mine.length) recordOwn(root, cm[1], mine)
           // the queue ingests at once - a tag is a card before the watcher wakes
           ;(await import('./jam/live.ts')).jamLive.poke?.()
           // push in the background - the periodic sync catches anything this drops

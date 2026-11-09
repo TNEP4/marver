@@ -273,10 +273,11 @@ export const useComments = create<CommentsState>((set, get) => {
       const r = await request('comment-ownership', { headers: { 'x-mv-c': csrf() } })
       if (!r.ok) return
       const b = await r.json() as { boards?: Record<string, string[]> }
-      const next: Record<string, Set<string>> = {}
+      // (no prototype: a board may be called `constructor`)
+      const next: Record<string, Set<string>> = Object.create(null)
       for (const [k, ids] of Object.entries(b.boards ?? {})) if (Array.isArray(ids)) next[k] = new Set(ids)
       // what this page wrote since stays mine (its sweep may have read the file a moment before the write)
-      for (const [k, ids] of Object.entries(get().ownership ?? {})) for (const id of ids) (next[k] ??= new Set()).add(id)
+      for (const [k, ids] of Object.entries(get().ownership ?? {})) for (const id of ids) (Object.hasOwn(next, k) ? next[k] : (next[k] = new Set())).add(id)
       set({ ownership: next })
     } catch { /* the next sweep */ }
   }
@@ -394,8 +395,8 @@ export const useComments = create<CommentsState>((set, get) => {
         if (get().local) {
           const mine = stamped.filter((e) => (e.type === 'create' || e.type === 'reply') && e.commentId)
           if (mine.length) {
-            const own = { ...(get().ownership ?? {}) }
-            own[target] = new Set([...(own[target] ?? []), ...mine.map((e) => e.commentId!)])
+            const own: Record<string, Set<string>> = Object.assign(Object.create(null), get().ownership ?? {})
+            own[target] = new Set([...(Object.hasOwn(own, target) ? own[target] : []), ...mine.map((e) => e.commentId!)])
             set({ ownership: own })
           }
         }
@@ -441,7 +442,7 @@ export const useComments = create<CommentsState>((set, get) => {
     isMine(board, msg) {
       if (msg.agent) return false
       const { local, ownership, me } = get()
-      if (local) return !!board && !!ownership?.[board]?.has(msg.id)
+      if (local) return !!board && !!ownership && Object.hasOwn(ownership, board) && ownership[board].has(msg.id)
       return !!me?.id && !!msg.author?.id && msg.author.id === me.id
     },
 

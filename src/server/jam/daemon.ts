@@ -373,6 +373,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       return packet ? sessionBrief(packet, handle, as, { agent: conn.agent, conn: conn.id, overlaps: overlapsOf(b, conn) }) : `The packet of this run is missing (${packetPath(b.batchId)}) - release it: \`npx marver jam release ${handle}${as ? ` --as ${as}` : ''}\`.`
     },
     say: (b) => ensureEarly(b),
+    gone: (board) => goneCached(board),
     ready: () => ready,
     // the session record a wrap-up queues belongs to the session it closes: it goes to your session too
     // a Jam session runs (its own record, written once it ended, is offered to your session by runs.ts - nothing else)
@@ -425,6 +426,22 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
    *  with none the caller ends the run (`ended`). The packet is changed in place; the caller writes it. */
   /** A board's deleted create and reply events, read now. */
   const goneOf = (board: string): Set<string> => deletedEvents(readLog(commentsDir, board))
+  /** The words of a board's deleted More work replies, as a record keeps them (the tag gone) - for records sealed before 0.31 */
+  const goneWords = (board: string): Set<string> => {
+    const log = readLog(commentsDir, board), g = deletedEvents(log)
+    return new Set(log.filter((e) => e.id.startsWith('mw-') && g.has(e.id)).map((e) => (e.body ?? '').replace(/^@marver\s*/i, '').trim()))
+  }
+  /** ...and read again only when its log changed (titles are asked for on every view of the queue) */
+  const goneSeen = new Map<string, { key: string; gone: Set<string> }>()
+  const goneCached = (board: string): Set<string> => {
+    let key = ''
+    try { const st = statSync(join(commentsDir, `${board}.jsonl`)); key = `${st.size}:${st.mtimeMs}` } catch { return new Set() }
+    const hit = goneSeen.get(board)
+    if (hit?.key === key) return hit.gone
+    const gone = goneOf(board)
+    goneSeen.set(board, { key, gone })
+    return gone
+  }
   function scrubDeleted(j: Journal, b: Batch, packet: JobPacket | null): { changed: boolean; left: number } {
     const gone = new Map<string, Set<string>>()
     const goneIn = (board: string) => { let g = gone.get(board); if (!g) gone.set(board, (g = goneOf(board))); return g }
@@ -439,7 +456,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       if (pm && JSON.stringify(dropDeleted(pm.brief, g)) !== JSON.stringify(pm.brief)) changed = true
       if (c.events.some((id) => g.has(id))) { c.events = c.events.filter((id) => !g.has(id)); changed = true }
       const briefAsks = (m.brief ?? pm?.brief)?.asks.length ?? 0
-      if (c.kind === 'comment' && c.state === 'working' && (!c.events.length || !briefAsks)) { c.state = 'dropped'; c.note = 'deleted'; c.rev += 1; c.at = Date.now(); changed = true }
+      // a capture whose own comment was deleted is a request withdrawn, like a tag's
+      const capGone = c.kind === 'capture' && readLog(commentsDir, m.board).some((e) => e.type === 'create' && e.capture === c.id && g.has(e.id))
+      if (c.state === 'working' && ((c.kind === 'comment' && (!c.events.length || !briefAsks)) || capGone)) { c.state = 'dropped'; c.note = 'deleted'; c.rev += 1; c.at = Date.now(); changed = true }
     }
     if (changed) {
       const survivors = b.members.filter((m) => j.cards.find((x) => x.id === m.card)?.state === 'working')
@@ -452,7 +471,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       const ids = new Map(b.members.map((m) => [m.card, m.id]))
       const next = packet.members.filter((x) => ids.has(x.card)).map((x) => {
         const brief = dropDeleted(x.brief, goneIn(x.board))!
-        return { ...x, id: ids.get(x.card)!, brief: brief.wrapup ? { ...brief, wrapup: { ...brief.wrapup, content: wrapupWithoutDeleted(brief.wrapup.content, goneIn) } } : brief }
+        return { ...x, id: ids.get(x.card)!, brief: brief.wrapup ? { ...brief, wrapup: { ...brief.wrapup, content: wrapupWithoutDeleted(brief.wrapup.content, goneIn, goneWords) } } : brief }
       })
       if (JSON.stringify(next) !== JSON.stringify(packet.members)) { packet.members = next; changed = true }
     }
@@ -766,7 +785,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       if (c.kind === 'wrapup') {
         const w = readWrapup(root, wrapupOf(c))
         if (!w || !wrapupIntact(q.ctx(), c) || recordPathProblem(root, w.wrapup.file)) { bad.push(m.card); continue }
-        brief = { ...brief, wrapup: { content: wrapupWithoutDeleted(w.wrapup, goneOf), hash: w.hash } }
+        brief = { ...brief, wrapup: { content: wrapupWithoutDeleted(w.wrapup, goneOf, goneWords), hash: w.hash } }
       } else if (brief.wrapup) { const { wrapup: _w, ...rest } = brief; brief = rest }   // only a record carries one
       // owner-only (spec 29b v2, 7): a brief frozen with other people's words - before 0.28, when it carries no policy
       // of its own - is cleaned before any runner reads it, and kept cleaned
@@ -964,7 +983,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
             const c = q.j.cards.find((x) => x.id === m.card)
             const w = c && readWrapup(root, wrapupOf(c))
             if (!c || !w || !wrapupIntact(q.ctx(), c) || recordPathProblem(root, w.wrapup.file)) throw new Error('the session record changed after it was written - write it again')
-            m.brief = { ...m.brief, wrapup: { content: wrapupWithoutDeleted(w.wrapup, goneOf), hash: w.hash } }
+            m.brief = { ...m.brief, wrapup: { content: wrapupWithoutDeleted(w.wrapup, goneOf, goneWords), hash: w.hash } }
           }
           writePacket()
           const beat = setInterval(followWork, 2_000)
