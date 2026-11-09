@@ -19,8 +19,12 @@ export interface CanvasWheelInput {
 /** The board's first camera - its boot fit or restored camera (Canvas.tsx) - has been applied: `marver show` goes only
  *  after it, so the boot never lands over a show (spec 31 D3). */
 let bootLandedNow: () => void = () => {}
+let bootIsDone = false
 export const bootLanded = new Promise<void>((r) => { bootLandedNow = r })
-export function markBootLanded(): void { bootLandedNow() }
+/** Called once the first camera is applied - or, for a board that boots with no nodes, once its boot is over (App.tsx):
+ *  from then on no board load restores the boot camera (a show to a populated board is never fitted over by it). */
+export function markBootLanded(): void { bootIsDone = true; bootLandedNow() }
+export const bootCameraDone = (): boolean => bootIsDone
 
 export const canvasCtl = {
   fitNode(_key: string) {},

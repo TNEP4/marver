@@ -97,7 +97,7 @@ async function go(t: ShowTarget | 'landing', n: number, force: boolean): Promise
     // the thread where it can be seen - pins turned on, a resolved one in its panel - under the same request, and
     // waited for: a thread that never shows is no "shown"
     if (!await openThreadAt(target.board, target.c, { alive })) return alive() ? 'missing' : ended()
-    return (await cameraLanded(alive)) ? 'shown' : ended()
+    return (await fitOwn(alive)) ? 'shown' : ended()
   }
   if (!keys.length && target.f?.length) {
     // not on this board's nodes: where it lives, under the same request - shown once it is selected there and the
@@ -106,7 +106,7 @@ async function go(t: ShowTarget | 'landing', n: number, force: boolean): Promise
     await revealFrame(f, nav, alive)
     for (let i = 0; i < 40 && alive(); i++) {
       const now = useStore.getState()
-      if (now.selection.some((k) => now.nodes.find((x) => x.key === k)?.frame === f)) return (await cameraLanded(alive)) ? 'shown' : ended()
+      if (now.selection.some((k) => now.nodes.find((x) => x.key === k)?.frame === f)) return (await fitOwn(alive)) ? 'shown' : ended()
       await new Promise((r) => setTimeout(r, 50))
     }
     return alive() ? 'missing' : ended()
@@ -117,6 +117,15 @@ async function go(t: ShowTarget | 'landing', n: number, force: boolean): Promise
   if (!alive()) return ended()
   if (keys.length) canvasCtl.fitNodes(keys); else canvasCtl.fitAll()
   return (await cameraLanded(alive)) ? 'shown' : ended()
+}
+
+/** The show's own fit to what the helper selected (revealFrame's and revealThread's fits run on their timers, which a
+ *  newer show may cancel): this command's camera, then its landing - in a background tab at once. */
+async function fitOwn(alive: () => boolean): Promise<boolean> {
+  if (!alive()) return false
+  const sel = useStore.getState().selection
+  if (sel.length) canvasCtl.fitNodes([...sel])
+  return cameraLanded(alive)
 }
 
 /** The camera came to rest (the commands' own rule, commands.ts `cameraDone`: it flew and stopped, or rested 250 ms),

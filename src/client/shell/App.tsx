@@ -16,6 +16,7 @@ import { Tip } from './Tip.tsx'
 import { PKG, ROUTE } from '../const.ts'
 import { api, resumed, scoped, useLink } from './api.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
+import { markBootLanded } from './canvas/ctl.ts'
 import { frameByWindow, fromLiveDocument } from './canvas/frame-registry.ts'
 import { recorder } from './recorder.ts'
 import { perfSeams } from './recorder-seams.ts'
@@ -463,6 +464,8 @@ export function App() {
       else if (resumed?.outcome === 'disk') toast(DISK_WON)
       else if (resumed?.outcome === 'gone') toast(BOARD_GONE)
       urlReady.current = true
+      // a board that booted with no nodes has no first camera: its boot is over all the same (spec 31 D3)
+      if (!useStore.getState().nodes.length) markBootLanded()
       showsMayGo()   // `marver show` and a deep link's place, held until the board and its camera are restored (spec 31)
       // a link naming frames on a board with NO nodes: the canvas's boot fit never runs (it waits
       // for the first frame) - follow the frame to where it lives from here

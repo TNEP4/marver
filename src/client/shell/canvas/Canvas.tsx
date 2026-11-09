@@ -165,7 +165,7 @@ export function animateLayout(ms = 360) {
 // the control channel lives in ctl.ts so play/focus can import it without
 // dragging the canvas into a locked-shell bundle; Canvas assigns the real
 // implementations below when it mounts
-import { canvasCtl, markBootLanded, type CanvasWheelInput } from './ctl.ts'
+import { bootCameraDone, canvasCtl, markBootLanded, type CanvasWheelInput } from './ctl.ts'
 import { cmd, type CmdHandle } from '../commands.ts'
 export { canvasCtl, type CanvasWheelInput }
 import { anchorNode, anchoredCamera, type Held } from './anchor.ts'
@@ -352,7 +352,8 @@ export function Canvas() {
   // refit through their own path.
   const booted = useRef(false)
   useEffect(() => {
-    if (booted.current || nodes.length === 0) return
+    // the boot's camera, once: never for a later board load once the boot is over (an empty board boots with none)
+    if (booted.current || nodes.length === 0 || bootCameraDone()) return
     let revealed = false
     booted.current = true
     // the page before this one reloaded itself when its canvas came back: its camera, on the board it showed

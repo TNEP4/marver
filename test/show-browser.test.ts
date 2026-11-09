@@ -38,6 +38,7 @@ beforeAll(async () => {
       { key: 'n-one-b', frame: 'demo/one', x: 6000, y: 0, w: 390, h: 844 },
     ] }),
     'design/boards/other.json': JSON.stringify({ version: 1, name: 'other', order: 1, auto: false, nodes: [{ key: 'n-three', frame: 'demo/three', x: 0, y: 0, w: 390, h: 844 }] }),
+    'design/boards/empty.json': JSON.stringify({ version: 1, name: 'empty', order: 2, auto: false, nodes: [] }),
   })
   dev = await startDev(root, { args: ['--port', String(PORT)] })
   browser = await Browser.launch()
@@ -62,8 +63,13 @@ const GATE = `(() => {
   const realFetch = window.fetch.bind(window)
   window.__gate = { name: null, asked: false, release: null }
   window.__hold = (name) => { const g = window.__gate; g.name = name; g.asked = false; g.held = new Promise((r) => { g.release = () => { g.name = null; r(); return 1 } }); return 1 }
+  window.__ackViews = []
   window.fetch = async (input, init) => {
     const g = window.__gate, url = String(input && input.url ? input.url : input)
+    if (url.includes('/__mv/api/show/ack') && init && init.body && JSON.parse(init.body).outcome === 'shown') {
+      const inside = (el) => { const r = el.getBoundingClientRect(); return r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight }
+      window.__ackViews.push([...document.querySelectorAll('.sh-node[data-node]')].filter(inside).map((n) => n.dataset.node).sort())
+    }
     if (g.name && url.split('?')[0].endsWith('/__mv/api/boards/' + g.name) && (!init || !init.method || init.method === 'GET')) { g.asked = true; await g.held }
     return realFetch(input, init)
   }
@@ -93,6 +99,17 @@ async function open(hash = '#/b/main', o: { app?: boolean } = {}) {
     until: (js: string, ms = 15_000) => browser!.until(s, js, ms),
   }
 }
+/** A tab on the board with no nodes (its canvas never fitted a first camera). */
+async function openEmpty() {
+  const s = await browser!.tab({ width: 1400, height: 900 })
+  tabs.push(s)
+  await browser!.send('Page.addScriptToEvaluateOnNewDocument', { source: GATE }, s)
+  await browser!.go(s, `${dev!.origin}/#/b/empty`)
+  await browser!.until(s, `!!window.__mvStore && __mvStore.getState().board === 'empty' && !!__mvStore.getState().manifest && !!window.__mvShow`, 30_000)
+  await new Promise((r) => setTimeout(r, 500))
+  return { s, ev: (js: string) => browser!.eval(s, js), until: (js: string, ms = 15_000) => browser!.until(s, js, ms) }
+}
+
 /** The board, the selection, and which nodes are inside the window. */
 const VIEW = `(() => {
   const inside = (el) => { const r = el.getBoundingClientRect(); return r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight }
@@ -281,6 +298,33 @@ describe('sh:show in the tab (D3)', () => {
     expect(await post({ board: 'nowhere' })).toBe(404)
     expect(await post({ board: 'main' }, {})).toBe(403)
   }, 30_000)
+})
+
+describe('in a tab in the background (the page reports hidden)', () => {
+  const HIDE = `Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' }), 1`
+
+  it('booted on an empty board: a show to a populated one is never fitted over by the boot camera afterwards', async () => {
+    if (!browser) return
+    const t = await openEmpty()
+    await t.ev(HIDE)
+    const seq = await show({ board: 'main', n: ['n-two'] })
+    await expect.poll(() => acks(seq), { timeout: 5000 }).toEqual({ shown: 1, notice: 0 })
+    await t.until(settled('main', ['n-two']))
+    await new Promise((r) => setTimeout(r, 1200))   // the boot fit would land here (a frame, then 150 ms)
+    expect(await t.ev(VIEW)).toEqual({ board: 'main', sel: ['n-two'], visible: ['n-two'] })
+  }, 60_000)
+
+  it('a frame followed to its board, and a thread: answered shown only once the camera is on that target', async () => {
+    if (!browser) return
+    appendEvents(join(root, 'design', 'comments'), 'main', [{ id: 'e-show-4', ts: Date.now() - 700, type: 'create', commentId: 't-bg', board: 'main', frame: 'demo/one', nodeKey: 'n-one-b', author: { name: 'Nic' }, body: 'background' }])
+    const t = await open('#/b/other')
+    await t.ev(HIDE)
+    const a = await show({ board: 'other', f: ['demo/two'] })   // not on other: followed to main
+    await expect.poll(() => acks(a), { timeout: 5000 }).toEqual({ shown: 1, notice: 0 })
+    const b = await show({ board: 'main', c: 't-bg' })
+    await expect.poll(() => acks(b), { timeout: 5000 }).toEqual({ shown: 1, notice: 0 })
+    expect(await t.ev(`__ackViews`)).toEqual([['n-two'], ['n-one-b']])
+  }, 60_000)
 })
 
 describe('marver show (the CLI)', () => {
