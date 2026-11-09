@@ -150,7 +150,7 @@ export interface Bridge {
   // ---- spec 31 (app 1.1; D1, D3) ----
   /** `mv:show { doc, p }` to the tab's admitted, trusted document whose instance lists `show`, the target checked
    *  (shared/deep-link.ts `checkShowTarget`); false when there is none, or the target fails the check */
-  showItem(tabId: string, target: ShowTarget): boolean
+  showItem(tabId: string, target: ShowTarget | 'landing'): boolean
   /** an accepted `mv:front`: the tab's admitted, trusted document, its instance listing `show`, at most once a second */
   onFront(fn: (tabId: string) => void): () => void
 }
@@ -339,6 +339,8 @@ export function checkPagePayload(channel: string, p: unknown): { ok: true; value
       if (p.action === 'copy') return one(p.id, ['dev', 'init', 'update'] as const) ? yes({ action: 'copy', id: p.id }) : no
       if (p.action === 'copy-start') return typeof p.id === 'string' && TAB_ID.test(p.id) ? yes({ action: 'copy-start', id: p.id }) : no
       if (p.action === 'show-files') return yes({ action: 'show-files' })
+      // spec 31 E4: a running canvas's update, named by its tab (main reads its folder from its own record)
+      if (p.action === 'copy-update') return typeof p.id === 'string' && TAB_ID.test(p.id) ? yes({ action: 'copy-update', id: p.id }) : no
       return no
     case CH.settingsSet:
       return obj(p) && one(p.file, ['config', 'theme'] as const) && typeof p.key === 'string' && /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(p.key)
@@ -848,10 +850,11 @@ export function installBridge(o: BridgeOptions = {}): Bridge {
       const rec = id === undefined ? undefined : docs.get(id)
       if (id === undefined || !rec?.doc || !isTrusted(id)) { trace('show', { tab: tabId, sent: false, why: 'not admitted' }); return false }
       if (!lists(id, FEATURE.show)) { trace('show', { wc: id, tab: tabId, sent: false, why: 'no show' }); return false }
-      const t = checkShowTarget(target)
-      if (!t) { trace('show', { wc: id, tab: tabId, sent: false, why: 'payload' }); return false }
+      // `landing`: the canvas's own board, on the wire as `p: null`
+      const t = target === 'landing' ? null : checkShowTarget(target)
+      if (target !== 'landing' && !t) { trace('show', { wc: id, tab: tabId, sent: false, why: 'payload' }); return false }
       const sent = sendCanvas(id, CANVAS_CHANNELS.show, { doc: rec.doc, p: t })
-      trace('show', { wc: id, tab: tabId, board: t.board, sent })
+      trace('show', { wc: id, tab: tabId, board: t?.board ?? null, sent })
       return sent
     },
     onFront(fn) { frontFns.add(fn); return () => { frontFns.delete(fn) } },

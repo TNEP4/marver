@@ -60,7 +60,7 @@ const clickFns = new Set<(p: MenuClick) => void>()
 const presentFns = new Set<(r: Present) => void>()
 const probeFns = new Set<(a: PerfProbeAsk) => void>()
 const openFns = new Set<(p: OpenItem) => OpenResult | Promise<OpenResult>>()
-const showFns = new Set<(t: ShowTarget) => void>()
+const showFns = new Set<(t: ShowTarget | null) => void>()
 /** the display's rate main last said (`display` ask) */
 let hz: number | null = null
 
@@ -162,9 +162,10 @@ ipcRenderer.on(CANVAS_CHANNELS.open, (_e, m: Record<string, unknown> | null) => 
 // spec 31 D1: a `marver://` link into this open tab - main's navigation command, for this document alone, checked again
 ipcRenderer.on(CANVAS_CHANNELS.show, (_e, m: Record<string, unknown> | null) => {
   if (!m || !doc || m.doc !== doc) return
-  const t = checkShowTarget(m.p)
-  if (!t) return
-  for (const fn of [...showFns]) { try { fn({ ...t }) } catch { /* the page's own */ } }
+  // null: the canvas's own board (a link whose place the app could not take)
+  const t = m.p === null ? null : checkShowTarget(m.p)
+  if (m.p !== null && !t) return
+  for (const fn of [...showFns]) { try { fn(t ? { ...t } : null) } catch { /* the page's own */ } }
 })
 
 // A4: a live picture of this document's view (A4.6 #35)

@@ -266,6 +266,8 @@ export function noteVerified(c: VerifiedCanvas): void {
   // the launch's own rule: an entry it would refuse is never recorded, so it can never cost the others at launch
   if (!checkEntry(e)) return
   recent = tidyRecent([e, ...recent.filter((r) => r.workspace !== c.ws)])
+  const held = early.get(c.ws)
+  if (held) { early.delete(c.ws); noteLogo(c.ws, held) }
   save()
 }
 
@@ -301,8 +303,15 @@ export const recentViews = (running: Iterable<string>): RecentView[] => {
 /** A local canvas's logo, as its tab proved and fetched it (views.ts refreshLogo): kept for its Recently here card. */
 export function noteLogo(ws: string, dataUrl: string): void {
   const k = wsKey(ws)
-  if (k && recent.some((e) => e.workspace === ws)) logos.keep(k, dataUrl)
+  if (!k) return
+  if (recent.some((e) => e.workspace === ws)) { logos.keep(k, dataUrl); return }
+  // proved before its canvas was recorded (the logo can land before the document's first trusted commit): held, and
+  // kept once noteVerified records it - a few at most, the newest
+  early.set(ws, dataUrl)
+  while (early.size > 8) early.delete(early.keys().next().value!)
 }
+/** logos proved for canvases not recorded yet, by workspace */
+const early = new Map<string, string>()
 
 /** The canvas a `marver://` link named while it does not run (spec 31 D1): its card leads Recently here, highlighted. */
 let linked: { ws: string; root: string } | null = null

@@ -59,6 +59,16 @@ describe('mv:show (spec 31 D1)', () => {
   it('to the admitted, trusted document of an instance listing show: { doc, p }, the target stripped to its known fields', () => {
     expect(bridge.showItem('t1', { board: 'main', f: ['demo/one'], n: ['demo/one@390'], extra: 'x' } as never)).toBe(true)
     expect(shows()).toEqual([{ doc: docOf(), p: { board: 'main', f: ['demo/one'], n: ['demo/one@390'] } }])
+    // the canvas's own board: `p: null` on the wire
+    expect(bridge.showItem('t1', 'landing')).toBe(true)
+    expect(shows().at(-1)).toEqual({ doc: docOf(), p: null })
+  })
+
+  it('home:action copy-update is admitted with a tab id alone (E4) - what Home\'s button sends', async () => {
+    const { checkPagePayload } = await import('../../src/main/bridge.ts')
+    expect(checkPagePayload('home:action', { action: 'copy-update', id: 't3', root: '/etc' })).toEqual({ ok: true, value: { action: 'copy-update', id: 't3' } })
+    expect(checkPagePayload('home:action', { action: 'copy-update', id: '../x' }).ok).toBe(false)
+    expect(checkPagePayload('home:action', { action: 'copy-update' }).ok).toBe(false)
   })
 
   it('nothing to a tab with no document, an instance without show, an untrusted document, or for a target off the grammar', () => {

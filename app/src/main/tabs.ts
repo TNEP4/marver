@@ -238,7 +238,7 @@ export interface Tab {
   /** spec 31 E4: the release its server says is newer than the one it runs (Home's card offers the update) */
   update?: string
   /** spec 31 D1: a `marver://` link's place, held for this tab's next admitted document's hello; a later link replaces it */
-  pendingShow?: { target: ShowTarget; at: number }
+  pendingShow?: { target: ShowTarget | 'landing'; at: number }
   /** a shared canvas's place: only on a `remote` tab */
   remote?: TabRemote
 }
@@ -1240,8 +1240,8 @@ function deliverOpen(t: Tab): void {
 // the unsaved-work guard - it hands the shell the navigation command `marver show` sends, over the bridge
 
 /** `mv:show { doc, p }` to the tab's admitted document (bridge.ts `showItem`, which checks it all again). */
-let showSender: ((t: Tab, target: ShowTarget) => boolean) | null = null
-export function setShowSender(fn: ((t: Tab, target: ShowTarget) => boolean) | null): void { showSender = fn }
+let showSender: ((t: Tab, target: ShowTarget | 'landing') => boolean) | null = null
+export function setShowSender(fn: ((t: Tab, target: ShowTarget | 'landing') => boolean) | null): void { showSender = fn }
 
 /**
  * A link's place for a canvas whose tab holds a live document: the tab shown - reopened when it was closed - and, for an
@@ -1250,7 +1250,7 @@ export function setShowSender(fn: ((t: Tab, target: ShowTarget) => boolean) | nu
  * activated. A canvas that does not list `show` (before 0.31) is only shown: its page is never navigated under it.
  * `target` null (a link naming no place) only shows the tab. Answers what it did.
  */
-export function showForLink(id: string, target: ShowTarget | null): 'held' | 'sent' | 'shown' | 'no-show' | 'none' {
+export function showForLink(id: string, target: ShowTarget | 'landing' | null): 'held' | 'sent' | 'shown' | 'no-show' | 'none' {
   const t = tabs.get(id)
   if (!t || t.kind !== 'local') return 'none'
   dropShow(t, 'superseded')
@@ -1261,7 +1261,7 @@ export function showForLink(id: string, target: ShowTarget | null): 'held' | 'se
   if (!t.reg?.features.includes(FEATURE.show)) { p.log?.('show', { tab: t.id, held: false, why: 'no-show' }); return 'no-show' }
   const o = { target, at: p.now() }
   t.pendingShow = o
-  p.log?.('show', { tab: t.id, board: target.board, held: true })
+  p.log?.('show', { tab: t.id, board: target === 'landing' ? null : target.board, held: true })
   const timer = setTimeout(() => { if (t.pendingShow === o) dropShow(t, 'wait') }, T.openWaitMs)
   ;(timer as { unref?: () => void }).unref?.()
   deliverShow(t)
@@ -1271,7 +1271,7 @@ export function showForLink(id: string, target: ShowTarget | null): 'held' | 'se
 function dropShow(t: Tab, why: string): void {
   const o = t.pendingShow
   t.pendingShow = undefined
-  if (o) P().log?.('show', { tab: t.id, board: o.target.board, dropped: why })
+  if (o) P().log?.('show', { tab: t.id, board: o.target === 'landing' ? null : o.target.board, dropped: why })
 }
 
 /** The held place goes, once, to the tab's current document - admitted, trusted, said hello - never while an unload closes it. */
@@ -1280,7 +1280,7 @@ function deliverShow(t: Tab): void {
   if (!o || !isActive(t) || unloadClosing(t) || !t.doc?.trusted || !t.doc.doc || !t.reports.hello) return
   t.pendingShow = undefined
   const sent = showSender?.(t, o.target) ?? false
-  P().log?.('show', { tab: t.id, board: o.target.board, doc: t.doc.doc, sent })
+  P().log?.('show', { tab: t.id, board: o.target === 'landing' ? null : o.target.board, doc: t.doc.doc, sent })
 }
 
 // ---------------------------------------------------------------------------------------------------------------

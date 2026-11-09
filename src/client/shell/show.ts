@@ -24,13 +24,13 @@ import { linkTargets } from './hash.ts'
 import { useJamCapture } from './jam-capture.ts'
 import { APP } from './marver-app.ts'
 import { PAGE_ID } from './recorder.ts'
-import { boardLabel, sceneLabel, useStore } from './store.ts'
+import { boardLabel, landingBoard, sceneLabel, useStore } from './store.ts'
 
 export type ShowFrom = 'server' | 'app'
 export type ShowResult = 'shown' | 'notice' | 'stale' | 'missing' | 'bad'
 
 /** The notice a tab holding unsent words puts up instead of moving: its words, and the target Go opens. */
-export interface ShowNotice { title: string; target: ShowTarget; at: number }
+export interface ShowNotice { title: string; target: ShowTarget | 'landing'; at: number }
 export const useShowNotice = create<{ notice: ShowNotice | null }>(() => ({ notice: null }))
 
 /** Words a move would lose, or a capture it would cut: the same reasons a notice's click reads (open-item.ts). */
@@ -53,24 +53,55 @@ export function titleOf(t: ShowTarget): string {
   return boardLabel(t.board)
 }
 
-/** Move to the target now: board, selection, thread, camera - each step only while this command is the newest. */
-async function go(t: ShowTarget, n: number): Promise<ShowResult> {
+/** The words the notice says for the canvas's own board (a link that named no place it understands). */
+const LANDING = 'the board this canvas opens on'
+
+/**
+ * Move to the target now - board, selection, thread, camera - each step only while this command is the newest and,
+ * unless the person chose it (`force`: the notice's Go), while no words wait unsent: words typed while the board loads
+ * stop it before anything moves (`blocked`, which the caller turns into the notice). `shown` only once the camera has
+ * landed for this command: a newer show, or a board that went, is never counted shown.
+ */
+async function go(t: ShowTarget | 'landing', n: number, force: boolean): Promise<ShowResult | 'blocked'> {
   const nav = navigated()
-  const alive = () => n === current && isLatest(nav)
+  const owned = () => n === current && isLatest(nav)
+  const words = () => !force && holdsWords()
+  const alive = () => owned() && !words()
+  const ended = (): 'blocked' | 'stale' => (owned() && words() ? 'blocked' : 'stale')
+  if (!alive()) return ended()
+  let target: ShowTarget
+  if (t === 'landing') {
+    const board = await landingBoard()
+    if (!alive()) return ended()
+    target = { board }
+  } else target = t
   let s = useStore.getState()
   if (s.play) s.setPlay(null)   // a stale overlay never survives a show
-  if (t.board !== s.board) {
-    if (!await switchFor(t.board, nav, alive)) return alive() ? 'missing' : 'stale'
+  if (target.board !== s.board) {
+    if (!await switchFor(target.board, nav, alive)) return alive() ? 'missing' : ended()
     s = useStore.getState()
   }
-  if (!alive()) return 'stale'
-  const keys = linkTargets(t, s.nodes)
+  if (!alive()) return ended()
+  const keys = linkTargets(target, s.nodes)
   useStore.setState({ selection: keys })
   s.look(keys)
-  if (t.c && !revealThread(t.c)) parkThread(t.c)
-  if (!keys.length && t.f?.length) void revealFrame(t.f[0]!, nav)   // not on this board's nodes: where it lives
+  // the thread under the same request: a newer show, or words typed, and its camera never moves
+  if (target.c && !revealThread(target.c, alive)) parkThread(target.c, alive)
+  if (!keys.length && target.f?.length) {
+    // not on this board's nodes: where it lives - shown once it is selected there, for this command
+    const f = target.f[0]!
+    await revealFrame(f, nav)
+    for (let i = 0; i < 40 && alive(); i++) {
+      const now = useStore.getState()
+      if (now.selection.some((k) => now.nodes.find((x) => x.key === k)?.frame === f)) return 'shown'
+      await new Promise((r) => setTimeout(r, 50))
+    }
+    return alive() ? 'missing' : ended()
+  }
   // the refit, even when the place is already on screen - unless a newer navigation has the camera by then
-  else setTimeout(() => { if (alive()) (keys.length ? canvasCtl.fitNodes(keys) : canvasCtl.fitAll()) }, 60)
+  await new Promise((r) => setTimeout(r, 60))
+  if (!alive()) return ended()
+  if (keys.length) canvasCtl.fitNodes(keys); else canvasCtl.fitAll()
   return 'shown'
 }
 
@@ -82,37 +113,46 @@ const ack = (seq: number, outcome: 'shown' | 'notice') => {
 /** The tab to the front of the app's window (a server show): main checks the asking document and acts. */
 const front = () => { try { APP?.front?.() } catch { /* the app went away under the page */ } }
 
-/** A show command, from the dev server (`seq`) or the app's bridge. */
+/**
+ * A show command, from the dev server (`seq`) or the app's bridge. The app's `null` is a link that named no place this
+ * shell takes: the canvas's own board, by the same rule (moved to, or the notice over unsent words).
+ */
 export async function showTarget(raw: unknown, from: ShowFrom): Promise<ShowResult> {
   const seq = from === 'server' ? (raw as { seq?: unknown } | null)?.seq : undefined
   if (from === 'server' && (typeof seq !== 'number' || !Number.isSafeInteger(seq) || seq < 1)) return 'bad'
-  const t = checkShowTarget(raw)
+  const t: ShowTarget | 'landing' | null = from === 'app' && raw === null ? 'landing' : checkShowTarget(raw)
   if (!t) return 'bad'
   if (typeof seq === 'number') {
     if (seq <= lastSeq) return 'stale'
     lastSeq = seq
   }
   const n = ++current
-  if (holdsWords()) {
-    useShowNotice.setState({ notice: { title: titleOf(t), target: t, at: Date.now() } })
+  const notice = (): ShowResult => {
+    useShowNotice.setState({ notice: { title: t === 'landing' ? LANDING : titleOf(t), target: t, at: Date.now() } })
     if (typeof seq === 'number') ack(seq, 'notice')
     if (from === 'server') front()
     return 'notice'
   }
+  if (holdsWords()) return notice()
   useShowNotice.setState({ notice: null })
-  if (from === 'server') front()
-  const r = await go(t, n)
-  // answered once it is on screen: a board that went, or a newer show that took over, is no "shown"
-  if (typeof seq === 'number' && r === 'shown') ack(seq, 'shown')
+  const r = await go(t, n, false)
+  // words typed while it was on its way: the notice instead, nothing moved
+  if (r === 'blocked') return n === current ? notice() : 'stale'
+  // answered, and the window brought forward, once it is on screen: a newer show or a board that went is no "shown"
+  if (r === 'shown') {
+    if (typeof seq === 'number') ack(seq, 'shown')
+    if (from === 'server') front()
+  }
   return r
 }
 
 /** The notice's Go: the human chose to move, words or not. */
-export function goNow(): Promise<ShowResult> {
+export async function goNow(): Promise<ShowResult> {
   const notice = useShowNotice.getState().notice
   useShowNotice.setState({ notice: null })
-  if (!notice) return Promise.resolve('stale')
-  return go(notice.target, ++current)
+  if (!notice) return 'stale'
+  const r = await go(notice.target, ++current, true)
+  return r === 'blocked' ? 'stale' : r
 }
 export const dismissShow = (): void => { useShowNotice.setState({ notice: null }) }
 

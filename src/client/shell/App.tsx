@@ -310,8 +310,8 @@ function UpdatePill() {
 /** `marver show` over unsent words (spec 31 D3): the tab did not move - Go moves it, × leaves it be. */
 function ShowNotice() {
   const notice = useShowNotice((s) => s.notice)
-  const play = useStore((s) => !!s.play)
-  if (!notice || play) return null
+  // in Play too: a draft typed there keeps the canvas where it is, and the notice says why (it sits over Play)
+  if (!notice) return null
   return (
     <div className="sh-update sh-show-notice" role="status">
       <span>Your agent wants to show you <b>{notice.title}</b></span>

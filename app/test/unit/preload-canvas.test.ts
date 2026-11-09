@@ -186,7 +186,8 @@ describe('the canvas preload: a deep link\'s place and front (spec 31 D1, D3)', 
     main(CANVAS_CHANNELS.show, { doc: 'B'.repeat(22), p: { board: 'main' } })
     main(CANVAS_CHANNELS.show, { doc: DOC, p: { board: 'main', f: ['../../etc'] } })
     main(CANVAS_CHANNELS.show, { doc: DOC, p: '#/b/main' })
-    expect(heard).toEqual([{ board: 'main', f: ['demo/one'] }])
+    main(CANVAS_CHANNELS.show, { doc: DOC, p: null })                                // the canvas's own board
+    expect(heard).toEqual([{ board: 'main', f: ['demo/one'] }, null])
     api.front()
     expect(wire.sent.filter((s) => s.ch === CANVAS_CHANNELS.front)).toEqual([{ ch: CANVAS_CHANNELS.front, msg: { doc: DOC } }])
   })

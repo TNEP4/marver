@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { Browser } from './browser.ts'
 import { CLI, fixtureRoot, startDev, type Dev } from './dev-server.ts'
+import { appendEvents } from '../src/server/comments.ts'
 
 /**
  * `marver show` (spec 31 D3) and the deep link's navigation command (D1), against a REAL `marver dev` (port 5641, this
@@ -56,6 +57,18 @@ const show = async (body: object): Promise<number> => {
 }
 const acks = async (seq: number) => (await fetch(`${dev!.origin}/__mv/api/show/acks?seq=${seq}`, { headers: { 'x-mv-work': token() } })).json()
 
+/** One board's GET held until released: a show's board switch caught on its way. */
+const GATE = `(() => {
+  const realFetch = window.fetch.bind(window)
+  window.__gate = { name: null, asked: false, release: null }
+  window.__hold = (name) => { const g = window.__gate; g.name = name; g.asked = false; g.held = new Promise((r) => { g.release = () => { g.name = null; r(); return 1 } }); return 1 }
+  window.fetch = async (input, init) => {
+    const g = window.__gate, url = String(input && input.url ? input.url : input)
+    if (g.name && url.split('?')[0].endsWith('/__mv/api/boards/' + g.name) && (!init || !init.method || init.method === 'GET')) { g.asked = true; await g.held }
+    return realFetch(input, init)
+  }
+})()`
+
 /** A fake bridge before any script: `front()` and `onShow` recorded. */
 const FAKE_APP = `(() => {
   const shows = new Set()
@@ -69,6 +82,7 @@ const FAKE_APP = `(() => {
 async function open(hash = '#/b/main', o: { app?: boolean } = {}) {
   const s = await browser!.tab({ width: 1400, height: 900 })
   tabs.push(s)
+  await browser!.send('Page.addScriptToEvaluateOnNewDocument', { source: GATE }, s)
   if (o.app) await browser!.send('Page.addScriptToEvaluateOnNewDocument', { source: FAKE_APP }, s)
   await browser!.go(s, `${dev!.origin}/${hash}`)
   await browser!.until(s, `!!window.__mvStore && __mvStore.getState().nodes.length > 0 && __mvStore.getState().nodes.every((n) => n.status === 'ready') && !!window.__mvShow`, 30_000)
@@ -150,6 +164,57 @@ describe('sh:show in the tab (D3)', () => {
     expect(await t.ev(`!!document.querySelector('.sh-show-notice')`)).toBe(false)
   }, 60_000)
 
+  it('words typed while the board is on its way: the switch never commits - the notice instead, the draft kept', async () => {
+    if (!browser) return
+    const t = await open('#/b/main')
+    await t.ev(`__hold('other')`)
+    const seq = await show({ board: 'other', f: ['demo/three'] })
+    await t.until(`__gate.asked`)
+    await t.ev(TYPE)
+    await t.ev(`__gate.release()`)
+    await t.until(`document.querySelector('.sh-show-notice')?.textContent.includes('Three')`)
+    await new Promise((r) => setTimeout(r, 500))
+    expect(await t.ev(`({ board: __mvStore.getState().board, words: document.getElementById('draft').value })`)).toEqual({ board: 'main', words: 'half a thought' })
+    await expect.poll(() => acks(seq), { timeout: 5000 }).toEqual({ shown: 0, notice: 1 })
+  }, 60_000)
+
+  it('in Play, with a draft: Play and the draft stay, and the notice shows over Play', async () => {
+    if (!browser) return
+    const t = await open('#/b/main')
+    await browser.press(t.s, 'p')
+    await t.until(`!!document.querySelector('.sh-play') && !!__mvStore.getState().play`)
+    await t.ev(TYPE)
+    await show({ board: 'other' })
+    await t.until(`!!document.querySelector('.sh-show-notice')`)
+    const r = await t.ev(`(() => { const n = document.querySelector('.sh-show-notice').getBoundingClientRect(); const top = document.elementFromPoint(n.left + n.width / 2, n.top + n.height / 2); return { play: !!__mvStore.getState().play, onTop: !!top?.closest('.sh-show-notice') } })()`)
+    expect(r).toEqual({ play: true, onTop: true })
+  }, 60_000)
+
+  it('a scene (s) selects every frame of it; a thread (c) opens that thread', async () => {
+    if (!browser) return
+    appendEvents(join(root, 'design', 'comments'), 'main', [{ id: 'e-show-1', ts: Date.now() - 1000, type: 'create', commentId: 't-show', board: 'main', frame: 'demo/two', nodeKey: 'n-two', author: { name: 'Nic' }, body: 'this one' }])
+    const t = await open('#/b/other')
+    await show({ board: 'main', s: ['demo'] })
+    await t.until(`(() => { const v = ${VIEW}; return v.board === 'main' && v.sel.join() === 'n-one,n-one-b,n-two' })()`)
+    await show({ board: 'main', c: 't-show' })
+    await t.until(`window.__mvComments?.getState().active === 't-show'`)
+  }, 60_000)
+
+  it('a show a newer one overtook is never counted shown: only the newest answers', async () => {
+    if (!browser) return
+    const t = await open('#/b/main')
+    await t.ev(`__hold('other')`)
+    const first = await show({ board: 'other', f: ['demo/three'] })
+    await t.until(`__gate.asked`)
+    const second = await show({ board: 'main', n: ['n-two'] })
+    await t.until(settled('main', ['n-two']))
+    await t.ev(`__gate.release()`)
+    await expect.poll(() => acks(second), { timeout: 5000 }).toEqual({ shown: 1, notice: 0 })
+    await new Promise((r) => setTimeout(r, 800))
+    expect(await acks(first)).toEqual({ shown: 0, notice: 0 })
+    expect(await t.ev(VIEW)).toMatchObject({ board: 'main', sel: ['n-two'] })
+  }, 60_000)
+
   it('the notice\'s × leaves the tab where it is', async () => {
     if (!browser) return
     const t = await open('#/b/main')
@@ -196,6 +261,11 @@ describe('in the app (a fake window.marverApp)', () => {
     expect(await t.ev(`__app.show({ board: 'main', n: ['n-two'] })`)).toBe(1)
     await t.until(settled('main', ['n-two']))
     expect(await t.ev('__app.fronts')).toBe(1)
+    // a link whose place the app could not take (null): the canvas's own board - the landing one, here main
+    await t.ev(`__app.show({ board: 'other' })`)
+    await t.until(settled('other', []))
+    await t.ev(`__app.show(null)`)
+    await t.until(`__mvStore.getState().board === 'main'`)
     // with words unsent the bridge's show is a notice too: a deep link never loses a draft
     await t.ev(TYPE)
     await t.ev(`__app.show({ board: 'other' })`)

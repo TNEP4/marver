@@ -391,9 +391,10 @@ export interface MarverAppV1 {
   capture?(a: CaptureAsk): Promise<CaptureAnswer>
   /**
    * spec 31 D1 (app 1.1): main's navigation command for a `marver://` link into this tab - the hash's own targets
-   * (shared/deep-link.ts `ShowTarget`), checked by the preload; never a reload or a hash replaced under the page
+   * (shared/deep-link.ts `ShowTarget`), checked by the preload - null for the canvas's own board (a link whose place
+   * the app could not take); never a reload or a hash replaced under the page
    */
-  onShow?(fn: (t: ShowTarget) => void): () => void
+  onShow?(fn: (t: ShowTarget | null) => void): () => void
   /** spec 31 D3 (app 1.1): this document showed a `marver show` - main brings its tab and the window forward */
   front?(): void
 }

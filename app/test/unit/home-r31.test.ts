@@ -92,6 +92,14 @@ describe('E2: a recent card keeps its logo', () => {
     expect(h.recentViews([WS(1)])).toEqual([])   // running: its live card is the one drawn
   })
 
+  it('a logo proved before its canvas is recorded is kept once it is (the logo can land before the first trusted commit)', async () => {
+    h.noteLogo(WS(3), PNG_URL)
+    verify(3)
+    await new Promise((r) => setTimeout(r, 50))
+    expect(readdirSync(join(state(), 'logos'))).toEqual([`ws-${WS(3)}.png`])
+    expect(h.recentViews([])[0]).toMatchObject({ name: 'Canvas 3', logo: PNG_URL })
+  })
+
   it('read back at the next launch, sniffed again: a file that is not a logo is as if absent; a canvas no longer listed loses its file', async () => {
     verify(1); verify(2)
     h.noteLogo(WS(1), PNG_URL)

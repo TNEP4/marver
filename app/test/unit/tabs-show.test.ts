@@ -16,7 +16,7 @@ const T2: ShowTarget = { board: 'other', n: ['demo/two@390'] }
 const hello = (t: Tab) => onReport(t.id, t.doc!.doc!, { hello: { version: '0.31.0', board: 'main', page: 'PAGE_0123456789' } })
 
 let w: World
-let sent: { tab: string; doc?: string; target: ShowTarget }[]
+let sent: { tab: string; doc?: string; target: ShowTarget | 'landing' }[]
 beforeEach(() => {
   w = world()
   sent = []
@@ -75,7 +75,15 @@ describe('showForLink (spec 31 D1)', () => {
     expect([sent, w.loads, w.acts]).toEqual([[], [], []])
   })
 
-  it('no place (a link naming none): the tab shown, nothing sent', () => {
+  it('the canvas\'s own board (`landing`, a link whose place the app could not take) goes over the bridge too', () => {
+    const t = liveTab(w, { entry: { features: SHOW } })
+    hello(t)
+    expect(showForLink(t.id, 'landing')).toBe('sent')
+    expect(sent).toEqual([{ tab: t.id, doc: t.doc!.doc, target: 'landing' }])
+    expect(w.loads).toEqual([])
+  })
+
+  it('no place (mv:front): the tab shown, nothing sent', () => {
     const t = liveTab(w, { entry: { features: SHOW } })
     hello(t)
     show('home')

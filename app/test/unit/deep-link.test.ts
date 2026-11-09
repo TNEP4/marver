@@ -95,7 +95,7 @@ describe('planDeepLink: the real folder, and the port hint only within it', () =
 describe('routeDeepLink: an open tab is shown the place, never loaded', () => {
   interface T { id: string; live: boolean }
   const run = (raw: string, o: { entries?: LinkCanvas[]; tab?: T } = {}) => {
-    const did: { show: [string, ShowTarget | null][]; open: [string, string | null, string][]; home: [string, string, boolean][]; focus: number } = { show: [], open: [], home: [], focus: 0 }
+    const did: { show: [string, ShowTarget | 'landing'][]; open: [string, string | null, string][]; home: [string, string, boolean][]; focus: number } = { show: [], open: [], home: [], focus: 0 }
     const r = routeDeepLink<T>(raw, {
       entries: () => o.entries ?? [entry()], realpath: real, focus: () => { did.focus++ },
       tabFor: () => o.tab, live: (t) => t.live,
@@ -111,6 +111,11 @@ describe('routeDeepLink: an open tab is shown the place, never loaded', () => {
     expect(did.show).toEqual([['t3', { board: 'main', f: ['demo/one'] }]])
     expect(did.open).toEqual([])
     expect(did.focus).toBe(1)
+  })
+
+  it('an open tab and a `to` it could not take: the canvas\'s own board, still over the bridge - never a load', () => {
+    const { did } = run(`marver://open?ws=${encodeURIComponent(A)}&to=${encodeURIComponent('javascript:alert(1)')}`, { tab: { id: 't3', live: true } })
+    expect([did.show, did.open]).toEqual([[['t3', 'landing']], []])
   })
 
   it('no tab yet, or one with no live document: opened at that place through openInTab, on the entry\'s bound origin', () => {

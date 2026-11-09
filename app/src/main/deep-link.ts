@@ -87,7 +87,7 @@ export interface RoutePorts<T> {
   /** the tab holds a live document (tabs.ts `liveDoc`), proved: what a load would replace */
   live(t: T): boolean
   /** a tab with a live document: shown the place over the bridge (tabs.ts `showForLink`) - never reloaded */
-  show(t: T, to: ShowTarget | null): void
+  show(t: T, to: ShowTarget | 'landing'): void
   /** no live document: the place loaded through views.ts `openInTab` (the proof and the guards) */
   open(e: LinkCanvas, url: string | null, rest: string): void
   /** no canvas of that folder runs: Home, its card */
@@ -105,7 +105,8 @@ export function routeDeepLink<T>(raw: unknown, p: RoutePorts<T>): 'bad' | 'home'
   if (plan.kind === 'home') { p.home(plan.root, plan.ws, plan.exists); return 'home' }
   const e = plan.entry
   const t = p.tabFor(e)
-  if (t !== undefined && p.live(t)) { p.show(t, link.to); return 'shown' }
+  // a `to` it could not take is the canvas's own board, as for a new tab - over the bridge all the same
+  if (t !== undefined && p.live(t)) { p.show(t, link.to ?? 'landing'); return 'shown' }
   const rest = `/${link.to ? hashOfTarget(link.to) : ''}`
   let url: string | null = null
   if (e.state === 'ready' && e.origin) { try { url = `${new URL(e.origin).origin}${rest}` } catch { url = null } }
