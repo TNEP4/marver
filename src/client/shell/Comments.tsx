@@ -13,7 +13,7 @@ import { api } from './api.ts'
 import { CONFIG, useStore, type Node } from './store.ts'
 import { threadHostKey } from './keys.ts'
 import { isNoteAnchor, resolveNoteAnchor, useNotes } from './notes.ts'
-import { canvasCtl } from './canvas/ctl.ts'
+import { bootCancelled, canvasCtl } from './canvas/ctl.ts'
 import { MARKER, placeMarkers, type Placed } from './pin-layout.ts'
 import { bootHash, buildHash, parseHash, writeHash } from './hash.ts'
 import { isLegacyLink } from './legacy-links.ts'
@@ -1027,11 +1027,8 @@ export function revealThread(c: string, alive: () => boolean = () => true): bool
 /** Board-level comment wiring: load + liveness + mode broadcast, one instance in App. */
 let bootThreadConsumed = false
 let pendingThread: string | null = null   // cross-board deep link awaiting its board's comments
-/** the request a parked thread belongs to (`marver show`, spec 31 D3): once it no longer holds, the thread is dropped */
-let pendingAlive: (() => boolean) | null = null
-/** Open this thread once the board just switched to has loaded its comments (an old link, App.tsx; a show, show.ts -
- *  `alive` read when it opens and when the camera moves). */
-export const parkThread = (id: string, alive?: () => boolean) => { pendingThread = id; pendingAlive = alive ?? null }
+/** Open this thread once the board just switched to has loaded its comments (an old link, App.tsx). */
+export const parkThread = (id: string) => { pendingThread = id }
 export function CommentsController() {
   const ctlShowAnchor = useComments((s) => s.showAnchor)
   const board = useStore((s) => s.board)
@@ -1063,14 +1060,14 @@ export function CommentsController() {
         useComments.setState({ inviteToken: bootHash.invite, needsIdentity: true })
       // a cross-board deep link parks its thread id here until the target board's
       // comments have actually loaded - a timer can't know how long that takes
-      if (pendingThread && pendingAlive && !pendingAlive()) { pendingThread = null; pendingAlive = null }
-      if (pendingThread && revealThread(pendingThread, pendingAlive ?? undefined)) { pendingThread = null; pendingAlive = null; return }
+      if (pendingThread && revealThread(pendingThread)) { pendingThread = null; return }
       // deep link ?c=<thread>: open the thread, select its node, fit it.
       // Consumed only on a successful find: the controller's first effect fires with
       // the pre-boot board (child effects run before the parent's boot effect), and
       // burning the flag on that empty pass would eat the link.
-      if (bootThreadConsumed || !bootHash.c) return
-      if (revealThread(bootHash.c)) bootThreadConsumed = true
+      // ...unless a show applied meanwhile (spec 31 D3): the camera is the show's, the boot link's thread gives way
+      if (bootThreadConsumed || !bootHash.c || bootCancelled()) return
+      if (revealThread(bootHash.c, () => !bootCancelled())) bootThreadConsumed = true
     })
     return live(board)
   }, [board])
@@ -1092,7 +1089,7 @@ export function CommentsController() {
         return
       }
       if (!h.c || isLegacyLink(h)) return   // an old All Scenes link: App.tsx finds its board first
-      if (!revealThread(h.c)) { pendingThread = h.c; pendingAlive = null }
+      if (!revealThread(h.c)) pendingThread = h.c
     }
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)

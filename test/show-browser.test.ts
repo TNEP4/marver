@@ -64,6 +64,7 @@ const GATE = `(() => {
   window.__gate = { name: null, asked: false, release: null }
   window.__hold = (name) => { const g = window.__gate; g.name = name; g.asked = false; g.held = new Promise((r) => { g.release = () => { g.name = null; r(); return 1 } }); return 1 }
   window.__ackViews = []
+  window.__holdPath = (sub) => { const p = window.__pathHold = { sub, asked: false }; p.held = new Promise((r) => { p.release = () => { window.__pathHold = null; r(); return 1 } }); return 1 }
   window.fetch = async (input, init) => {
     const g = window.__gate, url = String(input && input.url ? input.url : input)
     if (url.includes('/__mv/api/show/ack') && init && init.body && JSON.parse(init.body).outcome === 'shown') {
@@ -71,8 +72,11 @@ const GATE = `(() => {
       window.__ackViews.push([...document.querySelectorAll('.sh-node[data-node]')].filter(inside).map((n) => n.dataset.node).sort())
     }
     const isGet = (n) => n && url.split('?')[0].endsWith('/__mv/api/boards/' + n) && (!init || !init.method || init.method === 'GET')
-    if (isGet(g.failOnce)) { g.failOnce = null; return new Response('{"error":"down"}', { status: 500, headers: { 'content-type': 'application/json' } }) }
+    // held first (a slow load), then failed if asked (a slow load that fails)
     if (isGet(g.name)) { g.asked = true; await g.held }
+    if (isGet(g.failOnce)) { g.failOnce = null; return new Response('{"error":"down"}', { status: 500, headers: { 'content-type': 'application/json' } }) }
+    const p = window.__pathHold
+    if (p && url.includes(p.sub) && (!init || !init.method || init.method === 'GET')) { p.asked = true; await p.held }
     return realFetch(input, init)
   }
 })()`
@@ -342,6 +346,40 @@ describe('in a tab in the background (the page reports hidden)', () => {
 })
 
 describe('a show and the boot', () => {
+  const deferredCase = (name: string, hash: string, pre: string, release: string) => it(name, async () => {
+    if (!browser) return
+    const t = await openRaw(hash, pre)
+    await t.until(`__gate.asked`)
+    await new Promise((r) => setTimeout(r, 300))   // the shell listens for sh:show by now
+    const older = await show({ board: 'other', n: ['n-three'] })
+    const seq = await show({ board: 'main', n: ['n-two'] })   // the newest alone is kept
+    await new Promise((r) => setTimeout(r, 300))
+    expect(await acks(seq)).toEqual({ shown: 0, notice: 0 })   // deferred: nothing moved, nothing answered yet
+    await t.ev(release)
+    await expect.poll(() => acks(seq), { timeout: 8000 }).toEqual({ shown: 1, notice: 0 })
+    await t.until(settled('main', ['n-two']))
+    await new Promise((r) => setTimeout(r, 1200))   // no boot reveal lands after it
+    expect(await t.ev(VIEW)).toEqual({ board: 'main', sel: ['n-two'], visible: ['n-two'] })
+    expect(await acks(older)).toEqual({ shown: 0, notice: 0 })
+  }, 60_000)
+  deferredCase('deferred while a populated board boots slowly: applied once it settled, the newest only', '#/b/other?n=n-three', `window.__hold('other')`, `__gate.release()`)
+  deferredCase('deferred while an empty board boots slowly: applied once it settled', '#/b/empty', `window.__hold('empty')`, `__gate.release()`)
+  deferredCase('deferred while a boot fails slowly: applied once it failed, and the show has the camera', '#/b/other?n=n-three', `window.__hold('other'); window.__gate.failOnce = 'other'`, `__gate.release()`)
+
+  it('a boot link\'s thread still loading gives way to a show applied meanwhile', async () => {
+    if (!browser) return
+    appendEvents(join(root, 'design', 'comments'), 'main', [{ id: 'e-show-7', ts: Date.now() - 400, type: 'create', commentId: 't-old', board: 'main', frame: 'demo/one', nodeKey: 'n-one', author: { name: 'Nic' }, body: 'the boot link\'s' }])
+    const t = await openRaw('#/b/main?c=t-old', `window.__holdPath('/__mv/api/comments/main')`)
+    await t.until(`__mvStore.getState().board === 'main' && __mvStore.getState().nodes.length === 3 && __pathHold && __pathHold.asked`)
+    await new Promise((r) => setTimeout(r, 800))   // the boot settled: its camera applied
+    const seq = await show({ board: 'main', n: ['n-two'] })
+    await expect.poll(() => acks(seq), { timeout: 5000 }).toEqual({ shown: 1, notice: 0 })
+    await t.ev(`__pathHold.release()`)
+    await t.until(`__mvComments.getState().threads.some((x) => x.id === 't-old')`)
+    await new Promise((r) => setTimeout(r, 1000))
+    expect(await t.ev(`({ ...${VIEW}, active: __mvComments.getState().active })`)).toEqual({ board: 'main', sel: ['n-two'], visible: ['n-two'], active: null })
+  }, 60_000)
+
   it('a person switching boards while the boot still loads is newer than a show that came first', async () => {
     if (!browser) return
     const t = await openRaw('#/b/main', `window.__hold('main')`)

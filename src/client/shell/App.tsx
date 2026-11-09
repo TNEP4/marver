@@ -16,7 +16,7 @@ import { Tip } from './Tip.tsx'
 import { PKG, ROUTE } from '../const.ts'
 import { api, resumed, scoped, useLink } from './api.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
-import { markBootLanded } from './canvas/ctl.ts'
+import { bootCancelled } from './canvas/ctl.ts'
 import { frameByWindow, fromLiveDocument } from './canvas/frame-registry.ts'
 import { recorder } from './recorder.ts'
 import { perfSeams } from './recorder-seams.ts'
@@ -30,8 +30,8 @@ import { ALL_SCENES, humanize as slugLabel, readTitle } from '../../shared/board
 import { CommentsController, parkThread, revealThread } from './Comments.tsx'
 import { poweredByUrl } from '../../shared/utm.ts'
 import { avatarFallback, NO_COMMENTS_HERE, useComments } from './comments-store.ts'
-import { goTo, isLatest, navigated, revealFrame, switchFor } from './goto.ts'
-import { dismissShow, goNow, showsMayGo, showTarget, useShowNotice } from './show.ts'
+import { goTo, isLatest, navigated, navNow, revealFrame, switchFor } from './goto.ts'
+import { bootSettled, dismissShow, goNow, showTarget, useShowNotice } from './show.ts'
 import { newerVersion } from '../../shared/deep-link.ts'
 import { useNotes } from './notes.ts'
 import { contentOnly } from '../../shared/frames.ts'
@@ -464,13 +464,11 @@ export function App() {
       else if (resumed?.outcome === 'disk') toast(DISK_WON)
       else if (resumed?.outcome === 'gone') toast(BOARD_GONE)
       urlReady.current = true
-      // a board that booted with no nodes has no first camera: its boot is over all the same (spec 31 D3) - but a boot
-      // that failed keeps it, for the reload that recovers it
-      if (ok && !useStore.getState().nodes.length) markBootLanded()
-      showsMayGo()   // `marver show` and a deep link's place, held until the board and its camera are restored (spec 31)
+      // a show that came during the boot applies once it settled - success or failure (spec 31 D3)
+      bootSettled(ok)
       // a link naming frames on a board with NO nodes: the canvas's boot fit never runs (it waits
-      // for the first frame) - follow the frame to where it lives from here
-      if (ok && bootHash.f?.length && !bootHash.focus && !useStore.getState().nodes.length) void revealFrame(bootHash.f[0])
+      // for the first frame) - follow the frame to where it lives from here, under the boot's own navigation
+      if (ok && bootHash.f?.length && !bootHash.focus && !useStore.getState().nodes.length) void revealFrame(bootHash.f[0], navNow(), () => !bootCancelled())
       if (ok && bootHash.focus) {
         // a frame deep link forces focus for that visit, over every other rule
         // (01-sharing §6.1 step 3) - the stage mounts any manifest frame, so no

@@ -18,7 +18,7 @@ import { create } from 'zustand'
 import { checkShowTarget, type ShowTarget } from '../../shared/deep-link.ts'
 import { api, typedUnsent } from './api.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
-import { bootLanded, markBootLanded } from './canvas/ctl.ts'
+import { bootLanded, cancelBoot } from './canvas/ctl.ts'
 import { openThreadAt } from './jam-keys.ts'
 import { isLatest, navigated, navNow, revealFrame, switchFor } from './goto.ts'
 import { linkTargets } from './hash.ts'
@@ -28,7 +28,7 @@ import { PAGE_ID } from './recorder.ts'
 import { boardLabel, landingBoard, sceneLabel, useStore } from './store.ts'
 
 export type ShowFrom = 'server' | 'app'
-export type ShowResult = 'shown' | 'notice' | 'stale' | 'missing' | 'bad'
+export type ShowResult = 'shown' | 'notice' | 'stale' | 'missing' | 'bad' | 'deferred'
 
 /** The notice a tab holding unsent words puts up instead of moving: its words, and the target Go opens. */
 export interface ShowNotice { title: string; target: ShowTarget | 'landing'; at: number }
@@ -37,12 +37,30 @@ export const useShowNotice = create<{ notice: ShowNotice | null }>(() => ({ noti
 /** Words a move would lose, or a capture it would cut: the same reasons a notice's click reads (open-item.ts). */
 const holdsWords = (): boolean => typedUnsent() || !!useJamCapture.getState().current
 
-/** The shell's boot - the board and its camera restored from the URL (App.tsx) - is done: shows go from now. A show
- *  that comes earlier (the app delivers a link's place after the page's hello, before its first render) waits for it,
- *  so the boot's own navigation never lands over it, and it never resolves against a board not loaded yet. */
-let bootDone: () => void = () => {}
-const booted = new Promise<void>((r) => { bootDone = r })
-export function showsMayGo(): void { bootDone() }
+/**
+ * A show never races the boot (spec 31 D3). One that comes while the tab still boots - its board not loaded, or its
+ * first camera not applied (the app delivers a link's place right after the page's hello, before its first render) - is
+ * deferred: the newest alone is kept, and applied once the boot settles, whether it loaded or failed. A person's own
+ * navigation meanwhile wins: the deferred show is dropped. Applying it cancels every boot reveal still to come
+ * (canvas/ctl.ts `cancelBoot`).
+ */
+let booting = true
+let deferred: { t: ShowTarget | 'landing'; seq?: number; from: ShowFrom; n: number; nav: number } | null = null
+
+/** App.tsx, once `boot()` answered: a board that failed or has no nodes is settled now; one with nodes once its first
+ *  camera is applied (Canvas.tsx), or two seconds at most. */
+export function bootSettled(ok: boolean): void {
+  const settle = () => {
+    if (!booting) return
+    booting = false
+    const d = deferred
+    deferred = null
+    // the newest show, and no navigation of a person's since it came: applied now
+    if (d && d.n === current && isLatest(d.nav)) void apply(d.t, d.seq, d.from, d.n)
+  }
+  if (!ok || !useStore.getState().nodes.length) settle()
+  else void Promise.race([bootLanded, new Promise((r) => setTimeout(r, 2000))]).then(settle)
+}
 
 /** The newest command's number: an older one still on its way stops at its next step. */
 let current = 0
@@ -77,9 +95,10 @@ async function go(t: ShowTarget | 'landing', n: number, force: boolean): Promise
   const alive = () => owned() && !words()
   const ended = (): 'blocked' | 'stale' => (owned() && words() ? 'blocked' : 'stale')
   if (!alive()) return ended()
-  // the camera is this show's from here: a boot still owed its first camera (one that failed, then recovers) never fits
-  // over it
-  markBootLanded()
+  // the camera is this show's from here: every boot reveal still to come gives way (the boot camera, its frame fallback,
+  // its thread). After a failed boot the show owns the camera for good - if its own board then fails too, the canvas is a
+  // failed board load like any other and the boot link's place is not restored (spec 31 as built: accepted)
+  cancelBoot()
   let target: ShowTarget
   if (t === 'landing') {
     const board = await landingBoard()
@@ -174,20 +193,22 @@ export async function showTarget(raw: unknown, from: ShowFrom): Promise<ShowResu
     lastSeq = seq
   }
   const n = ++current
+  if (booting) {
+    // the newest alone waits for the boot (an older deferred one is superseded: never answered)
+    deferred = { t, ...(typeof seq === 'number' ? { seq } : {}), from, n, nav: navNow() }
+    return 'deferred'
+  }
+  return apply(t, typeof seq === "number" ? seq : undefined, from, n)
+}
+
+/** A show applied: the notice over unsent words, or the move - answered, and the window forward, once it is on screen. */
+async function apply(t: ShowTarget | 'landing', seq: number | undefined, from: ShowFrom, n: number): Promise<ShowResult> {
   const notice = (): ShowResult => {
     useShowNotice.setState({ notice: { title: t === 'landing' ? LANDING : titleOf(t), target: t, at: Date.now() } })
     if (typeof seq === 'number') ack(seq, 'notice')
     if (from === 'server') front()
     return 'notice'
   }
-  // a person's navigation from the moment it came - while the boot still loads, too - is newer than this show (the
-  // boot's own does not count: it changes boards without starting a navigation)
-  const before = navNow()
-  await booted
-  // the board's first camera applied (Canvas.tsx), so the boot never lands over the show - a board with no nodes has
-  // none to wait for, and a second at most whatever happens
-  if (useStore.getState().nodes.length) await Promise.race([bootLanded, new Promise((r) => setTimeout(r, 1500))])
-  if (n !== current || !isLatest(before)) return 'stale'
   if (holdsWords()) return notice()
   useShowNotice.setState({ notice: null })
   const r = await go(t, n, false)

@@ -16,15 +16,21 @@ export interface CanvasWheelInput {
   ctrlKey: boolean; metaKey: boolean; clientX: number; clientY: number
 }
 
-/** The board's first camera - its boot fit or restored camera (Canvas.tsx) - has been applied: `marver show` goes only
- *  after it, so the boot never lands over a show (spec 31 D3). */
+/** The board's first camera - its boot fit or restored camera (Canvas.tsx) - has been applied: a `marver show` that came
+ *  during the boot waits for it (show.ts), so it never races the boot (spec 31 D3). */
 let bootLandedNow: () => void = () => {}
-let bootIsDone = false
 export const bootLanded = new Promise<void>((r) => { bootLandedNow = r })
-/** Called once the first camera is applied - or, for a board that boots with no nodes, once its boot is over (App.tsx):
- *  from then on no board load restores the boot camera (a show to a populated board is never fitted over by it). */
-export function markBootLanded(): void { bootIsDone = true; bootLandedNow() }
-export const bootCameraDone = (): boolean => bootIsDone
+export function markBootLanded(): void { bootLandedNow() }
+
+/**
+ * A show applied (spec 31 D3): every boot reveal still to come gives way to it - the boot camera (Canvas.tsx), the boot
+ * link's frame fallback (Canvas.tsx, App.tsx) and its thread (Comments.tsx) each read this before they act. One flag,
+ * never reset: from here on the camera is the show's, and later board loads never restore the boot link's place - after
+ * a failed boot too, even when the show's own board then fails (a failed board load like any other: accepted).
+ */
+let bootCancelledFlag = false
+export function cancelBoot(): void { bootCancelledFlag = true }
+export const bootCancelled = (): boolean => bootCancelledFlag
 
 export const canvasCtl = {
   fitNode(_key: string) {},

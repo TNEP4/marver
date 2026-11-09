@@ -165,7 +165,7 @@ export function animateLayout(ms = 360) {
 // the control channel lives in ctl.ts so play/focus can import it without
 // dragging the canvas into a locked-shell bundle; Canvas assigns the real
 // implementations below when it mounts
-import { bootCameraDone, canvasCtl, markBootLanded, type CanvasWheelInput } from './ctl.ts'
+import { bootCancelled, canvasCtl, markBootLanded, type CanvasWheelInput } from './ctl.ts'
 import { cmd, type CmdHandle } from '../commands.ts'
 export { canvasCtl, type CanvasWheelInput }
 import { anchorNode, anchoredCamera, type Held } from './anchor.ts'
@@ -353,7 +353,7 @@ export function Canvas() {
   const booted = useRef(false)
   useEffect(() => {
     // the boot's camera, once: never for a later board load once the boot is over (an empty board boots with none)
-    if (booted.current || nodes.length === 0 || bootCameraDone()) return
+    if (booted.current || nodes.length === 0 || bootCancelled()) return
     let revealed = false
     booted.current = true
     // the page before this one reloaded itself when its canvas came back: its camera, on the board it showed
@@ -366,7 +366,7 @@ export function Canvas() {
     // a navigation after this point (a person's, a show's) owns the camera: the boot's fit gives way to it
     const nav = navNow()
     const fit = () => {
-      if (!isLatest(nav)) return
+      if (!isLatest(nav) || bootCancelled()) return
       const keys = linkTargets(bootHash, useStore.getState().nodes)
       if (keys.length) {
         useStore.setState({ selection: keys })
@@ -382,7 +382,8 @@ export function Canvas() {
       } else {
         canvasCtl.fitAll()
         // a link naming a frame this board does not show follows the frame where it lives
-        if (bootHash.f?.length && !revealed) { revealed = true; void revealFrame(bootHash.f[0]) }
+        // under the boot's own navigation (no new one: a person's, or an applied show, supersedes it)
+        if (bootHash.f?.length && !revealed) { revealed = true; void revealFrame(bootHash.f[0], nav, () => !bootCancelled()) }
       }
     }
     // a frame, or at once in a tab in the background (it draws none until it comes forward)
