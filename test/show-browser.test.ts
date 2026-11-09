@@ -366,6 +366,19 @@ describe('a show and the boot', () => {
   deferredCase('deferred while an empty board boots slowly: applied once it settled', '#/b/empty', `window.__hold('empty')`, `__gate.release()`)
   deferredCase('deferred while a boot fails slowly: applied once it failed, and the show has the camera', '#/b/other?n=n-three', `window.__hold('other'); window.__gate.failOnce = 'other'`, `__gate.release()`)
 
+  it('deferred while the board it names is the one booting: never resolved against nodes not loaded yet', async () => {
+    if (!browser) return
+    const t = await openRaw('#/b/main', `window.__hold('main')`)
+    await t.until(`__gate.asked`)
+    await new Promise((r) => setTimeout(r, 300))
+    const seq = await show({ board: 'main', n: ['n-two'] })
+    await new Promise((r) => setTimeout(r, 600))
+    expect(await acks(seq)).toEqual({ shown: 0, notice: 0 })
+    await t.ev(`__gate.release()`)
+    await expect.poll(() => acks(seq), { timeout: 8000 }).toEqual({ shown: 1, notice: 0 })
+    await t.until(settled('main', ['n-two']))
+  }, 60_000)
+
   it('a boot link\'s thread still loading gives way to a show applied meanwhile', async () => {
     if (!browser) return
     appendEvents(join(root, 'design', 'comments'), 'main', [{ id: 'e-show-7', ts: Date.now() - 400, type: 'create', commentId: 't-old', board: 'main', frame: 'demo/one', nodeKey: 'n-one', author: { name: 'Nic' }, body: 'the boot link\'s' }])
