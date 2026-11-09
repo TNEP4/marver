@@ -54,6 +54,8 @@ export interface PdfCtx {
   canvasName: string
   version: string
   frames: () => (PlanFrame & { file: string; note?: string; scene?: string; variantGroup?: string; variant?: string; contentWidth?: number })[]
+  /** the manifest's scenes: their notes and names lay a board out as the canvas does (boardNodes) */
+  scenes?: () => { name: string; note?: string }[]
   /** no source change in flight (the update-settlement barrier `shot` and bakes use) */
   settled: () => boolean
   /** a frame's document revision, dependency-aware (marks.ts docRev) */
@@ -121,7 +123,7 @@ export function playsAsSlides(root: string, board: string): boolean {
 
 /** The board file's nodes with the positions the canvas would give them: its own, else its layout's (a board an agent
  *  wrote as a frame list is laid out by the canvas when it opens - the same pure layout). */
-export async function boardNodes(root: string, board: string, frames: (PlanFrame & { scene?: string; variantGroup?: string; variant?: string; contentWidth?: number })[], viewports: Viewports, themes: string[]): Promise<{ nodes: PlanNode[]; title?: string } | null> {
+export async function boardNodes(root: string, board: string, frames: (PlanFrame & { note?: string; scene?: string; variantGroup?: string; variant?: string; contentWidth?: number })[], viewports: Viewports, themes: string[], scenes: readonly { name: string; note?: string }[] = []): Promise<{ nodes: PlanNode[]; title?: string } | null> {
   if (!BOARD_NAME.test(board) || board.length > 64) return null
   const { checkBoardsDir, isRegularFile } = await import('./boards.ts')
   const dir = join(root, 'design', 'boards'), file = join(dir, `${board}.json`)
@@ -164,12 +166,17 @@ export async function boardNodes(root: string, board: string, frames: (PlanFrame
     placeNewcomers(nodes as (PlanNode & { w: number })[], frames, (f) => { const d = size({ frame: f.id }); return { w: dv?.width ?? d.w, h: dv?.height ?? d.h } },
       (f, x, y, w, h) => { raw.push({ frame: f.id, w, h }); return { frame: f.id, x, y, w } })
   }
-  if (needTidy) {
+  // and when a note has no room (store.ts cramped): a board the canvas composes - a recipe, or auto - makes way for a note
+  // that landed beside saved positions; a load starts with no column measured yet (store.ts clearNoteHeights)
+  const { boardLayoutOf } = await import('./boards.ts')
+  const { notesCramped, tidyNodes } = await import('../client/shell/notes.ts')
+  const { composed, flow } = boardLayoutOf(b)
+  const manifest = { frames: frames.map((f) => ({ ...f, scene: f.scene ?? f.id.split('/')[0] })), scenes: [...scenes] }
+  const keyed = nodes.map((n, i) => ({ key: String(i), frame: n.frame, x: n.x, y: n.y, ...size(raw[i]), ...(n.missing ? { missing: true } : {}) }))
+  const cramped = !needTidy && composed && notesCramped(keyed, manifest, () => 0)
+  if ((needTidy || cramped) && nodes.length) {
     const { tidy } = await import('../client/shell/tidy.ts')
-    const { boardLayoutOf } = await import('./boards.ts')
-    const { flow } = boardLayoutOf(b)
-    const sceneOf = (id: string) => byId.get(id)?.scene ?? id.split('/')[0]
-    const placed = tidy(raw.map((n, i) => ({ key: String(i), frame: n.frame, scene: sceneOf(n.frame), group: byId.get(n.frame)?.variantGroup, variant: byId.get(n.frame)?.variant, ...size(n) })), flow)
+    const placed = tidy(tidyNodes(keyed, manifest, () => 0), flow, () => {}, new Set(scenes.map((sc) => sc.name)))
     for (const p of placed) { const n = nodes[Number(p.key)]; if (n) { n.x = p.x; n.y = p.y } }
   }
   const title = typeof b.title === 'string' && b.title.trim() ? b.title.trim().slice(0, 200) : undefined
@@ -179,9 +186,9 @@ export async function boardNodes(root: string, board: string, frames: (PlanFrame
 export type PlanAnswer = { ok: true; plan: Plan; title: string } | { ok: false; status: number; error: string }
 
 /** The board's plan with its budgets checked: 404 for a board that is not there, 400 for one that cannot print. */
-export async function planFor(ctx: Pick<PdfCtx, 'root' | 'viewports' | 'themes' | 'frames'>, board: string, theme?: string): Promise<PlanAnswer> {
+export async function planFor(ctx: Pick<PdfCtx, 'root' | 'viewports' | 'themes' | 'frames' | 'scenes'>, board: string, theme?: string): Promise<PlanAnswer> {
   const frames = ctx.frames()
-  const b = await boardNodes(ctx.root, board, frames, ctx.viewports, ctx.themes)
+  const b = await boardNodes(ctx.root, board, frames, ctx.viewports, ctx.themes, ctx.scenes?.() ?? [])
   if (!b) return { ok: false, status: 404, error: `no board "${board}" - boards are in design/boards/` }
   const plan = exportPlan({ slides: playsAsSlides(ctx.root, board), nodes: b.nodes, frames, viewports: ctx.viewports, theme })
   if (!plan.pages.length) return { ok: false, status: 400, error: `nothing to print on "${board}"${plan.skipped.length ? ` (${plan.skipped.length} frame(s) skipped: ${plan.skipped.slice(0, 3).map((s) => `${s.frame} - ${s.why}`).join(', ')})` : ''}` }

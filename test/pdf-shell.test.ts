@@ -3,7 +3,7 @@
 // focused, so the notice holds the file for a Download click instead of saying "downloaded" (release review).
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const h = vi.hoisted(() => ({ app: null as null | Record<string, unknown>, toasts: [] as string[], clicks: [] as string[], deletes: 0, cmds: [] as string[] }))
+const h = vi.hoisted(() => ({ app: null as null | Record<string, unknown>, toasts: [] as string[], clicks: [] as string[], deletes: 0, cmds: [] as string[], revoked: [] as string[], urls: 0, fileGate: null as null | Promise<void>, fileAsked: 0 }))
 vi.mock('../src/client/shell/marver-app.ts', () => ({ get APP() { return h.app } }))
 vi.mock('../src/client/shell/icons.tsx', () => ({ ExportIcon: () => null, XIcon: () => null }))
 vi.mock('../src/client/shell/commands.ts', () => ({ cmd: (name: string) => { h.cmds.push(name); return { done: () => {}, fail: () => {}, noop: () => {} } } }))
@@ -17,21 +17,21 @@ vi.mock('../src/client/shell/api.ts', () => ({
     if (path === 'pdf' && o?.method === 'POST') return json({ job: 'j1', pages: 2 })
     if (path === 'pdf/j1' && o?.method === 'DELETE') { h.deletes++; return json({ ok: true }) }
     if (path === 'pdf/j1') return json({ state: 'done', page: 2, pages: 2, filename: 'deck.pdf', report: { slides: [] } })
-    if (path === 'pdf/j1/file') return json({})
+    if (path === 'pdf/j1/file') { h.fileAsked++; if (h.fileGate) await h.fileGate; return json({}) }
     return json({ error: 'no' }, 404)
   },
 }))
 
 beforeEach(() => {
-  h.toasts = []; h.clicks = []; h.deletes = 0; h.cmds = []
+  h.toasts = []; h.clicks = []; h.deletes = 0; h.cmds = []; h.revoked = []; h.fileGate = null; h.fileAsked = 0; h.urls = 0
   const g = globalThis as Record<string, unknown>
   g.document = {
     cookie: '',
     createElement: () => { const a = { href: '', download: '', rel: '', click: () => h.clicks.push(a.download), remove: () => {} }; return a },
     body: { appendChild: () => {} },
   }
-  URL.createObjectURL = () => 'blob:pdf'
-  URL.revokeObjectURL = () => {}
+  URL.createObjectURL = () => `blob:pdf-${++h.urls}`
+  URL.revokeObjectURL = (u: string) => { h.revoked.push(u) }
 })
 
 describe('a finished PDF in the shell', () => {
@@ -68,5 +68,33 @@ describe('a finished PDF in the shell', () => {
     expect(h.deletes).toBe(1)
     expect(h.toasts).toEqual(['PDF dismissed'])
     expect(m.usePdfExport.getState().state).toBe('idle')
+  })
+  it('the 1.0.1 app: a cancel while the file is fetched holds nothing; a held file\'s URL is freed only after its own download', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] })
+    try {
+      h.app = { v: 1 }
+      const m = await import('../src/client/shell/pdf-export.tsx')
+      let open!: () => void
+      h.fileGate = new Promise<void>((r) => { open = r })
+      const run = m.exportPdf('deck', {}, { via: 'click', in: 'shell' })
+      // past the first poll, into the file's fetch, then cancelled there
+      for (let i = 0; i < 20 && !h.cmds.length; i++) await vi.advanceTimersByTimeAsync(10)
+      await vi.advanceTimersByTimeAsync(600)
+      expect(h.fileAsked).toBe(1)
+      await m.cancelPdf({ via: 'click', in: 'shell' })
+      open(); await run
+      expect(m.usePdfExport.getState()).toMatchObject({ state: 'idle', job: null })
+      expect(h.clicks).toEqual([])
+      expect(h.urls).toBe(0)
+      // a held file: its URL lives until a minute after its download, a newer one's is untouched
+      h.fileGate = null
+      const run2 = m.exportPdf('deck', {}, { via: 'click', in: 'shell' })
+      await vi.advanceTimersByTimeAsync(600); await run2
+      expect(m.usePdfExport.getState().state).toBe('ready')
+      m.downloadPdf({ via: 'click', in: 'shell' })
+      expect(h.revoked).toEqual([])
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(h.revoked).toEqual([`blob:pdf-${h.urls}`])
+    } finally { vi.useRealTimers() }
   })
 })

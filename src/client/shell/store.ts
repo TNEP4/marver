@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { ROUTE, slideSize } from '../const.ts'
 import { tidy, parseLayout, type BoardLayout, type TidyNode } from './tidy.ts'
-import { clearNoteHeights, noteHeight, noteReserve, notesCramped, scopeNotes, setNoteHeight } from './notes.ts'
+import { clearNoteHeights, noteHeight, noteReserve, notesCramped, scopeNotes, setNoteHeight, tidyNodes } from './notes.ts'
 import { stableNodeKey } from './keys.ts'
 import { canvasCtl } from './canvas/ctl.ts'
 import { api, beforeResume, canvasStopped, holdsReload, lostInResume, mvFetch, noteUnsaved, onLinkNotice, savedInResume, scoped, STOPPED_WAY, withWs } from './api.ts'
@@ -323,16 +323,7 @@ const HEADER = 28
  *  tidy keeps the scene reserve on the first node it places), and the measured height of the
  *  column standing there, so a note longer than its frame gets its room below as well. */
 export function tidyInput(nodes: readonly Node[], manifest: Manifest | null): TidyNode[] {
-  const entryOf = (id: string) => manifest?.frames.find((f) => f.id === id)
-  const sceneNote = (scene: string) => !!manifest?.scenes.find((s) => s.name === scene)?.note
-  return nodes.map((n) => {
-    const f = entryOf(n.frame)
-    const scene = f?.scene ?? ''
-    return {
-      key: n.key, frame: n.frame, scene, group: f?.variantGroup, variant: f?.variant, w: n.w, h: n.h + HEADER,
-      noteW: noteReserve(!!f?.note, false), sceneNoteW: noteReserve(false, sceneNote(scene)), noteH: noteHeight(n.key),
-    }
-  })
+  return tidyNodes(nodes, manifest)   // notes.ts: the deck PDF's plan lays boards out with the same input
 }
 let toastSeq = 0
 const nodeKey = () => 'n_' + Math.random().toString(36).slice(2, 8)

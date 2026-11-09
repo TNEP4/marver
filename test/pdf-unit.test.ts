@@ -114,6 +114,15 @@ describe('the board a job reads', () => {
     expect(b!.nodes.map((n) => n.frame)).toEqual(['s/a', 's/b', 's/c'])
     expect(b!.nodes.find((n) => n.frame === 's/a')!.y).not.toBe(1000)
   })
+  it('an auto board whose newcomer\'s note has no room is laid out again, as the canvas does (store.ts cramped): B above A + noted C plays A, B, C', async () => {
+    canvas({ auto: true, nodes: [{ frame: 's/a', x: 0, y: 1000, w: 1280, h: 720 }, { frame: 's/b', x: 0, y: 0, w: 1280, h: 720 }] }, { boards: { deck: { type: 'slides' } } })
+    const noted = frames.map((fr) => (fr.id === 's/c' ? { ...fr, note: 'why this slide' } : fr))
+    const b = await boardNodes(root, 'deck', noted, VP, ['light'], [{ name: 's' }])
+    expect(exportPlan({ slides: true, nodes: b!.nodes, frames: noted, viewports: VP }).pages.map((p) => p.frame)).toEqual(['s/a', 's/b', 's/c'])
+    // the same board with C's note out of anyone's way keeps its saved positions
+    const far = await boardNodes(root, 'deck', frames, VP, ['light'], [{ name: 's' }])
+    expect(far!.nodes.map((n) => [n.frame, n.y])).toEqual([['s/a', 1000], ['s/b', 0], ['s/c', 0]])
+  })
   it('a node\'s theme: its own pin, else a legacy stored theme that differs from the frame\'s default', async () => {
     canvas({ nodes: [{ frame: 's/a', x: 0, y: 0, themeUser: 'dark' }, { frame: 's/b', x: 1, y: 0, theme: 'light' }, { frame: 's/c', x: 2, y: 0, theme: 'dark' }] })
     const b = await boardNodes(root, 'deck', frames, VP, ['light', 'dark'])

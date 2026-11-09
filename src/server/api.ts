@@ -917,7 +917,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           const ctx = {
             root, origin: opts.origin?.() ?? `http://${req.headers.host ?? 'localhost'}`, viewports: opts.viewports ?? {}, themes: opts.themes ?? ['light', 'dark'],
             canvasName: opts.canvasName?.() ?? root.split(sep).pop() ?? 'canvas', version: installedVersion() ?? '0.0.0',
-            frames: () => devManifest().frames, settled: opts.settled ?? (() => true), docRev: (id: string) => docRev(root, devManifest().frames, id),
+            frames: () => devManifest().frames, scenes: () => devManifest().scenes, settled: opts.settled ?? (() => true), docRev: (id: string) => docRev(root, devManifest().frames, id),
           }
           const r = await pdf.startPdfJob(ctx, { board: b.board, ...(theme ? { theme } : {}), ...(notes ? { notes } : {}), ...(paper ? { paper } : {}), ...(mode ? { mode } : {}), ...(keepGoing ? { keepGoing } : {}) })
           if (!r.ok) return json(res, r.status, { error: r.error, ...(r.job ? { job: r.job } : {}) })
