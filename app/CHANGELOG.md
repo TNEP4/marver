@@ -1,5 +1,20 @@
 # Changelog - the Marver Mac app
 
+## Unreleased
+
+Use it with canvases on marver 0.31.0 for everything below; older canvases keep working as before.
+
+- **`marver://` links open Marver.** A link an agent gives you (from `marver link`) brings Marver forward on that canvas's
+  board, the frames selected and in view. A tab already open is never reloaded - if you were typing a comment there, it stays
+  put and offers to go. A canvas that isn't running opens Home on its card, with its start command.
+- **Your agent can show you a frame.** `marver show` moves your open canvas there and brings its tab and the window forward.
+- **Resolve All Comments** on a canvas tab's menu, beside Mark All as Seen, with Undo.
+- **File > Export PDF** saves the board's deck as a PDF where you choose.
+- **Calmer tabs:** frames new since you looked show a blue dot, not a count; orange still counts what waits on you.
+- **Home:** canvases in temporary folders no longer fill Recently here; recent and shared canvases keep their name and logo;
+  a running canvas on an older Marver says so, with the command that updates it.
+- Live pictures are saved in sRGB, so your agent reads the colours the page asked for.
+
 ## 1.0.1 - 2026-11-05
 
 Marver now records what the app does and what you ask of it, closely enough to explain a slow launch, a white flash or a
