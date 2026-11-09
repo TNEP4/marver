@@ -6,7 +6,7 @@ import { PDFDocument } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { boardOrder, exportPlan, presentDevice, titleOf, type PlanFrame } from '../src/shared/export-plan.ts'
 import {
-  assetsChanged, boardNodes, cancelPdfJob, captureScale, clearPdfJobs, exportUrl, getJob, handoutHtml, jobsDir, jobStatus, JOB_ID, mergePages, PDF_BUDGET, planFor, playsAsSlides,
+  assetsChanged, boardNodes, cancelPdfJob, captureScale, handoutAllowed, clearPdfJobs, exportUrl, getJob, handoutHtml, jobsDir, jobStatus, JOB_ID, mergePages, PDF_BUDGET, planFor, playsAsSlides,
   startPdfJob, sweepPdfJobs, unlinkGotos, writeOutline, writeWhole, type PdfCtx,
 } from '../src/server/pdf.ts'
 import { reportLines } from '../src/cli/pdf.ts'
@@ -194,6 +194,19 @@ describe('jobs (spec 31 How)', () => {
     utimesSync(join(root, 'design', 'assets', 'photo.png'), later, later)
     expect(assetsChanged(root, ['design/assets/photo.png'], since)).toBe(true)
     expect(assetsChanged(root, ['design/assets/../../etc/passwd', 'design/x'], 0)).toBe(false)
+    // an asset deleted under a loaded slide is a change too
+    expect(assetsChanged(root, ['design/assets/gone.png'], since)).toBe(true)
+    void ctx
+  })
+  it('the handout page is gated like the CLI\'s routes: the canvas\'s dev token, or nothing', () => {
+    const ctx = ctxFor()
+    mkdirSync(join(root, 'design', '.local'), { recursive: true })
+    writeFileSync(join(root, 'design', '.local', 'dev.json'), JSON.stringify({ port: 1, token: 'tok-123', pid: process.pid }))
+    expect(handoutAllowed({ 'x-mv-work': 'tok-123' }, root)).toBe(true)
+    expect(handoutAllowed({}, root)).toBe(false)
+    expect(handoutAllowed({ 'x-mv-work': 'other' }, root)).toBe(false)
+    rmSync(join(root, 'design', '.local', 'dev.json'))
+    expect(handoutAllowed({ 'x-mv-work': 'tok-123' }, root)).toBe(false)
     void ctx
   })
   it('the job folder is never reached through a link out of the project: dev start and cleanup leave it, a job is refused', async () => {

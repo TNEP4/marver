@@ -138,19 +138,20 @@ function install(): boolean {
       || ((c as unknown as { backdropFilter?: string }).backdropFilter ?? 'none') !== 'none'
       || /paint|layout|strict|content/.test(c.contain || '') || /transform|perspective|filter/.test(c.willChange || '')
       || (c.scale && c.scale !== 'none') || (c.rotate && c.rotate !== 'none') || (c.translate && c.translate !== 'none'))
+  /** which ancestors clip an element: those in its containing-block chain (CSS 2.2 11.1.1) - every ancestor of an
+   *  in-flow box, only a positioned one (or one holding fixed descendants) for an absolute box, only one holding fixed
+   *  descendants for a fixed box; each clipping ancestor then passes the question on by its own position */
+  const placeOf = (c: CSSStyleDeclaration): 'flow' | 'abs' | 'fixed' => (c.position === 'fixed' ? 'fixed' : c.position === 'absolute' ? 'abs' : 'flow')
   const clipOf = (el: Element, W: number, H: number): { x0: number; y0: number; x1: number; y1: number } => {
     let x0 = 0, y0 = 0, x1 = W, y1 = H
-    // a fixed element escapes the clips below its containing block - the viewport, unless an ancestor holds it
-    let clipping = getComputedStyle(el).position !== 'fixed'
+    let need = placeOf(getComputedStyle(el))
     for (let a = el.parentElement; a && a !== document.body && a !== document.documentElement; a = a.parentElement) {
       const c = getComputedStyle(a)
-      if (!clipping) { if (holdsFixed(c)) clipping = true; else continue }
-      if (c.overflowX === 'visible' && c.overflowY === 'visible') { if (c.position === 'fixed') clipping = false; continue }
-      const b = a.getBoundingClientRect()
-      if (c.overflowX !== 'visible') { x0 = Math.max(x0, b.left); x1 = Math.min(x1, b.right) }
-      if (c.overflowY !== 'visible') { y0 = Math.max(y0, b.top); y1 = Math.min(y1, b.bottom) }
-      // a fixed ancestor escapes the clips above it in turn, up to its own containing block
-      if (c.position === 'fixed') clipping = false
+      const holds = need === 'flow' ? true : need === 'abs' ? c.position !== 'static' || holdsFixed(c) : holdsFixed(c)
+      if (!holds) continue
+      if (c.overflowX !== 'visible') { const b = a.getBoundingClientRect(); x0 = Math.max(x0, b.left); x1 = Math.min(x1, b.right) }
+      if (c.overflowY !== 'visible') { const b = a.getBoundingClientRect(); y0 = Math.max(y0, b.top); y1 = Math.min(y1, b.bottom) }
+      need = placeOf(c)
     }
     return { x0, y0, x1, y1 }
   }
@@ -568,8 +569,9 @@ export const CROP = crop.toString()
  * - outside every box: `marver`'s bake rule - changed pixels beyond 32 levels, and the worst 16x16 block;
  * - `coarse`: the share of the page whose averages over 8 CSS px blocks differ by more than 32 levels - a missing or
  *   wrong area differs in its average (print certification);
- * - `fine`: the share of pixels, of either picture, more than 48 levels outside the range of the other picture's pixels
- *   within one pixel of them - text drawn by another rasteriser differs only at its edges, a changed pattern everywhere.
+ * - `fine`: the share of pixels, of either picture, more than 48 levels from every pixel within one pixel of them in the
+ *   other, and from every blend of two of those - text drawn by another rasteriser differs only at its edges (blends), a
+ *   changed pattern everywhere.
  */
 async function compare(a: string, b: string, dsf: number, boxes: { x: number; y: number; w: number; h: number }[], tol: number, atB = false): Promise<{ boxes: number[]; outside: { gt32: number; n: number; blockMax: number }; coarse: number; fine: number }> {
   const load = async (d: string) => { const im = new Image(); im.src = 'data:image/png;base64,' + d; await im.decode(); return im }
@@ -589,23 +591,31 @@ async function compare(a: string, b: string, dsf: number, boxes: { x: number; y:
   }
   const A = px(ia), B = px(ib)
   const d = (p: number) => { const i = p * 4; return Math.max(Math.abs(A[i] - B[i]), Math.abs(A[i + 1] - B[i + 1]), Math.abs(A[i + 2] - B[i + 2])) }
-  /** pixel (x, y) of P is not a blend of Q's pixels within one pixel of it: some channel lies more than `t` levels outside
-   *  their range. A resampled or re-snapped edge is a blend of its neighbours; a line, a box or a colour that is not
-   *  there is not */
+  /** pixel (x, y) of P is not near Q within one pixel of it: neither within `t` levels of one of those pixels nor of a
+   *  blend of two of them (the segment between them). A resampled or re-snapped edge is a blend of its neighbours; a
+   *  line, a box, or a colour no two neighbours mix to (yellow among red and green) is not */
+  const near: number[] = new Array(27)
   const unmatched = (P: Uint8ClampedArray, Q: Uint8ClampedArray, x: number, y: number, t: number) => {
     const i = (y * W + x) * 4
-    for (let c = 0; c < 3; c++) {
-      let lo = 255, hi = 0
-      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-        const xx = x + dx, yy = y + dy
-        if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue
-        const v = Q[(yy * W + xx) * 4 + c]
-        if (v < lo) lo = v
-        if (v > hi) hi = v
-      }
-      if (P[i + c] < lo - t || P[i + c] > hi + t) return true
+    const pr = P[i], pg = P[i + 1], pb = P[i + 2]
+    let k = 0
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const xx = x + dx, yy = y + dy
+      if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue
+      const j = (yy * W + xx) * 4
+      const r = Q[j], g = Q[j + 1], b = Q[j + 2]
+      if (Math.max(Math.abs(pr - r), Math.abs(pg - g), Math.abs(pb - b)) <= t) return false
+      near[k * 3] = r; near[k * 3 + 1] = g; near[k * 3 + 2] = b; k++
     }
-    return false
+    for (let a = 0; a < k; a++) for (let c = a + 1; c < k; c++) {
+      const ar = near[a * 3], ag = near[a * 3 + 1], ab = near[a * 3 + 2]
+      const vr = near[c * 3] - ar, vg = near[c * 3 + 1] - ag, vb = near[c * 3 + 2] - ab
+      const len = vr * vr + vg * vg + vb * vb
+      if (!len) continue
+      const u = Math.max(0, Math.min(1, ((pr - ar) * vr + (pg - ag) * vg + (pb - ab) * vb) / len))
+      if (Math.max(Math.abs(pr - (ar + u * vr)), Math.abs(pg - (ag + u * vg)), Math.abs(pb - (ab + u * vb))) <= t) return false
+    }
+    return true
   }
   const owned = new Uint8Array(W * H)
   const inBoxes = boxes.map((bx) => {

@@ -24,8 +24,9 @@
  */
 import { execFile } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, sep } from 'node:path'
+import { tmpdir } from 'node:os'
 import { PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFString, type PDFRef } from 'pdf-lib'
 import { ROUTE } from '../cli/name.ts'
 import { Browser } from './cdp.ts'
@@ -255,7 +256,7 @@ export function sipsRaster(pdfPath: string, side: number): Promise<Buffer | null
 }
 
 /** Render, patch, certify and print one page. Throws only when the browser itself is gone. */
-export async function renderSlide(b: Browser, helper: Helper, page: PlanPage, o: { url: string; dir: string; n: number; mode: Mode; notes: boolean; signal: AbortSignal; slideMs?: number; dirOk: () => boolean }): Promise<SlideOut> {
+export async function renderSlide(b: Browser, helper: Helper, page: PlanPage, o: { url: string; dir: string; n: number; mode: Mode; notes: boolean; signal: AbortSignal; slideMs?: number }): Promise<SlideOut> {
   const W = page.width, H = page.height
   const dsf = captureScale(W, H)
   const owner = {}
@@ -401,11 +402,12 @@ export async function renderSlide(b: Browser, helper: Helper, page: PlanPage, o:
         pdf = Buffer.from(await one.save())
       }
       // print certification: the printed page rasterised and compared with the screen
-      if (hasSips() && o.dirOk()) {
-        const file = join(o.dir, `${String(o.n).padStart(3, '0')}.pdf`)
-        writeFileSync(file, pdf)
-        const png = await sipsRaster(file, Math.max(W, H) * 2)
-        rmSync(file, { force: true })
+      if (hasSips()) {
+        // in a private temp folder of its own: nothing of the job's folder is written or removed around the await
+        const tmp = mkdtempSync(join(tmpdir(), 'mv-pdf-sips-'))
+        const file = join(tmp, 'page.pdf')
+        let png: Buffer | null = null
+        try { writeFileSync(file, pdf); png = await sipsRaster(file, Math.max(W, H) * 2) } finally { rmSync(tmp, { recursive: true, force: true }) }
         if (png) {
           debug('print.png', png)
           out.printChecked = true
@@ -670,11 +672,12 @@ function revisions(ctx: PdfCtx, frames: string[]): { doc: Map<string, string>; g
   const mt = (p: string) => { try { return String(statSync(join(ctx.root, p)).mtimeMs) } catch { return '-' } }
   return { doc, global: ['design/config.ts', 'design/theme.css', 'design/providers.tsx'].map(mt).join('|') }
 }
-/** Was any of these asset files (root-relative, inside design/assets) written at or after `since`? */
+/** Was any of these asset files (root-relative, inside design/assets) written at or after `since`, or removed? */
 export function assetsChanged(root: string, assets: string[], since: number): boolean {
   for (const a of assets) {
     if (!a.startsWith('design/assets/') || a.split('/').includes('..')) continue
-    try { if (statSync(join(root, a)).mtimeMs >= since - 1) return true } catch { /* gone: the frame shows its error, its doc moves */ }
+    // written since, or gone (an image deleted under a loaded slide need not move its document's revision)
+    try { if (statSync(join(root, a)).mtimeMs >= since - 1) return true } catch { return true }
   }
   return false
 }
@@ -719,7 +722,7 @@ async function runJob(ctx: PdfCtx, job: Job, plan: Plan, title: string): Promise
         else page = p2
         url = exportUrl(ctx.origin, page, ctx.frames().find((f) => f.id === page.frame)?.file)
         const base = revisions(ctx, [page.frame]), since = Date.now()
-        const out = await renderSlide(b, helper, page, { url, dir: job.dir, n, mode: job.ask.mode ?? 'auto', notes: !!job.ask.notes, signal, dirOk: () => jobDirReal(ctx.root, job.dir) })
+        const out = await renderSlide(b, helper, page, { url, dir: job.dir, n, mode: job.ask.mode ?? 'auto', notes: !!job.ask.notes, signal })
         const now = revisions(ctx, [page.frame])
         const moved = !ctx.settled() || now.doc.get(page.frame) !== base.doc.get(page.frame) || now.global !== base.global || assetsChanged(ctx.root, out.assets ?? [], since)
         return { out, moved }
@@ -833,6 +836,12 @@ async function printHandout(b: Browser, ctx: PdfCtx, job: Job, slides: { page: P
     targetId = (await b.send('Target.createTarget', { url: 'about:blank' }, undefined, owner)).targetId
     const sid = (await b.send('Target.attachToTarget', { targetId, flatten: true }, undefined, owner)).sessionId as string
     const send = (m: string, p: Record<string, unknown> = {}) => b.send(m, p, sid, owner)
+    // the route's gate (spec 31: every route, the dev token for the CLI): this tab's requests carry the token
+    const { readDevInfo } = await import('./work.ts')
+    const token = readDevInfo(ctx.root)?.token
+    if (!token) throw new Error('marver dev has no session token (design/.local/dev.json) - restart it')
+    await send('Network.enable')
+    await send('Network.setExtraHTTPHeaders', { headers: { 'x-mv-work': token } })
     await send('Page.enable')
     await send('Page.navigate', { url: `${ctx.origin}${ROUTE}/handout/?job=${job.id}` })
     for (const by = Date.now() + 30_000; Date.now() < by;) {
@@ -862,8 +871,15 @@ async function printHandout(b: Browser, ctx: PdfCtx, job: Job, slides: { page: P
   }
 }
 
+/** The handout's gate: the canvas's dev token (the renderer's tab sends it on every request), as the CLI's routes. */
+export function handoutAllowed(headers: Record<string, string | string[] | undefined>, root: string): boolean {
+  const token = readDevToken(root)
+  return !!token && headers['x-mv-work'] === token
+}
+const readDevToken = (root: string): string | null => { try { const t = JSON.parse(readFileSync(join(root, 'design', '.local', 'dev.json'), 'utf8')).token; return typeof t === 'string' && t ? t : null } catch { return null } }
+
 /** `/__mv/handout/?job=` and its pictures: served only while that job's handout prints, to its own browser. */
-export function handoutMiddleware(): (req: { url?: string; method?: string }, res: { statusCode: number; setHeader(k: string, v: string | number): void; end(b?: string | Buffer): void }, next: () => void) => void {
+export function handoutMiddleware(): (req: { url?: string; method?: string; headers?: Record<string, string | string[] | undefined> }, res: { statusCode: number; setHeader(k: string, v: string | number): void; end(b?: string | Buffer): void }, next: () => void) => void {
   return (req, res, next) => {
     const url = new URL(req.url ?? '/', 'http://x')
     if (!url.pathname.startsWith(`${ROUTE}/handout/`)) return next()
@@ -871,6 +887,7 @@ export function handoutMiddleware(): (req: { url?: string; method?: string }, re
     const h = JOB_ID.test(job) ? handouts.get(job) : undefined
     const j = h ? jobs.get(job) : undefined
     if (!h || !j || req.method !== 'GET') { res.statusCode = 404; return res.end('not found') }
+    if (!handoutAllowed(req.headers ?? {}, j.root)) { res.statusCode = 403; return res.end('forbidden') }
     res.setHeader('cache-control', 'no-store')
     res.setHeader('x-content-type-options', 'nosniff')
     const pic = /^\/handout\/(\d{1,3})\.jpg$/.exec(url.pathname.slice(ROUTE.length))

@@ -43,7 +43,8 @@ Some CSS effects come out wrong when Chrome prints: a frosted-glass `backdrop-fi
 Marver fixes each one element by element, and checks its own work:
 
 - **Glass** keeps its children live (text, links, icons stay vector and selectable); only the blurred backdrop behind it
-  becomes a picture, taken at 3x.
+  becomes a picture, taken at 3x (lowered for a large slide so one picture stays under 16 megapixels: 2.75x at
+  1920×1080, 1x at 4096×4096).
 - **A filtered, blended or masked box, a canvas, a video** becomes a 3x picture of itself, including the shadow or blur
   that spills past its edge; any link inside it stays clickable.
 - **A large soft shadow** is redrawn as a stack of sharp vector shadows that follows the blur's falloff - no picture
@@ -57,7 +58,7 @@ instead (*raster*). Every printed page is also rasterised (macOS `sips`) and com
 allowing only the edge differences two renderers make, and area by area - which catches anything that only goes wrong
 in print: such a page becomes a picture too. Where there is no rasteriser (not on a Mac), the report says *screen-certified only*.
 
-`--raster` prints every page as a 3x picture (no vector text). `--vector` fixes nothing: every page exactly as Chrome
+`--raster` prints every page as a picture at that same scale (no vector text). `--vector` fixes nothing: every page exactly as Chrome
 prints it (a page whose print differs from the screen is named, and kept).
 
 ## The report

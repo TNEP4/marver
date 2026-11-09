@@ -63,6 +63,7 @@ const FILES: Record<string, string> = {
       <a href="https://example.org/invisible" style={{ visibility: 'hidden' }}>an invisible link</a>
       <div style={{ height: 0, overflow: 'hidden' }}><a href="https://example.org/clipped-away">a link clipped away</a></div>
       <div style={{ transform: 'translateZ(0)', height: 0, overflow: 'hidden' }}><a href="https://example.org/fixed-clipped" style={{ position: 'fixed', left: 10, top: 10 }}>fixed, held and clipped</a></div>
+      <div style={{ position: 'relative' }}><div style={{ height: 0, overflow: 'hidden' }}><a href="https://example.org/abs-visible" style={{ position: 'absolute', left: 300, top: -40, fontSize: 20 }}>absolute, shown</a></div></div>
     </div>`),
   'design/scenes/deck/04-motion.tsx': `import { useEffect, useRef } from 'react'
 export const meta = { title: 'Motion', slide: true }
@@ -216,6 +217,8 @@ describe.skipIf(!hasChrome)('deck PDFs in real Chrome (spec 31 Part A)', () => {
     expect(inside).toContain('https://example.net/svg')
     // a link that does not show is no link on the page
     expect(inside.filter((u) => /invisible|clipped-away|fixed-clipped/.test(u ?? ''))).toEqual([])
+    // an absolute link escapes the clip of a wrapper that is not its containing block: it shows, so it stays a link
+    expect(inside).toContain('https://example.org/abs-visible')
     await doc.destroy()
     expect(deck.report.slides.filter((s) => s.status === 'raster' || s.status === 'failed')).toEqual([])
     // a drop-shadow-only filter is left to Chrome, which prints it right (print-certified like every page)
@@ -409,8 +412,11 @@ describe.skipIf(!hasChrome)('the finished slide, frozen deterministically (#4)',
         // a capture drawn back a fraction of a pixel off (resampled edges) is the same picture inside its box
         const sq = (o) => (g) => { g.fillStyle = '#e8501f'; g.fillRect(110 + o, 60 + o, 60, 70); g.fillStyle = '#123'; g.font = '20px Helvetica'; g.fillText('On', 120 + o, 100 + o) }
         const rs = await cmp(pic(sq(0)), pic(sq(0.3)), 2, [{ x: 100, y: 50, w: 100, h: 100 }], 24)
+        // a red/green checkerboard turned yellow/black: every channel stays within its neighbours' range, no colour is a blend
+        const checker = (p, q) => (g) => { for (let y = 0; y < 200; y += 0.5) for (let x = 0; x < 400; x += 0.5) { g.fillStyle = ((x + y) * 2) % 2 ? p : q; g.fillRect(x, y, 0.5, 0.5) } }
+        const ck = await cmp(pic(checker('#f00', '#0f0')), pic(checker('#ff0', '#000')), 2, [{ x: 100, y: 50, w: 100, h: 100 }], 24, false)
         const t = await cmp(pic(text(0)), pic(text(0.5)), 2, [], 24, true)
-        return { stripes: [a.coarse, a.fine], text: [t.coarse, t.fine], lines: l.fine, box: bx.boxes[0], resampled: rs.boxes[0] }
+        return { stripes: [a.coarse, a.fine], text: [t.coarse, t.fine], lines: l.fine, box: bx.boxes[0], resampled: rs.boxes[0], checker: [ck.boxes[0], ck.fine] }
       })()`)
       expect(got.stripes[0]).toBe(0)                 // the average cannot see it...
       expect(got.stripes[1]).toBeGreaterThan(0.4)    // ...the pixel check does
@@ -418,6 +424,8 @@ describe.skipIf(!hasChrome)('the finished slide, frozen deterministically (#4)',
       expect(got.lines).toBeGreaterThan(0.05)        // lines added where the screen has none
       expect(got.box).toBeGreaterThan(0.05)          // and inside a patch box
       expect(got.resampled).toBeLessThan(0.01)       // while edges resampled a fraction of a pixel off pass
+      expect(got.checker[0]).toBeGreaterThan(0.5)    // colours no two neighbours blend to fail, in a box...
+      expect(got.checker[1]).toBeGreaterThan(0.5)    // ...and on the page
     } finally { await b.close() }
   }, 60_000)
   it('export=1 turns Img\'s LOD canvas off on a frame that is not a slide: a plain <img> of the original (#5)', async () => {
