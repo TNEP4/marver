@@ -289,8 +289,12 @@ describe('marver show (the CLI)', () => {
   it('two open tabs: "shown in 2 tabs" and the link; none: "no open tab" and the link', async () => {
     if (!browser) return
     const a = await open('#/b/main'), b = await open('#/b/other')
+    // tab a in the background, as the page sees it: its camera must land with no flight to wait for
+    await a.ev(`Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' }), 1`)
     const out = await cli('demo/two')
     expect(out).toEqual(['shown in 2 tabs', `http://localhost:${PORT}/#/b/main?f=demo/two`])
+    // the tab in the background counted shown only once its camera landed there: no waiting now
+    expect(await a.ev(VIEW)).toEqual({ board: 'main', sel: ['n-two'], visible: ['n-two'] })
     await a.until(settled('main', ['n-two']))
     await b.until(settled('main', ['n-two']))
     for (const s of tabs.splice(0)) await browser.closeTab(s)

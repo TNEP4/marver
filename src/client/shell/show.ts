@@ -112,13 +112,12 @@ async function go(t: ShowTarget | 'landing', n: number, force: boolean): Promise
 
 /** The camera came to rest (the commands' own rule, commands.ts `cameraDone`: it flew and stopped, or rested 250 ms),
  *  while `alive` held throughout - a newer navigation or words typed meanwhile is no landing. A tab in the background
- *  draws no frames and its camera does not fly: the place is set, and shown when the tab comes forward. 2 s at most, so
- *  `marver show`'s 3 s hear every tab. */
+ *  lands its camera at once (Canvas.tsx `fly`), and is timed here without frames. 2 s at most, so `marver show`'s 3 s
+ *  hear every tab; a camera still flying then has not landed - no "shown". */
 async function cameraLanded(alive: () => boolean): Promise<boolean> {
   const since = performance.now()
   let saw = false
   for (let n = 1; performance.now() - since < 2000; n++) {
-    if (document.visibilityState === 'hidden') return alive()
     // a frame, or 50 ms where none come (a tab in the background)
     await new Promise((r) => { const late = setTimeout(r, 50); requestAnimationFrame(() => { clearTimeout(late); r(null) }) })
     if (!alive()) return false
@@ -126,7 +125,7 @@ async function cameraLanded(alive: () => boolean): Promise<boolean> {
     if (busy) saw = true
     if (!busy && (saw || performance.now() - since > 250) && n >= 2) return true
   }
-  return alive()
+  return false
 }
 
 const ack = (seq: number, outcome: 'shown' | 'notice') => {

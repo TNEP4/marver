@@ -214,7 +214,10 @@ export function Canvas() {
   const ref = useRef<ReactZoomPanPinchContentRef>(null)
   // every camera move the canvas aims (a fit, a zoom, a camera restored): where it lands, while rzpp flies there, and the
   // boot queue told - the first frame of a board starts now, ranked on that view, not once the flight is over
-  const fly = (x: number, y: number, scale: number, ms: number) => {
+  const fly = (x: number, y: number, scale: number, msAsked: number) => {
+    // a tab in the background draws no frames: its camera lands at once, where a flight nobody sees would wait for it
+    // to come forward (`marver show` to a background tab, spec 31 D3)
+    const ms = document.visibilityState === 'hidden' ? 0 : msAsked
     flight = ms ? { x, y, scale } : null
     ref.current?.setTransform(x, y, scale, ms, 'easeOut')
     aimed()

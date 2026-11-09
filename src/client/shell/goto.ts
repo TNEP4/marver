@@ -84,7 +84,7 @@ export async function switchFor(board: string, nav: number = navigated(), mayCom
   return isLatest(nav) && useStore.getState().board === board
 }
 /** The camera to a node once it is drawn - unless a newer navigation has it by then. */
-const fitLater = (key: string, seq: number) => setTimeout(() => { if (isLatest(seq)) canvasCtl.fitNode(key) }, 50)
+const fitLater = (key: string, seq: number, mayCommit?: () => boolean) => setTimeout(() => { if (isLatest(seq) && (!mayCommit || mayCommit())) canvasCtl.fitNode(key) }, 50)
 
 /** Switch to `home` and select + fit `target` there once the board commits - unless the human has
  *  moved on: newer navigation, or a board they switched to themselves while the lookup ran. */
@@ -99,7 +99,7 @@ async function landOn(home: string, target: string, carry: boolean, seq: number,
       if (node) {
         st.select(node.key)
         if (carry) st.setInteract(node.key)
-        fitLater(node.key, seq)
+        fitLater(node.key, seq, mayCommit)
         return
       }
     }
@@ -118,7 +118,7 @@ export async function revealFrame(target: string, nav?: number, mayCommit?: () =
   if (here) {
     const seq = nav ?? navigated()
     s.select(here.key)
-    fitLater(here.key, seq)
+    fitLater(here.key, seq, mayCommit)
     return
   }
   if (!s.manifest?.frames.some((f) => f.id === target)) return s.toast(`no frame "${target}" on this canvas`)
