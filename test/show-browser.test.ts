@@ -484,13 +484,13 @@ describe('a show and the boot', () => {
     expect(await acks(seq)).toEqual({ shown: 0, notice: 0 })
   }, 60_000)
 
-  it('the app\'s own menu action (Resolve All Comments) chosen while a show loads its board: the show gives way', async () => {
+  it('the app\'s own menu action (Mark All as Seen) chosen while a show loads its board: the show gives way', async () => {
     if (!browser) return
     const t = await open('#/b/main', { app: true })
     await t.ev(`__hold('other')`)
     const seq = await show({ board: 'other', n: ['n-three'] })
     await t.until(`__gate.asked`)
-    await t.ev(`__app.menu({ id: 'resolve-all-comments' }), 1`)
+    await t.ev(`__app.menu({ id: 'mark-all-seen' }), 1`)   // not Resolve All Comments: it would resolve this fixture's threads for the cases after it
     await t.ev(`__gate.release()`)
     await new Promise((r) => setTimeout(r, 1500))
     expect((await t.ev(VIEW)).board).toBe('main')
