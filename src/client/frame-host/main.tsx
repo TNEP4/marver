@@ -21,6 +21,9 @@ const theme = params.get('theme') ?? 'light'
 // data attribute). The bridge applies the same pair on sh:set-theme.
 document.documentElement.dataset.theme = theme
 document.documentElement.classList.toggle('dark', theme === 'dark')
+// a deck PDF's render (spec 31 #5): `export=1` says so on the document - Img decodes every image from its original
+// (no LOD canvas, nothing bucketed or capped at dpr 2), on any board, slide or not
+if (params.get('export') === '1') document.documentElement.setAttribute('data-mv-export', '')
 
 const post = (msg: Record<string, unknown>) => { if (window.parent !== window) window.parent.postMessage(msg, '*') }
 // this document's id, set by the bridge (imported first, above) before anything is posted - and the URL revision the

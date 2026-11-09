@@ -350,7 +350,14 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       // the marks start with the dev server, before any page asks (spec 26)
       initMarks(root, manifest.frames)
       tidyPerfDir(root)   // the perf logs are the owner's alone, and age out (spec 28 A1.7)
-      server.middlewares.use(apiMiddleware(root, { viewports: config.viewports, origin: listeningOrigin, bakeGen: () => bakeGen, notify: (event) => { server.ws.send(event, {} as any); liveChanged() }, manifest: () => manifest, settled, workspace: ws, inputs }))
+      // deck PDFs (spec 31): no job outlives its server - the folder starts empty; a handout's page is served while it prints
+      try { rmSync(join(root, 'design', '.local', 'pdf'), { recursive: true, force: true }) } catch { /* best-effort */ }
+      server.middlewares.use((req, res, next) => {
+        if (!(req.url ?? '').startsWith(`${ROUTE}/handout/`)) return next()
+        import('./pdf.ts').then((m) => m.handoutMiddleware()(req, res as never, next), next)
+      })
+      server.middlewares.use(apiMiddleware(root, { viewports: config.viewports, origin: listeningOrigin, bakeGen: () => bakeGen, notify: (event) => { server.ws.send(event, {} as any); liveChanged() }, manifest: () => manifest, settled, workspace: ws, inputs,
+        themes: config.themes, canvasName: () => config.share.name || basename(root) }))
       // the canvas's logo for the Mac app's tab (spec 28 A2.4, A2.9): proved like the document when asked with a nonce
       server.middlewares.use(logoRoute(root, () => config.share.logo, ctx.proof))
       server.middlewares.use(routesMiddleware(server, clientDir, {
