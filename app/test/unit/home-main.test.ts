@@ -31,6 +31,7 @@ const entry = (n: number, over: Partial<RecentEntry> = {}): RecentEntry => ({
 
 beforeEach(async () => {
   vi.resetModules()
+  process.env.MARVER_APP_TEMP_DIRS = ''   // these fixtures live in the temp folder Recently here hides (spec 31 E1)
   base = realpathSync(mkdtempSync(join(tmpdir(), 'mvapp-home-')))
   home = join(base, 'home')
   repos = join(base, 'repos')
@@ -41,7 +42,7 @@ beforeEach(async () => {
   fx.opened.length = 0
   fx.copied.length = 0
 })
-afterEach(() => { vi.useRealTimers(); rmSync(base, { recursive: true, force: true }); delete process.env.MARVER_HOME })
+afterEach(() => { vi.useRealTimers(); rmSync(base, { recursive: true, force: true }); delete process.env.MARVER_HOME; delete process.env.MARVER_APP_TEMP_DIRS })
 
 const boot = () => { cfg.ensureHome({ version: '0.1.0', dev: true }); cfg.loadFiles(); h.startHome() }
 const recentFile = () => join(home, 'state-dev', 'recent.json')

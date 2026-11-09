@@ -16,7 +16,7 @@
  * - a folder with no canvas running: Home, that canvas's card highlighted with its start command.
  */
 import { createHash } from 'node:crypto'
-import type { DeepLink } from '../../../src/shared/deep-link.ts'
+import { hashOfTarget, parseDeepLink, type DeepLink, type ShowTarget } from '../../../src/shared/deep-link.ts'
 
 /** What the router needs of a registry entry (registry.ts `RegistryEntry`, its `root` already its real path). */
 export interface LinkCanvas { ws: string; root: string; port: number; slot: number | null; state: string; origin: string | null; name: string }
@@ -73,4 +73,42 @@ export function createLinkQueue(max = QUEUE_MAX): LinkQueue {
     },
     held: () => [...held],
   }
+}
+
+/** What routing a link needs of the app (views.ts builds them from the registry, the tabs and Home). */
+export interface RoutePorts<T> {
+  entries(): LinkCanvas[]
+  /** realpath, or null when it does not resolve */
+  realpath(p: string): string | null
+  /** the window forward (every routed link) */
+  focus(): void
+  /** the canvas's local tab, if the app has one */
+  tabFor(e: LinkCanvas): T | undefined
+  /** the tab holds a live document (tabs.ts `liveDoc`), proved: what a load would replace */
+  live(t: T): boolean
+  /** a tab with a live document: shown the place over the bridge (tabs.ts `showForLink`) - never reloaded */
+  show(t: T, to: ShowTarget | null): void
+  /** no live document: the place loaded through views.ts `openInTab` (the proof and the guards) */
+  open(e: LinkCanvas, url: string | null, rest: string): void
+  /** no canvas of that folder runs: Home, its card */
+  home(root: string, ws: string, exists: boolean): void
+}
+
+/** One link, parsed and routed (spec 31 D1). Answers what was done. */
+export function routeDeepLink<T>(raw: unknown, p: RoutePorts<T>): 'bad' | 'home' | 'opened' | 'shown' {
+  const link = parseDeepLink(raw)
+  if (!link) return 'bad'
+  const real = p.realpath(link.ws)
+  const entries = p.entries().map((e) => ({ ...e, root: p.realpath(e.root) ?? e.root }))
+  const plan = planDeepLink(link, real, entries)
+  p.focus()
+  if (plan.kind === 'home') { p.home(plan.root, plan.ws, plan.exists); return 'home' }
+  const e = plan.entry
+  const t = p.tabFor(e)
+  if (t !== undefined && p.live(t)) { p.show(t, link.to); return 'shown' }
+  const rest = `/${link.to ? hashOfTarget(link.to) : ''}`
+  let url: string | null = null
+  if (e.state === 'ready' && e.origin) { try { url = `${new URL(e.origin).origin}${rest}` } catch { url = null } }
+  p.open(e, url, rest)
+  return 'opened'
 }

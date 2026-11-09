@@ -96,6 +96,8 @@ export const recentId = (ws: string): string => `r_${ws}`
  * `/var/folders`, `/private/var/folders`.
  */
 export function tempFolders(): string[] {
+  // a test build under the harness names its own (its fixtures live in the temp folder): `:`-separated, '' for none
+  if (__MV_TEST__ && process.env.MARVER_APP_TEMP_DIRS !== undefined) return process.env.MARVER_APP_TEMP_DIRS.split(':').filter((d) => d.startsWith('/'))
   const t = tmpdir()
   let real = t
   try { real = realpathSync(t) } catch { /* as it is */ }
@@ -168,7 +170,7 @@ function sharedChanged(): void {
 }
 
 /** At quit: what waits, written now. */
-export function flushShared(): void { sharedWriter?.flushSync() }
+export function flushShared(): void { sharedWriter?.flushSync(); sitesWriter?.flushSync() }
 
 /**
  * A shared canvas's name and logo (spec 31 E3), read through its remote tab's own session (views.ts) and kept by origin,

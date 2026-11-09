@@ -92,8 +92,7 @@ import { lastPressure } from './pressure.ts'
 import { actUnload as unloadAct, forceUnload, takeAct, unloadGone as actGone, type ActPorts } from './unload-act.ts'
 import { isQuitting, request as shutdownRequest, shutdownState, startShutdown, type RestartAlert } from './shutdown.ts'
 import { updateAct, updateMenu, updaterTabs } from './updater.ts'
-import { planDeepLink, type LinkCanvas } from './deep-link.ts'
-import { hashOfTarget, parseDeepLink } from '../../../src/shared/deep-link.ts'
+import { routeDeepLink } from './deep-link.ts'
 import { noteLogo, noteSite, setUpdateRoots, showLinked } from './home.ts'
 import { fetchSite } from './canvas-fetch.ts'
 
@@ -1027,35 +1026,30 @@ export async function openInTab(e: LinkTarget, url: string | null, rest: string)
 
 const realOf = (p: string): string | null => { try { return realpathSync(p) } catch { return null } }
 
-/** One link, routed. Answers what it did (journaled in a test build). */
+/** One link, routed (deep-link.ts `routeDeepLink`). Answers what it did (journaled in a test build). */
 export function openDeepLink(raw: string): 'bad' | 'home' | 'opened' | 'shown' {
-  const link = parseDeepLink(raw)
-  if (!link) { j('deep-link', { refused: 'bad' }); return 'bad' }
-  const entries: LinkCanvas[] = trust.entries().map((e) => ({ ws: e.ws, root: realOf(e.root) ?? e.root, port: e.port, slot: e.slot, state: e.state, origin: e.origin ?? null, name: e.name }))
-  const plan = planDeepLink(link, realOf(link.ws), entries)
-  focusWindow()
-  if (plan.kind === 'home') {
-    activate('home')
-    const id = showLinked(plan.root, plan.ws, plan.exists)
-    const home = contentView('home')
-    if (home && id) sendHeld(home.webContents, CH.homeFocus, { field: 'recent', id })
-    j('deep-link', { home: true, card: id ?? null })
-    return 'home'
-  }
-  const e = plan.entry
-  const locals = allTabs().filter((t) => t.kind === 'local' && t.reg?.ws === e.ws)
-  const t = locals.find((x) => e.origin ? x.reg!.origin === e.origin : x.reg!.port === e.port) ?? locals.find((x) => x.reg!.port === e.port)
-  if (t && liveDoc(t) && t.fail?.why !== 'unverified') {
+  const r = routeDeepLink<Tab>(raw, {
+    entries: () => trust.entries().map((e) => ({ ws: e.ws, root: e.root, port: e.port, slot: e.slot, state: e.state, origin: e.origin ?? null, name: e.name })),
+    realpath: realOf,
+    focus: focusWindow,
+    tabFor: (e) => {
+      const locals = allTabs().filter((t) => t.kind === 'local' && t.reg?.ws === e.ws)
+      return locals.find((x) => e.origin ? x.reg!.origin === e.origin : x.reg!.port === e.port) ?? locals.find((x) => x.reg!.port === e.port)
+    },
+    live: (t) => liveDoc(t) && t.fail?.why !== 'unverified',
     // open already: never reloaded, never a hash replaced under it - the shell gets the place and keeps any draft
-    const r = showForLink(t.id, link.to)
-    j('deep-link', { tab: t.id, show: r })
-    return 'shown'
-  }
-  const hash = link.to ? hashOfTarget(link.to) : ''
-  const rest = `/${hash}`
-  const url = e.state === 'ready' && e.origin ? `${new URL(e.origin).origin}${rest}` : null
-  void openInTab({ state: e.state, origin: e.origin, port: e.port, ws: e.ws, name: e.name }, url, rest).then((a) => j('deep-link', { opened: a }))
-  return 'opened'
+    show: (t, to) => { j('deep-link', { tab: t.id, show: showForLink(t.id, to) }) },
+    open: (e, url, rest) => { void openInTab({ state: e.state, origin: e.origin, port: e.port, ws: e.ws, name: e.name }, url, rest).then((a) => j('deep-link', { opened: a })) },
+    home: (root, ws, exists) => {
+      activate('home')
+      const id = showLinked(root, ws, exists)
+      const home = contentView('home')
+      if (home && id) sendHeld(home.webContents, CH.homeFocus, { field: 'recent', id })
+      j('deep-link', { home: true, card: id ?? null })
+    },
+  })
+  if (r === 'bad') j('deep-link', { refused: 'bad' })
+  return r
 }
 
 // ---------------------------------------------------------------------------------------------------------------
