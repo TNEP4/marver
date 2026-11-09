@@ -274,7 +274,17 @@ last); frames that sit on several boards get one link per board, and a frame on 
 instead of a link. `--board` picks one. The link reads `#/b/<board>?f=<scene/frame>,...` (or
 `?s=<scene>` for a whole scene), and a link naming a frame its board does not show follows the
 frame to where it lives. `npx marver work done` prints the same links for the frames it clears, so an
-agent's reply ends with them. A focus link (`#/f/<frame>`) opened on your dev canvas now has its way
+agent's reply ends with them. When the Mac app has this canvas open in a tab, each of them is a `marver://` link that
+opens it there ([Links into the app](app.md#links-into-the-app)); `--web` prints the localhost link anyway.
+
+## Showing you a place
+
+`npx marver show <scene/frame | scene ... | board>` moves every tab where this canvas is open to that place - its
+board, selected, the camera fitted, even when it is already there - and in the Mac app brings that tab and the window
+forward. `--thread <id>` opens a comment thread there too; frames on two boards are refused (show one board at a time).
+A tab where you are typing (a comment, a Jam edit) does not move: it says "Your agent wants to show you <title> · Go",
+and Go takes you. The command waits up to 3 seconds and says "shown in 2 tabs" (or "no open tab"), then prints the link.
+Agents run it only when you ask to be shown; otherwise they give the link. A focus link (`#/f/<frame>`) opened on your dev canvas now has its way
 back to the canvas (the grid button, or Esc); on a published canvas a focus link stays a page of
 its own.
 

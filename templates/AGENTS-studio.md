@@ -162,7 +162,12 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
   own line: the `on the canvas:` line `work done` printed, or `npx marver link <scene/frame |
   scene ...>` for any set. Each opens a board they sit on (one link per board when they sit
   on several) with them selected and in view -
-  the human finds the work at once on a board of fifty frames. Never a full-screen focus link
+  the human finds the work at once on a board of fifty frames. **Give exactly what those
+  commands print** - a `marver://...` link (the Mac app has this canvas open) or a localhost
+  one - never a link you wrote yourself or rewrote.
+- **`npx marver show <scene/frame | scene ... | board>` only when the human asks to be shown**
+  ("show me", "take me there"): it moves their open tabs to the place and prints the link. A
+  tab where they are typing is never moved - it shows them a notice. Otherwise, the link. Never a full-screen focus link
   (`#/f/...`) unless they ask for full screen. `npx marver ls` lists the canvases running on
   this Mac and their links; none for this folder? End by asking the person to run
   `npx marver dev` in their own terminal (or start it detached: "Keeping the canvas up") - the

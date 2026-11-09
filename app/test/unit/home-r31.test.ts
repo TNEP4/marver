@@ -122,7 +122,7 @@ describe('E2: a recent card keeps its logo', () => {
 
 describe('E3: shared canvases\' name and logo', () => {
   type Call = { url: string; init: RequestInit }
-  const res = (body: string | Buffer, o: { status?: number; url?: string } = {}) => { const r = new Response(body, { status: o.status ?? 200 }); if (o.url) Object.defineProperty(r, 'url', { value: o.url }); return r }
+  const res = (body: string | Buffer, o: { status?: number; url?: string } = {}) => { const r = new Response(typeof body === "string" ? body : new Uint8Array(body), { status: o.status ?? 200 }); if (o.url) Object.defineProperty(r, 'url', { value: o.url }); return r }
   const fake = (routes: Record<string, () => Response | Promise<Response>>) => {
     const calls: Call[] = []
     return { calls, fetch: async (url: string, init: RequestInit) => { calls.push({ url, init }); const r = routes[url]; if (!r) throw new Error('nothing'); return r() } }

@@ -116,7 +116,8 @@ The same glow, driven from the terminal. When your agent takes a request, it cre
 | `npx marver share …` | The roster (owner): `add <who> [--role]` · `remove` · `block` / `unblock` · `general <mode>` · `list` · `requests` · `explain <who>` · `who` |
 | `npx marver comments …` | The agent's queue: `connect <url>` · `sync` · `list` · `new <scene/frame>` · `reply` · `resolve` · `invite <email>` · `revoke <email>` |
 | `npx marver work …` | Working glow from the terminal: `start <scene/frame …>` · `done … \| --all` (prints the canvas link) · `list` |
-| `npx marver link <scene/frame \| scene ...>` | The canvas link that lands on those frames - their board, selected and in view (needs `dev` running) |
+| `npx marver link <scene/frame \| scene ...> [--web]` | The canvas link that lands on those frames - their board, selected and in view (needs `dev` running); a `marver://` link that opens the Mac app when it has this canvas open, `--web` for localhost |
+| `npx marver show <scene/frame \| scene ... \| board> [--thread <id>]` | Move every open tab of this canvas to that place, fitted (in the Mac app, its tab comes forward); a tab with words not yet sent shows a notice instead; then the link |
 | `npx marver shot <frame ...> \| --scene <name> \| --all [--scale 1-4] [--json]` | Render frames headless and print the PNG paths (needs `dev` running); a scene is one browser, several frames at a time; 2x by default |
 | `npx marver perf [--loads \| --jam \| --runs] [--json]` | What the canvas did lately: each edit's reloads; `--loads` each board load (time to settled, how many moves and why, the slowest frames, errors); `--jam` Jam's timings; `--runs` the headless runs compared ([Performance](docs/performance.md)) |
 | `npx marver perf --all` / `--live` | Every canvas on this Mac in one summary, no repo needed; or the records as they happen, in a terminal. |
