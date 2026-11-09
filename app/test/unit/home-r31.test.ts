@@ -122,7 +122,7 @@ describe('E2: a recent card keeps its logo', () => {
 
 describe('E3: shared canvases\' name and logo', () => {
   type Call = { url: string; init: RequestInit }
-  const res = (body: string | Buffer, o: { status?: number; url?: string } = {}) => Object.assign(new Response(body, { status: o.status ?? 200 }), o.url ? { url: o.url } : {})
+  const res = (body: string | Buffer, o: { status?: number; url?: string } = {}) => { const r = new Response(body, { status: o.status ?? 200 }); if (o.url) Object.defineProperty(r, 'url', { value: o.url }); return r }
   const fake = (routes: Record<string, () => Response | Promise<Response>>) => {
     const calls: Call[] = []
     return { calls, fetch: async (url: string, init: RequestInit) => { calls.push({ url, init }); const r = routes[url]; if (!r) throw new Error('nothing'); return r() } }
@@ -141,6 +141,12 @@ describe('E3: shared canvases\' name and logo', () => {
   it('a logo path that is not the repo\'s, bytes that are not a logo, or a body past 64 KB: no logo, or nothing at all', async () => {
     const { fetchSite } = await import('../../src/main/canvas-fetch.ts')
     expect(await fetchSite(fake({ [`${O}/meta.json`]: () => res(JSON.stringify({ name: 'x', logo: 'https://evil.example/l.svg' })) }).fetch, O)).toEqual({ name: 'X' })
+    // a path that is not the repo's logo, though an image answers there: never fetched
+    const other = fake({ [`${O}/meta.json`]: () => res(JSON.stringify({ name: 'x', logo: '/uploads/l.svg' })), [`${O}/uploads/l.svg`]: () => res(SVG) })
+    expect(await fetchSite(other.fetch, O)).toEqual({ name: 'X' })
+    expect(other.calls.map((c) => c.url)).toEqual([`${O}/meta.json`])
+    // a logo answered from another origin: not the canvas's
+    expect(await fetchSite(fake({ [`${O}/meta.json`]: () => res(JSON.stringify({ name: 'x', logo: '/__mv/logo.svg' })), [`${O}/__mv/logo.svg`]: () => res(SVG, { url: 'https://id.marver.design/__mv/logo.svg' }) }).fetch, O)).toEqual({ name: 'X' })
     expect(await fetchSite(fake({ [`${O}/meta.json`]: () => res(JSON.stringify({ name: 'x', logo: '/__mv/logo.png' })), [`${O}/__mv/logo.png`]: () => res('<script>alert(1)</script>') }).fetch, O)).toEqual({ name: 'X' })
     expect(await fetchSite(fake({ [`${O}/meta.json`]: () => res(JSON.stringify({ name: 'x', pad: 'a'.repeat(70 * 1024) })) }).fetch, O)).toBeNull()
     expect(await fetchSite(fake({ [`${O}/meta.json`]: () => res('{}', { status: 302 }) }).fetch, O)).toBeNull()
