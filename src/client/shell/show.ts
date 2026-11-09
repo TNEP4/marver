@@ -18,7 +18,7 @@ import { create } from 'zustand'
 import { checkShowTarget, type ShowTarget } from '../../shared/deep-link.ts'
 import { api, typedUnsent } from './api.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
-import { parkThread, revealThread } from './Comments.tsx'
+import { openThreadAt } from './jam-keys.ts'
 import { isLatest, navigated, revealFrame, switchFor } from './goto.ts'
 import { linkTargets } from './hash.ts'
 import { useJamCapture } from './jam-capture.ts'
@@ -85,15 +85,20 @@ async function go(t: ShowTarget | 'landing', n: number, force: boolean): Promise
   const keys = linkTargets(target, s.nodes)
   useStore.setState({ selection: keys })
   s.look(keys)
-  // the thread under the same request: a newer show, or words typed, and its camera never moves
-  if (target.c && !revealThread(target.c, alive)) parkThread(target.c, alive)
+  if (target.c) {
+    // the thread where it can be seen - pins turned on, a resolved one in its panel - under the same request, and
+    // waited for: a thread that never shows is no "shown"
+    if (!await openThreadAt(target.board, target.c, { alive })) return alive() ? 'missing' : ended()
+    return (await cameraLanded(alive)) ? 'shown' : ended()
+  }
   if (!keys.length && target.f?.length) {
-    // not on this board's nodes: where it lives - shown once it is selected there, for this command
+    // not on this board's nodes: where it lives, under the same request - shown once it is selected there and the
+    // camera has landed, for this command
     const f = target.f[0]!
-    await revealFrame(f, nav)
+    await revealFrame(f, nav, alive)
     for (let i = 0; i < 40 && alive(); i++) {
       const now = useStore.getState()
-      if (now.selection.some((k) => now.nodes.find((x) => x.key === k)?.frame === f)) return 'shown'
+      if (now.selection.some((k) => now.nodes.find((x) => x.key === k)?.frame === f)) return (await cameraLanded(alive)) ? 'shown' : ended()
       await new Promise((r) => setTimeout(r, 50))
     }
     return alive() ? 'missing' : ended()
@@ -102,7 +107,26 @@ async function go(t: ShowTarget | 'landing', n: number, force: boolean): Promise
   await new Promise((r) => setTimeout(r, 60))
   if (!alive()) return ended()
   if (keys.length) canvasCtl.fitNodes(keys); else canvasCtl.fitAll()
-  return 'shown'
+  return (await cameraLanded(alive)) ? 'shown' : ended()
+}
+
+/** The camera came to rest (the commands' own rule, commands.ts `cameraDone`: it flew and stopped, or rested 250 ms),
+ *  while `alive` held throughout - a newer navigation or words typed meanwhile is no landing. A tab in the background
+ *  draws no frames and its camera does not fly: the place is set, and shown when the tab comes forward. 2 s at most, so
+ *  `marver show`'s 3 s hear every tab. */
+async function cameraLanded(alive: () => boolean): Promise<boolean> {
+  const since = performance.now()
+  let saw = false
+  for (let n = 1; performance.now() - since < 2000; n++) {
+    if (document.visibilityState === 'hidden') return alive()
+    // a frame, or 50 ms where none come (a tab in the background)
+    await new Promise((r) => { const late = setTimeout(r, 50); requestAnimationFrame(() => { clearTimeout(late); r(null) }) })
+    if (!alive()) return false
+    const busy = canvasCtl.cameraBusy()
+    if (busy) saw = true
+    if (!busy && (saw || performance.now() - since > 250) && n >= 2) return true
+  }
+  return alive()
 }
 
 const ack = (seq: number, outcome: 'shown' | 'notice') => {

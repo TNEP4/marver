@@ -194,6 +194,49 @@ describe('sh:show in the tab (D3)', () => {
     expect(r).toEqual({ play: true, onTop: true })
   }, 60_000)
 
+  it('a frame followed to the board it lives on, with words typed while that board loads: nothing commits, the notice instead', async () => {
+    if (!browser) return
+    const t = await open('#/b/other')
+    await t.ev(`__hold('main')`)
+    const seq = await show({ board: 'other', f: ['demo/one'] })   // not on other: revealFrame goes to main
+    await t.until(`__gate.asked`)
+    await t.ev(TYPE)
+    await t.ev(`__gate.release()`)
+    await t.until(`!!document.querySelector('.sh-show-notice')`)
+    await new Promise((r) => setTimeout(r, 800))
+    expect(await t.ev(`({ board: __mvStore.getState().board, words: document.getElementById('draft').value })`)).toEqual({ board: 'other', words: 'half a thought' })
+    await expect.poll(() => acks(seq), { timeout: 5000 }).toEqual({ shown: 0, notice: 1 })
+  }, 60_000)
+
+  it('a real reply typed in a thread: the notice\'s × (a real click) keeps the thread open and its words', async () => {
+    if (!browser) return
+    appendEvents(join(root, 'design', 'comments'), 'main', [{ id: 'e-show-2', ts: Date.now() - 900, type: 'create', commentId: 't-reply', board: 'main', frame: 'demo/one', nodeKey: 'n-one', author: { name: 'Nic' }, body: 'reply here' }])
+    const t = await open('#/b/main')
+    await show({ board: 'main', c: 't-reply' })
+    await t.until(`!!document.querySelector('.cm-card[data-thread="t-reply"] textarea')`)
+    const ta = `document.querySelector('.cm-card[data-thread="t-reply"] textarea')`
+    await t.ev(`${ta}.focus(), 1`)
+    await browser.send('Input.insertText', { text: 'not sent yet' }, t.s)
+    await t.until(`${ta}.value === 'not sent yet'`)
+    await show({ board: 'other' })
+    await t.until(`!!document.querySelector('.sh-show-notice .x')`)
+    const r = await t.ev(`(() => { const b = document.querySelector('.sh-show-notice .x').getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 } })()`)
+    for (const type of ['mousePressed', 'mouseReleased']) await browser.send('Input.dispatchMouseEvent', { type, x: r.x, y: r.y, button: 'left', clickCount: 1 }, t.s)
+    await t.until(`!document.querySelector('.sh-show-notice')`)
+    expect(await t.ev(`({ active: __mvComments.getState().active, words: ${ta}?.value, board: __mvStore.getState().board })`)).toEqual({ active: 't-reply', words: 'not sent yet', board: 'main' })
+  }, 60_000)
+
+  it('a thread (c) with the pins hidden: they come on and its card is drawn', async () => {
+    if (!browser) return
+    appendEvents(join(root, 'design', 'comments'), 'main', [{ id: 'e-show-3', ts: Date.now() - 800, type: 'create', commentId: 't-hidden', board: 'main', frame: 'demo/two', nodeKey: 'n-two', author: { name: 'Nic' }, body: 'see me' }])
+    const t = await open('#/b/main')
+    await t.until(`__mvComments.getState().threads.some((x) => x.id === 't-hidden')`)
+    await t.ev(`__mvComments.getState().setShow(false), 1`)
+    const seq = await show({ board: 'main', c: 't-hidden' })
+    await t.until(`!!document.querySelector('.cm-card[data-thread="t-hidden"]')`)
+    await expect.poll(() => acks(seq), { timeout: 5000 }).toEqual({ shown: 1, notice: 0 })
+  }, 60_000)
+
   it('a scene (s) selects every frame of it; a thread (c) opens that thread', async () => {
     if (!browser) return
     appendEvents(join(root, 'design', 'comments'), 'main', [{ id: 'e-show-1', ts: Date.now() - 1000, type: 'create', commentId: 't-show', board: 'main', frame: 'demo/two', nodeKey: 'n-two', author: { name: 'Nic' }, body: 'this one' }])
@@ -261,7 +304,7 @@ describe('in the app (a fake window.marverApp)', () => {
     const t = await open('#/b/main', { app: true })
     await show({ board: 'other', f: ['demo/three'] })
     await t.until(settled('other', ['n-three']))
-    expect(await t.ev('__app.fronts')).toBe(1)
+    await t.until(`__app.fronts === 1`)   // once the camera landed for it
     expect(await t.ev(`__app.show({ board: 'main', n: ['n-two'] })`)).toBe(1)
     await t.until(settled('main', ['n-two']))
     expect(await t.ev('__app.fronts')).toBe(1)

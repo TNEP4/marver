@@ -1044,7 +1044,8 @@ export function CommentsController() {
     if (!active) return
     const onDown = (e: PointerEvent) => {
       const t = e.target instanceof Element ? e.target : null
-      if (t?.closest('.cm-card, .cm-pin, .cm-stack, .cm-modal')) return
+      // the show notice (spec 31 D3) too: it is up because words wait unsent here - its Go and × never close them
+      if (t?.closest('.cm-card, .cm-pin, .cm-stack, .cm-modal, .sh-show-notice')) return
       if (useComments.getState().active) cmd('thread-close', { via: 'click', in: 'shell' })   // silent when none is open
       useComments.getState().setActive(null)
     }
