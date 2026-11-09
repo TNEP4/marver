@@ -81,6 +81,30 @@ export function navigated(): number {
 let handSeq = 0
 export function navigatedByHand(): void { ++handSeq }
 export const handNow = (): number => handSeq
+
+const TEXT = 'textarea, input, select, [contenteditable=""], [contenteditable="true"]'
+const MODIFIERS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Fn'])
+/**
+ * Every input the person makes in the shell counts (spec 31 D3) - a pointer pressed, a key, a wheel - so no handler can
+ * be missed: a device preset, a Jam tile, Play and back, a toolbar button. Not words typed into a field (they make a
+ * show the notice instead, show.ts) nor a modifier key alone; never a synthetic event (`isTrusted`). Input inside a
+ * frame's own document never reaches here: its wheel is forwarded and counted by the canvas (Canvas.tsx beginGesture),
+ * a click on its node by FrameNode. Installed once by App.tsx; answers what removes it.
+ */
+export function watchHands(target: Window = window): () => void {
+  const inText = (e: Event) => { const t = e.target as Element | null; return !!t?.closest?.(TEXT) }
+  const press = (e: PointerEvent) => { if (e.isTrusted && !inText(e)) navigatedByHand() }
+  const key = (e: KeyboardEvent) => { if (e.isTrusted && !MODIFIERS.has(e.key) && !inText(e)) navigatedByHand() }
+  const wheel = (e: WheelEvent) => { if (e.isTrusted) navigatedByHand() }
+  target.addEventListener('pointerdown', press, true)
+  target.addEventListener('keydown', key, true)
+  target.addEventListener('wheel', wheel, { capture: true, passive: true })
+  return () => {
+    target.removeEventListener('pointerdown', press, true)
+    target.removeEventListener('keydown', key, true)
+    target.removeEventListener('wheel', wheel, { capture: true })
+  }
+}
 /** The navigation now, without starting one: a caller that waits (`marver show` for the boot) reads it first, and
  *  gives way if a person navigated meanwhile (`isLatest`). */
 export const navNow = (): number => gotoSeq

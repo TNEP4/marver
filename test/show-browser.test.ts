@@ -443,6 +443,34 @@ describe('a show and the boot', () => {
   byHand('Escape (deselect) while a show loads its board: the show gives way', (t) => key(t, 'Escape', 'Escape', 27), [])
   byHand('⇧1 (fit all) while a show loads its board: the show gives way', (t) => key(t, '!', 'Digit1', 49, 8), ['n-two'])
   byHand('⇧0 (actual size) while a show loads its board: the show gives way', (t) => key(t, ')', 'Digit0', 48, 8), ['n-two'])
+  // any key counts (goto.ts watchHands) - a device preset's digit included; F13 here, since a preset would tidy and
+  // rewrite this fixture's board for the cases after it
+  byHand('any other key while a show loads its board: the show gives way', (t) => key(t, 'F13', 'F13', 124), ['n-two'])
+  byHand('Play and back (P, then Escape) while a show loads its board: the show gives way', async (t) => {
+    await key(t, 'p', 'KeyP', 80)
+    await t.until(`!!__mvStore.getState().play`)
+    await key(t, 'Escape', 'Escape', 27)
+    await t.until(`!__mvStore.getState().play`)
+  }, null)
+  byHand('a press on the empty canvas while a show loads its board: the show gives way', async (t) => {
+    for (const type of ['mousePressed', 'mouseReleased']) await browser!.send('Input.dispatchMouseEvent', { type, x: 1300, y: 860, button: 'left', clickCount: 1 }, t.s)
+  }, null)
+
+  it('real typing in a field while a show loads its board is words, not navigation: the notice, the draft kept', async () => {
+    if (!browser) return
+    const t = await open('#/b/main')
+    await t.ev(`__hold('other')`)
+    const seq = await show({ board: 'other', n: ['n-three'] })
+    await t.until(`__gate.asked`)
+    await t.ev(`(() => { const ta = document.createElement('textarea'); ta.id = 'draft'; document.body.append(ta); ta.focus(); return 1 })()`)
+    for (const type of ['keyDown', 'keyUp']) await browser.send('Input.dispatchKeyEvent', { type, key: 'h', code: 'KeyH', windowsVirtualKeyCode: 72, ...(type === 'keyDown' ? { text: 'h' } : {}) }, t.s)
+    await t.until(`document.getElementById('draft').value === 'h'`)
+    await t.ev(`__gate.release()`)
+    await t.until(`!!document.querySelector('.sh-show-notice')`)
+    expect(await t.ev(`__mvStore.getState().board`)).toBe('main')
+    await expect.poll(() => acks(seq), { timeout: 5000 }).toEqual({ shown: 0, notice: 1 })
+  }, 60_000)
+
   byHand('a comment stack clicked on a frame while a show loads its board: the show gives way', async (t) => {
     await t.until(`!!document.querySelector('.sh-node[data-node="n-one"] .cm-stack, .cm-stack')`)
     await t.ev(`document.querySelector('.cm-stack').click(), 1`)

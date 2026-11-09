@@ -32,7 +32,7 @@ import { ALL_SCENES, humanize as slugLabel, readTitle } from '../../shared/board
 import { cardSelectAll, CommentsController, parkThread, revealThread } from './Comments.tsx'
 import { poweredByUrl } from '../../shared/utm.ts'
 import { avatarFallback, NO_COMMENTS_HERE, useComments } from './comments-store.ts'
-import { goTo, isLatest, navigated, navigatedByHand, navNow, revealFrame, switchFor } from './goto.ts'
+import { goTo, isLatest, navigated, navigatedByHand, navNow, revealFrame, switchFor, watchHands } from './goto.ts'
 import { bootSettled, dismissShow, goNow, showTarget, useShowNotice } from './show.ts'
 import { newerVersion } from '../../shared/deep-link.ts'
 import { useNotes } from './notes.ts'
@@ -653,6 +653,9 @@ export function App() {
       document.removeEventListener('gesturestart', blockGesture)
     }
   }, [])
+
+  // every input of the person's: a show or app link still loading gives way to it (spec 31 D3, goto.ts watchHands)
+  useEffect(() => watchHands(), [])
 
   // live updates from the dev server (source-served shell has import.meta.hot)
   useEffect(() => {
