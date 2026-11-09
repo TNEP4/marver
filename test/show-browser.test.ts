@@ -452,6 +452,10 @@ describe('a show and the boot', () => {
     await key(t, 'Escape', 'Escape', 27)
     await t.until(`!__mvStore.getState().play`)
   }, null)
+  byHand('Escape in an empty comment field while a show loads its board: the show gives way (it is no word)', async (t) => {
+    await t.ev(`(() => { const ta = document.createElement('textarea'); ta.id = 'esc-draft'; document.body.append(ta); ta.focus(); return 1 })()`)
+    await key(t, 'Escape', 'Escape', 27)
+  }, null)
   byHand('a press on the empty canvas while a show loads its board: the show gives way', async (t) => {
     for (const type of ['mousePressed', 'mouseReleased']) await browser!.send('Input.dispatchMouseEvent', { type, x: 1300, y: 860, button: 'left', clickCount: 1 }, t.s)
   }, null)
