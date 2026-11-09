@@ -133,7 +133,7 @@ function asRecord(v: unknown): SlotFile | null {
  *  own name here once its half works, never before: `live` (app-live.ts), `open` (the shell's open-item.ts) and
  *  `capture` (the shell asks for live pictures in play and the server takes `POST /api/jam/picture/live`:
  *  live-picture.ts, api.ts). */
-export const FEATURES: readonly string[] = [FEATURE.bridge, FEATURE.inset, FEATURE.live, FEATURE.open, FEATURE.capture]
+export const FEATURES: readonly string[] = [FEATURE.bridge, FEATURE.inset, FEATURE.live, FEATURE.open, FEATURE.capture, FEATURE.pdf]
 
 export interface Claim {
   slot: number | null

@@ -10,10 +10,11 @@ import { canvasCtl } from './canvas/Canvas.tsx'
 import { isLatest, navigated, switchFor } from './goto.ts'
 import { rollup } from '../../shared/marks.ts'
 import { Bubble, markSeenFrom, useAsks } from './marks-ui.tsx'
+import { exportPdf } from './pdf-export.tsx'
 import { Tip } from './Tip.tsx'
 import { copyToClipboard, type MenuItem, type MenuOpener } from './ContextMenu.tsx'
 import { cmd, keysOf, withCmd, withCmds, type CmdHandle, type CmdOpts } from './commands.ts'
-import { ArrowLineUpIcon, CardsIcon, CheckIcon, FolderIcon, FrameCornersIcon, FolderMinusIcon, FolderOpenIcon, FolderPlusIcon, PencilSimpleIcon, SignpostIcon } from './icons.tsx'
+import { ArrowLineUpIcon, CardsIcon, CheckIcon, FolderIcon, FrameCornersIcon, FolderMinusIcon, FolderOpenIcon, FolderPlusIcon, PencilSimpleIcon, SignpostIcon, ExportIcon } from './icons.tsx'
 import {
   applyDrop, boardsIn, createFolder, deleteFolder, depthOf, folderEntries, folderIn, folderOf, foldersIn, holdsFolders, humanize, INDENT, isOwnSlot, labelOf, listIn, moveBoard, moveFolderToRoot, newFolderSlot, parentOf, readTitle,
   resolveDrop, retitleFolder, rootIndex, slugFor,
@@ -429,6 +430,8 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
       panel: (close) => <StatusPicker board={n} meta={m} close={close} onPick={setStatus} />,
     })
     items.push({ label: 'Rename', icon: <PencilSimpleIcon size={15} />, onClick: () => setNaming({ kind: 'board', name: n }) })
+    // spec 31: the board printed, one page per slide (a present board's frames at the size Play shows them)
+    items.push({ label: 'Export PDF', icon: <ExportIcon size={15} />, onClick: () => void exportPdf(n, {}, { via: 'context', in: 'shell' }) })
     // the new folder takes the board's own slot at its own level (a sub-folder inside a top-level
     // folder; right after its sub-folder when it sits in one - that level holds no folders)
     items.push({ label: 'Move to new folder', icon: <FolderPlusIcon size={15} />, onClick: () => { const at = newFolderSlot(treeRef.current, n); newFolderAt(at.index, n, at.parent) } })

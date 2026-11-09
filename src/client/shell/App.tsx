@@ -22,6 +22,7 @@ import { perfSeams } from './recorder-seams.ts'
 import { takeNavToken } from './recorder-reloads.ts'
 import { cmd, endAfterFrames, endOnCamera, endOnLoad, endOnStage, foldsIntoSave, keysOf, shellReload, type CmdHandle, type CmdOpts } from './commands.ts'
 import { enterFocus, enterPlay, enterSlides, playCtl, PlayOverlay } from './Play.tsx'
+import { PdfNotice } from './pdf-export.tsx'
 import { bootHash, linkTargets, parseHash, retargetBoot, UNPLACED, writeHash } from './hash.ts'
 import { isLegacyLink, landLegacy } from './legacy-links.ts'
 import { CaretIcon, CheckIcon, ColumnsIcon, FrameRectIcon, ImagesSquareIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ParallelogramFillIcon, PencilSimpleIcon, PlayIcon, PlusIcon, SignpostIcon, SlideFrameIcon, SunIcon, VariantsIcon, XIcon, deviceIcon } from './icons.tsx'
@@ -1316,6 +1317,7 @@ function JamToasts({ toasts }: { toasts: import('./store.ts').Toast[] }) {
   const newest = jams[jams.length - 1]
   return (
     <div className="sh-toasts">
+      <PdfNotice />
       {plain.slice(-2).map((t) => <div key={t.id} className="sh-toast"><CheckIcon size={12} /> {t.text}</div>)}
       {expanded && jams.length > 2 && (
         <div className="sh-jam-list">

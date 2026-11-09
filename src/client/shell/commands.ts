@@ -137,6 +137,9 @@ export const COMMANDS = {
   'board-status': se('answer', { deadlineMs: S30, cancelled: true, failed: ['api'] }),
   // `nothing-new` (not in R12's table): no write goes, so no answer can come
   'mark-seen': se('answer', { noop: ['nothing-new'], failed: ['api'] }),
+  // spec 31: a deck PDF - ends when the server takes the job (its progress is the notice's); `busy` - one is being made
+  'export-pdf': se('answer', { deadlineMs: S30, noop: ['busy'], failed: ['api'] }),
+  'export-pdf-cancel': se('answer', { failed: ['api'] }),
   'add-to-board': se('answer', { failed: ['api'] }),
   'update-copy': se('clipboard', { failed: CLIP }),
   'update-dismiss': se('2raf'),

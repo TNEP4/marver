@@ -20,6 +20,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useStore, BOARD_POLICY, BRANDING, CONFIG, PUBLISHED, SOURCE_REVEALED, boardLabel, boardLocked, cap, fetchBoardNames, modeAllowed, playsAsSlides, SLIDE_INTRINSIC, stoppedFor, type Node } from './store.ts'
 import { deckOrder } from './play-order.ts'
 import { boardOrder, presentDevice } from '../../shared/export-plan.ts'
+import { exportPdf } from './pdf-export.tsx'
 import { NO_COMMENTS_HERE, useComments } from './comments-store.ts'
 import { UNPLACED } from './hash.ts'
 import { isNoteAnchor } from './notes.ts'
@@ -35,7 +36,7 @@ import { Tip } from './Tip.tsx'
 import { keyAllowed } from '../frame-host/keys.js'
 import { CommentButton, DevicePicker, HideUIButton, isHideUI, LaserButton, Popover, ThemePicker, toggleHideUI, usePopover } from './Toolbar.tsx'
 import { DraftComposer, Pins, placePins, ThreadCard } from './Comments.tsx'
-import { ArrowLeftIcon, ArrowRightIcon, BrowsersIcon, CaretIcon, CheckIcon, GridIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ReloadIcon, SpecDocIcon } from './icons.tsx'
+import { ArrowLeftIcon, ArrowRightIcon, BrowsersIcon, CaretIcon, CheckIcon, ExportIcon, GridIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ReloadIcon, SpecDocIcon } from './icons.tsx'
 
 const commentsStore = () => useComments.getState()
 
@@ -758,6 +759,12 @@ function PlayInner() {
           </button>
         </Tip>
         </>}
+        {/* spec 31: the deck (or the present board) as a PDF, in the theme the stage shows - a dev canvas only */}
+        {!focus && !PUBLISHED && (
+          <Tip side="bottom" label={<><b>Export PDF</b><span>this board, one page per {slides ? 'slide' : 'frame'}</span></>}>
+            <button className="sh-pill-btn" aria-label="Export PDF" onClick={() => void exportPdf(board, { theme: play.theme }, { via: 'click', in: 'pill' })}><ExportIcon size={15} /></button>
+          </Tip>
+        )}
         {/* the canvas door: absent on a locked board (policy) and on a frame
             deep link (the link's chrome) - not hidden, not rendered */}
         {!noDoor && (

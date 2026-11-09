@@ -184,7 +184,7 @@ describe('the slot file and the logo, for the app (A2.14 #15, #23; A2.4)', () =>
   }
 
   it('0.27.2 lists the bridge and the inset, and the name the shell shows (share.name)', () => {
-    expect(slotFile()).toMatchObject({ state: 'ready', features: ['bridge', 'inset', 'live', 'open', 'capture'], name: 'Bridge canvas', ws })
+    expect(slotFile()).toMatchObject({ state: 'ready', features: ['bridge', 'inset', 'live', 'open', 'capture', 'pdf'], name: 'Bridge canvas', ws })
   })
 
   it('GET /__mv/logo is proved with the slot file\'s key - on a 200 and a 304 - and the workspace guard runs first', async () => {
