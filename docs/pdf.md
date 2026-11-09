@@ -13,7 +13,8 @@ npx marver pdf pitch --theme dark --out ~/Desktop/pitch.pdf
 On the canvas: **Export PDF** in a board's menu (right-click it in the sidebar), and the export button in slides and
 present mode's toolbar, which prints in the theme the stage shows. A notice shows the page it is on, with Cancel; the
 file downloads when it is done. In the Mac app, **File > Export PDF…** does the same for the open board and asks where
-to save it.
+to save it. App 1.0.1 has no save panel for it: there the notice keeps the finished PDF and offers **Download**, since
+that app drops a download its window did not start while in front.
 
 ## What goes in the PDF
 

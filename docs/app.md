@@ -164,6 +164,8 @@ Check for Updates…:
 PDF (a board's menu, slides and present mode's toolbar) saves the same way in the app. The canvas sends the app only
 the finished job's id: the app fetches the file itself from that canvas, checks it is a PDF of 200 MB at most, checks
 again that the tab still shows the same canvas page after you chose where to save, and writes it whole.
+In app 1.0.1 (no File > Export PDF…), the canvas's Export PDF ends on a notice with **Download**: 1.0.1 cancels a
+download its window did not start while in front, so the file waits for that click rather than for the last page.
 
 ## The performance report
 

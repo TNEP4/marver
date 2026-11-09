@@ -740,6 +740,8 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 .sh-pdf-notice .bar i { display: block; height: 100%; background: currentColor; opacity: .7; transition: width .3s }
 .sh-pdf-notice button { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 999px; border: 0; background: transparent; color: var(--glass-ink-3); cursor: pointer }
 .sh-pdf-notice button:hover { background: var(--glass-hover, rgba(127,127,127,.15)); color: var(--glass-ink) }
+/* app 1.0.1: the held file's Download, a word not an icon */
+.sh-pdf-notice button.go { width: auto; padding: 0 9px; font: inherit; font-weight: 600; color: var(--glass-ink) }
 
 /* the Live Jam reply pill: our full glass treatment, full radius, one row (§9) */
 .sh-toast.jam { gap: 12px; padding: 12px 12px 12px 14px; width: 380px; max-width: 100%; border-radius: 999px;

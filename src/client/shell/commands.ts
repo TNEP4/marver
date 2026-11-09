@@ -144,6 +144,8 @@ export const COMMANDS = {
   // spec 31: a deck PDF - ends when the server takes the job (its progress is the notice's); `busy` - one is being made
   'export-pdf': se('answer', { deadlineMs: S30, noop: ['busy'], failed: ['api'] }),
   'export-pdf-cancel': se('answer', { failed: ['api'] }),
+  // an app with no exportPdf (1.0.1): the notice's Download of the file it holds; `nothing-ready` - none waits
+  'export-pdf-download': se('answer', { noop: ['nothing-ready'] }),
   'add-to-board': se('answer', { failed: ['api'] }),
   'update-copy': se('clipboard', { failed: CLIP }),
   'update-dismiss': se('2raf'),
