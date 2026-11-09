@@ -1888,10 +1888,19 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
   jamLive.view = () => core.view()
   jamLive.busy = () => core.busy()
   jamLive.withdrawn = (id) => withdrawnCaptures(core.snapshot(), commentsDir).has(id)
-  jamLive.act = (id, rev, action, body) => core.act(id, rev, action, body)
-  jamLive.capture = (record) => core.capture(record)
+  // what a page gets of a card (Codex r10): the queue view's projection - never the journal's card, whose brief and
+  // payload keep words a deletion withdrew - on every answer, a refusal included
+  const asPage = <R extends { card?: unknown }>(r: R): R => {
+    const id = (r.card as { id?: unknown } | undefined)?.id
+    if (typeof id !== 'string') return r
+    const { card: _c, ...rest } = r
+    const shown = core.view().cards.find((c) => c.id === id)
+    return { ...rest, ...(shown ? { card: shown } : {}) } as R
+  }
+  jamLive.act = async (id, rev, action, body) => asPage(await core.act(id, rev, action, body))
+  jamLive.capture = async (record) => asPage(await core.capture(record))
   jamLive.sealed = (id) => core.sealed(id)
-  jamLive.session = (op) => core.session(op)
+  jamLive.session = async (op) => asPage(await core.session(op))
   jamLive.record = (id) => core.record(id)
   jamLive.canWrap = (id) => core.canWrap(id)
   jamLive.captureOpen = (c, ses, on) => core.captureOpen(c, ses, on)

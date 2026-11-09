@@ -325,7 +325,10 @@ export function admitted(local: CommentEvent[], remote: CommentEvent[], bindings
       // message this machine never pushed
       const sameAuthor = (orig.author?.email && there.author?.email) ? key(orig.author) === key(there.author)
         : (orig.author?.id && there.author?.id) ? orig.author.id === there.author.id
-        : !!orig.author?.email && !!there.author?.id && Object.hasOwn(bindings, key(orig.author)) && bindings[key(orig.author)] === there.author.id
+        : !!orig.author?.email && !!there.author?.id ? Object.hasOwn(bindings, key(orig.author)) && bindings[key(orig.author)] === there.author.id
+        // ...and the other way (Codex r10): an id here (pulled through a password session), an address there (the
+        // operator's canonical transport) - the same binding, read backwards
+        : !!orig.author?.id && !!there.author?.email && Object.hasOwn(bindings, key(there.author)) && bindings[key(there.author)] === orig.author.id
       if (!sameAuthor) continue
       if (!key(e.author) || key(e.author) !== key(there.author)) continue
     }
