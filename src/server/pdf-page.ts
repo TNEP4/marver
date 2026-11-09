@@ -229,7 +229,11 @@ ${clip ? `body { max-height: ${Math.max(0, room)}px !important; overflow: hidden
           let target: Element = k
           let kind: 'glass' | 'whole' | null = whole || media ? 'whole' : own.glass ? 'glass' : null
           // an effect inside an svg is the whole svg's: an <img> cannot go inside one
-          if (kind && k instanceof SVGElement && k.tagName !== 'svg') { target = (k as SVGElement).ownerSVGElement ?? k; kind = 'whole' }
+          if (kind && k instanceof SVGElement && k.tagName !== 'svg') {
+            let top: SVGElement = k
+            for (let o = (k as SVGElement).ownerSVGElement; o; o = o.ownerSVGElement) top = o
+            target = top; kind = 'whole'
+          }
           if (kind) {
             const rect = shown(target, W, H)
             if (rect) {
@@ -249,8 +253,25 @@ ${clip ? `body { max-height: ${Math.max(0, room)}px !important; overflow: hidden
               if (kind === 'whole' || target !== k) continue
             } else if (kind === 'whole') continue
           }
-          if (!(k instanceof SVGElement)) visit(k)
+          // into an html element, or an outer svg (an effect inside it is the svg's, above)
+          if (!(k instanceof SVGElement) || (k.tagName === 'svg' && !(k as SVGElement).ownerSVGElement)) visit(k)
+          else if (k instanceof SVGElement) visitSvg(k)
         }
+      }
+      // inside an svg every element is looked at (an effect makes its outer svg a whole patch, once)
+      function visitSvg(el: Element): void { for (const c of Array.from(el.children)) { visitOne(c); visitSvg(c) } }
+      function visitOne(c: Element): void {
+        const e = effectOf(getComputedStyle(c), dropShadowPrints)
+        if (!e.whole && !e.glass) return
+        let top: Element = c
+        for (let o = (c as SVGElement).ownerSVGElement; o; o = o.ownerSVGElement) top = o
+        if (top.hasAttribute('data-mv-pdf')) return
+        const rect = shown(top, W, H)
+        if (!rect) return
+        const i = out.length
+        top.setAttribute('data-mv-pdf', String(i))
+        hits.set(i, top as SVGElement)
+        out.push({ i, kind: 'whole', why: e.whole || 'backdrop-filter', rect, transformed: transformed(top), replaced: true })
       }
       if (document.body) visit(document.body)
       // shadows: any element shown (and its pseudo-elements), outside the boxes a whole patch pictures

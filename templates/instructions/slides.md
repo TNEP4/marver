@@ -56,7 +56,7 @@ Code means the motion is yours: CSS keyframes and transitions, SVG
 animation, a JS library the project already uses. Three habits make it play
 well:
 
-- **At rest, the finished slide.** On the canvas, in `marver shot`, in a
+- **At rest, the finished slide.** On the canvas, in `marver shot`, in a PDF, in a
   thumbnail, the slide shows its final composition. Animate while the deck
   plays: the stage puts `data-sl-play` on `<html>` for the whole show and adds
   `data-sl-entered` once each slide has arrived. Key motion off them:
@@ -282,6 +282,27 @@ The board is the deck. Publish with:
 `transition`: `fade` (default) or `none`. `chrome`: `full` (default - the
 standard prototype toolbar and walker), `minimal` (a progress strip +
 comments) or `none`. Add `"lock": true` for a share that is ONLY the deck.
+
+## A deck as a PDF
+
+When the human asks for a PDF (to send, attach, print), run
+`npx marver pdf <board>` (needs `marver dev`) - it writes
+`design/exports/<board>.pdf` and prints a report; give the human the path.
+`--notes` makes a handout with each slide's `.note.md`; `--theme dark` picks
+the theme. Read the report before you hand it over:
+
+- **patched** slides are fine - glass, filters, blends, masks and big soft
+  shadows were fixed and checked against the screen;
+- **raster** slides printed as pictures (no searchable text): say so, and if
+  the reason is a patch, the slide is usually simplifiable (an effect under a
+  rotation, a filter on a huge box);
+- **unsettled**: an image or chart was still loading after 10 s - fix the
+  slide (a missing asset, a slow chart) and export again;
+- **clipped**: the slide is taller or wider than its stage - fix the layout;
+- **failed**: the frame threw - `npx marver shot` it, fix it, export again.
+
+The PDF is the finished slide, as at rest: another reason every slide must
+show its final composition without `data-sl-play` (Motion, above).
 
 ## design/slides.md - this project's deck look
 

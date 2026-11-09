@@ -32,6 +32,7 @@ import { Browser } from './cdp.ts'
 import { pool } from './shot.ts'
 import { staleSurface } from './stale.ts'
 import { exportPlan, type Plan, type PlanFrame, type PlanNode, type PlanPage, type Viewports } from '../shared/export-plan.ts'
+import { BOARD_NAME } from '../shared/board-tree.ts'
 import { COMPARE, CROP, PDF_INSTALL, SETTLED, SVG_IMAGES, TO_JPEG, TWO_FRAMES } from './pdf-page.ts'
 
 // ---- the contract ------------------------------------------------------------------------------------------------
@@ -62,9 +63,9 @@ export const PDF_LANES = 4
 export const JOB_ID = /^[A-Za-z0-9_-]{22}$/
 /** The share of a patch box allowed to differ (screen certification), and of the page coarsely (print certification). */
 export const CERTIFY = { box: 0.01, tol: 24, page: 0.0025 }
-/** A drop-shadow-only filter is a trigger like any filter: Chrome's PDF backend draws large blurs as solid boxes (the
- *  box-shadow measurement, spec 31 adaptations) - patched, it prints right whatever its size. */
-export const DROP_SHADOW_PRINTS = false
+/** Measured on the build (a grid of sizes and blurs, rasterised and compared): Chrome prints a drop-shadow-only filter
+ *  right at any size - unlike a large blurred box-shadow - so it is no trigger. Any other filter function is. */
+export const DROP_SHADOW_PRINTS = true
 
 export type SlideStatus = 'vector' | 'patched' | 'raster' | 'failed'
 export interface PageReport {
@@ -114,8 +115,13 @@ export function playsAsSlides(root: string, board: string): boolean {
 /** The board file's nodes with the positions the canvas would give them: its own, else its layout's (a board an agent
  *  wrote as a frame list is laid out by the canvas when it opens - the same pure layout). */
 export async function boardNodes(root: string, board: string, frames: (PlanFrame & { scene?: string; variantGroup?: string; variant?: string })[], viewports: Viewports, themes: string[]): Promise<{ nodes: PlanNode[]; title?: string } | null> {
+  if (!BOARD_NAME.test(board) || board.length > 64) return null
+  const { checkBoardsDir, isRegularFile } = await import('./boards.ts')
+  const dir = join(root, 'design', 'boards'), file = join(dir, `${board}.json`)
+  // the boards writer's rules: never a symlinked design/ or boards/, never a board file that is not a regular file
+  if (checkBoardsDir(root, dir) || !isRegularFile(file)) return null
   let b: Record<string, unknown>
-  try { b = JSON.parse(readFileSync(join(root, 'design', 'boards', `${board}.json`), 'utf8')) } catch { return null }
+  try { b = JSON.parse(readFileSync(file, 'utf8')) } catch { return null }
   if (!b || typeof b !== 'object') return null
   const byId = new Map(frames.map((f) => [f.id, f]))
   type Raw = { frame: string; x?: unknown; y?: unknown; w?: unknown; h?: unknown; theme?: unknown; themeUser?: unknown }
@@ -183,6 +189,8 @@ export interface SlideOut {
   spilled?: true
   error?: string
   printDiffers?: true
+  /** the printed page was rasterised and compared with the screen */
+  printChecked?: true
 }
 
 /** Device pixels per CSS px for a page's captures: 3x, lowered (in quarter steps) so one capture stays under 16 MP. */
@@ -380,6 +388,7 @@ export async function renderSlide(b: Browser, helper: Helper, page: PlanPage, o:
         rmSync(file, { force: true })
         if (png) {
           debug('print.png', png)
+          out.printChecked = true
           const c = await helper.compare(ref, png.toString('base64'), dsf, [], CERTIFY.tol)
           if (c.coarse > CERTIFY.page) {
             if (o.mode === 'vector') out.printDiffers = true
@@ -663,7 +672,8 @@ async function runJob(ctx: PdfCtx, job: Job, plan: Plan, title: string): Promise
     job.file = file
     job.report = {
       board: job.board, notes: !!job.ask.notes, pages: outs.length, bytes: pdf.length, ms: Date.now() - t0, chrome,
-      certified: hasSips() && !job.ask.notes ? 'print' : 'screen', skipped: plan.skipped,
+      // print-certified only when every printed page was rasterised and compared (a raster page is a picture of the screen)
+      certified: !job.ask.notes && outs.every((o) => !o.out.pdf || o.out.printChecked) && outs.some((o) => o.out.printChecked) ? 'print' : 'screen', skipped: plan.skipped,
       slides: outs.map(({ page, out, ms, changed }, i) => ({
         page: i + 1, frame: page.frame, title: page.title, width: page.width, height: page.height, theme: page.theme, status: out.status, ms,
         ...(out.patches?.length ? { patches: out.patches } : {}), ...(out.rasterWhy ? { raster: out.rasterWhy } : {}),

@@ -92,15 +92,20 @@ export default function F() {
     <div style={{ position: 'absolute', left: 240, top: 120, width: 760, height: 460, background: '#fff', borderRadius: 24, boxShadow: '0 40px 90px -30px oklch(0.3 0.05 40 / 0.45), 0 0 0 1px rgba(0,0,0,.06)' }}><h2 style={{ margin: 48 }}>A card with a big soft shadow</h2></div>`),
   'design/scenes/deck/08-mask.tsx': slide('Mask', `
     <div style={{ position: 'absolute', left: 200, top: 120, width: 600, height: 400, background: 'linear-gradient(90deg, #0a7, #07a)', WebkitMaskImage: 'radial-gradient(circle at 50% 50%, black 40%, transparent 70%)', maskImage: 'radial-gradient(circle at 50% 50%, black 40%, transparent 70%)' }} />`),
+  'design/scenes/deck/09-drop.tsx': slide('Drop shadow', `
+    <div style={{ position: 'absolute', left: 240, top: 120, width: 760, height: 420, background: '#fff', borderRadius: 24, filter: 'drop-shadow(0 30px 50px rgba(0,0,0,.4))' }}><h2 style={{ margin: 48 }}>A drop-shadow prints as it is</h2></div>`),
   // the present board: a page at the laptop viewport and an html frame
   'design/scenes/pitch/a-intro.tsx': `import { Img } from '@marver-design/marver/content'
 export const meta = { title: 'Intro page', viewport: 'laptop' }
 export default () => <main style={{ minHeight: '100vh', margin: 0, background: '#102030', color: '#fff', fontFamily: 'Helvetica' }}><h1 style={{ margin: 0, padding: 48 }}>Present page at laptop</h1><div style={{ width: 400 }}><Img src="big.png" /></div></main>
 `,
   'design/scenes/pitch/b-doc.html': '<!doctype html><html><head><meta charset="utf-8"><title>Doc</title></head><body style="margin:0;background:#fffbe6;font-family:Helvetica"><h1 style="padding:48px;margin:0">An html frame printed from its own document</h1></body></html>',
-  'design/boards/deck.json': JSON.stringify({ version: 1, name: 'deck', nodes: ['01-vector', '02-glass', '03-filter', '04-motion', '05-print-hidden', '06-overflow', '07-shadow', '08-mask'].map((n, i) => ({ key: `n${i}`, frame: `deck/${n}`, x: i * 1400, y: 0, w: 1280, h: 720 })) }),
+  'design/boards/deck.json': JSON.stringify({ version: 1, name: 'deck', nodes: ['01-vector', '02-glass', '03-filter', '04-motion', '05-print-hidden', '06-overflow', '07-shadow', '08-mask', '09-drop'].map((n, i) => ({ key: `n${i}`, frame: `deck/${n}`, x: i * 1400, y: 0, w: 1280, h: 720 })) }),
   'design/boards/pitch.json': JSON.stringify({ version: 1, name: 'pitch', nodes: [{ key: 'p2', frame: 'pitch/b-doc', x: 0, y: 900, w: 1280, h: 800 }, { key: 'p1', frame: 'pitch/a-intro', x: 0, y: 0, w: 1280, h: 800 }] }),
   'design/boards/notes.json': JSON.stringify({ version: 1, name: 'notes', nodes: ['01-vector', '02-glass', '03-filter'].map((n, i) => ({ key: `m${i}`, frame: `deck/${n}`, x: i * 1400, y: 0, w: 1280, h: 720 })) }),
+  'design/scenes/broken/01-ok.tsx': slide('Fine', `<h1>Fine</h1>`),
+  'design/scenes/broken/02-throws.tsx': `export const meta = { title: 'Throws', slide: true }\nexport default function F(): never { throw new Error('this slide is broken') }\n`,
+  'design/boards/broken.json': JSON.stringify({ version: 1, name: 'broken', nodes: [{ key: 'b1', frame: 'broken/01-ok', x: 0, y: 0 }, { key: 'b2', frame: 'broken/02-throws', x: 1400, y: 0 }] }),
   'design/publish.json': JSON.stringify({ boards: { deck: { max: 'read', type: 'slides' }, notes: { max: 'read', type: 'slides' } } }),
 }
 
@@ -170,14 +175,14 @@ describe.skipIf(!hasChrome)('deck PDFs in real Chrome (spec 31 Part A)', () => {
   it('a slides board: one page per slide at its stage, vector Unicode text, links, bookmarks pointing at their pages', async () => {
     deck = await runJob({ board: 'deck' })
     const doc = await open(deck.pdf)
-    expect(doc.numPages).toBe(8)
-    for (let n = 1; n <= 8; n++) expect((await doc.getPage(n)).view.slice(2)).toEqual([960, 540])
+    expect(doc.numPages).toBe(9)
+    for (let n = 1; n <= 9; n++) expect((await doc.getPage(n)).view.slice(2)).toEqual([960, 540])
     expect(await text(doc, 1)).toContain(squash('Vector — café naïve ✓ 日本'))
     const links = (await (await doc.getPage(1)).getAnnotations()).filter((a: { subtype: string }) => a.subtype === 'Link').map((a: { url?: string }) => a.url)
     expect(links).toContain('https://example.com/deck')
     const outline = await doc.getOutline()
-    expect(outline.map((o) => o.title)).toEqual(['Vector café ✓', 'Glass', 'Filter', 'Motion', 'Print rules ignored', 'Overflow', 'Soft shadow', 'Mask'])
-    expect(await Promise.all(outline.map((o) => doc.getPageIndex((o.dest as unknown[])[0] as never)))).toEqual([0, 1, 2, 3, 4, 5, 6, 7])
+    expect(outline.map((o) => o.title)).toEqual(['Vector café ✓', 'Glass', 'Filter', 'Motion', 'Print rules ignored', 'Overflow', 'Soft shadow', 'Mask', 'Drop shadow'])
+    expect(await Promise.all(outline.map((o) => doc.getPageIndex((o.dest as unknown[])[0] as never)))).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8])
     await doc.destroy()
   }, 240_000)
   it('images at full resolution: the 2400 px original, never an LOD bucket (#5)', async () => {
@@ -195,6 +200,9 @@ describe.skipIf(!hasChrome)('deck PDFs in real Chrome (spec 31 Part A)', () => {
     expect(inside).toContain('https://example.org/inside')
     await doc.destroy()
     expect(deck.report.slides.filter((s) => s.status === 'raster' || s.status === 'failed')).toEqual([])
+    // a drop-shadow-only filter is left to Chrome, which prints it right (print-certified like every page)
+    expect(by['09-drop'].status).toBe('vector')
+    expect(deck.report.certified).toBe(process.platform === 'darwin' ? 'print' : 'screen')
   })
   it('screen media: a slide whose print rules would hide its heading prints it (#3)', async () => {
     const doc = await open(deck.pdf)
@@ -234,6 +242,17 @@ describe.skipIf(!hasChrome)('deck PDFs in real Chrome (spec 31 Part A)', () => {
     expect(await largestImage(r.pdf, doc.numPages)).toBeGreaterThan(0)
     await doc.destroy()
   }, 240_000)
+  it('a slide that fails fails the export, naming it; --keep-going prints the rest with that page blank and named (#10)', async () => {
+    await expect(runJob({ board: 'broken' })).rejects.toThrow(/failed: broken\/02-throws: the frame rendered an error - this slide is broken/)
+    const r = await runJob({ board: 'broken', keepGoing: true })
+    const doc = await open(r.pdf)
+    expect(doc.numPages).toBe(2)
+    expect(await text(doc, 1)).toContain('Fine')
+    expect(await text(doc, 2)).toBe('')
+    expect(r.report.slides.map((x) => x.status)).toEqual(['vector', 'failed'])
+    expect(r.report.slides[1].error).toMatch(/this slide is broken/)
+    await doc.destroy()
+  }, 120_000)
   it('one job per canvas (409 with its id), and a cancel ends it', async () => {
     const a = await api('pdf', { method: 'POST', body: JSON.stringify({ board: 'deck' }) })
     const ja = await a.json() as { job: string }
@@ -277,6 +296,50 @@ describe.skipIf(!hasChrome)('the finished slide, frozen deterministically (#4)',
         waapi: '1',
         video: [true, 0],
       })
+    } finally { await b.close() }
+  }, 60_000)
+  it('the patch trigger (#7): outermost only, glass walked into, a pseudo-element through its host, nothing hidden, off-stage or clipped away; a rotation named; large soft shadows; masks; an svg as a whole', async () => {
+    const page = `<!doctype html><html><head><style>
+      #pseudo::after { content: ''; position: absolute; inset: 0; mix-blend-mode: multiply; background: red }
+      .a { position: absolute }
+    </style></head><body style="margin:0">
+      <div id="glass" class="a" style="left:10px;top:10px;width:300px;height:200px;backdrop-filter:blur(8px)"><div id="inner" style="width:100px;height:50px;filter:blur(2px)">x</div></div>
+      <div id="outer" class="a" style="left:400px;top:10px;width:200px;height:200px;filter:grayscale(1)"><div id="nested" style="filter:blur(1px);width:50px;height:50px"></div></div>
+      <div id="pseudo" class="a" style="left:10px;top:300px;width:100px;height:100px"></div>
+      <div id="hidden" class="a" style="left:10px;top:500px;width:100px;height:100px;filter:blur(2px);opacity:0"></div>
+      <div id="offstage" class="a" style="left:2000px;top:10px;width:100px;height:100px;filter:blur(2px)"></div>
+      <div class="a" style="left:700px;top:300px;width:100px;height:100px;overflow:hidden"><div id="clipped" style="position:relative;left:200px;width:50px;height:50px;filter:blur(1px)"></div></div>
+      <canvas id="cv" class="a" width="50" height="50" style="left:300px;top:300px"></canvas>
+      <div id="shadow" class="a" style="left:400px;top:400px;width:400px;height:200px;box-shadow:0 30px 60px oklch(0.2 0.02 40 / 0.4)"></div>
+      <div id="small" class="a" style="left:900px;top:400px;width:20px;height:20px;box-shadow:0 1px 2px rgba(0,0,0,.4)"></div>
+      <div class="a" style="left:900px;top:10px;transform:rotate(10deg)"><div id="rotated" style="width:80px;height:80px;backdrop-filter:blur(4px)"></div></div>
+      <div class="a" style="left:1050px;top:10px;transform:scale(0.5)"><div id="scaled" style="width:80px;height:80px;backdrop-filter:blur(4px)"></div></div>
+      <div id="masked" class="a" style="left:1100px;top:300px;width:100px;height:100px;background:#08f;mask-image:linear-gradient(black,transparent)"></div>
+      <div id="droponly" class="a" style="left:700px;top:500px;width:100px;height:60px;background:#fff;filter:drop-shadow(0 10px 20px rgba(0,0,0,.4))"></div>
+      <svg id="svgf" class="a" style="left:1100px;top:500px" width="100" height="100"><defs><filter id="f"><feGaussianBlur stdDeviation="2"/></filter></defs><g filter="url(#f)"><rect id="r" width="80" height="80" fill="#c00"/></g></svg>
+    </body></html>`
+    const b = await Browser.launch()
+    try {
+      const { targetId } = await b.send('Target.createTarget', { url: 'about:blank' })
+      const { sessionId: s } = await b.send('Target.attachToTarget', { targetId, flatten: true })
+      const ev = async (e: string) => (await b.send('Runtime.evaluate', { expression: e, awaitPromise: true, returnByValue: true }, s)).result?.value
+      await b.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false }, s)
+      await b.send('Page.navigate', { url: 'data:text/html;base64,' + Buffer.from(page).toString('base64') }, s)
+      for (let i = 0; i < 50 && !(await ev(`!!document.getElementById('svgf')`)); i++) await new Promise((r) => setTimeout(r, 50))
+      await ev(PDF_INSTALL)
+      const got = await ev(`window.__mvPdf.detect(1280, 720, true).map((h) => ({ id: (document.querySelector('[data-mv-pdf="' + h.i + '"]') || document.querySelector('[data-mv-pdf-sh="' + h.i + '"]')).id, kind: h.kind, why: h.why, ...(h.transformed ? { transformed: true } : {}) }))`)
+      expect(got).toEqual([
+        { id: 'glass', kind: 'glass', why: 'backdrop-filter' },
+        { id: 'inner', kind: 'whole', why: 'filter: blur(2px)' },
+        { id: 'outer', kind: 'whole', why: 'filter: grayscale(1)' },
+        { id: 'pseudo', kind: 'whole', why: '::after mix-blend-mode: multiply' },
+        { id: 'cv', kind: 'whole', why: 'canvas' },
+        { id: 'rotated', kind: 'glass', why: 'backdrop-filter', transformed: true },
+        { id: 'scaled', kind: 'glass', why: 'backdrop-filter' },
+        { id: 'masked', kind: 'whole', why: 'mask-image' },
+        { id: 'svgf', kind: 'whole', why: 'filter: url("#f")' },
+        { id: 'shadow', kind: 'shadow', why: 'box-shadow' },
+      ])
     } finally { await b.close() }
   }, 60_000)
   it('export=1 turns Img\'s LOD canvas off on a frame that is not a slide: a plain <img> of the original (#5)', async () => {

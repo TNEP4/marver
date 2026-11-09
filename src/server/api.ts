@@ -923,11 +923,15 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         if (pdfRoute[2]) {
           if (req.method !== 'GET') return json(res, 405, { error: 'GET the file' })
           if (j.state !== 'done' || !j.file) return json(res, 409, { error: j.state === 'running' ? 'the PDF is not finished yet' : `the export ${j.state}${j.error ? ` - ${j.error}` : ''}` })
-          let buf: Buffer
-          try { buf = readFileSync(j.file) } catch { return json(res, 410, { error: 'the PDF is gone - export it again' }) }
-          res.writeHead(200, { 'content-type': 'application/pdf', 'content-length': buf.length, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff',
+          // streamed: a PDF may be hundreds of MB
+          const { createReadStream, statSync } = await import('node:fs')
+          let size: number
+          try { size = statSync(j.file).size } catch { return json(res, 410, { error: 'the PDF is gone - export it again' }) }
+          res.writeHead(200, { 'content-type': 'application/pdf', 'content-length': size, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff',
             'content-disposition': `attachment; filename="${j.filename.replace(/[^A-Za-z0-9._-]/g, '_')}"` })
-          return res.end(buf)
+          const st = createReadStream(j.file)
+          st.on('error', () => res.destroy())
+          return st.pipe(res)
         }
         if (req.method === 'GET') return json(res, 200, pdf.jobStatus(j))
         if (req.method === 'DELETE') { pdf.cancelPdfJob(j.id); return json(res, 200, { job: j.id, cancelled: j.state === 'running' || j.state === 'cancelled' }) }

@@ -79,6 +79,14 @@ the chrome) and Fill window (edge to edge). Publish it with:
 
 Viewers land straight in the deck; the URL survives refresh and back.
 
+## A deck as a PDF
+
+`npx marver pdf <board>` writes `design/exports/<board>.pdf`: one page per slide in the deck's order, vector text and
+shapes, links that click, a bookmark per slide. **Export PDF** in the board's menu and in slides mode's toolbar do the
+same from the canvas, and `--notes` prints a handout with each slide's notes. Glass, filters, blends, masks and large
+soft shadows - the effects Chrome prints wrong - are fixed slide by slide and checked against the screen. See
+[Deck PDFs](pdf.md).
+
 ## Motion
 
 Motion is yours to write. While a deck plays, the stage puts

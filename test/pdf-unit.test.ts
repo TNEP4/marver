@@ -265,3 +265,23 @@ describe('the board type `slides` (spec 31 How)', () => {
     expect(knownType('slides')).toBeUndefined()
   })
 })
+
+describe('init keeps design/exports/ out of git (spec 31 How)', () => {
+  it('a fresh canvas ignores it, an older .gitignore gains it once, never rewritten', async () => {
+    const { init } = await import('../src/cli/init.ts')
+    const fresh = mkdtempSync(join(tmpdir(), 'mv-pdf-init-'))
+    const old = mkdtempSync(join(tmpdir(), 'mv-pdf-init-'))
+    try {
+      init(fresh, { mode: 'studio', demo: false })
+      expect(readFileSync(join(fresh, 'design', '.gitignore'), 'utf8').split('\n')).toContain('exports/')
+      mkdirSync(join(old, 'design'), { recursive: true })
+      writeFileSync(join(old, 'design', '.gitignore'), '.local/\n# mine\nsecret.env\n')
+      init(old, { mode: 'studio', demo: false })
+      const gi = readFileSync(join(old, 'design', '.gitignore'), 'utf8')
+      expect(gi.startsWith('.local/\n# mine\nsecret.env\n')).toBe(true)
+      expect(gi.split('\n').filter((l) => l === 'exports/').length).toBe(1)
+      init(old, { mode: 'studio', demo: false })
+      expect(readFileSync(join(old, 'design', '.gitignore'), 'utf8')).toBe(gi)
+    } finally { rmSync(fresh, { recursive: true, force: true }); rmSync(old, { recursive: true, force: true }) }
+  })
+})
