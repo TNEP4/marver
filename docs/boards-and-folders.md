@@ -101,8 +101,8 @@ never a log: a board's every open thread on the frames it shows, a folder's over
 sub-folders, a scene's on its frames, the tab's every open thread on the canvas. It is the same as
 resolving each one by hand - Jam's questions, reviews and failed runs on them are finished - except
 live work: a thread Jam is queued or working on is left open and counted ("2 left open: work in
-progress"). The notice says how many, with **Undo**: it reopens each thread nobody resolved or reopened
-since ("1 changed since - left as is"); what Jam finished stays finished. From the terminal: `npx marver
+progress"). The notice says how many, with **Undo**: it reopens each thread nothing happened in since - no
+reply, edit, reaction, resolve or reopen ("1 changed since - left as is"); what Jam finished stays finished. From the terminal: `npx marver
 comments resolve --all --board <b>` (`--folder`, `--scene`, `--canvas`, `--dry-run`), then `--undo <op>`
 with the op it prints. On a published canvas, threads are resolved one at a time.
 
