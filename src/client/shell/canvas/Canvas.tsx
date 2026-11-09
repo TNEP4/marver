@@ -3,7 +3,7 @@ import { TransformWrapper, TransformComponent, type ReactZoomPanPinchContentRef 
 import { CONFIG, useStore } from '../store.ts'
 import { letGoOfTile } from '../jam-state.ts'
 import { bootHash, linkTargets } from '../hash.ts'
-import { revealFrame } from '../goto.ts'
+import { isLatest, navNow, revealFrame } from '../goto.ts'
 import { noteGestureCmd, startPerf } from '../perf.ts'
 import { FrameNode, HEADER } from './FrameNode.tsx'
 import { NOTE_GAP } from '../notes.ts'
@@ -165,7 +165,7 @@ export function animateLayout(ms = 360) {
 // the control channel lives in ctl.ts so play/focus can import it without
 // dragging the canvas into a locked-shell bundle; Canvas assigns the real
 // implementations below when it mounts
-import { canvasCtl, type CanvasWheelInput } from './ctl.ts'
+import { canvasCtl, markBootLanded, type CanvasWheelInput } from './ctl.ts'
 import { cmd, type CmdHandle } from '../commands.ts'
 export { canvasCtl, type CanvasWheelInput }
 import { anchorNode, anchoredCamera, type Held } from './anchor.ts'
@@ -362,7 +362,10 @@ export function Canvas() {
     // reloaded this tab after a crash
     const named = !!(bootHash.n?.length || bootHash.f?.length || bootHash.s?.length)
     const cam = carried ?? (!named || APP_REOPEN ? savedCamera(board) : null)
+    // a navigation after this point (a person's, a show's) owns the camera: the boot's fit gives way to it
+    const nav = navNow()
     const fit = () => {
+      if (!isLatest(nav)) return
       const keys = linkTargets(bootHash, useStore.getState().nodes)
       if (keys.length) {
         useStore.setState({ selection: keys })
@@ -381,13 +384,16 @@ export function Canvas() {
         if (bootHash.f?.length && !revealed) { revealed = true; void revealFrame(bootHash.f[0]) }
       }
     }
-    requestAnimationFrame(() => {
+    // a frame, or at once in a tab in the background (it draws none until it comes forward)
+    const soon = (fn: () => void) => { if (document.visibilityState === 'hidden') setTimeout(fn, 0); else requestAnimationFrame(fn) }
+    soon(() => {
       fit()
       // published builds boot fast enough that rzpp's own init can land AFTER this fit
       // and stomp it back to the identity transform - one verification pass re-fits
       setTimeout(() => {
         const st = ref.current?.instance.transformState
         if (st && st.scale === 1 && st.positionX === 0 && st.positionY === 0) fit()
+        markBootLanded()   // spec 31 D3: a show waits for this
       }, 150)
     })
   }, [nodes])

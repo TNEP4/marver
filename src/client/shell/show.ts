@@ -18,8 +18,9 @@ import { create } from 'zustand'
 import { checkShowTarget, type ShowTarget } from '../../shared/deep-link.ts'
 import { api, typedUnsent } from './api.ts'
 import { canvasCtl } from './canvas/Canvas.tsx'
+import { bootLanded } from './canvas/ctl.ts'
 import { openThreadAt } from './jam-keys.ts'
-import { isLatest, navigated, revealFrame, switchFor } from './goto.ts'
+import { isLatest, navigated, navNow, revealFrame, switchFor } from './goto.ts'
 import { linkTargets } from './hash.ts'
 import { useJamCapture } from './jam-capture.ts'
 import { APP } from './marver-app.ts'
@@ -110,8 +111,9 @@ async function go(t: ShowTarget | 'landing', n: number, force: boolean): Promise
     }
     return alive() ? 'missing' : ended()
   }
-  // the refit, even when the place is already on screen - unless a newer navigation has the camera by then
-  await new Promise((r) => setTimeout(r, 60))
+  // the refit, even when the place is already on screen - unless a newer navigation has the camera by then (a frame's
+  // worth for the selection to draw; none in a background tab, whose timers run once a second)
+  if (document.visibilityState !== 'hidden') await new Promise((r) => setTimeout(r, 60))
   if (!alive()) return ended()
   if (keys.length) canvasCtl.fitNodes(keys); else canvasCtl.fitAll()
   return (await cameraLanded(alive)) ? 'shown' : ended()
@@ -124,6 +126,8 @@ async function go(t: ShowTarget | 'landing', n: number, force: boolean): Promise
 async function cameraLanded(alive: () => boolean): Promise<boolean> {
   const since = performance.now()
   let saw = false
+  // a background tab's fit landed synchronously (Canvas.tsx fly): verified now, no polling its throttled timers
+  if (document.visibilityState === 'hidden') return alive() && !canvasCtl.cameraBusy()
   for (let n = 1; performance.now() - since < 2000; n++) {
     // a frame, or 50 ms where none come (a tab in the background)
     await new Promise((r) => { const late = setTimeout(r, 50); requestAnimationFrame(() => { clearTimeout(late); r(null) }) })
@@ -164,9 +168,12 @@ export async function showTarget(raw: unknown, from: ShowFrom): Promise<ShowResu
     return 'notice'
   }
   await booted
-  // the boot's camera at rest first: its fit is not this show's to count
-  await cameraLanded(() => n === current)
-  if (n !== current) return 'stale'
+  // the boot's own navigation is done; a person's from here on is newer than this show
+  const before = navNow()
+  // the board's first camera applied (Canvas.tsx), so the boot never lands over the show - a board with no nodes has
+  // none to wait for, and a second at most whatever happens
+  if (useStore.getState().nodes.length) await Promise.race([bootLanded, new Promise((r) => setTimeout(r, 1500))])
+  if (n !== current || !isLatest(before)) return 'stale'
   if (holdsWords()) return notice()
   useShowNotice.setState({ notice: null })
   const r = await go(t, n, false)

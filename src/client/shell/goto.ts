@@ -71,6 +71,9 @@ export function navigated(): number {
   if (s.board) void s.switchBoard(s.board)
   return ++gotoSeq
 }
+/** The navigation now, without starting one: a caller that waits (`marver show` for the boot) reads it first, and
+ *  gives way if a person navigated meanwhile (`isLatest`). */
+export const navNow = (): number => gotoSeq
 /** Is this still the latest navigation - nothing newer since `navigated()` handed it out? */
 export const isLatest = (seq: number): boolean => seq === gotoSeq
 /** The one way a navigation changes boards - a link, a goto, a reveal, a board picked in the sidebar or the play pill, a

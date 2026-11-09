@@ -16,6 +16,12 @@ export interface CanvasWheelInput {
   ctrlKey: boolean; metaKey: boolean; clientX: number; clientY: number
 }
 
+/** The board's first camera - its boot fit or restored camera (Canvas.tsx) - has been applied: `marver show` goes only
+ *  after it, so the boot never lands over a show (spec 31 D3). */
+let bootLandedNow: () => void = () => {}
+export const bootLanded = new Promise<void>((r) => { bootLandedNow = r })
+export function markBootLanded(): void { bootLandedNow() }
+
 export const canvasCtl = {
   fitNode(_key: string) {},
   fitNodes(_keys: string[]) {},
