@@ -309,7 +309,8 @@ describe('in the app (a fake window.marverApp)', () => {
     tabs.push(s)
     // as the app does: the held place goes the moment the page listens, before its first render
     await browser.send('Page.addScriptToEvaluateOnNewDocument', { source: FAKE_APP.replace('onShow: (fn) => { shows.add(fn);', "onShow: (fn) => { shows.add(fn); fn({ board: 'other', n: ['n-three'] });") }, s)
-    await browser.go(s, `${dev!.origin}/#/b/main?n=n-one`)
+    // the board it boots onto is the one the place names: nothing to switch, its nodes not loaded yet
+    await browser.go(s, `${dev!.origin}/#/b/other`)
     await browser.until(s, settled('other', ['n-three']), 30_000)
     await new Promise((r) => setTimeout(r, 800))
     expect(await browser.eval(s, VIEW)).toEqual({ board: 'other', sel: ['n-three'], visible: ['n-three'] })
