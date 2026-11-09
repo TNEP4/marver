@@ -388,12 +388,17 @@ describe.skipIf(!hasChrome)('the finished slide, frozen deterministically (#4)',
         const text = (dx) => (g) => { g.fillStyle = '#111'; g.font = '28px Helvetica'; for (let y = 40; y < 200; y += 40) g.fillText('Quarterly numbers, the room', 10 + dx, y) }
         const cmp = ${COMPARE}
         const a = await cmp(pic(stripes(0)), pic(stripes(4)), 2, [], 24, true)
+        // thin lines added to a white page: each white screen pixel has white beside it in the print, so only the match
+        // from the print's side sees them
+        const lines = (g) => { g.fillStyle = '#000'; for (let x = 0; x < 400; x += 4) g.fillRect(x, 0, 0.5, 200) }
+        const l = await cmp(pic(() => {}), pic(lines), 2, [], 24, true)
         const t = await cmp(pic(text(0)), pic(text(0.5)), 2, [], 24, true)
-        return { stripes: [a.coarse, a.fine], text: [t.coarse, t.fine] }
+        return { stripes: [a.coarse, a.fine], text: [t.coarse, t.fine], lines: l.fine }
       })()`)
       expect(got.stripes[0]).toBe(0)                 // the average cannot see it...
       expect(got.stripes[1]).toBeGreaterThan(0.4)    // ...the pixel check does
       expect(got.text).toEqual([0, 0])               // text a device pixel apart (another rasteriser's snapping) is the same picture
+      expect(got.lines).toBeGreaterThan(0.05)        // lines added where the screen has none
     } finally { await b.close() }
   }, 60_000)
   it('export=1 turns Img\'s LOD canvas off on a frame that is not a slide: a plain <img> of the original (#5)', async () => {

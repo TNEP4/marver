@@ -534,8 +534,8 @@ export const CROP = crop.toString()
  * - outside every box: `marver`'s bake rule - changed pixels beyond 32 levels, and the worst 16x16 block;
  * - `coarse`: the share of the page whose averages over 8 CSS px blocks differ by more than 32 levels - a missing or
  *   wrong area differs in its average (print certification);
- * - `fine`: the share of pixels differing by more than 48 levels from every pixel within one pixel of them in the other
- *   picture - text drawn by another rasteriser differs only at its edges, a changed pattern everywhere.
+ * - `fine`: the share of pixels, of either picture, differing by more than 48 levels from every pixel within one pixel of
+ *   them in the other - text drawn by another rasteriser differs only at its edges, a changed pattern everywhere.
  */
 async function compare(a: string, b: string, dsf: number, boxes: { x: number; y: number; w: number; h: number }[], tol: number, atB = false): Promise<{ boxes: number[]; outside: { gt32: number; n: number; blockMax: number }; coarse: number; fine: number }> {
   const load = async (d: string) => { const im = new Image(); im.src = 'data:image/png;base64,' + d; await im.decode(); return im }
@@ -598,20 +598,22 @@ async function compare(a: string, b: string, dsf: number, boxes: { x: number; y:
   }
   // the page pixel by pixel, each matched within one pixel of the other picture: text another rasteriser draws differs
   // at its edges only, a pattern changed (stripes swapped, a box moved) differs everywhere it is
-  let fineBad = 0
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    const p = y * W + x
-    if (d(p) <= 48) continue
-    const i = p * 4
-    let best = 255
-    for (let dy = -1; dy <= 1 && best > 48; dy++) for (let dx = -1; dx <= 1; dx++) {
+  // both ways: a pixel of either picture with no match near it in the other (a line added to the print is no closer to
+  // the screen for having white beside it)
+  const unmatched = (P: Uint8ClampedArray, Q: Uint8ClampedArray, x: number, y: number) => {
+    const i = (y * W + x) * 4
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       const xx = x + dx, yy = y + dy
       if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue
       const j = (yy * W + xx) * 4
-      const v = Math.max(Math.abs(A[i] - B[j]), Math.abs(A[i + 1] - B[j + 1]), Math.abs(A[i + 2] - B[j + 2]))
-      if (v < best) best = v
+      if (Math.max(Math.abs(P[i] - Q[j]), Math.abs(P[i + 1] - Q[j + 1]), Math.abs(P[i + 2] - Q[j + 2])) <= 48) return false
     }
-    if (best > 48) fineBad++
+    return true
+  }
+  let fineBad = 0
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    if (d(y * W + x) <= 48) continue
+    if (unmatched(A, B, x, y) || unmatched(B, A, x, y)) fineBad++
   }
   return { boxes: inBoxes, outside: { gt32, n, blockMax }, coarse: cw * ch ? coarseBad / (cw * ch) : 0, fine: fineBad / (W * H) }
 }

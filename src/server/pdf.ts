@@ -50,7 +50,7 @@ export interface PdfCtx {
   themes: string[]
   canvasName: string
   version: string
-  frames: () => (PlanFrame & { file: string; note?: string; scene?: string; variantGroup?: string; variant?: string })[]
+  frames: () => (PlanFrame & { file: string; note?: string; scene?: string; variantGroup?: string; variant?: string; contentWidth?: number })[]
   /** no source change in flight (the update-settlement barrier `shot` and bakes use) */
   settled: () => boolean
   /** a frame's document revision, dependency-aware (marks.ts docRev) */
@@ -118,7 +118,7 @@ export function playsAsSlides(root: string, board: string): boolean {
 
 /** The board file's nodes with the positions the canvas would give them: its own, else its layout's (a board an agent
  *  wrote as a frame list is laid out by the canvas when it opens - the same pure layout). */
-export async function boardNodes(root: string, board: string, frames: (PlanFrame & { scene?: string; variantGroup?: string; variant?: string })[], viewports: Viewports, themes: string[]): Promise<{ nodes: PlanNode[]; title?: string } | null> {
+export async function boardNodes(root: string, board: string, frames: (PlanFrame & { scene?: string; variantGroup?: string; variant?: string; contentWidth?: number })[], viewports: Viewports, themes: string[]): Promise<{ nodes: PlanNode[]; title?: string } | null> {
   if (!BOARD_NAME.test(board) || board.length > 64) return null
   const { checkBoardsDir, isRegularFile } = await import('./boards.ts')
   const dir = join(root, 'design', 'boards'), file = join(dir, `${board}.json`)
@@ -140,18 +140,22 @@ export async function boardNodes(root: string, board: string, frames: (PlanFrame
     const f = byId.get(n.frame)
     return typeof n.theme === 'string' && themes.includes(n.theme) && n.theme !== (f?.theme ?? first) ? n.theme : undefined
   }
-  const nodes: PlanNode[] = raw.map((n) => ({ frame: n.frame, x: num(n.x) ? n.x : 0, y: num(n.y) ? n.y : 0, ...(num(n.w) ? { w: n.w } : {}), ...(themeOf(n) ? { theme: themeOf(n) } : {}), ...(byId.has(n.frame) ? {} : { missing: true }) }))
+  // a node with no saved size is the size the canvas gives it (store.ts defaultSize): a slide its stage, a Doc its width
+  // (its viewport's, else its content width), anything else its viewport, else mobile
+  const size = (n: Raw) => {
+    const f = byId.get(n.frame)
+    const vp = f?.viewport ? viewports[f.viewport] : undefined
+    const d = f?.slide ? (vp ?? { width: 1280, height: 720 })
+      : num(f?.contentWidth) ? { width: vp?.width ?? f!.contentWidth!, height: vp?.height ?? Math.round((vp?.width ?? f!.contentWidth!) * 0.75) }
+      : (vp ?? viewports.mobile ?? { width: 390, height: 844 })
+    return { w: num(n.w) ? n.w : d.width, h: num(n.h) ? n.h : d.height }
+  }
+  const nodes: PlanNode[] = raw.map((n) => ({ frame: n.frame, x: num(n.x) ? n.x : 0, y: num(n.y) ? n.y : 0, w: size(n).w, ...(themeOf(n) ? { theme: themeOf(n) } : {}), ...(byId.has(n.frame) ? {} : { missing: true }) }))
   if (raw.some((n) => !num(n.x) || !num(n.y))) {
     const { tidy } = await import('../client/shell/tidy.ts')
     const { boardLayoutOf } = await import('./boards.ts')
     const { flow } = boardLayoutOf(b)
     const sceneOf = (id: string) => byId.get(id)?.scene ?? id.split('/')[0]
-    const size = (n: Raw) => {
-      const f = byId.get(n.frame)
-      const vp = f?.viewport ? viewports[f.viewport] : undefined
-      const d = f?.slide ? (vp ?? { width: 1280, height: 720 }) : (vp ?? viewports.mobile ?? { width: 390, height: 844 })
-      return { w: num(n.w) ? n.w : d.width, h: num(n.h) ? n.h : d.height }
-    }
     const placed = tidy(raw.map((n, i) => ({ key: String(i), frame: n.frame, scene: sceneOf(n.frame), group: byId.get(n.frame)?.variantGroup, variant: byId.get(n.frame)?.variant, ...size(n) })), flow)
     for (const p of placed) { const n = nodes[Number(p.key)]; if (n) { n.x = p.x; n.y = p.y } }
   }
@@ -665,24 +669,32 @@ async function runJob(ctx: PdfCtx, job: Job, plan: Plan, title: string): Promise
     const helper = await Helper.open(b, owner)
     job.phase = 'rendering'
     let bytes = 0
-    const outs = await pool(PDF_LANES, pages, async (page, n) => {
+    const outs = await pool(PDF_LANES, pages, async (planned, n) => {
+      let page = planned
       if (signal.aborted) throw new Error('the export was cancelled')
       const t = Date.now()
-      const url = exportUrl(ctx.origin, page, frames.get(page.frame)?.file)
+      let url = exportUrl(ctx.origin, page, frames.get(page.frame)?.file)
       // source changes (spec 31 How): each render has its own baseline - the frame's document revision, the canvas-wide
       // inputs, and the asset files it loaded (an overwrite keeps its directory's time) - and one that moved while it
       // rendered renders once more; still moving, it is printed and named
-      const attempt = async () => {
+      const attempt = async (again: boolean) => {
         for (const by = Date.now() + 5000; !ctx.settled() && Date.now() < by;) await wait(100)
+        // a render again reads the page from the source as it is now: its size and theme (a frame's meta), its file
+        if (again) {
+          const fresh = await planFor(ctx, job.board, job.ask.theme).catch(() => null)
+          const p2 = fresh?.ok ? fresh.plan.pages.find((x) => x.frame === page.frame) : undefined
+          if (p2) page = p2
+          url = exportUrl(ctx.origin, page, ctx.frames().find((f) => f.id === page.frame)?.file)
+        }
         const base = revisions(ctx, [page.frame]), since = Date.now()
         const out = await renderSlide(b, helper, page, { url, dir: job.dir, n, mode: job.ask.mode ?? 'auto', notes: !!job.ask.notes, signal })
         const now = revisions(ctx, [page.frame])
         const moved = !ctx.settled() || now.doc.get(page.frame) !== base.doc.get(page.frame) || now.global !== base.global || assetsChanged(ctx.root, out.assets ?? [], since)
         return { out, moved }
       }
-      let { out, moved } = await attempt()
+      let { out, moved } = await attempt(false)
       let changed = false
-      if (out.status !== 'failed' && moved) { ({ out, moved } = await attempt()); changed = moved }
+      if (out.status !== 'failed' && moved) { ({ out, moved } = await attempt(true)); changed = moved }
       if (out.status === 'failed' && !job.ask.keepGoing) throw new Error(`${page.frame}: ${out.error}`)
       bytes += out.pdf?.length ?? out.raster?.jpeg.length ?? out.picture?.length ?? 0
       if (bytes > PDF_BUDGET.bytes) throw new Error(`the PDF passed ${PDF_BUDGET.bytes / 2 ** 20} MB - export fewer slides, or with --vector`)

@@ -49,13 +49,16 @@ export async function exportPdf(board: string, o: { theme?: string }, how: CmdOp
     usePdfExport.setState({ job, board, page: 0, pages: b.pages ?? 0, phase: 'starting', state: 'running' })
     h.done()
   } catch { h.fail('api'); toast('could not reach the dev server'); return }
+  // this export is still the one the notice shows: a Cancel (here or a newer export) ends it after any await
+  const alive = () => usePdfExport.getState().job === job
   try {
     let st: { state?: string; page?: number; pages?: number; phase?: string; error?: string; filename?: string } = {}
     for (;;) {
       await wait(500)
-      if (usePdfExport.getState().job !== job) return   // cancelled here
+      if (!alive()) return
       const r = await api(`pdf/${job}`, { headers: { 'x-mv-c': csrf() } })
       st = await r.json().catch(() => ({}))
+      if (!alive()) return
       if (!r.ok) { toast(st.error ?? 'the PDF job was lost'); return }
       usePdfExport.setState({ page: st.page ?? 0, pages: st.pages ?? 0, phase: st.phase ?? '' })
       if (st.state !== 'running') break
@@ -65,6 +68,7 @@ export async function exportPdf(board: string, o: { theme?: string }, how: CmdOp
     const name = st.filename ?? `${board}.pdf`
     if (APP?.exportPdf) {
       // the app fetches the file itself from this canvas and saves it where its panel says: only the id crosses
+      if (!alive()) return
       usePdfExport.setState({ state: 'saving' })
       const a = await APP.exportPdf({ job })
       if (a.ok) toast(`${name} saved`)
@@ -72,15 +76,18 @@ export async function exportPdf(board: string, o: { theme?: string }, how: CmdOp
       return
     }
     const f = await api(`pdf/${job}/file`, { headers: { 'x-mv-c': csrf() } })
+    if (!alive()) return
     if (!f.ok) { toast(`could not fetch the PDF (${f.status})`); return }
-    const url = URL.createObjectURL(await f.blob())
+    const blob = await f.blob()
+    if (!alive()) return
+    const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url; a.download = name; a.rel = 'noopener'
     document.body.appendChild(a); a.click(); a.remove()
     setTimeout(() => URL.revokeObjectURL(url), 60_000)
     toast(`${name} downloaded`)
   } catch { toast('the PDF was interrupted - is the dev server still running?') }
-  finally { if (usePdfExport.getState().job === job) usePdfExport.setState({ job: null, state: 'idle', page: 0, pages: 0, phase: '' }) }
+  finally { if (alive()) usePdfExport.setState({ job: null, state: 'idle', page: 0, pages: 0, phase: '' }) }
 }
 
 /** Cancel the PDF being made (the server closes its browser; nothing of it stays). */

@@ -97,6 +97,13 @@ describe('the board a job reads', () => {
     const b = await boardNodes(root, 'deck', frames, VP, ['light', 'dark'])
     expect(b!.nodes.map((n) => n.theme)).toEqual(['dark', undefined, 'dark'])
   })
+  it('a node with no saved size is planned at the size the canvas gives it: a wide Doc at its width (laptop), not the first viewport', async () => {
+    const docs = [{ ...f('w/doc', { viewport: undefined }), scene: 'w', contentWidth: 1280, file: 'design/scenes/w/doc.tsx' }, { ...f('w/screen'), scene: 'w', file: 'design/scenes/w/screen.tsx' }]
+    canvas({ nodes: [{ frame: 'w/doc', x: 0, y: 0 }, { frame: 'w/screen', x: 2000, y: 0 }] })
+    const b = await boardNodes(root, 'deck', docs, VP, ['light'])
+    const plan = exportPlan({ slides: false, nodes: b!.nodes, frames: docs, viewports: VP })
+    expect(plan.pages.map((p) => [p.frame, p.width, p.height, p.device])).toEqual([['w/doc', 1280, 800, 'laptop'], ['w/screen', 390, 844, 'mobile']])
+  })
   it('budgets: a missing board is a 404, an empty one, past 300 pages or a side past 4096 px a 400 with the reason', async () => {
     canvas({ nodes: [] })
     const ctx = { root, viewports: VP, themes: ['light'], frames: () => frames }
