@@ -16,6 +16,7 @@ import { logReloadLines, tidyPerfDir } from './perf.ts'
 import { writerOf } from './board-writes.ts'
 import { apiMiddleware } from './api.ts'
 import { resetPdf } from './pdf-reset.ts'
+import { checkRealDirs } from './boards.ts'
 import { SIZES_FILE } from './sizes.ts'
 import { routesMiddleware } from './routes.ts'
 import { logoRoute } from './logo.ts'
@@ -354,7 +355,10 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       // deck PDFs (spec 31): no job outlives its server - the folder starts empty; a handout's page is served while it prints
       // a restart in this process: the jobs of the server before are cancelled, then their folder goes; and at close
       resetPdf(root)
-      try { rmSync(join(root, 'design', '.local', 'pdf'), { recursive: true, force: true }) } catch { /* best-effort */ }
+      // only a real folder inside the project (pdf.ts jobsDirSafe): never through a link to somewhere else
+      try {
+        if (!checkRealDirs(root, [[join(root, 'design'), 'design'], [join(root, 'design', '.local'), 'design/.local'], [join(root, 'design', '.local', 'pdf'), 'design/.local/pdf']])) rmSync(join(root, 'design', '.local', 'pdf'), { recursive: true, force: true })
+      } catch { /* best-effort */ }
       server.httpServer?.once('close', () => resetPdf(root))
       server.middlewares.use((req, res, next) => {
         if (!(req.url ?? '').startsWith(`${ROUTE}/handout/`)) return next()

@@ -60,6 +60,8 @@ const FILES: Record<string, string> = {
       <div style={{ width: 200, height: 200, background: '#c84', borderRadius: 100 }} />
       <a href="https://example.org/inside" style={{ display: 'block', marginTop: 20, fontSize: 30, color: '#123' }}>a link inside the filter</a>
       <svg width="240" height="40"><a href="https://example.net/svg"><text x="0" y="28" fontSize="24">an svg link</text></a></svg>
+      <a href="https://example.org/invisible" style={{ visibility: 'hidden' }}>an invisible link</a>
+      <div style={{ height: 0, overflow: 'hidden' }}><a href="https://example.org/clipped-away">a link clipped away</a></div>
     </div>`),
   'design/scenes/deck/04-motion.tsx': `import { useEffect, useRef } from 'react'
 export const meta = { title: 'Motion', slide: true }
@@ -209,6 +211,8 @@ describe.skipIf(!hasChrome)('deck PDFs in real Chrome (spec 31 Part A)', () => {
     const inside = (await (await doc.getPage(3)).getAnnotations()).map((a: { url?: string }) => a.url)
     expect(inside).toContain('https://example.org/inside')
     expect(inside).toContain('https://example.net/svg')
+    // a link that does not show is no link on the page
+    expect(inside.filter((u: string) => /invisible|clipped-away/.test(u ?? ''))).toEqual([])
     await doc.destroy()
     expect(deck.report.slides.filter((s) => s.status === 'raster' || s.status === 'failed')).toEqual([])
     // a drop-shadow-only filter is left to Chrome, which prints it right (print-certified like every page)
@@ -392,13 +396,17 @@ describe.skipIf(!hasChrome)('the finished slide, frozen deterministically (#4)',
         // from the print's side sees them
         const lines = (g) => { g.fillStyle = '#000'; for (let x = 0; x < 400; x += 4) g.fillRect(x, 0, 0.5, 200) }
         const l = await cmp(pic(() => {}), pic(lines), 2, [], 24, true)
+        // the same inside a patch box (screen certification): lines added there change the box
+        const boxLines = (g) => { g.fillStyle = '#000'; for (let x = 100; x < 200; x += 4) g.fillRect(x, 50, 0.5, 100) }
+        const bx = await cmp(pic(() => {}), pic(boxLines), 2, [{ x: 100, y: 50, w: 100, h: 100 }], 24)
         const t = await cmp(pic(text(0)), pic(text(0.5)), 2, [], 24, true)
-        return { stripes: [a.coarse, a.fine], text: [t.coarse, t.fine], lines: l.fine }
+        return { stripes: [a.coarse, a.fine], text: [t.coarse, t.fine], lines: l.fine, box: bx.boxes[0] }
       })()`)
       expect(got.stripes[0]).toBe(0)                 // the average cannot see it...
       expect(got.stripes[1]).toBeGreaterThan(0.4)    // ...the pixel check does
       expect(got.text).toEqual([0, 0])               // text a device pixel apart (another rasteriser's snapping) is the same picture
       expect(got.lines).toBeGreaterThan(0.05)        // lines added where the screen has none
+      expect(got.box).toBeGreaterThan(0.05)          // and inside a patch box
     } finally { await b.close() }
   }, 60_000)
   it('export=1 turns Img\'s LOD canvas off on a frame that is not a slide: a plain <img> of the original (#5)', async () => {

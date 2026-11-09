@@ -196,6 +196,20 @@ describe('jobs (spec 31 How)', () => {
     expect(assetsChanged(root, ['design/assets/../../etc/passwd', 'design/x'], 0)).toBe(false)
     void ctx
   })
+  it('the job folder is never reached through a link out of the project: dev start and cleanup leave it, a job is refused', async () => {
+    const ctx = ctxFor()
+    const outside = mkdtempSync(join(tmpdir(), 'mv-pdf-outside-'))
+    try {
+      mkdirSync(join(outside, 'pdf'), { recursive: true })
+      writeFileSync(join(outside, 'pdf', 'keep.txt'), 'theirs')
+      const { symlinkSync } = await import('node:fs')
+      symlinkSync(outside, join(root, 'design', '.local'))
+      clearPdfJobs(root)
+      sweepPdfJobs(root, Date.now() + 10 * PDF_BUDGET.keepMs)
+      expect(readFileSync(join(outside, 'pdf', 'keep.txt'), 'utf8')).toBe('theirs')
+      expect(await startPdfJob(ctx, { board: 'deck' }, { run: async () => {} })).toMatchObject({ ok: false, status: 422 })
+    } finally { rmSync(outside, { recursive: true, force: true }) }
+  })
   it('cleanup: past its hour a job and its folder go; a folder no job knows goes too; dev start clears them all', async () => {
     const ctx = ctxFor()
     const a = await startPdfJob(ctx, { board: 'deck' }, { run: async (j) => { j.file = join(j.dir, j.filename); writeFileSync(j.file, '%PDF') } })
@@ -304,6 +318,16 @@ describe('the report, the handout, the URLs', () => {
     expect(captureScale(1920, 1080)).toBe(2.75)
     expect(1920 * 1080 * captureScale(1920, 1080) ** 2).toBeLessThan(16e6)
     expect(captureScale(4096, 4096)).toBe(1)
+  })
+})
+
+describe('the notice\'s summary of a report (the shell)', () => {
+  it('names what needs a look in a few words, nothing when all is well', async () => {
+    const { reportNotes } = await import('../src/client/shell/pdf-notes.ts')
+    expect(reportNotes({ skipped: [], slides: [{ status: 'vector' }, { status: 'patched' }] })).toBe('')
+    expect(reportNotes({ skipped: [1], slides: [{ status: 'raster', clipped: true }, { status: 'raster', unsettled: true }] }))
+      .toBe(' · 1 skipped, 2 as pictures, 1 unsettled, 1 clipped (npx marver pdf says which)')
+    expect(reportNotes(undefined)).toBe('')
   })
 })
 

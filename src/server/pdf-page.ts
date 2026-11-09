@@ -131,12 +131,9 @@ function install(): boolean {
     return changed ? { css: parts.join(', '), reach } : null
   }
   /** the element's box as the stage shows it: in the viewport, inside every clipping ancestor; null when nothing shows */
-  const shown = (el: Element, W: number, H: number): Rect | null => {
-    const r = el.getBoundingClientRect()
-    if (r.width < 1 || r.height < 1) return null
-    const ck = (el as unknown as { checkVisibility?: (o: object) => boolean }).checkVisibility
-    if (ck && !ck.call(el, { opacityProperty: true, visibilityProperty: false })) return null
-    let x0 = Math.max(0, r.left), y0 = Math.max(0, r.top), x1 = Math.min(W, r.right), y1 = Math.min(H, r.bottom)
+  /** the part of the stage an element can show in: the viewport, inside every clipping ancestor */
+  const clipOf = (el: Element, W: number, H: number): { x0: number; y0: number; x1: number; y1: number } => {
+    let x0 = 0, y0 = 0, x1 = W, y1 = H
     if (getComputedStyle(el).position !== 'fixed') {
       for (let a = el.parentElement; a && a !== document.body && a !== document.documentElement; a = a.parentElement) {
         const c = getComputedStyle(a)
@@ -147,6 +144,15 @@ function install(): boolean {
         if (c.position === 'fixed') break
       }
     }
+    return { x0, y0, x1, y1 }
+  }
+  const shown = (el: Element, W: number, H: number): Rect | null => {
+    const r = el.getBoundingClientRect()
+    if (r.width < 1 || r.height < 1) return null
+    const ck = (el as unknown as { checkVisibility?: (o: object) => boolean }).checkVisibility
+    if (ck && !ck.call(el, { opacityProperty: true, visibilityProperty: false })) return null
+    const c = clipOf(el, W, H)
+    const x0 = Math.max(c.x0, r.left), y0 = Math.max(c.y0, r.top), x1 = Math.min(c.x1, r.right), y1 = Math.min(c.y1, r.bottom)
     return x1 - x0 >= 1 && y1 - y0 >= 1 ? { x: r.left, y: r.top, w: r.width, h: r.height } : null
   }
   /** How far past its border box an element's effect draws (CSS px): a blur's falloff, a drop-shadow, its own outer
@@ -172,13 +178,23 @@ function install(): boolean {
    *  href is an SVGAnimatedString, or an xlink:href), resolved against the document */
   const linksUnder = (root: ParentNode): { href: string; rects: Rect[] }[] => {
     const out: { href: string; rects: Rect[] }[] = []
+    const W = innerWidth, H = innerHeight
     for (const a of Array.from(root.querySelectorAll('a'))) {
       const raw = a.getAttribute('href') ?? a.getAttributeNS('http://www.w3.org/1999/xlink', 'href')
       if (!raw) continue
       let href: string
       try { href = new URL(raw, document.baseURI).href } catch { continue }
       if (!/^(https?:|mailto:)/i.test(href)) continue
-      const rects = Array.from(a.getClientRects()).filter((r) => r.width >= 1 && r.height >= 1).map((r) => ({ x: r.left, y: r.top, w: r.width, h: r.height }))
+      // a link that does not show (hidden, transparent, display: none) is no link on the page
+      const ck = (a as unknown as { checkVisibility?: (o: object) => boolean }).checkVisibility
+      if (ck && !ck.call(a, { opacityProperty: true, visibilityProperty: true })) continue
+      // each box as much of it as shows: inside the stage and every clipping ancestor
+      const clip = clipOf(a, W, H)
+      const rects: Rect[] = []
+      for (const r of Array.from(a.getClientRects())) {
+        const x0 = Math.max(r.left, clip.x0), y0 = Math.max(r.top, clip.y0), x1 = Math.min(r.right, clip.x1), y1 = Math.min(r.bottom, clip.y1)
+        if (x1 - x0 >= 1 && y1 - y0 >= 1) rects.push({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 })
+      }
       if (rects.length) out.push({ href, rects })
     }
     return out
@@ -555,26 +571,25 @@ async function compare(a: string, b: string, dsf: number, boxes: { x: number; y:
   }
   const A = px(ia), B = px(ib)
   const d = (p: number) => { const i = p * 4; return Math.max(Math.abs(A[i] - B[i]), Math.abs(A[i + 1] - B[i + 1]), Math.abs(A[i + 2] - B[i + 2])) }
+  /** pixel (x, y) of P has no pixel of Q within one pixel of it closer than `t` levels */
+  const unmatched = (P: Uint8ClampedArray, Q: Uint8ClampedArray, x: number, y: number, t: number) => {
+    const i = (y * W + x) * 4
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const xx = x + dx, yy = y + dy
+      if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue
+      const j = (yy * W + xx) * 4
+      if (Math.max(Math.abs(P[i] - Q[j]), Math.abs(P[i + 1] - Q[j + 1]), Math.abs(P[i + 2] - Q[j + 2])) <= t) return false
+    }
+    return true
+  }
   const owned = new Uint8Array(W * H)
   const inBoxes = boxes.map((bx) => {
     const x0 = Math.max(0, Math.floor(bx.x * dsf)), y0 = Math.max(0, Math.floor(bx.y * dsf))
     const x1 = Math.min(W, Math.ceil((bx.x + bx.w) * dsf)), y1 = Math.min(H, Math.ceil((bx.y + bx.h) * dsf))
-    // a pixel differs only when no pixel of the other picture within one device pixel matches it: a box snapped a device
-    // pixel apart (a third of a CSS px at 3x) is the same picture
-    const near = (x: number, y: number) => {
-      const i = (y * W + x) * 4
-      let best = 255
-      for (let dy = -1; dy <= 1 && best > tol; dy++) for (let dx = -1; dx <= 1; dx++) {
-        const xx = x + dx, yy = y + dy
-        if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue
-        const j = (yy * W + xx) * 4
-        const v = Math.max(Math.abs(A[i] - B[j]), Math.abs(A[i + 1] - B[j + 1]), Math.abs(A[i + 2] - B[j + 2]))
-        if (v < best) best = v
-      }
-      return best
-    }
+    // a pixel differs only when no pixel of the other picture within one device pixel matches it, both ways: a box
+    // snapped a device pixel apart (a third of a CSS px at 3x) is the same picture, a line added beside white is not
     let bad = 0, n = 0
-    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const p = y * W + x; owned[p] = 1; n++; if (d(p) > tol && near(x, y) > tol) bad++ }
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const p = y * W + x; owned[p] = 1; n++; if (d(p) > tol && (unmatched(A, B, x, y, tol) || unmatched(B, A, x, y, tol))) bad++ }
     return n ? bad / n : 0
   })
   const cols = Math.ceil(W / 16), blocks = new Uint16Array(cols * Math.ceil(H / 16))
@@ -598,22 +613,10 @@ async function compare(a: string, b: string, dsf: number, boxes: { x: number; y:
   }
   // the page pixel by pixel, each matched within one pixel of the other picture: text another rasteriser draws differs
   // at its edges only, a pattern changed (stripes swapped, a box moved) differs everywhere it is
-  // both ways: a pixel of either picture with no match near it in the other (a line added to the print is no closer to
-  // the screen for having white beside it)
-  const unmatched = (P: Uint8ClampedArray, Q: Uint8ClampedArray, x: number, y: number) => {
-    const i = (y * W + x) * 4
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-      const xx = x + dx, yy = y + dy
-      if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue
-      const j = (yy * W + xx) * 4
-      if (Math.max(Math.abs(P[i] - Q[j]), Math.abs(P[i + 1] - Q[j + 1]), Math.abs(P[i + 2] - Q[j + 2])) <= 48) return false
-    }
-    return true
-  }
   let fineBad = 0
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     if (d(y * W + x) <= 48) continue
-    if (unmatched(A, B, x, y) || unmatched(B, A, x, y)) fineBad++
+    if (unmatched(A, B, x, y, 48) || unmatched(B, A, x, y, 48)) fineBad++
   }
   return { boxes: inBoxes, outside: { gt32, n, blockMax }, coarse: cw * ch ? coarseBad / (cw * ch) : 0, fine: fineBad / (W * H) }
 }

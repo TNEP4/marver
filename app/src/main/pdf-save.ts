@@ -6,7 +6,8 @@
  *   2. the job is asked on the canvas tab's own session (its owner cookie, echoed as `x-mv-c`, so the canvas's owner
  *      gate applies), with no redirect followed: it must be finished, and its file name is checked (else `deck.pdf`);
  *   3. the save panel opens on ~/Downloads/<name>; closed, nothing more happens;
- *   4. the document that asked is checked again (still the admitted, trusted one) - the panel took the person's time;
+ *   4. the document that asked is checked again (still the admitted, trusted one) - the panel took the person's time -
+ *      and once more right before the write;
  *   5. the file is fetched the same way: `application/pdf`, 200 MB at most as it arrives, starting `%PDF-`;
  *   6. it is written whole (a temp file beside it, then a rename) where the panel said.
  *
@@ -82,6 +83,8 @@ export async function savePdf(job: unknown, p: PdfSavePorts): Promise<ExportPdfA
     if (b.subarray(0, 5).toString('latin1') !== '%PDF-') return { ok: false, why: 'failed' }
     bytes = b
   } catch { return { ok: false, why: 'failed' } }
+  // and again right before the write: the fetch and the read took time too
+  if (!p.still()) return { ok: false, why: 'untrusted' }
   try { await p.write(file, bytes) } catch { return { ok: false, why: 'failed' } }
   return { ok: true }
 }

@@ -76,6 +76,13 @@ describe('savePdf: only a job id crosses, and main checks everything', () => {
     expect(r.asked.some((a) => a.url.endsWith('/file'))).toBe(false)
     expect(r.written).toEqual([])
   })
+  it('and checked once more right before the write: a document gone while the file came gets nothing written', async () => {
+    let n = 0
+    const r = ports({ still: () => ++n < 2 })   // true after the panel, false before the write
+    expect(await savePdf(JOB, r.p)).toEqual({ ok: false, why: 'untrusted' })
+    expect(r.asked.some((a) => a.url.endsWith('/file'))).toBe(true)
+    expect(r.written).toEqual([])
+  })
   it('200 MB at most - by its length header, and as it arrives when the header lies or is absent', async () => {
     const big = new Response(new ReadableStream({ start(c) { const chunk = new Uint8Array(8 * 2 ** 20); for (let i = 0; i <= PDF_MAX / chunk.length; i++) c.enqueue(chunk); c.close() } }), { headers: { 'content-type': 'application/pdf' } })
     const r1 = ports({ file: big })

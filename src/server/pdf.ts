@@ -35,6 +35,7 @@ import { exportPlan, type Plan, type PlanFrame, type PlanNode, type PlanPage, ty
 import { BOARD_NAME } from '../shared/board-tree.ts'
 import { COMPARE, CROP, PDF_EARLY, PDF_INSTALL, SETTLED, SVG_IMAGES, TO_JPEG, TWO_FRAMES } from './pdf-page.ts'
 import { onPdfReset } from './pdf-reset.ts'
+import { checkRealDirs } from './boards.ts'
 
 // ---- the contract ------------------------------------------------------------------------------------------------
 
@@ -536,13 +537,18 @@ const jobs = new Map<string, Job>()
 const running = new Map<string, string>()   // root -> the job running on it
 
 export const jobsDir = (root: string) => join(root, 'design', '.local', 'pdf')
+/** The job folder may be made, written and removed only when design/.local and design/.local/pdf are real folders (or
+ *  absent) inside the project - never through a symlink to somewhere else. */
+export function jobsDirSafe(root: string): boolean {
+  return !checkRealDirs(root, [[join(root, 'design'), 'design'], [join(root, 'design', '.local'), 'design/.local'], [jobsDir(root), 'design/.local/pdf']])
+}
 
 /** `marver dev` start: no job survives a server (their browsers did not), so the folder starts empty. */
 export function clearPdfJobs(root: string): void {
   // a job still running (a dev server restarted in this process) is cancelled first: its browser closes
   for (const [id, j] of jobs) if (j.root === root) { if (j.state === 'running') j.abort.abort(CANCELLED); jobs.delete(id) }
   running.delete(root)
-  try { rmSync(jobsDir(root), { recursive: true, force: true }) } catch { /* best-effort */ }
+  if (jobsDirSafe(root)) try { rmSync(jobsDir(root), { recursive: true, force: true }) } catch { /* best-effort */ }
 }
 // the dev server's restart and close reach the jobs through a hook that does not load this module (pdf-reset.ts)
 onPdfReset(clearPdfJobs)
@@ -554,7 +560,7 @@ export function sweepPdfJobs(root: string, now = Date.now()): void {
     if (now - (j.ended ?? j.created) > PDF_BUDGET.keepMs) { jobs.delete(id); try { rmSync(j.dir, { recursive: true, force: true }) } catch { /* gone */ } }
   }
   // a folder no job of this server knows (an earlier server's, a crash): past its hour, removed
-  try {
+  if (jobsDirSafe(root)) try {
     for (const n of readdirSync(jobsDir(root))) {
       if (jobs.has(n)) continue
       const p = join(jobsDir(root), n)
@@ -587,6 +593,7 @@ export async function startPdfJob(ctx: PdfCtx, ask: PdfAsk, seams: { run?: (j: J
   // a job may have started while the plan was read
   const again = runningJob(ctx.root)
   if (again) return { ok: false, status: 409, error: `a PDF of "${again.board}" is being made - wait for it, or cancel it`, job: again.id }
+  if (!jobsDirSafe(ctx.root)) return { ok: false, status: 422, error: 'design/.local is a link out of this project - the PDF has nowhere safe to go' }
   const id = randomBytes(16).toString('base64url')
   const dir = join(jobsDir(ctx.root), id)
   mkdirSync(dir, { recursive: true })
@@ -673,28 +680,28 @@ async function runJob(ctx: PdfCtx, job: Job, plan: Plan, title: string): Promise
       let page = planned
       if (signal.aborted) throw new Error('the export was cancelled')
       const t = Date.now()
-      let url = exportUrl(ctx.origin, page, frames.get(page.frame)?.file)
+      let url = ''
       // source changes (spec 31 How): each render has its own baseline - the frame's document revision, the canvas-wide
       // inputs, and the asset files it loaded (an overwrite keeps its directory's time) - and one that moved while it
       // rendered renders once more; still moving, it is printed and named
-      const attempt = async (again: boolean) => {
+      const attempt = async () => {
         for (const by = Date.now() + 5000; !ctx.settled() && Date.now() < by;) await wait(100)
-        // a render again reads the page from the source as it is now: its size and theme (a frame's meta), its file
-        if (again) {
-          const fresh = await planFor(ctx, job.board, job.ask.theme).catch(() => null)
-          const p2 = fresh?.ok ? fresh.plan.pages.find((x) => x.frame === page.frame) : undefined
-          if (p2) page = p2
-          url = exportUrl(ctx.origin, page, ctx.frames().find((f) => f.id === page.frame)?.file)
-        }
+        // every render reads its page from the source as it is when it starts (a slide queued behind others may have
+        // changed since the job began): its size and theme (a frame's meta), its file
+        const fresh = await planFor(ctx, job.board, job.ask.theme).catch(() => null)
+        const p2 = fresh?.ok ? fresh.plan.pages.find((x) => x.frame === page.frame) : undefined
+        if (p2 && (p2.width > PDF_BUDGET.side || p2.height > PDF_BUDGET.side)) throw new Error(`${p2.frame} is now ${p2.width}x${p2.height} - a page side is ${PDF_BUDGET.side} CSS px at most`)
+        if (p2) page = p2
+        url = exportUrl(ctx.origin, page, ctx.frames().find((f) => f.id === page.frame)?.file)
         const base = revisions(ctx, [page.frame]), since = Date.now()
         const out = await renderSlide(b, helper, page, { url, dir: job.dir, n, mode: job.ask.mode ?? 'auto', notes: !!job.ask.notes, signal })
         const now = revisions(ctx, [page.frame])
         const moved = !ctx.settled() || now.doc.get(page.frame) !== base.doc.get(page.frame) || now.global !== base.global || assetsChanged(ctx.root, out.assets ?? [], since)
         return { out, moved }
       }
-      let { out, moved } = await attempt(false)
+      let { out, moved } = await attempt()
       let changed = false
-      if (out.status !== 'failed' && moved) { ({ out, moved } = await attempt(true)); changed = moved }
+      if (out.status !== 'failed' && moved) { ({ out, moved } = await attempt()); changed = moved }
       if (out.status === 'failed' && !job.ask.keepGoing) throw new Error(`${page.frame}: ${out.error}`)
       bytes += out.pdf?.length ?? out.raster?.jpeg.length ?? out.picture?.length ?? 0
       if (bytes > PDF_BUDGET.bytes) throw new Error(`the PDF passed ${PDF_BUDGET.bytes / 2 ** 20} MB - export fewer slides, or with --vector`)

@@ -10,6 +10,7 @@ import { APP } from './marver-app.ts'
 import { boardLabel, PUBLISHED, useStore } from './store.ts'
 import { cmd, type CmdOpts } from './commands.ts'
 import { ExportIcon, XIcon } from './icons.tsx'
+import { reportNotes, type PdfReportLite } from './pdf-notes.ts'
 
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
 
@@ -52,7 +53,7 @@ export async function exportPdf(board: string, o: { theme?: string }, how: CmdOp
   // this export is still the one the notice shows: a Cancel (here or a newer export) ends it after any await
   const alive = () => usePdfExport.getState().job === job
   try {
-    let st: { state?: string; page?: number; pages?: number; phase?: string; error?: string; filename?: string } = {}
+    let st: { state?: string; page?: number; pages?: number; phase?: string; error?: string; filename?: string; report?: PdfReportLite } = {}
     for (;;) {
       await wait(500)
       if (!alive()) return
@@ -66,12 +67,14 @@ export async function exportPdf(board: string, o: { theme?: string }, how: CmdOp
     if (st.state === 'cancelled') return
     if (st.state !== 'done') { toast(`the PDF failed${st.error ? ` - ${st.error}` : ''}`); return }
     const name = st.filename ?? `${board}.pdf`
+    // what the report says needs a look rides on the notice that says it is done
+    const notes = reportNotes(st.report)
     if (APP?.exportPdf) {
       // the app fetches the file itself from this canvas and saves it where its panel says: only the id crosses
       if (!alive()) return
       usePdfExport.setState({ state: 'saving' })
       const a = await APP.exportPdf({ job })
-      if (a.ok) toast(`${name} saved`)
+      if (a.ok) toast(`${name} saved${notes}`)
       else if (a.why !== 'cancelled') toast(`the PDF was not saved (${a.why})`)
       return
     }
@@ -85,7 +88,7 @@ export async function exportPdf(board: string, o: { theme?: string }, how: CmdOp
     a.href = url; a.download = name; a.rel = 'noopener'
     document.body.appendChild(a); a.click(); a.remove()
     setTimeout(() => URL.revokeObjectURL(url), 60_000)
-    toast(`${name} downloaded`)
+    toast(`${name} downloaded${notes}`)
   } catch { toast('the PDF was interrupted - is the dev server still running?') }
   finally { if (alive()) usePdfExport.setState({ job: null, state: 'idle', page: 0, pages: 0, phase: '' }) }
 }
