@@ -51,7 +51,7 @@ import { createRegistry, type RegistryEntry } from './registry.ts'
 import { fetchLogo, installDispatcher, probeProof } from './proof.ts'
 import { attachNav } from './nav.ts'
 import { appCmd } from './commands.ts'
-import { contentView, focusWindow, onCompose, onFront, pageView, refreshTabs, windowInFront, windowVisible } from './window.ts'
+import { contentView, focusWindow, mainWindow, onCompose, onFront, pageView, refreshTabs, windowInFront, windowVisible } from './window.ts'
 import { activeTab, getTab, liveDoc, openForNotice, setMarksSource, setOpenSender, startTabs, type Tab } from './tabs.ts'
 import { createLive } from './live.ts'
 import { createNotify, type Notify } from './notify.ts'
@@ -59,6 +59,8 @@ import { presenter } from './notify-mac.ts'
 import { provideNoticeHooks } from './testing/notices.ts'
 import { confirm, setCondition, setOfferActions } from './pill.ts'
 import { effects } from './effects.ts'
+import { savePdf } from './pdf-save.ts'
+import { writeWhole } from './fsx.ts'
 import { CH } from '../shared/channels.ts'
 import { docInset } from './layout.ts'
 import { identity, recorder, sampler } from './recorder.ts'
@@ -287,6 +289,17 @@ function start(): void {
           windowShown: windowVisible(), viewShown: v.getVisible() && !pageView(tabId)?.getVisible(),
         }
       },
+    }))
+    // spec 31: File > Export PDF… and the shell's Export PDF - the finished job fetched from the canvas on the tab's own
+    // session, saved where the panel says (pdf-save.ts)
+    bridge.onExportPdf((ask, still) => savePdf(ask.job, {
+      origin: ask.origin,
+      fetch: (url, headers) => ask.wc.session.fetch(url, { headers, redirect: 'error', credentials: 'include' }),
+      csrf: async () => (await ask.wc.session.cookies.get({ url: ask.origin, name: 'mv_c' }))[0]?.value ?? null,
+      downloads: () => app.getPath('downloads'),
+      savePanel: (path) => effects.savePanel(path, windowVisible() ? mainWindow() : null, 'pdf'),
+      still,
+      write: (file, bytes) => writeWhole(file, bytes, 0o644),
     }))
     // the pages exist: an uncaught error is recorded (perf/app.jsonl) and the app goes on (errors.ts)
     setErrorHome(home)

@@ -40,7 +40,9 @@ describe('canvas reports', () => {
     expect(checkMenu([ok, { id: 'session', group: 'jam', label: 'Session', checked: true, role: 'quit' }])).toEqual([ok, { id: 'session', group: 'jam', label: 'Session', checked: true }])
     expect(checkMenu(Array.from({ length: 41 }, (_, i) => ({ ...ok, id: `i${i}` })))).toBe(null)
     expect(checkMenu([{ ...ok, id: 'Fit' }])).toBe(null)
-    expect(checkMenu([{ ...ok, group: 'file' }])).toBe(null)
+    // spec 31 (app 1.1): a canvas's File items (Export PDF…); any other group is still refused
+    expect(checkMenu([{ id: 'export-pdf', group: 'file', label: 'Export PDF…' }])).toEqual([{ id: 'export-pdf', group: 'file', label: 'Export PDF…' }])
+    expect(checkMenu([{ ...ok, group: 'edit' }])).toBe(null)
     expect(checkMenu([{ ...ok, label: 'x'.repeat(49) }])).toBe(null)
     expect(checkMenu([{ ...ok, label: '' }])).toBe(null)
     expect(checkMenu([{ ...ok, hint: '123456789' }])).toBe(null)

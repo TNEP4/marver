@@ -94,9 +94,11 @@ export function menuTemplate(m: MenuModel, acts: MenuActs): MenuItemConstructorO
       click: () => { guarded(t, () => acts.canvasClick(t, it.id))(); acts.rebuild() },
     }
   }
-  const items = (g: 'view' | 'jam') => (m.canvas?.items ?? []).filter((i) => i.group === g)
+  const items = (g: 'view' | 'jam' | 'file') => (m.canvas?.items ?? []).filter((i) => i.group === g)
   const viewItems = items('view')
   const jamItems = items('jam')
+  // spec 31: a canvas's File items (Export PDF…), under its name with the tab's own
+  const fileItems = items('file')
   const a = m.active
   const local = a.kind === 'local'
   const remote = a.kind === 'remote'
@@ -117,6 +119,7 @@ export function menuTemplate(m: MenuModel, acts: MenuActs): MenuItemConstructorO
         { label: 'Open in Browser', enabled: a.trusted, click: tabItem(a.token, 'open-browser') },
         { label: 'Reveal in Finder', click: tabItem(a.token, 'reveal') },
         { label: 'Copy Local Link', enabled: a.trusted, click: tabItem(a.token, 'copy-link') },
+        ...(fileItems.length ? [sep, ...fileItems.map(canvasItem)] : []),
       ] : remote ? [sep, header(a.name),
         // a shared canvas: its own link, through sessions.ts's checked openOutside; nothing of a repo
         { label: 'Open in Browser', click: tabItem(a.token, 'open-browser') },

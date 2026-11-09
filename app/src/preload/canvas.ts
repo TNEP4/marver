@@ -29,8 +29,8 @@
  */
 import { contextBridge, ipcRenderer } from 'electron'
 import {
-  APP_API_VERSION, BOUNDS, CANVAS_CHANNELS, CAPTURE_WHY, MENU_IN, OPEN_RESULTS, PERF_BOUNDS,
-  type AppState, type CaptureAnswer, type CaptureAsk, type CaptureWhy, type DocAnswer, type MarverAppV1, type MenuClick, type MenuIn, type OpenItem, type OpenResult,
+  APP_API_VERSION, BOUNDS, CANVAS_CHANNELS, CAPTURE_WHY, EXPORT_PDF_WHY, MENU_IN, OPEN_RESULTS, PDF_JOB, PERF_BOUNDS,
+  type AppState, type CaptureAnswer, type CaptureAsk, type CaptureWhy, type DocAnswer, type ExportPdfAnswer, type ExportPdfAsk, type ExportPdfWhy, type MarverAppV1, type MenuClick, type MenuIn, type OpenItem, type OpenResult,
   type PerfMsg, type PerfProbeAsk, type Present, type Presented,
 } from '../../../src/shared/app-api.ts'
 import { checkOpenItem } from '../shared/open-item.ts'
@@ -171,6 +171,21 @@ const capture = (a: CaptureAsk): Promise<CaptureAnswer> => {
   return ipcRenderer.invoke(CANVAS_CHANNELS.capture, { doc: asked, p }).then(captureAnswer, () => ({ ok: false, why: 'untrusted' }) as const)
 }
 
+// spec 31: a finished deck PDF saved by main - only the job id crosses; main's answer reaches the page as typed
+const PDF_WHYS = new Set<string>(EXPORT_PDF_WHY)
+const exportPdf = (a: ExportPdfAsk): Promise<ExportPdfAnswer> => {
+  const asked = doc
+  if (!asked) return Promise.resolve({ ok: false, why: 'untrusted' })
+  const job = a && typeof a === 'object' ? (a as { job?: unknown }).job : undefined
+  if (typeof job !== 'string' || !PDF_JOB.test(job)) return Promise.resolve({ ok: false, why: 'bad-job' })
+  return ipcRenderer.invoke(CANVAS_CHANNELS.exportPdf, { doc: asked, p: { job } }).then((r: unknown): ExportPdfAnswer => {
+    const m = r && typeof r === 'object' ? r as Record<string, unknown> : null
+    if (m?.ok === true) return { ok: true }
+    if (m?.ok === false && typeof m.why === 'string' && PDF_WHYS.has(m.why)) return { ok: false, why: m.why as ExportPdfWhy }
+    return { ok: false, why: 'failed' }
+  }, () => ({ ok: false, why: 'failed' }) as const)
+}
+
 const listen = <T>(set: Set<(x: T) => void>) => (fn: (x: T) => void): (() => void) => {
   if (typeof fn !== 'function') return () => {}
   set.add(fn)
@@ -199,5 +214,6 @@ const api: MarverAppV1 = {
     return () => { openFns.delete(fn) }
   },
   capture,
+  exportPdf,
 }
 contextBridge.exposeInMainWorld('marverApp', api)
