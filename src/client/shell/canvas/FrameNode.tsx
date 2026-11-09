@@ -425,7 +425,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
       {frame.variantGroup && (
         <div className="sh-vbadge sh-no-pan" title={`${frame.variantGroup} · variant ${frame.variant?.toUpperCase()} - click to select`}
           onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { cmd('select', { via: 'click', in: 'shell', frame: node.frame }); select(node.key, e.shiftKey) }}>
+          onClick={(e) => { cmd('select', { via: 'click', in: 'shell', frame: node.frame }); navigatedByHand(); select(node.key, e.shiftKey) }}>
           <b>{frame.variant?.toUpperCase()}</b>
           <span>{variantName}</span>
         </div>

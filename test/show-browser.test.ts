@@ -439,6 +439,29 @@ describe('a show and the boot', () => {
     await browser!.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 700, y: 450, deltaX: 400, deltaY: 0 }, t.s)
   }, ['n-two'])
 
+  for (const shift of [false, true]) {
+    for (const via of ['server', 'app'] as const) {
+      it(`a person ${shift ? 'Shift-' : ''}clicking a variant badge while a ${via === 'server' ? 'show' : 'link'} loads another board: it gives way`, async () => {
+        if (!browser) return
+        const t = await open('#/b/vars', { app: via === 'app' })
+        await t.until(`!!document.querySelector('.sh-node[data-node="v-b"] .sh-vbadge')`)
+        // the badge at rest (the boot's camera landed): the click goes where it was measured
+        const at = `JSON.stringify(document.querySelector('.sh-node[data-node="v-b"] .sh-vbadge').getBoundingClientRect())`
+        await t.until(`(async () => { const a = ${at}; await new Promise((r) => setTimeout(r, 250)); return a === ${at} })()`)
+        await t.ev(`__hold('other')`)
+        const seq = via === 'server' ? await show({ board: 'other', n: ['n-three'] }) : (await t.ev(`__app.show({ board: 'other', n: ['n-three'] })`), 0)
+        await t.until(`__gate.asked`)
+        const r = await t.ev(`(() => { const b = document.querySelector('.sh-node[data-node="v-b"] .sh-vbadge').getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 } })()`)
+        for (const type of ['mousePressed', 'mouseReleased']) await browser.send('Input.dispatchMouseEvent', { type, x: r.x, y: r.y, button: 'left', clickCount: 1, modifiers: shift ? 8 : 0 }, t.s)
+        await t.ev(`__gate.release()`)
+        await new Promise((r) => setTimeout(r, 1500))
+        expect((await t.ev(VIEW)).board).toBe('vars')
+        expect(await t.ev(`__mvStore.getState().selection`)).toContain('v-b')
+        if (via === 'server') expect(await acks(seq)).toEqual({ shown: 0, notice: 0 })
+      }, 60_000)
+    }
+  }
+
   it('a person clicking a variant group\'s caption while a show loads its board: the show gives way', async () => {
     if (!browser) return
     const t = await open('#/b/vars')
