@@ -42,6 +42,13 @@ export async function resolveAllFrom(how: CmdOpts, scope: ResolveScope): Promise
   const h = cmd('resolve-all', how)
   const s = useStore.getState()
   if (PUBLISHED) { h.noop('published'); return }
+  // the server reads which frames a board shows from its saved file (release review): the open board's edits waiting for
+  // their autosave go first, and while they are not saved nothing is resolved - a frame just taken off it would still
+  // count (as the PDF export's check). The canvas scope reads no board, so it never waits
+  const st = () => useStore.getState()
+  const reads = 'board' in scope ? st().board === scope.board : !('canvas' in scope)
+  if (reads) for (let i = 0; i < 5 && st().dirty; i++) if (!(await st().save())) break
+  if (reads && st().dirty) { h.fail('api'); s.toast('this board\'s latest changes are not saved yet - nothing was resolved; try again in a moment'); return }
   const op = crypto.randomUUID()
   let r: Awaited<ReturnType<typeof commentAction>>
   try { r = await commentAction('resolve-all', { op, scope }) } catch { h.fail('api'); s.toast('could not reach the dev server'); return }

@@ -134,11 +134,12 @@ describe('your own messages (spec 31 C.2-C.4)', () => {
     await browser.closeTab(s)
   }, 90_000)
 
-  it('a capture\'s own comment is yours to edit and delete too', async (ctx) => {
+  it('a capture\'s own comment is yours to delete - not to edit there (Jam holds its words: Codex r11)', async (ctx) => {
     if (!browser) return ctx.skip()
     const s = await open('#/b/main?c=th-cap')
     await browser.until(s, `!!document.querySelector('.cm-card[data-thread="th-cap"]')`, 20_000)
-    await browser.until(s, `!!document.querySelector('.cm-card [data-edit="th-cap"]') && !!document.querySelector('.cm-card [data-delete="th-cap"]')`, 10_000)
+    await browser.until(s, `!!document.querySelector('.cm-card [data-delete="th-cap"]')`, 10_000)
+    expect(await browser.eval(s, `!!document.querySelector('.cm-card [data-edit="th-cap"]')`)).toBe(false)
     await browser.closeTab(s)
   }, 60_000)
 
@@ -159,6 +160,21 @@ describe('your own messages (spec 31 C.2-C.4)', () => {
 })
 
 describe('Resolve all comments (spec 31 B.1-B.3, B.7)', () => {
+  it('unsaved board edits: nothing is resolved until they are saved - a save that fails says so (release review)', async (ctx) => {
+    if (!browser) return ctx.skip()
+    const s = await open('#/b/main')
+    // the board has an edit waiting, and its save keeps failing (the dev server refusing it, say)
+    await browser.eval(s, `(() => { window.__saves = 0; __mvStore.setState({ dirty: true, save: async () => { window.__saves++; return false } }); return 1 })()`)
+    await menuOn(s, '.sh-boards [data-board-row][data-board="main"]')
+    await pick(s, 'Resolve all comments')
+    await browser.until(s, `Array.from(document.querySelectorAll('.sh-toast')).some((t) => /not saved yet - nothing was resolved/.test(t.textContent))`)
+    expect(await browser.eval(s, `window.__saves`)).toBeGreaterThan(0)
+    await wait(500)
+    expect(isOpen('main', 'th-copy')).toBe(true)
+    expect(readLog(dir(), 'main').some((e) => e.type === 'resolve')).toBe(false)
+    await browser.closeTab(s)
+  }, 60_000)
+
   it('the board menu: beside Mark all as seen; resolves what the board shows; Undo reopens', async (ctx) => {
     if (!browser) return ctx.skip()
     const s = await open('#/b/main')
