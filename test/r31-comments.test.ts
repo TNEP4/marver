@@ -744,6 +744,33 @@ describe('sync against old and new servers (spec 31 C.6)', () => {
     } finally { await new Promise<void>((r) => srv.close(() => r())); done() }
   })
 
+  it('from a password session to the operator token (an id here, an address there): A\'s remote delete still lands (Codex r10)', async () => {
+    const { root, dir, done } = temp('mv-r31-bindrev-')
+    const A = { email: 'a@acct.test', id: 'e'.repeat(24) }
+    let operator = false
+    const canonical: CommentEvent[] = [{ ...create('revmsg001', { author: { email: A.email } }), ts: Date.now() - 9000 }]
+    const projected = () => canonical.map((e) => (e.author?.email ? { ...e, author: { id: A.id } } : e))
+    const srv: Server = createServer((req, res) => {
+      const send = (b: unknown) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(b)) }
+      const p = (req.url ?? '').replace(/^\/__mv\/api\//, '')
+      if (p === 'me') return send({ id: A.id })
+      if (p === 'capabilities') return send({ delete: true })
+      if (p === 'boards') return send({ rights: { main: 'read' }, stored: ['main'] })
+      if (p === 'comments/main') return send({ events: operator ? canonical : projected() })
+      res.writeHead(404); res.end()
+    })
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()))
+    const url = `http://127.0.0.1:${(srv.address() as { port: number }).port}`
+    try {
+      await syncOnce(root, { url, token: 't', email: A.email })   // a password session: the message arrives as A's id
+      expect(readLog(dir, 'main')[0].author).toEqual({ id: A.id })
+      operator = true
+      canonical.push({ id: 'rev-del-a', ts: Date.now() - 1000, type: 'delete', commentId: 'revmsg001', board: 'main', author: { email: A.email } })
+      for (let i = 0; i < 2; i++) await syncOnce(root, { url, token: 't', email: A.email })
+      expect(replay(readLog(dir, 'main')).some((x) => x.id === 'revmsg001')).toBe(false)
+    } finally { await new Promise<void>((r) => srv.close(() => r())); done() }
+  })
+
   it('a password or invite session (opaque ids, no emails): a remote delete by the author lands, one by anyone else does not', () => {
     const msg = { ...create('projmsg01', { author: { id: 'a'.repeat(24), name: 'Ana' } }) }
     const local = [msg]
