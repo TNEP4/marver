@@ -144,7 +144,8 @@ function tokens(src: string, i: number, emit?: (t: Tok, depth: number) => void):
       while (j < src.length && /[A-Za-z]/.test(src[j])) j++
       out({ k: 're' }); i = j; continue
     }
-    const w = /^(?:[A-Za-z_$][\w$]*|\d[\w.]*)/.exec(src.slice(i, i + 256))
+    // a name is any JS identifier, Unicode ones too (`π / 2` divides)
+    const w = /^(?:[\p{ID_Start}_$][\p{ID_Continue}$\u200c\u200d]*|\d[\w.]*)/u.exec(src.slice(i, i + 256))
     if (w) { out({ k: 'word', v: w[0], prop: prev?.k === 'punct' && (prev.v === '.' || prev.v === '?.') }); i += w[0].length; continue }
     if (ch === '}' && depth === 0) { if (emit) emit({ k: 'punct', v: '}' }, 0); return i }
     if (ch === '(') { parens.push(prev?.k === 'word' && !prev.prop && CONTROL.has(prev.v)); out({ k: 'punct', v: ch }); depth++; i++; continue }

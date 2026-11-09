@@ -48,6 +48,8 @@ describe('extractMeta reads escaped quotes (H.1)', () => {
     expect(extractMeta('export const meta = { title: "Home", n: values.in / 2, viewport: "tablet" }')).toEqual({ title: 'Home', viewport: 'tablet' })
     expect(extractMeta(`export const meta = { title: "Home", get x() { if (ready) /'}/.test(t); return 1 }, viewport: "tablet" }`)).toEqual({ title: 'Home', viewport: 'tablet' })
     expect(extractMeta('export const meta = { title: "Home", viewport: "tablet", n: a / b / c }')).toEqual({ title: 'Home', viewport: 'tablet' })
+    // round 5 (P3): a Unicode name divides too
+    expect(extractMeta('export const meta = {\n  x: π / 2, title: "Home", y: x / 3, viewport: "tablet"\n}')).toEqual({ title: 'Home', viewport: 'tablet' })
     expect(extractMeta(`export const meta = { title: 'Nic\\'s', viewport: 'mobile', odd: x ? /"/ : 1 }`)).toEqual({ title: "Nic's", viewport: 'mobile' })
   })
 })
