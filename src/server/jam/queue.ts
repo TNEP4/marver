@@ -843,9 +843,11 @@ export function answers(root: string): { answered: Answer[]; earlier: Answer[] }
   const out = { answered: [] as Answer[], earlier: [] as Answer[] }
   for (const board of listBoards(ctx.dir)) {
     const events = readLog(ctx.dir, board)
+    // a deleted message is never an answer, and its words never reach `marver marks` (spec 31 C.5)
+    const gone = deletedEvents(events)
     for (const t of replay(events)) {
       if (t.resolved || !(t.agent || t.replies.some((r) => r.agent))) continue
-      const msgs = events.filter((e) => (e.type === 'create' && e.commentId === t.id) || (e.type === 'reply' && e.parentId === t.id))
+      const msgs = events.filter((e) => !gone.has(e.id) && ((e.type === 'create' && e.commentId === t.id) || (e.type === 'reply' && e.parentId === t.id)))
       for (const ev of msgs) {
         if (ev.type !== 'reply' || ev.agent || !isOwned(ctx, board, ev.id)) continue
         const { body, rev } = textOf(ctx, board, events, ev, true)

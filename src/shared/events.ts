@@ -97,6 +97,11 @@ export function deletedMessages(events: readonly CommentEvent[]): Set<string> {
   return out
 }
 
+/** An event as a browser may see it (spec 31 C.4): a create, reply or edit of a deleted message carries no words or
+ *  mentions - the log keeps them (sync is by id), no transport to a page does. `gone`: deletedMessages of the log. */
+export const withoutDeletedWords = (e: CommentEvent, gone: ReadonlySet<string>): CommentEvent =>
+  gone.size && (e.type === 'create' || e.type === 'reply' || e.type === 'edit') && !!e.commentId && gone.has(e.commentId) ? { ...e, body: '', mentions: undefined } : e
+
 /** Replay a board's events into current thread state. Deterministic: replay order is
  *  (ts, id) so two stores holding the same event SET always derive the same state.
  *  TWO passes - creates first, then everything else - so a reply whose author's clock

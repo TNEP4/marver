@@ -1618,3 +1618,24 @@ describe('review 3', { timeout: 30_000 }, () => {
   })
 })
 
+
+describe('spec 31 C.5: a message deleted while your session is offered the run', { timeout: 30_000 }, () => {
+  it('never reaches it: the claim\'s brief and packet leave it out; with nothing left, it is told to release', async () => {
+    const s = await setup()
+    const a = tag(s.root, s.dir, '@marver make it say Hello')
+    const b = tag(s.root, s.dir, '@marver and the footer says Bye')
+    const t = s.jam.tick()
+    expect(await until(() => (readOffers(s.root, s.conn.id)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
+    // offered, not claimed: deleted now
+    appendEvents(s.dir, 'home', [{ id: randomUUID(), ts: Date.now(), type: 'delete', commentId: a.commentId, board: 'home', author: { email: 'nic@local', name: 'Nic' } }])
+    const n = await s.ask('next')
+    expect(String(n.text)).not.toContain('say Hello')
+    const batch = s.jam.snapshot().batches.find((x) => x.claim)!
+    const packet = JSON.parse(readFileSync(join(s.root, packetPath(batch.batchId)), 'utf8')) as JobPacket
+    expect(JSON.stringify(packet)).not.toContain('say Hello')
+    expect(packet.members.map((m) => m.id)).toEqual(['m1'])
+    expect(s.jam.snapshot().cards.find((c) => c.events.includes(a.id) || c.id === `c-${a.id}`)).toMatchObject({ state: 'dropped', note: 'deleted' })
+    s.jam.stop(); await t.catch(() => {}); s.done()
+    void b
+  })
+})

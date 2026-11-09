@@ -218,22 +218,9 @@ const resolveAllCli = async (root: string, value: string | undefined, opts: any)
   if (typeof scope === 'string') throw new Error(scope)
   const op = randomUUID()
   const dryRun = !!opts.dryRun
-  const info = readDevInfo(root)
-  let r: Awaited<ReturnType<typeof ca.resolveAll>> | null = null
-  if (info) {
-    try {
-      const res = await fetch(`http://localhost:${info.port}/__mv/api/comment-actions/resolve-all`, {
-        method: 'POST', headers: { 'x-mv-work': info.token, 'content-type': 'application/json' },
-        body: JSON.stringify({ op, scope, dryRun }), signal: AbortSignal.timeout(30_000),
-      })
-      const data = await res.json().catch(() => null) as any
-      if (res.status === 404 && data?.error && !/unknown endpoint/.test(data.error)) throw new Error(data.error)
-      if (res.ok || res.status === 207) r = data
-      else if (data?.error && res.status < 500 && !/unknown endpoint/.test(data.error)) throw new Error(data.error)
-    } catch (err) { if ((err as Error).name !== 'TypeError' && (err as Error).name !== 'TimeoutError') throw err }
-  }
-  // dev is not running (or is older than 0.31): the same core here, Jam's queued work read from its journal on disk
-  r ??= ca.resolveAll(root, op, scope, { dryRun })
+  // with `dev` running, only through it: its Jam queue in memory is checked in the same step as the writes - a write from
+  // here could slip between its ingest and its cards. Without it, the same core here, the queue read from its journal
+  const r = readDevInfo(root) ? await viaDev(root, 'resolve-all', { op, scope, dryRun }) : ca.resolveAll(root, op, scope, { dryRun })
   if ('error' in r) throw new Error(r.error)
   if (dryRun) {
     const per = new Map<string, number>()
@@ -248,22 +235,33 @@ const resolveAllCli = async (root: string, value: string | undefined, opts: any)
   if (r.failed.length) process.exitCode = 1
 }
 
-const resolveUndo = async (root: string, op: string) => {
-  const ca = await import('../server/comment-actions.ts')
-  const info = readDevInfo(root)
-  let u: Awaited<ReturnType<typeof ca.undoResolveAll>> | null = null
-  if (info) {
+/** A comment action through the running \`dev\` - tried twice with the same op (a retry returns the same receipt); a
+ *  \`dev\` that cannot answer is said, never worked around. */
+const viaDev = async (root: string, action: 'resolve-all' | 'undo', body: Record<string, unknown>): Promise<any> => {
+  const info = readDevInfo(root)!
+  let last = ''
+  for (let i = 0; i < 2; i++) {
     try {
-      const res = await fetch(`http://localhost:${info.port}/__mv/api/comment-actions/undo`, {
+      const res = await fetch(`http://localhost:${info.port}/__mv/api/comment-actions/${action}`, {
         method: 'POST', headers: { 'x-mv-work': info.token, 'content-type': 'application/json' },
-        body: JSON.stringify({ op }), signal: AbortSignal.timeout(30_000),
+        body: JSON.stringify(body), signal: AbortSignal.timeout(30_000),
       })
       const data = await res.json().catch(() => null) as any
-      if (res.ok || res.status === 207) u = data
-      else if (data?.error && res.status < 500 && !/unknown endpoint/.test(data.error)) throw new Error(data.error)
-    } catch (err) { if ((err as Error).name !== 'TypeError' && (err as Error).name !== 'TimeoutError') throw err }
+      if (res.ok || res.status === 207) return data
+      if (/unknown endpoint/.test(data?.error ?? '')) throw new Error(`the running \`${NAME} dev\` is older than 0.31 and cannot resolve all - restart it, then run this again`)
+      if (res.status < 500) return { error: data?.error ?? `dev answered ${res.status}` }
+      last = data?.error ?? `dev answered ${res.status}`
+    } catch (err) {
+      if ((err as Error).message.includes('older than 0.31')) throw err
+      last = (err as Error).message
+    }
   }
-  u ??= ca.undoResolveAll(root, op)
+  throw new Error(`\`${NAME} dev\` is running but did not answer (${last}) - run it again (what it already did stays done)`)
+}
+
+const resolveUndo = async (root: string, op: string) => {
+  const ca = await import('../server/comment-actions.ts')
+  const u = readDevInfo(root) ? await viaDev(root, 'undo', { op }) : ca.undoResolveAll(root, op)
   if ('error' in u) throw new Error(u.error)
   console.log(`  ${ca.undoSummary(u)}`)
   if (u.reopened.length) await pushIfConnected(root)

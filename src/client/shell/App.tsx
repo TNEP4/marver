@@ -1029,8 +1029,8 @@ export function App() {
                     : `board: ${useStore.getState().board} · scene: (root)`, 'path copied', cmd('copy-path', { via: 'context', in: 'shell' })),
                 }, ...(!PUBLISHED && sc.name ? [{ label: 'Rename', icon: <PencilSimpleIcon size={15} />, onClick: () => setSceneNaming(sc.name) }] : []),
                 ...(!PUBLISHED ? [{ label: 'Mark all as seen', icon: <CheckIcon size={15} />, onClick: () => markSeenFrom({ via: 'context', in: 'shell' }, frames.filter((f) => f.scene === sc.name).map((f) => f.id)) }] : []),
-                // ...and Resolve all comments on that scene's frames (spec 31 B.1); the root scene has no name to scope by
-                ...(!PUBLISHED && sc.name ? [{ label: 'Resolve all comments', icon: <CheckSquareOffsetIcon size={15} />, onClick: () => void resolveAllFrom({ via: 'context', in: 'shell' }, { scene: sc.name }) }] : [])])}
+                // ...and Resolve all comments on that scene's frames (spec 31 B.1) - the root scene's ('') too
+                ...(!PUBLISHED ? [{ label: 'Resolve all comments', icon: <CheckSquareOffsetIcon size={15} />, onClick: () => void resolveAllFrom({ via: 'context', in: 'shell' }, { scene: sc.name }) }] : [])])}
                 onPick={() => {
                   const keys = nodes.filter((n) => frames.some((f) => f.scene === sc.name && f.id === n.frame) && !n.missing).map((n) => n.key)
                   cmd('scene-pick', { via: 'click', in: 'shell', frames: keys.length })

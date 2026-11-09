@@ -8,9 +8,9 @@
  * Jam card is queued or working (or whose tag is written and not yet queued) is skipped and counted. The check and
  * the appends run in one synchronous step: nothing is awaited between them, so no ingest slips a card in.
  *
- * Every operation has a client id (`op`): a retry returns the same receipt. The receipt names, per thread, its log
- * and its resolve event; Undo reopens a thread only while that resolve is still its latest resolve or reopen, and
- * says how many changed since. Jam items a resolve completed stay completed - Undo reopens conversations only.
+ * Every operation has a client id (`op`): a retry returns the same receipt. The receipt names, per thread, its log,
+ * its resolve event and that event's time (after everything the thread held, whatever clock wrote it); Undo reopens a
+ * thread only while that resolve is still its latest event of any kind, and says how many changed since. Jam items a resolve completed stay completed - Undo reopens conversations only.
  *
  * Receipts live in `design/.local/comment-ops/` (never synced). Event ids are derived from the op, so a crash
  * between the appends and the receipt is retried onto the same ids (appendEvents keeps one of each).
@@ -38,21 +38,24 @@ export function parseScope(raw: unknown): Scope | string {
   const o = raw as Record<string, unknown>
   if ('board' in o) return isBoardName(o.board) ? { board: o.board } : 'invalid board name'
   if ('folder' in o) return isBoardName(o.folder) ? { folder: o.folder } : 'invalid folder name'
-  if ('scene' in o) return typeof o.scene === 'string' && o.scene.length <= 120 && SCENE_RE.test(o.scene) ? { scene: o.scene } : 'invalid scene name'
+  // '' is the root scene (frames straight in design/scenes/) - named, never a default
+  if ('scene' in o) return typeof o.scene === 'string' && o.scene.length <= 120 && (o.scene === '' || SCENE_RE.test(o.scene)) ? { scene: o.scene } : 'invalid scene name'
   if ('canvas' in o) return o.canvas === true ? { canvas: true } : 'canvas scope is {canvas: true}'
   return 'unknown scope - board, folder, scene or canvas'
 }
 
 export const scopeLabel = (s: Scope): string =>
-  'board' in s ? `board ${s.board}` : 'folder' in s ? `folder ${s.folder}` : 'scene' in s ? `scene ${s.scene}` : 'the canvas'
+  'board' in s ? `board ${s.board}` : 'folder' in s ? `folder ${s.folder}` : 'scene' in s ? (s.scene ? `scene ${s.scene}` : 'the root scene') : 'the canvas'
 
 /** The frames a scope covers (null = the whole canvas), or why it names nothing. */
 export function scopeFrames(root: string, scope: Scope): { frames: Set<string> | null } | { error: string } {
   if ('canvas' in scope) return { frames: null }
-  const live = scanFrames(root).frames.map((f) => f.id)
+  const manifest = scanFrames(root).frames
+  const live = manifest.map((f) => f.id)
   if ('scene' in scope) {
-    const ids = live.filter((id) => id.startsWith(`${scope.scene}/`))
-    return ids.length ? { frames: new Set(ids) } : { error: `no scene "${scope.scene}"` }
+    // the manifest's own scene of each frame - the sidebar's grouping, the root scene's ('') included
+    const ids = manifest.filter((f) => f.scene === scope.scene).map((f) => f.id)
+    return ids.length ? { frames: new Set(ids) } : { error: scope.scene ? `no scene "${scope.scene}"` : 'no frames in the root scene' }
   }
   const dir = join(root, 'design', 'boards')
   const files = checkBoardsDir(root, dir) ? [] : listBoardFiles(dir).boards
@@ -86,7 +89,7 @@ export function jamBusy(root: string, live?: () => Set<string>): Set<string> {
 
 /** `board` is the log the event is written to; `stamp`, when it differs, the board its thread's own events name (a log
  *  copied from another board's keeps their `board`) - the event carries it, so every reader groups it with its thread. */
-export interface Resolved { board: string; thread: string; event: string; stamp?: string }
+export interface Resolved { board: string; thread: string; event: string; stamp?: string; /** the event's time, fixed with the plan (a retry writes the same) */ ts?: number }
 export interface Receipt {
   op: string
   scope: Scope
@@ -122,6 +125,17 @@ const idFor = (kind: 'ra' | 'ru', op: string, board: string, thread: string) =>
   `${kind}-${createHash('sha256').update(`${op}\0${board}\0${thread}`).digest('hex').slice(0, 32)}`
 
 export const readReceipt = (root: string, op: string): Receipt | null => (OP_RE.test(op) ? readJson<Receipt>(receiptFile(root, op)) : null)
+
+/** Every event of a thread in one log - its messages, and whatever names it or one of its replies (an edit, a reaction,
+ *  a resolve, a delete) - in replay's order. */
+export function threadEvents(events: readonly CommentEvent[], thread: string): CommentEvent[] {
+  const ids = new Set([thread, ...events.filter((e) => e.type === 'reply' && e.parentId === thread && e.commentId).map((e) => e.commentId!)])
+  return events.filter((e) => (e.type === 'reply' ? e.parentId === thread : !!e.commentId && ids.has(e.commentId)))
+    .sort((a, b) => a.ts - b.ts || (a.id < b.id ? -1 : 1))
+}
+/** A time after everything the thread holds - what this clock says, or later when another clock ran ahead (replay
+ *  orders by time: the write must come last to take effect). */
+const after = (events: readonly CommentEvent[], thread: string, now: number) => Math.max(now, (threadEvents(events, thread).at(-1)?.ts ?? 0) + 1)
 
 /** The open threads a scope covers, each with its own log - shown threads only (a deleted one is not). */
 export function threadsIn(root: string, frames: Set<string> | null): { board: string; thread: string; frame?: string; stamp?: string }[] {
@@ -179,9 +193,11 @@ export function resolveAll(root: string, op: string, scope: Scope, o: ResolveAll
     const where = scopeFrames(root, scope)
     if ('error' in where) return { error: where.error, status: 404 }
     plan = []
+    const logs = new Map<string, CommentEvent[]>()
+    const logOf = (b: string) => { let l = logs.get(b); if (!l) logs.set(b, (l = readLog(dir, b))); return l }
     for (const t of threadsIn(root, where.frames)) {
       if (busy.has(`${t.board}\t${t.thread}`)) { skipped.push({ board: t.board, thread: t.thread, why: 'working' }); continue }
-      plan.push({ board: t.board, thread: t.thread, event: idFor('ra', op, t.board, t.thread), ...(t.stamp ? { stamp: t.stamp } : {}) })
+      plan.push({ board: t.board, thread: t.thread, event: idFor('ra', op, t.board, t.thread), ...(t.stamp ? { stamp: t.stamp } : {}), ts: after(logOf(t.board), t.thread, at) })
     }
   }
   const receipt: Receipt = { op, scope, at: had?.at ?? at, state: 'pending', resolved: plan, skipped, failed: [] }
@@ -189,15 +205,25 @@ export function resolveAll(root: string, op: string, scope: Scope, o: ResolveAll
   save(file, receipt)
   const byBoard = new Map<string, CommentEvent[]>()
   for (const r of plan) {
-    const ev: CommentEvent = { id: r.event, ts: at, type: 'resolve', commentId: r.thread, board: r.stamp ?? r.board, op }
+    const ev: CommentEvent = { id: r.event, ts: r.ts ?? receipt.at, type: 'resolve', commentId: r.thread, board: r.stamp ?? r.board, op }
     byBoard.set(r.board, [...(byBoard.get(r.board) ?? []), ev])
   }
-  receipt.failed = appendAll(dir, byBoard)
+  receipt.failed = [...appendAll(dir, byBoard), ...verify(dir, plan, true)]
   const lost = new Set(receipt.failed.flatMap((f) => f.threads.map((t) => `${f.board}\t${t}`)))
   receipt.resolved = plan.filter((r) => !lost.has(`${r.board}\t${r.thread}`))
   receipt.state = 'done'
   save(file, receipt)
   return receipt
+}
+
+/** What the logs say now, per planned thread: a write that took is counted, one that did not is reported. */
+function verify(dir: string, plan: Resolved[], resolved: boolean): { board: string; threads: string[]; error: string }[] {
+  const out = new Map<string, string[]>()
+  for (const board of new Set(plan.map((r) => r.board))) {
+    const state = new Map(replay(readLog(dir, board)).map((t) => [t.id, t.resolved]))
+    for (const r of plan.filter((x) => x.board === board)) if (state.has(r.thread) && state.get(r.thread) !== resolved) out.set(board, [...(out.get(board) ?? []), r.thread])
+  }
+  return [...out].map(([board, threads]) => ({ board, threads, error: `a later event keeps ${threads.length === 1 ? 'it' : 'them'} ${resolved ? 'open' : 'resolved'}` }))
 }
 
 /** Undo an op: reopen each thread whose latest resolve or reopen is still the op's resolve. A retry returns the
@@ -213,26 +239,24 @@ export function undoResolveAll(root: string, op: string, o: { now?: number } = {
   const at = o.now ?? Date.now()
   const logs = new Map<string, CommentEvent[]>()
   const logOf = (b: string) => { let l = logs.get(b); if (!l) logs.set(b, (l = readLog(dir, b))); return l }
-  const reopened: Resolved[] = [], changed: UndoReceipt['changed'] = []
-  for (const r of done.resolved) {
+  let reopened: Resolved[] = [], changed: UndoReceipt['changed'] = []
+  if (had) {
+    // a pending undo (a crash between its appends and its end): the same reopens, at the same times
+    reopened = had.reopened; changed = had.changed
+  } else for (const r of done.resolved) {
     const events = logOf(r.board)
-    const reopen = idFor('ru', op, r.board, r.thread)
-    // the thread's resolution history, in replay's order - its latest says whether it changed since
-    const latest = events.filter((e) => (e.type === 'resolve' || e.type === 'reopen') && e.commentId === r.thread)
-      .sort((a, b) => a.ts - b.ts || (a.id < b.id ? -1 : 1)).pop()
+    // its latest event must still be the op's resolve: a reply, an edit, a reaction, a reopen since - anything - and it
+    // is left as it is (spec 31 B.3)
+    const latest = threadEvents(events, r.thread).at(-1)
     const shown = replay(events).some((t) => t.id === r.thread)
-    if (shown && (latest?.id === r.event || latest?.id === reopen)) reopened.push({ board: r.board, thread: r.thread, event: reopen, ...(r.stamp ? { stamp: r.stamp } : {}) })
+    if (shown && latest?.id === r.event) reopened.push({ board: r.board, thread: r.thread, event: idFor('ru', op, r.board, r.thread), ...(r.stamp ? { stamp: r.stamp } : {}), ts: after(events, r.thread, at) })
     else changed.push({ board: r.board, thread: r.thread })
   }
   const receipt: UndoReceipt = { op, at: had?.at ?? at, state: 'pending', reopened, changed, failed: [] }
   save(file, receipt)
   const byBoard = new Map<string, CommentEvent[]>()
-  for (const r of reopened) {
-    // never before the resolve it undoes, whatever this clock says (replay orders by time)
-    const resolveTs = logOf(r.board).find((e) => e.id === idFor('ra', op, r.board, r.thread))?.ts ?? 0
-    byBoard.set(r.board, [...(byBoard.get(r.board) ?? []), { id: r.event, ts: Math.max(at, resolveTs + 1), type: 'reopen', commentId: r.thread, board: r.stamp ?? r.board, op }])
-  }
-  receipt.failed = appendAll(dir, byBoard)
+  for (const r of reopened) byBoard.set(r.board, [...(byBoard.get(r.board) ?? []), { id: r.event, ts: r.ts ?? receipt.at, type: 'reopen', commentId: r.thread, board: r.stamp ?? r.board, op }])
+  receipt.failed = [...appendAll(dir, byBoard), ...verify(dir, reopened, false)]
   const lost = new Set(receipt.failed.flatMap((f) => f.threads.map((t) => `${f.board}\t${t}`)))
   receipt.reopened = reopened.filter((r) => !lost.has(`${r.board}\t${r.thread}`))
   receipt.state = 'done'

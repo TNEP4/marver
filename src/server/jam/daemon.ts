@@ -360,6 +360,13 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       const as = conn.agent === 'cursor' ? conn.id : undefined
       let packet: JobPacket | null = null
       try { packet = JSON.parse(readFileSync(join(root, packetPath(b.batchId)), 'utf8')) as JobPacket } catch { packet = null }
+      // the hand-off to your session (spec 31 C.5): a message deleted while it was offered never reaches it (under the lock)
+      if (packet) {
+        const x = scrubDeleted(q.j, b, packet)
+        if (x.changed) writeFileSync(join(root, packetPath(b.batchId)), JSON.stringify(packet, null, 1), { mode: 0o600 })
+        // (it stays claimed until released; the run then ends at its next hand-off - nothing is left to hand)
+        if (!x.left) return `Everything this run asked for was deleted - nothing to do. Release it: \`npx marver jam release ${handle}${as ? ` --as ${as}` : ''}\`.`
+      }
       // the frames it holds now: one an earlier session run of it was given (`boards pin --run`) and let go of is its own to
       // finish - the brief, and the packet its subagent reads, say so (Codex's review: they said it reserves no frame)
       if (packet && packet.frames.join('\n') !== b.frames.join('\n')) { packet.frames = [...b.frames]; writeFileSync(join(root, packetPath(b.batchId)), JSON.stringify(packet, null, 1), { mode: 0o600 }) }
@@ -411,6 +418,36 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     .filter((x) => x.batchId !== b.batchId && x.state === 'claimed' && !x.results && x.frames.some((f) => b.frames.includes(f))
       && ((x.claim && x.claim.conn === conn.id && x.claim.inc === conn.inc) || (x.offer && x.offer.conn === conn.id && x.offer.inc === conn.inc)))
     .map((x) => ({ handle: x.claim ? handleOf(x, x.claim.gen) : `${x.batchId.slice(0, 8)} (offered, not taken yet)`, frames: x.frames.filter((f) => b.frames.includes(f)), title: runs.title(x) }))
+
+  /** Spec 31 C.5, at every hand-off: each message deleted since the claim is taken out of the run's briefs and its packet,
+   *  per message, history included; a tag's card with no request left is dropped, and the members left are numbered
+   *  from m1 again. Synchronous - the caller holds the queue lock (or is runs' goal, under it). `left`: the members left;
+   *  with none the caller ends the run (`ended`). The packet is changed in place; the caller writes it. */
+  function scrubDeleted(j: Journal, b: Batch, packet: JobPacket | null): { changed: boolean; left: number } {
+    const gone = new Map<string, Set<string>>()
+    const goneIn = (board: string) => { let g = gone.get(board); if (!g) gone.set(board, (g = deletedEvents(readLog(commentsDir, board)))); return g }
+    let changed = false
+    for (const m of b.members) {
+      const c = j.cards.find((x) => x.id === m.card)
+      const g = goneIn(m.board)
+      if (!c || !g.size) continue
+      const brief = dropDeleted(m.brief, g)
+      if (JSON.stringify(brief) !== JSON.stringify(m.brief)) { m.brief = brief; c.brief = dropDeleted(c.brief, g); changed = true }
+      const pm = packet?.members.find((x) => x.card === m.card)
+      if (pm && JSON.stringify(dropDeleted(pm.brief, g)) !== JSON.stringify(pm.brief)) changed = true
+      if (c.events.some((id) => g.has(id))) { c.events = c.events.filter((id) => !g.has(id)); changed = true }
+      const briefAsks = (m.brief ?? pm?.brief)?.asks.length ?? 0
+      if (c.kind === 'comment' && c.state === 'working' && (!c.events.length || !briefAsks)) { c.state = 'dropped'; c.note = 'deleted'; c.rev += 1; c.at = Date.now(); changed = true }
+    }
+    if (!changed) return { changed, left: b.members.length }
+    const survivors = b.members.filter((m) => j.cards.find((x) => x.id === m.card)?.state === 'working')
+    const ids = new Map(survivors.map((m, i) => [m.card, `m${i + 1}`]))
+    b.members = survivors.map((m) => ({ ...m, id: ids.get(m.card)! }))
+    if (packet) packet.members = packet.members.filter((x) => ids.has(x.card)).map((x) => ({ ...x, id: ids.get(x.card)!, brief: dropDeleted(x.brief, goneIn(x.board))! }))
+    return { changed, left: survivors.length }
+  }
+  /** A run whose every request was deleted before its hand-off: done, nothing ran (under the lock). */
+  const ended = (b: Batch) => { b.state = 'done'; b.at = Date.now(); b.note = 'its requests were deleted' }
 
   /** A session's early line (`marver jam say`), journaled on the batch before it is posted: posted with the id it
    *  names, once - an id already in the log is not posted again (a restart between the two posts it then). */
@@ -802,37 +839,11 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     let run: Awaited<ReturnType<typeof runAgent>> = { reply: '', asks: false, ok: false, reanchors: [] }
     try {
       // The hand-off (spec 31 C.5): a message deleted since the claim - while the pictures were taken, say - never reaches
-      // the agent. Each brief loses it, per message; a tag's card with no request left is dropped, and a run with no card
-      // left ends here. A run your session already claimed has been handed over: the agent read it, nothing can unread it.
+      // the agent; checked again before every spawned attempt and as your session claims the run (runs' goal, above)
       if (!b.claim) {
-        const gone = new Map<string, Set<string>>()
-        const goneIn = (board: string) => { let g = gone.get(board); if (!g) gone.set(board, (g = deletedEvents(readLog(commentsDir, board)))); return g }
-        const left = await q.lock((j) => {
-          let changed = false
-          for (const m of b.members) {
-            const c = j.cards.find((x) => x.id === m.card)
-            const g = goneIn(m.board)
-            if (!c || !g.size) continue
-            const brief = dropDeleted(m.brief, g)
-            if (JSON.stringify(brief) !== JSON.stringify(m.brief)) { m.brief = brief; c.brief = dropDeleted(c.brief, g); changed = true }
-            if (c.events.some((id) => g.has(id))) { c.events = c.events.filter((id) => !g.has(id)); changed = true }
-            if (c.kind === 'comment' && c.state === 'working' && (!c.events.length || !m.brief?.asks.length)) { c.state = 'dropped'; c.note = 'deleted'; c.rev += 1; c.at = Date.now() }
-          }
-          if (!changed) return b.members.length
-          const survivors = b.members.filter((m) => j.cards.find((x) => x.id === m.card)?.state === 'working')
-          const ids = new Map(survivors.map((m, i) => [m.card, `m${i + 1}`]))
-          b.members = survivors.map((m) => ({ ...m, id: ids.get(m.card)! }))
-          if (!survivors.length) { b.state = 'done'; b.at = Date.now(); b.note = 'its requests were deleted' }
-          // the packet the agent reads, made again: the same members, renumbered from m1, their briefs as they stand now
-          packet.members = packet.members.filter((x) => ids.has(x.card)).map((x) => {
-            const m = b.members.find((y) => y.card === x.card)!
-            return { ...x, id: m.id, brief: dropDeleted(x.brief, goneIn(x.board))! }
-          })
-          q.persist()
-          return survivors.length
-        })
-        if (!left) { runs.delivered(b.batchId, false, 'its requests were deleted'); queueChanged(); timeRun(); return }
-        writePacket()
+        const r = await q.lock((j) => { const x = scrubDeleted(j, b, packet); if (!x.left) ended(b); if (x.changed || !x.left) q.persist(); return x })
+        if (!r.left) { runs.delivered(b.batchId, false, 'its requests were deleted'); queueChanged(); timeRun(); return }
+        if (r.changed) writePacket()
       }
       // Who runs it (spec 29b): the owner's session when it can take it - or already holds it (a restart keeps a
       // session's run its own) - else a copy of that session, else a fresh agent; every one with full power.
@@ -933,7 +944,9 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         const permit = await takePermit()
         try {
         while (!stopped && b.attempts < MAX_ATTEMPTS) {
-          await q.lock(() => { b.attempts += 1; b.leaseUntil = Date.now() + LEASE_MS; q.persist() })
+          // (spec 31 C.5: what was deleted while it waited for a slot, or since a failed attempt, is out of this one)
+          const left = await q.lock((j) => { b.attempts += 1; b.leaseUntil = Date.now() + LEASE_MS; const x = scrubDeleted(j, b, packet); if (!x.left) ended(b); q.persist(); return x.left })
+          if (!left) { runs.delivered(b.batchId, false, 'its requests were deleted'); queueChanged(); timeRun(); return }
           // every spawn reads the packet the journal makes, written again now (a record's seal checked again)
           for (const m of packet.members) if (m.kind === 'wrapup') {
             const c = q.j.cards.find((x) => x.id === m.card)

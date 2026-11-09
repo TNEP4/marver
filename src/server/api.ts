@@ -1403,7 +1403,8 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
       if (cm) {
         const { appendEvents, readLog } = await import('./comments.ts')
         const dir = join(root, 'design', 'comments')
-        if (req.method === 'GET') return json(res, 200, { events: readLog(dir, cm[1]) })
+        // the page never gets a deleted message's words back (spec 31 C.4) - the log keeps them; agents read neither
+        if (req.method === 'GET') { const { deletedMessages, withoutDeletedWords } = await import('../shared/events.ts'); const evs = readLog(dir, cm[1]); const gone = deletedMessages(evs); return json(res, 200, { events: evs.map((e) => withoutDeletedWords(e, gone)) }) }
         if (req.method === 'POST') {
           // Owner gate: only a same-origin, cookie-proving POST may write - and be ledgered as
           // an authorization for the Live Jam daemon.
@@ -1413,6 +1414,18 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
           const incoming = Array.isArray(b.events) ? b.events : []
           const me = localProfile(root)
+          // a message id is one message's (spec 31 C.2): a new create or reply reusing one already in the log would make
+          // this machine record someone else's (or Marver's) message as yours. A retry of the same event is fine.
+          {
+            const have = readLog(dir, cm[1])
+            const evIds = new Set(have.map((e) => e.id))
+            const msgIds = new Set(have.filter((e) => (e.type === 'create' || e.type === 'reply') && e.commentId).map((e) => e.commentId!))
+            for (const ev of incoming) {
+              if ((ev?.type !== 'create' && ev?.type !== 'reply') || evIds.has(ev.id)) continue
+              if (typeof ev.commentId !== 'string' || msgIds.has(ev.commentId)) return json(res, 409, { error: 'a comment with that id already exists' })
+              msgIds.add(ev.commentId)
+            }
+          }
           // edit and delete are the author's own (spec 31 C.2-C.4): here, this machine's record decides (own.ts) -
           // never the email, which a connect or a profile change moves. A deleted message is not edited.
           if (incoming.some((ev: any) => ev?.type === 'edit' || ev?.type === 'delete')) {

@@ -89,6 +89,28 @@ describe('Jam never reads a deleted message (spec 31 C.5)', () => {
     done()
   }, 30_000)
 
+  it('deleted after a failed attempt: the next attempt\'s packet leaves it out', async () => {
+    const { root, dir, done } = setup()
+    let n = 0
+    let a: CommentEvent, b: CommentEvent
+    // the first attempt deletes a's message (as if you did, while it ran) and fails; the second is the real fake agent
+    const flaky: JamAdapter = { ...agent(), spawnArgs(goal) {
+      if (n++ === 0) return { cmd: process.execPath, args: ['-e', `require('fs').appendFileSync('design/comments/home.jsonl', JSON.stringify({ id: 'del-x1', ts: Date.now(), type: 'delete', commentId: ${JSON.stringify('PLACEHOLDER')}, board: 'home', author: { email: 'nic@local', name: 'Nic' } }) + '\\n'); process.exit(1)`] }
+      return agent().spawnArgs(goal)
+    } }
+    const jam = createJam(root, CFG, { ...flaky, spawnArgs(goal) { const r = flaky.spawnArgs(goal); return { ...r, args: r.args.map((x) => x.replace('"PLACEHOLDER"', JSON.stringify(a.commentId))) } } })
+    a = say(root, dir, '@marver first ask, deleted mid-run')
+    b = say(root, dir, '@marver second ask stays')
+    await jam.tick(); await settle(jam); jam.stop()
+    expect(n).toBeGreaterThanOrEqual(2)
+    const seen = packets(root)
+    expect(seen).toHaveLength(1)
+    expect(JSON.stringify(seen[0])).not.toContain('deleted mid-run')
+    expect(seen[0].members.map((m: any) => [m.id, m.card])).toEqual([['m1', `c-${b.id}`]])
+    expect(cardOf(jam, a)).toMatchObject({ state: 'dropped', note: 'deleted' })
+    done()
+  }, 30_000)
+
   it('at recovery: a frozen packet holding a deleted message is rebuilt, never reused', async () => {
     const { root, dir, done } = setup()
     const a = say(root, dir, '@marver one gone')

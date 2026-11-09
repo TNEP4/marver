@@ -22,7 +22,7 @@ import { claimInvite, createInvite, inviteInfo, issueDeviceSession, loadStore, n
 import { ceilingsFromRights, commentAllowed, entryAllowed, loadRequests, loadShare, operativeMode, provisionVerdict, putRequest, reconfirmGrant, removeGrant, resolveAccess, resolveRequest, rosterEtag, setBlocked, setGeneralMode, shareState, upsertGrant } from './share.ts'
 import { canvasIdentity, deriveThreads, loadSeen, markSeen, signCanvasJws, unreadCount, verifyCanvasJws, type BoardThreads } from './summary.ts'
 import { notifyCommentActivity, relayNotify, transitionId, type NotifyCtx } from './notify.ts'
-import { deletedMessages, type Mention } from '../shared/events.ts'
+import { deletedMessages, withoutDeletedWords, type Mention } from '../shared/events.ts'
 import { ALL_SCENES } from '../shared/board-tree.ts'
 import { secureSuffix } from './secure-cookie.ts'
 
@@ -150,6 +150,9 @@ export function validateEvents(incoming: CommentEvent[], log: CommentEvent[], u:
     switch (ev.type) {
       case 'create':
         if (creates.has(ev.commentId!)) return 'a thread with that id already exists'
+        // a message id is unique across threads AND replies (spec 31, Codex r1): a create reusing a reply's id would
+        // claim that reply's authorship - and with it the right to edit or delete it
+        if (comments.has(ev.commentId!)) return 'a comment with that id already exists'
         creates.set(ev.commentId!, ev)
         comments.add(ev.commentId!)
         if (ev.author?.email) authors.set(ev.commentId!, ev.author.email.toLowerCase())
@@ -245,14 +248,23 @@ export function collabHandler(dataDir: string, distDir: string) {
   // miss the gap (its Last-Event-ID carries the old epoch → resync)
   const bootEpoch = randomBytes(4).toString('hex')
   let seq = 0
-  const ring: { seq: number; data: string }[] = []          // last 500 broadcast frames
+  const ring: { seq: number; data: string; board: string; ev: CommentEvent }[] = []          // last 500 broadcast frames
   // each client keeps the token it connected with, so the stream can be
   // re-authorized long after the gate let it in
   const clients = new Map<ServerResponse, { tok: string | null }>()
-  const broadcast = (board: string, events: CommentEvent[]) => {
-    for (const ev of events) {
-      const frame = `id: ${bootEpoch}-${++seq}\nevent: comment\ndata: ${JSON.stringify({ board, ev })}\n\n`
-      ring.push({ seq, data: frame })
+  const frameOf = (s: number, board: string, ev: CommentEvent) => `id: ${bootEpoch}-${s}\nevent: comment\ndata: ${JSON.stringify({ board, ev })}\n\n`
+  /** `gone` (spec 31 C.4): the board's deleted messages - their words never go out, and a frame the replay ring still
+   *  holds for one is made again without them, so a reconnect cannot read what was deleted since */
+  const broadcast = (board: string, events: CommentEvent[], gone: ReadonlySet<string> = new Set()) => {
+    if (gone.size && events.some((e) => e.type === 'delete')) for (const r of ring) {
+      if (r.board !== board) continue
+      const ev = withoutDeletedWords(r.ev, gone)
+      if (ev !== r.ev) { r.ev = ev; r.data = frameOf(r.seq, board, ev) }
+    }
+    for (const raw of events) {
+      const ev = withoutDeletedWords(raw, gone)
+      const frame = frameOf(++seq, board, ev)
+      ring.push({ seq, data: frame, board, ev })
       if (ring.length > 500) ring.shift()
       for (const res of clients.keys()) res.write(frame)
     }
@@ -806,8 +818,7 @@ export function collabHandler(dataDir: string, distDir: string) {
           // a deleted message's words never travel to a browser again (spec 31 C.4): the log keeps the event (sync is
           // by id), the transport carries it without its body or mentions - as replay would show it anyway
           const gone = deletedMessages(events)
-          const shown = gone.size ? events.map((e) => ((e.type === 'create' || e.type === 'reply' || e.type === 'edit') && e.commentId && gone.has(e.commentId) ? { ...e, body: '', mentions: undefined } : e)) : events
-          return json(res, 200, { events: shown.map(project) }), true
+          return json(res, 200, { events: events.map((e) => project(withoutDeletedWords(e, gone))) }), true
         }
         if (path === 'invite-info') {
           if (limited(`ip:${ip}`)) return json(res, 429, { error: 'too many attempts - wait a minute' }), true
@@ -977,7 +988,7 @@ export function collabHandler(dataDir: string, distDir: string) {
           const st = threads.get(m[1])
           threads.set(m[1], deriveThreads([...(st?.events ?? []), ...fresh]))
         }
-        broadcast(m[1], fresh.map(project))   // the stream is a browser transport
+        broadcast(m[1], fresh.map(project), deletedMessages([...log, ...fresh]))   // the stream is a browser transport
         // activity mail (07-v1.1 §A/§B): a fresh reply pulls its thread back, a
         // mention pulls its person - history imports never mail (freshness gate)
         // (the old all-scenes log: its threads' readers are everyone a published board admits)
