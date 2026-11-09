@@ -481,6 +481,22 @@ describe('older records, titles and captures (spec 31 C.5)', () => {
     } finally { done() }
   })
 
+  it('a run reviewed before 0.31 (no board): found from the card it reviewed, or its asks left out', () => {
+    const { root, dir, done } = temp('mv-r31-legacyrv-')
+    try {
+      const askA = reply('askL0001', 'thL00001', { board: 'alpha', body: '@marver legacy secret' })
+      appendEvents(dir, 'alpha', [create('thL00001', { board: 'alpha' }), askA, del('askL0001', { board: 'alpha' })])
+      const j = fresh()
+      j.cards.push({ id: 'c-old', kind: 'comment', board: 'alpha', frames: [], thread: 'thL00001', events: [], state: 'done', made: 1, order: 1, rev: 1, at: 1 } as Card,
+        { id: 'cap-legacy1', kind: 'capture', board: 'beta', frames: [], thread: 'thB0x', events: [], state: 'queued', reviewing: { card: 'c-old', batch: 'b0', rev: 1 }, made: 1, order: 1, rev: 1, at: 1 } as Card)
+      const brief = (asks: unknown[]) => ({ asks: [], history: [], capture: { record: { id: 'cap-legacy1' }, recordHash: 'h', reviewed: { asks, result: 'r' } } }) as never
+      const out = dropDeleted(brief([{ id: askA.id, body: 'legacy secret', ts: 1 }, { id: 'kept-x', body: 'kept one', ts: 2 }]), 'beta', tombstonesOf(j, dir)) as any
+      expect(out.capture.reviewed.asks.map((a: any) => a.body)).toEqual(['kept one'])
+      j.cards.splice(0, 1)   // the card it reviewed is gone: nothing to go by
+      expect((dropDeleted(brief([{ id: askA.id, body: 'legacy secret', ts: 1 }]), 'beta', tombstonesOf(j, dir)) as any).capture.reviewed.asks).toEqual([])
+    } finally { done() }
+  })
+
   it('the attack (Codex r6): a message on another board reusing a request\'s event id, then deleted, cancels nothing', () => {
     const { root, dir, done } = temp('mv-r31-xcancel-')
     try {
@@ -570,6 +586,7 @@ describe('what a pull may do here (spec 31 C.4, Codex r4)', () => {
     const mine = create('mymsg0001', { body: 'mine' })
     const local = [note, mine]
     const remote: CommentEvent[] = [
+      mine,   // the server holds my message (it was pushed): its copy is what a mutation is checked against
       create('marvnote1', { id: 'hijack-c', author: OTHER, body: 'claimed' }),
       { id: 'hijack-d', ts: t(), type: 'delete', commentId: 'marvnote1', board: 'main', author: OTHER },
       { id: 'other-del', ts: t(), type: 'delete', commentId: 'mymsg0001', board: 'main', author: OTHER },
@@ -578,7 +595,7 @@ describe('what a pull may do here (spec 31 C.4, Codex r4)', () => {
       create('theirs001', { author: OTHER }),
       { id: 'their-del', ts: t(), type: 'delete', commentId: 'theirs001', board: 'main', author: OTHER },
     ]
-    expect(admitted(local, remote).map((e) => e.id)).toEqual(['own-ed', create('theirs001').id, 'their-del'])
+    expect(admitted(local, remote).map((e) => e.id)).toEqual([mine.id, 'own-ed', create('theirs001').id, 'their-del'])
   })
 })
 
@@ -646,6 +663,34 @@ describe('sync against old and new servers (spec 31 C.6)', () => {
       const b = await syncOnce(root, { url: srv.url, token: 't', email: NEW })
       expect(b.main).toMatchObject({ pushed: 1, held: 1 })
       expect(srv.store.some((e) => e.commentId === 'newmsg002')).toBe(true)
+    } finally { await srv.close(); done() }
+  })
+
+  it('a password or invite session (opaque ids, no emails): a remote delete by the author lands, one by anyone else does not', () => {
+    const msg = { ...create('projmsg01', { author: { id: 'a'.repeat(24), name: 'Ana' } }) }
+    const local = [msg]
+    const remote: CommentEvent[] = [msg,
+      { id: 'proj-del-x', ts: t(), type: 'delete', commentId: 'projmsg01', board: 'main', author: { id: 'b'.repeat(24) } },
+      { id: 'proj-del-a', ts: t(), type: 'delete', commentId: 'projmsg01', board: 'main', author: { id: 'a'.repeat(24) } }]
+    expect(admitted(local, remote).map((e) => e.id)).toEqual([msg.id, 'proj-del-a'])
+  })
+
+  it('a kept thread keeps what hangs on it whatever the order - an edit of its reply too (the real validator, two exchanges)', async () => {
+    const { root, dir, done } = temp('mv-r31-syncdep-')
+    const srv = await server(false, true)
+    try {
+      const B = 'nic@b.test'
+      srv.as(B)
+      const root0 = { ...create('rootA0001', { author: { email: OWNER.email } }), ts: Date.now() - 9000 }
+      const rep = { ...reply('replyB001', 'rootA0001', { author: { email: B } }), ts: Date.now() - 8000 }
+      // the edit sorts first in the log, before what it depends on
+      appendEvents(dir, 'main', [{ ...edit('replyB001', 'edited', { author: { email: B } }), ts: Date.now() - 7000 }, root0, rep, { ...create('freshB001', { author: { email: B } }), ts: Date.now() - 6000 }])
+      for (let i = 0; i < 2; i++) {
+        const r = await syncOnce(root, { url: srv.url, token: 't', email: B })
+        expect(r.main.held).toBe(3)
+      }
+      expect(srv.store.some((e) => e.commentId === 'freshB001')).toBe(true)
+      expect(srv.got.flat().some((e) => e.type === 'edit')).toBe(false)
     } finally { await srv.close(); done() }
   })
 

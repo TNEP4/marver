@@ -336,7 +336,9 @@ export function withdrawnCaptures(j: Journal, dir: string): Set<string> {
 
 /** Where a nested copy came from (Codex r6): a tombstone counts only on the board its event was written on - an event id
  *  is a client's, and another board's log may hold the same one. `gone(board)`: that board's deleted events. */
-export interface Tombstones { gone(board: string): ReadonlySet<string>; captures: ReadonlySet<string> }
+export interface Tombstones { gone(board: string): ReadonlySet<string>; captures: ReadonlySet<string>
+  /** the board a capture's reviewed run was on, for a payload frozen before 0.31 (no `board`): from the card it reviewed */
+  reviewedBoard?(capture: string): string | undefined }
 
 /** A frozen brief with every deleted message taken out (spec 31 C.5) - its asks, its history, the asks it follows
  *  (all on `board`), the run a capture reviewed (on ITS board) - and every withdrawn capture left out, nested ones too.
@@ -346,8 +348,10 @@ export function dropDeleted(brief: Brief | undefined, board: string, t: Tombston
   const here = t.gone(board)
   const keep = (l: Msg[], g: ReadonlySet<string> = here) => l.filter((m) => !g.has(m.id))
   const cap = brief.capture && !t.captures.has(brief.capture.record.id) ? brief.capture : undefined
-  // a run reviewed before 0.31 names no board: its asks are matched on this one (the capture's own, as a rule)
-  const reviewed = cap?.reviewed ? { ...cap.reviewed, asks: keep(cap.reviewed.asks, cap.reviewed.board ? t.gone(cap.reviewed.board) : here) } : undefined
+  // a run reviewed before 0.31 names no board: found from the card it reviewed; not found, its asks are left out - a
+  // deleted request is never risked for a reviewed one's context (Codex r7)
+  const rb = cap?.reviewed ? cap.reviewed.board ?? t.reviewedBoard?.(cap.record.id) : undefined
+  const reviewed = cap?.reviewed ? { ...cap.reviewed, asks: rb ? keep(cap.reviewed.asks, t.gone(rb)) : [] } : undefined
   if (reviewed?.capture && t.captures.has(reviewed.capture.record.id)) delete reviewed.capture
   const { capture: _c, ...rest } = brief
   const out: Brief = {
@@ -361,7 +365,11 @@ export function dropDeleted(brief: Brief | undefined, board: string, t: Tombston
 /** The tombstones of the logs under `dir`, read once per board as asked, and the journal's withdrawn captures. */
 export function tombstonesOf(j: Journal, dir: string): Tombstones {
   const seen = new Map<string, Set<string>>()
-  return { gone: (b) => { let g = seen.get(b); if (!g) seen.set(b, (g = deletedEvents(readLog(dir, b)))); return g }, captures: withdrawnCaptures(j, dir) }
+  return {
+    gone: (b) => { let g = seen.get(b); if (!g) seen.set(b, (g = deletedEvents(readLog(dir, b)))); return g },
+    captures: withdrawnCaptures(j, dir),
+    reviewedBoard: (capture) => { const c = j.cards.find((x) => x.id === capture); const r = c?.reviewing ? j.cards.find((x) => x.id === c.reviewing!.card) : undefined; return r?.board },
+  }
 }
 
 export function textOf(ctx: Ctx, board: string, events: CommentEvent[], ev: CommentEvent, owner: boolean): { body: string; rev: string } {
@@ -433,7 +441,7 @@ export function freezeBrief(j: Journal, ctx: Ctx, c: Card, events: CommentEvent[
     if (cap && capCard?.payload) {
       const note = capCard !== c && capCard.state === 'kept' ? 'kept - not an ask' : capCard !== c && capCard.state === 'dropped' ? 'dropped - not an ask' : undefined
       brief.capture = { record: cap.record, recordHash: cap.hash, ...(capCard.payload.edited !== undefined ? { edited: capCard.payload.edited, ...(capCard.payload.editedAt ? { editedAt: capCard.payload.editedAt } : {}) } : {}), ...(capCard.payload.added?.length ? { added: capCard.payload.added } : {}),
-        ...(capCard.payload.reviewed ? { reviewed: (() => { const rv = capCard.payload.reviewed!; const r = { ...rv, asks: rv.asks.filter((a) => !(rv.board ? ts.gone(rv.board) : gone).has(a.id)) }; if (r.capture && ts.captures.has(r.capture.record.id)) delete r.capture; return r })() } : {}), ...(note ? { note } : {}) }
+        ...(capCard.payload.reviewed ? { reviewed: (() => { const rv = capCard.payload.reviewed!; const rb = rv.board ?? ts.reviewedBoard?.(capCard.id); const r = { ...rv, asks: rb ? rv.asks.filter((a) => !ts.gone(rb).has(a.id)) : [] }; if (r.capture && ts.captures.has(r.capture.record.id)) delete r.capture; return r })() } : {}), ...(note ? { note } : {}) }
     }
   }
   if (c.kind === 'wrapup') {

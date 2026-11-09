@@ -134,6 +134,8 @@ export async function syncOnce(root: string, collab: Collab): Promise<Record<str
   // published board shows - a canvas built before 0.25 names none
   const { rights, legacy } = await bres.json() as { rights: Record<string, 'read' | 'comment'>; legacy?: { board: string; frames: string[] } }
 
+  // who this session is there - its opaque id, which a password or invite session's events carry instead of emails
+  const myId = await fetch(`${base}/__mv/api/me`, { headers: auth }).then(async (r) => (r.ok ? ((await r.json()) as { id?: string }).id : undefined), () => undefined)
   // what the server takes (spec 31 C.6): an older one has no `delete` - its validator refuses the type and with it the
   // whole batch, so a delete is held back here (never sent) until the server says it takes them
   const caps = await serverCapabilities(base, auth)
@@ -163,7 +165,7 @@ export async function syncOnce(root: string, collab: Collab): Promise<Record<str
       const gone = deletedMessages([...local, ...remote])
       const candidates = diffEvents(local, remote.map((e) => e.id)).filter((e) => !(e as { agent?: boolean }).agent && !marverThreads.has(threadOf(e)) && (!shipped || shipped.has(threadOf(e))) && (caps.delete || e.type !== 'delete') && !(e.type === 'edit' && gone.has(e.commentId ?? '')))
       // what the server would refuse - and with it the whole batch, every exchange - is kept here, said, never sent
-      const keptHere = unauthorized(candidates, [...local, ...remote], collab.email)
+      const keptHere = unauthorized(candidates, [...local, ...remote], { email: collab.email, id: myId })
       if (keptHere.length) held[board] = keptHere
       const keep = new Set(keptHere.map((h) => h.id))
       const missing = candidates.filter((e) => !keep.has(e.id))
@@ -189,25 +191,43 @@ export async function syncOnce(root: string, collab: Collab): Promise<Record<str
  *  address, an event written under the old one - or a change to a message the old one wrote, which this machine still
  *  lets you make (own.json) - would be refused there, and with it every comment in its batch, every 30 s. */
 export interface Held { id: string; type: string; why: 'another-account' | 'message-of-another-account' | 'thread-kept-here' }
-export function unauthorized(events: CommentEvent[], log: CommentEvent[], account?: string): Held[] {
-  const me = (account ?? '').toLowerCase()
-  if (!me) return []
-  const authorOf = new Map<string, string>()
-  for (const e of log) if ((e.type === 'create' || e.type === 'reply') && e.commentId && !authorOf.has(e.commentId)) authorOf.set(e.commentId, (e.author?.email ?? '').toLowerCase())
-  const out: Held[] = []
-  const heldThreads = new Set<string>()
+export function unauthorized(events: CommentEvent[], log: CommentEvent[], account?: string | { email?: string; id?: string }): Held[] {
+  const acct = typeof account === 'string' ? { email: account } : account ?? {}
+  const myEmail = (acct.email ?? '').toLowerCase(), myId = acct.id ?? ''
+  if (!myEmail && !myId) return []
+  // mine: my address, or - where this transport carries opaque ids (a password or invite session) - my id; unknown
+  // (an id, and mine unknown) is the server's to decide
+  const mine = (a?: { email?: string; id?: string }): boolean | null =>
+    a?.email ? (myEmail ? a.email.toLowerCase() === myEmail : null) : a?.id ? (myId ? a.id === myId : null) : false
+  const authorOf = new Map<string, CommentEvent['author']>()
+  const rootOf = new Map<string, string>()
+  for (const e of [...log, ...events]) {
+    if ((e.type === 'create' || e.type === 'reply') && e.commentId && !authorOf.has(e.commentId)) authorOf.set(e.commentId, e.author)
+    if (e.type === 'reply' && e.commentId && e.parentId) rootOf.set(e.commentId, e.parentId)
+    if (e.type === 'create' && e.commentId) rootOf.set(e.commentId, e.commentId)
+  }
   const byAuthor = new Set(['create', 'reply', 'react', 'edit', 'reanchor', 'profile', 'delete'])
+  const held = new Map<string, Held>()
   for (const e of events) {
     let why: Held['why'] | null = null
-    if (byAuthor.has(e.type) && (e.author?.email ?? '').toLowerCase() !== me) why = 'another-account'
-    else if ((e.type === 'edit' || e.type === 'delete') && authorOf.get(e.commentId ?? '') !== me) why = 'message-of-another-account'
-    else if (e.type === 'reanchor' && (authorOf.get(e.commentId ?? '') ?? me) !== me) why = 'message-of-another-account'
-    else if (heldThreads.has(threadOf(e))) why = 'thread-kept-here'
-    if (!why) continue
-    out.push({ id: e.id, type: e.type, why })
-    if (e.type === 'create' && e.commentId) heldThreads.add(e.commentId)
+    if (byAuthor.has(e.type) && mine(e.author) === false) why = 'another-account'
+    else if ((e.type === 'edit' || e.type === 'delete' || e.type === 'reanchor') && mine(authorOf.get(e.commentId ?? '')) === false) why = 'message-of-another-account'
+    if (why) held.set(e.id, { id: e.id, type: e.type, why })
   }
-  return out
+  // what depends on a kept message stays too, whatever the order: a reply to a kept thread, an edit or a reaction of a
+  // kept reply - every event whose message, or whose message's thread, is kept
+  for (let grew = true; grew;) {
+    grew = false
+    const keptMsgs = new Set(events.filter((e) => held.has(e.id) && (e.type === 'create' || e.type === 'reply') && e.commentId).map((e) => e.commentId!))
+    const keptThreads = new Set([...keptMsgs].map((m) => rootOf.get(m) ?? m).filter((m) => keptMsgs.has(m)))
+    for (const e of events) {
+      if (held.has(e.id)) continue
+      const target = e.type === 'reply' ? e.parentId : e.commentId
+      const root = target ? rootOf.get(target) ?? target : ''
+      if ((target && keptMsgs.has(target)) || (root && keptThreads.has(root))) { held.set(e.id, { id: e.id, type: e.type, why: 'thread-kept-here' }); grew = true }
+    }
+  }
+  return events.filter((e) => held.has(e.id)).map((e) => held.get(e.id)!)
 }
 const heldFile = (root: string) => join(root, 'design', '.local', 'sync-held.json')
 /** The last exchange's kept events, per board - what `marver comments sync` says, and what stays until you change it. */
@@ -248,6 +268,11 @@ export async function serverCapabilities(base: string, headers: Record<string, s
 export function admitted(local: CommentEvent[], remote: CommentEvent[]): CommentEvent[] {
   const msgs = new Map<string, CommentEvent>()
   for (const e of local) if ((e.type === 'create' || e.type === 'reply') && e.commentId && !msgs.has(e.commentId)) msgs.set(e.commentId, e)
+  // the server's own copy of each message: its author as THIS transport carries it - an email for the operator's
+  // session, an opaque id for a password or invite one (Codex r7) - compared with the mutation's in the same terms
+  const theirs = new Map<string, CommentEvent>()
+  for (const e of remote) if (e && (e.type === 'create' || e.type === 'reply') && e.commentId && !theirs.has(e.commentId)) theirs.set(e.commentId, e)
+  const key = (a?: { email?: string; id?: string }) => (a?.email ?? a?.id ?? '').toLowerCase()
   const localIds = new Set(local.map((e) => e.id))
   const offLimits = localOnlyThreads(local)
   const out: CommentEvent[] = []
@@ -257,11 +282,10 @@ export function admitted(local: CommentEvent[], remote: CommentEvent[]): Comment
       if (msgs.has(e.commentId)) continue
       msgs.set(e.commentId, e)
     } else if ((e.type === 'edit' || e.type === 'delete') && e.commentId) {
-      const orig = msgs.get(e.commentId)
-      if (!orig) continue
-      if (orig.agent || offLimits.has(e.commentId)) continue
-      const by = (e.author?.email ?? '').toLowerCase(), was = (orig.author?.email ?? '').toLowerCase()
-      if (!by || by !== was) continue
+      const orig = msgs.get(e.commentId), there = theirs.get(e.commentId)
+      // the message here must be the very one the server holds (same event), never Marver's or a local-only one
+      if (!orig || !there || there.id !== orig.id || orig.agent || offLimits.has(e.commentId)) continue
+      if (!key(e.author) || key(e.author) !== key(there.author)) continue
     }
     out.push(e)
   }
