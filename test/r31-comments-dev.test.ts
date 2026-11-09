@@ -88,6 +88,17 @@ describe('the dev server (spec 31 B.4, C.2-C.6)', () => {
     expect(replay(readLog(dir(), 'main')).some((t) => t.id === 'old-mine')).toBe(false)
   })
 
+  it('with Jam off, a withdrawn capture\'s record is not served (its own comment deleted - read from the files)', async () => {
+    const capId = 'cap-1700000000000-abcd'
+    put(`design/.local/jam/captures/${capId}.json`, { format: 'marver.jam.capture', v: 1, id: capId, context: { canvas: 'x', board: 'main' }, view: {}, timeline: [{ at: 1, event: 'words', text: 'the withdrawn words' }], pictures: [] })
+    appendEvents(dir(), 'main', [{ id: 'capc-ev-1', ts: Date.now(), type: 'create', commentId: 'capc-th-1', board: 'main', frame: 'spec/alpha', author: OWNER, capture: capId, body: 'the withdrawn words' }])
+    expect((await api(`jam/capture?id=${capId}`)).status).toBe(200)
+    appendEvents(dir(), 'main', [{ id: 'capc-del-1', ts: Date.now(), type: 'delete', commentId: 'capc-th-1', board: 'main', author: OWNER }])
+    const r = await api(`jam/capture?id=${capId}`)
+    expect(r.status).toBe(410)
+    expect(JSON.stringify(r.data)).not.toContain('withdrawn words')
+  })
+
   it('resolve-all routes cannot collide with boards named resolve-all and undo; scopes validated; owner-gated', async () => {
     const thread = async (board: string, frame: string) => { const c = id('t'); expect((await api(`comments/${board}`, { events: [{ id: id('e'), ts: Date.now(), type: 'create', commentId: c, frame, body: 'x' }] })).status).toBe(200); return c }
     const ra = await thread('resolve-all', 'lofi/delta'), un = await thread('undo', 'spec/bravo'), mb = await thread('main', 'spec/bravo')

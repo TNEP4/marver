@@ -12,7 +12,7 @@ import { parseScope, resolveAll, scopeFrames, undoResolveAll, type Receipt, type
 import { fresh, write as writeJournal } from '../src/server/jam/journal.ts'
 import { createJam } from '../src/server/jam/daemon.ts'
 import { answers, ctxFor, dropDeleted, form, freezeBrief, ingest, liveThreads, tombstonesOf } from '../src/server/jam/queue.ts'
-import { admitted, heldWords, readHeld, syncOnce } from '../src/server/sync.ts'
+import { admitted, bindIdentity, heldWords, identityBindings, readHeld, syncOnce } from '../src/server/sync.ts'
 import { markSlot } from '../app/pages/strip/needs.ts'
 import { wrapupWithoutDeleted, type Wrapup } from '../src/server/jam/session.ts'
 import type { Card } from '../src/server/jam/types.ts'
@@ -705,11 +705,43 @@ describe('sync against old and new servers (spec 31 C.6)', () => {
     expect(admitted([mine], [forged, { id: 'forged-del', ts: t(), type: 'delete', commentId: 'unpushed1', board: 'main', author: { email: OTHER.email } }]).map((e) => e.id)).toEqual([mine.id])
     // a password session sees ids: theirs is not mine
     const forgedP = { ...mine, author: { id: 'c'.repeat(24) } }
-    const me = { email: OWNER.email, id: 'a'.repeat(24) }
+    const me = { [OWNER.email]: 'a'.repeat(24) }
     expect(admitted([mine], [forgedP, { id: 'forged-dp', ts: t(), type: 'delete', commentId: 'unpushed1', board: 'main', author: { id: 'c'.repeat(24) } }], me).map((e) => e.id)).toEqual([mine.id])
     // ...while my own pushed message, as the server projects it, takes my own delete
     const mineP = { ...mine, author: { id: 'a'.repeat(24) } }
     expect(admitted([mine], [mineP, { id: 'my-del-p', ts: t(), type: 'delete', commentId: 'unpushed1', board: 'main', author: { id: 'a'.repeat(24) } }], me).map((e) => e.id)).toEqual([mine.id, 'my-del-p'])
+  })
+
+  it('after reconnecting as B, a remote delete by A of A\'s message (projected as A\'s id) still lands - the binding A taught us stays (Codex r9)', async () => {
+    const { root, dir, done } = temp('mv-r31-bind-')
+    const A = { email: 'a@acct.test', id: 'a'.repeat(24) }, B = { email: 'b@acct.test', id: 'b'.repeat(24) }
+    let me = A
+    const msg = { ...create('bindmsg01', { author: { email: A.email } }), ts: Date.now() - 9000 }
+    const store: CommentEvent[] = [{ ...msg, author: { id: A.id } }]   // as this password session's transport projects it
+    const srv: Server = createServer((req, res) => {
+      const send = (b: unknown) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(b)) }
+      const p = (req.url ?? '').replace(/^\/__mv\/api\//, '')
+      if (p === 'me') return send({ id: me.id })
+      if (p === 'capabilities') return send({ delete: true })
+      if (p === 'boards') return send({ rights: { main: 'read' }, stored: ['main'] })
+      if (p === 'comments/main') return send({ events: store })
+      res.writeHead(404); res.end()
+    })
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()))
+    const url = `http://127.0.0.1:${(srv.address() as { port: number }).port}`
+    try {
+      appendEvents(dir, 'main', [msg])
+      await syncOnce(root, { url, token: 't', email: A.email })   // signed in as A: A's binding learned
+      me = B
+      store.push({ id: 'del-by-a', ts: Date.now() - 1000, type: 'delete', commentId: 'bindmsg01', board: 'main', author: { id: A.id } })
+      const r = await syncOnce(root, { url, token: 't', email: B.email })
+      expect(r.main.pulled).toBe(1)
+      expect(replay(readLog(dir, 'main')).some((x) => x.id === 'bindmsg01')).toBe(false)
+      expect(identityBindings(root, url)).toEqual({ [A.email]: A.id, [B.email]: B.id })
+      // a binding is only what /me said - never an event's: a forged copy under someone else's id still cannot delete
+      bindIdentity(root, url, 'x@y.test', 'not-an-id')
+      expect(identityBindings(root, url)).not.toHaveProperty('x@y.test')
+    } finally { await new Promise<void>((r) => srv.close(() => r())); done() }
   })
 
   it('a password or invite session (opaque ids, no emails): a remote delete by the author lands, one by anyone else does not', () => {

@@ -136,6 +136,9 @@ export async function syncOnce(root: string, collab: Collab): Promise<Record<str
 
   // who this session is there - its opaque id, which a password or invite session's events carry instead of emails
   const myId = await fetch(`${base}/__mv/api/me`, { headers: auth }).then(async (r) => (r.ok ? ((await r.json()) as { id?: string }).id : undefined), () => undefined)
+  // what this canvas has told us, signed in, about who each address is there - kept across reconnects (Codex r9)
+  if (myId && collab.email) bindIdentity(root, base, collab.email, myId)
+  const bindings = identityBindings(root, base)
   // what the server takes (spec 31 C.6): an older one has no `delete` - its validator refuses the type and with it the
   // whole batch, so a delete is held back here (never sent) until the server says it takes them
   const caps = await serverCapabilities(base, auth)
@@ -150,7 +153,7 @@ export async function syncOnce(root: string, collab: Collab): Promise<Record<str
     const res = await fetch(`${base}/__mv/api/comments/${board}`, { headers: auth })
     if (!res.ok) { failures.push(`${board}: pull ${res.status}`); continue }
     const { events: remote } = await res.json() as { events: CommentEvent[] }
-    const pulled = appendEvents(dir, board, admitted(readLog(dir, board), remote, { email: collab.email, id: myId })).length
+    const pulled = appendEvents(dir, board, admitted(readLog(dir, board), remote, bindings)).length
     let pushed = 0
     if (rights[board] === 'comment' || old) {
       // Live Jam: agent-authored events are dev-local in v1 - never pushed to the published canvas
@@ -229,6 +232,37 @@ export function unauthorized(events: CommentEvent[], log: CommentEvent[], accoun
   }
   return events.filter((e) => held.has(e.id)).map((e) => held.get(e.id)!)
 }
+/**
+ * Identity bindings (Codex r9): an address and the opaque id a published canvas gives it, learned only from that canvas's
+ * own `/me`, signed in as that address - never from an event, whose ids anyone may choose. Per canvas origin, kept in
+ * `design/.local/identity-bindings.json` (never synced) so a reconnect under another address still recognises the first
+ * one's messages as the server projects them.
+ */
+const bindingsFile = (root: string) => join(root, 'design', '.local', 'identity-bindings.json')
+const readBindings = (root: string): Record<string, Record<string, string>> => {
+  try { const v = JSON.parse(readFileSync(bindingsFile(root), 'utf8')); return v && typeof v === 'object' && !Array.isArray(v) ? v : {} } catch { return {} }
+}
+const originOf = (base: string) => { try { return new URL(base).origin } catch { return base.replace(/\/+$/, '') } }
+export function identityBindings(root: string, base: string): Record<string, string> {
+  const all = readBindings(root)
+  const here = Object.hasOwn(all, originOf(base)) ? all[originOf(base)] : {}
+  const out: Record<string, string> = Object.create(null)
+  for (const [email, id] of Object.entries(here ?? {})) if (typeof id === 'string' && /^[0-9a-f]{24}$/.test(id)) out[email.toLowerCase()] = id
+  return out
+}
+export function bindIdentity(root: string, base: string, email: string, id: string): void {
+  if (!/^[0-9a-f]{24}$/.test(id) || !email) return
+  const all = readBindings(root)
+  const o = originOf(base)
+  const here: Record<string, string> = Object.assign(Object.create(null), Object.hasOwn(all, o) ? all[o] : {})
+  if (here[email.toLowerCase()] === id) return
+  here[email.toLowerCase()] = id
+  try {
+    mkdirSync(join(root, 'design', '.local'), { recursive: true })
+    writeFileSync(bindingsFile(root), JSON.stringify({ ...all, [o]: here }, null, 1) + '\n', { mode: 0o600 })
+  } catch { /* without it, an earlier account's projected messages are left as they are - never wrongly changed */ }
+}
+
 const heldFile = (root: string) => join(root, 'design', '.local', 'sync-held.json')
 /** The last exchange's kept events, per board - what `marver comments sync` says, and what stays until you change it. */
 function saveHeld(root: string, held: Record<string, Held[]>): void {
@@ -265,7 +299,7 @@ export async function serverCapabilities(base: string, headers: Record<string, s
  *  never held this machine's own messages (Marver's notes, captures - never pushed). So a message id already here is
  *  one message's: another event claiming it as a new message is refused, and an edit or a delete of it must come from
  *  its original author - never touching Marver's or a local-only message at all. */
-export function admitted(local: CommentEvent[], remote: CommentEvent[], me: { email?: string; id?: string } = {}): CommentEvent[] {
+export function admitted(local: CommentEvent[], remote: CommentEvent[], bindings: Readonly<Record<string, string>> = {}): CommentEvent[] {
   const msgs = new Map<string, CommentEvent>()
   for (const e of local) if ((e.type === 'create' || e.type === 'reply') && e.commentId && !msgs.has(e.commentId)) msgs.set(e.commentId, e)
   // the server's own copy of each message: its author as THIS transport carries it - an email for the operator's
@@ -286,11 +320,12 @@ export function admitted(local: CommentEvent[], remote: CommentEvent[], me: { em
       // the message here must be the very one the server holds (same event), never Marver's or a local-only one
       if (!orig || !there || there.id !== orig.id || orig.agent || offLimits.has(e.commentId)) continue
       // ids are a client's to choose (Codex r8): the server's copy must be written by whoever wrote the one here - the
-      // same address, the same opaque id, or (a message of mine, as a password session sees it) my address here and
-      // my id there. Otherwise someone reused the ids of a message this machine never pushed
+      // same address, the same opaque id, or an address here and the opaque id this canvas told us, signed in as that
+      // address, is its (a binding - any account this machine has connected as). Otherwise someone reused the ids of a
+      // message this machine never pushed
       const sameAuthor = (orig.author?.email && there.author?.email) ? key(orig.author) === key(there.author)
         : (orig.author?.id && there.author?.id) ? orig.author.id === there.author.id
-        : !!orig.author?.email && !!there.author?.id && !!me.id && !!me.email && key(orig.author) === me.email.toLowerCase() && there.author.id === me.id
+        : !!orig.author?.email && !!there.author?.id && Object.hasOwn(bindings, key(orig.author)) && bindings[key(orig.author)] === there.author.id
       if (!sameAuthor) continue
       if (!key(e.author) || key(e.author) !== key(there.author)) continue
     }

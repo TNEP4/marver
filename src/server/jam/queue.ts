@@ -334,6 +334,20 @@ export function withdrawnCaptures(j: Journal, dir: string): Set<string> {
   return out
 }
 
+/** Is this capture withdrawn - read from the files, whatever runs (Codex r9: `jam: false` serves its record too)? Its
+ *  card in the journal on disk says which comment is its own; with no card, its own comment is the first one in its
+ *  board's log that names it (this machine wrote it there before anything could be synced in). */
+export function captureWithdrawn(root: string, id: string, board?: string): boolean {
+  const dir = join(root, 'design', 'comments')
+  const raw = readRaw(root)
+  const card = raw.v2?.cards.find((c) => c.id === id && c.kind === 'capture')
+  if (card?.thread) return deletedMessages(readLog(dir, card.board)).has(card.thread)
+  if (!board) return false
+  const log = readLog(dir, board)
+  const own = log.find((e) => e.type === 'create' && e.capture === id && !!e.commentId)
+  return !!own && deletedMessages(log).has(own.commentId!)
+}
+
 /** Where a nested copy came from (Codex r6): a tombstone counts only on the board its event was written on - an event id
  *  is a client's, and another board's log may hold the same one. `gone(board)`: that board's deleted events. */
 export interface Tombstones { gone(board: string): ReadonlySet<string>; captures: ReadonlySet<string>
