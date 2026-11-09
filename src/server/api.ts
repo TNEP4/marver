@@ -1414,6 +1414,9 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
           const incoming = Array.isArray(b.events) ? b.events : []
           const me = localProfile(root)
+          // an event names the log it is written to, or none (Codex r5): one naming another board would pass the checks
+          // below against this log and be read by the shell as that board's - refused
+          if (incoming.some((ev: any) => ev?.board !== undefined && ev.board !== cm[1])) return json(res, 400, { error: 'event board does not match the endpoint' })
           // a message id is one message's (spec 31 C.2): a new create or reply reusing one already in the log would make
           // this machine record someone else's (or Marver's) message as yours. A retry of the same event is fine.
           {

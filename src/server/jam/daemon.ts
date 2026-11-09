@@ -30,7 +30,7 @@ import { workActivity } from '../work.ts'
 import { acquireLock, releaseLock } from './journal.ts'
 import { buildPacket, goalText, packetPath, parseAgentText, parseMembers, refusedAsk, sharedWhy } from './packet.ts'
 import { uncheckedAnchor, type AnchorCheck, type AnchorLook, type AnchorTarget } from '../../shared/anchor.ts'
-import { deletedCaptures, deletedEvents, dropDeleted, liveThreads, ownerOnly, act, addCapture, addWrapup, endSession, moreWrapup, startSession, textOf, wrapupIntact, wrapupOf, answeredSince, captureIntact, beginStep, captureComment, conflictStep, createQueue, ctxFor, endStep, looksGood, payloadKey, redelivering, requeue, joinAlone, runsAlone, sameComment, stillOwned, undelivered, fail, failCard, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
+import { deletedCaptures, deletedEvents, deletedEverywhere, dropDeleted, liveThreads, ownerOnly, act, addCapture, addWrapup, endSession, moreWrapup, startSession, textOf, wrapupIntact, wrapupOf, answeredSince, captureIntact, beginStep, captureComment, conflictStep, createQueue, ctxFor, endStep, looksGood, payloadKey, redelivering, requeue, joinAlone, runsAlone, sameComment, stillOwned, undelivered, fail, failCard, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
 import { jamReservations, restoreHolds } from './reserve.ts'
 import { jamLive, type QueueView } from './live.ts'
 import type { Batch, Brief, Card, JamAdapter, JobPacket, Journal, Msg, Reanchor, Result } from './types.ts'
@@ -374,6 +374,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     },
     say: (b) => ensureEarly(b),
     gone: (board) => goneCached(board),
+    withdrawn: (board) => deletedCaptures(readLog(commentsDir, board)),
     ready: () => ready,
     // the session record a wrap-up queues belongs to the session it closes: it goes to your session too
     // a Jam session runs (its own record, written once it ended, is offered to your session by runs.ts - nothing else)
@@ -446,9 +447,10 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   }
   function scrubDeleted(j: Journal, b: Batch, packet: JobPacket | null): { changed: boolean; left: number } {
     const gone = new Map<string, Set<string>>()
-    const goneIn = (board: string) => { let g = gone.get(board); if (!g) gone.set(board, (g = goneOf(board))); return g }
-    const capsSeen = new Map<string, Set<string>>()
-    const capsIn = (board: string) => { let g = capsSeen.get(board); if (!g) capsSeen.set(board, (g = capsOf(board))); return g }
+    // every board's (Codex r5): a brief copies from other boards too - a capture reviewing a run elsewhere
+    const all = deletedEverywhere(commentsDir)
+    const goneIn = (board: string) => { let g = gone.get(board); if (!g) gone.set(board, (g = new Set([...goneOf(board), ...all.events]))); return g }
+    const capsIn = (_board: string) => all.captures
     let changed = false
     for (const m of b.members) {
       const c = j.cards.find((x) => x.id === m.card)
@@ -1389,14 +1391,15 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         const owned = (board: string, id: string) => ctx.owned.has(`${board}\t${id}`) && logOf(board).some((e) => e.id === id)
         // ...and nothing deleted since (spec 31 C.5): taken out of every brief, per message, before the packet is reused
         const goneOf = new Map<string, Set<string>>()
-        const gone = (board: string) => { let g = goneOf.get(board); if (!g) goneOf.set(board, (g = deletedEvents(logOf(board)))); return g }
+        const all = deletedEverywhere(commentsDir)   // a nested copy may be another board's (Codex r5)
+        const gone = (board: string) => { let g = goneOf.get(board); if (!g) goneOf.set(board, (g = new Set([...deletedEvents(logOf(board)), ...all.events]))); return g }
         const askOk = (board: string, a: Msg) => !gone(board).has(a.id) && stillOwned(ctx, board, logOf(board), a)
-        const clean = (board: string, brief: Brief | undefined, comment: boolean): Brief | undefined => !brief || !comment ? dropDeleted(brief, gone(board), capsOf(board)) : dropDeleted({
+        const clean = (board: string, brief: Brief | undefined, comment: boolean): Brief | undefined => !brief || !comment ? dropDeleted(brief, gone(board), all.captures) : dropDeleted({
           ...brief,
           asks: brief.asks.filter((a) => askOk(board, a)),
           history: brief.history.map((m) => (m.owner && !askOk(board, m) ? { id: m.id, ...(m.author ? { author: m.author } : {}), body: m.body, ts: m.ts, note: 'someone else - context only' } : m)),
           ...(brief.follows ? { follows: { ...brief.follows, asks: brief.follows.asks.filter((a) => askOk(board, a)) } } : {}),
-        }, gone(board), capsOf(board))
+        }, gone(board), all.captures)
         for (const m of b.members) {
           const c = j.cards.find((x) => x.id === m.card)
           if (!c) continue
