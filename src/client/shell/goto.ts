@@ -102,7 +102,8 @@ export function watchHands(target: Window = window): () => void {
   const inText = (e: Event) => { const t = e.target as Element | null; return !!t?.closest?.(TEXT) }
   const press = (e: PointerEvent) => { if (e.isTrusted && !inText(e)) navigatedByHand() }
   // a key held down repeats: one choice, counted once (a held Enter on the show notice's Go never cancels the Go)
-  const key = (e: KeyboardEvent) => { if (e.isTrusted && !e.repeat && !MODIFIERS.has(e.key) && !inText(e)) navigatedByHand() }
+  // Escape in a field is no word: it leaves the field (a composer dismissed) - the person's choice, counted (release r3)
+  const key = (e: KeyboardEvent) => { if (e.isTrusted && !e.repeat && !MODIFIERS.has(e.key) && (!inText(e) || e.key === 'Escape')) navigatedByHand() }
   const wheel = (e: WheelEvent) => { if (e.isTrusted) navigatedByHand() }
   target.addEventListener('pointerdown', press, true)
   target.addEventListener('keydown', key, true)
