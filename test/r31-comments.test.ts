@@ -6,10 +6,11 @@ import { join } from 'node:path'
 import { appendEvents, readLog, replay, type CommentEvent } from '../src/server/comments.ts'
 import { asSentBy } from '../src/shared/events.ts'
 import { validateEvents } from '../src/server/collab.ts'
-import { migrateOwnership, ownsMessage, recordOwn } from '../src/server/own.ts'
+import { migrateOwnership, ownership, ownsMessage, recordOwn } from '../src/server/own.ts'
 import { record } from '../src/server/jam/ledger.ts'
 import { parseScope, resolveAll, scopeFrames, undoResolveAll, type Receipt, type UndoReceipt } from '../src/server/comment-actions.ts'
 import { fresh, write as writeJournal } from '../src/server/jam/journal.ts'
+import { createJam } from '../src/server/jam/daemon.ts'
 import { answers, ctxFor, form, freezeBrief, ingest, liveThreads } from '../src/server/jam/queue.ts'
 import { syncOnce } from '../src/server/sync.ts'
 import { markSlot } from '../app/pages/strip/needs.ts'
@@ -99,6 +100,19 @@ describe('who owns a message (spec 31 C.2)', () => {
       recordOwn(root, 'main', ['later'])
       expect(ownsMessage(root, 'main', 'later')).toBe(true)
       expect(JSON.parse(readFileSync(join(root, 'design', '.local', 'own.json'), 'utf8'))).toMatchObject({ v: 1, migrated: true })
+    } finally { done() }
+  })
+
+  it('a board may be called constructor (no prototype in the way)', () => {
+    const { root, dir, done } = temp('mv-r31-own3-')
+    try {
+      writeFileSync(join(root, 'design', '.local', 'profile.json'), JSON.stringify(OWNER))
+      appendEvents(dir, 'constructor', [create('ctor1', { board: 'constructor' })])
+      migrateOwnership(root)
+      expect(ownsMessage(root, 'constructor', 'ctor1')).toBe(true)
+      recordOwn(root, 'toString', ['x1'])
+      expect(ownsMessage(root, 'toString', 'x1')).toBe(true)
+      expect(ownership(root).constructor).toEqual(['ctor1'])
     } finally { done() }
   })
 
@@ -281,6 +295,17 @@ describe('resolve all (spec 31 B.1-B.4)', () => {
     } finally { done() }
   })
 
+  it('Undo sees an event that arrived since from a slower clock (it sorts before the resolve)', () => {
+    const { root, dir, done } = canvas()
+    try {
+      ok(resolveAll(root, 'op-slowclk1', { board: 'main' }))
+      appendEvents(dir, 'main', [{ id: 'slow-reply', ts: Date.now() - 600_000, type: 'reply', commentId: 'slow-r', parentId: 'alpha1', board: 'main', author: OWNER, body: 'from a slow clock' }])
+      const u = ok(undoResolveAll(root, 'op-slowclk1'))
+      expect(u.changed.map((x) => x.thread)).toEqual(['alpha1'])
+      expect(u.reopened.map((x) => x.thread)).toEqual(['bravo1'])
+    } finally { done() }
+  })
+
   it('an interrupted Undo checks each reopen not written yet again: a reply since, and it is left as it is', () => {
     const { root, dir, done } = canvas()
     try {
@@ -407,6 +432,40 @@ describe('a sealed record read by a run (spec 31 C.5)', () => {
     expect(out.captures[0].more).toEqual([{ ask: 'keep this', event: 'mw-a' }])
     expect(JSON.stringify(w)).toContain('the deleted ask')
     expect(wrapupWithoutDeleted(w, () => new Set())).toBe(w)
+  })
+})
+
+describe('older records, titles and captures (spec 31 C.5)', () => {
+  it('a record sealed before 0.31 (asks with no event): a deleted ask is matched by its words', () => {
+    const w = { captures: [{ id: 'cap1', record: { context: { board: 'home' } }, more: [{ ask: 'keep this' }, { ask: 'the old deleted ask' }] }] } as unknown as Wrapup
+    const out = wrapupWithoutDeleted(w, () => new Set(), () => new Set(['the old deleted ask']))
+    expect(out.captures[0].more).toEqual([{ ask: 'keep this' }])
+  })
+
+  it('a run\'s title (pings, "waits for") never shows a deleted request\'s words', () => {
+    const { root, dir, done } = temp('mv-r31-title-')
+    try {
+      const jam = createJam(root, { agent: 'claude', concurrency: 1, subagents: true, proactive: false, chime: false, capture: 'confirm', loc: true, names: false, runner: 'background', session: false, context: 'fresh', mcp: true, skills: true, others: true, sessionMax: 1 } as never, { name: 'claude', supportsSubagents: true, spawnArgs: () => ({ cmd: 'true', args: [] }), parse: () => ({}) } as never)
+      const a = create('asked01', { board: 'home', body: '@marver the secret request' }), b = create('asked02', { board: 'home', body: '@marver the plain one' })
+      appendEvents(dir, 'home', [a, b, del('asked01', { board: 'home' })])
+      const batch = { batchId: 'b1', members: [{ id: 'm1', card: 'none', board: 'home', brief: { asks: [{ id: a.id, body: a.body!, ts: 1 }, { id: b.id, body: b.body!, ts: 2 }], history: [] } }], frames: [], state: 'claimed', leaseUntil: 0, attempts: 0, at: 0 } as never
+      expect(jam.runs.title(batch)).toBe('the plain one')
+      jam.stop()
+    } finally { done() }
+  })
+
+  it('a capture\'s own comment deleted before it is sent: the capture is withdrawn', () => {
+    const { root, dir, done } = temp('mv-r31-cap-')
+    try {
+      const j = fresh()
+      j.cards.push({ id: 'cap-test01', kind: 'capture', board: 'home', frames: [], thread: 'capth01', events: [], state: 'queued', made: 1, order: 1, rev: 1, at: 1 } as Card)
+      const c = create('capth01', { board: 'home', capture: 'cap-test01', body: 'what I said' })
+      appendEvents(dir, 'home', [c])
+      j.seen = [`home|${c.id}`]
+      appendEvents(dir, 'home', [del('capth01', { board: 'home' })])
+      ingest(j, ctxFor(root))
+      expect(j.cards[0]).toMatchObject({ state: 'dropped', note: 'deleted' })
+    } finally { done() }
   })
 })
 

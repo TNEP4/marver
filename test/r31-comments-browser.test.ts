@@ -52,6 +52,7 @@ beforeAll(async () => {
     ev({ id: 'e4', type: 'create', commentId: 'th-marver', frame: 'spec/bravo', author: OWNER, agent: true, body: 'Marver asks: wallet first?' }),
     ev({ id: 'e5', type: 'create', commentId: 'th-gone', frame: 'spec/bravo', author: OWNER, body: 'a note I will delete' }),
     ev({ id: 'e6', type: 'reply', commentId: 'rp-gone', parentId: 'th-gone', author: ANA, body: 'Ana answered the deleted note' }),
+    ev({ id: 'e8', type: 'create', commentId: 'th-cap', frame: 'spec/alpha', author: OWNER, capture: 'cap-test-01', facts: '0:05', body: 'what I said in a capture' }),
   ])
   appendEvents(dir(), 'other', [ev({ id: 'e7', type: 'create', commentId: 'th-delta', board: 'other', frame: 'lofi/delta', author: OWNER, body: 'on delta' })])
   dev = await startDev(root, { args: ['--port', '5632'] })
@@ -133,6 +134,14 @@ describe('your own messages (spec 31 C.2-C.4)', () => {
     await browser.closeTab(s)
   }, 90_000)
 
+  it('a capture\'s own comment is yours to edit and delete too', async (ctx) => {
+    if (!browser) return ctx.skip()
+    const s = await open('#/b/main?c=th-cap')
+    await browser.until(s, `!!document.querySelector('.cm-card[data-thread="th-cap"]')`, 20_000)
+    await browser.until(s, `!!document.querySelector('.cm-card [data-edit="th-cap"]') && !!document.querySelector('.cm-card [data-delete="th-cap"]')`, 10_000)
+    await browser.closeTab(s)
+  }, 60_000)
+
   it('a deleted first comment keeps its replies under "Comment deleted"', async (ctx) => {
     if (!browser) return ctx.skip()
     const s = await open('#/b/main?c=th-gone')
@@ -161,10 +170,10 @@ describe('Resolve all comments (spec 31 B.1-B.3, B.7)', () => {
     expect(isOpen('other', 'th-delta')).toBe(true)    // another board's thread: out of scope
     await browser.until(s, `!!document.querySelector('.sh-toast-act')`)
     // th-gone's first comment was deleted: its thread stays (Ana's reply) - open, so resolved too
-    expect(await toast(s)).toMatch(/Resolved 3 conversations/)
+    expect(await toast(s)).toMatch(/Resolved 4 conversations/)
     await browser.eval(s, `document.querySelector('.sh-toast-act').click()`)
     await until(() => isOpen('main', 'th-copy') && isOpen('main', 'th-marver') && isOpen('main', 'th-gone'))
-    await browser.until(s, `Array.from(document.querySelectorAll('.sh-toast')).some((t) => /Reopened 3 \\(finished Jam items stay finished\\)/.test(t.textContent))`)
+    await browser.until(s, `Array.from(document.querySelectorAll('.sh-toast')).some((t) => /Reopened 4 \\(finished Jam items stay finished\\)/.test(t.textContent))`)
     await browser.closeTab(s)
   }, 90_000)
 
@@ -200,13 +209,13 @@ describe('Resolve all comments (spec 31 B.1-B.3, B.7)', () => {
     if (!browser) return ctx.skip()
     // reopen everything by hand first
     const now = Date.now()
-    for (const [board, id] of [['main', 'th-copy'], ['main', 'th-marver'], ['main', 'th-gone'], ['other', 'th-delta']] as const)
+    for (const [board, id] of [['main', 'th-copy'], ['main', 'th-marver'], ['main', 'th-gone'], ['main', 'th-cap'], ['other', 'th-delta']] as const)
       appendEvents(dir(), board, [{ id: `ro-${id}-${now}`, ts: now, type: 'reopen', commentId: id, board }])
     const s = await open('#/b/main', true)
     await browser.until(s, `!!window.__click`)
     expect(await browser.eval(s, `window.__click({ id: 'resolve-all-comments', in: 'tab-menu' })`)).toBeGreaterThan(0)
     await until(() => !isOpen('main', 'th-copy') && !isOpen('main', 'th-marver') && !isOpen('other', 'th-delta'))
-    await browser.until(s, `Array.from(document.querySelectorAll('.sh-toast')).some((t) => /Resolved 4 conversations/.test(t.textContent))`)
+    await browser.until(s, `Array.from(document.querySelectorAll('.sh-toast')).some((t) => /Resolved 5 conversations/.test(t.textContent))`)
     await browser.closeTab(s)
   }, 90_000)
 })
