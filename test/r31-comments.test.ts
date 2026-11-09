@@ -556,6 +556,19 @@ describe('sync against old and new servers (spec 31 C.6)', () => {
     return { url: `http://127.0.0.1:${port}`, got, store, close: () => new Promise<void>((r) => srv.close(() => r())) }
   }
 
+  it('a pull that would delete Marver\'s note here (a remote message claiming its id) leaves it standing', async () => {
+    const { root, dir, done } = temp('mv-r31-synchijack-')
+    const srv = await server(false)
+    try {
+      const note = { ...create('marvnote2', { agent: true, body: 'Marver note' }), ts: Date.now() - 5000 }
+      appendEvents(dir, 'main', [note])
+      srv.store.push({ ...create('marvnote2', { author: OTHER, body: 'claimed' }), id: 'hijack-c2', ts: Date.now() - 4000 },
+        { id: 'hijack-d2', ts: Date.now() - 3000, type: 'delete', commentId: 'marvnote2', board: 'main', author: OTHER })
+      await syncOnce(root, { url: srv.url, token: 't' })
+      expect(replay(readLog(dir, 'main')).find((x) => x.id === 'marvnote2')).toMatchObject({ body: 'Marver note', agent: true })
+    } finally { await srv.close(); done() }
+  })
+
   it('an edit of a message deleted since is never sent - the rest of the batch goes (the real validator)', async () => {
     const { root, dir, done } = temp('mv-r31-syncedit-')
     const srv = await server(false, true)
