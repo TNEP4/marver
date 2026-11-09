@@ -78,8 +78,9 @@ The sidebar shows where to look.
 - **One slot per row.** Every row keeps the one item at its right edge it has today, and what matters
   most takes it: the bubble first, then the row's own count or status, then a frame's dot. A board
   you are not on turns blue when its frames hold something new, and the bubble takes its status
-  glyph's place until answered. A closed folder or a folded scene changes only its count: blue when
-  something inside is new, the bubble when something inside waits on you.
+  glyph's place until answered. A closed folder shows the bubble when something inside waits on you,
+  else a blue dot when something inside is new - never a number for new: it is not a to-do count
+  (0.31). A folded scene keeps its frame count, blue when something inside is new.
 - **`U`** goes to the next frame that asks you something, then the next one waiting on you, then the
   next new one.
 
@@ -94,6 +95,17 @@ a scene, board or folder - for the version on screen: a change still loading (or
 focus or play) stays new until its new version shows, and a look you made while it loaded counts as
 soon as it does.
 
+**Resolve all comments** sits beside every **Mark all as seen** - a board's, a folder's, a scene's,
+and the Mac app's tab menu - for when the bubbles are noise (0.31). It resolves what that row shows,
+never a log: a board's every open thread on the frames it shows, a folder's over all its boards and
+sub-folders, a scene's on its frames, the tab's every open thread on the canvas. It is the same as
+resolving each one by hand - Jam's questions, reviews and failed runs on them are finished - except
+live work: a thread Jam is queued or working on is left open and counted ("2 left open: work in
+progress"). The notice says how many, with **Undo**: it reopens each thread nobody resolved or reopened
+since ("1 changed since - left as is"); what Jam finished stays finished. From the terminal: `npx marver
+comments resolve --all --board <b>` (`--folder`, `--scene`, `--canvas`, `--dry-run`), then `--undo <op>`
+with the op it prints. On a published canvas, threads are resolved one at a time.
+
 The marks start when `marver dev` starts, so whatever your agent makes before you open the canvas is
 new when you do; everything already there the first time counts as seen. They live in
 `design/.local/`, on this machine only, and a published canvas shows none. `npx marver marks` prints
@@ -101,8 +113,9 @@ them - for you, or for your agent at the start of a session.
 
 **In the Mac app** (0.3, with Marver 0.29), each canvas's tab sums this up, even while it is hidden: an
 orange count of what needs you - Marver's questions, captures to review, runs that failed or stalled -
-else a blue count of new frames, else a shimmer while an agent works, and a teal dot while a Jam session
-runs. Turn notices on and a canvas you are not looking at sends one when something new needs you, and the
+else a blue dot for new frames (no number, from app 1.1), else a shimmer while an agent works, and a teal
+dot while a Jam session runs. Its right-click menu holds **Resolve All Comments** beside **Mark All as
+Seen** for a canvas on Marver 0.31 or later. Turn notices on and a canvas you are not looking at sends one when something new needs you, and the
 Dock counts them all. Clicking a notice opens what it names where you can see it, on its board: a question
 in its thread on the frame (Play left and hidden pins shown for it), or in a panel with a field to answer
 when no frame on the board holds it; a review in its review; a failed run with Retry in view, a stalled

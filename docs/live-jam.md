@@ -251,6 +251,15 @@ The larger caution is unchanged and worth stating plainly: `marver dev` imports 
 `design/config.ts`, so running a dev server in a repo you do not trust is already running
 that repo's code. Live Jam adds no new hole to that; it does not make it safe.
 
+### A deleted comment (0.31)
+
+Delete one of your messages and Jam lets go of it: a request still queued drops it (a card left with no
+request is dropped), and a run that has not been handed to the agent yet - a card is "working" while its
+pictures are taken - has the message taken out of its packet, per message, history included; a frozen packet
+recovered after a restart is rebuilt the same way. Work already handed to an agent cannot unread it: a
+deleted message it read is in that run's context, though its reply never quotes it back. `marver comments
+list` and the context the agent reads never show a deleted message's words.
+
 ## Provenance
 
 Every jam reply is stamped with who acted: your dev user, the harness that ran, and the

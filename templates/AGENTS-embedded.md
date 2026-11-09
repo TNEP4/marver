@@ -183,7 +183,7 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
   new --thread <id>` on your own note), never a second note on the same subject. A note in the
   wrong place: `npx marver comments move <thread> --on "..."`, never a second copy. The chat keeps
   the summary and can say "question on the form". Never resolve your own notes: the human
-  resolves them as they review.
+  resolves them as they review (one at a time, or all at once - below).
 - **A plain reply in a Marver thread starts no job - only an `@marver` tag does.** The human
   answers your notes and questions on the canvas, then tags the threads they want acted on, or
   says "go through my replies": then run `npx marver marks` - its **answered by you** list is
@@ -264,6 +264,14 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
   waiting on them (your notes and replies they have not resolved - the ones that ask first) and
   the frames new since they last looked. When it bears on the work, say so in your first message
   ("you have not looked at the checkout frames since I changed them").
+- **Many open conversations: offer, never decide.** When `npx marver marks` shows more than 10
+  open, or the human says the badges are noisy, ask - with the count per board it prints ("38
+  open: checkout 22, onboarding 16 - resolve them?"). Only on a yes, run `npx marver comments
+  resolve --all --board <b>` (or `--folder`, `--scene`, `--canvas`; `--dry-run` counts first) and
+  give them the `--undo` line it prints. It never touches what Jam is working on, and the human
+  has the same in every board, folder and scene menu ("Resolve all comments"). Never on your own.
+- **A deleted comment is gone.** People edit and delete their own messages; `comments list`
+  and Jam never show a deleted one. Never quote one back, and never write one again.
 - **Performance.** `npx marver perf --loads --json` says what each board load did - time to
   settled, how many moves and why, the slowest frames, errors. To make a board faster, name
   the lever, change it, compare the next load. A slow frame's `admittedMs` is when its turn to

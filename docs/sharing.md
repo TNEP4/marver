@@ -276,6 +276,14 @@ board". Note the gate's own entry check short-circuits step 1 for the owner - th
 owner is always admitted so the canvas can be administered - which is the one
 place the blocklist does not have the last word.
 
+### What `comment` lets a person do with a thread
+
+Anyone with `comment` on a board may write, reply, react, and **resolve or reopen any thread** on it - not only
+their own. Editing and deleting a message stays its author's: the canvas compares the address of whoever wrote
+the original comment or reply with the signed-in account's (0.31 adds delete; a deleted message's replies stay,
+under "Comment deleted"). A canvas older than 0.31 takes no deletes: a delete made on your machine waits there,
+held back by `marver dev`'s sync, until the canvas is upgraded, and its shell offers no Delete.
+
 ## Mail, mentions, and the bell (v1.1)
 
 Sharing's mail rides one relay at the identity service, and the canvas can only

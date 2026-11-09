@@ -250,6 +250,9 @@ marver dev                        # two-way syncs comments every 30s
 marver comments list --open       # the agent's work queue
 marver comments reply <thread> --body "..."          # answer in the loop
 marver comments resolve <thread> --addressed-in <frame>   # close with a receipt
+#    resolve-all ("Resolve all comments" in a board's menu) is the dev server's only: on
+#    the published canvas threads are resolved one at a time. A message deleted locally
+#    reaches a canvas older than 0.31 only once it is upgraded (until then it is held back)
 marver comments revoke <email>    # kills the account + its sessions, mid-flight
 ```
 
@@ -265,7 +268,9 @@ through sign-in.
 - `design/comments/<board>.jsonl` - the dev-side mirror, git-tracked: feedback
   has history, and the volume has an off-site replica for free. **Each event
   carries its author's email address** - that is how the canvas decides who may
-  edit or resolve their own thread. Harmless in a private repo; if yours is
+  edit or delete a message: its author, and only its author. Resolving is not
+  the author's alone: anyone who may comment on a board may resolve (and reopen)
+  any thread on it. Harmless in a private repo; if yours is
   public, or may become public, gitignore `design/comments/` and let the volume
   be the record. The canvas keeps its own copy either way, so nothing is lost.
 - `~/.marver/canvases/<project-hash>.json` - THIS machine's device credential, kept
