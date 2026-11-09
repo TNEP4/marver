@@ -725,7 +725,8 @@ export function App() {
       perfSeams.frameMessage.emit(nodeKey, data)
       // Jam (spec 27): a capture's trail, handshake, probes and flushes; a key the shell owns
       if (onFrameMessage(nodeKey, data)) return
-      if (data.type === 'sh:key') { if (typeof data.key === 'string') jamKey({ key: data.key, shift: !!data.shift, alt: !!data.alt, meta: !!data.meta, ctrl: !!data.ctrl }, 'frame'); return }
+      // a key the frame forwards: the person's, so a show or link still loading gives way (spec 31 D3)
+      if (data.type === 'sh:key') { if (typeof data.key === 'string') { navigatedByHand(); jamKey({ key: data.key, shift: !!data.shift, alt: !!data.alt, meta: !!data.meta, ctrl: !!data.ctrl }, 'frame') } return }
 
       if (data.type === 'sh:ready') {
         // a WindowProxy survives navigation, so a ready queued by a SUPERSEDED document (one the

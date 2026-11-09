@@ -31,7 +31,7 @@ import { canvasCtl } from './canvas/ctl.ts'
 import { recorder } from './recorder.ts'
 import { perfSeams } from './recorder-seams.ts'
 import { cmd, endAfterFrames, endOnStage, keysOf, type CmdHandle, type CmdOpts, type CmdName } from './commands.ts'
-import { revealFrame, switchFor } from './goto.ts'
+import { navigatedByHand, revealFrame, switchFor } from './goto.ts'
 import { Tip } from './Tip.tsx'
 import { keyAllowed } from '../frame-host/keys.js'
 import { CommentButton, DevicePicker, HideUIButton, isHideUI, LaserButton, Popover, ThemePicker, toggleHideUI, usePopover } from './Toolbar.tsx'
@@ -482,7 +482,8 @@ function PlayInner() {
       perfSeams.stageMessage.emit(data)
       // Jam (spec 27): the stage records like a frame; a key the shell owns comes back as sh:key
       if (onFrameMessage('stage', data)) return
-      if (data.type === 'sh:key') { if (typeof data.key === 'string') jamKey({ key: data.key, shift: !!data.shift, alt: !!data.alt, meta: !!data.meta, ctrl: !!data.ctrl }, 'stage'); return }
+      // a key the stage forwards: the person's, so a show or link still loading gives way (spec 31 D3)
+      if (data.type === 'sh:key') { if (typeof data.key === 'string') { navigatedByHand(); jamKey({ key: data.key, shift: !!data.shift, alt: !!data.alt, meta: !!data.meta, ctrl: !!data.ctrl }, 'stage') } return }
       if (data.type === 'sh:stage-ready') {
         frameReady('stage')
         // an iframe reload (registry HMR invalidation) boots at the frozen initial src -
@@ -517,6 +518,7 @@ function PlayInner() {
           if (s.playNav && !s.stageShown) useStore.setState({ playUpdateRevision: 'retry' })   // an Update that failed: offer it again
         }
       } else if (data.type === 'sh:stage-key') {
+        navigatedByHand()   // the person's key or click on the stage (spec 31 D3)
         if (data.meta && data.key === '/') { cmd('toolbar', { via: 'key', in: 'stage', keys: 'Meta+/' }); toggleCollapse() }
         // the stage's background click, posted as Space, says so (#50)
         else handleKey(String(data.key), String(data.code), !!data.alt, data.origin === 'click' ? { via: 'click', in: 'stage' } : { via: 'key', in: 'stage', keys: keysOf({ key: String(data.key), alt: !!data.alt }) })

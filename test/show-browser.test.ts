@@ -92,7 +92,7 @@ const FAKE_APP = `(() => {
   const shows = new Set()
   window.__app = { fronts: 0, show: (t) => { for (const fn of shows) fn(t); return shows.size } }
   window.marverApp = Object.freeze({ v: 1, topInset: 0, hello() {}, theme() {}, busy() {}, menu() {},
-    onAppState: () => () => {}, onMenuClick: () => () => {},
+    onAppState: () => () => {}, onMenuClick: (fn) => { window.__app.menu = fn; return () => {} },
     onShow: (fn) => { shows.add(fn); return () => shows.delete(fn) },
     front: () => { window.__app.fronts++ } })
 })()`
@@ -469,6 +469,49 @@ describe('a show and the boot', () => {
     await t.until(`!!document.querySelector('.sh-show-notice')`)
     expect(await t.ev(`__mvStore.getState().board`)).toBe('main')
     await expect.poll(() => acks(seq), { timeout: 5000 }).toEqual({ shown: 0, notice: 1 })
+  }, 60_000)
+
+  it('an app menu item chosen while a show loads its board: the show gives way (its replayed key is untrusted)', async () => {
+    if (!browser) return
+    const t = await open('#/b/main', { app: true })
+    await t.ev(`__hold('other')`)
+    const seq = await show({ board: 'other', n: ['n-three'] })
+    await t.until(`__gate.asked`)
+    await t.ev(`__app.menu({ id: 'fit-all' }), 1`)
+    await t.ev(`__gate.release()`)
+    await new Promise((r) => setTimeout(r, 1500))
+    expect((await t.ev(VIEW)).board).toBe('main')
+    expect(await acks(seq)).toEqual({ shown: 0, notice: 0 })
+  }, 60_000)
+
+  it('a key a frame forwards (sh:key) while a show loads its board: the show gives way', async () => {
+    if (!browser) return
+    const t = await open('#/b/main')
+    await t.ev(`__hold('other')`)
+    const seq = await show({ board: 'other', n: ['n-three'] })
+    await t.until(`__gate.asked`)
+    await t.ev(`document.querySelector('.sh-node[data-node="n-one"] iframe').contentWindow.eval("parent.postMessage({ type: 'sh:key', key: 'F13' }, '*')"), 1`)
+    await new Promise((r) => setTimeout(r, 200))
+    await t.ev(`__gate.release()`)
+    await new Promise((r) => setTimeout(r, 1500))
+    expect((await t.ev(VIEW)).board).toBe('main')
+    expect(await acks(seq)).toEqual({ shown: 0, notice: 0 })
+  }, 60_000)
+
+  it('Enter held on the notice\'s Go: the Go goes, its own key repeat never cancels it', async () => {
+    if (!browser) return
+    const t = await open('#/b/main')
+    await t.ev(TYPE)
+    await show({ board: 'other', n: ['n-three'] })
+    await t.until(`!!document.querySelector('.sh-show-notice .cmd')`)
+    await t.ev(`__hold('other')`)
+    await t.ev(`document.querySelector('.sh-show-notice .cmd').focus(), 1`)
+    await browser.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' }, t.s)
+    await t.until(`__gate.asked`)
+    for (let i = 0; i < 3; i++) await browser.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, autoRepeat: true }, t.s)
+    await browser.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 }, t.s)
+    await t.ev(`__gate.release()`)
+    await t.until(settled('other', ['n-three']))
   }, 60_000)
 
   byHand('a comment stack clicked on a frame while a show loads its board: the show gives way', async (t) => {

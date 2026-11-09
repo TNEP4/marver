@@ -89,12 +89,15 @@ const MODIFIERS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Fn'])
  * be missed: a device preset, a Jam tile, Play and back, a toolbar button. Not words typed into a field (they make a
  * show the notice instead, show.ts) nor a modifier key alone; never a synthetic event (`isTrusted`). Input inside a
  * frame's own document never reaches here: its wheel is forwarded and counted by the canvas (Canvas.tsx beginGesture),
- * a click on its node by FrameNode. Installed once by App.tsx; answers what removes it.
+ * a click on its node by FrameNode, a key it forwards (`sh:key`, the stage's `sh:stage-key`) where the shell takes it;
+ * the app menu's items replay their key untrusted and count at their relay (app-bridge.ts runMenuItem). Installed once
+ * by App.tsx; answers what removes it.
  */
 export function watchHands(target: Window = window): () => void {
   const inText = (e: Event) => { const t = e.target as Element | null; return !!t?.closest?.(TEXT) }
   const press = (e: PointerEvent) => { if (e.isTrusted && !inText(e)) navigatedByHand() }
-  const key = (e: KeyboardEvent) => { if (e.isTrusted && !MODIFIERS.has(e.key) && !inText(e)) navigatedByHand() }
+  // a key held down repeats: one choice, counted once (a held Enter on the show notice's Go never cancels the Go)
+  const key = (e: KeyboardEvent) => { if (e.isTrusted && !e.repeat && !MODIFIERS.has(e.key) && !inText(e)) navigatedByHand() }
   const wheel = (e: WheelEvent) => { if (e.isTrusted) navigatedByHand() }
   target.addEventListener('pointerdown', press, true)
   target.addEventListener('keydown', key, true)

@@ -51,6 +51,7 @@ import { useJamUi } from './jam-state.ts'
 import { useJamVoice, voiceUntrusted } from './jam-voice.ts'
 import { endOpen, openLiveItem } from './open-item.ts'
 import { showTarget } from './show.ts'
+import { navigatedByHand } from './goto.ts'
 
 /** The ground under the strip (A2.14 #26): the shell's own - never a frame's pinned theme. */
 export const shellDark = (): boolean => { const s = useStore.getState(); return !!s.play || s.viewTheme === 'dark' }
@@ -172,6 +173,8 @@ export function runMenuItem(id: string, from?: unknown): void {
   }
   const it = ITEMS.find((x) => x.id === id)
   if (!it || !offered(it)) return
+  // the person chose it in the app's menu: a show or link still loading gives way (spec 31 D3; its key is untrusted)
+  navigatedByHand()
   // recorded by the key handler that runs it, once, as the relay it is (`cmd()` reads `relayed`)
   relayed(where, () => window.dispatchEvent(new KeyboardEvent('keydown', { ...it.key, bubbles: true, cancelable: true })))
 }
