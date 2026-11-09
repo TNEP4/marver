@@ -87,9 +87,18 @@ export function unescapeJs(s: string): string {
 
 /** Extract `export const meta = {...}` with literal string values only. Anything else is silently omitted. */
 export function extractMeta(src: string): FrameMeta {
-  const m = /export\s+const\s+meta\s*=\s*\{([\s\S]*?)\}/.exec(src)
+  const m = /export\s+const\s+meta\s*=\s*\{/.exec(src)
   if (!m) return {}
-  const body = m[1]
+  // the object's body runs to its first `}` outside a string literal - a brace inside one (`'a {b}'`, `'\u{e9}'`) is text
+  let end = m.index + m[0].length
+  for (let q = ''; end < src.length; end++) {
+    const ch = src[end]
+    if (q) { if (ch === '\\') end++; else if (ch === q || ch === '\n') q = '' }
+    else if (ch === "'" || ch === '"' || ch === '`') q = ch
+    else if (ch === '}') break
+  }
+  if (end >= src.length) return {}
+  const body = src.slice(m.index + m[0].length, end)
   const pick = (key: string) => {
     // boundary required: `covariant:` must not match `variant:` (property suffixes). Each
     // quote style closes on its own kind, so an apostrophe inside "…" is prose, not an end

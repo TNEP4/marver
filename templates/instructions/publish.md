@@ -53,7 +53,8 @@ vars if the host has no CLI.
    redeploy; marver fails loudly if the dir cannot be created.
 
 Then one line before you build: **name the canvas** -
-`share: { name: "Your App" }` in `design/config.ts`. The name is the gate's
+`name: "Your App"` in `design/config.ts` (configure.md's identity step usually did;
+`share.name` still works). The name is the gate's
 title, the brand pill's tooltip, and the `utm_campaign` on every powered-by
 link the canvas emits (the wordmark, the gate, the play brand pill). With no
 name it falls back to the ROOT DIRECTORY, which in a container is `app` -

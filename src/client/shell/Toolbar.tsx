@@ -217,7 +217,7 @@ export function DevicePicker({ value, onSelect, includeDefault, includeFill, inc
         </>}
         {entries.map(([name, vp], i) => (
           <button key={name} onClick={() => pick(name)} title={`${vp.width} × ${vp.height}`}>
-            {deviceIcon(name)}<span>{deviceLabel(name)}</span><kbd>{i < 9 ? i + 1 : ''}</kbd>
+            {deviceIcon(name)}<span className="dev-label">{deviceLabel(name)}</span><kbd>{i < 9 ? i + 1 : ''}</kbd>
             {value === name && <CheckIcon size={13} className="chk" />}
           </button>
         ))}

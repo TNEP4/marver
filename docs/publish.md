@@ -251,14 +251,14 @@ mention from the page metadata, the sign-in screens included).
 
 ### Name the canvas
 
-`share: { name: "Your App" }` in `design/config.ts`. That name titles the gate,
-labels the brand pill, and becomes `utm_campaign` on every powered-by link the
-canvas emits, so site analytics can tell which canvas sent a visitor. Unset, the gate
-falls back to your `package.json` name and the canvas shell to the root
-directory name - which inside a container is usually `app`, so every unnamed
-containerised canvas reports as one campaign.
+`name: "Your App"` in `design/config.ts` (`share: { name }` still works; `name` wins). That
+name titles the gate, labels the brand pill, names the canvas in the Mac app, and becomes
+`utm_campaign` on every powered-by link the canvas emits, so site analytics can tell which
+canvas sent a visitor. Unset, the gate falls back to your `package.json` name and the
+canvas shell to the root directory name - which inside a container is usually `app`, so
+every unnamed containerised canvas reports as one campaign.
 
-Your logo - `share.logo`, else the first of `design/logo.svg|png`, `public/logo.svg|png`
+Your logo - `logo` in the config, else `share.logo`, else the first of `design/logo.svg|png`, `public/logo.svg|png`
 and `public/favicon.svg|png|ico` - ships with the build. The gate shows it, and since
 0.29 it is the only tab icon of the canvas and the gate, so a browser tab (and the Mac
 app's tab for a shared canvas) wears it rather than Marver's mark. With no logo, the tab
@@ -283,7 +283,7 @@ Deploy. The repo itself is the deployable - nothing to export, nothing to sync.
 FROM node:22-slim
 RUN apt-get update && apt-get install -y --no-install-recommends chromium fonts-liberation \
   && rm -rf /var/lib/apt/lists/*          # the browser `marver build` compiles the glass textures with
-WORKDIR /app                      # set share.name in design/config.ts - the fallback name is this directory
+WORKDIR /app                      # set name in design/config.ts - the fallback name is this directory
 COPY . .
 RUN npm ci && npx marver build    # as root in a container: marver adds Chrome's --no-sandbox itself
 ENV PORT=8080

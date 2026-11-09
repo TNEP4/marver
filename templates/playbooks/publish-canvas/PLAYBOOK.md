@@ -24,7 +24,7 @@ project's values (which account, which domain, which gate) and every run in the 
 - The three decisions are made: **which boards ship** (`design/publish.json` - publishing is
   default-closed), **who gets in** (Marver Sign In by default; the canvas password when nothing
   external may be in the sign-in path), **collaboration** (a persistent volume for comments, or none).
-- The canvas has a name: `share: { name: "..." }` in `design/config.ts`.
+- The canvas has a name: `name: "..."` in `design/config.ts` (or `share: { name }`).
 
 ## Steps
 

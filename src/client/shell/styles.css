@@ -635,6 +635,8 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
   cursor: pointer; text-align: left }
 .sh-menu button:hover { background: var(--glass-hover) }
 .sh-menu button span { flex: 1; text-transform: capitalize }
+/* a device's label is written as it should read ("iPad landscape", spec 31 F.2) - never re-capitalised */
+.sh-menu button span.dev-label { text-transform: none }
 /* the sidebar right-click menu keeps its labels verbatim (they match the toolbar exactly);
    it scrolls rather than overflowing the window when the folder list grows long */
 .sh-ctxmenu { max-height: calc(100vh - 16px - var(--mv-top, 0px)); max-width: 240px; overflow-y: auto; scrollbar-width: thin }

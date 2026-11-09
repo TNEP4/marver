@@ -72,6 +72,11 @@ appears here, with its own tab, a second after it starts."), and for a repo with
 @marver-design/marver && npx marver init` first. Each command has a button that copies it. Every canvas running on
 this Mac gets its own tab; `⌘L`, or Home's field, opens a link - a local canvas's, or a shared canvas's.
 
+A canvas's tab and Home card wear its name and its logo: `name` in its `design/config.ts` (else `share.name`, else
+the folder's name) and `logo` (else `share.logo`, else the first of `design/logo.svg|png`, `public/logo.svg|png`,
+`public/favicon.svg|png|ico`, else Marver's mark). A canvas still on its folder's name or Marver's mark looks like
+every other one in the strip, so `marver dev` says so on its boot line.
+
 ## What it asks, and when
 
 - **Notices.** Nothing touches macOS's notices or the Dock before you choose. The first time a canvas needs you while

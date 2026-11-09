@@ -201,6 +201,11 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
   // tv available commented-out). Pick the one the screen is designed for - the human can
   // flip the whole board to any device (Devices menu; digit keys - 0 restores each
   // frame's own size, 1..n per configured device) to check responsiveness.
+  // Add the product's own devices there too: `"boox-full": { width: 1240, height: 1860 }`.
+  // Each shows as its name reads ("ipad-landscape" -> "iPad landscape", the tablet glyph
+  // turned) unless it sets `label` (40 chars) and `icon`: a glyph (mobile, tablet, laptop,
+  // monitor, tv, watch, desktop, ereader; "-landscape" turns it) or a repo .svg - paths and
+  // shapes only (no style, script, href, text), 32 KB at most, drawn in the toolbar's ink.
 - States are sibling frames: empty.tsx, filled.tsx, error.tsx, success.tsx.
 - VERSIONS are sibling frames with letter prefixes, and the canvas understands them:
   design/scenes/landing/a-terminal.tsx + b-editorial.tsx form a VARIANT GROUP - kept

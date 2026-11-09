@@ -1747,6 +1747,35 @@ describe('spec 28 A4.6 #9: the occurrence counters a live item is named by', () 
     done()
   })
 
+  it('at boot, a recovered batch whose cards are gone is retired after its failed post - not tried at every start (spec 31 H.3)', async () => {
+    const { root, done } = setup()
+    const j = readJournal(root)
+    j.baselined = true
+    const now = Date.now()
+    // a session's run from a week ago: claimed, results kept, an early line - its card pruned from the journal
+    const B_U = '7c1d6a40-2b9e-4f0a-9d3c-5e8f1a2b4c6d'
+    j.batches.push({ batchId: B_U, members: [{ id: 'm1', card: 'c-pruned', board: 'home' }], frames: ['demo/a'], state: 'claimed', leaseUntil: 0, attempts: 1, at: now - 8 * 86_400_000,
+      results: { m1: { body: 'Done, saved.', asks: false, reanchors: [] } }, early: { body: 'On it.', asks: false, commentId: 'jam-c-early', ts: now - 8 * 86_400_000 } })
+    writeJournal(root, j)
+    const lines: string[] = []
+    const t0 = performance.now()
+    const jam = createJam(root, CFG, agent(), (l: string) => lines.push(l))
+    await jam.tick(); jam.stop()
+    // one failed post, no backoff (the old path tried 4 times, ~7 s of startup barrier)
+    expect(performance.now() - t0).toBeLessThan(1500)
+    // retired: failed with its reason, or already pruned (a finished batch with no card left is not kept)
+    const b = readJournal(root).batches.find((x) => x.batchId === B_U)
+    expect(b === undefined || (b.state === 'failed' && b.note === 'its cards are gone'), JSON.stringify(b)).toBe(true)
+    expect(lines.filter((l) => l.includes('cards are gone')).length).toBe(1)
+    expect(lines.some((l) => l.includes('could not post a recovered batch'))).toBe(false)
+    // the next start has nothing to post again
+    const lines2: string[] = []
+    const again = createJam(root, CFG, agent(), (l: string) => lines2.push(l))
+    await again.tick(); again.stop()
+    expect(lines2.some((l) => /recovered batch/.test(l))).toBe(false)
+    done()
+  })
+
   it('at boot, a capture or a session record changed since it was confirmed fails its card through failCard', async () => {
     const { root, dir, done } = setup()
     const { a, b, j } = crashed(root, dir)

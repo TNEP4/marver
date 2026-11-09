@@ -20,8 +20,25 @@ frames render suspiciously unstyled - then never think about it again.
    guessed from env markers and PATH - on a machine with both CLIs installed that guess
    can be wrong, and then every `@marver` comment is answered by the other tool. Fix the
    line and tell the human. Details, including the off switch: instructions/jam.md.
+6. **The canvas looks like the product** (identity): in the Mac app's tab, on its Home
+   card and in the sidebar, a canvas wears its name and its logo - left alone it is the
+   folder's name and the Marver mark, like every other canvas there (`marver dev`'s boot
+   line says so). So:
+   - `name` in `design/config.ts` is the product's human name - "TMS Broker", not
+     "tms-broker" (init wrote a first guess from package.json; make it real).
+   - `design/logo.svg` is the product's REAL mark - find it in the app (`public/`,
+     `src/assets/`, the favicon) and copy it in; draw a simple one only when the app
+     truly has none, and tell the human. A regular file in the repo (never a symlink),
+     an SVG, PNG or ICO of at most 256 KB; `logo: "path"` in the config names another.
+   - Boards, folders and frames carry titles written for people ("iPad landscape",
+     "Checkout - empty cart"), never a slug ("Ipad-landscape").
+   - Custom breakpoints read well: `viewports.<name>` takes a `label` and an `icon` (a
+     built-in glyph or a repo .svg) - see the Frames section of AGENTS.md. A name like
+     `ipad-landscape` needs neither: it already shows as "iPad landscape" with the tablet
+     glyph turned.
+   `share.name` / `share.logo` still work (`name` / `logo` win); nothing needs rewriting.
 
-All five true → idle state. Go design.
+All six true → idle state. Go design.
 
 ## By repo maturity
 

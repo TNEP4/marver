@@ -29,7 +29,8 @@ export function DeviceGlyph({ look, size = 14 }: { look: DeviceLook; size?: numb
   if (look.mask && SAFE_MASK.test(look.mask)) {
     const url = `url("${look.mask}")`
     const style: CSSProperties = { width: size, height: size, WebkitMaskImage: url, maskImage: url }
-    return <span className="sh-dev-mask" aria-hidden data-mv-device-mask="" style={style} />
+    // an <i>, not a <span>: menu rules that stretch and capitalise a button's span are for its words
+    return <i className="sh-dev-mask" aria-hidden data-mv-device-mask="" style={style} />
   }
   const I = (look.glyph && DEVICE_GLYPH_ICONS[look.glyph]) || DevicesIcon
   return <I size={size} style={look.rotate ? { transform: 'rotate(90deg)' } : undefined} />
