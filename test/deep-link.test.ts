@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { execFile } from 'node:child_process'
 import { createServer, type Server } from 'node:http'
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
@@ -150,5 +150,36 @@ describe('GET /__mv/api/update always answers (E4)', () => {
     expect(await updateStatus(root)).toMatchObject({ latest: null, checkedAt: at, state: 'offline' })
     process.env.MARVER_NO_UPDATE_CHECK = '1'
     expect(await updateStatus(root)).toMatchObject({ latest: null, checkedAt: null, state: 'disabled' })
+  })
+
+  it('past the day\'s TTL it asks the registry again - once for requests that come together; a failure is offline, and kept', async () => {
+    delete process.env.MARVER_NO_UPDATE_CHECK
+    cache({ checkedAt: Date.now() - 25 * 3600 * 1000, latest: '0.0.1', ok: true })
+    let asked = 0
+    const answer = { body: JSON.stringify({ version: '98.7.6' }), ok: true }
+    vi.stubGlobal('fetch', async (url: string) => {
+      asked++
+      expect(url).toBe('https://registry.npmjs.org/%40marver-design%2Fmarver/latest')
+      await new Promise((r) => setTimeout(r, 50))
+      if (!answer.ok) throw new Error('offline')
+      return new Response(answer.body)
+    })
+    try {
+      const [a, b] = await Promise.all([updateStatus(root), updateStatus(root)])
+      expect(asked).toBe(1)
+      expect(a).toMatchObject({ latest: '98.7.6', state: 'ok' })
+      expect(b).toEqual(a)
+      expect(await updateStatus(root)).toMatchObject({ latest: '98.7.6' })   // fresh now: no ask
+      expect(asked).toBe(1)
+      cache({ checkedAt: Date.now() - 25 * 3600 * 1000, latest: '98.7.6', ok: true })
+      answer.ok = false
+      expect(await updateStatus(root)).toMatchObject({ latest: null, state: 'offline' })
+      expect(await updateStatus(root)).toMatchObject({ state: 'offline' })   // the failure is cached: the next ask waits a day
+      expect(asked).toBe(2)
+      // a registry that answers something that is not x.y.z: never passed on
+      cache({ checkedAt: Date.now() - 25 * 3600 * 1000, latest: null, ok: false })
+      answer.ok = true; answer.body = JSON.stringify({ version: '<b>1.0.0</b>' })
+      expect(await updateStatus(root)).toMatchObject({ latest: null, state: 'offline' })
+    } finally { vi.unstubAllGlobals() }
   })
 })
