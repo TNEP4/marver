@@ -6,8 +6,8 @@ import { PDFDocument } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { boardOrder, exportPlan, presentDevice, titleOf, type PlanFrame } from '../src/shared/export-plan.ts'
 import {
-  boardNodes, cancelPdfJob, captureScale, clearPdfJobs, exportUrl, getJob, handoutHtml, jobsDir, jobStatus, JOB_ID, mergePages, PDF_BUDGET, planFor, playsAsSlides,
-  startPdfJob, sweepPdfJobs, writeOutline, writeWhole, type PdfCtx,
+  assetsChanged, boardNodes, cancelPdfJob, captureScale, clearPdfJobs, exportUrl, getJob, handoutHtml, jobsDir, jobStatus, JOB_ID, mergePages, PDF_BUDGET, planFor, playsAsSlides,
+  startPdfJob, sweepPdfJobs, unlinkGotos, writeOutline, writeWhole, type PdfCtx,
 } from '../src/server/pdf.ts'
 import { reportLines } from '../src/cli/pdf.ts'
 import { knownType, resolveType } from '../src/shared/board-types.ts'
@@ -150,11 +150,44 @@ describe('jobs (spec 31 How)', () => {
     expect(await startPdfJob(ctx, { board: 'deck', theme: '../x' })).toMatchObject({ ok: false, status: 400 })
     expect(getJob('../../etc')).toBeUndefined()
   })
+  it('a cancel that lands while the last step finishes still wins: the job ends cancelled, never done', async () => {
+    const ctx = ctxFor()
+    let finish!: () => void
+    const a = await startPdfJob(ctx, { board: 'deck' }, { run: (j) => new Promise<void>((res) => { finish = () => { j.file = join(j.dir, j.filename); writeFileSync(j.file, '%PDF'); res() } }) })
+    const id = (a as { job: { id: string } }).job.id
+    cancelPdfJob(id)
+    finish()   // the run ends normally after the cancel (a merge that does not look at the signal)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(getJob(id)).toBeUndefined()
+  })
   it('a failure is reported with its reason (and the deadline\'s reason when it fires)', async () => {
     const ctx = ctxFor()
     const a = await startPdfJob(ctx, { board: 'deck' }, { run: async () => { throw new Error('s/a: the frame never rendered') } })
     await new Promise((r) => setTimeout(r, 20))
     expect(jobStatus(getJob((a as { job: { id: string } }).job.id)!)).toMatchObject({ state: 'failed', error: 's/a: the frame never rendered' })
+  })
+  it('a dev server restart in this process cancels the running job and frees the canvas for the next one', async () => {
+    const ctx = ctxFor()
+    const a = await startPdfJob(ctx, { board: 'deck' }, { run: (j) => new Promise((_, rej) => j.abort.signal.addEventListener('abort', () => rej(new Error('stopped')))) })
+    const j = (a as { job: { id: string; abort: AbortController } }).job
+    const { resetPdf } = await import('../src/server/pdf-reset.ts')
+    resetPdf(root)
+    expect(j.abort.signal.aborted).toBe(true)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(getJob(j.id)).toBeUndefined()
+    expect((await startPdfJob(ctx, { board: 'deck' }, { run: async () => {} })).ok).toBe(true)
+  })
+  it('an asset overwritten while a slide rendered is seen (its folder keeps its time; the file does not)', () => {
+    const ctx = ctxFor()
+    mkdirSync(join(root, 'design', 'assets'), { recursive: true })
+    writeFileSync(join(root, 'design', 'assets', 'photo.png'), 'a')
+    const since = Date.now() + 5000
+    expect(assetsChanged(root, ['design/assets/photo.png'], since)).toBe(false)
+    const later = since / 1000 + 1
+    utimesSync(join(root, 'design', 'assets', 'photo.png'), later, later)
+    expect(assetsChanged(root, ['design/assets/photo.png'], since)).toBe(true)
+    expect(assetsChanged(root, ['design/assets/../../etc/passwd', 'design/x'], 0)).toBe(false)
+    void ctx
   })
   it('cleanup: past its hour a job and its folder go; a folder no job knows goes too; dev start clears them all', async () => {
     const ctx = ctxFor()
@@ -236,6 +269,12 @@ describe('the report, the handout, the URLs', () => {
       '  every page print-certified (rasterised and compared with the screen)',
     ])
   })
+  it('--vector: a page that prints differently is named, and the PDF is not called print-certified', () => {
+    const lines = reportLines({ board: 'deck', notes: false, pages: 1, bytes: 1000, ms: 1000, chrome: '1', certified: 'screen', skipped: [], slides: [
+      { page: 1, frame: 'd/01', title: 'a', width: 1280, height: 720, theme: 'light', status: 'vector', printDiffers: true, ms: 1 },
+    ] }, 'x.pdf')
+    expect(lines.slice(1)).toEqual(['  printed differently from the screen (kept: --vector): d/01', '  not print-certified: the pages above differ in print'])
+  })
   it('the handout escapes titles and keeps notes as given (md.ts renders them inert), "No notes" where there are none', () => {
     const html = handoutHtml({ title: '<b>x</b>', canvas: 'c', paper: 'a4', slides: [{ title: '<script>alert(1)</script>', picture: '0.jpg', html: '<p>ok</p>' }, { title: 't', html: '' }] }, (n) => `/p/${n}.jpg?job=x"`)
     expect(html).not.toContain('<script>alert(1)')
@@ -244,6 +283,10 @@ describe('the report, the handout, the URLs', () => {
     expect(html).toContain('<div class="notes"><p>ok</p></div>')
     expect(html).toContain('<p class="none">No notes</p>')
     expect(html).toContain('size: 11.69in 8.27in')
+  })
+  it('a link to another slide in the notes prints as its text - never a link to the local handout page', () => {
+    expect(unlinkGotos('<p>see <a href="#" data-goto="d/02">slide <em>2</em></a> and <a href="https://x.com/" target="_blank" rel="noopener noreferrer">x</a></p>'))
+      .toBe('<p>see <span class="goto">slide <em>2</em></span> and <a href="https://x.com/" target="_blank" rel="noopener noreferrer">x</a></p>')
   })
   it('a page renders with export=1 - its frame host or its html file', () => {
     expect(exportUrl('http://o', { frame: 'd/a b', kind: 'tsx', theme: 'dark' })).toBe('http://o/__mv/frame/?id=d%2Fa%20b&theme=dark&export=1')

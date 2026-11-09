@@ -33,7 +33,8 @@ import { pool } from './shot.ts'
 import { staleSurface } from './stale.ts'
 import { exportPlan, type Plan, type PlanFrame, type PlanNode, type PlanPage, type Viewports } from '../shared/export-plan.ts'
 import { BOARD_NAME } from '../shared/board-tree.ts'
-import { COMPARE, CROP, PDF_INSTALL, SETTLED, SVG_IMAGES, TO_JPEG, TWO_FRAMES } from './pdf-page.ts'
+import { COMPARE, CROP, PDF_EARLY, PDF_INSTALL, SETTLED, SVG_IMAGES, TO_JPEG, TWO_FRAMES } from './pdf-page.ts'
+import { onPdfReset } from './pdf-reset.ts'
 
 // ---- the contract ------------------------------------------------------------------------------------------------
 
@@ -61,8 +62,9 @@ export const PDF_BUDGET = { side: 4096, pages: 300, ms: 15 * 60_000, bytes: 500 
 export const PDF_LANES = 4
 /** A job id: 128 random bits, base64url. */
 export const JOB_ID = /^[A-Za-z0-9_-]{22}$/
-/** The share of a patch box allowed to differ (screen certification), and of the page coarsely (print certification). */
-export const CERTIFY = { box: 0.01, tol: 24, page: 0.0025 }
+/** The share of a patch box allowed to differ (screen certification); of the page in 8 CSS px blocks, and pixel by pixel
+ *  within one pixel (print certification). Measured on the five real decks' good pages: at most 0.06 % and 0.19 %. */
+export const CERTIFY = { box: 0.01, tol: 24, page: 0.0025, fine: 0.01 }
 /** Measured on the build (a grid of sizes and blurs, rasterised and compared): Chrome prints a drop-shadow-only filter
  *  right at any size - unlike a large blurred box-shadow - so it is no trigger. Any other filter function is. */
 export const DROP_SHADOW_PRINTS = true
@@ -84,6 +86,8 @@ export interface PageReport {
   clipped?: true
   spilled?: true
   changed?: true
+  /** --vector: the printed page differs from the screen, and was kept as Chrome printed it */
+  printDiffers?: true
   error?: string
   ms: number
   bytes?: number
@@ -191,6 +195,8 @@ export interface SlideOut {
   printDiffers?: true
   /** the printed page was rasterised and compared with the screen */
   printChecked?: true
+  /** the design/assets files the slide loaded (root-relative): an overwrite while it rendered renders it again */
+  assets?: string[]
 }
 
 /** Device pixels per CSS px for a page's captures: 3x, lowered (in quarter steps) so one capture stays under 16 MP. */
@@ -217,7 +223,7 @@ export class Helper {
     return r.result.value as T
   }
   crop(shot: string, dsf: number, boxes: Rect[]) { return this.call<{ png: string; jpeg: string }[]>(CROP, [shot, dsf, boxes]) }
-  compare(a: string, b: string, dsf: number, boxes: Rect[], tol: number) { return this.call<{ boxes: number[]; outside: { gt32: number; n: number; blockMax: number }; coarse: number }>(COMPARE, [a, b, dsf, boxes, tol]) }
+  compare(a: string, b: string, dsf: number, boxes: Rect[], tol: number, atB = false) { return this.call<{ boxes: number[]; outside: { gt32: number; n: number; blockMax: number }; coarse: number; fine: number }>(COMPARE, [a, b, dsf, boxes, tol, atB]) }
   jpeg(png: string, quality: number, scale: number) { return this.call<string>(TO_JPEG, [png, quality, scale]) }
 }
 
@@ -280,6 +286,8 @@ export async function renderSlide(b: Browser, helper: Helper, page: PlanPage, o:
     let lastException = ''
     const off = b.on((m) => { if (m.sessionId === sid && m.method === 'Runtime.exceptionThrown') lastException = String(m.params?.exceptionDetails?.exception?.description ?? m.params?.exceptionDetails?.text ?? '').split('\n')[0] })
     await send('Runtime.enable', {}, sid)
+    // before the frame's own code: an animation that ends before the slide is ready keeps its end pose (#4)
+    await send('Page.addScriptToEvaluateOnNewDocument', { source: PDF_EARLY }, sid)
     try {
       const nav = await send('Page.navigate', { url: o.url }, sid)
       if (nav?.errorText && nav.errorText !== 'net::ERR_ABORTED') return { status: 'failed', error: `could not load the frame (${nav.errorText})` }
@@ -312,8 +320,7 @@ export async function renderSlide(b: Browser, helper: Helper, page: PlanPage, o:
       await bounded(ev(TWO_FRAMES, true), 1000)
       const out: SlideOut = { status: 'vector', ...(settled ? {} : { unsettled: true as const }) }
       if (await ev<boolean>(`window.__mvPdf.clipped(${W}, ${H})`)) out.clipped = true
-      await ev(`window.__mvPdf.stage(${W}, ${H}, ${!!out.clipped})`)
-      await bounded(ev(TWO_FRAMES, true), 1000)
+      out.assets = await bounded(ev<string[]>(`[...new Set(performance.getEntriesByType('resource').map((e) => { try { return decodeURIComponent(new URL(e.name).pathname) } catch { return '' } }).filter((p) => p.startsWith('/design/assets/')).map((p) => p.slice(1)))]`), 1000) ?? []
 
       // a screenshot of exactly the native view (never a clip): retaken when Chrome hands back its old surface tiled
       const shoot = async (): Promise<string> => {
@@ -324,7 +331,11 @@ export async function renderSlide(b: Browser, helper: Helper, page: PlanPage, o:
           await bounded(ev(TWO_FRAMES, true), 1000)
         }
       }
+      // the reference: the slide as the screen shows it, taken before anything is staged for print - every certification
+      // compares with this, so a staging that moved anything is caught
       const ref = await shoot()
+      await ev(`window.__mvPdf.stage(${W}, ${H})`)
+      await bounded(ev(TWO_FRAMES, true), 1000)
       // MARVER_PDF_DEBUG=<dir>: each slide's pictures kept there (the screen, the patched page, the printed page)
       const debug = (name: string, data: string | Buffer) => { const d = process.env.MARVER_PDF_DEBUG; if (d) try { mkdirSync(d, { recursive: true }); writeFileSync(join(d, `${String(o.n + 1).padStart(3, '0')}-${page.frame.replace(/\//g, '__')}.${name}`), typeof data === 'string' ? Buffer.from(data, 'base64') : data) } catch { /* a debug aid */ } }
       debug('screen.png', ref)
@@ -372,9 +383,11 @@ export async function renderSlide(b: Browser, helper: Helper, page: PlanPage, o:
         printBackground: true, preferCSSPageSize: false, scale: 1, generateTaggedPDF: false, generateDocumentOutline: false, transferMode: 'ReturnAsBase64',
       }, sid)
       let pdf: Buffer = Buffer.from(String(pr.data), 'base64')
+      debug('raw.pdf', pdf)
       const doc = await PDFDocument.load(pdf, { updateMetadata: false })
       if (doc.getPageCount() > 1) {
-        out.spilled = true
+        // a document taller than its stage prints past page 1 by design (its clip); anything else spilling is named
+        if (!out.clipped) out.spilled = true
         const one = await PDFDocument.create()
         const [p] = await one.copyPages(doc, [0])
         one.addPage(p)
@@ -389,10 +402,10 @@ export async function renderSlide(b: Browser, helper: Helper, page: PlanPage, o:
         if (png) {
           debug('print.png', png)
           out.printChecked = true
-          const c = await helper.compare(ref, png.toString('base64'), dsf, [], CERTIFY.tol)
-          if (c.coarse > CERTIFY.page) {
+          const c = await helper.compare(ref, png.toString('base64'), dsf, [], CERTIFY.tol, true)
+          if (c.coarse > CERTIFY.page || c.fine > CERTIFY.fine) {
             if (o.mode === 'vector') out.printDiffers = true
-            else return toRaster(`the printed page differed from the screen (${(c.coarse * 100).toFixed(2)} % of it)`)
+            else return toRaster(`the printed page differed from the screen (${(Math.max(c.coarse, c.fine) * 100).toFixed(2)} % of it)`)
           }
         }
       }
@@ -522,10 +535,13 @@ export const jobsDir = (root: string) => join(root, 'design', '.local', 'pdf')
 
 /** `marver dev` start: no job survives a server (their browsers did not), so the folder starts empty. */
 export function clearPdfJobs(root: string): void {
-  try { rmSync(jobsDir(root), { recursive: true, force: true }) } catch { /* best-effort */ }
-  for (const [id, j] of jobs) if (j.root === root) jobs.delete(id)
+  // a job still running (a dev server restarted in this process) is cancelled first: its browser closes
+  for (const [id, j] of jobs) if (j.root === root) { if (j.state === 'running') j.abort.abort(CANCELLED); jobs.delete(id) }
   running.delete(root)
+  try { rmSync(jobsDir(root), { recursive: true, force: true }) } catch { /* best-effort */ }
 }
+// the dev server's restart and close reach the jobs through a hook that does not load this module (pdf-reset.ts)
+onPdfReset(clearPdfJobs)
 
 /** Jobs past their hour: their folders removed, their ids forgotten. Run at every job request and on a timer. */
 export function sweepPdfJobs(root: string, now = Date.now()): void {
@@ -581,7 +597,14 @@ export async function startPdfJob(ctx: PdfCtx, ask: PdfAsk, seams: { run?: (j: J
   const deadline = setTimeout(() => job.abort.abort(new Error(`the export took longer than ${PDF_BUDGET.ms / 60_000} minutes`)), PDF_BUDGET.ms)
   deadline.unref?.()
   void (seams.run ?? ((j, plan, title) => runJob(ctx, j, plan, title)))(job, p.plan, p.title)
-    .then(() => { if (job.state === 'running') { job.state = 'done'; job.phase = 'done' } })
+    .then(() => {
+      if (job.state !== 'running') return
+      // a cancel or the deadline that landed after the last check still wins: a job the person cancelled is never done
+      const reason = job.abort.signal.aborted ? job.abort.signal.reason : undefined
+      if (reason === CANCELLED) job.state = 'cancelled'
+      else if (reason instanceof Error) { job.state = 'failed'; job.error = reason.message }
+      else { job.state = 'done'; job.phase = 'done' }
+    })
     .catch((err) => {
       if (job.state !== 'running') return
       const reason = job.abort.signal.aborted ? job.abort.signal.reason : undefined
@@ -608,11 +631,19 @@ export function cancelPdfJob(id: string): boolean {
   return true
 }
 
-/** The source revisions a job prints against: each frame's document, and the canvas-wide inputs. */
+/** The source revisions a render prints against: its frame's document, and the canvas-wide inputs. */
 function revisions(ctx: PdfCtx, frames: string[]): { doc: Map<string, string>; global: string } {
   const doc = new Map(frames.map((f) => [f, ctx.docRev(f)]))
   const mt = (p: string) => { try { return String(statSync(join(ctx.root, p)).mtimeMs) } catch { return '-' } }
-  return { doc, global: ['design/config.ts', 'design/theme.css', 'design/providers.tsx', 'design/assets'].map(mt).join('|') }
+  return { doc, global: ['design/config.ts', 'design/theme.css', 'design/providers.tsx'].map(mt).join('|') }
+}
+/** Was any of these asset files (root-relative, inside design/assets) written at or after `since`? */
+export function assetsChanged(root: string, assets: string[], since: number): boolean {
+  for (const a of assets) {
+    if (!a.startsWith('design/assets/') || a.split('/').includes('..')) continue
+    try { if (statSync(join(root, a)).mtimeMs >= since - 1) return true } catch { /* gone: the frame shows its error, its doc moves */ }
+  }
+  return false
 }
 
 async function runJob(ctx: PdfCtx, job: Job, plan: Plan, title: string): Promise<void> {
@@ -622,7 +653,6 @@ async function runJob(ctx: PdfCtx, job: Job, plan: Plan, title: string): Promise
   for (const by = Date.now() + 10_000; !ctx.settled() && Date.now() < by && !signal.aborted;) await wait(100)
   const pages = plan.pages
   const frames = new Map(ctx.frames().map((f) => [f.id, f]))
-  let revs = revisions(ctx, pages.map((p) => p.frame))
   if (signal.aborted) throw new Error('the export was cancelled')
   const b = await Browser.launch('mv-shot-')
   const owner = {}
@@ -639,18 +669,20 @@ async function runJob(ctx: PdfCtx, job: Job, plan: Plan, title: string): Promise
       if (signal.aborted) throw new Error('the export was cancelled')
       const t = Date.now()
       const url = exportUrl(ctx.origin, page, frames.get(page.frame)?.file)
-      const once = () => renderSlide(b, helper, page, { url, dir: job.dir, n, mode: job.ask.mode ?? 'auto', notes: !!job.ask.notes, signal })
-      let out = await once()
-      // source changes (spec 31 How): a frame whose document moved while it rendered renders once more; still moving,
-      // it is printed and named
-      let changed = false
-      const moved = () => { const now = revisions(ctx, [page.frame]); return !ctx.settled() || now.doc.get(page.frame) !== revs.doc.get(page.frame) || now.global !== revs.global }
-      if (out.status !== 'failed' && moved()) {
+      // source changes (spec 31 How): each render has its own baseline - the frame's document revision, the canvas-wide
+      // inputs, and the asset files it loaded (an overwrite keeps its directory's time) - and one that moved while it
+      // rendered renders once more; still moving, it is printed and named
+      const attempt = async () => {
         for (const by = Date.now() + 5000; !ctx.settled() && Date.now() < by;) await wait(100)
-        revs = { doc: new Map([...revs.doc, [page.frame, ctx.docRev(page.frame)]]), global: revisions(ctx, []).global }
-        out = await once()
-        changed = moved()
+        const base = revisions(ctx, [page.frame]), since = Date.now()
+        const out = await renderSlide(b, helper, page, { url, dir: job.dir, n, mode: job.ask.mode ?? 'auto', notes: !!job.ask.notes, signal })
+        const now = revisions(ctx, [page.frame])
+        const moved = !ctx.settled() || now.doc.get(page.frame) !== base.doc.get(page.frame) || now.global !== base.global || assetsChanged(ctx.root, out.assets ?? [], since)
+        return { out, moved }
       }
+      let { out, moved } = await attempt()
+      let changed = false
+      if (out.status !== 'failed' && moved) { ({ out, moved } = await attempt()); changed = moved }
       if (out.status === 'failed' && !job.ask.keepGoing) throw new Error(`${page.frame}: ${out.error}`)
       bytes += out.pdf?.length ?? out.raster?.jpeg.length ?? out.picture?.length ?? 0
       if (bytes > PDF_BUDGET.bytes) throw new Error(`the PDF passed ${PDF_BUDGET.bytes / 2 ** 20} MB - export fewer slides, or with --vector`)
@@ -659,26 +691,32 @@ async function runJob(ctx: PdfCtx, job: Job, plan: Plan, title: string): Promise
     })
     if (signal.aborted) throw signal.reason instanceof Error ? signal.reason : new Error('the export was cancelled')
     let pdf: Uint8Array
+    let pageCount = outs.length
     if (job.ask.notes) {
       job.phase = 'handout'
-      pdf = await printHandout(b, ctx, job, outs.map((o) => ({ page: o.page, picture: o.out.picture, note: frames.get(o.page.frame)?.note })))
+      const h = await printHandout(b, ctx, job, outs.map((o) => ({ page: o.page, picture: o.out.picture, note: frames.get(o.page.frame)?.note })))
+      pdf = h.pdf
+      pageCount = h.pages
+      if (pageCount > PDF_BUDGET.pages) throw new Error(`the handout is ${pageCount} pages - a PDF takes ${PDF_BUDGET.pages} at most (shorten the notes, or export fewer slides)`)
     } else {
       job.phase = 'merging'
       pdf = await mergePages(outs, { title, author: ctx.canvasName, version: ctx.version, chrome })
     }
+    // cancelled (or past its deadline) while the pages were merged or the handout printed: nothing is written
+    if (signal.aborted) throw signal.reason instanceof Error ? signal.reason : new Error('the export was cancelled')
     if (pdf.length > PDF_BUDGET.bytes) throw new Error(`the PDF is ${Math.round(pdf.length / 2 ** 20)} MB - ${PDF_BUDGET.bytes / 2 ** 20} MB at most`)
     const file = join(job.dir, job.filename)
     writeWhole(file, pdf)
     job.file = file
     job.report = {
-      board: job.board, notes: !!job.ask.notes, pages: outs.length, bytes: pdf.length, ms: Date.now() - t0, chrome,
+      board: job.board, notes: !!job.ask.notes, pages: pageCount, bytes: pdf.length, ms: Date.now() - t0, chrome,
       // print-certified only when every printed page was rasterised and compared (a raster page is a picture of the screen)
-      certified: !job.ask.notes && outs.every((o) => !o.out.pdf || o.out.printChecked) && outs.some((o) => o.out.printChecked) ? 'print' : 'screen', skipped: plan.skipped,
+      certified: !job.ask.notes && outs.every((o) => !o.out.pdf || (o.out.printChecked && !o.out.printDiffers)) && outs.some((o) => o.out.printChecked) ? 'print' : 'screen', skipped: plan.skipped,
       slides: outs.map(({ page, out, ms, changed }, i) => ({
         page: i + 1, frame: page.frame, title: page.title, width: page.width, height: page.height, theme: page.theme, status: out.status, ms,
         ...(out.patches?.length ? { patches: out.patches } : {}), ...(out.rasterWhy ? { raster: out.rasterWhy } : {}),
         ...(out.unsettled ? { unsettled: true as const } : {}), ...(out.clipped ? { clipped: true as const } : {}), ...(out.spilled ? { spilled: true as const } : {}),
-        ...(changed ? { changed: true as const } : {}), ...(out.error ? { error: out.error } : {}), ...(out.printDiffers ? { error: 'the printed page differs from the screen (--vector kept it)' } : {}),
+        ...(changed ? { changed: true as const } : {}), ...(out.error ? { error: out.error } : {}), ...(out.printDiffers ? { printDiffers: true as const } : {}),
         bytes: out.pdf?.length ?? out.raster?.jpeg.length ?? out.picture?.length ?? 0,
       })),
     }
@@ -702,8 +740,8 @@ export function handoutHtml(h: { title: string; canvas: string; paper: Paper; sl
   const p = PAPER[h.paper]
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${esc(h.title)}</title><style>
 @page { size: ${p.w}in ${p.h}in; margin: 0.45in 0.5in 0.6in }
-html { -webkit-print-color-adjust: exact; print-color-adjust: exact }
-body { margin: 0; font: 11pt/1.45 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif; color: #1d1d1f }
+html { -webkit-print-color-adjust: exact; print-color-adjust: exact; background: #fff }
+body { margin: 0; background: #fff; font: 11pt/1.45 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif; color: #1d1d1f }
 .slide { display: grid; grid-template-columns: 58% 1fr; column-gap: 0.35in; align-items: start }
 .slide + .slide { break-before: page }
 .slide > .pic { break-inside: avoid; margin: 0 }
@@ -723,18 +761,23 @@ body { margin: 0; font: 11pt/1.45 -apple-system, BlinkMacSystemFont, "Helvetica 
 .notes blockquote { border-left: 2pt solid #d2d2d7; padding-left: 8pt; color: #515154 }
 .notes img { max-width: 100%; height: auto }
 .notes a { color: #0066cc; text-decoration: none }
+.notes .goto { color: #0066cc }
 .none { color: #86868b; font-style: italic }
 </style></head><body>
 ${h.slides.map((s, i) => `<section class="slide"><figure class="pic">${s.picture ? `<img src="${esc(pictureUrl(i))}" alt="${esc(s.title)}">` : ''}<figcaption class="n">${i + 1} / ${h.slides.length}</figcaption></figure><div class="side"><h2>${esc(s.title)}</h2>${s.html ? `<div class="notes">${s.html}</div>` : '<p class="none">No notes</p>'}</div></section>`).join('\n')}
 </body></html>`
 }
 
-async function printHandout(b: Browser, ctx: PdfCtx, job: Job, slides: { page: PlanPage; picture?: Buffer; note?: string }[]): Promise<Uint8Array> {
+/** md.ts writes a `goto:` link as `<a href="#" data-goto="...">`: on paper it is its text. */
+export const unlinkGotos = (html: string): string => html.replace(/<a href="#" data-goto="[^"]*">([\s\S]*?)<\/a>/g, '<span class="goto">$1</span>')
+
+async function printHandout(b: Browser, ctx: PdfCtx, job: Job, slides: { page: PlanPage; picture?: Buffer; note?: string }[]): Promise<{ pdf: Uint8Array; pages: number }> {
   const { renderMarkdown } = await import('../client/content/md.ts')
   slides.forEach((s, i) => { if (s.picture) writeFileSync(join(job.dir, `${i}.jpg`), s.picture) })
   handouts.set(job.id, {
     title: `${job.board.replace(/-/g, ' ')} - notes`, canvas: ctx.canvasName, paper: job.ask.paper ?? 'letter',
-    slides: slides.map((s) => ({ title: s.page.title, ...(s.picture ? { picture: `${slides.indexOf(s)}.jpg` } : {}), html: s.note ? renderMarkdown(s.note) : '' })),
+    // a link to another slide (`goto:`) means nothing on paper - and its `#` would print as a link to this local page
+    slides: slides.map((s, i) => ({ title: s.page.title, ...(s.picture ? { picture: `${i}.jpg` } : {}), html: s.note ? unlinkGotos(renderMarkdown(s.note)) : '' })),
   })
   const owner = {}
   let targetId: string | undefined
@@ -763,7 +806,7 @@ async function printHandout(b: Browser, ctx: PdfCtx, job: Job, slides: { page: P
     doc.setAuthor(ctx.canvasName)
     doc.setCreator(`Marver ${ctx.version}`)
     doc.setProducer(`Marver ${ctx.version} (Chrome, pdf-lib)`)
-    return doc.save()
+    return { pdf: await doc.save(), pages: doc.getPageCount() }
   } finally {
     handouts.delete(job.id)
     if (targetId && !b.dead) await b.send('Target.closeTarget', { targetId }).catch(() => {})

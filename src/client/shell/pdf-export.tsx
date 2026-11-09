@@ -36,6 +36,10 @@ export async function exportPdf(board: string, o: { theme?: string }, how: CmdOp
   const h = cmd('export-pdf', { ...how, board })
   if (!canExportPdf()) { h.noop('busy'); return }
   if (usePdfExport.getState().state !== 'idle') { h.noop('busy'); toast('a PDF is already being made'); return }
+  // the server prints the board file: this board's edits waiting for their autosave go first
+  const s = () => useStore.getState()
+  if (s().board === board) for (let i = 0; i < 5 && s().dirty; i++) if (!(await s().save())) break
+  if (s().board === board && s().dirty) { h.fail('api'); toast('this board\'s latest changes are not saved yet - try again in a moment'); return }
   let job: string
   try {
     const r = await api('pdf', { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify({ board, ...(o.theme ? { theme: o.theme } : {}) }) })

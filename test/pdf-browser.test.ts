@@ -7,7 +7,7 @@ import { PDFDict, PDFDocument, PDFName, PDFRawStream, PDFRef, PDFStream } from '
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { findChrome } from '../src/server/shot.ts'
 import { Browser } from '../src/server/cdp.ts'
-import { PDF_INSTALL } from '../src/server/pdf-page.ts'
+import { COMPARE, PDF_EARLY, PDF_INSTALL } from '../src/server/pdf-page.ts'
 import { CLI, fixtureRoot, startDev, type Dev } from './dev-server.ts'
 
 /**
@@ -54,11 +54,12 @@ const FILES: Record<string, string> = {
     <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(120deg, #ff5a1f, #3b82f6 50%, #22c55e)' }} />
     <div style={{ position: 'absolute', left: 80, top: 120, width: 360, height: 260, background: '#ffd400', borderRadius: 40 }} />
     <div style={{ position: 'absolute', left: 240, top: 200, width: 620, height: 320, borderRadius: 28, background: 'rgba(255,255,255,0.35)', backdropFilter: 'blur(24px) saturate(1.6)', border: '1px solid rgba(255,255,255,0.5)', padding: 32, boxSizing: 'border-box', fontSize: 34 }}>Frosted glass panel</div>`),
-  'design/scenes/deck/02-glass.note.md': '| Metric | Value |\n|---|---|\n| Pages | 8 |\n| Glass | yes |\n\n```\nconst deck = await marver.pdf()\n```\n\n![the ramp](big.png)\n',
+  'design/scenes/deck/02-glass.note.md': 'Back to [the vector slide](goto:deck/01-vector), or [the site](https://example.com/notes).\n\n| Metric | Value |\n|---|---|\n| Pages | 8 |\n| Glass | yes |\n\n```\nconst deck = await marver.pdf()\n```\n\n![the ramp](big.png)\n',
   'design/scenes/deck/03-filter.tsx': slide('Filter', `
     <div style={{ position: 'absolute', left: 120, top: 120, width: 700, height: 420, filter: 'saturate(1.8) contrast(1.2) drop-shadow(0 8px 16px rgba(0,0,0,.3))', background: '#9db4c0', borderRadius: 24, padding: 40, boxSizing: 'border-box' }}>
       <div style={{ width: 200, height: 200, background: '#c84', borderRadius: 100 }} />
       <a href="https://example.org/inside" style={{ display: 'block', marginTop: 20, fontSize: 30, color: '#123' }}>a link inside the filter</a>
+      <svg width="240" height="40"><a href="https://example.net/svg"><text x="0" y="28" fontSize="24">an svg link</text></a></svg>
     </div>`),
   'design/scenes/deck/04-motion.tsx': `import { useEffect, useRef } from 'react'
 export const meta = { title: 'Motion', slide: true }
@@ -69,6 +70,8 @@ const css = \`
 #entrance { animation: mv-in 1s ease 4s both }
 #nofill { animation: mv-grow 20s linear }
 #spinner { animation: mv-spin 1.5s linear infinite }
+@keyframes mv-short { from { width: 10px } to { width: 200px } }
+#short { animation: mv-short 150ms linear }
 \`
 export default function F() {
   const w = useRef<HTMLDivElement>(null)
@@ -78,6 +81,7 @@ export default function F() {
     <div id="entrance" style={{ position: 'absolute', left: 60, top: 60, fontSize: 40 }}>Delayed entrance</div>
     <div id="nofill" style={{ position: 'absolute', left: 60, top: 160, height: 40, background: '#e8501f' }} />
     <div id="spinner" style={{ position: 'absolute', left: 60, top: 260, width: 80, height: 80, background: '#222' }} />
+    <div id="short" style={{ position: 'absolute', left: 60, top: 360, height: 20, width: 10, background: '#0a7' }} />
     <div id="waapi" ref={w} style={{ position: 'absolute', left: 60, top: 400, fontSize: 40 }}>WAAPI fade</div>
     <video id="clip" src="/design/assets/clip.webm" autoPlay muted loop playsInline style={{ position: 'absolute', left: 600, top: 60, width: 480, height: 270 }} />
   </main>)
@@ -106,6 +110,12 @@ export default () => <main style={{ minHeight: '100vh', margin: 0, background: '
   'design/scenes/broken/01-ok.tsx': slide('Fine', `<h1>Fine</h1>`),
   'design/scenes/broken/02-throws.tsx': `export const meta = { title: 'Throws', slide: true }\nexport default function F(): never { throw new Error('this slide is broken') }\n`,
   'design/boards/broken.json': JSON.stringify({ version: 1, name: 'broken', nodes: [{ key: 'b1', frame: 'broken/01-ok', x: 0, y: 0 }, { key: 'b2', frame: 'broken/02-throws', x: 1400, y: 0 }] }),
+  'design/scenes/tall/01-centered.tsx': `export const meta = { title: 'Centred in a tall body', slide: true }
+export default function F() {
+  return (<><style>{'body { height: 1200px; margin: 0; display: flex; align-items: center; justify-content: center; font-family: Helvetica }'}</style><h1 style={{ margin: 0, fontSize: 48 }}>Centred in 1200</h1></>)
+}
+`,
+  'design/boards/tall.json': JSON.stringify({ version: 1, name: 'tall', nodes: [{ key: 't1', frame: 'tall/01-centered', x: 0, y: 0 }] }),
   'design/publish.json': JSON.stringify({ boards: { deck: { max: 'read', type: 'slides' }, notes: { max: 'read', type: 'slides' } } }),
 }
 
@@ -198,6 +208,7 @@ describe.skipIf(!hasChrome)('deck PDFs in real Chrome (spec 31 Part A)', () => {
     const doc = await open(deck.pdf)
     const inside = (await (await doc.getPage(3)).getAnnotations()).map((a: { url?: string }) => a.url)
     expect(inside).toContain('https://example.org/inside')
+    expect(inside).toContain('https://example.net/svg')
     await doc.destroy()
     expect(deck.report.slides.filter((s) => s.status === 'raster' || s.status === 'failed')).toEqual([])
     // a drop-shadow-only filter is left to Chrome, which prints it right (print-certified like every page)
@@ -214,6 +225,19 @@ describe.skipIf(!hasChrome)('deck PDFs in real Chrome (spec 31 Part A)', () => {
     expect(s.clipped).toBe(true)
     expect(s.spilled).toBeUndefined()
   })
+  it('staging never lays a slide out again: a tall flex-centred body prints where the screen shows it, clipped (#3)', async () => {
+    const r = await runJob({ board: 'tall' })
+    const doc = await open(r.pdf)
+    expect(doc.numPages).toBe(1)
+    const page = await doc.getPage(1)
+    const items = ((await page.getTextContent()).items as { str: string; transform: number[] }[]).filter((i) => i.str.trim())
+    expect(items.length).toBeGreaterThan(0)
+    // centred in a 1200 px body: about 600 px down a 720 px stage - the bottom fifth of the 540 pt page, not its middle
+    expect(Math.max(...items.map((i) => i.transform[5]))).toBeLessThan(110)
+    expect(r.report.slides[0]).toMatchObject({ status: 'vector', clipped: true })
+    expect(r.report.slides[0].spilled).toBeUndefined()
+    await doc.destroy()
+  }, 120_000)
   it('a present board: its order, html frames printed from their own document, pages at the device Play picks (1280x800)', async () => {
     const r = await runJob({ board: 'pitch' })
     const doc = await open(r.pdf)
@@ -238,6 +262,12 @@ describe.skipIf(!hasChrome)('deck PDFs in real Chrome (spec 31 Part A)', () => {
     expect((await doc.getPage(1)).view.slice(2).map(Math.round)).toEqual([842, 595])
     const outline = await doc.getOutline()
     expect(outline.map((o) => o.title)).toEqual(['Vector café ✓', 'Glass', 'Filter'])
+    // its report counts the pages it printed; a goto link is text, an https link stays one
+    expect(r.report.pages).toBe(doc.numPages)
+    const urls = (await Promise.all(Array.from({ length: doc.numPages }, async (_, i) => (await (await doc.getPage(i + 1)).getAnnotations()).map((a: { url?: string }) => a.url ?? '')))).flat()
+    expect(urls).toContain('https://example.com/notes')
+    expect(urls.filter((u) => u.includes('/__mv/') || u.endsWith('#'))).toEqual([])
+    expect(all).toContain(squash('Back to the vector slide'))
     // the notes' image, beside the slides' pictures
     expect(await largestImage(r.pdf, doc.numPages)).toBeGreaterThan(0)
     await doc.destroy()
@@ -282,16 +312,19 @@ describe.skipIf(!hasChrome)('the finished slide, frozen deterministically (#4)',
       const { sessionId: s } = await b.send('Target.attachToTarget', { targetId, flatten: true })
       const ev = async (e: string) => (await b.send('Runtime.evaluate', { expression: e, awaitPromise: true, returnByValue: true }, s)).result?.value
       await b.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false }, s)
+      await b.send('Page.enable', {}, s)
+      await b.send('Page.addScriptToEvaluateOnNewDocument', { source: PDF_EARLY }, s)
       await b.send('Page.navigate', { url: `${dev!.origin}/__mv/frame/?id=deck%2F04-motion&theme=light&export=1` }, s)
       for (let i = 0; i < 200 && !(await ev(`!!document.getElementById('clip') && document.getElementById('clip').readyState >= 2`)); i++) await new Promise((r) => setTimeout(r, 100))
       await new Promise((r) => setTimeout(r, 600))
       await ev(PDF_INSTALL)
       await ev('window.__mvPdf.freeze()')
       const got = await ev(`(() => { const cs = (id) => getComputedStyle(document.getElementById(id)); const v = document.getElementById('clip'); return {
-        entrance: [cs('entrance').opacity, cs('entrance').transform], nofill: cs('nofill').width, spinner: cs('spinner').transform, waapi: cs('waapi').opacity, video: [v.paused, v.currentTime] } })()`)
+        entrance: [cs('entrance').opacity, cs('entrance').transform], nofill: cs('nofill').width, short: cs('short').width, spinner: cs('spinner').transform, waapi: cs('waapi').opacity, video: [v.paused, v.currentTime] } })()`)
       expect(got).toEqual({
         entrance: ['1', 'matrix(1, 0, 0, 1, 0, 0)'],   // its end pose: transform none, held by its fill
         nofill: '300px',                               // kept by fill: both, though authored without one
+        short: '200px',                                // ended long before the freeze, without a fill: held from its start
         spinner: 'matrix(0.707107, 0.707107, -0.707107, 0.707107, 0, 0)',   // its first pose: rotate(45deg)
         waapi: '1',
         video: [true, 0],
@@ -340,6 +373,27 @@ describe.skipIf(!hasChrome)('the finished slide, frozen deterministically (#4)',
         { id: 'svgf', kind: 'whole', why: 'filter: url("#f")' },
         { id: 'shadow', kind: 'shadow', why: 'box-shadow' },
       ])
+    } finally { await b.close() }
+  }, 60_000)
+  it('print certification sees a changed pattern, not only a changed average: stripes swapped fail, antialiasing passes (#7)', async () => {
+    const b = await Browser.launch()
+    try {
+      const { targetId } = await b.send('Target.createTarget', { url: 'about:blank' })
+      const { sessionId: s } = await b.send('Target.attachToTarget', { targetId, flatten: true })
+      const ev = async (e: string) => (await b.send('Runtime.evaluate', { expression: e, awaitPromise: true, returnByValue: true }, s)).result?.value
+      const got = await ev(`(async () => {
+        // at 2x, as a printed page is rasterised
+        const pic = (draw) => { const c = document.createElement('canvas'); c.width = 800; c.height = 400; const g = c.getContext('2d'); g.scale(2, 2); g.fillStyle = '#fff'; g.fillRect(0, 0, 400, 200); draw(g); return c.toDataURL('image/png').slice(22) }
+        const stripes = (o) => (g) => { g.fillStyle = '#000'; for (let x = o; x < 400; x += 8) g.fillRect(x, 0, 4, 200) }
+        const text = (dx) => (g) => { g.fillStyle = '#111'; g.font = '28px Helvetica'; for (let y = 40; y < 200; y += 40) g.fillText('Quarterly numbers, the room', 10 + dx, y) }
+        const cmp = ${COMPARE}
+        const a = await cmp(pic(stripes(0)), pic(stripes(4)), 2, [], 24, true)
+        const t = await cmp(pic(text(0)), pic(text(0.5)), 2, [], 24, true)
+        return { stripes: [a.coarse, a.fine], text: [t.coarse, t.fine] }
+      })()`)
+      expect(got.stripes[0]).toBe(0)                 // the average cannot see it...
+      expect(got.stripes[1]).toBeGreaterThan(0.4)    // ...the pixel check does
+      expect(got.text).toEqual([0, 0])               // text a device pixel apart (another rasteriser's snapping) is the same picture
     } finally { await b.close() }
   }, 60_000)
   it('export=1 turns Img\'s LOD canvas off on a frame that is not a slide: a plain <img> of the original (#5)', async () => {

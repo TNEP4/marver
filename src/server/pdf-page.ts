@@ -168,6 +168,21 @@ function install(): boolean {
   }
   /** per whole patch drawn by an overlay: how far its capture reaches past its border box on each side (CSS px, viewport) */
   const reaches = new Map<number, { l: number; t: number; r: number; b: number }>()
+  /** every `https:`, `http:` or `mailto:` link under `root` with its boxes - an html `<a href>` or an svg `<a>` (whose
+   *  href is an SVGAnimatedString, or an xlink:href), resolved against the document */
+  const linksUnder = (root: ParentNode): { href: string; rects: Rect[] }[] => {
+    const out: { href: string; rects: Rect[] }[] = []
+    for (const a of Array.from(root.querySelectorAll('a'))) {
+      const raw = a.getAttribute('href') ?? a.getAttributeNS('http://www.w3.org/1999/xlink', 'href')
+      if (!raw) continue
+      let href: string
+      try { href = new URL(raw, document.baseURI).href } catch { continue }
+      if (!/^(https?:|mailto:)/i.test(href)) continue
+      const rects = Array.from(a.getClientRects()).filter((r) => r.width >= 1 && r.height >= 1).map((r) => ({ x: r.left, y: r.top, w: r.width, h: r.height }))
+      if (rects.length) out.push({ href, rects })
+    }
+    return out
+  }
   const REPLACED = new Set(['IMG', 'CANVAS', 'VIDEO', 'IFRAME', 'OBJECT', 'EMBED', 'INPUT', 'SELECT', 'TEXTAREA', 'svg'])
 
   const api = {
@@ -193,16 +208,13 @@ function install(): boolean {
       const d = document.documentElement, b = document.body
       return Math.max(d.scrollHeight, b ? b.scrollHeight : 0) > H + 1 || Math.max(d.scrollWidth, b ? b.scrollWidth : 0) > W + 1
     },
-    stage(W: number, H: number, clip: boolean): void {
+    /** the page geometry, and nothing that lays the slide out again: `@page` at the stage size, every forced break off
+     *  (content after one would leave page 1), colours exact. A document taller than its stage prints past page 1, which
+     *  is dropped - the stage's own clip, without restyling html or body (which reflows a flex or grid body) */
+    stage(W: number, H: number): void {
       let st = document.getElementById('mv-pdf-stage')
       if (!st) { st = document.createElement('style'); st.id = 'mv-pdf-stage'; document.head.appendChild(st) }
-      // the root's overflow is the page's, which Chrome paginates past: a document taller than its stage is clipped by its
-      // body instead, at the stage's height (max-height: a body that fits is left exactly as it lays out)
-      const b = document.body ? getComputedStyle(document.body) : null
-      const room = b ? H - (parseFloat(b.marginTop) || 0) - (parseFloat(b.marginBottom) || 0) : H
       st.textContent = `@page { size: ${W}px ${H}px; margin: 0 }
-html { width: ${W}px !important; height: ${H}px !important; overflow: hidden !important }
-${clip ? `body { max-height: ${Math.max(0, room)}px !important; overflow: hidden !important }` : ''}
 *, *::before, *::after { break-before: auto !important; break-after: auto !important; break-inside: auto !important;
   page-break-before: auto !important; page-break-after: auto !important; page-break-inside: auto !important;
   -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important }`
@@ -300,16 +312,7 @@ ${clip ? `body { max-height: ${Math.max(0, room)}px !important; overflow: hidden
       }
       return out
     },
-    links(): { href: string; rects: Rect[] }[] {
-      const out: { href: string; rects: Rect[] }[] = []
-      for (const a of Array.from(document.querySelectorAll('a[href]'))) {
-        const href = (a as HTMLAnchorElement).href
-        if (!/^(https?:|mailto:)/i.test(href)) continue
-        const rects = Array.from(a.getClientRects()).filter((r) => r.width >= 1 && r.height >= 1).map((r) => ({ x: r.left, y: r.top, w: r.width, h: r.height }))
-        if (rects.length) out.push({ href, rects })
-      }
-      return out
-    },
+    links(): { href: string; rects: Rect[] }[] { return linksUnder(document) },
     /** the state patch `i` is captured in: the elements drawn after it and over its box hidden, its ancestors at full
      *  opacity; a glass element also without its own content, border and shadow (they stay live) */
     prepare(i: number): Rect | null {
@@ -459,21 +462,33 @@ ${clip ? `body { max-height: ${Math.max(0, room)}px !important; overflow: hidden
     /** the links inside patch `i`, taken before it is applied */
     linksIn(i: number): { href: string; rects: Rect[] }[] {
       const el = hits.get(i)
-      if (!el) return []
-      const out: { href: string; rects: Rect[] }[] = []
-      for (const a of Array.from(el.querySelectorAll('a[href]'))) {
-        const href = (a as HTMLAnchorElement).href
-        if (!/^(https?:|mailto:)/i.test(href)) continue
-        const rects = Array.from(a.getClientRects()).filter((r) => r.width >= 1 && r.height >= 1).map((r) => ({ x: r.left, y: r.top, w: r.width, h: r.height }))
-        if (rects.length) out.push({ href, rects })
-      }
-      return out
+      return el ? linksUnder(el) : []
     },
   }
   w.__mvPdf = api
   return true
 }
 export const PDF_INSTALL = `(${install.toString()})()`
+
+/** Runs at document start, before the frame's own code (Page.addScriptToEvaluateOnNewDocument): every finite animation
+ *  is given `fill: both` as it starts - CSS animations on `animationstart`, script ones through Element.animate - so one
+ *  that ends before the slide is ready still holds its end pose when it is frozen (#4). */
+function early(): void {
+  const keep = (a: Animation) => {
+    try {
+      const e = a.effect
+      if (!e || e.getComputedTiming().iterations === Infinity) return
+      const f = e.getTiming().fill
+      if (f !== 'both' && f !== 'forwards') e.updateTiming({ fill: 'both' })
+    } catch { /* an effect that takes no timing */ }
+  }
+  const sweep = () => { try { for (const a of document.getAnimations()) keep(a) } catch { /* not yet */ } }
+  addEventListener('animationstart', sweep, true)
+  addEventListener('transitionrun', sweep, true)
+  const animate = Element.prototype.animate
+  Element.prototype.animate = function (this: Element, ...args: Parameters<Element['animate']>) { const a = animate.apply(this, args); keep(a); return a }
+}
+export const PDF_EARLY = `(${early.toString()})()`
 
 /** Runs in the slide: settled when nothing it loads is still in flight (`marver shot`'s check, #6). */
 export const SETTLED = `(() => {
@@ -517,17 +532,24 @@ export const CROP = crop.toString()
  * Runs in the helper tab: compare picture `b` with the reference `a` (both base64; `b` scaled to `a`'s size).
  * - inside each box (CSS px at `dsf`): the share of pixels whose largest channel differs by more than `tol`;
  * - outside every box: `marver`'s bake rule - changed pixels beyond 32 levels, and the worst 16x16 block;
- * - `coarse`: the share of the page whose averages over 8 CSS px blocks differ by more than 32 levels - text drawn by
- *   another rasteriser differs at its edges, a missing or wrong area differs in its average (print certification).
+ * - `coarse`: the share of the page whose averages over 8 CSS px blocks differ by more than 32 levels - a missing or
+ *   wrong area differs in its average (print certification);
+ * - `fine`: the share of pixels differing by more than 48 levels from every pixel within one pixel of them in the other
+ *   picture - text drawn by another rasteriser differs only at its edges, a changed pattern everywhere.
  */
-async function compare(a: string, b: string, dsf: number, boxes: { x: number; y: number; w: number; h: number }[], tol: number): Promise<{ boxes: number[]; outside: { gt32: number; n: number; blockMax: number }; coarse: number }> {
+async function compare(a: string, b: string, dsf: number, boxes: { x: number; y: number; w: number; h: number }[], tol: number, atB = false): Promise<{ boxes: number[]; outside: { gt32: number; n: number; blockMax: number }; coarse: number; fine: number }> {
   const load = async (d: string) => { const im = new Image(); im.src = 'data:image/png;base64,' + d; await im.decode(); return im }
   const [ia, ib] = await Promise.all([load(a), load(b)])
-  const W = ia.width, H = ia.height
+  // `atB`: both at the second picture's size (a print rasterised at 2x against a 3x screenshot) - never upscaled
+  const W = atB ? ib.width : ia.width, H = atB ? ib.height : ia.height
+  dsf = atB ? dsf * (ib.width / ia.width) : dsf
   const px = (im: HTMLImageElement) => {
     const c = document.createElement('canvas'); c.width = W; c.height = H
     const g = c.getContext('2d', { willReadFrequently: true })!
     g.imageSmoothingQuality = 'high'
+    // on white paper: a page with no background of its own prints transparent, and a screenshot shows it white
+    g.fillStyle = '#fff'
+    g.fillRect(0, 0, W, H)
     g.drawImage(im, 0, 0, W, H)
     return g.getImageData(0, 0, W, H).data
   }
@@ -574,7 +596,24 @@ async function compare(a: string, b: string, dsf: number, boxes: { x: number; y:
     const k2 = K * K
     if (Math.max(Math.abs(ra - rb), Math.abs(ga - gb), Math.abs(ba - bb)) / k2 > 32) coarseBad++
   }
-  return { boxes: inBoxes, outside: { gt32, n, blockMax }, coarse: cw * ch ? coarseBad / (cw * ch) : 0 }
+  // the page pixel by pixel, each matched within one pixel of the other picture: text another rasteriser draws differs
+  // at its edges only, a pattern changed (stripes swapped, a box moved) differs everywhere it is
+  let fineBad = 0
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const p = y * W + x
+    if (d(p) <= 48) continue
+    const i = p * 4
+    let best = 255
+    for (let dy = -1; dy <= 1 && best > 48; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const xx = x + dx, yy = y + dy
+      if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue
+      const j = (yy * W + xx) * 4
+      const v = Math.max(Math.abs(A[i] - B[j]), Math.abs(A[i + 1] - B[j + 1]), Math.abs(A[i + 2] - B[j + 2]))
+      if (v < best) best = v
+    }
+    if (best > 48) fineBad++
+  }
+  return { boxes: inBoxes, outside: { gt32, n, blockMax }, coarse: cw * ch ? coarseBad / (cw * ch) : 0, fine: fineBad / (W * H) }
 }
 export const COMPARE = compare.toString()
 

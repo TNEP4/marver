@@ -30,7 +30,9 @@ export function reportLines(r: PdfReport, out: string): string[] {
   group('clipped', of((s) => !!s.clipped, (s) => s.frame))
   group('spilled', of((s) => !!s.spilled, (s) => s.frame))
   group('changed while printing', of((s) => !!s.changed, (s) => s.frame))
-  if (!r.notes) lines.push(r.certified === 'print' ? '  every page print-certified (rasterised and compared with the screen)' : '  screen-certified only (no PDF rasteriser here)')
+  const differs = of((s) => !!s.printDiffers, (s) => s.frame)
+  group('printed differently from the screen (kept: --vector)', differs)
+  if (!r.notes) lines.push(r.certified === 'print' ? '  every page print-certified (rasterised and compared with the screen)' : differs.length ? '  not print-certified: the pages above differ in print' : '  screen-certified only (no PDF rasteriser here)')
   return lines
 }
 

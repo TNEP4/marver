@@ -931,6 +931,8 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
             'content-disposition': `attachment; filename="${j.filename.replace(/[^A-Za-z0-9._-]/g, '_')}"` })
           const st = createReadStream(j.file)
           st.on('error', () => res.destroy())
+          // a download cut short closes the file too
+          res.on('close', () => st.destroy())
           return st.pipe(res)
         }
         if (req.method === 'GET') return json(res, 200, pdf.jobStatus(j))
