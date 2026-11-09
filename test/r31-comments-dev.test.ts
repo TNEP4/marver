@@ -76,6 +76,13 @@ describe('the dev server (spec 31 B.4, C.2-C.6)', () => {
     expect((await del('old-mine')).status).toBe(200)
     expect(readLog(dir(), 'main').find((e) => e.type === 'delete')).toMatchObject({ commentId: 'old-mine', author: { email: OWNER.email } })
     expect((await edit('old-mine', 'back?')).status).toBe(409)
+    // the page never gets the deleted words back
+    expect(JSON.stringify((await api('comments/main')).data)).not.toContain('mine, sharper')
+    expect(JSON.stringify((await api('comments/main')).data)).not.toContain('mine from before')
+    // a new message reusing another's id is refused - it would make theirs "mine"
+    expect((await api('comments/main', { events: [{ id: id('dup'), ts: Date.now(), type: 'reply', commentId: 'old-theirs', parentId: 'old-theirs', body: 'mine now' }] })).status).toBe(409)
+    expect((await api('comment-ownership')).data.boards.main).not.toContain('old-theirs')
+    expect((await edit('old-theirs', 'hijack')).status).toBe(403)
     expect(replay(readLog(dir(), 'main')).some((t) => t.id === 'old-mine')).toBe(false)
   })
 
@@ -121,6 +128,11 @@ describe('the dev server (spec 31 B.4, C.2-C.6)', () => {
     expect(cli('resolve', '--undo', op)).toMatch(/Reopened \d+/)
     expect(open('main')).toEqual(before)
     await dev!.stop()
+    // a dev that says it runs but does not answer: refused, never worked around from here
+    put('design/.local/dev.json', { port: 5639, token: 'x', pid: process.pid })
+    expect(() => cli('resolve', '--all', '--board', 'main')).toThrow(/did not answer/)
+    expect(replay(readLog(dir(), 'main')).filter((t) => t.frame === 'spec/alpha' || t.frame === 'spec/bravo').some((t) => !t.resolved)).toBe(true)
+    rmSync(join(root, 'design', '.local', 'dev.json'))
     const alone = cli('resolve', '--all', '--board', 'main')
     expect(alone).toMatch(/Resolved \d+ conversations? .*\(board main\)/)
     expect(replay(readLog(dir(), 'main')).filter((t) => t.frame === 'spec/alpha' || t.frame === 'spec/bravo').every((t) => t.resolved)).toBe(true)

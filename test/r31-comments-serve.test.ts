@@ -42,6 +42,28 @@ afterAll(async () => {
   rmSync(root, { recursive: true, force: true })
 })
 
+/** What a reconnecting stream replays from the start of this boot's ring: the epoch read off a fresh stream's first id. */
+async function streamFrom(session: string, thread: string): Promise<string> {
+  const read = async (headers: Record<string, string>, ms: number) => {
+    const ctl = new AbortController()
+    const r = await fetch(`http://localhost:${PORT}/__mv/api/events`, { headers: { ...H(session), ...headers }, signal: ctl.signal })
+    const reader = r.body!.getReader()
+    let text = ''
+    const stop = setTimeout(() => ctl.abort(), ms)
+    try { for (;;) { const { value, done } = await reader.read(); if (done) break; text += new TextDecoder().decode(value) } } catch { /* aborted */ }
+    clearTimeout(stop)
+    return text
+  }
+  // a frame from now on names the epoch: post one more event and read it live
+  const live = read({}, 600)
+  await new Promise((r) => setTimeout(r, 150))
+  expect((await post(owner.session, [{ id: id(), ts: Date.now(), type: 'reply', commentId: id(), parentId: thread, author: { email: 'owner@x.test', name: 'Owner' }, body: 'still here' }])).status).toBe(200)
+  const first = await live
+  const epoch = /id: ([0-9a-f]{8})-\d+/.exec(first)?.[1]
+  if (!epoch) throw new Error(`no live frame: ${first}`)
+  return read({ 'last-event-id': `${epoch}-0` }, 600)
+}
+
 describe('a published canvas (spec 31 C.4, C.6)', () => {
   it('takes deletes, the author\'s only; a deleted message travels to browsers without its words', async () => {
     const caps = await fetch(`http://localhost:${PORT}/__mv/api/capabilities`, { headers: H(member.session) })
@@ -61,6 +83,16 @@ describe('a published canvas (spec 31 C.4, C.6)', () => {
     expect(seen.events.some((e) => e.type === 'delete' && e.commentId === c)).toBe(true)
     // the log keeps it (sync is by id) - the operator's raw transport is canonical, never redacted
     expect(readFileSync(join(root, 'data', 'comments', 'main.jsonl'), 'utf8')).toContain('the secret plan')
+    // the live stream: a reconnect that replays the ring gets no deleted words, nor does a create and delete in one push
+    const c2 = id()
+    expect((await post(owner.session, [
+      { id: id(), ts: Date.now(), type: 'create', commentId: c2, frame: 'x/y', anchor: {}, author: { email: 'owner@x.test', name: 'Owner' }, body: 'gone at once' },
+      { id: id(), ts: Date.now(), type: 'delete', commentId: c2, author: { email: 'owner@x.test', name: 'Owner' } },
+    ])).status).toBe(200)
+    const replayed = await streamFrom(member.session, c)
+    expect(replayed).toMatch(/event: comment/)
+    expect(replayed).not.toContain('the secret plan')
+    expect(replayed).not.toContain('gone at once')
     // an edit of a deleted message is refused
     expect((await post(owner.session, [{ id: id(), ts: Date.now(), type: 'edit', commentId: c, author: { email: 'owner@x.test', name: 'Owner' }, body: 'back' }])).status).toBe(400)
   })

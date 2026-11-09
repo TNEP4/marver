@@ -208,7 +208,9 @@ export function resolveAll(root: string, op: string, scope: Scope, o: ResolveAll
     const ev: CommentEvent = { id: r.event, ts: r.ts ?? receipt.at, type: 'resolve', commentId: r.thread, board: r.stamp ?? r.board, op }
     byBoard.set(r.board, [...(byBoard.get(r.board) ?? []), ev])
   }
-  receipt.failed = [...appendAll(dir, byBoard), ...verify(dir, plan, true)]
+  const unwritten = appendAll(dir, byBoard)
+  const missed = new Set(unwritten.flatMap((f) => f.threads.map((t) => `${f.board}\t${t}`)))
+  receipt.failed = [...unwritten, ...verify(dir, plan.filter((r) => !missed.has(`${r.board}\t${r.thread}`)), true)]
   const lost = new Set(receipt.failed.flatMap((f) => f.threads.map((t) => `${f.board}\t${t}`)))
   receipt.resolved = plan.filter((r) => !lost.has(`${r.board}\t${r.thread}`))
   receipt.state = 'done'
@@ -256,7 +258,9 @@ export function undoResolveAll(root: string, op: string, o: { now?: number } = {
   save(file, receipt)
   const byBoard = new Map<string, CommentEvent[]>()
   for (const r of reopened) byBoard.set(r.board, [...(byBoard.get(r.board) ?? []), { id: r.event, ts: r.ts ?? receipt.at, type: 'reopen', commentId: r.thread, board: r.stamp ?? r.board, op }])
-  receipt.failed = [...appendAll(dir, byBoard), ...verify(dir, reopened, false)]
+  const unwritten = appendAll(dir, byBoard)
+  const missed = new Set(unwritten.flatMap((f) => f.threads.map((t) => `${f.board}\t${t}`)))
+  receipt.failed = [...unwritten, ...verify(dir, reopened.filter((r) => !missed.has(`${r.board}\t${r.thread}`)), false)]
   const lost = new Set(receipt.failed.flatMap((f) => f.threads.map((t) => `${f.board}\t${t}`)))
   receipt.reopened = reopened.filter((r) => !lost.has(`${r.board}\t${r.thread}`))
   receipt.state = 'done'

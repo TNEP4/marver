@@ -7,9 +7,9 @@ import { appendEvents, readLog, replay, type CommentEvent } from '../src/server/
 import { validateEvents } from '../src/server/collab.ts'
 import { migrateOwnership, ownsMessage, recordOwn } from '../src/server/own.ts'
 import { record } from '../src/server/jam/ledger.ts'
-import { parseScope, resolveAll, undoResolveAll, type Receipt, type UndoReceipt } from '../src/server/comment-actions.ts'
+import { parseScope, resolveAll, scopeFrames, undoResolveAll, type Receipt, type UndoReceipt } from '../src/server/comment-actions.ts'
 import { fresh, write as writeJournal } from '../src/server/jam/journal.ts'
-import { ctxFor, form, freezeBrief, ingest, liveThreads } from '../src/server/jam/queue.ts'
+import { answers, ctxFor, form, freezeBrief, ingest, liveThreads } from '../src/server/jam/queue.ts'
 import { syncOnce } from '../src/server/sync.ts'
 import { markSlot } from '../app/pages/strip/needs.ts'
 import type { Card } from '../src/server/jam/types.ts'
@@ -126,6 +126,12 @@ describe('the published validator (spec 31 C.4, B.3)', () => {
     expect(validateEvents([ev({ type: 'edit', commentId: 'c-mine01', author: { email: OWNER.email }, body: 'again' })], gone, me, 'main')).toMatch(/deleted/)
     expect(validateEvents([ev({ type: 'edit', commentId: 'c-mine01', author: { email: OWNER.email }, body: 'again' })], log, me, 'main')).toBeNull()
   })
+  it('a message id is one message\'s: a create reusing a reply\'s id cannot claim it, nor delete it', () => {
+    const withReply = [...log, { ...reply('r-them01', 'c-them01', { author: OTHER }), ts: now() - 800 }]
+    expect(validateEvents([ev({ type: 'create', commentId: 'r-them01', author: { email: OWNER.email }, body: 'mine now?', frame: 'x/y' }),
+      ev({ type: 'delete', commentId: 'r-them01', author: { email: OWNER.email } })], withReply, me, 'main')).toMatch(/already exists/)
+    expect(validateEvents([ev({ type: 'delete', commentId: 'r-them01', author: { email: OWNER.email } })], withReply, me, 'main')).toMatch(/only the author/)
+  })
   it('a resolve-all\'s op rides resolves and reopens only', () => {
     expect(validateEvents([ev({ type: 'resolve', commentId: 'c-them01', op: 'op-12345678' })], log, me, 'main')).toBeNull()
     expect(validateEvents([ev({ type: 'reopen', commentId: 'c-them01', op: 'op-12345678' })], log, me, 'main')).toBeNull()
@@ -240,6 +246,49 @@ describe('resolve all (spec 31 B.1-B.4)', () => {
     } finally { done() }
   })
 
+  it('Undo leaves a thread anything happened in since - a reply, a reaction', () => {
+    const { root, dir, done } = canvas()
+    try {
+      ok(resolveAll(root, 'op-later-01', { board: 'main' }))
+      const later = Date.now() + 1000
+      appendEvents(dir, 'main', [{ id: 'later-reply', ts: later, type: 'reply', commentId: 'later-r', parentId: 'alpha1', board: 'main', author: OWNER, body: 'one more thing' }])
+      appendEvents(dir, 'main', [{ id: 'later-react', ts: later, type: 'react', commentId: 'bravo1', board: 'main', author: OWNER, emoji: '👍' }])
+      const u = ok(undoResolveAll(root, 'op-later-01'))
+      expect(u.changed.map((x) => x.thread).sort()).toEqual(['alpha1', 'bravo1'])
+      expect(u.reopened).toEqual([])
+    } finally { done() }
+  })
+
+  it('times: after everything the thread holds (a clock ahead), and the same on a retry - a later reopen is never overwritten', () => {
+    const { root, dir, done } = canvas()
+    try {
+      // another clock ran 30 s ahead and reopened alpha (inside what a published server takes)
+      const ahead = Date.now() + 30_000
+      appendEvents(dir, 'main', [{ id: 'ahead-ro', ts: ahead, type: 'reopen', commentId: 'alpha1', board: 'main' }])
+      const r = ok(resolveAll(root, 'op-skew-001', { board: 'main' }))
+      expect(r.resolved.find((x) => x.thread === 'alpha1')!.ts).toBeGreaterThan(ahead)
+      expect(open(dir, 'main')).not.toContain('alpha1')
+      // a crash after the receipt, before the appends: someone reopens bravo meanwhile, later than the plan's time
+      const file = join(root, 'design', '.local', 'comment-ops', 'op-crash-01.json')
+      const plan = ok(resolveAll(root, 'op-crash-01', { canvas: true }, { dryRun: true }))
+      appendEvents(dir, 'undo', [{ id: 'by-hand-ro2', ts: Date.now() + 60_000, type: 'reopen', commentId: 'echo1', board: 'undo' }])
+      writeFileSync(file, JSON.stringify({ ...plan, op: 'op-crash-01', resolved: plan.resolved.map((x) => ({ ...x, event: x.event.replace('op-dry', 'op-crash') })), state: 'pending' }))
+      const done2 = ok(resolveAll(root, 'op-crash-01', { canvas: true }))
+      expect(done2.failed).toEqual([{ board: 'undo', threads: ['echo1'], error: 'a later event keeps it open' }])
+      expect(open(dir, 'undo')).toEqual(['echo1'])
+    } finally { done() }
+  })
+
+  it('the root scene is a scope of its own, named', () => {
+    const { root, done } = canvas()
+    try {
+      writeFileSync(join(root, 'design', 'scenes', 'hero.tsx'), 'export default () => <main />\n')
+      expect(parseScope({ scene: '' })).toEqual({ scene: '' })
+      expect(scopeFrames(root, { scene: '' })).toEqual({ frames: new Set(['hero']) })
+      expect(scopeFrames(root, { scene: 'spec' })).toEqual({ frames: new Set(['spec/alpha', 'spec/bravo']) })
+    } finally { done() }
+  })
+
   it('a log that cannot be written is reported with its threads; the other logs still land', () => {
     const { root, dir, done } = canvas()
     try {
@@ -316,6 +365,20 @@ describe('Jam never reads a deleted message (spec 31 C.5)', () => {
       const out = form(j, ctxFor(root), { free: 3, running: new Set(), exclusiveRunning: false, held: () => false, anyHold: () => false })
       expect(out.batches).toEqual([])
       expect(j.cards.find((x) => x.thread === 'alpha1')).toMatchObject({ state: 'dropped', note: 'deleted' })
+    } finally { done() }
+  })
+})
+
+describe('marks never show a deleted answer (spec 31 C.5)', () => {
+  it('a deleted plain reply under a Marver note is not "answered by you", its words nowhere', () => {
+    const { root, dir, done } = canvas()
+    try {
+      const note = create('note1', { agent: true, body: 'Marver asks: which one?' })
+      const ans = reply('ans1', 'note1', { body: 'the blue one, secretly' })
+      appendEvents(dir, 'main', [note, ans]); record(root, 'main', ans.id)
+      expect(answers(root).answered.map((a) => a.body)).toEqual(['the blue one, secretly'])
+      appendEvents(dir, 'main', [del('ans1')])
+      expect(JSON.stringify(answers(root))).not.toContain('secretly')
     } finally { done() }
   })
 })

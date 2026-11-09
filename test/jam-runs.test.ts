@@ -1620,7 +1620,7 @@ describe('review 3', { timeout: 30_000 }, () => {
 
 
 describe('spec 31 C.5: a message deleted while your session is offered the run', { timeout: 30_000 }, () => {
-  it('never reaches it: the claim\'s brief and packet leave it out; with nothing left, it is told to release', async () => {
+  it('never reaches it: the claim\'s brief and packet leave it out, the deleted request\'s card dropped', async () => {
     const s = await setup()
     const a = tag(s.root, s.dir, '@marver make it say Hello')
     const b = tag(s.root, s.dir, '@marver and the footer says Bye')
