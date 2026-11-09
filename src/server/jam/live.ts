@@ -53,6 +53,8 @@ export const jamLive: {
   view?: () => QueueView
   /** the threads Jam is at work on now, `board\tthread` (queue.ts liveThreads) - synchronous, from the journal in memory */
   busy?: () => Set<string>
+  /** a capture whose own comment was deleted (spec 31 C.5): its record is no page's to read any more */
+  withdrawn?: (id: string) => boolean
   act?: (id: string, rev: number, action: string, body?: string) => Promise<{ ok: boolean; card?: unknown; error?: string }>
   capture?: (record: unknown) => Promise<{ ok: boolean; card?: unknown; error?: string; held?: string }>
   sealed?: (id: string) => boolean

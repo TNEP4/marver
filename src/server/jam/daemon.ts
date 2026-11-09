@@ -1607,6 +1607,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       ...(c.session ? { session: c.session } : {}),
       ...(readWrapup(root, wrapupOf(c)) ? { file: readWrapup(root, wrapupOf(c))!.wrapup.file } : {}),
     }
+    // withdrawn (its own comment deleted - Codex r8): the page gets none of its words, nor a name made from them
+    if (withdrawnCaptures(q.j, commentsDir).has(c.id)) return { title: 'Withdrawn capture', notes: 0, ...(c.name ? { named: true, name: c.name } : {}), inRun: false, ...(c.session ? { session: c.session } : {}) }
     let t = titles.get(c.id)
     if (!t) {
       const rec = readCapture(root, c.id)?.record
@@ -1885,6 +1887,7 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
   jamLive.poke = () => void core.poke()
   jamLive.view = () => core.view()
   jamLive.busy = () => core.busy()
+  jamLive.withdrawn = (id) => withdrawnCaptures(core.snapshot(), commentsDir).has(id)
   jamLive.act = (id, rev, action, body) => core.act(id, rev, action, body)
   jamLive.capture = (record) => core.capture(record)
   jamLive.sealed = (id) => core.sealed(id)
@@ -1909,7 +1912,7 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
       watcher?.close()
       for (const w of sessionWatchers) w.close()
       core.stop()
-      delete jamLive.poke; delete jamLive.view; delete jamLive.busy; delete jamLive.act; delete jamLive.capture
+      delete jamLive.poke; delete jamLive.view; delete jamLive.busy; delete jamLive.withdrawn; delete jamLive.act; delete jamLive.capture
       jamReservations.frames.clear(); jamReservations.exclusive = null; jamReservations.settling = false
       releaseLock(root)
     },

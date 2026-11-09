@@ -1300,6 +1300,8 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const cap = readCapture(root, id)
         if (!cap) return json(res, 404, { error: 'no such capture' })
         const { jamLive } = await import('./jam/live.ts')
+        // its own comment deleted: withdrawn, and what it said is nobody's to read again (Codex r8)
+        if (jamLive.withdrawn?.(id)) return json(res, 410, { error: 'this capture was withdrawn - its comment was deleted' })
         const card = jamLive.view?.().cards.find((c) => c.id === id)
         // `sealed`: the record is still the one sealed - Resume starts only from one that is
         return json(res, 200, { record: cap.record, ...(card?.edited !== undefined ? { edited: card.edited } : {}), pictures: cap.record.pictures, sealed: jamLive.sealed?.(id) ?? false })

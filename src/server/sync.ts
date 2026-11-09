@@ -150,7 +150,7 @@ export async function syncOnce(root: string, collab: Collab): Promise<Record<str
     const res = await fetch(`${base}/__mv/api/comments/${board}`, { headers: auth })
     if (!res.ok) { failures.push(`${board}: pull ${res.status}`); continue }
     const { events: remote } = await res.json() as { events: CommentEvent[] }
-    const pulled = appendEvents(dir, board, admitted(readLog(dir, board), remote)).length
+    const pulled = appendEvents(dir, board, admitted(readLog(dir, board), remote, { email: collab.email, id: myId })).length
     let pushed = 0
     if (rights[board] === 'comment' || old) {
       // Live Jam: agent-authored events are dev-local in v1 - never pushed to the published canvas
@@ -265,7 +265,7 @@ export async function serverCapabilities(base: string, headers: Record<string, s
  *  never held this machine's own messages (Marver's notes, captures - never pushed). So a message id already here is
  *  one message's: another event claiming it as a new message is refused, and an edit or a delete of it must come from
  *  its original author - never touching Marver's or a local-only message at all. */
-export function admitted(local: CommentEvent[], remote: CommentEvent[]): CommentEvent[] {
+export function admitted(local: CommentEvent[], remote: CommentEvent[], me: { email?: string; id?: string } = {}): CommentEvent[] {
   const msgs = new Map<string, CommentEvent>()
   for (const e of local) if ((e.type === 'create' || e.type === 'reply') && e.commentId && !msgs.has(e.commentId)) msgs.set(e.commentId, e)
   // the server's own copy of each message: its author as THIS transport carries it - an email for the operator's
@@ -285,6 +285,13 @@ export function admitted(local: CommentEvent[], remote: CommentEvent[]): Comment
       const orig = msgs.get(e.commentId), there = theirs.get(e.commentId)
       // the message here must be the very one the server holds (same event), never Marver's or a local-only one
       if (!orig || !there || there.id !== orig.id || orig.agent || offLimits.has(e.commentId)) continue
+      // ids are a client's to choose (Codex r8): the server's copy must be written by whoever wrote the one here - the
+      // same address, the same opaque id, or (a message of mine, as a password session sees it) my address here and
+      // my id there. Otherwise someone reused the ids of a message this machine never pushed
+      const sameAuthor = (orig.author?.email && there.author?.email) ? key(orig.author) === key(there.author)
+        : (orig.author?.id && there.author?.id) ? orig.author.id === there.author.id
+        : !!orig.author?.email && !!there.author?.id && !!me.id && !!me.email && key(orig.author) === me.email.toLowerCase() && there.author.id === me.id
+      if (!sameAuthor) continue
       if (!key(e.author) || key(e.author) !== key(there.author)) continue
     }
     out.push(e)

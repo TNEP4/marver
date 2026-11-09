@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { appendEvents, readLog, replay, type CommentEvent } from '../src/server/comments.ts'
 import { asSentBy } from '../src/shared/events.ts'
-import { validateEvents } from '../src/server/collab.ts'
+import { mailable, validateEvents } from '../src/server/collab.ts'
 import { migrateOwnership, ownership, ownsMessage, recordOwn } from '../src/server/own.ts'
 import { record } from '../src/server/jam/ledger.ts'
 import { parseScope, resolveAll, scopeFrames, undoResolveAll, type Receipt, type UndoReceipt } from '../src/server/comment-actions.ts'
@@ -100,6 +100,16 @@ describe('who owns a message (spec 31 C.2)', () => {
       recordOwn(root, 'main', ['later'])
       expect(ownsMessage(root, 'main', 'later')).toBe(true)
       expect(JSON.parse(readFileSync(join(root, 'design', '.local', 'own.json'), 'utf8'))).toMatchObject({ v: 1, migrated: true })
+    } finally { done() }
+  })
+
+  it('no profile email: a message with an opaque id (a published canvas\'s projection of someone) is never mine', () => {
+    const { root, dir, done } = temp('mv-r31-own4-')
+    try {
+      appendEvents(dir, 'main', [create('projc0001', { author: { id: 'd'.repeat(24), name: 'Collaborator' } }), create('anon00001', { author: { name: 'You' } })])
+      migrateOwnership(root)
+      expect(ownsMessage(root, 'main', 'projc0001')).toBe(false)
+      expect(ownsMessage(root, 'main', 'anon00001')).toBe(true)
     } finally { done() }
   })
 
@@ -551,6 +561,29 @@ describe('older records, titles and captures (spec 31 C.5)', () => {
     } finally { done() }
   })
 
+  it('a withdrawn capture\'s words never reach a page: the lane\'s view shows a neutral title, no edit', async () => {
+    const { root, dir, done } = temp('mv-r31-capview-')
+    try {
+      const j = fresh()
+      j.cards.push({ id: 'cap-view01', kind: 'capture', board: 'home', frames: [], thread: 'capv0001', events: [], state: 'review', payload: { record: {} as never, recordHash: 'h', edited: 'the withdrawn secret' }, made: 1, order: 1, rev: 1, at: 1 } as Card)
+      j.baselined = true
+      writeJournal(root, j)
+      appendEvents(dir, 'home', [create('capv0001', { board: 'home', capture: 'cap-view01', body: 'x' }), del('capv0001', { board: 'home' })])
+      const jam = createJam(root, { agent: 'claude', concurrency: 1, subagents: true, proactive: false, chime: false, capture: 'confirm', loc: true, names: false, runner: 'background', session: false, context: 'fresh', mcp: true, skills: true, others: true, sessionMax: 1 } as never, { name: 'claude', supportsSubagents: true, spawnArgs: () => ({ cmd: 'true', args: [] }), parse: () => ({}) } as never)
+      const v = JSON.stringify(jam.view())
+      expect(v).not.toContain('withdrawn secret')
+      expect(jam.view().cards.find((c) => c.id === 'cap-view01')).toMatchObject({ title: 'Withdrawn capture' })
+      jam.stop()
+    } finally { done() }
+  })
+
+  it('a create and its delete pushed together mail nothing (Codex r8)', () => {
+    const c = create('mailc0001', { body: 'deleted before it synced', mentions: [{ email: OTHER.email, label: 'Ana' }] })
+    expect(mailable([c, del('mailc0001')], [])).toHaveLength(1)
+    expect(mailable([c, del('mailc0001')], []).some((e) => e.type === 'create')).toBe(false)
+    expect(mailable([c], [])).toEqual([c])
+  })
+
   it('a capture\'s own comment deleted before it is sent: the capture is withdrawn', () => {
     const { root, dir, done } = temp('mv-r31-cap-')
     try {
@@ -664,6 +697,19 @@ describe('sync against old and new servers (spec 31 C.6)', () => {
       expect(b.main).toMatchObject({ pushed: 1, held: 1 })
       expect(srv.store.some((e) => e.commentId === 'newmsg002')).toBe(true)
     } finally { await srv.close(); done() }
+  })
+
+  it('ids reused for a message this machine never pushed (Codex r8): the remote "original" is someone else\'s - its delete never lands', () => {
+    const mine = create('unpushed1', { author: { email: OWNER.email } })
+    const forged = { ...mine, author: { email: OTHER.email } }
+    expect(admitted([mine], [forged, { id: 'forged-del', ts: t(), type: 'delete', commentId: 'unpushed1', board: 'main', author: { email: OTHER.email } }]).map((e) => e.id)).toEqual([mine.id])
+    // a password session sees ids: theirs is not mine
+    const forgedP = { ...mine, author: { id: 'c'.repeat(24) } }
+    const me = { email: OWNER.email, id: 'a'.repeat(24) }
+    expect(admitted([mine], [forgedP, { id: 'forged-dp', ts: t(), type: 'delete', commentId: 'unpushed1', board: 'main', author: { id: 'c'.repeat(24) } }], me).map((e) => e.id)).toEqual([mine.id])
+    // ...while my own pushed message, as the server projects it, takes my own delete
+    const mineP = { ...mine, author: { id: 'a'.repeat(24) } }
+    expect(admitted([mine], [mineP, { id: 'my-del-p', ts: t(), type: 'delete', commentId: 'unpushed1', board: 'main', author: { id: 'a'.repeat(24) } }], me).map((e) => e.id)).toEqual([mine.id, 'my-del-p'])
   })
 
   it('a password or invite session (opaque ids, no emails): a remote delete by the author lands, one by anyone else does not', () => {

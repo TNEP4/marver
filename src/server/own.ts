@@ -64,7 +64,9 @@ export function migrateOwnership(root: string): void {
     for (const e of readLog(commentsOf(root), board)) {
       if ((e.type !== 'create' && e.type !== 'reply') || !e.commentId || e.agent || e.agentMeta) continue
       const theirs = (e.author?.email ?? '').toLowerCase()
-      if (ledger.has(`${board}\t${e.id}`) || (me ? theirs === me : !theirs)) ids.add(e.commentId)
+      // with no address on either side, only a message that carries no identity at all is this machine's - an opaque id
+      // is a published canvas's projection of someone (a synced or copied log): never mine without the ledger (Codex r8)
+      if (ledger.has(`${board}\t${e.id}`) || (me ? theirs === me : !theirs && !e.author?.id)) ids.add(e.commentId)
     }
     if (ids.size) boards[board] = [...ids]
   }

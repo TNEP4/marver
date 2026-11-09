@@ -206,6 +206,13 @@ export function validateEvents(incoming: CommentEvent[], log: CommentEvent[], u:
   return null
 }
 
+/** What of a push may be mailed (spec 31 C.4, Codex r8): never a message deleted by then - an offline create and its
+ *  delete arriving together mail nothing. */
+export function mailable(fresh: CommentEvent[], log: CommentEvent[]): CommentEvent[] {
+  const gone = deletedMessages([...log, ...fresh])
+  return fresh.filter((e) => !((e.type === 'create' || e.type === 'reply' || e.type === 'edit') && e.commentId && gone.has(e.commentId)))
+}
+
 export function collabHandler(dataDir: string, distDir: string) {
   let rights: Rights = {}
   let meta: { name?: string; boards?: Record<string, { type?: string }>; frontDoor?: boolean } = {}
@@ -992,7 +999,9 @@ export function collabHandler(dataDir: string, distDir: string) {
         // activity mail (07-v1.1 §A/§B): a fresh reply pulls its thread back, a
         // mention pulls its person - history imports never mail (freshness gate)
         // (the old all-scenes log: its threads' readers are everyone a published board admits)
-        if (fresh.length) notifyCommentActivity(notifyCtx, m[1], fresh, legacy ? [...log, ...fresh] : threads.get(m[1])?.events ?? [],
+        // nothing deleted in the same push (an offline create, then its delete) is ever mailed (Codex r8)
+        const mail = mailable(fresh, log)
+        if (mail.length) notifyCommentActivity(notifyCtx, m[1], mail, legacy ? [...log, ...fresh] : threads.get(m[1])?.events ?? [],
           (email) => (legacy ? Object.keys(rights).some((b) => mailAllowed(b, email)) : mailAllowed(m[1], email)))
         return json(res, 200, { accepted: fresh.length }), true
       }
