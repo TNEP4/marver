@@ -37,6 +37,8 @@ import { BOARD_NAME } from '../shared/board-tree.ts'
 import { COMPARE, CROP, PDF_EARLY, PDF_INSTALL, SETTLED, SVG_IMAGES, TO_JPEG, TWO_FRAMES } from './pdf-page.ts'
 import { onPdfReset } from './pdf-reset.ts'
 import { checkRealDirs } from './boards.ts'
+import { placeNewcomers } from '../shared/auto-place.ts'
+import { slideSize } from '../client/const.ts'
 
 // ---- the contract ------------------------------------------------------------------------------------------------
 
@@ -53,6 +55,8 @@ export interface PdfCtx {
   canvasName: string
   version: string
   frames: () => (PlanFrame & { file: string; note?: string; scene?: string; variantGroup?: string; variant?: string; contentWidth?: number })[]
+  /** the manifest's scenes: their notes and names lay a board out as the canvas does (boardNodes) */
+  scenes?: () => { name: string; note?: string }[]
   /** no source change in flight (the update-settlement barrier `shot` and bakes use) */
   settled: () => boolean
   /** a frame's document revision, dependency-aware (marks.ts docRev) */
@@ -120,7 +124,7 @@ export function playsAsSlides(root: string, board: string): boolean {
 
 /** The board file's nodes with the positions the canvas would give them: its own, else its layout's (a board an agent
  *  wrote as a frame list is laid out by the canvas when it opens - the same pure layout). */
-export async function boardNodes(root: string, board: string, frames: (PlanFrame & { scene?: string; variantGroup?: string; variant?: string; contentWidth?: number })[], viewports: Viewports, themes: string[]): Promise<{ nodes: PlanNode[]; title?: string } | null> {
+export async function boardNodes(root: string, board: string, frames: (PlanFrame & { note?: string; scene?: string; variantGroup?: string; variant?: string; contentWidth?: number; kind?: string })[], viewports: Viewports, themes: string[], scenes: readonly { name: string; note?: string }[] = []): Promise<{ nodes: PlanNode[]; title?: string } | null> {
   if (!BOARD_NAME.test(board) || board.length > 64) return null
   const { checkBoardsDir, isRegularFile } = await import('./boards.ts')
   const dir = join(root, 'design', 'boards'), file = join(dir, `${board}.json`)
@@ -130,11 +134,15 @@ export async function boardNodes(root: string, board: string, frames: (PlanFrame
   try { b = JSON.parse(readFileSync(file, 'utf8')) } catch { return null }
   if (!b || typeof b !== 'object') return null
   const byId = new Map(frames.map((f) => [f.id, f]))
-  type Raw = { frame: string; x?: unknown; y?: unknown; w?: unknown; h?: unknown; theme?: unknown; themeUser?: unknown }
-  const raw: Raw[] = (Array.isArray(b.nodes) ? b.nodes : []).filter((n): n is Raw => !!n && typeof (n as Raw).frame === 'string')
-  // an auto board shows every frame: the ones not on it yet follow, in the manifest's order
-  if (b.auto === true) { const on = new Set(raw.map((n) => n.frame)); for (const f of frames) if (!on.has(f.id)) raw.push({ frame: f.id }) }
+  type Raw = { frame: string; x?: unknown; y?: unknown; w?: unknown; h?: unknown; theme?: unknown; themeUser?: unknown; sizeMode?: unknown }
+  const auto = b.auto === true
   const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+  const saved: Raw[] = (Array.isArray(b.nodes) ? b.nodes : []).filter((n): n is Raw => !!n && typeof (n as Raw).frame === 'string')
+  // the canvas lays a board out again only when a node of its file has no position (store.ts needTidy, counted before an
+  // auto board sheds its gone frames) - frames an auto board gains are placed beside the saved ones, which keep theirs
+  const needTidy = saved.some((n) => !num(n.x) || !num(n.y))
+  // an auto board sheds the nodes whose frame is gone, as the canvas does when it loads it (store.ts)
+  const raw: Raw[] = auto ? saved.filter((n) => byId.has(n.frame)) : saved
   const first = themes[0] ?? 'light'
   const themeOf = (n: Raw): string | undefined => {
     if (typeof n.themeUser === 'string' && themes.includes(n.themeUser)) return n.themeUser
@@ -142,23 +150,51 @@ export async function boardNodes(root: string, board: string, frames: (PlanFrame
     const f = byId.get(n.frame)
     return typeof n.theme === 'string' && themes.includes(n.theme) && n.theme !== (f?.theme ?? first) ? n.theme : undefined
   }
-  // a node with no saved size is the size the canvas gives it (store.ts defaultSize): a slide its stage, a Doc its width
-  // (its viewport's, else its content width), anything else its viewport, else mobile
+  // the committed heights a board load is handed (api.ts GET sizes): a measuring content frame's, at its own width
+  const { autoWidthOf, keptSizes, measuringFrames, readSizes } = await import('./sizes.ts')
+  const heights = keptSizes(readSizes(root), autoWidthOf(frames, viewports), measuringFrames(root, frames))
+  // the size the canvas gives a frame (store.ts defaultSize): a slide its stage, a Doc its width (its viewport's, else
+  // its content width) and its committed height, anything else its viewport, else mobile; a frame gone, a phone
+  const def = (f: (typeof frames)[number] | undefined): { w: number; h: number } => {
+    if (!f) return { w: 390, h: 844 }
+    const sl = slideSize(f, viewports)
+    if (sl) return { w: sl.width, h: sl.height }
+    if (f.contentWidth) {
+      const vp = viewports[f.viewport ?? '']
+      const w = vp?.width ?? f.contentWidth
+      const known = heights[`${f.id}@${w}`]
+      return { w, h: known ?? vp?.height ?? Math.round(w * 0.75) }
+    }
+    const vp = viewports[f.viewport ?? ''] ?? viewports.mobile ?? { width: 390, height: 844 }
+    return { w: vp.width, h: vp.height }
+  }
+  // a node's size as the canvas hydrates it (store.ts): its saved one - except an auto-sized Doc with a committed height at
+  // its default width (store.ts hasKnownHeight, whichever size defaultSize gave it - a slide's stage too), which opens at
+  // its default size (a saved w/h there is a guess the first measurement overrides)
   const size = (n: Raw) => {
     const f = byId.get(n.frame)
-    const vp = f?.viewport ? viewports[f.viewport] : undefined
-    const d = f?.slide ? (vp ?? { width: 1280, height: 720 })
-      : num(f?.contentWidth) ? { width: vp?.width ?? f!.contentWidth!, height: vp?.height ?? Math.round((vp?.width ?? f!.contentWidth!) * 0.75) }
-      : (vp ?? viewports.mobile ?? { width: 390, height: 844 })
-    return { w: num(n.w) ? n.w : d.width, h: num(n.h) ? n.h : d.height }
+    const d = def(f)
+    const own = !!f?.contentWidth && n.sizeMode !== 'manual' && n.sizeMode !== 'device' && heights[`${f.id}@${d.w}`] !== undefined
+    return { w: !own && num(n.w) ? n.w : d.w, h: !own && num(n.h) ? n.h : d.h }
   }
   const nodes: PlanNode[] = raw.map((n) => ({ frame: n.frame, x: num(n.x) ? n.x : 0, y: num(n.y) ? n.y : 0, w: size(n).w, ...(themeOf(n) ? { theme: themeOf(n) } : {}), ...(byId.has(n.frame) ? {} : { missing: true }) }))
-  if (raw.some((n) => !num(n.x) || !num(n.y))) {
+  if (auto) {
+    // frames not on the board yet, placed by the canvas's own rule (src/shared/auto-place.ts), at its device view's size
+    const dv = typeof b.deviceView === 'string' ? viewports[b.deviceView] : undefined
+    placeNewcomers(nodes as (PlanNode & { w: number })[], frames, (f) => { const d = def(f); return { w: dv?.width ?? d.w, h: dv?.height ?? d.h } },
+      (f, x, y, w, h) => { raw.push({ frame: f.id, w, h, sizeMode: dv ? 'device' : 'auto' }); return { frame: f.id, x, y, w } })
+  }
+  // and when a note has no room (store.ts cramped): a board the canvas composes - a recipe, or auto - makes way for a note
+  // that landed beside saved positions; a load starts with no column measured yet (store.ts clearNoteHeights)
+  const { boardLayoutOf } = await import('./boards.ts')
+  const { notesCramped, tidyNodes } = await import('../client/shell/notes.ts')
+  const { composed, flow } = boardLayoutOf(b)
+  const manifest = { frames: frames.map((f) => ({ ...f, scene: f.scene ?? f.id.split('/')[0] })), scenes: [...scenes] }
+  const keyed = nodes.map((n, i) => ({ key: String(i), frame: n.frame, x: n.x, y: n.y, ...size(raw[i]), ...(n.missing ? { missing: true } : {}) }))
+  const cramped = !needTidy && composed && notesCramped(keyed, manifest, () => 0)
+  if ((needTidy || cramped) && nodes.length) {
     const { tidy } = await import('../client/shell/tidy.ts')
-    const { boardLayoutOf } = await import('./boards.ts')
-    const { flow } = boardLayoutOf(b)
-    const sceneOf = (id: string) => byId.get(id)?.scene ?? id.split('/')[0]
-    const placed = tidy(raw.map((n, i) => ({ key: String(i), frame: n.frame, scene: sceneOf(n.frame), group: byId.get(n.frame)?.variantGroup, variant: byId.get(n.frame)?.variant, ...size(n) })), flow)
+    const placed = tidy(tidyNodes(keyed, manifest, () => 0), flow, () => {}, new Set(scenes.map((sc) => sc.name)))
     for (const p of placed) { const n = nodes[Number(p.key)]; if (n) { n.x = p.x; n.y = p.y } }
   }
   const title = typeof b.title === 'string' && b.title.trim() ? b.title.trim().slice(0, 200) : undefined
@@ -168,9 +204,9 @@ export async function boardNodes(root: string, board: string, frames: (PlanFrame
 export type PlanAnswer = { ok: true; plan: Plan; title: string } | { ok: false; status: number; error: string }
 
 /** The board's plan with its budgets checked: 404 for a board that is not there, 400 for one that cannot print. */
-export async function planFor(ctx: Pick<PdfCtx, 'root' | 'viewports' | 'themes' | 'frames'>, board: string, theme?: string): Promise<PlanAnswer> {
+export async function planFor(ctx: Pick<PdfCtx, 'root' | 'viewports' | 'themes' | 'frames' | 'scenes'>, board: string, theme?: string): Promise<PlanAnswer> {
   const frames = ctx.frames()
-  const b = await boardNodes(ctx.root, board, frames, ctx.viewports, ctx.themes)
+  const b = await boardNodes(ctx.root, board, frames, ctx.viewports, ctx.themes, ctx.scenes?.() ?? [])
   if (!b) return { ok: false, status: 404, error: `no board "${board}" - boards are in design/boards/` }
   const plan = exportPlan({ slides: playsAsSlides(ctx.root, board), nodes: b.nodes, frames, viewports: ctx.viewports, theme })
   if (!plan.pages.length) return { ok: false, status: 400, error: `nothing to print on "${board}"${plan.skipped.length ? ` (${plan.skipped.length} frame(s) skipped: ${plan.skipped.slice(0, 3).map((s) => `${s.frame} - ${s.why}`).join(', ')})` : ''}` }

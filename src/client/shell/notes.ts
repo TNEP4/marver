@@ -104,6 +104,27 @@ export function notesCramped(
   })
 }
 
+/** What tidy sees of a board's nodes (spec 18): each with its scene, variant run, header-inclusive height, the note
+ *  width to reserve in front (the frame's note, and the scene's on every member - tidy keeps the scene reserve on the
+ *  first node it places) and its column's measured height. One rule for the canvas (store.ts tidyInput) and the deck
+ *  PDF's plan (pdf.ts), which lays a board out as the canvas does when it opens it. */
+export function tidyNodes(
+  nodes: readonly { key: string; frame: string; w: number; h: number }[],
+  manifest: { frames: { id: string; scene: string; note?: string; variantGroup?: string; variant?: string }[]; scenes: { name: string; note?: string }[] } | null,
+  noteH: (key: string) => number = noteHeight,
+): { key: string; frame: string; scene: string; group?: string; variant?: string; w: number; h: number; noteW: number; sceneNoteW: number; noteH: number }[] {
+  const entryOf = (id: string) => manifest?.frames.find((f) => f.id === id)
+  const sceneNote = (scene: string) => !!manifest?.scenes.find((s) => s.name === scene)?.note
+  return nodes.map((n) => {
+    const f = entryOf(n.frame)
+    const scene = f?.scene ?? ''
+    return {
+      key: n.key, frame: n.frame, scene, group: f?.variantGroup, variant: f?.variant, w: n.w, h: n.h + NODE_HEADER,
+      noteW: noteReserve(!!f?.note, false), sceneNoteW: noteReserve(false, sceneNote(scene)), noteH: noteH(n.key),
+    }
+  })
+}
+
 // ---- per-viewer visibility -------------------------------------------------------------
 
 /** The viewer's choice is kept per canvas (spec 28 A1.6): the shell names the key at boot (store.ts),

@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { ROUTE, slideSize } from '../const.ts'
 import { tidy, parseLayout, type BoardLayout, type TidyNode } from './tidy.ts'
-import { clearNoteHeights, noteHeight, noteReserve, notesCramped, scopeNotes, setNoteHeight } from './notes.ts'
+import { clearNoteHeights, noteHeight, noteReserve, notesCramped, scopeNotes, setNoteHeight, tidyNodes } from './notes.ts'
 import { stableNodeKey } from './keys.ts'
 import { canvasCtl } from './canvas/ctl.ts'
 import { api, beforeResume, canvasStopped, holdsReload, lostInResume, mvFetch, noteUnsaved, onLinkNotice, savedInResume, scoped, STOPPED_WAY, withWs } from './api.ts'
@@ -179,6 +179,7 @@ import { canAutoReload } from './canvas/ready-watch.ts'
 import { pumpUpdates } from './canvas/updates.ts'
 import { archiveLast, buildTree, flatten, framesOn, labelOf, toWire, TREE_PROTOCOL, type TreeItem } from '../../shared/board-tree.ts'
 import { UNPLACED } from './hash.ts'
+import { placeNewcomers } from '../../shared/auto-place.ts'
 import type { BoardType, StatusWord } from '../../shared/board-types.ts'
 import type { Phase, Status } from '../../shared/status.ts'
 import { isNew, type Marks } from '../../shared/marks.ts'
@@ -322,16 +323,7 @@ const HEADER = 28
  *  tidy keeps the scene reserve on the first node it places), and the measured height of the
  *  column standing there, so a note longer than its frame gets its room below as well. */
 export function tidyInput(nodes: readonly Node[], manifest: Manifest | null): TidyNode[] {
-  const entryOf = (id: string) => manifest?.frames.find((f) => f.id === id)
-  const sceneNote = (scene: string) => !!manifest?.scenes.find((s) => s.name === scene)?.note
-  return nodes.map((n) => {
-    const f = entryOf(n.frame)
-    const scene = f?.scene ?? ''
-    return {
-      key: n.key, frame: n.frame, scene, group: f?.variantGroup, variant: f?.variant, w: n.w, h: n.h + HEADER,
-      noteW: noteReserve(!!f?.note, false), sceneNoteW: noteReserve(false, sceneNote(scene)), noteH: noteHeight(n.key),
-    }
-  })
+  return tidyNodes(nodes, manifest)   // notes.ts: the deck PDF's plan lays boards out with the same input
 }
 let toastSeq = 0
 const nodeKey = () => 'n_' + Math.random().toString(36).slice(2, 8)
@@ -1166,7 +1158,6 @@ export const useStore = create<State>((set, get) => {
       // (the old published everything-board bug: frames created after the board file was last
       // saved piled up at the origin)
       if (boardAuto) {
-        const placed = new Set(nodes.map((n) => n.frame))
         // newcomers get deterministic keys too - on a published auto board
         // this path mints EVERY key, every visit, and comments anchor to them
         const haveKeys = new Set(nodes.map((n) => n.key))
@@ -1176,24 +1167,10 @@ export const useStore = create<State>((set, get) => {
           haveKeys.add(k)
           return k
         }
-        let maxX = nodes.reduce((a, n) => Math.max(a, n.x + n.w), 0)
-        for (const f of manifest.frames) {
-          if (placed.has(f.id)) continue
-          placed.add(f.id)
-          const d = defaultSize(f)
-          const vp = deviceView ? CONFIG.viewports[deviceView] : null
-          const w = vp?.width ?? d.w, h = vp?.height ?? d.h
-          let x: number, y: number
-          const sibling = f.variantGroup
-            ? nodes.filter((n) => manifest.frames.find((m) => m.id === n.frame)?.variantGroup === f.variantGroup)
-                .reduce<Node | null>((a, n) => (!a || n.x + n.w > a.x + a.w ? n : a), null)
-            : null
-          if (sibling) { x = sibling.x + sibling.w + Math.max(140, sibling.w * 0.12); y = sibling.y }
-          else { x = nodes.length ? maxX + 96 : 0; y = 0 }
-          const node: Node = { key: mint(f.id), frame: f.id, x, y, w, h, theme: resolveTheme(f), status: 'loading', ...(f.contentWidth ? { sizeMode: (vp ? 'device' : 'auto') as Node['sizeMode'] } : {}) }
-          nodes.push(node)
-          maxX = Math.max(maxX, x + w)
-        }
+        // the placement rule the deck PDF's plan shares (src/shared/auto-place.ts)
+        const vp = deviceView ? CONFIG.viewports[deviceView] : null
+        placeNewcomers(nodes, manifest.frames, (f) => { const d = defaultSize(f); return { w: vp?.width ?? d.w, h: vp?.height ?? d.h } },
+          (f, x, y, w, h): Node => ({ key: mint(f.id), frame: f.id, x, y, w, h, theme: resolveTheme(f), status: 'loading', ...(f.contentWidth ? { sizeMode: (vp ? 'device' : 'auto') as Node['sizeMode'] } : {}) }))
       }
       // published: re-apply this visit's pins and content sizes over the inlined data
       if (DATA && nodes.length) {
