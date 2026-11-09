@@ -30,6 +30,10 @@ export const TYPE_ROLES: Record<BoardType, string> = {
 export const TYPE_GRAMMAR = /^[a-z][a-z-]{0,31}$/
 /** A type off a file: the word when it is on-grammar, else absent. */
 export const readType = (v: unknown): string | undefined => (typeof v === 'string' && TYPE_GRAMMAR.test(v) ? v : undefined)
+/** Words read as another type (spec 31): `slides` is a deck - for the type only; whether a board plays as slides stays
+ *  its publish policy's. */
+export const TYPE_ALIASES: Readonly<Record<string, KnownType>> = { slides: 'deck' }
+const alias = (v: unknown): unknown => (typeof v === 'string' && Object.hasOwn(TYPE_ALIASES, v) ? TYPE_ALIASES[v] : v)
 /** A type this Marver draws. */
 export const knownType = (v: unknown): KnownType | undefined =>
   (BOARD_TYPES as readonly string[]).includes(v as string) ? (v as KnownType) : undefined
@@ -37,8 +41,8 @@ export const knownType = (v: unknown): KnownType | undefined =>
 /** A board's type: its own when it states one (an unknown word reads as plain - the board spoke
  *  for itself), else its folder's, else that folder's parent's, else plain. */
 export function resolveType(own: unknown, folder?: unknown, parent?: unknown): BoardType {
-  if (readType(own)) return knownType(own) ?? 'plain'
-  return knownType(folder) ?? knownType(parent) ?? 'plain'
+  if (readType(own)) return knownType(alias(own)) ?? 'plain'
+  return knownType(alias(folder)) ?? knownType(alias(parent)) ?? 'plain'
 }
 
 /** The publish type a board's type proposes when its publish row names none - how a board

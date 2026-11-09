@@ -141,6 +141,9 @@ export const COMMANDS = {
   // to resolve, or every one is Jam's work in progress
   'resolve-all': se('answer', { deadlineMs: S30, noop: ['nothing-open', 'published'], failed: ['api'] }),
   'resolve-undo': se('answer', { deadlineMs: S30, failed: ['api'] }),
+  // spec 31: a deck PDF - ends when the server takes the job (its progress is the notice's); `busy` - one is being made
+  'export-pdf': se('answer', { deadlineMs: S30, noop: ['busy'], failed: ['api'] }),
+  'export-pdf-cancel': se('answer', { failed: ['api'] }),
   'add-to-board': se('answer', { failed: ['api'] }),
   'update-copy': se('clipboard', { failed: CLIP }),
   'update-dismiss': se('2raf'),

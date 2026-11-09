@@ -168,10 +168,12 @@ export function Img({ src, caption, alt, h }: { src: string; caption?: string; a
   // and a bitmap decoded for the frame's own box would blur there - the plain <img> keeps
   // its full resolution. A slide frame is marked on <html> (data-mv-slide) before it renders.
   const inSlide = useInSlide() || (typeof document !== 'undefined' && document.documentElement.hasAttribute('data-mv-slide'))
+  // a deck PDF's render (frame host `export=1`, spec 31 #5): the original image, loaded now - never an LOD bucket
+  const exporting = typeof document !== 'undefined' && document.documentElement.hasAttribute('data-mv-export')
   // LOD: paint the image on a <canvas> decoded to its on-screen size (never the full 17MB bitmap), and
   // re-pick resolution only when the canvas settles after a zoom. See img-lod.ts. Falls back to a plain
   // <img> where createImageBitmap/bitmaprenderer isn't available (correctness over the optimization).
-  const lodOn = lodSupported && !inSlide
+  const lodOn = lodSupported && !inSlide && !exporting
   useEffect(() => {
     if (!url || err || !lodOn || !canvasRef.current) return
     return registerLodImage(canvasRef.current, url)
@@ -196,7 +198,7 @@ export function Img({ src, caption, alt, h }: { src: string; caption?: string; a
     <figure className="mv-block mv-img">
       {lodOn
         ? <canvas ref={canvasRef} className="mv-img-el" role="img" aria-label={alt ?? caption ?? ''} style={style} />
-        : <img className="mv-img-el" src={url} alt={alt ?? caption ?? ''} loading="lazy" style={style} onError={() => setErr(true)} />}
+        : <img className="mv-img-el" src={url} alt={alt ?? caption ?? ''} loading={exporting ? 'eager' : 'lazy'} style={style} onError={() => setErr(true)} />}
       {caption && <figcaption>{caption}</figcaption>}
     </figure>
   )

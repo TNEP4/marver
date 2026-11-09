@@ -139,6 +139,8 @@ function contained(target: string, base: string): boolean {
 export function apiMiddleware(root: string, opts: { viewports?: Record<string, { width: number; height: number }>; origin?: () => string | null; bakeGen?: () => number; notify?: (event: string) => void; manifest?: () => Manifest; settled?: () => boolean; workspace?: string; inputs?: InputsWatch
   /** an event with its payload to every open shell tab (spec 31 D3: `sh:show`) */
   broadcast?: (event: string, payload: unknown) => void
+  /** the config's themes, and the canvas's name as the shell shows it (a deck PDF's Author, spec 31) */
+  themes?: string[]; canvasName?: () => string
   /** a live picture's whole upload, read and checked, at most (A4.6 #37: 10 s; shorter in tests) */
   livePictureMs?: number } = {}): Connect.NextHandleFunction {
   // the run's workspace (spec 28 A1.6): a --recover run serves under an earlier address's key
@@ -883,6 +885,64 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         // base64url: a header must be ASCII, a frame id or note need not be
         res.writeHead(200, { 'content-type': 'image/png', 'content-length': png.length, 'cache-control': 'no-store', 'x-mv-shot': Buffer.from(JSON.stringify(summary)).toString('base64url') })
         return res.end(png)
+      }
+
+      // ---- pdf: deck PDFs (spec 31 Part A), one job per canvas. `POST pdf {board, theme?, notes?, paper?, mode?,
+      // keepGoing?}` starts one (202 and its id; 409 with the running one's id; 404 an unknown board; 400 a board that
+      // cannot print or a budget passed); `GET pdf/<job>` is its status, `GET pdf/<job>/file` the finished PDF,
+      // `DELETE pdf/<job>` cancels it. Gated like `shot` on every route: the owner (shell) or the dev token (CLI).
+      const pdfRoute = /^pdf(?:\/([^/]*)(\/file)?)?$/.exec(path)
+      if (pdfRoute) {
+        const { readDevInfo } = await import('./work.ts')
+        const token = readDevInfo(root)?.token
+        if (!ownerGated(req) && !(token && req.headers['x-mv-work'] === token)) return json(res, 403, { error: 'forbidden' })
+        const pdf = await import('./pdf.ts')
+        if (pdfRoute[1] === undefined) {
+          if (req.method !== 'POST') return json(res, 405, { error: 'POST to start a PDF' })
+          const raw = await readBody(req)
+          if (raw == null) return json(res, 400, { error: 'body too large or unreadable' })
+          let b: Record<string, unknown>
+          try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+          if (!b || typeof b !== 'object' || Array.isArray(b)) return json(res, 400, { error: 'expected an object' })
+          if (!validName(b.board)) return json(res, 400, { error: 'board must be a board name' })
+          const opt = <T,>(k: string, ok: (v: unknown) => boolean): T | undefined | null => (b[k] === undefined ? undefined : ok(b[k]) ? b[k] as T : null)
+          const theme = opt<string>('theme', (v) => typeof v === 'string' && /^[a-z0-9-]{1,32}$/i.test(v))
+          const notes = opt<boolean>('notes', (v) => typeof v === 'boolean')
+          const paper = opt<'letter' | 'a4'>('paper', (v) => v === 'letter' || v === 'a4')
+          const mode = opt<'auto' | 'raster' | 'vector'>('mode', (v) => v === 'auto' || v === 'raster' || v === 'vector')
+          const keepGoing = opt<boolean>('keepGoing', (v) => typeof v === 'boolean')
+          for (const [k, v] of Object.entries({ theme, notes, paper, mode, keepGoing })) if (v === null) return json(res, 400, { error: `invalid ${k}` })
+          const { docRev } = await import('./marks.ts')
+          const { installedVersion } = await import('./update.ts')
+          const ctx = {
+            root, origin: opts.origin?.() ?? `http://${req.headers.host ?? 'localhost'}`, viewports: opts.viewports ?? {}, themes: opts.themes ?? ['light', 'dark'],
+            canvasName: opts.canvasName?.() ?? root.split(sep).pop() ?? 'canvas', version: installedVersion() ?? '0.0.0',
+            frames: () => devManifest().frames, settled: opts.settled ?? (() => true), docRev: (id: string) => docRev(root, devManifest().frames, id),
+          }
+          const r = await pdf.startPdfJob(ctx, { board: b.board, ...(theme ? { theme } : {}), ...(notes ? { notes } : {}), ...(paper ? { paper } : {}), ...(mode ? { mode } : {}), ...(keepGoing ? { keepGoing } : {}) })
+          if (!r.ok) return json(res, r.status, { error: r.error, ...(r.job ? { job: r.job } : {}) })
+          return json(res, 202, pdf.jobStatus(r.job))
+        }
+        const j = pdf.getJob(pdfRoute[1])
+        if (!j || j.root !== root) return json(res, 404, { error: 'no such PDF job - a finished one is kept for an hour' })
+        if (pdfRoute[2]) {
+          if (req.method !== 'GET') return json(res, 405, { error: 'GET the file' })
+          if (j.state !== 'done' || !j.file) return json(res, 409, { error: j.state === 'running' ? 'the PDF is not finished yet' : `the export ${j.state}${j.error ? ` - ${j.error}` : ''}` })
+          // streamed: a PDF may be hundreds of MB
+          const { createReadStream, statSync } = await import('node:fs')
+          let size: number
+          try { size = statSync(j.file).size } catch { return json(res, 410, { error: 'the PDF is gone - export it again' }) }
+          res.writeHead(200, { 'content-type': 'application/pdf', 'content-length': size, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff',
+            'content-disposition': `attachment; filename="${j.filename.replace(/[^A-Za-z0-9._-]/g, '_')}"` })
+          const st = createReadStream(j.file)
+          st.on('error', () => res.destroy())
+          // a download cut short closes the file too
+          res.on('close', () => st.destroy())
+          return st.pipe(res)
+        }
+        if (req.method === 'GET') return json(res, 200, pdf.jobStatus(j))
+        if (req.method === 'DELETE') { pdf.cancelPdfJob(j.id); return json(res, 200, { job: j.id, cancelled: j.state === 'running' || j.state === 'cancelled' }) }
+        return json(res, 405, { error: 'GET or DELETE a job' })
       }
 
       // ---- shots: many frames as ONE operation - one browser, several frames at a time inside

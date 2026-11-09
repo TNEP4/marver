@@ -65,7 +65,7 @@ import { randomBytes } from 'node:crypto'
 import { ipcMain, webFrameMain, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents, type WebFrameMain } from 'electron'
 import {
   APP_MENU_IDS, BOUNDS, CANVAS_CHANNELS, FEATURE, PERF_BOUNDS, UNSAVED_WHY, WATCH_WHY, WHY, type WatchWhy,
-  type AppState, type Busy, type CaptureAnswer, type CaptureRect, type DocAnswer, type Hello, type Inset, type MenuIn, type MenuItem, type OpenItem, type PerfAsk, type PerfCam,
+  type AppState, type Busy, type CaptureAnswer, type CaptureRect, type ExportPdfAnswer, type DocAnswer, type Hello, type Inset, type MenuIn, type MenuItem, type OpenItem, type PerfAsk, type PerfCam,
   type PerfMsg, type PerfSize, type Present, type Presented, type Theme, type Why,
 } from '../../../src/shared/app-api.ts'
 import { CH, INVOKES as INVOKE_LIST, SENDERS, type PageKind } from '../shared/channels.ts'
@@ -98,6 +98,13 @@ export interface PageCtx { wc: WebContents; kind: PageKind; tabId?: string }
  * trusted, its instance listing `capture`), for the checks after the readback.
  */
 export type CaptureHandler = (tabId: string, doc: string, rect: CaptureRect, still: () => boolean) => Promise<CaptureAnswer>
+
+/**
+ * Spec 31: main's answer to an accepted `mv:export-pdf` - the tab and document that asked, the canvas origin it was
+ * admitted on, its webContents (whose session holds the owner cookie), the job id as sent (pdf-save.ts checks it), and
+ * `still()`, the same admission run again (after the save panel).
+ */
+export type ExportPdfHandler = (ask: { tabId: string; doc: string; origin: string; wc: WebContents; job: unknown }, still: () => boolean) => Promise<ExportPdfAnswer>
 
 export interface Bridge {
   /** record a webContents main created, with its kind (and its tab, for a canvas or a tab page) */
@@ -153,6 +160,8 @@ export interface Bridge {
   showItem(tabId: string, target: ShowTarget | 'landing'): boolean
   /** an accepted `mv:front`: the tab's admitted, trusted document, its instance listing `show`, at most once a second */
   onFront(fn: (tabId: string) => void): () => void
+  /** spec 31: main's handler for accepted `mv:export-pdf` asks (pdf-save.ts); null takes it away */
+  onExportPdf(fn: ExportPdfHandler | null): void
 }
 
 /** What the bridge asks of the rest of main (main.ts passes them at install). */
@@ -197,7 +206,7 @@ export function checkMenu(p: unknown): MenuItem[] | null {
   const ids = new Set<string>()
   for (const it of p) {
     if (!obj(it) || typeof it.id !== 'string' || !BOUNDS.menuId.test(it.id) || ids.has(it.id)) return null
-    if (it.group !== 'view' && it.group !== 'jam') return null
+    if (it.group !== 'view' && it.group !== 'jam' && it.group !== 'file') return null
     if (!text(it.label, BOUNDS.label, 1)) return null
     if (it.hint !== undefined && !text(it.hint, BOUNDS.hint)) return null
     if (it.checked !== undefined && typeof it.checked !== 'boolean') return null
@@ -437,6 +446,8 @@ export function installBridge(o: BridgeOptions = {}): Bridge {
   const frontFns = new Set<(tabId: string) => void>()
   /** when each webContents last had its `mv:front` taken: once a second at most, so no page can hold the window */
   const frontAt = new Map<number, number>()
+  /** spec 31: main's PDF save handler, read by the `mv:export-pdf` invoke */
+  let exportPdfFn: ExportPdfHandler | null = null
   let watched: Registry | null = null
   let unwatch: (() => void) | null = null
 
@@ -657,6 +668,22 @@ export function installBridge(o: BridgeOptions = {}): Bridge {
     trace('accepted', { wc: id, ch: 'front', tab: who.tabId })
     for (const fn of [...frontFns]) { try { fn(who.tabId) } catch (err) { process.stderr.write(`marver-app: a front listener threw: ${(err as Error).message}\n`) } }
   })
+  // spec 31: a finished deck PDF saved where the person says - admitted as the reports are, its instance listing `pdf`;
+  // only the job id crosses, and main fetches the file itself from the origin the document was admitted on
+  ipcMain.handle(CANVAS_CHANNELS.exportPdf, async (e: IpcMainInvokeEvent, msg: unknown): Promise<ExportPdfAnswer> => {
+    const id = e.sender.id
+    const m = obj(msg) ? msg : null
+    const admitted = () => { const w = admittedSender(e, m); return typeof w === 'string' || lists(id, FEATURE.pdf) ? w : 'no pdf' }
+    const who = admitted()
+    if (typeof who === 'string') { trace('refused', { wc: id, ch: 'export-pdf', why: who }); return { ok: false, why: 'untrusted' } }
+    const origin = targetOf(id)?.entry.origin
+    const p = obj(m!.p) ? m!.p as Record<string, unknown> : null
+    if (!origin || !p) { trace('refused', { wc: id, ch: 'export-pdf', why: 'payload' }); return { ok: false, why: 'bad-job' } }
+    if (!exportPdfFn) { trace('refused', { wc: id, ch: 'export-pdf', why: 'no handler' }); return { ok: false, why: 'failed' } }
+    const still = () => { const w = admitted(); return typeof w !== 'string' && w.tabId === who.tabId && w.doc === who.doc && targetOf(id)?.entry.origin === origin }
+    trace('accepted', { wc: id, ch: 'export-pdf' })
+    try { return await exportPdfFn({ tabId: who.tabId, doc: who.doc, origin, wc: e.sender, job: p.job }, still) } catch { return { ok: false, why: 'failed' } }
+  })
 
   // app pages
   const pageCtx = (e: IpcMainEvent | IpcMainInvokeEvent, channel: string): PageCtx | null => {
@@ -858,6 +885,7 @@ export function installBridge(o: BridgeOptions = {}): Bridge {
       return sent
     },
     onFront(fn) { frontFns.add(fn); return () => { frontFns.delete(fn) } },
+    onExportPdf(fn) { exportPdfFn = fn; trace('export-pdf-handler', { set: !!exportPdfFn }) },
   }
   return installed
 }

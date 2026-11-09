@@ -51,7 +51,9 @@ export interface Busy { busy: boolean; unsaved: boolean; why: Why[] }
 /** `mv:theme` - the shell's `play || slides || viewTheme === 'dark'` (A2.14 #26). */
 export interface Theme { dark: boolean }
 /** `mv:menu` - at most 40, no separators in 0.1 (A2.7). */
-export interface MenuItem { id: string; group: 'view' | 'jam'; label: string; hint?: string; checked?: boolean }
+/** `group: 'file'` (app 1.1, spec 31): an item for the File menu under the canvas's name - a shell offers one only to an
+ *  app that has `exportPdf` (an older app refuses a menu naming a group it does not know). */
+export interface MenuItem { id: string; group: 'view' | 'jam' | 'file'; label: string; hint?: string; checked?: boolean }
 /** `mv:app-state` (main to canvas). `untrusted`: stop every microphone track (A2.14 #13). A4 adds `mv:open` and
  *  `mv:capture`; this stays these three (A4.6 #29). */
 export type AppState = 'shown' | 'hidden' | 'untrusted'
@@ -162,6 +164,8 @@ export const CANVAS_CHANNELS = {
   show: 'mv:show',
   /** spec 31 D3: the shell showed what `marver show` asked - its tab to the front of the window (canvas to main) */
   front: 'mv:front',
+  /** app 1.1 (spec 31): a finished deck PDF saved where the person says - an invoke carrying only the job id */
+  exportPdf: 'mv:export-pdf',
 } as const
 
 /** Bounds main checks again (A2.14 #19): unknown fields are stripped, a known one of the wrong type or past its bound refuses the message. */
@@ -227,6 +231,8 @@ export const FEATURE = {
   /** 0.31.0 (spec 31 B.1): the shell handles `mv:menu-click resolve-all-comments` - every open thread on the canvas resolved,
    *  but what Jam is at work on, with its Undo. The app offers the tab menu's Resolve All Comments only to a canvas that says so */
   resolveAll: 'resolve-all',
+  /** 0.31.0 (spec 31 Part A): the server makes deck PDFs (`/__mv/api/pdf`) and the shell asks `mv:export-pdf` to save one */
+  pdf: 'pdf',
 } as const
 export type Feature = (typeof FEATURE)[keyof typeof FEATURE]
 
@@ -350,6 +356,19 @@ export type CaptureWhy = (typeof CAPTURE_WHY)[number]
  *  size in device pixels, its long side at most `BOUNDS.captureLong`. */
 export type CaptureAnswer = { ok: true; png: Uint8Array; width: number; height: number } | { ok: false; why: CaptureWhy }
 
+/** A deck PDF job's id (src/server/pdf.ts JOB_ID): 128 random bits, base64url. */
+export const PDF_JOB = /^[A-Za-z0-9_-]{22}$/
+/** The largest PDF main fetches and writes (spec 31: 200 MB). */
+export const PDF_MAX = 200 * 2 ** 20
+/** `mv:export-pdf` (canvas to main, an invoke; on the wire `{ doc, p }`): the finished job to save. */
+export interface ExportPdfAsk { job: string }
+/** Why nothing was saved: `cancelled` - the person closed the save panel; `untrusted` - the document is not the admitted,
+ *  trusted one (before the panel or after it); `bad-job` - no such finished job on this canvas; `too-large` - past
+ *  `PDF_MAX`; `failed` - the fetch or the write failed. */
+export const EXPORT_PDF_WHY = ['cancelled', 'untrusted', 'bad-job', 'too-large', 'failed'] as const
+export type ExportPdfWhy = (typeof EXPORT_PDF_WHY)[number]
+export type ExportPdfAnswer = { ok: true } | { ok: false; why: ExportPdfWhy }
+
 /**
  * `window.marverApp`, exposed by the canvas preload to verified local canvases. Typed methods only: a page never
  * names a channel. The six methods of 0.1 are required (marver-app.ts checks them); every A3 and A4 one is optional.
@@ -401,6 +420,11 @@ export interface MarverAppV1 {
   onShow?(fn: (t: ShowTarget | null) => void): () => void
   /** spec 31 D3 (app 1.1): this document showed a `marver show` - main brings its tab and the window forward */
   front?(): void
+  /**
+   * app 1.1 (spec 31): save a finished deck PDF. Only the job id crosses: main fetches the file itself from the admitted
+   * canvas origin, shows the save panel, checks the document again, and writes the file where the panel says
+   */
+  exportPdf?(a: ExportPdfAsk): Promise<ExportPdfAnswer>
 }
 
 import type { ShowTarget } from './deep-link.ts'

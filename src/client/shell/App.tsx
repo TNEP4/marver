@@ -23,6 +23,7 @@ import { perfSeams } from './recorder-seams.ts'
 import { takeNavToken } from './recorder-reloads.ts'
 import { cmd, endAfterFrames, endOnCamera, endOnLoad, endOnStage, foldsIntoSave, keysOf, shellReload, type CmdHandle, type CmdOpts } from './commands.ts'
 import { enterFocus, enterPlay, enterSlides, playCtl, PlayOverlay } from './Play.tsx'
+import { PdfNotice } from './pdf-export.tsx'
 import { bootHash, linkTargets, parseHash, retargetBoot, UNPLACED, writeHash } from './hash.ts'
 import { isLegacyLink, landLegacy } from './legacy-links.ts'
 import { CaretIcon, CheckIcon, CheckSquareOffsetIcon, ColumnsIcon, FrameRectIcon, ImagesSquareIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ParallelogramFillIcon, PencilSimpleIcon, PlayIcon, PlusIcon, SignpostIcon, SlideFrameIcon, SunIcon, VariantsIcon, XIcon } from './icons.tsx'
@@ -1350,6 +1351,7 @@ function JamToasts({ toasts }: { toasts: import('./store.ts').Toast[] }) {
   const newest = jams[jams.length - 1]
   return (
     <div className="sh-toasts">
+      <PdfNotice />
       {/* the last two - and a notice with an action (Undo) stays among them while it lasts */}
       {(() => { const act = plain.filter((t) => t.action).slice(-1); return [...plain.filter((t) => !t.action).slice(act.length ? -1 : -2), ...act].sort((a, b) => a.id - b.id) })().map((t) => (
         <div key={t.id} className="sh-toast" data-toast={t.action?.id}><CheckIcon size={12} /> {t.text}

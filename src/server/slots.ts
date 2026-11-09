@@ -133,8 +133,8 @@ function asRecord(v: unknown): SlotFile | null {
  *  own name here once its half works, never before: `live` (app-live.ts), `open` (the shell's open-item.ts) and
  *  `capture` (the shell asks for live pictures in play and the server takes `POST /api/jam/picture/live`:
  *  live-picture.ts, api.ts). 0.31 adds `show` (spec 31 D) and `resolve-all` (spec 31 B.1: the shell's runMenuItem, the dev server's
- *  comment-actions routes). */
-export const FEATURES: readonly string[] = [FEATURE.bridge, FEATURE.inset, FEATURE.live, FEATURE.open, FEATURE.capture, FEATURE.show, FEATURE.resolveAll]
+ *  comment-actions routes), and `pdf` (spec 31 A). */
+export const FEATURES: readonly string[] = [FEATURE.bridge, FEATURE.inset, FEATURE.live, FEATURE.open, FEATURE.capture, FEATURE.show, FEATURE.resolveAll, FEATURE.pdf]
 
 export interface Claim {
   slot: number | null

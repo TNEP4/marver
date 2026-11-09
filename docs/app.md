@@ -157,6 +157,14 @@ Check for Updates…:
   [the disk image](https://github.com/TNEP4/marver-app/releases/latest/download/Marver-arm64.dmg) again, open it,
   drag Marver into Applications and choose Replace. Your settings and tabs stay.
 
+## Exporting a PDF
+
+**File > Export PDF…** (app 1.1, a canvas on Marver 0.31 or later) prints the open board as a PDF - one page per slide
+([Deck PDFs](pdf.md)) - and, when it is ready, opens a save panel on `~/Downloads/<board>.pdf`. The canvas's own Export
+PDF (a board's menu, slides and present mode's toolbar) saves the same way in the app. The canvas sends the app only
+the finished job's id: the app fetches the file itself from that canvas, checks it is a PDF of 200 MB at most, checks
+again that the tab still shows the same canvas page after you chose where to save, and writes it whole.
+
 ## The performance report
 
 When Marver is slow, crashes or flashes, a report helps find out why. **Help > Export Performance Report…** (also on a

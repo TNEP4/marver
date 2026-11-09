@@ -35,6 +35,7 @@ import { BOUNDS, MENU_IN, type AppState, type Busy, type Hello, type MarverAppV1
 import type { CmdIn } from '../../shared/perf-records.ts'
 import { relayed } from './commands.ts'
 import { markSeenFrom, resolveAllFrom } from './marks-ui.tsx'
+import { canExportPdf, exportPdf } from './pdf-export.tsx'
 import { APP } from './marver-app.ts'
 import { TOP } from './inset.ts'
 import { api, canvasStopped } from './api.ts'
@@ -133,12 +134,18 @@ const ITEMS: readonly Item[] = [
 ]
 const offered = (it: Item) => { try { return it.when?.() ?? true } catch { return false } }
 
+/** File > Export PDF… (spec 31): the open board, offered only to an app that saves PDFs (`exportPdf`, app 1.1) - an
+ *  older app refuses a menu naming the `file` group - and on a dev canvas with a board open. */
+const pdfOffered = () => !!APP?.exportPdf && canExportPdf() && useStore.getState().board !== UNPLACED
+
 /** `mv:menu` now: at most 40 items, ids, labels and hints within the contract's bounds. */
 export function menuNow(): MenuItem[] {
-  return ITEMS.filter(offered).slice(0, BOUNDS.menuItems).map((it) => ({
+  const items: MenuItem[] = ITEMS.filter(offered).map((it) => ({
     id: it.id, group: it.group, label: it.label, hint: it.hint,
     ...(it.checked ? { checked: (() => { try { return !!it.checked!() } catch { return false } })() } : {}),
   }))
+  if (pdfOffered()) items.unshift({ id: 'export-pdf', group: 'file', label: 'Export PDF…' })
+  return items.slice(0, BOUNDS.menuItems)
 }
 
 /** A menu item chosen in the app: its key, replayed on the shell's window - the same handlers, the same rules (a
@@ -157,6 +164,10 @@ export function runMenuItem(id: string, from?: unknown): void {
   // the tab's Resolve All Comments (spec 31 B.1): every open thread on the canvas, as the sidebar's does for a board
   if (id === 'resolve-all-comments') {
     if (!PUBLISHED) void resolveAllFrom({ via: 'relay', in: where }, { canvas: true })
+    return
+  }
+  if (id === 'export-pdf') {
+    if (pdfOffered()) { const s = useStore.getState(); void exportPdf(s.board, s.play ? { theme: s.play.theme } : {}, { via: 'relay', in: where }) }
     return
   }
   const it = ITEMS.find((x) => x.id === id)
@@ -264,7 +275,7 @@ export function startAppBridge(): void {
   }
   const menuChanged = () => { if (menuQueued) return; menuQueued = true; queueMicrotask(sendMenu) }
   sendMenu()
-  useStore.subscribe((s, p) => { if (s.laser !== p.laser || s.laserInspect !== p.laserInspect) menuChanged() })
+  useStore.subscribe((s, p) => { if (s.laser !== p.laser || s.laserInspect !== p.laserInspect || (s.board === UNPLACED) !== (p.board === UNPLACED)) menuChanged() })
   useComments.subscribe((s, p) => { if (s.commentMode !== p.commentMode || s.show !== p.show) menuChanged() })
   useNotes.subscribe((s, p) => { if (s.all !== p.all) menuChanged() })
   useJamQueue.subscribe((s, p) => { if (!!s.session !== !!p.session) menuChanged() })

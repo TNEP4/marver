@@ -409,6 +409,26 @@ cli
     }
   })
 
+cli
+  .command('pdf [board]', 'A board\'s deck as a PDF, one page per slide (needs `dev` running): design/exports/<board>.pdf')
+  .option('--root <dir>', 'Host repo root', { default: '.' })
+  .option('--theme <name>', 'Theme to print (default: each slide\'s own, else light)')
+  .option('--notes', 'A handout instead: each slide with its title and its notes (design/exports/<board>-notes.pdf)')
+  .option('--paper <size>', 'The handout\'s paper, landscape: letter (default) or a4')
+  .option('--out <file>', 'Where to write the PDF')
+  .option('--raster', 'Every page a picture (3x) - no vector text')
+  .option('--vector', 'Patch nothing: every page as Chrome prints it')
+  .option('--keep-going', 'A slide that fails to render is left blank and named, instead of failing the export')
+  .option('--json', 'Print the report as JSON')
+  .action(async (board: string | undefined, opts) => {
+    const { pdfCommand } = await import('./pdf.ts')
+    try { process.exit(await pdfCommand(resolve(opts.root), board, opts)) }
+    catch (err) {
+      console.error(`[${NAME}] ${(err as Error).message}`)
+      process.exit(1)
+    }
+  })
+
 cli.help()
 cli.version(version())
 cli.parse()

@@ -732,6 +732,14 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
    its own muted ink - undo the blanket green above */
 .sh-toast.jam svg { color: currentColor }
 .sh-toast-more { color: var(--glass-ink-3); font-size: 11px; padding: 2px 10px }
+/* a deck PDF being made (spec 31): its board and page, a thin progress bar, Cancel */
+.sh-toast.sh-pdf-notice { gap: 8px; padding: 7px 8px 7px 13px; pointer-events: auto }
+.sh-toast.sh-pdf-notice svg { color: currentColor }
+.sh-toast.sh-pdf-notice b { font-weight: 600; color: var(--glass-ink) }
+.sh-pdf-notice .bar { width: 56px; height: 3px; border-radius: 2px; background: var(--glass-line, rgba(127,127,127,.25)); overflow: hidden; flex: none }
+.sh-pdf-notice .bar i { display: block; height: 100%; background: currentColor; opacity: .7; transition: width .3s }
+.sh-pdf-notice button { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 999px; border: 0; background: transparent; color: var(--glass-ink-3); cursor: pointer }
+.sh-pdf-notice button:hover { background: var(--glass-hover, rgba(127,127,127,.15)); color: var(--glass-ink) }
 
 /* the Live Jam reply pill: our full glass treatment, full radius, one row (§9) */
 .sh-toast.jam { gap: 12px; padding: 12px 12px 12px 14px; width: 380px; max-width: 100%; border-radius: 999px;

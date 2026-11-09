@@ -50,9 +50,10 @@ export const effects = {
    * A5: the report's save panel on `defaultPath` (a sheet on the window when it shows, else on its own); the path
    * chosen, or null. macOS's panel asks before replacing a file of that name.
    */
-  async savePanel(defaultPath: string, parent: BaseWindow | null): Promise<string | null> {
+  async savePanel(defaultPath: string, parent: BaseWindow | null, kind: 'json' | 'pdf' = 'json'): Promise<string | null> {
     if (__MV_TEST__ && fake()) { recorded.saves.push(defaultPath); return saveAnswer }
-    const o = { defaultPath, filters: [{ name: 'JSON', extensions: ['json'] }], properties: ['createDirectory' as const, 'showOverwriteConfirmation' as const] }
+    const filter = kind === 'pdf' ? { name: 'PDF', extensions: ['pdf'] } : { name: 'JSON', extensions: ['json'] }
+    const o = { defaultPath, filters: [filter], properties: ['createDirectory' as const, 'showOverwriteConfirmation' as const] }
     const r = parent ? await dialog.showSaveDialog(parent, o) : await dialog.showSaveDialog(o)
     return r.canceled || !r.filePath ? null : r.filePath
   },

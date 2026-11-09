@@ -321,7 +321,7 @@ function sizeOf(f: PlaceFrameInfo | undefined, viewports: Record<string, { width
 /** How the canvas lays a board out (store.ts): `composed` - it lays it out itself, re-running its layout whenever a Doc
  *  measures, a note lands or the window resizes (a layout recipe, scene rows, or the auto board); `flow` - the recipe it
  *  runs (the legacy scene rows as plain rows). */
-function boardLayoutOf(b: { layout?: unknown; sceneRows?: unknown; auto?: unknown }): { composed: boolean; flow?: BoardLayout } {
+export function boardLayoutOf(b: { layout?: unknown; sceneRows?: unknown; auto?: unknown }): { composed: boolean; flow?: BoardLayout } {
   const layout = parseLayout(b.layout, () => {})
   const rows = (Array.isArray(b.sceneRows) ? b.sceneRows : []).map((r: unknown) => (Array.isArray(r) ? r.filter((x): x is string => typeof x === 'string') : [])).filter((r) => r.length)
   const flow = layout ?? (rows.length ? { rows } : undefined)
