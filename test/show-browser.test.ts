@@ -477,7 +477,7 @@ describe('a show and the boot', () => {
     await t.ev(`__hold('other')`)
     const seq = await show({ board: 'other', n: ['n-three'] })
     await t.until(`__gate.asked`)
-    await t.ev(`__app.menu({ id: 'fit-all' }), 1`)
+    await t.ev(`__app.menu({ id: 'play' }), 1`)   // Play: its key handler counts nothing of its own
     await t.ev(`__gate.release()`)
     await new Promise((r) => setTimeout(r, 1500))
     expect((await t.ev(VIEW)).board).toBe('main')
