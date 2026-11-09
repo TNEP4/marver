@@ -37,6 +37,7 @@ import { BOARD_NAME } from '../shared/board-tree.ts'
 import { COMPARE, CROP, PDF_EARLY, PDF_INSTALL, SETTLED, SVG_IMAGES, TO_JPEG, TWO_FRAMES } from './pdf-page.ts'
 import { onPdfReset } from './pdf-reset.ts'
 import { checkRealDirs } from './boards.ts'
+import { placeNewcomers } from '../shared/auto-place.ts'
 
 // ---- the contract ------------------------------------------------------------------------------------------------
 
@@ -131,10 +132,13 @@ export async function boardNodes(root: string, board: string, frames: (PlanFrame
   if (!b || typeof b !== 'object') return null
   const byId = new Map(frames.map((f) => [f.id, f]))
   type Raw = { frame: string; x?: unknown; y?: unknown; w?: unknown; h?: unknown; theme?: unknown; themeUser?: unknown }
-  const raw: Raw[] = (Array.isArray(b.nodes) ? b.nodes : []).filter((n): n is Raw => !!n && typeof (n as Raw).frame === 'string')
-  // an auto board shows every frame: the ones not on it yet follow, in the manifest's order
-  if (b.auto === true) { const on = new Set(raw.map((n) => n.frame)); for (const f of frames) if (!on.has(f.id)) raw.push({ frame: f.id }) }
+  const auto = b.auto === true
+  // an auto board sheds the nodes whose frame is gone, as the canvas does when it loads it (store.ts)
+  const raw: Raw[] = (Array.isArray(b.nodes) ? b.nodes : []).filter((n): n is Raw => !!n && typeof (n as Raw).frame === 'string' && (!auto || byId.has((n as Raw).frame)))
   const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+  // the canvas lays a board out again only when a node of its file has no position (store.ts needTidy) - frames an auto
+  // board gains are placed beside the saved ones, which keep theirs
+  const needTidy = raw.some((n) => !num(n.x) || !num(n.y))
   const first = themes[0] ?? 'light'
   const themeOf = (n: Raw): string | undefined => {
     if (typeof n.themeUser === 'string' && themes.includes(n.themeUser)) return n.themeUser
@@ -153,7 +157,13 @@ export async function boardNodes(root: string, board: string, frames: (PlanFrame
     return { w: num(n.w) ? n.w : d.width, h: num(n.h) ? n.h : d.height }
   }
   const nodes: PlanNode[] = raw.map((n) => ({ frame: n.frame, x: num(n.x) ? n.x : 0, y: num(n.y) ? n.y : 0, w: size(n).w, ...(themeOf(n) ? { theme: themeOf(n) } : {}), ...(byId.has(n.frame) ? {} : { missing: true }) }))
-  if (raw.some((n) => !num(n.x) || !num(n.y))) {
+  if (auto) {
+    // frames not on the board yet, placed by the canvas's own rule (src/shared/auto-place.ts), at its device view's size
+    const dv = typeof b.deviceView === 'string' ? viewports[b.deviceView] : undefined
+    placeNewcomers(nodes as (PlanNode & { w: number })[], frames, (f) => { const d = size({ frame: f.id }); return { w: dv?.width ?? d.w, h: dv?.height ?? d.h } },
+      (f, x, y, w, h) => { raw.push({ frame: f.id, w, h }); return { frame: f.id, x, y, w } })
+  }
+  if (needTidy) {
     const { tidy } = await import('../client/shell/tidy.ts')
     const { boardLayoutOf } = await import('./boards.ts')
     const { flow } = boardLayoutOf(b)

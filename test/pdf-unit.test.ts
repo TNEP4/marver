@@ -11,6 +11,7 @@ import {
 } from '../src/server/pdf.ts'
 import { reportLines } from '../src/cli/pdf.ts'
 import { knownType, resolveType } from '../src/shared/board-types.ts'
+import { placeNewcomers } from '../src/shared/auto-place.ts'
 
 /**
  * Spec 31 Part A, the parts that need no browser: the export plan (both board kinds, duplicates, missing frames, sizes,
@@ -91,6 +92,21 @@ describe('the board a job reads', () => {
     const b = await boardNodes(root, 'deck', frames, VP, ['light', 'dark'])
     const plan = exportPlan({ slides: true, nodes: b!.nodes, frames, viewports: VP })
     expect(plan.pages.map((p) => p.frame)).toEqual(['s/c', 's/a', 's/b'])
+  })
+  it('the shared placement rule: an empty board starts at 0, a grouped frame lands right of its group\'s rightmost node on its row', () => {
+    const make = (fr: { id: string }, x: number, y: number, w: number) => ({ frame: fr.id, x, y, w })
+    expect(placeNewcomers([], [{ id: 'a' }], () => ({ w: 100, h: 50 }), make)).toEqual([{ frame: 'a', x: 0, y: 0, w: 100 }])
+    const out = placeNewcomers([{ frame: 'g1', x: 0, y: 900, w: 1000 }, { frame: 'z', x: 3000, y: 0, w: 100 }],
+      [{ id: 'g1', variantGroup: 'g' }, { id: 'z' }, { id: 'g2', variantGroup: 'g' }, { id: 'n' }], () => ({ w: 100, h: 50 }), make)
+    expect(out.slice(2)).toEqual([{ frame: 'g2', x: 1000 + 140, y: 900, w: 100 }, { frame: 'n', x: 3100 + 96, y: 0, w: 100 }])
+  })
+  it('an auto board keeps its saved positions and places a frame it gains as the canvas does: B above A + newcomer C plays B, C, A', async () => {
+    canvas({ auto: true, nodes: [{ frame: 's/a', x: 0, y: 1000, w: 1280, h: 720 }, { frame: 's/b', x: 0, y: 0, w: 1280, h: 720 }, { frame: 's/gone', x: 0, y: 500 }] }, { boards: { deck: { type: 'slides' } } })
+    const b = await boardNodes(root, 'deck', frames, VP, ['light'])
+    // the saved nodes stay where they were, the frame gone from the manifest is shed, the newcomer goes past the right edge
+    expect(b!.nodes.map((n) => [n.frame, n.x, n.y])).toEqual([['s/a', 0, 1000], ['s/b', 0, 0], ['s/c', 1280 + 96, 0]])
+    const plan = exportPlan({ slides: true, nodes: b!.nodes, frames, viewports: VP })
+    expect(plan.pages.map((p) => p.frame)).toEqual(['s/b', 's/c', 's/a'])
   })
   it('a node\'s theme: its own pin, else a legacy stored theme that differs from the frame\'s default', async () => {
     canvas({ nodes: [{ frame: 's/a', x: 0, y: 0, themeUser: 'dark' }, { frame: 's/b', x: 1, y: 0, theme: 'light' }, { frame: 's/c', x: 2, y: 0, theme: 'dark' }] })

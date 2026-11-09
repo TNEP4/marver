@@ -179,6 +179,7 @@ import { canAutoReload } from './canvas/ready-watch.ts'
 import { pumpUpdates } from './canvas/updates.ts'
 import { archiveLast, buildTree, flatten, framesOn, labelOf, toWire, TREE_PROTOCOL, type TreeItem } from '../../shared/board-tree.ts'
 import { UNPLACED } from './hash.ts'
+import { placeNewcomers } from '../../shared/auto-place.ts'
 import type { BoardType, StatusWord } from '../../shared/board-types.ts'
 import type { Phase, Status } from '../../shared/status.ts'
 import { isNew, type Marks } from '../../shared/marks.ts'
@@ -1166,7 +1167,6 @@ export const useStore = create<State>((set, get) => {
       // (the old published everything-board bug: frames created after the board file was last
       // saved piled up at the origin)
       if (boardAuto) {
-        const placed = new Set(nodes.map((n) => n.frame))
         // newcomers get deterministic keys too - on a published auto board
         // this path mints EVERY key, every visit, and comments anchor to them
         const haveKeys = new Set(nodes.map((n) => n.key))
@@ -1176,24 +1176,10 @@ export const useStore = create<State>((set, get) => {
           haveKeys.add(k)
           return k
         }
-        let maxX = nodes.reduce((a, n) => Math.max(a, n.x + n.w), 0)
-        for (const f of manifest.frames) {
-          if (placed.has(f.id)) continue
-          placed.add(f.id)
-          const d = defaultSize(f)
-          const vp = deviceView ? CONFIG.viewports[deviceView] : null
-          const w = vp?.width ?? d.w, h = vp?.height ?? d.h
-          let x: number, y: number
-          const sibling = f.variantGroup
-            ? nodes.filter((n) => manifest.frames.find((m) => m.id === n.frame)?.variantGroup === f.variantGroup)
-                .reduce<Node | null>((a, n) => (!a || n.x + n.w > a.x + a.w ? n : a), null)
-            : null
-          if (sibling) { x = sibling.x + sibling.w + Math.max(140, sibling.w * 0.12); y = sibling.y }
-          else { x = nodes.length ? maxX + 96 : 0; y = 0 }
-          const node: Node = { key: mint(f.id), frame: f.id, x, y, w, h, theme: resolveTheme(f), status: 'loading', ...(f.contentWidth ? { sizeMode: (vp ? 'device' : 'auto') as Node['sizeMode'] } : {}) }
-          nodes.push(node)
-          maxX = Math.max(maxX, x + w)
-        }
+        // the placement rule the deck PDF's plan shares (src/shared/auto-place.ts)
+        const vp = deviceView ? CONFIG.viewports[deviceView] : null
+        placeNewcomers(nodes, manifest.frames, (f) => { const d = defaultSize(f); return { w: vp?.width ?? d.w, h: vp?.height ?? d.h } },
+          (f, x, y, w, h): Node => ({ key: mint(f.id), frame: f.id, x, y, w, h, theme: resolveTheme(f), status: 'loading', ...(f.contentWidth ? { sizeMode: (vp ? 'device' : 'auto') as Node['sizeMode'] } : {}) }))
       }
       // published: re-apply this visit's pins and content sizes over the inlined data
       if (DATA && nodes.length) {
