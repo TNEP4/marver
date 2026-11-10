@@ -177,7 +177,7 @@ export { cap, humanize } from './labels.ts'
 import { cap, humanize } from './labels.ts'
 import { canAutoReload } from './canvas/ready-watch.ts'
 import { pumpUpdates } from './canvas/updates.ts'
-import { archiveLast, buildTree, flatten, framesOn, labelOf, toWire, TREE_PROTOCOL, type TreeItem } from '../../shared/board-tree.ts'
+import { archiveLast, buildTree, canvasLabel, flatten, framesOn, labelOf, toWire, TREE_PROTOCOL, type TreeItem } from '../../shared/board-tree.ts'
 import { UNPLACED } from './hash.ts'
 import { placeNewcomers } from '../../shared/auto-place.ts'
 import type { BoardType, StatusWord } from '../../shared/board-types.ts'
@@ -264,7 +264,7 @@ export async function fetchMembership(): Promise<{ boards: { name: string; frame
  *  re-render on change), else the Title-Cased slug. */
 export const boardLabel = (n: string) => (n === UNPLACED ? 'Not on a board' : labelOf(n, useStore.getState().boardTitles[n]))
 /** The canvas's name, as the sidebar heads it: the project's (share.name, else the repo folder). */
-export const CANVAS_NAME = CONFIG.projectName ? humanize(CONFIG.projectName) : 'Marver'
+export const CANVAS_NAME = CONFIG.projectName ? canvasLabel(CONFIG.projectName) : 'Marver'
 /** The browser tab: the board, then the canvas - "Start here - Acme Studio" - so a row of canvas tabs
  *  says which project each one is (it said "- Marver" on all of them). */
 export const tabTitle = (board: string | null | undefined): string => (board ? `${boardLabel(board)} - ${CANVAS_NAME}` : CANVAS_NAME)

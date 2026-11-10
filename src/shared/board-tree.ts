@@ -66,6 +66,9 @@ export const readTitle = (v: unknown): string | undefined => {
 }
 /** Title Case off a slug - the display when no title is set ("old-stuff" → "Old Stuff"). */
 export const humanize = (s: string): string => s.replace(/-/g, ' ').replace(/(^|\s)\S/g, (c) => c.toUpperCase())
+/** The canvas's name on screen: a name someone wrote (a capital or a space in it - `name: "iPad Lab"`) stays exactly as
+ *  written; a slug-like one (a folder's name, `my-repo`) is humanized ("My Repo") (spec 31 G). */
+export const canvasLabel = (name: string): string => (/[A-Z\s]/.test(name) ? name : humanize(name))
 /** What a board, folder or scene is called on screen: its title, else its humanized slug. */
 export const labelOf = (name: string, title?: string): string => title ?? humanize(name)
 
