@@ -155,7 +155,7 @@ describe('immersive play: the wish, the answer, one refit (C1, C3, C4)', () => {
     expect([await rootVar(s, '--mv-play-top'), await hidden(s), await ev(s, `__mvImmersive.granted()`)]).toEqual(['44px', false, false])
     // and again
     await grant(s)
-    expect((await size(s)).w).toBe(TIGHT)
+    await until(s, `getComputedStyle(document.querySelector('.sh-play-stage')).width === '${TIGHT}px'`)
   })
 
   it('a wish off main never answers is taken as answered within a second: the inset comes back', { timeout: 45_000 }, async (ctx) => {
