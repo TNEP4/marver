@@ -1716,9 +1716,9 @@ function mountPages(pages: NonNullable<TrustPort['pages']>): void {
   pages.handle(CH.tabActivate, (_wc, p) => pageHandlers.tabActivate(String(o(p).id)))
   pages.handle(CH.tabClose, (_wc, p) => pageHandlers.tabClose(String(o(p).id)))
   // spec 32 B2: how it was asked for (`MenuAsk`), the bridge's booleans, absent reading false
-  const ask = (p: unknown): Partial<MenuAsk> => ({ key: o(p).key === true, hadFocus: o(p).hadFocus === true })
-  pages.handle(CH.tabMenu, (_wc, p) => pageHandlers.tabMenu(String(o(p).id), Number(o(p).x), Number(o(p).y), ask(p)))
-  pages.handle(CH.tabsMore, (_wc, p) => pageHandlers.tabsMore(((o(p).ids as unknown[]) ?? []).map(String), Number(o(p).x), Number(o(p).y), ask(p)))
+  const asked = (p: unknown): Partial<MenuAsk> => ({ key: o(p).key === true, hadFocus: o(p).hadFocus === true })
+  pages.handle(CH.tabMenu, (_wc, p) => pageHandlers.tabMenu(String(o(p).id), Number(o(p).x), Number(o(p).y), asked(p)))
+  pages.handle(CH.tabsMore, (_wc, p) => pageHandlers.tabsMore(((o(p).ids as unknown[]) ?? []).map(String), Number(o(p).x), Number(o(p).y), asked(p)))
   pages.handle(CH.tabMenuPick, (_wc, p) => pageHandlers.menuPick(Number(o(p).rev), typeof o(p).id === 'string' ? String(o(p).id) : null))
   pages.handle(CH.tabMenuShown, (_wc, p) => pageHandlers.menuShown(Number(o(p).rev)))
   pages.handle(CH.pillAction, (_wc, p) => pageHandlers.pillAction(Number(o(p).rev), o(p).act === 'dismiss' ? 'dismiss' : 'button'))
