@@ -181,6 +181,8 @@ body.inactive .tab.on .face::after { opacity: .5 }
   .tab.on .face, :root.dark .tab.on .face, .pill { background: var(--solid); border-color: var(--node-brd) }
   .home.on, .home.on:hover, .more.menu-open, .more.menu-open:hover { background: var(--solid); box-shadow: 0 0 0 1px var(--node-brd), var(--ts-shadow-lit) }
   .tab.on .face::after, .pill::after { display: none }
+  /* the session dot's ring in the face it sits on, now --solid */
+  .tab.on .sess { box-shadow: 0 0 0 1.5px var(--solid) }
 }
 /* Increase Contrast: ink-2 and ink-3 read as ink */
 @media (prefers-contrast: more) {

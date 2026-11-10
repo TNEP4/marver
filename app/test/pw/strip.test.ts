@@ -398,7 +398,7 @@ describe('the look and the system settings (A2.2, A2.13, A2.14 #26)', () => {
   })
 
   it('Reduce Transparency and Increase Contrast (A13): the active face and the pill opaque, their borders solid, no rim', async () => {
-    await show(snap('t1', FOUR))
+    await show(snap('t1', [home, { ...FOUR[1], marks: { needs: 0, unseen: 0, working: false, session: true } }, ...FOUR.slice(2)]))
     await p.send('pill', { rev: 20, kind: 'files', text: 'x', short: 'x' })
     const look = () => p.page.evaluate(() => ['.tab.on .face', '#pill'].map((s) => {
       const cs = getComputedStyle(document.querySelector(s)!)
@@ -413,17 +413,20 @@ describe('the look and the system settings (A2.2, A2.13, A2.14 #26)', () => {
       for (const [bg, brd] of await look()) { expect(alpha(bg), JSON.stringify(features)).toBe(1); expect(alpha(brd)).toBe(1) }
       expect(await p.page.$eval('.tab.on .face', (e) => getComputedStyle(e, '::after').display)).toBe('none')
       expect(await p.page.$eval('.tab.on .face', (e) => getComputedStyle(e).backgroundColor)).toBe(await resolved('background-color', 'var(--solid)'))
+      // the session dot's ring is the face it sits on: --solid now, not the panel look
+      expect(await p.page.$eval('.tab.on .sess', (e) => getComputedStyle(e).boxShadow)).toBe(await resolved('box-shadow', '0 0 0 1.5px var(--solid)'))
     }
     await p.media({})
     await p.send('pill', null)
   })
 
   it('A13 in dark: the active face takes --solid and --node-brd there too (the dark .2 hairline does not win), no rim', async () => {
-    await show(snap('t1', [home, tab('t1', 'Dark one', { dark: true }), tab('t2', 'Other')]))
+    await show(snap('t1', [home, tab('t1', 'Dark one', { dark: true, marks: { needs: 0, unseen: 0, working: false, session: true } }), tab('t2', 'Other')]))
     expect(await p.page.evaluate(() => document.documentElement.classList.contains('dark'))).toBe(true)
     for (const features of [{ 'prefers-reduced-transparency': 'reduce' }, { 'prefers-contrast': 'more' }] as Record<string, string>[]) {
       await p.media(features)
       await settle()
+      expect(await p.page.$eval('.tab.on .sess', (e) => getComputedStyle(e).boxShadow), JSON.stringify(features)).toBe(await resolved('box-shadow', '0 0 0 1.5px var(--solid)'))
       expect(await p.page.$eval('.tab.on .face', (e) => { const cs = getComputedStyle(e); return [cs.backgroundColor, cs.borderTopColor, getComputedStyle(e, '::after').display] }), JSON.stringify(features))
         .toEqual([await resolved('background-color', 'var(--solid)'), await resolved('border-top-color', 'var(--node-brd)'), 'none'])
     }
@@ -720,6 +723,29 @@ describe('option D: the looks (spec 32 A5, A10, A13)', () => {
         expect(await p.page.$eval(`[data-id="${id}"]`, (e) => e.classList.contains('menu-open'))).toBe(false)
       }
       expect(await p.page.evaluate(() => [...document.querySelectorAll('*')].filter((e) => { const cs = getComputedStyle(e); return cs.backdropFilter !== 'none' && cs.backdropFilter !== '' }).length)).toBe(0)
+    })
+
+    it(`A5.5 with the pointer still on the opener, and through a repaint, ${dark ? 'dark' : 'light'}: its badge stays and no key shows; a newer snapshot keeps .menu-open and the look`, async () => {
+      await show(three(dark))
+      const b = await box('[data-id="t2"]')
+      // the right-click that asks leaves the pointer over the tab, and no catcher is up yet: :hover holds
+      await p.page.mouse.click(b.x + 20, b.y + 16, { button: 'right' })
+      await settle()
+      const end = () => p.page.$eval('[data-id="t2"]', (e) => ({
+        hover: e.matches(':hover'), open: e.classList.contains('menu-open'), mk: e.querySelector('.mk')?.textContent ?? null,
+        mkOp: getComputedStyle(e.querySelector('.mk')!).opacity, keyOp: getComputedStyle(e.querySelector('.key')!).opacity,
+        bg: getComputedStyle(e.querySelector('.face')!).backgroundColor,
+      }))
+      const fillHover = dark ? 'rgb(38, 39, 45)' : 'rgba(231, 233, 239, 0.9)'
+      expect(await end()).toEqual({ hover: true, open: true, mk: '3', mkOp: '1', keyOp: '0', bg: fillHover })
+      // the view comes and grows; then main pushes a newer snapshot (its count rose) while the menu is open
+      await answer()
+      const s = three(dark)
+      s.tabs[2] = { ...s.tabs[2], marks: { needs: 4, unseen: 0, working: false, session: false } }
+      await show(s)
+      expect(await end()).toMatchObject({ open: true, mk: '4', mkOp: '1', keyOp: '0', bg: fillHover })
+      expect(await state()).toMatchObject({ visible: true, openers: ['t2'] })
+      await p.page.keyboard.press('Escape')
     })
 
     it(`Home: rest, hover and on (the panel look, no rim; hover keeps it), and » open wears it, ${dark ? 'dark' : 'light'}`, async () => {
@@ -1241,6 +1267,22 @@ describe('the Marver menu, the strip\'s side (spec 32 B3, B6-B11, B14)', () => {
     await p.send('tab-menu', null)
     expect(await picks()).toEqual([{ rev: v.rev, id: null }])
     expect(await state()).toEqual({ body: true, openers: [], menu: false, visible: false })
+    await p.resize(1280, 44)
+    await poll('no body.menu-open', async () => !(await state()).body)
+  })
+  it('B11, B12: a local dismissal, then main\'s tab-menu: null arriving late: no drag stays while the view is still grown, and goes once it is 44 px', async () => {
+    await show(snap('t1', FIVE))
+    await rightClick('[data-id="t2"]')
+    const v = await answer()
+    await p.page.keyboard.press('Escape')
+    expect(await picks()).toEqual([{ rev: v.rev, id: null }])
+    // main's own close crossed the strip's: its null comes after the null pick, before the view shrinks
+    await p.send('tab-menu', null)
+    await settle()
+    expect(await p.page.evaluate(() => window.innerHeight)).toBeGreaterThan(44)
+    expect(await state()).toEqual({ body: true, openers: [], menu: false, visible: false })
+    expect(await p.page.evaluate(() => getComputedStyle(document.body).getPropertyValue('-webkit-app-region'))).toBe('no-drag')
+    expect(await picks()).toEqual([{ rev: v.rev, id: null }])
     await p.resize(1280, 44)
     await poll('no body.menu-open', async () => !(await state()).body)
   })

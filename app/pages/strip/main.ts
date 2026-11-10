@@ -438,6 +438,9 @@ function onMenuView(v: TabMenuView | null): void {
     api?.menuPick({ rev, id: null })
     return
   }
+  // main's close crossing a local one (B11, B12): the menu was shown and the view is still grown, so no drag stays
+  // until the ResizeObserver reads 44 px (`closing` is never set while an ask is pending: marked() clears it)
+  if (closing && window.innerHeight > STRIP_H) return
   // main refused the ask (B2): nothing was shown, so the marks go at once
   if (asked) { clearTimeout(asked.timer); asked = null }
   closing = false
