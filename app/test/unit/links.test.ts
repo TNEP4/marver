@@ -1,5 +1,6 @@
 /** One parser for a canvas link (src/shared/links.ts; spec 28 A2.7, v1.10 r1 #4). */
 import { describe, expect, it } from 'vitest'
+import { buildDeepLink } from '../../../src/shared/deep-link.ts'
 import { boardOf, loopbackHost, parseLink, remoteFavicon, remoteFaviconPick, remoteStart, shellDestination, shellPath } from '../../src/shared/links.ts'
 
 describe('parseLink()', () => {
@@ -32,6 +33,16 @@ describe('parseLink()', () => {
     expect(parseLink('pilot.example.com:8443')).toEqual({ kind: 'https', url: 'https://pilot.example.com:8443/', host: 'pilot.example.com:8443' })
     expect(parseLink('localhost:4806/#/b/x')).toMatchObject({ kind: 'local', port: 4806 })
     for (const s of ['pilot', 'u:p@pilot.example.com', 'localhost', `pilot.example.com/${'a'.repeat(2048)}`]) expect(parseLink(s), s).toEqual({ kind: 'bad' })
+  })
+
+  it('spec 32 D3: a marver: link parseDeepLink accepts is deep (its url as typed, its folder); any other marver: input is bad', () => {
+    const url = buildDeepLink({ ws: '/Users/nic/abs', port: 4806 })!
+    expect(parseLink(url)).toEqual({ kind: 'deep', url, ws: '/Users/nic/abs' })
+    expect(parseLink(`  ${buildDeepLink({ ws: '/abs' })}  `)).toEqual({ kind: 'deep', url: 'marver://open?ws=%2Fabs', ws: '/abs' })
+    expect(parseLink('MARVER://open?ws=%2Fabs')).toMatchObject({ kind: 'deep', ws: '/abs' })
+    for (const s of ['marver://open', 'marver://open?ws=rel', 'marver://close?ws=%2Fabs', 'marver://open?ws=%2Fabs&x=1', 'marver:open', 'marver://open?ws=%2Fa#h', `marver://open?ws=%2F${'a'.repeat(2048)}`]) {
+      expect(parseLink(s), s).toEqual({ kind: 'bad' })
+    }
   })
 
   it('refuses anything else', () => {

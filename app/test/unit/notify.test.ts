@@ -278,7 +278,7 @@ describe('marks (A4.6 #19)', () => {
   it('needs is every need, exact; unseen, working, session; stale; only local tabs; hidden ones keep theirs', () => {
     const t = canvas()
     snap(t, [ask(), of('review')], { counts: { ask: 3, review: 1, failed: 2, stalled: 1 }, unseen: 4, working: true, session: true, stale: true })
-    expect(n.marksOf(t)).toEqual({ needs: 7, unseen: 4, working: true, session: true, stale: true })
+    expect(n.marksOf(t)).toEqual({ needs: 7, unseen: 4, working: true, session: true, stale: true, kinds: { ask: 3, review: 1, failed: 2, stalled: 1 }, top: { kind: 'ask' } })
     t.view = 'unloaded'
     expect(viewOf(t, false, '/Users/nic').marks).toMatchObject({ needs: 7 })
     expect(viewOf(allTabs().find((x) => x.kind === 'home')!, true, '/Users/nic').marks).toBeUndefined()
@@ -286,6 +286,60 @@ describe('marks (A4.6 #19)', () => {
     const quiet = canvas()
     expect(viewOf(quiet, false, '/Users/nic').marks).toBeUndefined()   // no snapshot, no stop: no marks
     expect(fx.refreshes).toBeGreaterThan(0)
+  })
+})
+
+describe('spec 32 F1, D6.1: what Home leads with (kinds, top, work)', () => {
+  it('top comes from the counts by priority (ask > failed > stalled > review), never from which items arrived', () => {
+    const t = canvas()
+    // an ask counted with an empty items list (filtered or trimmed): still Needs you's ask, with no board
+    snap(t, [], { counts: { ask: 2, review: 5, failed: 1, stalled: 0 }, cut: 0 })
+    expect(n.marksOf(t)).toMatchObject({ kinds: { ask: 2, review: 5, failed: 1, stalled: 0 }, top: { kind: 'ask' } })
+    expect(n.marksOf(t)!.top!.board).toBeUndefined()
+    snap(t, [of('failed'), of('review')], { counts: { ask: 0, review: 1, failed: 1, stalled: 3 } })
+    expect(n.marksOf(t)!.top!.kind).toBe('failed')
+    snap(t, [of('review')], { counts: { ask: 0, review: 1, failed: 0, stalled: 1 } })
+    expect(n.marksOf(t)!.top!.kind).toBe('stalled')
+    snap(t, [of('review')])
+    expect(n.marksOf(t)!.top).toEqual({ kind: 'review', board: 'Main' })
+    snap(t, [], { counts: { ask: 0, review: 0, failed: 0, stalled: 0 }, unseen: 3 })
+    expect(n.marksOf(t)!.top).toBeUndefined()
+  })
+
+  it('a board only when every item of the kind is held and all name one board: its title, else (0.31) the humanized slug', () => {
+    const t = canvas()
+    snap(t, [ask({ board: 'vault-feed' }), ask({ board: 'vault-feed' })], { titles: { 'vault-feed': 'Vault feed v2' } })
+    expect(n.marksOf(t)!.top).toEqual({ kind: 'ask', board: 'Vault feed v2' })
+    snap(t, [ask({ board: 'vault-feed' }), ask({ board: 'vault-feed' })])   // a 0.31 canvas: no titles
+    expect(n.marksOf(t)!.top).toEqual({ kind: 'ask', board: 'Vault Feed' })
+    snap(t, [ask({ board: 'vault-feed' }), ask({ board: 'filter' })])        // two boards
+    expect(n.marksOf(t)!.top).toEqual({ kind: 'ask' })
+    snap(t, [ask({ board: 'vault-feed' })], { counts: { ask: 2, review: 0, failed: 0, stalled: 0 } })   // one not held
+    expect(n.marksOf(t)!.top).toEqual({ kind: 'ask' })
+    snap(t, [ask({ board: 'vault-feed' })], { cut: 1 })                       // the stream cut some
+    expect(n.marksOf(t)!.top).toEqual({ kind: 'ask' })
+  })
+
+  it('work: its since and its board as a title; none without the stream\'s work', () => {
+    const t = canvas()
+    snap(t, [], { working: true, work: { board: 'tab-strip', since: 1234 }, titles: { 'tab-strip': 'Tab strip' } })
+    expect(n.marksOf(t)!.work).toEqual({ board: 'Tab strip', since: 1234 })
+    snap(t, [], { working: true, work: { board: 'onboarding', since: 9 } })
+    expect(n.marksOf(t)!.work).toEqual({ board: 'Onboarding', since: 9 })
+    snap(t, [], { working: true, work: { since: 9 } })
+    expect(n.marksOf(t)!.work).toEqual({ since: 9 })
+    snap(t, [], { working: true })
+    expect(n.marksOf(t)!.work).toBeUndefined()
+  })
+
+  it('an unacknowledged stop with no held snapshot: stopped, top stopped (read before any event)', () => {
+    const t = canvas()
+    snap(t, [ask()])
+    held.delete(t.reg!.instance)
+    onRegistry({ kind: 'gone', file: t.reg!.file, instance: t.reg!.instance, why: 'pid' })
+    n.onRegistry({ kind: 'gone', file: t.reg!.file, instance: t.reg!.instance, why: 'pid' })
+    expect(n.marksOf(t)).toMatchObject({ needs: 1, stopped: true, top: { kind: 'stopped' } })
+    expect(n.marksOf(t)!.kinds).toBeUndefined()
   })
 })
 

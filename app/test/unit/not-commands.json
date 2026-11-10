@@ -4,5 +4,8 @@
   { "file": "src/shared/channels.ts", "fn": "SENDERS", "prop": "channel", "label": "app:ready", "reason": "no input: a page saying it has loaded" },
   { "file": "src/shared/channels.ts", "fn": "SENDERS", "prop": "channel", "label": "settings:get", "reason": "no input: Settings reading the files to draw itself" },
   { "file": "src/shared/channels.ts", "fn": "SENDERS", "prop": "channel", "label": "tab:menu-pick", "reason": "no input of its own (spec 32 B2): the strip's menu pick runs exactly what the native click ran, so the one command is the one tabAct opens (TAB_MENU or OVERFLOW); a null pick runs nothing" },
-  { "file": "src/shared/channels.ts", "fn": "SENDERS", "prop": "channel", "label": "tab:menu-shown", "reason": "no input (spec 32 B2): the strip saying the menu is on screen, which ends the held tab-menu or tabs-more command" }
+  { "file": "src/shared/channels.ts", "fn": "SENDERS", "prop": "channel", "label": "tab:menu-shown", "reason": "no input (spec 32 B2): the strip saying the menu is on screen, which ends the held tab-menu or tabs-more command" },
+  { "file": "pages/home/main.ts", "fn": "head", "prop": "onclick", "label": "View", "reason": "spec 32 D8.5: the View button opens Home's View menu; Grid or Board is a choice kept on this Mac (localStorage), with no app effect" },
+  { "file": "pages/home/main.ts", "fn": "<top>", "prop": "addEventListener:keydown", "label": "document", "reason": "spec 32 D8.6, D9.7: Escape closes Help; no app effect (a menu's own Escape, and the field's, are elsewhere)" },
+  { "file": "pages/home/main.ts", "fn": "<top>", "prop": "addEventListener:pointerdown", "label": "document", "reason": "spec 32 D8.6, D9.7: a press outside Help closes it; no app effect" }
 ]
