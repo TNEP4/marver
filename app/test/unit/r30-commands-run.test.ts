@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PerfAsk, PerfMsg } from '../../../src/shared/app-api.ts'
+import type { TabMenuView } from '../../src/shared/channels.ts'
 
 type Listener = (...a: unknown[]) => void
 
@@ -22,13 +23,24 @@ const m = vi.hoisted(() => ({
   dialogResponse: 0,
   views: [] as unknown[],
   appOn: new Map<string, ((...a: unknown[]) => void)[]>(),
-  popup: null as unknown,
   menu: null as unknown,
   winHandlers: new Map<string, ((...a: unknown[]) => void)[]>(),
   fullScreen: false,
   visible: true,
   minimized: 0,
   hidden: 0,
+  // spec 32 B1.4, C8: window.ts's ports views.ts sets, the strip's readiness and trouble, what main sent the strip
+  composePorts: null as null | { immersive(tab: unknown, facts: unknown): boolean; menuOpen(): boolean },
+  composes: 0,
+  menuOpen: false,
+  /** the view facts a case sets per tab id: the mock's compose() calls `immersive(tab, facts)` for each */
+  facts: new Map<string, Record<string, unknown>>(),
+  stripShown: new Map<string, boolean>(),
+  stripReady: true,
+  trouble: null as null | ((why: 'gone' | 'unresponsive') => void),
+  toStrip: [] as [string, unknown][],
+  held: [] as [string, unknown][],
+  getTab: null as null | ((id: string) => unknown),
 }))
 
 class FakeWc {
@@ -59,6 +71,8 @@ class FakeWc {
   openDevTools() {}
   forcefullyCrashRenderer() {}
   send() {}
+  focused = 0
+  focus() { this.focused++; this.emit('focus') }
 }
 
 vi.mock('electron', () => {
@@ -73,7 +87,7 @@ vi.mock('electron', () => {
       getAppMetrics: () => [], getGPUFeatureStatus: () => ({}), commandLine: { hasSwitch: () => false },
     },
     dialog: { showMessageBox: async () => ({ response: m.dialogResponse, checkboxChecked: false }), showSaveDialog: async () => ({ canceled: true }) },
-    Menu: { setApplicationMenu: (x: { template: unknown }) => { m.menu = x.template }, buildFromTemplate: (t: unknown) => ({ template: t, popup: () => { m.popup = t } }), sendActionToFirstResponder: () => {} },
+    Menu: { setApplicationMenu: (x: { template: unknown }) => { m.menu = x.template }, buildFromTemplate: (t: unknown) => ({ template: t }), sendActionToFirstResponder: () => {} },
     nativeTheme: { shouldUseDarkColors: false, on: () => {} },
     net: { isOnline: () => true },
     powerMonitor: { on: () => {}, getCurrentThermalState: () => 'nominal' },
@@ -108,7 +122,19 @@ vi.mock('../../src/main/window.ts', () => ({
   attachContent: (id: string, view: { webContents: FakeWc }) => { content.set(id, view) },
   detachContent: (id: string) => { content.delete(id) },
   captureWindow: async () => null,
-  compose: () => {},
+  // spec 32 C8.2: the ports views.ts set, called as composeOnce calls them - the gate for each tab a case gave facts
+  // for, then the menu's state
+  compose: () => {
+    m.composes++
+    const p = m.composePorts
+    if (!p) return
+    for (const [id, f] of m.facts) { const t = m.getTab?.(id); if (t) m.stripShown.set(id, p.immersive(t, f)) }
+    m.menuOpen = p.menuOpen()
+  },
+  setComposePorts: (p: typeof m.composePorts) => { m.composePorts = p },
+  stripReady: () => m.stripReady,
+  onStripTrouble: (fn: (why: 'gone' | 'unresponsive') => void) => { m.trouble = fn; return () => {} },
+  sendToStrip: (ch: string, p: unknown) => { m.toStrip.push([ch, p]) },
   contentView: (id: string) => content.get(id),
   coverContents: () => null,
   hideWindow: () => { m.hidden += 1; emitWin('hide') },
@@ -117,7 +143,7 @@ vi.mock('../../src/main/window.ts', () => ({
   openWindow: () => win,
   pageOf: () => undefined,
   pageView: () => undefined,
-  sendHeld: () => {},
+  sendHeld: (_wc: unknown, ch: string, p: unknown) => { m.held.push([ch, p]) },
   sendPill: () => {},
   showWindow: () => {},
   stripContents: () => undefined,
@@ -166,6 +192,11 @@ const { CH } = await import('../../src/shared/channels.ts')
 const { checkHello, checkPagePayload } = await import('../../src/main/bridge.ts')
 const { identity } = await import('../../src/main/recorder.ts')
 const { launchFirstCanvas, launchReady, launchWriter, resetLaunch } = await import('../../src/main/launch.ts')
+const views = await import('../../src/main/views.ts')
+const { compose } = await import('../../src/main/window.ts')
+const { workspaceOf } = await import('../../src/main/deep-link.ts')
+const { buildDeepLink } = await import('../../../src/shared/deep-link.ts')
+m.getTab = (id) => tabs.getTab(id)
 
 // ---- the run -----------------------------------------------------------------------------------------------------------
 
@@ -180,6 +211,8 @@ let perfFn: ((tabId: string, doc: string, msg: PerfMsg) => void) | null = null
 let reportFn: ((tabId: string, doc: string, r: Record<string, unknown>) => void) | null = null
 const asks: { tab: string; ask: PerfAsk }[] = []
 const menuClicks: unknown[][] = []
+const immersiveSent: Record<string, unknown>[] = []
+let immersiveSends = true
 const navFns = new Map<string, (e: unknown) => void>()
 let docN = 0
 const docs = new Map<string, string>()
@@ -206,6 +239,8 @@ const trust = {
   appState: () => true,
   menuClick: (...a: unknown[]) => { menuClicks.push(a); return true },
   reopenNext: () => {},
+  // spec 32 C2: the one sender of `mv:immersive-state` (bridge.ts's own is unit-tested in bridge-immersive)
+  immersiveState: (tab: string, doc: string, s: Record<string, unknown>) => { immersiveSent.push({ tab, doc, ...s }); return immersiveSends },
   pages: {
     onReady: () => {},
     handle: (ch: string, fn: (wc: unknown, p: unknown) => unknown) => bridge.handle(ch, (ctx, p) => fn(ctx.wc, p)),
@@ -259,6 +294,13 @@ const page = (kind: 'strip' | 'home' | 'settings' | 'tabpage', tabId?: string) =
   bridge.register(wc as never, kind, tabId)
   return { sender: wc, senderFrame: wc.mainFrame }
 }
+/** spec 32 B: main's last `tab-menu` to the strip (a view, or null) */
+const lastMenuView = () => m.toStrip.filter(([ch]) => ch === CH.tabMenuView).at(-1)?.[1] as TabMenuView | null | undefined
+/** the strip's `tab:menu` and `tabs:more`, through the funnel, and the view main answered */
+const openTabMenu = (id: string, ask: { key?: boolean; hadFocus?: boolean } = {}) => { m.toStrip.length = 0; m.ipcOn.get(CH.tabMenu)!(page('strip'), { id, x: 10, y: 40, ...ask }); return lastMenuView() }
+const openMore = (ids: string[], ask: { key?: boolean; hadFocus?: boolean } = {}) => { m.toStrip.length = 0; m.ipcOn.get(CH.tabsMore)!(page('strip'), { ids, x: 600, y: 40, ...ask }); return lastMenuView() }
+const menuShownAck = (rev: number) => m.ipcOn.get(CH.tabMenuShown)!(page('strip'), { rev })
+const menuPickSend = (rev: number, id: string | null) => m.ipcOn.get(CH.tabMenuPick)!(page('strip'), { rev, id })
 
 describe('appCmd: the lifecycle (#48, #49)', () => {
   const O = { via: 'key', in: 'shell', keys: 'Meta+1' } as const
@@ -517,52 +559,51 @@ describe('runCommand (#49, #50, #52)', () => {
 
 describe('tabAct (#49, #50, #51)', () => {
   type Item = { label?: string; click?: () => void; submenu?: Item[] }
-  /** The tab's own right-click, as main builds it: the items' clicks are the input. */
-  const menuOf = (id: string): Item[] => { pageHandlers.tabMenu(id, 1, 1); return m.popup as Item[] }
-  it('the right-click: via context, in tab-menu; its work\'s end', async () => {
+  /** spec 32 B15: the tab's Marver menu through the funnel, as the strip sends it - opened and shown; its rows main's */
+  const shownMenu = async (id: string) => { const v = openTabMenu(id)!; menuShownAck(v.rev); await tick(); flushNow(); writeFileSync(file(), ''); return v }
+  /** a row picked through the record (`tab:menu-pick`): the input is the pick, its one command the one tabAct opens */
+  const pickRow = async (id: string, row: string) => { const v = await shownMenu(id); menuPickSend(v.rev, row); await tick(); return v }
+  it('the right-click: via context, in tab-menu; its work\'s end - exactly one command for the pick', async () => {
     const t = await canvas()
-    flushNow(); writeFileSync(file(), '')
-    menuOf(t.id).find((i) => i.label === 'Copy Local Link')!.click!()
-    await tick()
+    await pickRow(t.id, 'copy-link')
     expect(cmdLines()).toEqual([
       expect.objectContaining({ phase: 'start', cmd: 'copy-link', via: 'context', in: 'tab-menu', tab: t.id }),
       expect.objectContaining({ phase: 'end', cmd: 'copy-link', outcome: 'done' }),
     ])
   })
-  it('Mark All as Seen is a relay: nothing written here, `in: tab-menu` passed on', async () => {
+  it('Mark all as seen is a relay: nothing written here, `in: tab-menu` passed on', async () => {
     const t = await canvas()
-    flushNow(); writeFileSync(file(), '')
-    menuOf(t.id).find((i) => i.label === 'Mark All as Seen')!.click!()
-    await tick()
+    await pickRow(t.id, 'mark-all-seen')
     expect(cmdLines()).toEqual([])
     expect(menuClicks).toEqual([[t.id, 'mark-all-seen', 'tab-menu']])
   })
-  it('Resolve All Comments (spec 31 B.1) sits beside Mark All as Seen: a relay too, `in: tab-menu`, for a canvas that says `resolve-all`', async () => {
+  it('Resolve all comments (spec 31 B.1) sits beside Mark all as seen: a relay too, `in: tab-menu`, for a canvas that says `resolve-all`', async () => {
     const t = await canvas()
     ;(t.reg!.features as string[]).push('resolve-all')
-    flushNow(); writeFileSync(file(), '')
-    const items = menuOf(t.id)
-    const at = items.findIndex((i) => i.label === 'Mark All as Seen')
-    expect(items[at + 1]).toMatchObject({ label: 'Resolve All Comments', enabled: true })
-    items[at + 1].click!()
+    const v = await shownMenu(t.id)
+    const at = v.rows.findIndex((r) => r.kind === 'item' && r.id === 'mark-all-seen')
+    expect(v.rows[at + 1]).toMatchObject({ kind: 'item', id: 'resolve-all-comments', label: 'Resolve all comments', enabled: true })
+    menuPickSend(v.rev, 'resolve-all-comments')
     await tick()
     expect(cmdLines()).toEqual([])
     expect(menuClicks).toEqual([[t.id, 'resolve-all-comments', 'tab-menu']])
   })
-  it('an older canvas (no `resolve-all`): Resolve All Comments is there, greyed, and sends nothing', async () => {
+  it('an older canvas (no `resolve-all`): Resolve all comments is there, dimmed, and a pick of it does nothing (B8, B13)', async () => {
     const t = await canvas()
-    const item = menuOf(t.id).find((i) => i.label === 'Resolve All Comments')!
-    expect((item as Item & { enabled?: boolean }).enabled).toBe(false)
-    item.click!()
+    const v = await shownMenu(t.id)
+    expect(v.rows.find((r) => r.kind === 'item' && r.id === 'resolve-all-comments')).toMatchObject({ enabled: false })
+    menuPickSend(v.rev, 'resolve-all-comments')
     await tick()
     expect(menuClicks).toEqual([])
+    expect(cmdLines()).toEqual([])
   })
-  it('a stale token: noop untrusted', async () => {
+  it('a stale token: noop untrusted, as today (B13)', async () => {
     const t = await canvas()
-    const items = menuOf(t.id)
+    const v = openTabMenu(t.id)!
+    menuShownAck(v.rev)
     await commit(t.id)     // another document: the token no longer holds
     flushNow(); writeFileSync(file(), '')
-    items.find((i) => i.label === 'Copy Local Link')!.click!()
+    menuPickSend(v.rev, 'copy-link')
     await tick()
     expect(cmdLines()).toEqual([expect.objectContaining({ phase: 'once', cmd: 'copy-link', outcome: 'noop', why: 'untrusted' })])
   })
@@ -664,6 +705,533 @@ describe('spec 32 F1, D8.1: the tab facts views.ts gives home.ts (setTabFacts)',
     add(); fire()
     expect([excluded, running, both]).toEqual([2, 3, 3])
     drop(); fire()
+  })
+})
+
+describe('spec 32 Part B: the strip\'s Marver menu, main\'s side (the real views.ts, window.ts mocked)', () => {
+  const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+  const nulls = () => m.toStrip.filter(([ch, p]) => ch === CH.tabMenuView && p === null).length
+  const menuCmds = () => cmdLines().filter((l) => l.cmd === 'tab-menu' || l.cmd === 'tabs-more')
+  const closeLive = async () => { const n = views.menuNow(); if (n) { menuPickSend(n.rev, null); await tick() } }
+  beforeEach(async () => { await closeLive(); m.stripReady = true; m.toStrip.length = 0 })
+  afterEach(async () => { await closeLive(); m.stripReady = true })
+
+  it('B1.2, B3.2: the record, then the menu set and a compose (the strip grows), then main\'s view; every compose reads it open', async () => {
+    const t = await canvas()
+    const before = m.composes
+    const v = openTabMenu(t.id)!
+    expect(m.composes).toBeGreaterThan(before)
+    expect(m.menuOpen).toBe(true)
+    expect(v).toMatchObject({ rev: expect.any(Number), x: 10, y: 40, kind: 'tab' })
+    // B4: the rows, sentence case, the sidebar's icons, a separator before Close tab
+    expect(v.rows).toEqual([
+      { kind: 'item', id: 'open-browser', label: 'Open in browser', icon: 'arrow-square-out', enabled: true },
+      { kind: 'item', id: 'reveal', label: 'Reveal in Finder', icon: 'folder-open', enabled: true },
+      { kind: 'item', id: 'copy-link', label: 'Copy local link', icon: 'link', enabled: true },
+      { kind: 'item', id: 'mark-all-seen', label: 'Mark all as seen', icon: 'check', enabled: true },
+      { kind: 'item', id: 'resolve-all-comments', label: 'Resolve all comments', icon: 'check-square-offset', enabled: false },
+      { kind: 'sep' },
+      { kind: 'item', id: 'close', label: 'Close tab', icon: 'x', enabled: true },
+    ])
+    // a mark, a pill, a resize - any compose - never shrinks it
+    compose()
+    expect(m.menuOpen).toBe(true)
+    menuShownAck(v.rev)
+    compose()
+    expect(m.menuOpen).toBe(true)
+    // the strip's null pick for the current rev: closed, shrunk
+    menuPickSend(v.rev, null)
+    expect(m.menuOpen).toBe(false)
+    expect(views.menuNow()).toBeNull()
+  })
+
+  it('B15: the journal `popup` record (labels and `enabled`, no `checked`) and lastPopup, kept after the menu goes', async () => {
+    const t = await canvas()
+    const v = openTabMenu(t.id)!
+    expect(views.popupNow()).toEqual({ rev: v.rev, x: 10, y: 40, items: [
+      { label: 'Open in browser', enabled: true }, { label: 'Reveal in Finder', enabled: true }, { label: 'Copy local link', enabled: true },
+      { label: 'Mark all as seen', enabled: true }, { label: 'Resolve all comments', enabled: false }, { label: 'Close tab', enabled: true },
+    ] })
+    menuPickSend(v.rev, null)
+    expect(views.popupNow()?.rev).toBe(v.rev)
+  })
+
+  it('B2: the open command is held until `tab:menu-shown`, then done; a pick records exactly one more command, the one tabAct opens', async () => {
+    const t = await canvas()
+    await tick()
+    flushNow(); writeFileSync(file(), '')
+    const v = openTabMenu(t.id)!
+    await tick()
+    expect(menuCmds().map((l) => l.phase)).toEqual(['start'])
+    menuShownAck(v.rev)
+    await tick()
+    expect(menuCmds()).toEqual([expect.objectContaining({ phase: 'start', cmd: 'tab-menu', via: 'context', in: 'strip', tab: t.id }), expect.objectContaining({ phase: 'end', cmd: 'tab-menu', outcome: 'done' })])
+    flushNow(); writeFileSync(file(), '')
+    menuPickSend(v.rev, 'copy-link')
+    await tick()
+    expect(cmdLines().filter((l) => l.phase !== 'end').map((l) => [l.cmd, l.via, l.in])).toEqual([['copy-link', 'context', 'tab-menu']])
+  })
+
+  it('B2: replaced by a newer open (no shrink in between: no null sent), closed before it showed, refused as not ready', async () => {
+    const a = await canvas()
+    const b = await canvas()
+    await tick()
+    flushNow(); writeFileSync(file(), '')
+    const v1 = openTabMenu(b.id)!
+    m.toStrip.length = 0
+    const v2 = openTabMenu(a.id, { key: false, hadFocus: true })!
+    expect(v2.rev).toBeGreaterThan(v1.rev)
+    expect(nulls()).toBe(0)
+    expect(m.menuOpen).toBe(true)
+    // the old rev's picks are refused: nothing closes, nothing runs
+    menuPickSend(v1.rev, 'close')
+    await tick()
+    expect(views.menuNow()?.rev).toBe(v2.rev)
+    expect(tabs.getTab(b.id)?.open).toBe(true)
+    // closed before it showed
+    menuPickSend(v2.rev, null)
+    await tick()
+    const ends = menuCmds().filter((l) => l.phase === 'end' || l.phase === 'once').map((l) => [l.outcome, l.why])
+    expect(ends).toEqual([['noop', 'replaced'], ['noop', 'closed']])
+    // not ready: refused, `tab-menu: null`, the record written all the same
+    flushNow(); writeFileSync(file(), '')
+    m.stripReady = false
+    m.toStrip.length = 0
+    m.ipcOn.get(CH.tabMenu)!(page('strip'), { id: a.id, x: 3, y: 4 })
+    await tick()
+    expect(m.toStrip).toEqual([[CH.tabMenuView, null]])
+    expect(views.menuNow()).toBeNull()
+    expect(views.popupNow()).toMatchObject({ x: 3, y: 4 })
+    expect(menuCmds().filter((l) => l.outcome).map((l) => [l.outcome, l.why])).toEqual([['noop', 'not-ready']])
+  })
+
+  it('B2: every refusal answers `tab-menu: null` - no tab, Home, an empty » list, a stale id', async () => {
+    await canvas()
+    for (const send of [
+      () => m.ipcOn.get(CH.tabMenu)!(page('strip'), { id: 'no-such', x: 1, y: 1 }),
+      () => m.ipcOn.get(CH.tabMenu)!(page('strip'), { id: 'home', x: 1, y: 1 }),
+      () => m.ipcOn.get(CH.tabsMore)!(page('strip'), { ids: [], x: 1, y: 1 }),
+      () => m.ipcOn.get(CH.tabsMore)!(page('strip'), { ids: ['gone-1', 'gone-2'], x: 1, y: 1 }),
+    ]) {
+      m.toStrip.length = 0
+      flushNow(); writeFileSync(file(), '')
+      send()
+      await tick()
+      expect(m.toStrip).toEqual([[CH.tabMenuView, null]])
+      expect(views.menuNow()).toBeNull()
+      expect(menuCmds().map((l) => [l.outcome, l.why])).toEqual([['noop', 'no-tab']])
+    }
+  })
+
+  it('B3.6: no `tab:menu-shown` within 500 ms - the menu cleared, the strip shrunk, `tab-menu: null`, the command noop no-show', async () => {
+    const t = await canvas()
+    await tick()
+    flushNow(); writeFileSync(file(), '')
+    openTabMenu(t.id)
+    await sleep(450)
+    expect(m.menuOpen).toBe(true)
+    await sleep(100)
+    expect(views.menuNow()).toBeNull()
+    expect(m.menuOpen).toBe(false)
+    expect(nulls()).toBe(1)
+    expect(menuCmds().filter((l) => l.outcome).map((l) => [l.outcome, l.why])).toEqual([['noop', 'no-show']])
+  })
+
+  it('B3.6, B12.6: the strip\'s `unresponsive` and `render-process-gone` take the grown view back at once', async () => {
+    const t = await canvas()
+    for (const why of ['unresponsive', 'gone'] as const) {
+      const v = openTabMenu(t.id)!
+      menuShownAck(v.rev)
+      expect(m.menuOpen).toBe(true)
+      m.trouble!(why)
+      expect(m.menuOpen).toBe(false)
+      expect(views.menuNow()).toBeNull()
+    }
+  })
+
+  it('B12: main\'s close sends `tab-menu: null` and keeps the strip grown until the strip\'s null pick for that rev, or 150 ms', async () => {
+    const t = await canvas()
+    let v = openTabMenu(t.id)!
+    menuShownAck(v.rev)
+    m.toStrip.length = 0
+    expect(views.closeMenu()).toBe(true)
+    expect(m.toStrip).toEqual([[CH.tabMenuView, null]])
+    expect(m.menuOpen).toBe(true)
+    compose()
+    expect(m.menuOpen).toBe(true)
+    menuPickSend(v.rev, null)             // the strip's ack
+    expect(m.menuOpen).toBe(false)
+    // no ack: 150 ms
+    v = openTabMenu(t.id)!
+    menuShownAck(v.rev)
+    views.closeMenu()
+    await sleep(100)
+    expect(views.menuNow()).not.toBeNull()
+    await sleep(80)
+    expect(views.menuNow()).toBeNull()
+    expect(m.menuOpen).toBe(false)
+  })
+
+  it('B12.3, B12.4, B12.5: a window blur, any app command, the active tab changing - each closes the menu', async () => {
+    const a = await canvas()
+    const b = await canvas()
+    const cases: [string, () => void][] = [
+      ['blur', () => emitWin('blur')],
+      ['app command', () => runCommand('settings', 'menu')],
+      ['active tab', () => { tabs.activate(a.id) }],
+    ]
+    for (const [name, act] of cases) {
+      tabs.activate(b.id)
+      await tick()
+      const v = openTabMenu(b.id)!
+      menuShownAck(v.rev)
+      m.toStrip.length = 0
+      act()
+      if (!views.menuNow()?.closing) throw new Error(`${name}: not closed`)
+      expect(nulls()).toBe(1)
+      menuPickSend(v.rev, null)
+      expect(m.menuOpen).toBe(false)
+    }
+  })
+
+  it('B12.5: the tab it belongs to closing closes it; its own open request does not (B3.2)', async () => {
+    const a = await canvas()
+    const b = await canvas()
+    tabs.activate(b.id)
+    await tick()
+    const v = openTabMenu(a.id)!
+    menuShownAck(v.rev)
+    m.toStrip.length = 0
+    await tabs.closeTab(a.id)
+    await tick()
+    expect(views.menuNow()?.closing).toBe(true)
+    menuPickSend(v.rev, null)
+  })
+
+  it('B13: an unknown id or a disabled row does nothing (the menu shrinks all the same); the strip never names a label', async () => {
+    const t = await canvas()
+    t.doc!.trusted = false
+    let v = openTabMenu(t.id)!
+    expect(v.rows.find((r) => r.kind === 'item' && r.id === 'open-browser')).toMatchObject({ enabled: false })
+    menuShownAck(v.rev)
+    await tick()
+    flushNow(); writeFileSync(file(), '')
+    menuPickSend(v.rev, 'open-browser')    // disabled
+    await tick()
+    expect(cmdLines()).toEqual([])
+    expect(m.menuOpen).toBe(false)
+    t.doc!.trusted = true
+    v = openTabMenu(t.id)!
+    menuShownAck(v.rev)
+    await tick()
+    flushNow(); writeFileSync(file(), '')
+    menuPickSend(v.rev, 'reload')          // a row id a local tab's menu never has
+    await tick()
+    expect(cmdLines()).toEqual([])
+    expect(m.menuOpen).toBe(false)
+    // a label is refused by the bridge's check: nothing reaches main
+    expect(checkPagePayload(CH.tabMenuPick, { rev: 1, id: 'Close tab' }).ok).toBe(false)
+  })
+
+  it('B5: the » menu - one row per hidden tab, `tab:<id>`, its state word, no icon and no check; a pick activates it via the overflow', async () => {
+    const a = await canvas()
+    const b = await canvas()
+    tabs.activate(b.id)
+    a.reg!.state = 'starting'
+    const v = openMore([a.id, 'no-such'])!
+    a.reg!.state = 'ready'
+    expect(v.kind).toBe('more')
+    expect(v.rows).toEqual([{ kind: 'item', id: `tab:${a.id}`, label: `${tabs.tabName(a)} - starting`, enabled: true }])
+    expect(views.popupNow()!.items).toEqual([{ label: `${tabs.tabName(a)} - starting`, enabled: true }])
+    menuShownAck(v.rev)
+    await tick()
+    flushNow(); writeFileSync(file(), '')
+    menuPickSend(v.rev, `tab:${a.id}`)
+    await tick()
+    expect(tabs.activeTab()?.id).toBe(a.id)
+    expect(cmdLines().find((l) => l.phase === 'start')).toMatchObject({ cmd: 'activate', via: 'menu', in: 'strip', tab: a.id })
+  })
+
+  it('B15: popup:click acts from main\'s record and closes the live menu; after the live menu\'s deadline it still acts from lastPopup; popup:close closes with no pick', async () => {
+    const t = await canvas()
+    const { effects } = await import('../../src/main/effects.ts')
+    const copies: string[] = []
+    const was = effects.copy
+    effects.copy = (s: string) => { copies.push(s) }
+    try {
+      let v = openTabMenu(t.id)!
+      menuShownAck(v.rev)
+      expect(views.popupClick('Copy local link')).toBe(true)
+      expect(copies).toEqual([`http://localhost:${t.reg!.port}/`])
+      expect(views.menuNow()).toBeNull()
+      expect(m.menuOpen).toBe(false)
+      // the deadline passed with no show (an occluded test window): the record still acts
+      openTabMenu(t.id)
+      await sleep(560)
+      expect(views.menuNow()).toBeNull()
+      expect(views.popupClick('Copy local link')).toBe(true)
+      expect(copies.length).toBe(2)
+      expect(views.popupClick('Resolve all comments')).toBe(false)   // disabled
+      // popup:close: the live menu closed with no pick, the strip shrunk at its ack
+      v = openTabMenu(t.id)!
+      menuShownAck(v.rev)
+      expect(views.closeMenu()).toBe(true)
+      menuPickSend(v.rev, null)
+      expect(m.menuOpen).toBe(false)
+      expect(copies.length).toBe(2)
+    } finally { effects.copy = was }
+  })
+
+  describe('B14: focus', () => {
+    const focus = () => import('../../src/main/focus.ts')
+    let stripWc: FakeWc
+    const pageFocus: unknown[] = []
+    beforeEach(async () => {
+      const f = await focus()
+      stripWc = new FakeWc('marver-app://strip/')
+      f.resetFocus()
+      f.setFocusPorts({
+        active: () => tabs.activeTab()?.id, strip: () => stripWc as never,
+        content: (id) => content.get(id)?.webContents as never, page: () => undefined,
+        pageFocus: (_wc, p) => { pageFocus.push(p) },
+      })
+      f.track(stripWc as never, { part: 'strip' })
+      pageFocus.length = 0
+    })
+    afterEach(async () => { const f = await focus(); f.setFocusPorts(null as never); f.resetFocus() })
+
+    it('a canvas focused, a right mousedown focuses the strip, then `tab:menu {hadFocus: false}`: prevOwner the canvas; a dismissal gives it focus back', async () => {
+      const t = await canvas()
+      const cv = content.get(t.id)!.webContents
+      cv.emit('focus')
+      stripWc.emit('focus')               // the right mousedown made the strip first responder
+      const strip0 = stripWc.focused
+      const v = openTabMenu(t.id, { key: false, hadFocus: false })!
+      expect(views.menuNow()?.prevOwner).toEqual({ part: 'content', tab: t.id })
+      // focusStripQuiet: the strip focused, no page:focus (it would take focus back from the menu's first row)
+      expect(stripWc.focused).toBe(strip0 + 1)
+      expect(pageFocus).toEqual([])
+      menuShownAck(v.rev)
+      const cv0 = cv.focused
+      menuPickSend(v.rev, null)
+      expect(cv.focused).toBe(cv0 + 1)
+    })
+
+    it('with `hadFocus: true` prevOwner is the strip and a dismissal leaves focus to the strip; a key open says so', async () => {
+      const t = await canvas()
+      const cv = content.get(t.id)!.webContents
+      cv.emit('focus')
+      stripWc.emit('focus')
+      const v = openTabMenu(t.id, { key: true, hadFocus: true })!
+      expect(views.menuNow()).toMatchObject({ key: true, hadFocus: true, prevOwner: { part: 'strip' } })
+      menuShownAck(v.rev)
+      const cv0 = cv.focused
+      menuPickSend(v.rev, null)
+      expect(cv.focused).toBe(cv0)
+    })
+
+    it('a pick that moves focus itself (an activate from ») restores nothing; one that does not (a copy) restores it', async () => {
+      const a = await canvas()
+      const b = await canvas()
+      const cb = content.get(b.id)!.webContents
+      cb.emit('focus')
+      stripWc.emit('focus')
+      let v = openMore([a.id])!
+      menuShownAck(v.rev)
+      const b0 = cb.focused
+      menuPickSend(v.rev, `tab:${a.id}`)
+      expect(cb.focused).toBe(b0)
+      tabs.activate(b.id)
+      cb.emit('focus')
+      stripWc.emit('focus')
+      v = openTabMenu(b.id)!
+      menuShownAck(v.rev)
+      const b1 = cb.focused
+      menuPickSend(v.rev, 'copy-link')
+      expect(cb.focused).toBe(b1 + 1)
+    })
+  })
+})
+
+describe('spec 32 C8: main\'s immersive gate, the views.ts glue (through the mock\'s compose)', () => {
+  const FULL = { active: true, view: true, page: false, placed: 'full', seeThrough: true }
+  const wish = (t: { id: string }, on: boolean, n: number) => reportFn!(t.id, docs.get(t.id)!, { immersive: { on, n } })
+  afterEach(() => { m.facts.clear(); immersiveSent.length = 0; immersiveSends = true })
+
+  it('a report composes through onReport\'s changed() (no second compose); the answer carries the wish\'s n and is sent once', async () => {
+    const t = await canvas()
+    m.facts.set(t.id, FULL)
+    immersiveSent.length = 0
+    const before = m.composes
+    wish(t, true, 1)
+    expect(m.composes - before).toBe(1)
+    expect(immersiveSent).toEqual([{ tab: t.id, doc: docs.get(t.id), n: 1, on: true }])
+    expect(t.reports.immersiveGrant).toBe('on')
+    expect(m.stripShown.get(t.id)).toBe(false)
+    compose(); compose()
+    expect(immersiveSent.length).toBe(1)
+  })
+
+  it('H on, H off, H on: on, then `{on: false}` with no end (the shell\'s own off: grant none), then on again', async () => {
+    const t = await canvas()
+    m.facts.set(t.id, FULL)
+    wish(t, true, 1)
+    wish(t, false, 2)
+    expect(t.reports.immersiveGrant).toBeUndefined()
+    expect(m.stripShown.get(t.id)).toBe(true)
+    wish(t, true, 3)
+    expect(immersiveSent.map((x) => [x.n, x.on, x.end])).toEqual([[1, true, undefined], [2, false, undefined], [3, true, undefined]])
+    expect(m.stripShown.get(t.id)).toBe(false)
+  })
+
+  it('main takes it away (a hang): `{on: false, end: true}` once; the shell\'s off then is answered; the next wish meets the gate', async () => {
+    const t = await canvas()
+    m.facts.set(t.id, FULL)
+    wish(t, true, 1)
+    t.hung = true
+    compose()
+    compose()
+    expect(immersiveSent.slice(1)).toEqual([{ tab: t.id, doc: docs.get(t.id), n: 1, on: false, end: true }])
+    expect(t.reports.immersiveGrant).toBe('ended')
+    expect(m.stripShown.get(t.id)).toBe(true)
+    wish(t, false, 2)
+    expect(t.reports.immersiveGrant).toBeUndefined()
+    t.hung = false
+    wish(t, true, 3)
+    expect(immersiveSent.at(-1)).toMatchObject({ n: 3, on: true })
+  })
+
+  it('ended, then a reload (a commit): the reports reset clears the grant, and a wish on is granted', async () => {
+    const t = await canvas()
+    m.facts.set(t.id, FULL)
+    wish(t, true, 1)
+    t.reg!.state = 'gone'
+    compose()
+    expect(t.reports.immersiveGrant).toBe('ended')
+    t.reg!.state = 'ready'
+    wish(t, true, 2)
+    expect(immersiveSent.at(-1)).toMatchObject({ n: 2, on: false })
+    expect(immersiveSent.at(-1)!.end).toBeUndefined()
+    await commit(t.id)
+    expect(t.reports.immersiveGrant).toBeUndefined()
+    wish(t, true, 1)                       // a new document's preload counts from 1
+    expect(immersiveSent.at(-1)).toEqual({ tab: t.id, doc: docs.get(t.id), n: 1, on: true })
+    expect(t.reports.immersiveGrant).toBe('on')
+  })
+
+  it('a send that could not go out is made again by the next compose (answered only when sent)', async () => {
+    const t = await canvas()
+    m.facts.set(t.id, { ...FULL, placed: 'below' })
+    immersiveSends = false
+    wish(t, true, 1)
+    expect(t.reports.immersiveAnswered).toBeUndefined()
+    immersiveSends = true
+    compose()
+    expect(t.reports.immersiveAnswered).toBe(1)
+    expect(immersiveSent.map((x) => [x.n, x.on])).toEqual([[1, false], [1, false]])
+    compose()
+    expect(immersiveSent.length).toBe(2)
+  })
+
+  it('a tab that is not the active one is refused; a tab switch ends a granted one', async () => {
+    const t = await canvas()
+    m.facts.set(t.id, { ...FULL, active: false })
+    wish(t, true, 1)
+    expect(immersiveSent.at(-1)).toMatchObject({ n: 1, on: false })
+    m.facts.set(t.id, FULL)
+    compose()
+    expect(immersiveSent.at(-1)).toMatchObject({ n: 1, on: true })
+    m.facts.set(t.id, { ...FULL, active: false })
+    compose()
+    expect(immersiveSent.at(-1)).toMatchObject({ n: 1, on: false, end: true })
+  })
+
+  it('C8.1: F6 while immersive - main ends it (the strip back first), then focuses the strip; the grant then reads ended', async () => {
+    const t = await canvas()
+    m.facts.set(t.id, FULL)
+    wish(t, true, 1)
+    expect(m.stripShown.get(t.id)).toBe(false)
+    runCommand('focus-strip', 'key', { keys: 'F6', in: 'shell' })
+    expect(m.stripShown.get(t.id)).toBe(true)
+    expect(immersiveSent.at(-1)).toMatchObject({ n: 1, on: false, end: true })
+    expect(t.reports.immersiveGrant).toBe('ended')
+    // the shell turns Hide UI off, then on again: the gate decides again (main's end does not latch)
+    wish(t, false, 2)
+    wish(t, true, 3)
+    expect(immersiveSent.at(-1)).toMatchObject({ n: 3, on: true })
+  })
+
+  it('B12.8: turning immersive on closes the strip\'s menu first', async () => {
+    const t = await canvas()
+    const v = openTabMenu(t.id)!
+    menuShownAck(v.rev)
+    m.facts.set(t.id, FULL)
+    m.toStrip.length = 0
+    wish(t, true, 1)
+    expect(views.menuNow()?.closing).toBe(true)
+    expect(m.toStrip).toEqual([[CH.tabMenuView, null]])
+    menuPickSend(v.rev, null)
+  })
+})
+
+describe('spec 32 D6.4, D6.5: Home\'s excluded workspaces and a marver:// link to a gone tab\'s canvas (views.ts)', () => {
+  const real = () => realpathSync(mkdtempSync(join(base, 'ws-')))
+  /** a canvas of a real folder (its ws as the app derives it), shown and committed; `slot` another instance's */
+  async function folderCanvas(root: string, slot?: number) {
+    const e = { ...makeEntry(++n), root, ws: workspaceOf(root), ...(slot !== undefined ? { slot, port: 40100 + slot, origin: `http://[::1]:${40100 + slot}` } : {}) }
+    entries.push(e)
+    tabs.onRegistry({ kind: 'entry', entry: e as never })
+    const t = tabs.allTabs().find((x) => x.reg?.instance === e.instance)!
+    tabs.activate(t.id)
+    await tick()
+    return { t, e }
+  }
+  const stop = (e: { file: string; instance: string }) => {
+    entries.splice(entries.indexOf(e as never), 1)
+    tabs.onRegistry({ kind: 'gone', file: e.file, instance: e.instance, why: 'pid' })
+  }
+  const lastFocus = () => m.held.filter(([ch]) => ch === CH.homeFocus).at(-1)?.[1]
+
+  it('homeExcluded: the running set and every open gone tab\'s workspace; running() (the quit\'s flushRecent) never a gone one; closing the gone tab tells the listener at once', async () => {
+    const w = views.windowPorts()
+    const { t, e } = await folderCanvas(real())
+    let told = 0
+    const off = w.onHomeExcludedChange(() => { told++ })
+    stop(e)
+    expect(tabs.getTab(t.id)?.open).toBe(true)
+    expect(w.running()).not.toContain(e.ws)
+    expect(w.homeExcluded()).toContain(e.ws)
+    const after = told
+    await tabs.closeTab(t.id)
+    await tick()
+    expect(tabs.getTab(t.id)).toBeUndefined()
+    expect(w.homeExcluded()).not.toContain(e.ws)
+    expect(told).toBeGreaterThan(after)
+    off()
+  })
+
+  it('a link to a canvas whose gone tab is open focuses that tab\'s card; with two gone instances the first in strip order, or the one on the link\'s port', async () => {
+    const root = real()
+    const one = await folderCanvas(root, 70)
+    const two = await folderCanvas(root, 71)
+    expect(one.t.id).not.toBe(two.t.id)
+    stop(one.e); stop(two.e)
+    m.held.length = 0
+    expect(views.openDeepLink(buildDeepLink({ ws: root })!)).toBe('home')
+    const order = tabs.ordered().map((x) => x.id)
+    const first = order.indexOf(one.t.id) < order.indexOf(two.t.id) ? one.t : two.t
+    expect(lastFocus()).toEqual({ field: 'recent', id: first.id })
+    const other = first === one.t ? two : one
+    views.openDeepLink(buildDeepLink({ ws: root, port: other.e.port })!)
+    expect(lastFocus()).toEqual({ field: 'recent', id: other.t.id })
+    // a port no gone tab is on: the first again
+    views.openDeepLink(buildDeepLink({ ws: root, port: 40999 })!)
+    expect(lastFocus()).toEqual({ field: 'recent', id: first.id })
+    await tabs.closeTab(one.t.id); await tabs.closeTab(two.t.id)
+    // none left open: the recent card's id (showLinked), never a closed tab's
+    m.held.length = 0
+    views.openDeepLink(buildDeepLink({ ws: root })!)
+    expect(lastFocus()).not.toEqual({ field: 'recent', id: first.id })
   })
 })
 
@@ -1207,8 +1775,11 @@ describe('a 0.29.0 canvas in app 1.0.1 (#54)', () => {
   it('a relay to it is not recorded: no owner here, and a 0.29 shell does not record it either (#51)', async () => {
     const t = await canvas(HELLO_029)
     flushNow(); writeFileSync(file(), '')
-    pageHandlers.tabMenu(t.id, 1, 1)
-    ;(m.popup as { label?: string; click?: () => void }[]).find((i) => i.label === 'Mark All as Seen')!.click!()
+    const v = openTabMenu(t.id)!
+    menuShownAck(v.rev)
+    await tick()
+    flushNow(); writeFileSync(file(), '')
+    menuPickSend(v.rev, 'mark-all-seen')
     await tick()
     expect(cmdLines()).toEqual([])
     expect(menuClicks.at(-1)).toEqual([t.id, 'mark-all-seen', 'tab-menu'])

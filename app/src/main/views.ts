@@ -1525,7 +1525,7 @@ function restoreMenuFocus(rec: MenuRec): void {
 }
 
 /** B12: main closes the menu - `tab-menu: null`, kept grown until the strip's null pick for that rev, or 150 ms. */
-function closeMenu(): boolean {
+export function closeMenu(): boolean {
   const rec = menu
   if (!rec || rec.closing) return false
   rec.closing = true
