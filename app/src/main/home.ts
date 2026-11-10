@@ -25,6 +25,7 @@
  * and, in the quit path, `flushRecent`; the bridge mounts `homeAction` and `openLink` as invokes; the home page's
  * `recent` and `home:info` come from `recentViews()` and `homeInfo()`, pushed again on `onRecentChange`.
  */
+import { createHash } from 'node:crypto'
 import { existsSync, realpathSync, statSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
@@ -32,6 +33,7 @@ import { app } from 'electron'
 import { CH, type HomeActionAnswer, type HomeInfo, type LinkOpenAnswer, type RecentView, type SharedLink } from '../shared/channels.ts'
 import { FIXED_COMMANDS, startCommand, tilde, updateCommand } from '../shared/command.ts'
 import { hueOf } from '../shared/hue.ts'
+import { buildDeepLink } from '../../../src/shared/deep-link.ts'
 import { LINK_MAX, parseLink, remoteStart, shellPath } from '../shared/links.ts'
 import { currentHome, filesStatus, noteWrite, onPill, onStatus, settingsReveal, settingsSet, settingsView, stateDir, stateFileWriter } from './config.ts'
 import { effects } from './effects.ts'
@@ -197,9 +199,16 @@ export function noteSite(origin: string, name: string, logo: string | undefined)
 }
 const siteOf = (url: string) => { try { const o = new URL(url).origin; return { site: sites.find((x) => x.origin === o), logo: logos.get(siteKey(o)) } } catch { return { site: undefined, logo: undefined } } }
 
+/** Spec 32 F1: a past shared link's id - `s_` and 16 hex of sha256 over its origin (within the bridge's id pattern). */
+export const sharedId = (url: string): string => {
+  let o = url
+  try { o = new URL(url).origin } catch { /* as it is */ }
+  return `s_${createHash('sha256').update(o).digest('hex').slice(0, 16)}`
+}
+
 export const sharedLinks = (): SharedLink[] => shared.map((l) => {
   const { site, logo } = siteOf(l.url)
-  return { ...l, ...(site ? { name: site.name } : {}), ...(logo ? { logo } : {}) }
+  return { ...l, id: sharedId(l.url), ...(site ? { name: site.name } : {}), ...(logo ? { logo } : {}) }
 })
 export function onSharedChange(fn: () => void): () => void { sharedFns.add(fn); return () => sharedFns.delete(fn) }
 
@@ -288,12 +297,17 @@ export function flushRecent(running: Iterable<string>): void {
   writer?.flushSync()
 }
 
-/** `exclude` (spec 32 D6.4): the workspaces whose card Home hides - read from W3 on; until then the running ones decide. */
-export const recentViews = (running: Iterable<string>, _exclude: Iterable<string> = running): RecentView[] => {
-  const run = [...running]
-  const views = recentViewsOf(recent, run, homedir(), { logoOf: (ws) => { const k = wsKey(ws); return k ? logos.get(k) : undefined } })
+/**
+ * Recently here as Home draws it. `exclude` (spec 32 D6.4, `WindowPorts.homeExcluded`): the workspaces whose card Home
+ * hides - the running ones and every open gone tab's, so a workspace never has a recent card beside a tab's card. No
+ * synthetic linked card for an excluded workspace: its tab's card is the one a `marver://` link names (D6.5).
+ * `running` itself is not read here: it stays the quit's (`flushRecent`) alone.
+ */
+export const recentViews = (running: Iterable<string>, exclude: Iterable<string> = running): RecentView[] => {
+  const ex = [...new Set([...exclude])]
+  const views = recentViewsOf(recent, ex, homedir(), { logoOf: (ws) => { const k = wsKey(ws); return k ? logos.get(k) : undefined } })
   // a `marver://` link to a canvas that is not running (spec 31 D1): its card first - recorded or not - highlighted
-  if (linked && !run.includes(linked.ws)) {
+  if (linked && !ex.includes(linked.ws)) {
     const i = views.findIndex((v) => v.id === recentId(linked!.ws))
     if (i >= 0) views.unshift({ ...views.splice(i, 1)[0]!, linked: true })
     else views.unshift({ id: recentId(linked.ws), name: basename(linked.root) || linked.root, folder: tilde(linked.root, homedir()), lastSeen: 0, hue: hueOf(linked.ws), linked: true })
@@ -347,6 +361,45 @@ export function setTabFacts(fn: ((tabId: string) => TabFacts | undefined) | null
 /** Spec 32 F1: a tab's facts, or undefined (no hook, or no such tab). */
 export const tabFacts = (tabId: string): TabFacts | undefined => tabFactsOf?.(tabId)
 
+/** What one Home card's actions resolve to (spec 32 D8.1): main's own records, never a value from Home. */
+export interface CardFacts { ws?: string; root?: string; port?: number; startPort?: number; link?: string }
+
+/**
+ * Spec 32 D8.1: the one resolver behind a card's Copy start command, Copy link, Copy path and Reveal in Finder - and
+ * nothing else. A tab id: the views.ts hook's facts (`setTabFacts`: its root, where it ran, its explicit port, its
+ * people link while trusted, a remote tab's url or a gone tab's `marver://` link). `r_<ws>`: the stored entry (`port`
+ * both where it ran and its start's `--port`, kept only for an explicit-port start), else the deep-link-only card's
+ * `linked.root`, its link `buildDeepLink({ws: root, port})`. `s_<hash>`: the past shared link of that origin. Unknown:
+ * undefined.
+ */
+export function cardOf(id: string): CardFacts | undefined {
+  if (typeof id !== 'string' || id.length >= 80) return undefined
+  if (id.startsWith('r_')) {
+    const e = recent.find((r) => recentId(r.workspace) === id)
+    if (e) {
+      const link = buildDeepLink({ ws: e.root, ...(e.port !== undefined ? { port: e.port } : {}) }) ?? undefined
+      return { ws: e.workspace, root: e.root, ...(e.port !== undefined ? { port: e.port, startPort: e.port } : {}), ...(link ? { link } : {}) }
+    }
+    if (linked && recentId(linked.ws) === id) {
+      const link = buildDeepLink({ ws: linked.root }) ?? undefined
+      return { ws: linked.ws, root: linked.root, ...(link ? { link } : {}) }
+    }
+    return undefined
+  }
+  if (id.startsWith('s_')) {
+    const l = shared.find((x) => sharedId(x.url) === id)
+    return l ? { link: l.url } : undefined
+  }
+  const f = tabFactsOf?.(id)
+  if (!f) return undefined
+  return {
+    ...(f.ws ? { ws: f.ws } : {}), ...(f.root ? { root: f.root } : {}), ...(f.port !== undefined ? { port: f.port } : {}),
+    ...(f.startPort !== undefined ? { startPort: f.startPort } : {}), ...(f.link ? { link: f.link } : {}),
+  }
+}
+
+const MISSING: HomeActionAnswer = { ok: false, why: 'missing' }
+
 /** `home:action`: main copies its own command, or opens the folder. Checked again here. */
 export async function homeAction(raw: unknown): Promise<HomeActionAnswer> {
   const a = raw as { action?: unknown; id?: unknown } | null
@@ -355,11 +408,32 @@ export async function homeAction(raw: unknown): Promise<HomeActionAnswer> {
     effects.copy(FIXED_COMMANDS[a.id as keyof typeof FIXED_COMMANDS])
     return { ok: true }
   }
-  if (a.action === 'copy-start' && typeof a.id === 'string' && a.id.length < 80 && a.id.startsWith('r_')) {
-    const e = recent.find((r) => recentId(r.workspace) === a.id)
-    const root = e?.root ?? (linked && recentId(linked.ws) === a.id ? linked.root : undefined)
-    if (!root) return { ok: false }
-    effects.copy(startCommand({ root, port: e?.port }))
+  // a recent's start command, or (spec 32 D8.1) a gone tab's: `startPort` only for an explicit-port start, never
+  // where an automatic slot ran (another canvas may hold that port by the time the command runs)
+  if (a.action === 'copy-start' && typeof a.id === 'string') {
+    const c = cardOf(a.id)
+    if (!c?.root) return MISSING
+    effects.copy(startCommand({ root: c.root, port: c.startPort }))
+    return { ok: true }
+  }
+  // spec 32 D8.1: a card's Copy link (its people link, its `marver://` link when stopped, a shared canvas's url), Copy
+  // path and Reveal in Finder (its folder)
+  if (a.action === 'copy-link' && typeof a.id === 'string') {
+    const c = cardOf(a.id)
+    if (!c?.link) return MISSING
+    effects.copy(c.link)
+    return { ok: true }
+  }
+  if (a.action === 'copy-path' && typeof a.id === 'string') {
+    const c = cardOf(a.id)
+    if (!c?.root) return MISSING
+    effects.copy(c.root)
+    return { ok: true }
+  }
+  if (a.action === 'reveal' && typeof a.id === 'string') {
+    const c = cardOf(a.id)
+    if (!c?.root) return MISSING
+    effects.showItem(c.root)
     return { ok: true }
   }
   // spec 31 E4: a running canvas's update, in its own folder - main's record of the tab, never a path from Home
@@ -412,6 +486,8 @@ export async function openLink(raw: unknown, ports: LinkPorts): Promise<LinkOpen
   const p = parseLink(s)
   if (p.kind === 'bad') return { ok: false, why: 'bad' }
   if (p.kind === 'https') return ports.openRemote(p.url)   // shared canvases: A4.4
+  // spec 32 D3: a `marver:` link, to main's deep-link handler, which checks it again as for a link from outside
+  if (p.kind === 'deep') return ports.deep(p.url) === 'bad' ? { ok: false, why: 'bad' } : { ok: true }
   const e = ports.byPort(p.port)
   if (!e || (e.state !== 'ready' && e.state !== 'starting')) return { ok: false, why: 'nothing' }
   if (e.state === 'starting' || !e.origin) return ports.open(e, null, p.rest)
@@ -445,16 +521,26 @@ export function mountPages(bridge: PageBridge, w: WindowPorts): () => void {
     info = j
     bridge.send('home', CH.homeInfo, i)
   }
-  const pushRecent = () => { bridge.send('home', CH.recent, recentViews(w.running(), w.homeExcluded())) }
+  let sentRecent = ''
+  // the running set and the excluded set change together (both fire): the same list is sent once
+  const pushRecent = (force = false) => {
+    const v = recentViews(w.running(), w.homeExcluded())
+    const j = JSON.stringify(v)
+    if (!force && j === sentRecent) return
+    sentRecent = j
+    bridge.send('home', CH.recent, v)
+  }
   const pushShared = () => { bridge.send('home', CH.shared, sharedLinks()) }
   const offs = [
     bridge.onReady((ctx) => {
-      if (ctx.kind === 'home') { pushInfo(true); pushRecent(); pushShared() }
+      if (ctx.kind === 'home') { pushInfo(true); pushRecent(true); pushShared() }
       else if (ctx.kind === 'settings') bridge.send('settings', CH.status, filesStatus())
     }),
-    onRecentChange(pushRecent),
+    onRecentChange(() => pushRecent()),
     onSharedChange(pushShared),
-    w.onRunningChange(pushRecent),
+    w.onRunningChange(() => pushRecent()),
+    // spec 32 D6.4: a gone tab opened, closed or reopened changes which recent cards Home hides
+    w.onHomeExcludedChange(() => pushRecent()),
     onStatus((s) => { bridge.send('settings', CH.status, s); pushInfo() }),
     onPill((p) => w.setFilesPill(p)),
   ]
@@ -474,7 +560,7 @@ function provideHomeHooks(): void {
   provide('home.shown', () => { noteHomeShown(); return true })
   provide('home.verified', (a) => { noteVerified(a as VerifiedCanvas); return true })
   provide('home.gone', (a) => { noteGone(String((a as { ws?: unknown })?.ws)); return true })
-  provide('home.views', (a) => recentViews(((a as { running?: string[] })?.running) ?? []))
+  provide('home.views', (a) => { const o = a as { running?: string[]; exclude?: string[] } | null; return recentViews(o?.running ?? [], o?.exclude ?? o?.running ?? []) })
   provide('home.entries', () => recentEntries())
   provide('home.action', (a) => homeAction(a))
   provide('home.flush', async (a) => { flushRecent(((a as { running?: string[] })?.running) ?? []); flushShared(); return true })
@@ -483,11 +569,12 @@ function provideHomeHooks(): void {
     const o = a as { url: unknown; entries?: LinkEntry[]; answer?: LinkOpenAnswer }
     const opened: { url: string | null; rest: string }[] = []
     const remote: string[] = []
+    const deep: string[] = []
     return openLink({ url: o.url }, {
       byPort: (port) => o.entries?.find((e) => e.port === port),
       open: async (_e, url, rest) => { opened.push({ url, rest }); return o.answer ?? { ok: true } },
       openRemote: async (url) => { remote.push(url); return o.answer ?? { ok: true } },
-      deep: () => 'bad',
-    }).then((answer) => ({ answer, opened, remote }))
+      deep: (url) => { deep.push(url); return o.answer?.ok === false ? 'bad' : 'home' },
+    }).then((answer) => ({ answer, opened, remote, deep }))
   })
 }

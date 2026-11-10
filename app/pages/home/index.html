@@ -9,23 +9,10 @@
 <link rel="stylesheet" href="style.css">
 <script src="main.js" defer></script>
 </head>
-<body class="ground">
-<main class="home">
-  <header class="top">
-    <h1 class="h1" id="title">On this Mac</h1>
-    <div class="link">
-      <label class="sr-only" for="link">Open a canvas link</label>
-      <div class="field" id="field">
-        <span class="field-ic" id="field-ic" aria-hidden="true"></span>
-        <input id="link" type="text" maxlength="2048" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="Open a canvas link…" aria-describedby="hint">
-        <kbd class="field-key" aria-hidden="true">⌘L</kbd>
-      </div>
-      <div class="hint-row"><span id="hint" class="hint"></span><span id="back" class="hint back"></span></div>
-    </div>
-  </header>
-  <div id="body" class="body"></div>
-  <footer id="foot" class="foot"></footer>
-</main>
+<body class="hm">
+<!-- spec 32 D11: the body renderBody() rebuilds; the menus and Help live in #hm-layer, which it never touches -->
+<main id="hm-root"></main>
+<div id="hm-layer"></div>
 <div class="sr-only" id="live" aria-live="polite"></div>
 </body>
 </html>
