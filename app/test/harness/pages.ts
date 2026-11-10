@@ -97,7 +97,8 @@ async function launch(extra: Record<string, string>, o: OpenOptions): Promise<Pa
   assertOneTeam(ELECTRON_BIN)
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'mvpages-')))
   const app = await _electron.launch({
-    args: [join(APP_DIR, 'test', 'harness', 'pages-main.cjs')],
+    // the scale factor as a Chromium switch on the command line (pages-main.cjs appends it too, before ready)
+    args: [...(o.dpr ? [`--force-device-scale-factor=${o.dpr}`] : []), join(APP_DIR, 'test', 'harness', 'pages-main.cjs')],
     env: {
       ...process.env as Record<string, string>,
       MVPAGES_DIST: join(APP_DIR, 'dist'), ...extra,

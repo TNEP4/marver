@@ -373,6 +373,13 @@ describe('the Marver menu on the strip (E2, B6-B11)', () => {
     expect(await css(p, '.mv-menu', ['visibility'])).toEqual({ visibility: 'visible' })
   })
 
+  it('the harness: resize() resolves once both axes have landed, a height-only resize included (F4)', async () => {
+    for (const [w, hh] of [[1280, 44], [1280, 800], [1280, 44], [1280, 800]] as const) {
+      await p.resize(w, hh)
+      expect(await p.page.evaluate(() => [innerWidth, innerHeight])).toEqual([w, hh])
+    }
+  })
+
   it('needs no inline style: no CSP refusal on the page', async () => {
     expect(await p.csp()).toEqual([])
   })

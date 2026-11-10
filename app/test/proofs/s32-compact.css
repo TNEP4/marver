@@ -1,0 +1,75 @@
+/* Spec 32 H2.5 / G4b: the compact-tab proof. A2's CSS (with A5-A8, A10, A11 and A4's » circle) written for a static
+   page: fixed widths from A3's arithmetic, no fit(), each row its own 44 px strip on the canvas ground. The
+   strip's tokens are E1's (pages/strip/style.css), copied here so the proof stands alone. Nic's call (I2): compact
+   under 104 px, the 84 px floor, then ». */
+:root {
+  --ts-panel-look: #f6f7f9; --ts-face-hover: rgba(231, 233, 239, .9); --ts-kbd-bg: rgba(24, 24, 27, .06);
+  --ts-shadow-lit: inset 0 1px 0 rgba(255, 255, 255, .7), 0 1px 1.5px rgba(24, 24, 27, .05), 0 3px 8px -4px rgba(24, 24, 27, .1);
+}
+:root.dark {
+  --ts-panel-look: #101116; --ts-face-hover: #26272d; --ts-kbd-bg: rgba(255, 255, 255, .1);
+  --ts-shadow-lit: inset 0 1px 0 rgba(255, 255, 255, .1), 0 1px 2px rgba(0, 0, 0, .35), 0 4px 12px -6px rgba(0, 0, 0, .5);
+  --ts-edge-dark: linear-gradient(155deg, rgba(255, 255, 255, .46), rgba(255, 255, 255, .1) 30%, rgba(255, 255, 255, .04) 65%, rgba(255, 255, 255, .24));
+}
+html, body { background: var(--ground); overflow: hidden }
+#rows { display: block; padding: 6px 0 10px }
+.label { height: 22px; padding: 6px 14px 0; font: 600 11px/1 -apple-system, system-ui, sans-serif; color: var(--glass-ink-3); letter-spacing: .01em }
+
+.strip { position: relative; height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 14px 0 82px;
+  background: radial-gradient(var(--dot) 1px, transparent 1px) 0 0 / 20px 20px, var(--ground) }
+.lights { position: absolute; left: 14px; top: 16px; display: flex; gap: 8px }
+.lights i { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; box-shadow: inset 0 0 0 .5px rgba(0, 0, 0, .12) }
+.lights i:nth-child(2) { background: #febc2e }
+.lights i:nth-child(3) { background: #28c840 }
+
+.tabs { flex: 1; min-width: 0; height: 44px; display: flex; align-items: center; gap: 4px }
+.home { flex: none; position: relative; width: 30px; height: 30px; margin-right: 6px; padding: 0; border: 0; border-radius: 50%;
+  display: grid; place-items: center; background: none; color: var(--glass-ink-2) }
+.home svg { width: 15px; height: 15px }
+.home.on { background: var(--ts-panel-look); color: var(--glass-ink); box-shadow: 0 0 0 1px var(--glass-brd), var(--ts-shadow-lit) }
+
+.tab { flex: none; width: var(--tw, 176px); min-width: 0; height: 32px; padding: 0; border: 0; background: none; cursor: pointer;
+  font: 500 12.5px/1 -apple-system, system-ui, sans-serif }
+.tab.on { width: var(--aw, var(--tw, 176px)) }
+.face { position: relative; width: 100%; height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 6px 0 3px;
+  border: 1px solid transparent; border-radius: 999px; color: var(--glass-ink-2) }
+.face::after { content: ''; position: absolute; inset: -1px; padding: 1px; border-radius: inherit; pointer-events: none; opacity: 0;
+  background: var(--edge-light);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite: exclude }
+.slot { flex: none; width: 24px; height: 24px; display: grid; place-items: center }
+.slot .logo b { font-size: 10px }
+.name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.end { position: relative; flex: none; display: grid; place-items: center end; min-width: 0; height: 18px }
+.end > * { grid-area: 1 / 1 }
+.mk.ask { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; box-sizing: border-box; text-align: center;
+  font: 700 10.5px/18px -apple-system, system-ui, sans-serif; color: #fff; font-variant-numeric: tabular-nums; background: var(--mk-ask) }
+.mk.new.dot { width: 8px; height: 8px; margin-right: 5px; border-radius: 50%; background: var(--mk-new) }
+kbd.key { height: 18px; padding: 0 6px; border-radius: 9px; background: var(--ts-kbd-bg); font: 500 10.5px/18px -apple-system, system-ui, sans-serif;
+  color: var(--glass-ink-3); white-space: nowrap; opacity: 0; transform: scale(.92) }
+
+/* hover (A5, A6): the lit face; the badge gives way to the key */
+.tab.hov .face { color: var(--glass-ink); background: var(--ts-face-hover); border-color: var(--glass-brd); box-shadow: var(--ts-shadow-lit) }
+.tab.hov .face::after { opacity: 1 }
+:root.dark .tab.hov:not(.on) .face { border-color: rgba(255, 255, 255, .1) }
+:root.dark .tab.hov .face::after { background: var(--ts-edge-dark) }
+.tab.hov .end .mk { opacity: 0; transform: scale(.85) }
+.tab.hov .end .key { opacity: 1; transform: none }
+/* active (A5): the sidebar's panel look */
+.tab.on .face { color: var(--glass-ink); background: var(--ts-panel-look); border-color: var(--glass-brd); box-shadow: var(--ts-shadow-lit) }
+.tab.on .face::after { opacity: 1 }
+:root.dark .tab.on .face { border-color: rgba(255, 255, 255, .2) }
+:root.dark .tab.on .face::after { background: var(--ts-edge-dark) }
+
+/* compact (A2, Nic I2): under 104 px the name goes; the logo stays 4 px from the left, the badge 7 px from the right */
+.tab.compact .name { display: none }
+.tab.compact .end { margin-left: auto }
+
+/* the strip on Home (A11): no marks, until a hover brings the key back */
+.strip.home-on .mk, .strip.home-on .end { display: none }
+.strip.home-on .tab.hov .end { display: grid }
+
+/* » (A4): Home's circle with the count */
+.more { flex: none; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; gap: 2px;
+  background: none; color: var(--glass-ink-2); font: 500 12px/1 -apple-system, system-ui, sans-serif }
+.more small { font-size: 11px; color: var(--glass-ink-3) }
