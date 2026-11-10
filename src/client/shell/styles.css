@@ -967,13 +967,16 @@ body.sh-hide-ui .sh-banner:not(.sh-stopped) { display: none !important }   /* a 
 
 /* spec 32 C5.3 (MOTION.out.pills 160 ms, MOTION.back.pills 200 ms): in play the pills, their fab, the navigator and the
    minimal deck's progress strip fade instead of vanishing - out up (the pills) or down (the nav, the strip), then
-   hidden from the pointer and from view; back at once into view, then up to full */
-.sh-play .sh-play-pill, .sh-play .sh-pill-fab { transition: transform var(--morph), opacity 200ms ease, visibility 0s }
+   hidden from the pointer and from view; back at once into view, then up to full.
+   The pills' 6 px goes on `translate`, so `transform` keeps the pill/fab morph (`.closed`, `.hidden`) and its --morph time
+   while the fade's own move takes MOTION's 160 ms out and 200 ms back, ease. */
+.sh-play .sh-play-pill, .sh-play .sh-pill-fab { transition: opacity 200ms ease, translate 200ms ease, transform var(--morph), visibility 0s }
 .sh-play-nav, .sh-slides-strip { transition: opacity 200ms ease, transform 200ms ease, visibility 0s }
 body.sh-hide-ui .sh-play .sh-play-pill, body.sh-hide-ui .sh-play .sh-pill-fab, body.sh-hide-ui .sh-play-nav, body.sh-hide-ui .sh-slides-strip {
   opacity: 0; pointer-events: none; visibility: hidden;
   transition: opacity 160ms ease, transform 160ms ease, visibility 0s linear 160ms }
-body.sh-hide-ui .sh-play .sh-play-pill, body.sh-hide-ui .sh-play .sh-pill-fab { transform: translateY(-6px) }
+body.sh-hide-ui .sh-play .sh-play-pill, body.sh-hide-ui .sh-play .sh-pill-fab {
+  translate: 0 -6px; transition: opacity 160ms ease, translate 160ms ease, transform var(--morph), visibility 0s linear 160ms }
 body.sh-hide-ui .sh-play-nav { transform: translateY(6px) }
 body.sh-hide-ui .sh-slides-strip { transform: translateX(-50%) translateY(6px) }
 

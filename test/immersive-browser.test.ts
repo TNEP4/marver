@@ -109,7 +109,9 @@ const hidden = (s: string) => ev(s, `document.body.classList.contains('sh-hide-u
 const wishes = (s: string): Promise<{ on: boolean }[]> => ev(s, `__fake.wishes()`)
 const answer = (s: string, a: { on: boolean; end?: true }) => ev(s, `(__fake.answer(${JSON.stringify(a)}), 1)`)
 /** counts every `.flip` the play root takes from now on */
-const watchFlips = (s: string) => ev(s, `(() => { window.__flips = 0; window.__devT = []; new MutationObserver(() => { if (document.querySelector('.sh-play.flip')) { __flips++; __devT.push(getComputedStyle(document.querySelector('.sh-play .dev')).transitionDuration) } }).observe(document.querySelector('.sh-play'), { attributes: true, attributeFilter: ['class'] }); return 1 })()`)
+/** ...and each FLIP's start - `.flip` coming on, a restart's off-and-on in one task too: the stage's rendered width
+ *  then (its first frame, the size it starts from) */
+const watchFlips = (s: string) => ev(s, `(() => { window.__flips = 0; window.__devT = []; window.__flipW = []; new MutationObserver((rs) => { const on = !!document.querySelector('.sh-play.flip'); if (on) { __flips++; __devT.push(getComputedStyle(document.querySelector('.sh-play .dev')).transitionDuration) } const added = rs.filter((r) => !/\\bflip\\b/.test(r.oldValue ?? '')).length; if (on && added) __flipW.push(document.querySelector('.sh-play-stage').getBoundingClientRect().width) }).observe(document.querySelector('.sh-play'), { attributes: true, attributeFilter: ['class'], attributeOldValue: true }); return 1 })()`)
 
 /** H in play, and main's grant: immersive, the stage grown */
 async function grant(s: string): Promise<void> {
@@ -324,7 +326,7 @@ describe('the ways in and back (C1.1, C1.2, C6, C7)', () => {
 })
 
 describe('the shell\'s motion (C5)', () => {
-  it('the FLIP: a device stage starts from its old size with .dev\'s own size transition off, and ends with no transform; a reversal mid-FLIP ends at the right size', { timeout: 60_000 }, async (ctx) => {
+  it('the FLIP: a device stage starts from its old size with .dev\'s own size transition off, and ends with no transform; a reversal mid-FLIP starts from the size it shows and ends at the right size', { timeout: 60_000 }, async (ctx) => {
     skip(ctx)
     const s = await open({ on: true, immersive: true }, '#/p/main?at=demo/big')
     await watchFlips(s)
@@ -333,15 +335,26 @@ describe('the shell\'s motion (C5)', () => {
     expect(await ev(s, `__devT`)).toContain('0s')
     await until(s, `!document.querySelector('.sh-play.flip') && document.querySelector('.sh-play-stage').style.transform === ''`, 2000)
     expect((await size(s)).w).toBe(TIGHT)
-    // reversal: H off and its answer while the FLIP back runs, then H on and its answer at once
+    // its first frame is the old size (scale(prev/next) at the new layout size), and one answer gave one FLIP
+    const starts = await ev(s, `__flipW`) as number[]
+    expect(starts).toHaveLength(1)
+    expect(starts[0]).toBeCloseTo(SHOWN, 0)
+    // reversal: H off and its answer, and 80 ms into the FLIP back, H on and its grant in one task - the new FLIP
+    // starts from the rendered size of that moment (between the two sizes), never from either end
     await key(s, 'h')
     await until(s, `__fake.wishes().at(-1).on === false`)
     await answer(s, { on: false })
     await wait(80)
-    await grant(s)
+    const mid = await ev(s, `(() => { const w = document.querySelector('.sh-play-stage').getBoundingClientRect().width; window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', code: 'KeyH', bubbles: true })); __fake.answer({ on: true }); return w })()`) as number
+    expect(await ev(s, `__fake.wishes().at(-1).on`)).toBe(true)
+    expect(mid).toBeGreaterThan(SHOWN + 3)
+    expect(mid).toBeLessThan(TIGHT - 3)
+    await until(s, `__flipW.length === 3`, 1000)
+    expect((await ev(s, `__flipW`) as number[])[2]).toBeCloseTo(mid, 0)
     await until(s, `!document.querySelector('.sh-play.flip')`, 2000)
     expect((await size(s)).w).toBe(TIGHT)
     expect(await ev(s, `document.querySelector('.sh-play-stage').getBoundingClientRect().width`)).toBeCloseTo(TIGHT, 0)
+    expect(await ev(s, `__flipW.length`)).toBe(3)
   })
 
   it('the stage\'s padding moves with MOTION: back 300 ms, out 320 ms, the stage ease', { timeout: 45_000 }, async (ctx) => {
@@ -360,9 +373,23 @@ describe('the shell\'s motion (C5)', () => {
   it('under Hide UI in play the pills, their fab and the navigator fade (display kept, 160 ms out, 200 ms back); the minimal deck\'s strip fades centred; a full deck and a no-chrome deck draw none', { timeout: 60_000 }, async (ctx) => {
     skip(ctx)
     const s = await open({ on: false }, '#/p/main?at=demo/big')
+    const look = (sel: string) => ev(s, `(() => { const c = getComputedStyle(document.querySelector(${JSON.stringify(sel)})); return { display: c.display, dur: c.transitionDuration, pe: c.pointerEvents } })()`)
+    // the fade's move: the offset from the shown place (translate and transform, rendered), the scale (the pill/fab morph
+    // left alone), which property carries the offset, and each property's time and ease
+    type Move = { dy: number; scale: number; via: 'translate' | 'transform'; t: Record<string, [string, string] | null> }
+    const moves = (sel: string): Promise<Move> => ev(s, `(() => {
+      const el = document.querySelector(${JSON.stringify(sel)}), c = getComputedStyle(el)
+      const p = c.transitionProperty.split(', '), d = c.transitionDuration.split(', '), f = c.transitionTimingFunction.split(', ')
+      const of = (x) => { const i = p.indexOf(x); return i < 0 ? null : [d[i % d.length], f[i % f.length]] }
+      const tr = c.translate === 'none' ? 0 : parseFloat(c.translate.split(' ')[1] ?? '0'), m = new DOMMatrix(c.transform)
+      return { dy: tr + m.m42, scale: Math.round(m.a * 100) / 100, via: tr ? 'translate' : 'transform', t: { translate: of('translate'), transform: of('transform') } }
+    })()`)
+    const PILLS = ['.sh-play > nav.sh-play-pill', '.sh-play > .sh-pill-fab']
+    const base: Record<string, Move> = {}
+    for (const sel of PILLS) base[sel] = await moves(sel)
+    expect(base['.sh-play > .sh-pill-fab'].scale).toBe(0.5)   // the fab, shown folded while the pill is open
     await key(s, 'h')
     await wait(30)
-    const look = (sel: string) => ev(s, `(() => { const c = getComputedStyle(document.querySelector(${JSON.stringify(sel)})); return { display: c.display, dur: c.transitionDuration, pe: c.pointerEvents } })()`)
     for (const sel of ['.sh-play > nav.sh-play-pill', '.sh-play > .sh-pill-fab', '.sh-play-nav']) {
       const l = await look(sel)
       expect(l.display, sel).not.toBe('none')
@@ -370,9 +397,19 @@ describe('the shell\'s motion (C5)', () => {
       expect(l.pe, sel).toBe('none')
     }
     await until(s, `getComputedStyle(document.querySelector('.sh-play-nav')).visibility === 'hidden' && getComputedStyle(document.querySelector('.sh-play > nav.sh-play-pill')).opacity === '0'`, 2000)
+    // the pills' and the fab's move: 6 px up, 160 ms ease out, their own scale kept (the pill/fab morph is left alone)
+    const via: Record<string, Move['via']> = {}
+    for (const sel of PILLS) {
+      const m = await moves(sel)
+      expect([m.dy - base[sel].dy, m.scale], sel).toEqual([-6, base[sel].scale])
+      expect(m.t[m.via], sel).toEqual([`${MOTION.out.pills / 1000}s`, 'ease'])
+      via[sel] = m.via
+    }
     await key(s, 'h')
     await wait(30)
     expect((await look('.sh-play-nav')).dur.split(', ')[0]).toBe(`${MOTION.back.pills / 1000}s`)
+    // back: 200 ms ease for the pills' move too (never the morph's 260 ms)
+    for (const sel of PILLS) expect((await moves(sel)).t[via[sel]], sel).toEqual([`${MOTION.back.pills / 1000}s`, 'ease'])
     await until(s, `getComputedStyle(document.querySelector('.sh-play-nav')).visibility === 'visible' && getComputedStyle(document.querySelector('.sh-play-nav')).opacity === '1'`, 2000)
 
     const m = await open({ on: false }, '#/p/mini?at=deck/s1&slides=1')
