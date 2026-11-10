@@ -384,6 +384,26 @@ describe('the look and the system settings (A2.2, A2.13, A2.14 #26)', () => {
     await p.media({})
   })
 
+  it('E7: a keyboard-focused tab always shows a ring: on its face when it has one, else base.css\'s on the tab; light and dark', async () => {
+    const ring = () => p.page.evaluate(() => {
+      const t = document.activeElement as HTMLElement
+      const face = t.querySelector<HTMLElement>(':scope > .face')
+      const read = (e: Element) => { const cs = getComputedStyle(e); return { outline: `${cs.outlineStyle} ${cs.outlineWidth} ${cs.outlineColor}`, shadow: cs.boxShadow } }
+      return { id: t.dataset.id, visible: t.matches(':focus-visible'), tab: read(t), face: face ? read(face) : null }
+    })
+    for (const dark of [false, true]) {
+      await p.send('tabs', snap('t1', [home, tab('t1', 'Marver Platform', { key: 1, dark }), tab('t2', 'TMS broker', { key: 2 })]))
+      await p.page.focus('[data-id="t1"]')
+      await p.page.keyboard.press('ArrowRight')
+      const r = await ring()
+      expect(r).toMatchObject({ id: 't2', visible: true })
+      const holder = r.face ?? r.tab
+      expect(holder.outline).toBe('solid 1px rgb(0, 136, 255)')
+      expect(holder.shadow.startsWith(dark ? 'rgba(0, 136, 255, 0.32) 0px 0px 0px 4px' : 'rgba(0, 136, 255, 0.2) 0px 0px 0px 4px')).toBe(true)
+      if (r.face) expect(r.tab).toEqual({ outline: expect.stringMatching(/^none /), shadow: 'none' })
+    }
+  })
+
   it('loads under the app pages\' CSP with nothing refused', async () => {
     expect(await p.csp()).toEqual([])
   })

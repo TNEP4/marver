@@ -35,9 +35,10 @@
   --mv-menu-ring: var(--ts-edge-dark);
 }
 /* E7: keyboard focus only (:focus-visible). The tab is a rectangle that holds the width: the ring goes on its pill,
-   which also wears its hover look; a ring adds to the face's state shadow, never replaces it. Home and » keep
-   base.css's ring on their 30 px circles; a menu row's focus is its fill (menu.css). */
-.tab:focus-visible { outline: none; box-shadow: none }
+   which also wears its hover look; a ring adds to the face's state shadow, never replaces it. The tab gives up its own
+   ring only when it has a face to carry it: until the strip draws `.face` (W1) a tab keeps base.css's ring. Home and »
+   keep base.css's ring on their 30 px circles; a menu row's focus is its fill (menu.css). */
+.tab:has(> .face):focus-visible { outline: none; box-shadow: none }
 .tab:focus-visible .face { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: 999px;
   box-shadow: 0 0 0 4px var(--accent-ring), var(--ts-shadow-lit) }
 .tab:focus-visible:not(.on) .face { color: var(--glass-ink); background: var(--ts-face-hover); border-color: var(--glass-brd) }

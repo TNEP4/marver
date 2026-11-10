@@ -295,11 +295,11 @@ describe('the Marver menu on the strip (E2, B6-B11)', () => {
     await p.page.mouse.down()
     await p.page.mouse.up()
     await p.page.keyboard.up('Control')
-    await sleep(50)
-    // the catcher read the press as secondary and held the menu for its contextmenu, where a primary press closes
-    expect((await log(p)).filter((e) => e.on === 'close')).toEqual([])
-    expect(await isOpen(p)).toBe(true)
+    // past the 300 ms deadline: the catcher read the press as secondary, held the menu for its contextmenu and handed
+    // that back for t2 once, where a primary press (or a missed hand-back) closes
     await sleep(350)
+    expect(await log(p)).toEqual([{ on: 'secondary', el: 't2' }])
+    expect(await isOpen(p)).toBe(true)
   })
 
   it('places by B7: never above 44, clamped 14 px from both edges by its measured width, upward near the foot, right-aligned by origin', async () => {
@@ -455,6 +455,9 @@ describe('Home\'s token block, menu glass and focus looks (E1, E2, E7)', () => {
         const card = document.createElement('div'); card.className = 'hm-card'; card.dataset.id = id; card.tabIndex = 0
         const more = document.createElement('button'); more.className = 'hm-more-btn'; more.dataset.id = `${id}-more`; card.append(more); wrap.append(card); f.append(wrap)
       }
+      // Help's command pill and its Copy button (D, H:374-383)
+      const cmd = document.createElement('div'); cmd.className = 'hm-cmd2'; const code = document.createElement('code'); code.textContent = 'marver show'
+      const copy = document.createElement('button'); copy.dataset.id = 'copy'; copy.textContent = 'Copy'; cmd.append(code, copy); f.append(cmd)
     })
   })
   afterAll(async () => { await p?.close() })
@@ -495,7 +498,16 @@ describe('Home\'s token block, menu glass and focus looks (E1, E2, E7)', () => {
     await p.page.evaluate(() => window.kit.m?.close())
   })
 
-  it('E7: the link input draws no ring; a focused card rings in the field accent over its state shadow and shows its more button; light and dark', async () => {
+  it('E7: the link input draws no ring; a focused card wears its D5 hover look with the ring before its shadow, and shows its more button; light and dark', async () => {
+    const LIGHT_FILL = 'linear-gradient(155deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.7) 45%, rgba(255, 255, 255, 0.38))'
+    const INK_RIM = 'linear-gradient(155deg, rgba(24, 24, 27, 0.15), rgba(24, 24, 27, 0.05) 30%, rgba(24, 24, 27, 0.03) 65%, rgba(24, 24, 27, 0.1))'
+    const EDGE_DARK = 'linear-gradient(155deg, rgba(255, 255, 255, 0.46), rgba(255, 255, 255, 0.1) 30%, rgba(255, 255, 255, 0.04) 65%, rgba(255, 255, 255, 0.24))'
+    const INSET = 'rgba(255, 255, 255, 0.95) 0px 1px 0px 0px inset'
+    const LIT_DARK = 'rgba(255, 255, 255, 0.09) 0px 1px 0px 0px inset, rgba(10, 10, 16, 0.25) 0px 1px 2px 0px, rgba(10, 10, 16, 0.45) 0px 6px 18px -8px'
+    const look7 = async (id: string) => ({
+      ...(await css(p, `[data-id="${id}"]`, ['outline-color', 'outline-style', 'outline-width', 'outline-offset', 'box-shadow', 'border-top-color', 'background-color', 'background-image', 'backdrop-filter'])),
+      ...Object.fromEntries(Object.entries(await css(p, `[data-id="${id}"]`, ['opacity', 'background-image'], '::after')).map(([k, v]) => [`after ${k}`, v])),
+    })
     for (const dark of [false, true]) {
       await look(p, dark)
       await p.page.click('.hm-link input')
@@ -505,9 +517,12 @@ describe('Home\'s token block, menu glass and focus looks (E1, E2, E7)', () => {
       expect(await focused(p)).toBe('c1')
       const accent = dark ? 'rgb(92, 179, 255)' : 'rgb(0, 136, 255)'
       const ring = dark ? 'rgba(92, 179, 255, 0.18) 0px 0px 0px 4px' : 'rgba(0, 136, 255, 0.16) 0px 0px 0px 4px'
-      const card = await css(p, '[data-id="c1"]', ['outline-color', 'outline-style', 'outline-offset', 'box-shadow'])
-      expect(card).toMatchObject({ 'outline-color': accent, 'outline-style': 'solid', 'outline-offset': '1px' })
-      expect(card['box-shadow'].startsWith(`${ring}, `)).toBe(true)   // the ring, then the grid card's lift
+      const outline = { 'outline-color': accent, 'outline-style': 'solid', 'outline-width': '1px', 'outline-offset': '1px' }
+      // the grid card: light H:391-401 (gradient fill, near-invisible border, the inset highlight, the ink rim); dark
+      // H:47, 192-194 (--hm-card-hover's .085, read back as .086 by the 8-bit alpha; border .18, the lit shadow, the white edge light)
+      expect(await look7('c1')).toEqual(dark
+        ? { ...outline, 'box-shadow': `${ring}, ${LIT_DARK}`, 'border-top-color': 'rgba(255, 255, 255, 0.18)', 'background-color': 'rgba(255, 255, 255, 0.086)', 'background-image': 'none', 'backdrop-filter': 'none', 'after opacity': '1', 'after background-image': EDGE_DARK }
+        : { ...outline, 'box-shadow': `${ring}, ${INSET}`, 'border-top-color': 'rgba(24, 24, 27, 0.05)', 'background-color': 'rgba(0, 0, 0, 0)', 'background-image': LIGHT_FILL, 'backdrop-filter': 'none', 'after opacity': '1', 'after background-image': INK_RIM })
       expect((await css(p, '[data-id="c1-more"]', ['opacity'])).opacity).toBe('1')
       expect((await css(p, '[data-id="c2-more"]', ['opacity'])).opacity).toBe('0')
       await p.page.keyboard.press('Tab')
@@ -515,8 +530,20 @@ describe('Home\'s token block, menu glass and focus looks (E1, E2, E7)', () => {
       expect(await css(p, '[data-id="c1-more"]', ['outline-color', 'box-shadow', 'opacity'])).toEqual({ 'outline-color': accent, 'box-shadow': ring, opacity: '1' })
       await p.page.keyboard.press('Tab')
       expect(await focused(p)).toBe('c2')
-      // a board card has no lift: its ring alone
-      expect((await css(p, '[data-id="c2"]', ['box-shadow']))['box-shadow']).toBe(ring)
+      // the board card: glass, no lift (H:222-224); light keeps the grid's fill, inset highlight and ink rim
+      // (H:391-401); dark (.065, read back as .067) has no shadow, so the ring stands alone
+      expect(await look7('c2')).toEqual(dark
+        ? { ...outline, 'box-shadow': ring, 'border-top-color': 'rgba(255, 255, 255, 0.18)', 'background-color': 'rgba(255, 255, 255, 0.067)', 'background-image': 'none', 'backdrop-filter': 'blur(18px) saturate(1.5)', 'after opacity': '1', 'after background-image': EDGE_DARK }
+        : { ...outline, 'box-shadow': `${ring}, ${INSET}`, 'border-top-color': 'rgba(24, 24, 27, 0.05)', 'background-color': 'rgba(0, 0, 0, 0)', 'background-image': LIGHT_FILL, 'backdrop-filter': 'blur(18px) saturate(1.5)', 'after opacity': '1', 'after background-image': INK_RIM })
+      // a not-running card's dark rim is .6 (H:195); in light the ink rim's 1 wins (H:393, 400)
+      await p.page.evaluate(() => document.querySelector('[data-id="c2"]')!.classList.add('hm-off'))
+      expect((await css(p, '[data-id="c2"]', ['opacity'], '::after')).opacity).toBe(dark ? '0.6' : '1')
+      await p.page.evaluate(() => document.querySelector('[data-id="c2"]')!.classList.remove('hm-off'))
+      // Help's Copy button: the round ring in the field accent, not the shell's
+      await p.page.keyboard.press('Tab')
+      await p.page.keyboard.press('Tab')
+      expect(await focused(p)).toBe('copy')
+      expect(await css(p, '[data-id="copy"]', ['outline-color', 'outline-style', 'outline-offset', 'box-shadow'])).toEqual({ 'outline-color': accent, 'outline-style': 'solid', 'outline-offset': '1px', 'box-shadow': ring })
     }
   })
 })
