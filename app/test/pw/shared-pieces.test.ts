@@ -189,6 +189,15 @@ describe('the Marver menu on the strip (E2, B6-B11)', () => {
     await p.page.mouse.up({ button: 'right' })
     expect(await log(p)).toEqual([])
     expect(await isOpen(p)).toBe(true)
+    // long past 250 ms, but still no pointermove: the opening press's release picks nothing
+    await p.page.evaluate(() => { window.kit.m?.close() })
+    await p.page.mouse.move(r.left + 22, r.top + 10)
+    await p.page.mouse.down()
+    await open(p, { rows: ROWS, at: { x: 100, y: 60 }, top: 44, solid: true })
+    await sleep(300)
+    await p.page.mouse.up()
+    expect(await log(p)).toEqual([])
+    expect(await isOpen(p)).toBe(true)
     // moved, but within 250 ms of showing
     await open(p, { rows: ROWS, at: { x: 100, y: 60 }, top: 44, solid: true })
     await p.page.mouse.move(r.left + 24, r.top + 12)
@@ -602,6 +611,19 @@ describe('logos trimmed in the renderer, and the app mark (E4, E6)', () => {
       return { cls: el.className, fit: getComputedStyle(img).objectFit, w: img.getBoundingClientRect().width, bg: getComputedStyle(el).backgroundColor }
     })
     expect(cls).toEqual({ cls: 'logo round plate bleed', fit: 'cover', w: 24, bg: 'rgba(0, 0, 0, 0)' })
+    // drawn while its trim is still pending: the landing gives the plate its `bleed` class too
+    const late = await p.page.evaluate(async () => {
+      const kit = window.kit as unknown as { draw(v: object, s: number, o: object): HTMLElement; trimLogo(s: string): Promise<{ cover: boolean }> }
+      const c = document.createElement('canvas'); c.width = c.height = 60
+      const g = c.getContext('2d')!; g.fillStyle = '#2c7a7b'; g.fillRect(0, 0, 60, 60)
+      const src = c.toDataURL()
+      const el = kit.draw({ name: 'Fresh app', logo: src }, 24, { round: true, plate: 0.91 })
+      const before = el.classList.contains('bleed')
+      const r = await kit.trimLogo(src)
+      await new Promise((res) => setTimeout(res, 0))
+      return { before, cover: r.cover, after: el.classList.contains('bleed') }
+    })
+    expect(late).toEqual({ before: false, cover: true, after: true })
   })
 
   it('a tainting SVG and a viewBox-only SVG each settle: no plate is left empty', async () => {
@@ -615,6 +637,52 @@ describe('logos trimmed in the renderer, and the app mark (E4, E6)', () => {
       return { settled: settled === 'timeout' ? 'timeout' : settled.length, srcs: els.map((e) => !!e.querySelector('img')!.getAttribute('src')) }
     })
     expect(out).toEqual({ settled: 2, srcs: [true, true] })
+  })
+
+  // This Chromium neither taints a canvas with a data: foreignObject SVG nor gives a viewBox-only SVG a zero
+  // intrinsic size (it reports 150 x 150), so the fixtures above never reach either guard. Each guard is driven here
+  // by the condition it is for: the canvas's SecurityError on read, a zero naturalWidth / naturalHeight, a decode error.
+  it('the guards: a read that throws (a tainted canvas), an image with no intrinsic size and one that fails to decode each settle', async () => {
+    const out = await p.page.evaluate(async () => {
+      const kit = window.kit as unknown as { draw(v: object, s: number, o: object): HTMLElement; trimLogo(s: string): Promise<{ src: string; cover: boolean }>; inkBox(s: string): Promise<{ w: number; h: number; width: number }> }
+      const race = <T>(pr: Promise<T>) => Promise.race([pr, new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), 3000))])
+      const svgOf = (fill: string) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect x="8" y="8" width="48" height="48" fill="${fill}"/></svg>`)}`
+      // a tainted canvas: getImageData throws a SecurityError
+      const taint = svgOf('#9b2c2c')
+      const proto = CanvasRenderingContext2D.prototype
+      const read = proto.getImageData
+      proto.getImageData = function () { throw new DOMException('The canvas has been tainted by cross-origin data.', 'SecurityError') }
+      let t: { src: string; cover: boolean } | 'timeout'
+      const el = kit.draw({ name: 'Taint', logo: taint }, 36, { round: true, plate: 0.88 })
+      try { t = await race(kit.trimLogo(taint)) } finally { proto.getImageData = read }
+      await new Promise((r) => setTimeout(r, 0))
+      const tainted = t === 'timeout' ? 'timeout' : { same: t.src === taint, cover: t.cover, drawn: el.querySelector('img')!.getAttribute('src') === taint }
+      // no intrinsic size: drawn into the full box, so its ink is found and trimmed
+      const sized = svgOf('#553c9a')
+      const iw = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'naturalWidth')!
+      const ih = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'naturalHeight')!
+      Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', { configurable: true, get: () => 0 })
+      Object.defineProperty(HTMLImageElement.prototype, 'naturalHeight', { configurable: true, get: () => 0 })
+      let z: { src: string; cover: boolean } | 'timeout'
+      try { z = await race(kit.trimLogo(sized)) } finally {
+        Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', iw)
+        Object.defineProperty(HTMLImageElement.prototype, 'naturalHeight', ih)
+      }
+      const box = z === 'timeout' || z.src === sized ? null : await kit.inkBox(z.src)
+      const zero = z === 'timeout' ? 'timeout' : { trimmed: z.src !== sized, cover: z.cover, fills: !!box && box.w >= 95 && box.h >= 95 }
+      // a decode error: settles as itself
+      const broken = 'data:image/png;base64,AAAA'
+      const elB = kit.draw({ name: 'Broken', logo: broken }, 36, { round: true, plate: 0.88 })
+      const b = await race(kit.trimLogo(broken))
+      await new Promise((r) => setTimeout(r, 0))
+      const failed = b === 'timeout' ? 'timeout' : { same: b.src === broken, cover: b.cover, drawn: elB.querySelector('img')!.getAttribute('src') === broken }
+      return { tainted, zero, failed }
+    })
+    expect(out).toEqual({
+      tainted: { same: true, cover: false, drawn: true },
+      zero: { trimmed: true, cover: true, fills: true },
+      failed: { same: true, cover: false, drawn: true },
+    })
   })
 
   it('a repaint while the trim is pending, then the trim landing: every img drawn since takes the trimmed src; a later repaint draws it at once', async () => {
