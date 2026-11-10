@@ -10,8 +10,15 @@
  *
  * Each launch has its own temporary profile; nothing reads or writes ~/.marver. Never a bundle of two Team IDs
  * (scripts/team-id.mjs).
+ *
+ * Spec 32 (G4): `dpr` launches at a device scale factor of 1 or 2 (H2.1's screenshots); `resize()` waits for both
+ * axes (F4); `openProof(file)` serves one static HTML file from test/proofs/ on `marver-app://proof/` - with the
+ * proof folder's own CSS and scripts beside it, the pages' shared files at `/<file>` and any page's built files at
+ * `/pages/<page>/<file>`, and, with `bundle`, one TypeScript entry of test/proofs bundled as `/proof.js` (an IIFE,
+ * as a page's is) - under the same CSP as every app page. Not a folder of pages/: every folder there is a shipped
+ * page (bundle.test.ts).
  */
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { _electron, type ElectronApplication, type Page } from 'playwright-core'
@@ -21,6 +28,9 @@ import { APP_DIR, ELECTRON_BIN } from './app.ts'
 
 export type PageKind = 'strip' | 'home' | 'settings' | 'tabpage'
 export interface Call { ch: string; p: unknown; t: number }
+export interface OpenOptions { width?: number; height?: number; dpr?: 1 | 2 }
+/** the proof pages' folder (G4): static HTML, CSS and script entries, never shipped */
+export const PROOFS_DIR = join(APP_DIR, 'test', 'proofs')
 
 export interface PageRun {
   app: ElectronApplication
@@ -39,21 +49,59 @@ export interface PageRun {
   answerLater(ch: string, value: unknown, ms: number): Promise<void>
   /** emulated media features (CDP), all at once: { 'prefers-reduced-motion': 'reduce', ... } */
   media(features: Record<string, string>): Promise<void>
+  /** the window's content size; resolves once the page sees both (innerWidth and innerHeight) */
   resize(w: number, h: number): Promise<void>
   /** CSP refusals the page's console reported */
   csp(): Promise<string[]>
   close(): Promise<void>
 }
 
-export async function openPage(kind: PageKind, o: { width?: number; height?: number } = {}): Promise<PageRun> {
+export function openPage(kind: PageKind, o: OpenOptions = {}): Promise<PageRun> {
+  return launch({ MVPAGES_PAGE: kind }, o)
+}
+
+/**
+ * A proof page (G4, H2.5): `file` (an .html in test/proofs/) on `marver-app://proof/`, no preload, the page CSP.
+ * `bundle` names a .ts entry in test/proofs/, bundled (tsdown, an IIFE for chrome140) and served as `/proof.js`.
+ */
+export async function openProof(file: string, o: OpenOptions & { bundle?: string } = {}): Promise<PageRun> {
+  if (!/^[\w.-]+\.html$/.test(file) || !existsSync(join(PROOFS_DIR, file))) throw new Error(`no proof page ${file} in test/proofs`)
+  const env: Record<string, string> = { MVPAGES_PAGE: 'proof', MVPAGES_PROOF: file, MVPAGES_PROOF_DIR: PROOFS_DIR }
+  let out: string | null = null
+  if (o.bundle) {
+    out = realpathSync(mkdtempSync(join(tmpdir(), 'mvproof-js-')))
+    env.MVPAGES_PROOF_JS = await bundleProof(o.bundle, out)
+  }
+  const run = await launch(env, o)
+  if (!out) return run
+  const dir = out
+  return { ...run, close: async () => { await run.close(); rmSync(dir, { recursive: true, force: true }) } }
+}
+
+/** One test/proofs entry as a browser IIFE (the pages' own build options, tsdown.config.ts `page()`). */
+async function bundleProof(entry: string, out: string): Promise<string> {
+  if (!/^[\w.-]+\.ts$/.test(entry) || !existsSync(join(PROOFS_DIR, entry))) throw new Error(`no proof entry ${entry} in test/proofs`)
+  const { build } = await import('tsdown')
+  await build({
+    config: false, cwd: APP_DIR, entry: { proof: join(PROOFS_DIR, entry) }, format: 'iife', platform: 'browser', target: 'chrome140',
+    outDir: out, clean: false, dts: false, hash: false, report: false, publint: false, sourcemap: false, logLevel: 'warn', deps: {},
+    define: { __MARVER_RELEASE__: 'false', __MV_TEST__: 'true', __MARVER_FEED__: '""' },
+    outputOptions: { entryFileNames: '[name].js' },
+  })
+  const js = join(out, 'proof.js')
+  if (!existsSync(js)) throw new Error(`the proof bundle of ${entry} wrote no proof.js`)
+  return js
+}
+
+async function launch(extra: Record<string, string>, o: OpenOptions): Promise<PageRun> {
   assertOneTeam(ELECTRON_BIN)
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'mvpages-')))
   const app = await _electron.launch({
     args: [join(APP_DIR, 'test', 'harness', 'pages-main.cjs')],
     env: {
       ...process.env as Record<string, string>,
-      MVPAGES_DIST: join(APP_DIR, 'dist'), MVPAGES_PAGE: kind,
-      MVPAGES_W: String(o.width ?? 1100), MVPAGES_H: String(o.height ?? 720),
+      MVPAGES_DIST: join(APP_DIR, 'dist'), ...extra,
+      MVPAGES_W: String(o.width ?? 1100), MVPAGES_H: String(o.height ?? 720), MVPAGES_DPR: String(o.dpr ?? ''),
       MVPAGES_INVOKES: JSON.stringify(INVOKES), MVPAGES_SENDS: JSON.stringify(Object.keys(SENDERS).filter((c) => !isInvoke(c))),
       MARVER_APP_USER_DATA: join(dir, 'ud'),
     },
@@ -80,7 +128,8 @@ export async function openPage(kind: PageKind, o: { width?: number; height?: num
     reject: async (ch) => { await ev((g, a) => { g.reject(a as string) }, ch) },
     answerLater: async (ch, value, ms) => { await ev((g, a) => { const [c, v, m] = a as [string, unknown, number]; g.later(c, v, m) }, [ch, value, ms]) },
     media: async (features) => { await cdp.send('Emulation.setEmulatedMedia', { features: Object.entries(features).map(([name, value]) => ({ name, value })) }) },
-    resize: async (w, h) => { await ev((g, a) => { const [x, y] = a as [number, number]; g.resize(x, y) }, [w, h]); await page.waitForFunction(([x]) => window.innerWidth === x, [w]) },
+    // both axes (spec 32 F4): a height-only resize (1280 x 44 to 1280 x 800) must not resolve at once
+    resize: async (w, h) => { await ev((g, a) => { const [x, y] = a as [number, number]; g.resize(x, y) }, [w, h]); await page.waitForFunction(([x, y]) => window.innerWidth === x && window.innerHeight === y, [w, h]) },
     csp: () => ev((g) => g.csp),
     close: async () => {
       await app.close().catch(() => {})

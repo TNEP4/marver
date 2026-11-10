@@ -4,6 +4,55 @@
 /* the window's full height under the transparent strip (A3.8 #32): the page never scrolls - its ground and still dots
    fill the view, under the strip too - and its one scroll area starts 44 px down, so nothing to read or click, and
    nothing scrolled, ever passes under the tabs */
+/* ---- spec 32 E1, E2, E7: Home's own tokens, the menu's interface and the focus looks --------------------------
+   Prefixed `--hm-*` (Nic, gaps.md 5); the values are the design's after its cascade (H). */
+:root {
+  --hm-ground: #eceef3; --hm-ink: #18181b; --hm-ink-2: rgba(24, 24, 27, .62); --hm-ink-3: rgba(24, 24, 27, .4);
+  --hm-card: rgba(255, 255, 255, .5); --hm-card-hover: rgba(255, 255, 255, .82);
+  --hm-hair: rgba(24, 24, 27, .07); --hm-hair-2: rgba(24, 24, 27, .12); --hm-chip: rgba(24, 24, 27, .05);
+  --hm-ask: #f08a00; --hm-new: #0077e6; --hm-live: #8b5cf6; --hm-off: rgba(24, 24, 27, .28);
+  --hm-accent: #0088ff; --hm-field-accent: #0088ff; --hm-accent-ring: rgba(0, 136, 255, .16);
+  --hm-edge-light: linear-gradient(155deg, rgba(255, 255, 255, .95), rgba(255, 255, 255, .2) 30%, rgba(24, 24, 27, .05) 65%, rgba(255, 255, 255, .6));
+  --hm-shadow-lit: inset 0 1px 0 rgba(255, 255, 255, .75), 0 1px 1.5px rgba(24, 24, 27, .05), 0 6px 16px -8px rgba(24, 24, 27, .16);
+  --hm-glow: radial-gradient(900px 620px at 100% 100%, rgba(120, 165, 255, .2), transparent 62%), radial-gradient(700px 420px at 0% 0%, rgba(255, 255, 255, .7), transparent 60%);
+  /* the Marver menu (pages/shared/menu.css), in Home's glass (B6) */
+  --mv-menu-ink: var(--hm-ink); --mv-menu-ink-3: var(--hm-ink-3);
+  --mv-menu-hover: rgba(24, 24, 27, .05); --mv-menu-sep: rgba(24, 24, 27, .12); --mv-menu-accent: var(--hm-accent);
+  --mv-menu-fill: rgba(255, 255, 255, .7); --mv-menu-blur: blur(20px) saturate(150%); --mv-menu-brd: rgba(24, 24, 27, .1);
+  --mv-menu-shadow: inset 0 1px 0 rgba(255, 255, 255, .65), 0 1px 2px rgba(24, 24, 27, .05), 0 12px 32px -12px rgba(24, 24, 27, .22);
+  --mv-menu-ring: var(--hm-edge-light); --mv-menu-update: var(--hm-new);
+}
+:root.dark {
+  --hm-ground: #131418; --hm-ink: #f5f5f7; --hm-ink-2: rgba(245, 245, 247, .6); --hm-ink-3: rgba(245, 245, 247, .38);
+  --hm-card: rgba(255, 255, 255, .045); --hm-card-hover: rgba(255, 255, 255, .085);
+  --hm-hair: rgba(255, 255, 255, .07); --hm-hair-2: rgba(255, 255, 255, .14); --hm-chip: rgba(255, 255, 255, .07);
+  --hm-ask: #ff9f0a; --hm-new: #5cb3ff; --hm-live: #a78bfa; --hm-off: rgba(255, 255, 255, .3);
+  /* the accent stays #0088ff, as rendered (H:6 never redefines it); the focused field's alone is lighter (gaps.md 11, 42) */
+  --hm-accent: #0088ff; --hm-field-accent: #5cb3ff; --hm-accent-ring: rgba(92, 179, 255, .18);
+  --hm-edge-light: linear-gradient(155deg, rgba(255, 255, 255, .46), rgba(255, 255, 255, .1) 30%, rgba(255, 255, 255, .04) 65%, rgba(255, 255, 255, .24));
+  --hm-shadow-lit: inset 0 1px 0 rgba(255, 255, 255, .09), 0 1px 2px rgba(10, 10, 16, .25), 0 6px 18px -8px rgba(10, 10, 16, .45);
+  --hm-glow: radial-gradient(900px 620px at 100% 100%, rgba(40, 90, 200, .26), transparent 62%), radial-gradient(700px 420px at 0% 0%, rgba(255, 255, 255, .03), transparent 60%);
+  --mv-menu-hover: rgba(255, 255, 255, .1); --mv-menu-sep: rgba(255, 255, 255, .14);
+  --mv-menu-fill: rgba(22, 22, 28, .86); --mv-menu-brd: rgba(255, 255, 255, .16);
+  --mv-menu-shadow: inset 0 1px 0 rgba(255, 255, 255, .09), 0 1px 2px rgba(10, 10, 16, .2), 0 12px 32px -12px rgba(0, 0, 0, .5);
+}
+/* E7: keyboard focus only (:focus-visible), the app's ring fitted to each shape in the field's accent; a ring adds
+   to a state's own shadow, never replaces it. The link field's input has none (its field's Focus look is its ring);
+   a menu row's focus is its fill (menu.css). */
+.hm-link input:focus-visible { outline: none; box-shadow: none }
+.hm-card:focus-visible { outline: 1px solid var(--hm-field-accent); outline-offset: 1px;
+  box-shadow: 0 0 0 4px var(--hm-accent-ring), var(--hm-shadow-lit); border-color: var(--hm-hair-2) }
+:root.dark .hm-card:focus-visible { border-color: rgba(255, 255, 255, .18) }
+:root:not(.dark) .hm-card:focus-visible { background: linear-gradient(155deg, rgba(255, 255, 255, .96), rgba(255, 255, 255, .7) 45%, rgba(255, 255, 255, .38)) }
+.hm-card:focus-visible::after { opacity: 1 }
+/* a board card's hover has no lift (H: .hm-col .hm-card:hover), so its ring stands alone */
+.hm-col .hm-card:focus-visible { box-shadow: 0 0 0 4px var(--hm-accent-ring) }
+:root.dark .hm-col .hm-card:focus-visible { background: rgba(255, 255, 255, .065) }
+.hm-card:focus-within .hm-more-btn { opacity: 1 }
+.hm-more-btn:focus-visible, .hm-chip:focus-visible, .hm-icon:focus-visible, .hm-cplabel:focus-visible, .hm-foot-btn:focus-visible {
+  outline: 1px solid var(--hm-field-accent); outline-offset: 1px; box-shadow: 0 0 0 4px var(--hm-accent-ring) }
+/* ---- end of spec 32's token block ------------------------------------------------------------------------------ */
+
 html, body { overflow: hidden }
 .home { position: fixed; inset: 44px 0 0 0; overflow: auto; padding: 30px 48px 26px; display: flex; flex-direction: column; gap: 16px }
 .top { display: flex; align-items: flex-start; gap: 16px; flex-wrap: wrap }

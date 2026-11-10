@@ -31,6 +31,17 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace }
 .logo b { display: grid; place-items: center; color: #fff; font-weight: 650; letter-spacing: -.02em; line-height: 1 }
 .logo.grey { filter: grayscale(1); opacity: .45 }
 .logo.dim { opacity: .55 }
+/* logo()'s options form (spec 32 E4, A8, D5): a trimmed mark on a white plate at its share (--plate: 91% strip, 88%
+   Home), or a full-bleed mark (the trim's cover) filling the circle with no plate; initials round, 700 */
+.logo.round b { font-weight: 700 }
+.logo.plate { place-items: center; background: #fff; box-shadow: inset 0 0 0 .5px rgba(24, 24, 27, .12) }
+.logo.plate img { width: var(--plate, 100%); height: var(--plate, 100%); object-fit: contain }
+.logo.plate.bleed { background: none; box-shadow: none }
+.logo.plate.bleed img { width: 100%; height: 100%; object-fit: cover }
+
+/* the Marver app's own mark (spec 32 E6, HT:52-56): its box and radius set by appMark(), the image overflowing it */
+.mv-mark { flex: none; display: block; overflow: hidden; font-style: normal }
+.mv-mark img { display: block; max-width: none }
 
 /* the spinner: it turns; under Reduce Motion it becomes a slow opacity pulse, the one animation left */
 .spin { flex: none; display: inline-block; width: 14px; height: 14px; margin: 0 2px; border-radius: 50%;

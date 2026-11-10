@@ -159,8 +159,12 @@ describe('spec 32\'s amendments (F1-F3b), frozen at the contract commit (G3)', (
     const label: TabMenuPick = { rev: 1, id: 'close', label: 'Close tab' }
     expect([v.rows.length, pick.id, ask.key, path, label]).toHaveLength(5)
   })
-  it('the icon names, as dom.ts draws them (E3 adds to these)', () => {
-    expect(ICON_NAMES).toEqual(['house', 'warning', 'link', 'gear', 'copy', 'x', 'check'])
+  it('the icon names, as dom.ts draws them (spec 32 E3 added the menus\' and Home\'s)', () => {
+    expect(ICON_NAMES).toEqual([
+      'house', 'warning', 'link', 'gear', 'copy', 'x', 'check',
+      'arrow-square-out', 'folder-open', 'check-square-offset', 'arrow-clockwise', 'arrow-right', 'arrow-up', 'signpost',
+      'dots-vertical', 'sliders', 'grid', 'board',
+    ])
   })
   it('immersive play: the two canvas channels, the optional methods, the motion and the recorder\'s mode', () => {
     expect([CANVAS_CHANNELS.immersive, CANVAS_CHANNELS.immersiveState]).toEqual(['mv:immersive', 'mv:immersive-state'])

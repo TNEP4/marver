@@ -1,0 +1,61 @@
+/* The Marver menu (spec 32 B6, E2; src/pages/menu.ts): the strip's tab and » menus and every Home menu. Home's
+   approved .hm-ctx metrics (H:231-254, H:403). It names no page token: each page sets this interface on :root and
+   :root.dark from its own tokens (E2's table) -
+     --mv-menu-ink, --mv-menu-ink-3, --mv-menu-hover, --mv-menu-sep, --mv-menu-accent, --mv-menu-fill,
+     --mv-menu-blur, --mv-menu-brd, --mv-menu-shadow, --mv-menu-ring, --mv-menu-update
+   Geometry (left, top, max-height, transform-origin) is set through CSSOM by menu.ts, never a style attribute. */
+
+/* the full-window catcher under the menu: every outside press lands here (B11) */
+.mv-catcher { position: fixed; inset: 0; z-index: 29; background: transparent; -webkit-app-region: no-drag }
+
+.mv-menu { position: fixed; z-index: 30; min-width: 200px; max-width: 320px; padding: 0; border-radius: 16px;
+  display: flex; flex-direction: column; box-sizing: border-box;
+  background: var(--mv-menu-fill); border: 1px solid var(--mv-menu-brd); box-shadow: var(--mv-menu-shadow);
+  -webkit-backdrop-filter: var(--mv-menu-blur, none); backdrop-filter: var(--mv-menu-blur, none);
+  color: var(--mv-menu-ink); font: 500 13px/1 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  transform-origin: top left; -webkit-app-region: no-drag; outline: none }
+.mv-menu:focus, .mv-menu:focus-visible { outline: none; box-shadow: var(--mv-menu-shadow) }
+/* the strip cannot blur (a separate view): its fill is opaque (gaps.md 19) */
+.mv-menu.solid { -webkit-backdrop-filter: none; backdrop-filter: none }
+/* the ring: the page's edge light, the masked-border recipe */
+.mv-menu::after { content: ''; position: absolute; inset: -1px; padding: 1px; border-radius: inherit; pointer-events: none;
+  background: var(--mv-menu-ring);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite: exclude }
+.mv-menu.pop { animation: mv-pop .14s ease }
+@keyframes mv-pop { from { opacity: 0; transform: scale(.95) translateY(-4px) } }
+
+/* the rows scroll inside the container (B7.3), so the ring and the fill are never clipped; the menu's 5 px padding
+   lives here, so a separator still runs edge to edge (margin 5px -5px) and a scrolled row stays inside the corners */
+.mv-menu-rows { display: grid; gap: 0; padding: 5px; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  border-radius: inherit; scrollbar-width: thin }
+
+.mv-row { height: 30px; display: flex; align-items: center; gap: 10px; padding: 0 10px; border-radius: 12px;
+  font: 500 13px/1 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; color: var(--mv-menu-ink); cursor: pointer;
+  white-space: nowrap; outline: none }
+.mv-row:hover, .mv-row:focus { background: var(--mv-menu-hover) }
+/* a focused row's look is its fill (E7): no outline and no ring */
+.mv-row:focus, .mv-row:focus-visible { outline: none; box-shadow: none }
+.mv-row[aria-disabled] { opacity: .4; cursor: default }
+.mv-row[aria-disabled]:hover, .mv-row[aria-disabled]:focus { background: none }
+.mv-row > .mv-ic { width: 15px; height: 15px; flex: none; color: var(--mv-menu-ink) }
+.mv-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+/* the trailing check, by class: a row with no leading icon can never draw its check as one */
+.mv-row > .mv-check { width: 15px; height: 15px; flex: none; margin-left: auto; color: var(--mv-menu-accent) }
+.mv-row.update, .mv-row.update > .mv-ic { color: var(--mv-menu-update, var(--mv-menu-ink)) }
+/* a copy row answered (D8.3): the CopyLabel's done colours (D10.5) */
+.mv-row.done, .mv-row.done:hover, .mv-row.done:focus { color: #1f9d55; background: rgba(52, 199, 89, .16) }
+.mv-row.done > .mv-ic { color: #1f9d55 }
+:root.dark .mv-row.done, :root.dark .mv-row.done:hover, :root.dark .mv-row.done:focus { color: #4cd964; background: rgba(52, 199, 89, .18) }
+:root.dark .mv-row.done > .mv-ic { color: #4cd964 }
+
+.mv-sep { height: 1px; margin: 5px -5px; background: var(--mv-menu-sep) }
+.mv-menu-h { font: 600 11px/1 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; color: var(--mv-menu-ink-3); padding: 7px 10px 5px }
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .mv-menu { background: var(--solid); border-color: var(--node-brd); -webkit-backdrop-filter: none; backdrop-filter: none }
+  .mv-menu::after { display: none }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mv-menu.pop { animation: none }
+}
