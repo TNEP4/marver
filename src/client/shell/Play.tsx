@@ -340,6 +340,9 @@ function PlayInner() {
   // a frame deep link is presentation, not access (01-sharing §3.5) - on a PUBLISHED canvas. In dev
   // the visitor is the owner, who followed an agent's link: the way back to the canvas stays.
   const noDoor = locked || (!!play?.deep && PUBLISHED)
+  // read by the key handler, which is bound once (spec 32 C7)
+  const noDoorRef = useRef(noDoor)
+  noDoorRef.current = noDoor
 
   // the stage is same-origin (/__mv/stage/); a fixed target origin keeps anchor bundles
   // from leaking if a link ever navigates the iframe cross-origin
@@ -584,7 +587,7 @@ function PlayInner() {
         endAfterFrames(h)
       }
       // spec 32 C7: a board with no way out (locked, a published deep link) - Escape with nothing live shows the UI again
-      else if (noDoor && isHideUI()) { cmd('hide-ui', how); toggleHideUI() }
+      else if (noDoorRef.current && isHideUI()) { cmd('hide-ui', how); toggleHideUI() }
       else exitFrom(how)
       return
     }

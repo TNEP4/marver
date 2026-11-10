@@ -23,7 +23,7 @@ const input = (o: Partial<LiveInput> & { cards?: Card[] } = {}): LiveInput => {
   const { cards, ...rest } = o
   return { boards: [], fresh: [], cli: [], ...(cards ? { jam: { agent: 'claude', cards } } : {}), ...rest }
 }
-const item = (i: number, board: string): LiveItem => ({ id: `ask:${i.toString(16).padStart(20, '0')}`, kind: 'ask', board, title: 'x'.repeat(LIVE_BOUNDS.title), at: 1000 - i, thread: `t${i}`, msg: `m${i}` })
+const item = (i: number, board: string): LiveItem => ({ id: `ask:${i.toString(16).padStart(20, '0')}`, kind: 'ask', board, title: '\u{1F600}'.repeat(LIVE_BOUNDS.title / 2), at: 1000 - i, thread: `t${i}`, msg: `m${i}` })
 
 /** A response stand-in: what the hub writes. */
 function client() {
@@ -130,6 +130,9 @@ describe('LiveEvent.work (spec 32 F2)', () => {
   })
 })
 
+const e0 = (items: LiveItem[], titles: Record<string, string>): LiveEvent => ({ v: 1, instance: 'i', seq: 1, jam: 'on', items, cut: 0,
+  counts: { ask: items.length, review: 0, failed: 0, stalled: 0 }, unseen: 0, working: true, session: false, work: { board: 'worked', since: 1 }, titles })
+
 describe('LiveEvent.titles (spec 32 F2)', () => {
   const ask = (board: string, id: string) => ({ board, threads: [{ id, ts: ++t0, resolved: false, replies: [{ id: `${id}-r`, ts: ++t0, body: 'Which one?', agent: true, asks: true }], reactions: {}, body: 'root', frame: 'demo/one' }] })
 
@@ -155,11 +158,12 @@ describe('LiveEvent.titles (spec 32 F2)', () => {
   })
 
   it('counted in the event\'s bytes: an event over budget sheds its oldest items and the titles only they named; work\'s board keeps its title', () => {
-    const items = Array.from({ length: 100 }, (_, i) => item(i, `b${String(i).padStart(3, '0')}${'z'.repeat(100)}`))
+    const items = Array.from({ length: 100 }, (_, i) => item(i, `b${String(i).padStart(3, '0')}${'\u00e9'.repeat(LIVE_BOUNDS.ref - 4)}`))
+    // the titles of the oldest items - the ones the budget sheds - and of work's board
     const titles: Record<string, string> = { worked: 'W'.repeat(LIVE_BOUNDS.title) }
-    for (const i of items.slice(0, LIVE_TITLES_MAX - 1)) titles[i.board] = 'T'.repeat(LIVE_BOUNDS.title)
-    const e: LiveEvent = { v: 1, instance: 'i', seq: 1, jam: 'on', items, cut: 0, counts: { ask: 100, review: 0, failed: 0, stalled: 0 }, unseen: 0, working: true, session: false,
-      work: { board: 'worked', since: 1 }, titles }
+    for (const i of items.slice(-(LIVE_TITLES_MAX - 1))) titles[i.board] = '\u{1F600}'.repeat(LIVE_BOUNDS.title / 2)
+    expect(Buffer.byteLength(JSON.stringify(e0(items, titles)))).toBeGreaterThan(LIVE_BOUNDS.eventBytes)
+    const e = e0(items, titles)
     const text = encodeLive(e)
     expect(Buffer.byteLength(text)).toBeLessThanOrEqual(LIVE_BOUNDS.eventBytes)
     const out = JSON.parse(text.split('\n')[1].slice(6)) as LiveEvent
@@ -168,6 +172,7 @@ describe('LiveEvent.titles (spec 32 F2)', () => {
     const named = new Set(['worked', ...out.items.map((i) => i.board)])
     expect(Object.keys(out.titles!).every((k) => named.has(k))).toBe(true)
     expect(out.titles!.worked).toBe(titles.worked)
+    expect(Object.keys(out.titles!).length).toBeLessThan(Object.keys(titles).length)   // the shed items' titles went with them
     expect(out.work).toEqual({ board: 'worked', since: 1 })
   })
 })
