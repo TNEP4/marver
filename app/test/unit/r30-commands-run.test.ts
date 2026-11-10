@@ -618,6 +618,18 @@ describe('spec 32 F1, D8.1: the tab facts views.ts gives home.ts (setTabFacts)',
     // Home, Settings and an unknown id have none
     expect([tabFacts('home'), tabFacts('no-such')]).toEqual([undefined, undefined])
   })
+  it('the amended window ports (F3b #2) keep today\'s behaviour: homeExcluded is the running set, deep is the open-url handler', async () => {
+    const v = await import('../../src/main/views.ts')
+    await canvas()
+    const w = v.windowPorts()
+    expect(w.homeExcluded().sort()).toEqual(w.running().sort())
+    expect(w.homeExcluded().length).toBeGreaterThan(0)
+    expect(w.linkPorts.deep).toBe(v.openDeepLink)
+    expect(w.linkPorts.deep('not a link')).toBe('bad')
+    const off = w.onHomeExcludedChange(() => {})
+    expect(off).toBeTypeOf('function')
+    off()
+  })
 })
 
 describe('the page funnel (bridge.ts:625-650)', () => {

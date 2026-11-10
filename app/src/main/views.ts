@@ -1608,10 +1608,13 @@ const runningWorkspaces = (): string[] => [...new Set(trust.entries().filter((e)
  */
 export function windowPorts() {
   const fns = new Set<() => void>()
+  /** spec 32 D6.4: told when the excluded set changes - today exactly when the running set does (its own set, so one
+   *  listener on both is told by each and unsubscribed from each alone) */
+  const excludedFns = new Set<() => void>()
   let last = ''
   trust.onRegistry(() => {
     const now = runningWorkspaces().sort().join(',')
-    if (now !== last) { last = now; for (const fn of [...fns]) fn() }
+    if (now !== last) { last = now; for (const fn of [...fns]) fn(); for (const fn of [...excludedFns]) fn() }
   })
   return {
     running: runningWorkspaces,
@@ -1619,7 +1622,7 @@ export function windowPorts() {
     // spec 32 D6.4 (F3b #2): the workspaces whose Recently here card Home hides - today the running ones, told exactly
     // when they change (W2 widens both to the gone tabs' workspaces)
     homeExcluded: runningWorkspaces,
-    onHomeExcludedChange(fn: () => void) { fns.add(fn); return () => { fns.delete(fn) } },
+    onHomeExcludedChange(fn: () => void) { excludedFns.add(fn); return () => { excludedFns.delete(fn) } },
     linkPorts: {
       byPort(port: number): LinkTarget | undefined {
         const e = trust.entries().find((x) => x.port === port && (x.state === 'ready' || x.state === 'starting'))
