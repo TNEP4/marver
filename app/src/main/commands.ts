@@ -340,6 +340,8 @@ function finish(l: Live, outcome: CmdOutcome, why?: string): void {
  * `recorder.event`, so it obeys `recorder: true` as every other app kind does (the ring and the journal always).
  */
 export const appCmd: AppCmdFn = (name, o) => {
+  // spec 32 B12.4: main closes the strip's Marver menu before any app command runs (views.ts's hook)
+  if (beforeCmd) { try { beforeCmd(name) } catch (err) { process.stderr.write(`marver-app: the before-command hook threw: ${(err as Error).message}\n`) } }
   const now = performance.now()
   if (!sink) return NOTHING
   if (!takeToken(now)) { countDropped(); return NOTHING }
@@ -365,6 +367,10 @@ export const appCmd: AppCmdFn = (name, o) => {
   ;(l.timer as { unref?: () => void }).unref?.()
   return h
 }
+
+/** Spec 32 B12.4: told the name of every app command as it is opened, before it runs (null: nobody). */
+let beforeCmd: ((name: AppCmdName) => void) | null = null
+export function setBeforeCmd(fn: ((name: AppCmdName) => void) | null): void { beforeCmd = fn }
 
 /** The command whose input this turn is, for an effect's `by`; undefined when none (or past the rate bound). */
 export const currentAppCmd = (): AppCmdHandle | undefined => current?.h

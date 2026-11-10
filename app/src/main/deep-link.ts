@@ -24,8 +24,9 @@ export interface LinkCanvas { ws: string; root: string; port: number; slot: numb
 export type DeepPlan =
   /** a canvas of that folder runs: open or show there (`to` null: its default board) */
   | { kind: 'canvas'; entry: LinkCanvas }
-  /** no canvas of that folder runs: Home, its card (its workspace id, from the real path) */
-  | { kind: 'home'; root: string; ws: string; exists: boolean }
+  /** no canvas of that folder runs: Home, its card (its workspace id, from the real path); `port` the link's own hint
+   *  (spec 32 D6.5: among that folder's gone tabs, the one on that port) */
+  | { kind: 'home'; root: string; ws: string; exists: boolean; port?: number }
 
 /** The app's workspace id of a real folder: the first 16 hex of its sha256 (src/server/workspace.ts `workspaceId`). */
 export const workspaceOf = (real: string): string => createHash('sha256').update(real).digest('hex').slice(0, 16)
@@ -38,7 +39,7 @@ export const workspaceOf = (real: string): string => createHash('sha256').update
 export function planDeepLink(link: DeepLink, real: string | null, entries: readonly LinkCanvas[]): DeepPlan {
   const root = real ?? link.ws
   const mine = real ? entries.filter((e) => e.root === real && (e.state === 'ready' || e.state === 'starting')) : []
-  if (!mine.length) return { kind: 'home', root, ws: workspaceOf(root), exists: real !== null }
+  if (!mine.length) return { kind: 'home', root, ws: workspaceOf(root), exists: real !== null, ...(link.port !== undefined ? { port: link.port } : {}) }
   const hinted = link.port !== undefined ? mine.find((e) => e.port === link.port) : undefined
   return { kind: 'canvas', entry: hinted ?? mine.find((e) => e.state === 'ready') ?? mine[0]! }
 }
@@ -90,8 +91,8 @@ export interface RoutePorts<T> {
   show(t: T, to: ShowTarget | 'landing'): void
   /** no live document: the place loaded through views.ts `openInTab` (the proof and the guards) */
   open(e: LinkCanvas, url: string | null, rest: string): void
-  /** no canvas of that folder runs: Home, its card */
-  home(root: string, ws: string, exists: boolean): void
+  /** no canvas of that folder runs: Home, its card - a gone tab's when one is open (spec 32 D6.5: `port` the link's) */
+  home(root: string, ws: string, exists: boolean, port?: number): void
 }
 
 /** One link, parsed and routed (spec 31 D1). Answers what was done. */
@@ -102,7 +103,7 @@ export function routeDeepLink<T>(raw: unknown, p: RoutePorts<T>): 'bad' | 'home'
   const entries = p.entries().map((e) => ({ ...e, root: p.realpath(e.root) ?? e.root }))
   const plan = planDeepLink(link, real, entries)
   p.focus()
-  if (plan.kind === 'home') { p.home(plan.root, plan.ws, plan.exists); return 'home' }
+  if (plan.kind === 'home') { p.home(plan.root, plan.ws, plan.exists, plan.port); return 'home' }
   const e = plan.entry
   const t = p.tabFor(e)
   // a `to` it could not take is the canvas's own board, as for a new tab - over the bridge all the same

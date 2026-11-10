@@ -44,14 +44,15 @@ import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, writeFileSync, writeSync } from 'node:fs'
 import { homedir, totalmem } from 'node:os'
 import { join } from 'node:path'
-import { app, dialog, Menu, nativeTheme, net, powerMonitor, shell, WebContentsView, type MenuItemConstructorOptions, type Session, type WebContents, type WebPreferences } from 'electron'
+import { app, dialog, Menu, nativeTheme, net, powerMonitor, shell, WebContentsView, type Session, type WebContents, type WebPreferences } from 'electron'
 import * as sessions from './sessions.ts'
-import { CH, type LinkOpenAnswer, type PageKind, type TabPageAction } from '../shared/channels.ts'
+import { CH, type LinkOpenAnswer, type MenuAsk, type PageKind, type TabMenuRow, type TabMenuView, type TabPageAction } from '../shared/channels.ts'
+import type { IconName } from '../pages/dom.ts'
 import { startCommand } from '../shared/command.ts'
 import { parseLink, remoteFaviconPick, remoteStart, shellDestination } from '../shared/links.ts'
 import { LOGO_MAX, LOGO_MIME, sniffLogo } from '../../../src/shared/logo-sniff.ts'
 import { effects, provideEffectHooks } from './effects.ts'
-import type { AppState, MenuIn, MenuItem, Present, Presented } from '../../../src/shared/app-api.ts'
+import type { AppState, ImmersiveAnswer, MenuIn, MenuItem, Present, Presented } from '../../../src/shared/app-api.ts'
 import { FEATURE } from '../../../src/shared/app-api.ts'
 import { WINDOW_EVENTS, type AppBody, type AppKind, type TabIdent } from '../../../src/shared/app-perf.ts'
 import type { CmdIn, CmdVia } from '../../../src/shared/perf-records.ts'
@@ -63,8 +64,9 @@ import { attachNav, type NavAdapter, type NavEvent } from './nav.ts'
 import type { RegistryEntry, RegistryEvent } from './registry.ts'
 import { mainFrameOf, safely } from './frames.ts'
 import { attachKeys, digitOf, type AppCommand } from './keys.ts'
-import { activated, appCmd, askedLoad, askedShown, cmdTabsChanged, cmdWindowGone, currentAppCmd, expectWindow, holdCmd, tabDocument, tabFailed, waitForDoc, windowCause, type AppCmdHandle, type KeyFrom } from './commands.ts'
-import { focusOwner, f6, track } from './focus.ts'
+import { activated, appCmd, askedLoad, askedShown, cmdTabsChanged, cmdWindowGone, currentAppCmd, expectWindow, holdCmd, setBeforeCmd, tabDocument, tabFailed, waitForDoc, windowCause, type AppCmdHandle, type KeyFrom } from './commands.ts'
+import { beforeStrip, focusOwner, focusShown, focusStripQuiet, f6, track, type Owner } from './focus.ts'
+import { gateOf, step, type Grant, type ViewFacts } from './immersive-gate.ts'
 import { buildNow, HELP_URL, invalidateMenu, startMenu, type MenuModel, type MenuToken } from './menu.ts'
 import { crashReloaded, currentPill, onPillAction, setCondition, setPillPorts } from './pill.ts'
 import {
@@ -81,7 +83,7 @@ import { exportReport, type ExportResult } from './report.ts'
 import { flushQueued } from './perflog.ts'
 import {
   appPrefs, APP_ORIGIN, attachContent, captureWindow, compose, contentView, detachContent, hideWindow, mainWindow, onAppReady, openWindow,
-  focusWindow, pageOf, pageView, sendHeld, sendPill, showWindow, stripContents, viewsNow, windowVisible,
+  focusWindow, onStripTrouble, pageOf, pageView, sendHeld, sendPill, sendToStrip, setComposePorts, showWindow, stripContents, stripReady, viewsNow, windowVisible,
 } from './window.ts'
 import { note, provide, testMode } from './testing/index.ts'
 import { T } from './timings.ts'
@@ -143,6 +145,9 @@ export interface TrustPort {
   onPresented?(fn: (tabId: string, doc: string, r: Presented) => void): () => void
   /** spec 31 E4: the canvas's update through its own session (canvas-fetch.ts `fetchUpdate`): newer, or null */
   fetchUpdate?(t: Tab, signal: AbortSignal): Promise<{ current: string; latest: string } | null>
+  /** spec 32 C2, C8: `mv:immersive-state` to the tab's document `doc` while admitted and trusted (bridge.ts
+   *  `immersiveState`, the one sender); without it views.ts calls the installed bridge's */
+  immersiveState?(tabId: string, doc: string, s: ImmersiveAnswer): boolean
 }
 
 /**
@@ -965,7 +970,13 @@ export function runCommand(c: AppCommand, via: 'key' | 'menu', key?: KeyFrom): v
       h.done()
       return
     }
-    case 'focus-strip': case 'focus-strip-back': f6(); h.done(); return
+    case 'focus-strip': case 'focus-strip-back': {
+      // spec 32 C8.1: F6 while immersive - main ends it (the gate's own cause), so the strip comes back first, then
+      // takes focus (the compose shows it before f6 runs)
+      const at = activeTab()
+      if (at?.kind === 'local' && at.reports.immersiveGrant === 'on') { mainEnds.add(at.id); compose() }
+      f6(); h.done(); return
+    }
     case 'mark-flash':
       holdCmd(h)
       void recorder.markFlash(via).then((r) => { if (r === 'written') h.done(); else if (r === 'failed') h.fail('mark-failed'); else h.noop('debounced') })
@@ -1042,12 +1053,16 @@ export function openDeepLink(raw: string): 'bad' | 'home' | 'opened' | 'shown' {
     // open already: never reloaded, never a hash replaced under it - the shell gets the place and keeps any draft
     show: (t, to) => { j('deep-link', { tab: t.id, show: showForLink(t.id, to) }) },
     open: (e, url, rest) => { void openInTab({ state: e.state, origin: e.origin, port: e.port, ws: e.ws, name: e.name }, url, rest).then((a) => j('deep-link', { opened: a })) },
-    home: (root, ws, exists) => {
+    home: (root, ws, exists, port) => {
       activate('home')
-      const id = showLinked(root, ws, exists)
+      // spec 32 D6.5: a gone tab of that folder still open has the card that survives (Home shows no recent beside it):
+      // the one on the link's port when it names one, else the first in strip order; only with none, its recent card
+      const gone = ordered().filter((t) => goneOpen(t) && t.reg!.ws === ws)
+      const tab = (port !== undefined ? gone.find((t) => t.reg!.port === port) : undefined) ?? gone[0]
+      const id = tab ? tab.id : showLinked(root, ws, exists)
       const home = contentView('home')
       if (home && id) sendHeld(home.webContents, CH.homeFocus, { field: 'recent', id })
-      j('deep-link', { home: true, card: id ?? null })
+      j('deep-link', { home: true, card: id ?? null, ...(tab ? { gone: true } : {}) })
     },
   })
   if (r === 'bad') j('deep-link', { refused: 'bad' })
@@ -1314,19 +1329,302 @@ export function openOutside(url: string): void {
   void shell.openExternal(url)
 }
 
-/** The last native popup a test run would have shown: kept, never put on the screen (its items clicked by a hook). */
-let lastPopup: MenuItemConstructorOptions[] = []
+// ---------------------------------------------------------------------------------------------------------------
+// Spec 32 Part B: the tab's right-click (and ») as a Marver menu, drawn by the strip in its own view, grown to the
+// window while the menu is open (B1). Main keeps the menu's whole state here - the open, the refusals, the shown ack,
+// the deadline, a pick, every close of B12 - so a unit test drives it with window.ts mocked (B1.4): window.ts reads
+// `menuOpen()` through `setComposePorts` at every compose (plan.ts grows the strip), and sends main's view.
 
-function popup(items: MenuItemConstructorOptions[], x: number, y: number): void {
-  const win = mainWindow()
-  if (!win || !items.length) { currentAppCmd()?.noop('no-tab'); return }
-  if (__MV_TEST__ && testMode()) {
-    lastPopup = items
-    j('popup', { x: Math.round(x), y: Math.round(y), items: items.filter((i) => i.type !== 'separator').map((i) => ({ label: i.label, enabled: i.enabled !== false, ...(i.type === 'checkbox' ? { checked: !!i.checked } : {}) })) })
-    return
-  }
-  Menu.buildFromTemplate(items).popup({ window: win, x: Math.round(x), y: Math.round(y) })
+/** A row's action, from main's own record (never from the strip: it sends a row id, never a label, B13). */
+interface MenuAction {
+  id: string; label: string; icon?: IconName; enabled: boolean
+  run(): void
+  /** the action moves focus itself (Close tab, an activate from »): nothing is restored after it (B14.3) */
+  moves?: boolean
 }
+type MenuLine = MenuAction | 'sep'
+
+/** The menu open now (B3.2): set when main sends its view, cleared at the strip's ack for its rev or a deadline. */
+interface MenuRec {
+  rev: number
+  kind: 'tab' | 'more'
+  /** the tab it belongs to (a tab menu) */
+  tab?: string
+  actions: Map<string, MenuAction>
+  /** the open command (`tab-menu` / `tabs-more`), held until `tab:menu-shown` (B2, B3.5) */
+  cmd?: AppCmdHandle
+  /** how it was asked for (B3.1) */
+  key: boolean
+  hadFocus: boolean
+  /** who had focus before the press (B14.2): the strip, or the page or canvas `focusShown()` gives it back to */
+  prevOwner: Owner | null
+  /** B12.5: the active tab and the tabs' order when it opened */
+  active: string | undefined
+  order: string
+  shown: boolean
+  /** main closed it (`tab-menu: null` sent): kept grown until the strip's null pick for this rev, or 150 ms (B12) */
+  closing: boolean
+  timer?: ReturnType<typeof setTimeout>
+}
+
+/** What a test hook reads (B15): the journal `popup` record, with its actions, kept until the next open. */
+interface PopupRecord { x: number; y: number; items: { label: string; enabled: boolean; checked?: boolean }[] }
+
+const MENU_SHOW_MS = 500     // B3.6: no `tab:menu-shown` by then - the menu is taken back
+const MENU_CLOSE_MS = 150    // B12: main's close, kept grown until the strip's ack or this
+let menuRev = 0
+let menu: MenuRec | null = null
+let lastPopup: { rev: number; record: PopupRecord; actions: MenuAction[] } | null = null
+
+/** B12.5: what a tab menu belongs to - its tab's place among the open tabs (closed, reopened, moved); » the whole order. */
+function menuOrder(kind: 'tab' | 'more', tab?: string): string {
+  const ids = ordered().map((t) => t.id)
+  if (kind === 'more') return ids.join(',')
+  const t = tab ? getTab(tab) : undefined
+  return t ? `${ids.indexOf(t.id)}:${t.open}` : 'gone'
+}
+
+/** B4: the tab menu's rows - today's enabled rules exactly, sentence case, the sidebar's icons. */
+function tabRows(t: Tab): MenuLine[] {
+  const k = tokenOf(t)
+  const row = (id: string, label: string, icon: IconName, enabled: boolean, run: () => void, moves?: boolean): MenuAction =>
+    ({ id, label, icon, enabled, run, ...(moves ? { moves } : {}) })
+  const out: MenuLine[] = []
+  if (t.kind === 'local') {
+    const trusted = !!t.doc?.trusted
+    out.push(
+      row('open-browser', 'Open in browser', 'arrow-square-out', trusted, () => tabAct(k, 'open-browser', TAB_MENU)),
+      row('reveal', 'Reveal in Finder', 'folder-open', !!t.root, () => tabAct(k, 'reveal', TAB_MENU)),
+      row('copy-link', 'Copy local link', 'link', trusted, () => tabAct(k, 'copy-link', TAB_MENU)),
+      // main's own mv:menu-click (app-api.ts APP_MENU_IDS): only a canvas with the bridge (0.27.1) hears it
+      row('mark-all-seen', 'Mark all as seen', 'check', trusted && hasBridge(t), () => markAllSeen(k)),
+      row('resolve-all-comments', 'Resolve all comments', 'check-square-offset', trusted && canResolveAll(t), () => resolveAllComments(k)),
+      'sep',
+    )
+  } else if (t.kind === 'remote') {
+    // a shared canvas (A4.6 #49): no Reveal in Finder, no Mark all as seen, no canvas items
+    out.push(
+      row('open-browser', 'Open in browser', 'arrow-square-out', true, () => tabAct(k, 'open-browser', TAB_MENU)),
+      row('copy-link', 'Copy link', 'link', true, () => tabAct(k, 'copy-link', TAB_MENU)),
+      'sep',
+      row('reload', 'Reload', 'arrow-clockwise', true, () => tabAct(k, 'reload', TAB_MENU)),
+      row('force-reload', 'Force reload', 'arrow-clockwise', true, () => tabAct(k, 'force-reload', TAB_MENU)),
+      'sep',
+    )
+  }
+  out.push(row('close', 'Close tab', 'x', true, () => tabAct(k, 'close', TAB_MENU), true))
+  return out
+}
+
+/** B5: one row per hidden tab, `<name> - <state word>`, no icon and no check; a pick activates it behind its token. */
+function moreRows(list: Tab[]): MenuLine[] {
+  const a = activeTab()
+  return list.map((t): MenuAction => {
+    const word = STATE_WORD[displayState(t, t === a)]
+    const k = tokenOf(t)
+    return { id: `tab:${t.id}`, label: word ? `${tabName(t)} - ${word}` : tabName(t), enabled: true, run: () => tabAct(k, 'activate', OVERFLOW), moves: true }
+  })
+}
+
+/** B9: no separator leads, trails or doubles. */
+function tidy(lines: MenuLine[]): MenuLine[] {
+  const out: MenuLine[] = []
+  for (const l of lines) {
+    if (l === 'sep' && (!out.length || out.at(-1) === 'sep')) continue
+    out.push(l)
+  }
+  while (out.at(-1) === 'sep') out.pop()
+  return out
+}
+
+/** B2: every open request is answered - a refusal with `tab-menu: null` (dropped by a strip that is not ready, B1.2). */
+function refuseMenu(h: AppCmdHandle | undefined, why: 'no-tab' | 'not-ready'): void {
+  holdCmd(h)
+  // a menu already open is closed by the refusal's null: main's close, the strip's ack to come
+  if (menu && !menu.closing) closeMenu()
+  else sendToStrip(CH.tabMenuView, null)
+  j('tab-menu', { refused: why })
+  h?.noop(why)
+}
+
+/** B3.2: main's record, the menu set, the strip grown, then main's view. A second open replaces the first. */
+function openMenu(h: AppCmdHandle | undefined, kind: 'tab' | 'more', lines: MenuLine[], o: { x: number; y: number; ask: Partial<MenuAsk>; tab?: string }): void {
+  const all = tidy(lines)
+  const items = all.filter((l): l is MenuAction => l !== 'sep')
+  if (!items.length) { refuseMenu(h, 'no-tab'); return }
+  holdCmd(h)
+  const rev = ++menuRev
+  // B15: the journal `popup` record and `lastPopup`, from main's rows, before the readiness check - a test hook reads
+  // them whether the strip is ready or not
+  const record: PopupRecord = { x: Math.round(o.x), y: Math.round(o.y), items: items.map((i) => ({ label: i.label, enabled: i.enabled })) }
+  lastPopup = { rev, record, actions: items }
+  j('popup', record)
+  if (!stripReady()) { refuseMenu(h, 'not-ready'); return }
+  const key = o.ask.key === true
+  const hadFocus = o.ask.hadFocus === true
+  const prev = menu
+  if (prev) { clearTimeout(prev.timer); prev.cmd?.noop('replaced') }
+  // B14.2: who had focus before the press. A replace (B11: a right-click on another tab through the catcher, which
+  // says hadFocus) keeps the first open's: the strip has held focus only for its menu since
+  const now = focusOwner()
+  const prevOwner: Owner | null = prev ? prev.prevOwner : hadFocus ? { part: 'strip' } : now && now.part !== 'strip' ? now : beforeStrip()
+  focusStripQuiet()
+  const rec: MenuRec = {
+    rev, kind, ...(o.tab ? { tab: o.tab } : {}), actions: new Map(items.map((i) => [i.id, i])), ...(h ? { cmd: h } : {}),
+    key, hadFocus, prevOwner, active: activeTab()?.id, order: menuOrder(kind, o.tab), shown: false, closing: false,
+  }
+  menu = rec
+  compose()   // the strip grows (plan.ts `menu`), no shrink in between for a replace
+  const rows: TabMenuRow[] = all.map((l) => l === 'sep' ? { kind: 'sep' } : { kind: 'item', id: l.id, label: l.label, ...(l.icon ? { icon: l.icon } : {}), enabled: l.enabled })
+  const view: TabMenuView = { rev, x: o.x, y: o.y, kind, rows }
+  sendToStrip(CH.tabMenuView, view)
+  j('tab-menu', { rev, kind, ...(o.tab ? { tab: o.tab } : {}), key, hadFocus, prevOwner })
+  // B3.6: a menu that never shows is taken back - a stalled strip costs 44 px again, never a full-window view
+  rec.timer = setTimeout(() => {
+    if (menu !== rec || rec.shown || rec.closing) return
+    j('tab-menu', { rev, noShow: true })
+    menu = null
+    compose()
+    sendToStrip(CH.tabMenuView, null)
+    rec.cmd?.noop('no-show')
+  }, MENU_SHOW_MS)
+}
+
+/** B3.5: the strip shows the menu - the held open command ends `done` now (Nic, gaps.md 22). */
+function menuShownAck(rev: number): void {
+  const rec = menu
+  if (!rec || rec.rev !== rev || rec.shown || rec.closing) { j('tab-menu', { shown: rev, stale: true }); return }
+  rec.shown = true
+  clearTimeout(rec.timer)
+  rec.timer = undefined
+  rec.cmd?.done()
+}
+
+/** The strip hid the menu and says what was chosen (B12, B13): the current rev only, then the strip shrinks. */
+function pickMenu(rev: number, id: string | null): void {
+  const rec = menu
+  if (!rec || rec.rev !== rev) { j('tab-menu', { pick: id, rev, stale: true }); return }
+  clearTimeout(rec.timer)
+  menu = null
+  compose()
+  rec.cmd?.noop('closed')                     // a close before it showed; one that showed already ended `done`
+  if (rec.closing) { j('tab-menu', { rev, acked: true }); return }   // the strip's ack of main's own close
+  const a = id ? rec.actions.get(id) : undefined
+  j('tab-menu', { rev, pick: id, ...(id && (!a || !a.enabled) ? { refused: !a ? 'unknown' : 'disabled' } : {}) })
+  if (a?.enabled) {
+    a.run()
+    if (a.moves) return                      // B14.3: the pick moved focus itself
+  }
+  restoreMenuFocus(rec)
+}
+
+/** B14: back to the opener (the strip does it, by its roving tabindex) or to what had focus before the press. */
+function restoreMenuFocus(rec: MenuRec): void {
+  if (rec.prevOwner?.part === 'strip') return
+  focusShown()
+}
+
+/** B12: main closes the menu - `tab-menu: null`, kept grown until the strip's null pick for that rev, or 150 ms. */
+function closeMenu(): boolean {
+  const rec = menu
+  if (!rec || rec.closing) return false
+  rec.closing = true
+  clearTimeout(rec.timer)
+  sendToStrip(CH.tabMenuView, null)
+  rec.cmd?.noop('closed')
+  j('tab-menu', { rev: rec.rev, closed: true })
+  rec.timer = setTimeout(() => { if (menu === rec) { menu = null; compose() } }, MENU_CLOSE_MS)
+  return true
+}
+
+/**
+ * B15's `popup:click {label}`: the row of the last record run from main's record, as a pick would (behind its token),
+ * then the live menu closed. A live menu of that record is picked through (the strip told to hide it); one that lost
+ * its deadline, or a record whose menu was refused as not ready, runs the action alone.
+ */
+export function popupClick(label: string): boolean {
+  const p = lastPopup
+  const a = p?.actions.find((x) => x.label === label)
+  if (!p || !a || !a.enabled) return false
+  if (menu && menu.rev === p.rev && !menu.closing) {
+    sendToStrip(CH.tabMenuView, null)
+    pickMenu(p.rev, a.id)
+    return true
+  }
+  a.run()
+  closeMenu()
+  return true
+}
+
+/** B12.6: the strip's renderer crashed or hangs - the full-window view is taken back at once. */
+function menuTrouble(why: 'gone' | 'unresponsive'): void {
+  const rec = menu
+  if (!rec) return
+  clearTimeout(rec.timer)
+  menu = null
+  rec.cmd?.noop('closed')
+  j('tab-menu', { rev: rec.rev, trouble: why })
+  compose()
+}
+
+/** Each compose reads it (B1.2, plan.ts `menu`); B12.5's changes of the active tab or of the menu's tab close it here. */
+function menuOpen(): boolean {
+  const rec = menu
+  if (rec && !rec.closing && (activeTab()?.id !== rec.active || menuOrder(rec.kind, rec.tab) !== rec.order)) closeMenu()
+  return menu !== null
+}
+
+/** Test seams: the live menu and the last record (unit tests; window tests read the journal and the hooks). */
+export const menuNow = () => menu ? { rev: menu.rev, kind: menu.kind, tab: menu.tab, shown: menu.shown, closing: menu.closing, key: menu.key, hadFocus: menu.hadFocus, prevOwner: menu.prevOwner } : null
+export const popupNow = () => lastPopup ? { rev: lastPopup.rev, ...lastPopup.record } : null
+
+// ---------------------------------------------------------------------------------------------------------------
+// Spec 32 C8: main's immersive gate, the views.ts glue. window.ts calls `immersiveFor` for every canvas tab at every
+// compose with what it knows of the views (`ViewFacts`); the tab's own record supplies the rest. The table is pure
+// (immersive-gate.ts `step`): this stores the grant and `answered` on the tab's reports (reset at every commit),
+// sends the answer stamped with the wish's `n` once, and returns whether the strip shows for this tab.
+
+/** C8.1: F6 or ⇧F6 pressed while immersive - main takes it away, through the gate (until the grant leaves `on`). */
+const mainEnds = new Set<string>()
+
+function immersiveFor(t: Tab, w: ViewFacts): boolean {
+  if (t.kind !== 'local') return true
+  const r = t.reports
+  const grant: Grant = r.immersiveGrant ?? 'none'
+  const wish = r.immersive
+  if (grant === 'none' && !wish) { mainEnds.delete(t.id); return true }
+  const gate = gateOf({
+    ...w, local: true, pending: !!t.geo.pending, htmlFullscreen: t.geo.htmlFullscreen, trusted: !!t.doc?.trusted, hung: !!t.hung,
+    gone: !t.reg || t.reg.state === 'gone', wish: wish?.on === true, mainEnds: mainEnds.has(t.id),
+  })
+  const out = step({ grant, ...(wish ? { wish } : {}), ...(r.immersiveAnswered !== undefined ? { answered: r.immersiveAnswered } : {}), gate })
+  if (out.grant !== grant) {
+    if (out.grant === 'none') delete r.immersiveGrant
+    else r.immersiveGrant = out.grant
+  }
+  if (out.grant !== 'on') mainEnds.delete(t.id)
+  if (out.answer && wish && t.doc?.doc) {
+    const a: ImmersiveAnswer = { n: wish.n, on: out.answer.on, ...(out.answer.end ? { end: true as const } : {}) }
+    const sent = trust.immersiveState ? trust.immersiveState(t.id, t.doc.doc, a) : bridgeNow()?.immersiveState(t.id, t.doc.doc, a) ?? false
+    if (sent) r.immersiveAnswered = wish.n
+    j('immersive', { tab: t.id, grant: out.grant, ...a, sent })
+  } else if (out.grant !== grant) j('immersive', { tab: t.id, grant: out.grant })
+  // B12.8: immersive and the menu never coexist - turning it on closes the menu first
+  if (!out.stripShown && w.active) closeMenu()
+  return out.stripShown
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Spec 32 D6.4: the workspaces whose Recently here card Home hides - the running ones, and those an open gone tab
+// shows (a workspace never has a recent card beside a tab's card). `runningWorkspaces` stays as it is: it also feeds
+// the quit's `flushRecent` and `notes.quitting`, which stamp `lastSeen = now`.
+
+/** A tab still open on a canvas that stopped: its card is Home's, never a recent's. */
+const goneOpen = (t: Tab): boolean => t.kind === 'local' && t.open && !!t.reg && t.reg.state === 'gone'
+const homeExcludedNow = (): string[] => [...new Set([...runningWorkspaces(), ...allTabs().filter(goneOpen).map((t) => t.reg!.ws)])]
+/** each `windowPorts()`'s check of its own excluded set, run on registry events and on tab changes */
+const excludedChecks = new Set<() => void>()
+const checkExcluded = (): void => { for (const fn of [...excludedChecks]) fn() }
 
 export const pageHandlers = {
   /** `app:ready` */
@@ -1345,46 +1643,25 @@ export const pageHandlers = {
     if (getTab(id)) closing(currentAppCmd(), id)
     else currentAppCmd()?.noop('no-tab')
   },
-  /** `tab:menu { id, x, y }`: the tab's right-click menu, built from main's record (A2.4, A2.7) */
-  tabMenu(id: string, x: number, y: number): void {
+  /** `tab:menu { id, x, y, key?, hadFocus? }`: the tab's Marver menu, built from main's record (spec 32 B3, B4) */
+  tabMenu(id: string, x: number, y: number, ask: Partial<MenuAsk> = {}): void {
+    const h = currentAppCmd()
     const t = getTab(id)
-    if (!t) { currentAppCmd()?.noop('no-tab'); return }
-    const k = tokenOf(t)
-    const items: MenuItemConstructorOptions[] = []
-    if (t.kind === 'local') {
-      items.push(
-        { label: 'Open in Browser', enabled: !!t.doc?.trusted, click: () => tabAct(k, 'open-browser', TAB_MENU) },
-        { label: 'Reveal in Finder', enabled: !!t.root, click: () => tabAct(k, 'reveal', TAB_MENU) },
-        { label: 'Copy Local Link', enabled: !!t.doc?.trusted, click: () => tabAct(k, 'copy-link', TAB_MENU) },
-        // main's own mv:menu-click (app-api.ts APP_MENU_IDS): only a canvas with the bridge (0.27.1) hears it
-        { label: 'Mark All as Seen', enabled: !!t.doc?.trusted && hasBridge(t), click: () => markAllSeen(k) },
-        { label: 'Resolve All Comments', enabled: !!t.doc?.trusted && canResolveAll(t), click: () => resolveAllComments(k) },
-        { type: 'separator' },
-      )
-    } else if (t.kind === 'remote') {
-      // a shared canvas (A4.6 #49): no Reveal in Finder, no Mark All as Seen, no canvas items
-      items.push(
-        { label: 'Open in Browser', click: () => tabAct(k, 'open-browser', TAB_MENU) },
-        { label: 'Copy Link', click: () => tabAct(k, 'copy-link', TAB_MENU) },
-        { type: 'separator' },
-        { label: 'Reload', click: () => tabAct(k, 'reload', TAB_MENU) },
-        { label: 'Force Reload', click: () => tabAct(k, 'force-reload', TAB_MENU) },
-        { type: 'separator' },
-      )
-    }
-    if (t.kind !== 'home') items.push({ label: 'Close Tab', click: () => tabAct(k, 'close', TAB_MENU) })
-    popup(items, x, y)
+    // Home has no rows: the strip never asks for its menu (B3.1), and one that still arrives is refused (B2)
+    if (!t || t.kind === 'home') { refuseMenu(h, 'no-tab'); return }
+    openMenu(h, 'tab', tabRows(t), { x, y, ask, tab: t.id })
   },
-  /** `tabs:more { ids, x, y }`: the tabs behind », each with its state, the active one checked (A2.14 #19) */
-  tabsMore(ids: string[], x: number, y: number): void {
-    const a = activeTab()
-    const items = ids.map((id) => getTab(id)).filter((t): t is Tab => !!t).map((t): MenuItemConstructorOptions => {
-      const word = STATE_WORD[displayState(t, t === a)]
-      const k = tokenOf(t)
-      return { label: word ? `${tabName(t)} - ${word}` : tabName(t), type: 'checkbox', checked: t === a, click: () => tabAct(k, 'activate', OVERFLOW) }
-    })
-    popup(items, x, y)
+  /** `tabs:more { ids, x, y, key?, hadFocus? }`: the tabs behind », each with its state (spec 32 B5) */
+  tabsMore(ids: string[], x: number, y: number, ask: Partial<MenuAsk> = {}): void {
+    const h = currentAppCmd()
+    const list = ids.map((id) => getTab(id)).filter((t): t is Tab => !!t && t.kind !== 'home')
+    if (!list.length) { refuseMenu(h, 'no-tab'); return }
+    openMenu(h, 'more', moreRows(list), { x, y, ask })
   },
+  /** `tab:menu-pick { rev, id }` (spec 32 B12, B13): the row chosen, or null for a close with no pick */
+  menuPick(rev: number, id: string | null): void { pickMenu(rev, id) },
+  /** `tab:menu-shown { rev }` (spec 32 B3.5): the menu is on screen - its open command ends `done` now */
+  menuShown(rev: number): void { menuShownAck(rev) },
   /** `pill:action { rev, act }` */
   pillAction(rev: number, act: 'button' | 'dismiss'): boolean { return onPillAction(rev, act) },
   /** `tabpage:action { rev, action }`: the view's own tab in main's map, never named by the page */
@@ -1431,8 +1708,12 @@ function mountPages(pages: NonNullable<TrustPort['pages']>): void {
   pages.onReady((wc) => onAppReady(wc))
   pages.handle(CH.tabActivate, (_wc, p) => pageHandlers.tabActivate(String(o(p).id)))
   pages.handle(CH.tabClose, (_wc, p) => pageHandlers.tabClose(String(o(p).id)))
-  pages.handle(CH.tabMenu, (_wc, p) => pageHandlers.tabMenu(String(o(p).id), Number(o(p).x), Number(o(p).y)))
-  pages.handle(CH.tabsMore, (_wc, p) => pageHandlers.tabsMore(((o(p).ids as unknown[]) ?? []).map(String), Number(o(p).x), Number(o(p).y)))
+  // spec 32 B2: how it was asked for (`MenuAsk`), the bridge's booleans, absent reading false
+  const ask = (p: unknown): Partial<MenuAsk> => ({ key: o(p).key === true, hadFocus: o(p).hadFocus === true })
+  pages.handle(CH.tabMenu, (_wc, p) => pageHandlers.tabMenu(String(o(p).id), Number(o(p).x), Number(o(p).y), ask(p)))
+  pages.handle(CH.tabsMore, (_wc, p) => pageHandlers.tabsMore(((o(p).ids as unknown[]) ?? []).map(String), Number(o(p).x), Number(o(p).y), ask(p)))
+  pages.handle(CH.tabMenuPick, (_wc, p) => pageHandlers.menuPick(Number(o(p).rev), typeof o(p).id === 'string' ? String(o(p).id) : null))
+  pages.handle(CH.tabMenuShown, (_wc, p) => pageHandlers.menuShown(Number(o(p).rev)))
   pages.handle(CH.pillAction, (_wc, p) => pageHandlers.pillAction(Number(o(p).rev), o(p).act === 'dismiss' ? 'dismiss' : 'button'))
   pages.handle(CH.tabpageAction, (wc, p) => pageHandlers.tabpageAction(wc, Number(o(p).rev), String(o(p).action) as TabPageAction))
 }
@@ -1612,16 +1893,24 @@ export function windowPorts() {
    *  listener on both is told by each and unsubscribed from each alone) */
   const excludedFns = new Set<() => void>()
   let last = ''
+  let lastExcluded = homeExcludedNow().sort().join(',')
+  // D6.4: compared by the joined sorted list - on registry events (as the running set) and on tab changes (a tab
+  // opened, closed or reopened, its state to or from gone), so closing a gone tab brings its recent card back at once
+  excludedChecks.add(() => {
+    const now = homeExcludedNow().sort().join(',')
+    if (now !== lastExcluded) { lastExcluded = now; for (const fn of [...excludedFns]) fn() }
+  })
   trust.onRegistry(() => {
     const now = runningWorkspaces().sort().join(',')
-    if (now !== last) { last = now; for (const fn of [...fns]) fn(); for (const fn of [...excludedFns]) fn() }
+    if (now !== last) { last = now; for (const fn of [...fns]) fn() }
+    checkExcluded()
   })
   return {
     running: runningWorkspaces,
     onRunningChange(fn: () => void) { fns.add(fn); return () => { fns.delete(fn) } },
-    // spec 32 D6.4 (F3b #2): the workspaces whose Recently here card Home hides - today the running ones, told exactly
-    // when they change (W2 widens both to the gone tabs' workspaces)
-    homeExcluded: runningWorkspaces,
+    // spec 32 D6.4 (F3b #2): the workspaces whose Recently here card Home hides - the running ones and every open gone
+    // tab's, told when that set changes
+    homeExcluded: homeExcludedNow,
     onHomeExcludedChange(fn: () => void) { excludedFns.add(fn); return () => { excludedFns.delete(fn) } },
     linkPorts: {
       byPort(port: number): LinkTarget | undefined {
@@ -1658,7 +1947,7 @@ export function startViews(i: StartInput): void {
   setTabsPorts({
     now: () => Date.now(), home, appDark: () => nativeTheme.shouldUseDarkColors,
     // a waiting update looks at its tab after every change: closed, or its document changed (A5.1 #21)
-    changed: (o) => { ensureAppViews(); compose(o); updaterTabs(); cmdTabsChanged(activeTab()?.id) }, load, appState: sendState, act, ask, forget, save: saveSoon,
+    changed: (o) => { ensureAppViews(); compose(o); updaterTabs(); cmdTabsChanged(activeTab()?.id); checkExcluded() }, load, appState: sendState, act, ask, forget, save: saveSoon,
     shown: (t) => { onShown(t); refreshLogo(t) }, forward,
     recheck: (t) => scheduleRetry(t, { now: true }),
     // Home's Shared canvases (A4.6 #47): the place, never a sign-in URL (tabs.ts moves it only to a shell page)
@@ -1698,6 +1987,12 @@ export function startViews(i: StartInput): void {
     afterCompose: () => recorder.tabsChanged(),
   })
   watchWindowEvents()
+  // spec 32 B1.4, C8: what each compose reads of views.ts - the menu's state and the immersive gate's answer per tab
+  setComposePorts({ immersive: immersiveFor, menuOpen })
+  // B12.4: any app command closes the menu before it runs - but its own open requests, which replace it (B3.2)
+  setBeforeCmd((name) => { if (name !== 'tab-menu' && name !== 'tabs-more') closeMenu() })
+  // B3.6, B12.6: the strip's renderer crashed or hangs - the menu's grown view taken back at once
+  onStripTrouble(menuTrouble)
   // the presentation (A3.8 #27): an accepted answer, judged with the GPU identity read in its turn; the GPU
   // process gone or replaced covers every view until each presents again
   trust.onPresented?.((tabId, doc, r) => { const v = presentAnswer(tabId, doc, r, Date.now(), gpuIdentity()); if (v === 'ok' || v === 'lost') compose() })
@@ -1846,6 +2141,8 @@ function watchWindowEvents(): void {
   for (const event of WINDOW_EVENTS) win.on(event as 'minimize', () => record('window', null, { event, cause: windowCause(event) }))
   win.on('hide', cmdWindowGone)
   win.on('minimize', cmdWindowGone)
+  // spec 32 B12.3: the window's blur closes the strip's menu, as an NSMenu's would
+  win.on('blur', () => { closeMenu() })
 }
 
 /** The Mac woke: every failed tab looks again at once (A2.11: a check on `powerMonitor` `resume`). */
@@ -2084,15 +2381,16 @@ function testHooks(): void {
   provide('writeTabs', () => { writeTabsNow(); return tabsFile })
   provide('notes', () => ({ homeNoted }))
   provide('settings:open', () => { openSettingsTab(); return true })
-  // the strip's tab:menu and tabs:more, as the bridge hands them on; their popup recorded, never shown
-  provide('tabMenu', (a) => { const { id, x, y } = arg<{ id: string; x?: number; y?: number }>(a); pageHandlers.tabMenu(id, x ?? 10, y ?? 40); return true })
-  provide('tabsMore', (a) => { const { ids, x, y } = arg<{ ids: string[]; x?: number; y?: number }>(a); pageHandlers.tabsMore(ids, x ?? 10, y ?? 40); return true })
-  provide('popup:click', (a) => {
-    const it = lastPopup.find((i) => i.label === arg<{ label: string }>(a).label)
-    if (!it?.click || it.enabled === false) return false
-    ;(it.click as unknown as () => void)()
-    return true
-  })
+  // the strip's tab:menu and tabs:more, as the bridge hands them on (spec 32 B15): main's handler called directly - its
+  // view still goes to the strip, which shows it; the journal `popup` record and `lastPopup` kept until the next open
+  provide('tabMenu', (a) => { const { id, x, y, key, hadFocus } = arg<{ id: string; x?: number; y?: number } & Partial<MenuAsk>>(a); pageHandlers.tabMenu(id, x ?? 10, y ?? 40, { key: key === true, hadFocus: hadFocus === true }); return true })
+  provide('tabsMore', (a) => { const { ids, x, y, key, hadFocus } = arg<{ ids: string[]; x?: number; y?: number } & Partial<MenuAsk>>(a); pageHandlers.tabsMore(ids, x ?? 10, y ?? 40, { key: key === true, hadFocus: hadFocus === true }); return true })
+  // a row of the last record, by its label: its action from main's record, as a pick would, then the menu closed. A
+  // live menu that lost its show deadline (an occluded test window) loses only the menu, never the record (B15)
+  provide('popup:click', (a) => popupClick(arg<{ label: string }>(a).label))
+  // the live menu closed with no pick (B15): a case that opens a menu and picks nothing ends with it
+  provide('popup:close', () => closeMenu())
+  provide('tabMenu:state', () => menuNow())
   provideEffectHooks()   // `effects`: the copies and folders recorded (home.ts provides it too once the streams meet)
   provide('resume', () => { onResume(); return true })
   // A4: an https link opened as ⌘L and Home open it (home.ts's openLink hands it here); net.isOnline() answered by
