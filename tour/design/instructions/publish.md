@@ -1,4 +1,4 @@
-<!-- marver:managed 40b27211a0f0d4be47ae3518e104217789d695d8db2465d60da15d6ddb445844 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed f3511e42c3992d79aac0fe04932e76284231359e8eb4c5420ed406c36ba6fecd - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Publish - put the canvas on a URL, collaboration included
 
 Publishing is three decisions, then one build and one process. A coding agent can
@@ -54,11 +54,13 @@ vars if the host has no CLI.
    redeploy; marver fails loudly if the dir cannot be created.
 
 Then one line before you build: **name the canvas** -
-`share: { name: "Your App" }` in `design/config.ts`. The name is the gate's
+`name: "Your App"` in `design/config.ts` (configure.md's identity step usually did;
+`share.name` still works). The name is the gate's
 title, the brand pill's tooltip, and the `utm_campaign` on every powered-by
 link the canvas emits (the wordmark, the gate, the play brand pill). With no
-name it falls back to the ROOT DIRECTORY, which in a container is `app` -
-every containerised canvas you never named reports as the same campaign.
+name, the gate falls back to package.json's `name` and the canvas shell to the
+ROOT DIRECTORY, which in a container is `app` - every containerised canvas you
+never named reports as the same campaign.
 
 ## The serve contract (env vars, complete list)
 
@@ -251,6 +253,12 @@ marver dev                        # two-way syncs comments every 30s
 marver comments list --open       # the agent's work queue
 marver comments reply <thread> --body "..."          # answer in the loop
 marver comments resolve <thread> --addressed-in <frame>   # close with a receipt
+#    resolve-all (`marver comments resolve --all ...`, or "Resolve all comments" in a
+#    board's menu) runs on this machine only - the published canvas has no such button -
+#    and each thread it resolves (or its Undo reopens) reaches the published canvas as its
+#    own resolve on the next sync. Threads your agent started stay here, as always.
+#    A message deleted locally reaches a canvas older than 0.31 only once it is upgraded
+#    (until then it is held back)
 marver comments revoke <email>    # kills the account + its sessions, mid-flight
 ```
 
@@ -266,7 +274,9 @@ through sign-in.
 - `design/comments/<board>.jsonl` - the dev-side mirror, git-tracked: feedback
   has history, and the volume has an off-site replica for free. **Each event
   carries its author's email address** - that is how the canvas decides who may
-  edit or resolve their own thread. Harmless in a private repo; if yours is
+  edit or delete a message: its author, and only its author. Resolving is not
+  the author's alone: anyone who may comment on a board may resolve (and reopen)
+  any thread on it. Harmless in a private repo; if yours is
   public, or may become public, gitignore `design/comments/` and let the volume
   be the record. The canvas keeps its own copy either way, so nothing is lost.
 - `~/.marver/canvases/<project-hash>.json` - THIS machine's device credential, kept

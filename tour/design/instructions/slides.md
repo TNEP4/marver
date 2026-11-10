@@ -1,4 +1,4 @@
-<!-- marver:managed 6c1bdf745a4b1afa5e7c61f89cc8866f7a27c4470a4f40bab3123559d88203a7 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 8770f6880838458853c3c2cd863b240d2622f03eb9527c3ca13edcf17ee0f51b - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Slides - decks in code
 
 Run this when the work is a DECK: the human asks for slides, a presentation,
@@ -57,7 +57,7 @@ Code means the motion is yours: CSS keyframes and transitions, SVG
 animation, a JS library the project already uses. Three habits make it play
 well:
 
-- **At rest, the finished slide.** On the canvas, in `marver shot`, in a
+- **At rest, the finished slide.** On the canvas, in `marver shot`, in a PDF, in a
   thumbnail, the slide shows its final composition. Animate while the deck
   plays: the stage puts `data-sl-play` on `<html>` for the whole show and adds
   `data-sl-entered` once each slide has arrived. Key motion off them:
@@ -270,6 +270,9 @@ are stuck.
   slide, a card around everything, a tiny uppercase kicker over every
   headline, filler numbers, the same composition three slides running with no
   reason. Delete before you add.
+- **Hand it over** with what `npx marver link <deck>` prints (the deck's
+  scene), on its own line, as printed. `npx marver show <deck board>` only when
+  they ask to be shown.
 
 ## Publishing a deck
 
@@ -283,6 +286,69 @@ The board is the deck. Publish with:
 `transition`: `fade` (default) or `none`. `chrome`: `full` (default - the
 standard prototype toolbar and walker), `minimal` (a progress strip +
 comments) or `none`. Add `"lock": true` for a share that is ONLY the deck.
+
+## A deck as a PDF
+
+When the human asks for a PDF of a deck or of any board ("make a PDF of the
+deck", "send me the slides", to attach or print), run `npx marver pdf <board>`
+and give them the path it prints. It needs `marver dev` running for this
+folder: `npx marver ls` first; none running, see "Keeping the canvas up" in
+design/AGENTS.md. It writes `design/exports/<board>.pdf` (kept out of git);
+`--out <file>` writes it elsewhere ("on my Desktop": `--out
+~/Desktop/<board>.pdf`). `--json` prints the report as JSON, with the file's
+absolute path in `file`.
+
+- **What prints.** A board whose `design/publish.json` row says
+  `"type": "slides"` (or `"open": "slides"`) prints its deck: its `slide: true`
+  frames in reading order, one page each at the stage size. Any other board
+  prints every frame in the board file's order (Play's), each at the device
+  Play shows it at. So before you export a deck, give its board that publish
+  row (Publishing a deck, above). A board file's own `"type"` does not count:
+  without the row the pages follow the board file's order, non-slide frames
+  included.
+- `--notes` makes a handout instead (`<board>-notes.pdf`) - what the human
+  calls "with speaker notes": each page's picture and title beside its whole
+  `.note.md` (all four parts, Say among them), "No notes" when it has none,
+  Letter landscape (`--paper a4` for A4). Its pages are the deck's, chosen the
+  same way: give the board its publish row first here too.
+  `--theme dark` prints every page in one theme; without it each slide prints
+  in its own.
+- One PDF at a time per canvas: "a PDF of ... is being made" means wait for
+  it, then run again.
+- The human can do the same on the canvas: Export PDF in the board's menu,
+  the export button in slides and present mode, or File > Export PDF in the
+  Mac app. A published canvas cannot export.
+
+Read the report before you hand it over. Its first line is the file, pages,
+size and time; each line under it names slides that need a look:
+
+- **patched** slides are fine - glass, filters, blends, masks and big soft
+  shadows were fixed and checked against the screen;
+- **raster** slides printed as pictures (no searchable text), with the reason:
+  say so. An effect on the page itself (`body` or `html`) or under a transform
+  is the usual cause - move it onto an inner element and export again;
+- **unsettled**: an image or chart was still loading after 10 s - fix the
+  slide (a missing asset, a slow chart) and export again;
+- **clipped**: the slide is taller or wider than its stage - fix the layout;
+- **spilled**: the page ran onto a second printed page and only the first was
+  kept - check that nothing is missing;
+- **changed while printing**: its files changed during the export (an edit
+  landed) - export again once edits stop;
+- **printed differently from the screen (kept: --vector)**: only with
+  `--vector` - those pages print as Chrome prints them, unlike the screen. Look
+  at them in the PDF, or export again without `--vector`;
+- **skipped**: a frame the board names but the manifest no longer lists, or a
+  non-slide frame on a slides board - name it to the human;
+- **failed**: the frame threw or never rendered, and the export stops with no
+  file - `npx marver shot` it, fix it, export again. With `--keep-going` the
+  PDF is written with that page blank and the command exits 1: never hand it
+  over without saying which page is blank.
+- The last line says `every page print-certified` or `screen-certified only`
+  (no rasteriser on this machine): both are fine to hand over. `not
+  print-certified` follows the "printed differently" line above.
+
+The PDF is the finished slide, as at rest: another reason every slide must
+show its final composition without `data-sl-play` (Motion, above).
 
 ## design/slides.md - this project's deck look
 

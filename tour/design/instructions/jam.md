@@ -1,4 +1,4 @@
-<!-- marver:managed 48242b24a20977eaf4ed3da3767b2b915bae96758e965743f4e4d4e59a1ec16f - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 206911e428b6c32e19314f364a349a6c061aff5ac5c6fff7f7d56732e633c0ad - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Live Jam - acting on @marver comments
 
 The owner leaves a comment on the canvas and tags `@marver`. While `npx marver dev` runs,
@@ -324,6 +324,12 @@ discards everything else you say (narration never reaches a thread):
   your reply where they asked, with no review step after it. Say what you changed and what is
   left; to go on, they tag again. **A capture member's** reply is also shown in its review,
   beside its before and after pictures.
+- **A request to be shown** ("show me the cart", in a tag or a capture): with a shell (a run in
+  your own session), run `npx marver show <scene/frame | scene | board>` - their open tabs go there
+  (one where they are typing gets a notice instead) - and say in the reply block what you showed.
+  With no shell (a spawned job), or when it prints `not shown`, say in the reply block where it is
+  (board and frame). Never a link in a reply block: the thread is already on their canvas. Never a link in a reply block:
+  the thread is already on their canvas.
 Rules (first line and the marver-reply block):
 - **Plain text only.** The thread renders RAW text, so markdown shows as literal characters. No
   `**bold**`, no `` `backticks` ``, no headings, no bullet lists. Line breaks are your only formatting.
@@ -340,6 +346,9 @@ Rules (first line and the marver-reply block):
 - **Concise and clear, always.** Cut every filler word. Lead with what changed. Apply the copy
   principles in instructions/reference/copy.md (active voice, specific, no fluff).
 Do NOT resolve the thread; the human resolves after reviewing.
+A message the owner deleted never reaches you: it is taken out of the packet before the hand-off (and a
+request with nothing left is dropped). Once a packet is in your hands nothing can unread it - so never
+quote a message back that the thread no longer shows.
 
 ## Working in parallel (when enabled)
 Two kinds of parallelism stack, and they are not the same knob: the daemon runs up to

@@ -1,4 +1,4 @@
-<!-- marver:managed 3aabf1daf2afb7a4e922569cea750c9ede802984c9d5eff0ba829bd9fa805885 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 6c696a694a250158fb3888346a930b9b1595b5ad8b9e1bd046d89c6440254b1a - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Boards - curated canvases and publishing
 
 A board is a saved canvas: `design/boards/<name>.json` (name: `^[a-z0-9][a-z0-9-]*$`).
@@ -303,11 +303,12 @@ A board's status, reason and capability never ship - unless the row says `"showS
 then only a status drawn from publishable evidence (`audience: publishable` under `context/`; a scene
 brief counts unless it says otherwise), never Blocked, never a reason.
 
-The published gate page shows the app's identity: `design/logo.svg` + the host
-package name (overridable via config `share`). If the app has no logo asset yet,
-create a simple `design/logo.svg`. The same logo wears the canvas's tab in the Mac
-app. It counts only as a real file in the repo (never a symlink), at most 256 KB,
-whose bytes are an SVG, a PNG or an ICO. Leave `share.branding` ON unless the human
+The published gate page shows the app's identity - the same as the canvas wears in the
+Mac app (instructions/configure.md, step 6): config `name`, else `share.name`, else the
+host package name; config `logo`, else `share.logo`, else `design/logo.svg` (then
+`public/`). If the app has no logo asset yet, create a simple `design/logo.svg`. It
+counts only as a real file in the repo (never a symlink), at most 256 KB, whose bytes
+are an SVG, a PNG or an ICO. Leave `share.branding` ON unless the human
 explicitly asks to remove it: marver is free, the gate is already personalized to
 the app, and the small "Powered by" line is how the tool spreads. Do not remove it
 as part of "branding polish".

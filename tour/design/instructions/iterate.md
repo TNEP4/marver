@@ -1,4 +1,4 @@
-<!-- marver:managed 8749f94f5b731e380391f7285a36bb175d104894888e86daf5fae59c2ccdd0f9 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 7f87f261260892bedde9a500ed05362e665630d65962938c88dd3b1cac699fb1 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Iterate - versions are nearly free, so keep them
 
 Read this when you are about to CHANGE a frame the human has already seen, when
@@ -90,6 +90,9 @@ comment took it minutes ago), the snapshot exists - skip to step 4.
    (resolve first, restructure second); the owner's stays open - say in the
    reply what replaced the element (its pin joins the column at the frame's
    top-right corner, still in view) - or re-pin it with `comments move`.
+   End the round's chat reply with what `npx marver link <scene>` prints (the
+   after) and `npx marver link <scene>-v<N> --board archive` (the before), each
+   on its own line, as printed.
 
 Never wait for the human to ask for this. They should be able to say "make the
 cards denser", "drop the sidebar", "try a warmer palette" three times in a row
@@ -194,6 +197,11 @@ The discipline:
 5. **Never resolve what you didn't address.** Disagree? Reply with your
    reasoning and leave the thread open - the human closes debates, you close
    completed work.
+   Many open at once is the human's to clear, never yours: past ten open
+   (`npx marver marks` counts them per board), ask - and only on a yes run
+   `npx marver comments resolve --all --board <b>` (`--folder`, `--scene`,
+   `--canvas`; `--dry-run` counts first; it prints its `--undo`). It skips
+   every thread Jam is working on.
 6. **A frame with open comments is load-bearing - never delete, rename, or
    gut it.** Its threads are anchored to elements INSIDE it; restructure the
    frame and the anchors strand (a dead anchor parks the pin in the column at

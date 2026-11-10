@@ -11,5 +11,5 @@ export default {
   },
   themes: ["light", "dark"],
   port: 5240,
-  share: { name: "marver tour" },
+  share: { name: "Marver Tour" },
 }

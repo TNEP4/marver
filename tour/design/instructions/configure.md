@@ -1,4 +1,4 @@
-<!-- marver:managed dc82a54d44479d4f470a5efcc05914dd3491db6992a76181e44ccbcec105d3db - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed e0947f3c7628bd124a6b2f584a96fed83d443fb6063f27f1abb81f6b6a833170 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Configure - reach the idle state, once per repo
 
 The idle state is marver fully wired into THIS repo: frames render with the app's
@@ -21,8 +21,38 @@ frames render suspiciously unstyled - then never think about it again.
    guessed from env markers and PATH - on a machine with both CLIs installed that guess
    can be wrong, and then every `@marver` comment is answered by the other tool. Fix the
    line and tell the human. Details, including the off switch: instructions/jam.md.
+6. **The canvas looks like the product** (identity): in the Mac app's tab, on its Home
+   card and in the sidebar, a canvas wears its name and its logo - left alone it is the
+   folder's name and the Marver mark, like every other canvas there (`marver dev`'s boot
+   line says so). So:
+   - `name` in `design/config.ts` is the product's human name - "TMS Broker", not
+     "tms-broker". A config a current `marver init` wrote has a first guess from
+     package.json, else the folder (`my-repo` -> "My repo"): make it real - the boot line does not ask
+     about a guess. An older config has no `name` line, and re-running init never adds
+     one - add it yourself. 80 characters at most.
+   - `design/logo.svg` is the product's REAL mark - find it in the app (`public/`,
+     `src/assets/`, the favicon) and copy it in; draw a simple one only when the app
+     truly has none, and tell the human. A regular file in the repo (never a symlink),
+     an SVG, PNG or ICO of at most 256 KB; `logo: "path"` in the config names another.
+     With no `logo` in the config, the canvas takes the first of design/logo.svg|png,
+     public/logo.svg|png and public/favicon.svg|png|ico, else the Marver mark: check that
+     what it found is the product's mark.
+   - Boards, folders and frames carry titles written for people ("iPad landscape",
+     "Checkout - empty cart"), never a slug ("Ipad-landscape").
+   - Custom breakpoints read well: `viewports.<name>` takes a `label` and an `icon` (a
+     built-in glyph or a repo .svg) - see the Frames section of AGENTS.md. A name like
+     `ipad-landscape` needs neither: it already shows as "iPad landscape" with the tablet
+     glyph turned.
+   - `name`, `logo` and a viewport's `label` and `icon` are read when `marver dev` starts:
+     the running canvas keeps its old name and icons until it starts again (a new
+     `design/logo.svg` shows at once). Tell the human to stop and start `marver dev`
+     when it suits them. Never restart it yourself while they are on the canvas. Its
+     terminal then names anything ignored (`[marver] design/config.ts: ...` for a name, label or icon;
+     `marver: logo <path> is ignored: ...` for a logo, when the canvas or the app first asks for it), and its
+     boot line stops asking for a name and a logo once both are set.
+   `share.name` / `share.logo` still work (`name` / `logo` win); nothing needs rewriting.
 
-All five true → idle state. Go design.
+All six true → idle state. Go design.
 
 ## By repo maturity
 

@@ -1,4 +1,4 @@
-<!-- marver:managed 5fe3739f30c463ec46aef72fed5e7c1dc12de9ccde5f06bb2503a945335b1e66 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 7f9353684860268907e9898a244129ceb9bf28a220756a46baaa21715caa6b40 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Review - the self-review pass before presenting anything
 
 Run this before telling the human a design is ready. The budget is fixed: one full
@@ -54,3 +54,7 @@ Lead with what to look at: the board name, the frame to start on, the flow to wa
 and the one or two decisions you need from the human. Copy file paths for anything
 you reference (select frames + press c). Never present work whose review you skipped;
 say "unreviewed" if the human asked for speed.
+
+End with the canvas link, on its own line: what `npx marver link <scene/frame | scene ...>`
+(or `work done`) printed, as printed. Run `npx marver show <scene/frame | scene | board>`
+only if they ask to be shown (design/AGENTS.md, "Hand it back on the canvas").
