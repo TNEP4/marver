@@ -11,6 +11,8 @@ const wire = vi.hoisted(() => ({
   sent: [] as { ch: string; args: unknown[] }[],
   invoked: [] as { ch: string; args: unknown[] }[],
   listened: [] as string[],
+  /** each channel's ipcRenderer.on handler, so a test can play main sending it */
+  handlers: new Map<string, (e: unknown, payload: unknown) => void>(),
   exposed: null as Record<string, unknown> | null,
 }))
 vi.mock('electron', () => ({
@@ -18,7 +20,7 @@ vi.mock('electron', () => ({
   ipcRenderer: {
     send: (ch: string, ...args: unknown[]) => { wire.sent.push({ ch, args }) },
     invoke: (ch: string, ...args: unknown[]) => { wire.invoked.push({ ch, args }); return Promise.resolve({ ok: true }) },
-    on: (ch: string) => { wire.listened.push(ch) },
+    on: (ch: string, fn: (e: unknown, payload: unknown) => void) => { wire.listened.push(ch); wire.handlers.set(ch, fn) },
   },
 }))
 
@@ -26,6 +28,7 @@ type AppKind = AppPageKind
 async function load(kind: string): Promise<Record<string, unknown> | null> {
   vi.resetModules()
   wire.sent.length = wire.invoked.length = wire.listened.length = 0
+  wire.handlers.clear()
   wire.exposed = null
   ;(globalThis as unknown as { location: unknown }).location = { protocol: 'marver-app:', host: kind }
   await import('../../src/preload/app.ts')
@@ -107,6 +110,23 @@ describe('spec 32: the strip\'s menu and Home\'s own inputs (B2, D8.8)', () => {
     // the strip's activate stays the shared one: `{ id, via }` only
     api.activate('t1', 'key', { cancel: true, keys: 'Enter' })
     expect(sends('tab:activate')).toEqual([{ id: 't1', via: 'key' }])
+  })
+  it('the strip: onTabMenu delivers what main sends on tab-menu - a menu, then null - and nothing from tabs; its off stops it', async () => {
+    const api = (await load('strip'))! as Record<string, Fn>
+    const got: unknown[] = []
+    const tabsGot: unknown[] = []
+    const off = api.onTabMenu((v: unknown) => { got.push(v) }) as () => void
+    api.onTabs((v: unknown) => { tabsGot.push(v) })
+    const emit = (ch: string, v: unknown) => wire.handlers.get(ch)!({ sender: 'main' }, v)
+    const menu = { rev: 1, x: 10, y: 20, kind: 'tab', rows: [{ kind: 'item', id: 'close', label: 'Close Tab', enabled: true }, { kind: 'sep' }] }
+    emit('tab-menu', menu)
+    emit('tab-menu', null)
+    emit('tabs', { rev: 1, tabs: [] })
+    expect(got).toEqual([menu, null])
+    expect(tabsGot).toEqual([{ rev: 1, tabs: [] }])
+    off()
+    emit('tab-menu', { ...menu, rev: 2 })
+    expect(got).toEqual([menu, null])
   })
   it('Home has no tabMenu; its activate sends cancel and keys only when given and valid', async () => {
     const api = (await load('home'))! as Record<string, Fn>

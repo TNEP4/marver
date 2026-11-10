@@ -184,6 +184,8 @@ const navFns = new Map<string, (e: unknown) => void>()
 let docN = 0
 const docs = new Map<string, string>()
 const entries: ReturnType<typeof makeEntry>[] = []
+/** what subscribed to the faked trust stream's registry, so a test can play a registry change */
+const registryFns: ((e: unknown) => void)[] = []
 const makeEntry = (n: number) => ({
   file: `/home/running/slot-${n}.json`, key: Buffer.alloc(32), state: 'ready', pid: 1000 + n, instance: `inst-${n}`,
   slot: n, port: 40100 + n, origin: `http://[::1]:${40100 + n}`, url: `http://localhost:${40100 + n}/`, root: `/Users/nic/repo-${n}`, name: `Canvas ${n}`,
@@ -199,7 +201,7 @@ const trust = {
   register: () => {},
   entries: () => entries,
   entryFor: () => undefined,
-  onRegistry: () => () => {},
+  onRegistry: (fn: (e: unknown) => void) => { registryFns.push(fn); return () => {} },
   onReport: (fn: typeof reportFn) => { reportFn = fn; return () => {} },
   appState: () => true,
   menuClick: (...a: unknown[]) => { menuClicks.push(a); return true },
@@ -629,6 +631,39 @@ describe('spec 32 F1, D8.1: the tab facts views.ts gives home.ts (setTabFacts)',
     const off = w.onHomeExcludedChange(() => {})
     expect(off).toBeTypeOf('function')
     off()
+  })
+  it('F3b #2: onHomeExcludedChange is told when the excluded set changes, not when it stays; one callback on both ports is told by each and unsubscribed from each alone', async () => {
+    const v = await import('../../src/main/views.ts')
+    await canvas()
+    const before = registryFns.length
+    const w = v.windowPorts()
+    const mine = registryFns.slice(before)
+    expect(mine.length).toBe(1)
+    const fire = () => { for (const f of mine) f({ kind: 'entry', entry: entries.at(-1) }) }
+    fire()                                   // the first look: the set it starts from
+    let excluded = 0, running = 0, both = 0
+    const offEx = w.onHomeExcludedChange(() => { excluded++ })
+    w.onRunningChange(() => { running++ })
+    const shared = () => { both++ }
+    const offSharedEx = w.onHomeExcludedChange(shared)
+    const offSharedRun = w.onRunningChange(shared)
+    fire()                                   // nothing changed: nothing sent
+    expect([excluded, running, both]).toEqual([0, 0, 0])
+    // a workspace of its own joins the running set, then leaves it (only this port's listener is played)
+    const extra = { ...makeEntry(900), ws: 'f3b2-excluded-ws', instance: 'inst-f3b2' }
+    const add = () => { entries.push(extra) }
+    const drop = () => { entries.splice(entries.indexOf(extra), 1) }
+    add(); fire()                            // the set changes
+    expect([excluded, running, both]).toEqual([1, 1, 2])
+    expect(w.homeExcluded()).toContain('f3b2-excluded-ws')
+    offSharedEx()                            // off the excluded port alone: still told by the running one
+    drop(); fire()
+    expect([excluded, running, both]).toEqual([2, 2, 3])
+    offSharedRun()
+    offEx()
+    add(); fire()
+    expect([excluded, running, both]).toEqual([2, 3, 3])
+    drop(); fire()
   })
 })
 
