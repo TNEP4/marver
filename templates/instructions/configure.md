@@ -25,17 +25,30 @@ frames render suspiciously unstyled - then never think about it again.
    folder's name and the Marver mark, like every other canvas there (`marver dev`'s boot
    line says so). So:
    - `name` in `design/config.ts` is the product's human name - "TMS Broker", not
-     "tms-broker" (init wrote a first guess from package.json; make it real).
+     "tms-broker". A config a current `marver init` wrote has a first guess from
+     package.json, else the folder (`my-repo` -> "My repo"): make it real - the boot line does not ask
+     about a guess. An older config has no `name` line, and re-running init never adds
+     one - add it yourself. 80 characters at most.
    - `design/logo.svg` is the product's REAL mark - find it in the app (`public/`,
      `src/assets/`, the favicon) and copy it in; draw a simple one only when the app
      truly has none, and tell the human. A regular file in the repo (never a symlink),
      an SVG, PNG or ICO of at most 256 KB; `logo: "path"` in the config names another.
+     With no `logo` in the config, the canvas takes the first of design/logo.svg|png,
+     public/logo.svg|png and public/favicon.svg|png|ico, else the Marver mark: check that
+     what it found is the product's mark.
    - Boards, folders and frames carry titles written for people ("iPad landscape",
      "Checkout - empty cart"), never a slug ("Ipad-landscape").
    - Custom breakpoints read well: `viewports.<name>` takes a `label` and an `icon` (a
      built-in glyph or a repo .svg) - see the Frames section of AGENTS.md. A name like
      `ipad-landscape` needs neither: it already shows as "iPad landscape" with the tablet
      glyph turned.
+   - `name`, `logo` and a viewport's `label` and `icon` are read when `marver dev` starts:
+     the running canvas keeps its old name and icons until it starts again (a new
+     `design/logo.svg` shows at once). Tell the human to stop and start `marver dev`
+     when it suits them. Never restart it yourself while they are on the canvas. Its
+     terminal then names anything ignored (`[marver] design/config.ts: ...` for a name, label or icon;
+     `marver: logo <path> is ignored: ...` for a logo, when the canvas or the app first asks for it), and its
+     boot line stops asking for a name and a logo once both are set.
    `share.name` / `share.logo` still work (`name` / `logo` win); nothing needs rewriting.
 
 All six true → idle state. Go design.

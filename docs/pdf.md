@@ -14,12 +14,15 @@ On the canvas: **Export PDF** in a board's menu (right-click it in the sidebar),
 present mode's toolbar, which prints in the theme the stage shows. A notice shows the page it is on, with Cancel; the
 file downloads when it is done. In the Mac app, **File > Export PDF…** does the same for the open board and asks where
 to save it. App 1.0.1 has no save panel for it: there the notice keeps the finished PDF and offers **Download**, since
-that app drops a download its window did not start while in front.
+that app drops a download its window did not start while in front. The canvas exports with the
+defaults: the handout (`--notes`), `--paper`, `--raster`, `--vector`, `--keep-going` and `--out` are the command's.
 
 ## What goes in the PDF
 
 - **A slides board** (its publish row plays it as slides) prints its deck: its `slide: true` frames in reading order -
-  top to bottom, then left to right - each once, as slides mode plays them.
+  top to bottom, then left to right - each once, as slides mode plays them. The publish row decides, not the mode you
+  are in: a board with no such row prints as any other board below, even from slides mode's export button. A board's
+  own type (`"type": "deck"` in its JSON) does not decide it either.
 - **Any other board** prints its frames in the board's order, as Play walks them, html frames included. A slide frame
   is its stage size on any board; any other frame is printed at the device Play shows it at - the viewport whose width
   is its node's on the board, else the frame's own viewport, else the first - at that viewport's height.
@@ -73,10 +76,13 @@ design/exports/mark-ii.pdf - 32 pages, 2.7 MB, 17.8 s
 Each kind of slide that needs a look is named: **skipped** (a frame the manifest no longer lists, or a non-slide frame
 on a slides board), **failed**, **patched** (and with what), **raster** (and why), **unsettled** (still loading images or
 charts after 10 s - printed anyway), **clipped**, **spilled** (Chrome made more than one page; the first is kept),
-**changed while printing** (its source changed twice while it rendered). `--json` prints all of it, slide by slide.
+**changed while printing** (its source changed while it rendered and again on the second try, or the frame left the
+board), and with `--vector` **printed differently from the screen** (kept as Chrome printed it). The last line says
+whether every page was print-certified, or screen-certified only. `--json` prints all of it, slide by slide, with the
+file's absolute path.
 
 A slide that fails to render fails the export - a PDF is never handed over with a page missing. `--keep-going` prints
-the rest and leaves the failed page blank, named in the report.
+the rest and leaves the failed page blank, named in the report. The command then exits 1, though the PDF is written.
 
 ## The handout (`--notes`)
 
@@ -98,4 +104,5 @@ the deck PDF is the one you search.
 
 One PDF at a time per canvas (a second is refused, naming the one running). 300 pages at most, a page side of 4096 CSS
 px at most, 15 minutes, 500 MB. The job's folder (`design/.local/pdf/`) keeps only the finished file, for an hour, and
-is emptied when `marver dev` starts. `marver init` keeps `design/exports/` out of git.
+is emptied when `marver dev` starts. `marver init` keeps `design/exports/` out of git. The Mac app saves a PDF of 200 MB
+at most; a larger one says "not saved (too-large)": export it with `npx marver pdf`.

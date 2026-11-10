@@ -64,7 +64,9 @@ without narrating into the void; your next message is the reveal.
    execution - assume, mark UNCONFIRMED, surface it first.) Once they confirm,
    write that understanding as one sentence into `description` in
    design/config.ts - the project's line in design/manifest.json, the first
-   thing every later session reads.
+   thing every later session reads - and set `name` there to the product's
+   name as they say it (init's guess reads "Tms broker"; configure.md step 6
+   also gives the canvas its real logo).
 2. **Confirm the stack aloud - what detection ACTUALLY found.** Read AGENTS.md's
    UI line and design/theme.css and narrate the reality, for example: "Tailwind
    + shadcn/ui; brand tokens in <file>; design/theme.css imports them." No
@@ -110,10 +112,12 @@ Deliver conversationally when the first draft is ready - a short guided
 message, not a manual. The canvas must be running: `npx marver ls` lists it.
 Not yet? Ask the person to run `npx marver dev` in their own terminal - a
 canvas you start dies with your job - or start it detached, as design/AGENTS.md
-says ("Keeping the canvas up"); never with a port. ALWAYS hand a deep link to
-the board you prepared, using the port the dev server printed (`npx marver ls`
-lists it):
-`http://localhost:<port>/#/b/<board>` - never the bare root URL. The link goes
+says ("Keeping the canvas up"); never with a port. ALWAYS end with what
+`npx marver link <scene ...> --board <board>` prints for the board you prepared
+(its scenes selected and in view), or the `on the canvas:` line `work done`
+printed - a `marver://` link when the Mac app has this canvas open, else a
+localhost one. Give it as printed: never a link you wrote, never the bare root
+URL. The link goes
 at the BOTTOM of the message, on its own line: the human reads through, then
 clicks. The human has already played with the hosted tour by now, so keep it
 short - let their own product carry the moment. The highlights, all real

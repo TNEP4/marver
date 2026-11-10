@@ -89,6 +89,9 @@ comment took it minutes ago), the snapshot exists - skip to step 4.
    (resolve first, restructure second); the owner's stays open - say in the
    reply what replaced the element (its pin joins the column at the frame's
    top-right corner, still in view) - or re-pin it with `comments move`.
+   End the round's chat reply with what `npx marver link <scene>` prints (the
+   after) and `npx marver link <scene>-v<N> --board archive` (the before), each
+   on its own line, as printed.
 
 Never wait for the human to ask for this. They should be able to say "make the
 cards denser", "drop the sidebar", "try a warmer palette" three times in a row

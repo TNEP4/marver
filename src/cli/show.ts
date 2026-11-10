@@ -20,7 +20,7 @@ export const SHOW_WAIT_MS = 3000
 
 /** What to show (pure of the network): one board's target, or why not. */
 export function showPlan(root: string, targets: string[], opts: { board?: string; thread?: string } = {}): { target: ShowTarget; hints: string[] } {
-  if (!targets.length) throw new Error('name what to show: show <scene/frame | scene ... | board>')
+  if (!targets.length) throw new Error(`name what to show: show <scene/frame | scene ... | board>${opts.board ? ` - a whole board is its name alone (show ${opts.board}); when a scene has that name too, name the scenes it shows with --board ${opts.board}` : ''}`)
   if (opts.thread !== undefined && !/^[\w-]{1,128}$/.test(opts.thread)) throw new Error(`"${opts.thread}" is not a thread id`)
   const thread = opts.thread ? { c: opts.thread } : {}
   // a board name alone: that board, fitted - when no frame or scene answers to it
@@ -41,7 +41,7 @@ export function showPlan(root: string, targets: string[], opts: { board?: string
 
 /** The words for the tabs' answers (pure). */
 export function showWords(a: { shown: number; notice: number } | null): string {
-  if (!a || (a.shown === 0 && a.notice === 0)) return 'no open tab'
+  if (!a || (a.shown === 0 && a.notice === 0)) return 'not shown - no open tab took it (none is open, the person moved first, or the place is not on that board)'
   const tabs = (n: number) => `${n} tab${n === 1 ? '' : 's'}`
   const parts: string[] = []
   if (a.shown) parts.push(`shown in ${tabs(a.shown)}`)

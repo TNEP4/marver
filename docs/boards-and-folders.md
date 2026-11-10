@@ -79,8 +79,8 @@ The sidebar shows where to look.
   most takes it: the bubble first, then the row's own count or status, then a frame's dot. A board
   you are not on turns blue when its frames hold something new, and the bubble takes its status
   glyph's place until answered. A closed folder shows the bubble when something inside waits on you,
-  else a blue dot when something inside is new - never a number for new: it is not a to-do count
-  (0.31). A folded scene keeps its frame count, blue when something inside is new.
+  else a blue dot when something inside is new, else nothing - never a number for new: it is not a
+  to-do count (0.31). An open folder shows how many boards it holds. A folded scene keeps its frame count, blue when something inside is new.
 - **`U`** goes to the next frame that asks you something, then the next one waiting on you, then the
   next new one.
 
@@ -104,12 +104,16 @@ live work: a thread Jam is queued or working on is left open and counted ("2 lef
 progress"). The notice says how many, with **Undo**: it reopens each thread nothing happened in since - no
 reply, edit, reaction, resolve or reopen ("1 changed since - left as is"); what Jam finished stays finished. From the terminal: `npx marver
 comments resolve --all --board <b>` (`--folder`, `--scene`, `--canvas`, `--dry-run`), then `--undo <op>`
-with the op it prints. On a published canvas, threads are resolved one at a time.
+with the op it prints. Missed the notice's Undo (it shows for 10 seconds)? Every run is kept as
+`design/.local/comment-ops/<op>.json` (its `scope` and `at` say which), and `npx marver comments resolve --undo <op>`
+undoes it. On the board you have open, it saves your latest edits first; while they are not saved it resolves nothing
+and says so ("this board's latest changes are not saved yet"). A published canvas has no Resolve all of its own: run it
+here, and each thread it resolves reaches the published canvas with the next sync.
 
 The marks start when `marver dev` starts, so whatever your agent makes before you open the canvas is
 new when you do; everything already there the first time counts as seen. They live in
 `design/.local/`, on this machine only, and a published canvas shows none. `npx marver marks` prints
-them - for you, or for your agent at the start of a session.
+them, and the open conversations per board - for you, or for your agent at the start of a session.
 
 **In the Mac app** (0.3, with Marver 0.29), each canvas's tab sums this up, even while it is hidden: an
 orange count of what needs you - Marver's questions, captures to review, runs that failed or stalled -
@@ -292,12 +296,16 @@ opens it there ([Links into the app](app.md#links-into-the-app)); `--web` prints
 
 ## Showing you a place
 
-`npx marver show <scene/frame | scene ... | board>` moves every tab where this canvas is open to that place - its
-board, selected, the camera fitted, even when it is already there - and in the Mac app brings that tab and the window
-forward. `--thread <id>` opens a comment thread there too; frames on two boards are refused (show one board at a time).
-A tab where you are typing (a comment, a Jam edit) does not move: it says "Your agent wants to show you <title> · Go",
-and Go takes you. The command waits up to 3 seconds and says "shown in 2 tabs" (or "no open tab"), then prints the link.
-Agents run it only when you ask to be shown; otherwise they give the link. A focus link (`#/f/<frame>`) opened on your dev canvas now has its way
+`npx marver show <scene/frame | scene ... | board>` (needs `marver dev`) moves every tab where this canvas is open to
+that place - its board, selected, the camera fitted, even when it is already there - and in the Mac app brings that tab
+and the window forward. A name alone is a board, fitted whole, when no frame or scene has that name. `--thread <id>`
+opens a comment thread there too; frames on two boards are refused (show one board at a time). A tab where you are
+typing (a comment, a Jam edit) or recording a capture does not move: it says "Your agent wants to show you <title> ·
+Go", and Go takes you. Click, pan or press a key while it is on its way and yours wins: it stops. The command waits 3
+seconds and says "shown in 2 tabs" (or "not shown - no open tab took it" when no tab answered), then prints the link. Agents run it only
+when you ask to be shown; otherwise they give the link.
+
+A focus link (`#/f/<frame>`) opened on your dev canvas now has its way
 back to the canvas (the grid button, or Esc); on a published canvas a focus link stays a page of
 its own.
 

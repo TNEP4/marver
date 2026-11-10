@@ -16,19 +16,21 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   [Deck PDFs](docs/pdf.md)
 - **Resolve all comments.** Next to Mark all as seen - in a board's, a folder's and a scene's menu, and on the Mac app's
   canvas tab - one click resolves every open conversation there, with Undo. It never touches what Jam is working on. Your
-  agent can do it too (`marver comments resolve --all`), and asks you first when the conversations pile up.
+  agent can do it too (`marver comments resolve --all --board <b>`, or `--folder`, `--scene`, `--canvas`; `--undo <op>`
+  takes it back), and asks you first when the conversations pile up.
 - **Calmer badges.** Frames new since you looked show a blue dot instead of a count, on the app's tab and on a closed folder;
   orange still counts what waits on you.
 - **Links that open the Mac app.** When Marver is open with the canvas in a tab, `marver link` gives a `marver://` link: click
-  it anywhere and the app comes forward on that board, frames selected and in view. And `marver show <frame>` lets your
-  agent move your open canvas to what it wants you to see - never while you are typing a comment.
+  it anywhere and the app comes forward on that board, frames selected and in view. `marver work done` hands back the same
+  links. And ask your agent to show you something - a frame, a scene, a board or a comment thread - and `marver show`
+  moves your open canvas there; while you are typing a comment it offers to go instead.
 - **Comments you can copy, edit and delete.** Select and copy a comment's words (⌘A in a card selects its text). Edit or
   delete your own; a deleted first comment keeps its replies under "Comment deleted". Deleted words never reach your agent.
 
 ### Added
 
 - **Your own breakpoint icons and names.** A viewport in `design/config.ts` takes a `label` and an `icon` - a built-in glyph
-  (phone, tablet, laptop, monitor, tv, watch, desktop, e-reader; `-landscape` turns it) or an SVG in your repo, drawn in the
+  (`mobile`, `tablet`, `laptop`, `monitor`, `tv`, `watch`, `desktop`, `ereader`; `-landscape` turns it) or an SVG in your repo, drawn in the
   toolbar's ink. Without them, both come from the name: "ipad-landscape" shows as "iPad landscape" with a tablet turned on
   its side.
 - **A canvas that looks like itself in the app.** `name` and `logo` in `design/config.ts` name the canvas everywhere (the app's
@@ -41,16 +43,22 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 - A frame's `meta` with an escaped quote (`'Nic\'s board'`) is no longer dropped.
 - The Marver ID sign-in page shows the canvas's logo, not Marver's.
 - A Jam batch whose cards are gone no longer slows every `marver dev` start by about 7 seconds.
-- A board whose file says `"type": "slides"` is read as a deck.
+- A board whose file says `"type": "slides"` is read as a deck (its type only: playing and printing as slides still follow
+  its publish row).
 - A long-running canvas now learns of a new Marver release (`/__mv/api/update` refreshes daily and always answers).
 - Docs: any commenter may resolve a conversation; only its author may edit or delete it.
 
 ### Upgrading
 
-- `npx marver init` after upgrading, for the agent guide's new steps (identity, resolve-all, `marver show`, `marver link`) and
-  `design/exports/` in `.gitignore`.
+- `npx marver init` after upgrading, for the agent guide's new steps (identity, resolve-all, `marver show`, `marver link`,
+  deck PDFs with `marver pdf`) and `design/exports/` in `.gitignore`.
+- Restart `marver dev` after upgrading: `marver pdf`, `marver show` and `marver comments resolve --all` need the 0.31 dev
+  server.
+- `init` writes `name` only into a new `design/config.ts`. An existing canvas keeps its folder's name until you, or your
+  agent, add `name: "Your Product"` and a real `design/logo.svg`; `marver dev`'s boot line says when either is missing.
 - Comment deletes reach a published canvas once it runs 0.31; until then they wait on this Mac.
-- The `marver://` links and Export PDF's save panel need the Mac app 1.1; app 1.0.1 still exports (the file downloads).
+- The `marver://` links and Export PDF's save panel need the Mac app 1.1; app 1.0.1 still exports: when the PDF is ready,
+  its notice offers **Download**.
 
 ## 0.30.1 - 2026-11-09
 

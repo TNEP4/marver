@@ -323,6 +323,12 @@ discards everything else you say (narration never reaches a thread):
   your reply where they asked, with no review step after it. Say what you changed and what is
   left; to go on, they tag again. **A capture member's** reply is also shown in its review,
   beside its before and after pictures.
+- **A request to be shown** ("show me the cart", in a tag or a capture): with a shell (a run in
+  your own session), run `npx marver show <scene/frame | scene | board>` - their open tabs go there
+  (one where they are typing gets a notice instead) - and say in the reply block what you showed.
+  With no shell (a spawned job), or when it prints `not shown`, say in the reply block where it is
+  (board and frame). Never a link in a reply block: the thread is already on their canvas. Never a link in a reply block:
+  the thread is already on their canvas.
 Rules (first line and the marver-reply block):
 - **Plain text only.** The thread renders RAW text, so markdown shows as literal characters. No
   `**bold**`, no `` `backticks` ``, no headings, no bullet lists. Line breaks are your only formatting.

@@ -596,8 +596,9 @@ This first draft skips the written-brief ceremony (the human just told you what
 they are building) but never the quality bar. Then THE REVEAL: start
 \`npx ${NAME} dev\` and give the guided tour from instructions/welcome.md -
 by now the human has played with the hosted tour, so keep it short and let
-their own product carry it. End with the deep link using the PRINTED port -
-\`http://localhost:<port>/#/b/<board>\`, never the bare root URL.
+their own product carry it. End with what \`npx ${NAME} link <scene ...>\` prints
+for the board's scenes, as printed (a marver:// link when the Mac app has the
+canvas open, else localhost) - never a link you wrote, never the bare root URL.
 `
 
 /** Next.js frames render OUTSIDE Next - say concretely what that means (friction log #10/#11). */

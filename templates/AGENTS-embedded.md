@@ -34,7 +34,7 @@ file in design/instructions/ - they are short, strict, and part of this contract
 | Phase | When | Read |
 |---|---|---|
 | Welcome | the human's FIRST session, or "what is this?" | instructions/welcome.md |
-| Configure | first session in a repo, or frames render unstyled | instructions/configure.md |
+| Configure | first session in a repo, frames render unstyled, or the canvas does not wear the product's name and logo: `marver dev`'s boot line says "this canvas still shows ...", `name` in design/config.ts is missing or still init's guess from package.json ("My repo" for `my-repo`), or the logo is the Marver mark - do step 6, identity | instructions/configure.md |
 | Discover | any new surface, feature, or flow | instructions/discover.md |
 | Shape | thinking a feature through on canvas (specs, diagrams, mood boards) - never the first session | instructions/shape.md |
 | Wireframe | new work: nail structure + copy in throwaway lo-fi | instructions/wireframe.md |
@@ -44,7 +44,7 @@ file in design/instructions/ - they are short, strict, and part of this contract
 | Review | before presenting anything | instructions/review.md |
 | Boards | creating a board, choosing what ships | instructions/boards.md |
 | Context | any question about what the product does or what is live; a behaviour change; a deploy; no `context/` yet | instructions/context.md |
-| Slides | a deck is asked for, or its PDF (`npx marver pdf <board>`), or `slide: true` frames exist | instructions/slides.md + design/slides.md |
+| Slides | a deck is asked for; a PDF of a deck or of any board, a flow too (`npx marver pdf <board>`, then give back the path it prints); or `slide: true` frames exist | instructions/slides.md + design/slides.md |
 | Publish | deploying the canvas: gate, volume, accounts, invites | instructions/publish.md |
 | Live Jam | responding to an `@marver` comment (a spawned job), or a "Live Jam: ... new request" message (below) - run `npx marver jam next`; on by default - confirm it names YOUR tool | instructions/jam.md |
 
@@ -160,18 +160,35 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
 
 - **Every reply in which you created or changed frames ends with their canvas link**, on its
   own line: the `on the canvas:` line `work done` printed, or `npx marver link <scene/frame |
-  scene ...>` for any set. Each opens a board they sit on (one link per board when they sit
-  on several) with them selected and in view -
-  the human finds the work at once on a board of fifty frames. **Give exactly what those
-  commands print** - a `marver://...` link (the Mac app has this canvas open) or a localhost
-  one - never a link you wrote yourself or rewrote.
-- **`npx marver show <scene/frame | scene ... | board>` only when the human asks to be shown**
-  ("show me", "take me there"): it moves their open tabs to the place and prints the link. A
-  tab where they are typing is never moved - it shows them a notice. Otherwise, the link. Never a full-screen focus link
-  (`#/f/...`) unless they ask for full screen. `npx marver ls` lists the canvases running on
-  this Mac and their links; none for this folder? End by asking the person to run
-  `npx marver dev` in their own terminal (or start it detached: "Keeping the canvas up") - the
-  link carries its port.
+  scene ...>` for any set (`checkout/cart`, or `checkout` for a whole scene). Each opens a board
+  they sit on (one link per board when they sit on several; `--board <b>` picks one) with them
+  selected and in view - the human finds the work at once on a board of fifty frames. **Give
+  exactly what those commands print** - a `marver://...` link (the Mac app has this canvas
+  open) or a localhost one - never a link you wrote yourself or rewrote. `link` reads a bare
+  name as a scene (`checkout`), never as a board: for a whole board, link the scenes it shows
+  with `--board <board>` (each node's `frame` in design/boards/<board>.json starts with its
+  scene; an `auto: true` board shows every scene), or its frames when it shows only some of a
+  scene's. Never a full-screen focus link unless they ask for full screen - then
+  `#/f/<scene/frame>` after the localhost link `npx marver ls` prints, the one link you write
+  yourself. **`link` and `show` need `marver dev` running for this folder** - the link carries
+  its port. `npx marver ls` lists the canvases running on this Mac and their links; none for
+  this folder? End by asking the person to run `npx marver dev` in their own terminal (or start
+  it detached: "Keeping the canvas up").
+- **Show, only when they ask.** "Show me", "take me there", "open it for me": run `npx marver
+  show <target>` - `checkout/cart` (a frame), `checkout/cart checkout/pay` (several),
+  `checkout` (a scene), `launch-plan` (a board, fitted whole). A bare name is a frame or a
+  scene first, and a board only when no frame or scene has that name: a board whose name a
+  scene also has cannot be shown whole - show the scenes it shows with `--board <board>`, as
+  for `link`. `--thread <id>` opens that comment thread there too, with its frame or board
+  still named (`show checkout/cart --thread <id>`). Every open tab of this canvas goes
+  there, selected and fitted, and the Mac app comes forward. It waits 3 seconds, prints one
+  line, then the link:
+  - `shown in 2 tabs` - say it is on their screen, and end with the link;
+  - `1 tab holds words not yet sent - ...` - they were typing, so that tab did not move: it
+    shows "Your agent wants to show you ... · Go". Say so, and give the link;
+  - `not shown - no open tab took it ...` or `not shown: ...` - nothing moved: give the link.
+  Frames on two boards are refused: show one board at a time (`--board <board>`). Never show on
+  your own to hand work back - that is the link, above.
 - **Answer each comment thread you addressed, in the thread**: `npx marver comments reply
   <thread> --body "<what changed>"` - one line, no longer than their comment. On a thread
   the human started it posts as Marver and pings them on the frame. A reply that asks them
@@ -210,7 +227,13 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
   // Each shows as its name reads ("ipad-landscape" -> "iPad landscape", the tablet glyph
   // turned) unless it sets `label` (40 chars) and `icon`: a glyph (mobile, tablet, laptop,
   // monitor, tv, watch, desktop, ereader; "-landscape" turns it) or a repo .svg - paths and
-  // shapes only (no style, script, href, text), 32 KB at most, drawn in the toolbar's ink.
+  // shapes only (no style, script, href, text), 32 KB at most, drawn in the toolbar's ink:
+  // it is a mask, so colours do not matter, only what is painted - `fill`/`stroke` attributes
+  // are fine (any colour, or none); a line icon needs fill="none" or its shapes fill solid.
+  // An `icon` replaces the name's turn: a landscape device names `tablet-landscape`,
+  // not `tablet`. An .svg is never turned - draw it the way the device stands. A bad
+  // label or icon falls back to the name's, with one line in `marver dev`'s terminal;
+  // both are read when `marver dev` starts (instructions/configure.md, step 6).
 - States are sibling frames: empty.tsx, filled.tsx, error.tsx, success.tsx.
 - VERSIONS are sibling frames with letter prefixes, and the canvas understands them:
   design/scenes/landing/a-terminal.tsx + b-editorial.tsx form a VARIANT GROUP - kept
@@ -271,17 +294,40 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
   Read it before exploring; `marver dev` keeps it fresh. `npx marver boards` prints the
   boards part as a tree.
 - **What the human has not reviewed.** At the start of a session, `npx marver marks`: the frames
-  waiting on them (your notes and replies they have not resolved - the ones that ask first) and
-  the frames new since they last looked. When it bears on the work, say so in your first message
+  waiting on them (your notes and replies they have not resolved - the ones that ask first), the
+  frames new since they last looked, and the open conversations per board. When it bears on the work, say so in your first message
   ("you have not looked at the checkout frames since I changed them").
+- **The sidebar's marks, as the human names them.** Orange is Marver waiting on them: an
+  orange bubble on a frame, scene, board or closed folder counts your open notes and replies
+  there (a hollow one on a frame: they answered, and it waits on you - `marks`' answered by
+  you list). Blue is new: frames new or changed since they last looked - a blue dot, a blue
+  title. A board's status glyph takes the same slot when no question does (Building is blue),
+  and a board icon that shimmers blue is an agent at work on it. The human's own threads wear
+  no mark. Orange goes as the threads are resolved (resolve-all, below, only on their yes);
+  blue goes as they look at the frames, or with "Mark all as seen" in a board, folder or scene
+  menu - theirs to click, never yours.
 - **Many open conversations: offer, never decide.** When `npx marver marks` shows more than 10
-  open, or the human says the badges are noisy, ask - with the count per board it prints ("38
-  open: checkout 22, onboarding 16 - resolve them?"). Only on a yes, run `npx marver comments
-  resolve --all --board <b>` (or `--folder`, `--scene`, `--canvas`; `--dry-run` counts first) and
-  give them the `--undo` line it prints. It never touches what Jam is working on, and the human
-  has the same in every board, folder and scene menu ("Resolve all comments"). Never on your own.
-- **A deleted comment is gone.** People edit and delete their own messages; `comments list`
-  and Jam never show a deleted one. Never quote one back, and never write one again.
+  open (its `open` line; `--json` has `open.total` and `open.boards`), or the human says the
+  badges are noisy, ask - with the count per board it prints ("38 open: launch-plan 22,
+  checkout-compare 16 - resolve them?"). A frame on two boards counts on both. Only on a yes, and only for what
+  they said yes to: one board is `npx marver comments resolve --all --board <b>`, a folder
+  `--folder <f>`, a scene `--scene <s>`, everything `--canvas` (the only scope that also takes
+  threads with no frame or on a frame that is gone; `--scene` takes its frames whether or not a board shows them). `--dry-run` counts first. Give them the `--undo` line it
+  prints. It never touches what Jam is working on, and the human has the same in every board,
+  folder and scene menu ("Resolve all comments") and on the Mac app's tab. Never on your own.
+- **Undo a resolve-all later.** The canvas's Undo notice lasts 10 seconds. After that, each run
+  is kept as `design/.local/comment-ops/<op>.json` (its `scope` and `at` say which; skip the
+  `.undo.json` files): `npx marver comments resolve --undo <op>` reopens each thread nothing
+  happened in since.
+- **Edit and delete are the author's, on the canvas.** People edit and delete their own
+  messages there. Marver's notes and replies have no Edit or Delete, for anyone, and the CLI
+  edits and deletes nothing. A note of yours that is wrong: correct it in its thread (`comments
+  new --thread <id>` on your own note); a misplaced one: `comments move`. Say so in the chat;
+  the human resolves it. A person's message only they can change: never post it again reworded.
+- **A deleted comment is gone.** A deleted reply
+  disappears; a deleted first comment whose replies stay is listed as "(comment deleted)"
+  (`"deleted": true` in `--json`, no body or author). Its words never reach you, in
+  `comments list` or in Jam. Never quote one back, and never write one again.
 - **Performance.** `npx marver perf --loads --json` says what each board load did - time to
   settled, how many moves and why, the slowest frames, errors. To make a board faster, name
   the lever, change it, compare the next load. A slow frame's `admittedMs` is when its turn to

@@ -120,7 +120,7 @@ export async function commentsCommand(root: string, action: string, value: strin
     case 'new': {
       if (opts.thread !== undefined) return addToThread(root, String(opts.thread), value, opts)
       if (!value || !opts.body) throw new Error('usage: comments new <scene/frame> --body "..." --on "<words it shows>" | --at "<selector or data-testid>" [--nth <n>] [--fyi] [--board <board>]')
-      const { resolveLink, devOrigin } = await import('./link.ts')
+      const { resolveLink, devOrigin, linkFor } = await import('./link.ts')
       const r = resolveLink(root, [value], opts.board)
       if (r.exact.length !== 1) throw new Error(`"${value}" is a folder of frames - pin a note on one frame: comments new <scene/frame>`)
       // a note lives on a board: a frame on none gets the hint first (spec 26, Part 7) - then its element
@@ -138,7 +138,7 @@ export async function commentsCommand(root: string, action: string, value: strin
         ...marverAuthor(root), body: plainDashes(String(opts.body)), asks: !opts.fyi,
       }])
       const origin = await devOrigin(root)
-      console.log(`  pinned a note on ${frame} (board ${r.board})${origin ? `: ${origin}#/b/${r.board}?c=${threadId}` : ''}`)
+      console.log(`  pinned a note on ${frame} (board ${r.board})${origin ? `: ${linkFor(root, origin, `#/b/${r.board}?c=${threadId}`)}` : ''}`)
       // one thread per topic: the note is written, and the next one about this element is a reply
       for (const t of open.filter((t) => holders.includes(t.id))) {
         const next = ownerThread(root, t) ? `comments new --thread ${t.id} --body "..."` : `comments reply ${t.id} --body "..."`

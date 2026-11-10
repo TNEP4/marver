@@ -94,6 +94,14 @@ that took the same port later. A link that names no place Marver understands ope
 `marver link` gives the `marver://` link only while Marver is in use (it keeps `~/.marver/state/app-live.json` fresh
 every 30 seconds) with that canvas open in a tab; otherwise, and with `--web`, the localhost link.
 
+## A tab's badge and menu
+
+Each canvas's tab shows an orange count of what needs you (Marver's questions, captures to review, runs that failed or
+stalled), else a blue dot when frames are new since you looked (no number, from 1.1), else a shimmer while an agent
+works. Right-click the tab of a canvas on this Mac for **Mark All as Seen** and, with Marver 0.31 or later, **Resolve
+All Comments**: every open conversation on that canvas, never what Jam is working on, with Undo. [What the marks
+mean](boards-and-folders.md#what-is-new-what-needs-you).
+
 ## Home
 
 - **Running canvases** each have a card; one whose Marver has a newer release says "0.31.0 available" with the command

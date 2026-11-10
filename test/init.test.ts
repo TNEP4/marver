@@ -261,7 +261,9 @@ describe('init: onboarding', () => {
     expect(s).toContain('what are we building')
     expect((s.match(/STOP/g) ?? []).length).toBeGreaterThanOrEqual(2)
     expect(s).toContain('welcome.md')
-    expect(s).toContain('#/b/')
+    // the hand-back is what `marver link` prints (a marver:// link when the Mac app has the canvas open), never a URL typed by hand
+    expect(s).toContain('link <scene ...>')
+    expect(s).not.toContain('#/b/')
   })
 
   it('a stale marver-authored setup.md is refreshed in place', () => {

@@ -7,9 +7,13 @@ Use it with canvases on marver 0.31.0 for everything below; older canvases keep 
 - **`marver://` links open Marver.** A link an agent gives you (from `marver link`) brings Marver forward on that canvas's
   board, the frames selected and in view. A tab already open is never reloaded - if you were typing a comment there, it stays
   put and offers to go. A canvas that isn't running opens Home on its card, with its start command.
-- **Your agent can show you a frame.** `marver show` moves your open canvas there and brings its tab and the window forward.
-- **Resolve All Comments** on a canvas tab's menu, beside Mark All as Seen, with Undo.
-- **File > Export PDF** saves the board's deck as a PDF where you choose.
+- **Ask your agent to show you something.** `marver show` moves your open canvas to that frame, scene, board or comment
+  thread and brings its tab and the window forward; if you were typing a comment there, it offers to go instead.
+- **Resolve All Comments** on a canvas tab's menu, beside Mark All as Seen: every open conversation on that canvas, never
+  what Jam is working on, with Undo.
+- **File > Export PDF** saves the open board as a PDF where you choose (the save panel opens on Downloads); the canvas's own
+  Export PDF, in a board's menu and in slides and present mode, saves the same way. Up to 200 MB - a larger one:
+  `npx marver pdf`.
 - **Calmer tabs:** frames new since you looked show a blue dot, not a count; orange still counts what waits on you.
 - **Home:** canvases in temporary folders no longer fill Recently here; recent and shared canvases keep their name and logo;
   a running canvas on an older Marver says so, with the command that updates it.

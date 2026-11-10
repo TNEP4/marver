@@ -714,7 +714,7 @@ describe('marver show (the CLI)', () => {
     await a.until(settled('main', ['n-two']))
     await b.until(settled('main', ['n-two']))
     for (const s of tabs.splice(0)) await browser.closeTab(s)
-    expect(await cli('other')).toEqual(['no open tab', `http://localhost:${PORT}/#/b/other`])
+    expect(await cli('other')).toEqual(['not shown - no open tab took it (none is open, the person moved first, or the place is not on that board)', `http://localhost:${PORT}/#/b/other`])
   }, 60_000)
 })
 

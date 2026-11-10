@@ -127,7 +127,7 @@ cli
   })
 
 cli
-  .command('comments <action> [value]', 'Comment collaboration: connect <url> · sync · list · new <scene/frame> · reply <thread> · move <thread> · resolve <thread> | --all · invite <email> · revoke <email>')
+  .command('comments <action> [value]', 'Comment collaboration: connect <url> · sync · list · new <scene/frame> · reply <thread> · move <thread> · resolve <thread> | --all · invite <email> · revoke <email>. Nothing here edits or deletes a message: people do their own on the canvas, and Marver\'s have no Edit or Delete - correct a wrong note in its thread')
   .option('--root <dir>', 'Host repo root', { default: '.' })
   .option('--token <token>', 'connect: the canvas\'s MARVER_CLI_TOKEN (default $MARVER_CLI_TOKEN) - the identity-mode path')
   .option('--invite <token>', 'connect: claim this invite instead of signing in')
@@ -217,7 +217,7 @@ cli
   })
 
 cli
-  .command('link [...targets]', 'The canvas link that lands on frames: link <scene/frame | scene ...> - their board, in canvas mode, selected and fitted. A marver:// link when the Mac app has this canvas open, else localhost')
+  .command('link [...targets]', 'The canvas link that lands on frames (needs `dev` running): link <scene/frame | scene ...> - their board, in canvas mode, selected and fitted; a bare name is a scene, never a board (a whole board: its scenes with --board <board>). A marver:// link when the Mac app has this canvas open, else localhost')
   .option('--root <dir>', 'Host repo root', { default: '.' })
   .option('--board <board>', 'The board to open (default: the first board that shows them all, else one link per board)')
   .option('--web', 'The localhost link even when the Mac app has this canvas open')
@@ -231,10 +231,10 @@ cli
   })
 
 cli
-  .command('show [...targets]', 'Show the human a place - only when they ask to be shown: show <scene/frame | scene ... | board> - every open tab of this canvas goes there, selected and fitted (a tab holding unsent words shows a notice instead); then the link')
+  .command('show [...targets]', 'Show the human a place - only when they ask to be shown (needs `dev` running): show <scene/frame | scene ... | board> - a bare name is a frame or scene first, else a board, fitted whole; every open tab of this canvas goes there, selected and fitted (a tab holding unsent words shows a notice instead); then the link')
   .option('--root <dir>', 'Host repo root', { default: '.' })
   .option('--board <board>', 'The board to show them on (default: the first board that shows them all)')
-  .option('--thread <id>', 'A comment thread to open there too')
+  .option('--thread <id>', 'A comment thread to open there too: its id from `comments list`, with its frame or board still named (show <scene/frame> --thread <id>); it opens only on its own board, so pass --board when the frame sits on more than one')
   .option('--web', 'Print the localhost link even when the Mac app has this canvas open')
   .action(async (targets: string[], opts) => {
     const { showCommand } = await import('./show.ts')
@@ -347,7 +347,7 @@ cli
   })
 
 cli
-  .command('marks', 'What the human has not reviewed: frames waiting on them (the ones that ask first), their answers nothing has acted on yet, and frames new since they looked')
+  .command('marks', 'What the human has not reviewed: frames waiting on them (the ones that ask first), their answers nothing has acted on yet, frames new since they looked, and the open conversations per board (more than 10: offer `comments resolve --all` to the human - never run it on your own)')
   .option('--root <dir>', 'Host repo root', { default: '.' })
   .option('--json', 'Machine-readable output')
   .option('--all', 'Also list the answers from before 0.26 that may already be handled')
@@ -410,16 +410,16 @@ cli
   })
 
 cli
-  .command('pdf [board]', 'A board\'s deck as a PDF, one page per slide (needs `dev` running): design/exports/<board>.pdf')
+  .command('pdf [board]', 'A board as a PDF (needs `dev` running): a slides board\'s deck one page per slide, any other board one page per frame - design/exports/<board>.pdf')
   .option('--root <dir>', 'Host repo root', { default: '.' })
-  .option('--theme <name>', 'Theme to print (default: each slide\'s own, else light)')
+  .option('--theme <name>', 'Theme to print (default: each page\'s theme on the board, else its frame\'s own, else light)')
   .option('--notes', 'A handout instead: each slide with its title and its notes (design/exports/<board>-notes.pdf)')
   .option('--paper <size>', 'The handout\'s paper, landscape: letter (default) or a4')
   .option('--out <file>', 'Where to write the PDF')
   .option('--raster', 'Every page a picture (3x) - no vector text')
   .option('--vector', 'Patch nothing: every page as Chrome prints it')
   .option('--keep-going', 'A slide that fails to render is left blank and named, instead of failing the export')
-  .option('--json', 'Print the report as JSON')
+  .option('--json', 'Print the report as JSON, with the file\'s absolute path (file)')
   .action(async (board: string | undefined, opts) => {
     const { pdfCommand } = await import('./pdf.ts')
     try { process.exit(await pdfCommand(resolve(opts.root), board, opts)) }

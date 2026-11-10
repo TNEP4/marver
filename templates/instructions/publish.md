@@ -57,8 +57,9 @@ Then one line before you build: **name the canvas** -
 `share.name` still works). The name is the gate's
 title, the brand pill's tooltip, and the `utm_campaign` on every powered-by
 link the canvas emits (the wordmark, the gate, the play brand pill). With no
-name it falls back to the ROOT DIRECTORY, which in a container is `app` -
-every containerised canvas you never named reports as the same campaign.
+name, the gate falls back to package.json's `name` and the canvas shell to the
+ROOT DIRECTORY, which in a container is `app` - every containerised canvas you
+never named reports as the same campaign.
 
 ## The serve contract (env vars, complete list)
 
@@ -251,9 +252,12 @@ marver dev                        # two-way syncs comments every 30s
 marver comments list --open       # the agent's work queue
 marver comments reply <thread> --body "..."          # answer in the loop
 marver comments resolve <thread> --addressed-in <frame>   # close with a receipt
-#    resolve-all ("Resolve all comments" in a board's menu) is the dev server's only: on
-#    the published canvas threads are resolved one at a time. A message deleted locally
-#    reaches a canvas older than 0.31 only once it is upgraded (until then it is held back)
+#    resolve-all (`marver comments resolve --all ...`, or "Resolve all comments" in a
+#    board's menu) runs on this machine only - the published canvas has no such button -
+#    and each thread it resolves (or its Undo reopens) reaches the published canvas as its
+#    own resolve on the next sync. Threads your agent started stay here, as always.
+#    A message deleted locally reaches a canvas older than 0.31 only once it is upgraded
+#    (until then it is held back)
 marver comments revoke <email>    # kills the account + its sessions, mid-flight
 ```
 

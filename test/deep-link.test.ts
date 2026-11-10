@@ -134,7 +134,7 @@ describe('marver link: the app\'s link only while the app is in use with this ca
     expect(() => showPlan(root, ['demo/one'], { thread: '../x' })).toThrow(/not a thread id/)
     expect(() => showPlan(root, [])).toThrow(/name what to show/)
     expect([showWords(null), showWords({ shown: 0, notice: 0 }), showWords({ shown: 2, notice: 0 }), showWords({ shown: 1, notice: 1 })]).toEqual([
-      'no open tab', 'no open tab', 'shown in 2 tabs', 'shown in 1 tab; 1 tab holds words not yet sent - it shows a notice to go there instead',
+      'not shown - no open tab took it (none is open, the person moved first, or the place is not on that board)', 'not shown - no open tab took it (none is open, the person moved first, or the place is not on that board)', 'shown in 2 tabs', 'shown in 1 tab; 1 tab holds words not yet sent - it shows a notice to go there instead',
     ])
   })
 })

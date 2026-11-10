@@ -53,3 +53,7 @@ Lead with what to look at: the board name, the frame to start on, the flow to wa
 and the one or two decisions you need from the human. Copy file paths for anything
 you reference (select frames + press c). Never present work whose review you skipped;
 say "unreviewed" if the human asked for speed.
+
+End with the canvas link, on its own line: what `npx marver link <scene/frame | scene ...>`
+(or `work done`) printed, as printed. Run `npx marver show <scene/frame | scene | board>`
+only if they ask to be shown (design/AGENTS.md, "Hand it back on the canvas").

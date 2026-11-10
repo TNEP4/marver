@@ -229,6 +229,11 @@ Threads live in `design/comments/<board>.jsonl`, which is committed with the res
 comment would. They never reach a published canvas: `marver build` and `marver comments sync`
 leave capture threads (and Marver's notes and replies) on your machine. The session
 **record** your agent writes goes to `context/sessions/`, also meant to be committed.
+
+In its thread, a capture's own comment can be deleted but not edited (0.31): Jam keeps the words it took, so an edit
+would change what you see and never what your agent gets. Deleting it withdraws a capture your agent has not been
+handed yet, as deleting a tagged comment does ([A deleted comment](live-jam.md#a-deleted-comment-031)); its tile reads
+"Withdrawn capture".
 Published canvases carry none of Jam: no captures, no queue, no microphone.
 
 ## A capture left on an old address
