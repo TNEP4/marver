@@ -397,6 +397,36 @@ describe('the document (A2.14 #8, v1.12 r1 #1, v1.13 r2 #3)', () => {
     expect(t.reports.safety).toBe('stale')
   })
 
+  it('spec 32 C2: the immersive wish is stored by onReport, the latest whole, from the admitted trusted document alone; the grant and the answer reset with the reports at a commit', () => {
+    const t = liveTab(w)
+    onReport(t.id, 'doc-other', { immersive: { on: true, n: 1 } })
+    expect(t.reports.immersive).toBeUndefined()
+    onReport(t.id, t.doc!.doc!, { immersive: { on: true, n: 1 } })
+    expect(t.reports.immersive).toEqual({ on: true, n: 1 })
+    onReport(t.id, t.doc!.doc!, { theme: { dark: false } })                      // another report keeps the wish
+    expect(t.reports.immersive).toEqual({ on: true, n: 1 })
+    onReport(t.id, t.doc!.doc!, { immersive: { on: false, n: 2 } })
+    expect(t.reports.immersive).toEqual({ on: false, n: 2 })
+    // what the gate writes (views.ts, W2) lives on the reports, so a new document - a reload while ended - starts at none
+    t.reports.immersiveGrant = 'ended'
+    t.reports.immersiveAnswered = 2
+    onCommit(t, { gen: 2, url: `${t.reg!.origin}/`, attributed: true, admitted: `doc-${t.id}-2` })
+    expect([t.reports.immersive, t.reports.immersiveGrant, t.reports.immersiveAnswered]).toEqual([undefined, undefined, undefined])
+    // an untrusted document's wish is not kept
+    onReport(t.id, t.doc!.doc!, { safety: 'stale' })
+    onReport(t.id, t.doc!.doc!, { immersive: { on: true, n: 3 } })
+    expect(t.reports.immersive).toBeUndefined()
+  })
+
+  it('spec 32 F1: a hung tab says so in its view (Home\'s "Not responding"); absent otherwise', () => {
+    const t = liveTab(w)
+    expect(viewOf(t, true, '/Users/nic').hung).toBeUndefined()
+    t.hung = true
+    expect(viewOf(t, false, '/Users/nic').hung).toBe(true)
+    t.hung = false
+    expect('hung' in viewOf(t, true, '/Users/nic')).toBe(false)
+  })
+
   it('reports: only from the admitted document; incoherent busy refused; the first busy makes it fresh', () => {
     const t = liveTab(w, { busy: null })
     onReport(t.id, 'doc-other', { busy: { busy: true, unsaved: true, why: ['typing'] } })

@@ -597,6 +597,29 @@ describe('tabAct (#49, #50, #51)', () => {
   })
 })
 
+describe('spec 32 F1, D8.1: the tab facts views.ts gives home.ts (setTabFacts)', () => {
+  it('a local tab: its ws, root, port and its people link while trusted; --port only for an explicit-port start; once gone, its marver:// link', async () => {
+    const { tabFacts } = await import('../../src/main/home.ts')
+    const a = await canvas()
+    const port = a.reg!.port
+    expect(a.doc?.trusted).toBe(true)
+    expect(tabFacts(a.id)).toEqual({ ws: a.reg!.ws, root: a.root, port, link: `http://localhost:${port}/` })
+    // untrusted: no link
+    a.doc!.trusted = false
+    expect(tabFacts(a.id)).toEqual({ ws: a.reg!.ws, root: a.root, port })
+    a.doc!.trusted = true
+    // an explicit-port start (no slot): Copy start command's --port
+    a.reg!.slot = null
+    expect(tabFacts(a.id)).toMatchObject({ startPort: port })
+    // gone: its marver:// link names its root and the port it ran on, either way
+    a.reg!.state = 'gone'
+    expect(tabFacts(a.id)).toEqual({ ws: a.reg!.ws, root: a.root, port, startPort: port, gone: true, link: `marver://open?ws=${encodeURIComponent(a.root!)}&port=${port}` })
+    a.reg!.state = 'ready'; a.reg!.slot = n
+    // Home, Settings and an unknown id have none
+    expect([tabFacts('home'), tabFacts('no-such')]).toEqual([undefined, undefined])
+  })
+})
+
 describe('the page funnel (bridge.ts:625-650)', () => {
   it('tab:activate carries via; the strip by key, by click, and the `shown` ends it', async () => {
     const a = await canvas()

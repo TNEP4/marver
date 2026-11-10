@@ -57,11 +57,13 @@ describe('the version floor (#5, r2 #7)', () => {
 })
 
 describe('the CHANGELOG section (#11 step 0)', () => {
-  it('waivers: a candidate may fail only memory-no-canvas; 1.0.0 and 1.0.1 the same by Nic\'s decision; every later version none', () => {
+  it('waivers: a candidate may fail only memory-no-canvas; 1.0.0, 1.0.1 and 1.1.0 the same by Nic\'s decision; every other version none', () => {
     expect(waiversFor('0.99.3', true)).toEqual(['memory-no-canvas'])
     expect(waiversFor('1.0.0', false)).toEqual(['memory-no-canvas'])
     expect(waiversFor('1.0.1', false)).toEqual(['memory-no-canvas'])
-    for (const v of ['1.0.2', '1.1.0', '2.0.0']) expect(waiversFor(v, false)).toEqual([])
+    // Nic, 10 Nov: around 200 MB is fine for 1.1.0 (203.3 MB measured; abfd0f17)
+    expect(waiversFor('1.1.0', false)).toEqual(['memory-no-canvas'])
+    for (const v of ['1.0.2', '1.2.0', '2.0.0']) expect(waiversFor(v, false)).toEqual([])
   })
 
   it('the companion is looked up on npm under the repo\'s own package name, never a bare marver (0.99.1\'s first run)', () => {

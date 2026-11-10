@@ -4,7 +4,10 @@
  * that loosens fails `tsc --noEmit`. The live proof's check is proof.test.ts's; the fake canvas's stream is
  * fake-canvas.test.ts's.
  */
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+// dom.ts (ICON_NAMES below) reads the colour scheme at load: a page's module, here in node
+vi.hoisted(() => { (globalThis as { matchMedia?: unknown }).matchMedia ??= () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) })
 import {
   BOUNDS, CANVAS_CHANNELS, CAPTURE_WHY, FEATURE, LIVE_BOUNDS, LIVE_KINDS, LIVE_TITLES_MAX, LIVE_WIRE, OPEN_RESULTS,
   type CaptureAnswer, type ImmersiveAnswer, type LiveEvent, type LiveItem, type LiveKind, type MarverAppV1, type OpenItem, type OpenResult,
