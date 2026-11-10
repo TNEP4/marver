@@ -958,69 +958,126 @@ describe('the mv:doc trace (A3.8 #26)', () => {
 describe('spec 32 C9: immersive play hides the strip and the lights, and brings them back (main\'s sequence; window, H4)', () => {
   let id = ''
   interface ComposeLine { strip?: 'shown' | 'hidden'; lights?: boolean; changes: Change[] }
+  /** one native call main made, watched in main: the lights' visibility and position, the strip view's setVisible */
+  interface Native { call: 'lights' | 'position' | 'strip'; arg: unknown; at: number }
   const stripLines = async (since: number) => (await lines('compose', since)).map((l) => l.data as unknown as ComposeLine)
   /** the answers the canvas heard (`onImmersive`), subscribed once per document */
   const answers = async (tab: string) => JSON.parse(await exec<string>(tab, 'JSON.stringify(window.__imm || [])')) as { on: boolean; end?: boolean }[]
   const wish = (tab: string, on: boolean) => exec(tab, `(window.__imm ||= [], window.__immOff ||= window.marverApp.onImmersive((s) => window.__imm.push(s)), window.marverApp.immersive({ on: ${on} }), 1)`)
   const stripView = async () => (await bounds('strip'))!
+  const LIGHTS = { x: 14, y: 14 }
+  /** Electron's Point, read back from AppKit */
   const lightsAt = () => w.run.pw!.evaluate(({ BaseWindow }) => BaseWindow.getAllWindows()[0]!.getWindowButtonPosition())
+  /**
+   * Wrap, once, the window's `setWindowButtonVisibility` and `setWindowButtonPosition` and the strip view's
+   * `setVisible` in main, so each call window.ts makes is journalled with its time before it reaches AppKit.
+   */
+  const watchNative = () => w.run.pw!.evaluate(({ BaseWindow }) => {
+    const g = globalThis as unknown as { __c9?: { call: string; arg: unknown; at: number }[] }
+    if (g.__c9) return
+    const log: { call: string; arg: unknown; at: number }[] = g.__c9 = []
+    const win = BaseWindow.getAllWindows()[0]!
+    const wrap = (o: object, name: string, call: string) => {
+      const x = o as Record<string, (...a: unknown[]) => unknown>
+      const f = x[name]!.bind(o)
+      x[name] = (...a: unknown[]) => { log.push({ call, arg: a[0], at: Date.now() }); return f(...a) }
+    }
+    wrap(win, 'setWindowButtonVisibility', 'lights')
+    wrap(win, 'setWindowButtonPosition', 'position')
+    const strip = win.contentView.children.find((v) => (v as { webContents?: { getURL(): string } }).webContents?.getURL().startsWith('marver-app://strip/'))
+    if (!strip) throw new Error('no strip view')
+    wrap(strip, 'setVisible', 'strip')
+  })
+  const natives = async (since: number) => (await w.run.pw!.evaluate(() => (globalThis as unknown as { __c9: Native[] }).__c9.slice())).slice(since)
+  const nativeMark = async () => (await natives(0)).length
+  const calls = (xs: Native[]) => xs.map((x) => [x.call, x.arg])
   const hidden = () => waitFor('the strip view hidden', async () => (await stripView()).visible === false)
   const shown = () => waitFor('the strip view shown', async () => (await stripView()).visible === true)
 
-  it('granted: the strip\'s CSS out and the lights off in the compose that answers, its view hidden after MOTION.out.strip, no cover; back: the view, the lights at LIGHTS', async () => {
+  it('granted: the lights off at once, the strip view hidden only after MOTION.out.strip, no cover; back: the view first, then the lights and LIGHTS', async () => {
     ;({ id } = await canvas(40, 'Immersive'))
     await w.run.call('activate', { id })
     await lifted(id)
     await uncovered(id)
+    await watchNative()
     const since = await mark()
+    const n0 = await nativeMark()
     await wish(id, true)
     await waitFor('granted', async () => (await answers(id)).some((x) => x.on))
-    const at = Date.now()
     await hidden()
-    expect(Date.now() - at).toBeLessThan(1000)
+    const out = await natives(n0)
+    // the lights pop first, then the view hides, MOTION.out.strip (240 ms) later - never at once
+    expect(calls(out)).toEqual([['lights', false], ['strip', false]])
+    const gap = out[1]!.at - out[0]!.at
+    expect(gap).toBeGreaterThanOrEqual(235)
+    expect(gap).toBeLessThan(1000)
     expect((await stripLines(since)).some((x) => x.strip === 'hidden' && x.lights === false)).toBe(true)
     expect((await ground()).cover.visible).toBe(false)
     expect((await bounds(`${id}:view`))!.bounds).toEqual(FULL(await content()))
     const back = await mark()
+    const n1 = await nativeMark()
     await wish(id, false)
     await shown()
+    await waitFor('the lights back', async () => (await natives(n1)).some((x) => x.call === 'position'))
+    // the view back first, then the lights shown, then put at LIGHTS
+    expect(calls(await natives(n1))).toEqual([['strip', true], ['lights', true], ['position', LIGHTS]])
     expect((await stripLines(back)).some((x) => x.strip === 'shown' && x.lights === true)).toBe(true)
-    expect(await lightsAt()).toEqual([14, 14])
+    expect(await lightsAt()).toEqual(LIGHTS)
     expect((await answers(id)).at(-1)).toEqual({ on: false })
   })
 
-  it('a resize keeps it; full screen in and out keeps the lights hidden; the way back puts them at LIGHTS', async () => {
+  it('a resize keeps it; full screen in and out each re-apply the lights hidden; the way back puts them at LIGHTS', async () => {
     await wish(id, true)
     await hidden()
     await w.run.call('resize', { width: 1100, height: 720 })
     await sleep(300)
     expect((await stripView()).visible).toBe(false)
     const since = await mark()
+    const n0 = await nativeMark()
     await w.run.call('fullscreen', { on: true })
     await waitFor('full screen', async () => (await w.run.call<{ fullScreen: boolean }>('window')).fullScreen)
+    // enter-full-screen re-applies the lights, still hidden
+    await waitFor('the lights re-applied at enter', async () => (await natives(n0)).some((x) => x.call === 'lights'))
+    const n1 = await nativeMark()
     await w.run.call('fullscreen', { on: false })
     await waitFor('out of full screen', async () => !(await w.run.call<{ fullScreen: boolean }>('window')).fullScreen)
+    await waitFor('the lights re-applied at leave', async () => (await natives(n1)).some((x) => x.call === 'lights'))
     await sleep(300)
-    expect((await stripLines(since)).filter((x) => x.strip).every((x) => x.strip === 'hidden' && x.lights === false)).toBe(true)
+    // both transitions: the lights set hidden, never shown, and the strip view never shown
+    expect(calls(await natives(n0)).filter(([c]) => c === 'lights')).toEqual([['lights', false], ['lights', false]])
+    expect((await natives(n0)).filter((x) => x.call === 'strip' || x.call === 'position')).toEqual([])
+    const during = (await stripLines(since)).filter((x) => x.strip)
+    expect(during.length).toBeGreaterThanOrEqual(2)
+    expect(during.every((x) => x.strip === 'hidden' && x.lights === false)).toBe(true)
+    expect((await stripView()).visible).toBe(false)
+    const n2 = await nativeMark()
     await wish(id, false)
     await shown()
-    expect(await lightsAt()).toEqual([14, 14])
+    await waitFor('the lights back', async () => (await natives(n2)).some((x) => x.call === 'position'))
+    expect(calls(await natives(n2))).toEqual([['strip', true], ['lights', true], ['position', LIGHTS]])
+    expect(await lightsAt()).toEqual(LIGHTS)
   })
 
   it('a tab switch ends it (`end`), and so does a reload (the new document starts at none)', async () => {
     await wish(id, true)
     await hidden()
+    let n = await nativeMark()
     await w.run.call('activate', { id: 'home' })
     await shown()
     expect((await answers(id)).at(-1)).toEqual({ on: false, end: true })
+    await waitFor('the lights back', async () => (await natives(n)).some((x) => x.call === 'position'))
+    expect(calls(await natives(n))).toEqual([['strip', true], ['lights', true], ['position', LIGHTS]])
     await w.run.call('activate', { id })
     await uncovered(id)
     await wish(id, false)
     await wish(id, true)
     await hidden()
+    n = await nativeMark()
     await reloadInto(id, null)
     await shown()
-    expect(await lightsAt()).toEqual([14, 14])
+    await waitFor('the lights back', async () => (await natives(n)).some((x) => x.call === 'position'))
+    expect(calls(await natives(n))).toEqual([['strip', true], ['lights', true], ['position', LIGHTS]])
+    expect(await lightsAt()).toEqual(LIGHTS)
   })
 })
 

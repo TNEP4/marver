@@ -843,10 +843,59 @@ describe('spec 32 Part B: the strip\'s Marver menu, main\'s side (the real views
       const v = openTabMenu(t.id)!
       menuShownAck(v.rev)
       expect(m.menuOpen).toBe(true)
+      m.toStrip.length = 0
       m.trouble!(why)
       expect(m.menuOpen).toBe(false)
       expect(views.menuNow()).toBeNull()
+      // `tab-menu: null` goes to the strip at once: a hung strip reads it when it recovers and takes its menu down
+      expect(m.toStrip).toEqual([[CH.tabMenuView, null]])
     }
+  })
+
+  it('B3.6, B12.6: a strip that recovers from a hang - its late ack for the old rev changes nothing, and its next open and pick work', async () => {
+    const t = await canvas()
+    const { effects } = await import('../../src/main/effects.ts')
+    const copies: string[] = []
+    const was = effects.copy
+    effects.copy = (x: string) => { copies.push(x) }
+    try {
+      const v1 = openTabMenu(t.id)!
+      menuShownAck(v1.rev)
+      m.toStrip.length = 0
+      m.trouble!('unresponsive')
+      expect(m.toStrip).toEqual([[CH.tabMenuView, null]])
+      // recovered: the strip took the queued null, hid its menu and acked the old rev - stale, nothing grows or runs
+      menuPickSend(v1.rev, null)
+      expect(m.menuOpen).toBe(false)
+      menuPickSend(v1.rev, 'copy-link')
+      expect(copies).toEqual([])
+      const v2 = openTabMenu(t.id)!
+      menuShownAck(v2.rev)
+      menuPickSend(v2.rev, 'copy-link')
+      expect(copies).toEqual([`http://localhost:${t.reg!.port}/`])
+      expect(m.menuOpen).toBe(false)
+    } finally { effects.copy = was }
+  })
+
+  it('B12.4: a canvas item picked from the app menu (its own template callback, a relay outside appCmd) closes the menu first', async () => {
+    const t = await canvas()
+    reportFn!(t.id, docs.get(t.id)!, { menu: [{ id: 'fit-all', group: 'view', label: 'Fit All' }] })
+    tabs.activate(t.id)
+    const menu = await import('../../src/main/menu.ts')
+    menu.buildNow(true)
+    type Node = { id?: string; click?: () => void; submenu?: Node[] }
+    const find = (xs: Node[]): Node | undefined => { for (const x of xs) { if (x.id === 'cv:fit-all') return x; const y = x.submenu && find(x.submenu); if (y) return y } }
+    const fit = find(m.menu as Node[])!
+    expect(fit).toBeDefined()
+    const v = openTabMenu(t.id)!
+    menuShownAck(v.rev)
+    m.toStrip.length = 0
+    fit.click!()
+    expect(views.menuNow()?.closing).toBe(true)
+    expect(nulls()).toBe(1)
+    expect(menuClicks.at(-1)).toEqual([t.id, 'fit-all', 'menu'])
+    menuPickSend(v.rev, null)
+    expect(m.menuOpen).toBe(false)
   })
 
   it('B12: main\'s close sends `tab-menu: null` and keeps the strip grown until the strip\'s null pick for that rev, or 150 ms', async () => {
@@ -1054,6 +1103,34 @@ describe('spec 32 Part B: the strip\'s Marver menu, main\'s side (the real views
       expect(cv.focused).toBe(c0 + 1)
     })
 
+    it('B3.6: opened by pointer over a canvas, never shown - the deadline gives the canvas focus back (the strip\'s late ack is stale)', async () => {
+      const t = await canvas()
+      const cv = content.get(t.id)!.webContents
+      cv.emit('focus')
+      stripWc.emit('focus')               // the right mousedown
+      openTabMenu(t.id, { key: false, hadFocus: false })
+      const cv0 = cv.focused
+      await sleep(560)
+      expect(views.menuNow()).toBeNull()
+      expect(cv.focused).toBe(cv0 + 1)
+      const f = await focus()
+      expect(f.focusOwner()).toEqual({ part: 'content', tab: t.id })
+    })
+
+    it('B12.6: the strip hangs with the menu open by pointer - focus goes back to the canvas at once', async () => {
+      const t = await canvas()
+      const cv = content.get(t.id)!.webContents
+      cv.emit('focus')
+      stripWc.emit('focus')
+      const v = openTabMenu(t.id, { key: false, hadFocus: false })!
+      menuShownAck(v.rev)
+      const cv0 = cv.focused
+      m.trouble!('unresponsive')
+      expect(cv.focused).toBe(cv0 + 1)
+      menuPickSend(v.rev, null)           // its ack on recovery: stale, focus not moved again
+      expect(cv.focused).toBe(cv0 + 1)
+    })
+
     it('a pick that moves focus itself (an activate from ») restores nothing; one that does not (a copy) restores it', async () => {
       const a = await canvas()
       const b = await canvas()
@@ -1173,19 +1250,44 @@ describe('spec 32 C8: main\'s immersive gate, the views.ts glue (through the moc
     expect(immersiveSent.at(-1)).toMatchObject({ n: 1, on: false, end: true })
   })
 
-  it('C8.1: F6 while immersive - main ends it (the strip back first), then focuses the strip; the grant then reads ended', async () => {
-    const t = await canvas()
-    m.facts.set(t.id, FULL)
-    wish(t, true, 1)
-    expect(m.stripShown.get(t.id)).toBe(false)
-    runCommand('focus-strip', 'key', { keys: 'F6', in: 'shell' })
-    expect(m.stripShown.get(t.id)).toBe(true)
-    expect(immersiveSent.at(-1)).toMatchObject({ n: 1, on: false, end: true })
-    expect(t.reports.immersiveGrant).toBe('ended')
-    // the shell turns Hide UI off, then on again: the gate decides again (main's end does not latch)
-    wish(t, false, 2)
-    wish(t, true, 3)
-    expect(immersiveSent.at(-1)).toMatchObject({ n: 3, on: true })
+  it('C8.1: F6 and ⇧F6 while immersive - main ends it (the strip back first), then the strip takes focus; the grant then reads ended', async () => {
+    const f = await import('../../src/main/focus.ts')
+    const stripWc = new FakeWc('marver-app://strip/')
+    // what the strip's focus saw: whether the strip was shown when it took focus
+    const atFocus: (boolean | undefined)[] = []
+    f.resetFocus()
+    f.setFocusPorts({
+      active: () => tabs.activeTab()?.id, strip: () => stripWc as never,
+      content: (id) => content.get(id)?.webContents as never, page: () => undefined,
+      pageFocus: () => {},
+    })
+    f.track(stripWc as never, { part: 'strip' })
+    try {
+      const t = await canvas()
+      stripWc.on('focus', () => { atFocus.push(m.stripShown.get(t.id)) })
+      const cv = content.get(t.id)!.webContents
+      m.facts.set(t.id, FULL)
+      let n = 0
+      for (const [cmd, keys] of [['focus-strip', 'F6'], ['focus-strip-back', 'Shift+F6']] as const) {
+        wish(t, true, ++n)
+        expect(m.stripShown.get(t.id)).toBe(false)
+        cv.emit('focus')                     // the canvas holds focus while immersive
+        const s0 = stripWc.focused
+        runCommand(cmd, 'key', { keys, in: 'shell' })
+        expect(m.stripShown.get(t.id)).toBe(true)
+        expect(immersiveSent.at(-1)).toMatchObject({ n, on: false, end: true })
+        expect(t.reports.immersiveGrant).toBe('ended')
+        // then the strip takes focus, already shown
+        expect(stripWc.focused).toBe(s0 + 1)
+        expect(atFocus.at(-1)).toBe(true)
+        expect(f.focusOwner()).toEqual({ part: 'strip' })
+        // the shell turns Hide UI off, then on again: the gate decides again (main's end does not latch)
+        wish(t, false, ++n)
+        expect(t.reports.immersiveGrant).toBeUndefined()
+      }
+      wish(t, true, ++n)
+      expect(immersiveSent.at(-1)).toMatchObject({ n, on: true })
+    } finally { f.setFocusPorts(null as never); f.resetFocus() }
   })
 
   it('B12.8: turning immersive on closes the strip\'s menu first', async () => {

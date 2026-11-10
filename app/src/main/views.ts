@@ -1487,6 +1487,9 @@ function openMenu(h: AppCmdHandle | undefined, kind: 'tab' | 'more', lines: Menu
     compose()
     sendToStrip(CH.tabMenuView, null)
     rec.cmd?.noop('no-show')
+    // B14: the open moved focus to the strip (focusStripQuiet); the strip's null ack to come is stale, so focus goes
+    // back here, while the strip still holds it
+    afterMainClose(rec)
   }, MENU_SHOW_MS)
 }
 
@@ -1572,6 +1575,10 @@ function menuTrouble(why: 'gone' | 'unresponsive'): void {
   rec.cmd?.noop('closed')
   j('tab-menu', { rev: rec.rev, trouble: why })
   compose()
+  // a hung strip that recovers reads the queued null and takes its menu and catcher down (its later ack is stale);
+  // a reloaded one starts with none. Focus goes back as for main's own close (B14)
+  sendToStrip(CH.tabMenuView, null)
+  afterMainClose(rec)
 }
 
 /** Each compose reads it (B1.2, plan.ts `menu`); B12.5's changes of the active tab or of the menu's tab close it here. */
@@ -1768,6 +1775,9 @@ function endExport(h: AppCmdHandle | undefined, r: ExportResult): void {
 
 /** `mv:menu-click` for the active canvas's own items, only while its token holds. A relay (#51): the shell records it, told it came from the menu. */
 function canvasClick(k: MenuToken, id: string): void {
+  // spec 32 B12.4: an app menu pick closes the strip's menu first - this relay does not pass through appCmd, whose
+  // before-command hook closes it for every other pick
+  closeMenu()
   const t = getTab(k.tab)
   if (!t || !holds(k) || !t.doc?.trusted || !t.reports.menu?.some((m: MenuItem) => m.id === id)) return
   trust.menuClick(t.id, id, 'menu')
