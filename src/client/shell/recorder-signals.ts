@@ -27,6 +27,7 @@ import { hooked, perfSeams, type Answered } from './recorder-seams.ts'
 import { addRow, createRate, foldRows, nodesIn, normRoute, p50, topWarnings } from './recorder-signals-core.ts'
 import { useStore } from './store.ts'
 import { isHideUI, onHideUI } from './Toolbar.tsx'
+import { isGranted, onImmersiveChange } from './immersive.ts'
 
 type State = ReturnType<typeof useStore.getState>
 
@@ -455,7 +456,7 @@ export function startSignals(): void {
 
   // what is on already counts from here, with no enter record of its own
   const s0 = useStore.getState()
-  const held = { ...canvasModes(s0), comments: useComments.getState().commentMode, 'hide-ui': isHideUI(), 'jam-session': !!useJamQueue.getState().session, 'jam-capture': !!useJamCapture.getState().current, ...reviewModes() }
+  const held = { ...canvasModes(s0), comments: useComments.getState().commentMode, 'hide-ui': isHideUI(), immersive: isGranted(), 'jam-session': !!useJamQueue.getState().session, 'jam-capture': !!useJamCapture.getState().current, ...reviewModes() }
   for (const k of Object.keys(held) as ModeName[]) if (held[k]) modes.set(k, { since: now(), errors: 0 })
 
   // #21, #26: the `t` a message to a document carries
@@ -471,6 +472,8 @@ export function startSignals(): void {
   useJamCapture.subscribe(hooked('mode', (s: { current: string | null }, p: { current: string | null }) => { if (s.current !== p.current) setModes({ 'jam-capture': !!s.current }) }))
   useJamUi.subscribe(hooked('mode', () => setModes(reviewModes())))
   onHideUI(hooked('mode', () => setModes({ 'hide-ui': isHideUI() })))
+  // spec 32 C11: immersive play, held while main's grant stands (immersive.ts `granted`)
+  onImmersiveChange(hooked('mode', () => setModes({ immersive: isGranted() })))
 
   perfSeams.frameMessage.on(hooked(null, onFrameMessage))
   perfSeams.stageMessage.on(hooked(null, onStageMessage))

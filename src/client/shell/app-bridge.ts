@@ -24,6 +24,9 @@
  * - `mv:show` (app 1.1, spec 31 D1): a `marver://` link into this tab, shown by show.ts as `marver show` is; and
  *   show.ts asks `front()` once it showed a `marver show`.
  *
+ * - `mv:immersive` (app 1.2, spec 32 C1, C2): immersive play's wish, and main's answer - immersive.ts; a `hidden` or
+ *   `untrusted` app state ends it with Hide UI off (C6.4, C6.5).
+ *
  * The one ground (0.27.2, A3.8 #27, #31): `mv:hello` says the inset the shell applied (inset.ts's `TOP`: 44 only when
  * the app said so and gave the whole presentation contract), and each `mv:present { epoch, w, h, frames }` is answered
  * once the viewport has that size (500 ms at most) and `frames` animation frames have passed, with the size it was
@@ -52,6 +55,7 @@ import { useJamVoice, voiceUntrusted } from './jam-voice.ts'
 import { endOpen, openLiveItem } from './open-item.ts'
 import { showTarget } from './show.ts'
 import { navigatedByHand } from './goto.ts'
+import { appStateEnds, startImmersive } from './immersive.ts'
 
 /** The ground under the strip (A2.14 #26): the shell's own - never a frame's pinned theme. */
 export const shellDark = (): boolean => { const s = useStore.getState(); return !!s.play || s.viewTheme === 'dark' }
@@ -210,6 +214,8 @@ function onAppState(s: AppState): void {
   if (s === 'shown') { void resumeReconcile(); return }
   // a notice's click still reading or waiting moves nothing more once the tab is hidden or its trust is gone
   endOpen()
+  // spec 32 C6.4, C6.5: immersive play ends with Hide UI off, so coming back shows the chrome
+  appStateEnds()
   if (s === 'untrusted') voiceUntrusted()
 }
 
@@ -237,6 +243,8 @@ export function startAppBridge(): void {
   // the one ground's presentation requests (0.27.2): answered only when the shell took the inset - a shell that did
   // not is placed below the strip and never asked (A3.8 #31)
   if (TOP) call(() => { answerPresents(app, call) })
+  // spec 32 C1: immersive play's wish, sent on every change, and main's answers (an app without `immersive` gets none)
+  call(() => startImmersive())
 
   // 1. hello, first (A2.14 #9)
   call(() => app.hello(helloNow()))

@@ -11,12 +11,14 @@
  * next) stays prototype-only.
  */
 import { setStageSize } from './stage-size.ts'
-import { usable } from './inset.ts'
+import { onTopChange, usable } from './inset.ts'
+import { onImmersiveChange, tight as tightNow } from './immersive.ts'
+import { MOTION } from '../../shared/immersive.ts'
 import { frameLoaded, frameReady, onFrameMessage, stageNavigated } from './jam-capture.ts'
 import { jamKey } from './jam-keys.ts'
 import { letGoOfTile } from './jam-state.ts'
 import { JamButton } from './jam-session.tsx'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useStore, BOARD_POLICY, BRANDING, CONFIG, PUBLISHED, SOURCE_REVEALED, boardLabel, boardLocked, cap, fetchBoardNames, modeAllowed, playsAsSlides, SLIDE_INTRINSIC, stoppedFor, type Node } from './store.ts'
 import { deckOrder } from './play-order.ts'
 import { boardOrder, presentDevice } from '../../shared/export-plan.ts'
@@ -312,6 +314,15 @@ function PlayInner() {
   const src = useRef(play ? withWs(`${ROUTE}/stage/?at=${encodeURIComponent(play.at)}&theme=${encodeURIComponent(play.theme)}${slParams(play)}`) : '')
   // the view below the Mac app's strip when the shell took the inset (inset.ts): fill, the doc preset and every fit
   const [win, setWin] = useState(() => { const u = usable(); return { w: u.width, h: u.height } })
+  // spec 32 C4: play's 24 px margins - Hide UI on in play (immersive.ts `tight`: in the app, at main's answer)
+  const [tight, setTight] = useState(tightNow)
+  // spec 32 C5.2: the stage's FLIP on a re-fit C4 causes - its rect before the re-fit, read as it changes
+  const rootRef = useRef<HTMLDivElement>(null)
+  const stageRef = useRef<HTMLDivElement>(null)
+  const flipFrom = useRef<{ width: number; height: number } | null>(null)
+  const flipping = useRef<{ end: () => void } | null>(null)
+  const fixedRef = useRef(false)
+  const sizeRef = useRef({ w: 0, h: 0 })
   const [pillOpen, setPillOpen] = useState(true)          // collapse (pill -> re-open fab), like the canvas
   const [stageReady, setStageReady] = useState(0)         // bumps on each sh:stage-ready (reload) - re-drives the highlight
   const [away, setAway] = useState(false)                 // the stage shows another project's "another canvas" page (A1.11)
@@ -572,6 +583,8 @@ function PlayInner() {
         c.setMode(false); c.setActive(null); c.setDraft(null); s.setLaser(false)
         endAfterFrames(h)
       }
+      // spec 32 C7: a board with no way out (locked, a published deep link) - Escape with nothing live shows the UI again
+      else if (noDoor && isHideUI()) { cmd('hide-ui', how); toggleHideUI() }
       else exitFrom(how)
       return
     }
@@ -629,8 +642,53 @@ function PlayInner() {
   useEffect(() => {
     const onResize = () => { const u = usable(); setWin({ w: u.width, h: u.height }) }
     window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
+    // spec 32 C4: `win` follows the play inset (onTopChange) and the margins `tight` - one refit for main's one answer
+    // (the two land in one turn and render once). A fixed stage's rect is read first, for its FLIP (C5.2): mid-FLIP it
+    // is the size it shows now, so a reversal starts from there
+    const refit = () => {
+      if (fixedRef.current && stageRef.current) { const r = stageRef.current.getBoundingClientRect(); flipFrom.current = { width: r.width, height: r.height } }
+      onResize()
+      setTight(tightNow())
+    }
+    const offTop = onTopChange(refit)
+    const offTight = onImmersiveChange(refit)
+    return () => { window.removeEventListener('resize', onResize); offTop(); offTight(); flipping.current?.end() }
   }, [])
+
+  // spec 32 C5.2: a fixed stage re-fit by C4 (the play inset, the margins) animates as a FLIP - it starts at
+  // scale(prev/next) at its new whole-pixel size and runs to none over the stage's time; `.flip` holds the inner .dev's
+  // own size transition off, so one animation resizes it. Ended by the transform's transitionend, or the time + 50 ms;
+  // a newer re-fit mid-FLIP starts again from the rect it shows (read before the re-fit); leaving play drops it at once
+  useLayoutEffect(() => {
+    const from = flipFrom.current
+    flipFrom.current = null
+    const el = stageRef.current, root = rootRef.current
+    const { w, h } = sizeRef.current
+    if (!from || !el || !root || !w || !h || (Math.abs(from.width - w) < 0.5 && Math.abs(from.height - h) < 0.5)) return
+    flipping.current?.end()
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return   // C5.4: instant
+    const m = tightNow() ? MOTION.out : MOTION.back
+    root.classList.add('flip')
+    el.style.transition = 'none'
+    el.style.transform = `scale(${from.width / w}, ${from.height / h})`
+    void el.getBoundingClientRect()
+    el.style.transition = `transform ${m.stage}ms ${m.stageEase}`
+    el.style.transform = 'none'
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const onEnd = (e: TransitionEvent) => { if (e.target === el && e.propertyName === 'transform') f.end() }
+    const f = {
+      end: () => {
+        clearTimeout(timer)
+        el.removeEventListener('transitionend', onEnd)
+        root.classList.remove('flip')
+        el.style.transition = ''; el.style.transform = ''
+        if (flipping.current === f) { flipping.current = null; setStageReady((n) => n + 1) }   // the comments overlay re-measures
+      },
+    }
+    el.addEventListener('transitionend', onEnd)
+    timer = setTimeout(f.end, m.stage + 50)
+    flipping.current = f
+  })
 
   if (!play) return null                       // parent gates on play; belt to its braces
 
@@ -651,11 +709,18 @@ function PlayInner() {
   // (no hook here - this is past the early return: a microtask, right after this layout)
   const stageAt = play.at, stageW = Math.round(vp.width), stageH = Math.round(vp.height)
   queueMicrotask(() => setStageSize(stageAt, stageW, stageH))
+  // spec 32 C4: shown, today's margins; Hide UI on (`tight`), 24 px in both axes in every host - fill and the doc preset
+  // have none either way, and grow with `win`
   const scale = stage ? Math.max(0.05, fill ? Math.min(win.w / vp.width, win.h / vp.height)
+      : tight ? Math.min((win.w - 24) / vp.width, (win.h - 24) / vp.height)
       : slides ? Math.min((win.w - 48) / vp.width, (win.h - (deckChrome === 'none' ? 48 : 88)) / vp.height)
       : Math.min((win.w - 96) / vp.width, (win.h - 128) / vp.height))
     : docPreset || fill ? 1
+    : tight ? Math.min(1, (win.w - 24) / vp.width, (win.h - 24) / vp.height)
     : Math.min(1, (win.w - 96) / vp.width, (win.h - 128) / vp.height)
+  // the stages whose width and height scale together get the FLIP (C5.2): a slide stage (under fill too) and a device;
+  // responsive fill and the doc preset only grow in height while the iframe reflows - a FLIP would squash the live frame
+  fixedRef.current = !!stage || !(docPreset || fill)
   const names = Object.keys(CONFIG.viewports)
   const list = focus ? [play.at] : slides ? currentDeck() : playList()
   const pos = list.indexOf(play.at)
@@ -666,14 +731,15 @@ function PlayInner() {
   // fractional sizes left subpixel seams glowing at the corners on dark frames
   const dw = Math.round(vp.width * scale)
   const dh = Math.round(vp.height * scale)
+  sizeRef.current = { w: dw, h: dh }
   const deviceHint = stage ? `${vp.width} × ${vp.height} stage · ${fill ? 'edge to edge' : 'fit to the window'}`
     : fill ? 'Fill window' : `${CONFIG.viewports[play.device] ? `${deviceLabel(play.device)} · ` : ''}${vp.width} × ${vp.height} · keys 1-${names.length + 1}`
 
   return (
-    <div className={`sh-play${fill || docPreset ? ' fill' : ''}${docPreset ? ` doc t-${play.theme}` : ''}`}>
+    <div ref={rootRef} className={`sh-play${fill || docPreset ? ' fill' : ''}${docPreset ? ` doc t-${play.theme}` : ''}`}>
       {/* device + comment overlay share ONE flex-centered box; the overlay is inset:0 over
           it (a sibling of the clipping .dev, so a thread card is never eaten by overflow) */}
-      <div className="sh-play-stage" style={{ width: dw, height: dh }}
+      <div ref={stageRef} className="sh-play-stage" style={{ width: dw, height: dh }}
         onClick={slides ? (e) => {
           // background advance: never on controls, links, media, comments, or goto targets
           const t = e.target as Element
