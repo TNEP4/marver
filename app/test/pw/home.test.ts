@@ -36,6 +36,7 @@ let rev = 0
 const readyCalls: unknown[] = []
 beforeAll(async () => {
   p = await openPage('home', { width: 1280, height: 800 })
+  p.page.setDefaultTimeout(5000)
   readyCalls.push(...await p.calls('app:ready'))
 })
 afterAll(async () => { await p?.close() })
@@ -70,8 +71,9 @@ const look = async (dark: boolean) => {
 async function setView(v: 'grid' | 'board') {
   if (await p.page.$(`.hm-body.${v}`)) return
   await p.page.click('[data-key="view"]')
-  await p.page.click(`.mv-row[data-id="${v}"]`, { delay: 0 }).catch(() => {})
-  await p.page.waitForSelector(`.hm-body.${v}`)
+  await pickByPointer(v)
+  await p.page.waitForSelector(`.hm-body.${v}`, { timeout: 3000 })
+  await p.page.mouse.move(1, 470)
 }
 const css = (sel: string, props: string[], pseudo?: string) => p.page.evaluate(([s, ps, pe]) => {
   const el = document.querySelector(s as string)
@@ -80,7 +82,8 @@ const css = (sel: string, props: string[], pseudo?: string) => p.page.evaluate((
   return Object.fromEntries((ps as string[]).map((k) => [k, cs.getPropertyValue(k).trim()]))
 }, [sel, props, pseudo ?? ''] as const)
 const rect = (sel: string) => p.page.evaluate(async (s) => {
-  await Promise.all(document.getAnimations().map((a) => a.finished.catch(() => null)))
+  // the pops and transitions settled; never an infinite one (the working dot's pulse)
+  await Promise.all(document.getAnimations().filter((a) => a.effect?.getTiming().iterations !== Infinity).map((a) => a.finished.catch(() => null)))
   const el = document.querySelector(s)
   if (!el) throw new Error(`no ${s}`)
   const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height }
@@ -155,11 +158,13 @@ describe('D1, D2, D10: the page, its header, the empty state', () => {
     expect(await p.page.getAttribute('[data-key="help"]', 'title')).toBe('How Marver runs')
     // hover: glass, ink (light); dark its own fill and highlight
     await p.page.hover('[data-key="view"]')
+    await sleep(250)
     expect(await css('[data-key="view"]', ['background-image', 'box-shadow', 'color', 'backdrop-filter'])).toEqual({
       'background-image': 'linear-gradient(155deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.55) 50%, rgba(255, 255, 255, 0.3))',
       'box-shadow': 'rgba(255, 255, 255, 0.95) 0px 1px 0px 0px inset', color: 'rgb(24, 24, 27)', 'backdrop-filter': 'blur(16px) saturate(1.5)',
     })
     await look(true)
+    await sleep(250)
     expect(await css('[data-key="view"]', ['background-color', 'box-shadow', 'color'])).toEqual({ 'background-color': 'rgba(255, 255, 255, 0.08)', 'box-shadow': 'rgba(255, 255, 255, 0.08) 0px 1px 0px 0px inset', color: 'rgb(245, 245, 247)' })
     await look(false)
   })
@@ -188,7 +193,7 @@ describe('D4, D5, D7: the grid, the card and the board', () => {
     expect((await css('.hm-grid', ['grid-template-columns']))['grid-template-columns'].split(' ')).toHaveLength(4)
     expect(await css('.hm-grid', ['column-gap', 'margin-bottom'])).toEqual({ 'column-gap': '12px', 'margin-bottom': '26px' })
     // the order inside Running: column priority, then strip order
-    expect(await p.page.$$eval('.hm-grid:first-of-type .hm-card .hm-name', (els) => els.map((e) => e.textContent))).toEqual(['Asteria', 'Calepin', 'Ambient agent', 'Aperture', 'OS'])
+    expect(await p.page.$$eval('.hm-grid', (els) => [...els[0]!.querySelectorAll('.hm-name')].map((e) => e.textContent))).toEqual(['Asteria', 'Calepin', 'Ambient agent', 'Aperture', 'OS'])
     await world({ tabs: [home, tab('os', 'OS', 4809)], view: 'grid' })
     expect(await texts('.hm-sec')).toEqual(['Running 1'])
   })
@@ -225,7 +230,8 @@ describe('D4, D5, D7: the grid, the card and the board', () => {
     // not running: the logo greyed, back to colour on hover
     expect(await css('[data-card="r_0000000000000001"] .logo', ['filter', 'opacity'])).toEqual({ filter: 'grayscale(0.85)', opacity: '0.55' })
     await p.page.hover('[data-card="r_0000000000000001"]')
-    expect(await css('[data-card="r_0000000000000001"] .logo', ['filter', 'opacity'])).toEqual({ filter: 'none', opacity: '1' })
+    expect(await css('[data-card="r_0000000000000001"] .logo', ['filter', 'opacity'])).toEqual({ filter: 'none', opacity: '1' })   // no transition
+    await sleep(250)
     expect((await css('[data-more="r_0000000000000001"]', ['opacity'])).opacity).toBe('1')
   })
 
@@ -409,8 +415,9 @@ describe('D8: menus and clicks on Home', () => {
     await p.page.click('[data-more="calepin"]')
     expect(await menuRows()).toEqual(['Open', 'Update to 0.32.0', '-', 'Copy link', 'Copy path', 'Reveal in Finder'])
     const c = await rect('[data-card="calepin"]'), m = await rect('.mv-menu')
-    expect(m.right).toBeCloseTo(c.right - 8, 0)
-    expect(m.top).toBeCloseTo(c.bottom - 4, 0)
+    // menu.ts places on whole pixels
+    expect(Math.abs(m.right - (c.right - 8))).toBeLessThanOrEqual(1)
+    expect(Math.abs(m.top - (c.bottom - 4))).toBeLessThanOrEqual(1)
     expect(await p.page.$eval('[data-card="calepin"]', (e) => [e.classList.contains('hov'), e.classList.contains('menu-open')])).toEqual([true, true])
     expect(await p.page.$eval('[data-more="calepin"]', (e) => [e.classList.contains('on'), e.getAttribute('aria-expanded')])).toEqual([true, 'true'])
     expect(await css('[data-more="calepin"]', ['opacity', 'background-color'])).toEqual({ opacity: '1', 'background-color': 'rgba(24, 24, 27, 0.12)' })
@@ -427,13 +434,14 @@ describe('D8: menus and clicks on Home', () => {
     const os = await rect('[data-card="os"]')
     await rightClick(os.left + 30, os.top + 20)
     let m = await rect('.mv-menu')
-    expect([Math.round(m.left), Math.round(m.top)]).toEqual([Math.round(os.left + 30), Math.round(os.top + 22)])
+    expect(Math.abs(m.left - (os.left + 30))).toBeLessThanOrEqual(1)
+    expect(Math.abs(m.top - (os.top + 22))).toBeLessThanOrEqual(1)
     await closeAll()
     // the rightmost card, right-clicked at its far edge: the menu's right edge stays 14 px in
     const last = await p.page.$$eval('.hm-grid .hm-card', (els) => { const r = els[3]!.getBoundingClientRect(); return { x: r.right - 3, y: r.top + 20, id: (els[3] as HTMLElement).dataset.card } })
     await rightClick(last.x, last.y)
     m = await rect('.mv-menu')
-    expect(m.right).toBeCloseTo(1280 - 14, 0)
+    expect(Math.abs(m.right - (1280 - 14))).toBeLessThanOrEqual(1)
     await closeAll()
     // near the window's foot it opens upward, never above 44 + 14
     await p.resize(1280, 480)
@@ -442,7 +450,7 @@ describe('D8: menus and clicks on Home', () => {
     await rightClick(chip.left + 10, chip.top + 10)
     expect(await menuRows()).toEqual(['Open', '-', 'Copy link'])
     m = await rect('.mv-menu')
-    expect(m.bottom).toBeCloseTo(chip.top + 10 - 2, 0)
+    expect(Math.abs(m.bottom - (chip.top + 10 - 2))).toBeLessThanOrEqual(1)
     expect(await p.page.$eval('.mv-menu', (e) => (e as HTMLElement).dataset.side)).toBe('up')
     await closeAll()
     await rightClick(20, 470)
@@ -513,7 +521,7 @@ describe('D8: menus and clicks on Home', () => {
     expect(await p.page.$('.hm-help2')).toBeNull()
     await tabs(BUSY)
     // a wheel over the grid closes a card menu; Help survives a scroll
-    await p.resize(1280, 480)
+    await p.resize(1280, 400)
     await p.page.hover('[data-card="os"]')
     await p.page.click('[data-more="os"]')
     await p.page.evaluate(() => { const b = document.querySelector('.hm-body')!; b.scrollTop = 40 })
@@ -585,7 +593,7 @@ describe('D8: menus and clicks on Home', () => {
     expect(card.bottom).toBeLessThanOrEqual(list.bottom + 0.5)
     expect(await p.page.$eval(`[data-card="${id}"]`, (e) => e.classList.contains('hov'))).toBe(true)
     const m = await rect('.mv-menu')
-    expect(m.right).toBeCloseTo(card.right - 8, 0)
+    expect(Math.abs(m.right - (card.right - 8))).toBeLessThanOrEqual(1)
     expect(await menuOpen()).toBe(true)
     await closeAll()
     await p.resize(1280, 800)
@@ -616,6 +624,7 @@ describe('D9: Help', () => {
     await p.page.click('.hm-foot-btn')
     expect(await p.calls('home:action')).toEqual([{ action: 'copy', id: 'init' }, { action: 'show-files' }])
     await p.page.waitForSelector('.hm-cmd2 >> nth=1 >> button.done')
+    await sleep(300)
     expect((await css('.hm-cmd2 button.done', ['background-color']))['background-color']).toBe('rgba(52, 199, 89, 0.22)')
     for (const sel of ['.hm-cmd2 button', '.hm-foot-btn']) expect((await css(sel, ['cursor'])).cursor, sel).toBe('pointer')
     // the edge ring is not clipped: the clip lives on the inner wrapper
@@ -683,7 +692,7 @@ describe('D11: Home\'s UI state lives outside the DOM', () => {
     expect(await focusedRow()).toBe('copy-link')
     // the card moved column (Running to Not running): the menu re-anchored to its more button's new rect
     const c = await rect('[data-card="os"]'), m = await rect('.mv-menu')
-    expect(m.right).toBeCloseTo(Math.min(c.right - 8, 1280 - 14), 0)
+    expect(Math.abs(m.right - (Math.min(c.right - 8, 1280 - 14)))).toBeLessThanOrEqual(1)
     // an unverified card that verifies gains Copy link
     await closeAll()
     await tabs([...BUSY, tab('u', 'U', 4820, { state: 'unverified' })])
@@ -734,7 +743,7 @@ describe('D11: Home\'s UI state lives outside the DOM', () => {
     await sleep(150)
     expect(await menuOpen()).toBe(true)
     const c = await rect(`[data-card="${id}"]`), m = await rect('.mv-menu')
-    expect(m.right).toBeCloseTo(c.right - 8, 0)
+    expect(Math.abs(m.right - (c.right - 8))).toBeLessThanOrEqual(1)
     await closeAll()
     await world({ tabs: BUSY, recent: RECENT, view: 'grid', size: [720, 480] })
     await p.page.$eval('.hm-body', (e) => { e.scrollTop = 60 })
@@ -751,6 +760,7 @@ describe('E7 and the system settings', () => {
     await p.page.keyboard.press('Tab'); await p.page.keyboard.press('Tab'); await p.page.keyboard.press('Tab')
     expect(await p.page.evaluate(() => (document.activeElement as HTMLElement).dataset.card)).toBe('asteria')
     expect(await css('[data-card="asteria"]', ['outline-color', 'outline-style'])).toEqual({ 'outline-color': 'rgb(0, 136, 255)', 'outline-style': 'solid' })
+    await sleep(250)
     expect((await css('[data-more="asteria"]', ['opacity'])).opacity).toBe('1')
   })
 
@@ -758,6 +768,7 @@ describe('E7 and the system settings', () => {
     await world({ tabs: BUSY, view: 'grid' })
     for (const f of [{ 'prefers-reduced-transparency': 'reduce' }, { 'prefers-contrast': 'more' }] as Record<string, string>[]) {
       await p.media(f)
+      await sleep(250)   // the fill's own transition
       const c = await css('[data-card="os"]', ['backdrop-filter', 'background-color'])
       expect(c['backdrop-filter'], JSON.stringify(f)).toBe('none')
       expect(c['background-color']).toMatch(/^rgb\(/)
