@@ -955,6 +955,75 @@ describe('the mv:doc trace (A3.8 #26)', () => {
   })
 })
 
+describe('spec 32 C9: immersive play hides the strip and the lights, and brings them back (main\'s sequence; window, H4)', () => {
+  let id = ''
+  interface ComposeLine { strip?: 'shown' | 'hidden'; lights?: boolean; changes: Change[] }
+  const stripLines = async (since: number) => (await lines('compose', since)).map((l) => l.data as unknown as ComposeLine)
+  /** the answers the canvas heard (`onImmersive`), subscribed once per document */
+  const answers = async (tab: string) => JSON.parse(await exec<string>(tab, 'JSON.stringify(window.__imm || [])')) as { on: boolean; end?: boolean }[]
+  const wish = (tab: string, on: boolean) => exec(tab, `(window.__imm ||= [], window.__immOff ||= window.marverApp.onImmersive((s) => window.__imm.push(s)), window.marverApp.immersive({ on: ${on} }), 1)`)
+  const stripView = async () => (await bounds('strip'))!
+  const lightsAt = () => w.run.pw!.evaluate(({ BaseWindow }) => BaseWindow.getAllWindows()[0]!.getWindowButtonPosition())
+  const hidden = () => waitFor('the strip view hidden', async () => (await stripView()).visible === false)
+  const shown = () => waitFor('the strip view shown', async () => (await stripView()).visible === true)
+
+  it('granted: the strip\'s CSS out and the lights off in the compose that answers, its view hidden after MOTION.out.strip, no cover; back: the view, the lights at LIGHTS', async () => {
+    ;({ id } = await canvas(40, 'Immersive'))
+    await w.run.call('activate', { id })
+    await lifted(id)
+    await uncovered(id)
+    const since = await mark()
+    await wish(id, true)
+    await waitFor('granted', async () => (await answers(id)).some((x) => x.on))
+    const at = Date.now()
+    await hidden()
+    expect(Date.now() - at).toBeLessThan(1000)
+    expect((await stripLines(since)).some((x) => x.strip === 'hidden' && x.lights === false)).toBe(true)
+    expect((await ground()).cover.visible).toBe(false)
+    expect((await bounds(`${id}:view`))!.bounds).toEqual(FULL(await content()))
+    const back = await mark()
+    await wish(id, false)
+    await shown()
+    expect((await stripLines(back)).some((x) => x.strip === 'shown' && x.lights === true)).toBe(true)
+    expect(await lightsAt()).toEqual([14, 14])
+    expect((await answers(id)).at(-1)).toEqual({ on: false })
+  })
+
+  it('a resize keeps it; full screen in and out keeps the lights hidden; the way back puts them at LIGHTS', async () => {
+    await wish(id, true)
+    await hidden()
+    await w.run.call('resize', { width: 1100, height: 720 })
+    await sleep(300)
+    expect((await stripView()).visible).toBe(false)
+    const since = await mark()
+    await w.run.call('fullscreen', { on: true })
+    await waitFor('full screen', async () => (await w.run.call<{ fullScreen: boolean }>('window')).fullScreen)
+    await w.run.call('fullscreen', { on: false })
+    await waitFor('out of full screen', async () => !(await w.run.call<{ fullScreen: boolean }>('window')).fullScreen)
+    await sleep(300)
+    expect((await stripLines(since)).filter((x) => x.strip).every((x) => x.strip === 'hidden' && x.lights === false)).toBe(true)
+    await wish(id, false)
+    await shown()
+    expect(await lightsAt()).toEqual([14, 14])
+  })
+
+  it('a tab switch ends it (`end`), and so does a reload (the new document starts at none)', async () => {
+    await wish(id, true)
+    await hidden()
+    await w.run.call('activate', { id: 'home' })
+    await shown()
+    expect((await answers(id)).at(-1)).toEqual({ on: false, end: true })
+    await w.run.call('activate', { id })
+    await uncovered(id)
+    await wish(id, false)
+    await wish(id, true)
+    await hidden()
+    await reloadInto(id, null)
+    await shown()
+    expect(await lightsAt()).toEqual([14, 14])
+  })
+})
+
 describe('the app\'s own pages at the full height (A3.8 #32)', () => {
   it('Home and Settings: full bounds, the cover hidden, nothing scrolls but the area 44 px down, focus targets below it', async () => {
     for (const page of ['home', 'settings'] as const) {

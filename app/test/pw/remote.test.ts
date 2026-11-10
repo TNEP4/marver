@@ -154,12 +154,12 @@ describe('opening, the policy, the guard (A4.6 #39-#43, #45, #49)', () => {
     await w.until((x) => shared(x, 'pilot')!.doc!.commits > t.doc!.commits && !!shared(x, 'pilot')!.doc!.lifted, 10_000, 'reloaded')
   })
 
-  it('its tab menu: Open in Browser, Copy Link, Reload, Force Reload, Close Tab - no Reveal in Finder, no Mark All as Seen', async () => {
+  it('its tab menu (spec 32 B4): Open in browser, Copy link, Reload, Force reload, Close tab - no Reveal in Finder, no Mark all as seen', async () => {
     const t = await now('pilot')
     await w.run.call('tabMenu', { id: t.id })
-    const pop = (await w.log('popup')).at(-1)!.data as { items: { label: string }[] }
-    expect(pop.items.map((i) => i.label)).toEqual(['Open in Browser', 'Copy Link', 'Reload', 'Force Reload', 'Close Tab'])
-    await w.run.call('popup:click', { label: 'Copy Link' })
+    const pop = (await w.log('popup')).at(-1)!.data as { items: { label: string; enabled: boolean }[] }
+    expect(pop.items).toEqual(['Open in browser', 'Copy link', 'Reload', 'Force reload', 'Close tab'].map((label) => ({ label, enabled: true })))
+    await w.run.call('popup:click', { label: 'Copy link' })
     expect((await w.run.call<{ copies: string[] }>('effects')).copies.at(-1)).toBe(t.remote!.url)
   })
 
@@ -458,6 +458,8 @@ describe('the overflow: twenty local canvases and two shared ones at 720 px (A2.
     // the first shared one, chosen from »: it shows
     await w.run.call('activate', { id: locals[0] })
     await w.run.call('tabsMore', { ids: hidden })
+    // spec 32 B5: no check on a » row; the pick through main's record closes the menu (B15)
+    expect((await w.log('popup')).at(-1)!.data.items).toContainEqual({ label: `first.canvas.test:${r.port}`, enabled: true })
     expect(await w.run.call('popup:click', { label: `first.canvas.test:${r.port}` })).toBe(true)
     await w.until((x) => x.active === ids[0], 3000, 'chosen from »')
     await new Promise((res) => setTimeout(res, 300))
