@@ -54,9 +54,9 @@ const until = async (ok: () => boolean, ms = 8_000, step?: () => unknown) => {
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const REPLY = (text: string) => `\`\`\`marver-reply m1\n${text}\n\`\`\``
 
-async function setup(o: { session?: boolean; adapter?: JamAdapter } = {}) {
+async function setup(o: { session?: boolean; adapter?: JamAdapter; cfg?: Partial<JamConfig> } = {}) {
   const w = workspace()
-  const jam = createJam(w.root, CFG, o.adapter ?? slow(0))
+  const jam = createJam(w.root, { ...CFG, ...o.cfg }, o.adapter ?? slow(0))
   const conn = upsertConn(w.root, 'claude', randomUUID(), { pid: process.pid, cwd: w.root }, Date.now(), true)
   if (o.session !== false) await jam.session({ action: 'start', id: `ses-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` })
   const ask = async (op: Parameters<typeof request>[2], args: Record<string, unknown> = {}) => {
@@ -155,6 +155,33 @@ describe('a Jam run\'s start (spec 32 F2: Batch.runAt, the view\'s startedAt)', 
     await wait(40)
     expect((await s.ask('release', { handle })).ok).toBe(true)
     expect(await until(() => { const b = s.batch(); return !!b && b.runner?.kind !== 'session' && (b.runAt ?? 0) > claimAt }, 10_000, () => s.jam.runs.tick())).toBe(true)
+    await t
+    s.jam.stop(); s.done()
+  })
+
+  it('a new claim (a new gen) stamps runAt again: released under session-only, offered again and claimed again, its start is the second claim\'s', { timeout: 60_000 }, async () => {
+    const s = await setup({ cfg: { runner: 'session' } })
+    tag(s.root, s.dir)
+    const t = s.jam.tick()
+    expect(await until(() => (readOffers(s.root, s.conn.id)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
+    const h1 = String((await s.ask('next')).handle)
+    const first = s.batch()!
+    const gen1 = first.claim!.gen, at1 = first.claim!.at
+    expect(first.runAt).toBe(at1)
+    await wait(40)
+    expect((await s.ask('release', { handle: h1 })).ok).toBe(true)
+    // session-only: it waits for a session again, offered again, never spawned
+    expect(await until(() => !!s.batch()?.offer, 10_000, () => s.jam.runs.tick())).toBe(true)
+    expect(s.batch()!.runAt).toBe(at1)                // not yet begun again: the last start stands until a claim
+    const h2 = String((await s.ask('next')).handle)
+    const b = s.batch()!
+    expect(h2).not.toBe(h1)
+    expect(b.claim!.gen).toBeGreaterThan(gen1)
+    expect(b.claim!.at).toBeGreaterThan(at1)
+    expect(b.runAt).toBe(b.claim!.at)
+    expect(s.working()?.startedAt).toBe(b.claim!.at)
+    expect(liveSnapshot({ boards: [], fresh: [], jam: s.jam.view(), cli: [] }).work).toEqual({ board: 'home', since: b.claim!.at })
+    expect((await s.ask('done', { handle: h2, text: REPLY('ok') })).ok).toBe(true)
     await t
     s.jam.stop(); s.done()
   })
