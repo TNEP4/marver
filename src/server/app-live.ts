@@ -163,7 +163,7 @@ export function liveSnapshot(input: LiveInput): LiveBody {
 /**
  * Spec 32 F2, `work`: since when something has been at work, and on which board. `since` is the earlier of `marver
  * work`'s clock and the oldest working run's start (its `startedAt`, else when it was first seen working); `board` the
- * newest working run's board (the latest start, then the latest made), else the first board by name pinning a frame
+ * newest working Jam card's board (the last made, then by id - never the latest run start), else the first board by name pinning a frame
  * the CLI holds; absent when nothing works.
  */
 function workOf(input: LiveInput, runsNow: ViewCard[]): LiveEvent['work'] {
@@ -176,11 +176,11 @@ function workOf(input: LiveInput, runsNow: ViewCard[]): LiveEvent['work'] {
     if (t === undefined) firstSeenWorking.set(c.id, (t = now))
     return t
   }
-  const starts = runsNow.map((c) => ({ c, at: startOf(c) }))
   const cli = input.cli.length > 0 && typeof input.cliSince === 'number' ? input.cliSince : undefined
-  const all = [...(cli !== undefined ? [cli] : []), ...starts.map((x) => x.at)]
+  const all = [...(cli !== undefined ? [cli] : []), ...runsNow.map(startOf)]
   if (!all.length) return undefined
-  const newest = starts.sort((a, b) => b.at - a.at || b.c.made - a.c.made || (a.c.id < b.c.id ? -1 : a.c.id > b.c.id ? 1 : 0))[0]?.c
+  // the newest working card: the last made (a card's age, never its run's restart), then by id
+  const newest = [...runsNow].sort((a, b) => b.made - a.made || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0]
   const board = newest?.board ?? (input.cli.length ? input.pinning?.[0] : undefined)
   return { ...(board && board.length <= LIVE_BOUNDS.ref ? { board } : {}), since: Math.min(...all) }
 }
@@ -219,18 +219,19 @@ function withItems(e: LiveEvent, items: LiveItem[], cut: number): LiveEvent {
  * in UTF-8. While it is over, the oldest whole items go (the end of `items`), counted in `cut`; `counts` stay exact.
  */
 export function encodeLive(e: LiveEvent): string {
-  let text = block(e)
+  const text = block(e)
   if (Buffer.byteLength(text) <= LIVE_BOUNDS.eventBytes) return text
-  // each item measured once, the most that can fit kept, then the event measured again (cut's digits grow)
-  const sizes = e.items.map((i) => Buffer.byteLength(JSON.stringify(i)) + 1)
-  let over = Buffer.byteLength(text) - LIVE_BOUNDS.eventBytes
-  let keep = e.items.length
-  while (keep > 0 && over > 0) over -= sizes[--keep]
-  for (;;) {
-    text = block(withItems(e, e.items.slice(0, keep), e.cut + e.items.length - keep))
-    if (keep === 0 || Buffer.byteLength(text) <= LIVE_BOUNDS.eventBytes) return text
-    keep--
+  // the most items that fit, by bisection over the event as written: an item that goes takes the titles only it named
+  // (spec 32 F2), and `cut`'s digits change, so only the written event is measured. Fewer items never write more bytes
+  const at = (keep: number) => block(withItems(e, e.items.slice(0, keep), e.cut + e.items.length - keep))
+  const fits = (keep: number) => Buffer.byteLength(at(keep)) <= LIVE_BOUNDS.eventBytes
+  let lo = 0, hi = e.items.length - 1          // the whole event is over: at most n - 1 fit
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1
+    if (fits(mid)) lo = mid
+    else hi = mid - 1
   }
+  return at(lo)
 }
 
 // ---- the hub --------------------------------------------------------------------------------------------------

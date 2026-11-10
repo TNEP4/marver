@@ -108,11 +108,16 @@ describe('LiveEvent.work (spec 32 F2)', () => {
     expect(liveSnapshot(input({ cli: [], cliSince: 1234, pinning: ['alpha'] })).work).toBeUndefined()
   })
 
-  it('Jam runs: since the oldest working run\'s start, on the newest one\'s board; a stalled, offered, waiting or stopping run never counts', () => {
+  it('Jam runs: since the oldest working run\'s start, on the newest working card\'s board; a stalled, offered, waiting or stopping run never counts', () => {
     const run = (id: string, board: string, startedAt: number, state?: 'offered' | 'claimed' | 'stalled' | 'stopping' | 'waiting') =>
       card(id, { board, startedAt, runner: { kind: state ? 'session' : 'fresh', agent: 'claude', batch: `b-${id}`, ...(state ? { state } : {}) } })
+    // made in order a, b, c: the newest card is c, whatever run started last
     const b = liveSnapshot(input({ cards: [run('a', 'first', 100), run('b', 'second', 300), run('c', 'third', 200, 'claimed')] }))
-    expect(b.work).toEqual({ board: 'second', since: 100 })
+    expect(b.work).toEqual({ board: 'third', since: 100 })
+    // an older card whose run restarted later (a new claim stamps again) never takes the board from a newer card
+    const older = run('old', 'older', 900), newer = run('new', 'newer', 800)
+    expect(liveSnapshot(input({ cards: [newer, older] })).work).toEqual({ board: 'newer', since: 800 })
+    expect(liveSnapshot(input({ cards: [older, newer] })).work).toEqual({ board: 'newer', since: 800 })
     for (const st of ['offered', 'stalled', 'stopping', 'waiting'] as const) {
       expect(liveSnapshot(input({ cards: [run('x', 'gone', 50, st), run('y', 'live', 400)] })).work).toEqual({ board: 'live', since: 400 })
     }
@@ -169,6 +174,11 @@ describe('LiveEvent.titles (spec 32 F2)', () => {
     const out = JSON.parse(text.split('\n')[1].slice(6)) as LiveEvent
     expect(out.items.length).toBeLessThan(100)
     expect(out.cut).toBe(100 - out.items.length)
+    // the most that fit: one more item - with the title only it names - would be over (never shed while it fits)
+    const k = out.items.length + 1
+    const more = { ...e, items: items.slice(0, k), cut: 100 - k,
+      titles: Object.fromEntries(Object.entries(titles).filter(([b]) => b === 'worked' || items.slice(0, k).some((i) => i.board === b))) }
+    expect(Buffer.byteLength(`event: ${LIVE_WIRE.event}\ndata: ${JSON.stringify(more)}\n\n`)).toBeGreaterThan(LIVE_BOUNDS.eventBytes)
     const named = new Set(['worked', ...out.items.map((i) => i.board)])
     expect(Object.keys(out.titles!).every((k) => named.has(k))).toBe(true)
     expect(out.titles!.worked).toBe(titles.worked)
