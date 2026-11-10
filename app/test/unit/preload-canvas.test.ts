@@ -192,3 +192,57 @@ describe('the canvas preload: a deep link\'s place and front (spec 31 D1, D3)', 
     expect(wire.sent.filter((s) => s.ch === CANVAS_CHANNELS.front)).toEqual([{ ch: CANVAS_CHANNELS.front, msg: { doc: DOC } }])
   })
 })
+
+describe('the canvas preload: immersive play (spec 32 C2)', () => {
+  interface ImApi {
+    hello(p: unknown): void; theme(p: unknown): void; busy(p: unknown): void; menu(p: unknown): void
+    immersive(p: { on: boolean }): void; onImmersive(fn: (s: unknown) => void): () => void
+  }
+  const reports = () => wire.sent.filter((s) => s.ch.startsWith('mv:') && s.ch !== CANVAS_CHANNELS.perf)
+  it('the wish is held, stamped with n from 1, and replayed after menu at an admit; a new doc replays the latest', async () => {
+    const api = await load({ reopen: false, inset: 44 }) as unknown as ImApi
+    api.immersive({ on: true })
+    api.menu([])
+    api.hello({ version: '0.32.0', board: null, page: 'p'.repeat(8) })
+    api.immersive({ on: false, extra: 1 } as never)
+    expect(reports()).toEqual([])                                                    // nothing before an admit
+    main(CANVAS_CHANNELS.admit, { doc: DOC })
+    expect(reports().map((s) => s.ch)).toEqual([CANVAS_CHANNELS.hello, CANVAS_CHANNELS.menu, CANVAS_CHANNELS.immersive])
+    expect(reports().at(-1)!.msg).toEqual({ doc: DOC, p: { on: false, n: 2 } })
+    api.immersive({ on: true })
+    expect(reports().at(-1)).toEqual({ ch: CANVAS_CHANNELS.immersive, msg: { doc: DOC, p: { on: true, n: 3 } } })
+    // the same admit again replays nothing; a new document's replays all, the wish last, with its latest n
+    const n = wire.sent.length
+    main(CANVAS_CHANNELS.admit, { doc: DOC })
+    expect(wire.sent.length).toBe(n)
+    main(CANVAS_CHANNELS.admit, { doc: 'C'.repeat(22) })
+    expect(wire.sent.slice(n).map((s) => s.ch)).toEqual([CANVAS_CHANNELS.hello, CANVAS_CHANNELS.menu, CANVAS_CHANNELS.immersive])
+    expect(wire.sent.at(-1)!.msg).toEqual({ doc: 'C'.repeat(22), p: { on: true, n: 3 } })
+  })
+  it('onImmersive hears main\'s answer for this document and the last n sent alone, `end` only when true; the shell never sees n', async () => {
+    const api = await load({ reopen: false, inset: 44 }) as unknown as ImApi
+    const heard: unknown[] = []
+    api.onImmersive((s) => heard.push(s))
+    api.immersive({ on: true })                                                      // n 1
+    main(CANVAS_CHANNELS.immersiveState, { doc: DOC, n: 1, on: true })               // before the admit: not this document's
+    main(CANVAS_CHANNELS.admit, { doc: DOC })
+    main(CANVAS_CHANNELS.immersiveState, { doc: DOC, n: 1, on: true })
+    main(CANVAS_CHANNELS.immersiveState, { doc: 'B'.repeat(22), n: 1, on: false })   // another document's
+    api.immersive({ on: false })                                                     // n 2
+    api.immersive({ on: true })                                                      // n 3
+    main(CANVAS_CHANNELS.immersiveState, { doc: DOC, n: 2, on: false })              // an older wish's: dropped
+    main(CANVAS_CHANNELS.immersiveState, { doc: DOC, n: 3, on: 'yes' })
+    main(CANVAS_CHANNELS.immersiveState, { doc: DOC, n: 3, on: false, end: false })
+    main(CANVAS_CHANNELS.immersiveState, { doc: DOC, n: 3, on: false, end: true, x: 1 })
+    expect(heard).toEqual([{ on: true }, { on: false, end: true }])
+  })
+  it('with no wish sent, no answer reaches the page', async () => {
+    const api = await load({ reopen: false, inset: 44 }) as unknown as ImApi
+    const heard: unknown[] = []
+    api.onImmersive((s) => heard.push(s))
+    main(CANVAS_CHANNELS.admit, { doc: DOC })
+    main(CANVAS_CHANNELS.immersiveState, { doc: DOC, n: 0, on: true })
+    main(CANVAS_CHANNELS.immersiveState, { doc: DOC, n: 1, on: true })
+    expect(heard).toEqual([])
+  })
+})

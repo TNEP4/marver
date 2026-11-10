@@ -300,7 +300,7 @@ describe('⌘L (A2.7, A2.13)', () => {
     await p.page.press('#link', 'Escape')
     await p.page.fill('#link', '')
     await p.page.press('#link', 'Escape')
-    expect(await p.calls('tab:activate')).toEqual([{ id: 't1', via: 'key' }, { id: 't1', via: 'key' }])
+    expect(await p.calls('tab:activate')).toEqual([{ id: 't1', via: 'key', cancel: true }, { id: 't1', via: 'key', cancel: true }])
   })
 
   it('if that tab has closed, Esc stays on Home: main keeps a running canvas\'s closed tab, open: false', async () => {
@@ -309,10 +309,10 @@ describe('⌘L (A2.7, A2.13)', () => {
     expect(await text('#back')).toBe('')
     await p.page.press('#link', 'Escape')
     // said to main as Home itself, for its record (spec 30's link-cancel, noop no-tab); main does nothing with it
-    expect(await p.calls('tab:activate')).toEqual([{ id: 'home', via: 'key' }])
+    expect(await p.calls('tab:activate')).toEqual([{ id: 'home', via: 'key', cancel: true }])
     await tabs([home, tab('t2', 'TMS broker', 4806)])   // and once main drops it
     await p.page.press('#link', 'Escape')
-    expect(await p.calls('tab:activate')).toEqual([{ id: 'home', via: 'key' }, { id: 'home', via: 'key' }])
+    expect(await p.calls('tab:activate')).toEqual([{ id: 'home', via: 'key', cancel: true }, { id: 'home', via: 'key', cancel: true }])
   })
 })
 

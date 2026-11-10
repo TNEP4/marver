@@ -25,6 +25,11 @@
  * | window | the quit: as it starts, and again once guardAll answered 'done'    | tabsWriter().set(file); .flushSync()    |
  * | window | the quit, once guardAll answered 'done', before app.quit()         | flushRecent(runningWorkspaces)          |
  *
+ * **Spec 32 amends it in writing** (F3b #2): `WindowPorts` gains `homeExcluded()` and `onHomeExcludedChange(fn)` (the
+ * workspaces whose Recently here card Home hides, D6.4 - today the running ones, firing as `onRunningChange` does);
+ * `HomePorts.recentViews` takes `(running, exclude)`; home.ts's `LinkPorts` gains `deep(url)` (a `marver:` link pasted
+ * on Home, D3). home.ts and views.ts `satisfies` them, so a drift fails the typecheck.
+ *
  * **tabs.json is config.ts's file**: `readTabsFile()` and `tabsWriter()` are its one reader and one writer (fsx's
  * whole write, its failures in the files pill and status.json). tabs.ts decides what goes in it and writes nothing
  * itself - two writers of one file overwrite each other's newer state.
@@ -54,6 +59,10 @@ export interface WindowPorts {
   running(): string[]
   /** called when that set changes (a canvas started or went away) */
   onRunningChange(fn: () => void): Off
+  /** spec 32 D6.4: the workspaces whose Recently here card Home hides (the running ones, and those a gone tab shows) */
+  homeExcluded(): string[]
+  /** spec 32 D6.4: called when that set changes */
+  onHomeExcludedChange(fn: () => void): Off
   /** opens a checked link in a canvas's tab (home.ts `LinkPorts`: its duties are listed there) */
   linkPorts: LinkPorts
   /** the strip's tier-3 pill (A2.2): the files pill, or null when its cause is gone; called at once, then on change */
@@ -75,7 +84,8 @@ export interface HomePorts {
   flushRecent(running: Iterable<string>): void
   /** mounted by mountPages; exported for tests */
   homeInfo(): HomeInfo
-  recentViews(running: Iterable<string>): RecentView[]
+  /** spec 32 D6.4: `exclude`, the workspaces whose card Home hides (`WindowPorts.homeExcluded`) */
+  recentViews(running: Iterable<string>, exclude: Iterable<string>): RecentView[]
   onRecentChange(fn: () => void): Off
   homeAction(raw: unknown): Promise<HomeActionAnswer>
   openLink(raw: unknown, ports: LinkPorts): Promise<LinkOpenAnswer>

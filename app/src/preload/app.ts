@@ -11,7 +11,7 @@
  * Whether a channel is an invoke or a send is `INVOKES`'s (src/shared/channels.ts), never this file's own choice.
  */
 import { contextBridge, ipcRenderer } from 'electron'
-import { CH, isInvoke, RECEIVES, type ActivateVia, type AppPageKind, type HomeAction, type HomeActionAnswer, type HomeApi, type InvokeChannel, type LinkOpenAnswer, type PageApi, type PillAction, type SettingsAction, type SettingsApi, type SettingsSet, type SettingsSetResult, type SettingsView, type StripApi, type TabPageAction, type TabPageApi, type TabsMore, type WindowView } from '../shared/channels.ts'
+import { CH, isInvoke, RECEIVES, type ActivateVia, type AppPageKind, type HomeAction, type HomeActionAnswer, type HomeApi, type HomeKeys, type InvokeChannel, type LinkOpenAnswer, type MenuAsk, type PageApi, type PillAction, type SettingsAction, type SettingsApi, type SettingsSet, type SettingsSetResult, type SettingsView, type StripApi, type TabMenuPick, type TabMenuShown, type TabPageAction, type TabPageApi, type TabsMore, type WindowView } from '../shared/channels.ts'
 
 type AppKind = AppPageKind
 const KINDS: readonly AppKind[] = ['strip', 'home', 'settings', 'tabpage']
@@ -62,13 +62,19 @@ const ready = () => { if (!readied) { readied = true; send(CH.ready) } }
 const str = (v: unknown, max = 80) => String(v ?? '').slice(0, max)
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : 0)
 
+const viaOf = (via?: ActivateVia) => (via === 'key' || via === 'click' ? { via } : {})
 const tabActions = {
   // spec 30 #50: how it was chosen, passed only when the page says (`via` absent reads a click)
-  activate: (id: string, via?: ActivateVia) => send(CH.tabActivate, { id: str(id), ...(via === 'key' || via === 'click' ? { via } : {}) }),
+  activate: (id: string, via?: ActivateVia) => send(CH.tabActivate, { id: str(id), ...viaOf(via) }),
   close: (id: string) => send(CH.tabClose, { id: str(id) }),
-  tabMenu: (id: string, x: number, y: number) => send(CH.tabMenu, { id: str(id), x: num(x), y: num(y) }),
   openLink: (url: string, via?: 'click') => invoke<LinkOpenAnswer>(CH.linkOpen, { url: str(url, 4096), ...(via === 'click' ? { via } : {}) }),
 }
+/** spec 32 D8.8: the key that made a Home input, passed only when it is one of the two */
+const keysOf = (k: unknown): { keys?: HomeKeys } => (k === 'Enter' || k === 'Space' ? { keys: k } : {})
+/** spec 32 B2: `MenuAsk`'s fields, each sent only as a boolean and only when given (absent reads false) */
+const askOf = (a: Partial<MenuAsk> | undefined) => ({
+  ...(typeof a?.key === 'boolean' ? { key: a.key } : {}), ...(typeof a?.hadFocus === 'boolean' ? { hadFocus: a.hadFocus } : {}),
+})
 
 function build(k: AppKind): PageApi {
   for (const ch of RECEIVES[k]) listen(ch)
@@ -80,9 +86,14 @@ function build(k: AppKind): PageApi {
         onTabs: (fn) => on(CH.tabs, fn as Fn),
         onPill: (fn) => on(CH.pill, fn as Fn),
         onPageFocus: (fn) => on(CH.pageFocus, fn as Fn),
-        more: (m: TabsMore) => send(CH.tabsMore, {
-          ids: Array.isArray(m?.ids) ? m.ids.slice(0, 64).map((i) => str(i)) : [], x: num(m?.x), y: num(m?.y),
+        // spec 32 B2: the strip's Marver menu - main's view, the pick, the shown ack; the asks carry `MenuAsk`
+        onTabMenu: (fn) => on(CH.tabMenuView, fn as Fn),
+        tabMenu: (id: string, x: number, y: number, ask?: Partial<MenuAsk>) => send(CH.tabMenu, { id: str(id), x: num(x), y: num(y), ...askOf(ask) }),
+        more: (m: TabsMore & Partial<MenuAsk>) => send(CH.tabsMore, {
+          ids: Array.isArray(m?.ids) ? m.ids.slice(0, 64).map((i) => str(i)) : [], x: num(m?.x), y: num(m?.y), ...askOf(m),
         }),
+        menuPick: (p: TabMenuPick) => send(CH.tabMenuPick, { rev: num(p?.rev), id: typeof p?.id === 'string' ? str(p.id, 40) : null }),
+        menuShown: (p: TabMenuShown) => send(CH.tabMenuShown, { rev: num(p?.rev) }),
         pillAction: (a: PillAction) => send(CH.pillAction, { rev: num(a?.rev), act: a?.act === 'dismiss' ? 'dismiss' : 'button', ...(a?.via === 'key' ? { via: 'key' } : {}) }),
       }
       return api
@@ -95,8 +106,20 @@ function build(k: AppKind): PageApi {
         onHomeInfo: (fn) => on(CH.homeInfo, fn as Fn),
         onHomeFocus: (fn) => on(CH.homeFocus, fn as Fn),
         onShared: (fn) => on(CH.shared, fn as Fn),
+        // spec 32 D8.8: Home's own activate - the field's Escape (`cancel`) and a card's Enter or Space (`keys`), each
+        // sent only when given and valid; the strip keeps the shared one, `{ id, via }`
+        activate: (id: string, via?: ActivateVia, o?: { cancel?: true; keys?: HomeKeys }) => send(CH.tabActivate, {
+          id: str(id), ...viaOf(via), ...(o?.cancel === true ? { cancel: true } : {}), ...keysOf(o?.keys),
+        }),
+        // spec 32 D8.8: a past shared link's card by key says `via: 'key'` and the key
+        openLink: (url: string, via?: 'click' | 'key', keys?: HomeKeys) => invoke<LinkOpenAnswer>(CH.linkOpen, {
+          url: str(url, 4096), ...(via === 'click' ? { via } : via === 'key' ? { via, ...keysOf(keys) } : {}),
+        }),
         action: (a: HomeAction) => invoke<HomeActionAnswer>(CH.homeAction, a && typeof a === 'object'
-          ? { action: str((a as { action?: unknown }).action, 16), ...('id' in a ? { id: str((a as { id?: unknown }).id) } : {}) }
+          ? {
+            action: str((a as { action?: unknown }).action, 16), ...('id' in a ? { id: str((a as { id?: unknown }).id) } : {}),
+            ...((a as { via?: unknown }).via === 'key' ? { via: 'key', ...keysOf((a as { keys?: unknown }).keys) } : {}),
+          }
           : {}),
       }
       return api

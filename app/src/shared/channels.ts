@@ -11,7 +11,14 @@
  * remote tab and its view (`TabKind` and `PageKind` `remote`, #39, #40, #49), the notices offer (`PillView.kind`
  * `offer`, #26), Settings' notices (`SettingsView.notices` and `settings:action`, #27), `link:open` without
  * `later` (#39) and Home's Shared canvases (`shared`, #47).
+ *
+ * Spec 32 (app 1.2) amends it in writing (F1, F3b #3), frozen before its streams split (G3), all additive: the tab's
+ * Marver menu (`tab-menu`, `tab:menu-pick`, `tab:menu-shown`; `TabMenuView`, `MenuAsk`), `SENDERS` of `tab:menu` and
+ * `tabs:more` narrowed to the strip, `WindowView.immersive`, `TabView.hung`, `TabMarks`' `kinds`, `stopped`, `top`
+ * and `work`, `SharedLink.id`, Home's card actions (`copy-link`, `copy-path`, `reveal`, `HomeActionAnswer.why`) and
+ * how Home's inputs were made (`via`, `keys`, `cancel`), which the bridge keeps from Home alone. No new page kind.
  */
+import type { IconName } from '../pages/dom.ts'
 
 /**
  * The kind `bridge.ts` records for each webContents it created. `remote` (A4.6 #40): a shared canvas's view - no
@@ -39,6 +46,15 @@ export interface TabMarks {
   session: boolean
   /** the stream has been down `liveIdleMs`: drawn dimmed, "may be out of date" - never zero (#18) */
   stale?: boolean
+  /** spec 32 F1 (notify.ts `marksOf`): the stream's canvas-wide `counts`, by kind */
+  kinds?: { ask: number; review: number; failed: number; stalled: number }
+  /** spec 32 F1: a stop main has not had acknowledged (the local stop map), with or without a held snapshot */
+  stopped?: true
+  /** spec 32 F1, D6.1: what Home's card leads with - the kind by D6.1's priority over the counts, and its board's title
+   *  only when every one of that kind is on one board */
+  top?: { kind: 'stopped' | 'ask' | 'failed' | 'stalled' | 'review'; board?: string }
+  /** spec 32 F1: the stream's `work` (app-api.ts `LiveEvent.work`), its board as a title */
+  work?: { board?: string; since: number }
 }
 
 /**
@@ -87,13 +103,40 @@ export interface TabView {
   marks?: TabMarks
   /** spec 31 E4: a newer release of Marver than this canvas runs (Home's card: "<update> available" and its command) */
   update?: string
+  /** spec 32 F1: Chromium's hang monitor says its renderer does not respond (tabs.ts `Tab.hung`) - Home's "Not responding" */
+  hung?: boolean
 }
 
 /** `tabs` (main to strip, home). */
 export interface TabsSnapshot { rev: number; active: string; tabs: TabView[] }
 
-/** `tabs:more` (strip to main): the ids the strip put behind `»`, and where to pop the menu. */
+/** `tabs:more` (strip to main): the ids the strip put behind `»`, and where to pop the menu; spec 32 adds `MenuAsk`. */
 export interface TabsMore { ids: string[]; x: number; y: number }
+
+/**
+ * Spec 32 B2: added to `tab:menu {id, x, y}` and `tabs:more {ids, x, y}` - how the menu was asked for (B3.1, B14). `key`:
+ * ContextMenu, ⇧F10, or Enter or Space on `#more`; `hadFocus`: the strip had keyboard focus before the press. Booleans,
+ * absent reading false, so an older strip reads as a pointer open with no focus.
+ */
+export interface MenuAsk { key: boolean; hadFocus: boolean }
+
+/** Spec 32 B2: `tab-menu` (main to strip): the menu to show, or null to close it. */
+export interface TabMenuView {
+  rev: number
+  /** where it opens, in strip CSS px (= window content px) */
+  x: number; y: number
+  kind: 'tab' | 'more'
+  rows: TabMenuRow[]
+}
+/** A row of the strip's Marver menu: the icon by name only (dom.ts `IconName`), never a path from main. */
+export type TabMenuRow =
+  | { kind: 'item'; id: string; label: string; icon?: IconName; enabled: boolean; checked?: boolean }
+  | { kind: 'sep' }
+/** Spec 32 B2: `tab:menu-pick` (strip to main): the row chosen, or null for a close with no pick. No `via`: a pick
+ *  records what the native click recorded. */
+export interface TabMenuPick { rev: number; id: string | null }
+/** Spec 32 B2: `tab:menu-shown` (strip to main): the menu is on screen. */
+export interface TabMenuShown { rev: number }
 
 /** `window` (main to every app page): replaces `focus`. */
 export interface WindowView {
@@ -104,6 +147,8 @@ export interface WindowView {
    * Absent reads false.
    */
   dots?: boolean
+  /** spec 32 C10: immersive play hides the strip - `body.immersive` runs its CSS out (no-drag first). Absent reads false */
+  immersive?: boolean
 }
 
 /** `page:focus` (main to the strip and a tab page): A2.13's focus rule and F6. */
@@ -184,16 +229,31 @@ export type HomeFocus =
   | { field: 'link'; back?: string }
   /** spec 31 D1: a `marver://` link to a canvas not running - its card, highlighted and its start command focused */
   | { field: 'recent'; id: string }
+/** Spec 32 D8.8: the key that made a Home activation or menu pick. */
+export type HomeKeys = 'Enter' | 'Space'
+/**
+ * Spec 32 D8.8: how a Home menu row was picked - absent reads a click; `via: 'key'` with the key pressed. The bridge
+ * keeps both only from Home.
+ */
+export interface HomeVia { via?: 'key'; keys?: HomeKeys }
 /** `home:action` (home to main; an invoke, `INVOKES`, answering `HomeActionAnswer`). */
-export type HomeAction =
+export type HomeAction = HomeVia & (
   | { action: 'copy'; id: 'dev' | 'init' | 'update' }
+  /** `id` a recent's `r_<ws>` or (spec 32 D8.1) a gone tab's id */
   | { action: 'copy-start'; id: string }
   /** spec 31 E4: a running canvas's update command, in its folder - `id` its tab */
   | { action: 'copy-update'; id: string }
   | { action: 'show-files' }
+  /**
+   * spec 32 D8.1: a card's Copy link, Copy path, Reveal in Finder - `id` a tab's id, a recent's `r_<ws>` or a past shared
+   * link's `s_<hash>`; main resolves root, link or url from its own records, never from Home
+   */
+  | { action: 'copy-link' | 'copy-path' | 'reveal'; id: string }
+)
 
-/** `home:action`'s answer: false when there was nothing to do (a recent id main no longer holds). */
-export interface HomeActionAnswer { ok: boolean }
+/** `home:action`'s answer: false when there was nothing to do (a recent id main no longer holds); `why` (spec 32 D8.1)
+ *  `missing` when the card, or a field its action needs, is not there. */
+export interface HomeActionAnswer { ok: boolean; why?: 'missing' }
 
 /**
  * `link:open` (strip, home; an invoke). An https link opens a shared canvas's tab (A4.6 #39): never `later` from A4. Its
@@ -207,6 +267,9 @@ export type LinkOpenAnswer = { ok: true } | { ok: false; why: 'bad' | 'nothing' 
  */
 export interface SharedLink {
   url: string; host: string; lastSeen: number
+  /** spec 32 F1: Home's view only - `s_` and the first 16 hex of sha256 over the link's origin (within the bridge's id
+   *  pattern), so a past card's Copy link names it by id */
+  id?: string
   /** spec 31 E3: what its `meta.json` named it, and its logo - read through its tab's session, kept by origin (Home's view only) */
   name?: string
   logo?: string
@@ -298,6 +361,10 @@ export const CH = {
   /** A4 (A4.6 #27, #47) */
   settingsAction: 'settings:action',
   shared: 'shared',
+  /** spec 32 B2: the strip's Marver menu - main's view (to strip), the pick and the shown ack (strip to main) */
+  tabMenuView: 'tab-menu',
+  tabMenuPick: 'tab:menu-pick',
+  tabMenuShown: 'tab:menu-shown',
 } as const
 
 /**
@@ -319,7 +386,8 @@ export const SENDERS: Record<string, readonly PageKind[]> = {
   [CH.tabsMore]: ['strip'],
   [CH.tabActivate]: ['strip', 'home'],
   [CH.tabClose]: ['strip', 'home'],
-  [CH.tabMenu]: ['strip', 'home'],
+  // spec 32 B2: the strip alone - Home's menus are its own DOM (D8)
+  [CH.tabMenu]: ['strip'],
   [CH.linkOpen]: ['strip', 'home'],
   [CH.pillAction]: ['strip'],
   [CH.tabpageAction]: ['tabpage'],
@@ -328,11 +396,14 @@ export const SENDERS: Record<string, readonly PageKind[]> = {
   [CH.settingsSet]: ['settings'],
   [CH.settingsReveal]: ['settings'],
   [CH.settingsAction]: ['settings'],
+  // spec 32 B2: the strip's menu - no input of their own (the pick records what `tabAct` opens)
+  [CH.tabMenuPick]: ['strip'],
+  [CH.tabMenuShown]: ['strip'],
 }
 
 /** Main-to-page channels each kind receives: the app preload subscribes to these alone (added by the pages stream). */
 export const RECEIVES: Record<AppPageKind, readonly string[]> = {
-  strip: [CH.tabs, CH.window, CH.pill, CH.pageFocus],
+  strip: [CH.tabs, CH.window, CH.pill, CH.pageFocus, CH.tabMenuView],
   home: [CH.tabs, CH.window, CH.recent, CH.homeInfo, CH.homeFocus, CH.shared],
   settings: [CH.window, CH.status],
   tabpage: [CH.window, CH.tabpage, CH.pageFocus],
@@ -353,17 +424,27 @@ interface PageApiBase {
 /** Spec 30 #50: how a strip or Home tab was chosen - `tab:activate`'s `via` (allowlisted by the bridge), so the
  *  `tab-activate` command records it; absent reads `click`. */
 export type ActivateVia = 'key' | 'click'
-/** `tab:activate`'s payload. */
-export interface TabActivate { id: string; via?: ActivateVia }
+/**
+ * `tab:activate`'s payload. Spec 32 D8.8 (Home only, kept by the bridge from Home alone): `cancel` - the link field's
+ * Escape, back to the tab ⌘L came from; `keys` - a card activated by Enter or Space.
+ */
+export interface TabActivate { id: string; via?: ActivateVia; cancel?: true; keys?: HomeKeys }
 export interface StripApi extends PageApiBase {
   readonly kind: 'strip'
   onTabs(fn: (s: TabsSnapshot) => void): Off
   onPill(fn: (p: PillView | null) => void): Off
   onPageFocus(fn: (f: PageFocus) => void): Off
+  /** spec 32 B2: main's menu view, or null to close it */
+  onTabMenu(fn: (v: TabMenuView | null) => void): Off
   activate(id: string, via?: ActivateVia): void
   close(id: string): void
-  tabMenu(id: string, x: number, y: number): void
-  more(m: TabsMore): void
+  /** spec 32 B2: the ask optional until the strip passes it (absent reads false) */
+  tabMenu(id: string, x: number, y: number, ask?: Partial<MenuAsk>): void
+  more(m: TabsMore & Partial<MenuAsk>): void
+  /** spec 32 B2: the row chosen, or null */
+  menuPick(p: TabMenuPick): void
+  /** spec 32 B2: the menu of this rev is on screen */
+  menuShown(p: TabMenuShown): void
   pillAction(a: PillAction): void
   openLink(url: string, via?: 'click'): Promise<LinkOpenAnswer>
 }
@@ -375,10 +456,12 @@ export interface HomeApi extends PageApiBase {
   onHomeFocus(fn: (f: HomeFocus) => void): Off
   /** A4 (A4.6 #47): the Shared canvases list */
   onShared(fn: (s: SharedLink[]) => void): Off
-  activate(id: string, via?: ActivateVia): void
+  /** spec 32 D8.8: Home's own - `cancel: true` and `keys` are sent only when given and valid */
+  activate(id: string, via?: ActivateVia, o?: { cancel?: true; keys?: HomeKeys }): void
   close(id: string): void
-  tabMenu(id: string, x: number, y: number): void
-  openLink(url: string, via?: 'click'): Promise<LinkOpenAnswer>
+  /** spec 32 D8.8: `via: 'key'` with `keys` - a past shared link's card by key */
+  openLink(url: string, via?: 'click' | 'key', keys?: HomeKeys): Promise<LinkOpenAnswer>
+  /** spec 32 D8.8: `via` and `keys` sent when given */
   action(a: HomeAction): Promise<HomeActionAnswer>
 }
 export interface SettingsApi extends PageApiBase {

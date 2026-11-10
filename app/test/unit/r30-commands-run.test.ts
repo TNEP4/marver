@@ -625,23 +625,74 @@ describe('the page funnel (bridge.ts:625-650)', () => {
     expect(checkPagePayload(CH.pillAction, { rev: 1, act: 'dismiss', via: 'key' })).toEqual({ ok: true, value: { rev: 1, act: 'dismiss', via: 'key' } })
     expect(checkPagePayload(CH.pillAction, { rev: 1, act: 'dismiss', via: 'click' }).ok).toBe(false)
   })
-  it('Esc in Home\'s link field: link-cancel; with no tab to go back to, noop no-tab and nothing else', async () => {
+  it('spec 32 D8.8: Home\'s own fields - cancel and keys on tab:activate, link:open by key - kept from Home alone', () => {
+    const both = { id: 't1', via: 'key', cancel: true, keys: 'Enter' }
+    expect(checkPagePayload(CH.tabActivate, both, 'home')).toEqual({ ok: true, value: both })
+    expect(checkPagePayload(CH.tabActivate, both, 'strip')).toEqual({ ok: true, value: { id: 't1', via: 'key' } })
+    expect(checkPagePayload(CH.tabActivate, both)).toEqual({ ok: true, value: { id: 't1', via: 'key' } })   // absent reads not Home
+    expect(checkPagePayload(CH.tabActivate, { id: 't1', via: 'key', keys: 'Space' }, 'home')).toEqual({ ok: true, value: { id: 't1', via: 'key', keys: 'Space' } })
+    for (const bad of [{ cancel: false }, { cancel: 'yes' }, { keys: 'Escape' }, { keys: 1 }]) expect(checkPagePayload(CH.tabActivate, { id: 't1', via: 'key', ...bad }, 'home').ok, JSON.stringify(bad)).toBe(false)
+    expect(checkPagePayload(CH.linkOpen, { url: 'x', via: 'key', keys: 'Enter' }, 'home')).toEqual({ ok: true, value: { url: 'x', via: 'key', keys: 'Enter' } })
+    expect(checkPagePayload(CH.linkOpen, { url: 'x', via: 'key', keys: 'Space' }, 'home')).toEqual({ ok: true, value: { url: 'x', via: 'key', keys: 'Space' } })
+    expect(checkPagePayload(CH.linkOpen, { url: 'x', via: 'key' }, 'home').ok).toBe(false)                    // no keys
+    expect(checkPagePayload(CH.linkOpen, { url: 'x', via: 'key', keys: 'Escape' }, 'home').ok).toBe(false)
+    expect(checkPagePayload(CH.linkOpen, { url: 'x', via: 'key', keys: 'Enter' }, 'strip').ok).toBe(false)    // not from Home
+    expect(checkPagePayload(CH.linkOpen, { url: 'x', via: 'key', keys: 'Enter' }).ok).toBe(false)
+    expect(checkPagePayload(CH.linkOpen, { url: 'x', keys: 'Enter' }, 'home')).toEqual({ ok: true, value: { url: 'x' } })   // no via: Return, keys stripped
+  })
+  it('Esc in Home\'s link field (`cancel`): link-cancel; with no tab to go back to, noop no-tab and nothing else', async () => {
     const a = await canvas()
     tabs.activate('home')
     await tick()
     flushNow(); writeFileSync(file(), '')
     const on = m.ipcOn.get(CH.tabActivate)!
-    on(page('home'), { id: 'home', via: 'key' })
+    on(page('home'), { id: 'home', via: 'key', cancel: true })
     await tick()
     expect(cmdLines()).toEqual([expect.objectContaining({ phase: 'once', cmd: 'link-cancel', via: 'key', keys: 'Escape', in: 'home', outcome: 'noop', why: 'no-tab' })])
     expect(tabs.activeTab()?.id).toBe('home')
     flushNow(); writeFileSync(file(), '')
-    on(page('home'), { id: a.id, via: 'key' })
+    on(page('home'), { id: a.id, via: 'key', cancel: true })
     await tick()
     answerShown(a.id)
     expect(tabs.activeTab()?.id).toBe(a.id)
     expect(cmdLines().find((l) => l.phase === 'start')).toMatchObject({ cmd: 'link-cancel', tab: a.id })
     expect(cmdLines().find((l) => l.phase === 'end')).toMatchObject({ outcome: 'done' })
+  })
+  it('spec 32 D8.8: a Home card by Enter or Space is tab-activate with its key, never link-cancel; the strip\'s `cancel` is stripped', async () => {
+    const a = await canvas()
+    tabs.activate('home')
+    await tick()
+    const on = m.ipcOn.get(CH.tabActivate)!
+    for (const keys of ['Enter', 'Space'] as const) {
+      tabs.activate('home')
+      await tick()
+      flushNow(); writeFileSync(file(), '')
+      on(page('home'), { id: a.id, via: 'key', keys })
+      await tick()
+      answerShown(a.id)
+      expect(cmdLines().find((l) => l.phase === 'start'), keys).toMatchObject({ cmd: 'tab-activate', via: 'key', keys, in: 'home', tab: a.id })
+      expect(cmdLines().some((l) => l.cmd === 'link-cancel')).toBe(false)
+    }
+    // by key with no key named (an older page): still tab-activate, no keys
+    tabs.activate('home')
+    await tick()
+    flushNow(); writeFileSync(file(), '')
+    on(page('home'), { id: a.id, via: 'key' })
+    await tick()
+    answerShown(a.id)
+    const start = cmdLines().find((l) => l.phase === 'start')
+    expect(start).toMatchObject({ cmd: 'tab-activate', via: 'key', in: 'home' })
+    expect(start?.keys).toBeUndefined()
+    // the strip cannot say `cancel`: the bridge strips it, and the strip's key reads tab-activate
+    tabs.activate('home')
+    await tick()
+    flushNow(); writeFileSync(file(), '')
+    on(page('strip'), { id: a.id, via: 'key', cancel: true, keys: 'Enter' })
+    await tick()
+    answerShown(a.id)
+    const s2 = cmdLines().find((l) => l.phase === 'start')
+    expect(s2).toMatchObject({ cmd: 'tab-activate', via: 'key', in: 'strip' })
+    expect(s2?.keys).toBeUndefined()
   })
   it('tab:close ends on the tab gone; an unknown tab is a noop', async () => {
     const a = await canvas()
@@ -669,6 +720,18 @@ describe('the page funnel (bridge.ts:625-650)', () => {
     await ask(page('home'), { url: 'https://x.example/', via: 'click' })
     await tick()
     expect(cmdLines().map((l) => [l.phase, l.via, l.outcome].filter(Boolean))).toEqual([['start', 'click'], ['end', 'done']])
+    // spec 32 D8.8: a past shared link's card by Enter or Space
+    for (const keys of ['Enter', 'Space']) {
+      flushNow(); writeFileSync(file(), '')
+      await ask(page('home'), { url: 'https://x.example/', via: 'key', keys })
+      await tick()
+      expect(cmdLines().find((l) => l.phase === 'start'), keys).toMatchObject({ cmd: 'link-open', via: 'key', keys, in: 'home' })
+    }
+    // from the strip, `via: 'key'` is refused: no command, the channel's own no
+    flushNow(); writeFileSync(file(), '')
+    expect(await ask(page('strip'), { url: 'https://x.example/', via: 'key', keys: 'Enter' })).toEqual({ ok: false, why: 'bad' })
+    await tick()
+    expect(cmdLines()).toEqual([])
   })
   it('home:action: copy names which, copy-start missing fails', async () => {
     let answer = { ok: true }
@@ -688,6 +751,36 @@ describe('the page funnel (bridge.ts:625-650)', () => {
     await ask(page('home'), { action: 'show-files' })
     await tick()
     expect(cmdLines().find((l) => l.phase === 'start')).toMatchObject({ cmd: 'show-files', in: 'home' })
+  })
+  it('spec 32 D8.1, D8.8: a card\'s copy-link, copy-path and reveal, by click or by key; main\'s `{ ok: false }` ends failed missing', async () => {
+    let answer: { ok: boolean; why?: string } = { ok: true }
+    bridge.handle(CH.homeAction, async () => answer)
+    const ask = m.ipcHandle.get(CH.homeAction)!
+    for (const action of ['copy-link', 'copy-path', 'reveal']) {
+      flushNow(); writeFileSync(file(), '')
+      answer = { ok: true }
+      await ask(page('home'), { action, id: 't1' })
+      await tick()
+      expect(cmdLines().find((l) => l.phase === 'start'), action).toMatchObject({ cmd: action, via: 'click', in: 'home' })
+      expect(cmdLines().find((l) => l.phase === 'end'), action).toMatchObject({ outcome: 'done' })
+      flushNow(); writeFileSync(file(), '')
+      answer = { ok: false, why: 'missing' }
+      await ask(page('home'), { action, id: 's_0123456789abcdef', via: 'key', keys: 'Space' })
+      await tick()
+      expect(cmdLines().find((l) => l.phase === 'start'), action).toMatchObject({ cmd: action, via: 'key', keys: 'Space', in: 'home' })
+      expect(cmdLines().find((l) => l.phase === 'end'), action).toMatchObject({ outcome: 'failed', why: 'missing' })
+    }
+    // a copy row by Enter records it; a bad key refuses the message (no command, `{ ok: false }`)
+    flushNow(); writeFileSync(file(), '')
+    answer = { ok: true }
+    await ask(page('home'), { action: 'copy-start', id: 'r_x', via: 'key', keys: 'Enter' })
+    await tick()
+    expect(cmdLines().find((l) => l.phase === 'start')).toMatchObject({ cmd: 'copy-start', via: 'key', keys: 'Enter', in: 'home' })
+    flushNow(); writeFileSync(file(), '')
+    expect(await ask(page('home'), { action: 'copy-path', id: 't1', via: 'key', keys: 'Tab' })).toEqual({ ok: false })
+    expect(await ask(page('home'), { action: 'copy-path', id: 't1', via: 'drag' })).toEqual({ ok: false })
+    await tick()
+    expect(cmdLines()).toEqual([])
   })
   it('settings: `setting`\'s arg is the key, never the value; failed with its code; the reveal and the notification pane', async () => {
     let answer: unknown = { ok: true }

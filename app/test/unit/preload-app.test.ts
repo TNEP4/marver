@@ -39,6 +39,8 @@ async function callAll(api: Record<string, unknown>): Promise<void> {
     ready: [], activate: ['t1'], close: ['t1'], tabMenu: ['t1', 1, 2], more: [{ ids: ['t2'], x: 1, y: 2 }],
     pillAction: [{ rev: 1, act: 'button' }], openLink: ['http://localhost:4806/'], action: [{ action: 'show-files' }],
     get: [], set: [{ file: 'config', key: 'restoreTabs', value: false }], reveal: [],
+    // spec 32 B2: the strip's menu
+    menuPick: [{ rev: 1, id: null }], menuShown: [{ rev: 1 }],
   }
   for (const [name, fn] of Object.entries(api)) {
     if (typeof fn !== 'function' || name.startsWith('on')) continue
@@ -78,5 +80,65 @@ describe('the app preload follows INVOKES', () => {
     wire.exposed = null
     await import('../../src/preload/app.ts')
     expect(wire.exposed).toBeNull()
+  })
+})
+
+describe('spec 32: the strip\'s menu and Home\'s own inputs (B2, D8.8)', () => {
+  const sends = (ch: string) => wire.sent.filter((x) => x.ch === ch).map((x) => x.args[0])
+  type Fn = (...a: unknown[]) => unknown
+  it('the strip: onTabMenu hears tab-menu; tabMenu and more carry MenuAsk only as booleans, absent when not given; the pick and the shown ack', async () => {
+    const api = (await load('strip'))! as Record<string, Fn>
+    expect(Object.keys(api).filter((k) => typeof api[k] === 'function').sort()).toEqual(
+      ['activate', 'close', 'menuPick', 'menuShown', 'more', 'onPageFocus', 'onPill', 'onTabMenu', 'onTabs', 'onWindow', 'openLink', 'pillAction', 'ready', 'tabMenu'])
+    expect(wire.listened).toContain('tab-menu')
+    api.tabMenu('t1', 1, 2)
+    api.tabMenu('t1', 1, 2, { key: true, hadFocus: false })
+    api.tabMenu('t1', 1, 2, { key: 'yes', hadFocus: 1 })
+    expect(sends('tab:menu')).toEqual([{ id: 't1', x: 1, y: 2 }, { id: 't1', x: 1, y: 2, key: true, hadFocus: false }, { id: 't1', x: 1, y: 2 }])
+    api.more({ ids: ['t2'], x: 1, y: 2 })
+    api.more({ ids: ['t2'], x: 1, y: 2, key: false, hadFocus: true })
+    expect(sends('tabs:more')).toEqual([{ ids: ['t2'], x: 1, y: 2 }, { ids: ['t2'], x: 1, y: 2, key: false, hadFocus: true }])
+    api.menuPick({ rev: 3, id: 'close' })
+    api.menuPick({ rev: 3, id: null })
+    api.menuPick({ rev: 3 })
+    api.menuShown({ rev: 3, extra: 1 })
+    expect(sends('tab:menu-pick')).toEqual([{ rev: 3, id: 'close' }, { rev: 3, id: null }, { rev: 3, id: null }])
+    expect(sends('tab:menu-shown')).toEqual([{ rev: 3 }])
+    // the strip's activate stays the shared one: `{ id, via }` only
+    api.activate('t1', 'key', { cancel: true, keys: 'Enter' })
+    expect(sends('tab:activate')).toEqual([{ id: 't1', via: 'key' }])
+  })
+  it('Home has no tabMenu; its activate sends cancel and keys only when given and valid', async () => {
+    const api = (await load('home'))! as Record<string, Fn>
+    expect(api.tabMenu).toBeUndefined()
+    expect(api.menuPick).toBeUndefined()
+    api.activate('t1', 'key', { cancel: true })
+    api.activate('t1', 'key', { keys: 'Enter' })
+    api.activate('t1', 'key', { keys: 'Space' })
+    api.activate('t1', 'key', { keys: 'Escape' })
+    api.activate('t1', 'key', { cancel: 'yes' })
+    api.activate('t1', 'key', { cancel: false })
+    api.activate('t1')
+    expect(sends('tab:activate')).toEqual([
+      { id: 't1', via: 'key', cancel: true }, { id: 't1', via: 'key', keys: 'Enter' }, { id: 't1', via: 'key', keys: 'Space' },
+      { id: 't1', via: 'key' }, { id: 't1', via: 'key' }, { id: 't1', via: 'key' }, { id: 't1' },
+    ])
+  })
+  it('Home\'s openLink and action: via key with its key', async () => {
+    const api = (await load('home'))! as Record<string, Fn>
+    await api.openLink('https://x.example/', 'key', 'Space')
+    await api.openLink('https://x.example/', 'click', 'Space')
+    await api.openLink('https://x.example/')
+    await api.action({ action: 'copy-path', id: 't1', via: 'key', keys: 'Enter' })
+    await api.action({ action: 'reveal', id: 't1', keys: 'Enter' })
+    await api.action({ action: 'copy-link', id: 's_0123456789abcdef', via: 'key', keys: 'Tab' })
+    expect(wire.invoked.map((x) => [x.ch, x.args[0]])).toEqual([
+      ['link:open', { url: 'https://x.example/', via: 'key', keys: 'Space' }],
+      ['link:open', { url: 'https://x.example/', via: 'click' }],
+      ['link:open', { url: 'https://x.example/' }],
+      ['home:action', { action: 'copy-path', id: 't1', via: 'key', keys: 'Enter' }],
+      ['home:action', { action: 'reveal', id: 't1' }],
+      ['home:action', { action: 'copy-link', id: 's_0123456789abcdef', via: 'key' }],
+    ])
   })
 })

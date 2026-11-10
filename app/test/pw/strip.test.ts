@@ -38,7 +38,7 @@ describe('the tab list (A2.13)', () => {
 
   it('the preload exposes the strip\'s own methods alone, and no channel', async () => {
     expect(await p.page.evaluate(() => Object.keys((window as unknown as { marverPage: object }).marverPage).sort())).toEqual([
-      'activate', 'close', 'kind', 'more', 'onPageFocus', 'onPill', 'onTabs', 'onWindow', 'openLink', 'pillAction', 'ready', 'tabMenu',
+      'activate', 'close', 'kind', 'menuPick', 'menuShown', 'more', 'onPageFocus', 'onPill', 'onTabMenu', 'onTabs', 'onWindow', 'openLink', 'pillAction', 'ready', 'tabMenu',
     ])
   })
 

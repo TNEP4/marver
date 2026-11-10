@@ -34,7 +34,7 @@
  * never restored. `canLoad`, `addressOf` and `keptDoc` answer for both kinds where a gate read the registry.
  */
 import type { DisplayState, TabKind, TabMarks, TabPageProbe, TabView } from '../shared/channels.ts'
-import type { AppState, Busy, Hello, Inset, MenuItem, OpenItem, Theme, Why } from '../../../src/shared/app-api.ts'
+import type { AppState, Busy, Hello, ImmersiveWish, Inset, MenuItem, OpenItem, Theme, Why } from '../../../src/shared/app-api.ts'
 import { FEATURE, UNSAVED_WHY, WHY_WORDS } from '../../../src/shared/app-api.ts'
 import type { AppBody, AppKind, TabIdent, UnloadReason } from '../../../src/shared/app-perf.ts'
 import { noticeDropped } from './commands.ts'
@@ -89,7 +89,16 @@ export interface TabDoc {
 export type Safety = 'unknown' | 'fresh' | 'stale'
 
 /** The current document's last reports (writer: tabs.ts `onReport`, from the bridge). `hello`: its accepted `mv:hello` (A3: its inset, its page). */
-export interface TabReports { safety: Safety; busy?: Busy; theme?: Theme; menu?: MenuItem[]; hello?: Hello }
+export interface TabReports {
+  safety: Safety; busy?: Busy; theme?: Theme; menu?: MenuItem[]; hello?: Hello
+  /** spec 32 C2: the document's latest immersive wish (`mv:immersive`), stored by `onReport` */
+  immersive?: ImmersiveWish
+  /** spec 32 C2, C8: main's grant for this document (absent reads `none`), written by the immersive gate (views.ts); it
+   *  resets with the reports at every commit, so a new document - a reload while `ended` included - starts at `none` */
+  immersiveGrant?: 'on' | 'ended'
+  /** spec 32 C8: the last wish `n` main answered (the gate's, views.ts), reset with the reports */
+  immersiveAnswered?: number
+}
 
 /**
  * The crash record (writer: tabpage.ts `recover`). `count`, `lastAuto` and `latched` are the frozen part; the
@@ -539,6 +548,8 @@ export function viewOf(t: Tab, active: boolean, home: string, list: Tab[] = allT
   if (t.look !== undefined) v.dark = t.look
   if (t.reg) v.hue = hueOf(t.reg.ws)   // the same initials hue as its Recently here card and its tab page
   if (t.update && t.reg?.version) v.update = t.update
+  // spec 32 F1: Home's "Not responding"
+  if (t.hung) v.hung = true
   const m = marksSource?.(t)
   if (m) v.marks = m
   return v
@@ -1059,7 +1070,7 @@ function pathOf(url: string): string | null {
 }
 
 /** A report from the admitted document (the bridge checked its `doc`, its trust and every field). */
-export function onReport(tabId: string, doc: string, r: { safety?: Safety; busy?: Busy; theme?: Theme; menu?: MenuItem[]; hello?: Hello }): void {
+export function onReport(tabId: string, doc: string, r: { safety?: Safety; busy?: Busy; theme?: Theme; menu?: MenuItem[]; hello?: Hello; immersive?: ImmersiveWish }): void {
   const t = tabs.get(tabId)
   if (!t?.doc || !doc || t.doc.doc !== doc) return
   const p = P()
@@ -1089,6 +1100,8 @@ export function onReport(tabId: string, doc: string, r: { safety?: Safety; busy?
   }
   if (r.theme) { t.reports.theme = { dark: r.theme.dark }; t.look = r.theme.dark }
   if (r.menu) t.reports.menu = r.menu.map((m) => ({ ...m }))
+  // spec 32 C2: the wish, the latest whole; the compose that `changed()` runs reads it (C8's gate)
+  if (r.immersive) t.reports.immersive = { on: r.immersive.on, n: r.immersive.n }
   p.changed()
 }
 

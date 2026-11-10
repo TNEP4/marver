@@ -208,7 +208,7 @@ export interface ThemeBody {
 }
 
 /** #24: a state that changes what input does until left. */
-export const MODES = ['laser', 'inspect', 'comments', 'interact', 'play', 'slides', 'hide-ui', 'jam-session', 'jam-capture', 'jam-review', 'jam-lane'] as const
+export const MODES = ['laser', 'inspect', 'comments', 'interact', 'play', 'slides', 'hide-ui', 'immersive', 'jam-session', 'jam-capture', 'jam-review', 'jam-lane'] as const
 export type ModeName = (typeof MODES)[number]
 /** #25, #26: `enter` carries the shown fields, `exit` the held ones. */
 export interface ModeBody {

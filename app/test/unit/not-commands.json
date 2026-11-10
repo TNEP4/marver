@@ -2,5 +2,7 @@
   { "file": "src/main/views.ts", "fn": "ask", "prop": "dialog", "label": "ask", "reason": "the guard's sheet: its answer is the outcome of the command that asked (a declined sheet ends a close or a reload `cancelled`, views.ts endRefused), never an input of its own" },
   { "file": "src/main/views.ts", "fn": "restartAlertBox", "prop": "dialog", "label": "restartAlertBox", "reason": "A5.1 #17's alert when a restart failed: one button, Quit, on a window already gone; no choice to record, and the restart's failure is `update`'s own `restart-failed` line" },
   { "file": "src/shared/channels.ts", "fn": "SENDERS", "prop": "channel", "label": "app:ready", "reason": "no input: a page saying it has loaded" },
-  { "file": "src/shared/channels.ts", "fn": "SENDERS", "prop": "channel", "label": "settings:get", "reason": "no input: Settings reading the files to draw itself" }
+  { "file": "src/shared/channels.ts", "fn": "SENDERS", "prop": "channel", "label": "settings:get", "reason": "no input: Settings reading the files to draw itself" },
+  { "file": "src/shared/channels.ts", "fn": "SENDERS", "prop": "channel", "label": "tab:menu-pick", "reason": "no input of its own (spec 32 B2): the strip's menu pick runs exactly what the native click ran, so the one command is the one tabAct opens (TAB_MENU or OVERFLOW); a null pick runs nothing" },
+  { "file": "src/shared/channels.ts", "fn": "SENDERS", "prop": "channel", "label": "tab:menu-shown", "reason": "no input (spec 32 B2): the strip saying the menu is on screen, which ends the held tab-menu or tabs-more command" }
 ]

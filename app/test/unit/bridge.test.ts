@@ -99,6 +99,41 @@ describe('app pages', () => {
     expect(checkPagePayload('settings:action', null).ok).toBe(false)
     expect(checkPagePayload('mv:theme', { dark: true }).ok).toBe(false)
   })
+  it('spec 32 B2: the strip\'s menu - the asks\' booleans, a pick by row id or null (never a label), the shown ack', () => {
+    expect(checkPagePayload('tab:menu', { id: 't1', x: 10, y: 20, key: true, hadFocus: false, label: 'x' })).toEqual({ ok: true, value: { id: 't1', x: 10, y: 20, key: true, hadFocus: false } })
+    expect(checkPagePayload('tab:menu', { id: 't1', x: 10, y: 20, hadFocus: true })).toEqual({ ok: true, value: { id: 't1', x: 10, y: 20, hadFocus: true } })
+    for (const bad of [{ key: 'yes' }, { hadFocus: 1 }, { key: null }]) expect(checkPagePayload('tab:menu', { id: 't1', x: 1, y: 1, ...bad }).ok, JSON.stringify(bad)).toBe(false)
+    expect(checkPagePayload('tabs:more', { ids: ['t1'], x: 1, y: 2, key: false, hadFocus: true })).toEqual({ ok: true, value: { ids: ['t1'], x: 1, y: 2, key: false, hadFocus: true } })
+    expect(checkPagePayload('tabs:more', { ids: ['t1'], x: 1, y: 2, key: 'no' }).ok).toBe(false)
+    for (const id of ['open-browser', 'reveal', 'copy-link', 'mark-all-seen', 'resolve-all-comments', 'reload', 'force-reload', 'close', 'tab:t_1-x', null]) {
+      expect(checkPagePayload('tab:menu-pick', { rev: 3, id, label: 'Close tab' }), String(id)).toEqual({ ok: true, value: { rev: 3, id } })
+    }
+    for (const bad of [{ rev: 3, id: 'Close tab' }, { rev: 3, id: 'activate' }, { rev: 3, id: 'tab:' }, { rev: 3, id: `tab:${'a'.repeat(33)}` }, { rev: 3, id: 'tab:../x' }, { rev: 3 }, { rev: -1, id: null }, { rev: 1.5, id: null }, { id: null }]) {
+      expect(checkPagePayload('tab:menu-pick', bad).ok, JSON.stringify(bad)).toBe(false)
+    }
+    expect(checkPagePayload('tab:menu-shown', { rev: 4, x: 1 })).toEqual({ ok: true, value: { rev: 4 } })
+    expect(checkPagePayload('tab:menu-shown', { rev: 'a' }).ok).toBe(false)
+  })
+  it('spec 32 D8.1, D8.8: home:action\'s card actions by id, and how a row was picked (via key, its key)', () => {
+    for (const action of ['copy-link', 'copy-path', 'reveal']) {
+      expect(checkPagePayload('home:action', { action, id: 's_0123456789abcdef', url: 'x' }), action).toEqual({ ok: true, value: { action, id: 's_0123456789abcdef' } })
+      expect(checkPagePayload('home:action', { action, id: 'r_0123456789abcdef', via: 'key', keys: 'Space' }), action).toEqual({ ok: true, value: { action, id: 'r_0123456789abcdef', via: 'key', keys: 'Space' } })
+      expect(checkPagePayload('home:action', { action, id: '/Users/x' }).ok, action).toBe(false)
+      expect(checkPagePayload('home:action', { action }).ok, action).toBe(false)
+    }
+    expect(checkPagePayload('home:action', { action: 'copy', id: 'dev', via: 'key', keys: 'Enter' })).toEqual({ ok: true, value: { action: 'copy', id: 'dev', via: 'key', keys: 'Enter' } })
+    expect(checkPagePayload('home:action', { action: 'copy-start', id: 't1', via: 'key' })).toEqual({ ok: true, value: { action: 'copy-start', id: 't1', via: 'key' } })
+    // a key with no `via` is not kept; a wrong via or key refuses
+    expect(checkPagePayload('home:action', { action: 'show-files', keys: 'Enter' })).toEqual({ ok: true, value: { action: 'show-files' } })
+    for (const bad of [{ via: 'click' }, { via: 'key', keys: 'Escape' }, { keys: 'Tab' }]) expect(checkPagePayload('home:action', { action: 'reveal', id: 't1', ...bad }).ok, JSON.stringify(bad)).toBe(false)
+  })
+  it('spec 32 D8.8: the sender\'s kind - tab:activate\'s cancel and keys kept from Home, stripped from the strip', () => {
+    const p = { id: 't1', cancel: true, keys: 'Enter' }
+    expect(checkPagePayload('tab:activate', p, 'home')).toEqual({ ok: true, value: { id: 't1', cancel: true, keys: 'Enter' } })
+    expect(checkPagePayload('tab:activate', p, 'strip')).toEqual({ ok: true, value: { id: 't1' } })
+    expect(checkPagePayload('link:open', { url: 'x', via: 'key', keys: 'Space' }, 'home').ok).toBe(true)
+    expect(checkPagePayload('link:open', { url: 'x', via: 'key', keys: 'Space' }, 'strip').ok).toBe(false)
+  })
   it('a pinned page is exactly marver-app://<kind>/', () => {
     expect(isPinnedUrl('marver-app://home/', 'home')).toBe(true)
     expect(isPinnedUrl('marver-app://home/index.html#x', 'home')).toBe(true)
@@ -127,6 +162,11 @@ describe('app pages', () => {
     // A4.6 #27: settings:action from Settings alone; #40: a remote view sends nothing and has no pinned page
     expect(mayUsePageChannel('settings:action', 'settings', true, 'marver-app://settings/')).toBe(true)
     expect(mayUsePageChannel('settings:action', 'home', true, 'marver-app://home/')).toBe(false)
+    // spec 32 B2: the tab menu's channels from the strip alone - Home's menus are its own DOM now
+    for (const ch of ['tab:menu', 'tabs:more', 'tab:menu-pick', 'tab:menu-shown']) {
+      expect(mayUsePageChannel(ch, 'strip', true, 'marver-app://strip/'), ch).toBe(true)
+      expect(mayUsePageChannel(ch, 'home', true, 'marver-app://home/'), ch).toBe(false)
+    }
     for (const url of ['https://pilot.example.com/', 'marver-app://remote/']) {
       for (const ch of Object.keys(SENDERS)) expect(mayUsePageChannel(ch, 'remote', true, url), `${ch} ${url}`).toBe(false)
       expect(isPinnedUrl(url, 'remote')).toBe(false)

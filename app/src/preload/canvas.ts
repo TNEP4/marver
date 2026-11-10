@@ -30,6 +30,11 @@
  * A4 (app 0.3; A4.6 #35): `capture` asks main for a picture of this document's own view - before an admit it answers
  * `untrusted` with no IPC; after, `mv:capture { doc, p }` is invoked, and main's answer reaches the page only as the
  * contract types it (the bytes a `Uint8Array`, the size within `BOUNDS.captureLong`), anything else `untrusted`.
+ *
+ * Spec 32 (app 1.2; C2): `immersive({ on })` is a fifth held report, `mv:immersive`, replayed after `menu` at an admit.
+ * Each wish is stamped with `n`, this document's own counter from 1 (a new document is a new preload); `onImmersive`
+ * hears `mv:immersive-state` only for this document's admitted `doc` and only for the last `n` sent, so an answer to an
+ * older wish never acts after a newer one. The shell never sees `n`.
  */
 import { contextBridge, ipcRenderer } from 'electron'
 import {
@@ -40,8 +45,8 @@ import {
 import { checkOpenItem } from '../shared/open-item.ts'
 import { checkShowTarget, type ShowTarget } from '../../../src/shared/deep-link.ts'
 
-type Report = 'hello' | 'theme' | 'busy' | 'menu'
-const ORDER: readonly Report[] = ['hello', 'theme', 'busy', 'menu']
+type Report = 'hello' | 'theme' | 'busy' | 'menu' | 'immersive'
+const ORDER: readonly Report[] = ['hello', 'theme', 'busy', 'menu', 'immersive']
 
 let answer: DocAnswer = { reopen: false }
 try {
@@ -61,6 +66,9 @@ const presentFns = new Set<(r: Present) => void>()
 const probeFns = new Set<(a: PerfProbeAsk) => void>()
 const openFns = new Set<(p: OpenItem) => OpenResult | Promise<OpenResult>>()
 const showFns = new Set<(t: ShowTarget | null) => void>()
+const immersiveFns = new Set<(s: { on: boolean; end?: boolean }) => void>()
+/** spec 32 C2: the last wish's `n` (0: none sent yet) */
+let wishN = 0
 /** the display's rate main last said (`display` ask) */
 let hz: number | null = null
 
@@ -168,6 +176,14 @@ ipcRenderer.on(CANVAS_CHANNELS.show, (_e, m: Record<string, unknown> | null) => 
   for (const fn of [...showFns]) { try { fn(t ? { ...t } : null) } catch { /* the page's own */ } }
 })
 
+// spec 32 C2: main's answer to the latest wish, for this document alone
+ipcRenderer.on(CANVAS_CHANNELS.immersiveState, (_e, m: Record<string, unknown> | null) => {
+  if (!m || !doc || m.doc !== doc || typeof m.on !== 'boolean' || m.n !== wishN || wishN === 0) return
+  if (m.end !== undefined && m.end !== true) return
+  const s = { on: m.on, ...(m.end === true ? { end: true } : {}) }
+  for (const fn of [...immersiveFns]) { try { fn({ ...s }) } catch { /* the page's own */ } }
+})
+
 // A4: a live picture of this document's view (A4.6 #35)
 const WHYS = new Set<string>(CAPTURE_WHY)
 const side = (v: unknown): v is number => whole(v, BOUNDS.captureLong) && v >= 1
@@ -233,5 +249,13 @@ const api: MarverAppV1 = {
   // spec 31 D3: this document showed a `marver show` - main judges the sender and brings its tab forward
   front: () => { if (doc) ipcRenderer.send(CANVAS_CHANNELS.front, { doc }) },
   exportPdf,
+  // spec 32 C2: the wish, a whole state held and replayed like the others, stamped with this document's next `n`
+  immersive: (p: { on: boolean }) => {
+    const on = !!(p && typeof p === 'object' && (p as { on?: unknown }).on === true)
+    if (wishN >= 2 ** 31) return
+    wishN += 1
+    say('immersive')({ on, n: wishN })
+  },
+  onImmersive: listen(immersiveFns),
 }
 contextBridge.exposeInMainWorld('marverApp', api)

@@ -223,8 +223,8 @@ describe('Shared canvases: state/shared.json (A4.6 #47)', () => {
     const sent: { ch: string; p: unknown }[] = []
     let ready = (_c: { kind: string }) => {}
     h.mountPages({ handle: () => {}, onReady: (fn: typeof ready) => { ready = fn; return () => {} }, send: (_t: string, ch: string, p: unknown) => { sent.push({ ch, p }); return true } } as never, {
-      running: () => [], onRunningChange: () => () => {}, setFilesPill: () => {},
-      linkPorts: { byPort: () => undefined, open: async () => ({ ok: true }), openRemote: async () => ({ ok: true }) },
+      running: () => [], onRunningChange: () => () => {}, homeExcluded: () => [], onHomeExcludedChange: () => () => {}, setFilesPill: () => {},
+      linkPorts: { byPort: () => undefined, open: async () => ({ ok: true }), openRemote: async () => ({ ok: true }), deep: () => 'bad' },
     })
     ready({ kind: 'home' })
     const pushes = () => sent.filter((x) => x.ch === 'shared').map((x) => x.p as { url: string; lastSeen: number }[])
@@ -330,6 +330,7 @@ describe('link:open', () => {
       byPort: (p) => entries.find((e) => e.port === p),
       open: async (_e, u, rest) => { opened.push({ url: u, rest }); return answer },
       openRemote: async (u) => { remote.push(u); return answer },
+      deep: () => 'bad',
     }).then((a) => ({ a, opened }))
   }
 
@@ -397,8 +398,8 @@ describe('mountPages (ports.ts): the pages\' channels, mounted once at ready', (
     const pills: unknown[] = []
     const { INVOKES, CH } = await import('../../src/shared/channels.ts')
     h.mountPages(f.bridge as never, {
-      running: () => [], onRunningChange: () => () => {}, setFilesPill: (p) => pills.push(p),
-      linkPorts: { byPort: (port) => (port === 4901 ? { state: 'ready', origin: 'http://[::1]:4901', port, ws: WS(1), name: 'A' } : undefined), open: async () => ({ ok: true }), openRemote: async () => ({ ok: true }) },
+      running: () => [], onRunningChange: () => () => {}, homeExcluded: () => [], onHomeExcludedChange: () => () => {}, setFilesPill: (p) => pills.push(p),
+      linkPorts: { byPort: (port) => (port === 4901 ? { state: 'ready', origin: 'http://[::1]:4901', port, ws: WS(1), name: 'A' } : undefined), open: async () => ({ ok: true }), openRemote: async () => ({ ok: true }), deep: () => 'bad' },
     })
     expect([...f.handlers.keys()].sort()).toEqual([...INVOKES, CH.settingsReveal].sort())
     expect(await f.invoke(CH.homeAction, { action: 'copy-start', id: `r_${WS(1)}` })).toEqual({ ok: true })
@@ -417,8 +418,8 @@ describe('mountPages (ports.ts): the pages\' channels, mounted once at ready', (
     let runningChanged = () => {}
     const f = fakeBridge()
     const off = h.mountPages(f.bridge as never, {
-      running: () => running, onRunningChange: (fn) => { runningChanged = fn; return () => {} }, setFilesPill: () => {},
-      linkPorts: { byPort: () => undefined, open: async () => ({ ok: true }), openRemote: async () => ({ ok: true }) },
+      running: () => running, onRunningChange: (fn) => { runningChanged = fn; return () => {} }, homeExcluded: () => running, onHomeExcludedChange: () => () => {}, setFilesPill: () => {},
+      linkPorts: { byPort: () => undefined, open: async () => ({ ok: true }), openRemote: async () => ({ ok: true }), deep: () => 'bad' },
     })
     f.ready('home')
     expect(f.sent.map((s) => s.ch)).toEqual(['home:info', 'recent', 'shared'])

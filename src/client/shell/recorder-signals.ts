@@ -158,7 +158,7 @@ type Shown = 'cohort' | 'first-frame' | 'two-frames'
 const SHOWN: Record<ModeName, Shown> = {
   laser: 'cohort', inspect: 'cohort', comments: 'cohort',
   play: 'first-frame', slides: 'first-frame',
-  interact: 'two-frames', 'hide-ui': 'two-frames', 'jam-session': 'two-frames', 'jam-capture': 'two-frames', 'jam-review': 'two-frames', 'jam-lane': 'two-frames',
+  interact: 'two-frames', 'hide-ui': 'two-frames', immersive: 'two-frames', 'jam-session': 'two-frames', 'jam-capture': 'two-frames', 'jam-review': 'two-frames', 'jam-lane': 'two-frames',
 }
 /** The first frame of a stage is a cold boot: the command's own deadline (`play`, `slides`: 30 s), not a toggle's 5 s - a
  *  slow first frame is the answer that record exists for. */

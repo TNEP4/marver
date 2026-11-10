@@ -94,7 +94,8 @@ import { actUnload as unloadAct, forceUnload, takeAct, unloadGone as actGone, ty
 import { isQuitting, request as shutdownRequest, shutdownState, startShutdown, type RestartAlert } from './shutdown.ts'
 import { updateAct, updateMenu, updaterTabs } from './updater.ts'
 import { routeDeepLink } from './deep-link.ts'
-import { noteLogo, noteSite, setUpdateRoots, showLinked } from './home.ts'
+import { noteLogo, noteSite, setTabFacts, setUpdateRoots, showLinked, type TabFacts } from './home.ts'
+import { buildDeepLink } from '../../../src/shared/deep-link.ts'
 import { fetchSite } from './canvas-fetch.ts'
 
 export const PRELOAD_CANVAS = join(__dirname, 'preload-canvas.cjs')
@@ -1575,6 +1576,28 @@ export function writeTabsNow(): boolean {
   return store.flushSync()
 }
 
+/**
+ * Spec 32 F1, D8.1: what Home's card actions may use of a tab. A local tab: its `ws`, `root`, the port it ran on, the
+ * `--port` of an explicit-port start (an automatic slot's port may be another canvas's by the time the command runs),
+ * and its link - the people link while its document is trusted, or, once it is gone, its `marver://` link; a remote
+ * tab: its own place. Home and Settings have none.
+ */
+function tabFactsOf(id: string): TabFacts | undefined {
+  const t = getTab(id)
+  if (!t) return undefined
+  if (t.kind === 'remote') return t.remote ? { link: t.remote.url } : undefined
+  if (t.kind !== 'local') return undefined
+  const gone = !t.reg || t.reg.state === 'gone'
+  const port = t.reg?.port
+  const link = gone
+    ? (t.root ? buildDeepLink({ ws: t.root, ...(port !== undefined ? { port } : {}) }) ?? undefined : undefined)
+    : t.reg && t.doc?.trusted ? `http://localhost:${t.reg.port}${safePath(t.path)}` : undefined
+  return {
+    ...(t.reg ? { ws: t.reg.ws } : {}), ...(t.root ? { root: t.root } : {}), ...(port !== undefined ? { port } : {}),
+    ...(t.reg && t.reg.slot == null ? { startPort: t.reg.port } : {}), ...(link ? { link } : {}), ...(gone ? { gone: true } : {}),
+  }
+}
+
 /** The workspaces of the canvases running now (the registry's starting and ready entries). */
 const runningWorkspaces = (): string[] => [...new Set(trust.entries().filter((e) => e.state === 'ready' || e.state === 'starting').map((e) => e.ws))]
 
@@ -1593,6 +1616,10 @@ export function windowPorts() {
   return {
     running: runningWorkspaces,
     onRunningChange(fn: () => void) { fns.add(fn); return () => { fns.delete(fn) } },
+    // spec 32 D6.4 (F3b #2): the workspaces whose Recently here card Home hides - today the running ones, told exactly
+    // when they change (W2 widens both to the gone tabs' workspaces)
+    homeExcluded: runningWorkspaces,
+    onHomeExcludedChange(fn: () => void) { fns.add(fn); return () => { fns.delete(fn) } },
     linkPorts: {
       byPort(port: number): LinkTarget | undefined {
         const e = trust.entries().find((x) => x.port === port && (x.state === 'ready' || x.state === 'starting'))
@@ -1601,6 +1628,8 @@ export function windowPorts() {
       open: openInTab,
       // A4.4: the link's origin in its shared tab, new or existing (A4.6 #39-#43)
       openRemote,
+      // spec 32 D3: a `marver:` link pasted on Home, through the handler `open-url` feeds
+      deep: openDeepLink,
     },
     setFilesPill(p: { lead?: string; text: string; short: string; tooltip?: string } | null) {
       setCondition('files', p ? { text: p.text, short: p.short, ...(p.lead ? { lead: p.lead } : {}), ...(p.tooltip ? { tooltip: p.tooltip } : {}) } : null)
@@ -1700,6 +1729,8 @@ export function startViews(i: StartInput): void {
   setInterval(() => { for (const t of allTabs()) if (t.kind === 'local' && t.reg?.state === 'ready') refreshUpdate(t) }, UPDATE_EVERY_MS).unref()
   // Home's copy-update: the folder of that tab, from main's own record (spec 31 E4)
   setUpdateRoots((id) => { const t = getTab(id); return t?.kind === 'local' && t.update && t.root ? t.root : undefined })
+  // spec 32 F1, D8.1: a card's facts from main's own record of its tab - its trust read here, so home.ts never does
+  setTabFacts(tabFactsOf)
   trust.onReport((tabId, doc, r) => {
     onReport(tabId, doc, r)
     invalidateMenu()

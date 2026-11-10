@@ -40,6 +40,8 @@ const PATHS = {
   check: 'M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z',
 } as const
 export type IconName = keyof typeof PATHS
+/** Spec 32 E3: every icon name, a runtime list (a4-contracts pins it; `PATHS` stays private). */
+export const ICON_NAMES = Object.keys(PATHS) as IconName[]
 
 /** A decorative icon (aria-hidden), drawn from a fixed path: never from a string a page was sent. */
 export function icon(name: IconName, size = 16, cls = ''): SVGSVGElement {

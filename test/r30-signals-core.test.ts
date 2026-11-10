@@ -254,6 +254,9 @@ describe('the server\'s allowlist for each new kind (#4)', () => {
     expect(cleanPageRecord(env('mode', { mode: 'comments', phase: 'enter', t, by, shownMs: 88, frames: 3, outcome: 'done' }))).toMatchObject({ mode: 'comments', phase: 'enter', t, by, shownMs: 88, frames: 3, outcome: 'done' })
     expect(cleanPageRecord(env('mode', { mode: 'play', phase: 'enter', t, firstFrameMs: 900, outcome: 'done' }))).toMatchObject({ firstFrameMs: 900 })
     expect(cleanPageRecord(env('mode', { mode: 'laser', phase: 'exit', t, heldMs: 5000, errors: 2 }))).toMatchObject({ heldMs: 5000, errors: 2 })
+    // spec 32 C11: immersive play's mode, entered and left, survives the allowlist
+    expect(cleanPageRecord(env('mode', { mode: 'immersive', phase: 'enter', t, by, frames: 2, outcome: 'done' }))).toMatchObject({ mode: 'immersive', phase: 'enter', t, by, frames: 2, outcome: 'done' })
+    expect(cleanPageRecord(env('mode', { mode: 'immersive', phase: 'exit', t, heldMs: 4200 }))).toMatchObject({ mode: 'immersive', phase: 'exit', heldMs: 4200 })
     expect(cleanPageRecord(env('mode', { mode: 'dancing', phase: 'enter', t }))).toBeNull()
     expect(cleanPageRecord(env('mode', { mode: 'laser', phase: 'sideways', t }))).toBeNull()
   })

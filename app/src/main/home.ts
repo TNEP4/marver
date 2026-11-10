@@ -288,7 +288,8 @@ export function flushRecent(running: Iterable<string>): void {
   writer?.flushSync()
 }
 
-export const recentViews = (running: Iterable<string>): RecentView[] => {
+/** `exclude` (spec 32 D6.4): the workspaces whose card Home hides - read from W3 on; until then the running ones decide. */
+export const recentViews = (running: Iterable<string>, _exclude: Iterable<string> = running): RecentView[] => {
   const run = [...running]
   const views = recentViewsOf(recent, run, homedir(), { logoOf: (ws) => { const k = wsKey(ws); return k ? logos.get(k) : undefined } })
   // a `marver://` link to a canvas that is not running (spec 31 D1): its card first - recorded or not - highlighted
@@ -333,6 +334,18 @@ export function onRecentChange(fn: () => void): () => void { recentFns.add(fn); 
 /** The folder of a running canvas's tab whose card offers an update (views.ts sets it): `copy-update`'s. */
 let updateRootOf: ((tabId: string) => string | undefined) | null = null
 export function setUpdateRoots(fn: ((tabId: string) => string | undefined) | null): void { updateRootOf = fn }
+
+/**
+ * Spec 32 F1, D8.1: what main's record of a tab gives a card's action (views.ts reads the tab and its trust, so home.ts
+ * never does). `port` where it ran (its `marver://` link); `startPort` what Copy start command passes as `--port`, only
+ * for an explicit-port start; `link` the people link while trusted, a remote tab's url, or a gone tab's `marver://` link.
+ */
+export interface TabFacts { ws?: string; root?: string; port?: number; startPort?: number; link?: string; gone?: boolean }
+/** Spec 32 F1: the tab facts, by tab id (views.ts sets it); null by default, so every tab id resolves to nothing. */
+let tabFactsOf: ((tabId: string) => TabFacts | undefined) | null = null
+export function setTabFacts(fn: ((tabId: string) => TabFacts | undefined) | null): void { tabFactsOf = fn }
+/** Spec 32 F1: a tab's facts, or undefined (no hook, or no such tab). */
+export const tabFacts = (tabId: string): TabFacts | undefined => tabFactsOf?.(tabId)
 
 /** `home:action`: main copies its own command, or opens the folder. Checked again here. */
 export async function homeAction(raw: unknown): Promise<HomeActionAnswer> {
@@ -384,6 +397,11 @@ export interface LinkPorts {
    * rules and activated (the remote stream's). Its answer passes through; never `later`.
    */
   openRemote(url: string): Promise<LinkOpenAnswer>
+  /**
+   * Spec 32 D3: a `marver:` link pasted on Home, handed to main's deep-link handler (views.ts `openDeepLink`, the one
+   * `open-url` feeds), which checks it with `parseDeepLink` as for a link from outside
+   */
+  deep(url: string): 'bad' | 'home' | 'opened' | 'shown'
 }
 
 /** `link:open { url }` from the strip or Home (A2.7): checked again in main, never loading the host it wrote. */
@@ -427,7 +445,7 @@ export function mountPages(bridge: PageBridge, w: WindowPorts): () => void {
     info = j
     bridge.send('home', CH.homeInfo, i)
   }
-  const pushRecent = () => { bridge.send('home', CH.recent, recentViews(w.running())) }
+  const pushRecent = () => { bridge.send('home', CH.recent, recentViews(w.running(), w.homeExcluded())) }
   const pushShared = () => { bridge.send('home', CH.shared, sharedLinks()) }
   const offs = [
     bridge.onReady((ctx) => {
@@ -469,6 +487,7 @@ function provideHomeHooks(): void {
       byPort: (port) => o.entries?.find((e) => e.port === port),
       open: async (_e, url, rest) => { opened.push({ url, rest }); return o.answer ?? { ok: true } },
       openRemote: async (url) => { remote.push(url); return o.answer ?? { ok: true } },
+      deep: () => 'bad',
     }).then((answer) => ({ answer, opened, remote }))
   })
 }

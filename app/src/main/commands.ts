@@ -33,8 +33,9 @@ import type { AppCommand } from './keys.ts'
 export const TAB_ACTIONS = ['activate', 'open-browser', 'reveal', 'copy-link', 'reload', 'force-reload', 'close'] as const
 /** The strip (views.ts:1199-1204), by key or click. */
 export const STRIP_COMMANDS = ['tab-activate', 'tab-close', 'tab-menu', 'tabs-more', 'link-open'] as const
-/** Home (channels.ts:178-181; pages/home/main.ts): `copy`'s `arg` is `dev`, `init` or `update` (FIXED_COMMANDS). */
-export const HOME_COMMANDS = ['copy', 'copy-start', 'copy-update', 'show-files', 'tab-activate', 'link-open', 'link-cancel'] as const
+/** Home (channels.ts:178-181; pages/home/main.ts): `copy`'s `arg` is `dev`, `init` or `update` (FIXED_COMMANDS). Spec 32
+ *  D8.1 adds a card's `copy-link`, `copy-path` and `reveal`. */
+export const HOME_COMMANDS = ['copy', 'copy-start', 'copy-update', 'show-files', 'tab-activate', 'link-open', 'link-cancel', 'copy-link', 'copy-path', 'reveal'] as const
 /** Settings, the pill and the tab page (channels.ts:165, :253): `setting`'s `arg` is the key, never the value. */
 export const PAGE_COMMANDS = [
   'setting', 'settings-reveal', 'notification-settings', 'pill-button', 'pill-dismiss',
@@ -157,19 +158,24 @@ export const APP_COMMANDS: Record<AppCmdName, AppCmdSpec> = {
   // ---- tabAct (`reload`, `force-reload` above)
   activate: se({ noop: ['no-tab', 'untrusted'], failed: ['refused', 'gone'] }),
   'open-browser': se({ noop: ['no-tab', 'untrusted'] }),
-  reveal: se({ noop: ['no-tab', 'untrusted'] }),
-  'copy-link': se({ noop: ['no-tab', 'untrusted'] }),
+  // spec 32 D8.1: Home's card actions end `failed: missing` on main's `{ ok: false }` (`pageEnd`)
+  reveal: se({ noop: ['no-tab', 'untrusted'], failed: ['missing'] }),
+  'copy-link': se({ noop: ['no-tab', 'untrusted'], failed: ['missing'] }),
   close: se({ noop: ['no-tab', 'untrusted'], failed: ['refused'], cancelled: true }),
   // ---- the strip and Home
   'tab-activate': SHOW,
   'tab-close': CLOSE,
-  'tab-menu': se({ noop: ['no-tab'] }),
-  'tabs-more': se({ noop: ['no-tab'] }),
+  // spec 32 B2: held until the strip says the menu shows; else refused (`not-ready`), replaced by a newer open, closed
+  // before it showed, or past its deadline (`no-show`)
+  'tab-menu': se({ noop: ['no-tab', 'not-ready', 'replaced', 'closed', 'no-show'] }),
+  'tabs-more': se({ noop: ['no-tab', 'not-ready', 'replaced', 'closed', 'no-show'] }),
   'link-open': se({ failed: ['bad', 'nothing', 'not-canvas', 'refused'] }),
   copy: se({ failed: ['refused'] }),
   'copy-start': se({ noop: ['no-tab'], failed: ['missing'] }),
   // spec 31 E4: a running canvas's update command, in its folder
   'copy-update': se({ failed: ['missing'] }),
+  // spec 32 D8.1: a card's folder path
+  'copy-path': se({ noop: ['no-tab'], failed: ['missing'] }),
   'show-files': se(),
   'link-cancel': se({ noop: ['no-tab'], failed: ['refused', 'gone'] }),
   // ---- Settings, the pill, the tab page
@@ -511,7 +517,8 @@ export function noticeAnswered(itemId: string, result: OpenResult): void {
 /** What the funnel records for a page's message; `noop`: decided here, its handler never runs. */
 export interface PageCommand { name: AppCmdName; o: AppCmdOpts; noop?: string }
 
-/** The channels the funnel records (R16's gate reads this against `SENDERS`). `app:ready` and `settings:get` are no input. */
+/** The channels the funnel records (R16's gate reads this against `SENDERS`). `app:ready` and `settings:get` are no input,
+ *  and so are spec 32's `tab:menu-pick` and `tab:menu-shown` (a pick records what `tabAct` opens; B2). */
 export const PAGE_CHANNELS: readonly string[] = [
   CH.tabActivate, CH.tabClose, CH.tabMenu, CH.tabsMore, CH.linkOpen, CH.pillAction, CH.tabpageAction, CH.homeAction, CH.settingsSet, CH.settingsReveal, CH.settingsAction,
 ]
@@ -528,29 +535,39 @@ export function pageCommand(channel: string, ctx: { kind: PageKind; tabId?: stri
   switch (channel) {
     case CH.tabActivate: {
       const via: CmdVia = v.via === 'key' ? 'key' : 'click'
-      // Home's cards are buttons (click); its one key is Esc in the link field, back to the tab ⌘L came from. With no
-      // such tab it names Home itself: nothing to go back to
-      if (ctx.kind === 'home' && via === 'key') return { name: 'link-cancel', o: { via, keys: 'Escape', in: 'home', ...(id ? { tab: id } : {}) }, ...(id === 'home' ? { noop: 'no-tab' } : {}) }
-      return { name: 'tab-activate', o: { via, in: surface, ...(id ? { tab: id } : {}) } }
+      // Home's field Escape says `cancel` (spec 32 D8.8): back to the tab ⌘L came from. With no such tab it names Home
+      // itself: nothing to go back to
+      if (ctx.kind === 'home' && v.cancel === true) return { name: 'link-cancel', o: { via: 'key', keys: 'Escape', in: 'home', ...(id ? { tab: id } : {}) }, ...(id === 'home' ? { noop: 'no-tab' } : {}) }
+      // a Home card by Enter or Space records the key (spec 32 D8.8)
+      const keys = ctx.kind === 'home' && via === 'key' && (v.keys === 'Enter' || v.keys === 'Space') ? { keys: v.keys } : {}
+      return { name: 'tab-activate', o: { via, ...keys, in: surface, ...(id ? { tab: id } : {}) } }
     }
     // the strip closes by Delete or Backspace, it has no close button
     case CH.tabClose: return { name: 'tab-close', o: { via: ctx.kind === 'strip' ? 'key' : 'click', in: surface, ...(id ? { tab: id } : {}) } }
     // a right-click, or the context-menu key or ⇧F10: a context menu either way
     case CH.tabMenu: return { name: 'tab-menu', o: { via: 'context', in: surface, ...(id ? { tab: id } : {}) } }
     case CH.tabsMore: return { name: 'tabs-more', o: { via: 'click', in: 'strip' } }
-    // absent reads Return in the field; a past shared canvas's card says `click` (channels.ts `openLink`)
-    case CH.linkOpen: return { name: 'link-open', o: v.via === 'click' ? { via: 'click', in: surface } : { via: 'key', keys: 'Enter', in: surface } }
+    // absent reads Return in the field; a past shared canvas's card says `click` (channels.ts `openLink`), or by key its
+    // Enter or Space (spec 32 D8.8, Home alone: the bridge refuses it from anyone else)
+    case CH.linkOpen:
+      if (v.via === 'key' && (v.keys === 'Enter' || v.keys === 'Space')) return { name: 'link-open', o: { via: 'key', keys: v.keys, in: surface } }
+      return { name: 'link-open', o: v.via === 'click' ? { via: 'click', in: surface } : { via: 'key', keys: 'Enter', in: surface } }
     case CH.pillAction: {
       const key = v.via === 'key'
       return { name: v.act === 'dismiss' ? 'pill-dismiss' : 'pill-button', o: key ? { via: 'key', keys: 'Escape', in: 'pill' } : { via: 'click', in: 'pill' } }
     }
     case CH.tabpageAction: return { name: String(v.action) as AppCmdName, o: { via: 'click', in: 'tabpage', ...(ctx.tabId ? { tab: ctx.tabId } : {}) } }
-    case CH.homeAction:
-      if (v.action === 'copy') return { name: 'copy', o: { via: 'click', in: 'home', ...(id ? { arg: id } : {}) } }
-      if (v.action === 'copy-start') return { name: 'copy-start', o: { via: 'click', in: 'home' } }
-      if (v.action === 'copy-update') return { name: 'copy-update', o: { via: 'click', in: 'home' } }
-      if (v.action === 'show-files') return { name: 'show-files', o: { via: 'click', in: 'home' } }
+    case CH.homeAction: {
+      // spec 32 D8.8: a menu row picked by key records the key pressed; absent reads a click
+      const how: Pick<AppCmdOpts, 'via' | 'keys'> = v.via === 'key' ? { via: 'key', ...(v.keys === 'Enter' || v.keys === 'Space' ? { keys: v.keys } : {}) } : { via: 'click' }
+      if (v.action === 'copy') return { name: 'copy', o: { ...how, in: 'home', ...(id ? { arg: id } : {}) } }
+      if (v.action === 'copy-start') return { name: 'copy-start', o: { ...how, in: 'home' } }
+      if (v.action === 'copy-update') return { name: 'copy-update', o: { ...how, in: 'home' } }
+      if (v.action === 'show-files') return { name: 'show-files', o: { ...how, in: 'home' } }
+      // spec 32 D8.1: a card's link, path, folder - the names tabAct records too, told apart by `in: 'home'`
+      if (v.action === 'copy-link' || v.action === 'copy-path' || v.action === 'reveal') return { name: v.action, o: { ...how, in: 'home' } }
       return null
+    }
     case CH.settingsSet: return { name: 'setting', o: { via: 'click', in: 'settings', ...(typeof v.key === 'string' ? { arg: v.key } : {}) } }
     case CH.settingsReveal: return { name: 'settings-reveal', o: { via: 'click', in: 'settings' } }
     case CH.settingsAction: return { name: 'notification-settings', o: { via: 'click', in: 'settings' } }

@@ -274,7 +274,8 @@ input.addEventListener('keydown', (e) => {
     // back to the tab ⌘L came from, whatever the field holds; if that tab has closed, stay on Home - said to main all
     // the same, as Home itself, for the record (spec 30's link-cancel, noop no-tab): main does nothing with it
     const b = backTab()
-    api?.activate(b ? b.id : 'home', 'key')
+    // spec 32 D8.8: the field's Escape says so (`cancel`), through Home's own activate
+    api?.activate(b ? b.id : 'home', 'key', { cancel: true })
   }
 })
 

@@ -24,6 +24,12 @@
  * three white-out windows a shell asks for (R8 #38), sent only when `perfInfo().watch` is true - app 1.0.0 would refuse
  * it and spend the tab's bucket; and `mv:menu-click`'s `in`, the menu a relayed item came from (#51), absent from 1.0.0
  * (the shell then records `in: 'app'`). Owners: app-store (`watch`, `perfInfo().watch`), commands (`in`).
+ *
+ * Spec 32 (app 1.2, marver 0.32.0) amends it in writing (F2, F3b #1), frozen before its streams split and `v` still 1,
+ * no new FEATURE name: `mv:immersive` / `mv:immersive-state`, immersive play's wish and main's answer (C2), with the
+ * optional `MarverAppV1.immersive` and `onImmersive` (a shell gates on the method); and two optional `LiveEvent` fields,
+ * `work` and `titles` (unknown fields are stripped, so a 0.31 app ignores them), the titles bounded by the new
+ * `LIVE_TITLES_MAX`. `LIVE_KINDS`, `LIVE_BOUNDS` and `LIVE_WIRE` are unchanged.
  */
 
 export const APP_API_VERSION = 1
@@ -166,6 +172,10 @@ export const CANVAS_CHANNELS = {
   front: 'mv:front',
   /** app 1.1 (spec 31): a finished deck PDF saved where the person says - an invoke carrying only the job id */
   exportPdf: 'mv:export-pdf',
+  /** spec 32 C2: immersive play's wish (canvas to main, a held whole-state report like `theme`: `ImmersiveWish`) */
+  immersive: 'mv:immersive',
+  /** spec 32 C2: main's answer to the wish (main to canvas, `{ doc, ...ImmersiveAnswer }`) */
+  immersiveState: 'mv:immersive-state',
 } as const
 
 /** Bounds main checks again (A2.14 #19): unknown fields are stripped, a known one of the wrong type or past its bound refuses the message. */
@@ -294,6 +304,15 @@ export interface LiveEvent {
   working: boolean
   /** a Jam session runs (`!!view.session`) */
   session: boolean
+  /**
+   * spec 32 F2 (0.32.0, optional): since when something has been at work - `marver work`'s CLI leases and the Jam runs
+   * the snapshot counts as working - and on which board (the newest working Jam card's, else the first board pinning a
+   * `marver work` frame). Absent when nothing works, and from a 0.31 server
+   */
+  work?: { board?: string; since: number }
+  /** spec 32 F2 (0.32.0, optional): the titles of the boards `items` and `work` name, at most `LIVE_TITLES_MAX` keys,
+   *  each key a ref (at most `LIVE_BOUNDS.ref`) and each value at most `LIVE_BOUNDS.title` */
+  titles?: Record<string, string>
 }
 
 /**
@@ -311,6 +330,8 @@ export const LIVE_BOUNDS = {
   eventBytes: 65_536,
   id: /^(ask|review|failed|stalled):[0-9a-f]{20}$/,
 } as const
+/** spec 32 F2: `LiveEvent.titles` has at most this many keys. A constant of its own: `LIVE_BOUNDS` is frozen (A4.6 #11). */
+export const LIVE_TITLES_MAX = 32
 
 /**
  * The live stream's wire (A4.6 #5, #6, #14). `GET <origin><path>` with `x-mv-ws`, a fresh `x-mv-nonce` and
@@ -355,6 +376,19 @@ export type CaptureWhy = (typeof CAPTURE_WHY)[number]
 /** The PNG's bytes cross IPC as a `Uint8Array` (a sandboxed preload has no `Buffer` in Electron 45, A4.6 #1); its
  *  size in device pixels, its long side at most `BOUNDS.captureLong`. */
 export type CaptureAnswer = { ok: true; png: Uint8Array; width: number; height: number } | { ok: false; why: CaptureWhy }
+
+/**
+ * Spec 32 C2: `mv:immersive` (canvas to main; on the wire `{ doc, p }`) - the shell's wish that immersive play hide the
+ * strip, a whole state held and replayed after `menu`. `n` is the preload's, counting from 1 for each document; the
+ * shell never sees it. The bridge takes `on` a boolean and `n` an integer 1..2^31, unknown fields stripped.
+ */
+export interface ImmersiveWish { on: boolean; n: number }
+/**
+ * Spec 32 C2: `mv:immersive-state` (main to canvas; on the wire `{ doc, ...ImmersiveAnswer }`) - main's answer to the
+ * wish `n`. `on: true`: the strip is hidden, drop the inset; `on: false`: keep or restore the 44 px inset, Hide UI as it
+ * is; `end: true`: main took immersive away for this document (restore the inset, and turn Hide UI off if play is on).
+ */
+export interface ImmersiveAnswer { n: number; on: boolean; end?: true }
 
 /** A deck PDF job's id (src/server/pdf.ts JOB_ID): 128 random bits, base64url. */
 export const PDF_JOB = /^[A-Za-z0-9_-]{22}$/
@@ -425,6 +459,13 @@ export interface MarverAppV1 {
    * canvas origin, shows the save panel, checks the document again, and writes the file where the panel says
    */
   exportPdf?(a: ExportPdfAsk): Promise<ExportPdfAnswer>
+  /**
+   * spec 32 C2 (app 1.2): the shell's wish for immersive play, sent on every change (the preload stamps it with `n`,
+   * holds it and replays it at an admit). What the shell shows follows `onImmersive`'s answer, never the wish
+   */
+  immersive?(p: { on: boolean }): void
+  /** spec 32 C2 (app 1.2): main's answer to the latest wish, for this document alone; an answer to an older wish is dropped */
+  onImmersive?(fn: (s: { on: boolean; end?: boolean }) => void): () => void
 }
 
 import type { ShowTarget } from './deep-link.ts'

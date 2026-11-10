@@ -6,10 +6,16 @@
  */
 import { afterEach, describe, expect, it } from 'vitest'
 import {
-  BOUNDS, CANVAS_CHANNELS, CAPTURE_WHY, FEATURE, LIVE_BOUNDS, LIVE_KINDS, LIVE_WIRE, OPEN_RESULTS,
-  type CaptureAnswer, type LiveEvent, type LiveItem, type LiveKind, type MarverAppV1, type OpenItem, type OpenResult,
+  BOUNDS, CANVAS_CHANNELS, CAPTURE_WHY, FEATURE, LIVE_BOUNDS, LIVE_KINDS, LIVE_TITLES_MAX, LIVE_WIRE, OPEN_RESULTS,
+  type CaptureAnswer, type ImmersiveAnswer, type LiveEvent, type LiveItem, type LiveKind, type MarverAppV1, type OpenItem, type OpenResult,
 } from '../../../src/shared/app-api.ts'
-import { CH, INVOKES, RECEIVES, SENDERS, type AppPageKind, type LinkOpenAnswer, type PillView, type SettingsView, type TabKind, type TabView } from '../../src/shared/channels.ts'
+import { MOTION } from '../../../src/shared/immersive.ts'
+import { MODES } from '../../../src/shared/perf-records.ts'
+import {
+  CH, INVOKES, RECEIVES, SENDERS, type AppPageKind, type HomeAction, type HomeActionAnswer, type LinkOpenAnswer, type MenuAsk, type PillView, type SettingsView, type SharedLink,
+  type TabActivate, type TabKind, type TabMenuPick, type TabMenuView, type TabView, type WindowView,
+} from '../../src/shared/channels.ts'
+import { ICON_NAMES } from '../../src/pages/dom.ts'
 import type { Bridge } from '../../src/main/bridge.ts'
 import { overrideTimings, T } from '../../src/main/timings.ts'
 
@@ -119,5 +125,67 @@ describe('A4\'s timings (A4.6 #28, #44)', () => {
     expect([T.liveBackoffMs, T.liveIdleMs, T.openWaitMs]).toEqual([[10, 20], 300, 200])
     expect(() => overrideTimings(JSON.stringify({ liveBackoffMs: 10 }))).toThrow(/liveBackoffMs must be an array of numbers/)
     expect(() => overrideTimings(JSON.stringify({ noticeEveryMs: [1] }))).toThrow(/noticeEveryMs must be a number/)
+  })
+})
+
+describe('spec 32\'s amendments (F1-F3b), frozen at the contract commit (G3)', () => {
+  it('the live event: two optional fields, the titles bounded by LIVE_TITLES_MAX beside the frozen LIVE_BOUNDS', () => {
+    expect(LIVE_TITLES_MAX).toBe(32)
+    expect('titles' in LIVE_BOUNDS).toBe(false)
+    const old: LiveEvent = { v: 1, instance: 'i', seq: 1, jam: 'on', items: [], cut: 0, counts: { ask: 0, review: 0, failed: 0, stalled: 0 }, unseen: 0, working: true, session: false }
+    const now: LiveEvent = { ...old, work: { board: 'home', since: 5 }, titles: { home: 'Home' } }
+    // @ts-expect-error work always says since when
+    const sinceless: LiveEvent = { ...old, work: { board: 'home' } }
+    expect([now.work?.since, sinceless]).toHaveLength(2)
+  })
+  it('the strip\'s menu: its channels from the strip alone, its view to the strip; tab:menu and tabs:more narrowed to the strip', () => {
+    expect([CH.tabMenuView, CH.tabMenuPick, CH.tabMenuShown]).toEqual(['tab-menu', 'tab:menu-pick', 'tab:menu-shown'])
+    for (const ch of [CH.tabMenu, CH.tabsMore, CH.tabMenuPick, CH.tabMenuShown]) expect(SENDERS[ch], ch).toEqual(['strip'])
+    expect(RECEIVES.strip).toContain(CH.tabMenuView)
+    for (const k of ['home', 'settings', 'tabpage'] as const) expect(RECEIVES[k]).not.toContain(CH.tabMenuView)
+    for (const ch of [CH.tabMenuPick, CH.tabMenuShown]) expect((INVOKES as readonly string[]).includes(ch), ch).toBe(false)
+    expect(Object.keys(RECEIVES).sort()).toEqual(['home', 'settings', 'strip', 'tabpage'])
+  })
+  it('the menu\'s shapes: icons by name only, a pick by id never by label, the ask two booleans', () => {
+    const v: TabMenuView = { rev: 1, x: 10, y: 44, kind: 'tab', rows: [{ kind: 'item', id: 'close', label: 'Close tab', icon: 'x', enabled: true }, { kind: 'sep' }] }
+    const pick: TabMenuPick = { rev: 1, id: null }
+    const ask: MenuAsk = { key: false, hadFocus: true }
+    // @ts-expect-error an icon is a name dom.ts draws, never a path
+    const path: TabMenuView = { ...v, rows: [{ kind: 'item', id: 'x', label: 'X', icon: 'M0 0', enabled: true }] }
+    // @ts-expect-error a pick names a row, never a label
+    const label: TabMenuPick = { rev: 1, id: 'close', label: 'Close tab' }
+    expect([v.rows.length, pick.id, ask.key, path, label]).toHaveLength(5)
+  })
+  it('the icon names, as dom.ts draws them (E3 adds to these)', () => {
+    expect(ICON_NAMES).toEqual(['house', 'warning', 'link', 'gear', 'copy', 'x', 'check'])
+  })
+  it('immersive play: the two canvas channels, the optional methods, the motion and the recorder\'s mode', () => {
+    expect([CANVAS_CHANNELS.immersive, CANVAS_CHANNELS.immersiveState]).toEqual(['mv:immersive', 'mv:immersive-state'])
+    const old: MarverAppV1 = { v: 1, topInset: 0, reopen: false, hello() {}, theme() {}, busy() {}, menu() {}, onAppState: () => () => {}, onMenuClick: () => () => {} }
+    expect([old.immersive, old.onImmersive]).toEqual([undefined, undefined])
+    const keys: (keyof Bridge)[] = ['immersiveState']
+    const a: ImmersiveAnswer = { n: 1, on: false, end: true }
+    // @ts-expect-error `end` is true or absent
+    const notEnd: ImmersiveAnswer = { n: 1, on: false, end: false }
+    expect([keys, a.end, notEnd]).toHaveLength(3)
+    expect(MOTION).toEqual({
+      out: { strip: 240, pills: 160, stage: 320, ease: 'cubic-bezier(.4, 0, .9, .6)', stageEase: 'cubic-bezier(.2, .8, .2, 1)' },
+      back: { strip: 260, pills: 200, stage: 300, ease: 'cubic-bezier(.15, .7, .2, 1)', stageEase: 'cubic-bezier(.2, .8, .2, 1)' },
+    })
+    expect(MODES).toContain('immersive')
+    const wv: WindowView = { rev: 1, focused: true, fullScreen: false, immersive: true }
+    expect(wv.immersive).toBe(true)
+  })
+  it('Home\'s inputs: cancel and keys on tab:activate, the card actions, why missing; a hung tab', () => {
+    const cancel: TabActivate = { id: 't1', via: 'key', cancel: true }
+    // @ts-expect-error cancel is true or absent
+    const notCancel: TabActivate = { id: 't1', cancel: false }
+    // @ts-expect-error a key is Enter or Space
+    const esc: TabActivate = { id: 't1', keys: 'Escape' }
+    const acts: HomeAction[] = [{ action: 'copy-link', id: 's_0123456789abcdef' }, { action: 'copy-path', id: 'r_x' }, { action: 'reveal', id: 't1', via: 'key', keys: 'Space' }]
+    const missing: HomeActionAnswer = { ok: false, why: 'missing' }
+    const hung: TabView = { id: 't1', kind: 'local', name: 'A', state: 'hidden', verified: true, open: true, hung: true }
+    const shared: SharedLink = { url: 'https://a.example/', host: 'a.example', lastSeen: 1, id: 's_0123456789abcdef' }
+    expect([cancel.cancel, notCancel, esc, acts.length, missing.why, hung.hung, shared.id]).toHaveLength(7)
   })
 })

@@ -60,12 +60,22 @@
  * (`pageRun`): the handler runs as that command's turn, and what it does not end itself ends on its answer. A `via`
  * only the page can know is allowlisted in `checkPagePayload`: `tab:activate`, `link:open` and `pill:action`.
  * `mv:menu-click` carries the menu a relayed item came from (`in`, #51), and `mv:opened` ends its notice's command.
+ *
+ * **Spec 32** (app 1.2; B2, C2, D8.8), all of it here at the contract commit (G3) - this file belongs to no stream after:
+ * - `mv:immersive`, immersive play's wish `{ on, n }`, is a fifth canvas report (`checkImmersive`), admitted as the others
+ *   and held in `CanvasReports.immersive`; `immersiveState` is main's one sender of the answer, `mv:immersive-state`,
+ *   only to the document named while it is the tab's admitted, trusted one;
+ * - the strip's Marver menu: `tab:menu-pick { rev, id | null }` (a row id of main's grammar, never a label) and
+ *   `tab:menu-shown { rev }`; `tab:menu` and `tabs:more` carry `MenuAsk`'s `key` and `hadFocus`, booleans;
+ * - `checkPagePayload` takes the sender's kind: Home's own fields (`tab:activate`'s `cancel` and `keys`, `link:open`'s
+ *   `via: 'key'` with its `keys`) are kept from Home alone - stripped, or for `link:open` refused, from anyone else;
+ *   `home:action` gains `copy-link`, `copy-path` and `reveal` by id, and `via: 'key'` with `keys`.
  */
 import { randomBytes } from 'node:crypto'
 import { ipcMain, webFrameMain, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents, type WebFrameMain } from 'electron'
 import {
   APP_MENU_IDS, BOUNDS, CANVAS_CHANNELS, FEATURE, PERF_BOUNDS, UNSAVED_WHY, WATCH_WHY, WHY, type WatchWhy,
-  type AppState, type Busy, type CaptureAnswer, type CaptureRect, type ExportPdfAnswer, type DocAnswer, type Hello, type Inset, type MenuIn, type MenuItem, type OpenItem, type PerfAsk, type PerfCam,
+  type AppState, type Busy, type CaptureAnswer, type CaptureRect, type ExportPdfAnswer, type DocAnswer, type Hello, type ImmersiveAnswer, type ImmersiveWish, type Inset, type MenuIn, type MenuItem, type OpenItem, type PerfAsk, type PerfCam,
   type PerfMsg, type PerfSize, type Present, type Presented, type Theme, type Why,
 } from '../../../src/shared/app-api.ts'
 import { CH, INVOKES as INVOKE_LIST, SENDERS, type PageKind } from '../shared/channels.ts'
@@ -87,6 +97,8 @@ export interface CanvasReports {
   theme?: Theme
   busy?: Busy
   menu?: MenuItem[]
+  /** spec 32 C2: the document's latest immersive wish (`mv:immersive`) */
+  immersive?: ImmersiveWish
 }
 
 /** Who sent an app page's message, as main's map knows it. */
@@ -162,6 +174,11 @@ export interface Bridge {
   onFront(fn: (tabId: string) => void): () => void
   /** spec 31: main's handler for accepted `mv:export-pdf` asks (pdf-save.ts); null takes it away */
   onExportPdf(fn: ExportPdfHandler | null): void
+
+  // ---- spec 32 (app 1.2; C2) ----
+  /** `mv:immersive-state { doc, n, on, end? }` to the tab's document `doc`, only while it is the admitted, trusted one;
+   *  false otherwise (the next compose answers again) */
+  immersiveState(tabId: string, doc: string, s: ImmersiveAnswer): boolean
 }
 
 /** What the bridge asks of the rest of main (main.ts passes them at install). */
@@ -215,7 +232,12 @@ export function checkMenu(p: unknown): MenuItem[] | null {
   }
   return out
 }
-const CANVAS_CHECKS = { hello: checkHello, theme: checkTheme, busy: checkBusy, menu: checkMenu } as const
+/** spec 32 C2: `mv:immersive`'s wish - `on` a boolean, `n` an integer 1..2^31; unknown fields stripped. */
+export function checkImmersive(p: unknown): ImmersiveWish | null {
+  if (!obj(p) || typeof p.on !== 'boolean' || typeof p.n !== 'number' || !Number.isInteger(p.n) || p.n < 1 || p.n > 2 ** 31) return null
+  return { on: p.on, n: p.n }
+}
+const CANVAS_CHECKS = { hello: checkHello, theme: checkTheme, busy: checkBusy, menu: checkMenu, immersive: checkImmersive } as const
 
 // ---- A3's canvas messages (pure; A3.8 #10, #27) -------------------------------------------------------------
 
@@ -313,11 +335,23 @@ const TAB_ID = /^[A-Za-z0-9_-]{1,32}$/
 const coord = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 20_000
 const rev = (v: unknown) => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= Number.MAX_SAFE_INTEGER
 const one = <T extends string>(v: unknown, set: readonly T[]): v is T => typeof v === 'string' && (set as readonly string[]).includes(v)
+/** spec 32 B2: a pick's row id - main's own grammar, never a label */
+const PICK_ID = /^(open-browser|reveal|copy-link|mark-all-seen|resolve-all-comments|reload|force-reload|close|tab:[A-Za-z0-9_-]{1,32})$/
+const HOME_KEYS = ['Enter', 'Space'] as const
+/** spec 32 B2: `MenuAsk`'s booleans, each absent or a boolean (absent reads false); null refuses */
+const askOf = (p: Record<string, unknown>): { key?: boolean; hadFocus?: boolean } | null => {
+  if ((p.key !== undefined && typeof p.key !== 'boolean') || (p.hadFocus !== undefined && typeof p.hadFocus !== 'boolean')) return null
+  return { ...(p.key !== undefined ? { key: p.key as boolean } : {}), ...(p.hadFocus !== undefined ? { hadFocus: p.hadFocus as boolean } : {}) }
+}
 
-/** An app page channel's payload, checked and stripped; null refuses it (pure). */
-export function checkPagePayload(channel: string, p: unknown): { ok: true; value: unknown } | { ok: false } {
+/**
+ * An app page channel's payload, checked and stripped; null refuses it (pure). `kind` (spec 32 D8.8): the sender's, as
+ * main's map records it - Home's own fields are kept only when it is `'home'`; absent reads not Home.
+ */
+export function checkPagePayload(channel: string, p: unknown, kind?: PageKind): { ok: true; value: unknown } | { ok: false } {
   const yes = (value: unknown) => ({ ok: true as const, value })
   const no = { ok: false as const }
+  const home = kind === 'home'
   switch (channel) {
     case CH.ready: case CH.settingsGet: case CH.settingsReveal: return yes(null)
     case CH.settingsAction:
@@ -325,17 +359,34 @@ export function checkPagePayload(channel: string, p: unknown): { ok: true; value
     case CH.tabActivate:
       // spec 30 #50: how it was chosen, which only the page knows; absent reads `click`
       if (!obj(p) || typeof p.id !== 'string' || !TAB_ID.test(p.id) || (p.via !== undefined && !one(p.via, ['key', 'click'] as const))) return no
-      return yes({ id: p.id, ...(p.via !== undefined ? { via: p.via } : {}) })
+      // spec 32 D8.8: Home's field Escape (`cancel`, true or absent) and a card's key (`keys`) - from Home alone, else stripped
+      if (!home) return yes({ id: p.id, ...(p.via !== undefined ? { via: p.via } : {}) })
+      if ((p.cancel !== undefined && p.cancel !== true) || (p.keys !== undefined && !one(p.keys, HOME_KEYS))) return no
+      return yes({ id: p.id, ...(p.via !== undefined ? { via: p.via } : {}), ...(p.cancel === true ? { cancel: true } : {}), ...(p.keys !== undefined ? { keys: p.keys } : {}) })
     case CH.tabClose:
       return obj(p) && typeof p.id === 'string' && TAB_ID.test(p.id) ? yes({ id: p.id }) : no
-    case CH.tabMenu:
-      return obj(p) && typeof p.id === 'string' && TAB_ID.test(p.id) && coord(p.x) && coord(p.y) ? yes({ id: p.id, x: p.x, y: p.y }) : no
-    case CH.tabsMore:
-      return obj(p) && Array.isArray(p.ids) && p.ids.length <= 64 && p.ids.every((i) => typeof i === 'string' && TAB_ID.test(i)) && coord(p.x) && coord(p.y)
-        ? yes({ ids: [...p.ids], x: p.x, y: p.y }) : no
+    case CH.tabMenu: {
+      // spec 32 B2: how it was asked for (`MenuAsk`), booleans, absent reading false
+      if (!obj(p) || typeof p.id !== 'string' || !TAB_ID.test(p.id) || !coord(p.x) || !coord(p.y)) return no
+      const ask = askOf(p)
+      return ask ? yes({ id: p.id, x: p.x, y: p.y, ...ask }) : no
+    }
+    case CH.tabsMore: {
+      if (!obj(p) || !Array.isArray(p.ids) || p.ids.length > 64 || !p.ids.every((i) => typeof i === 'string' && TAB_ID.test(i)) || !coord(p.x) || !coord(p.y)) return no
+      const ask = askOf(p)
+      return ask ? yes({ ids: [...p.ids], x: p.x, y: p.y, ...ask }) : no
+    }
+    // spec 32 B2: the strip's menu - a row of main's grammar (never a label) or null, and the shown ack
+    case CH.tabMenuPick:
+      return obj(p) && rev(p.rev) && (p.id === null || (typeof p.id === 'string' && PICK_ID.test(p.id))) ? yes({ rev: p.rev, id: p.id }) : no
+    case CH.tabMenuShown:
+      return obj(p) && rev(p.rev) ? yes({ rev: p.rev }) : no
     case CH.linkOpen:
-      // `via`: `click`, a past shared canvas's card; absent reads Return in the field (spec 30 #50)
-      if (!obj(p) || typeof p.url !== 'string' || p.url.length > 2048 || (p.via !== undefined && p.via !== 'click')) return no
+      // `via`: `click`, a past shared canvas's card; absent reads Return in the field (spec 30 #50). Spec 32 D8.8: `key`,
+      // a past shared link's card by Enter or Space - only from Home and only with its `keys`
+      if (!obj(p) || typeof p.url !== 'string' || p.url.length > 2048) return no
+      if (p.via === 'key') return home && one(p.keys, HOME_KEYS) ? yes({ url: p.url, via: 'key', keys: p.keys }) : no
+      if (p.via !== undefined && p.via !== 'click') return no
       return yes({ url: p.url, ...(p.via !== undefined ? { via: p.via } : {}) })
     case CH.pillAction:
       // `via`: `key`, Esc on a dismissible pill; absent reads a click (spec 30 #50)
@@ -343,14 +394,22 @@ export function checkPagePayload(channel: string, p: unknown): { ok: true; value
       return yes({ rev: p.rev, act: p.act, ...(p.via !== undefined ? { via: p.via } : {}) })
     case CH.tabpageAction:
       return obj(p) && rev(p.rev) && one(p.action, ['retry', 'reload', 'copy-start', 'copy-details', 'reveal', 'open-browser', 'close', 'export-report'] as const) ? yes({ rev: p.rev, action: p.action }) : no
-    case CH.homeAction:
+    case CH.homeAction: {
       if (!obj(p)) return no
-      if (p.action === 'copy') return one(p.id, ['dev', 'init', 'update'] as const) ? yes({ action: 'copy', id: p.id }) : no
-      if (p.action === 'copy-start') return typeof p.id === 'string' && TAB_ID.test(p.id) ? yes({ action: 'copy-start', id: p.id }) : no
-      if (p.action === 'show-files') return yes({ action: 'show-files' })
+      // spec 32 D8.8: a menu row picked by key says so, with the key; absent reads a click
+      if ((p.via !== undefined && p.via !== 'key') || (p.keys !== undefined && !one(p.keys, HOME_KEYS))) return no
+      const how = p.via === 'key' ? { via: 'key', ...(p.keys !== undefined ? { keys: p.keys } : {}) } : {}
+      const byId = typeof p.id === 'string' && TAB_ID.test(p.id)
+      if (p.action === 'copy') return one(p.id, ['dev', 'init', 'update'] as const) ? yes({ action: 'copy', id: p.id, ...how }) : no
+      // `id` a recent's `r_<ws>`, or (spec 32 D8.1) a gone tab's id
+      if (p.action === 'copy-start') return byId ? yes({ action: 'copy-start', id: p.id, ...how }) : no
+      if (p.action === 'show-files') return yes({ action: 'show-files', ...how })
       // spec 31 E4: a running canvas's update, named by its tab (main reads its folder from its own record)
-      if (p.action === 'copy-update') return typeof p.id === 'string' && TAB_ID.test(p.id) ? yes({ action: 'copy-update', id: p.id }) : no
+      if (p.action === 'copy-update') return byId ? yes({ action: 'copy-update', id: p.id, ...how }) : no
+      // spec 32 D8.1: a card's link, path or folder, named by its id (a tab, `r_<ws>`, `s_<hash>`); main resolves the rest
+      if (one(p.action, ['copy-link', 'copy-path', 'reveal'] as const)) return byId ? yes({ action: p.action, id: p.id, ...how }) : no
       return no
+    }
     case CH.settingsSet:
       return obj(p) && one(p.file, ['config', 'theme'] as const) && typeof p.key === 'string' && /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(p.key)
         && (typeof p.value === 'boolean' || (typeof p.value === 'number' && Number.isFinite(p.value)) || text(p.value, 64))
@@ -455,6 +514,7 @@ export function installBridge(o: BridgeOptions = {}): Bridge {
     safety: rec.safety,
     ...(rec.hello ? { hello: { ...rec.hello } } : {}), ...(rec.theme ? { theme: { ...rec.theme } } : {}),
     ...(rec.busy ? { busy: { ...rec.busy, why: [...rec.busy.why] } } : {}), ...(rec.menu ? { menu: rec.menu.map((m) => ({ ...m })) } : {}),
+    ...(rec.immersive ? { immersive: { ...rec.immersive } } : {}),
   })
   const tell = (wcId: number) => {
     const tabId = regs.get(wcId)?.tabId
@@ -720,7 +780,7 @@ export function installBridge(o: BridgeOptions = {}): Bridge {
       ipcMain.handle(channel, async (e, payload: unknown) => {
         const ctx = pageCtx(e, channel)
         if (!ctx) throw new Error('refused')
-        const p = checkPagePayload(channel, payload)
+        const p = checkPagePayload(channel, payload, ctx.kind)
         if (!p.ok) { trace('page-refused', { wc: e.sender.id, channel, why: 'payload' }); return REFUSED_ANSWER[channel] ?? null }
         return await pageRun(channel, ctx, p.value)
       })
@@ -729,7 +789,7 @@ export function installBridge(o: BridgeOptions = {}): Bridge {
     ipcMain.on(channel, (e, payload: unknown) => {
       const ctx = pageCtx(e, channel)
       if (!ctx) return
-      const p = checkPagePayload(channel, payload)
+      const p = checkPagePayload(channel, payload, ctx.kind)
       if (!p.ok) { trace('page-refused', { wc: e.sender.id, channel, why: 'payload' }); return }
       if (channel === CH.ready) {
         const r = regs.get(e.sender.id)
@@ -886,6 +946,16 @@ export function installBridge(o: BridgeOptions = {}): Bridge {
     },
     onFront(fn) { frontFns.add(fn); return () => { frontFns.delete(fn) } },
     onExportPdf(fn) { exportPdfFn = fn; trace('export-pdf-handler', { set: !!exportPdfFn }) },
+    // spec 32 C2: the answer to the document named, while it is the tab's admitted, trusted one - never another document
+    immersiveState(tabId, doc, a) {
+      const id = tabWc.get(tabId)
+      const rec = id === undefined ? undefined : docs.get(id)
+      if (id === undefined || !rec?.doc || rec.doc !== doc || !isTrusted(id)) { trace('immersive', { tab: tabId, sent: false }); return false }
+      const msg = { doc, n: a.n, on: a.on, ...(a.end === true ? { end: true } : {}) }
+      const sent = sendCanvas(id, CANVAS_CHANNELS.immersiveState, msg)
+      trace('immersive', { wc: id, tab: tabId, n: a.n, on: a.on, end: a.end === true, sent })
+      return sent
+    },
   }
   return installed
 }
