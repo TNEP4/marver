@@ -20,6 +20,35 @@ import { listBoardFiles } from './boards.ts'
 /** One per process - the dev server, the jam daemon, and the API all share it. */
 export const workActivity: Activity = createActivity()
 
+/**
+ * Since when `marver work` has held frames (spec 32 F2): the start of the CLI's work, kept at the activity source and
+ * never in the live hub - a hub skips changes while no client is connected and is made again per server. Told of every
+ * change of every source (the callback's frames are their union), it never reads emptiness from the callback: an
+ * expired lease leaves the map only at the next sweep, and `mark()` sets before it emits, so an expired lease and a new
+ * mark give two non-empty callbacks with none empty between. At each change it reads the unexpired 'cli' leases: none,
+ * and `since` is cleared; some, with `since` unset or every lease it knew expired (`until <= now`, swept or not), and
+ * `since` is now; then `until` is the latest expiry read. Jam's own marks are not timed here: a leftover Jam lease must
+ * never give new CLI work an old duration. A read once `until` has passed answers nothing. Erasable TypeScript.
+ */
+export interface WorkClock { since(): number | undefined }
+export function createWorkClock(a: Pick<Activity, 'leases' | 'onChange'>, now: () => number = Date.now): WorkClock & { stop(): void } {
+  let since: number | undefined
+  let until = 0
+  const read = () => {
+    const leases = a.leases('cli')
+    const t = now()
+    if (!leases.length) { since = undefined; until = 0; return }
+    if (since === undefined || until <= t) since = t
+    until = Math.max(...leases.map(([, u]) => u))
+  }
+  const stop = a.onChange(read)
+  read()
+  return { since: () => (since !== undefined && until > now() ? since : undefined), stop }
+}
+/** The process's clock over `workActivity`, subscribed once at module load: a Vite restart, a hub made again or a client
+ *  that reconnects keeps it; a new `marver dev` process starts again. */
+export const workClock: WorkClock = createWorkClock(workActivity)
+
 /** The order of what the shell is told about activity: each broadcast takes the next number, and the
  *  snapshot a page asks for carries the latest - so a slow snapshot never undoes a newer broadcast.
  *  Time-based, so a restarted server never counts backwards past a page that outlived it. */
@@ -100,6 +129,16 @@ export function boardsChanged(root: string): void {
 export function onBoardsChanged(fn: (root: string) => void): () => void {
   boardListeners.add(fn)
   return () => { boardListeners.delete(fn) }
+}
+
+/** The boards that pin any of these frames, by name - never the auto boards, which hold every frame (spec 32 F2: the
+ *  board a `marver work` hold is named by, its first). */
+export function pinningBoards(root: string, frames: readonly string[]): string[] {
+  if (!frames.length) return []
+  const ix = indexOf(root)
+  const out = new Set<string>()
+  for (const f of frames) for (const b of ix.byFrame.get(f) ?? []) if (!ix.auto.includes(b)) out.add(b)
+  return [...out].sort()
 }
 
 /** The boards that show any of these frames - what the sidebar lights while an agent works (the

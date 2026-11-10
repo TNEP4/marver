@@ -977,7 +977,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         const opts: SpawnOpts | undefined = full ? { root, mcp: s.mcp, skills: s.skills, ...(ch.kind === 'fork' && ch.session ? { fork: ch.session } : {}), marver: marverCmd() } : undefined
         // the runner is the decision now: saved before it runs, and the handoff it came from is spent - and what it was
         // formed for: no session's run any more (heldBy, kept)
-        await q.lock(() => { b.runner = { kind: ch.kind, agent, ...(ch.kind === 'fork' && ch.session ? { session: ch.session } : {}), ...(ch.why ? { why: ch.why } : {}) }; delete b.handoff; delete b.share; q.persist() })
+        // (spec 32 F2: and its run begins now - `runAt`, what "working on X · N min" counts from)
+        await q.lock(() => { b.runner = { kind: ch.kind, agent, ...(ch.kind === 'fork' && ch.session ? { session: ch.session } : {}), ...(ch.why ? { why: ch.why } : {}) }; b.runAt = Date.now(); delete b.handoff; delete b.share; q.persist() })
         queueChanged()
         // a process slot of its own, whatever brought it here (jam.concurrency is the most Marver spawns at once)
         const permit = await takePermit()
@@ -1674,7 +1675,14 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           ...(c.follows ? { follows: c.follows } : {}), ...(c.reply ? { reply: c.reply } : {}), ...(c.batch ? { batch: c.batch } : {}),
           ...(position ? { position } : {}), ...(waitsFor ? { waitsFor } : {}), ...(waiting ? { waiting } : {}), ...(c.exclusive ? { exclusive: true } : {}),
           ...(c.kind !== 'comment' ? captureView(c) : {}),
-          ...(c.state === 'working' ? (() => { const r = runs.runnerOf(j.batches.find((b) => b.batchId === c.batch)); return r ? { runner: r } : {} })() : {}),
+          ...(c.state === 'working' ? (() => {
+            const b = j.batches.find((x) => x.batchId === c.batch)
+            const r = runs.runnerOf(b)
+            // spec 32 F2: when its run began - the batch's `runAt`, else (an older journal) its claim's time when claimed;
+            // never the card's own `at`, which resolving a working thread rewrites
+            const startedAt = b?.runAt ?? b?.claim?.at
+            return { ...(r ? { runner: r } : {}), ...(typeof startedAt === 'number' ? { startedAt } : {}) }
+          })() : {}),
         }
       }),
       ...runs.view(),

@@ -15,7 +15,7 @@ import { createHash } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { appProofOk, proofHeaders, type DocProof } from './proof.ts'
 import { asks, type Thread } from '../shared/events.ts'
-import { LIVE_BOUNDS, LIVE_WIRE, type LiveEvent, type LiveItem, type LiveKind } from '../shared/app-api.ts'
+import { LIVE_BOUNDS, LIVE_TITLES_MAX, LIVE_WIRE, type LiveEvent, type LiveItem, type LiveKind } from '../shared/app-api.ts'
 import type { QueueView } from './jam/live.ts'
 
 /** A snapshot without what the hub adds (`v`, `instance`, `seq`). */
@@ -32,7 +32,21 @@ export interface LiveInput {
   jam?: QueueView
   /** the frames `marver work` holds (`workActivity.leases('cli')`) - never Jam's own leases (A4.6 r2 #3) */
   cli: readonly string[]
+  /** spec 32 F2: since when `marver work` has held frames (work.ts `workClock.since()`), absent when it holds none */
+  cliSince?: number
+  /** spec 32 F2: the boards, by name, that pin a frame `marver work` holds (work.ts `pinningBoards`, no auto board) */
+  pinning?: readonly string[]
+  /** spec 32 F2: every board's title, by its name (boards.ts `boardFields().title`, as the manifest carries it) */
+  titles?: Readonly<Record<string, string>>
+  /** the time now (a test's clock); `Date.now()` when absent */
+  now?: number
 }
+
+/**
+ * Spec 32 F2: the time app-live first saw a working Jam card with no `startedAt` (an older batch never claimed), by its
+ * card - what its run counts from then. Kept for the process, a card leaving work forgets it.
+ */
+const firstSeenWorking = new Map<string, number>()
 
 // ---- the selector ---------------------------------------------------------------------------------------------
 
@@ -128,21 +142,77 @@ export function liveSnapshot(input: LiveInput): LiveBody {
   const shown = items.filter(refsFit).sort((a, b) => b.at - a.at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
   // at work (#8): `marver work` holds a frame, or a Jam run runs - a background run, or a claimed one; a stalled,
   // offered, waiting or stopping one does not, whatever leases the daemon keeps for it meanwhile
-  const working = input.cli.length > 0 || cards.some((c) => c.state === 'working' && (!c.runner || !c.runner.state || c.runner.state === 'claimed'))
+  const runsNow = cards.filter((c) => c.state === 'working' && (!c.runner || !c.runner.state || c.runner.state === 'claimed'))
+  const working = input.cli.length > 0 || runsNow.length > 0
+  const kept = shown.slice(0, LIVE_BOUNDS.items)
+  const work = workOf(input, runsNow)
+  const titles = titlesOf(input.titles, [...(work?.board ? [work.board] : []), ...kept.map((i) => i.board)])
   return {
     jam: view ? 'on' : 'off',
-    items: shown.slice(0, LIVE_BOUNDS.items),
+    items: kept,
     cut: Math.max(0, shown.length - LIVE_BOUNDS.items),
     counts,
     unseen: input.fresh.length,
     working,
     session: !!view?.session,
+    ...(work ? { work } : {}),
+    ...(titles ? { titles } : {}),
   }
+}
+
+/**
+ * Spec 32 F2, `work`: since when something has been at work, and on which board. `since` is the earlier of `marver
+ * work`'s clock and the oldest working run's start (its `startedAt`, else when it was first seen working); `board` the
+ * newest working run's board (the latest start, then the latest made), else the first board by name pinning a frame
+ * the CLI holds; absent when nothing works.
+ */
+function workOf(input: LiveInput, runsNow: ViewCard[]): LiveEvent['work'] {
+  const now = input.now ?? Date.now()
+  const ids = new Set(runsNow.map((c) => c.id))
+  for (const id of [...firstSeenWorking.keys()]) if (!ids.has(id)) firstSeenWorking.delete(id)
+  const startOf = (c: ViewCard): number => {
+    if (typeof c.startedAt === 'number') return c.startedAt
+    let t = firstSeenWorking.get(c.id)
+    if (t === undefined) firstSeenWorking.set(c.id, (t = now))
+    return t
+  }
+  const starts = runsNow.map((c) => ({ c, at: startOf(c) }))
+  const cli = input.cli.length > 0 && typeof input.cliSince === 'number' ? input.cliSince : undefined
+  const all = [...(cli !== undefined ? [cli] : []), ...starts.map((x) => x.at)]
+  if (!all.length) return undefined
+  const newest = starts.sort((a, b) => b.at - a.at || b.c.made - a.c.made || (a.c.id < b.c.id ? -1 : a.c.id > b.c.id ? 1 : 0))[0]?.c
+  const board = newest?.board ?? (input.cli.length ? input.pinning?.[0] : undefined)
+  return { ...(board && board.length <= LIVE_BOUNDS.ref ? { board } : {}), since: Math.min(...all) }
+}
+
+/** Spec 32 F2, `titles`: the titles of the boards named, in that order, each once - at most `LIVE_TITLES_MAX`, a key a
+ *  ref (at most `LIVE_BOUNDS.ref`) and a value one line of at most `LIVE_BOUNDS.title`; absent when none has one. */
+function titlesOf(all: LiveInput['titles'], boards: readonly string[]): Record<string, string> | undefined {
+  if (!all) return undefined
+  const out: Record<string, string> = {}
+  let n = 0
+  for (const b of boards) {
+    if (n >= LIVE_TITLES_MAX) break
+    if (Object.hasOwn(out, b) || b.length > LIVE_BOUNDS.ref || !Object.hasOwn(all, b)) continue
+    const t = oneLine(all[b])
+    if (!t) continue
+    out[b] = t
+    n++
+  }
+  return n ? out : undefined
 }
 
 // ---- the encoder ----------------------------------------------------------------------------------------------
 
 const block = (e: LiveEvent) => `event: ${LIVE_WIRE.event}\ndata: ${JSON.stringify(e)}\n\n`
+
+/** The event with only these items, and only the titles they or `work` still name (spec 32 F2: titles count in the bytes). */
+function withItems(e: LiveEvent, items: LiveItem[], cut: number): LiveEvent {
+  const { titles, ...rest } = e
+  const named = new Set([...(e.work?.board ? [e.work.board] : []), ...items.map((i) => i.board)])
+  const kept = titles ? Object.fromEntries(Object.entries(titles).filter(([b]) => named.has(b))) : {}
+  return { ...rest, items, cut, ...(Object.keys(kept).length ? { titles: kept } : {}) }
+}
 
 /**
  * The event as written (#11, r1 #4): `event: live`, one `data:` line, a blank line - within `LIVE_BOUNDS.eventBytes`
@@ -157,7 +227,7 @@ export function encodeLive(e: LiveEvent): string {
   let keep = e.items.length
   while (keep > 0 && over > 0) over -= sizes[--keep]
   for (;;) {
-    text = block({ ...e, items: e.items.slice(0, keep), cut: e.cut + e.items.length - keep })
+    text = block(withItems(e, e.items.slice(0, keep), e.cut + e.items.length - keep))
     if (keep === 0 || Buffer.byteLength(text) <= LIVE_BOUNDS.eventBytes) return text
     keep--
   }
