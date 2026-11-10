@@ -1,0 +1,114 @@
+{
+  "v": 1,
+  "version": "1.1.0",
+  "status": "published",
+  "kind": "production",
+  "repo": "TNEP4/marver-app",
+  "tag": "v1.1.0",
+  "source": {
+    "sha": "abfd0f173058277e65d186465a3ac939925a17aa",
+    "branch": "main"
+  },
+  "companion": "0.31.0",
+  "tagTarget": "2fb18a895a71439c50c888d594b7e77ac67bfad0",
+  "release": {
+    "id": 440182440,
+    "url": "https://github.com/TNEP4/marver-app/releases/tag/untagged-97ff3de2275009e929ba"
+  },
+  "assets": [
+    {
+      "name": "Marver-darwin-arm64-1.1.0.zip",
+      "bytes": 120970226,
+      "sha256": "64f9b1e6202cb42d1283ccc274dbb99e0523d061d87104ec72bfd95eb686eade"
+    },
+    {
+      "name": "Marver-arm64.dmg",
+      "bytes": 131422015,
+      "sha256": "1f4c59b5b6f238e0618840e88d6ba59bd214cbabff7dade3682ce373765f82f8"
+    },
+    {
+      "name": "releases.json",
+      "bytes": 1871,
+      "sha256": "7e6f4d7b4c3f6716e2325edf76bbae2173c0d5c86032b1faaaf11d5e7861778f"
+    }
+  ],
+  "acceptance": {
+    "by": "Nic Touron",
+    "at": "2026-11-10T10:05:09.207Z",
+    "evidence": {
+      "version": "1.1.0",
+      "dmg": "1f4c59b5b6f238e0618840e88d6ba59bd214cbabff7dade3682ce373765f82f8",
+      "zip": "64f9b1e6202cb42d1283ccc274dbb99e0523d061d87104ec72bfd95eb686eade",
+      "mac": "Mac17,8 (Apple silicon): install items in a clean tart VM on it (s7-111, cloned from tahoe-base, deleted after); the 1.1 items (marver:// link, marver show) also checked on this Mac itself with the release-flavour build of the same source, 10 Nov",
+      "macos": "26.6.2",
+      "google": "refused",
+      "checks": {
+        "install-open": "pass",
+        "notarised": "pass",
+        "not-translocated": "pass",
+        "notice-ask": "pass",
+        "notice-banner": "pass",
+        "dock-badge": "pass",
+        "notice-denied": "pass",
+        "settings-link": "pass",
+        "signin": "pass",
+        "shared-card": "pass",
+        "live-picture": "pass"
+      },
+      "notes": "Run on these exact bytes (the draft's DMG, sha256 1f4c59b5..., downloaded from the draft with gh and hash-checked, copied into a fresh clone of tahoe-base and given Safari's quarantine flag), 10 Nov, clean macOS 26.6.2: opened from the DMG - the disk-image question ('Apple checked it for malicious software and none was detected'), Open; the silent move (update.json: moved from dmg; app.jsonl: update move moved 1.1.0); macOS's second question, Open; Home ('Welcome to Marver', no canvas yet); running from /Applications/Marver.app (not translocated); spctl: accepted, Notarized Developer ID, Developer ID Application: Nicolas Touron (PXV6WER853); version 1.1.0. New in 1.1 and checked on these bytes: app-live.json written with scheme 1, LaunchServices binds marver: to the app, and a marver:// link opened in the VM reached it (app.jsonl: cmd deep-link done). On Nic's Mac with the release-flavour build of the same source (10 Nov, his OK): a marver:// link opened the app on the exact slide, marver show from another app brought the window forward ('shown in 1 tab'), a hostile link opened the canvas's own board and ran nothing, a stopped canvas was highlighted on Home. NOT re-run by hand on 1.1.0: notice-ask, notice-banner, dock-badge, notice-denied, settings-link, signin, shared-card, live-picture - carried over from Nic's hand checks of 0.3.0 on 31 Oct (#53), as for 1.0.0 and 1.0.1 by Nic's decision; 1.1 touches the notices (the blue dot), Home and live pictures (sRGB), covered by the app's unit tests (1,250 pass) on this code. Not checked by hand: Resolve All Comments in the tab menu, File > Export PDF's save panel, the typed-draft notice (no Accessibility on the host for clicks). google 'refused': not shown to work, unchanged (#53 finding 2)."
+    }
+  },
+  "notary": {
+    "app": [
+      "eec4eb9e-5063-4e77-84ad-e42b26bf8917"
+    ],
+    "dmg": [
+      "a3177b75-ebb6-4e80-8033-87f007ab35ae"
+    ]
+  },
+  "dr": "identifier \"design.marver.app\" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = PXV6WER853",
+  "immutable": true,
+  "smokeReport": "smoke-1794304104167.json",
+  "knownFailures": [
+    {
+      "name": "memory-no-canvas",
+      "measured": 215.7,
+      "unit": "MB",
+      "budget": 200,
+      "detail": "215.7 MB footprint, mean of 3 reads 10 s apart: browser 56.1, utility 8.8 (NetworkService), app pages 59.0 (3 renderers), crashpad 2.4, GPU 89.4 counted (33.3 with a canvas open: -56.1); RSS beside it 641.8 MB counted, 641.8 MB all 7 processes; over the 200 MB budget - the limit stays (Nic, 23 Oct): the numbers go to Nic",
+      "decision": "Nic, 24 Oct: app 0.2 ships with it, the 200 MB limit unchanged; 29 Oct: it no longer blocks (A3 closed); investigated later"
+    }
+  ],
+  "steps": {
+    "preflight": "2026-11-10T09:46:11.303Z",
+    "freeze": "2026-11-10T09:46:11.381Z",
+    "build": "2026-11-10T09:48:24.173Z",
+    "app-hashed": "2026-11-10T09:48:24.305Z",
+    "app-zipped": "2026-11-10T09:48:30.116Z",
+    "notarize-app": "2026-11-10T09:49:41.316Z",
+    "staple-app": "2026-11-10T09:49:43.776Z",
+    "zip": "2026-11-10T09:49:49.621Z",
+    "dmg-built": "2026-11-10T09:49:57.442Z",
+    "dmg-signed": "2026-11-10T09:49:58.129Z",
+    "dmg-accepted": "2026-11-10T09:51:24.635Z",
+    "dmg-stapled": "2026-11-10T09:51:25.961Z",
+    "dmg": "2026-11-10T09:51:25.969Z",
+    "verify": "2026-11-10T09:51:32.669Z",
+    "feed": "2026-11-10T09:51:32.759Z",
+    "draft": "2026-11-10T09:51:34.657Z",
+    "upload": "2026-11-10T09:52:15.129Z",
+    "check-draft": "2026-11-10T09:52:37.434Z",
+    "publish": "2026-11-10T10:05:18.627Z"
+  },
+  "check": {
+    "at": 1794305118757,
+    "problems": [],
+    "latest": {
+      "owner": "1.1.0",
+      "agreeing": 18,
+      "reads": 18
+    },
+    "immutable": true,
+    "status": "published"
+  }
+}
