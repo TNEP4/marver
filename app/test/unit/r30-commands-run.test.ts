@@ -11,7 +11,7 @@
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import type { PerfAsk, PerfMsg } from '../../../src/shared/app-api.ts'
 import type { TabMenuView } from '../../src/shared/channels.ts'
 
@@ -872,12 +872,15 @@ describe('spec 32 Part B: the strip\'s Marver menu, main\'s side (the real views
     expect(m.menuOpen).toBe(false)
   })
 
-  it('B12.3, B12.4, B12.5: a window blur, any app command, the active tab changing - each closes the menu', async () => {
+  it('B12.3, B12.4, B12.5: a window blur, any app command (a key, the app menu, the Dock), the active tab changing - each closes the menu', async () => {
     const a = await canvas()
     const b = await canvas()
     const cases: [string, () => void][] = [
       ['blur', () => emitWin('blur')],
-      ['app command', () => runCommand('settings', 'menu')],
+      // commands that leave the active tab as it is, so only B12.4 can close it
+      ['app menu', () => runCommand('hide', 'menu')],
+      ['key', () => runCommand('focus-strip', 'key', { keys: 'F6', in: 'shell' })],
+      ['dock', () => { for (const f of m.appOn.get('activate') ?? []) f() }],
       ['active tab', () => { tabs.activate(a.id) }],
     ]
     for (const [name, act] of cases) {
@@ -1030,17 +1033,41 @@ describe('spec 32 Part B: the strip\'s Marver menu, main\'s side (the real views
       expect(cv.focused).toBe(cv0)
     })
 
+    it('main\'s own close gives focus back at the strip\'s ack (a blur), unless its cause moved it off the strip already (F6)', async () => {
+      const t = await canvas()
+      const cv = content.get(t.id)!.webContents
+      cv.emit('focus')
+      stripWc.emit('focus')
+      let v = openTabMenu(t.id)!
+      menuShownAck(v.rev)
+      let c0 = cv.focused
+      emitWin('blur')
+      menuPickSend(v.rev, null)              // the strip's ack
+      expect(cv.focused).toBe(c0 + 1)
+      stripWc.emit('focus')
+      v = openTabMenu(t.id)!
+      menuShownAck(v.rev)
+      c0 = cv.focused
+      runCommand('focus-strip', 'key', { keys: 'F6', in: 'shell' })   // closes it, then F6 moves focus to the canvas
+      expect(cv.focused).toBe(c0 + 1)
+      menuPickSend(v.rev, null)
+      expect(cv.focused).toBe(c0 + 1)
+    })
+
     it('a pick that moves focus itself (an activate from ») restores nothing; one that does not (a copy) restores it', async () => {
       const a = await canvas()
       const b = await canvas()
       const cb = content.get(b.id)!.webContents
       cb.emit('focus')
       stripWc.emit('focus')
+      const ca = content.get(a.id)!.webContents
       let v = openMore([a.id])!
       menuShownAck(v.rev)
       const b0 = cb.focused
+      const a0 = ca.focused
       menuPickSend(v.rev, `tab:${a.id}`)
-      expect(cb.focused).toBe(b0)
+      expect(tabs.activeTab()?.id).toBe(a.id)
+      expect([cb.focused, ca.focused]).toEqual([b0, a0])   // nothing restored: the activation focuses what it shows
       tabs.activate(b.id)
       cb.emit('focus')
       stripWc.emit('focus')
@@ -1195,6 +1222,7 @@ describe('spec 32 D6.4, D6.5: Home\'s excluded workspaces and a marver:// link t
   it('homeExcluded: the running set and every open gone tab\'s workspace; running() (the quit\'s flushRecent) never a gone one; closing the gone tab tells the listener at once', async () => {
     const w = views.windowPorts()
     const { t, e } = await folderCanvas(real())
+    onTestFinished(async () => { if (tabs.getTab(t.id)) await tabs.closeTab(t.id) })
     let told = 0
     const off = w.onHomeExcludedChange(() => { told++ })
     stop(e)
@@ -1214,6 +1242,7 @@ describe('spec 32 D6.4, D6.5: Home\'s excluded workspaces and a marver:// link t
     const root = real()
     const one = await folderCanvas(root, 70)
     const two = await folderCanvas(root, 71)
+    onTestFinished(async () => { for (const x of [one.t, two.t]) if (tabs.getTab(x.id)) await tabs.closeTab(x.id) })
     expect(one.t.id).not.toBe(two.t.id)
     stop(one.e); stop(two.e)
     m.held.length = 0

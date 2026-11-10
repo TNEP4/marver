@@ -1508,7 +1508,9 @@ function pickMenu(rev: number, id: string | null): void {
   menu = null
   compose()
   rec.cmd?.noop('closed')                     // a close before it showed; one that showed already ended `done`
-  if (rec.closing) { j('tab-menu', { rev, acked: true }); return }   // the strip's ack of main's own close
+  // the strip's ack of main's own close: focus goes back as for any close (B14), unless the close's cause already moved
+  // it off the strip (an activation, F6)
+  if (rec.closing) { j('tab-menu', { rev, acked: true }); afterMainClose(rec); return }
   const a = id ? rec.actions.get(id) : undefined
   j('tab-menu', { rev, pick: id, ...(id && (!a || !a.enabled) ? { refused: !a ? 'unknown' : 'disabled' } : {}) })
   if (a?.enabled) {
@@ -1533,8 +1535,13 @@ export function closeMenu(): boolean {
   sendToStrip(CH.tabMenuView, null)
   rec.cmd?.noop('closed')
   j('tab-menu', { rev: rec.rev, closed: true })
-  rec.timer = setTimeout(() => { if (menu === rec) { menu = null; compose() } }, MENU_CLOSE_MS)
+  rec.timer = setTimeout(() => { if (menu === rec) { menu = null; compose(); afterMainClose(rec) } }, MENU_CLOSE_MS)
   return true
+}
+
+/** B14 after main's own close: back to what had focus, only while the strip still holds it for the menu. */
+function afterMainClose(rec: MenuRec): void {
+  if (focusOwner()?.part === 'strip') restoreMenuFocus(rec)
 }
 
 /**
