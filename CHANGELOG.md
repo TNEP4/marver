@@ -8,9 +8,9 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 
 - **Export a deck as a PDF.** `npx marver pdf <board>`, Export PDF in a board's menu or in slides and present mode, and in the
   Mac app File > Export PDF. One page per slide at the slide's own size, real searchable text, vector shapes, links that
-  click, a bookmark per slide, images at full resolution, animations at their end (a looping one at its first pose). Glass, filters,
-  blends, masks and large soft shadows - which browsers print wrong - are rebuilt so the page looks as it does on screen,
-  and checked against it (on macOS each printed page too); anything that cannot be rebuilt prints as a picture, and the
+  click, a bookmark per slide, images at full resolution, CSS and Web Animations at their end (a looping one at its first pose).
+  Glass, filters, blends, masks and large soft shadows - which browsers print wrong - are rebuilt so the page looks as it
+  does on screen, and checked against it (each printed page too, where macOS can render it); anything that cannot be rebuilt prints as a picture, and the
   report names every page rebuilt, pictured or not settled. `--notes`
   prints a handout with each slide's notes beside it. Any board that plays exports, present boards too.
   [Deck PDFs](docs/pdf.md)
