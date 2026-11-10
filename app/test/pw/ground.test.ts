@@ -1026,7 +1026,7 @@ describe('spec 32 C9: immersive play hides the strip and the lights, and brings 
     expect((await answers(id)).at(-1)).toEqual({ on: false })
   })
 
-  it('a resize keeps it; full screen in and out each re-apply the lights hidden; the way back puts them at LIGHTS', async () => {
+  it('a resize keeps it; full screen in and out each re-apply the lights hidden and at LIGHTS; the way back shows them at LIGHTS', async () => {
     await wish(id, true)
     await hidden()
     await w.run.call('resize', { width: 1100, height: 720 })
@@ -1037,15 +1037,17 @@ describe('spec 32 C9: immersive play hides the strip and the lights, and brings 
     await w.run.call('fullscreen', { on: true })
     await waitFor('full screen', async () => (await w.run.call<{ fullScreen: boolean }>('window')).fullScreen)
     // enter-full-screen re-applies the lights, still hidden
-    await waitFor('the lights re-applied at enter', async () => (await natives(n0)).some((x) => x.call === 'lights'))
+    await waitFor('the lights re-applied at enter', async () => (await natives(n0)).some((x) => x.call === 'position'))
     const n1 = await nativeMark()
     await w.run.call('fullscreen', { on: false })
     await waitFor('out of full screen', async () => !(await w.run.call<{ fullScreen: boolean }>('window')).fullScreen)
-    await waitFor('the lights re-applied at leave', async () => (await natives(n1)).some((x) => x.call === 'lights'))
+    await waitFor('the lights re-applied at leave', async () => (await natives(n1)).some((x) => x.call === 'position'))
     await sleep(300)
-    // both transitions: the lights set hidden, never shown, and the strip view never shown
-    expect(calls(await natives(n0)).filter(([c]) => c === 'lights')).toEqual([['lights', false], ['lights', false]])
-    expect((await natives(n0)).filter((x) => x.call === 'strip' || x.call === 'position')).toEqual([])
+    // both transitions (C9): the visibility, hidden, then LIGHTS - never shown, and the strip view never shown
+    expect(calls(await natives(n0)).filter(([c]) => c === 'lights' || c === 'position'))
+      .toEqual([['lights', false], ['position', LIGHTS], ['lights', false], ['position', LIGHTS]])
+    expect((await natives(n0)).filter((x) => x.call === 'strip')).toEqual([])
+    expect(await lightsAt()).toEqual(LIGHTS)
     const during = (await stripLines(since)).filter((x) => x.strip)
     expect(during.length).toBeGreaterThanOrEqual(2)
     expect(during.every((x) => x.strip === 'hidden' && x.lights === false)).toBe(true)

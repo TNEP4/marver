@@ -1464,10 +1464,10 @@ function openMenu(h: AppCmdHandle | undefined, kind: 'tab' | 'more', lines: Menu
   const hadFocus = o.ask.hadFocus === true
   const prev = menu
   if (prev) { clearTimeout(prev.timer); prev.cmd?.noop('replaced') }
-  // B14.2: who had focus before the press. A replace (B11: a right-click on another tab through the catcher, which
-  // says hadFocus) keeps the first open's: the strip has held focus only for its menu since
+  // B14.2: who had focus before the press, from this revision's own request. A replace (B11: a right-click on another
+  // tab through the catcher) says hadFocus, so its close gives focus to the strip's opener, the tab it was opened on
   const now = focusOwner()
-  const prevOwner: Owner | null = prev ? prev.prevOwner : hadFocus ? { part: 'strip' } : now && now.part !== 'strip' ? now : beforeStrip()
+  const prevOwner: Owner | null = hadFocus ? { part: 'strip' } : now && now.part !== 'strip' ? now : beforeStrip()
   focusStripQuiet()
   const rec: MenuRec = {
     rev, kind, ...(o.tab ? { tab: o.tab } : {}), actions: new Map(items.map((i) => [i.id, i])), ...(h ? { cmd: h } : {}),
@@ -1612,19 +1612,28 @@ function immersiveFor(t: Tab, w: ViewFacts): boolean {
     gone: !t.reg || t.reg.state === 'gone', wish: wish?.on === true, mainEnds: mainEnds.has(t.id),
   })
   const out = step({ grant, ...(wish ? { wish } : {}), ...(r.immersiveAnswered !== undefined ? { answered: r.immersiveAnswered } : {}), gate })
-  if (out.grant !== grant) {
-    if (out.grant === 'none') delete r.immersiveGrant
-    else r.immersiveGrant = out.grant
+  // B12.8 with B12's close: immersive and the menu never coexist. A strip that would hide while a menu is open, or
+  // closing, closes it first and waits: nothing granted, nothing answered and the strip kept (grown, plan.ts) until the
+  // strip's null ack or the 150 ms deadline clears `menu`, whose compose decides again
+  if (!out.stripShown && menu) {
+    if (closeMenu()) j('immersive', { tab: t.id, waits: 'menu' })
+    return true
   }
-  if (out.grant !== 'on') mainEnds.delete(t.id)
+  let next = out.grant
   if (out.answer && wish && t.doc?.doc) {
     const a: ImmersiveAnswer = { n: wish.n, on: out.answer.on, ...(out.answer.end ? { end: true as const } : {}) }
     const sent = trust.immersiveState ? trust.immersiveState(t.id, t.doc.doc, a) : bridgeNow()?.immersiveState(t.id, t.doc.doc, a) ?? false
     if (sent) r.immersiveAnswered = wish.n
-    j('immersive', { tab: t.id, grant: out.grant, ...a, sent })
-  } else if (out.grant !== grant) j('immersive', { tab: t.id, grant: out.grant })
-  // B12.8: immersive and the menu never coexist - turning it on closes the menu first
-  if (!out.stripShown && w.active) closeMenu()
+    // main's end (row 2) is the one answer the next compose could not make again from `answered` (row 5 answers a
+    // refusal with no `end`): until it goes out the grant stays `on`, so each compose sends it again
+    else if (a.end) next = grant
+    j('immersive', { tab: t.id, grant: next, ...a, sent })
+  } else if (next !== grant) j('immersive', { tab: t.id, grant: next })
+  if (next !== grant) {
+    if (next === 'none') delete r.immersiveGrant
+    else r.immersiveGrant = next
+  }
+  if (next !== 'on') mainEnds.delete(t.id)
   return out.stripShown
 }
 
@@ -1639,6 +1648,9 @@ const homeExcludedNow = (): string[] => [...new Set([...runningWorkspaces(), ...
 /** each `windowPorts()`'s check of its own excluded set, run on registry events and on tab changes */
 const excludedChecks = new Set<() => void>()
 const checkExcluded = (): void => { for (const fn of [...excludedChecks]) fn() }
+
+/** B2, B5: a menu's tab is one the strip shows now - a closed local tab's record (kept, `open: false`) is not one */
+const stripTab = (id: string): Tab | undefined => ordered().find((t) => t.id === id)
 
 export const pageHandlers = {
   /** `app:ready` */
@@ -1660,7 +1672,7 @@ export const pageHandlers = {
   /** `tab:menu { id, x, y, key?, hadFocus? }`: the tab's Marver menu, built from main's record (spec 32 B3, B4) */
   tabMenu(id: string, x: number, y: number, ask: Partial<MenuAsk> = {}): void {
     const h = currentAppCmd()
-    const t = getTab(id)
+    const t = stripTab(id)
     // Home has no rows: the strip never asks for its menu (B3.1), and one that still arrives is refused (B2)
     if (!t || t.kind === 'home') { refuseMenu(h, 'no-tab'); return }
     openMenu(h, 'tab', tabRows(t), { x, y, ask, tab: t.id })
@@ -1668,7 +1680,7 @@ export const pageHandlers = {
   /** `tabs:more { ids, x, y, key?, hadFocus? }`: the tabs behind », each with its state (spec 32 B5) */
   tabsMore(ids: string[], x: number, y: number, ask: Partial<MenuAsk> = {}): void {
     const h = currentAppCmd()
-    const list = ids.map((id) => getTab(id)).filter((t): t is Tab => !!t && t.kind !== 'home')
+    const list = ids.map(stripTab).filter((t): t is Tab => !!t && t.kind !== 'home')
     if (!list.length) { refuseMenu(h, 'no-tab'); return }
     openMenu(h, 'more', moreRows(list), { x, y, ask })
   },

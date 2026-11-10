@@ -960,6 +960,29 @@ describe('spec 32 Part B: the strip\'s Marver menu, main\'s side (the real views
     menuPickSend(v.rev, null)
   })
 
+  it('B2, B5: a closed local tab whose record is kept (`open: false`) is no menu target - a stale tab:menu and tabs:more are refused', async () => {
+    const a = await canvas()
+    const b = await canvas()
+    await tabs.closeTab(a.id)
+    await tick()
+    expect(tabs.getTab(a.id)).toMatchObject({ open: false })   // the running canvas's record kept for Home
+    for (const send of [
+      () => m.ipcOn.get(CH.tabMenu)!(page('strip'), { id: a.id, x: 1, y: 1 }),
+      () => m.ipcOn.get(CH.tabsMore)!(page('strip'), { ids: [a.id], x: 1, y: 1 }),
+    ]) {
+      m.toStrip.length = 0
+      send()
+      await tick()
+      expect(m.toStrip).toEqual([[CH.tabMenuView, null]])
+      expect(views.menuNow()).toBeNull()
+    }
+    // a » list that names it beside an open tab lists only the open one: » cannot reopen it
+    const v = openMore([a.id, b.id])!
+    expect(v.rows.map((r) => r.kind === 'item' && r.id)).toEqual([`tab:${b.id}`])
+    menuPickSend(v.rev, null)
+    expect(tabs.getTab(a.id)?.open).toBe(false)
+  })
+
   it('B13: an unknown id or a disabled row does nothing (the menu shrinks all the same); the strip never names a label', async () => {
     const t = await canvas()
     t.doc!.trusted = false
@@ -1080,6 +1103,27 @@ describe('spec 32 Part B: the strip\'s Marver menu, main\'s side (the real views
       const cv0 = cv.focused
       menuPickSend(v.rev, null)
       expect(cv.focused).toBe(cv0)
+    })
+
+    it('B11, B14.2: a replace takes its return owner from its own request - opened over the canvas, replaced through the catcher (`hadFocus: true`): its dismissal leaves focus to the strip\'s opener', async () => {
+      const t = await canvas()
+      const u = await canvas()
+      tabs.activate(t.id)
+      await tick()
+      const cv = content.get(t.id)!.webContents
+      cv.emit('focus')
+      stripWc.emit('focus')               // the right mousedown
+      const v1 = openTabMenu(t.id, { key: false, hadFocus: false })!
+      expect(views.menuNow()?.prevOwner).toEqual({ part: 'content', tab: t.id })
+      menuShownAck(v1.rev)
+      const v2 = openTabMenu(u.id, { key: false, hadFocus: true })!
+      expect(views.menuNow()).toMatchObject({ rev: v2.rev, hadFocus: true, prevOwner: { part: 'strip' } })
+      menuShownAck(v2.rev)
+      const cv0 = cv.focused
+      menuPickSend(v2.rev, null)
+      expect(cv.focused).toBe(cv0)          // the strip gives focus to its opener (roving tabindex); main moves nothing
+      const f = await focus()
+      expect(f.focusOwner()).toEqual({ part: 'strip' })
     })
 
     it('main\'s own close gives focus back at the strip\'s ack (a blur), unless its cause moved it off the strip already (F6)', async () => {
@@ -1237,6 +1281,31 @@ describe('spec 32 C8: main\'s immersive gate, the views.ts glue (through the moc
     expect(immersiveSent.length).toBe(2)
   })
 
+  it('main\'s end that could not go out keeps the grant `on`: the next compose sends it again, then the grant reads ended', async () => {
+    const t = await canvas()
+    m.facts.set(t.id, FULL)
+    wish(t, true, 1)
+    expect(t.reports.immersiveAnswered).toBe(1)
+    immersiveSends = false
+    t.hung = true
+    compose()
+    expect(immersiveSent.at(-1)).toMatchObject({ n: 1, on: false, end: true })
+    expect(t.reports.immersiveGrant).toBe('on')
+    expect(m.stripShown.get(t.id)).toBe(true)
+    compose()
+    expect(immersiveSent.filter((x) => x.end).length).toBe(2)
+    immersiveSends = true
+    compose()
+    expect(immersiveSent.filter((x) => x.end).length).toBe(3)
+    expect(t.reports.immersiveGrant).toBe('ended')
+    compose()
+    expect(immersiveSent.filter((x) => x.end).length).toBe(3)   // sent once it went out
+    expect(m.stripShown.get(t.id)).toBe(true)
+    t.hung = false
+    compose()
+    expect(m.stripShown.get(t.id)).toBe(true)                   // ended: the strip does not vanish again
+  })
+
   it('a tab that is not the active one is refused; a tab switch ends a granted one', async () => {
     const t = await canvas()
     m.facts.set(t.id, { ...FULL, active: false })
@@ -1299,7 +1368,39 @@ describe('spec 32 C8: main\'s immersive gate, the views.ts glue (through the moc
     wish(t, true, 1)
     expect(views.menuNow()?.closing).toBe(true)
     expect(m.toStrip).toEqual([[CH.tabMenuView, null]])
+    // B12: until the strip's null ack nothing is granted and the strip stays shown and grown (plan.ts: the menu)
+    expect(immersiveSent).toEqual([])
+    expect(t.reports.immersiveGrant).toBeUndefined()
+    expect(m.stripShown.get(t.id)).toBe(true)
+    expect(m.menuOpen).toBe(true)
+    compose()
+    expect(immersiveSent).toEqual([])
+    expect(m.stripShown.get(t.id)).toBe(true)
+    expect(m.toStrip).toEqual([[CH.tabMenuView, null]])        // closed once, not at every compose
     menuPickSend(v.rev, null)
+    // the ack's compose: menu gone, then the grant and the strip hidden
+    expect(m.menuOpen).toBe(false)
+    expect(immersiveSent).toEqual([{ tab: t.id, doc: docs.get(t.id), n: 1, on: true }])
+    expect(t.reports.immersiveGrant).toBe('on')
+    expect(m.stripShown.get(t.id)).toBe(false)
+  })
+
+  it('B12.8: a strip that never acks the close - the grant waits out its 150 ms deadline', async () => {
+    const t = await canvas()
+    const v = openTabMenu(t.id)!
+    menuShownAck(v.rev)
+    m.facts.set(t.id, FULL)
+    wish(t, true, 1)
+    expect(views.menuNow()?.closing).toBe(true)
+    await new Promise((r) => setTimeout(r, 60))
+    expect(immersiveSent).toEqual([])
+    expect(m.stripShown.get(t.id)).toBe(true)
+    await new Promise((r) => setTimeout(r, 140))
+    expect(views.menuNow()).toBeNull()
+    expect(immersiveSent).toEqual([{ tab: t.id, doc: docs.get(t.id), n: 1, on: true }])
+    expect(m.stripShown.get(t.id)).toBe(false)
+    menuPickSend(v.rev, null)              // its late ack: stale
+    expect(m.stripShown.get(t.id)).toBe(false)
   })
 })
 

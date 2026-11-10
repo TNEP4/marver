@@ -413,6 +413,16 @@ function setLights(on: boolean): void {
   } catch { /* not on this platform */ }
 }
 
+/** Spec 32 C9: after either full-screen transition, the lights' visibility and `LIGHTS` both, hidden or shown. */
+function reapplyLights(): void {
+  lightsOn = !stripHidden
+  if (!win || win.isDestroyed()) return
+  try {
+    win.setWindowButtonVisibility(lightsOn)
+    win.setWindowButtonPosition(LIGHTS)
+  } catch { /* not on this platform */ }
+}
+
 /** Spec 32 C9, shown to hidden: the strip's CSS runs out (no-drag first), the lights pop; the view hides after it. */
 function stripLeaves(changes: unknown[]): void {
   stripHidden = true
@@ -828,8 +838,8 @@ export function openWindow(d?: WindowDeps): BaseWindow {
   win.on('resized', () => endLiveResize('resized'))
   win.on('resize', () => { if (resizing) armQuiet(); compose(); deferred() })
   // spec 32 C9: full screen re-applies the lights' visibility and LIGHTS (macOS puts them back its own way)
-  win.on('enter-full-screen', () => { setLights(!stripHidden); compose(); deferred() })
-  win.on('leave-full-screen', () => { setLights(!stripHidden); compose(); deferred() })
+  win.on('enter-full-screen', () => { reapplyLights(); compose(); deferred() })
+  win.on('leave-full-screen', () => { reapplyLights(); compose(); deferred() })
   win.on('focus', () => { feedWindow(); front() })
   win.on('blur', () => feedWindow())
   for (const ev of ['show', 'hide', 'minimize', 'restore'] as const) win.on(ev as 'show', () => { onVisibility(); feedWindow(); if (ev === 'show' || ev === 'restore') front() })

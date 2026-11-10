@@ -122,39 +122,55 @@ describe('spec 32 B12: what closes the strip\'s menu, in the window (its grown v
     const end = Date.now() + ms
     while (!(await f())) { if (Date.now() > end) throw new Error(`timed out: ${what}`); await sleep(40) }
   }
+  /** the menu open, grown and shown (B3.5): B3.6's 500 ms deadline can no longer shrink it, only a close can */
   const open = async (tab: string) => {
     await w.run.call('tabMenu', { id: tab })
     await until('the strip grown', async () => (await stripBounds()).height > 44)
+    await until('the menu shown', async () => (await menuState())?.shown === true)
+    const s = (await menuState())!
+    return { rev: s.rev, since: (await w.log()).length }
   }
+  /** what main journalled for that rev since it showed: never B3.6's no-show */
+  const menuLines = async (m: { rev: number; since: number }) => (await w.log('tab-menu', m.since)).map((l) => l.data as Record<string, unknown>).filter((d) => d.rev === m.rev)
   const shrunk = (why: string) => until(`shrunk after ${why}`, async () => (await menuState()) === null && (await stripBounds()).height === 44)
+  /** B12: main's own close (`tab-menu: null`), then the strip's ack for that rev */
+  const closedByMain = async (why: string, m: { rev: number; since: number }) => {
+    await shrunk(why)
+    const ls = await menuLines(m)
+    expect(ls.some((d) => d.closed === true), `${why}: main's close`).toBe(true)
+    expect(ls.some((d) => d.noShow), `${why}: no deadline`).toBe(false)
+  }
 
   it('a tab switch, ⌘W and the window\'s blur each close it and shrink the strip; popup:close too', async () => {
     const a = await w.canvas({ slot: 7, name: 'Menu one' })
     const b = await w.canvas({ slot: 8, name: 'Menu two' })
     await w.run.call('activate', { id: a.id })
-    await open(a.id)
+    let m = await open(a.id)
     await w.run.call('activate', { id: b.id })
-    await shrunk('a tab switch')
-    await open(b.id)
+    await closedByMain('a tab switch', m)
+    m = await open(b.id)
     await w.run.call('command', { cmd: 'close-tab' })
-    await shrunk('⌘W')
+    await closedByMain('⌘W', m)
     await w.run.call('activate', { id: a.id })
-    await open(a.id)
     await w.run.call('focusApp')
+    m = await open(a.id)
     await w.run.call('hide')
-    await shrunk('the window hidden (its blur)')
+    await closedByMain('the window hidden (its blur)', m)
     await w.run.call('show', { focus: false })
-    await open(a.id)
+    m = await open(a.id)
     await w.run.call('popup:close')
-    await shrunk('popup:close')
+    await closedByMain('popup:close', m)
   })
 
   it('a strip crash takes the grown view back at once', async () => {
     const s = await w.state()
     const tab = s.tabs.find((t) => t.name === 'Menu one')!
-    await open(tab.id)
+    const m = await open(tab.id)
     await w.run.call('crash', { target: 'strip' })
     await shrunk('the strip crashed')
+    const ls = await menuLines(m)
+    expect(ls.some((d) => d.trouble === 'gone')).toBe(true)
+    expect(ls.some((d) => d.noShow)).toBe(false)
   })
 
   it('popup:click after the live menu\'s deadline still acts from lastPopup', async () => {
