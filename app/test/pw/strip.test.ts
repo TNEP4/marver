@@ -418,6 +418,18 @@ describe('the look and the system settings (A2.2, A2.13, A2.14 #26)', () => {
     await p.send('pill', null)
   })
 
+  it('A13 in dark: the active face takes --solid and --node-brd there too (the dark .2 hairline does not win), no rim', async () => {
+    await show(snap('t1', [home, tab('t1', 'Dark one', { dark: true }), tab('t2', 'Other')]))
+    expect(await p.page.evaluate(() => document.documentElement.classList.contains('dark'))).toBe(true)
+    for (const features of [{ 'prefers-reduced-transparency': 'reduce' }, { 'prefers-contrast': 'more' }] as Record<string, string>[]) {
+      await p.media(features)
+      await settle()
+      expect(await p.page.$eval('.tab.on .face', (e) => { const cs = getComputedStyle(e); return [cs.backgroundColor, cs.borderTopColor, getComputedStyle(e, '::after').display] }), JSON.stringify(features))
+        .toEqual([await resolved('background-color', 'var(--solid)'), await resolved('border-top-color', 'var(--node-brd)'), 'none'])
+    }
+    await p.media({})
+  })
+
   it('Reduce Motion: every running animation animates opacity only (the spinner pulses)', async () => {
     await p.send('tabs', snap('t1', FOUR))   // Tidewell starting: a spinner
     const before = await animatedProperties(p.page)
@@ -1231,5 +1243,39 @@ describe('the Marver menu, the strip\'s side (spec 32 B3, B6-B11, B14)', () => {
     expect(await state()).toEqual({ body: true, openers: [], menu: false, visible: false })
     await p.resize(1280, 44)
     await poll('no body.menu-open', async () => !(await state()).body)
+  })
+  it('B7.1-B7.3: a menu open while the window is resized is placed again - clamped 14 px inside the new right edge and capped by the new foot', async () => {
+    await show(snap('t1', FIVE))
+    await rightClick('[data-id="t2"]')
+    await answer({ x: 1066 })
+    expect((await box('.mv-menu')).x).toBe(1066)
+    await p.resize(720, 480)
+    const r = (await poll('placed again', async () => { const b = await box('.mv-menu'); return b.x + b.width <= 720 - 14 + 0.5 ? b : null }, 1500))!
+    expect(r.x + r.width).toBeCloseTo(720 - 14, 0)
+    expect(r.y).toBeGreaterThanOrEqual(44)
+    expect(r.y + r.height).toBeLessThanOrEqual(480 - 14 + 0.5)
+    expect(await state()).toMatchObject({ visible: true, openers: ['t2'] })
+    await p.page.keyboard.press('Escape')
+    await p.resize(1280, 44)
+  })
+
+  it('B2, B3.1, B11: a refusal (tab-menu: null) of a replacement asked through the catcher closes the open menu and drops the pending ask too - its look, its timer; no drag only until the view is 44 px; page:focus answered then', async () => {
+    await show(snap('t1', FIVE))
+    await rightClick('[data-id="t2"]')
+    const v = await answer()
+    const t3 = await box('[data-id="t3"]')
+    await p.page.mouse.move(t3.x + 30, t3.y + 16)
+    await p.page.mouse.down({ button: 'right' })
+    await p.page.mouse.up({ button: 'right' })
+    await poll('the ask for t3', async () => (await lastAsk()).id === 't3')
+    expect((await state()).openers).toEqual(['t2', 't3'])
+    await p.send('tab-menu', null)
+    expect(await picks()).toEqual([{ rev: v.rev, id: null }])
+    expect(await state()).toEqual({ body: true, openers: [], menu: false, visible: false })
+    await p.resize(1280, 44)
+    // well inside the 1 s fallback: the refusal answered the ask, nothing waits on it
+    await poll('no body.menu-open', async () => !(await state()).body, 300)
+    await p.send('page:focus', { target: 'active-tab' })
+    expect(await focused()).toBe('t1')
   })
 })

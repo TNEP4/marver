@@ -177,7 +177,8 @@ body.inactive .tab.on .face::after { opacity: .5 }
 /* A13: Reduce Transparency and Increase Contrast - the active face, Home on and » open take the solid fill and the
    node hairline, no rim; the pill too */
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  .tab.on .face, .pill { background: var(--solid); border-color: var(--node-brd) }
+  /* :root.dark too, as specific as the dark active hairline above (rgba(255, 255, 255, .2)), or it would win in dark */
+  .tab.on .face, :root.dark .tab.on .face, .pill { background: var(--solid); border-color: var(--node-brd) }
   .home.on, .home.on:hover, .more.menu-open, .more.menu-open:hover { background: var(--solid); box-shadow: 0 0 0 1px var(--node-brd), var(--ts-shadow-lit) }
   .tab.on .face::after, .pill::after { display: none }
 }

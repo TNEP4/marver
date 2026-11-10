@@ -428,7 +428,10 @@ function ended(rev: number): void {
 function onMenuView(v: TabMenuView | null): void {
   if (v) { showMenu(v); return }
   if (menu) {
-    // main closed it (B12): hidden at once, then the null pick that lets main shrink the view
+    // main closed it (B12), or refused a replacement asked through the catcher (B2, B11): an ask still pending is
+    // answered by this null too, so its opener's look and its timer go now; no drag stays until the view is 44 px
+    if (asked) { clearTimeout(asked.timer); if (asked.opener !== menu.opener) asked.opener.classList.remove('menu-open'); asked = null }
+    // hidden at once, then the null pick that lets main shrink the view
     const { rev, handle } = menu
     handle.close()
     ended(rev)
@@ -497,6 +500,9 @@ new ResizeObserver(() => {
   const tall = window.innerHeight > STRIP_H
   if (tall && menu?.waiting) void reveal()
   if (!tall && closing && !menu) { closing = false; if (!asked) document.body.classList.remove('menu-open') }
+  // B7.1-B7.3: a shown menu is placed again for the new size (a window resized or made full screen while it is open),
+  // so it stays clamped 14 px inside both edges and capped by the room it has
+  else if (tall && menu && !menu.waiting) menu.handle.place()
   if (window.innerWidth === lastWidth) return
   lastWidth = window.innerWidth
   if (pill) renderPill(); else fit()
