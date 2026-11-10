@@ -60,14 +60,17 @@ describe('the strip\'s marks (A4.6 #19)', () => {
   afterAll(async () => { await p?.close() })
   const read = (id: string) => p.page.$eval(`[data-id="${id}"]`, (e) => ({
     cls: e.className, mark: e.querySelector('.mk')?.textContent ?? null, markCls: e.querySelector('.mk')?.className ?? null,
-    sess: !!e.querySelector('.slot .sess'), label: e.getAttribute('aria-label'), order: [...e.children].map((c) => c.className),
+    sess: !!e.querySelector('.slot .sess'), label: e.getAttribute('aria-label'),
+    // spec 32 A1: the face holds the slot, the name and the end cell; the end cell the mark, then the key
+    order: [...e.querySelector(':scope > .face')!.children].map((c) => c.className), end: [...e.querySelector('.face > .end')!.children].map((c) => c.className),
   }))
 
-  it('needs you: an orange count after the name and before the key, 99+ past 99, said in the tab\'s name; no sweep beside it', async () => {
+  it('needs you: an orange count after the name, in the key\'s cell, 99+ past 99, said in the tab\'s name; no sweep beside it', async () => {
     await p.send('tabs', snap('t1', [home, tab('t1', 'Pilot', { key: 1, marks: marks({ needs: 3, unseen: 5, working: true }) }), tab('t2', 'Tidewell', { key: 2, marks: marks({ needs: 150 }) }), tab('t3', 'One', { key: 3, marks: marks({ needs: 1 }) })]))
     const a = await read('t1')
     expect(a).toMatchObject({ mark: '3', markCls: 'mk ask', label: 'Pilot, 3 need you', sess: false })
-    expect(a.order).toEqual(['slot', 'name', 'mk ask', 'key'])
+    expect(a.order).toEqual(['slot', 'name', 'end'])
+    expect(a.end).toEqual(['mk ask', 'key'])
     expect(a.cls).not.toMatch(/working/)
     expect((await read('t2')).mark).toBe('99+')
     expect((await read('t3')).label).toBe('One, 1 needs you')
@@ -76,17 +79,19 @@ describe('the strip\'s marks (A4.6 #19)', () => {
     expect(bg).not.toBe('rgba(0, 0, 0, 0)')
   })
 
-  it('else new frames: a blue count; else an agent at work: the bubble sweeps, no count - a still wash under Reduce Motion', async () => {
+  it('else new frames: a blue dot, no number (spec 31 B.7); else an agent at work: the face sweeps, no count - a still wash under Reduce Motion', async () => {
     await p.send('tabs', snap('t1', [home, tab('t1', 'Pilot', { marks: marks({ unseen: 2, working: true }) }), tab('t2', 'Tidewell', { marks: marks({ unseen: 1 }) }), tab('t3', 'One', { marks: marks({ working: true }) })]))
-    expect(await read('t1')).toMatchObject({ mark: '2', markCls: 'mk new', label: 'Pilot, 2 new frames' })
-    expect((await read('t2')).label).toBe('Tidewell, 1 new frame')
+    expect(await read('t1')).toMatchObject({ mark: '', markCls: 'mk new dot', label: 'Pilot, new since you looked' })
+    expect((await read('t2')).label).toBe('Tidewell, new since you looked')
     const w = await read('t3')
     expect(w).toMatchObject({ mark: null, label: 'One, agent working' })
     expect(w.cls).toMatch(/\bworking\b/)
     expect((await animatedProperties(p.page)).some((x) => x.name === 'mv-sweep')).toBe(true)
     await p.media({ 'prefers-reduced-motion': 'reduce' })
     expect((await animatedProperties(p.page)).some((x) => x.name === 'mv-sweep')).toBe(false)
-    expect(await p.page.$eval('[data-id="t3"]', (e) => getComputedStyle(e, '::before').backgroundColor)).not.toBe('rgba(0, 0, 0, 0)')
+    // spec 32 A9: the sweep is the face's (`.tab.working` stays the class)
+    expect(await p.page.$eval('[data-id="t3"] .face', (e) => getComputedStyle(e, '::before').backgroundColor)).not.toBe('rgba(0, 0, 0, 0)')
+    expect(await p.page.$eval('[data-id="t3"]', (e) => getComputedStyle(e, '::before').content)).toBe('none')
     await p.media({ 'prefers-reduced-motion': 'no-preference' })
   })
 
