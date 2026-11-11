@@ -292,6 +292,8 @@ document.addEventListener('keydown', (e) => {
 })
 // a window blur closes the days menu, as Home's menus close (menu.ts has no blur rule)
 window.addEventListener('blur', () => closeMenu())
+// a resize moves its button: the menu closes rather than stay where the button was
+window.addEventListener('resize', () => closeMenu())
 
 setLook(undefined)
 shown()

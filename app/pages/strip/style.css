@@ -193,7 +193,7 @@ body.inactive .tab.on .face::after { opacity: .5 }
 }
 /* Increase Contrast: ink-2 and ink-3 read as ink */
 @media (prefers-contrast: more) {
-  .face, .home, .more, .more span, .pill, .slot.plate, kbd.key, .tab.is-gone .name, .tab.is-unreachable .name, .tab.is-crashed .name { color: var(--glass-ink) }
+  .face, .home, .more, .more span, .pill, .slot.plate, :root.dark .slot.plate, kbd.key, .tab.is-gone .name, .tab.is-unreachable .name, .tab.is-crashed .name { color: var(--glass-ink) }
 }
 /* Reduce Motion: base.css stops every transition (the widths, the badge and key swap, the hover fade, C10's run) */
 

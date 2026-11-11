@@ -183,6 +183,12 @@ describe('the controls (A4)', () => {
     await p.page.evaluate(() => window.dispatchEvent(new Event('blur')))
     expect(await p.page.locator('.mv-menu').count()).toBe(0)
     expect(await ctl('config.keepPerfDays').getAttribute('aria-expanded')).toBe('false')
+    // a resize closes it too: its button moved
+    await ctl('config.keepPerfDays').click()
+    await p.page.waitForSelector('.mv-menu')
+    await p.resize(1000, 800)
+    await p.page.waitForFunction(() => !document.querySelector('.mv-menu'))
+    await p.resize(1280, 800)
   })
 
   it('the days menu follows a value changed while it is open: its check moves, and picking the old value writes it', async () => {
@@ -213,6 +219,11 @@ describe('the controls (A4)', () => {
     await p.media({ 'prefers-reduced-transparency': 'reduce' })
     expect((await style('.st-card', ['backdrop-filter']))['backdrop-filter']).toBe('none')
     expect((await style('.st-seg', ['backdrop-filter']))['backdrop-filter']).toBe('none')
+    // dark too: the days button takes the solid fill over its dark glass
+    await p.media({ 'prefers-reduced-transparency': 'reduce', 'prefers-color-scheme': 'dark' })
+    await p.page.waitForFunction(() => document.documentElement.classList.contains('dark'))
+    const solid = await p.page.evaluate(() => { const d = document.createElement('i'); d.style.background = 'var(--solid)'; document.body.append(d); const c = getComputedStyle(d).backgroundColor; d.remove(); return c })
+    expect((await style('.st-select-btn', ['background-color']))['background-color']).toBe(solid)
   })
 
   it('Reduce Motion: the switch does not slide', async () => {
@@ -361,6 +372,7 @@ describe('Updates (C3-C5)', () => {
 describe('D (spec 33 D)', () => {
   it('d sends the opposite of what shows, by key; Meta+d, d in the days menu send nothing', async () => {
     await p.media({ 'prefers-color-scheme': 'light' })
+    await p.page.waitForFunction(() => !document.documentElement.classList.contains('dark'))
     await p.page.keyboard.press('d')
     await p.page.waitForTimeout(40)
     expect(await p.calls('settings:set')).toEqual([{ file: 'theme', key: 'mode', value: 'dark', via: 'key' }])

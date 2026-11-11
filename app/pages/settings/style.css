@@ -111,7 +111,7 @@ html, body { overflow: hidden }
 
 /* Reduce Transparency / Increase Contrast (Home's E1): no blur, solid fills, an inset hairline */
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  .st-card, .st-seg, .hm .st-select-btn { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--solid); box-shadow: inset 0 0 0 1px var(--node-brd) }
+  :root .st-card, :root .st-seg, :root .hm .st-select-btn { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--solid); box-shadow: inset 0 0 0 1px var(--node-brd) }
   .st-card { border-color: transparent }
   .st-card::after { display: none }
 }

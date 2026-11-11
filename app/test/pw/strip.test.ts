@@ -919,6 +919,9 @@ describe('option D: the key, the marks, the logos and the states (spec 32 A6, A7
       expect(await read()).toEqual({ w: 24, h: 24, radius: '50%', gear: ['17', 'evenodd'],
         ...(dark ? { bg: 'rgba(255, 255, 255, 0.12)', color: 'rgba(245, 245, 247, 0.86)' } : { bg: 'rgb(226, 228, 235)', color: 'rgba(24, 24, 27, 0.72)' }) })
     }
+    // Increase Contrast, dark: the gear in the glass ink
+    await p.media({ 'prefers-color-scheme': 'dark', 'prefers-contrast': 'more' })
+    expect((await read()).color).toBe(await resolved('color', 'var(--glass-ink)'))
     await p.media({})
   })
 
