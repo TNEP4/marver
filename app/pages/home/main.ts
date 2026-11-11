@@ -215,13 +215,18 @@ function moreClick(e: MouseEvent, id: string): void {
 const cardNode = (id: string) => rootEl.querySelector<HTMLElement>(`[data-card="${CSS.escape(id)}"]`)
 const moreNode = (id: string) => rootEl.querySelector<HTMLElement>(`[data-more="${CSS.escape(id)}"]`)
 
-/** Where an anchored menu opens now: under its more button (right-aligned 8 px in, top at the card's bottom - 4). */
+/**
+ * Where an anchored menu opens now: under its more button, right-aligned 8 px in, top at the card's bottom - 4 - both
+ * measured from the card's padding box, as the frame draws it (home-v2/_home.tsx: `right: 8, top: calc(100% - 4px)`
+ * inside the card's 1 px border, so 9 px in from its outer edge and 5 above its outer bottom; H2's proof).
+ */
 function anchorAt(a: Anchor, id: string): MenuAt | null {
   if (a.kind === 'pointer') return a.at
-  const card = moreNode(id)?.closest('.hm-card') ?? cardNode(id)
+  const card = (moreNode(id)?.closest('.hm-card') ?? cardNode(id)) as HTMLElement | null
   if (!card) return null
   const r = card.getBoundingClientRect()
-  return { x: r.right - 8, y: r.bottom - 4, origin: 'top right' }
+  const b = card.clientTop
+  return { x: r.right - b - 8, y: r.bottom - b - 4, origin: 'top right' }
 }
 
 function openCardMenu(id: string, anchor: Anchor, byKey: boolean): void {

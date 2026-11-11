@@ -450,15 +450,19 @@ describe('D8: menus and clicks on Home', () => {
     expect(await p.calls('home:action')).toEqual([])
   })
 
-  it('D8.4: the more button\'s menu: below it, right-aligned 8 px in from the card, top at the card\'s bottom - 4; the card .hov and menu-open, the button .on', async () => {
+  it('D8.4: the more button\'s menu: below it, right-aligned 8 px in from the card\'s padding box, top at its bottom - 4 (9 and 5 from its outer edges, as the frame draws it); the card .hov and menu-open, the button .on', async () => {
     await world({ tabs: BUSY, view: 'grid' })
     await p.page.hover('[data-card="calepin"]')
     await p.page.click('[data-more="calepin"]')
     expect(await menuRows()).toEqual(['Open', 'Update to 0.32.0', '-', 'Copy link', 'Copy path', 'Reveal in Finder'])
     const c = await rect('[data-card="calepin"]'), m = await rect('.mv-menu')
     // menu.ts places on whole pixels
-    expect(Math.abs(m.right - (c.right - 8))).toBeLessThanOrEqual(1)
-    expect(Math.abs(m.top - (c.bottom - 4))).toBeLessThanOrEqual(1)
+    expect(Math.abs(m.right - (c.right - 9))).toBeLessThanOrEqual(1)
+    expect(Math.abs(m.top - (c.bottom - 5))).toBeLessThanOrEqual(1)
+    // exactly as the frame draws it (H2): 8 and 4 from the card's padding box, inside its 1 px border - 9 px in from
+    // its outer right, 5 above its outer bottom
+    expect(m.left).toBeCloseTo(Math.round(c.right - 9 - m.width), 2)
+    expect(m.top).toBeCloseTo(Math.round(c.bottom - 5), 2)
     expect(await p.page.$eval('[data-card="calepin"]', (e) => [e.classList.contains('hov'), e.classList.contains('menu-open')])).toEqual([true, true])
     expect(await p.page.$eval('[data-more="calepin"]', (e) => [e.classList.contains('on'), e.getAttribute('aria-expanded')])).toEqual([true, 'true'])
     expect(await css('[data-more="calepin"]', ['opacity', 'background-color'])).toEqual({ opacity: '1', 'background-color': 'rgba(24, 24, 27, 0.12)' })
@@ -684,7 +688,7 @@ describe('D8: menus and clicks on Home', () => {
     expect(card.bottom).toBeLessThanOrEqual(list.bottom + 0.5)
     expect(await p.page.$eval(`[data-card="${id}"]`, (e) => e.classList.contains('hov'))).toBe(true)
     const m = await rect('.mv-menu')
-    expect(Math.abs(m.right - (card.right - 8))).toBeLessThanOrEqual(1)
+    expect(Math.abs(m.right - (card.right - 9))).toBeLessThanOrEqual(1)
     expect(await menuOpen()).toBe(true)
     await closeAll()
     await p.resize(1280, 800)
@@ -750,8 +754,8 @@ describe('D8: menus and clicks on Home', () => {
     expect(await menuOpen()).toBe(true)
     let c = await rect('[data-card="os"]'), m = await rect('.mv-menu')
     expect(Math.abs(m.right - before.right)).toBeGreaterThan(20)
-    expect(Math.abs(m.right - (c.right - 8))).toBeLessThanOrEqual(1)
-    expect(Math.abs(m.top - (c.bottom - 4))).toBeLessThanOrEqual(1)
+    expect(Math.abs(m.right - (c.right - 9))).toBeLessThanOrEqual(1)
+    expect(Math.abs(m.top - (c.bottom - 5))).toBeLessThanOrEqual(1)
     await closeAll()
     // a right-click's: at its pointer, clamped 14 px inside the window on both axes
     await p.resize(1280, 800)
@@ -872,7 +876,7 @@ describe('D11: Home\'s UI state lives outside the DOM', () => {
     expect(await focusedRow()).toBe('copy-link')
     // the card moved column (Running to Not running): the menu re-anchored to its more button's new rect
     const c = await rect('[data-card="os"]'), m = await rect('.mv-menu')
-    expect(Math.abs(m.right - (Math.min(c.right - 8, 1280 - 14)))).toBeLessThanOrEqual(1)
+    expect(Math.abs(m.right - (Math.min(c.right - 9, 1280 - 14)))).toBeLessThanOrEqual(1)
     // an unverified card that verifies gains Copy link
     await closeAll()
     await tabs([...BUSY, tab('u', 'U', 4820, { state: 'unverified' })])
@@ -937,7 +941,7 @@ describe('D11: Home\'s UI state lives outside the DOM', () => {
     await sleep(150)
     expect(await menuOpen()).toBe(true)
     const c = await rect(`[data-card="${id}"]`), m = await rect('.mv-menu')
-    expect(Math.abs(m.right - (c.right - 8))).toBeLessThanOrEqual(1)
+    expect(Math.abs(m.right - (c.right - 9))).toBeLessThanOrEqual(1)
     await closeAll()
     await world({ tabs: BUSY, recent: RECENT, view: 'grid', size: [720, 480] })
     await p.page.$eval('.hm-body', (e) => { e.scrollTop = 60 })
@@ -1045,7 +1049,7 @@ describe('D6.2, D11: the 60 s timer repaints through the render path', () => {
     expect(await p.page.evaluate((m) => m === document.querySelector('.mv-menu'), el)).toBe(true)
     expect(await p.page.$eval(col, (e) => e.scrollTop)).toBe(120)
     const c = await rect(`[data-card="${id}"]`), m = await rect('.mv-menu')
-    expect(Math.abs(m.right - (c.right - 8))).toBeLessThanOrEqual(1)
+    expect(Math.abs(m.right - (c.right - 9))).toBeLessThanOrEqual(1)
     await closeAll()
     // the View menu and Help
     await p.page.click('[data-key="view"]')
