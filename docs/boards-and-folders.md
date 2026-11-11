@@ -118,8 +118,10 @@ them, and the open conversations per board - for you, or for your agent at the s
 **In the Mac app** (0.3, with Marver 0.29), each canvas's tab sums this up, even while it is hidden: an
 orange count of what needs you - Marver's questions, captures to review, runs that failed or stalled -
 else a blue dot for new frames (no number, from app 1.1), else a shimmer while an agent works, and a teal
-dot while a Jam session runs. Its right-click menu holds **Resolve All Comments** beside **Mark All as
-Seen** for a canvas on Marver 0.31 or later. Turn notices on and a canvas you are not looking at sends one when something new needs you, and the
+dot while a Jam session runs; while Home is open the tabs drop them: Home shows them. Its right-click menu holds
+**Resolve all comments** beside **Mark all as seen** for a canvas on Marver 0.31 or later. Home's card says the same
+in words ("2 questions on Checkout", "3 new frames to look at"), and with Marver 0.32 (app 1.2) which board an agent
+works on and for how long ([Home](app.md#home)). Turn notices on and a canvas you are not looking at sends one when something new needs you, and the
 Dock counts them all. Clicking a notice opens what it names where you can see it, on its board: a question
 in its thread on the frame (Play left and hidden pins shown for it), or in a panel with a field to answer
 when no frame on the board holds it; a review in its review; a failed run with Retry in view, a stalled
@@ -256,7 +258,8 @@ confirmed.
 **An agent at work.** While an agent works on a board's frames (`marver work start`, or a Live Jam
 job), that board's icon in the sidebar turns accent blue with a highlight sweeping across it - the
 frames' working shimmer, in miniature - and so does a closed folder holding it. It lasts exactly as
-long as the work, so nobody sets it.
+long as the work, so nobody sets it. In the Mac app (1.2, with Marver 0.32), the canvas's Home card reads "Agent
+working on <board> · N min", counted from when the work began: a Jam run waiting for its turn does not count.
 
 ## Starting points
 

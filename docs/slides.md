@@ -59,7 +59,8 @@ Press `p` on a board whose publish row says slides and you get slides mode:
 the stage scaled to the window, the standard prototype toolbars (with
 `chrome: full`, the default), arrows / Space / click to advance, `d` cycles
 the theme, and two views of the stage: Slide (fit to the window, room for
-the chrome) and Fill window (edge to edge). Publish it with:
+the chrome) and Fill window (edge to edge). `h` hides the chrome; in the Mac app (1.2) it hides the tab
+strip too and the stage grows into the window ([Hide UI in play](app.md#hide-ui-in-play)). Publish it with:
 
 ```json
 { "boards": { "pitch": { "max": "comment", "type": "slides",

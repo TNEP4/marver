@@ -17,6 +17,8 @@ what changed, are in [TNEP4/marver-app](https://github.com/TNEP4/marver-app/rele
 - **Canvases on Marver 0.27 or later.** They show in the app, a tab each, and closing, reloading or quitting asks
   before losing their unsaved work. Marks, notices and live pictures need **0.29 or later**, the version to use with
   the app. A canvas on 0.26 or older does not appear: update it with `npm i -D @marver-design/marver@latest`.
+- **Marver 0.32 or later, with app 1.2,** for Home to name the board an agent works on and for how long, and for Hide
+  UI to take the whole window in play ([Hide UI in play](#hide-ui-in-play)).
 
 ## Install
 
@@ -67,10 +69,11 @@ Your settings and tabs stay: every version keeps them in the same folders ([Unin
 
 ## First launch
 
-Marver opens on Home. With no canvas running, Home says how to start one: `npx marver dev` in a repo with Marver ("It
-appears here, with its own tab, a second after it starts."), and for a repo without Marver yet, `npm i -D
-@marver-design/marver && npx marver init` first. Each command has a button that copies it. Every canvas running on
-this Mac gets its own tab; `⌘L`, or Home's field, opens a link - a local canvas's, or a shared canvas's.
+Marver opens on Home. With no canvas yet, Home is the welcome: "No canvas running yet", and three ways in. In a repo
+with Marver, run `npx marver dev`. In a repo without Marver yet, run `npm i -D @marver-design/marver && npx marver
+init` first. Each command has a Copy button. For a canvas someone shared with you, paste its link in the field there
+and press Return. A canvas you start appears a second later, on Home and in its own tab. The ? button in the corner
+is How Marver runs ([Help](#help-how-marver-runs)).
 
 A canvas's tab and Home card wear its name and its logo: `name` in its `design/config.ts` (else `share.name`, else
 the folder's name) and `logo` (else `share.logo`, else the first of `design/logo.svg|png`, `public/logo.svg|png`,
@@ -87,29 +90,114 @@ on that board, the frames selected and in view:
   `marver show` does - and if you were typing a comment or a Jam edit there, it stays put and says "Your agent wants
   to show you <the frame> · Go" instead, so nothing you typed is lost.
 - **It has no tab yet:** a tab opens on that place.
-- **The canvas is not running:** Home opens with its card first, highlighted, and its start command ready to copy.
+- **The canvas is not running:** Home opens with its card first under Not running, highlighted, and its menu open on
+  Copy start command. When that canvas's tab is still open but stopped, its tab's card is the one.
 
 A link names its canvas by its folder, and only a canvas running from that same folder opens it - never another canvas
 that took the same port later. A link that names no place Marver understands opens the canvas on its board.
 `marver link` gives the `marver://` link only while Marver is in use (it keeps `~/.marver/state/app-live.json` fresh
-every 30 seconds) with that canvas open in a tab; otherwise, and with `--web`, the localhost link.
-
-## A tab's badge and menu
-
-Each canvas's tab shows an orange count of what needs you (Marver's questions, captures to review, runs that failed or
-stalled), else a blue dot when frames are new since you looked (no number, from 1.1), else a shimmer while an agent
-works. Right-click the tab of a canvas on this Mac for **Mark All as Seen** and, with Marver 0.31 or later, **Resolve
-All Comments**: every open conversation on that canvas, never what Jam is working on, with Undo. [What the marks
-mean](boards-and-folders.md#what-is-new-what-needs-you).
+every 30 seconds) with that canvas open in a tab; otherwise, and with `--web`, the localhost link. Home's field opens a
+`marver://` link too ([The link field](#the-link-field)).
 
 ## Home
 
-- **Running canvases** each have a card; one whose Marver has a newer release says "0.31.0 available" with the command
-  that updates it, in its own folder, ready to copy.
-- **Recently here** lists the canvases that ran before, with their logo and start command - not those in a temporary
-  folder (`/tmp`, `/private/tmp`, `/var/folders`), which are tests and scratch copies.
-- **Shared canvases** show their name and logo once Marver has opened them once (read from the canvas's own
-  `meta.json`, through that tab's sign-in).
+Home shows your canvases as cards. **View** (the sliders button at the top) switches between two views, and Home
+keeps your choice; it starts on Board.
+
+- **Board**: a column per state - Needs you, Agent working, Ready to review, Running, Not running - and the shared
+  canvases as chips along the foot, under Shared with you. A full column scrolls.
+- **Grid**: three sections, Running, Not running and Shared with you, four cards a row. Running holds the cards of the
+  board's first four columns, in that order. A section with no card is left out.
+
+Each canvas has a card (one per tab, so a canvas open twice has two), in the first column that fits, in that order. Each card's line says what is going on:
+
+| Column | The line |
+|---|---|
+| Needs you | "2 questions on Checkout", "Agent run failed on Checkout", "Agent stalled on Checkout", "Agent run to review on Checkout" (the board is named when all of them are on one board), or "Stopped unexpectedly": its process ended while you were not looking at it |
+| Agent working | "Agent working on Checkout · 4 min", from an hour "2 h". The board and the minutes need a canvas on Marver 0.32 or later; an older one reads "Agent working" |
+| Ready to review | "3 new frames to look at" |
+| Running | "Running", "Starting…", "Not responding", "Can't reach", "Crashed" or "Unloaded", then " · tab closed" when its tab is closed and it still runs. A port that does not answer as a Marver canvas reads "Not a Marver canvas", named by its host |
+| Not running | "Stopped" while its tab is open, "Ran 2 hours ago" ("Ran Oct 27" after two weeks), or "Not running" for a canvas a link named that never ran here |
+| Shared with you | "Open" (or "Opening…", "Can't reach", "Crashed") for a shared canvas in a tab, "Opened 3 days ago" for one opened before |
+
+"Agent working" counts from when the agent began: a `marver work start` hold, or a Jam run once it has started, never
+while it waits for its turn, a session or a free slot. Not running lists the canvases that ran before, not those in a
+temporary folder (`/tmp`, `/private/tmp`, `/var/folders`), which are tests and scratch copies. A shared canvas shows its
+name and logo once Marver has opened it once (read from the canvas's own `meta.json`, through that tab's sign-in).
+
+**Clicking a card.** A running or shared card opens its tab; Return or Space does the same from the keyboard. A card
+that is not running opens its menu.
+
+**A card's menu.** Right-click a card, or press its more button (it shows on hover), for its menu. A shared chip on the
+board has the same menu on a right-click.
+
+| Card | Its menu |
+|---|---|
+| running | Open; Update to 0.32.0, in blue, when its Marver has a newer release; Copy link (its localhost link); Copy path; Reveal in Finder |
+| not running | Copy start command; Copy link (its `marver://` link); Copy path; Reveal in Finder |
+| shared | Open; Copy link |
+| not a Marver canvas | Open |
+
+Update to copies the command that updates that canvas, in its own folder; nothing is updated in the app. Copy start
+command copies the command that starts it in its folder. A copy row says "Copied" for a moment, then the menu closes.
+
+### The link field
+
+The field at the top of Home opens a canvas link: a local canvas's, a shared canvas's https link, or a `marver://`
+link. ⌘L (File > Open Link…) takes you there from any tab. Before you press Return, the line under it says where the
+link goes ("↩ opens in Checkout's tab"), or why it can't ("Nothing is running on localhost:5173"). Escape takes you
+back to the tab you came from.
+
+### Help: How Marver runs
+
+The ? button opens How Marver runs: how to open a canvas (`npx marver dev` in its repo), add Marver to a repo (`npm i
+-D @marver-design/marver && npx marver init`) and update a canvas (`npm i -D @marver-design/marver@latest`), each with
+a Copy button. Its foot shows where Marver keeps its settings and agent notes (`~/.marver/`), with Show the files. A
+click outside it, or Escape, closes it.
+
+## The tab strip
+
+Each canvas you run has a tab, with its round logo and its name. The tabs share the strip's width, and the open one
+stands out in glass. On a narrow window, or with many tabs, a tab shrinks to its logo and its badge, and » at the end
+lists the tabs that do not fit, with a word for any that is not running as it should ("stopped", "can't reach"). Pick
+one to open it. Home has its own button, at the left (⌘T). Hover a tab to see its key: ⌘1 to ⌘8, and ⌘9 for the last
+canvas.
+
+**Its badge.** Each canvas's tab shows an orange count of what needs you (Marver's questions, captures to review, runs
+that failed or stalled), else a blue dot when frames are new since you looked, else a shimmer while an agent works,
+and a teal dot while a Jam session runs. While Home is open the tabs drop their counts, dots and shimmer: Home already
+shows them. [What the marks mean](boards-and-folders.md#what-is-new-what-needs-you).
+
+**Its menu.** Right-click a tab for its Marver menu, with icons like the sidebar's:
+
+- a canvas on this Mac: Open in browser, Reveal in Finder, Copy local link, Mark all as seen and, with Marver 0.31 or
+  later, Resolve all comments (every open conversation on that canvas, never what Jam is working on, with Undo);
+- a shared canvas: Open in browser, Copy link, Reload, Force reload;
+- every tab: Close tab.
+
+The ContextMenu key or ⇧F10 opens it from the keyboard. » opens the same kind of menu, one row per hidden tab.
+
+**Moving the window.** Drag the strip where it is empty. However many tabs you have, the strip keeps at least 40 px
+empty before its right end, or before a message showing there, so there is always somewhere to grab: the tabs shrink
+and move behind » a little sooner instead.
+
+The strip and Home follow Reduce Transparency and Increase Contrast, and show a clear focus ring when you use the
+keyboard.
+
+## Hide UI in play
+
+In play, prototype, slides or focus mode, `h` (Hide UI) takes the whole window: the tab strip and the window's buttons
+go with Marver's own controls, and the stage grows into the room they leave. A thin band along the top, 16 px and
+invisible, still drags the window. Everything comes back with:
+
+- `h` again;
+- Escape, which leaves play (it first cancels a comment you are writing or the laser);
+- leaving play any other way: the strip comes back, and the canvas keeps its controls hidden until you press `h`;
+- switching tabs (⌘1 to ⌘9, say): coming back, everything shows.
+
+On a board locked to play, Escape shows everything again. On the canvas, Hide UI hides Marver's controls and keeps the
+strip, which is how you move between canvases; a shared canvas's tab keeps the strip too. This needs app 1.2 and a
+canvas on Marver 0.32 or later. In a browser, or with an older app or canvas, Hide UI works as before: the strip stays.
 
 ## What it asks, and when
 
@@ -140,7 +228,7 @@ of what changed), and the Marver menu reads Restart to Install Update. Two ways 
 
 **After an update, Marver opens as it does after a quit.** With Settings' "Reopen tabs at launch" on (the default),
 each running canvas gets its tab back on the board it showed, and Settings if it was open; with it off, Marver starts
-on Home and every running canvas still gets its tab. Shared canvases do not come back in tabs (Home's Shared canvases
+on Home and every running canvas still gets its tab. Shared canvases do not come back in tabs (Home's Shared with you
 reopens them), and a canvas that is not running gets no tab. What a page held only in memory, such as an open panel or
 a scroll position, does not come back. The first launch after says "Updated to 1.0.1", once.
 
@@ -211,7 +299,7 @@ and roughly when, and attach the file.
 Marver keeps its settings and its state in `~/.marver/`, beside the files `marver dev` keeps there. At every launch
 the app writes a `README.md` in it, for you and your coding agent: every file, every setting, and the rules for
 changing them (edits to the README itself are lost). Settings (Marver > Settings…) writes `config.json` and
-`theme.json`. Home's Show the Files opens the folder; Help > Show Performance Files opens the app's performance records.
+`theme.json`. Show the files, in Home's How Marver runs (the ? button), opens the folder; Help > Show Performance Files opens the app's performance records.
 
 ## Uninstalling
 
