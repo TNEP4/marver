@@ -1,0 +1,114 @@
+{
+  "v": 1,
+  "version": "1.2.1",
+  "status": "published",
+  "kind": "production",
+  "repo": "TNEP4/marver-app",
+  "tag": "v1.2.1",
+  "source": {
+    "sha": "a4a07d216f2aff2b135f0085636e92feb0813ef5",
+    "branch": "main"
+  },
+  "companion": "0.32.0",
+  "tagTarget": "2fb18a895a71439c50c888d594b7e77ac67bfad0",
+  "release": {
+    "id": 442182749,
+    "url": "https://github.com/TNEP4/marver-app/releases/tag/untagged-6aad2f21f28d75828364"
+  },
+  "assets": [
+    {
+      "name": "Marver-darwin-arm64-1.2.1.zip",
+      "bytes": 121068191,
+      "sha256": "61e1e555a1c6606a2b8423ceccb7e83aad5ffd57b60ce600e77826324a5e6369"
+    },
+    {
+      "name": "Marver-arm64.dmg",
+      "bytes": 131540425,
+      "sha256": "1fcd46681b00506e21e91bcf7c2d9782982b2939dcb5ca7fda47db8fa4b82234"
+    },
+    {
+      "name": "releases.json",
+      "bytes": 650,
+      "sha256": "ee858c7d47907910f4799d4da2b0c2e21b32cc462d9a0f01b12fc753adf8cc92"
+    }
+  ],
+  "acceptance": {
+    "by": "Nic Touron",
+    "at": "2026-11-11T21:02:32.213Z",
+    "evidence": {
+      "version": "1.2.1",
+      "dmg": "1fcd46681b00506e21e91bcf7c2d9782982b2939dcb5ca7fda47db8fa4b82234",
+      "zip": "61e1e555a1c6606a2b8423ceccb7e83aad5ffd57b60ce600e77826324a5e6369",
+      "mac": "Mac17,8 (Apple silicon): install items in a clean tart VM on it (s7-121, cloned from tahoe-base, deleted after), 11 Nov",
+      "macos": "26.6.2",
+      "google": "refused",
+      "checks": {
+        "install-open": "pass",
+        "notarised": "pass",
+        "not-translocated": "pass",
+        "notice-ask": "pass",
+        "notice-banner": "pass",
+        "dock-badge": "pass",
+        "notice-denied": "pass",
+        "settings-link": "pass",
+        "signin": "pass",
+        "shared-card": "pass",
+        "live-picture": "pass"
+      },
+      "notes": "Run on these exact bytes (the draft's DMG, sha256 1fcd4668..., downloaded from the draft (release 442182749) with gh into a fresh folder and hash-checked, the draft's digests of the DMG and the zip read back and matching, and the release state's; copied into a fresh clone of tahoe-base and given Safari's quarantine flag), 11 Nov, clean macOS 26.6.2 (no Marver, no ~/.marver before; Gatekeeper: assessments enabled, developer id enabled): the DMG opened and mounted (Marver 1.2.1); Marver double-clicked in its window - the disk-image question ('This item is on the disk image \"Marver-arm64.dmg\". Safari downloaded this disk image today... Apple checked it for malicious software and none was detected'), Open; the silent move (/Applications/Marver.app there before the second answer; app.jsonl: update move moved 1.2.1; update.json's move already cleared as read); macOS's second question ('This file was downloaded on an unknown date. Apple checked it...'), Open; Home's empty state: 'No canvas running yet' with its three cards, screenshot vm/shots/s7-121-4-home.png; running from /Applications/Marver.app (not translocated: no AppTranslocation process); spctl: accepted, Notarized Developer ID, Developer ID Application: Nicolas Touron (PXV6WER853); codesign design.marver.app, team PXV6WER853; version 1.2.1 (CFBundleShortVersionString and CFBundleVersion; app.jsonl start: release flavour, electron 45.0.0); launch none-restored; the update check answered current. The 1.1 items again on these bytes: app-live.json written (scheme 1, version 1.2.1), LaunchServices resolves marver: to /Applications/Marver.app, and a marver://open?ws=<a folder> link opened in the VM reached the app (app.jsonl: cmd deep-link done) and, with no canvas running, showed Home's board with that folder's card under Not running, its menu open with Copy start command first (vm/shots/s7-121-5-link.png); a bare marver://show was refused as bad, as designed. New in 1.2.1, on these bytes: D on Home (focus off the link field, no menu open) switched light to dark (vm/shots/s7-121-6-d-before.png, s7-121-7-d-after.png; ~/.marver/theme.json written mode dark; app.jsonl cmd setting via key in home, done) and D again back to light (s7-121-8-d-back.png, theme.json mode light); Marver > Settings... opened the Settings tab (its gear on the tab; app.jsonl cmd settings via menu, done): the new glass page, 'Settings - Saved as plain files in ~/.marver/', its Updates group first with the app icon, 'Marver 1.2.1', 'Marver is up to date', Check for updates, 'Last checked a minute ago' and 'Download updates automatically' (autoUpdate, on), then Appearance (Theme System/Light/Dark, 'switch with D'), Tabs (vm/shots/s7-121-10-settings.png). NOT re-run by hand on 1.2.1: notice-ask, notice-banner, dock-badge, notice-denied, settings-link, signin, shared-card, live-picture - carried over from Nic's hand checks of 0.3.0 on 31 Oct (#53), as for 1.0.0, 1.0.1, 1.1.0 and 1.2.0 by Nic's decision; 1.2.1 does not touch the notices or sign-in (it changes Settings, the theme key on Home and Settings, the Settings tab's gear and the updater's autoUpdate setting). google 'refused': not shown to work, unchanged (#53 finding 2); not retried."
+    }
+  },
+  "notary": {
+    "app": [
+      "365cca8a-63e5-418e-bd21-a7fc63ff40c3"
+    ],
+    "dmg": [
+      "deadd98a-c78a-4339-99ec-fc829babbd64"
+    ]
+  },
+  "dr": "identifier \"design.marver.app\" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = PXV6WER853",
+  "immutable": true,
+  "smokeReport": "smoke-1794430308415.json",
+  "knownFailures": [
+    {
+      "name": "memory-no-canvas",
+      "measured": 443.5,
+      "unit": "MB",
+      "budget": 200,
+      "detail": "443.5 MB footprint, mean of 3 reads 10 s apart: browser 54.7, utility 8.8 (NetworkService), app pages 63.8 (3 renderers), crashpad 2.4, GPU 313.8 counted (33.2 with a canvas open: -280.5); RSS beside it 654.4 MB counted, 654.4 MB all 7 processes; over the 200 MB budget - the limit stays (Nic, 23 Oct): the numbers go to Nic",
+      "decision": "Nic, 24 Oct: app 0.2 ships with it, the 200 MB limit unchanged; 29 Oct: it no longer blocks (A3 closed); investigated later"
+    }
+  ],
+  "steps": {
+    "preflight": "2026-11-11T20:49:31.311Z",
+    "freeze": "2026-11-11T20:49:31.384Z",
+    "build": "2026-11-11T20:51:48.422Z",
+    "app-hashed": "2026-11-11T20:51:48.551Z",
+    "app-zipped": "2026-11-11T20:51:54.088Z",
+    "notarize-app": "2026-11-11T20:53:11.226Z",
+    "staple-app": "2026-11-11T20:53:12.533Z",
+    "zip": "2026-11-11T20:53:18.134Z",
+    "dmg-built": "2026-11-11T20:53:26.890Z",
+    "dmg-signed": "2026-11-11T20:53:27.444Z",
+    "dmg-accepted": "2026-11-11T20:54:54.617Z",
+    "dmg-stapled": "2026-11-11T20:54:55.664Z",
+    "dmg": "2026-11-11T20:54:55.680Z",
+    "verify": "2026-11-11T20:55:02.901Z",
+    "feed": "2026-11-11T20:55:02.922Z",
+    "draft": "2026-11-11T20:55:04.703Z",
+    "upload": "2026-11-11T20:55:32.969Z",
+    "check-draft": "2026-11-11T20:55:53.259Z",
+    "publish": "2026-11-11T21:02:36.374Z"
+  },
+  "check": {
+    "at": 1794430956516,
+    "problems": [],
+    "latest": {
+      "owner": "1.2.1",
+      "agreeing": 18,
+      "reads": 18
+    },
+    "immutable": true,
+    "status": "published"
+  }
+}
