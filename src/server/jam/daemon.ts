@@ -240,6 +240,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   const activeChildren = new Set<ChildProcess>()   // concurrent jobs (bounded by jam.concurrency)
   const running = new Map<string, Promise<void>>()   // batchId -> its run
   const runningBatches = new Map<string, Batch>()
+  /** spec 32 F2: background runs whose runner is set and that wait for a process slot (jam.concurrency): not at work yet */
+  const slotWaiting = new Set<string>()
   /** every run that starts, counted: a run knows whether another began while it ran */
   let batchStarts = 0
 
@@ -977,12 +979,17 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         const opts: SpawnOpts | undefined = full ? { root, mcp: s.mcp, skills: s.skills, ...(ch.kind === 'fork' && ch.session ? { fork: ch.session } : {}), marver: marverCmd() } : undefined
         // the runner is the decision now: saved before it runs, and the handoff it came from is spent - and what it was
         // formed for: no session's run any more (heldBy, kept)
-        // (spec 32 F2: and its run begins now - `runAt`, what "working on X · N min" counts from)
-        await q.lock(() => { b.runner = { kind: ch.kind, agent, ...(ch.kind === 'fork' && ch.session ? { session: ch.session } : {}), ...(ch.why ? { why: ch.why } : {}) }; b.runAt = Date.now(); delete b.handoff; delete b.share; q.persist() })
+        // (spec 32 F2: its run has not begun yet - it waits for a process slot first, shown as waiting, never as working)
+        await q.lock(() => { slotWaiting.add(b.batchId); b.runner = { kind: ch.kind, agent, ...(ch.kind === 'fork' && ch.session ? { session: ch.session } : {}), ...(ch.why ? { why: ch.why } : {}) }; delete b.handoff; delete b.share; q.persist() })
         queueChanged()
         // a process slot of its own, whatever brought it here (jam.concurrency is the most Marver spawns at once)
         const permit = await takePermit()
         try {
+        // spec 32 F2: its run begins with its slot - `runAt`, what "working on X · N min" counts from (Codex's review: a
+        // run stamped before it waited for one counted its time in the queue, and named its board while another worked);
+        // it stops waiting in the same step, so no view reads it as working with an older start
+        await q.lock(() => { slotWaiting.delete(b.batchId); if (!stopped) { b.runAt = Date.now(); q.persist() } })
+        queueChanged()
         while (!stopped && b.attempts < MAX_ATTEMPTS) {
           // (spec 31 C.5: what was deleted while it waited for a slot, or since a failed attempt, is out of this one)
           const left = await q.lock((j) => { b.attempts += 1; b.leaseUntil = Date.now() + LEASE_MS; const x = scrubDeleted(j, b, packet); if (!x.left) ended(b); q.persist(); return x.left })
@@ -1018,7 +1025,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           logRun(b.batchId, run.raw)
           if (run.ok) break
         }
-        } finally { permit() }
+        } finally { slotWaiting.delete(b.batchId); permit() }
       }
       if (stopped) return
       if (!run.ok) {
@@ -1677,10 +1684,13 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
           ...(c.kind !== 'comment' ? captureView(c) : {}),
           ...(c.state === 'working' ? (() => {
             const b = j.batches.find((x) => x.batchId === c.batch)
-            const r = runs.runnerOf(b)
+            // spec 32 F2: a background run waiting for a process slot is waiting, not working - and has no start yet
+            const slot = !!b && slotWaiting.has(b.batchId)
+            const r0 = runs.runnerOf(b)
+            const r = r0 && slot ? { ...r0, state: 'waiting' as const } : r0
             // spec 32 F2: when its run began - the batch's `runAt`, else (an older journal) its claim's time when claimed;
             // never the card's own `at`, which resolving a working thread rewrites
-            const startedAt = b?.runAt ?? b?.claim?.at
+            const startedAt = slot ? undefined : b?.runAt ?? b?.claim?.at
             return { ...(r ? { runner: r } : {}), ...(typeof startedAt === 'number' ? { startedAt } : {}) }
           })() : {}),
         }

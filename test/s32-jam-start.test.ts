@@ -9,15 +9,15 @@ import { claudeAdapter } from '../src/server/jam/adapter/claude.ts'
 import { record } from '../src/server/jam/ledger.ts'
 import { readConn, readOffers, upsertConn } from '../src/server/jam/conn.ts'
 import { request } from '../src/server/jam/transport.ts'
-import { STALL_MS } from '../src/server/jam/runs.ts'
+import { STALL_MS, handleOf } from '../src/server/jam/runs.ts'
 import { liveSnapshot } from '../src/server/app-live.ts'
 import type { Batch, JamAdapter } from '../src/server/jam/types.ts'
 import type { JamConfig } from '../src/server/config.ts'
 
 /**
  * Spec 32 F2, Jam's half of "Agent working on X · N min": a run's start is when its execution began - `Batch.runAt`,
- * stamped at a session's claim (with `claim.at`) and when a background runner is set to run it - never while its batch
- * forms or is offered (queue.ts sets a card `working` while its batch forms, so a card's own clock would count the
+ * stamped at a session's claim (with `claim.at`) and when a background runner takes its process slot and runs it - never
+ * while its batch forms, is offered or waits for a slot (jam.concurrency) (queue.ts sets a card `working` while its batch forms, so a card's own clock would count the
  * wait). The daemon's view gives each working card that start as `startedAt` (an older batch with no `runAt` reads its
  * claim's `at`), a card's `at` never: resolving a working thread rewrites it. The live stream's `work.since` reads it.
  */
@@ -37,13 +37,14 @@ const workspace = () => {
   mkdirSync(join(root, 'design', 'scenes', 'demo'), { recursive: true })
   writeFileSync(join(root, 'design', '.local', 'profile.json'), JSON.stringify({ name: 'Nic', email: 'nic@local' }))
   writeFileSync(join(root, 'design', 'scenes', 'demo', 'hero.tsx'), 'export default () => <h1>Hi</h1>\n')
+  writeFileSync(join(root, 'design', 'scenes', 'demo', 'two.tsx'), 'export default () => <h1>Two</h1>\n')
   return { root, dir: join(root, 'design', 'comments'), done: () => rmSync(root, { recursive: true, force: true }) }
 }
-const tag = (root: string, dir: string) => {
+const tag = (root: string, dir: string, board = 'home', frame = 'demo/hero') => {
   const id = randomUUID()
-  const ev: CommentEvent = { id, ts: Date.now(), type: 'create', commentId: id, frame: 'demo/hero', nodeKey: 'demo/hero', author: { email: 'nic@local', name: 'Nic' }, body: '@marver make it say Hello' }
-  appendEvents(dir, 'home', [ev])
-  record(root, 'home', id)
+  const ev: CommentEvent = { id, ts: Date.now(), type: 'create', commentId: id, frame, nodeKey: frame, author: { email: 'nic@local', name: 'Nic' }, body: '@marver make it say Hello' }
+  appendEvents(dir, board, [ev])
+  record(root, board, id)
   return ev
 }
 const until = async (ok: () => boolean, ms = 8_000, step?: () => unknown) => {
@@ -155,6 +156,47 @@ describe('a Jam run\'s start (spec 32 F2: Batch.runAt, the view\'s startedAt)', 
     await wait(40)
     expect((await s.ask('release', { handle })).ok).toBe(true)
     expect(await until(() => { const b = s.batch(); return !!b && b.runner?.kind !== 'session' && (b.runAt ?? 0) > claimAt }, 10_000, () => s.jam.runs.tick())).toBe(true)
+    await t
+    s.jam.stop(); s.done()
+  })
+
+  it('background runs waiting for a process slot (jam.concurrency used up) are waiting, not working: no start, never work.board, and a run\'s start is when it took its slot', { timeout: 60_000 }, async () => {
+    const s = await setup({ adapter: slow(2500), cfg: { concurrency: 1 } })
+    tag(s.root, s.dir, 'home', 'demo/hero')
+    await wait(5)
+    tag(s.root, s.dir, 'away', 'demo/two')    // made later: the newest working card, were it counted
+    const t = s.jam.tick()
+    expect(await until(() => (readOffers(s.root, s.conn.id)?.n ?? 0) === 2, 8_000, () => s.jam.runs.tick())).toBe(true)
+    const h1 = String((await s.ask('next')).handle)
+    const h2 = String((await s.ask('next')).handle)
+    const of = (h: string) => s.jam.snapshot().batches.find((b) => b.claim && handleOf(b, b.claim.gen) === h)!
+    const home = of(h1).frames.includes('demo/hero') ? h1 : h2, away = home === h1 ? h2 : h1
+    const homeId = of(home).batchId, awayId = of(away).batchId
+    const byId = (id: string) => s.jam.snapshot().batches.find((b) => b.batchId === id)!
+    const card = (id: string) => s.jam.view().cards.find((c) => c.state === 'working' && c.batch === id)
+    const claimed = of(home).claim!.at
+    await wait(40)
+    // both fall back to the background at once; one process slot: home's run takes it, away's waits for it
+    expect((await s.ask('release', { handle: home })).ok).toBe(true)
+    expect(await until(() => byId(homeId).runner?.kind !== 'session' && (byId(homeId).runAt ?? 0) > claimed, 10_000, () => s.jam.runs.tick())).toBe(true)
+    expect((await s.ask('release', { handle: away })).ok).toBe(true)
+    expect(await until(() => byId(awayId).runner?.kind !== undefined && byId(awayId).runner!.kind !== 'session', 10_000, () => s.jam.runs.tick())).toBe(true)
+    const homeRun = byId(homeId).runAt!
+    const waiting = card(awayId)!
+    expect(waiting.runner?.kind).toMatch(/fresh|fork/)
+    expect(waiting.runner?.state).toBe('waiting')
+    expect(waiting.startedAt).toBeUndefined()
+    expect(card(homeId)?.startedAt).toBe(homeRun)
+    // the live stream: home's run is the work - its board and its start, never the waiting run's
+    expect(liveSnapshot({ boards: [], fresh: [], jam: s.jam.view(), cli: [] }).work).toEqual({ board: 'home', since: homeRun })
+    // home's run ends, away's takes the slot: its start is then, not when it began to wait
+    expect(await until(() => !card(homeId), 15_000)).toBe(true)
+    const freed = Date.now()
+    expect(await until(() => typeof card(awayId)?.startedAt === 'number', 10_000)).toBe(true)
+    const awayRun = byId(awayId).runAt!
+    expect(awayRun).toBeGreaterThanOrEqual(freed - 100)
+    expect(card(awayId)!.runner?.state).toBeUndefined()
+    expect(liveSnapshot({ boards: [], fresh: [], jam: s.jam.view(), cli: [] }).work).toEqual({ board: 'away', since: awayRun })
     await t
     s.jam.stop(); s.done()
   })

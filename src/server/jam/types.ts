@@ -221,8 +221,8 @@ export interface Batch {
    *  last word (say, progress). `stalls`: how many times it went quiet under this claim (spec 28 A4.6 #9) - one more
    *  each time `stalled` is set where it was not; absent reads 0 */
   /** when its run began (spec 32 F2): stamped when execution starts - at a session's claim, with `claim.at` (a new claim,
-   *  with a new `gen`, stamps again), and when a background runner is set to run it (fork or fresh). Never while it forms
-   *  or is offered; a stall and its resume under one claim keep it. Absent from an older journal: read `claim.at` */
+   *  with a new `gen`, stamps again), and when a background runner (fork or fresh) takes its process slot and runs it.
+   *  Never while it forms, is offered or waits for a slot (jam.concurrency); a stall and its resume under one claim keep it. Absent from an older journal: read `claim.at` */
   runAt?: number
   claim?: { conn: string; inc: string; pid?: number; gen: number; at: number; progress: number; stalled?: boolean; stalls?: number; stopping?: 'background' | 'drop'
     /** its final message, stored at `done` under the lock: the completion boundary (a restart delivers it from here) */
