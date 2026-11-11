@@ -678,11 +678,17 @@ describe('D8: menus and clicks on Home', () => {
 
   it('D8.4, B7: a window resize puts every open menu back at its anchor - a more button\'s, a right-click\'s clamped into the window as it is now, the View menu', async () => {
     await world({ tabs: BUSY, recent: RECENT, view: 'grid', size: [1280, 800] })
+    // the page's resize event lands a frame or more after innerWidth changes: wait for it, never a fixed sleep
+    const resized = async (w: number, h: number) => {
+      await p.page.evaluate(() => { (window as unknown as { __rz: Promise<void> }).__rz = new Promise((r) => addEventListener('resize', () => r(), { once: true })) })
+      await p.resize(w, h)
+      await p.page.evaluate(() => (window as unknown as { __rz: Promise<void> }).__rz)
+    }
     // a card's menu at its more button follows the card
     await p.page.hover('[data-card="os"]')
     await p.page.click('[data-more="os"]')
     const before = await rect('.mv-menu')
-    await p.resize(900, 800)
+    await resized(900, 800)
     expect(await menuOpen()).toBe(true)
     let c = await rect('[data-card="os"]'), m = await rect('.mv-menu')
     expect(Math.abs(m.right - before.right)).toBeGreaterThan(20)
@@ -694,7 +700,7 @@ describe('D8: menus and clicks on Home', () => {
     const last = await p.page.$$eval('.hm-grid .hm-card', (els) => { const r = els[3]!.getBoundingClientRect(); return { x: r.left + 30, y: r.top + 20 } })
     await rightClick(last.x, last.y)
     expect((await rect('.mv-menu')).left).toBeGreaterThan(720)
-    await p.resize(720, 480)
+    await resized(720, 480)
     expect(await menuOpen()).toBe(true)
     m = await rect('.mv-menu')
     expect(m.right).toBeLessThanOrEqual(720 - 14 + 0.5)
@@ -706,7 +712,7 @@ describe('D8: menus and clicks on Home', () => {
     await p.resize(1280, 800)
     await p.page.click('[data-key="view"]')
     await rect('.mv-menu')
-    await p.resize(900, 800)
+    await resized(900, 800)
     expect(await menuOpen()).toBe(true)
     const b = await rect('[data-key="view"]')
     m = await rect('.mv-menu')

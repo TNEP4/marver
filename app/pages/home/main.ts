@@ -239,7 +239,8 @@ function openCardMenu(id: string, anchor: Anchor, byKey: boolean): void {
 
 /** The card wears its hover look and `menu-open`, its more button `.on`, while its menu is open (D5). */
 function markMenu(): void {
-  for (const el of rootEl.querySelectorAll('.menu-open')) el.classList.remove('menu-open', 'hov')
+  // `.hov` is Home's own (an open menu's card, a deep-linked card): every one cleared, then the current ones put back
+  for (const el of rootEl.querySelectorAll('.menu-open, .hov')) el.classList.remove('menu-open', 'hov')
   for (const el of rootEl.querySelectorAll('.hm-more-btn.on')) { el.classList.remove('on'); el.setAttribute('aria-expanded', 'false') }
   if (ui.highlight) cardNode(ui.highlight)?.classList.add('hov')
   const m = ui.menu
