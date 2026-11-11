@@ -616,6 +616,25 @@ document.addEventListener('scroll', (e) => {
   closeCardMenu()
   closeViewMenu()
 }, true)
+// the menus' catcher covers the window (menu.ts, B11), so a wheel over the content lands on it and scrolls nothing:
+// Home hands the wheel to the scroller under the pointer that can move that way, and that scroll, the person's, then
+// closes the menus as above. Nothing scrollable there: nothing moves and the menu stays. A wheel over a menu's own
+// rows is the menu's (B7.3).
+document.addEventListener('wheel', (e) => {
+  const t = e.target
+  if (!(t instanceof Element) || !t.classList.contains('mv-catcher')) return
+  const under = document.elementsFromPoint(e.clientX, e.clientY).find((x) => !x.closest('#hm-layer'))
+  const sc = wheelScroller(under, e.deltaX, e.deltaY)
+  if (sc) sc.scrollBy({ left: e.deltaX, top: e.deltaY })
+}, { capture: true, passive: true })
+function wheelScroller(el: Element | undefined, dx: number, dy: number): Element | null {
+  for (let n = el?.closest(SCROLLERS) ?? null; n; n = n.parentElement?.closest(SCROLLERS) ?? null) {
+    const cs = getComputedStyle(n)
+    if (dy !== 0 && /auto|scroll/.test(cs.overflowY) && n.scrollHeight > n.clientHeight) return n
+    if (dx !== 0 && /auto|scroll/.test(cs.overflowX) && n.scrollWidth > n.clientWidth) return n
+  }
+  return null
+}
 
 /** D8.7: a `marver://` link's card - highlighted, scrolled into view, its menu at its more button with its first row
  *  (Copy start command) focused once the scroll has landed. */

@@ -309,6 +309,20 @@ describe('D4, D5, D7: the grid, the card and the board', () => {
     expect(await p.page.evaluate(() => (document.activeElement as HTMLElement).dataset.card)).toBe('c0')
     expect(first.left - 5).toBeGreaterThanOrEqual(box.left - 0.5)
     expect(first.top - 5).toBeGreaterThanOrEqual(box.top - 0.5)
+    expect(box.right - first.right).toBeGreaterThanOrEqual(5 - 0.5)
+    // a hovered first card wears its ring (inset -1px), inside the scroller's box with the 5 px of room
+    await p.page.mouse.move(first.left + 20, first.top + 10)
+    await p.page.waitForFunction(() => getComputedStyle(document.querySelector('[data-card="c0"]')!, '::after').opacity === '1')
+    // the last card, scrolled to the end and focused by key: its ring is whole on all four sides too
+    await p.page.$eval(list, (e) => { e.scrollTop = e.scrollHeight })
+    await p.page.focus('[data-card="c11"]')
+    await p.page.keyboard.press('Shift+Tab'); await p.page.keyboard.press('Tab')
+    expect(await p.page.evaluate(() => (document.activeElement as HTMLElement).dataset.card)).toBe('c11')
+    expect(await p.page.$eval('[data-card="c11"]', (e) => e.matches(':focus-visible'))).toBe(true)
+    const end = await rect('[data-card="c11"]'), box2 = await rect(list)
+    expect(box2.bottom - end.bottom).toBeGreaterThanOrEqual(5 - 0.5)
+    expect(end.left - box2.left).toBeGreaterThanOrEqual(5 - 0.5)
+    expect(box2.right - end.right).toBeGreaterThanOrEqual(5 - 0.5)
     await p.resize(1280, 800)
   })
 })
@@ -532,6 +546,27 @@ describe('D8: menus and clicks on Home', () => {
     expect(await p.page.$('.hm-help2')).not.toBeNull()
     await p.page.mouse.click(300, 300)   // an outside press closes Help
     expect(await p.page.$('.hm-help2')).toBeNull()
+    // the View menu too: its button moved with the body
+    await p.page.click('[data-key="view"]')
+    expect(await menuOpen()).toBe(true)
+    await p.page.evaluate(() => { document.querySelector('.hm-body')!.scrollTop = 30 })
+    await p.page.waitForFunction(() => !document.querySelector('.mv-menu'))
+    await p.page.evaluate(() => { document.querySelector('.hm-body')!.scrollTop = 0 })
+    // the wheel over a full column (the menus' catcher on top of it), with a card menu open in another column: the
+    // column scrolls and the menu closes (a scroll the person made)
+    const twelve = Array.from({ length: 12 }, (_, i) => tab(`c${i}`, `Canvas ${i}`, 4900 + i))
+    await world({ tabs: [home, tab('asteria', 'Asteria', 4805, asks(2, 'Vault feed')), ...twelve], view: 'board', size: [720, 480] })
+    const list = '.hm-col[data-col="live"] .hm-col-list'
+    await p.page.hover('[data-card="asteria"]')
+    await p.page.click('[data-more="asteria"]')
+    expect(await menuOpen()).toBe(true)
+    const lr = await rect(list)
+    expect(await p.page.evaluate(([x, y]) => document.elementFromPoint(x!, y!)?.className, [lr.left + 20, lr.top + 150])).toBe('mv-catcher')
+    await p.page.mouse.move(lr.left + 20, lr.top + 150)
+    await p.page.mouse.wheel(0, 200)
+    await p.page.waitForFunction(() => !document.querySelector('.mv-menu'))
+    expect(await p.page.$eval(list, (e) => e.scrollTop)).toBeGreaterThan(0)
+    await p.page.$eval(list, (e) => { e.scrollTop = 0 })
     await p.resize(1280, 800)
   })
 
@@ -660,7 +695,7 @@ describe('D9: Help', () => {
 })
 
 describe('D11: Home\'s UI state lives outside the DOM', () => {
-  it('an open card menu, the View menu and Help survive three pushes and a timer tick', async () => {
+  it('an open card menu, the View menu and Help survive three pushes (the timer's repaint: the last describe)', async () => {
     await world({ tabs: BUSY, view: 'grid' })
     await p.page.hover('[data-card="os"]')
     await p.page.click('[data-more="os"]')
@@ -704,9 +739,23 @@ describe('D11: Home\'s UI state lives outside the DOM', () => {
     // its card gone from the model: the menu closes
     await tabs(BUSY)
     expect(await menuOpen()).toBe(false)
+    // a remote tab closed with no past link left: its card goes, and its menu with it
+    await p.page.focus('[data-card="deck"]')
+    await p.page.keyboard.press('ContextMenu')
+    expect(await menuRows()).toEqual(['Open', '-', 'Copy link'])
+    await tabs(BUSY.filter((t) => t.id !== 'deck'))
+    expect(await menuOpen()).toBe(false)
+    // a gone tab closed: its recent card, another id, takes its place; the gone card's menu closes
+    await p.page.focus('[data-card="gone"]')
+    await p.page.keyboard.press('ContextMenu')
+    expect(await menuRows()).toEqual(['Copy start command', '-', 'Copy link', 'Copy path', 'Reveal in Finder'])
+    await tabs(BUSY.filter((t) => t.id !== 'gone'))
+    await p.send('recent', [{ id: 'r_00000000000000ff', name: 'Grindr creative swap', folder: '~/gone', lastSeen: Date.now() - 1000 }])
+    expect(await p.page.$('[data-card="r_00000000000000ff"]')).not.toBeNull()
+    expect(await menuOpen()).toBe(false)
   })
 
-  it('typing in the field keeps the draft, the focus and the selection through pushes, a timer tick and empty to populated and back', async () => {
+  it('typing in the field keeps the draft, the focus and the selection through pushes and empty to populated and back (the timer: the last describe)', async () => {
     await world({ tabs: BUSY, view: 'grid' })
     await p.page.click('#link')
     await p.page.keyboard.type('http://localhost:4806/x')
@@ -776,5 +825,55 @@ describe('E7 and the system settings', () => {
     await p.media({ 'prefers-reduced-motion': 'reduce' })
     for (const a of await animatedProperties(p.page)) expect(a.name).not.toBe('hm-pulse')
     await p.media({})
+  })
+})
+
+describe('D6.2, D11: the 60 s timer repaints through the render path', () => {
+  // last in the file: the page reloads under Playwright's clock, so the 60 s interval is the fake one
+  it('moves the working minutes, and keeps an open card menu in a scrolled column, the View menu, Help, the draft and the offsets', async () => {
+    await closeAll()
+    await p.page.clock.install()
+    await p.page.reload()
+    await p.page.waitForFunction(() => document.readyState === 'complete')
+    const twelve = Array.from({ length: 12 }, (_, i) => tab(`c${i}`, `Canvas ${i}`, 4900 + i))
+    const agent = tab('ambient', 'Ambient agent', 4807, { marks: marks({ working: true, work: { board: 'Onboarding', since: await p.page.evaluate(() => Date.now()) - 4.5 * 60_000 } }) })
+    const list = [home, agent, ...twelve]
+    await world({ tabs: list, recent: RECENT, view: 'board', size: [720, 480] })
+    const line = () => text('[data-card="ambient"] .hm-line')
+    expect(await line()).toBe('Agent working on Onboarding · 4 min')
+    const tick = async () => { await p.page.clock.runFor(60_000); await sleep(50) }
+    // a card menu open in a column scrolled to a nonzero offset
+    const col = '.hm-col[data-col="live"] .hm-col-list'
+    await p.page.$eval(col, (e) => { e.scrollTop = 120 })
+    await sleep(50)
+    const id = await p.page.$eval(col, (e) => { const r = e.getBoundingClientRect(); return [...e.querySelectorAll<HTMLElement>('.hm-card')].find((x) => x.getBoundingClientRect().top > r.top + 10)!.dataset.card! })
+    await p.page.hover(`[data-card="${id}"]`)
+    await p.page.click(`[data-more="${id}"]`)
+    const el = await p.page.evaluateHandle(() => document.querySelector('.mv-menu'))
+    await tick()
+    expect(await line()).toBe('Agent working on Onboarding · 5 min')
+    expect(await text('[data-card="r_0000000000000001"] .hm-line')).toBe('Ran 19 hours ago')
+    expect(await p.page.evaluate((m) => m === document.querySelector('.mv-menu'), el)).toBe(true)
+    expect(await p.page.$eval(col, (e) => e.scrollTop)).toBe(120)
+    const c = await rect(`[data-card="${id}"]`), m = await rect('.mv-menu')
+    expect(Math.abs(m.right - (c.right - 8))).toBeLessThanOrEqual(1)
+    await closeAll()
+    // the View menu and Help
+    await p.page.click('[data-key="view"]')
+    await tick()
+    expect(await menuRows()).toEqual(['View', 'Grid', 'Board'])
+    await closeAll()
+    await p.page.click('[data-key="help"]')
+    await tick()
+    expect(await p.page.$('.hm-help2')).not.toBeNull()
+    await p.page.click('[data-key="help"]')
+    // the field's draft, focus and selection
+    await p.page.click('#link')
+    await p.page.keyboard.type('http://localhost:4806/x')
+    await p.page.evaluate(() => (document.getElementById('link') as HTMLInputElement).setSelectionRange(3, 8))
+    await tick()
+    expect(await p.page.evaluate(() => { const i = document.getElementById('link') as HTMLInputElement; return [document.activeElement === i, i.value, i.selectionStart, i.selectionEnd] })).toEqual([true, 'http://localhost:4806/x', 3, 8])
+    await p.page.fill('#link', '')
+    await p.resize(1280, 800)
   })
 })
