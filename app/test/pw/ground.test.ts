@@ -1149,7 +1149,7 @@ describe('the app\'s own pages at the full height (A3.8 #32)', () => {
       await waitFor('the cover hidden', async () => !(await ground()).cover.visible)
       expect((await bounds(`${page}:view`))!.bounds).toEqual(FULL(await content()))
       // spec 32 D1.3, D10.1: Home's area is `.hm-body` (or, with nothing to list, `.hm-empty`), 44 px down
-      const area = page === 'home' ? '.hm-body, .hm-empty' : '.settings'
+      const area = page === 'home' ? '.hm-body, .hm-empty' : '.st-body'   // spec 33: Settings v2's scrolling area
       const dom = await exec<string>(page, `JSON.stringify((() => {
         const box = document.querySelector('${area}').getBoundingClientRect()
         const first = [...document.querySelectorAll('button, input, select, a[href], [tabindex]:not([tabindex="-1"])')].find((e) => e.offsetParent !== null)
