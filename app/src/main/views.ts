@@ -65,7 +65,7 @@ import type { RegistryEntry, RegistryEvent } from './registry.ts'
 import { mainFrameOf, safely } from './frames.ts'
 import { attachKeys, digitOf, type AppCommand } from './keys.ts'
 import { activated, appCmd, askedLoad, askedShown, cmdTabsChanged, cmdWindowGone, currentAppCmd, expectWindow, holdCmd, setBeforeCmd, tabDocument, tabFailed, waitForDoc, windowCause, type AppCmdHandle, type KeyFrom } from './commands.ts'
-import { beforeStrip, focusOwner, focusShown, focusStripQuiet, f6, track, type Owner } from './focus.ts'
+import { beforeStrip, focusOwner, focusShown, focusStrip, focusStripQuiet, f6, track, type Owner } from './focus.ts'
 import { gateOf, step, type Grant, type ViewFacts } from './immersive-gate.ts'
 import { buildNow, HELP_URL, invalidateMenu, startMenu, type MenuModel, type MenuToken } from './menu.ts'
 import { crashReloaded, currentPill, onPillAction, setCondition, setPillPorts } from './pill.ts'
@@ -972,10 +972,12 @@ export function runCommand(c: AppCommand, via: 'key' | 'menu', key?: KeyFrom): v
     }
     case 'focus-strip': case 'focus-strip-back': {
       // spec 32 C8.1: F6 while immersive - main ends it (the gate's own cause), so the strip comes back first, then
-      // takes focus (the compose shows it before f6 runs)
+      // takes focus (the compose shows it before the focus moves). Not the toggle: while immersive the strip is where
+      // focus goes, whoever the recorded owner is (one left on the strip by a menu that closed as the grant came)
       const at = activeTab()
-      if (at?.kind === 'local' && at.reports.immersiveGrant === 'on') { mainEnds.add(at.id); compose() }
-      f6(); h.done(); return
+      if (at?.kind === 'local' && at.reports.immersiveGrant === 'on') { mainEnds.add(at.id); compose(); focusStrip() }
+      else f6()
+      h.done(); return
     }
     case 'mark-flash':
       holdCmd(h)
@@ -1460,6 +1462,10 @@ function openMenu(h: AppCmdHandle | undefined, kind: 'tab' | 'more', lines: Menu
   lastPopup = { rev, record, actions: items }
   j('popup', record)
   if (!stripReady()) { refuseMenu(h, 'not-ready'); return }
+  // C8.3, B12.8: a menu asked for while immersive is granted (a request queued before the strip hid) - main ends
+  // immersive first, so the strip is back before the record exists; the menu's own compose then never meets a grant
+  const at = activeTab()
+  if (at?.kind === 'local' && at.reports.immersiveGrant === 'on') { mainEnds.add(at.id); compose() }
   const key = o.ask.key === true
   const hadFocus = o.ask.hadFocus === true
   const prev = menu
@@ -1475,6 +1481,8 @@ function openMenu(h: AppCmdHandle | undefined, kind: 'tab' | 'more', lines: Menu
   }
   menu = rec
   compose()   // the strip grows (plan.ts `menu`), no shrink in between for a replace
+  // a record the compose closed (B12: its tab moved, immersive still owed) is never published: its null went out
+  if (menu !== rec || rec.closing) { j('tab-menu', { rev, unpublished: true }); return }
   const rows: TabMenuRow[] = all.map((l) => l === 'sep' ? { kind: 'sep' } : { kind: 'item', id: l.id, label: l.label, ...(l.icon ? { icon: l.icon } : {}), enabled: l.enabled })
   const view: TabMenuView = { rev, x: o.x, y: o.y, kind, rows }
   sendToStrip(CH.tabMenuView, view)
@@ -1600,16 +1608,19 @@ export const popupNow = () => lastPopup ? { rev: lastPopup.rev, ...lastPopup.rec
 
 /** C8.1: F6 or ⇧F6 pressed while immersive - main takes it away, through the gate (until the grant leaves `on`). */
 const mainEnds = new Set<string>()
+/** C8: main's end that could not go out, latched on the document's reports (reset at every commit) - the gate reads
+ *  failed until it is delivered, whatever its cause does in between (an abort, a hang that clears) */
+const endOwed = new WeakSet<object>()
 
 function immersiveFor(t: Tab, w: ViewFacts): boolean {
   if (t.kind !== 'local') return true
   const r = t.reports
   const grant: Grant = r.immersiveGrant ?? 'none'
   const wish = r.immersive
-  if (grant === 'none' && !wish) { mainEnds.delete(t.id); return true }
+  if (grant === 'none' && !wish) { mainEnds.delete(t.id); endOwed.delete(r); return true }
   const gate = gateOf({
     ...w, local: true, pending: !!t.geo.pending, htmlFullscreen: t.geo.htmlFullscreen, trusted: !!t.doc?.trusted, hung: !!t.hung,
-    gone: !t.reg || t.reg.state === 'gone', wish: wish?.on === true, mainEnds: mainEnds.has(t.id),
+    gone: !t.reg || t.reg.state === 'gone', wish: wish?.on === true, mainEnds: mainEnds.has(t.id) || endOwed.has(r),
   })
   const out = step({ grant, ...(wish ? { wish } : {}), ...(r.immersiveAnswered !== undefined ? { answered: r.immersiveAnswered } : {}), gate })
   // B12.8 with B12's close: immersive and the menu never coexist. A strip that would hide while a menu is open, or
@@ -1625,15 +1636,16 @@ function immersiveFor(t: Tab, w: ViewFacts): boolean {
     const sent = trust.immersiveState ? trust.immersiveState(t.id, t.doc.doc, a) : bridgeNow()?.immersiveState(t.id, t.doc.doc, a) ?? false
     if (sent) r.immersiveAnswered = wish.n
     // main's end (row 2) is the one answer the next compose could not make again from `answered` (row 5 answers a
-    // refusal with no `end`): until it goes out the grant stays `on`, so each compose sends it again
-    else if (a.end) next = grant
+    // refusal with no `end`): until it goes out the grant stays `on` and the end is latched (the gate reads failed),
+    // so each compose sends it again and the strip stays shown even if its cause clears first
+    else if (a.end) { next = grant; endOwed.add(r) }
     j('immersive', { tab: t.id, grant: next, ...a, sent })
   } else if (next !== grant) j('immersive', { tab: t.id, grant: next })
   if (next !== grant) {
     if (next === 'none') delete r.immersiveGrant
     else r.immersiveGrant = next
   }
-  if (next !== 'on') mainEnds.delete(t.id)
+  if (next !== 'on') { mainEnds.delete(t.id); endOwed.delete(r) }
   return out.stripShown
 }
 

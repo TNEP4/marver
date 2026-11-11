@@ -1306,6 +1306,48 @@ describe('spec 32 C8: main\'s immersive gate, the views.ts glue (through the moc
     expect(m.stripShown.get(t.id)).toBe(true)                   // ended: the strip does not vanish again
   })
 
+  it('main\'s end that could not go out is latched: its cause clearing first (a hang that clears) never hides the strip again', async () => {
+    const t = await canvas()
+    m.facts.set(t.id, FULL)
+    wish(t, true, 1)
+    expect(m.stripShown.get(t.id)).toBe(false)
+    immersiveSends = false
+    t.hung = true
+    compose()
+    expect(t.reports.immersiveGrant).toBe('on')
+    expect(m.stripShown.get(t.id)).toBe(true)
+    t.hung = false                         // the cause clears before the end gets through
+    compose()
+    expect(m.stripShown.get(t.id)).toBe(true)
+    expect(immersiveSent.filter((x) => x.end).length).toBe(2)
+    expect(immersiveSent.filter((x) => x.on === true).length).toBe(1)   // no `{on: true}` again
+    immersiveSends = true
+    compose()
+    expect(immersiveSent.at(-1)).toEqual({ tab: t.id, doc: docs.get(t.id), n: 1, on: false, end: true })
+    expect(t.reports.immersiveGrant).toBe('ended')
+    compose()
+    expect(m.stripShown.get(t.id)).toBe(true)
+    expect(immersiveSent.filter((x) => x.end).length).toBe(3)
+    // the same with an abort: a pending navigation that clears, the end still owed
+    wish(t, false, 2)
+    wish(t, true, 3)
+    expect(m.stripShown.get(t.id)).toBe(false)
+    immersiveSends = false
+    t.geo.pending = { gen: 9, instance: 'x', layout: 'full' }
+    compose()
+    delete t.geo.pending                   // the navigation aborts: same document, the end still owed
+    compose()
+    expect(m.stripShown.get(t.id)).toBe(true)
+    expect(immersiveSent.at(-1)).toMatchObject({ n: 3, on: false, end: true })
+    // the shell's own off while the end is owed: row 1, the latch goes with the grant, the next wish meets the gate
+    immersiveSends = true
+    wish(t, false, 4)
+    expect(t.reports.immersiveGrant).toBeUndefined()
+    wish(t, true, 5)
+    expect(immersiveSent.at(-1)).toMatchObject({ n: 5, on: true })
+    expect(m.stripShown.get(t.id)).toBe(false)
+  })
+
   it('a tab that is not the active one is refused; a tab switch ends a granted one', async () => {
     const t = await canvas()
     m.facts.set(t.id, { ...FULL, active: false })
@@ -1324,11 +1366,13 @@ describe('spec 32 C8: main\'s immersive gate, the views.ts glue (through the moc
     const stripWc = new FakeWc('marver-app://strip/')
     // what the strip's focus saw: whether the strip was shown when it took focus
     const atFocus: (boolean | undefined)[] = []
+    // what the strip was told to focus (page:focus)
+    const pageFocus: unknown[] = []
     f.resetFocus()
     f.setFocusPorts({
       active: () => tabs.activeTab()?.id, strip: () => stripWc as never,
       content: (id) => content.get(id)?.webContents as never, page: () => undefined,
-      pageFocus: () => {},
+      pageFocus: (_wc, msg) => { pageFocus.push(msg) },
     })
     f.track(stripWc as never, { part: 'strip' })
     try {
@@ -1337,11 +1381,17 @@ describe('spec 32 C8: main\'s immersive gate, the views.ts glue (through the moc
       const cv = content.get(t.id)!.webContents
       m.facts.set(t.id, FULL)
       let n = 0
-      for (const [cmd, keys] of [['focus-strip', 'F6'], ['focus-strip-back', 'Shift+F6']] as const) {
+      const cases = [['focus-strip', 'F6', 'content'], ['focus-strip-back', 'Shift+F6', 'content'], ['focus-strip', 'F6', 'strip'], ['focus-strip-back', 'Shift+F6', 'strip']] as const
+      for (const [cmd, keys, was] of cases) {
         wish(t, true, ++n)
         expect(m.stripShown.get(t.id)).toBe(false)
-        cv.emit('focus')                     // the canvas holds focus while immersive
+        // the canvas holds focus while immersive, or the owner is still the strip (a keyboard-opened menu that
+        // closed as the grant came: its focus stayed on the strip)
+        if (was === 'content') cv.emit('focus'); else stripWc.emit('focus')
+        expect(f.focusOwner()).toEqual(was === 'content' ? { part: 'content', tab: t.id } : { part: 'strip' })
+        pageFocus.length = 0
         const s0 = stripWc.focused
+        const c0 = cv.focused
         runCommand(cmd, 'key', { keys, in: 'shell' })
         expect(m.stripShown.get(t.id)).toBe(true)
         expect(immersiveSent.at(-1)).toMatchObject({ n, on: false, end: true })
@@ -1350,6 +1400,8 @@ describe('spec 32 C8: main\'s immersive gate, the views.ts glue (through the moc
         expect(stripWc.focused).toBe(s0 + 1)
         expect(atFocus.at(-1)).toBe(true)
         expect(f.focusOwner()).toEqual({ part: 'strip' })
+        expect(pageFocus).toEqual([{ target: 'active-tab' }])   // the strip's active tab, not the toggle's canvas
+        expect(cv.focused).toBe(c0)
         // the shell turns Hide UI off, then on again: the gate decides again (main's end does not latch)
         wish(t, false, ++n)
         expect(t.reports.immersiveGrant).toBeUndefined()
@@ -1383,6 +1435,54 @@ describe('spec 32 C8: main\'s immersive gate, the views.ts glue (through the moc
     expect(immersiveSent).toEqual([{ tab: t.id, doc: docs.get(t.id), n: 1, on: true }])
     expect(t.reports.immersiveGrant).toBe('on')
     expect(m.stripShown.get(t.id)).toBe(false)
+  })
+
+  it('C8.3, B12.8 the reverse order: a menu asked for while immersive is granted ends immersive first, then opens and stays', async () => {
+    for (const kind of ['tab', 'more'] as const) {
+      const t = await canvas()
+      m.facts.set(t.id, FULL)
+      wish(t, true, 1)
+      expect(t.reports.immersiveGrant).toBe('on')
+      expect(m.stripShown.get(t.id)).toBe(false)
+      immersiveSent.length = 0
+      const v = kind === 'tab' ? openTabMenu(t.id)! : openMore([t.id])!
+      // main's end went out before the record existed, and the strip is back
+      expect(immersiveSent).toEqual([{ tab: t.id, doc: docs.get(t.id), n: 1, on: false, end: true }])
+      expect(t.reports.immersiveGrant).toBe('ended')
+      expect(m.stripShown.get(t.id)).toBe(true)
+      // the strip gets the view and no null before it; the record is live, not closing
+      expect(m.toStrip.filter(([ch]) => ch === CH.tabMenuView)).toEqual([[CH.tabMenuView, v]])
+      expect(views.menuNow()).toMatchObject({ rev: v.rev, closing: false })
+      expect(m.menuOpen).toBe(true)
+      menuShownAck(v.rev)
+      await new Promise((r) => setTimeout(r, 200))
+      // past B12's 150 ms: still open, the strip still shown, no grant back
+      expect(views.menuNow()).toMatchObject({ rev: v.rev, closing: false, shown: true })
+      expect(m.stripShown.get(t.id)).toBe(true)
+      expect(immersiveSent.length).toBe(1)
+      menuPickSend(v.rev, null)
+      expect(m.stripShown.get(t.id)).toBe(true)              // ended: the strip stays until the shell's wish drops
+      wish(t, false, 2)
+      m.facts.delete(t.id)
+    }
+  })
+
+  it('C8.3 with C8\'s latch: a menu asked for while main\'s end is still owed opens over a shown strip', async () => {
+    const t = await canvas()
+    m.facts.set(t.id, FULL)
+    wish(t, true, 1)
+    immersiveSends = false
+    const v = openTabMenu(t.id)!
+    expect(t.reports.immersiveGrant).toBe('on')              // the end could not go out: latched
+    expect(m.stripShown.get(t.id)).toBe(true)
+    expect(m.toStrip.filter(([ch]) => ch === CH.tabMenuView)).toEqual([[CH.tabMenuView, v]])
+    expect(views.menuNow()?.closing).toBe(false)
+    immersiveSends = true
+    compose()
+    expect(t.reports.immersiveGrant).toBe('ended')
+    expect(views.menuNow()?.closing).toBe(false)
+    menuShownAck(v.rev)
+    menuPickSend(v.rev, null)
   })
 
   it('B12.8: a strip that never acks the close - the grant waits out its 150 ms deadline', async () => {

@@ -76,7 +76,8 @@ export function track(wc: WebContents, o: Owner): void {
 
 const sameOwner = (a: Owner, b: Owner) => a.part === b.part && (a.part === 'strip' || (b.part !== 'strip' && a.tab === b.tab))
 
-function focusStrip(): void {
+/** The strip, and through `page:focus` its active tab (C8.1's F6 while immersive calls it directly, not the toggle). */
+export function focusStrip(): void {
   const s = ports?.strip()
   if (!s || s.isDestroyed()) return
   s.focus()
