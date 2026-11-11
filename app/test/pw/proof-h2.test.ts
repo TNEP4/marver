@@ -494,6 +494,19 @@ const DESIGN: Record<string, string[]> = {
   'home-hover-board-card': ['h2ref--board-hover', 'home-v2--03-board'],
 }
 
+/** what the comparison with the frames found and left, as of 11 Nov (the fixed ones are in git log) */
+const LEFT = [
+  'Strip: from the second tab on, every tab sits up to 2 px further left than in the frames - A3 corrects the kit\'s Home allowance (+10, not +8), so the kit\'s tabs run 2 px past their row.',
+  'Home: a focused field\'s icon and key chip are #5cb3ff in dark (the frame keeps #0088ff) - E1\'s --hm-field-accent, a defect the spec fixes.',
+  'Home: Help\'s edge-light ring shows (the frame clips it with overflow: hidden) - D9.4, a defect the spec fixes.',
+  'Home: the field shows its hint line under it ("opens app.marver.design in a new tab") - D3 keeps today\'s hint; the frame draws none.',
+  'Menus: Copy link\'s icon is dom.ts\'s link (the field\'s glyph, E3); the frame\'s menu draws the shell\'s LinkIcon, another chain.',
+  'Right-click menus open at clientY + 2 (D8.4); the frame, positioned inside the card\'s border, lands 1 px right and 1 px lower than that.',
+  'The working dot pulses: its shade differs with the moment of the shot. Logos and initials hues are the proof\'s data, not the app\'s look.',
+  'At 2x some lines of text sit half a CSS pixel lower and the 28 px brand mark draws half a pixel larger per side - rounding.',
+  'The proofs are tagged Display P3 (the harness draws in the display\'s space); the frames are untagged sRGB. Compare them colour-managed.',
+]
+
 afterAll(() => {
   if (!shots.length) return
   const designDir = join(OUT, 'design')
@@ -506,7 +519,7 @@ afterAll(() => {
   }
   const fig = (src: string, cap: string) => `<figure><a href="${src}"><img src="${src}" alt="${cap}" loading="lazy"></a><figcaption>${cap}</figcaption></figure>`
   const sections = [...groups].sort(([a], [b]) => a.localeCompare(b)).map(([g, { note, files }]) => {
-    const refs = (DESIGN[g] ?? []).flatMap((base) => have.filter((f) => f.startsWith(`${base}--`)).sort().map((f) => fig(`design/${f}`, `design: ${f}`)))
+    const refs = (DESIGN[g] ?? []).flatMap((base) => have.filter((f) => f.startsWith(`${base}--`) || f.startsWith(`${base}-light--`) || f.startsWith(`${base}-dark--`)).sort().map((f) => fig(`design/${f}`, `design: ${f}`)))
     return `<section id="${g}"><h2>${g}</h2><p>${note}</p><div class="row">${files.sort().map((f) => fig(f, f)).join('')}</div>${refs.length ? `<details><summary>Design frames (${refs.length})</summary><div class="row">${refs.join('')}</div></details>` : ''}</section>`
   })
   const toc = [...groups.keys()].sort().map((g) => `<a href="#${g}">${g}</a>`).join(' ')
@@ -517,6 +530,7 @@ section{margin:28px 0;border-top:1px solid #dcdee5;padding-top:12px}h2{font-size
 figcaption{margin-top:4px;color:#55575f;font-size:11px}details{margin-top:10px}summary{cursor:pointer;color:#0068d6}</style>
 <h1>Spec 32 H2 proofs (page harness, windowless)</h1>
 <p>The real strip and Home pages under a fake main, at 1x and 2x, light and dark; Home at 1280 x 800 and 720 x 480. The traffic lights and the canvas ground behind a strip alone are stand-ins (macOS and the canvas draw them in the app). Each group opens its design frames below it.</p>
+<h2>Compared with the frames: what is left</h2><ul>${LEFT.map((l) => `<li>${l.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</li>`).join('')}</ul>
 <nav>${toc}</nav>
 ${sections.join('\n')}
 `)
