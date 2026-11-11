@@ -304,6 +304,9 @@ body.hm { background: var(--hm-glow), var(--hm-ground); color: var(--hm-ink); fo
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
   .hm-card, .hm-chip, .hm-link, .hm-help2, .hm-col::before, .hm .hm-icon:hover, .hm .hm-icon.on { -webkit-backdrop-filter: none !important; backdrop-filter: none !important }
   .hm-card, .hm-chip, .hm-link, .hm-help2 { background: var(--solid) !important; box-shadow: inset 0 0 0 1px var(--node-brd) !important }
+  /* E7: a ring adds to the state's own shadow, here the hairline, never replaced by it */
+  .hm-card:focus-visible, .hm-chip:focus-visible { box-shadow: 0 0 0 4px var(--hm-accent-ring), inset 0 0 0 1px var(--node-brd) !important }
+  .hm-link:focus-within { box-shadow: 0 0 0 3.5px var(--hm-accent-ring), inset 0 0 0 1px var(--node-brd) !important }
   .hm-col::before { background: var(--solid) }
   .hm-col { box-shadow: inset 0 0 0 1px var(--node-brd) }
 }

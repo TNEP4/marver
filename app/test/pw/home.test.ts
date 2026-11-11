@@ -1019,6 +1019,40 @@ describe('E7 and the system settings', () => {
     for (const a of await animatedProperties(p.page)) expect(a.name).not.toBe('hm-pulse')
     await p.media({})
   })
+
+  it('E7 under Reduce Transparency and Increase Contrast: a card, a chip and the link field focused by key keep their ring beside the hairline, light and dark', async () => {
+    const tabTo = async (pred: string) => {
+      await p.page.focus('#link')
+      for (let i = 0; i < 40; i++) {
+        await p.page.keyboard.press('Tab')
+        if (await p.page.evaluate((k) => ((document.activeElement as HTMLElement | null)?.dataset.key ?? '').startsWith(k), pred)) break
+      }
+      const at = await p.page.evaluate(() => { const e = document.activeElement as HTMLElement; return { key: e.dataset.key ?? '', card: e.dataset.card ?? '', fv: e.matches(':focus-visible') } })
+      expect(at.key.startsWith(pred), pred).toBe(true)
+      expect(at.fv, pred).toBe(true)
+      return `[data-key="${at.key}"]`
+    }
+    for (const f of [{ 'prefers-reduced-transparency': 'reduce' }, { 'prefers-contrast': 'more' }] as Record<string, string>[]) {
+      for (const dark of [false, true]) {
+        const at = `${JSON.stringify(f)} ${dark ? 'dark' : 'light'}`
+        // the board view: its cards and, on its foot, the shared canvases' chips (D7.5)
+        await world({ tabs: BUSY, recent: RECENT, shared: SHARED, view: 'board', dark })
+        await p.media({ ...f, 'prefers-color-scheme': dark ? 'dark' : 'light' })
+        const ring = dark ? 'rgba(92, 179, 255, 0.18)' : 'rgba(0, 136, 255, 0.16)'
+        const card = await tabTo('card:')
+        await rect(card)
+        expect((await css(card, ['box-shadow']))['box-shadow'], `${at} card`).toMatch(new RegExp(`^${ring.replace(/[().]/g, '\\$&')} 0px 0px 0px 4px, .* 0px 0px 0px 1px inset$`))
+        const chip = await tabTo('chip:')
+        await rect(chip)
+        expect((await css(chip, ['box-shadow']))['box-shadow'], `${at} chip`).toMatch(new RegExp(`^${ring.replace(/[().]/g, '\\$&')} 0px 0px 0px 4px, .* 0px 0px 0px 1px inset$`))
+        await p.page.focus('#link')
+        await rect('.hm-link')
+        expect((await css('.hm-link', ['box-shadow']))['box-shadow'], `${at} link`).toMatch(new RegExp(`^${ring.replace(/[().]/g, '\\$&')} 0px 0px 0px 3.5px, .* 0px 0px 0px 1px inset$`))
+      }
+    }
+    await p.media({})
+    await look(false)
+  })
 })
 
 describe('D6.2, D11: the 60 s timer repaints through the render path', () => {
