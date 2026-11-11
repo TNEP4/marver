@@ -1,5 +1,23 @@
 # Changelog - the Marver Mac app
 
+## Unreleased
+
+Use it with canvases on marver 0.32.0 for everything below; older canvases keep working as before.
+
+- **A new tab strip.** Tabs fit the strip's width, each with its canvas's logo, the active one in glass; when they no
+  longer fit, » lists the rest. Home has its own button at the start of the strip (⌘T).
+- **The tab's right-click is a Marver menu**, with icons, like the sidebar's: open in browser, reveal in Finder, copy the
+  link, mark all as seen, resolve all comments, close the tab - and » opens the same kind of menu.
+- **Hide UI takes the whole window** in play, prototype, slides and focus mode: the strip and the window's buttons go,
+  and come back with H, Escape, leaving play or switching tabs. On the canvas the strip stays.
+- **A new Home.** Your canvases as cards in a grid - Running, Not running and Shared with you - or as a board with a
+  column per state: Needs you, Agent working, Ready to review, Running, Not running.
+  Each card says what is going on: what waits on you, "Agent working on <board> · N min", when it last ran. A right-click
+  or the more button on a card opens its menu: Open, Update, Copy start command, Copy link, Copy path, Reveal in Finder.
+- **Open any canvas link from Home**, a `marver://` link included; ⌘L takes you there. "How Marver runs" (the ? button)
+  shows how to start a canvas and add Marver to a repo, and with no canvas yet, Home is the welcome.
+- Home and the strip follow Reduce Transparency and Increase Contrast, and show a clear focus ring when you use the keyboard.
+
 ## 1.1.0 - 2026-11-10
 
 Use it with canvases on marver 0.31.0 for everything below; older canvases keep working as before.

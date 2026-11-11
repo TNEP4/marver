@@ -2,6 +2,18 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## Unreleased
+
+### Highlights
+
+- **Hide UI takes the whole window in the Mac app.** In play, prototype, slides or focus mode, H hides the app's tab strip
+  and the window's buttons too, and the stage grows into the room they left; H again, Escape, leaving play or switching
+  tabs brings them back. On the canvas, Hide UI keeps the strip, as before. In a browser, and with an older Mac app, Hide
+  UI works as it did.
+- **Home says what your agent is working on.** A canvas tells the Mac app which board an agent works on and since when -
+  a `marver work` hold, or a Jam run once it has begun (never while it waits for its turn, a session or a process slot) -
+  and the names of the boards it mentions, so Home reads "Agent working on <board> · N min". Needs app 1.2.0.
+
 ## 0.31.0 - 2026-11-10
 
 ### Highlights
