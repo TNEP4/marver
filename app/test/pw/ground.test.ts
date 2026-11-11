@@ -850,26 +850,45 @@ describe('stalled renderers: covering never waits on one, uncovering waits for t
     await waitFor('the heartbeat gone', async () => (await anim()) === 'none', 3000)
   })
 
-  it('the strip\'s empty part, read from the strip itself (A3.8 #34): right of the tabs (and »), left of the pill, the heartbeat\'s corner; none while the tabs share the strip (spec 32 A3)', async () => {
-    const r = await w.run.call<{ width: number; height: number; tabsRight: number; pillLeft: number; empty: { x: number; y: number; width: number; height: number }[]; heartbeat: { x: number; y: number } }>('ground:strip-regions')
-    const c = await content()
-    expect([r.width, r.height]).toEqual([c.width, 44])
-    const s = JSON.parse(await exec<string>('strip', `JSON.stringify((() => {
-      const shown = (e) => e && !e.hidden && e.getClientRects().length > 0, more = document.getElementById('more')
-      return { tabs: [...document.querySelectorAll('#tabs > *')].filter(shown).map((e) => e.getBoundingClientRect().right), more: shown(more) ? more.getBoundingClientRect().right : null,
-        tw: parseFloat(getComputedStyle(document.getElementById('tabs')).getPropertyValue('--tw')) }
-    })())`)) as { tabs: number[]; more: number | null; tw: number }
-    expect(s.tabs.length).toBeGreaterThan(2)
-    const last = Math.max(...s.tabs, s.more ?? 0)
-    expect(r.tabsRight).toBeGreaterThanOrEqual(last)
-    expect(r.tabsRight - last).toBeLessThan(1)
-    // the empty part is what lies 8 px clear of both ends, or nothing
-    const room = r.pillLeft - 8 - (r.tabsRight + 8)
-    expect(r.empty).toEqual(room > 0 ? [{ x: r.tabsRight + 8, y: 0, width: room, height: 44 }] : [])
-    // spec 32 A3: the tabs share #tabs's width, each at most 176 - below that they fill it, so the strip keeps no
-    // empty part beside the pill; only tabs at 176 leave one
-    if (s.more === null) expect(r.empty, JSON.stringify(s)).toHaveLength(s.tw < 176 ? 0 : 1)
-    expect(r.heartbeat).toEqual({ x: c.width - 1, y: 43, width: 1, height: 1 })
+  it('the strip\'s empty part, read from the strip itself (A3.8 #34): right of the tabs (and »), left of the pill, the heartbeat\'s corner; at least 40 px of it, draggable, at every width the tabs share (spec 32 A3, amended by Nic 11 Nov)', async () => {
+    const c0 = await content()
+    try {
+      // the window's width stands in for the tab count: the tabs at 176 and sharing below it, down to the least width
+      for (const width of [c0.width, 960, 820, 720]) {   // 720: the window's least
+        if (width !== c0.width) {
+          await w.run.call('resize', { width, height: c0.height })
+          await waitFor(`the strip at ${width}`, async () => (await exec<number>('strip', 'innerWidth')) === width)
+          await sleep(400)   // the widths' .2 s transition
+        }
+        const r = await w.run.call<{ width: number; height: number; tabsRight: number; pillLeft: number; empty: { x: number; y: number; width: number; height: number }[]; heartbeat: { x: number; y: number } }>('ground:strip-regions')
+        const c = await content()
+        expect([r.width, r.height]).toEqual([c.width, 44])
+        const s = JSON.parse(await exec<string>('strip', `JSON.stringify((() => {
+          const shown = (e) => e && !e.hidden && e.getClientRects().length > 0, more = document.getElementById('more'), pill = document.getElementById('pill'), strip = document.getElementById('strip')
+          const tabs = [...document.querySelectorAll('#tabs > *')].filter(shown).map((e) => e.getBoundingClientRect().right)
+          const last = Math.max(...tabs, shown(more) ? more.getBoundingClientRect().right : 0)
+          const end = shown(pill) ? pill.getBoundingClientRect().left : innerWidth - parseFloat(getComputedStyle(strip).paddingRight)
+          const noDrag = (x) => { for (let n = document.elementFromPoint(x, 22); n; n = n.parentElement) if (getComputedStyle(n).getPropertyValue('-webkit-app-region') === 'no-drag') return true; return false }
+          return { tabs, more: shown(more) ? more.getBoundingClientRect().right : null, last, end, noDrag: [last + 2, (last + end) / 2, end - 2].some(noDrag) }
+        })())`)) as { tabs: number[]; more: number | null; last: number; end: number; noDrag: boolean }
+        const at = `${width}: ${JSON.stringify(s)}`
+        expect(s.tabs.length, at).toBeGreaterThan(2)
+        expect(r.tabsRight, at).toBeGreaterThanOrEqual(s.last)
+        expect(r.tabsRight - s.last, at).toBeLessThan(1)
+        // the empty part is what lies 8 px clear of both ends
+        const room = r.pillLeft - 8 - (r.tabsRight + 8)
+        expect(r.empty, at).toEqual(room > 0 ? [{ x: r.tabsRight + 8, y: 0, width: room, height: 44 }] : [])
+        // spec 32 A3, amended (Nic, 11 Nov): the tabs never fill the strip - at least 40 px stay empty before the pill
+        // (or the right padding), right of the last tab or », and none of it is no-drag: the window's drag area
+        expect(s.end - s.last, at).toBeGreaterThanOrEqual(39.99)
+        expect(r.empty, at).toHaveLength(1)
+        expect(s.noDrag, at).toBe(false)
+        expect(r.heartbeat).toEqual({ x: c.width - 1, y: 43, width: 1, height: 1 })
+      }
+    } finally {
+      await w.run.call('resize', { width: c0.width, height: c0.height })
+      await waitFor('the strip back at its width', async () => (await exec<number>('strip', 'innerWidth')) === c0.width)
+    }
   })
 
   it('the canvas stalled: a resize covers at once, and no answer lifts it until the page runs again; shown while stalled, the same', async () => {
@@ -963,11 +982,12 @@ describe('the mv:doc trace (A3.8 #26)', () => {
   })
 })
 
-describe('spec 32 C9: immersive play hides the strip and the lights, and brings them back (main\'s sequence; window, H4)', () => {
+describe('spec 32 C9: immersive play runs the strip out to an 8 px drag band and hides the lights, and brings them back (main\'s sequence; window, H4; amended by Nic 11 Nov)', () => {
   let id = ''
   interface ComposeLine { strip?: 'shown' | 'hidden'; lights?: boolean; changes: Change[] }
-  /** one native call main made, watched in main: the lights' visibility and position, the strip view's setVisible */
-  interface Native { call: 'lights' | 'position' | 'strip'; arg: unknown; at: number }
+  /** one native call main made, watched in main: the lights' visibility and position, the strip view's height as a
+   *  setBounds changes it (`strip`, 44 or the 8 px band) and any setVisible on it (`visible`: never, since the amendment) */
+  interface Native { call: 'lights' | 'position' | 'strip' | 'visible'; arg: unknown; at: number }
   const stripLines = async (since: number) => (await lines('compose', since)).map((l) => l.data as unknown as ComposeLine)
   /** the answers the canvas heard (`onImmersive`), subscribed once per document */
   const answers = async (tab: string) => JSON.parse(await exec<string>(tab, 'JSON.stringify(window.__imm || [])')) as { on: boolean; end?: boolean }[]
@@ -978,7 +998,8 @@ describe('spec 32 C9: immersive play hides the strip and the lights, and brings 
   const lightsAt = () => w.run.pw!.evaluate(({ BaseWindow }) => BaseWindow.getAllWindows()[0]!.getWindowButtonPosition())
   /**
    * Wrap, once, the window's `setWindowButtonVisibility` and `setWindowButtonPosition` and the strip view's
-   * `setVisible` in main, so each call window.ts makes is journalled with its time before it reaches AppKit.
+   * `setVisible` and `setBounds` (only a call that changes its height) in main, so each call window.ts makes is
+   * journalled with its time before it reaches AppKit.
    */
   const watchNative = () => w.run.pw!.evaluate(({ BaseWindow }) => {
     const g = globalThis as unknown as { __c9?: { call: string; arg: unknown; at: number }[] }
@@ -994,15 +1015,41 @@ describe('spec 32 C9: immersive play hides the strip and the lights, and brings 
     wrap(win, 'setWindowButtonPosition', 'position')
     const strip = win.contentView.children.find((v) => (v as { webContents?: { getURL(): string } }).webContents?.getURL().startsWith('marver-app://strip/'))
     if (!strip) throw new Error('no strip view')
-    wrap(strip, 'setVisible', 'strip')
+    wrap(strip, 'setVisible', 'visible')
+    const v = strip as unknown as { getBounds(): { height: number }; setBounds(r: { height: number }): void }
+    const set = v.setBounds.bind(v)
+    v.setBounds = (r) => { if (r.height !== v.getBounds().height) log.push({ call: 'strip', arg: r.height, at: Date.now() }); set(r) }
   })
   const natives = async (since: number) => (await w.run.pw!.evaluate(() => (globalThis as unknown as { __c9: Native[] }).__c9.slice())).slice(since)
   const nativeMark = async () => (await natives(0)).length
   const calls = (xs: Native[]) => xs.map((x) => [x.call, x.arg])
-  const hidden = () => waitFor('the strip view hidden', async () => (await stripView()).visible === false)
-  const shown = () => waitFor('the strip view shown', async () => (await stripView()).visible === true)
+  const BAND = 8
+  const band = () => waitFor('the strip view the 8 px band', async () => { const v = await stripView(); return v.visible && v.bounds.height === BAND })
+  const shown = () => waitFor('the strip view at 44', async () => { const v = await stripView(); return v.visible && v.bounds.height === 44 })
+  /** the strip page as the band shows it: body.band, the drag region, the strip hidden, what a press at y 4 meets */
+  const page = async () => JSON.parse(await exec<string>('strip', `JSON.stringify((() => {
+    const strip = document.querySelector('.strip'), controls = [...strip.querySelectorAll('.tab, .home, #more, #pill')]
+    return { band: document.body.classList.contains('band'), region: getComputedStyle(document.body).getPropertyValue('-webkit-app-region'),
+      visibility: getComputedStyle(strip).visibility, controls: controls.filter((e) => getComputedStyle(e).visibility === 'visible' && e.getClientRects().length > 0).length,
+      hits: [10, Math.round(innerWidth / 2), innerWidth - 10].map((x) => document.elementFromPoint(x, 4)?.tagName ?? null).filter((t) => t !== 'HTML' && t !== 'BODY') }
+  })())`)) as { band: boolean; region: string; visibility: string; controls: number; hits: string[] }
+  /** C9 amendment: the band at the window's top, visible, the canvas page still at y 0 under it */
+  async function expectBand(): Promise<void> {
+    const c = await content()
+    const v = await stripView()
+    expect(v).toMatchObject({ visible: true, bounds: { x: 0, y: 0, width: c.width, height: BAND } })
+    await waitFor('the band drawn', async () => (await page()).band)
+    expect(await page()).toEqual({ band: true, region: 'drag', visibility: 'hidden', controls: 0, hits: [] })
+    expect((await bounds(`${id}:view`))!.bounds).toEqual(FULL(c))
+  }
+  async function expectControls(): Promise<void> {
+    await waitFor('the controls back', async () => !(await page()).band)
+    const s = await page()
+    expect(s).toMatchObject({ band: false, region: 'drag', visibility: 'visible' })
+    expect(s.controls).toBeGreaterThan(1)
+  }
 
-  it('granted: the lights off at once, the strip view hidden only after MOTION.out.strip, no cover; back: the view first, then the lights and LIGHTS', async () => {
+  it('granted: the lights off at once, the strip view shrunk to the 8 px band only after MOTION.out.strip (never hidden), no cover; back: the view at 44 with its controls first, then the lights and LIGHTS', async () => {
     ;({ id } = await canvas(3, 'Immersive'))   // a slot the registry reads (1-20) that no other case here takes
     await w.run.call('activate', { id })
     await lifted(id)
@@ -1012,23 +1059,24 @@ describe('spec 32 C9: immersive play hides the strip and the lights, and brings 
     const n0 = await nativeMark()
     await wish(id, true)
     await waitFor('granted', async () => (await answers(id)).some((x) => x.on))
-    await hidden()
+    await band()
     const out = await natives(n0)
-    // the lights pop first, then the view hides, MOTION.out.strip (240 ms) later - never at once
-    expect(calls(out)).toEqual([['lights', false], ['strip', false]])
+    // the lights pop first, then the view shrinks to the band, MOTION.out.strip (240 ms) later - never at once
+    expect(calls(out)).toEqual([['lights', false], ['strip', BAND]])
     const gap = out[1]!.at - out[0]!.at
     expect(gap).toBeGreaterThanOrEqual(235)
     expect(gap).toBeLessThan(1000)
     expect((await stripLines(since)).some((x) => x.strip === 'hidden' && x.lights === false)).toBe(true)
     expect((await ground()).cover.visible).toBe(false)
-    expect((await bounds(`${id}:view`))!.bounds).toEqual(FULL(await content()))
+    await expectBand()
     const back = await mark()
     const n1 = await nativeMark()
     await wish(id, false)
     await shown()
     await waitFor('the lights back', async () => (await natives(n1)).some((x) => x.call === 'position'))
-    // the view back first, then the lights shown, then put at LIGHTS
-    expect(calls(await natives(n1))).toEqual([['strip', true], ['lights', true], ['position', LIGHTS]])
+    // the view at 44 first, then the lights shown, then put at LIGHTS
+    expect(calls(await natives(n1))).toEqual([['strip', 44], ['lights', true], ['position', LIGHTS]])
+    await expectControls()
     expect((await stripLines(back)).some((x) => x.strip === 'shown' && x.lights === true)).toBe(true)
     expect(await lightsAt()).toEqual(LIGHTS)
     expect((await answers(id)).at(-1)).toEqual({ on: false })
@@ -1036,10 +1084,10 @@ describe('spec 32 C9: immersive play hides the strip and the lights, and brings 
 
   it('a resize keeps it; full screen in and out each re-apply the lights hidden and at LIGHTS; the way back shows them at LIGHTS', async () => {
     await wish(id, true)
-    await hidden()
+    await band()
     await w.run.call('resize', { width: 1100, height: 720 })
     await sleep(300)
-    expect((await stripView()).visible).toBe(false)
+    await expectBand()   // the band follows the width
     const since = await mark()
     const n0 = await nativeMark()
     await w.run.call('fullscreen', { on: true })
@@ -1051,42 +1099,43 @@ describe('spec 32 C9: immersive play hides the strip and the lights, and brings 
     await waitFor('out of full screen', async () => !(await w.run.call<{ fullScreen: boolean }>('window')).fullScreen)
     await waitFor('the lights re-applied at leave', async () => (await natives(n1)).some((x) => x.call === 'position'))
     await sleep(300)
-    // both transitions (C9): the visibility, hidden, then LIGHTS - never shown, and the strip view never shown
+    // both transitions (C9): the visibility, hidden, then LIGHTS - never shown, and the strip view the band throughout
     expect(calls(await natives(n0)).filter(([c]) => c === 'lights' || c === 'position'))
       .toEqual([['lights', false], ['position', LIGHTS], ['lights', false], ['position', LIGHTS]])
-    expect((await natives(n0)).filter((x) => x.call === 'strip')).toEqual([])
+    expect((await natives(n0)).filter((x) => x.call === 'strip' || x.call === 'visible')).toEqual([])
     expect(await lightsAt()).toEqual(LIGHTS)
     const during = (await stripLines(since)).filter((x) => x.strip)
     expect(during.length).toBeGreaterThanOrEqual(2)
     expect(during.every((x) => x.strip === 'hidden' && x.lights === false)).toBe(true)
-    expect((await stripView()).visible).toBe(false)
+    await expectBand()
     const n2 = await nativeMark()
     await wish(id, false)
     await shown()
     await waitFor('the lights back', async () => (await natives(n2)).some((x) => x.call === 'position'))
-    expect(calls(await natives(n2))).toEqual([['strip', true], ['lights', true], ['position', LIGHTS]])
+    expect(calls(await natives(n2))).toEqual([['strip', 44], ['lights', true], ['position', LIGHTS]])
+    await expectControls()
     expect(await lightsAt()).toEqual(LIGHTS)
   })
 
   it('a tab switch ends it (`end`), and so does a reload (the new document starts at none)', async () => {
     await wish(id, true)
-    await hidden()
+    await band()
     let n = await nativeMark()
     await w.run.call('activate', { id: 'home' })
     await shown()
     expect((await answers(id)).at(-1)).toEqual({ on: false, end: true })
     await waitFor('the lights back', async () => (await natives(n)).some((x) => x.call === 'position'))
-    expect(calls(await natives(n))).toEqual([['strip', true], ['lights', true], ['position', LIGHTS]])
+    expect(calls(await natives(n))).toEqual([['strip', 44], ['lights', true], ['position', LIGHTS]])
     await w.run.call('activate', { id })
     await uncovered(id)
     await wish(id, false)
     await wish(id, true)
-    await hidden()
+    await band()
     n = await nativeMark()
     await reloadInto(id, null)
     await shown()
     await waitFor('the lights back', async () => (await natives(n)).some((x) => x.call === 'position'))
-    expect(calls(await natives(n))).toEqual([['strip', true], ['lights', true], ['position', LIGHTS]])
+    expect(calls(await natives(n))).toEqual([['strip', 44], ['lights', true], ['position', LIGHTS]])
     expect(await lightsAt()).toEqual(LIGHTS)
   })
 })

@@ -45,7 +45,7 @@ import { app, BaseWindow, nativeImage, nativeTheme, powerMonitor, screen, View, 
 import * as sessions from './sessions.ts'
 import type { Present } from '../../../src/shared/app-api.ts'
 import { CH, type PageKind, type PageFocus, type TabsSnapshot, type TabView, type WindowView } from '../shared/channels.ts'
-import { STRIP_HEIGHT, full, ground, plan, type Plan, type PlanTab } from './plan.ts'
+import { BAND_HEIGHT, STRIP_HEIGHT, full, ground, plan, type Plan, type PlanTab } from './plan.ts'
 import { activeTab, allTabs, darkOf, getTab, ordered, viewOf, type Layout, type Tab } from './tabs.ts'
 import { pageFor, snapshotKey, type PageBody } from './tabpage.ts'
 import { recompute as recomputePill, onVisibility } from './pill.ts'
@@ -102,9 +102,14 @@ export interface ComposePorts {
 let composePorts: ComposePorts | null = null
 export function setComposePorts(p: ComposePorts | null): void { composePorts = p }
 
-/** Spec 32 C9: the strip hidden for immersive play (its CSS run out first, then the view), and the traffic lights. */
+/**
+ * Spec 32 C9: the strip away for immersive play (its CSS run out first), and the traffic lights. Amendment (Nic, 11
+ * Nov): the view is never hidden - after the run-out it shrinks to an 8 px band at the top, transparent, a drag region
+ * (`stripBand`, WindowView.band), so the window can still be moved.
+ */
 let stripHidden = false
-let stripShownView = true
+let stripBand = false
+const bandRect = (w: number) => ({ x: 0, y: 0, width: Math.max(0, w), height: BAND_HEIGHT })
 let stripTimer: ReturnType<typeof setTimeout> | undefined
 let lightsOn = true
 
@@ -291,8 +296,8 @@ function feedWindow(): void {
   // the strip's still dots while a cover that has the strip draw them covers (app 0.1's plain view until S15, A3.8 #3;
   // variant 4 after): a canvas keeps 0.1's look under the tabs; over Home, Settings and a tab page the cover is hidden
   // and the page's own dots show there
-  // spec 32 C10: `immersive` only while the strip is hidden (absent reads false)
-  const body = { focused: win.isFocused(), fullScreen: win.isFullScreen(), dots: !!cover?.stripDraws && coverWas.visible, ...(stripHidden ? { immersive: true } : {}) }
+  // spec 32 C10: `immersive` only while the strip is away; `band` only while its view is the 8 px band (C9 amendment)
+  const body = { focused: win.isFocused(), fullScreen: win.isFullScreen(), dots: !!cover?.stripDraws && coverWas.visible, ...(stripHidden ? { immersive: true } : {}), ...(stripBand ? { band: true } : {}) }
   const s = JSON.stringify(body)
   if (s === lastWindow) return
   lastWindow = s
@@ -423,7 +428,8 @@ function reapplyLights(): void {
   } catch { /* not on this platform */ }
 }
 
-/** Spec 32 C9, shown to hidden: the strip's CSS runs out (no-drag first), the lights pop; the view hides after it. */
+/** Spec 32 C9, shown to away: the strip's CSS runs out (no-drag first), the lights pop; the view shrinks to the band
+ *  after it (the amendment: never hidden). */
 function stripLeaves(changes: unknown[]): void {
   stripHidden = true
   feedWindow()   // WindowView.immersive: true
@@ -431,13 +437,13 @@ function stripLeaves(changes: unknown[]): void {
   changes.push({ key: 'strip', op: 'immersive', shown: false })
 }
 
-/** Spec 32 C9, hidden to shown: the view back at once, its CSS runs in, the lights back at `LIGHTS`. */
-function stripReturns(changes: unknown[]): void {
+/** Spec 32 C9, away to shown: the band grown back to 44 at once, its controls and CSS in, the lights back at `LIGHTS`. */
+function stripReturns(changes: unknown[], rect: Plan['strip']): void {
   stripHidden = false
   clearTimeout(stripTimer)
   stripTimer = undefined
-  if (!stripShownView && strip) { strip.setVisible(true); stripShownView = true; changes.push({ key: 'strip', op: 'visible', visible: true }) }
-  feedWindow()   // WindowView.immersive absent
+  if (stripBand && strip) { stripBand = false; strip.setBounds(rect); changes.push({ key: 'strip', op: 'band', band: false, rect }) }
+  feedWindow()   // WindowView.immersive and band absent
   setLights(true)
   changes.push({ key: 'strip', op: 'immersive', shown: true })
 }
@@ -542,12 +548,13 @@ function composeOnce(o: { focus?: 'shown' }): void {
     if (v.visible && !a.vis) { view.setVisible(true); a.vis = true; changes.push({ key: v.key, op: 'visible', visible: true }) }
   }
   // 3. the cover and the strip, on top - the cover in the same turn as the views beneath (A3.8 #30). Spec 32 C9: the
-  // strip's immersive sequence around it - hidden: its CSS out and the lights first, the cover hidden by the plan, the
-  // view hidden after MOTION.out.strip; shown: the view, its CSS in, the lights, then the cover as the plan says
+  // strip's immersive sequence around it - away: its CSS out and the lights first, the cover hidden by the plan, the
+  // view shrunk to the 8 px band after MOTION.out.strip (never hidden: the amendment); shown: the view at 44 again, its
+  // controls and CSS in, the lights, then the cover as the plan says
   if (!p.stripShown && !stripHidden) stripLeaves(changes)
-  else if (p.stripShown && stripHidden) stripReturns(changes)
+  else if (p.stripShown && stripHidden) stripReturns(changes, p.strip)
   cover!.setRect(p.cover.rect)
-  strip!.setBounds(p.strip)
+  strip!.setBounds(stripBand ? bandRect(w) : p.strip)
   if (p.cover.color !== coverWas.color) { cover!.setLook(p.cover.dark); win!.setBackgroundColor(p.cover.color) }
   if (p.cover.visible !== coverWas.visible) {
     cover!.setVisible(p.cover.visible)
@@ -558,13 +565,14 @@ function composeOnce(o: { focus?: 'shown' }): void {
     }
   }
   coverWas = { visible: p.cover.visible, color: p.cover.color }
-  if (stripHidden && stripShownView && !stripTimer) {
+  if (stripHidden && !stripBand && !stripTimer) {
     stripTimer = setTimeout(() => {
       stripTimer = undefined
-      if (!stripHidden || !strip || !stripShownView) return
-      strip.setVisible(false)
-      stripShownView = false
-      if (__MV_TEST__) j('strip', { visible: false, turn })
+      if (!stripHidden || !strip || stripBand || !win || win.isDestroyed()) return
+      stripBand = true
+      strip.setBounds(bandRect(win.getContentBounds().width))
+      feedWindow()   // WindowView.band: true - no controls, the body drags
+      if (__MV_TEST__) j('strip', { band: true, turn })
     }, MOTION.out.strip)
   }
   // 4. focus, before the hides: what the active tab shows now holds it (A2.13)
@@ -587,7 +595,8 @@ function composeOnce(o: { focus?: 'shown' }): void {
   if (__MV_TEST__ && changes.length) {
     const layouts: Record<string, Layout> = {}
     for (const t of allTabs()) if (t.kind === 'local' && content.has(t.id)) layouts[t.id] = placed(t)
-    // spec 32 C9: the strip shown or hidden for immersive play, and the lights (beside the frozen topic's fields)
+    // spec 32 C9: the strip shown or away ('hidden': run out, then the band) for immersive play, and the lights (beside
+    // the frozen topic's fields)
     const line = { turn, active: p.active, w, h, cover: coverWas, changes, resizing, layouts, strip: stripHidden ? 'hidden' : 'shown', lights: lightsOn }
     noteTopic('compose', line)
   }

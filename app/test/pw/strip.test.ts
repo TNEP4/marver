@@ -693,6 +693,40 @@ describe('option D: widths, compact tabs and » (spec 32 A2, A3, A4)', () => {
     await p.page.mouse.move(2, 40)
     await p.resize(1280, 44)
   })
+
+  it('A3 amendment (Nic, 11 Nov): at every tab count, with the pill and without, at least 40 px of empty, draggable strip right of the last tab or » and left of the pill (or the right padding)', async () => {
+    const pillOn: PillView = { rev: 42, kind: 'test', text: 'A pill with a button', short: 'Pill', dismissible: true, button: { label: 'Do it', style: 'accent' } }
+    const gap = () => p.page.evaluate(() => {
+      const shown = (e: Element | null): e is HTMLElement => !!e && !(e as HTMLElement).hidden && e.getClientRects().length > 0
+      const strip = document.getElementById('strip')!, more = document.getElementById('more'), pill = document.getElementById('pill')
+      const last = Math.max(...[...document.querySelectorAll('#tabs > *')].filter(shown).map((e) => e.getBoundingClientRect().right), shown(more) ? more.getBoundingClientRect().right : 0)
+      const end = shown(pill) ? pill.getBoundingClientRect().left : innerWidth - parseFloat(getComputedStyle(strip).paddingRight)
+      // what a press there meets: nothing that is no-drag (the strip body is the drag region)
+      const hits = [last + 2, (last + end) / 2, end - 2].map((x) => document.elementFromPoint(x, 22)!)
+      const noDrag = hits.filter((e) => { for (let n: Element | null = e; n; n = n.parentElement) if (getComputedStyle(n).getPropertyValue('-webkit-app-region') === 'no-drag') return true; return false })
+      return { gap: end - last, more: shown(more), noDrag: noDrag.map((e) => e.id || e.className) }
+    })
+    try {
+      for (const w of [1280, 720]) {
+        await p.resize(w, 44)
+        for (const withPill of [false, true]) {
+          await p.send('pill', withPill ? { ...pillOn, rev: pillOn.rev + (w === 1280 ? 0 : 1) } : null)
+          let sawMore = false
+          for (let n = 1; n <= 20; n++) {
+            await show(snap('t1', many(n)))
+            const g = await gap()
+            expect(g.gap, `${n} tabs at ${w}${withPill ? ' with the pill' : ''}`).toBeGreaterThanOrEqual(39.99)
+            expect(g.noDrag, `${n} tabs at ${w}`).toEqual([])
+            sawMore ||= g.more
+          }
+          expect(sawMore, `» shown at some count at ${w}`).toBe(true)
+        }
+      }
+    } finally {
+      await p.send('pill', null)
+      await p.resize(1280, 44)
+    }
+  })
 })
 
 describe('option D: the looks (spec 32 A5, A10, A13)', () => {
@@ -945,6 +979,35 @@ describe('immersive play (spec 32 C10)', () => {
     expect(back).toMatchObject({ cls: false, region: 'drag', transform: 'none', opacity: '1', events: 'auto' })
     expect(back.duration).toBe(`${MOTION.back.strip / 1000}s, ${MOTION.back.strip / 1000}s`)
     expect(norm(back.ease)).toBe(norm(`${MOTION.back.ease}, ${MOTION.back.ease}`))
+  })
+
+  it('C9 amendment (Nic, 11 Nov): WindowView.band - the 8 px band paints nothing and has no pointer target, the body drags; back, the controls show', async () => {
+    await show(snap('t1', FOUR))
+    await p.send('window', { rev: 72, focused: true, fullScreen: false, immersive: true })
+    await settle()
+    await p.resize(1280, 8)
+    await p.send('window', { rev: 73, focused: true, fullScreen: false, immersive: true, band: true })
+    await settle()
+    const read = () => p.page.evaluate(() => {
+      const strip = document.querySelector('.strip')!
+      const controls = [...strip.querySelectorAll('.tab, .home, #more, #pill')]
+      return {
+        band: document.body.classList.contains('band'), region: getComputedStyle(document.body).getPropertyValue('-webkit-app-region'),
+        visibility: getComputedStyle(strip).visibility, events: getComputedStyle(strip).pointerEvents,
+        controlsShown: controls.filter((e) => getComputedStyle(e).visibility === 'visible' && e.getClientRects().length > 0 && e.getBoundingClientRect().bottom > 0).length,
+        hits: [10, 200, 640, 1270].map((x) => document.elementFromPoint(x, 4)?.tagName ?? null),
+      }
+    })
+    const band = await read()
+    expect(band).toMatchObject({ band: true, region: 'drag', visibility: 'hidden', events: 'none', controlsShown: 0 })
+    for (const h of band.hits) expect(['HTML', 'BODY']).toContain(h)
+    // back: main grows the view to 44 and drops band and immersive together; the controls run in
+    await p.resize(1280, 44)
+    await p.send('window', { rev: 74, focused: true, fullScreen: false })
+    await settle()
+    const back = await read()
+    expect(back).toMatchObject({ band: false, region: 'drag', visibility: 'visible', events: 'auto' })
+    expect(back.controlsShown).toBeGreaterThan(2)
   })
 })
 
@@ -1226,7 +1289,8 @@ describe('the Marver menu, the strip\'s side (spec 32 B3, B6-B11, B14)', () => {
 
   it('B7.3, B7.4: at 720 x 480 a » menu of 30 hidden tabs is capped and its rows scroll; arrowing to the last row scrolls it into view; Enter picks its id', async () => {
     await p.resize(720, 44)
-    await show(snap('t1', [home, ...Array.from({ length: 36 }, (_, i) => tab(`t${i + 1}`, `Canvas number ${i + 1}`))]))
+    // five stay at 720 with the 40 px drag gap kept (A3 amendment): 35 leave 30 behind »
+    await show(snap('t1', [home, ...Array.from({ length: 35 }, (_, i) => tab(`t${i + 1}`, `Canvas number ${i + 1}`))]))
     await p.page.focus('#more')
     await p.page.keyboard.press('Enter')
     const ids = (await lastAsk()).ids!
@@ -1261,7 +1325,7 @@ describe('the Marver menu, the strip\'s side (spec 32 B3, B6-B11, B14)', () => {
     await p.page.keyboard.press('Escape')
     expect(await focused()).toBe('t3')
     await p.resize(1280, 44)
-    await p.send('pill', { rev: 41, kind: 'test', text: 'A pill with a button', short: 'Pill', dismissible: true, button: { label: 'Do it', style: 'accent' } })
+    await p.send('pill', { rev: 50, kind: 'test', text: 'A pill with a button', short: 'Pill', dismissible: true, button: { label: 'Do it', style: 'accent' } })
     await settle()
     await p.page.focus('#pill .pill-btn')
     await rightClick('[data-id="t2"]')

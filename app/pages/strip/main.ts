@@ -14,7 +14,8 @@
  * - **Fitting** (A3, A4): every tab one width (`--tw`, 84-176 px), the active one wider (`--aw`, up to 260) only when its
  *   name is cut; under 104 px a tab is `.compact` (no name, its logo and badge where they were). What does not fit at
  *   84 px goes behind `»`. The pill takes its room first and shows its short form below 960 px. A resize of the height
- *   alone (a menu growing the view, B1) refits nothing.
+ *   alone (a menu growing the view, B1) refits nothing. At least 40 px of empty strip always stays before the pill (or
+ *   the right padding), right of the last tab or `»`: the window's drag area (A3 amendment, Nic 11 Nov).
  * - **The Marver menu** (B3-B14): a right-click, ⇧F10 or the context-menu key on a tab, or `»`, asks main (`tab:menu`,
  *   `tabs:more` with `MenuAsk`); main answers with the rows (`tab-menu`) and grows the view to the window, and the strip
  *   shows src/pages/menu.ts there once it has grown, then says so (`tab:menu-shown`); a pick or a close with no pick
@@ -53,6 +54,10 @@ const MIN = 84
 const COMPACT = 104
 const SHARE_MAX = 176
 const ACTIVE_MAX = 260
+/** A3 (amendment, Nic 11 Nov): the empty, draggable strip always kept before the pill (or the right padding), right of
+ *  the last tab or `»` - the strip body is the window's only drag region; and the strip's own flex gap, part of it */
+const DRAG_GAP = 40
+const STRIP_GAP = 8
 /** A3.1: Home's own width plus its margin (6) and the gap after it (4) */
 const HOME_ALLOWANCE = 10
 const NARROW = 960
@@ -181,6 +186,9 @@ function naturalWidth(el: HTMLElement): number {
   return w
 }
 
+/** #tabs's width, floored: clientWidth rounds, so a list 0.5 px narrower than it reads would overflow into the drag gap */
+const listWidth = () => Math.floor(tabsEl.getBoundingClientRect().width)
+
 /**
  * What fits (A3, A4): every canvas tab (and Settings) one width, `--tw`, at most 176 and at least 84; the active one
  * `--aw`, wider only when its name is cut, up to 260; under 104 a tab is `.compact`. When they do not fit at 84, `»`
@@ -192,14 +200,21 @@ function fit(): void {
   const tabEls = tabs.map((t) => els.get(t.id)!)
   for (const e of tabEls) e.hidden = false
   moreEl.hidden = true
+  // the drag gap (A3 amendment): a margin on whatever stands last before the pill - #tabs, or `»` once it shows - so
+  // #tabs's own width is the room left; the strip's 8 px flex gap before a shown pill counts toward it
+  const tail = `${pillEl.hidden ? DRAG_GAP : DRAG_GAP - STRIP_GAP}px`
+  tabsEl.style.marginRight = tail
+  moreEl.style.removeProperty('margin-right')
   const homeEl = els.get(shownTabs().find((t) => t.kind === 'home')?.id ?? '')
   const homeW = homeEl ? homeEl.offsetWidth + HOME_ALLOWANCE : 0
   const n = tabs.length
   hiddenIds = []
   let shownEls = tabEls
-  if (n && n * MIN + (n - 1) * GAP > tabsEl.clientWidth - homeW) {
+  if (n && n * MIN + (n - 1) * GAP > listWidth() - homeW) {
     moreEl.hidden = false   // a sibling of #tabs: the list is narrower now (its 30 px and the strip's gap); read it again
-    const m = Math.max(1, Math.floor((tabsEl.clientWidth - homeW + GAP) / (MIN + GAP)))
+    tabsEl.style.removeProperty('margin-right')
+    moreEl.style.marginRight = tail
+    const m = Math.max(1, Math.floor((listWidth() - homeW + GAP) / (MIN + GAP)))
     const ai = tabs.findIndex((t) => t.id === snap!.active)
     const keep = new Set<number>()
     if (ai >= 0) keep.add(ai)
@@ -213,10 +228,10 @@ function fit(): void {
     const what = allCanvases ? (c === 1 ? 'canvas' : 'canvases') : (c === 1 ? 'tab' : 'tabs')
     fill(moreEl, '»', h('span', { 'aria-hidden': 'true' }, String(c)))
     moreEl.setAttribute('aria-label', `${c} more ${what}`)
-  } else moreEl.hidden = true
+  } else if (!moreEl.hidden) { moreEl.hidden = true; moreEl.style.removeProperty('margin-right'); tabsEl.style.marginRight = tail }
   const k = shownEls.length
   if (k) {
-    const W = tabsEl.clientWidth
+    const W = listWidth()
     const room = W - homeW - GAP * (k - 1)
     const share = Math.min(SHARE_MAX, Math.max(MIN, room / k))
     const on = shownEls.find((e) => e.dataset.id === snap!.active) ?? null
@@ -555,6 +570,7 @@ if (api) {
     document.body.classList.toggle('fullscreen', w.fullScreen)
     document.body.classList.toggle('dots', w.dots === true)   // app 0.1's cover covers: its still dots, until S15 (A3.8 #3)
     document.body.classList.toggle('immersive', w.immersive === true)   // spec 32 C10: no drag, then the strip runs out
+    document.body.classList.toggle('band', w.band === true)   // C9 amendment: the 8 px band - no controls, the body drags
   })
   api.onPageFocus((f) => {
     if (f.target !== 'active-tab' || !snap) return

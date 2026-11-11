@@ -6,7 +6,8 @@
    24 px logo 4 px from the left, an 18 px badge 7 px from the right). Hover lights the face (fill, hairline, lift, the
    rim); the active tab wears the sidebar's panel look, one opaque colour (the strip cannot blur what is under it, a
    separate view: no backdrop-filter anywhere here, A5.1). The values are the design's after its cascade (tab-strip
-   _kit.css). The only drag region, except while a menu is open (B11) or the strip is away in immersive play (C10). */
+   _kit.css). The only drag region, except while a menu is open (B11) or the strip runs out for immersive play (C10);
+   away, the band left at the top drags again (C9 amendment). */
 
 /* ---- spec 32 E1, E2, E7: the strip's own tokens, the menu's interface and the focus looks ------------------------
    Prefixed `--ts-*` (Nic, gaps.md 5): the kit and Home give different values to the same names, so each page defines
@@ -50,6 +51,10 @@ body.dots .strip { background: radial-gradient(var(--dot) 1px, transparent 1px) 
 /* C10 (IM:13-24, src/shared/immersive.ts MOTION): immersive play runs the strip out of the window, and back */
 body.immersive .strip { transform: translateY(-48px); opacity: 0; pointer-events: none;
   transition: transform 240ms cubic-bezier(.4, 0, .9, .6), opacity 240ms cubic-bezier(.4, 0, .9, .6) }
+/* C9 amendment (Nic, 11 Nov): once run out, main shrinks the view to an 8 px band at the window's top, over the canvas;
+   it paints nothing and has no pointer target - the body alone, a drag region, so the window can still be moved */
+body.band { -webkit-app-region: drag }
+body.band .strip { visibility: hidden; pointer-events: none }
 
 #tabs { flex: 1; min-width: 0; height: 44px; display: flex; align-items: center; gap: 4px }
 

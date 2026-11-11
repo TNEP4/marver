@@ -19,6 +19,8 @@
 import type { Layout } from './tabs.ts'
 
 export const STRIP_HEIGHT = 44
+/** spec 32 C9 amendment (Nic, 11 Nov): the strip view while immersive, run out - an 8 px drag band at the window's top */
+export const BAND_HEIGHT = 8
 
 /** The shell's two grounds (styles.css `--ground`): the cover, the window and every view's background. */
 export const GROUND = { light: '#e7e9ef', dark: '#1b1c23' } as const
@@ -71,7 +73,8 @@ export interface Plan {
   active: string
   views: PlanView[]
   strip: Rect
-  /** spec 32 C8: false while the active tab is immersive (window.ts hides the strip and the lights, C9) */
+  /** spec 32 C8: false while the active tab is immersive (window.ts runs the strip out to its 8 px band and hides the
+   *  lights, C9) */
   stripShown: boolean
   cover: { rect: Rect; visible: boolean; color: string; dark: boolean }
 }
