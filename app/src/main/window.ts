@@ -775,6 +775,15 @@ export function openWindow(d?: WindowDeps): BaseWindow {
     titleBarStyle: 'hidden', trafficLightPosition: LIGHTS,
     backgroundColor: ground(dark), show: false, title: 'Marver',
   })
+  // tests only: MARVER_TEST_DISPLAY names the display the window opens on (Nic: test windows on the Studio Display XDR)
+  if (__MV_TEST__ && testMode() && process.env.MARVER_TEST_DISPLAY) {
+    const want = process.env.MARVER_TEST_DISPLAY.toLowerCase()
+    const d = screen.getAllDisplays().find((x) => (x.label || '').toLowerCase().includes(want))
+    if (d) {
+      const b = win.getBounds()
+      win.setPosition(Math.round(d.workArea.x + (d.workArea.width - b.width) / 2), Math.round(d.workArea.y + (d.workArea.height - b.height) / 2))
+    }
+  }
   // the strip first, so a cover can use it (S15's variant 4 colours its native background); added last, on top
   strip = new WebContentsView({ webPreferences: appPrefs() })
   strip.setBackgroundColor('#00000000')   // transparent: it paints controls only, over the cover or the views beneath (A3.8 #29)
