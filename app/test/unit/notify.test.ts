@@ -332,6 +332,16 @@ describe('spec 32 F1, D6.1: what Home leads with (kinds, top, work)', () => {
     expect(n.marksOf(t)!.work).toBeUndefined()
   })
 
+  it('a stop leads over a held ask: the snapshot still held, top is stopped, not the ask', () => {
+    const t = canvas()
+    snap(t, [ask()])
+    expect(n.marksOf(t)!.top!.kind).toBe('ask')
+    onRegistry({ kind: 'gone', file: t.reg!.file, instance: t.reg!.instance, why: 'pid' })
+    n.onRegistry({ kind: 'gone', file: t.reg!.file, instance: t.reg!.instance, why: 'pid' })
+    expect(held.has(t.reg!.instance)).toBe(true)
+    expect(n.marksOf(t)).toMatchObject({ needs: 2, stopped: true, top: { kind: 'stopped' }, kinds: { ask: 1 } })
+  })
+
   it('an unacknowledged stop with no held snapshot: stopped, top stopped (read before any event)', () => {
     const t = canvas()
     snap(t, [ask()])

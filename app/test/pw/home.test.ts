@@ -144,6 +144,26 @@ describe('D1, D2, D10: the page, its header, the empty state', () => {
     expect(await p.page.$('[data-key="cp:dev"].done')).toBeNull()
   })
 
+  it('D10.5, D9.6: a second copy inside the 2 s goes back to its own name, not to Copied', async () => {
+    await world()
+    const b = '[data-key="cp:dev"]'
+    await p.page.click(b)
+    await p.page.waitForSelector(`${b}.done`)
+    await p.page.click(b)
+    expect(await p.page.$eval(b, (e) => e.getAttribute('aria-label'))).toBe('Copied')
+    await p.page.waitForSelector(`${b}:not(.done)`, { timeout: 3000 })
+    expect(await p.page.$eval(b, (e) => [e.getAttribute('aria-label'), e.getAttribute('title')])).toEqual(['Copy', null])
+    // Help's copy buttons too: their title and name both come back
+    await p.page.click('[data-key="help-float"]')
+    const hb = '.hm-cmd2 >> nth=0 >> button'
+    await p.page.click(hb)
+    await p.page.waitForSelector('.hm-cmd2 >> nth=0 >> button.done')
+    await p.page.click(hb)
+    await p.page.waitForSelector('.hm-cmd2 >> nth=0 >> button:not(.done)', { timeout: 3000 })
+    expect(await p.page.locator(hb).evaluate((e) => [e.getAttribute('aria-label'), e.getAttribute('title')])).toEqual(['Copy', 'Copy'])
+    await p.page.click('[data-key="help-float"]')
+  })
+
   it('D2: the brand, the field, View and Help, in order; the icon buttons as rendered (34 round, transparent, ink-3, pointer, "?" 400 16 px)', async () => {
     await world({ tabs: BUSY, view: 'grid' })
     expect(await p.page.$$eval('.hm-head > *', (els) => els.map((e) => e.className))).toEqual(['hm-brand', 'hm-sp', 'hm-slot', 'hm-icon', 'hm-icon hm-q'])
@@ -574,6 +594,27 @@ describe('D8: menus and clicks on Home', () => {
     await p.page.waitForFunction(() => !document.querySelector('.mv-menu'))
     expect(await p.page.$eval(list, (e) => e.scrollTop)).toBeGreaterThan(0)
     await p.page.$eval(list, (e) => { e.scrollTop = 0 })
+    await p.resize(1280, 800)
+  })
+
+  it('D8.6: an offset Home set counts once - scrolled away and back by the person, a card menu still closes', async () => {
+    // rendered at 0 (Home's own restore notes 0); the person scrolls the column to 120, opens a card menu there, then
+    // scrolls back to 0: their scroll, so the menu closes
+    const twelve = Array.from({ length: 12 }, (_, i) => tab(`c${i}`, `Canvas ${i}`, 4900 + i))
+    await world({ tabs: [home, ...twelve], view: 'board', size: [720, 480] })
+    const list = '.hm-col[data-col="live"] .hm-col-list'
+    expect(await p.page.$eval(list, (e) => e.scrollTop)).toBe(0)
+    await p.page.$eval(list, (e) => { e.scrollTop = 120 })
+    await sleep(80)
+    expect(await p.page.$eval(list, (e) => e.scrollTop)).toBe(120)
+    const lr = await rect(list)
+    const id = await p.page.evaluate(([x, y]) => (document.elementFromPoint(x!, y!)?.closest('[data-card]') as HTMLElement | null)?.dataset.card ?? null, [lr.left + 40, lr.top + 60])
+    expect(id).not.toBeNull()
+    await p.page.hover(`[data-card="${id}"]`)
+    await p.page.click(`[data-more="${id}"]`)
+    expect(await menuOpen()).toBe(true)
+    await p.page.$eval(list, (e) => { e.scrollTop = 0 })
+    await p.page.waitForFunction(() => !document.querySelector('.mv-menu'), undefined, { timeout: 1500 })
     await p.resize(1280, 800)
   })
 

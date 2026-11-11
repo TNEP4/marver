@@ -59,7 +59,9 @@ let focusGen = 0
 
 /** set while Home itself scrolls (a restore, a deep-linked card scrolled into view, a focus); cleared two frames later */
 let ownScrolls = 0
-/** the offsets Home itself set, by scroller: a later scroll event that finds them unchanged is Home's own too */
+/** the offsets Home itself set, by scroller: the next scroll event that finds them unchanged is Home's own too. Each
+ *  is used once - matched or not, the scroller's next scroll event drops it - so a person who scrolls away and back
+ *  to an offset Home once set is still the person scrolling. */
 const ownAt = new WeakMap<Element, [number, number]>()
 const SCROLLERS = '.hm-body, .hm-col-list, .hm-shared, .hm-empty'
 function noteOwn(): void { for (const el of rootEl.querySelectorAll(SCROLLERS)) ownAt.set(el, [el.scrollTop, el.scrollLeft]) }
@@ -401,14 +403,30 @@ function markHelp(): void {
 function closeAll(): void { closeCardMenu(); closeViewMenu(); if (ui.help) closeHelp(); cancelFocus() }
 
 const copyFixed = async (id: 'dev' | 'init' | 'update'): Promise<boolean> => { try { return (await api?.action({ action: 'copy', id }))?.ok === true } catch { return false } }
-/** A copy button's answered look (`.done`) for `ms`, then back. */
+/** A copy button's answered look (`.done`) for `ms`, then back. Its own name and title are kept once, when no answer
+ *  is showing, so a second copy inside the `ms` still goes back to them (not to the answer's). */
 function done(el: HTMLElement, ms: number, label?: string): void {
   el.classList.add('done')
-  const was = el.getAttribute('aria-label')
-  if (label) { el.setAttribute('aria-label', label); el.title = label }
   const t = Number(el.dataset.t ?? 0)
   if (t) clearTimeout(t)
-  el.dataset.t = String(setTimeout(() => { el.classList.remove('done'); if (label && was) { el.setAttribute('aria-label', was); el.title = was } delete el.dataset.t }, ms))
+  else {
+    delete el.dataset.wasLabel
+    delete el.dataset.wasTitle
+    if (el.hasAttribute('aria-label')) el.dataset.wasLabel = el.getAttribute('aria-label')!
+    if (el.hasAttribute('title')) el.dataset.wasTitle = el.getAttribute('title')!
+  }
+  if (label) { el.setAttribute('aria-label', label); el.title = label }
+  el.dataset.t = String(setTimeout(() => {
+    el.classList.remove('done')
+    if (label) {
+      const { wasLabel, wasTitle } = el.dataset
+      if (wasLabel === undefined) el.removeAttribute('aria-label'); else el.setAttribute('aria-label', wasLabel)
+      if (wasTitle === undefined) el.removeAttribute('title'); else el.title = wasTitle
+    }
+    delete el.dataset.t
+    delete el.dataset.wasLabel
+    delete el.dataset.wasTitle
+  }, ms))
 }
 
 // ---- the page (D2-D7, D10) ----------------------------------------------------------------------------------------
@@ -621,6 +639,7 @@ document.addEventListener('scroll', (e) => {
   const t = e.target
   if (!(t instanceof Element) || !t.matches(SCROLLERS)) return
   const own = ownAt.get(t)
+  ownAt.delete(t)
   if (ownScrolls > 0 || (own && own[0] === t.scrollTop && own[1] === t.scrollLeft)) { reanchor(); return }
   closeCardMenu()
   closeViewMenu()
