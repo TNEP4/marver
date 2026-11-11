@@ -201,6 +201,8 @@ body.inactive .tab.on .face::after { opacity: .5 }
 .tab:focus-visible:not(.on) .face, .tab:focus-visible:not(.on):hover .face { color: var(--glass-ink); background: var(--ts-face-hover); border-color: var(--glass-brd) }
 :root.dark .tab:focus-visible:not(.on) .face { border-color: rgba(255, 255, 255, .1) }
 .tab:focus-visible .face::after { opacity: 1 }
+/* a keyboard focus shows at once: the hover fade is for the pointer */
+.tab:focus-visible .face, .tab:focus-visible .face::after { transition: none }
 :root.dark .tab:focus-visible .face::after { background: var(--ts-edge-dark) }
 .tab:focus-visible:not(.on) .sess { box-shadow: 0 0 0 1.5px var(--ts-face-hover) }
 .home.on:focus-visible, .more.menu-open:focus-visible { box-shadow: 0 0 0 1px var(--glass-brd), 0 0 0 4px var(--accent-ring), var(--ts-shadow-lit) }
