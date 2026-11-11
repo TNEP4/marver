@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { rmSync } from 'node:fs'
+import { readFileSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
 import { Browser } from './browser.ts'
 import { fixtureRoot, startDev, type Dev } from './dev-server.ts'
 import { MOTION } from '../src/shared/immersive.ts'
@@ -16,7 +17,8 @@ import { MOTION } from '../src/shared/immersive.ts'
  * in play turns Hide UI off and after play does not; Escape, `hidden` and `untrusted` end it; the FLIP (fixed stages
  * only, `.dev`'s own transition off, a reversal ending at the right size); the minimal deck's strip fades centred; the
  * play pills fade rather than vanish; canvas-mode Hide UI sends nothing; a board with no way out shows the UI on
- * Escape. Skips without Chrome.
+ * Escape; the recorder's `immersive` mode (C11): an enter at main's grant (never at the wish or a refusal), an exit with
+ * its heldMs at the revoke, and a grant standing when the signals start held from there. Skips without Chrome.
  */
 
 const FRAME = (t: string, vp: string, bg: string) => `export const meta = { title: '${t}', viewport: '${vp}' }\nexport default () => <main style={{ background: '${bg}', width: '100%', height: '100vh', margin: 0 }} />\n`
@@ -423,5 +425,82 @@ describe('the shell\'s motion (C5)', () => {
       const d = await open({ on: false }, `#/p/${b}?at=deck/s1&slides=1`)
       expect(await ev(d, `!!document.querySelector('.sh-slides-strip')`), b).toBe(false)
     }
+  })
+})
+
+describe('the recorder\'s immersive mode (C11)', () => {
+  /** this page's `immersive` (or `hide-ui`) mode records in design/.local/perf/page.jsonl, oldest first */
+  const recs = (page: string, mode: string, phase: 'enter' | 'exit'): Record<string, any>[] => {
+    let text = ''
+    try { text = readFileSync(join(root, 'design', '.local', 'perf', 'page.jsonl'), 'utf8') } catch { return [] }
+    return text.split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.page === page && r.kind === 'mode' && r.mode === mode && r.phase === phase).sort((a, b) => a.seq - b.seq)
+  }
+  /** everything waiting goes now, then `n` such records are on disk */
+  async function flushed(s: string, page: string, mode: string, phase: 'enter' | 'exit', n: number): Promise<Record<string, any>[]> {
+    const by = Date.now() + 10_000
+    while (Date.now() < by) {
+      await ev(s, `window.__mvRecorder.send()`)
+      const r = recs(page, mode, phase)
+      if (r.length >= n) return r
+      await wait(150)
+    }
+    return recs(page, mode, phase)
+  }
+
+  it('main\'s grant enters it (two frames, done), its end exits it with how long it was held; a refusal records nothing; a grant standing when the signals start is held, its end an exit', { timeout: 90_000 }, async (ctx) => {
+    skip(ctx)
+    const s = await open({ on: true, immersive: true }, '#/p/main?at=demo/big')
+    const page: string = await until(s, `window.__mvRecorder?.page`)
+    // refused, then H off: Hide UI entered and left, immersive never
+    await key(s, 'h')
+    await until(s, `__fake.wishes().length === 1`)
+    await answer(s, { on: false })
+    await key(s, 'h')
+    await until(s, `__fake.wishes().length === 2`)
+    expect(await flushed(s, page, 'hide-ui', 'exit', 1)).toHaveLength(1)
+    expect([recs(page, 'immersive', 'enter'), recs(page, 'immersive', 'exit')]).toEqual([[], []])
+
+    // granted: the enter, at main's answer (never at the wish)
+    await key(s, 'h')
+    await until(s, `__fake.wishes().length === 3 && __fake.wishes().at(-1).on === true`)
+    await wait(200)
+    await ev(s, `window.__mvRecorder.send()`)
+    expect(recs(page, 'immersive', 'enter')).toEqual([])
+    await answer(s, { on: true })
+    await until(s, `__mvImmersive.granted()`)
+    const [enter] = await flushed(s, page, 'immersive', 'enter', 1)
+    expect(enter).toMatchObject({ mode: 'immersive', phase: 'enter', outcome: 'done' })
+    expect(enter.shownMs).toBeGreaterThanOrEqual(0)
+    expect(recs(page, 'immersive', 'exit')).toEqual([])
+    // held 400 ms, then revoked: the exit, its heldMs the time between
+    await wait(400)
+    await key(s, 'h')
+    await until(s, `__fake.wishes().length === 4`)
+    await answer(s, { on: false })
+    const [exit] = await flushed(s, page, 'immersive', 'exit', 1)
+    expect(exit).toMatchObject({ mode: 'immersive', phase: 'exit' })
+    expect(exit.heldMs).toBeGreaterThanOrEqual(400)
+    expect(exit.heldMs).toBeLessThan(10_000)
+
+    // a grant standing when the signals start: a fresh instance of the recorder's signals (Vite serves the module again
+    // under its own query; immersive.ts, the stores and the page's outbox stay the page's own) starts while granted
+    await grant(s)
+    await flushed(s, page, 'immersive', 'enter', 2)
+    const url: string = await ev(s, `performance.getEntriesByType('resource').map((e) => e.name).find((n) => n.includes('/shell/recorder-signals.ts'))`)
+    expect(url).toBeTruthy()
+    const fresh = new URL(url)
+    fresh.searchParams.set('mvfresh', '1')
+    expect(await ev(s, `import(${JSON.stringify(fresh.href)}).then((m) => { const before = m.modesOn(); m.startSignals(); return { before, after: m.modesOn() } })`)).toEqual({ before: [], after: expect.arrayContaining(['hide-ui']) })   // started, Hide UI held with it
+    await wait(300)
+    const enters = (await flushed(s, page, 'immersive', 'enter', 2)).length
+    expect(enters).toBe(2)   // held from the start: no enter record of its own
+    await key(s, 'h')
+    await until(s, `__fake.wishes().length === 6`)
+    await answer(s, { on: false })
+    // two exits: the page's own instance (entered at the grant) and the fresh one (held since it started)
+    const exits = await flushed(s, page, 'immersive', 'exit', 3)
+    expect(exits).toHaveLength(3)
+    expect(exits.slice(1).every((r) => r.heldMs >= 300)).toBe(true)
+    expect(recs(page, 'immersive', 'enter')).toHaveLength(2)
   })
 })
