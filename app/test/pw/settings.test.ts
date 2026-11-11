@@ -185,6 +185,29 @@ describe('the controls (A4)', () => {
     expect(await ctl('config.keepPerfDays').getAttribute('aria-expanded')).toBe('false')
   })
 
+  it('the days menu follows a value changed while it is open: its check moves, and picking the old value writes it', async () => {
+    await ctl('config.keepPerfDays').click()
+    await p.page.waitForSelector('.mv-menu')
+    await draw(view({ config: { keepPerfDays: 30 } }))
+    expect(await p.page.$eval('.mv-menu [aria-checked="true"]', (e) => e.textContent)).toBe('30 days')
+    const row14 = p.page.locator('.mv-menu [data-id="14"]')
+    await row14.hover()
+    await p.page.waitForTimeout(300)
+    await row14.click()
+    await p.page.waitForTimeout(40)
+    expect(await p.calls('settings:set')).toEqual([{ file: 'config', key: 'keepPerfDays', value: 14 }])
+  })
+
+  it('the theme by keyboard: one tab stop, the chosen one; the arrows move and choose', async () => {
+    expect(await p.page.$$eval('.st-seg [role="radio"]', (els) => els.map((e) => e.getAttribute('tabindex')))).toEqual(['0', '-1', '-1'])
+    await p.answer('settings:get', view({ mode: 'light' }))
+    await ctl('theme.mode.system').focus()
+    await p.page.keyboard.press('ArrowRight')
+    await p.page.waitForFunction(() => document.querySelector('[data-ctl="theme.mode.light"]')!.getAttribute('aria-checked') === 'true')
+    expect(await p.calls('settings:set')).toEqual([{ file: 'theme', key: 'mode', value: 'light' }])
+    expect(await p.page.evaluate(() => (document.activeElement as HTMLElement).dataset.ctl)).toBe('theme.mode.light')
+  })
+
   it('Reduce Transparency: the cards lose the blur and take the solid fill', async () => {
     expect((await style('.st-card', ['backdrop-filter']))['backdrop-filter']).toContain('blur(24px)')
     await p.media({ 'prefers-reduced-transparency': 'reduce' })

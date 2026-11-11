@@ -18,7 +18,7 @@ import type { SettingsFileView, SettingsSetResult, SettingsView, UpdateRow } fro
 import { BLOCKED_TITLE } from '../../src/shared/channels.ts'
 import { keySpec, type FileName } from '../../src/shared/settings-keys.ts'
 import { ago, fill, h, icon, pageApi, say, setLook, shown, themeKey, type IconName } from '../../src/pages/dom.ts'
-import { openMenu, type MenuHandle } from '../../src/pages/menu.ts'
+import { openMenu, type MenuHandle, type MenuRow } from '../../src/pages/menu.ts'
 
 const api = pageApi('settings')
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
@@ -89,12 +89,25 @@ function toggle(file: FileName, key: string, on: boolean, labelId: string): HTML
   }, h('i'))
 }
 
+/** System, Light, Dark: a radio group - a click, or the arrows (they move and choose, one tab stop: the chosen one). */
 function segmented(mode: string, labelId: string): HTMLElement {
-  return h('div', { class: 'st-seg', role: 'radiogroup', 'aria-labelledby': labelId },
-    ...MODES.map(([m, label, ic]) => h('button', {
-      type: 'button', role: 'radio', 'aria-checked': String(mode === m), 'data-ctl': `theme.mode.${m}`,
-      onclick: () => { if (mode !== m) void change('theme', 'mode', m) },
-    }, icon(ic, 14), label)))
+  const pick = (m: string) => { if (mode !== m) void change('theme', 'mode', m) }
+  return h('div', {
+    class: 'st-seg', role: 'radiogroup', 'aria-labelledby': labelId,
+    onkeydown: (e) => {
+      const k = (e as KeyboardEvent).key
+      const step = k === 'ArrowRight' || k === 'ArrowDown' ? 1 : k === 'ArrowLeft' || k === 'ArrowUp' ? -1 : 0
+      if (!step) return
+      e.preventDefault()
+      const i = MODES.findIndex(([m]) => m === mode)
+      const next = MODES[(i + step + MODES.length) % MODES.length][0]
+      document.querySelector<HTMLElement>(`[data-ctl="theme.mode.${next}"]`)?.focus()
+      pick(next)
+    },
+  }, ...MODES.map(([m, label, ic]) => h('button', {
+    type: 'button', role: 'radio', 'aria-checked': String(mode === m), tabindex: mode === m ? '0' : '-1', 'data-ctl': `theme.mode.${m}`,
+    onclick: () => pick(m),
+  }, icon(ic, 14), label)))
 }
 
 let menu: MenuHandle | null = null
@@ -103,20 +116,25 @@ const daysBtn = () => document.querySelector<HTMLElement>('.st-select-btn')
 function closeMenu(): void { menu?.close(); menu = null; daysBtn()?.setAttribute('aria-expanded', 'false') }
 
 /** The days select (A4): a pill that opens the shared Marver menu under it, right-aligned; a value off the list is listed. */
+const daysRows = (days: number): MenuRow[] =>
+  (KEEP.includes(days) ? KEEP : [...KEEP, days].sort((a, b) => a - b)).map((d) => ({ kind: 'item', id: String(d), label: `${d} days`, enabled: true, checked: d === days }))
+
 function select(days: number, labelId: string): HTMLElement {
+  // a redraw while the menu is open (an agent changed the file) checks the value now in force
+  menu?.update(daysRows(days))
   const btn = h('button', {
     class: 'st-select-btn', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': String(!!menu), 'aria-labelledby': `${labelId} keep-now`,
     'data-ctl': 'config.keepPerfDays',
   }, h('span', { id: 'keep-now' }, `${days} days`), icon('caret', 12))
   btn.addEventListener('click', () => {
     if (menu) { closeMenu(); return }
-    const list = KEEP.includes(days) ? KEEP : [...KEEP, days].sort((a, b) => a - b)
     const r = btn.getBoundingClientRect()
     const done = (focus: boolean) => { menu = null; const b = daysBtn(); b?.setAttribute('aria-expanded', 'false'); if (focus) b?.focus() }
     menu = openMenu(document.body, {
-      rows: list.map((d) => ({ kind: 'item', id: String(d), label: `${d} days`, enabled: true, checked: d === days })),
+      rows: daysRows(days),
       at: { x: r.right, y: r.bottom + 6, origin: 'top right' }, top: 44, opener: btn, focusFirst: btn.matches(':focus-visible'),
-      onPick: (id) => { done(true); if (Number(id) !== days) void change('config', 'keepPerfDays', Number(id)) },
+      // compared with the value in force at the pick, never the one at the open
+      onPick: (id) => { done(true); if (Number(id) !== view?.config.values.keepPerfDays) void change('config', 'keepPerfDays', Number(id)) },
       onClose: (how) => done(how !== 'outside'),
     })
     btn.setAttribute('aria-expanded', 'true')
