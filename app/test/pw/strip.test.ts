@@ -183,6 +183,20 @@ describe('the tab list (A2.13)', () => {
     // A14, B3.1: at the tab's left and bottom, by key, the strip holding focus
     const at = { id: 't3', x: Math.round(b!.x), y: Math.round(b!.y + b!.height), key: true, hadFocus: true }
     expect(menus).toEqual([at, at])
+    // B3.4, B14.1: both asks out before either answer; main answers each in turn (the second replaces the first, B3.2),
+    // and the second answer still opens by key: its first enabled row focused, the opener focused again on dismissal
+    const v1: TabMenuView = { rev: ++mrev, x: at.x, y: at.y, kind: 'tab', rows: ROWS }
+    const v2: TabMenuView = { rev: ++mrev, x: at.x, y: at.y, kind: 'tab', rows: ROWS }
+    await p.send('tab-menu', v1)
+    await p.send('tab-menu', v2)
+    await p.resize(1280, 800)
+    await poll(`tab:menu-shown ${v2.rev}`, async () => (await shownRevs()).includes(v2.rev))
+    expect(await focused()).toBe('open-browser')
+    await p.page.keyboard.press('Escape')
+    expect((await picks()).at(-1)).toEqual({ rev: v2.rev, id: null })
+    expect(await focused()).toBe('t3')
+    await p.resize(1280, 44)
+    await poll('no body.menu-open', async () => !(await state()).body)
   })
 
   it('a click activates; a right-click opens the tab\'s menu where it was made', async () => {
@@ -1299,6 +1313,26 @@ describe('the Marver menu, the strip\'s side (spec 32 B3, B6-B11, B14)', () => {
     expect(await state()).toMatchObject({ visible: true, openers: ['t2'] })
     await p.page.keyboard.press('Escape')
     await p.resize(1280, 44)
+  })
+
+  it('B2, B3.1, B3.4: two asks out, the first refused: the refusal answers the oldest alone - the second keeps its marks and its own key and focus reading', async () => {
+    await show(snap('t1', FIVE))
+    await blurAll()
+    await rightClick('[data-id="t2"]')
+    await p.page.focus('[data-id="t3"]')
+    await p.page.keyboard.press('Shift+F10')
+    expect((await p.calls('tab:menu') as Ask[]).map((a) => [a.id, a.key, a.hadFocus])).toEqual([['t2', false, false], ['t3', true, true]])
+    expect(await state()).toMatchObject({ body: true, openers: ['t2', 't3'] })
+    await p.send('tab-menu', null)   // t2's refusal
+    expect(await state()).toEqual({ body: true, openers: ['t3'], menu: false, visible: false })
+    const v = await answer()
+    expect(await state()).toMatchObject({ body: true, openers: ['t3'], visible: true })
+    expect(await focused()).toBe('open-browser')
+    await p.page.keyboard.press('Escape')
+    expect(await picks()).toEqual([{ rev: v.rev, id: null }])
+    expect(await focused()).toBe('t3')
+    await p.resize(1280, 44)
+    await poll('no body.menu-open', async () => !(await state()).body)
   })
 
   it('B2, B3.1, B11: a refusal (tab-menu: null) of a replacement asked through the catcher closes the open menu and drops the pending ask too - its look, its timer; no drag only until the view is 44 px; page:focus answered then', async () => {

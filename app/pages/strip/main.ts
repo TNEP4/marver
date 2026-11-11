@@ -307,7 +307,18 @@ pillEl.addEventListener('keydown', (e) => {
 // ---- the Marver menu (spec 32 B3-B14) ------------------------------------------------------------------------------
 
 /** an ask sent (B3.1), no view or refusal back yet */
-let asked: { opener: HTMLElement; key: boolean; hadFocus: boolean; timer: ReturnType<typeof setTimeout> } | null = null
+type Ask = { opener: HTMLElement; key: boolean; hadFocus: boolean; timer: ReturnType<typeof setTimeout> }
+/** every ask still unanswered, oldest first: main answers each in turn, with a view or a refusal (B2), so each answer
+ *  takes the oldest; a later answer still opens by how its own ask was made (B3.4, B14.1) */
+const asks: Ask[] = []
+/** an unanswered ask was made from `el` */
+const askedBy = (el: HTMLElement | null): boolean => !!el && asks.some((a) => a.opener === el)
+/** the oldest ask, answered now (a view or a refusal): its timer goes */
+function answered(): Ask | undefined {
+  const a = asks.shift()
+  if (a) clearTimeout(a.timer)
+  return a
+}
 /** the menu main sent: its rev, the handle, who opened it and how; `waiting` until the view has grown and it shows */
 let menu: { rev: number; handle: MenuHandle; opener: HTMLElement | null; key: boolean; hadFocus: boolean; waiting: boolean } | null = null
 /** a menu closed while the view is still grown: `body.menu-open` stays until the view is 44 px again (B11) */
@@ -332,17 +343,20 @@ function dropMarks(): void {
 
 /** B3.1: the strip draws as open from the ask (no drag, the opener's look, A5.5), and gives up after 1 s unanswered */
 function marked(opener: HTMLElement, how: MenuAsk): void {
-  if (asked) { clearTimeout(asked.timer); if (asked.opener !== menu?.opener) asked.opener.classList.remove('menu-open') }
   closing = false
   document.body.classList.add('menu-open')
   opener.classList.add('menu-open')
-  const timer = setTimeout(() => {
-    if (asked?.timer !== timer) return
-    asked = null   // a send main dropped (a strip not ready, B1.2): no view and no refusal came
-    if (!menu) dropMarks()
-    else opener.classList.toggle('menu-open', opener === menu.opener)
-  }, ASK_FALLBACK_MS)
-  asked = { opener, key: how.key, hadFocus: how.hadFocus, timer }
+  const a: Ask = {
+    opener, key: how.key, hadFocus: how.hadFocus,
+    timer: setTimeout(() => {
+      const i = asks.indexOf(a)
+      if (i < 0) return
+      asks.splice(i, 1)   // a send main dropped (a strip not ready, B1.2): no view and no refusal came
+      if (!menu && !asks.length) dropMarks()
+      else opener.classList.toggle('menu-open', opener === menu?.opener || askedBy(opener))
+    }, ASK_FALLBACK_MS),
+  }
+  asks.push(a)
 }
 function askTab(el: HTMLElement, x: number, y: number, how: MenuAsk): void {
   const id = el.dataset.id
@@ -372,12 +386,10 @@ function openerAt(v: TabMenuView): HTMLElement | null {
 
 function showMenu(v: TabMenuView): void {
   const was = menu
-  const by = asked
-  if (by) clearTimeout(by.timer)
-  asked = null
+  const by = answered()
   const opener = by?.opener ?? openerAt(v)
   // a newer view replaces the menu with no null pick and no shrink between (B3.2, B11)
-  if (was) { menu = null; was.handle.close(); if (was.opener && was.opener !== opener) was.opener.classList.remove('menu-open') }
+  if (was) { menu = null; was.handle.close(); if (was.opener && was.opener !== opener && !askedBy(was.opener)) was.opener.classList.remove('menu-open') }
   closing = false
   document.body.classList.add('menu-open')   // also for a view it never asked for (B11)
   opener?.classList.add('menu-open')
@@ -415,8 +427,8 @@ function ended(rev: number): void {
   if (!m || m.rev !== rev) return
   menu = null
   // the opener's look lasts until the pick (A5.5); no drag lasts until the view is 44 px again (B11)
-  if (m.opener && asked?.opener !== m.opener) m.opener.classList.remove('menu-open')
-  if (!asked) {
+  if (m.opener && !askedBy(m.opener)) m.opener.classList.remove('menu-open')
+  if (!asks.length) {
     if (window.innerHeight > STRIP_H) closing = true
     else document.body.classList.remove('menu-open')
   }
@@ -428,9 +440,10 @@ function ended(rev: number): void {
 function onMenuView(v: TabMenuView | null): void {
   if (v) { showMenu(v); return }
   if (menu) {
-    // main closed it (B12), or refused a replacement asked through the catcher (B2, B11): an ask still pending is
-    // answered by this null too, so its opener's look and its timer go now; no drag stays until the view is 44 px
-    if (asked) { clearTimeout(asked.timer); if (asked.opener !== menu.opener) asked.opener.classList.remove('menu-open'); asked = null }
+    // main closed it (B12), or refused a replacement asked through the catcher (B2, B11): the oldest ask still pending
+    // is answered by this null too, so its opener's look and its timer go now; no drag stays until the view is 44 px
+    const a = answered()
+    if (a && a.opener !== menu.opener && !askedBy(a.opener)) a.opener.classList.remove('menu-open')
     // hidden at once, then the null pick that lets main shrink the view
     const { rev, handle } = menu
     handle.close()
@@ -441,8 +454,9 @@ function onMenuView(v: TabMenuView | null): void {
   // main's close crossing a local one (B11, B12): the menu was shown and the view is still grown, so no drag stays
   // until the ResizeObserver reads 44 px (`closing` is never set while an ask is pending: marked() clears it)
   if (closing && window.innerHeight > STRIP_H) return
-  // main refused the ask (B2): nothing was shown, so the marks go at once
-  if (asked) { clearTimeout(asked.timer); asked = null }
+  // main refused the ask (B2): nothing was shown, so the marks go at once; an ask still pending behind it keeps its own
+  const a = answered()
+  if (a && asks.length) { a.opener.classList.toggle('menu-open', askedBy(a.opener)); return }
   closing = false
   dropMarks()
 }
@@ -502,7 +516,7 @@ let lastWidth = -1
 new ResizeObserver(() => {
   const tall = window.innerHeight > STRIP_H
   if (tall && menu?.waiting) void reveal()
-  if (!tall && closing && !menu) { closing = false; if (!asked) document.body.classList.remove('menu-open') }
+  if (!tall && closing && !menu) { closing = false; if (!asks.length) document.body.classList.remove('menu-open') }
   // B7.1-B7.3: a shown menu is placed again for the new size (a window resized or made full screen while it is open),
   // so it stays clamped 14 px inside both edges and capped by the room it has
   else if (tall && menu && !menu.waiting) menu.handle.place()
@@ -544,7 +558,7 @@ if (api) {
   })
   api.onPageFocus((f) => {
     if (f.target !== 'active-tab' || !snap) return
-    if (menu || asked) return   // B14: the menu holds focus while it is open
+    if (menu || asks.length) return   // B14: the menu holds focus while it is open
     focusId = null
     rove()
     els.get(snap.active)?.focus()
