@@ -150,7 +150,7 @@ export interface WindowView {
   /** spec 32 C10: immersive play hides the strip - `body.immersive` runs its CSS out (no-drag first). Absent reads false */
   immersive?: boolean
   /**
-   * spec 32 C9 amendment (Nic, 11 Nov): the strip, run out, is now the 8 px band main keeps at the window's top while
+   * spec 32 C9 amendment (Nic, 11 Nov): the strip, run out, is now the 16 px band main keeps at the window's top while
    * immersive - `body.band`: every control hidden, no pointer target, the body a drag region. Absent reads false
    */
   band?: boolean

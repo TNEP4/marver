@@ -982,11 +982,11 @@ describe('the mv:doc trace (A3.8 #26)', () => {
   })
 })
 
-describe('spec 32 C9: immersive play runs the strip out to an 8 px drag band and hides the lights, and brings them back (main\'s sequence; window, H4; amended by Nic 11 Nov)', () => {
+describe('spec 32 C9: immersive play runs the strip out to a 16 px drag band and hides the lights, and brings them back (main\'s sequence; window, H4; amended by Nic 11 Nov)', () => {
   let id = ''
   interface ComposeLine { strip?: 'shown' | 'hidden'; lights?: boolean; changes: Change[] }
   /** one native call main made, watched in main: the lights' visibility and position, the strip view's height as a
-   *  setBounds changes it (`strip`, 44 or the 8 px band) and any setVisible on it (`visible`: never, since the amendment) */
+   *  setBounds changes it (`strip`, 44 or the 16 px band) and any setVisible on it (`visible`: never, since the amendment) */
   interface Native { call: 'lights' | 'position' | 'strip' | 'visible'; arg: unknown; at: number }
   const stripLines = async (since: number) => (await lines('compose', since)).map((l) => l.data as unknown as ComposeLine)
   /** the answers the canvas heard (`onImmersive`), subscribed once per document */
@@ -1023,8 +1023,8 @@ describe('spec 32 C9: immersive play runs the strip out to an 8 px drag band and
   const natives = async (since: number) => (await w.run.pw!.evaluate(() => (globalThis as unknown as { __c9: Native[] }).__c9.slice())).slice(since)
   const nativeMark = async () => (await natives(0)).length
   const calls = (xs: Native[]) => xs.map((x) => [x.call, x.arg])
-  const BAND = 8
-  const band = () => waitFor('the strip view the 8 px band', async () => { const v = await stripView(); return v.visible && v.bounds.height === BAND })
+  const BAND = 16
+  const band = () => waitFor('the strip view the 16 px band', async () => { const v = await stripView(); return v.visible && v.bounds.height === BAND })
   const shown = () => waitFor('the strip view at 44', async () => { const v = await stripView(); return v.visible && v.bounds.height === 44 })
   /** the strip page as the band shows it: body.band, the drag region, the strip hidden, what a press at y 4 meets */
   const page = async () => JSON.parse(await exec<string>('strip', `JSON.stringify((() => {
@@ -1049,7 +1049,7 @@ describe('spec 32 C9: immersive play runs the strip out to an 8 px drag band and
     expect(s.controls).toBeGreaterThan(1)
   }
 
-  it('granted: the lights off at once, the strip view shrunk to the 8 px band only after MOTION.out.strip (never hidden), no cover; back: the view at 44 with its controls first, then the lights and LIGHTS', async () => {
+  it('granted: the lights off at once, the strip view shrunk to the 16 px band only after MOTION.out.strip (never hidden), no cover; back: the view at 44 with its controls first, then the lights and LIGHTS', async () => {
     ;({ id } = await canvas(3, 'Immersive'))   // a slot the registry reads (1-20) that no other case here takes
     await w.run.call('activate', { id })
     await lifted(id)

@@ -104,7 +104,7 @@ export function setComposePorts(p: ComposePorts | null): void { composePorts = p
 
 /**
  * Spec 32 C9: the strip away for immersive play (its CSS run out first), and the traffic lights. Amendment (Nic, 11
- * Nov): the view is never hidden - after the run-out it shrinks to an 8 px band at the top, transparent, a drag region
+ * Nov): the view is never hidden - after the run-out it shrinks to an 16 px band at the top, transparent, a drag region
  * (`stripBand`, WindowView.band), so the window can still be moved.
  */
 let stripHidden = false
@@ -296,7 +296,7 @@ function feedWindow(): void {
   // the strip's still dots while a cover that has the strip draw them covers (app 0.1's plain view until S15, A3.8 #3;
   // variant 4 after): a canvas keeps 0.1's look under the tabs; over Home, Settings and a tab page the cover is hidden
   // and the page's own dots show there
-  // spec 32 C10: `immersive` only while the strip is away; `band` only while its view is the 8 px band (C9 amendment)
+  // spec 32 C10: `immersive` only while the strip is away; `band` only while its view is the 16 px band (C9 amendment)
   const body = { focused: win.isFocused(), fullScreen: win.isFullScreen(), dots: !!cover?.stripDraws && coverWas.visible, ...(stripHidden ? { immersive: true } : {}), ...(stripBand ? { band: true } : {}) }
   const s = JSON.stringify(body)
   if (s === lastWindow) return
@@ -549,7 +549,7 @@ function composeOnce(o: { focus?: 'shown' }): void {
   }
   // 3. the cover and the strip, on top - the cover in the same turn as the views beneath (A3.8 #30). Spec 32 C9: the
   // strip's immersive sequence around it - away: its CSS out and the lights first, the cover hidden by the plan, the
-  // view shrunk to the 8 px band after MOTION.out.strip (never hidden: the amendment); shown: the view at 44 again, its
+  // view shrunk to the 16 px band after MOTION.out.strip (never hidden: the amendment); shown: the view at 44 again, its
   // controls and CSS in, the lights, then the cover as the plan says
   if (!p.stripShown && !stripHidden) stripLeaves(changes)
   else if (p.stripShown && stripHidden) stripReturns(changes, p.strip)

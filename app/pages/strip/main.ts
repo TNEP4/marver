@@ -570,7 +570,7 @@ if (api) {
     document.body.classList.toggle('fullscreen', w.fullScreen)
     document.body.classList.toggle('dots', w.dots === true)   // app 0.1's cover covers: its still dots, until S15 (A3.8 #3)
     document.body.classList.toggle('immersive', w.immersive === true)   // spec 32 C10: no drag, then the strip runs out
-    document.body.classList.toggle('band', w.band === true)   // C9 amendment: the 8 px band - no controls, the body drags
+    document.body.classList.toggle('band', w.band === true)   // C9 amendment: the 16 px band - no controls, the body drags
   })
   api.onPageFocus((f) => {
     if (f.target !== 'active-tab' || !snap) return

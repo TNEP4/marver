@@ -981,7 +981,7 @@ describe('immersive play (spec 32 C10)', () => {
     expect(norm(back.ease)).toBe(norm(`${MOTION.back.ease}, ${MOTION.back.ease}`))
   })
 
-  it('C9 amendment (Nic, 11 Nov): WindowView.band - the 8 px band paints nothing and has no pointer target, the body drags; back, the controls show', async () => {
+  it('C9 amendment (Nic, 11 Nov): WindowView.band - the 16 px band paints nothing and has no pointer target, the body drags; back, the controls show', async () => {
     await show(snap('t1', FOUR))
     await p.send('window', { rev: 72, focused: true, fullScreen: false, immersive: true })
     await settle()
