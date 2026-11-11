@@ -142,7 +142,8 @@ export function liveSnapshot(input: LiveInput): LiveBody {
   const shown = items.filter(refsFit).sort((a, b) => b.at - a.at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
   // at work (#8): `marver work` holds a frame, or a Jam run runs - a background run, or a claimed one; a stalled,
   // offered, waiting or stopping one does not, whatever leases the daemon keeps for it meanwhile
-  const runsNow = cards.filter((c) => c.state === 'working' && (!c.runner || !c.runner.state || c.runner.state === 'claimed'))
+  // (spec 32 F2: one whose run has not begun - it forms, takes its pictures before, or waits for a slot - is not either)
+  const runsNow = cards.filter((c) => c.state === 'working' && !c.unstarted && (!c.runner || !c.runner.state || c.runner.state === 'claimed'))
   const working = input.cli.length > 0 || runsNow.length > 0
   const kept = shown.slice(0, LIVE_BOUNDS.items)
   const work = workOf(input, runsNow)

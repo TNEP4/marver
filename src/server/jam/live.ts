@@ -37,6 +37,9 @@ export interface QueueView {
     fails?: number
     /** spec 32 F2: a working card's run began then (its batch's `runAt`, else its claim's `at`); absent when unknown */
     startedAt?: number
+    /** spec 32 F2: a working card whose run has not begun yet - its batch forms, takes its pictures before, chooses a
+     *  runner or waits for a process slot (a session's claim begins it). Never at work; absent once it runs */
+    unstarted?: true
   })[]
   /** the sessions connected to this repo now, and the one that takes the work */
   sessions?: { id: string; agent: 'claude' | 'codex' | 'cursor'; busy: boolean; selected: boolean; since: number; mode?: string }[]

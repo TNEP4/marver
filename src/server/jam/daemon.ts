@@ -242,6 +242,11 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   const runningBatches = new Map<string, Batch>()
   /** spec 32 F2: background runs whose runner is set and that wait for a process slot (jam.concurrency): not at work yet */
   const slotWaiting = new Set<string>()
+  /** spec 32 F2: batches set to run that have not begun yet - formed (their cards are `working` already), taking their
+   *  pictures before, recovered at boot, or choosing a runner. A session's claim begins one (`claim.at`); a background
+   *  one leaves for `slotWaiting` as its runner is set. Never at work meanwhile, and never read as an older batch with
+   *  no `runAt` (Codex's round-3 review: a new batch's preparation was counted, then its start jumped at execution) */
+  const preparing = new Set<string>()
   /** every run that starts, counted: a run knows whether another began while it ran */
   let batchStarts = 0
 
@@ -980,7 +985,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         // the runner is the decision now: saved before it runs, and the handoff it came from is spent - and what it was
         // formed for: no session's run any more (heldBy, kept)
         // (spec 32 F2: its run has not begun yet - it waits for a process slot first, shown as waiting, never as working)
-        await q.lock(() => { slotWaiting.add(b.batchId); b.runner = { kind: ch.kind, agent, ...(ch.kind === 'fork' && ch.session ? { session: ch.session } : {}), ...(ch.why ? { why: ch.why } : {}) }; delete b.handoff; delete b.share; q.persist() })
+        await q.lock(() => { slotWaiting.add(b.batchId); preparing.delete(b.batchId); b.runner = { kind: ch.kind, agent, ...(ch.kind === 'fork' && ch.session ? { session: ch.session } : {}), ...(ch.why ? { why: ch.why } : {}) }; delete b.handoff; delete b.share; q.persist() })
         queueChanged()
         // a process slot of its own, whatever brought it here (jam.concurrency is the most Marver spawns at once)
         const permit = await takePermit()
@@ -1296,7 +1301,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       })
       prune(j)
       if (moved() !== was) q.persist()
-      for (const b of batches) runningBatches.set(b.batchId, b)
+      for (const b of batches) { runningBatches.set(b.batchId, b); preparing.add(b.batchId) }
       // each member's wait, measured now (it leaves the queue as it is claimed)
       const now = performance.now()
       for (const b of batches) batchWaits.set(b.batchId, new Map(b.members.flatMap((m) => { const t = queuedSince.get(m.card); return t !== undefined && !atBoot.has(m.card) ? [[m.card, now - t] as [string, number]] : [] })))
@@ -1354,6 +1359,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
 
   const launch = (b: Batch) => {
     runningBatches.set(b.batchId, b)
+    if (!b.results) preparing.add(b.batchId)
     const p = (async () => {
       try { await runBatch(b) } catch (err) {
         log(`  jam: batch error - ${(err as Error).message}`)
@@ -1366,6 +1372,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         }
       } finally {
         if (!delivering.has(b.batchId)) runningBatches.delete(b.batchId)   // a delivery being retried keeps its frames
+        preparing.delete(b.batchId)
         running.delete(b.batchId)
         reserve()
         // what this batch held is free: start what waited on it BEFORE this run counts as over, so
@@ -1446,7 +1453,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       q.persist()
       return out
     })
-    for (const { b } of leftover) runningBatches.set(b.batchId, b)
+    for (const { b, results } of leftover) { runningBatches.set(b.batchId, b); if (!results) preparing.add(b.batchId) }
     reserve()
     // reconcile first (post what is left, move the cards), then re-arm the rest
     // ...and the barrier holds until each is reconciled: nothing new starts, no hold is taken, before a
@@ -1686,12 +1693,15 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
             const b = j.batches.find((x) => x.batchId === c.batch)
             // spec 32 F2: a background run waiting for a process slot is waiting, not working - and has no start yet
             const slot = !!b && slotWaiting.has(b.batchId)
+            // spec 32 F2: one not begun yet - preparing, unclaimed (a claim begins a session's run), or waiting for a slot -
+            // says so, with no start: an older batch with no `runAt` is told apart from it (Codex's round-3 review)
+            const unstarted = slot || (!!b && preparing.has(b.batchId) && !b.claim)
             const r0 = runs.runnerOf(b)
             const r = r0 && slot ? { ...r0, state: 'waiting' as const } : r0
             // spec 32 F2: when its run began - the batch's `runAt`, else (an older journal) its claim's time when claimed;
             // never the card's own `at`, which resolving a working thread rewrites
-            const startedAt = slot ? undefined : b?.runAt ?? b?.claim?.at
-            return { ...(r ? { runner: r } : {}), ...(typeof startedAt === 'number' ? { startedAt } : {}) }
+            const startedAt = unstarted ? undefined : b?.runAt ?? b?.claim?.at
+            return { ...(r ? { runner: r } : {}), ...(typeof startedAt === 'number' ? { startedAt } : {}), ...(unstarted ? { unstarted: true as const } : {}) }
           })() : {}),
         }
       }),

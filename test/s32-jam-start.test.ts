@@ -4,14 +4,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { appendEvents, type CommentEvent } from '../src/server/comments.ts'
-import { createJam } from '../src/server/jam/daemon.ts'
+import { createJam, type JamHooks } from '../src/server/jam/daemon.ts'
 import { claudeAdapter } from '../src/server/jam/adapter/claude.ts'
 import { record } from '../src/server/jam/ledger.ts'
 import { readConn, readOffers, upsertConn } from '../src/server/jam/conn.ts'
 import { request } from '../src/server/jam/transport.ts'
 import { STALL_MS, handleOf } from '../src/server/jam/runs.ts'
 import { liveSnapshot } from '../src/server/app-live.ts'
-import type { Batch, JamAdapter } from '../src/server/jam/types.ts'
+import type { Batch, CaptureRecord, JamAdapter } from '../src/server/jam/types.ts'
 import type { JamConfig } from '../src/server/config.ts'
 
 /**
@@ -55,9 +55,9 @@ const until = async (ok: () => boolean, ms = 8_000, step?: () => unknown) => {
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const REPLY = (text: string) => `\`\`\`marver-reply m1\n${text}\n\`\`\``
 
-async function setup(o: { session?: boolean; adapter?: JamAdapter; cfg?: Partial<JamConfig> } = {}) {
+async function setup(o: { session?: boolean; adapter?: JamAdapter; cfg?: Partial<JamConfig>; hooks?: JamHooks } = {}) {
   const w = workspace()
-  const jam = createJam(w.root, { ...CFG, ...o.cfg }, o.adapter ?? slow(0))
+  const jam = createJam(w.root, { ...CFG, ...o.cfg }, o.adapter ?? slow(0), undefined, o.hooks)
   const conn = upsertConn(w.root, 'claude', randomUUID(), { pid: process.pid, cwd: w.root }, Date.now(), true)
   if (o.session !== false) await jam.session({ action: 'start', id: `ses-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` })
   const ask = async (op: Parameters<typeof request>[2], args: Record<string, unknown> = {}) => {
@@ -227,6 +227,50 @@ describe('a Jam run\'s start (spec 32 F2: Batch.runAt, the view\'s startedAt)', 
     await t
     s.jam.stop(); s.done()
   })
+
+  // a capture's batch is formed (its card `working`) with no runner and no runAt, and takes its pictures before - a wait,
+  // never work: an older batch's fallback (first seen working) must not count it (Codex's round-3 review: since read the
+  // preparation, then jumped to the execution's start)
+  const capture = (): CaptureRecord => ({ format: 'marver.jam.capture', v: 1, id: `cap-${Date.now()}-abcdef`, context: { canvas: 'test', board: 'home' }, view: { board: 'home', frames: ['demo/hero'], theme: 'light' },
+    timeline: [{ at: 1_000, event: 'view', view: { frames: ['demo/hero'] } }, { at: 2_000, event: 'words', text: 'icon labels' }, { at: 3_000, frame: 'demo/hero', event: 'pick', point: 1, mode: 'canvas', bundle: { tag: 'h1', quote: 'Hi' } }], pictures: [] })
+  for (const mode of ['background', 'session'] as const) {
+    it(`a ${mode} run that waits on its pictures before is not at work: no start, no work, until its execution begins`, { timeout: 60_000 }, async () => {
+      let open!: () => void
+      const gate = new Promise<void>((r) => { open = r })
+      let shots = 0
+      const s = await setup({ adapter: slow(1500), ...(mode === 'background' ? { cfg: { runner: 'background' } } : {}), hooks: { shoot: async () => { shots += 1; await gate; return null } } })
+      expect((await s.jam.capture(capture())).ok).toBe(true)
+      const t = s.jam.tick()
+      expect(await until(() => shots >= 1, 8_000)).toBe(true)
+      const b = s.batch()!
+      expect(b.runner).toBeUndefined()
+      expect(b.runAt).toBeUndefined()
+      const prep = s.working()!
+      expect(prep.unstarted).toBe(true)
+      expect(prep.startedAt).toBeUndefined()
+      const live = () => liveSnapshot({ boards: [], fresh: [], jam: s.jam.view(), cli: [] })
+      expect(live().work).toBeUndefined()
+      expect(live().working).toBe(false)
+      await wait(80)
+      expect(live().work).toBeUndefined()                       // still preparing: nothing counted meanwhile
+      const opened = Date.now()
+      open()
+      let handle: string | undefined
+      if (mode === 'session') {
+        expect(await until(() => (readOffers(s.root, s.conn.id)?.n ?? 0) === 1, 8_000, () => s.jam.runs.tick())).toBe(true)
+        expect(live().work).toBeUndefined()                     // offered: not begun either
+        handle = String((await s.ask('next')).handle)
+      }
+      expect(await until(() => typeof s.working()?.startedAt === 'number', 10_000, () => s.jam.runs.tick())).toBe(true)
+      const runAt = s.batch()!.runAt!
+      expect(runAt).toBeGreaterThanOrEqual(opened)
+      expect(s.working()!.unstarted).toBeUndefined()
+      // its start is its execution's, never the time it was first seen preparing
+      expect(live().work).toEqual({ board: 'home', since: runAt })
+      if (handle) expect((await s.ask('done', { handle, text: REPLY('ok') })).ok).toBe(true)
+      s.jam.stop(); await t.catch(() => {}); s.done()
+    })
+  }
 
   it('a batch from an older journal (no runAt) reads its claim\'s at; one never claimed reads nothing from the view', { timeout: 60_000 }, async () => {
     const s = await setup()
