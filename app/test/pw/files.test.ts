@@ -309,8 +309,8 @@ describe('Recently here and Home\'s commands (A2.12, A2.14 #5, #24)', () => {
     const pill = await until(() => call<{ lead?: string } | null>('files.pill'), (p) => !!p, 3000)
     expect(pill).toMatchObject({ lead: 'Couldn\'t save recent.json', short: 'Files not saved' })
     expect(readFileSync(state('recent.json'), 'utf8')).toBe(before)
+    await call('files.statusWritten')   // status.json's own write lands first, so its .tmp is not read mid-write
     expect(readdirSync(state()).filter((n) => n.endsWith('.tmp'))).toEqual([])
-    await call('files.statusWritten')
     expect(JSON.parse(readFileSync(state('status.json'), 'utf8')).write).toMatchObject({ code: 'ENOSPC' })
     await call('home.verified', { ws: WS, root, name: 'R', origin: 'http://[::1]:4903', slot: 3, port: 4903 })
     await until(() => call('files.pill'), (p) => p === null, 3000)
