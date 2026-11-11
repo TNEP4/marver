@@ -1,6 +1,6 @@
 # Changelog - the Marver Mac app
 
-## Unreleased
+## 1.2.1 - 2026-11-11
 
 ### Highlights
 - Settings in glass, with updates in one place

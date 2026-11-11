@@ -241,12 +241,11 @@ describe('spec 33 E2: the Highlights', () => {
     const text = `${H('One', 'Two', 'Three')}\n\n- **Detail.**`
     expect(releaseBody({ notes: text, sha: 'a'.repeat(40) }).startsWith(text)).toBe(true)
   })
-  it('app/CHANGELOG.md\'s newest section opens with valid Highlights', async () => {
+  it('app/CHANGELOG.md has a dated section for package.json\'s version, opening with valid Highlights', async () => {
     const { readFileSync } = await import('node:fs')
-    const log = readFileSync(join(import.meta.dirname, '..', '..', 'CHANGELOG.md'), 'utf8')
-    const lines = log.split('\n')
-    const at = lines.findIndex((l) => l.startsWith('## '))
-    const end = lines.findIndex((l, i) => i > at && l.startsWith('## '))
-    expect(highlightsOf(lines.slice(at + 1, end).join('\n'))).toHaveProperty('lines')
+    const read = (f: string) => readFileSync(join(import.meta.dirname, '..', '..', f), 'utf8')
+    const section = changelogSection(read('CHANGELOG.md'), JSON.parse(read('package.json')).version)
+    expect(section).toHaveProperty('date')
+    expect(highlightsOf(section.text)).toHaveProperty('lines')
   })
 })
