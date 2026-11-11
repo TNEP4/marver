@@ -1,6 +1,6 @@
 # Changelog - the Marver Mac app
 
-## Unreleased
+## 1.2.0 - 2026-11-11
 
 Use it with canvases on marver 0.32.0 for everything below; older canvases keep working as before.
 
