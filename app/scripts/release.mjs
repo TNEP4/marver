@@ -73,9 +73,10 @@ export const CANDIDATE_WAIVERS = ['memory-no-canvas']
  * after 1.0), its number in the record; 1.0.1 the same (Nic, 5 Nov); 1.1.0 the same (Nic, 10 Nov: "it was an arbitrary
  * number - around 200mb is fine"; 203.3 MB measured); 1.2.0 the same (Nic, 11 Nov: waive, then watch it once released on
  * the laptop without the XDR - 266.7 to 498.4 MB measured on 11 Nov, the GPU process 136-360 MB, rising with the display the
- * smoke window lands on; Home v2's glass blur is the new cost). Every other version names none (#3).
+ * smoke window lands on; Home v2's glass blur is the new cost); 1.2.1 the same, under that decision (Settings v2 on the same glass; 448.3 MB
+ * measured on 11 Nov, GPU 316.3 MB). Every other version names none (#3).
  */
-export const RELEASE_WAIVERS = { '1.0.0': ['memory-no-canvas'], '1.0.1': ['memory-no-canvas'], '1.1.0': ['memory-no-canvas'], '1.2.0': ['memory-no-canvas'] }
+export const RELEASE_WAIVERS = { '1.0.0': ['memory-no-canvas'], '1.0.1': ['memory-no-canvas'], '1.1.0': ['memory-no-canvas'], '1.2.0': ['memory-no-canvas'], '1.2.1': ['memory-no-canvas'] }
 /** The smoke checks a build may pass failing at a measured number: a candidate's, else this version's own */
 export const waiversFor = (version, test) => (test ? [...CANDIDATE_WAIVERS] : [...(RELEASE_WAIVERS[version] ?? [])])
 /** the companion's npm name (#2): the repo's own package, read from its package.json - never a bare `marver`, which is someone else's */
