@@ -127,6 +127,20 @@ describe('the windows (#38, #40)', () => {
     expect(r.captures.length).toBe(end)
   })
 
+  it('a gesture after the tail is over but before the next tick ends it: a window of its own, not the old one\'s', async () => {
+    const r = rig()
+    r.o.captureMs = 5
+    r.send(watch(true, 1))                                   // ticks at 0, 250, 500, 750
+    await run(100)
+    r.send(watch(false, 1))                                  // its tail ends at 600
+    await run(600)
+    r.send({ kind: 'gesture', on: true, seq: 7 })            // at 700: over, not yet ended by a tick
+    await run(300)
+    r.send({ kind: 'gesture', on: false, seq: 7 })
+    await run(T.whiteoutTailMs + T.whiteoutTickMs + 50)
+    expect(whiteoutStats().windows).toBe(2)
+  })
+
   it('`shown` is main\'s own: a window from the show, ended at 10 s', async () => {
     const r = rig()
     r.o.captureMs = 5

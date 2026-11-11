@@ -171,6 +171,9 @@ export function startWhiteout(p: WhiteoutPorts): void {
 
   /** The window for `tabId`, opened when none is (another tab's ended first), with this reason added and counted. */
   function join(tabId: string, seq: number, why: WhiteoutWhy): NonNullable<typeof win> {
+    // one already over (its watch past, no gesture running) that its next tick has not ended yet: ended now, so a
+    // reason in that lag opens a window of its own instead of joining the old one's record
+    if (win && win.tabId === tabId && !gestureLive(win, p.now()) && p.now() >= win.watchUntil) endWindow()
     if (!win || win.tabId !== tabId) {
       endWindow()
       win = { tabId, seq, why: new Set(), gesture: null, open: new Set(), watchUntil: 0, counts: { samples: 0, skipped: 0, inconclusive: 0 } }
