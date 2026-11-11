@@ -40,6 +40,8 @@
    the ring put before that look's own shadow */
 .hm-card:focus-visible { outline: 1px solid var(--hm-field-accent); outline-offset: 1px }
 .hm-card:focus-visible::after { opacity: 1 }
+/* a keyboard focus shows at once: the hover fade is for the pointer */
+.hm-card:focus-visible, .hm-card:focus-visible::after { transition: none }
 :root:not(.dark) .hm-card:focus-visible { border-color: rgba(24, 24, 27, .05);
   background: linear-gradient(155deg, rgba(255, 255, 255, .96), rgba(255, 255, 255, .7) 45%, rgba(255, 255, 255, .38));
   box-shadow: 0 0 0 4px var(--hm-accent-ring), inset 0 1px 0 rgba(255, 255, 255, .95) }
@@ -60,6 +62,7 @@
 :root.dark .hm-card:focus-visible:is(:hover, .hov) { box-shadow: 0 0 0 4px var(--hm-accent-ring), var(--hm-shadow-lit) }
 :root.dark .hm-col .hm-card:focus-visible:is(:hover, .hov) { box-shadow: 0 0 0 4px var(--hm-accent-ring) }
 .hm-card:focus-within .hm-more-btn { opacity: 1 }
+.hm-card:focus-visible .hm-more-btn { transition: none }
 /* the round ring; :root lifts it over the design's `.hm .hm-cmd2 button` and `.hm .hm-foot-btn`, which zero the shadow */
 :root .hm-more-btn:focus-visible, :root .hm-chip:focus-visible, :root .hm-icon:focus-visible, :root .hm-cplabel:focus-visible,
 :root .hm-cmd2 button:focus-visible, :root .hm-foot-btn:focus-visible {

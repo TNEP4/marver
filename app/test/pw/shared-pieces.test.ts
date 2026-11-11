@@ -512,6 +512,7 @@ describe('Home\'s token block, menu glass and focus looks (E1, E2, E7)', () => {
     const INK_RIM = 'linear-gradient(155deg, rgba(24, 24, 27, 0.15), rgba(24, 24, 27, 0.05) 30%, rgba(24, 24, 27, 0.03) 65%, rgba(24, 24, 27, 0.1))'
     const EDGE_DARK = 'linear-gradient(155deg, rgba(255, 255, 255, 0.46), rgba(255, 255, 255, 0.1) 30%, rgba(255, 255, 255, 0.04) 65%, rgba(255, 255, 255, 0.24))'
     const INSET = 'rgba(255, 255, 255, 0.95) 0px 1px 0px 0px inset'
+    const GLASS = 'blur(24px) saturate(1.6)'
     const LIT_DARK = 'rgba(255, 255, 255, 0.09) 0px 1px 0px 0px inset, rgba(10, 10, 16, 0.25) 0px 1px 2px 0px, rgba(10, 10, 16, 0.45) 0px 6px 18px -8px'
     const look7 = async (id: string) => ({
       ...(await css(p, `[data-id="${id}"]`, ['outline-color', 'outline-style', 'outline-width', 'outline-offset', 'box-shadow', 'border-top-color', 'background-color', 'background-image', 'backdrop-filter'])),
@@ -528,11 +529,14 @@ describe('Home\'s token block, menu glass and focus looks (E1, E2, E7)', () => {
       const ring = dark ? 'rgba(92, 179, 255, 0.18) 0px 0px 0px 4px' : 'rgba(0, 136, 255, 0.16) 0px 0px 0px 4px'
       const outline = { 'outline-color': accent, 'outline-style': 'solid', 'outline-width': '1px', 'outline-offset': '1px' }
       // the grid card: light H:391-401 (gradient fill, near-invisible border, the inset highlight, the ink rim); dark
-      // H:47, 192-194 (--hm-card-hover's .085, read back as .086 by the 8-bit alpha; border .18, the lit shadow, the white edge light)
+      // H:47, 192-194 (--hm-card-hover's .085, read back as .086 by the 8-bit alpha; border .18, the lit shadow, the white edge light);
+      // both keep D5's card glass (H:45), which no hover rule drops. Read at once: a keyboard focus has no hover fade
       expect(await look7('c1')).toEqual(dark
-        ? { ...outline, 'box-shadow': `${ring}, ${LIT_DARK}`, 'border-top-color': 'rgba(255, 255, 255, 0.18)', 'background-color': 'rgba(255, 255, 255, 0.086)', 'background-image': 'none', 'backdrop-filter': 'none', 'after opacity': '1', 'after background-image': EDGE_DARK }
-        : { ...outline, 'box-shadow': `${ring}, ${INSET}`, 'border-top-color': 'rgba(24, 24, 27, 0.05)', 'background-color': 'rgba(0, 0, 0, 0)', 'background-image': LIGHT_FILL, 'backdrop-filter': 'none', 'after opacity': '1', 'after background-image': INK_RIM })
+        ? { ...outline, 'box-shadow': `${ring}, ${LIT_DARK}`, 'border-top-color': 'rgba(255, 255, 255, 0.18)', 'background-color': 'rgba(255, 255, 255, 0.086)', 'background-image': 'none', 'backdrop-filter': GLASS, 'after opacity': '1', 'after background-image': EDGE_DARK }
+        : { ...outline, 'box-shadow': `${ring}, ${INSET}`, 'border-top-color': 'rgba(24, 24, 27, 0.05)', 'background-color': 'rgba(0, 0, 0, 0)', 'background-image': LIGHT_FILL, 'backdrop-filter': GLASS, 'after opacity': '1', 'after background-image': INK_RIM })
       expect((await css(p, '[data-id="c1-more"]', ['opacity'])).opacity).toBe('1')
+      // c2's button may still be fading from the pointer's leave on the way to the field (D5's .14 s): settled first
+      await p.page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => null))))
       expect((await css(p, '[data-id="c2-more"]', ['opacity'])).opacity).toBe('0')
       await p.page.keyboard.press('Tab')
       expect(await focused(p)).toBe('c1-more')
