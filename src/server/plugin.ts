@@ -1,5 +1,5 @@
 import type { Plugin, ViteDevServer } from 'vite'
-import { boardsChanged, workActivity } from './work.ts'
+import { boardsChanged, pinningBoards, workActivity, workClock } from './work.ts'
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, watch, writeFileSync } from 'node:fs'
 import { join, sep } from 'node:path'
 import { hash } from './manifest.ts'
@@ -291,7 +291,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       server.middlewares.use(perfRunBarrier())
       // spec 28 A4.6 #5: the live stream right after them, ahead of everything that serves content - proved both ways
       // (app-live.ts), one hub per server, closed with it. No slot (no proof): a 404, and no hub is made
-      const hub = ctx.proof ? createLiveHub({ instance: ctx.proof.instance, read: () => liveSnapshot(live.read(manifest.frames)), on: (fn) => workActivity.onChange(fn) }) : null
+      const hub = ctx.proof ? createLiveHub({ instance: ctx.proof.instance, read: () => liveSnapshot(live.read(manifest.frames, manifest.boards)), on: (fn) => workActivity.onChange(fn) }) : null
       if (hub) onClose(() => hub.close())
       server.middlewares.use(liveRoute(hub, ctx.proof))
       // a run's inputs (A3.8 #21): the files this watcher watches - this server's from now on - and every event it fires
@@ -637,12 +637,12 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
  * running server's marks (`freshFrames`); Jam's view (`jamLive.view()`, absent when Jam is off or its lock is held
  * elsewhere); and `marver work`'s own leases - never `active()`, which holds the Jam daemon's too (A4.6 r2 #3).
  */
-export function liveSources(root: string): { read(frames: readonly Pick<FrameEntry, 'id' | 'file' | 'kind'>[]): LiveInput; reads(): number } {
+export function liveSources(root: string): { read(frames: readonly Pick<FrameEntry, 'id' | 'file' | 'kind'>[], boards?: readonly { name: string; title?: string }[]): LiveInput; reads(): number } {
   const dir = join(root, 'design', 'comments')
   const cache = new Map<string, { key: string; threads: Thread[] }>()
   let reads = 0
   return {
-    read(frames) {
+    read(frames, manifestBoards) {
       const names = listBoards(dir)
       for (const b of cache.keys()) if (!names.includes(b)) cache.delete(b)
       const boards: LiveInput['boards'] = []
@@ -653,7 +653,14 @@ export function liveSources(root: string): { read(frames: readonly Pick<FrameEnt
         if (c?.key !== key) { reads++; c = { key, threads: replay(readLog(dir, board)) }; cache.set(board, c) }
         boards.push({ board, threads: c.threads })
       }
-      return { boards, fresh: freshFrames(root, frames), jam: jamLive.view?.(), cli: workActivity.leases('cli').map(([f]) => f) }
+      const cli = workActivity.leases('cli').map(([f]) => f)
+      // spec 32 F2: since when the CLI works (the process's clock, never the hub's), the boards pinning its frames, and
+      // every board's title - the selector names only those its items and `work` carry
+      const titles: Record<string, string> = {}
+      for (const b of manifestBoards ?? []) if (b.title) titles[b.name] = b.title
+      const since = workClock.since()
+      return { boards, fresh: freshFrames(root, frames), jam: jamLive.view?.(), cli,
+        ...(since !== undefined ? { cliSince: since } : {}), ...(cli.length ? { pinning: pinningBoards(root, cli) } : {}), titles }
     },
     reads: () => reads,
   }

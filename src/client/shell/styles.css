@@ -792,8 +792,13 @@ body.sh-space .sh-node { pointer-events: none }                   /* space-drag 
 
 /* ---- Play mode: near-black stage, one centered device, auto-hiding bar.
    Fixed dark palette - the backdrop never follows the board theme, so no tokens here. */
-.sh-play { position: absolute; inset: 0; z-index: 30; background: #0a0a0b; display: flex; padding-top: var(--mv-top, 0px);
-  align-items: center; justify-content: center; animation: sh-play-in .28s ease-out; cursor: auto }
+.sh-play { position: absolute; inset: 0; z-index: 30; background: #0a0a0b; display: flex; padding-top: var(--mv-play-top, var(--mv-top, 0px));
+  align-items: center; justify-content: center; animation: sh-play-in .28s ease-out; cursor: auto;
+  /* spec 32 C5.1 (MOTION, src/shared/immersive.ts): the play inset goes in 320 ms and comes back in 300 ms */
+  transition: padding-top 300ms cubic-bezier(.2, .8, .2, 1) }
+:root.mv-immersive .sh-play { transition: padding-top 320ms cubic-bezier(.2, .8, .2, 1) }
+/* spec 32 C5.2: while the stage FLIPs, the device's own size transition holds off - one animation resizes it */
+.sh-play.flip .dev { transition: none }
 @keyframes sh-play-in { from { opacity: 0 } }
 /* the device wears the frame-node card language: same theme border tokens, the same
    masked 1px edge-light gradient ring (glass catching light), and a real drop shadow
@@ -951,15 +956,29 @@ body.sh-kbd .sh-app :focus-visible { outline: 2px solid var(--accent); outline-o
 /* Hide-UI: one binary body class (canvas + prototype) drops all operating chrome. Not
    persisted - a page refresh always restores it. Comment pins/threads (the review
    annotations) stay; only the marver chrome hides, for a clean point-and-shoot frame. */
-body.sh-hide-ui .sh-pill,
-body.sh-hide-ui .sh-pill-fab,
+body.sh-hide-ui .sh-pill:not(.sh-play-pill),
+body.sh-hide-ui .sh-pill-fab:not(.sh-play *),
 body.sh-hide-ui .sh-panel,
 body.sh-hide-ui .sh-fab,
 body.sh-hide-ui .sh-ctx,
 body.sh-hide-ui .sh-update,
 body.sh-hide-ui .sh-toasts,
-body.sh-hide-ui .sh-banner:not(.sh-stopped),   /* a stopped canvas stays said: the page holds what only it has */
-body.sh-hide-ui .sh-play-nav { display: none !important }
+body.sh-hide-ui .sh-banner:not(.sh-stopped) { display: none !important }   /* a stopped canvas stays said: the page holds what only it has */
+
+/* spec 32 C5.3 (MOTION.out.pills 160 ms, MOTION.back.pills 200 ms): in play the pills, their fab, the navigator and the
+   minimal deck's progress strip fade instead of vanishing - out up (the pills) or down (the nav, the strip), then
+   hidden from the pointer and from view; back at once into view, then up to full.
+   The pills' 6 px goes on `translate`, so `transform` keeps the pill/fab morph (`.closed`, `.hidden`) and its --morph time
+   while the fade's own move takes MOTION's 160 ms out and 200 ms back, ease. */
+.sh-play .sh-play-pill, .sh-play .sh-pill-fab { transition: opacity 200ms ease, translate 200ms ease, transform var(--morph), visibility 0s }
+.sh-play-nav, .sh-slides-strip { transition: opacity 200ms ease, transform 200ms ease, visibility 0s }
+body.sh-hide-ui .sh-play .sh-play-pill, body.sh-hide-ui .sh-play .sh-pill-fab, body.sh-hide-ui .sh-play-nav, body.sh-hide-ui .sh-slides-strip {
+  opacity: 0; pointer-events: none; visibility: hidden;
+  transition: opacity 160ms ease, transform 160ms ease, visibility 0s linear 160ms }
+body.sh-hide-ui .sh-play .sh-play-pill, body.sh-hide-ui .sh-play .sh-pill-fab {
+  translate: 0 -6px; transition: opacity 160ms ease, translate 160ms ease, transform var(--morph), visibility 0s linear 160ms }
+body.sh-hide-ui .sh-play-nav { transform: translateY(6px) }
+body.sh-hide-ui .sh-slides-strip { transform: translateX(-50%) translateY(6px) }
 
 /* the prototype pill reuses the shared pill LAYOUT but wears the discreet DARK skin of the
    bottom-left navigator (not the bright canvas glass), so it recedes into the near-black

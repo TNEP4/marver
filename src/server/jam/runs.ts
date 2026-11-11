@@ -486,6 +486,7 @@ export function createRuns(d: RunsDeps): Runs {
         b.gen = gen
         b.runner = { kind: 'session', agent: conn.agent, conn: conn.id }
         b.claim = { conn: conn.id, inc: conn.inc, ...(conn.pid ? { pid: conn.pid } : {}), gen, at: Date.now(), progress: Date.now() }
+        b.runAt = b.claim.at   // spec 32 F2: its run begins with the claim (a new claim stamps again)
         const handle = handleOf(b, gen)
         const o = { ok: true, handle, frames: b.frames, text: d.goal(b, handle, conn) }
         keep(req, o, b)

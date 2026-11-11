@@ -35,6 +35,8 @@ export interface QueueView {
      *  many times it entered review or failed; `fails` - its batch's `failures`. Absent reads 0 */
     att?: number
     fails?: number
+    /** spec 32 F2: a working card's run began then (its batch's `runAt`, else its claim's `at`); absent when unknown */
+    startedAt?: number
   })[]
   /** the sessions connected to this repo now, and the one that takes the work */
   sessions?: { id: string; agent: 'claude' | 'codex' | 'cursor'; busy: boolean; selected: boolean; since: number; mode?: string }[]
