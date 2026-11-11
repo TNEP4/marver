@@ -10,7 +10,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { appProofOk, liveProof, proofHeaders } from '../../../src/server/proof.ts'
-import { LIVE_BOUNDS, LIVE_WIRE, type LiveEvent, type LiveItem } from '../../../src/shared/app-api.ts'
+import { LIVE_BOUNDS, LIVE_TITLES_MAX, LIVE_WIRE, type LiveEvent, type LiveItem } from '../../../src/shared/app-api.ts'
 import { backoffMs, createLive, parseLive, SseReader, wantsLive, type Live, type LiveChange } from '../../src/main/live.ts'
 import type { RegistryEntry } from '../../src/main/registry.ts'
 import { T } from '../../src/main/timings.ts'
@@ -115,6 +115,29 @@ describe('parsing (A4.6 #11, #16)', () => {
       { ...ok, items: [item(1, { cards: Array.from({ length: 9 }, (_, i) => `c${i}`) })] }, { ...ok, items: [item(1, { gen: 1.5 })] },
       { ...ok, items: [item(1, { note: 'n'.repeat(141) })] }, { ...ok, items: ['ask'] },
     ]) expect(parseLive(bad), JSON.stringify(bad).slice(0, 80)).toBeNull()
+  })
+
+  it('spec 32 F2: work and titles are kept and bounded; either malformed is dropped alone, never the event', () => {
+    const ok = event('i', 3, { items: [item(1)] })
+    const titles = Object.fromEntries(Array.from({ length: LIVE_TITLES_MAX }, (_, i) => [`b${i}`, `Board ${i}`]))
+    const p = parseLive({ ...ok, work: { board: 'tab-strip', since: 1700, extra: 1 }, titles })!
+    expect(p.work).toEqual({ board: 'tab-strip', since: 1700 })
+    expect(p.titles).toEqual(titles)
+    expect(parseLive({ ...ok, work: { since: 5 } })!.work).toEqual({ since: 5 })
+    for (const work of [{ board: 'x' }, { since: -1 }, { since: Number.NaN }, { since: 1, board: 'b'.repeat(129) }, { since: 1, board: 'a\nb' }, 'now', [1]]) {
+      const q = parseLive({ ...ok, work })
+      expect(q, JSON.stringify(work)).not.toBeNull()
+      expect(q).not.toHaveProperty('work')
+    }
+    for (const t of [{ ...titles, extra: 'one too many' }, { b: 'x'.repeat(141) }, { b: 'a\nb' }, { ['k'.repeat(129)]: 'x' }, { '': 'x' }, { b: 1 }, ['x'], 'titles']) {
+      const q = parseLive({ ...ok, titles: t })
+      expect(q).not.toBeNull()
+      expect(q).not.toHaveProperty('titles')
+    }
+    // a 0.31 canvas sends neither
+    const old = parseLive(ok)!
+    expect(old).not.toHaveProperty('work')
+    expect(old).not.toHaveProperty('titles')
   })
 
   it('a stream is wanted only for a ready entry with an origin that lists live', () => {

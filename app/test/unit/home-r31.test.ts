@@ -164,7 +164,7 @@ describe('E3: shared canvases\' name and logo', () => {
 
   it('kept by origin only on success: Home\'s shared links wear the name and logo; a failure keeps nothing', async () => {
     h.noteShared({ url: `${O}/#/b/main`, host: 'pilot.example.com' })
-    expect(h.sharedLinks()[0]).toEqual({ url: `${O}/#/b/main`, host: 'pilot.example.com', lastSeen: expect.any(Number) })
+    expect(h.sharedLinks()[0]).toEqual({ url: `${O}/#/b/main`, host: 'pilot.example.com', lastSeen: expect.any(Number), id: expect.stringMatching(/^s_[0-9a-f]{16}$/) })
     h.noteSite(O, 'Acme Studio', PNG_URL)
     h.noteSite('http://pilot.example.com', 'Nope', undefined)   // not https: never
     expect(h.sharedLinks()[0]).toMatchObject({ name: 'Acme Studio', logo: PNG_URL })

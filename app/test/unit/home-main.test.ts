@@ -308,7 +308,9 @@ describe('home:action', () => {
     for (const a of [
       { action: 'copy-start', id: `r_${WS(9)}` }, { action: 'copy-start', id: `r:${WS(1)}` }, { action: 'copy', id: 'rm -rf ~' }, { action: 'copy', id: 'toString' },
       { action: 'run', id: 'dev' }, null, 'copy',
-    ]) expect(await h.homeAction(a), JSON.stringify(a)).toEqual({ ok: false })
+    ]) expect((await h.homeAction(a)).ok, JSON.stringify(a)).toBe(false)
+    // spec 32 D8.1: a card main does not hold answers `missing` (the funnel fails it so)
+    expect(await h.homeAction({ action: 'copy-start', id: `r_${WS(9)}` })).toEqual({ ok: false, why: 'missing' })
     expect(fx.copied).toEqual([])
   })
 

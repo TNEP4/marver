@@ -14,7 +14,12 @@
  *
  * A shared canvas's tab keeps where it returns (`remoteStart`, `shellDestination`; A4.6 r1 #9): the opening link,
  * moved only to a later page of the shell on the tab's own origin - never to a sign-in route or another site.
+ *
+ * Spec 32 D3: a `marver:` link (`marver://open?ws=...`, what Home's Copy link writes for a stopped canvas) is `deep`
+ * when `parseDeepLink` (src/shared/deep-link.ts, pure, so the page bundles it) accepts it, else `bad`.
  */
+
+import { parseDeepLink } from '../../../src/shared/deep-link.ts'
 
 /** The longest link either side takes (the channels table: under 2 KB). */
 export const LINK_MAX = 2048
@@ -23,6 +28,11 @@ export type ParsedLink =
    /** `rest` is the path, query and hash (always the shell's own document); `host` as written, for the words */
   | { kind: 'local'; port: number; rest: string; host: string; board: string | null }
   | { kind: 'https'; url: string; host: string }
+  /**
+   * spec 32 D3: a `marver:` link `parseDeepLink` accepts (what Copy link writes for a stopped canvas), as typed; main
+   * hands it to its deep-link handler, which checks it again. `ws` the folder it names, for the words
+   */
+  | { kind: 'deep'; url: string; ws: string }
   /** `page`: a loopback link with a port whose path is not the canvas's own page */
   | { kind: 'bad'; why?: 'page'; port?: number }
 
@@ -57,6 +67,11 @@ export function parseLink(raw: unknown): ParsedLink {
   const s = raw.trim()
   if (!s || s.length >= LINK_MAX) return BAD
   if (/[\s\0]/.test(s)) return BAD
+  // spec 32 D3: a `marver:` link is a deep link or nothing - never read as a host
+  if (/^marver:/i.test(s)) {
+    const d = parseDeepLink(s)
+    return d ? { kind: 'deep', url: s, ws: d.ws } : BAD
+  }
   const schemed = /^[a-z][a-z0-9+.-]*:\/\//i.test(s)
   if (!schemed && /^[a-z][a-z0-9+.-]*:(?!\d)/i.test(s)) return BAD   // javascript:, mailto:, data: ... (not host:port)
   let u: URL

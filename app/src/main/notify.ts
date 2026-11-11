@@ -29,7 +29,8 @@
  *   while `notifications` is unset and notices.json holds no `dismissedAt`: the pill's `offer`. Its first raise writes
  *   `offeredAt`; Turn On sets `notifications: true` as Settings would; Not now writes `dismissedAt`.
  */
-import type { LiveItem, OpenItem } from '../../../src/shared/app-api.ts'
+import type { LiveEvent, LiveItem, LiveKind, OpenItem } from '../../../src/shared/app-api.ts'
+import { humanize } from '../../../src/shared/board-tree.ts'
 import type { TabMarks } from '../shared/channels.ts'
 import type { Held, LiveChange } from './live.ts'
 import type { RegistryEvent } from './registry.ts'
@@ -137,6 +138,32 @@ export function openItemOf(i: LiveItem): OpenItem {
   return o
 }
 
+/** Spec 32 D6.1: the kind Home's Needs you line leads with - the first of these whose count is positive. */
+const TOP_ORDER = ['ask', 'failed', 'stalled', 'review'] as const satisfies readonly LiveKind[]
+
+/** A board slug as Home names it (spec 32 F1): the event's title for it, else its humanized slug (a 0.31 canvas). */
+const titleOf = (ev: LiveEvent, slug: string): string => (ev.titles && Object.hasOwn(ev.titles, slug) ? ev.titles[slug]! : humanize(slug))
+
+/**
+ * Spec 32 F1, D6.1 (pure): what Home's card leads with, from the counts alone, never from which items arrived. Its
+ * board only when that is known to be true: the items hold every item of the kind (as many as `counts[kind]`, and
+ * `cut === 0`) and they all name one board.
+ */
+export function topOf(ev: LiveEvent): TabMarks['top'] {
+  const kind = TOP_ORDER.find((k) => ev.counts[k] > 0)
+  if (!kind) return undefined
+  const of = ev.items.filter((i) => i.kind === kind)
+  const boards = new Set(of.map((i) => i.board))
+  const whole = ev.cut === 0 && of.length === ev.counts[kind] && boards.size === 1
+  return whole ? { kind, board: titleOf(ev, [...boards][0]!) } : { kind }
+}
+
+/** Spec 32 F1 (pure): the event's `work`, its board as a title. */
+export function workOf(ev: LiveEvent): TabMarks['work'] {
+  if (!ev.work) return undefined
+  return { since: ev.work.since, ...(ev.work.board ? { board: titleOf(ev, ev.work.board) } : {}) }
+}
+
 interface Seen { ids: Set<string>; started: boolean; afterCut: boolean }
 interface Stop { instance: string; id: string; ws: string }
 
@@ -176,6 +203,13 @@ export function createNotify(ports: NotifyPorts, o: { seenMax?: number } = {}): 
       unseen: h?.event.unseen ?? 0, working: h?.event.working ?? false, session: h?.event.session ?? false,
     }
     if (h?.stale) m.stale = true
+    // spec 32 F1: the counts by kind, and what Home leads with - a stop main holds first, read before the event and
+    // whether or not a snapshot is held (the snapshot goes with its instance, so a stop often has none)
+    if (c) m.kinds = { ask: c.ask, review: c.review, failed: c.failed, stalled: c.stalled }
+    if (stop) { m.stopped = true; m.top = { kind: 'stopped' } }
+    else if (h) { const top = topOf(h.event); if (top) m.top = top }
+    const work = h ? workOf(h.event) : undefined
+    if (work) m.work = work
     return m
   }
 

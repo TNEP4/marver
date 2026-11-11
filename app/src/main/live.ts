@@ -27,7 +27,7 @@
  */
 import { randomBytes } from 'node:crypto'
 import { appProof } from '../../../src/server/proof.ts'
-import { FEATURE, LIVE_BOUNDS, LIVE_KINDS, LIVE_WIRE, type LiveEvent, type LiveItem, type LiveKind } from '../../../src/shared/app-api.ts'
+import { FEATURE, LIVE_BOUNDS, LIVE_KINDS, LIVE_TITLES_MAX, LIVE_WIRE, type LiveEvent, type LiveItem, type LiveKind } from '../../../src/shared/app-api.ts'
 import { checkProof } from './proof.ts'
 import type { RegistryEntry, RegistryEvent } from './registry.ts'
 import { T } from './timings.ts'
@@ -67,7 +67,32 @@ function checkItem(p: unknown): LiveItem | 'skip' | null {
   return it
 }
 
-/** A `LiveEvent` v1, every field checked again (A4.6 #16, A2.14 #19); null for a malformed one. */
+/** Spec 32 F2: `work`, checked - `since` a time, `board` a ref when present; undefined (dropped) when malformed. */
+function checkWork(p: unknown): LiveEvent['work'] | undefined {
+  if (!obj(p) || typeof p.since !== 'number' || !Number.isFinite(p.since) || p.since < 0) return undefined
+  if (p.board !== undefined && !ref(p.board)) return undefined
+  return { since: p.since, ...(p.board !== undefined ? { board: p.board as string } : {}) }
+}
+
+/** Spec 32 F2: `titles`, checked - at most `LIVE_TITLES_MAX` keys, each a ref, each value a title line; undefined
+ *  (dropped, never the event) when malformed. */
+function checkTitles(p: unknown): Record<string, string> | undefined {
+  if (!obj(p)) return undefined
+  const keys = Object.keys(p)
+  if (keys.length > LIVE_TITLES_MAX) return undefined
+  const out: Record<string, string> = {}
+  for (const k of keys) {
+    const v = p[k]
+    if (!ref(k) || !line(v, LIVE_BOUNDS.title) || k === '__proto__') return undefined
+    out[k] = v
+  }
+  return out
+}
+
+/**
+ * A `LiveEvent` v1, every field checked again (A4.6 #16, A2.14 #19); null for a malformed one. Spec 32 F2's optional
+ * `work` and `titles` are bounded too, and either is dropped alone when malformed, never the event.
+ */
 export function parseLive(p: unknown): LiveEvent | null {
   if (!obj(p) || p.v !== 1 || typeof p.instance !== 'string' || !whole(p.seq) || (p.jam !== 'on' && p.jam !== 'off')) return null
   if (!Array.isArray(p.items) || p.items.length > LIVE_BOUNDS.items || !whole(p.cut)) return null
@@ -80,10 +105,13 @@ export function parseLive(p: unknown): LiveEvent | null {
     if (it === null) return null
     if (it !== 'skip') items.push(it)
   }
+  const work = p.work === undefined ? undefined : checkWork(p.work)
+  const titles = p.titles === undefined ? undefined : checkTitles(p.titles)
   return {
     v: 1, instance: p.instance, seq: p.seq, jam: p.jam, items, cut: p.cut,
     counts: { ask: c.ask as number, review: c.review as number, failed: c.failed as number, stalled: c.stalled as number },
     unseen: p.unseen, working: p.working, session: p.session,
+    ...(work ? { work } : {}), ...(titles ? { titles } : {}),
   }
 }
 

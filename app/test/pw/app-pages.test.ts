@@ -58,7 +58,7 @@ describe('Home and Settings (A2.5)', () => {
     await w.run.call('exec', { target: 'home', js: "location.href = 'https://example.com/'; 1" })
     await sleep(500)
     expect((await w.log('policy', since)).map((l) => l.data)).toContainEqual(expect.objectContaining({ event: 'navigation-refused', url: 'https://example.com/' }))
-    expect(await homeText()).toMatch(/On this Mac|Welcome to Marver/)   // the page stayed
+    expect(await homeText()).toMatch(/No canvas running yet|Needs you|Running \d/)   // the page stayed (spec 32 D7, D10: the board, or the empty state)
     expect((await w.log('page', since)).filter((l) => l.data.ready === 'home')).toEqual([])   // it never reloaded
     await canvas(3, 'After the refused navigation')
     expect(await homeSays('After the refused navigation')).toContain('After the refused navigation')

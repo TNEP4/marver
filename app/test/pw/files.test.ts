@@ -77,7 +77,7 @@ describe('first launch (A2.12, A2.14 #24)', () => {
     } finally { await f.close() }
   })
 
-  it('state/launched only once Home has shown; the welcome holds for the run; the next launch is "On this Mac" and quick', async () => {
+  it('state/launched only once Home has shown; the welcome holds for the run (on the wire: the empty state of Home is the welcome, spec 32 D10); the next launch is not the first, and quick', async () => {
     env = testEnv(runSlotBase())
     await launch()
     expect(existsSync(state('launched'))).toBe(false)

@@ -1,9 +1,5 @@
-/* Home (spec 28 A2.7, A2.12; frames mac-app/04, 10, 11, 14): the app's own page, on the ground and its still dots,
-   in the shell's glass. */
-
-/* the window's full height under the transparent strip (A3.8 #32): the page never scrolls - its ground and still dots
-   fill the view, under the strip too - and its one scroll area starts 44 px down, so nothing to read or click, and
-   nothing scrolled, ever passes under the tabs */
+/* Home v2 (spec 32 Part D; design scenes home-v2/_home.css, its values after the cascade): the app's own page on
+   its ground and glow, in its own `--hm-*` tokens. */
 /* ---- spec 32 E1, E2, E7: Home's own tokens, the menu's interface and the focus looks --------------------------
    Prefixed `--hm-*` (Nic, gaps.md 5); the values are the design's after its cascade (H). */
 :root {
@@ -57,6 +53,12 @@
    dark has no shadow, so its ring stands alone */
 .hm-col .hm-card:focus-visible { -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5) }
 :root.dark .hm-col .hm-card:focus-visible { background: rgba(255, 255, 255, .065); box-shadow: 0 0 0 4px var(--hm-accent-ring) }
+/* a focused card that is also hovered, or wears Home's .hov (an open menu, a deep link), keeps its ring: D5's hover
+   rules come later in the file and would replace the shadow, so these outrank them, grid and board */
+:root:not(.dark) .hm-card:focus-visible:is(:hover, .hov), :root:not(.dark) .hm-col .hm-card:focus-visible:is(:hover, .hov) {
+  box-shadow: 0 0 0 4px var(--hm-accent-ring), inset 0 1px 0 rgba(255, 255, 255, .95) }
+:root.dark .hm-card:focus-visible:is(:hover, .hov) { box-shadow: 0 0 0 4px var(--hm-accent-ring), var(--hm-shadow-lit) }
+:root.dark .hm-col .hm-card:focus-visible:is(:hover, .hov) { box-shadow: 0 0 0 4px var(--hm-accent-ring) }
 .hm-card:focus-within .hm-more-btn { opacity: 1 }
 /* the round ring; :root lifts it over the design's `.hm .hm-cmd2 button` and `.hm .hm-foot-btn`, which zero the shadow */
 :root .hm-more-btn:focus-visible, :root .hm-chip:focus-visible, :root .hm-icon:focus-visible, :root .hm-cplabel:focus-visible,
@@ -64,83 +66,244 @@
   outline: 1px solid var(--hm-field-accent); outline-offset: 1px; box-shadow: 0 0 0 4px var(--hm-accent-ring) }
 /* ---- end of spec 32's token block ------------------------------------------------------------------------------ */
 
+/* ---- the page (spec 32 D1) ------------------------------------------------------------------------------------
+   The design's class names (`hm-*`, home-v2/_home.css) and its values after the cascade. `body.hm` scopes the
+   design's button reset (H:15): it beats a class alone, so the icon buttons rest transparent and borderless. */
 html, body { overflow: hidden }
-.home { position: fixed; inset: 44px 0 0 0; overflow: auto; padding: 30px 48px 26px; display: flex; flex-direction: column; gap: 16px }
-.top { display: flex; align-items: flex-start; gap: 16px; flex-wrap: wrap }
-.h1 { flex: 1; min-width: 200px; padding-top: 6px; font: 600 20px/1.2 -apple-system, system-ui, sans-serif; letter-spacing: -.01em }
-.h2 { font: 600 11px/1 -apple-system, system-ui, sans-serif; letter-spacing: .02em; color: var(--glass-ink-3); text-transform: uppercase; margin-top: 10px }
+body.hm { background: var(--hm-glow), var(--hm-ground); color: var(--hm-ink); font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif }
+.hm button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: pointer }
+#hm-root { position: fixed; inset: 0 }
+/* the menus' and Help's layer: above the body, never inside a card (D8) */
+#hm-layer { position: fixed; inset: 0; z-index: 30; pointer-events: none }
+#hm-layer > * { pointer-events: auto }
 
-/* the link field (⌘L) and the line under it */
-.link { width: min(440px, 100%); display: grid; gap: 6px }
-.field { height: 34px; border-radius: 9px; display: flex; align-items: center; gap: 8px; padding: 0 12px; color: var(--glass-ink-3);
-  background: var(--node-bg); box-shadow: inset 0 0 0 .5px var(--glass-brd), 0 1px 2px rgba(0, 0, 0, .04) }
-.field:focus-within { color: var(--glass-ink); box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-ring) }
-.field-ic { display: grid; flex: none }
-.field input { flex: 1; min-width: 0; height: 100%; border: 0; outline: none; background: none; padding: 0;
-  font: 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--glass-ink); -webkit-user-select: text; user-select: text }
-.field input::placeholder { font: 13px/1 -apple-system, system-ui, sans-serif; color: var(--glass-ink-3) }
-.field input:focus-visible { box-shadow: none; outline: none }
-.field-key { flex: none; font: 500 11px/1 -apple-system, system-ui, sans-serif; color: var(--glass-ink-3) }
-.hint-row { min-height: 16px; display: flex; align-items: center; gap: 12px; padding: 0 2px }
-.hint-row .hint { display: inline-flex; align-items: center; gap: 4px; min-width: 0 }
-.hint-row .back { margin-left: auto; flex: none }
-.hint b { font-weight: 600; color: var(--glass-ink-2) }
-.hint kbd { font: 500 10.5px/1 -apple-system, system-ui, sans-serif; color: var(--glass-ink-3) }
-.hint .logo { display: inline-grid; vertical-align: -3px; margin: 0 2px }
-.hint.refused { color: var(--glass-warn) }
+/* D1.3: 14 px from each window edge, 22 px under the strip; the grid scrolls (a defect fixed: the design clips), the
+   board does not (its columns do, D7.3) */
+.hm-body { position: absolute; left: 0; right: 0; top: 44px; bottom: 0; padding: 22px 14px 14px; overflow: hidden }
+.hm-body.grid { overflow-y: auto }
 
-.body { display: grid; gap: 16px; align-content: start }
-/* four across at the window's default size, as frames 04 and 10 draw them (a 1280 px window: about 278 px each); fewer,
-   never narrower than 210 px, in a narrower window */
-.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(max(210px, calc((100% - 3 * 14px) / 4)), 1fr)); gap: 14px }
+/* D2: the header */
+.hm-head { display: flex; align-items: center; gap: 12px; height: 40px; margin-bottom: 22px }
+.hm-head.on-board { padding: 0 15px }
+.hm-brand { display: flex; align-items: center; gap: 9px; margin: 0; font: 680 19px/1 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; letter-spacing: -.015em }
+.hm-sp { flex: 1 }
+.hm-slot { display: contents }
+.hm-icon { position: relative; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; flex: none; transition: background .14s, color .14s }
+.hm .hm-icon { color: var(--hm-ink-3) }
+.hm-icon svg { width: 16px; height: 16px }
+/* the "?" renders in the reset's inherited 400, at the design's 16 px (the frame's root size; .hm-q's 650 14px loses, H:151) */
+.hm .hm-q { font-size: 16px; font-weight: 400; line-height: 1 }
+:root:not(.dark) .hm .hm-icon:hover, :root:not(.dark) .hm .hm-icon.on {
+  background: linear-gradient(155deg, rgba(255, 255, 255, .9), rgba(255, 255, 255, .55) 50%, rgba(255, 255, 255, .3));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .95); color: var(--hm-ink);
+  -webkit-backdrop-filter: blur(16px) saturate(1.5); backdrop-filter: blur(16px) saturate(1.5) }
+:root.dark .hm .hm-icon:hover, :root.dark .hm .hm-icon.on { background: rgba(255, 255, 255, .08); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08); color: var(--hm-ink) }
+/* E7: a focused icon button that is hovered or open (Help's "?" while Help shows) keeps its ring: the ring before the
+   look's own inset highlight, in a rule that outranks the look's */
+:root:not(.dark) .hm .hm-icon:focus-visible:is(:hover, .on) { box-shadow: 0 0 0 4px var(--hm-accent-ring), inset 0 1px 0 rgba(255, 255, 255, .95) }
+:root.dark .hm .hm-icon:focus-visible:is(:hover, .on) { box-shadow: 0 0 0 4px var(--hm-accent-ring), inset 0 1px 0 rgba(255, 255, 255, .08) }
 
-/* a canvas's card: in the shell's glass */
-.card { position: relative; min-width: 0; border: 0; border-radius: 12px; padding: 14px; display: grid; gap: 6px; align-content: start;
-  text-align: left; background: var(--glass); backdrop-filter: var(--blur);
-  box-shadow: inset 0 0 0 .5px var(--glass-brd), 0 1px 3px rgba(0, 0, 0, .05); color: var(--glass-ink); font: inherit }
-button.card:hover { box-shadow: inset 0 0 0 .5px var(--glass-brd), 0 2px 8px rgba(0, 0, 0, .08) }
-.card-hd { display: flex; align-items: center; gap: 10px; font-weight: 600; margin-bottom: 4px; min-width: 0 }
-.card-hd span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-.card small { color: var(--glass-ink-3); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-.card .state { margin-top: 4px; font-size: 11.5px; color: var(--glass-ink-2); display: flex; align-items: center; gap: 6px }
-.card .state .spin { width: 10px; height: 10px; margin: 0 }
-.card .note { font-size: 11px; color: var(--glass-ink-3) }
-.card.stopped .card-hd span { color: var(--glass-ink-2) }
-.slot-warn { flex: none; display: grid; place-items: center; width: 30px; height: 30px; color: #d97706 }
-.card.stopped .cmd { margin-top: 6px; justify-self: start }
-.card.is-gone .state, .card.is-unreachable .state { color: var(--glass-ink-3) }
-/* spec 31 D1: the canvas a marver:// link named, not running - its card leads, ringed in the accent */
-.card.linked { box-shadow: inset 0 0 0 1.5px var(--accent), 0 1px 3px rgba(0, 0, 0, .05) }
-.card .linked-why { color: var(--glass-ink-2) }
-/* spec 31 E4: a running canvas's update, under its card's button (a button holds no button) */
-.card-wrap { position: relative; display: grid; min-width: 0 }
-.card-wrap > .card.has-update { padding-bottom: 50px }
-.card-wrap > .update { position: absolute; left: 14px; right: 14px; bottom: 12px; display: flex; align-items: center; gap: 8px; min-width: 0;
-  font-size: 11.5px; color: var(--glass-ink-2) }
-.card-wrap > .update b { font-weight: 650; color: var(--glass-ink) }
-.card-wrap > .update .cmd { height: 24px; padding: 0 9px; min-width: 0; flex: 1 }
-.card-wrap > .update .cmd code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+/* D3: the link field */
+.hm-field { position: relative; flex: none }
+.hm-link { position: relative; width: 300px; height: 34px; border-radius: 999px; display: flex; align-items: center; gap: 8px; padding: 0 6px 0 13px;
+  background: var(--hm-card); border: 1px solid var(--hm-hair); color: var(--hm-ink-3); font-size: 13px; cursor: text;
+  -webkit-backdrop-filter: blur(20px) saturate(1.5); backdrop-filter: blur(20px) saturate(1.5);
+  transition: background .16s, border-color .16s, box-shadow .16s }
+.hm-link > svg { width: 14px; height: 14px; flex: none }
+.hm-link input { flex: 1; min-width: 0; height: 100%; border: 0; outline: none; box-shadow: none; background: none; padding: 0;
+  font: 400 13px/1 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; color: var(--hm-ink); -webkit-user-select: text; user-select: text }
+.hm-link input:focus, .hm-link input:focus-visible { outline: none; box-shadow: none }
+.hm-link input::placeholder { color: var(--hm-ink-3) }
+.hm-link::after { content: ''; position: absolute; inset: -1px; padding: 1px; border-radius: inherit; pointer-events: none; opacity: 0; transition: opacity .16s;
+  background: var(--hm-edge-light);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite: exclude }
+.hm-kbd { flex: none; font: 500 11px/1 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; color: var(--hm-ink-3); padding: 4px 7px; border-radius: 999px;
+  background: var(--hm-chip); opacity: 0; transition: opacity .14s }
+.hm-link:hover .hm-kbd, .hm-link:focus-within .hm-kbd { opacity: 1 }
+:root:not(.dark) .hm-link:not(:focus-within):hover { background: rgba(255, 255, 255, .6); border-color: rgba(24, 24, 27, .1) }
+:root.dark .hm-link:not(:focus-within):hover { background: rgba(255, 255, 255, .07); border-color: var(--hm-hair-2) }
+.hm-link:not(:focus-within):hover::after { opacity: .5 }
+.hm-link:focus-within { background: rgba(255, 255, 255, .92); border-color: rgba(0, 136, 255, .55); color: var(--hm-field-accent);
+  box-shadow: 0 0 0 3.5px rgba(0, 136, 255, .16), inset 0 1px 0 rgba(255, 255, 255, .9), 0 6px 18px -8px rgba(0, 100, 220, .3) }
+.hm-link:focus-within::after { opacity: 1;
+  background: linear-gradient(155deg, #fff, rgba(120, 190, 255, .55) 35%, rgba(0, 136, 255, .35) 65%, rgba(255, 255, 255, .9)) }
+.hm-link:focus-within .hm-kbd { background: rgba(0, 136, 255, .1); color: var(--hm-field-accent) }
+:root.dark .hm-link:focus-within { background: rgba(30, 32, 42, .9); border-color: rgba(92, 179, 255, .6);
+  box-shadow: 0 0 0 3.5px rgba(92, 179, 255, .18), inset 0 1px 0 rgba(255, 255, 255, .08), 0 6px 18px -8px rgba(0, 0, 0, .5) }
+:root.dark .hm-link:focus-within::after {
+  background: linear-gradient(155deg, rgba(255, 255, 255, .6), rgba(92, 179, 255, .4) 35%, rgba(92, 179, 255, .2) 65%, rgba(255, 255, 255, .35)) }
+/* the line under the field: floating, right-aligned to it, so the header never grows */
+.hm-hint { position: absolute; top: calc(100% + 6px); right: 0; display: flex; gap: 12px; align-items: center; white-space: nowrap;
+  font: 400 11.5px/1.2 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; color: var(--hm-ink-3); pointer-events: none }
+.hm-hint:empty { display: none }
+.hm-hint-text { display: inline-flex; align-items: center; gap: 4px }
+.hm-hint-text.refused { color: var(--hm-ink-2) }
+.hm-hint b { font-weight: 600; color: var(--hm-ink-2) }
+.hm-hint kbd { font: 500 10.5px/1 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; color: var(--hm-ink-3) }
 
-/* nothing running: how to start one */
-.empty { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 12px 14px 12px 18px }
-.empty > span { flex: 1; min-width: 0 }
-.empty b { font-weight: 600 }
-.empty .soft { color: var(--glass-ink-2) }
-.welcome { grid-column: span 2; padding: 18px 20px; gap: 10px }
-.welcome .lead { font: 600 15px/1.3 -apple-system, system-ui, sans-serif }
-.welcome .soft { color: var(--glass-ink-2) }
-.welcome hr { height: 1px; border: 0; background: var(--glass-brd); margin: 4px 0; width: 100% }
-.welcome .cmd { justify-self: start }
-.ghost { background: none; backdrop-filter: none; box-shadow: none; border: 1.5px dashed color-mix(in srgb, var(--glass-ink) 16%, transparent) }
+/* D4: the grid */
+.hm-sec { font: 600 11.5px/1 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; letter-spacing: .02em; color: var(--hm-ink-3); margin: 0 4px 10px;
+  display: flex; gap: 8px; align-items: center }
+.hm-sec b { font-weight: 600; color: var(--hm-ink-3); opacity: .8 }
+.hm-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 26px }
 
-.foot { margin-top: auto; padding-top: 18px; display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center }
-.foot .old { flex: 1; min-width: 260px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap }
-.foot .cmd { height: 24px; padding: 0 9px }
-.foot .files { display: flex; align-items: center; gap: 10px }
-.foot .unwritable { color: var(--glass-warn) }
+/* D5: the card - glass, no shadow; a logo, a name, one line; hover never changes its size */
+.hm-card { position: relative; border-radius: 18px; padding: 12px; min-width: 0; background: var(--hm-card); border: 1px solid var(--hm-hair);
+  -webkit-backdrop-filter: blur(24px) saturate(1.6); backdrop-filter: blur(24px) saturate(1.6); cursor: pointer;
+  transition: background .16s, box-shadow .16s, border-color .16s }
+.hm-card::after { content: ''; position: absolute; inset: -1px; padding: 1px; border-radius: inherit; pointer-events: none; opacity: 0; transition: opacity .16s;
+  background: var(--hm-edge-light);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite: exclude }
+.hm-card:hover, .hm-card.hov { background: var(--hm-card-hover); border-color: var(--hm-hair-2); box-shadow: var(--hm-shadow-lit) }
+.hm-card:hover::after, .hm-card.hov::after { opacity: 1 }
+:root.dark .hm-card:hover, :root.dark .hm-card.hov { border-color: rgba(255, 255, 255, .18) }
+.hm-off.hm-card:hover::after, .hm-off.hm-card.hov::after { opacity: .6 }
+:root:not(.dark) .hm-card:hover, :root:not(.dark) .hm-card.hov { border-color: rgba(24, 24, 27, .05); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .95);
+  background: linear-gradient(155deg, rgba(255, 255, 255, .96), rgba(255, 255, 255, .7) 45%, rgba(255, 255, 255, .38)) }
+:root:not(.dark) .hm-card:hover::after, :root:not(.dark) .hm-card.hov::after { opacity: 1;
+  background: linear-gradient(155deg, rgba(24, 24, 27, .15), rgba(24, 24, 27, .05) 30%, rgba(24, 24, 27, .03) 65%, rgba(24, 24, 27, .1)) }
+/* a card whose menu is open: its hover look, above its neighbours, its own blur dropped (H:196, 252) */
+.hm-card.menu-open { z-index: 40; -webkit-backdrop-filter: none !important; backdrop-filter: none !important }
+.hm-row { display: flex; align-items: center; gap: 11px }
+.hm-txt { flex: 1; min-width: 0; display: grid; gap: 2px }
+.hm-top { display: flex; align-items: center; gap: 8px; min-width: 0; height: 17px }
+.hm-name { flex: 1; min-width: 0; font: 600 14px/1.15 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.hm-end { flex: none; height: 17px; margin-right: -3px; display: grid; place-items: center end }
+.hm-more-btn { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; opacity: 0; transition: opacity .14s, background .14s }
+.hm-more-btn svg { width: 16px; height: 16px }
+.hm .hm-more-btn:hover { background: var(--hm-hair-2); color: var(--hm-ink) }
+.hm-card:hover .hm-more-btn, .hm-card.hov .hm-more-btn { opacity: 1 }
+.hm .hm-more-btn.on { opacity: 1; background: var(--hm-hair-2); color: var(--hm-ink) }
+.hm-line { font: 400 12.5px/1.2 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; color: var(--hm-ink-2); display: flex; align-items: center; gap: 6px;
+  white-space: nowrap; overflow: hidden }
+.hm-ell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0 }
+.hm-dot { flex: none; width: 7px; height: 7px; border-radius: 50% }
+.hm-dot.live { background: var(--hm-live) } .hm-dot.ask { background: var(--hm-ask) } .hm-dot.new { background: var(--hm-new) }
+.hm-dot.off { background: var(--hm-off) }
+.hm-dot.work { background: var(--hm-accent); animation: hm-pulse 1.4s ease-in-out infinite }
+@keyframes hm-pulse { 50% { opacity: .35 } }
+.hm-num { font-weight: 700; margin-right: .05em }
+.hm-num.ask { color: var(--hm-ask) } .hm-num.new { color: var(--hm-new) }
+/* the logo (E4's options form): initials on their hue with no plate; greyed while not running, back on hover */
+.hm-card .logo:not(.plate), .hm-chip .logo:not(.plate) { box-shadow: none }
+.hm-off .logo { filter: grayscale(.85); opacity: .55 }
+.hm-off:hover .logo, .hm-off.hov .logo { filter: none; opacity: 1 }
+.hm-warn { flex: none; display: grid; place-items: center; color: #d97706 }
 
-@media (max-width: 760px) { .home { padding: 24px 24px 20px } .welcome { grid-column: auto } }
+/* D7: the board */
+.hm-board { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; height: calc(100% - 62px - 58px) }
+.hm-col { position: relative; isolation: isolate; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 20px;
+  border: 1px solid var(--hm-hair); background: none }
+.hm-col::before { content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none; background: rgba(255, 255, 255, .56);
+  -webkit-backdrop-filter: blur(32px) saturate(1.4); backdrop-filter: blur(32px) saturate(1.4) }
+:root.dark .hm-col::before { background: rgba(255, 255, 255, .03) }
+.hm-col:has(.menu-open) { z-index: 5 }
+.hm-col-h { display: flex; align-items: center; gap: 7px; padding: 2px 4px 4px; font: 600 12.5px/1 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; flex: none }
+.hm-col-h small { margin-left: auto; font: 600 11px/1 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; color: var(--hm-ink-3) }
+/* D7.3: a full column scrolls its cards under its header; 5 px of room inside the scroller holds the focus ring */
+.hm-col-list { display: flex; flex-direction: column; gap: 8px; flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 5px; margin: -5px; scrollbar-width: thin }
+.hm-col-list > .hm-card { flex: 0 0 auto }
+.hm-col .hm-card { padding: 11px; min-height: 0; border-radius: 15px }
+.hm-col .hm-name { font-size: 13px }
+.hm-col .hm-line { font-size: 12px; line-height: 1.3 }
+.hm-col .hm-line .hm-ell { display: block }
+.hm-col .hm-line .hm-dot { display: none }
+.hm-col .hm-card:hover, .hm-col .hm-card.hov { box-shadow: none; -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5) }
+:root:not(.dark) .hm-col .hm-card:hover, :root:not(.dark) .hm-col .hm-card.hov { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .95) }
+:root.dark .hm-col .hm-card:hover, :root.dark .hm-col .hm-card.hov { background: rgba(255, 255, 255, .065) }
+.hm-col-empty { font: 400 12px/1.4 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; color: var(--hm-ink-3); padding: 8px 6px }
+/* D7.5: the shared row - chips scroll sideways, no scrollbar, a 14 px fade at the right edge; 5 px above and below hold
+   the focus ring inside the scroller */
+.hm-shared { display: flex; align-items: center; gap: 8px; margin: 19px 0 -5px; padding: 5px 14px 5px 11px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 14px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 14px), transparent) }
+.hm-shared::-webkit-scrollbar { display: none }
+.hm-shared > .hm-sec { margin: 0 6px 0 4px; flex: none }
+.hm-chip { position: relative; flex: none; display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px 0 4px; border-radius: 999px; white-space: nowrap;
+  background: var(--hm-card); border: 1px solid var(--hm-hair); font: 500 12.5px/1 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; cursor: pointer }
+.hm-chip:hover { background: var(--hm-card-hover) }
+.hm-chip.menu-open { z-index: 40; background: var(--hm-card-hover) }
+
+/* D9: Help */
+.hm-help2 { position: absolute; right: 14px; top: 108px; z-index: 20; width: 420px; padding: 0; border-radius: 18px;
+  display: flex; flex-direction: column; max-height: calc(100vh - 108px - 14px); transform-origin: top right;
+  background: rgba(255, 255, 255, .82); border: 1px solid rgba(24, 24, 27, .1); color: var(--hm-ink);
+  -webkit-backdrop-filter: blur(24px) saturate(150%); backdrop-filter: blur(24px) saturate(150%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .7), 0 1px 2px rgba(24, 24, 27, .05), 0 18px 44px -18px rgba(24, 24, 27, .3) }
+:root.dark .hm-help2 { background: rgba(26, 27, 34, .9); border-color: rgba(255, 255, 255, .14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 18px 44px -18px rgba(0, 0, 0, .6) }
+.hm-help2.up { top: auto; bottom: 58px; right: 14px; transform-origin: bottom right; max-height: calc(100vh - 44px - 58px - 8px) }
+.hm-help2::after { content: ''; position: absolute; inset: -1px; padding: 1px; border-radius: inherit; pointer-events: none; background: var(--hm-edge-light);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite: exclude }
+.hm-help2 > header { flex: none; padding: 14px 16px 12px }
+/* the clip moves to the inner wrapper (D9.4), so the ring shows; it scrolls under the pinned header (D9.1) */
+.hm-help-in { flex: 1 1 auto; min-height: 0; overflow-y: auto; border-radius: 0 0 17px 17px }
+.hm-help-in > section, .hm-help-in > footer { padding: 12px 16px; border-top: 1px solid var(--hm-hair-2) }
+.hm-help2 h4 { margin: 0; font: 650 14px/1.2 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; color: var(--hm-ink) }
+.hm-help2 header p { margin: 4px 0 0; font: 400 12px/1.4 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; color: var(--hm-ink-3) }
+.hm-hs, .hm-help-in > footer { display: flex; align-items: flex-start; gap: 11px }
+.hm-help-in > footer { align-items: center; background: none }
+.hm-hs-body { flex: 1; min-width: 0; display: grid; gap: 2px }
+.hm-hs-body h5 { margin: 0; font: 600 13px/1.25 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; color: var(--hm-ink); padding-top: 1px }
+.hm-hs-body p { margin: 0; font: 400 12px/1.45 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; color: var(--hm-ink-2) }
+.hm-help-in > footer .hm-hs-body p { font: 500 11.5px/1.3 ui-monospace, 'SF Mono', Menlo, monospace; color: var(--hm-ink-3) }
+.hm .hm-foot-btn { flex: none; height: 28px; padding: 0 12px; border-radius: 999px; background: none; border: 1px solid var(--hm-hair-2); box-shadow: none;
+  font: 600 12px/1 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; color: var(--hm-ink); cursor: pointer }
+.hm .hm-foot-btn:hover { background: var(--hm-chip) }
+/* D9.6: a command in a pill that inverts the theme, its Copy button at the far right */
+.hm-cmd2 { margin-top: 8px; display: flex; align-items: center; gap: 8px; padding: 0 4px 0 14px; min-height: 34px; border-radius: 999px; border: 0; background: #1c1d22 }
+.hm-cmd2.two { border-radius: 18px }
+.hm-cmd2 code { flex: 1; min-width: 0; display: grid; padding: 8px 0; font: 500 11.5px/1.45 ui-monospace, 'SF Mono', Menlo, monospace; color: rgba(255, 255, 255, .92) }
+.hm-cmd2 code span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+:root.dark .hm-cmd2 { background: #f2f3f6 }
+:root.dark .hm-cmd2 code { color: #18181b }
+.hm .hm-cmd2 button { position: relative; overflow: hidden; flex: none; margin-left: auto; width: 26px; height: 26px; border-radius: 50%; box-shadow: none;
+  background: rgba(255, 255, 255, .12); color: rgba(255, 255, 255, .78); transition: background .2s, color .2s; cursor: pointer }
+.hm .hm-cmd2 button:hover { background: rgba(255, 255, 255, .2); color: #fff }
+:root.dark .hm .hm-cmd2 button { background: rgba(24, 24, 27, .08); color: rgba(24, 24, 27, .7) }
+:root.dark .hm .hm-cmd2 button:hover { background: rgba(24, 24, 27, .14); color: #18181b }
+.hm-cmd2 button i { position: absolute; inset: 0; display: grid; place-items: center; transition: opacity .22s ease, transform .32s cubic-bezier(.3, 1.5, .5, 1) }
+.hm-cmd2 button .hm-cp-b { opacity: 0; transform: scale(.4) rotate(-45deg) }
+.hm-cmd2 button.done .hm-cp-a { opacity: 0; transform: scale(.4) rotate(45deg); transition: opacity .14s ease, transform .2s ease }
+.hm-cmd2 button.done .hm-cp-b { opacity: 1; transform: none }
+.hm .hm-cmd2 button.done { background: rgba(52, 199, 89, .22); color: #4cd964 }
+:root.dark .hm .hm-cmd2 button.done { background: rgba(30, 150, 70, .14); color: #1f9d55 }
+.hm-help-in .unwritable { color: var(--hm-ink-2) }
+
+/* D10: the empty state - it is the welcome */
+.hm-empty { position: absolute; inset: 44px 0 0; display: grid; place-items: safe center; overflow-y: auto; text-align: center; padding-bottom: 76px }
+.hm-empty-in { width: 520px; display: grid; gap: 14px; justify-items: center }
+.hm-empty-in h2 { margin: 6px 0 0; font: 680 26px/1.15 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; letter-spacing: -.02em }
+.hm-empty-in > p { margin: -8px 0 8px; font: 400 14px/1.5 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; color: var(--hm-ink-2) }
+.hm-empty-steps { width: 100%; display: grid; gap: 10px; text-align: left }
+.hm-empty-steps .hm-card { cursor: default }
+.hm-cmd { display: flex; align-items: center; gap: 8px; min-height: 32px; margin-top: 6px; padding: 7px 6px 7px 11px; border-radius: 999px; background: var(--hm-chip);
+  font: 500 11.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--hm-ink) }
+.hm-cmd > span { flex: 1; min-width: 0; white-space: normal; overflow-wrap: anywhere; line-height: 1.45 }
+.hm-empty-link .hm-field { display: block }
+.hm-empty-link .hm-link { width: auto; margin-top: 6px }
+.hm .hm-float { position: absolute; right: 14px; bottom: 14px; z-index: 6 }
+/* D10.5: Copy -> Copied -> Copy, the labels sliding past each other */
+.hm .hm-cplabel { position: relative; display: inline-grid; overflow: hidden; flex: none; padding: 0 9px; height: 22px; border-radius: 999px;
+  background: var(--hm-card-hover); font: 600 11px/22px -apple-system, BlinkMacSystemFont, system-ui, sans-serif; color: var(--hm-ink); cursor: pointer;
+  transition: background .2s, color .2s }
+.hm-cplabel > span { grid-area: 1 / 1; display: flex; align-items: center; justify-content: center; gap: 4px; white-space: nowrap;
+  transition: transform .3s cubic-bezier(.3, 1.3, .5, 1), opacity .2s ease }
+.hm-cplabel .b { transform: translateY(100%); opacity: 0 }
+.hm-cplabel.done .a { transform: translateY(-100%); opacity: 0 }
+.hm-cplabel.done .b { transform: none; opacity: 1 }
+.hm .hm-cplabel.done { background: rgba(52, 199, 89, .16); color: #1f9d55 }
+:root.dark .hm .hm-cplabel.done { background: rgba(52, 199, 89, .18); color: #4cd964 }
+
+/* E1: Reduce Transparency / Increase Contrast - no blur, an inset hairline, solid fills; Reduce Motion - nothing pulses */
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  .card { backdrop-filter: none; box-shadow: inset 0 0 0 1px var(--node-brd) }
-  .ghost { box-shadow: none }
+  .hm-card, .hm-chip, .hm-link, .hm-help2, .hm-col::before, .hm .hm-icon:hover, .hm .hm-icon.on { -webkit-backdrop-filter: none !important; backdrop-filter: none !important }
+  .hm-card, .hm-chip, .hm-link, .hm-help2 { background: var(--solid) !important; box-shadow: inset 0 0 0 1px var(--node-brd) !important }
+  .hm-col::before { background: var(--solid) }
+  .hm-col { box-shadow: inset 0 0 0 1px var(--node-brd) }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hm-dot.work { animation: none }
 }
