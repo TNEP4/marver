@@ -61,6 +61,8 @@ import type { TabIdent } from '../../../src/shared/app-perf.ts'
 import { coverReady, makeCover, type Cover } from './cover.ts'
 import { isQuitting } from './shutdown.ts'
 import { appCmd } from './commands.ts'
+import type { ViewFacts } from './immersive-gate.ts'
+import { MOTION } from '../../../src/shared/immersive.ts'
 
 export { STRIP_HEIGHT }
 
@@ -87,6 +89,24 @@ let cover: Cover | null = null
 let strip: WebContentsView | null = null
 let deps: WindowDeps | null = null
 let turn = 0
+
+/**
+ * Spec 32 B1.4, C8.2: what each compose reads of views.ts (set by it, as `setFocusPorts` is): the strip's Marver menu
+ * open (plan.ts `menu`: the strip grows to the window), and, for every canvas tab, the immersive gate's answer -
+ * views.ts runs `gateOf` and `step`, stores the grant, sends the answer, and says whether the strip shows for it.
+ */
+export interface ComposePorts {
+  immersive(tab: Tab, facts: ViewFacts): boolean
+  menuOpen(): boolean
+}
+let composePorts: ComposePorts | null = null
+export function setComposePorts(p: ComposePorts | null): void { composePorts = p }
+
+/** Spec 32 C9: the strip hidden for immersive play (its CSS run out first, then the view), and the traffic lights. */
+let stripHidden = false
+let stripShownView = true
+let stripTimer: ReturnType<typeof setTimeout> | undefined
+let lightsOn = true
 
 const j = (topic: string, data: unknown) => { if (__MV_TEST__) note(topic, data) }
 
@@ -225,6 +245,20 @@ export function sendHeld(wc: WebContents, channel: string, payload: unknown): vo
 /** `page:focus`, held until the page says ready (A2.13). */
 export function sendPageFocus(wc: WebContents, f: PageFocus): void { sendHeld(wc, CH.pageFocus, f) }
 
+/**
+ * Spec 32 B1.2: a message to the strip now - dropped while it is not ready (a refused open's `tab-menu: null` too: the
+ * strip's own 1 s fallback clears its classes then).
+ */
+export function sendToStrip(channel: string, payload: unknown): void { send(stripContents(), channel, payload) }
+
+/** Spec 32 B1.2: the strip said `app:ready` for its current document (main never opens a menu in a strip that is not). */
+export const stripReady = (): boolean => { const s = stripContents(); return !!s && ready.has(s) }
+
+/** Spec 32 B3.6, B12.6: the strip's renderer gone (the reload below) or hung - views.ts takes the grown menu back. */
+const stripTroubleFns = new Set<(why: 'gone' | 'unresponsive') => void>()
+export function onStripTrouble(fn: (why: 'gone' | 'unresponsive') => void): () => void { stripTroubleFns.add(fn); return () => { stripTroubleFns.delete(fn) } }
+const stripTrouble = (why: 'gone' | 'unresponsive') => { for (const fn of [...stripTroubleFns]) { try { fn(why) } catch (err) { process.stderr.write(`marver-app: a strip-trouble listener threw: ${(err as Error).message}\n`) } } }
+
 /** The strip's `pill` (pill.ts chose it). */
 export function sendPill(v: unknown): void {
   pillBody = v
@@ -257,7 +291,8 @@ function feedWindow(): void {
   // the strip's still dots while a cover that has the strip draw them covers (app 0.1's plain view until S15, A3.8 #3;
   // variant 4 after): a canvas keeps 0.1's look under the tabs; over Home, Settings and a tab page the cover is hidden
   // and the page's own dots show there
-  const body = { focused: win.isFocused(), fullScreen: win.isFullScreen(), dots: !!cover?.stripDraws && coverWas.visible }
+  // spec 32 C10: `immersive` only while the strip is hidden (absent reads false)
+  const body = { focused: win.isFocused(), fullScreen: win.isFullScreen(), dots: !!cover?.stripDraws && coverWas.visible, ...(stripHidden ? { immersive: true } : {}) }
   const s = JSON.stringify(body)
   if (s === lastWindow) return
   lastWindow = s
@@ -360,12 +395,51 @@ export function compose(o: { focus?: 'shown' } = {}): void {
 /** The tab's own page shows over it this turn (A2.11). */
 const pageShows = (t: Tab): boolean => { const h = pages.get(t.id); return !!h && !h.closing && !!h.body }
 
-function planTab(t: Tab, appDark: boolean, presented: boolean): PlanTab {
+function planTab(t: Tab, appDark: boolean, presented: boolean, immersive = false): PlanTab {
   const h = pages.get(t.id)
   return {
     id: t.id, kind: t.kind, view: content.has(t.id), page: !!h && !h.closing && !!h.body, pageView: !!h,
-    dark: darkOf(t, appDark), placed: placed(t), seeThrough: seeThrough(t), presented,
+    dark: darkOf(t, appDark), placed: placed(t), seeThrough: seeThrough(t), presented, ...(immersive ? { immersive } : {}),
   }
+}
+
+/** Spec 32 C9: the traffic lights shown or hidden (they pop: they cannot fade), and put back at `LIGHTS` when shown. */
+function setLights(on: boolean): void {
+  lightsOn = on
+  if (!win || win.isDestroyed()) return
+  try {
+    win.setWindowButtonVisibility(on)
+    if (on) win.setWindowButtonPosition(LIGHTS)
+  } catch { /* not on this platform */ }
+}
+
+/** Spec 32 C9: after either full-screen transition, the lights' visibility and `LIGHTS` both, hidden or shown. */
+function reapplyLights(): void {
+  lightsOn = !stripHidden
+  if (!win || win.isDestroyed()) return
+  try {
+    win.setWindowButtonVisibility(lightsOn)
+    win.setWindowButtonPosition(LIGHTS)
+  } catch { /* not on this platform */ }
+}
+
+/** Spec 32 C9, shown to hidden: the strip's CSS runs out (no-drag first), the lights pop; the view hides after it. */
+function stripLeaves(changes: unknown[]): void {
+  stripHidden = true
+  feedWindow()   // WindowView.immersive: true
+  setLights(false)
+  changes.push({ key: 'strip', op: 'immersive', shown: false })
+}
+
+/** Spec 32 C9, hidden to shown: the view back at once, its CSS runs in, the lights back at `LIGHTS`. */
+function stripReturns(changes: unknown[]): void {
+  stripHidden = false
+  clearTimeout(stripTimer)
+  stripTimer = undefined
+  if (!stripShownView && strip) { strip.setVisible(true); stripShownView = true; changes.push({ key: 'strip', op: 'visible', visible: true }) }
+  feedWindow()   // WindowView.immersive absent
+  setLights(true)
+  changes.push({ key: 'strip', op: 'immersive', shown: true })
 }
 
 // ---- the one ground's state: a live resize, the lift's delay ----
@@ -435,7 +509,19 @@ function composeOnce(o: { focus?: 'shown' }): void {
   // its sent epoch's record as hidden, and its replies are refused from now (A3.8 #27)
   if (!observed) showing(null, now)
   for (const id of epochIdent.keys()) if (epochOf(id) === null) epochIdent.delete(id)   // its view forgotten
-  const p: Plan = plan({ tabs: allTabs().map((t) => planTab(t, appDark, t === a && eligible && presented)), active: a?.id ?? 'home', w, h, appDark, resizing })
+  // spec 32 C8.2: the immersive gate, for every canvas tab (one that lost eligibility while not active is ended too):
+  // views.ts answers its document and says whether the strip shows; the active tab's answer goes to the plan
+  let immersive = false
+  if (composePorts) {
+    for (const t of allTabs()) {
+      if (t.kind !== 'local') continue
+      const shown = composePorts.immersive(t, { active: t === a, view: content.has(t.id), page: pageShows(t), placed: placed(t), seeThrough: seeThrough(t) })
+      if (t === a && !shown) immersive = true
+    }
+  }
+  // spec 32 B1.2: the menu's state is main's, read at every compose - a mark, a pill or a resize never shrinks it
+  const menu = composePorts?.menuOpen() ?? false
+  const p: Plan = plan({ tabs: allTabs().map((t) => planTab(t, appDark, t === a && eligible && presented, t === a && immersive)), active: a?.id ?? 'home', w, h, appDark, resizing, menu })
   lastPlan = p
   const changes: unknown[] = []
   // 1. bounds, shown or hidden, and each view's ground
@@ -455,7 +541,11 @@ function composeOnce(o: { focus?: 'shown' }): void {
     if (!a || !view) continue
     if (v.visible && !a.vis) { view.setVisible(true); a.vis = true; changes.push({ key: v.key, op: 'visible', visible: true }) }
   }
-  // 3. the cover and the strip, on top - the cover in the same turn as the views beneath (A3.8 #30)
+  // 3. the cover and the strip, on top - the cover in the same turn as the views beneath (A3.8 #30). Spec 32 C9: the
+  // strip's immersive sequence around it - hidden: its CSS out and the lights first, the cover hidden by the plan, the
+  // view hidden after MOTION.out.strip; shown: the view, its CSS in, the lights, then the cover as the plan says
+  if (!p.stripShown && !stripHidden) stripLeaves(changes)
+  else if (p.stripShown && stripHidden) stripReturns(changes)
   cover!.setRect(p.cover.rect)
   strip!.setBounds(p.strip)
   if (p.cover.color !== coverWas.color) { cover!.setLook(p.cover.dark); win!.setBackgroundColor(p.cover.color) }
@@ -468,6 +558,15 @@ function composeOnce(o: { focus?: 'shown' }): void {
     }
   }
   coverWas = { visible: p.cover.visible, color: p.cover.color }
+  if (stripHidden && stripShownView && !stripTimer) {
+    stripTimer = setTimeout(() => {
+      stripTimer = undefined
+      if (!stripHidden || !strip || !stripShownView) return
+      strip.setVisible(false)
+      stripShownView = false
+      if (__MV_TEST__) j('strip', { visible: false, turn })
+    }, MOTION.out.strip)
+  }
   // 4. focus, before the hides: what the active tab shows now holds it (A2.13)
   afterShow(o.focus)
   // 5. hides
@@ -488,7 +587,9 @@ function composeOnce(o: { focus?: 'shown' }): void {
   if (__MV_TEST__ && changes.length) {
     const layouts: Record<string, Layout> = {}
     for (const t of allTabs()) if (t.kind === 'local' && content.has(t.id)) layouts[t.id] = placed(t)
-    noteTopic('compose', { turn, active: p.active, w, h, cover: coverWas, changes, resizing, layouts })
+    // spec 32 C9: the strip shown or hidden for immersive play, and the lights (beside the frozen topic's fields)
+    const line = { turn, active: p.active, w, h, cover: coverWas, changes, resizing, layouts, strip: stripHidden ? 'hidden' : 'shown', lights: lightsOn }
+    noteTopic('compose', line)
   }
   feedTabs()
   feedWindow()
@@ -709,10 +810,13 @@ export function openWindow(d?: WindowDeps): BaseWindow {
   registerApp(strip.webContents, 'strip')
   track(strip.webContents, { part: 'strip' })
   strip.webContents.on('render-process-gone', () => {
-    // the cover stays, showing ground; the strip comes back
+    // the cover stays, showing ground; the strip comes back. Spec 32 B12.6: its menu's grown view taken back at once
     j('strip', { gone: true })
+    stripTrouble('gone')
     setTimeout(() => { if (strip && !strip.webContents.isDestroyed()) void strip.webContents.loadURL(`${APP_ORIGIN}strip/`).catch(() => {}) }, 0)
   })
+  // spec 32 B3.6: a hung strip renderer costs 44 px again, never a full-window view that swallows clicks
+  strip.webContents.on('unresponsive', () => { j('strip', { unresponsive: true }); stripTrouble('unresponsive') })
   if (cover.view) win.contentView.addChildView(cover.view)
   win.contentView.addChildView(strip)
   void strip.webContents.loadURL(`${APP_ORIGIN}strip/`).catch(() => { /* served by sessions.ts */ })
@@ -733,8 +837,9 @@ export function openWindow(d?: WindowDeps): BaseWindow {
   win.on('will-resize', () => startLiveResize())
   win.on('resized', () => endLiveResize('resized'))
   win.on('resize', () => { if (resizing) armQuiet(); compose(); deferred() })
-  win.on('enter-full-screen', () => { compose(); deferred() })
-  win.on('leave-full-screen', () => { compose(); deferred() })
+  // spec 32 C9: full screen re-applies the lights' visibility and LIGHTS (macOS puts them back its own way)
+  win.on('enter-full-screen', () => { reapplyLights(); compose(); deferred() })
+  win.on('leave-full-screen', () => { reapplyLights(); compose(); deferred() })
   win.on('focus', () => { feedWindow(); front() })
   win.on('blur', () => feedWindow())
   for (const ev of ['show', 'hide', 'minimize', 'restore'] as const) win.on(ev as 'show', () => { onVisibility(); feedWindow(); if (ev === 'show' || ev === 'restore') front() })

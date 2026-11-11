@@ -74,7 +74,8 @@ describe('planDeepLink: the real folder, and the port hint only within it', () =
 
   it('a reused port: the hint names another canvas\'s port - never opened; Home for this folder instead', () => {
     const other = entry({ ws: workspaceOf(B), root: B, port: 4807, origin: 'http://[::1]:4807', name: 'Other' })
-    expect(planDeepLink(link({ port: 4807 }), A, [other])).toEqual({ kind: 'home', root: A, ws: workspaceOf(A), exists: true })
+    // spec 32 D6.5: the link's port goes to Home, which picks the gone tab on it among that folder's
+    expect(planDeepLink(link({ port: 4807 }), A, [other])).toEqual({ kind: 'home', root: A, ws: workspaceOf(A), exists: true, port: 4807 })
     const mine = entry({ port: 4806 })
     expect(planDeepLink(link({ port: 4807 }), A, [other, mine])).toEqual({ kind: 'canvas', entry: mine })
   })
@@ -95,11 +96,11 @@ describe('planDeepLink: the real folder, and the port hint only within it', () =
 describe('routeDeepLink: an open tab is shown the place, never loaded', () => {
   interface T { id: string; live: boolean }
   const run = (raw: string, o: { entries?: LinkCanvas[]; tab?: T } = {}) => {
-    const did: { show: [string, ShowTarget | 'landing'][]; open: [string, string | null, string][]; home: [string, string, boolean][]; focus: number } = { show: [], open: [], home: [], focus: 0 }
+    const did: { show: [string, ShowTarget | 'landing'][]; open: [string, string | null, string][]; home: [string, string, boolean, number?][]; focus: number } = { show: [], open: [], home: [], focus: 0 }
     const r = routeDeepLink<T>(raw, {
       entries: () => o.entries ?? [entry()], realpath: real, focus: () => { did.focus++ },
       tabFor: () => o.tab, live: (t) => t.live,
-      show: (t, to) => { did.show.push([t.id, to]) }, open: (e, url, rest) => { did.open.push([e.origin ?? '', url, rest]) }, home: (root, ws, exists) => { did.home.push([root, ws, exists]) },
+      show: (t, to) => { did.show.push([t.id, to]) }, open: (e, url, rest) => { did.open.push([e.origin ?? '', url, rest]) }, home: (root, ws, exists, port) => { did.home.push(port !== undefined ? [root, ws, exists, port] : [root, ws, exists]) },
     })
     return { r, did }
   }
@@ -130,6 +131,8 @@ describe('routeDeepLink: an open tab is shown the place, never loaded', () => {
   it('not running: Home with its card; a bad link: nothing at all, not even the window', () => {
     const { r, did } = run(buildDeepLink({ ws: B, to })!)
     expect([r, did.home]).toEqual(['home', [[B, workspaceOf(B), true]]])
+    // spec 32 D6.5: the link's port reaches Home's callback (its gone tabs: the one on that port), absent when it names none
+    expect(run(buildDeepLink({ ws: B, to, port: 4900 })!).did.home).toEqual([[B, workspaceOf(B), true, 4900]])
     const bad = run('marver://open?ws=relative')
     expect([bad.r, bad.did.focus, bad.did.open, bad.did.show, bad.did.home]).toEqual(['bad', 0, [], [], []])
   })

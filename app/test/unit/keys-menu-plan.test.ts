@@ -232,3 +232,44 @@ describe('the layout: a canvas without the one ground stays below the strip (A2.
     expect(p.views.filter((v) => v.visible).map((v) => v.key)).toEqual(['home:view'])
   })
 })
+
+describe('spec 32 B1.1, C8: the plan\'s menu and immersive inputs (pure)', () => {
+  const tab = (id: string, kind: 'local' | 'home' | 'settings', o: Record<string, unknown> = {}) =>
+    ({ id, kind, view: true, page: false, pageView: false, dark: false, ...o })
+  const see = { placed: 'full' as const, seeThrough: true, presented: true }
+  const STRIP = { x: 0, y: 0, width: 1280, height: 44 }
+  const WHOLE = { x: 0, y: 0, width: 1280, height: 820 }
+
+  it('B1.1: `menu` grows the strip to the window; the cover keeps its own 44 px rect (never the strip\'s object)', () => {
+    for (const active of ['home', 't1']) {
+      const p = plan({ tabs: [tab('home', 'home'), tab('t1', 'local', see)], active, w: 1280, h: 820, appDark: false, menu: true })
+      expect(p.strip).toEqual(WHOLE)
+      expect(p.cover.rect).toEqual(STRIP)
+      expect(p.stripShown).toBe(true)
+    }
+    const q = plan({ tabs: [tab('home', 'home')], active: 'home', w: 1280, h: 820, appDark: false })
+    expect(q.strip).toEqual(STRIP)
+    expect(q.cover.rect).toEqual(STRIP)
+    expect(q.cover.rect).not.toBe(q.strip)
+    // the canvas rects are the menu's business not at all
+    const a = plan({ tabs: [tab('home', 'home'), tab('t1', 'local', see)], active: 't1', w: 1280, h: 820, appDark: false })
+    const b = plan({ tabs: [tab('home', 'home'), tab('t1', 'local', see)], active: 't1', w: 1280, h: 820, appDark: false, menu: true })
+    expect(b.views).toEqual(a.views)
+    expect(b.cover).toEqual(a.cover)
+  })
+
+  it('C8: the active tab immersive - the strip not shown, no cover, the canvas rect unchanged; a menu never grows a hidden strip', () => {
+    const tabs = [tab('home', 'home'), tab('t1', 'local', { ...see, presented: false, immersive: true })]
+    const p = plan({ tabs, active: 't1', w: 1280, h: 820, appDark: false })
+    expect(p.stripShown).toBe(false)
+    expect(p.cover.visible).toBe(false)
+    expect(p.views.find((v) => v.key === 't1:view')).toMatchObject({ rect: WHOLE, visible: true })
+    expect(plan({ tabs, active: 't1', w: 1280, h: 820, appDark: false, menu: true }).strip).toEqual(STRIP)
+    // not the active one, or with a tab page over it, or no view: the strip shows
+    expect(plan({ tabs, active: 'home', w: 1280, h: 820, appDark: false }).stripShown).toBe(true)
+    expect(plan({ tabs: [tab('t1', 'local', { ...see, immersive: true, page: true, pageView: true })], active: 't1', w: 1280, h: 820, appDark: false }).stripShown).toBe(true)
+    expect(plan({ tabs: [tab('t1', 'local', { ...see, immersive: true, view: false })], active: 't1', w: 1280, h: 820, appDark: false }).stripShown).toBe(true)
+    // without it: today's
+    expect(plan({ tabs: [tab('t1', 'local', see)], active: 't1', w: 1280, h: 820, appDark: false }).stripShown).toBe(true)
+  })
+})

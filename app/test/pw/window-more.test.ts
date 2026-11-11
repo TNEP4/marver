@@ -1,7 +1,8 @@
 /**
  * The window stream's smaller paths, end to end with the fake trust (spec 28 A2.4, A2.7, A2.11, A2.14 #19, #21, #24):
- * a hidden tab's own page closed after its delay and made again when shown; the strip's right-click menu and `»`
- * menu built from main's record (their native popups recorded, never put on the screen); the logo - at most one
+ * a hidden tab's own page closed after its delay and made again when shown; the strip's Marver menu and the `»` menu
+ * built from main's record (spec 32 B: drawn by the strip in its grown view; the journal's `popup` record read, a row
+ * run by `popup:click`, a menu nobody picks from closed by `popup:close`); the logo - at most one
  * fetch in flight per tab, the older aborted by a newer one or a navigation, applied to the document it was
  * fetched for; and the checks a failed tab makes at once when the Mac wakes. Durations shortened only where the
  * rule, not the duration, is under test (a hidden tab page's close; the retries kept long so only the wake looks).
@@ -17,7 +18,8 @@ beforeAll(async () => {
 })
 afterAll(async () => { await w?.close() })
 
-interface PopupItem { label: string; enabled: boolean; checked?: boolean }
+/** spec 32 B15: `{label, enabled}` - no `checked` (B5: » never lists the active tab) */
+interface PopupItem { label: string; enabled: boolean }
 const lastPopup = async () => ((await w.log('popup')).at(-1)?.data.items ?? []) as PopupItem[]
 const effects = () => w.run.call<{ copies: string[]; opened: string[] }>('effects')
 
@@ -54,20 +56,20 @@ describe('the strip\'s menus, from main\'s record (A2.4, A2.7, A2.14 #19, #24)',
     await w.report(id, { unsaved: false })
     await w.run.call('tabMenu', { id })
     expect(await lastPopup()).toEqual([
-      { label: 'Open in Browser', enabled: true }, { label: 'Reveal in Finder', enabled: true },
-      { label: 'Copy Local Link', enabled: true }, { label: 'Mark All as Seen', enabled: true },
+      { label: 'Open in browser', enabled: true }, { label: 'Reveal in Finder', enabled: true },
+      { label: 'Copy local link', enabled: true }, { label: 'Mark all as seen', enabled: true },
       // spec 31 B.1: beside it, for a canvas whose features say `resolve-all` (the fake's do not: greyed)
-      { label: 'Resolve All Comments', enabled: false }, { label: 'Close Tab', enabled: true },
+      { label: 'Resolve all comments', enabled: false }, { label: 'Close tab', enabled: true },
     ])
     const before = (await effects()).copies.length
-    expect(await w.run.call('popup:click', { label: 'Copy Local Link' })).toBe(true)
+    expect(await w.run.call('popup:click', { label: 'Copy local link' })).toBe(true)
     const copies = (await effects()).copies
     expect(copies.length).toBe(before + 1)
     expect(copies.at(-1)).toBe(`http://localhost:${port}/`)   // the people link, never the bound origin
     // Mark All as Seen: main's own mv:menu-click to the canvas - not an item the page's mv:menu offers
     await w.run.call('tabMenu', { id })
     const since = (await w.log()).length
-    expect(await w.run.call('popup:click', { label: 'Mark All as Seen' })).toBe(true)
+    expect(await w.run.call('popup:click', { label: 'Mark all as seen' })).toBe(true)
     expect((await w.log('fake-trust', since)).map((l) => l.data)).toContainEqual({ menuClick: 'mark-all-seen', tab: id })
     expect((await w.log('tab-act', since)).map((l) => l.data)).toContainEqual({ what: 'mark-all-seen', tab: id, sent: true })
   })
@@ -78,8 +80,9 @@ describe('the strip\'s menus, from main\'s record (A2.4, A2.7, A2.14 #19, #24)',
     await w.until((x) => !!x.tabs.find((t) => t.id === c.id)?.doc?.lifted, 10_000, 'lifted')
     await w.run.call('tabMenu', { id: c.id })
     const items = await lastPopup()
-    expect(items.find((i) => i.label === 'Copy Local Link')!.enabled).toBe(true)
-    expect(items.find((i) => i.label === 'Mark All as Seen')!.enabled).toBe(false)
+    expect(items.find((i) => i.label === 'Copy local link')!.enabled).toBe(true)
+    expect(items.find((i) => i.label === 'Mark all as seen')!.enabled).toBe(false)
+    await w.run.call('popup:close')   // nothing picked: no grown strip left over the window (B15)
     await w.run.call('activate', { id })
   })
 
@@ -91,23 +94,97 @@ describe('the strip\'s menus, from main\'s record (A2.4, A2.7, A2.14 #19, #24)',
     expect(t.reports.safety).toBe('stale')
     await w.run.call('tabMenu', { id })
     const items = await lastPopup()
-    expect(items.find((i) => i.label === 'Open in Browser')!.enabled).toBe(false)
-    expect(items.find((i) => i.label === 'Copy Local Link')!.enabled).toBe(false)
-    expect(await w.run.call('popup:click', { label: 'Copy Local Link' })).toBe(false)
+    expect(items.find((i) => i.label === 'Open in browser')!.enabled).toBe(false)
+    expect(items.find((i) => i.label === 'Copy local link')!.enabled).toBe(false)
+    expect(await w.run.call('popup:click', { label: 'Copy local link' })).toBe(false)
+    await w.run.call('popup:close')
   })
 
-  it('the » menu names each tab behind it with its state, the active one checked; choosing one activates it', async () => {
+  it('the » menu names each tab behind it with its state, no check; choosing one activates it', async () => {
     const s = await w.state()
     const stopped = s.tabs.find((t) => t.name === 'Stopped one')!
     await w.run.call('tabsMore', { ids: [stopped.id, id] })
     const items = await lastPopup()
     expect(items).toEqual([
-      { label: 'Stopped one - stopped', enabled: true, checked: false },
-      { label: 'Tidewell', enabled: true, checked: true },
+      { label: 'Stopped one - stopped', enabled: true },
+      { label: 'Tidewell', enabled: true },
     ])
     expect(await w.run.call('popup:click', { label: 'Stopped one - stopped' })).toBe(true)
     await w.until((x) => x.active === stopped.id, 3000, 'the tab chosen from »')
     await w.run.call('activate', { id: 'home' })
+  })
+})
+
+describe('spec 32 B12: what closes the strip\'s menu, in the window (its grown view shrinks back to 44 px)', () => {
+  const stripBounds = async () => (await w.run.call<{ key: string; bounds: { height: number } }[]>('views')).find((v) => v.key === 'strip')!.bounds
+  const menuState = () => w.run.call<{ rev: number; shown: boolean; closing: boolean } | null>('tabMenu:state')
+  const until = async (what: string, f: () => Promise<boolean>, ms = 3000) => {
+    const end = Date.now() + ms
+    while (!(await f())) { if (Date.now() > end) throw new Error(`timed out: ${what}`); await sleep(40) }
+  }
+  /** the menu open, grown and shown (B3.5): B3.6's 500 ms deadline can no longer shrink it, only a close can */
+  const open = async (tab: string) => {
+    await w.run.call('tabMenu', { id: tab })
+    await until('the strip grown', async () => (await stripBounds()).height > 44)
+    await until('the menu shown', async () => (await menuState())?.shown === true)
+    const s = (await menuState())!
+    return { rev: s.rev, since: (await w.log()).length }
+  }
+  /** what main journalled for that rev since it showed: never B3.6's no-show */
+  const menuLines = async (m: { rev: number; since: number }) => (await w.log('tab-menu', m.since)).map((l) => l.data as Record<string, unknown>).filter((d) => d.rev === m.rev)
+  const shrunk = (why: string) => until(`shrunk after ${why}`, async () => (await menuState()) === null && (await stripBounds()).height === 44)
+  /** B12: main's own close (`tab-menu: null`), then the strip's ack for that rev */
+  const closedByMain = async (why: string, m: { rev: number; since: number }) => {
+    await shrunk(why)
+    const ls = await menuLines(m)
+    expect(ls.some((d) => d.closed === true), `${why}: main's close`).toBe(true)
+    expect(ls.some((d) => d.noShow), `${why}: no deadline`).toBe(false)
+  }
+
+  it('a tab switch, ⌘W and the window\'s blur each close it and shrink the strip; popup:close too', async () => {
+    const a = await w.canvas({ slot: 7, name: 'Menu one' })
+    const b = await w.canvas({ slot: 8, name: 'Menu two' })
+    await w.run.call('activate', { id: a.id })
+    let m = await open(a.id)
+    await w.run.call('activate', { id: b.id })
+    await closedByMain('a tab switch', m)
+    m = await open(b.id)
+    await w.run.call('command', { cmd: 'close-tab' })
+    await closedByMain('⌘W', m)
+    await w.run.call('activate', { id: a.id })
+    await w.run.call('focusApp')
+    m = await open(a.id)
+    await w.run.call('hide')
+    await closedByMain('the window hidden (its blur)', m)
+    await w.run.call('show', { focus: false })
+    m = await open(a.id)
+    await w.run.call('popup:close')
+    await closedByMain('popup:close', m)
+  })
+
+  it('a strip crash takes the grown view back at once', async () => {
+    const s = await w.state()
+    const tab = s.tabs.find((t) => t.name === 'Menu one')!
+    const m = await open(tab.id)
+    await w.run.call('crash', { target: 'strip' })
+    await shrunk('the strip crashed')
+    const ls = await menuLines(m)
+    expect(ls.some((d) => d.trouble === 'gone')).toBe(true)
+    expect(ls.some((d) => d.noShow)).toBe(false)
+  })
+
+  it('popup:click after the live menu\'s deadline still acts from lastPopup', async () => {
+    const s = await w.state()
+    const tab = s.tabs.find((t) => t.name === 'Menu one')!
+    await w.run.call('activate', { id: tab.id })
+    await w.until((x) => !!x.tabs.find((t) => t.id === tab.id)?.doc?.lifted, 10_000, 'lifted')
+    await w.run.call('tabMenu', { id: tab.id })
+    await sleep(700)   // shown or not (an occluded window draws nothing), the record stays
+    const before = (await effects()).copies.length
+    expect(await w.run.call('popup:click', { label: 'Copy local link' })).toBe(true)
+    expect((await effects()).copies.length).toBe(before + 1)
+    await w.run.call('popup:close')
+    await shrunk('the click')
   })
 })
 

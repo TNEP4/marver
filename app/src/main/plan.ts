@@ -43,6 +43,11 @@ export interface PlanTab {
   seeThrough?: boolean
   /** present.ts `observe()` for the active view: its latest epoch answered at its size; false for every other */
   presented?: boolean
+  /**
+   * spec 32 C8: main granted this tab's document immersive play (views.ts's gate, immersive-gate.ts): while it is the
+   * active tab the strip is hidden and no cover is drawn. The canvas rect is unchanged - its view is already full height
+   */
+  immersive?: boolean
 }
 
 export interface PlanInput {
@@ -53,6 +58,11 @@ export interface PlanInput {
   appDark: boolean
   /** a person's live resize (will-resize .. resized): covered throughout, no request (A3.8 #28) */
   resizing?: boolean
+  /**
+   * spec 32 B1.1: the strip's Marver menu is open (main's state, views.ts): the strip view grows to the whole window so
+   * the menu can draw below its row; the cover keeps its own 44 px rect
+   */
+  menu?: boolean
 }
 
 export interface PlanView { key: string; tab: string; part: 'view' | 'page'; rect: Rect; visible: boolean; color: string }
@@ -61,6 +71,8 @@ export interface Plan {
   active: string
   views: PlanView[]
   strip: Rect
+  /** spec 32 C8: false while the active tab is immersive (window.ts hides the strip and the lights, C9) */
+  stripShown: boolean
   cover: { rect: Rect; visible: boolean; color: string; dark: boolean }
 }
 
@@ -73,6 +85,7 @@ export function plan(i: PlanInput): Plan {
   const views: PlanView[] = []
   let activeDark = i.appDark
   let covered = true
+  let immersive = false
   const whole = full(i.w, i.h)
   for (const t of i.tabs) {
     const on = t.id === i.active
@@ -86,10 +99,15 @@ export function plan(i: PlanInput): Plan {
     if (t.view) views.push({ key: `${t.id}:view`, tab: t.id, part: 'view', rect, visible: viewShown, color })
     if (t.pageView) views.push({ key: `${t.id}:page`, tab: t.id, part: 'page', rect: whole, visible: on && t.page, color })
     if (!on) continue
+    // spec 32 C8: the gate already holds the view at full height with no page over it - nothing to cover
+    if (local && t.immersive && t.view && !t.page) { immersive = true; covered = false; continue }
     if (t.page && t.pageView) covered = false                                  // the tab page paints its own ground there
     else if (appPage(t) && t.view) covered = false                             // so do Home and Settings
     else if (local && t.view && t.placed === 'full' && t.seeThrough && t.presented && !i.resizing) covered = false
   }
-  const strip = { x: 0, y: 0, width: Math.max(0, i.w), height: STRIP_HEIGHT }
-  return { active: i.active, views, strip, cover: { rect: strip, visible: covered, color: ground(activeDark), dark: activeDark } }
+  // spec 32 B1.1: the menu grows the strip to the window (never while immersive: the menu closes first, B12.8); the cover
+  // rect is always its own object, never the strip's
+  const strip = i.menu && !immersive ? whole : { x: 0, y: 0, width: Math.max(0, i.w), height: STRIP_HEIGHT }
+  const coverRect = { x: 0, y: 0, width: Math.max(0, i.w), height: STRIP_HEIGHT }
+  return { active: i.active, views, strip, stripShown: !immersive, cover: { rect: coverRect, visible: covered, color: ground(activeDark), dark: activeDark } }
 }
