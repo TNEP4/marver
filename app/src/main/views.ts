@@ -896,9 +896,9 @@ function reloadTab(h: AppCmdHandle, t: Tab | undefined, force: boolean): void {
 }
 
 /** ⌘W, a tab's Close, the strip's Delete: it ends on the tab gone or the sheet refused (#49: closeTab returns before them). */
-function closing(h: AppCmdHandle | undefined, id: string): void {
+function closing(h: AppCmdHandle | undefined, id: string): Promise<void> {
   holdCmd(h)
-  void closeTab(id).then((r) => { if (r === 'closed') h?.done(); else endRefused(h, id) }, () => h?.fail('refused'))
+  return closeTab(id).then((r) => { if (r === 'closed') h?.done(); else endRefused(h, id) }, () => h?.fail('refused'))
 }
 
 /** ⌘L: Home with its link field, `back` the tab it came from (A2.7). The home stream's page does the rest. */
@@ -940,7 +940,7 @@ export function runCommand(c: AppCommand, via: 'key' | 'menu', key?: KeyFrom): v
   switch (c) {
     case 'home': showWindow(); activate('home'); activated(h, 'home'); return
     case 'open-link': showWindow(); openLink(); activated(h, 'home'); return
-    case 'close-tab': if (target && target.kind !== 'home') closing(h, target.id); else h.noop('no-tab'); return
+    case 'close-tab': if (target && target.kind !== 'home') void closing(h, target.id); else h.noop('no-tab'); return
     case 'close-window': hideWindow(); h.done(); return
     case 'reload': reloadTab(h, target, false); return
     case 'force-reload': reloadTab(h, target, true); return
@@ -1273,7 +1273,7 @@ function resolveAllComments(k: MenuToken): void {
 /** A canvas that handles the tab's Resolve All Comments: the bridge, and `resolve-all` in its features (0.31). */
 const canResolveAll = (t: Tab): boolean => hasBridge(t) && !!t.reg?.features.includes(FEATURE.resolveAll)
 
-function tabAct(k: MenuToken, what: 'activate' | 'open-browser' | 'reveal' | 'copy-link' | 'close' | 'reload' | 'force-reload', from: TabFrom): void {
+function tabAct(k: MenuToken, what: 'activate' | 'open-browser' | 'reveal' | 'copy-link' | 'close' | 'reload' | 'force-reload', from: TabFrom): void | Promise<void> {
   const h = appCmd(what, { ...from, tab: k.tab })
   const t = getTab(k.tab)
   if (!t) { j('tab-act', { what, tab: k.tab, stale: true }); h.noop('no-tab'); return }
@@ -1303,7 +1303,7 @@ function tabAct(k: MenuToken, what: 'activate' | 'open-browser' | 'reveal' | 'co
       else if (link && t.doc?.trusted) { effects.copy(link); h.done() }
       else h.noop('untrusted')
       return
-    case 'close': closing(h, t.id); return
+    case 'close': return closing(h, t.id)
     // the menu's Reload Canvas and Force Reload: the tab the menu was built for, its document and trust unchanged
     case 'reload': reloadTab(h, t, false); return
     case 'force-reload': reloadTab(h, t, true); return
@@ -1340,7 +1340,8 @@ export function openOutside(url: string): void {
 /** A row's action, from main's own record (never from the strip: it sends a row id, never a label, B13). */
 interface MenuAction {
   id: string; label: string; icon?: IconName; enabled: boolean
-  run(): void
+  /** a Close tab gives back its close's end, so focus can be restored once it is known whether it activated anything */
+  run(): void | Promise<void>
   /** the action moves focus itself (Close tab, an activate from »): nothing is restored after it (B14.3) */
   moves?: boolean
 }
@@ -1525,8 +1526,10 @@ function pickMenu(rev: number, id: string | null): void {
   const a = id ? rec.actions.get(id) : undefined
   j('tab-menu', { rev, pick: id, ...(id && (!a || !a.enabled) ? { refused: !a ? 'unknown' : 'disabled' } : {}) })
   if (a?.enabled) {
-    a.run()
-    if (a.moves) return                      // B14.3: the pick moved focus itself
+    const ran = a.run()
+    // B14.3: the pick moves focus itself - but a close that activated nothing (an inactive tab's, or one refused) leaves
+    // it in the strip: once it ends, focus goes back as for main's own close, unless a newer menu is open
+    if (a.moves) { if (ran) void ran.then(() => { if (!menu) afterMainClose(rec) }); return }
   }
   restoreMenuFocus(rec)
 }
@@ -1734,7 +1737,7 @@ export const pageHandlers = {
       // A5.1 #28: the latched page's Export Performance Report…, the menu's own export (the report names no canvas)
       case 'export-report': holdCmd(h); void exportNow('tabpage').then((r) => endExport(h, r)); return true
       case 'reveal': if (t.root) reveal(t); else h?.noop('no-tab'); return true
-      case 'close': closing(h, t.id); return true
+      case 'close': void closing(h, t.id); return true
       default: return false
     }
   },

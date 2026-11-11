@@ -1198,6 +1198,37 @@ describe('spec 32 Part B: the strip\'s Marver menu, main\'s side (the real views
       menuPickSend(v.rev, 'copy-link')
       expect(cb.focused).toBe(b1 + 1)
     })
+
+    it('B14.3: Close tab on an inactive tab activates nothing - once the close ends, the canvas that had focus gets it back; on the active tab the activation moves it', async () => {
+      const a = await canvas()
+      const b = await canvas()
+      const c = await canvas()
+      tabs.activate(a.id)
+      await tick()
+      const ca = content.get(a.id)!.webContents
+      ca.emit('focus')
+      stripWc.emit('focus')               // the right mousedown on b's tab
+      let v = openTabMenu(b.id, { key: false, hadFocus: false })!
+      menuShownAck(v.rev)
+      const a0 = ca.focused
+      menuPickSend(v.rev, 'close')
+      await tick(); await tick()
+      expect(tabs.getTab(b.id)?.open).toBe(false)
+      expect(tabs.activeTab()?.id).toBe(a.id)
+      expect(ca.focused).toBe(a0 + 1)
+      const f = await focus()
+      expect(f.focusOwner()).toEqual({ part: 'content', tab: a.id })
+      // the active tab's close: its neighbour is shown and focused by the activation, nothing given back after
+      stripWc.emit('focus')
+      v = openTabMenu(a.id, { key: false, hadFocus: false })!
+      menuShownAck(v.rev)
+      const a1 = ca.focused
+      menuPickSend(v.rev, 'close')
+      await tick(); await tick()
+      expect(tabs.activeTab()?.id).toBe(c.id)
+      expect(ca.focused).toBe(a1)
+      expect(f.focusOwner()).toEqual({ part: 'content', tab: c.id })
+    })
   })
 })
 
