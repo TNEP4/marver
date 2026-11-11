@@ -405,6 +405,13 @@ describe('D3: the link field', () => {
     expect(await text('.hm-back')).toBe('esc back to OS')
     await p.page.press('#link', 'Escape')
     expect(await p.calls('tab:activate')).toEqual([{ id: 'os', via: 'key', cancel: true }])
+    // with Help open, the field's Escape closes Help first and goes nowhere (D8.6)
+    await p.page.click('[data-key="help"]')
+    await p.page.focus('#link')
+    expect(await p.page.$('.hm-help2')).not.toBeNull()
+    await p.page.press('#link', 'Escape')
+    expect(await p.page.$('.hm-help2')).toBeNull()
+    expect(await p.calls('tab:activate')).toHaveLength(1)
     await p.page.fill('#link', '')
   })
 })
@@ -695,7 +702,7 @@ describe('D9: Help', () => {
 })
 
 describe('D11: Home\'s UI state lives outside the DOM', () => {
-  it('an open card menu, the View menu and Help survive three pushes (the timer's repaint: the last describe)', async () => {
+  it('an open card menu, the View menu and Help survive three pushes (the timer: the last describe)', async () => {
     await world({ tabs: BUSY, view: 'grid' })
     await p.page.hover('[data-card="os"]')
     await p.page.click('[data-more="os"]')
