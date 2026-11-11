@@ -92,6 +92,10 @@ body.hm { background: var(--hm-glow), var(--hm-ground); color: var(--hm-ink); fo
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .95); color: var(--hm-ink);
   -webkit-backdrop-filter: blur(16px) saturate(1.5); backdrop-filter: blur(16px) saturate(1.5) }
 :root.dark .hm .hm-icon:hover, :root.dark .hm .hm-icon.on { background: rgba(255, 255, 255, .08); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08); color: var(--hm-ink) }
+/* E7: a focused icon button that is hovered or open (Help's "?" while Help shows) keeps its ring: the ring before the
+   look's own inset highlight, in a rule that outranks the look's */
+:root:not(.dark) .hm .hm-icon:focus-visible:is(:hover, .on) { box-shadow: 0 0 0 4px var(--hm-accent-ring), inset 0 1px 0 rgba(255, 255, 255, .95) }
+:root.dark .hm .hm-icon:focus-visible:is(:hover, .on) { box-shadow: 0 0 0 4px var(--hm-accent-ring), inset 0 1px 0 rgba(255, 255, 255, .08) }
 
 /* D3: the link field */
 .hm-field { position: relative; flex: none }

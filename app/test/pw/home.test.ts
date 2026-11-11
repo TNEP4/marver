@@ -640,6 +640,80 @@ describe('D8: menus and clicks on Home', () => {
     await closeAll()
     await p.resize(1280, 800)
   })
+
+  it('D8.6, D8.7: a deep-linked card\'s menu still waiting for its scroll never opens after a blur or a tab switch in between', async () => {
+    const many: RecentView[] = Array.from({ length: 16 }, (_, i) => ({ id: `r_${String(i).padStart(16, '0')}`, name: `Old ${i}`, folder: `~/old${i}`, lastSeen: Date.now() - (i + 1) * 3600_000 }))
+    const list = [home, tab('os', 'OS', 4809)]
+    await world({ tabs: list, recent: many, view: 'board', size: [1280, 600] })
+    const id = many[15]!.id
+    // the page's frames held, so the dismissal lands between home:focus and the callback that opens the menu
+    const hold = () => p.page.evaluate(() => {
+      const w = window as unknown as { __held: (() => void)[]; __raf: typeof requestAnimationFrame; __st: typeof setTimeout }
+      w.__held = []; w.__raf = window.requestAnimationFrame; w.__st = window.setTimeout
+      window.requestAnimationFrame = ((cb: FrameRequestCallback) => { w.__held.push(() => w.__raf.call(window, cb)); return 0 }) as typeof requestAnimationFrame
+      window.setTimeout = ((cb: () => void, ms?: number) => (ms === 50 ? (w.__held.push(() => w.__st.call(window, cb, ms)), 0) : w.__st.call(window, cb, ms))) as unknown as typeof setTimeout
+    })
+    const release = () => p.page.evaluate(() => {
+      const w = window as unknown as { __held: (() => void)[]; __raf: typeof requestAnimationFrame; __st: typeof setTimeout }
+      window.requestAnimationFrame = w.__raf; window.setTimeout = w.__st
+      for (const f of w.__held.splice(0)) f()
+    })
+    for (const dismiss of ['blur', 'tab switch'] as const) {
+      await hold()
+      await p.send('home:focus', { field: 'recent', id })
+      expect(await p.page.$eval(`[data-card="${id}"]`, (e) => e.classList.contains('hov')), dismiss).toBe(true)
+      if (dismiss === 'blur') await p.page.evaluate(() => { window.dispatchEvent(new Event('blur')) })
+      else { await tabs(list, 'os'); await tabs(list) }
+      await release()
+      await sleep(250)
+      expect(await menuOpen(), dismiss).toBe(false)
+      expect(await p.page.$eval(`[data-card="${id}"]`, (e) => e.classList.contains('hov')), dismiss).toBe(false)
+    }
+    // undisturbed, the same request still opens its menu
+    await p.send('home:focus', { field: 'recent', id })
+    await p.page.waitForSelector('.mv-menu')
+    await closeAll()
+    await p.resize(1280, 800)
+  })
+
+  it('D8.4, B7: a window resize puts every open menu back at its anchor - a more button\'s, a right-click\'s clamped into the window as it is now, the View menu', async () => {
+    await world({ tabs: BUSY, recent: RECENT, view: 'grid', size: [1280, 800] })
+    // a card's menu at its more button follows the card
+    await p.page.hover('[data-card="os"]')
+    await p.page.click('[data-more="os"]')
+    const before = await rect('.mv-menu')
+    await p.resize(900, 800)
+    expect(await menuOpen()).toBe(true)
+    let c = await rect('[data-card="os"]'), m = await rect('.mv-menu')
+    expect(Math.abs(m.right - before.right)).toBeGreaterThan(20)
+    expect(Math.abs(m.right - (c.right - 8))).toBeLessThanOrEqual(1)
+    expect(Math.abs(m.top - (c.bottom - 4))).toBeLessThanOrEqual(1)
+    await closeAll()
+    // a right-click's: at its pointer, clamped 14 px inside the window on both axes
+    await p.resize(1280, 800)
+    const last = await p.page.$$eval('.hm-grid .hm-card', (els) => { const r = els[3]!.getBoundingClientRect(); return { x: r.left + 30, y: r.top + 20 } })
+    await rightClick(last.x, last.y)
+    expect((await rect('.mv-menu')).left).toBeGreaterThan(720)
+    await p.resize(720, 480)
+    expect(await menuOpen()).toBe(true)
+    m = await rect('.mv-menu')
+    expect(m.right).toBeLessThanOrEqual(720 - 14 + 0.5)
+    expect(m.left).toBeGreaterThanOrEqual(14 - 0.5)
+    expect(m.top).toBeGreaterThanOrEqual(44 - 0.5)
+    expect(m.bottom).toBeLessThanOrEqual(480 - 14 + 0.5)
+    await closeAll()
+    // the View menu stays right-aligned under its button
+    await p.resize(1280, 800)
+    await p.page.click('[data-key="view"]')
+    await rect('.mv-menu')
+    await p.resize(900, 800)
+    expect(await menuOpen()).toBe(true)
+    const b = await rect('[data-key="view"]')
+    m = await rect('.mv-menu')
+    expect([Math.round(m.right), Math.round(m.top)]).toEqual([Math.round(b.right), Math.round(b.top + 42)])
+    await closeAll()
+    await p.resize(1280, 800)
+  })
 })
 
 describe('D9: Help', () => {
@@ -818,6 +892,25 @@ describe('E7 and the system settings', () => {
     expect(await css('[data-card="asteria"]', ['outline-color', 'outline-style'])).toEqual({ 'outline-color': 'rgb(0, 136, 255)', 'outline-style': 'solid' })
     await sleep(250)
     expect((await css('[data-more="asteria"]', ['opacity'])).opacity).toBe('1')
+  })
+
+  it('the "?" focused by key keeps its 4 px ring while Help is open, with the open look\'s inset highlight, light and dark', async () => {
+    for (const dark of [false, true]) {
+      await world({ tabs: BUSY, view: 'grid', dark })
+      await p.page.focus('#link')
+      await p.page.keyboard.press('Tab'); await p.page.keyboard.press('Tab')
+      expect(await p.page.evaluate(() => (document.activeElement as HTMLElement).dataset.key)).toBe('help')
+      await p.page.keyboard.press('Enter')
+      expect(await p.page.$('.hm-help2')).not.toBeNull()
+      expect(await p.page.$eval('[data-key="help"]', (e) => [e.matches(':focus-visible'), e.classList.contains('on')])).toEqual([true, true])
+      const s = await css('[data-key="help"]', ['box-shadow', 'outline-style'])
+      expect(s['outline-style']).toBe('solid')
+      expect(s['box-shadow'], dark ? 'dark' : 'light').toBe(dark
+        ? 'rgba(92, 179, 255, 0.18) 0px 0px 0px 4px, rgba(255, 255, 255, 0.08) 0px 1px 0px 0px inset'
+        : 'rgba(0, 136, 255, 0.16) 0px 0px 0px 4px, rgba(255, 255, 255, 0.95) 0px 1px 0px 0px inset')
+      await p.page.keyboard.press('Escape')
+    }
+    await look(false)
   })
 
   it('Reduce Transparency and Increase Contrast: no blur, solid fills; Reduce Motion: the work dot does not pulse', async () => {

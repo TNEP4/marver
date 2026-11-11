@@ -11,7 +11,7 @@
  *   render never touches, one at a time: a card's more button (below it, right-aligned), a right-click at the pointer,
  *   a chip's right-click (upward), the View menu; Help is a card in the same layer. Escape, window blur, an outside
  *   press, a tab switch and a scroll the person made close them; Home's own scrolls (a restore, a deep-linked card
- *   scrolled into view, a focus) never do (`ownScroll`).
+ *   scrolled into view, a focus) never do (`ownScroll`), nor does a window resize: every open menu re-anchors.
  * - **UI state outside the DOM** (D11): the view, the open menu (its card id and anchor), the View menu, Help and the
  *   focus key live in `ui`; every render rebuilds the body, then rebuilds an open card menu from the card as it is now
  *   (closed when the card is gone), re-anchors it, restores focus by `data-key`, the scroll offsets by `data-scroll`,
@@ -52,6 +52,8 @@ interface OpenCardMenu { id: string; anchor: Anchor; handle: MenuHandle; byKey: 
 const ui: { view: 'grid' | 'board'; menu: OpenCardMenu | null; viewMenu: MenuHandle | null; viewByKey: boolean; help: boolean; highlight: string | null } = {
   view: readView(), menu: null, viewMenu: null, viewByKey: false, help: false, highlight: null,
 }
+/** the current deep-link focus request (D8.7): any dismissal (closeAll) makes a pending one stale */
+let focusGen = 0
 
 // ---- Home's own scrolls (D8.6) ----------------------------------------------------------------------------------
 
@@ -312,10 +314,12 @@ function syncMenu(): void {
   markMenu()
   reanchor()
 }
-/** Every open menu at its anchor's rect now (a render, a scroll Home made). */
+/** Every open menu at its anchor's rect now (a render, a scroll Home made, a window resize): an anchored one moves
+ *  with its button, a right-click's stays at its pointer and is clamped again into the window as it is now (B7). */
 function reanchor(): void {
   const m = ui.menu
   if (m && m.anchor.kind === 'more') { const at = anchorAt(m.anchor, m.id); if (at) m.handle.place(at) }
+  else if (m) m.handle.place()
   if (ui.viewMenu) { const at = viewAt(); if (at) ui.viewMenu.place(at) }
 }
 
@@ -391,8 +395,9 @@ function closeHelp(): void { ui.help = false; helpEl?.remove(); helpEl = null; m
 function markHelp(): void {
   for (const b of rootEl.querySelectorAll('.hm-q')) { b.classList.toggle('on', ui.help); b.setAttribute('aria-expanded', String(ui.help)) }
 }
-/** One open at a time (D8.6): a card menu, the View menu, Help. */
-function closeAll(): void { closeCardMenu(); closeViewMenu(); if (ui.help) closeHelp() }
+/** One open at a time (D8.6): a card menu, the View menu, Help - and a deep-linked card's menu still waiting for its
+ *  scroll to land (D8.7) is cancelled with them, so a blur or a tab switch in between never finds it opening later. */
+function closeAll(): void { closeCardMenu(); closeViewMenu(); if (ui.help) closeHelp(); cancelFocus() }
 
 const copyFixed = async (id: 'dev' | 'init' | 'update'): Promise<boolean> => { try { return (await api?.action({ action: 'copy', id }))?.ok === true } catch { return false } }
 /** A copy button's answered look (`.done`) for `ms`, then back. */
@@ -606,6 +611,9 @@ document.addEventListener('pointerdown', (e) => {
   closeHelp()
 }, true)
 window.addEventListener('blur', () => closeAll())
+// a window resize moves the cards and the header: every open menu goes back to its anchor, clamped into the window
+// as it is now (B7, D8.4); main repaints nothing on a resize, so Home does it itself
+window.addEventListener('resize', () => reanchor())
 // a scroll the person made moves the anchors: the card or chip menu and the View menu close, Help stays (it sits on
 // the window); Home's own scrolls re-anchor instead
 document.addEventListener('scroll', (e) => {
@@ -640,15 +648,23 @@ function wheelScroller(el: Element | undefined, dx: number, dy: number): Element
  *  (Copy start command) focused once the scroll has landed. */
 function focusCard(id: string): void {
   closeAll()
+  const gen = focusGen
   ui.highlight = id
   renderBody()
   const el = cardNode(id)
   if (!el) { ui.highlight = null; return }
   ownScroll(() => el.scrollIntoView({ block: 'nearest' }), () => {
+    // dismissed in between (closeAll: a blur, a tab switch, Escape, another menu or Help): nothing opens
+    if (gen !== focusGen || !homeActive()) { if (gen === focusGen) cancelFocus(); return }
     if (ui.highlight === id && model.byId.has(id) && !ui.menu) openCardMenu(id, { kind: 'more' }, true)
     if (ui.menu?.id === id) ui.highlight = id
     markMenu()
   })
+}
+/** A pending deep-link focus is dropped: its highlight goes, unless its menu is the one open. */
+function cancelFocus(): void {
+  focusGen += 1
+  if (ui.highlight && ui.menu?.id !== ui.highlight) { ui.highlight = null; markMenu() }
 }
 
 // ---- what main sends ------------------------------------------------------------------------------------------------
