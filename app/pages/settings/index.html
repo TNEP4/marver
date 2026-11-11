@@ -5,18 +5,26 @@
 <title>Settings</title>
 <link rel="stylesheet" href="tokens.css">
 <link rel="stylesheet" href="base.css">
+<link rel="stylesheet" href="glass.css">
+<link rel="stylesheet" href="menu.css">
 <link rel="stylesheet" href="style.css">
 <script src="main.js" defer></script>
 </head>
-<body class="ground">
-<main class="settings">
-  <div class="col">
-    <h1 class="h1">Settings</h1>
-    <p class="hint warn" id="note" hidden></p>
-    <div id="files"></div>
-    <div class="foot"><button type="button" class="quiet" id="reveal">Show the Files</button></div>
+<body class="hm st">
+<main class="st-body">
+  <div class="st-col">
+    <header class="st-head">
+      <h1>Settings</h1>
+      <p>Saved as plain files in <code class="dir">~/.marver/</code> - your agents read the same ones.</p>
+      <p class="st-note" id="note" hidden></p>
+    </header>
+    <div class="st-bads" id="bad"></div>
+    <div class="st-groups" id="groups"></div>
+    <footer class="st-foot">
+      <span><code>config.json</code> and <code>theme.json</code> in <code class="dir">~/.marver/</code></span>
+      <button type="button" class="st-btn ghost" id="reveal">Show the files</button>
+    </footer>
   </div>
-  <aside class="side" id="side" aria-label="Files that did not apply"></aside>
 </main>
 <div class="sr-only" id="live" aria-live="polite"></div>
 </body>

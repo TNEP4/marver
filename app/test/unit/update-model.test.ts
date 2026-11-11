@@ -9,7 +9,7 @@ import type { AutoUpdater } from 'electron'
 import { describe, expect, it } from 'vitest'
 import { FakeClock, FakeUpdater } from '../../src/main/testing/updater.ts'
 import { T } from '../../src/main/timings.ts'
-import { menuItem, pillOf, startUpdates, type UpdateBody, type UpdateGates, type UpdateModel, type UpdaterAdapter } from '../../src/main/update-model.ts'
+import { menuItem, noteLines, pillOf, startUpdates, updateRow, type UpdateBody, type UpdateState, type UpdateGates, type UpdateModel, type UpdaterAdapter } from '../../src/main/update-model.ts'
 
 // held by the typecheck: Electron 45's own autoUpdater is an UpdaterAdapter as it is (#13)
 void ((u: AutoUpdater): UpdaterAdapter => u)
@@ -33,7 +33,7 @@ interface Rig {
 }
 
 /** A launch: the model started on the fakes, running 0.99.1; setup's macrotask run unless `raw`. */
-function rig(o: { feed?: string; gates?: UpdateGates; duringFeed?: (u: FakeUpdater) => void; raw?: boolean } = {}): Rig {
+function rig(o: { feed?: string; gates?: UpdateGates; duringFeed?: (u: FakeUpdater) => void; raw?: boolean; auto?: () => boolean } = {}): Rig {
   const u = new FakeUpdater()
   if (o.duringFeed) u.duringFeed = o.duringFeed
   const clock = new FakeClock()
@@ -49,6 +49,7 @@ function rig(o: { feed?: string; gates?: UpdateGates; duringFeed?: (u: FakeUpdat
     explain: (why) => { r.explained.push(why) },
     restartFailed: (message) => { r.restartFailed.push(message) },
     beforeQuitForUpdate: () => { r.quits += 1 },
+    ...(o.auto ? { auto: o.auto } : {}),
   }, o.gates ?? OPEN)
   if (!o.raw) clock.tick()
   return r
@@ -83,7 +84,7 @@ describe('the gates (#13)', () => {
     ]
     for (const [why, feed, gates] of cases) {
       const r = rig({ feed, gates })
-      expect(r.m.state()).toEqual({ phase: { kind: 'blocked', why }, failure: null })
+      expect(r.m.state()).toEqual({ phase: { kind: 'blocked', why }, failure: null, last: null })
       expect(r.records).toEqual([{ phase: 'blocked', why }])
       expect(r.u.calls).toEqual([])
       r.clock.advance(3 * T.updateEveryMs)
@@ -407,7 +408,7 @@ describe('the failure, apart from the phase (#14, #18, #21, r1 #8)', () => {
   it('a check runs while it is shown, and one that finds nothing keeps it', () => {
     const r = rig()
     r.m.failed(FAILURE)
-    expect(r.m.state()).toEqual({ phase: { kind: 'idle' }, failure: FAILURE })
+    expect(r.m.state()).toEqual({ phase: { kind: 'idle' }, failure: FAILURE, last: null })
     expect(menuItem(r.m.state())).toEqual({ label: 'Check for Updates…', enabled: true, token: { act: 'check' } })
     first(r)
     expect(pillOf(r.m.state(), () => '')?.show).toBe('failed')   // whatever the phase
@@ -548,5 +549,75 @@ describe('the pill and the menu read the state (#21, #22)', () => {
     r.m.restarting('0.99.2')
     expect(r.changes).toBe(c + 1)
     expect(menuItem(r.m.state())).toEqual({ label: 'Restarting…', enabled: false, token: null })
+  })
+})
+
+describe('spec 33 C1: the last check, and autoUpdate', () => {
+  it('`last` is set at a check\'s end on the wall clock - ok when current, not when an error - and stays through a download', () => {
+    const r = rig()
+    expect(r.m.state().last).toBe(null)
+    const t0 = Date.now()
+    first(r)
+    r.u.emit('update-not-available')
+    const a = r.m.state().last!
+    expect(a.ok).toBe(true)
+    expect(a.at).toBeGreaterThanOrEqual(t0)
+    expect(a.at).toBeLessThanOrEqual(Date.now())
+    r.clock.advance(T.updateEveryMs)
+    r.u.fail('offline')
+    expect(r.m.state().last).toMatchObject({ ok: false })
+    r.clock.advance(T.updateEveryMs)
+    r.u.emit('update-available')
+    r.u.downloaded('0.99.2', 'x')
+    expect(r.m.state().last).toMatchObject({ ok: false })   // a download is not a check's end
+  })
+
+  it('autoUpdate off: the timer starts nothing and is armed again, a wake starts nothing, a manual check still runs; on again, the next tick checks', () => {
+    let auto = false
+    const r = rig({ auto: () => auto })
+    r.clock.advance(T.updateFirstMs)
+    expect(kind(r)).toBe('idle')
+    expect(checks(r)).toBe(0)
+    r.clock.advance(T.updateEveryMs)
+    expect(checks(r)).toBe(0)
+    expect(r.m.wake()).toBe(false)
+    expect(checks(r)).toBe(0)
+    expect(r.m.act({ act: 'check' })).toBe(true)
+    expect(checks(r)).toBe(1)
+    r.u.emit('update-not-available')
+    auto = true
+    r.clock.advance(T.updateEveryMs)
+    expect(checks(r)).toBe(2)
+  })
+})
+
+describe('spec 33 C3: updateRow, first match wins', () => {
+  const st = (phase: UpdateState['phase'], o: Partial<UpdateState> = {}): UpdateState => ({ phase, failure: null, last: null, ...o })
+  const F = { from: '1.2.1', to: '1.2.2', at: 1 }
+  const name = (t: string) => (t === 'tab-a' ? 'Board A' : '?')
+  const row = (s: UpdateState) => updateRow(s, '1.2.1', name)
+  it('every row of the table', () => {
+    const base = { version: '1.2.1', checkedAt: null }
+    expect(row(st({ kind: 'blocked', why: 'feed' }))).toEqual({ ...base, show: 'off', token: null })
+    expect(row(st({ kind: 'blocked', why: 'write' }))).toEqual({ ...base, show: 'blocked', why: 'write', token: { act: 'explain', why: 'write' } })
+    expect(row(st({ kind: 'restarting', version: '1.2.2' }))).toEqual({ ...base, show: 'restarting', next: '1.2.2', token: null })
+    expect(row(st({ kind: 'ready', version: '1.2.2', notes: 'A\nB' }, { failure: F }))).toEqual({ ...base, show: 'ready', next: '1.2.2', notes: ['A', 'B'], token: { act: 'restart', version: '1.2.2' } })
+    expect(row(st({ kind: 'waiting', version: '1.2.2', notes: '', tab: 'tab-a', commit: 3 }))).toEqual({ ...base, show: 'waiting', next: '1.2.2', notes: [], tab: 'Board A', token: { act: 'try-again', version: '1.2.2' } })
+    expect(row(st({ kind: 'checking' }, { last: { at: 5, ok: true } }))).toEqual({ ...base, checkedAt: 5, show: 'checking', token: null })
+    expect(row(st({ kind: 'downloading' }))).toEqual({ ...base, show: 'downloading', token: null })
+    expect(row(st({ kind: 'idle' }, { failure: F, last: { at: 5, ok: false } }))).toEqual({ ...base, checkedAt: 5, show: 'failed', next: '1.2.2', token: { act: 'download', version: '1.2.2' } })
+    expect(row(st({ kind: 'idle' }, { last: { at: 5, ok: false } }))).toEqual({ ...base, checkedAt: 5, show: 'error', token: { act: 'check' } })
+    expect(row(st({ kind: 'idle' }, { last: { at: 5, ok: true } }))).toEqual({ ...base, checkedAt: 5, show: 'current', token: { act: 'check' } })
+    expect(row(st({ kind: 'idle' }))).toEqual({ ...base, show: 'idle', token: { act: 'check' } })
+    expect(row(st({ kind: 'setup' }))).toEqual({ ...base, show: 'idle', token: null })
+  })
+  it('the notes: one per non-empty line, "- " stripped, at most 5', () => {
+    expect(noteLines('- One\n\n  - Two \nThree\n- 4\n- 5\n- 6')).toEqual(['One', 'Two', 'Three', '4', '5'])
+    expect(noteLines('')).toEqual([])
+  })
+  it('a live model reads as the row: ready after a check, with its notes', () => {
+    const r = rig()
+    toReady(r, '0.99.2', '- Boards open faster\n- And more')
+    expect(updateRow(r.m.state(), '0.99.1', name)).toMatchObject({ show: 'ready', next: '0.99.2', notes: ['Boards open faster', 'And more'] })
   })
 })

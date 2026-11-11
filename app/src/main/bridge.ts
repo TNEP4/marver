@@ -43,7 +43,9 @@
  *   instance listing `capture` (else `untrusted`), checks the rect (`checkCaptureRect`: inside the view, rounded out;
  *   else `bounds`), and hands an accepted ask to `onCapture`'s handler with a `still()` that runs the same admission
  *   again - the bridge holds no capture logic (live-picture.ts does);
- * - `settings:action` carries Settings' one action, `open-notification-settings` (A4.6 #27).
+ * - `settings:action` carries Settings' actions: `open-notification-settings` (A4.6 #27), and (spec 33 C5)
+ *   `release-notes` and `update` with its token's shape checked (`updateToken`).
+ * - `settings:set` (spec 33 D) keeps `via: 'key'`; from Home it takes only `theme mode` light or dark.
  * - a shared canvas's view (`remote`, A4.6 #40, r1 #8) is recorded like any view - its kind and tab, and its cleanup
  *   at `destroyed` - so `kindOf` answers for its permissions (sessions.ts `allowRemote`); then `register` returns,
  *   before the app-page and canvas wiring: it has no channel, no document record and no admission.
@@ -78,7 +80,7 @@ import {
   type AppState, type Busy, type CaptureAnswer, type CaptureRect, type ExportPdfAnswer, type DocAnswer, type Hello, type ImmersiveAnswer, type ImmersiveWish, type Inset, type MenuIn, type MenuItem, type OpenItem, type PerfAsk, type PerfCam,
   type PerfMsg, type PerfSize, type Present, type Presented, type Theme, type Why,
 } from '../../../src/shared/app-api.ts'
-import { CH, INVOKES as INVOKE_LIST, SENDERS, type PageKind } from '../shared/channels.ts'
+import { CH, INVOKES as INVOKE_LIST, SENDERS, type PageKind, type UpdateToken } from '../shared/channels.ts'
 import { appCmd, noticeAnswered, pageCommand, pageEnd, withAppCmd } from './commands.ts'
 import { checkOpened, checkOpenItem } from '../shared/open-item.ts'
 import { checkShowTarget, type ShowTarget } from '../../../src/shared/deep-link.ts'
@@ -344,6 +346,15 @@ const askOf = (p: Record<string, unknown>): { key?: boolean; hadFocus?: boolean 
   return { ...(p.key !== undefined ? { key: p.key as boolean } : {}), ...(p.hadFocus !== undefined ? { hadFocus: p.hadFocus as boolean } : {}) }
 }
 
+/** Settings' update token (spec 33 C5): an act of the five, a version under 32 for the versioned ones, a why for explain. */
+function updateToken(t: unknown): UpdateToken | null {
+  if (!obj(t)) return null
+  if (t.act === 'check') return { act: 'check' }
+  if (one(t.act, ['restart', 'try-again', 'download'] as const)) return typeof t.version === 'string' && t.version.length < 32 ? { act: t.act, version: t.version } : null
+  if (t.act === 'explain') return one(t.why, ['location', 'write', 'setup'] as const) ? { act: 'explain', why: t.why } : null
+  return null
+}
+
 /**
  * An app page channel's payload, checked and stripped; null refuses it (pure). `kind` (spec 32 D8.8): the sender's, as
  * main's map records it - Home's own fields are kept only when it is `'home'`; absent reads not Home.
@@ -354,8 +365,12 @@ export function checkPagePayload(channel: string, p: unknown, kind?: PageKind): 
   const home = kind === 'home'
   switch (channel) {
     case CH.ready: case CH.settingsGet: case CH.settingsReveal: return yes(null)
-    case CH.settingsAction:
-      return obj(p) && p.action === 'open-notification-settings' ? yes({ action: p.action }) : no
+    case CH.settingsAction: {
+      if (!obj(p)) return no
+      if (p.action === 'open-notification-settings' || p.action === 'release-notes') return yes({ action: p.action })
+      const token = p.action === 'update' ? updateToken(p.token) : null
+      return token ? yes({ action: 'update', token }) : no
+    }
     case CH.tabActivate:
       // spec 30 #50: how it was chosen, which only the page knows; absent reads `click`
       if (!obj(p) || typeof p.id !== 'string' || !TAB_ID.test(p.id) || (p.via !== undefined && !one(p.via, ['key', 'click'] as const))) return no
@@ -410,10 +425,14 @@ export function checkPagePayload(channel: string, p: unknown, kind?: PageKind): 
       if (one(p.action, ['copy-link', 'copy-path', 'reveal'] as const)) return byId ? yes({ action: p.action, id: p.id, ...how }) : no
       return no
     }
-    case CH.settingsSet:
-      return obj(p) && one(p.file, ['config', 'theme'] as const) && typeof p.key === 'string' && /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(p.key)
-        && (typeof p.value === 'boolean' || (typeof p.value === 'number' && Number.isFinite(p.value)) || text(p.value, 64))
-        ? yes({ file: p.file, key: p.key, value: p.value }) : no
+    case CH.settingsSet: {
+      if (!obj(p) || !one(p.file, ['config', 'theme'] as const) || typeof p.key !== 'string' || !/^[A-Za-z][A-Za-z0-9]{0,63}$/.test(p.key)
+        || !(typeof p.value === 'boolean' || (typeof p.value === 'number' && Number.isFinite(p.value)) || text(p.value, 64))
+        || (p.via !== undefined && p.via !== 'key')) return no
+      // spec 33 D: Home's D sets the theme's mode to light or dark, nothing else
+      if (home && !(p.file === 'theme' && p.key === 'mode' && one(p.value, ['light', 'dark'] as const))) return no
+      return yes({ file: p.file, key: p.key, value: p.value, ...(p.via === 'key' ? { via: 'key' } : {}) })
+    }
     default: return no
   }
 }

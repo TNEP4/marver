@@ -272,3 +272,68 @@ describe('a blocked build (#13, #22)', () => {
     } finally { await w.close() }
   })
 })
+
+describe('Settings\' Updates group (spec 33 C), on the fake updater', () => {
+  /** the Settings page's own webContents, as Playwright sees it */
+  const settingsPage = async (w: WindowRun) => {
+    await w.run.call('settings:open')
+    return until('the Settings page', async () => w.run.pw!.windows().find((pg) => pg.url().startsWith('marver-app://settings/')) ?? null)
+  }
+  const stateText = (pg: import('playwright-core').Page) => pg.evaluate(() => document.getElementById('update-state')?.textContent ?? null)
+
+  it('Check for updates: checking, downloading, then ready with the feed\'s notes; Restart to update goes through the coordinator to quitAndInstall', async () => {
+    let log = ''
+    const w = await launchWindow('pw', {
+      extraEnv: { ...FAKE, MARVER_APP_TIMINGS: JSON.stringify({ updateFirstMs: 600_000 }) },
+      prepare: async (e) => { log = join(e.dir, 'updater.log'); return { extraEnv: { MARVER_APP_FAKE_UPDATER_LOG: log } } },
+    })
+    try {
+      await until('idle', async () => (await phase(w)).kind === 'idle')
+      const pg = await settingsPage(w)
+      await pg.waitForSelector('#update-btn:not([disabled])')
+      expect(await pg.$eval('#checked', (e) => e.textContent)).toBe('Not checked yet')
+      // the check never answers by itself: each step is the case's
+      await w.run.call('updater:fake', { next: null })
+      await pg.click('#update-btn')
+      await pg.waitForFunction(() => document.getElementById('update-state')?.textContent === 'Checking for updates…')
+      expect(await pg.$eval('#update-btn', (b) => [b.textContent, (b as HTMLButtonElement).disabled])).toEqual(['Checking…', true])
+      await w.run.call('updater:emit', { event: 'update-available' })
+      await pg.waitForSelector('.st-bar')
+      expect(await stateText(pg)).toBe('Downloading the update…')
+      await w.run.call('updater:emit', { event: 'update-downloaded', version: '1.2.9', notes: 'What changed\nAnd more' })
+      await pg.waitForFunction(() => document.getElementById('update-state')?.textContent === 'Marver 1.2.9 is ready to install')
+      expect(await pg.$$eval('.st-notes li', (els) => els.map((e) => e.textContent))).toEqual(['What changed', 'And more'])
+      expect(await pg.$eval('.st-notes .st-label', (e) => e.textContent)).toBe('What\'s new in 1.2.9')
+      const exit = exited(w.run)
+      await pg.click('#update-btn')
+      expect(await Promise.race([exit, sleep(20_000).then(() => 'held' as const)])).toBe(0)
+      const lines = readFileSync(log, 'utf8').trim().split('\n')
+      expect(inOrder(lines, ['before-quit-for-update', 'before-quit', 'exit 0'])).toBe(true)
+      expect(records(w.env).filter((x) => x.phase === 'restart')).toEqual([expect.objectContaining({ version: '1.2.9' })])
+    } finally {
+      await w.close().catch(() => {})
+    }
+  })
+
+  it('autoUpdate: false in config.json - no automatic check; Check for updates in Settings still checks', async () => {
+    const w = await launchWindow('pw', {
+      extraEnv: { ...FAKE, MARVER_APP_TIMINGS: JSON.stringify({ updateFirstMs: 300, updateEveryMs: 300 }) },
+      prepare: async (e) => { mkdirSync(e.home, { recursive: true }); writeFileSync(join(e.home, 'config.json'), JSON.stringify({ autoUpdate: false })); return {} },
+    })
+    try {
+      await until('idle', async () => (await phase(w)).kind === 'idle')
+      await sleep(1500)
+      expect((await updater(w)).calls!.filter((c) => c === 'checkForUpdates')).toEqual([])
+      expect(records(w.env).filter((x) => x.phase === 'check')).toEqual([])
+      const pg = await settingsPage(w)
+      await pg.waitForSelector('[data-ctl="config.autoUpdate"][aria-checked="false"]')
+      await w.run.call('updater:fake', { next: { kind: 'current' } })
+      await pg.click('#update-btn')
+      await pg.waitForFunction(() => document.getElementById('update-state')?.textContent === 'Marver is up to date')
+      expect(await pg.$eval('#checked', (e) => e.textContent)).toBe('Last checked just now')
+      expect((await updater(w)).calls!.filter((c) => c === 'checkForUpdates')).toHaveLength(1)
+    } finally {
+      await w.close().catch(() => {})
+    }
+  })
+})

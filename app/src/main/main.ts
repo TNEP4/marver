@@ -61,7 +61,7 @@ import { confirm, setCondition, setOfferActions } from './pill.ts'
 import { effects } from './effects.ts'
 import { savePdf } from './pdf-save.ts'
 import { writeWhole } from './fsx.ts'
-import { CH } from '../shared/channels.ts'
+import { CH, type SettingsAction } from '../shared/channels.ts'
 import { docInset } from './layout.ts'
 import { identity, recorder, sampler } from './recorder.ts'
 import { launchReady, launchWriter } from './launch.ts'
@@ -73,7 +73,7 @@ import { livePictures } from './live-picture.ts'
 import { genOf, quitting as presentQuitting } from './present.ts'
 import { readAgx } from './machine.ts'
 import { openOutside, openSameCanvas, showOutside, startViews, windowPorts, type TrustPort } from './views.ts'
-import { bundleOf, startUpdater } from './updater.ts'
+import { bundleOf, openReleaseNotes, startUpdater, updateAct, updateRowNow } from './updater.ts'
 import { nodeMoverPorts, offerMove, takeMoveCmd } from './mover.ts'
 import type { UpdateBody } from '../../../src/shared/app-perf.ts'
 import { fakeTrust } from './testing/fake-trust.ts'
@@ -279,7 +279,7 @@ function start(): void {
       },
     })
     // Home's and Settings' channels and pushes, ⌘L's links into their tabs, the files pill (home.ts, ports.ts)
-    mountPages(bridge, windowPorts())
+    mountPages(bridge, windowPorts(), updateRowNow)
     // the updater, once the views exist - the pill and the menu are there (A5.1 #13): #18's reconciliation, then its
     // gates and setup; the shutdown coordinator gets its update side
     startUpdater({ record: (b) => recorder.event('update', null, b), openExternal: openOutside, reveal: showOutside })
@@ -392,7 +392,14 @@ function startNotices(trust: TrustPort, bridge: ReturnType<typeof installBridge>
   setShowSender((t, target) => bridge.showItem(t.id, target))
   bridge.onFront((tabId) => { if (getTab(tabId)?.kind !== 'local') return; focusWindow(); showForLink(tabId, null) })
   setOfferActions({ turnOn: () => { void n.offerTurnOn() }, dismissed: () => n.offerDismissed() })
-  bridge.handle(CH.settingsAction, () => effects.openNotificationSettings())
+  // spec 33 C4, C5: the Updates row's button acts only while its token holds (false: a stale click), Release notes
+  bridge.handle(CH.settingsAction, (_c, p) => {
+    const a = p as SettingsAction
+    if (a.action === 'update') return updateAct(a.token)
+    if (a.action === 'release-notes') { openReleaseNotes(); return true }
+    effects.openNotificationSettings()
+    return true
+  })
   // after views.ts's listener: the tabs have heard the event first (a stop reads whether its tab is open)
   trust.onRegistry((e) => { live.onRegistry(e); n.onRegistry(e) })
   live.start(trust.entries())

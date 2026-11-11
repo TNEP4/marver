@@ -22,7 +22,7 @@
  */
 import type { HomeInfo, HomeKeys, LinkOpenAnswer, RecentView, SharedLink, TabsSnapshot, TabView } from '../../src/shared/channels.ts'
 import { parseLink } from '../../src/shared/links.ts'
-import { ago, appMark, fill, h, icon, logo, pageApi, portOf, say, setLook, shown } from '../../src/pages/dom.ts'
+import { ago, appMark, fill, h, icon, logo, pageApi, portOf, say, setLook, shown, themeKey } from '../../src/pages/dom.ts'
 import { frame, openMenu, type MenuAt, type MenuHandle, type MenuPick, type MenuRow } from '../../src/pages/menu.ts'
 import { COLS, COPY_ROWS, deepFolder, homeModel, lineText, menuRows, viewOf, type CardModel, type HomeModel, type RowId } from './model.ts'
 
@@ -642,6 +642,13 @@ document.addEventListener('pointerdown', (e) => {
   closeHelp()
 }, true)
 window.addEventListener('blur', () => closeAll())
+// D switches light and dark (spec 33 D): the opposite of what shows, never in the field or an open menu
+document.addEventListener('keydown', (e) => {
+  const mode = themeKey(e)
+  if (!mode) return
+  e.preventDefault()
+  void api?.setTheme(mode).catch(() => {})
+})
 // a window resize moves the cards and the header: every open menu goes back to its anchor, clamped into the window
 // as it is now (B7, D8.4); main repaints nothing on a resize, so Home does it itself
 window.addEventListener('resize', () => reanchor())

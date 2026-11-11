@@ -109,7 +109,7 @@ export interface FilesPorts {
   readTabsFile(): TabsFile | undefined
   tabsWriter(): StateWriter<TabsFile>
   /** mounted by mountPages; exported for tests */
-  settingsView(): SettingsView
+  settingsView(): Omit<SettingsView, 'update'>
   settingsSet(raw: unknown): Promise<SettingsSetResult>
   settingsReveal(): void
   filesStatus(): FilesStatus

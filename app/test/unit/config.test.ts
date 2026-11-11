@@ -361,7 +361,7 @@ describe('settings:set', () => {
     await cfg.reread()
     const v = cfg.settingsView()
     // STAGE a4 (A4.6 #27): notices and the badge are Settings' rows now
-    expect(v.shown).toEqual(['config.restoreTabs', 'config.unloadUnderPressure', 'config.recorder', 'config.keepPerfDays', 'config.notifications', 'config.dockBadge', 'theme.mode'])
+    expect(v.shown).toEqual(['config.restoreTabs', 'config.unloadUnderPressure', 'config.recorder', 'config.keepPerfDays', 'config.notifications', 'config.dockBadge', 'config.autoUpdate', 'theme.mode'])
     expect(v.statusFile).toBe(join(home, 'state-dev', 'status.json'))   // under the temp home: no ~ to shorten
     expect(v.config).toMatchObject({ ok: true, present: false, values: { restoreTabs: true } })
     expect(v.config).not.toHaveProperty('text')

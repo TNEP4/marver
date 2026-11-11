@@ -109,6 +109,9 @@ keeps your choice; it starts on Board.
 - **Grid**: three sections, Running, Not running and Shared with you, four cards a row. Running holds the cards of the
   board's first four columns, in that order. A section with no card is left out.
 
+**D** switches Home, Settings and the strip over them between light and dark, the opposite of what shows (not while
+you type in the link field or a menu is open). Canvases keep their own theme.
+
 Each canvas has a card (one per tab, so a canvas open twice has two), in the first column that fits, in that order. Each card's line says what is going on:
 
 | Column | The line |
@@ -215,6 +218,12 @@ Updates…** checks now and answers in the strip: "Marver 1.0.0 is up to date", 
 offline" or "Couldn't check for updates · Try again later". While it works, the item reads Checking for Updates… or
 Downloading Update….
 
+**Settings shows it too** (Marver > Settings…, its Updates group): Marver and its version, whether it is up to date and
+when it last checked, with Check for updates; "Checking for updates…" and "Downloading the update…" while it works
+(Marver's updater gives no sizes); once one is ready, "What's new in 1.2.1" with its highlights, Release notes and
+Restart to update. **Download updates automatically** (on by default; `autoUpdate` in `config.json`) turned off,
+Marver checks only when you ask.
+
 **When an update is ready**, the strip says "1.0.1 is ready" with **Restart to Update** (its tooltip is the first line
 of what changed), and the Marver menu reads Restart to Install Update. Two ways to install it:
 
@@ -299,7 +308,9 @@ and roughly when, and attach the file.
 Marver keeps its settings and its state in `~/.marver/`, beside the files `marver dev` keeps there. At every launch
 the app writes a `README.md` in it, for you and your coding agent: every file, every setting, and the rules for
 changing them (edits to the README itself are lost). Settings (Marver > Settings…) writes `config.json` and
-`theme.json`. Show the files, in Home's How Marver runs (the ? button), opens the folder; Help > Show Performance Files opens the app's performance records.
+`theme.json`: Updates, Appearance (System, Light or Dark; D switches light and dark there and on Home), Tabs, Notices
+and Performance, each row with its key's name. A file that does not apply shows at the top of Settings, with what is
+wrong and the file's text; the app keeps the last good one meanwhile. Show the files, in Home's How Marver runs (the ? button), opens the folder; Help > Show Performance Files opens the app's performance records.
 
 ## Uninstalling
 

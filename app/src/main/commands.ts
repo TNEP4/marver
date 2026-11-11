@@ -38,7 +38,7 @@ export const STRIP_COMMANDS = ['tab-activate', 'tab-close', 'tab-menu', 'tabs-mo
 export const HOME_COMMANDS = ['copy', 'copy-start', 'copy-update', 'show-files', 'tab-activate', 'link-open', 'link-cancel', 'copy-link', 'copy-path', 'reveal'] as const
 /** Settings, the pill and the tab page (channels.ts:165, :253): `setting`'s `arg` is the key, never the value. */
 export const PAGE_COMMANDS = [
-  'setting', 'settings-reveal', 'notification-settings', 'pill-button', 'pill-dismiss',
+  'setting', 'settings-reveal', 'notification-settings', 'release-notes', 'pill-button', 'pill-dismiss',
   'retry', 'reload', 'copy-start', 'copy-details', 'reveal', 'open-browser', 'close', 'export-report',
 ] as const
 /** The Marver and Help menus' own items (menu.ts:98-150). */
@@ -182,6 +182,7 @@ export const APP_COMMANDS: Record<AppCmdName, AppCmdSpec> = {
   setting: se({ failed: ['unknown-key', 'bad-value', 'unwritable', 'write-failed'] }),
   'settings-reveal': se(),
   'notification-settings': se(),
+  'release-notes': se(),
   'pill-button': se({ noop: ['stale'] }),
   'pill-dismiss': se({ noop: ['stale'] }),
   retry: se({ deadlineMs: S30, noop: ['stale'], failed: ['refused', 'gone'], cancelled: true }),
@@ -574,9 +575,15 @@ export function pageCommand(channel: string, ctx: { kind: PageKind; tabId?: stri
       if (v.action === 'copy-link' || v.action === 'copy-path' || v.action === 'reveal') return { name: v.action, o: { ...how, in: 'home' } }
       return null
     }
-    case CH.settingsSet: return { name: 'setting', o: { via: 'click', in: 'settings', ...(typeof v.key === 'string' ? { arg: v.key } : {}) } }
+    // spec 33 D: D's theme switch, on Home or Settings, says `via: 'key'`; the key's name, never the value
+    case CH.settingsSet: return { name: 'setting', o: { via: v.via === 'key' ? 'key' : 'click', in: surface, ...(typeof v.key === 'string' ? { arg: v.key } : {}) } }
     case CH.settingsReveal: return { name: 'settings-reveal', o: { via: 'click', in: 'settings' } }
-    case CH.settingsAction: return { name: 'notification-settings', o: { via: 'click', in: 'settings' } }
+    // spec 33 C5: the Updates row's button is the `update` command (`arg` its act), as the menu's item is
+    case CH.settingsAction: {
+      const t = v.token as { act?: unknown } | undefined
+      if (v.action === 'update') return { name: 'update', o: { via: 'click', in: 'settings', ...(typeof t?.act === 'string' ? { arg: t.act } : {}) } }
+      return { name: v.action === 'release-notes' ? 'release-notes' : 'notification-settings', o: { via: 'click', in: 'settings' } }
+    }
     default: return null
   }
 }

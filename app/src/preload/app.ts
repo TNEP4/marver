@@ -121,6 +121,8 @@ function build(k: AppKind): PageApi {
             ...((a as { via?: unknown }).via === 'key' ? { via: 'key', ...keysOf((a as { keys?: unknown }).keys) } : {}),
           }
           : {}),
+        // spec 33 D: D's switch, the theme's mode alone (the bridge takes nothing else from Home)
+        setTheme: (mode: 'light' | 'dark') => invoke<SettingsSetResult>(CH.settingsSet, { file: 'theme', key: 'mode', value: mode === 'dark' ? 'dark' : 'light', via: 'key' }),
       }
       return api
     }
@@ -132,9 +134,13 @@ function build(k: AppKind): PageApi {
         set: (s: SettingsSet) => invoke<SettingsSetResult>(CH.settingsSet, {
           file: s?.file === 'theme' ? 'theme' : 'config', key: str(s?.key, 32),
           value: typeof s?.value === 'boolean' || typeof s?.value === 'number' ? s.value : str(s?.value, 16),
+          ...(s?.via === 'key' ? { via: 'key' } : {}),
         }),
         reveal: () => send(CH.settingsReveal),
-        action: (a: SettingsAction) => send(CH.settingsAction, { action: str(a?.action, 32) }),
+        // spec 33 C5: the update's token as given (the bridge checks its shape)
+        action: (a: SettingsAction) => send(CH.settingsAction, {
+          action: str(a?.action, 32), ...(a?.action === 'update' && a.token && typeof a.token === 'object' ? { token: { ...a.token } } : {}),
+        }),
       }
       return api
     }

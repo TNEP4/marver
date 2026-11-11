@@ -21,15 +21,18 @@
  *   alert explains (#22); the coordinator's side is set here (`updateSide`).
  * - **A waiting update** (#21) goes back to `ready` when its tab's fresh `unsaved` turns false, the tab closes or its
  *   document changes (`updaterTabs`, from views.ts's reports and tab changes; pill.ts `waitingEnds`).
+ * - **Settings** (spec 33 C): `updateRowNow()` is its Updates row; every change pushes `status`, so it asks again;
+ *   `autoUpdate` off stops the automatic checks (the model's `auto`).
  */
 import { accessSync, appendFileSync, constants } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { app, autoUpdater, BaseWindow, dialog, net, powerMonitor } from 'electron'
 import type { UpdateBody } from '../../../src/shared/app-perf.ts'
+import { BLOCKED_TITLE, type UpdateRow } from '../shared/channels.ts'
 import { tilde } from '../shared/command.ts'
 import { appCmd } from './commands.ts'
-import { readUpdateFile, writeUpdateFile, type UpdateFile } from './config.ts'
+import { pushStatus, readUpdateFile, values, writeUpdateFile, type UpdateFile } from './config.ts'
 import { invalidateMenu } from './menu.ts'
 import { APP_NAME, APPS } from './mover.ts'
 import { confirm, setUpdatePill, waitingEnds } from './pill.ts'
@@ -39,12 +42,14 @@ import { LiveFakeUpdater, type FakeAnswer, type FakeRestart } from './testing/up
 import { note, provide, testMode } from './testing/index.ts'
 import { T } from './timings.ts'
 import {
-  menuItem, pillOf, startUpdates, type BlockedWhy, type CheckAnswer, type UpdateClock, type UpdateFailure, type UpdateGates, type UpdateMenuItem, type UpdateModel,
+  menuItem, pillOf, startUpdates, updateRow, type BlockedWhy, type CheckAnswer, type UpdateClock, type UpdateFailure, type UpdateGates, type UpdateMenuItem, type UpdateModel,
   type UpdaterAdapter, type UpdateState, type UpdateToken,
 } from './update-model.ts'
 
 /** Every download link (#29): the latest release's DMG, one name in every release. */
 export const DOWNLOAD_URL = 'https://github.com/TNEP4/marver-app/releases/latest/download/Marver-arm64.dmg'
+/** Settings' Release notes (spec 33 C4): the GitHub release of a version. */
+export const releaseNotesUrl = (version: string): string => `https://github.com/TNEP4/marver-app/releases/tag/v${version}`
 
 const j = (topic: string, data: unknown) => { if (__MV_TEST__) note(topic, data) }
 
@@ -68,7 +73,7 @@ export interface ExplainAlert { message: string; detail: string; buttons: string
 export function explainAlert(why: Exclude<BlockedWhy, 'feed'>, o: { folder: string; declined: boolean }): ExplainAlert {
   if (why === 'location') {
     return {
-      message: 'Marver updates itself only from the Applications folder',
+      message: BLOCKED_TITLE.location,
       detail: `This Marver runs from ${o.folder}. Quit it, move it to Applications, and open it from there: it then checks for updates on its own.`
         + (o.declined ? '\n\nMarver was told not to move itself there. Move at Next Launch lets it, the next time it opens from here.' : ''),
       buttons: ['OK', 'Show in Finder', ...(o.declined ? ['Move at Next Launch'] : [])],
@@ -76,13 +81,13 @@ export function explainAlert(why: Exclude<BlockedWhy, 'feed'>, o: { folder: stri
   }
   if (why === 'write') {
     return {
-      message: "Marver can't update itself here",
+      message: BLOCKED_TITLE.write,
       detail: `Updating replaces Marver where it is, and this account can't change ${o.folder}. Download the latest Marver and install it again to update.`,
       buttons: ['OK', 'Download'],
     }
   }
   return {
-    message: "Marver can't check for updates",
+    message: BLOCKED_TITLE.setup,
     detail: "Its updater couldn't start on this Mac. Download the latest Marver to update by hand.",
     buttons: ['OK', 'Download'],
   }
@@ -182,11 +187,23 @@ export interface UpdaterStart {
 
 let model: UpdateModel | null = null
 let started: UpdaterStart | null = null
+let runVersion = ''
 
 /** The Marver menu's item (#22), for views.ts's menu model: none before the updater starts, none while blocked by the feed. */
 export const updateMenu = (): UpdateMenuItem | null => (model ? menuItem(model.state()) : null)
 /** The menu's and the pill's one entry (#22): acts only while the token holds. */
 export const updateAct = (t: UpdateToken): boolean => model?.act(t) ?? false
+const nameOf = (tab: string): string => { const t = getTab(tab); return t ? tabName(t) : 'a closed tab' }
+/** Settings' Updates row (spec 33 C2): `idle` with no button before the updater starts. */
+export function updateRowNow(): UpdateRow {
+  if (!model) return { show: 'idle', version: app.getVersion(), checkedAt: null, token: null }
+  return updateRow(model.state(), runVersion, nameOf)
+}
+/** Settings' Release notes (spec 33 C4): the version the update goes to, else the one running. */
+export function openReleaseNotes(): void {
+  const r = updateRowNow()
+  started?.openExternal(releaseNotesUrl(r.next ?? r.version))
+}
 
 /**
  * #21: a waiting update goes back to `ready` when its tab's fresh `unsaved` turns false (`reportTab`: a report of that
@@ -254,12 +271,14 @@ export function startUpdater(s: UpdaterStart): UpdateModel {
     gates = { inApplications: blocked !== 'location', writable: blocked !== 'write' }
   }
   const run = version
+  runVersion = run
   const ports = {
     adapter, clock: s.clock ?? clockOf(), feed, version: run,
     record: (b: UpdateBody) => s.record(b),
     changed: (st: UpdateState) => {
-      setUpdatePill(pillOf(st, (tab) => { const t = getTab(tab); return t ? tabName(t) : 'a closed tab' }), updateAct)
+      setUpdatePill(pillOf(st, nameOf), updateAct)
       invalidateMenu()
+      pushStatus()
       j('update', { phase: st.phase, failure: st.failure })
     },
     answer: (a: CheckAnswer, text: string) => confirm('update', { text, short: ANSWER_SHORT[a] }),
@@ -269,6 +288,7 @@ export function startUpdater(s: UpdaterStart): UpdateModel {
     explain: (why: Exclude<BlockedWhy, 'feed'>) => { void explain(why) },
     restartFailed: (message: string) => restartFailed(message),
     beforeQuitForUpdate: () => beforeQuitForUpdate(),
+    auto: () => values().config.autoUpdate !== false,
   }
   const m = startUpdates(ports, gates ?? readGates())
   model = m
@@ -366,6 +386,6 @@ function hooks(): void {
 /** Test seam (unit cases). */
 export function resetUpdater(): void {
   model?.stop()
-  model = null; started = null; fake = null; onlineStub = null; alertsShown.length = 0; alertAnswer = null
+  model = null; started = null; runVersion = ''; fake = null; onlineStub = null; alertsShown.length = 0; alertAnswer = null
   setUpdateSide(null)
 }

@@ -17,6 +17,10 @@
  * `tabs:more` narrowed to the strip, `WindowView.immersive`, `TabView.hung`, `TabMarks`' `kinds`, `stopped`, `top`
  * and `work`, `SharedLink.id`, Home's card actions (`copy-link`, `copy-path`, `reveal`, `HomeActionAnswer.why`) and
  * how Home's inputs were made (`via`, `keys`, `cancel`), which the bridge keeps from Home alone. No new page kind.
+ *
+ * Spec 33 (app 1.2.1), additive: Settings' Updates row (`SettingsView.update`, `UpdateRow`; `UpdateToken`,
+ * `BlockedWhy` and `BLOCKED_TITLE` moved here from update-model.ts so the page can carry a token), `settings:action`'s
+ * `update` and `release-notes`, and `settings:set` from Home with `via: 'key'` (D switches light and dark).
  */
 import type { IconName } from '../pages/dom.ts'
 
@@ -330,15 +334,53 @@ export interface SettingsView {
    * `unknown` (none posted yet). `state/notices.json`'s `lastOutcome`, absent reading `unknown`.
    */
   notices: { outcome: 'unknown' | 'accepted' | 'failed' }
+  /** spec 33 C2: the Updates row */
+  update: UpdateRow
 }
-/** `settings:set` (settings to main; an invoke): one key into one file. */
-export interface SettingsSet { file: 'config' | 'theme'; key: string; value: boolean | number | string }
+/** `settings:set` (settings and Home to main; an invoke): one key into one file. `via: 'key'` (spec 33 D): D's theme
+ *  switch; absent reads a click. From Home the bridge takes only `theme mode` light or dark. */
+export interface SettingsSet { file: 'config' | 'theme'; key: string; value: boolean | number | string; via?: 'key' }
 export type SettingsSetResult =
   | { ok: true }
   | { ok: false; why: 'unknown-key' | 'bad-value' | 'unwritable' | 'write-failed'; code?: string }
-/** `settings:action` (settings to main; a send, A4.6 #27): the Notices row's Open System Settings, the one action. The
- *  Notices switch itself is `settings:set notifications`; `notices-on` and `notices-off` are not built. */
-export interface SettingsAction { action: 'open-notification-settings' }
+/** `settings:action` (settings to main; a send, A4.6 #27): the Notices row's Open System Settings; spec 33 C4, C5: the
+ *  Updates row's button (its token, acted on only while it holds) and Release notes (main builds the link). */
+export type SettingsAction =
+  | { action: 'open-notification-settings' }
+  | { action: 'release-notes' }
+  | { action: 'update'; token: UpdateToken }
+
+/** Why the updater is blocked (spec 28 A5.1 #13). */
+export type BlockedWhy = 'feed' | 'location' | 'write' | 'setup'
+/** What a click acts on (A5.1 #21, #22): its act and the state and version it was offered for. */
+export type UpdateToken =
+  | { act: 'check' }
+  | { act: 'restart' | 'try-again' | 'download' | 'dismiss'; version: string }
+  | { act: 'explain'; why: Exclude<BlockedWhy, 'feed'> }
+/** A blocked updater's title (#22): the alert's message, and Settings' state line (spec 33 C3). */
+export const BLOCKED_TITLE: Record<Exclude<BlockedWhy, 'feed'>, string> = {
+  location: 'Marver updates itself only from the Applications folder',
+  write: "Marver can't update itself here",
+  setup: "Marver can't check for updates",
+}
+/** Settings' Updates row (spec 33 C2, C3): one more view of the updater's state, beside the pill and the menu. */
+export interface UpdateRow {
+  show: 'off' | 'blocked' | 'idle' | 'current' | 'checking' | 'downloading' | 'ready' | 'waiting' | 'restarting' | 'error' | 'failed'
+  /** the version running */
+  version: string
+  /** ready, waiting, restarting, failed: the version it goes to */
+  next?: string
+  /** ready, waiting: the feed's notes, one per non-empty line, "- " stripped, at most 5 */
+  notes?: string[]
+  /** waiting: the tab whose unsaved work holds it */
+  tab?: string
+  /** blocked */
+  why?: Exclude<BlockedWhy, 'feed'>
+  /** the last check's end (wall clock), this launch */
+  checkedAt: number | null
+  /** the button's; null: none, or disabled */
+  token: UpdateToken | null
+}
 
 /** The channel names. */
 export const CH = {
@@ -398,7 +440,8 @@ export const SENDERS: Record<string, readonly PageKind[]> = {
   [CH.tabpageAction]: ['tabpage'],
   [CH.homeAction]: ['home'],
   [CH.settingsGet]: ['settings'],
-  [CH.settingsSet]: ['settings'],
+  // spec 33 D: Home's D, `theme mode` light or dark alone (the bridge)
+  [CH.settingsSet]: ['settings', 'home'],
   [CH.settingsReveal]: ['settings'],
   [CH.settingsAction]: ['settings'],
   // spec 32 B2: the strip's menu - no input of their own (the pick records what `tabAct` opens)
@@ -468,6 +511,8 @@ export interface HomeApi extends PageApiBase {
   openLink(url: string, via?: 'click' | 'key', keys?: HomeKeys): Promise<LinkOpenAnswer>
   /** spec 32 D8.8: `via` and `keys` sent when given */
   action(a: HomeAction): Promise<HomeActionAnswer>
+  /** spec 33 D: D's switch - `settings:set theme mode` with `via: 'key'` */
+  setTheme(mode: 'light' | 'dark'): Promise<SettingsSetResult>
 }
 export interface SettingsApi extends PageApiBase {
   readonly kind: 'settings'
@@ -475,7 +520,7 @@ export interface SettingsApi extends PageApiBase {
   get(): Promise<SettingsView>
   set(s: SettingsSet): Promise<SettingsSetResult>
   reveal(): void
-  /** A4 (A4.6 #27): Open System Settings, on the Notifications pane */
+  /** A4 (A4.6 #27): Open System Settings, on the Notifications pane; spec 33: the Updates row's button, Release notes */
   action(a: SettingsAction): void
 }
 export interface TabPageApi extends PageApiBase {

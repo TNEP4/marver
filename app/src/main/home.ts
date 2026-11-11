@@ -30,7 +30,7 @@ import { existsSync, realpathSync, statSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { app } from 'electron'
-import { CH, type HomeActionAnswer, type HomeInfo, type LinkOpenAnswer, type RecentView, type SharedLink } from '../shared/channels.ts'
+import { CH, type HomeActionAnswer, type HomeInfo, type LinkOpenAnswer, type RecentView, type SharedLink, type UpdateRow } from '../shared/channels.ts'
 import { FIXED_COMMANDS, startCommand, tilde, updateCommand } from '../shared/command.ts'
 import { hueOf } from '../shared/hue.ts'
 import { buildDeepLink } from '../../../src/shared/deep-link.ts'
@@ -502,15 +502,18 @@ export async function openLink(raw: unknown, ports: LinkPorts): Promise<LinkOpen
 
 // ---- the pages' channels, mounted once at ready ---------------------------------------------------------------
 
+const noUpdates = (): UpdateRow => ({ show: 'idle', version: app.getVersion(), checkedAt: null, token: null })
+
 /**
  * At ready, once the bridge and the tabs exist (ports.ts): `home:action`, `link:open`, `settings:get`, `settings:set`
  * as invokes and `settings:reveal` as a send; `home:info` and `recent` to Home, `status` to Settings, at each page's
- * `app:ready` and on every change; the files pill to the window's feed. Answers what undoes it (tests).
+ * `app:ready` and on every change; the files pill to the window's feed. Answers what undoes it (tests). `update`
+ * (spec 33 C2): Settings' Updates row, the updater's (main.ts passes `updateRowNow`), so this file never imports it.
  */
-export function mountPages(bridge: PageBridge, w: WindowPorts): () => void {
+export function mountPages(bridge: PageBridge, w: WindowPorts, update: () => UpdateRow = noUpdates): () => void {
   bridge.handle(CH.homeAction, (_c, p) => homeAction(p))
   bridge.handle(CH.linkOpen, (_c, p) => openLink(p, w.linkPorts))
-  bridge.handle(CH.settingsGet, () => settingsView())
+  bridge.handle(CH.settingsGet, () => ({ ...settingsView(), update: update() }))
   bridge.handle(CH.settingsSet, (_c, p) => settingsSet(p))
   bridge.handle(CH.settingsReveal, () => { settingsReveal() })
   let info = ''

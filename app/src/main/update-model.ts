@@ -22,8 +22,11 @@
  * - **The failure** (#14, #18) is apart from the phase: a check runs while it is shown. Dismiss, a later
  *   `update-downloaded` and a later `installed` clear it.
  * - **Actions** (#21, #22): the pill and the menu call `act(token)`, which acts only while its token still holds.
+ * - **Spec 33** (app 1.2.1): `last`, the last check's end on the wall clock (Settings' "Last checked"); `auto`, the
+ *   `autoUpdate` key - off, the timer and a wake start nothing (a manual check still runs); `updateRow`, Settings' view.
  */
 import type { UpdateBody } from '../../../src/shared/app-perf.ts'
+import type { BlockedWhy, UpdateRow, UpdateToken } from '../shared/channels.ts'
 import { T } from './timings.ts'
 
 // ---- the frozen contracts (#41) ---------------------------------------------------------------------------------
@@ -43,7 +46,7 @@ export interface UpdaterAdapter {
   quitAndInstall(): void
 }
 
-export type BlockedWhy = 'feed' | 'location' | 'write' | 'setup'
+export type { BlockedWhy, UpdateRow, UpdateToken }
 
 /** Eight values (#14). `downloading` is the middle of an attempt; `waiting` is an update refused by a tab's unsaved work. */
 export type UpdatePhase =
@@ -59,13 +62,8 @@ export type UpdatePhase =
 /** #18's reconciliation found the version it left: the update did not install. */
 export interface UpdateFailure { from: string; to: string; at: number }
 
-export interface UpdateState { phase: UpdatePhase; failure: UpdateFailure | null }
-
-/** What a click acts on (#21, #22): its act and the state and version it was offered for. */
-export type UpdateToken =
-  | { act: 'check' }
-  | { act: 'restart' | 'try-again' | 'download' | 'dismiss'; version: string }
-  | { act: 'explain'; why: Exclude<BlockedWhy, 'feed'> }
+/** `last` (spec 33 C1): the last check's end this launch, `at` on the wall clock; null until one ends. */
+export interface UpdateState { phase: UpdatePhase; failure: UpdateFailure | null; last: { at: number; ok: boolean } | null }
 
 /** The `update` record (#25), frozen in app-perf.ts beside the other kinds. */
 export type { UpdateBody }
@@ -105,6 +103,8 @@ export interface UpdatePorts {
   restartFailed(message: string): void
   /** Electron 45 emits it twice with a window open (#16): passed on once */
   beforeQuitForUpdate(): void
+  /** spec 33 C1: `autoUpdate`, read at each automatic start; absent reads true */
+  auto?(): boolean
 }
 
 /** What updater.ts reads before setup (#13): `app.isInApplicationsFolder()`, and W_OK on the bundle and its folder. */
@@ -192,6 +192,30 @@ export function pillOf(s: UpdateState, tabName: (tab: string) => string): Update
   return { show: 'failed', version: f.to, text: `${f.to} couldn't be installed`, short: 'Update failed', button: { label: 'Download', token: { act: 'download', version: f.to } }, dismiss: { act: 'dismiss', version: f.to } }
 }
 
+/** One line per non-empty line of the feed's notes, "- " stripped, at most 5 (spec 33 C4). */
+export const noteLines = (notes: string): string[] =>
+  notes.split('\n').map((l) => l.trim().replace(/^- /, '').trim()).filter(Boolean).slice(0, 5)
+
+/** Settings' Updates row (spec 33 C3): the state as a row, first match wins. */
+export function updateRow(s: UpdateState, version: string, tabName: (tab: string) => string): UpdateRow {
+  const p = s.phase
+  const checkedAt = s.last?.at ?? null
+  const row = (show: UpdateRow['show'], token: UpdateToken | null, more: Partial<UpdateRow> = {}): UpdateRow => ({ show, version, checkedAt, token, ...more })
+  switch (p.kind) {
+    case 'blocked': return p.why === 'feed' ? row('off', null) : row('blocked', { act: 'explain', why: p.why }, { why: p.why })
+    case 'restarting': return row('restarting', null, { next: p.version })
+    case 'ready': return row('ready', { act: 'restart', version: p.version }, { next: p.version, notes: noteLines(p.notes) })
+    case 'waiting': return row('waiting', { act: 'try-again', version: p.version }, { next: p.version, notes: noteLines(p.notes), tab: tabName(p.tab) })
+    case 'checking': return row('checking', null)
+    case 'downloading': return row('downloading', null)
+    case 'setup': return row('idle', null)
+    case 'idle':
+      if (s.failure) return row('failed', { act: 'download', version: s.failure.to }, { next: s.failure.to })
+      if (s.last) return row(s.last.ok ? 'current' : 'error', { act: 'check' })
+      return row('idle', { act: 'check' })
+  }
+}
+
 /** A manual check's words (#14). */
 export function answerText(a: CheckAnswer, version: string): string {
   if (a === 'current') return `Marver ${version} is up to date`
@@ -207,6 +231,8 @@ export function startUpdates(p: UpdatePorts, g: UpdateGates): UpdateModel {
   const c = p.clock
   let phase: UpdatePhase = { kind: 'setup' }
   let failure: UpdateFailure | null = null
+  let last: UpdateState['last'] = null
+  const auto = (): boolean => p.auto?.() ?? true
   /** the attempt in flight: set before `checkForUpdates()` is called, cleared at its one end */
   let flight: { id: number; manual: boolean } | null = null
   let ids = 0
@@ -216,12 +242,16 @@ export function startUpdates(p: UpdatePorts, g: UpdateGates): UpdateModel {
   let quitPassed = false
   let restartPassed = false
 
-  const state = (): UpdateState => ({ phase, failure })
+  const state = (): UpdateState => ({ phase, failure, last })
   const set = (ph: UpdatePhase, f: UpdateFailure | null = failure): void => { phase = ph; failure = f; p.changed(state()) }
   const clear = (h: unknown): null => { if (h !== null) c.clearTimeout(h); return null }
   const quiet = (): void => { next = clear(next); slow = clear(slow) }
-  /** the next automatic attempt: one timer, replaced at every end; one firing mid-attempt starts nothing */
-  const arm = (ms: number): void => { next = clear(next); next = c.setTimeout(() => { next = null; start(false) }, ms) }
+  /** the next automatic attempt: one timer, replaced at every end; one firing mid-attempt starts nothing, and with
+   *  `autoUpdate` off (spec 33 C1) none starts and the timer is armed again */
+  const arm = (ms: number): void => {
+    next = clear(next)
+    next = c.setTimeout(() => { next = null; if (auto()) start(false); else arm(T.updateEveryMs) }, ms)
+  }
 
   function block(why: BlockedWhy, message?: string): void {
     if (phase.kind === 'blocked') return   // once per launch
@@ -259,6 +289,7 @@ export function startUpdates(p: UpdatePorts, g: UpdateGates): UpdateModel {
       return
     }
     p.record(e.how === 'current' ? { phase: 'current', attempt: f.id } : { phase: 'error', attempt: f.id, message: e.message })
+    last = { at: Date.now(), ok: e.how === 'current' }
     set({ kind: 'idle' })
     arm(T.updateEveryMs)
     if (!f.manual) return
@@ -317,6 +348,7 @@ export function startUpdates(p: UpdatePorts, g: UpdateGates): UpdateModel {
       }
     },
     wake() {
+      if (!auto()) return false
       if (lastStart !== null && c.now() - lastStart < T.updateWakeQuietMs) return false
       return start(false)
     },

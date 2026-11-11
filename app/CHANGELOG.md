@@ -1,5 +1,29 @@
 # Changelog - the Marver Mac app
 
+## Unreleased
+
+### Highlights
+- Settings in glass, with updates in one place
+- See when Marver last checked for updates, and what's new before you restart
+- D switches light and dark on Home and Settings
+- Turn off automatic updates in Settings; Check for Updates still works
+- The Settings tab wears a gear, like a canvas wears its logo
+
+Use it with canvases on marver 0.32.0, as 1.2.0; older canvases keep working as before.
+
+- **Settings, redone in Home's glass.** One centred column: Updates, Appearance, Tabs, Notices and Performance, with
+  real switches, a System / Light / Dark control and a menu for how long performance files are kept. A settings file
+  that does not apply says so at the top, with its problems and its text.
+- **Updates in Settings.** Marver and its version, whether it is up to date and when it last checked, Check for updates;
+  while it checks or downloads, it says so; once an update is ready, what's new in it, Release notes and Restart to
+  update - your canvases keep running until you do.
+- **Download updates automatically** (`autoUpdate` in `config.json`, on by default): off, Marver checks only when you ask.
+  A `config.json` that sets it does not apply in a Marver older than 1.2.1 (an unknown key); updates only move forward.
+- **D switches light and dark** on Home and in Settings, the opposite of what shows; canvases keep their own theme.
+- The Settings tab shows a filled gear on a round plate, the size of a canvas's logo.
+- Each release now opens with a few short highlights: the update's "What's new", its tooltip and the GitHub release
+  page show them.
+
 ## 1.2.0 - 2026-11-11
 
 Use it with canvases on marver 0.32.0 for everything below; older canvases keep working as before.

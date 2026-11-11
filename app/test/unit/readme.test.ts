@@ -16,6 +16,10 @@ describe('README.md', () => {
     expect(isWhole('README.md', '')).toBe(false)
   })
 
+  it('spec 33 C6: autoUpdate is used from app 1.2.1, its own version over its milestone\'s', () => {
+    const row = renderReadme('1.2.1').split('\n').find((l) => l.startsWith('| `autoUpdate`'))
+    expect(row).toMatch(/^\| `autoUpdate` \| true or false \| `true` \| 1\.2\.1 \| Check for updates every few hours/)
+  })
   it('lists update.json among the app\'s state files (A5.1 #18, #23)', () => {
     const state = renderReadme('1.0.0').split('\n').find((l) => l.startsWith('| `state/`'))
     expect(state).toContain('`update.json`')

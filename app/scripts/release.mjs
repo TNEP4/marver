@@ -15,9 +15,10 @@
  *
  * The steps (#11), each recorded in `.release/X.Y.Z/state.json` (gitignored) before the next starts:
  *   0 preflight     refusals only: a clean tree, pushed (marver's main for production); the versions (#5) above the
- *                   floor; a dated, committed CHANGELOG section naming its companion marver version, published on
+ *                   floor; a dated, committed CHANGELOG section naming its companion marver version (from 1.2.1, and
+ *                   for every candidate, opening with its Highlights, spec 33 E2), published on
  *                   npm; no release or tag vX.Y.Z but this state's draft; gh able to write; immutability on; notarytool
- *   1 freeze        the source SHA, the notes and their sha256, the feed, the designated requirement (DR)
+ *   1 freeze        the source SHA, the notes and their sha256 (and the Highlights, the feed's notes), the feed, the DR
  *   2 build         scripts/build.mjs's buildRelease with the feed baked in, the smoke whole, into .release/X.Y.Z/
  *   3 notarize-app  the built app's tree hash first (app-hashed), then its ZIP submitted without --wait (#7)
  *   4 staple-app    a ditto copy, stapled, validated, spctl'd and checked against the DR; the copy's tree hash
@@ -221,6 +222,29 @@ export function changelogSection(changelog, version) {
 export function companionVersions(text) {
   return [...new Set([...String(text).matchAll(/(?<![\w.-])marver (\d+\.\d+\.\d+)(?![\w-]|\.\d)/g)].map((m) => m[1]))].sort(cmpVersion)
 }
+
+/**
+ * A section's Highlights (spec 33 E2): its first non-empty line is exactly `### Highlights`, then 3-5 lines `- <text>`
+ * (one line each, at most 90 characters, plain: no `**`, no links), then a blank line or the end. Returns `{ lines }`
+ * (the dash stripped) or `{ error }`. What people read where they download: the feed's notes, the app's What's new.
+ */
+export function highlightsOf(text) {
+  const lines = String(text ?? '').split('\n')
+  let i = lines.findIndex((l) => l.trim())
+  if (i < 0 || lines[i] !== '### Highlights') return { error: 'the section does not start with "### Highlights"' }
+  const out = []
+  for (i += 1; i < lines.length && lines[i].trim(); i++) {
+    const m = /^- (\S.*)$/.exec(lines[i])
+    if (!m) return { error: `a highlight is one line starting "- ": ${JSON.stringify(lines[i])}` }
+    if (m[1].length > 90) return { error: `a highlight is at most 90 characters: ${JSON.stringify(m[1])}` }
+    if (/\*\*|\]\(/.test(m[1])) return { error: `a highlight is plain text, no ** or links: ${JSON.stringify(m[1])}` }
+    out.push(m[1].trim())
+  }
+  if (out.length < 3 || out.length > 5) return { error: `the Highlights have ${out.length} bullets, not 3 to 5` }
+  return { lines: out }
+}
+/** From 1.2.1 every release, and every candidate (which numbers below it), must open with its Highlights (spec 33 E2). */
+export const needsHighlights = (version, test) => !!test || cmpVersion(version, '1.2.1') >= 0
 
 /** The asset URL of a version's release (the feed's `url`, check-public's reads) */
 export const assetUrl = (repo, v, name) => `https://github.com/${repo}/releases/download/v${v}/${name}`
@@ -994,6 +1018,8 @@ async function preflight(cx) {
   else {
     companions = companionVersions(section.text)
     if (!companions.length) bad.push(`the ${cx.version} section names no companion marver version (written "marver X.Y.Z", A5.1 #2)`)
+    const hl = needsHighlights(cx.version, cx.test) ? highlightsOf(section.text) : null
+    if (hl?.error) bad.push(`the ${cx.version} section's Highlights: ${hl.error} (playbooks/release/APP-NOTES.md)`)
   }
   const dr = (git.show(cx.root, 'HEAD', `${cx.appRel}/build/designated-requirement.txt`) ?? '').trim()
   if (!dr.includes(`identifier "${BUNDLE_ID}"`) || !dr.includes('anchor apple generic')) bad.push('app/build/designated-requirement.txt is missing or not the Developer ID form (#8)')
@@ -1030,9 +1056,11 @@ function freeze(cx) {
   const section = changelogSection(cx.p.git.show(cx.root, 'HEAD', `${cx.appRel}/CHANGELOG.md`), cx.version)
   const dr = cx.p.git.show(cx.root, 'HEAD', `${cx.appRel}/build/designated-requirement.txt`).trim()
   const companions = companionVersions(section.text)
+  // spec 33 E2: the short notes the feed carries, beside the whole section the GitHub body keeps
+  const hl = highlightsOf(section.text)
   mark(cx, 'freeze', {
     version: cx.version, repo: cx.repo, feed: cx.feed, dr, companion: companions.at(-1),
-    notes: { heading: section.heading, date: section.date, text: section.text, sha256: sha256(section.text) },
+    notes: { heading: section.heading, date: section.date, text: section.text, sha256: sha256(section.text), ...(hl.lines ? { highlights: hl.lines } : {}) },
   }, (s) => { s.source = { sha: head, branch: pre.branch } })
 }
 
@@ -1261,7 +1289,8 @@ function feed(cx) {
   const version = p.CFBundleShortVersionString
   if (version !== cx.version) stop(`the bundle says ${version}, not ${cx.version}`)
   const fr = cx.state.steps.freeze
-  const text = feedText({ version, pubDate: iso(fr.at), notes: fr.notes.text, repo: cx.repo })
+  // the Highlights, one per line (spec 33 E2); a state frozen before them has the whole section, as before
+  const text = feedText({ version, pubDate: iso(fr.at), notes: fr.notes.highlights ? fr.notes.highlights.join('\n') : fr.notes.text, repo: cx.repo })
   const bad = versionAgreement(cx.version, { feed: JSON.parse(text), zipName: cx.names.zip, heading: fr.notes.heading, repo: cx.repo })
   if (bad.length) stop(`the versions do not agree (#5): ${bad.join('; ')}`)
   const tmp = at(cx, `${cx.names.feed}.tmp`)

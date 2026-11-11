@@ -11,7 +11,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import {
   ACCEPTANCE_IDS, REPOS, T, assetNames, changelogSection, cmpVersion, companionVersions, feedText, ghFieldsPayload, isCandidate,
   judgeEvidence, notaryAppName, notaryDmgName, notaryOutcome, publishArgs, reconcileAssets, releaseBody, requiredChecks, sha256,
-  submissionsOf, treeHash, versionAgreement, versionFloor, NPM_NAME, waiversFor,
+  submissionsOf, treeHash, versionAgreement, versionFloor, NPM_NAME, waiversFor, highlightsOf, needsHighlights,
 } from '../../scripts/release.mjs'
 
 const V = '1.0.0'
@@ -216,5 +216,37 @@ describe('the tree hash (#11 step 7)', () => {
     symlinkSync('B', join(c, 'Contents', 'Versions', 'Current'))
     expect(treeHash(c).sha256).not.toBe(treeHash(a).sha256)
     expect(sha256('')).toBe('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855')
+  })
+})
+
+describe('spec 33 E2: the Highlights', () => {
+  const H = (...b: string[]) => ['### Highlights', ...b.map((x) => `- ${x}`)].join('\n')
+  it('3 to 5 one-line bullets, first in the section, then a blank line or the end', () => {
+    expect(highlightsOf(`${H('One', 'Two', 'Three')}\n\nUse it with canvases on marver 0.32.0.\n\n- **Detail.** x`)).toEqual({ lines: ['One', 'Two', 'Three'] })
+    expect(highlightsOf(`\n${H('A', 'B', 'C', 'D', 'E')}`)).toEqual({ lines: ['A', 'B', 'C', 'D', 'E'] })
+    expect(highlightsOf('Use it with marver 0.32.0.\n\n- **x**').error).toMatch(/does not start with "### Highlights"/)
+    expect(highlightsOf(H('A', 'B')).error).toMatch(/2 bullets, not 3 to 5/)
+    expect(highlightsOf(H('A', 'B', 'C', 'D', 'E', 'F')).error).toMatch(/6 bullets/)
+    expect(highlightsOf(`${H('A', 'B is long')}\n  and wraps\n- C`).error).toMatch(/one line starting "- "/)
+    expect(highlightsOf(H('A', 'B', 'x'.repeat(91))).error).toMatch(/at most 90/)
+    expect(highlightsOf(H('A', 'B', '**Bold**')).error).toMatch(/plain text/)
+    expect(highlightsOf(H('A', 'B', 'a [link](https://x)')).error).toMatch(/plain text/)
+  })
+  it('required from 1.2.1, and for every --test candidate', () => {
+    expect([needsHighlights('1.2.0', false), needsHighlights('1.2.1', false), needsHighlights('1.10.0', false), needsHighlights('0.99.1', true)]).toEqual([false, true, true, true])
+  })
+  it('the feed carries what it is given; the GitHub body is still the whole section', () => {
+    const notes = 'One\nTwo\nThree'
+    expect(JSON.parse(feedText({ version: '1.2.1', pubDate: 'd', notes, repo: P })).releases[0].updateTo.notes).toBe(notes)
+    const text = `${H('One', 'Two', 'Three')}\n\n- **Detail.**`
+    expect(releaseBody({ notes: text, sha: 'a'.repeat(40) }).startsWith(text)).toBe(true)
+  })
+  it('app/CHANGELOG.md\'s newest section opens with valid Highlights', async () => {
+    const { readFileSync } = await import('node:fs')
+    const log = readFileSync(join(import.meta.dirname, '..', '..', 'CHANGELOG.md'), 'utf8')
+    const lines = log.split('\n')
+    const at = lines.findIndex((l) => l.startsWith('## '))
+    const end = lines.findIndex((l, i) => i > at && l.startsWith('## '))
+    expect(highlightsOf(lines.slice(at + 1, end).join('\n'))).toHaveProperty('lines')
   })
 })

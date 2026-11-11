@@ -16,7 +16,7 @@ const sha = (s: string) => createHash('sha256').update(s).digest('hex')
 
 function keyTable(file: FileName): string {
   const rows = (Object.entries(KEYS[file]) as [string, KeySpec][]).map(([k, s]) =>
-    `| \`${k}\` | ${typeWords(s)} | ${defaultWords(s)} | ${STAGE_VERSION[s.since]} | ${s.does} |`)
+    `| \`${k}\` | ${typeWords(s)} | ${defaultWords(s)} | ${s.from ?? STAGE_VERSION[s.since]} | ${s.does} |`)
   return ['| Key | Value | Default | Used from app | What it does |', '|---|---|---|---|---|', ...rows].join('\n')
 }
 

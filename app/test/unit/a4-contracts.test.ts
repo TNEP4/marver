@@ -164,6 +164,8 @@ describe('spec 32\'s amendments (F1-F3b), frozen at the contract commit (G3)', (
       'house', 'warning', 'link', 'gear', 'copy', 'x', 'check',
       'arrow-square-out', 'folder-open', 'check-square-offset', 'arrow-clockwise', 'arrow-right', 'arrow-up', 'signpost',
       'dots-vertical', 'sliders', 'grid', 'board',
+      // spec 33: Settings v2's and the strip's filled gear
+      'screen', 'sun', 'moon', 'caret', 'check-bold', 'arrow-down', 'gear-fill',
     ])
   })
   it('immersive play: the two canvas channels, the optional methods, the motion and the recorder\'s mode', () => {

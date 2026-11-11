@@ -108,11 +108,12 @@ const shownTabs = (): TabView[] => (snap?.tabs ?? []).filter((t) => t.kind === '
 const visibleEls = (): HTMLElement[] => shownTabs().map((t) => els.get(t.id)).filter((e): e is HTMLElement => !!e && !e.hidden)
 const idOf = (el: Element | null) => (el as HTMLElement | null)?.dataset?.id ?? null
 
-/** A9: the 24 px round slot - a gear for Settings, the spinner while starting, a warning for a canvas not proven, else the
+/** A9: the 24 px round slot - a filled gear on a plate for Settings (spec 33 B), the spinner while starting, a warning for a canvas not proven, else the
  *  logo (A8: trimmed, on a white plate at 91%, a full-bleed mark covering the circle; initials on its hue) */
 function slotFor(t: TabView): HTMLElement {
   const slot = h('span', { class: 'slot', 'aria-hidden': 'true' })
-  if (t.kind === 'settings') slot.append(icon('gear', 15, 'gear'))
+  // spec 33 B: Settings' filled gear on a round plate that follows the strip's look
+  if (t.kind === 'settings') { slot.classList.add('plate'); slot.append(icon('gear-fill', 17)) }
   else if (t.state === 'starting') slot.append(h('i', { class: 'spin' }))
   else if (t.state === 'unverified') slot.append(icon('warning', 16, 'warn'))   // never a logo for a canvas not proven
   else slot.append(logo(t, 24, { round: true, plate: 0.91 }))

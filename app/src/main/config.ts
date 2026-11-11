@@ -60,6 +60,8 @@ export interface Config {
   dockBadge: boolean
   /** A3's, 1-90 */
   keepPerfDays: number
+  /** spec 33 C6: the automatic checks, from app 1.2.1 (the defaults set it; absent reads on) */
+  autoUpdate?: boolean
 }
 /** theme.json. */
 export interface ThemeFile { mode: 'system' | 'light' | 'dark' }
@@ -405,8 +407,11 @@ function locked<R>(key: string, fn: () => Promise<R>): Promise<R> {
   return run
 }
 
+/** `settings:get` without its `update` row (spec 33 C2: home.ts adds the updater's, so this file never imports it). */
+export type FilesView = Omit<SettingsView, 'update'>
+
 /** `settings:get`: each file's record, effective values and, when it does not apply, its text. */
-export function settingsView(): SettingsView {
+export function settingsView(): FilesView {
   const v = values()
   const file = (f: FileName) => ({
     ...structuredClone(recs[f].state),
@@ -445,6 +450,11 @@ export function setNoticesState(patch: Partial<NoticesFile>): void {
   if (JSON.stringify(next) === JSON.stringify(was)) return
   notices = next
   noticesWriter().set(next)
+  pushStatus()
+}
+
+/** `status` to Settings with nothing re-judged: it asks `settings:get` again (notices, spec 33 C2's update changes). */
+export function pushStatus(): void {
   const s = filesStatus()
   for (const fn of statusFns) fn(s)
 }

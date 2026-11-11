@@ -1803,6 +1803,28 @@ describe('the page funnel (bridge.ts:625-650)', () => {
     await tick()
     expect(cmdLines().filter((l) => l.phase === 'start').map((l) => l.cmd)).toEqual(['settings-reveal', 'notification-settings'])
   })
+  it('spec 33: the Updates row\'s button is `update` (arg its act, a stale token a noop), Release notes its own, D a `setting` by key in Home or Settings', async () => {
+    let acted = true
+    bridge.handle(CH.settingsAction, (_c, p) => ((p as { action: string }).action === 'update' ? acted : true))
+    bridge.handle(CH.settingsSet, async () => ({ ok: true }))
+    m.ipcOn.get(CH.settingsAction)!(page('settings'), { action: 'update', token: { act: 'check' } })
+    await tick()
+    expect(cmdLines().find((l) => l.phase === 'start')).toMatchObject({ cmd: 'update', via: 'click', in: 'settings', arg: 'check' })
+    expect(cmdLines().find((l) => l.phase === 'end')).toMatchObject({ cmd: 'update', outcome: 'done' })
+    flushNow(); writeFileSync(file(), '')
+    acted = false
+    m.ipcOn.get(CH.settingsAction)!(page('settings'), { action: 'update', token: { act: 'restart', version: '1.2.2' } })
+    m.ipcOn.get(CH.settingsAction)!(page('settings'), { action: 'release-notes' })
+    await tick()
+    expect(cmdLines().filter((l) => l.phase !== 'start').map((l) => [l.cmd, l.outcome, l.why])).toEqual([['update', 'noop', 'stale'], ['release-notes', 'done', undefined]])
+    expect(cmdLines().find((l) => l.cmd === 'update')).toMatchObject({ arg: 'restart' })
+    flushNow(); writeFileSync(file(), '')
+    await m.ipcHandle.get(CH.settingsSet)!(page('home'), { file: 'theme', key: 'mode', value: 'dark', via: 'key' })
+    await m.ipcHandle.get(CH.settingsSet)!(page('settings'), { file: 'theme', key: 'mode', value: 'light', via: 'key' })
+    await tick()
+    expect(cmdLines().filter((l) => l.phase === 'start').map((l) => [l.cmd, l.in, l.via, l.arg])).toEqual([['setting', 'home', 'key', 'mode'], ['setting', 'settings', 'key', 'mode']])
+    expect(JSON.stringify(cmdLines())).not.toContain('dark')
+  })
   it('settings:get and app:ready are no input', async () => {
     bridge.handle(CH.settingsGet, async () => ({ dir: '~' }))
     await m.ipcHandle.get(CH.settingsGet)!(page('settings'), undefined)

@@ -161,6 +161,41 @@ describe('the ports', () => {
   })
 })
 
+describe('Settings\' Updates row (spec 33 C1, C2, C4)', () => {
+  it('every change pushes `status` (Settings asks again); updateRowNow is the model\'s row; Release notes opens the next version\'s page', async () => {
+    const cfg = await import('../../src/main/config.ts')
+    const pushes: unknown[] = []
+    cfg.onStatus((s) => { pushes.push(s) })
+    expect(upd.updateRowNow()).toMatchObject({ show: 'idle', token: null })   // before it starts
+    const x = await rig()
+    expect(upd.updateRowNow()).toMatchObject({ show: 'idle', version: '0.99.1', token: { act: 'check' } })
+    const n = pushes.length
+    x.ready()
+    expect(pushes.length).toBeGreaterThanOrEqual(n + 3)          // checking, downloading, ready
+    expect(upd.updateRowNow()).toMatchObject({ show: 'ready', next: '0.99.2', notes: ['Boards open faster'], token: { act: 'restart', version: '0.99.2' } })
+    upd.openReleaseNotes()
+    expect(x.r.opened).toEqual(['https://github.com/TNEP4/marver-app/releases/tag/v0.99.2'])
+  })
+
+  it('autoUpdate: false in config.json - the timer checks nothing; Check for Updates still runs', async () => {
+    const cfg = await import('../../src/main/config.ts')
+    const { writeFileSync } = await import('node:fs')
+    writeFileSync(join(process.env.MARVER_HOME!, 'config.json'), JSON.stringify({ autoUpdate: false }))
+    cfg.readFiles()
+    expect(cfg.values().config.autoUpdate).toBe(false)
+    const x = await rig()
+    x.clock.advance(x.T.updateFirstMs)
+    expect(x.u.count('checkForUpdates')).toBe(0)
+    expect(upd.updateAct({ act: 'check' })).toBe(true)
+    expect(x.u.count('checkForUpdates')).toBe(1)
+  })
+
+  it('a blocked alert\'s title is BLOCKED_TITLE, the one Settings shows', async () => {
+    const { BLOCKED_TITLE } = await import('../../src/shared/channels.ts')
+    for (const why of ['location', 'write', 'setup'] as const) expect(upd.explainAlert(why, { folder: '~/x', declined: false }).message).toBe(BLOCKED_TITLE[why])
+  })
+})
+
 describe('a blocked item\'s alert (#22)', () => {
   it('Updates Need the Applications Folder…: why, where it runs, Show in Finder selects this copy', async () => {
     const x = await rig({ gates: { inApplications: false, writable: true }, answer: 'Show in Finder' })

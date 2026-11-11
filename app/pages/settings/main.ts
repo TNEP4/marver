@@ -1,25 +1,29 @@
 /**
- * Settings, a view of the files (spec 28 A2.7, A2.12, A2.13; frame mac-app/06). Served as marver-app://settings/.
- * On load and on every `status` push it asks `settings:get` and draws: each key this build shows (settings-keys.ts,
- * the same table main validates with), under its file's heading, a switch, a menu or a number field, the key's name
- * under its label. A change is one `settings:set`; refused, the control goes back to what is in force and the row
- * says why. A file that does not apply says so, with each problem and the file's text beside it. "Show the Files"
- * opens the folder.
+ * Settings, a view of the files (spec 28 A2.7, A2.12, A2.13), in Home's glass (spec 33 A; design scenes settings-v2/).
+ * Served as marver-app://settings/. On load and on every `status` push it asks `settings:get` and draws a centred
+ * column of groups - Updates, Appearance, Tabs, Notices, Performance - each a glass card of rows from one table
+ * (`ROWS`), a row only for a key this build shows (`view.shown`). A change is one `settings:set`; the control shows
+ * the value sent until main answers; refused, it goes back to what is in force and the row says why. A file that does
+ * not apply gets a card at the top with its problems and its text. "Show the files" opens the folder.
  *
- * Notices (A4, A4.6 #25, #27): the Notices row is `notifications`' own switch, says that macOS decides whether notices
- * show, and always offers Open System Settings (`settings:action`, the Notifications pane): a notice macOS hides -
- * Marver set to Don't Allow, a Focus that silences it - still reports itself shown, so the app cannot tell (the #53 hand check, 31 Oct).
- * After a notice that failed to post it says "macOS couldn't post Marver's last notice", and no more than that. The
- * Dock badge row shows only once notices are on.
+ * Notices (A4.6 #25, #27): macOS decides whether notices show, so the row always says so and offers Open System
+ * Settings; after a notice that failed to post it says "macOS couldn't post Marver's last notice". The Dock badge row
+ * shows only once notices are on.
+ *
+ * Updates (spec 33 C): the updater's state as main reads it (`view.update`, update-model.ts `updateRow`); the button
+ * sends the row's token back, and main acts only while it holds. "Last checked" is rewritten each minute in place.
+ * D switches light and dark (dom.ts `themeKey`).
  */
-import type { SettingsFileView, SettingsSetResult, SettingsView } from '../../src/shared/channels.ts'
-import { keySpec, type FileName, type KeySpec } from '../../src/shared/settings-keys.ts'
-import { fill, h, pageApi, say, setLook, shown } from '../../src/pages/dom.ts'
+import type { SettingsFileView, SettingsSetResult, SettingsView, UpdateRow } from '../../src/shared/channels.ts'
+import { BLOCKED_TITLE } from '../../src/shared/channels.ts'
+import { keySpec, type FileName } from '../../src/shared/settings-keys.ts'
+import { ago, fill, h, icon, pageApi, say, setLook, shown, themeKey, type IconName } from '../../src/pages/dom.ts'
+import { openMenu, type MenuHandle } from '../../src/pages/menu.ts'
 
 const api = pageApi('settings')
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
-const filesEl = $('files')
-const sideEl = $('side')
+const groupsEl = $('groups')
+const badEl = $('bad')
 const noteEl = $('note')
 const live = $('live')
 
@@ -29,6 +33,22 @@ const errors = new Map<string, string>()
 /** values sent and not yet answered: the control shows them meanwhile */
 const pending = new Map<string, unknown>()
 const NAMES: Record<FileName, string> = { config: 'config.json', theme: 'theme.json' }
+const KEEP = [7, 14, 30, 90]
+
+type Group = 'Updates' | 'Appearance' | 'Tabs' | 'Notices' | 'Performance'
+const GROUPS: Group[] = ['Updates', 'Appearance', 'Tabs', 'Notices', 'Performance']
+/** The rows (spec 33 A3): group, file, key, label, desc. */
+const ROWS: [Group, FileName, string, string, string][] = [
+  ['Updates', 'config', 'autoUpdate', 'Download updates automatically', 'Marver checks every few hours and gets an update ready; it asks before restarting'],
+  ['Appearance', 'theme', 'mode', 'Theme', 'Canvases keep their own · switch with'],
+  ['Tabs', 'config', 'restoreTabs', 'Reopen tabs at launch', 'The canvases you had open come back'],
+  ['Tabs', 'config', 'unloadUnderPressure', 'Unload hidden tabs when memory runs short', 'Never one that is busy; it reloads when you come back'],
+  ['Notices', 'config', 'notifications', 'Notices', 'When a canvas needs you: a question, a review, a run that failed'],
+  ['Notices', 'config', 'dockBadge', 'Dock badge', 'The number of canvases that need you'],
+  ['Performance', 'config', 'recorder', 'Performance recorder', 'What loads slowly, what flashes white - for you and your agent'],
+  ['Performance', 'config', 'keepPerfDays', 'Keep performance files', 'Older days are deleted whole'],
+]
+const MODES: [string, string, IconName][] = [['system', 'System', 'screen'], ['light', 'Light', 'sun'], ['dark', 'Dark', 'moon']]
 
 const WORDS: Record<string, string> = {
   ENOSPC: 'the disk is full', EDQUOT: 'the disk quota is full', EACCES: 'no permission', EPERM: 'no permission', EROFS: 'the disk is read-only',
@@ -42,7 +62,7 @@ function why(r: Exclude<SettingsSetResult, { ok: true }>, file: FileName): strin
   }
 }
 
-async function change(file: FileName, key: string, value: boolean | number | string): Promise<void> {
+async function change(file: FileName, key: string, value: boolean | number | string, via?: 'key'): Promise<void> {
   if (!api) return
   const id = `${file}.${key}`
   pending.set(id, value)
@@ -50,105 +70,182 @@ async function change(file: FileName, key: string, value: boolean | number | str
   render()
   let r: SettingsSetResult
   // an answer that never came (main refused the call, or went away) is a failed write: the control goes back
-  try { r = await api.set({ file, key, value }) } catch { r = { ok: false, why: 'write-failed' } } finally { pending.delete(id) }
+  try { r = await api.set({ file, key, value, ...(via ? { via } : {}) }) } catch { r = { ok: false, why: 'write-failed' } } finally { pending.delete(id) }
   if (!r.ok) { errors.set(id, why(r, file)); say(live, errors.get(id)!) }
   await load()
 }
 
-function control(file: FileName, key: string, spec: KeySpec, f: SettingsFileView, labelId: string): HTMLElement {
+const valueOf = (file: FileName, key: string, f: SettingsFileView): unknown => {
   const id = `${file}.${key}`
-  const value = pending.has(id) ? pending.get(id) : f.values[key]
-  switch (spec.type) {
-    case 'boolean': {
-      const on = value === true
-      return h('button', {
-        class: 'switch', type: 'button', role: 'switch', 'aria-checked': String(on), 'aria-labelledby': labelId, 'data-ctl': id,
-        onclick: () => void change(file, key, !on),
-      })
-    }
-    case 'enum': {
-      const sel = h('select', { 'aria-labelledby': labelId, 'data-ctl': id, onchange: (e) => void change(file, key, (e.target as HTMLSelectElement).value) },
-        ...spec.values.map((v) => h('option', { value: v }, spec.names[v] ?? v)))
-      sel.value = String(value ?? spec.def)
-      return sel
-    }
-    case 'integer': {
-      const inp = h('input', {
-        type: 'number', min: spec.min, max: spec.max, step: 1, 'aria-labelledby': labelId, 'data-ctl': id,
-        onchange: (e) => {
-          const n = Number((e.target as HTMLInputElement).value)
-          void change(file, key, Number.isInteger(n) ? n : Number.NaN)
-        },
-      })
-      inp.value = String(value ?? spec.def)
-      return inp
-    }
-  }
+  return pending.has(id) ? pending.get(id) : f.values[key]
 }
 
-function hintOf(key: string, spec: KeySpec): string {
-  if (spec.type === 'enum') return `${key} - ${spec.values.slice(0, -1).join(', ')} or ${spec.values[spec.values.length - 1]}`
-  return spec.note ? `${key} - ${spec.note}` : key
+// ---- the controls (spec 33 A4) --------------------------------------------------------------------------------
+
+function toggle(file: FileName, key: string, on: boolean, labelId: string): HTMLElement {
+  return h('button', {
+    class: 'st-sw', type: 'button', role: 'switch', 'aria-checked': String(on), 'aria-labelledby': labelId, 'data-ctl': `${file}.${key}`,
+    onclick: () => void change(file, key, !on),
+  }, h('i'))
 }
 
-function section(file: FileName, keys: string[]): HTMLElement | null {
-  if (!view || !keys.length) return null
+function segmented(mode: string, labelId: string): HTMLElement {
+  return h('div', { class: 'st-seg', role: 'radiogroup', 'aria-labelledby': labelId },
+    ...MODES.map(([m, label, ic]) => h('button', {
+      type: 'button', role: 'radio', 'aria-checked': String(mode === m), 'data-ctl': `theme.mode.${m}`,
+      onclick: () => { if (mode !== m) void change('theme', 'mode', m) },
+    }, icon(ic, 14), label)))
+}
+
+let menu: MenuHandle | null = null
+/** the days button as drawn now (a redraw replaces it while its menu stays open) */
+const daysBtn = () => document.querySelector<HTMLElement>('.st-select-btn')
+function closeMenu(): void { menu?.close(); menu = null; daysBtn()?.setAttribute('aria-expanded', 'false') }
+
+/** The days select (A4): a pill that opens the shared Marver menu under it, right-aligned; a value off the list is listed. */
+function select(days: number, labelId: string): HTMLElement {
+  const btn = h('button', {
+    class: 'st-select-btn', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': String(!!menu), 'aria-labelledby': `${labelId} keep-now`,
+    'data-ctl': 'config.keepPerfDays',
+  }, h('span', { id: 'keep-now' }, `${days} days`), icon('caret', 12))
+  btn.addEventListener('click', () => {
+    if (menu) { closeMenu(); return }
+    const list = KEEP.includes(days) ? KEEP : [...KEEP, days].sort((a, b) => a - b)
+    const r = btn.getBoundingClientRect()
+    const done = (focus: boolean) => { menu = null; const b = daysBtn(); b?.setAttribute('aria-expanded', 'false'); if (focus) b?.focus() }
+    menu = openMenu(document.body, {
+      rows: list.map((d) => ({ kind: 'item', id: String(d), label: `${d} days`, enabled: true, checked: d === days })),
+      at: { x: r.right, y: r.bottom + 6, origin: 'top right' }, top: 44, opener: btn, focusFirst: btn.matches(':focus-visible'),
+      onPick: (id) => { done(true); if (Number(id) !== days) void change('config', 'keepPerfDays', Number(id)) },
+      onClose: (how) => done(how !== 'outside'),
+    })
+    btn.setAttribute('aria-expanded', 'true')
+  })
+  return btn
+}
+
+// ---- the rows ------------------------------------------------------------------------------------------------
+
+function row(file: FileName, key: string, label: string, desc: string): HTMLElement | null {
+  if (!view) return null
   const f = view[file]
-  const hid = `h-${file}`
-  return h('section', { 'aria-labelledby': hid },
-    h('h2', { class: 'h2', id: hid }, `${view.dir}/${NAMES[file]}`),
-    f.ok ? null : h('div', { class: 'problem' },
-      h('p', {}, h('b', {}, `${NAMES[file]} did not apply`), ' · using the last good one'),
-      h('ul', {}, ...(f.problems ?? []).map((p) => h('li', {}, p.message)))),
-    ...keys.map((key) => {
-      const spec = keySpec(file, key)
-      if (!spec) return null
-      // the badge needs the same permission as notices (A4.6 #21): its row only once they are on
-      if (file === 'config' && key === 'dockBadge' && f.values.notifications !== true) return null
-      const labelId = `l-${file}-${key}`
-      const id = `${file}.${key}`
-      return h('div', { class: 'row-wrap' },
-        h('div', { class: 'row' },
-          h('div', { class: 'row-txt' }, h('span', { id: labelId }, spec.label), h('small', { class: 'hint' }, hintOf(key, spec))),
-          control(file, key, spec, f, labelId)),
-        file === 'config' && key === 'notifications' ? noticesMore() : null,
-        h('p', { class: 'row-err' }, errors.get(id) ?? ''))
-    }))
+  const spec = keySpec(file, key)
+  if (!spec) return null
+  const id = `${file}.${key}`
+  const labelId = `l-${file}-${key}`
+  const v = valueOf(file, key, f)
+  const err = errors.get(id)
+  const ctl = key === 'mode' ? segmented(String(v ?? spec.def), labelId)
+    : key === 'keepPerfDays' ? select(Number(v ?? spec.def), labelId)
+      : toggle(file, key, v === true, labelId)
+  const words = err ?? desc
+  const tail = key === 'mode' ? (err ? null : h('kbd', {}, 'D')) : h('code', {}, key)
+  return h('div', { class: 'st-row' },
+    h('div', { class: 'st-txt' }, h('div', { class: 'st-label', id: labelId }, label),
+      h('div', { class: `st-desc${err ? ' err' : ''}` }, `${words}${key === 'mode' && !err ? ' ' : ''}`, tail)),
+    h('div', { class: 'st-ctl' }, ctl))
 }
 
 /** Under the Notices switch: that macOS decides, a notice that failed to post, if one did, and Open System Settings, always. */
 function noticesMore(): HTMLElement {
   const failed = view?.notices.outcome === 'failed'
-  return h('div', { class: 'row-more' },
-    h('p', { class: 'hint', id: 'notices-macos' }, 'macOS decides whether notices show. With Marver set to Don\'t Allow, or a Focus that silences it, they don\'t appear, and Marver can\'t tell.'),
-    failed ? h('p', { class: 'hint warn', id: 'notices-failed' }, 'macOS couldn\'t post Marver\'s last notice') : null,
-    h('button', { class: 'quiet', type: 'button', id: 'notice-settings', onclick: () => api?.action({ action: 'open-notification-settings' }) }, 'Open System Settings'))
+  return h('div', { class: 'st-row sub' },
+    h('div', { class: 'st-txt' },
+      h('div', { class: 'st-desc', id: 'notices-macos' }, 'macOS decides whether notices show. With Marver set to Don\'t Allow, or a Focus that silences it, they don\'t appear, and Marver can\'t tell.'),
+      failed ? h('div', { class: 'st-desc err', id: 'notices-failed' }, 'macOS couldn\'t post Marver\'s last notice') : null),
+    h('div', { class: 'st-ctl' }, h('button', { class: 'st-btn ghost', type: 'button', id: 'notice-settings', onclick: () => api?.action({ action: 'open-notification-settings' }) }, 'Open System Settings')))
 }
 
-function sideFor(file: FileName): HTMLElement | null {
+// ---- Updates (spec 33 C3) --------------------------------------------------------------------------------------
+
+/** the state line's mark and words, the button's label, and the small line under it */
+function upWords(u: UpdateRow): { mark?: IconName | 'spin'; tone?: string; text?: string; button?: string; primary?: boolean; small?: string } {
+  const last = u.checkedAt !== null ? `Last checked ${ago(u.checkedAt)}` : undefined
+  switch (u.show) {
+    case 'off': return { text: 'This build doesn\'t update itself' }
+    case 'blocked': return { mark: 'warning', tone: 'err', text: BLOCKED_TITLE[u.why!], button: 'Learn more' }
+    case 'restarting': return { mark: 'spin', text: `Restarting to install Marver ${u.next}`, button: 'Restarting…' }
+    case 'ready': return { mark: 'arrow-down', tone: 'new', text: `Marver ${u.next} is ready to install`, button: 'Restart to update', primary: true, small: 'Your canvases keep running' }
+    case 'waiting': return { mark: 'arrow-down', tone: 'new', text: `Marver ${u.next} waits for ${u.tab}`, button: 'Try again', primary: true, small: 'It has unsaved work' }
+    case 'checking': return { mark: 'spin', text: 'Checking for updates…', button: 'Checking…', small: last }
+    case 'downloading': return { mark: 'spin', text: 'Downloading the update…', button: 'Downloading…' }
+    case 'failed': return { mark: 'warning', tone: 'err', text: `Marver ${u.next} couldn't be installed`, button: 'Download', small: 'Install it again from the disk image' }
+    case 'error': return { mark: 'warning', tone: 'err', text: 'Couldn\'t check - you\'re offline, or GitHub didn\'t answer', button: 'Try again' }
+    case 'current': return { mark: 'check-bold', tone: 'ok', text: 'Marver is up to date', button: 'Check for updates', small: last }
+    case 'idle': return { button: 'Check for updates', small: 'Not checked yet' }
+  }
+}
+
+function updates(u: UpdateRow): HTMLElement[] {
+  const w = upWords(u)
+  const mark = w.mark === 'spin' ? h('i', { class: 'st-spin', 'aria-hidden': 'true' }) : w.mark ? icon(w.mark, 13) : null
+  const token = u.token
+  const button = w.button ? h('button', {
+    class: `st-btn${w.primary ? ' primary' : ''}`, type: 'button', id: 'update-btn', disabled: !token,
+    onclick: () => { if (token) api?.action({ action: 'update', token }) },
+  }, w.button) : null
+  const small = w.small ? h('small', { id: 'checked', ...(w.small.startsWith('Last checked') ? { 'data-at': String(u.checkedAt) } : {}) }, w.small) : null
+  const out = [h('div', { class: 'st-row st-up' },
+    h('img', { class: 'st-appicon', src: 'app-mark.png', alt: '', draggable: 'false' }),
+    h('div', { class: 'st-txt' },
+      h('div', { class: 'st-app' }, 'Marver ', h('span', { class: 'st-ver' }, u.version)),
+      w.text ? h('div', { class: `st-state${w.tone ? ` ${w.tone}` : ''}`, id: 'update-state' }, mark, w.text) : null,
+      u.show === 'downloading' ? h('div', { class: 'st-bar', role: 'progressbar', 'aria-label': 'Downloading the update' }, h('i')) : null),
+    button || small ? h('div', { class: 'st-act' }, button, small) : null)]
+  if ((u.show === 'ready' || u.show === 'waiting') && u.next) {
+    out.push(h('div', { class: 'st-row sub st-notes' },
+      h('div', { class: 'st-txt' }, h('div', { class: 'st-label' }, `What's new in ${u.next}`),
+        u.notes?.length ? h('ul', {}, ...u.notes.map((n) => h('li', {}, n))) : null),
+      h('div', { class: 'st-ctl' }, h('button', { class: 'st-btn ghost', type: 'button', id: 'release-notes', onclick: () => api?.action({ action: 'release-notes' }) }, 'Release notes'))))
+  }
+  return out
+}
+
+/** Every minute: only "Last checked" is rewritten (spec 33 A5) - an open menu and the focus stay. */
+setInterval(() => {
+  const el = document.querySelector<HTMLElement>('#checked[data-at]')
+  if (el) el.textContent = `Last checked ${ago(Number(el.dataset.at))}`
+}, 60_000)
+
+// ---- a file that does not apply, the page --------------------------------------------------------------------
+
+function badCard(file: FileName): HTMLElement | null {
   const f = view?.[file]
   if (!view || !f || f.ok) return null
-  return h('div', { class: 'file' },
-    h('small', {}, `${view.dir}/${NAMES[file]}`),
-    f.text !== undefined ? h('pre', {}, f.text) : h('p', { class: 'hint' }, f.problems?.[0]?.message ?? ''))
+  return h('section', { class: 'st-bad', 'aria-label': `${NAMES[file]} did not apply` },
+    h('p', { class: 'st-bad-h' }, h('b', {}, `${NAMES[file]} did not apply`), ' · using the last good one'),
+    h('ul', {}, ...(f.problems ?? []).map((p) => h('li', {}, p.message))),
+    f.text !== undefined ? h('pre', {}, f.text) : h('p', {}, f.problems?.[0]?.message ?? ''),
+    h('p', {}, 'The app kept the last good file and wrote the problem to ', h('code', {}, view.statusFile), ', where an agent checks its edit.'))
 }
 
 function render(): void {
   if (!view) return
-  const focused = (document.activeElement as HTMLElement | null)?.dataset?.ctl
-  const by = (file: FileName) => view!.shown.filter((s) => s.startsWith(`${file}.`)).map((s) => s.slice(file.length + 1))
-  fill(filesEl, section('config', by('config')), section('theme', by('theme')))
-  const sides = [sideFor('config'), sideFor('theme')].filter(Boolean) as HTMLElement[]
-  sideEl.hidden = !sides.length   // no empty landmark
-  fill(sideEl, ...sides, sides.length
-    ? h('p', { class: 'hint' }, 'The app kept the last good file and wrote the problem to ', h('code', {}, view.statusFile), ', where an agent checks its edit.')
-    : null)
-  const st = view.status
-  const note = !st.writable ? `${view.dir} can't be written · nothing is kept`
+  const v = view
+  const focused = (document.activeElement as HTMLElement | null)?.dataset?.ctl ?? (document.activeElement?.id || undefined)
+  const shownKeys = new Set(v.shown)
+  const groups = GROUPS.map((g) => {
+    const rows: (HTMLElement | null)[] = g === 'Updates' ? updates(v.update) : []
+    for (const [group, file, key, label, desc] of ROWS) {
+      if (group !== g || !shownKeys.has(`${file}.${key}`)) continue
+      // the badge needs the same permission as notices (A4.6 #21): its row only once they are on
+      if (key === 'dockBadge' && v.config.values.notifications !== true) continue
+      rows.push(row(file, key, label, desc))
+      if (key === 'notifications') rows.push(noticesMore())
+    }
+    if (!rows.some(Boolean)) return null
+    const hid = `g-${g.toLowerCase()}`
+    return h('section', { class: 'st-group', 'aria-labelledby': hid }, h('h3', { id: hid }, g), h('div', { class: 'st-card' }, ...rows))
+  })
+  fill(groupsEl, ...groups)
+  fill(badEl, badCard('config'), badCard('theme'))
+  for (const el of document.querySelectorAll('code.dir')) el.textContent = `${v.dir}/`
+  const st = v.status
+  const note = !st.writable ? `${v.dir} can't be written · nothing is kept`
     : st.write ? `Couldn't save ${st.write.file}: ${WORDS[st.write.code] ?? st.write.code}` : ''
   noteEl.hidden = !note
   noteEl.textContent = note
-  if (focused) (filesEl.querySelector(`[data-ctl="${CSS.escape(focused)}"]`) as HTMLElement | null)?.focus()
+  if (focused && !menu?.open) (document.querySelector<HTMLElement>(`[data-ctl="${CSS.escape(focused)}"]`) ?? document.getElementById(focused))?.focus()
 }
 
 let loading: Promise<void> | null = null
@@ -168,6 +265,15 @@ function load(): Promise<void> {
 }
 
 $('reveal').addEventListener('click', () => api?.reveal())
+// D: light or dark, the opposite of what shows (spec 33 D)
+document.addEventListener('keydown', (e) => {
+  const mode = themeKey(e)
+  if (!mode) return
+  e.preventDefault()
+  void change('theme', 'mode', mode, 'key')
+})
+// a window blur closes the days menu, as Home's menus close (menu.ts has no blur rule)
+window.addEventListener('blur', () => closeMenu())
 
 setLook(undefined)
 shown()

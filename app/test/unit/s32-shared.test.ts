@@ -68,10 +68,11 @@ describe('the files every page serves (E2, E6)', () => {
       expect(manifest[page]['/menu.css'], page).toBe('shared/menu.css')
       expect(manifest[page]['/app-mark.png'], page).toBe('shared/app-mark.png')
     }
-    for (const page of ['strip', 'home']) {
+    // spec 33 A1: Home and Settings share Home's glass (glass.css) before the menu
+    for (const [page, want] of [['strip', ['tokens.css', 'base.css', 'menu.css', 'style.css']], ['home', ['tokens.css', 'base.css', 'glass.css', 'menu.css', 'style.css']], ['settings', ['tokens.css', 'base.css', 'glass.css', 'menu.css', 'style.css']]] as const) {
       const html = readFileSync(join(APP, 'pages', page, 'index.html'), 'utf8')
       const links = [...html.matchAll(/<link rel="stylesheet" href="([^"]+)">/g)].map((m) => m[1])
-      expect(links, page).toEqual(['tokens.css', 'base.css', 'menu.css', 'style.css'])
+      expect(links, page).toEqual(want)
     }
     // a 256 x 256 PNG (its IHDR)
     const png = readFileSync(join(APP, 'pages', 'shared', 'app-mark.png'))

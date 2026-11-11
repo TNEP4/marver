@@ -44,6 +44,8 @@ async function callAll(api: Record<string, unknown>): Promise<void> {
     get: [], set: [{ file: 'config', key: 'restoreTabs', value: false }], reveal: [],
     // spec 32 B2: the strip's menu
     menuPick: [{ rev: 1, id: null }], menuShown: [{ rev: 1 }],
+    // spec 33 D: Home's D
+    setTheme: ['dark'],
   }
   for (const [name, fn] of Object.entries(api)) {
     if (typeof fn !== 'function' || name.startsWith('on')) continue

@@ -630,6 +630,9 @@ describe('release.mjs (A5.1 #11, #33)', { timeout: 300_000 }, () => {
       gitIn(w.repo, ['push', '-q'])
       await stops(w, ['1.0.2'], /a release's is "## 1\.0\.2 - YYYY-MM-DD", dated/)
       await stops(w, ['0.99.1'], /a candidate's number/)
+      // spec 33 E2: from 1.2.1 a section opens with its Highlights
+      w.bump('1.2.1', { highlights: false })
+      await stops(w, ['1.2.1'], /the 1\.2\.1 section's Highlights: the section does not start with "### Highlights"/)
       expect(w.builds).toEqual([])
     })
 
@@ -781,6 +784,11 @@ describe('release.mjs --test (A5.1 #4, #31, #43)', { timeout: 300_000 }, () => {
     w.gh.seed(TR, '0.90.2')
     await ok(w, ['0.99.1', '--test'])
     expect(w.builds[0]).toMatchObject({ feed: 'https://github.com/TNEP4/marver-app-test/releases/latest/download/releases.json' })
+    // spec 33 E2: the feed carries the Highlights alone, the draft's body the whole section
+    const fr = w.state('0.99.1').steps.freeze
+    expect(fr.notes.highlights).toEqual(['Updates arrive by themselves', 'Settings in glass', 'D switches light and dark'])
+    const feed = JSON.parse(readFileSync(join(w.app, '.release', '0.99.1', 'releases.json'), 'utf8'))
+    expect(feed.releases[0].updateTo.notes).toBe('Updates arrive by themselves\nSettings in glass\nD switches light and dark')
     expect(said(w)).toMatch(/needs no acceptance/)
     await stops(w, ['0.99.1'], /is a --test release: run it with --test/)
     await ok(w, ['0.99.1', '--publish', '--test'])
@@ -791,6 +799,9 @@ describe('release.mjs --test (A5.1 #4, #31, #43)', { timeout: 300_000 }, () => {
 
   it('a candidate may pass with the no-canvas memory check failing, its number in the record; any other failure, or a production build, stops (Nic, 2 Nov)', async () => {
     expect(w.builds[0]).toMatchObject({ knownFail: ['memory-no-canvas'] })
+    // spec 33 E2: a candidate, numbered below 1.2.1, is held to the Highlights too
+    w.bump('0.99.2', { highlights: false })
+    await stops(w, ['0.99.2', '--test'], /the 0\.99\.2 section's Highlights: the section does not start with "### Highlights"/)
     w.bump('0.99.2')
     w.failing = [{ name: 'memory-no-canvas', measured: 226.9, budget: 200 }]
     await ok(w, ['0.99.2', '--test'])

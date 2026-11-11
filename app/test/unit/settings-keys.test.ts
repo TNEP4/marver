@@ -27,12 +27,12 @@ describe('check()', () => {
 
 describe('the table', () => {
   it('holds every v1 key of the spec, and only those', () => {
-    expect(Object.keys(KEYS.config).sort()).toEqual(['dockBadge', 'keepPerfDays', 'notifications', 'recorder', 'restoreTabs', 'unloadUnderPressure'])
+    expect(Object.keys(KEYS.config).sort()).toEqual(['autoUpdate', 'dockBadge', 'keepPerfDays', 'notifications', 'recorder', 'restoreTabs', 'unloadUnderPressure'])
     expect(Object.keys(KEYS.theme)).toEqual(['mode'])
   })
 
   it('defaults: restoreTabs on, mode system, notifications absent until chosen (A2.14 #23, A4.2)', () => {
-    expect(defaults('config')).toEqual({ restoreTabs: true, unloadUnderPressure: true, recorder: true, keepPerfDays: 14, dockBadge: true })
+    expect(defaults('config')).toEqual({ restoreTabs: true, unloadUnderPressure: true, recorder: true, keepPerfDays: 14, dockBadge: true, autoUpdate: true })
     expect(defaults('config')).not.toHaveProperty('notifications')
     expect(defaults('theme')).toEqual({ mode: 'system' })
   })
@@ -40,7 +40,9 @@ describe('the table', () => {
   it('app 0.1 shows the keys of its milestone alone: Reopen tabs and Appearance (unloading A3, notices A4)', () => {
     expect(shownKeys('a2')).toEqual(['config.restoreTabs', 'theme.mode'])
     expect(shownKeys('a3')).toEqual(['config.restoreTabs', 'config.unloadUnderPressure', 'config.recorder', 'config.keepPerfDays', 'theme.mode'])
-    expect(shownKeys('a4')).toHaveLength(7)
+    // spec 33 C6: autoUpdate joins at a4, used from app 1.2.1
+    expect(shownKeys('a4')).toHaveLength(8)
+    expect(shownKeys('a4')).toContain('config.autoUpdate')
   })
 
   it('unloadUnderPressure, from A3: its label, its note and A3.8 #46\'s words exactly, in the README\'s row', () => {

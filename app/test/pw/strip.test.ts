@@ -905,6 +905,23 @@ describe('option D: the key, the marks, the logos and the states (spec 32 A6, A7
     expect(await p.page.$eval('[data-id="t1"] .logo img', (e, a) => (e as HTMLImageElement).src !== a && !!(e as HTMLImageElement).src, pngs.mark)).toBe(true)
   })
 
+  it('spec 33 B: Settings\' slot is a 24 px round plate with a filled 17 px gear (evenodd), its plate light or dark with the strip', async () => {
+    const settings = { id: 'settings', kind: 'settings', name: 'Settings', state: 'live', verified: false, open: true } as TabView
+    const read = () => p.page.$eval('[data-id="settings"] .slot', (e) => {
+      const cs = getComputedStyle(e); const svg = e.querySelector('svg')!
+      return { w: (e as HTMLElement).offsetWidth, h: (e as HTMLElement).offsetHeight, radius: cs.borderRadius, bg: cs.backgroundColor, color: cs.color,
+        gear: [svg.getAttribute('width'), svg.querySelector('path')!.getAttribute('fill-rule')] }
+    })
+    for (const dark of [false, true]) {
+      await p.media({ 'prefers-color-scheme': dark ? 'dark' : 'light' })
+      await show(snap('settings', [home, tab('t1', 'One'), settings]))
+      await p.page.waitForFunction((d) => document.documentElement.classList.contains('dark') === d, dark)
+      expect(await read()).toEqual({ w: 24, h: 24, radius: '50%', gear: ['17', 'evenodd'],
+        ...(dark ? { bg: 'rgba(255, 255, 255, 0.12)', color: 'rgba(245, 245, 247, 0.86)' } : { bg: 'rgb(226, 228, 235)', color: 'rgba(24, 24, 27, 0.72)' }) })
+    }
+    await p.media({})
+  })
+
   it('A9: the states the design never drew, fitted into the 24 px slot', async () => {
     const settings = { id: 'settings', kind: 'settings', name: 'Settings', state: 'hidden', verified: false, open: true } as TabView
     await show(snap('t1', [home, tab('t1', 'Session on', { dark: false, marks: mk({ session: true }) }), settings, tab('t2', 'Starting', { state: 'starting' }), tab('t3', 'Not proven', { state: 'unverified', link: 'http://localhost:4808/' }),
@@ -914,7 +931,7 @@ describe('option D: the key, the marks, the logos and the states (spec 32 A6, A7
       const slot = t.querySelector('.slot')!.getBoundingClientRect(); const e = t.querySelector(s)!; const r = e.getBoundingClientRect(); const cs = getComputedStyle(e)
       return { w: (e as HTMLElement).offsetWidth ?? Math.round(r.width), dx: Math.round((r.left + r.width / 2) - (slot.left + slot.width / 2)), dy: Math.round((r.top + r.height / 2) - (slot.top + slot.height / 2)), color: cs.color, plate: !!t.querySelector('.logo') }
     }, sel)
-    expect(await centred('settings', 'svg.gear')).toMatchObject({ w: 15, dx: 0, dy: 0, color: await resolved('color', 'var(--glass-ink-2)'), plate: false })
+    expect(await centred('settings', '.slot.plate svg')).toMatchObject({ w: 17, dx: 0, dy: 0, color: 'rgba(24, 24, 27, 0.72)', plate: false })
     expect(await centred('t2', '.spin')).toMatchObject({ w: 14, dx: 0, dy: 0, plate: false })
     expect(await centred('t3', 'svg.warn')).toMatchObject({ w: 16, dx: 0, dy: 0, color: 'rgb(217, 119, 6)', plate: false })
     const dim = (id: string) => p.page.$eval(`[data-id="${id}"]`, (t) => ({ logo: [getComputedStyle(t.querySelector('.logo')!).filter, getComputedStyle(t.querySelector('.logo')!).opacity], name: [getComputedStyle(t.querySelector('.name')!).color, getComputedStyle(t.querySelector('.name')!).fontStyle] }))

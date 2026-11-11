@@ -14,7 +14,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { BuildFailure, feedKind } from '../../scripts/build.mjs'
-import { REPOS, Stop, Unreadable, assetNames, realPorts, run } from '../../scripts/release.mjs'
+import { REPOS, Stop, Unreadable, assetNames, isCandidate, needsHighlights, realPorts, run } from '../../scripts/release.mjs'
 
 export class Crash extends Error {
   constructor(where: string) { super(`crash: ${where}`); this.name = 'Crash' }
@@ -349,8 +349,10 @@ export function makeBundle(app: string, version: string, { downgrades = true } =
 
 const git = (cwd: string, args: string[]) => execFileSync('git', ['-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', '-C', cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 
-export const changelog = (version: string, { date = '2026-11-09', companion = '0.29.0' } = {}) =>
-  `# Changelog - the Marver Mac app\n\n## ${version} - ${date}\n\n- **Updates arrive by themselves.** Needs a canvas on marver ${companion}.\n\n## 0.3.0 - unreleased (spec 28 A4)\n\n- Earlier.\n`
+/** A version's CHANGELOG; from 1.2.1, and for every candidate, it opens with its Highlights (spec 33 E2), as release.mjs asks. */
+export const changelog = (version: string, { date = '2026-11-09', companion = '0.29.0', highlights = needsHighlights(version, isCandidate(version)) } = {}) =>
+  `# Changelog - the Marver Mac app\n\n## ${version} - ${date}\n\n${highlights ? `${HIGHLIGHTS}\n\n` : ''}- **Updates arrive by themselves.** Needs a canvas on marver ${companion}.\n\n## 0.3.0 - unreleased (spec 28 A4)\n\n- Earlier.\n`
+export const HIGHLIGHTS = '### Highlights\n- Updates arrive by themselves\n- Settings in glass\n- D switches light and dark'
 
 export interface World {
   base: string; repo: string; app: string; home: string; clock: FakeClock; gh: FakeGitHub; notary: FakeNotary; tools: FakeTools
@@ -361,7 +363,7 @@ export interface World {
   shared(test?: boolean): any
   record(version: string, app?: string): any
   /** a new version committed and pushed: package.json and its CHANGELOG section */
-  bump(version: string, o?: { companion?: string; push?: boolean }): void
+  bump(version: string, o?: { companion?: string; push?: boolean; highlights?: boolean }): void
   /** smoke checks the next builds fail at a measured number: a named one lands in build.json's knownFailures, any other fails the build */
   failing: { name: string; measured: number; budget: number }[]
   worktree(name: string): string
@@ -428,9 +430,9 @@ export function makeWorld(version: string, { test = false } = {}): World {
     state: (v, a = app) => { const f = join(a, '.release', v, 'state.json'); return existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : null },
     shared: (t = test) => { const f = join(home, `${(t ? REPOS.test : REPOS.production).replace('/', '-')}.json`); return existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : null },
     record: (v, a = app) => { const f = join(a, 'releases', `${v}.json`); return existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : null },
-    bump: (v, { companion = '0.29.0', push = true } = {}) => {
+    bump: (v, { companion = '0.29.0', push = true, highlights } = {}) => {
       writeFileSync(join(app, 'package.json'), JSON.stringify({ name: 'marver-app', version: v }, null, 2) + '\n')
-      writeFileSync(join(app, 'CHANGELOG.md'), changelog(v, { companion }))
+      writeFileSync(join(app, 'CHANGELOG.md'), changelog(v, { companion, ...(highlights !== undefined ? { highlights } : {}) }))
       git(repo, ['add', '-A'])
       git(repo, ['commit', '-q', '-m', `app ${v}`])
       if (push) git(repo, ['push', '-q'])

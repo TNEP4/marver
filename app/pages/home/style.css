@@ -1,80 +1,11 @@
 /* Home v2 (spec 32 Part D; design scenes home-v2/_home.css, its values after the cascade): the app's own page on
    its ground and glow, in its own `--hm-*` tokens. */
-/* ---- spec 32 E1, E2, E7: Home's own tokens, the menu's interface and the focus looks --------------------------
-   Prefixed `--hm-*` (Nic, gaps.md 5); the values are the design's after its cascade (H). */
-:root {
-  --hm-ground: #eceef3; --hm-ink: #18181b; --hm-ink-2: rgba(24, 24, 27, .62); --hm-ink-3: rgba(24, 24, 27, .4);
-  --hm-card: rgba(255, 255, 255, .5); --hm-card-hover: rgba(255, 255, 255, .82);
-  --hm-hair: rgba(24, 24, 27, .07); --hm-hair-2: rgba(24, 24, 27, .12); --hm-chip: rgba(24, 24, 27, .05);
-  --hm-ask: #f08a00; --hm-new: #0077e6; --hm-live: #8b5cf6; --hm-off: rgba(24, 24, 27, .28);
-  --hm-accent: #0088ff; --hm-field-accent: #0088ff; --hm-accent-ring: rgba(0, 136, 255, .16);
-  --hm-edge-light: linear-gradient(155deg, rgba(255, 255, 255, .95), rgba(255, 255, 255, .2) 30%, rgba(24, 24, 27, .05) 65%, rgba(255, 255, 255, .6));
-  --hm-shadow-lit: inset 0 1px 0 rgba(255, 255, 255, .75), 0 1px 1.5px rgba(24, 24, 27, .05), 0 6px 16px -8px rgba(24, 24, 27, .16);
-  --hm-glow: radial-gradient(900px 620px at 100% 100%, rgba(120, 165, 255, .2), transparent 62%), radial-gradient(700px 420px at 0% 0%, rgba(255, 255, 255, .7), transparent 60%);
-  /* the Marver menu (pages/shared/menu.css), in Home's glass (B6) */
-  --mv-menu-ink: var(--hm-ink); --mv-menu-ink-3: var(--hm-ink-3);
-  --mv-menu-hover: rgba(24, 24, 27, .05); --mv-menu-sep: rgba(24, 24, 27, .12); --mv-menu-accent: var(--hm-accent);
-  --mv-menu-fill: rgba(255, 255, 255, .7); --mv-menu-blur: blur(20px) saturate(150%); --mv-menu-brd: rgba(24, 24, 27, .1);
-  --mv-menu-shadow: inset 0 1px 0 rgba(255, 255, 255, .65), 0 1px 2px rgba(24, 24, 27, .05), 0 12px 32px -12px rgba(24, 24, 27, .22);
-  --mv-menu-ring: var(--hm-edge-light); --mv-menu-update: var(--hm-new);
-}
-:root.dark {
-  --hm-ground: #131418; --hm-ink: #f5f5f7; --hm-ink-2: rgba(245, 245, 247, .6); --hm-ink-3: rgba(245, 245, 247, .38);
-  --hm-card: rgba(255, 255, 255, .045); --hm-card-hover: rgba(255, 255, 255, .085);
-  --hm-hair: rgba(255, 255, 255, .07); --hm-hair-2: rgba(255, 255, 255, .14); --hm-chip: rgba(255, 255, 255, .07);
-  --hm-ask: #ff9f0a; --hm-new: #5cb3ff; --hm-live: #a78bfa; --hm-off: rgba(255, 255, 255, .3);
-  /* the accent stays #0088ff, as rendered (H:6 never redefines it); the focused field's alone is lighter (gaps.md 11, 42) */
-  --hm-accent: #0088ff; --hm-field-accent: #5cb3ff; --hm-accent-ring: rgba(92, 179, 255, .18);
-  --hm-edge-light: linear-gradient(155deg, rgba(255, 255, 255, .46), rgba(255, 255, 255, .1) 30%, rgba(255, 255, 255, .04) 65%, rgba(255, 255, 255, .24));
-  --hm-shadow-lit: inset 0 1px 0 rgba(255, 255, 255, .09), 0 1px 2px rgba(10, 10, 16, .25), 0 6px 18px -8px rgba(10, 10, 16, .45);
-  --hm-glow: radial-gradient(900px 620px at 100% 100%, rgba(40, 90, 200, .26), transparent 62%), radial-gradient(700px 420px at 0% 0%, rgba(255, 255, 255, .03), transparent 60%);
-  --mv-menu-hover: rgba(255, 255, 255, .1); --mv-menu-sep: rgba(255, 255, 255, .14);
-  --mv-menu-fill: rgba(22, 22, 28, .86); --mv-menu-brd: rgba(255, 255, 255, .16);
-  --mv-menu-shadow: inset 0 1px 0 rgba(255, 255, 255, .09), 0 1px 2px rgba(10, 10, 16, .2), 0 12px 32px -12px rgba(0, 0, 0, .5);
-}
-/* E7: keyboard focus only (:focus-visible), the app's ring fitted to each shape in the field's accent; a ring adds
-   to a state's own shadow, never replaces it. The link field's input has none (its field's Focus look is its ring);
-   a menu row's focus is its fill (menu.css). */
-.hm-link input:focus-visible { outline: none; box-shadow: none }
-/* a focused card wears its D5 hover look, theme by theme (H:47, 187-195, 222-224, 391-401 after the cascade), with
-   the ring put before that look's own shadow */
-.hm-card:focus-visible { outline: 1px solid var(--hm-field-accent); outline-offset: 1px }
-.hm-card:focus-visible::after { opacity: 1 }
-/* a keyboard focus shows at once: the hover fade is for the pointer */
-.hm-card:focus-visible, .hm-card:focus-visible::after { transition: none }
-:root:not(.dark) .hm-card:focus-visible { border-color: rgba(24, 24, 27, .05);
-  background: linear-gradient(155deg, rgba(255, 255, 255, .96), rgba(255, 255, 255, .7) 45%, rgba(255, 255, 255, .38));
-  box-shadow: 0 0 0 4px var(--hm-accent-ring), inset 0 1px 0 rgba(255, 255, 255, .95) }
-:root:not(.dark) .hm-card:focus-visible::after {
-  background: linear-gradient(155deg, rgba(24, 24, 27, .15), rgba(24, 24, 27, .05) 30%, rgba(24, 24, 27, .03) 65%, rgba(24, 24, 27, .1)) }
-:root.dark .hm-card:focus-visible { border-color: rgba(255, 255, 255, .18); background: var(--hm-card-hover);
-  box-shadow: 0 0 0 4px var(--hm-accent-ring), var(--hm-shadow-lit) }
-:root.dark .hm-card:focus-visible::after { background: var(--hm-edge-light) }
-:root.dark .hm-off.hm-card:focus-visible::after { opacity: .6 }
-/* a board card's hover is glass with no lift (H:222-224): light keeps the grid's fill and inset highlight (H:391-399),
-   dark has no shadow, so its ring stands alone */
-.hm-col .hm-card:focus-visible { -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5) }
-:root.dark .hm-col .hm-card:focus-visible { background: rgba(255, 255, 255, .065); box-shadow: 0 0 0 4px var(--hm-accent-ring) }
-/* a focused card that is also hovered, or wears Home's .hov (an open menu, a deep link), keeps its ring: D5's hover
-   rules come later in the file and would replace the shadow, so these outrank them, grid and board */
-:root:not(.dark) .hm-card:focus-visible:is(:hover, .hov), :root:not(.dark) .hm-col .hm-card:focus-visible:is(:hover, .hov) {
-  box-shadow: 0 0 0 4px var(--hm-accent-ring), inset 0 1px 0 rgba(255, 255, 255, .95) }
-:root.dark .hm-card:focus-visible:is(:hover, .hov) { box-shadow: 0 0 0 4px var(--hm-accent-ring), var(--hm-shadow-lit) }
-:root.dark .hm-col .hm-card:focus-visible:is(:hover, .hov) { box-shadow: 0 0 0 4px var(--hm-accent-ring) }
-.hm-card:focus-within .hm-more-btn { opacity: 1 }
-.hm-card:focus-visible .hm-more-btn { transition: none }
-/* the round ring; :root lifts it over the design's `.hm .hm-cmd2 button` and `.hm .hm-foot-btn`, which zero the shadow */
-:root .hm-more-btn:focus-visible, :root .hm-chip:focus-visible, :root .hm-icon:focus-visible, :root .hm-cplabel:focus-visible,
-:root .hm-cmd2 button:focus-visible, :root .hm-foot-btn:focus-visible {
-  outline: 1px solid var(--hm-field-accent); outline-offset: 1px; box-shadow: 0 0 0 4px var(--hm-accent-ring) }
-/* ---- end of spec 32's token block ------------------------------------------------------------------------------ */
 
 /* ---- the page (spec 32 D1) ------------------------------------------------------------------------------------
    The design's class names (`hm-*`, home-v2/_home.css) and its values after the cascade. `body.hm` scopes the
-   design's button reset (H:15): it beats a class alone, so the icon buttons rest transparent and borderless. */
+   design's button reset (H:15): it beats a class alone, so the icon buttons rest transparent and borderless. The
+   tokens, the ground and that reset are in pages/shared/glass.css (spec 33 A1), shared with Settings. */
 html, body { overflow: hidden }
-body.hm { background: var(--hm-glow), var(--hm-ground); color: var(--hm-ink); font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif }
-.hm button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: pointer }
 #hm-root { position: fixed; inset: 0 }
 /* the menus' and Help's layer: above the body, never inside a card (D8) */
 #hm-layer { position: fixed; inset: 0; z-index: 30; pointer-events: none }

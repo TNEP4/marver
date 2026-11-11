@@ -97,6 +97,21 @@ describe('app pages', () => {
     expect(checkPagePayload('settings:action', { action: 'open-notification-settings', url: 'x' })).toEqual({ ok: true, value: { action: 'open-notification-settings' } })
     for (const action of ['notices-on', 'notices-off', 'open-browser', undefined]) expect(checkPagePayload('settings:action', { action }).ok).toBe(false)
     expect(checkPagePayload('settings:action', null).ok).toBe(false)
+    // spec 33 C5: Release notes, and the Updates row's button with its token's shape checked (no `dismiss` from Settings)
+    expect(checkPagePayload('settings:action', { action: 'release-notes', url: 'https://x' })).toEqual({ ok: true, value: { action: 'release-notes' } })
+    for (const token of [{ act: 'check' }, { act: 'restart', version: '1.2.2' }, { act: 'try-again', version: '1.2.2' }, { act: 'download', version: '1.2.2' }, { act: 'explain', why: 'write' }]) {
+      expect(checkPagePayload('settings:action', { action: 'update', token: { ...token, extra: 1 } }), JSON.stringify(token)).toEqual({ ok: true, value: { action: 'update', token } })
+    }
+    for (const token of [undefined, null, {}, { act: 'dismiss', version: '1' }, { act: 'restart' }, { act: 'restart', version: 'x'.repeat(32) }, { act: 'download', version: 3 }, { act: 'explain', why: 'feed' }, { act: 'quit' }]) {
+      expect(checkPagePayload('settings:action', { action: 'update', token }).ok, JSON.stringify(token)).toBe(false)
+    }
+    // spec 33 D: `via: 'key'` kept; from Home only the theme's mode, light or dark
+    expect(checkPagePayload('settings:set', { file: 'theme', key: 'mode', value: 'dark', via: 'key' }, 'settings')).toEqual({ ok: true, value: { file: 'theme', key: 'mode', value: 'dark', via: 'key' } })
+    expect(checkPagePayload('settings:set', { file: 'theme', key: 'mode', value: 'light', via: 'key' }, 'home')).toEqual({ ok: true, value: { file: 'theme', key: 'mode', value: 'light', via: 'key' } })
+    expect(checkPagePayload('settings:set', { file: 'config', key: 'restoreTabs', value: false, via: 'click' }).ok).toBe(false)
+    for (const bad of [{ file: 'theme', key: 'mode', value: 'system' }, { file: 'config', key: 'restoreTabs', value: false }, { file: 'theme', key: 'other', value: 'dark' }]) {
+      expect(checkPagePayload('settings:set', { ...bad, via: 'key' }, 'home').ok, JSON.stringify(bad)).toBe(false)
+    }
     expect(checkPagePayload('mv:theme', { dark: true }).ok).toBe(false)
   })
   it('spec 32 B2: the strip\'s menu - the asks\' booleans, a pick by row id or null (never a label), the shown ack', () => {
@@ -162,6 +177,9 @@ describe('app pages', () => {
     // A4.6 #27: settings:action from Settings alone; #40: a remote view sends nothing and has no pinned page
     expect(mayUsePageChannel('settings:action', 'settings', true, 'marver-app://settings/')).toBe(true)
     expect(mayUsePageChannel('settings:action', 'home', true, 'marver-app://home/')).toBe(false)
+    // spec 33 D: Home sets the theme by D (its payload is narrowed above); the strip never
+    expect(mayUsePageChannel('settings:set', 'home', true, 'marver-app://home/')).toBe(true)
+    expect(mayUsePageChannel('settings:set', 'strip', true, 'marver-app://strip/')).toBe(false)
     // spec 32 B2: the tab menu's channels from the strip alone - Home's menus are its own DOM now
     for (const ch of ['tab:menu', 'tabs:more', 'tab:menu-pick', 'tab:menu-shown']) {
       expect(mayUsePageChannel(ch, 'strip', true, 'marver-app://strip/'), ch).toBe(true)

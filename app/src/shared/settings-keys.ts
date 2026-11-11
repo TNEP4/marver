@@ -15,7 +15,8 @@ export const STAGE: Stage = 'a4'
 /** The app version that brings each milestone, for the README's tables. */
 export const STAGE_VERSION: Record<Stage, string> = { a2: '0.1', a3: '0.2', a4: '0.3', a5: '1.0' }
 
-interface Base { since: Stage; label: string; does: string; note?: string }
+/** `from` (spec 33 C6): the app version that first takes the key, when later than its milestone's (the README's column) */
+interface Base { since: Stage; label: string; does: string; note?: string; from?: string }
 export type KeySpec =
   | Base & { type: 'boolean'; def: boolean | null }
   | Base & { type: 'integer'; min: number; max: number; def: number; unit?: string }
@@ -48,6 +49,10 @@ export const KEYS = {
     dockBadge: {
       type: 'boolean', def: true, since: 'a4', label: 'Dock badge',
       does: 'Count what needs you on the Dock icon. Shown once notices are on.',
+    },
+    autoUpdate: {
+      type: 'boolean', def: true, since: 'a4', from: '1.2.1', label: 'Download updates automatically',
+      does: 'Check for updates every few hours and download one when found; Marver asks before restarting. Off: only Check for Updates checks.',
     },
   },
   theme: {
