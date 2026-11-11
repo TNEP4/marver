@@ -359,6 +359,36 @@ describe('the shell\'s motion (C5)', () => {
     expect(await ev(s, `__flipW.length`)).toBe(3)
   })
 
+  it('responsive fill picked mid-FLIP drops the device\'s FLIP at once: no .flip, no transform, no transition on its stage', { timeout: 45_000 }, async (ctx) => {
+    skip(ctx)
+    const s = await open({ on: true, immersive: true }, '#/p/main?at=demo/big')
+    await key(s, 'h')
+    await until(s, `__fake.wishes().at(-1)?.on === true`)
+    // in the page, in one go: the grant, and 60 ms into the device FLIP it starts, fill - then two frames on (far
+    // inside the FLIP's 320 ms + 50 ms timer), what the fill stage carries
+    const r = await ev(s, `new Promise((done) => {
+      const play = document.querySelector('.sh-play')
+      const ob = new MutationObserver(() => {
+        if (!play.classList.contains('flip')) return
+        ob.disconnect()
+        const at = performance.now()
+        setTimeout(() => {
+          __mvStore.getState().setPlay({ ...__mvStore.getState().play, device: 'fill' })
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            const st = document.querySelector('.sh-play-stage')
+            done({ fill: play.classList.contains('fill'), flip: play.classList.contains('flip'), transform: st.style.transform,
+              transition: st.style.transition, computed: getComputedStyle(st).transform, ms: performance.now() - at })
+          }))
+        }, 60)
+      })
+      ob.observe(play, { attributes: true, attributeFilter: ['class'] })
+      __fake.answer({ on: true })
+    })`) as { fill: boolean; flip: boolean; transform: string; transition: string; computed: string; ms: number }
+    expect(r.ms).toBeLessThan(MOTION.out.stage)
+    expect(r).toMatchObject({ fill: true, flip: false, transform: '', transition: '', computed: 'none' })
+    expect(await size(s)).toEqual({ w: 1400, h: 1100 })
+  })
+
   it('the stage\'s padding moves with MOTION: back 300 ms, out 320 ms, the stage ease', { timeout: 45_000 }, async (ctx) => {
     skip(ctx)
     const s = await open({ on: true, immersive: true }, '#/p/main?at=demo/big')

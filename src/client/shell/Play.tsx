@@ -661,8 +661,10 @@ function PlayInner() {
   // spec 32 C5.2: a fixed stage re-fit by C4 (the play inset, the margins) animates as a FLIP - it starts at
   // scale(prev/next) at its new whole-pixel size and runs to none over the stage's time; `.flip` holds the inner .dev's
   // own size transition off, so one animation resizes it. Ended by the transform's transitionend, or the time + 50 ms;
-  // a newer re-fit mid-FLIP starts again from the rect it shows (read before the re-fit); leaving play drops it at once
+  // a newer re-fit mid-FLIP starts again from the rect it shows (read before the re-fit); leaving play drops it at once;
+  // a stage that is no longer fixed (responsive fill, the doc preset - picked mid-FLIP) drops it at once too: it never FLIPs
   useLayoutEffect(() => {
+    if (!fixedRef.current) flipping.current?.end()
     const from = flipFrom.current
     flipFrom.current = null
     const el = stageRef.current, root = rootRef.current
@@ -684,6 +686,10 @@ function PlayInner() {
         clearTimeout(timer)
         el.removeEventListener('transitionend', onEnd)
         root.classList.remove('flip')
+        // cancelled, not only cleared: under the default `all 0s` a running transform transition whose end is unchanged
+        // runs on, so `none` is flushed first - an end mid-FLIP (fill picked, play left) leaves no scale behind
+        el.style.transition = 'none'; el.style.transform = 'none'
+        void el.getBoundingClientRect()
         el.style.transition = ''; el.style.transform = ''
         if (flipping.current === f) { flipping.current = null; setStageReady((n) => n + 1) }   // the comments overlay re-measures
       },
