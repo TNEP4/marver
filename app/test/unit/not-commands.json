@@ -4,5 +4,6 @@
   { "file": "src/shared/channels.ts", "fn": "SENDERS", "prop": "channel", "label": "app:ready", "reason": "no input: a page saying it has loaded" },
   { "file": "src/shared/channels.ts", "fn": "SENDERS", "prop": "channel", "label": "settings:get", "reason": "no input: Settings reading the files to draw itself" },
   { "file": "src/shared/channels.ts", "fn": "SENDERS", "prop": "channel", "label": "tab:menu-pick", "reason": "no input of its own (spec 32 B2): the strip's menu pick runs exactly what the native click ran, so the one command is the one tabAct opens (TAB_MENU or OVERFLOW); a null pick runs nothing" },
-  { "file": "src/shared/channels.ts", "fn": "SENDERS", "prop": "channel", "label": "tab:menu-shown", "reason": "no input (spec 32 B2): the strip saying the menu is on screen, which ends the held tab-menu or tabs-more command" }
+  { "file": "src/shared/channels.ts", "fn": "SENDERS", "prop": "channel", "label": "tab:menu-shown", "reason": "no input (spec 32 B2): the strip saying the menu is on screen, which ends the held tab-menu or tabs-more command" },
+  { "file": "pages/strip/main.ts", "fn": "<top>", "prop": "addEventListener:pointerdown", "label": "document", "reason": "no input of its own (spec 32 B3.1, B11): the capture-phase reading, before a press moves focus, of whether the strip held keyboard focus and where a secondary press landed; the ask that follows (`tab:menu`, `tabs:more`) is the recorded input" }
 ]

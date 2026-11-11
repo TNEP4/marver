@@ -1,11 +1,12 @@
-/* The strip (spec 28 A2.2, A2.13, A3.8 #3, #29; frames mac-app/01-06, 11): 44 px, transparent, painting controls -
-   no ground, no bar and no line. Under it is main's cover (the active tab's ground) or, from app 0.2, the view
-   beneath: Home's, Settings' or a tab page's ground and still dots, or a see-through canvas's own scroll edge. The
-   still dots are drawn here only while app 0.1's plain cover covers (main's `dots`), so a canvas keeps 0.1's look
-   until spike S15 chooses a cover; with one chosen, never (#29: they would sit over a canvas's moving grid, and a
-   stalled strip renderer could not take them away). The tabs are floating glass capsules hugging their logo and name;
-   the active one wears the shell's glass exactly as the sidebar and the toolbar do (fill, hairline, shadow, edge
-   light; no blur - the strip cannot sample what is under it). The only drag region. */
+/* The strip (spec 28 A2.2, A2.13, A3.8 #3, #29; spec 32 Part A, option D "Concentric glass"; frames mac-app/01-06, 11,
+   tab-strip/06): 44 px, transparent, painting controls - no ground, no bar and no line. Under it is main's cover (the
+   active tab's ground) or, from app 0.2, the view beneath: Home's, Settings' or a tab page's ground and still dots, or a
+   see-through canvas's own scroll edge. The still dots are drawn here only while app 0.1's plain cover covers (main's
+   `dots`). A tab holds its width only; its face is a 32 px pill whose round things are concentric with its end caps (a
+   24 px logo 4 px from the left, an 18 px badge 7 px from the right). Hover lights the face (fill, hairline, lift, the
+   rim); the active tab wears the sidebar's panel look, one opaque colour (the strip cannot blur what is under it, a
+   separate view: no backdrop-filter anywhere here, A5.1). The values are the design's after its cascade (tab-strip
+   _kit.css). The only drag region, except while a menu is open (B11) or the strip is away in immersive play (C10). */
 
 /* ---- spec 32 E1, E2, E7: the strip's own tokens, the menu's interface and the focus looks ------------------------
    Prefixed `--ts-*` (Nic, gaps.md 5): the kit and Home give different values to the same names, so each page defines
@@ -34,104 +35,132 @@
   --mv-menu-shadow: inset 0 1px 0 rgba(255, 255, 255, .09), 0 1px 2px rgba(10, 10, 16, .2), 0 12px 32px -12px rgba(0, 0, 0, .5);
   --mv-menu-ring: var(--ts-edge-dark);
 }
-/* E7: keyboard focus only (:focus-visible). The tab is a rectangle that holds the width: the ring goes on its pill,
-   which also wears its hover look; a ring adds to the face's state shadow, never replaces it. The tab gives up its own
-   ring only when it has a face to carry it: until the strip draws `.face` (W1) a tab keeps base.css's ring. Home and »
-   keep base.css's ring on their 30 px circles; a menu row's focus is its fill (menu.css). */
-.tab:has(> .face):focus-visible { outline: none; box-shadow: none }
-.tab:focus-visible .face { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: 999px;
-  box-shadow: 0 0 0 4px var(--accent-ring), var(--ts-shadow-lit) }
-.tab:focus-visible:not(.on) .face { color: var(--glass-ink); background: var(--ts-face-hover); border-color: var(--glass-brd) }
-:root.dark .tab:focus-visible:not(.on) .face { border-color: rgba(255, 255, 255, .1) }
-.tab:focus-visible .face::after { opacity: 1 }
-:root.dark .tab:focus-visible .face::after { background: var(--ts-edge-dark) }
 /* ---- end of spec 32's token block ------------------------------------------------------------------------------ */
 
 html, body { background: transparent; overflow: hidden }
 body { -webkit-app-region: drag }
+/* B11: the grown view under a menu is never a drag region, from the ask until it is 44 px again; C10 before it hides */
+body.menu-open, body.immersive { -webkit-app-region: no-drag }
 .strip { position: fixed; left: 0; right: 0; top: 0; height: 44px; display: flex; align-items: center; gap: 8px;
-  padding: 0 14px 0 82px }   /* the traffic lights: x 14, three of 12 px 8 apart, then room */
+  padding: 0 14px 0 82px;   /* the traffic lights: x 14, three of 12 px 8 apart, then room */
+  transition: transform 260ms cubic-bezier(.15, .7, .2, 1), opacity 260ms cubic-bezier(.15, .7, .2, 1) }
 body.fullscreen .strip { padding-left: 10px }
 /* app 0.1's cover covers: its still dots, from the window's origin like the app pages' (A3.8 #3, #32) */
 body.dots .strip { background: radial-gradient(var(--dot) 1px, transparent 1px) 0 0 / 20px 20px }
+/* C10 (IM:13-24, src/shared/immersive.ts MOTION): immersive play runs the strip out of the window, and back */
+body.immersive .strip { transform: translateY(-48px); opacity: 0; pointer-events: none;
+  transition: transform 240ms cubic-bezier(.4, 0, .9, .6), opacity 240ms cubic-bezier(.4, 0, .9, .6) }
 
-#tabs { flex: 1; min-width: 0; height: 44px; display: flex; align-items: center; gap: 8px }
+#tabs { flex: 1; min-width: 0; height: 44px; display: flex; align-items: center; gap: 4px }
 
-/* Home: a 30 px circle in the same style */
-.home { flex: none; position: relative; width: 30px; height: 30px; border: 1px solid transparent; border-radius: 50%;
+/* A12: a pointer on everything that opens or picks (base.css sets default) */
+.tab, .tab *, .home, .home *, .more, .more * { cursor: pointer }
+
+/* A10: Home, a 30 px circle; 10 px to the first tab (its margin 6 and the gap 4) */
+.home { flex: none; position: relative; width: 30px; height: 30px; margin-right: 6px; padding: 0; border: 0; border-radius: 50%;
   display: grid; place-items: center; color: var(--glass-ink-2); -webkit-app-region: no-drag }
+.home svg { width: 15px; height: 15px }
 .home:hover { background: var(--glass-hover); color: var(--glass-ink) }
+/* on (Home showing): the active tab's panel look, no ring; hovering keeps it (K:192 after K:33) */
+.home.on, .home.on:hover { background: var(--ts-panel-look); color: var(--glass-ink); box-shadow: 0 0 0 1px var(--glass-brd), var(--ts-shadow-lit) }
 
-/* a tab hugs its logo and name: 8 px before the logo, 14 after the last thing in it; a long name ellipsises at 176 px,
-   and a full strip shrinks them to no less than 58 px - the active one never shrinks */
-.tab { position: relative; flex: 0 1 auto; min-width: 58px; max-width: 176px; height: 30px; padding: 0 14px 0 8px;
-  border: 1px solid transparent; border-radius: 999px; display: flex; align-items: center; gap: 8px;
-  font: 500 12.5px/1 -apple-system, system-ui, sans-serif; color: var(--glass-ink-2); -webkit-app-region: no-drag }
-.tab:hover { background: var(--glass-hover); color: var(--glass-ink) }
-.tab.on { flex-shrink: 0 }
-#tabs.measure .tab { flex: none; min-width: 58px }
-
-.tab.on, .home.on { background: var(--glass); border-color: var(--glass-brd); color: var(--glass-ink); box-shadow: var(--shadow-glass) }
-.tab.on::after, .home.on::after, .pill::after { content: ''; position: absolute; inset: -1px; padding: 1px; border-radius: inherit;
-  background: var(--edge-light); pointer-events: none;
+/* A2: the tab holds the width (--tw, the active one --aw, set by fit() on #tabs); its face draws everything */
+.tab { position: relative; flex: none; width: var(--tw, 176px); min-width: 0; height: 32px; padding: 0; border: 0; background: none;
+  font: 500 12.5px/1 -apple-system, system-ui, sans-serif; transition: width .2s ease; -webkit-app-region: no-drag }
+.tab.on { width: var(--aw, var(--tw, 176px)) }
+.face { position: relative; width: 100%; height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 6px 0 3px;
+  border: 1px solid transparent; border-radius: 999px; color: var(--glass-ink-2); transition: background .12s, box-shadow .12s }
+/* the lit rim: the masked-border recipe, shown on hover, on the active tab and under an open menu */
+.face::after { content: ''; position: absolute; inset: -1px; padding: 1px; border-radius: inherit; pointer-events: none; opacity: 0;
+  transition: opacity .14s; background: var(--edge-light);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
   mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite: exclude }
+:root.dark .face::after { background: var(--ts-edge-dark) }
 
-.slot { position: relative; flex: none; display: grid; place-items: center; width: 18px; height: 18px }
+/* A5: hover (not active), and an inactive tab under its open menu (A5.5: the catcher sits over it, so :hover cannot) */
+.tab:not(.on):hover .face, .tab:not(.on).menu-open .face { color: var(--glass-ink); background: var(--ts-face-hover);
+  border-color: var(--glass-brd); box-shadow: var(--ts-shadow-lit) }
+/* the dark hover hairline is .1 (K:181 beats K:206) */
+:root.dark .tab:not(.on):hover .face, :root.dark .tab:not(.on).menu-open .face { border-color: rgba(255, 255, 255, .1) }
+.tab:hover .face::after, .tab.on .face::after, .tab.menu-open .face::after { opacity: 1 }
+/* active, hovered or not: the sidebar's panel look (K:153) */
+.tab.on .face { color: var(--glass-ink); background: var(--ts-panel-look); border-color: var(--glass-brd); box-shadow: var(--ts-shadow-lit) }
+:root.dark .tab.on .face { border-color: rgba(255, 255, 255, .2) }
+
+/* the slot: 24 px round - the logo (A8), or a state's icon centred (A9) */
+.slot { position: relative; flex: none; width: 24px; height: 24px; display: grid; place-items: center }
 .slot .warn { color: #d97706 }
 .slot .gear { color: var(--glass-ink-2) }
+.slot .spin { margin: 0 }
 .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-/* hover shows the tab's key over the end of its name: nothing moves (frame 05) */
-.key { position: absolute; right: 10px; top: 0; bottom: 0; display: flex; align-items: center; opacity: 0; pointer-events: none;
-  font: 500 10.5px/1 -apple-system, system-ui, sans-serif; color: var(--glass-ink-3); transition: opacity .12s }
-.tab:hover .key { opacity: 1 }
-.tab:hover:has(.key) .name { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 26px), transparent calc(100% - 12px));
-  mask-image: linear-gradient(90deg, #000 calc(100% - 26px), transparent calc(100% - 12px)) }
 
-/* the logo carries the state: a spinner while starting, a warning when the proof failed, greyed when stopped or out
-   of reach, dimmed after a crash */
+/* the end cell: the badge and the key overlap in one grid cell, so the tab never changes size (A6) */
+.end { position: relative; flex: none; display: grid; place-items: center end; min-width: 0; height: 18px }
+.end > * { grid-area: 1 / 1; transition: opacity .14s, transform .14s }
+.mk { box-sizing: border-box; color: #fff; text-align: center; font-variant-numeric: tabular-nums }
+.mk.ask { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; font: 700 10.5px/18px -apple-system, system-ui, sans-serif;
+  background: var(--mk-ask) }
+/* spec 31 B.7: new frames are a dot, 12 px from the face's end */
+.mk.new.dot { width: 8px; height: 8px; margin-right: 5px; border-radius: 50%; background: var(--mk-new) }
+kbd.key { height: 18px; padding: 0 6px; border-radius: 9px; background: var(--ts-kbd-bg); font: 500 10.5px/18px -apple-system, system-ui, sans-serif;
+  color: var(--glass-ink-3); white-space: nowrap; opacity: 0; transform: scale(.92) }
+/* A6: hover gives the badge's place to ⌘N - only on a tab that has a key; never under an open menu (A5) */
+.tab:hover:not(.menu-open) .end:has(> .key) > .mk { opacity: 0; transform: scale(.85) }
+.tab:hover:not(.menu-open) .end > .key { opacity: 1; transform: none }
+
+/* A2 compact (Nic, I2): under 104 px the name goes; the logo stays 4 px from the left, the badge 7 px from the right */
+.tab.compact .name { display: none }
+.tab.compact .end { margin-left: auto }
+
+/* A9: the logo carries the state - greyed when stopped or out of reach, dimmed after a crash or an unload */
 .tab.is-gone .name, .tab.is-unreachable .name { color: var(--glass-ink-3); font-style: italic }
 .tab.is-gone .logo, .tab.is-unreachable .logo { filter: grayscale(1); opacity: .45 }
 .tab.is-crashed .logo { opacity: .55 }
 .tab.is-crashed .name { color: var(--glass-ink-3) }
-/* unloaded to free memory (A3.8 #46): dimmed, its name kept; it reopens when shown */
 .tab.is-unloaded .logo { opacity: .55 }
 
-/* A4 (A4.6 #19): the tab's one mark slot, after its name - orange needs you, blue new frames (the sidebar's marks,
-   their own tokens) - else a light sweeping the bubble while an agent works; a teal dot on the logo's corner for a
-   Jam session. A stream that has been down: the mark dimmed. At 58 px the name ellipsises first */
-.mk { flex: none; min-width: 16px; height: 15px; padding: 0 4px; border-radius: 8px; color: #fff; text-align: center;
-  font: 700 10px/15px -apple-system, system-ui, sans-serif; font-variant-numeric: tabular-nums }
-.mk.ask { background: var(--mk-ask) }
-.mk.new { background: var(--mk-new) }
-/* spec 31 B.7: new frames are a dot, not a to-do count */
-.mk.new.dot { min-width: 0; width: 7px; height: 7px; padding: 0; border-radius: 50%; align-self: center }
-.tab.stale .mk, .tab.stale .sess { opacity: .45 }
+/* a Jam session: a teal dot on the logo's corner, ringed in the face's current fill */
 .sess { position: absolute; right: -2px; bottom: -2px; width: 6px; height: 6px; border-radius: 50%; background: #00c3d0;
   box-shadow: 0 0 0 1.5px var(--ground) }
 :root.dark .sess { background: #00d2e0 }
-.tab.working::before { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+.tab:not(.on):hover .sess, .tab:not(.on).menu-open .sess { box-shadow: 0 0 0 1.5px var(--ts-face-hover) }
+.tab.on .sess { box-shadow: 0 0 0 1.5px var(--ts-panel-look) }
+/* a stream that has been down: the mark dimmed */
+.tab.stale .mk, .tab.stale .sess { opacity: .45 }
+/* an agent at work (no needs, no new frames): a light sweeping the face */
+.tab.working .face::before { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
   background: linear-gradient(100deg, transparent 35%, var(--inner-tint) 50%, transparent 65%) 0 0 / 250% 100% no-repeat;
   animation: mv-sweep 1.8s linear infinite }
-.tab.working.stale::before { opacity: .45 }
+.tab.working.stale .face::before { opacity: .45 }
 @keyframes mv-sweep { from { background-position: 150% 0 } to { background-position: -50% 0 } }
-@media (prefers-reduced-motion: reduce) { .tab.working::before { animation: none; background: var(--accent-wash) } }
+@media (prefers-reduced-motion: reduce) { .tab.working .face::before { animation: none; background: var(--accent-wash) } }
+
+/* A11: on Home the strip drops every mark, the dot and the sweep (the board shows them); a hover brings the key back */
+body.home-on .mk, body.home-on .end, body.home-on .sess, body.home-on .tab.working .face::before { display: none }
+body.home-on .tab:hover .end { display: grid }
 
 /* the window in the background: dimmed, as native title bars do */
 body.inactive .tab, body.inactive .home { opacity: .55 }
-body.inactive .tab.on { opacity: .8; box-shadow: none }
-body.inactive .tab.on::after { opacity: .5 }
+body.inactive .tab.on { opacity: .8 }
+body.inactive .tab.on .face { box-shadow: none }
+body.inactive .tab.on .face::after { opacity: .5 }
 
-/* more tabs than fit: the rest behind one bare capsule (a native menu) */
-.more { flex: none; height: 30px; padding: 0 11px; border: 1px solid transparent; border-radius: 999px; display: flex;
-  align-items: center; gap: 5px; background: var(--glass-hover); color: var(--glass-ink-2);
-  font: 500 12.5px/1 -apple-system, system-ui, sans-serif; -webkit-app-region: no-drag }
+/* A4: the tabs that do not fit at 84 px, behind » - Home's circle with the count; its menu open, Home's on look */
+.more { flex: none; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; display: inline-flex; align-items: center;
+  justify-content: center; gap: 2px; background: none; color: var(--glass-ink-2); font: 500 12px/1 -apple-system, system-ui, sans-serif;
+  -webkit-app-region: no-drag }
 .more span { font-size: 11px; color: var(--glass-ink-3) }
+.more:hover { background: var(--glass-hover); color: var(--glass-ink) }
+.more.menu-open, .more.menu-open:hover { background: var(--ts-panel-look); color: var(--glass-ink); box-shadow: 0 0 0 1px var(--glass-brd), var(--ts-shadow-lit) }
 
-/* the one pill, at the right end, in the active tab's glass exactly */
+/* the one pill, at the right end, in the shell's glass */
 .pill { position: relative; flex: none; height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 12px;
   border-radius: 999px; background: var(--glass); border: 1px solid var(--glass-brd); box-shadow: var(--shadow-glass);
   color: var(--glass-ink-2); font: 500 12px/1 -apple-system, system-ui, sans-serif; white-space: nowrap; -webkit-app-region: no-drag }
+.pill::after { content: ''; position: absolute; inset: -1px; padding: 1px; border-radius: inherit; pointer-events: none;
+  background: var(--edge-light);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite: exclude }
 .pill.has-btn { padding-right: 4px }
 .pill > svg { flex: none; color: var(--glass-good) }
 .pill b { font-weight: 600; color: var(--glass-ink) }
@@ -145,9 +174,33 @@ body.inactive .tab.on::after { opacity: .5 }
 .pill-x:hover { color: var(--glass-ink) }
 .pill.files { color: var(--glass-warn) }
 
-/* Reduce Transparency and Increase Contrast: the tokens make the glass opaque; the borders go solid too */
+/* A13: Reduce Transparency and Increase Contrast - the active face, Home on and » open take the solid fill and the
+   node hairline, no rim; the pill too */
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  .tab.on, .home.on, .pill, .more { background: var(--solid); border-color: var(--node-brd) }
-  .tab.on::after, .home.on::after, .pill::after { display: none }
+  /* :root.dark too, as specific as the dark active hairline above (rgba(255, 255, 255, .2)), or it would win in dark */
+  .tab.on .face, :root.dark .tab.on .face, .pill { background: var(--solid); border-color: var(--node-brd) }
+  .home.on, .home.on:hover, .more.menu-open, .more.menu-open:hover { background: var(--solid); box-shadow: 0 0 0 1px var(--node-brd), var(--ts-shadow-lit) }
+  .tab.on .face::after, .pill::after { display: none }
+  /* the session dot's ring in the face it sits on, now --solid */
+  .tab.on .sess { box-shadow: 0 0 0 1.5px var(--solid) }
 }
-@media (prefers-contrast: more) { .tab, .home, .more, .pill { color: var(--glass-ink) } }
+/* Increase Contrast: ink-2 and ink-3 read as ink */
+@media (prefers-contrast: more) {
+  .face, .home, .more, .more span, .pill, .slot .gear, kbd.key, .tab.is-gone .name, .tab.is-unreachable .name, .tab.is-crashed .name { color: var(--glass-ink) }
+}
+/* Reduce Motion: base.css stops every transition (the widths, the badge and key swap, the hover fade, C10's run) */
+
+/* ---- spec 32 E7, after every look it adds to ----------------------------------------------------------------- */
+/* E7: keyboard focus only (:focus-visible). The tab is a rectangle that holds the width: the ring goes on its pill,
+   which also wears its hover look; a ring adds to the face's state shadow, never replaces it. The tab gives up its own
+   ring only when it has a face to carry it (every tab draws one: A1). Home and » keep base.css's ring on their 30 px
+   circles, added to their on look's own shadow; a menu row's focus is its fill (menu.css). */
+.tab:has(> .face):focus-visible { outline: none; box-shadow: none }
+.tab:focus-visible .face, .tab:focus-visible:hover .face { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: 999px;
+  box-shadow: 0 0 0 4px var(--accent-ring), var(--ts-shadow-lit) }
+.tab:focus-visible:not(.on) .face, .tab:focus-visible:not(.on):hover .face { color: var(--glass-ink); background: var(--ts-face-hover); border-color: var(--glass-brd) }
+:root.dark .tab:focus-visible:not(.on) .face { border-color: rgba(255, 255, 255, .1) }
+.tab:focus-visible .face::after { opacity: 1 }
+:root.dark .tab:focus-visible .face::after { background: var(--ts-edge-dark) }
+.tab:focus-visible:not(.on) .sess { box-shadow: 0 0 0 1.5px var(--ts-face-hover) }
+.home.on:focus-visible, .more.menu-open:focus-visible { box-shadow: 0 0 0 1px var(--glass-brd), 0 0 0 4px var(--accent-ring), var(--ts-shadow-lit) }
