@@ -850,17 +850,25 @@ describe('stalled renderers: covering never waits on one, uncovering waits for t
     await waitFor('the heartbeat gone', async () => (await anim()) === 'none', 3000)
   })
 
-  it('the strip\'s empty part, read from the strip itself (A3.8 #34): right of the tabs, left of the pill, the heartbeat\'s corner', async () => {
+  it('the strip\'s empty part, read from the strip itself (A3.8 #34): right of the tabs (and »), left of the pill, the heartbeat\'s corner; none while the tabs share the strip (spec 32 A3)', async () => {
     const r = await w.run.call<{ width: number; height: number; tabsRight: number; pillLeft: number; empty: { x: number; y: number; width: number; height: number }[]; heartbeat: { x: number; y: number } }>('ground:strip-regions')
     const c = await content()
     expect([r.width, r.height]).toEqual([c.width, 44])
-    const tabs = JSON.parse(await exec<string>('strip', `JSON.stringify([...document.querySelectorAll('#tabs > *')].map((e) => e.getBoundingClientRect().right))`)) as number[]
-    expect(tabs.length).toBeGreaterThan(2)
-    expect(r.tabsRight).toBeGreaterThanOrEqual(Math.max(...tabs))
-    expect(r.empty).toHaveLength(1)
-    expect(r.empty[0]).toMatchObject({ y: 0, height: 44 })
-    expect(r.empty[0]!.x).toBeGreaterThan(Math.max(...tabs))
-    expect(r.empty[0]!.x + r.empty[0]!.width).toBeLessThanOrEqual(r.pillLeft)
+    const s = JSON.parse(await exec<string>('strip', `JSON.stringify((() => {
+      const shown = (e) => e && !e.hidden && e.getClientRects().length > 0, more = document.getElementById('more')
+      return { tabs: [...document.querySelectorAll('#tabs > *')].filter(shown).map((e) => e.getBoundingClientRect().right), more: shown(more) ? more.getBoundingClientRect().right : null,
+        tw: parseFloat(getComputedStyle(document.getElementById('tabs')).getPropertyValue('--tw')) }
+    })())`)) as { tabs: number[]; more: number | null; tw: number }
+    expect(s.tabs.length).toBeGreaterThan(2)
+    const last = Math.max(...s.tabs, s.more ?? 0)
+    expect(r.tabsRight).toBeGreaterThanOrEqual(last)
+    expect(r.tabsRight - last).toBeLessThan(1)
+    // the empty part is what lies 8 px clear of both ends, or nothing
+    const room = r.pillLeft - 8 - (r.tabsRight + 8)
+    expect(r.empty).toEqual(room > 0 ? [{ x: r.tabsRight + 8, y: 0, width: room, height: 44 }] : [])
+    // spec 32 A3: the tabs share #tabs's width, each at most 176 - below that they fill it, so the strip keeps no
+    // empty part beside the pill; only tabs at 176 leave one
+    if (s.more === null) expect(r.empty, JSON.stringify(s)).toHaveLength(s.tw < 176 ? 0 : 1)
     expect(r.heartbeat).toEqual({ x: c.width - 1, y: 43, width: 1, height: 1 })
   })
 
@@ -995,7 +1003,7 @@ describe('spec 32 C9: immersive play hides the strip and the lights, and brings 
   const shown = () => waitFor('the strip view shown', async () => (await stripView()).visible === true)
 
   it('granted: the lights off at once, the strip view hidden only after MOTION.out.strip, no cover; back: the view first, then the lights and LIGHTS', async () => {
-    ;({ id } = await canvas(40, 'Immersive'))
+    ;({ id } = await canvas(3, 'Immersive'))   // a slot the registry reads (1-20) that no other case here takes
     await w.run.call('activate', { id })
     await lifted(id)
     await uncovered(id)
@@ -1091,8 +1099,10 @@ describe('the app\'s own pages at the full height (A3.8 #32)', () => {
       await waitFor(`${page} shown`, async () => (await bounds(`${page}:view`))?.visible)
       await waitFor('the cover hidden', async () => !(await ground()).cover.visible)
       expect((await bounds(`${page}:view`))!.bounds).toEqual(FULL(await content()))
+      // spec 32 D1.3, D10.1: Home's area is `.hm-body` (or, with nothing to list, `.hm-empty`), 44 px down
+      const area = page === 'home' ? '.hm-body, .hm-empty' : '.settings'
       const dom = await exec<string>(page, `JSON.stringify((() => {
-        const box = document.querySelector('.${page}').getBoundingClientRect()
+        const box = document.querySelector('${area}').getBoundingClientRect()
         const first = [...document.querySelectorAll('button, input, select, a[href], [tabindex]:not([tabindex="-1"])')].find((e) => e.offsetParent !== null)
         return { top: box.top, body: getComputedStyle(document.body).overflow, html: getComputedStyle(document.documentElement).overflow, first: first ? first.getBoundingClientRect().top : null,
           bg: getComputedStyle(document.body).backgroundImage.includes('radial-gradient'), h: innerHeight }
