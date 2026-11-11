@@ -52,8 +52,10 @@ interface OpenCardMenu { id: string; anchor: Anchor; handle: MenuHandle; byKey: 
 const ui: { view: 'grid' | 'board'; menu: OpenCardMenu | null; viewMenu: MenuHandle | null; viewByKey: boolean; help: boolean; highlight: string | null } = {
   view: readView(), menu: null, viewMenu: null, viewByKey: false, help: false, highlight: null,
 }
-/** the current deep-link focus request (D8.7): any dismissal (closeAll) makes a pending one stale */
+/** the current deep-link focus request (D8.7): any dismissal (closeAll, an Escape, a press) makes a pending one stale */
 let focusGen = 0
+/** a deep-linked card's menu is waiting for its scroll to land (D8.7) */
+let focusPending = false
 
 // ---- Home's own scrolls (D8.6) ----------------------------------------------------------------------------------
 
@@ -606,8 +608,8 @@ input.addEventListener('keydown', (e) => {
   else if (e.key === 'Escape') {
     e.preventDefault()
     e.stopPropagation()
-    // a menu or Help first (D8.6)
-    if (ui.menu || ui.viewMenu || ui.help) { closeAll(); return }
+    // a menu or Help first (D8.6), and a deep-linked card's menu still waiting for its scroll (D8.7)
+    if (ui.menu || ui.viewMenu || ui.help || focusPending) { closeAll(); return }
     // back to the tab ⌘L came from, whatever the field holds; if that tab has closed, stay on Home - said to main all
     // the same, as Home itself, for the record (spec 30's link-cancel, noop no-tab): main does nothing with it
     const b = backTab()
@@ -618,12 +620,17 @@ input.addEventListener('keydown', (e) => {
 
 // ---- what closes a menu or Help (D8.6, D9.7) ------------------------------------------------------------------------
 
-// Escape anywhere closes Help (a menu's own Escape is menu.ts's)
+// Escape anywhere closes Help (a menu's own Escape is menu.ts's), and drops a deep-linked card's menu still waiting
+// for its scroll (D8.6, D8.7): it never opens after the person said no
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !e.defaultPrevented && ui.help) { e.preventDefault(); closeHelp() }
+  if (e.key !== 'Escape') return
+  if (focusPending) cancelFocus()
+  if (!e.defaultPrevented && ui.help) { e.preventDefault(); closeHelp() }
 })
-// an outside press closes Help (a menu's catcher closes the menus); the "?" toggles it itself
+// an outside press closes Help (a menu's catcher closes the menus); the "?" toggles it itself. Any press drops a
+// deep-linked card's pending menu (no menu or catcher is up yet to take it)
 document.addEventListener('pointerdown', (e) => {
+  if (focusPending) cancelFocus()
   if (!ui.help || !helpEl) return
   const t = e.target as Element | null
   if (t && (helpEl.contains(t) || t.closest('.hm-q'))) return
@@ -673,9 +680,11 @@ function focusCard(id: string): void {
   renderBody()
   const el = cardNode(id)
   if (!el) { ui.highlight = null; return }
+  focusPending = true
   ownScroll(() => el.scrollIntoView({ block: 'nearest' }), () => {
-    // dismissed in between (closeAll: a blur, a tab switch, Escape, another menu or Help): nothing opens
+    // dismissed in between (closeAll: a blur, a tab switch, another menu or Help; an Escape, a press): nothing opens
     if (gen !== focusGen || !homeActive()) { if (gen === focusGen) cancelFocus(); return }
+    focusPending = false
     if (ui.highlight === id && model.byId.has(id) && !ui.menu) openCardMenu(id, { kind: 'more' }, true)
     if (ui.menu?.id === id) ui.highlight = id
     markMenu()
@@ -684,6 +693,7 @@ function focusCard(id: string): void {
 /** A pending deep-link focus is dropped: its highlight goes, unless its menu is the one open. */
 function cancelFocus(): void {
   focusGen += 1
+  focusPending = false
   if (ui.highlight && ui.menu?.id !== ui.highlight) { ui.highlight = null; markMenu() }
 }
 

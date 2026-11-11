@@ -525,7 +525,7 @@ describe('D8: menus and clicks on Home', () => {
     await p.page.waitForFunction(() => document.getElementById('live')!.textContent!.includes('Not found'))
   })
 
-  it('D8.5: the View menu - header, Grid and Board with a check on the current, 200 wide, right-aligned under its button; the choice kept', async () => {
+  it('D8.5: the View menu - header, Grid and Board with a check on the current, 200 wide, right-aligned under its button; the choice kept and restored', async () => {
     await world({ tabs: BUSY, view: 'board' })
     await p.page.click('[data-key="view"]')
     expect(await menuRows()).toEqual(['View', 'Grid', 'Board'])
@@ -540,6 +540,14 @@ describe('D8: menus and clicks on Home', () => {
     expect(await p.calls('home:action')).toEqual([])   // a local choice: nothing to main
     await setView('board')
     expect(await p.page.evaluate(() => localStorage.getItem('mv.home.view'))).toBe('board')
+    // restored: a reloaded page draws the kept view with no choice made, Grid then Board
+    for (const v of ['grid', 'board'] as const) {
+      await setView(v)
+      await p.page.reload()
+      await world({ tabs: BUSY })
+      await p.page.waitForSelector('.hm-body')
+      expect(await p.page.$eval('.hm-body', (e) => e.classList.contains('grid') ? 'grid' : 'board'), v).toBe(v)
+    }
   })
 
   it('D8.6: one open at a time; Escape, an outside press, a tab switch close them; a scroll the person made closes a card and the View menu, Help stays', async () => {
@@ -682,7 +690,7 @@ describe('D8: menus and clicks on Home', () => {
     await p.resize(1280, 800)
   })
 
-  it('D8.6, D8.7: a deep-linked card\'s menu still waiting for its scroll never opens after a blur or a tab switch in between', async () => {
+  it('D8.6, D8.7: a deep-linked card\'s menu still waiting for its scroll never opens after a blur, a tab switch, an Escape (in the field too) or a background press in between', async () => {
     const many: RecentView[] = Array.from({ length: 16 }, (_, i) => ({ id: `r_${String(i).padStart(16, '0')}`, name: `Old ${i}`, folder: `~/old${i}`, lastSeen: Date.now() - (i + 1) * 3600_000 }))
     const list = [home, tab('os', 'OS', 4809)]
     await world({ tabs: list, recent: many, view: 'board', size: [1280, 600] })
@@ -699,12 +707,21 @@ describe('D8: menus and clicks on Home', () => {
       window.requestAnimationFrame = w.__raf; window.setTimeout = w.__st
       for (const f of w.__held.splice(0)) f()
     })
-    for (const dismiss of ['blur', 'tab switch'] as const) {
+    for (const dismiss of ['blur', 'tab switch', 'Escape', 'Escape in the field', 'background press'] as const) {
+      if (dismiss === 'Escape in the field') await p.page.focus('#link')
+      await p.clear()
       await hold()
       await p.send('home:focus', { field: 'recent', id })
       expect(await p.page.$eval(`[data-card="${id}"]`, (e) => e.classList.contains('hov')), dismiss).toBe(true)
       if (dismiss === 'blur') await p.page.evaluate(() => { window.dispatchEvent(new Event('blur')) })
-      else { await tabs(list, 'os'); await tabs(list) }
+      else if (dismiss === 'tab switch') { await tabs(list, 'os'); await tabs(list) }
+      else if (dismiss === 'background press') await p.page.mouse.click(4, 590)
+      else {
+        expect(await p.page.evaluate(() => document.activeElement?.id === 'link'), dismiss).toBe(dismiss === 'Escape in the field')
+        await p.page.keyboard.press('Escape')
+        // the field's Escape drops the pending menu first, as it closes an open one: it goes back nowhere
+        expect(await p.calls('tab:activate'), dismiss).toEqual([])
+      }
       await release()
       await sleep(250)
       expect(await menuOpen(), dismiss).toBe(false)
@@ -939,6 +956,31 @@ describe('E7 and the system settings', () => {
     expect(await css('[data-card="asteria"]', ['outline-color', 'outline-style'])).toEqual({ 'outline-color': 'rgb(0, 136, 255)', 'outline-style': 'solid' })
     await sleep(250)
     expect((await css('[data-more="asteria"]', ['opacity'])).opacity).toBe('1')
+  })
+
+  it('a card focused by key keeps its 4 px ring under the pointer, grid and board, light and dark', async () => {
+    for (const dark of [false, true]) {
+      for (const view of ['grid', 'board'] as const) {
+        const at = `${view} ${dark ? 'dark' : 'light'}`
+        await world({ tabs: BUSY, view, dark })
+        await p.page.focus('#link')
+        await p.page.keyboard.press('Tab'); await p.page.keyboard.press('Tab'); await p.page.keyboard.press('Tab')
+        const id = await p.page.evaluate(() => (document.activeElement as HTMLElement).dataset.card ?? null)
+        expect(id, at).not.toBeNull()
+        const sel = `[data-card="${id!}"]`
+        expect(await p.page.$eval(sel, (e) => e.matches(':focus-visible')), at).toBe(true)
+        await rect(sel)
+        const focused = (await css(sel, ['box-shadow']))['box-shadow']
+        expect(focused, at).toMatch(dark ? /^rgba\(92, 179, 255, 0\.18\) 0px 0px 0px 4px/ : /^rgba\(0, 136, 255, 0\.16\) 0px 0px 0px 4px/)
+        const r = await rect(sel)
+        await p.page.mouse.move(r.left + 40, r.top + r.height / 2)
+        expect(await p.page.$eval(sel, (e) => [e.matches(':hover'), e.matches(':focus-visible')]), at).toEqual([true, true])
+        await rect(sel)
+        expect((await css(sel, ['box-shadow']))['box-shadow'], at).toBe(focused)
+        if (!dark) expect(focused, at).toBe('rgba(0, 136, 255, 0.16) 0px 0px 0px 4px, rgba(255, 255, 255, 0.95) 0px 1px 0px 0px inset')
+      }
+    }
+    await look(false)
   })
 
   it('the "?" focused by key keeps its 4 px ring while Help is open, with the open look\'s inset highlight, light and dark', async () => {

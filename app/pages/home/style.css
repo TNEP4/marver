@@ -53,6 +53,12 @@
    dark has no shadow, so its ring stands alone */
 .hm-col .hm-card:focus-visible { -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5) }
 :root.dark .hm-col .hm-card:focus-visible { background: rgba(255, 255, 255, .065); box-shadow: 0 0 0 4px var(--hm-accent-ring) }
+/* a focused card that is also hovered, or wears Home's .hov (an open menu, a deep link), keeps its ring: D5's hover
+   rules come later in the file and would replace the shadow, so these outrank them, grid and board */
+:root:not(.dark) .hm-card:focus-visible:is(:hover, .hov), :root:not(.dark) .hm-col .hm-card:focus-visible:is(:hover, .hov) {
+  box-shadow: 0 0 0 4px var(--hm-accent-ring), inset 0 1px 0 rgba(255, 255, 255, .95) }
+:root.dark .hm-card:focus-visible:is(:hover, .hov) { box-shadow: 0 0 0 4px var(--hm-accent-ring), var(--hm-shadow-lit) }
+:root.dark .hm-col .hm-card:focus-visible:is(:hover, .hov) { box-shadow: 0 0 0 4px var(--hm-accent-ring) }
 .hm-card:focus-within .hm-more-btn { opacity: 1 }
 /* the round ring; :root lifts it over the design's `.hm .hm-cmd2 button` and `.hm .hm-foot-btn`, which zero the shadow */
 :root .hm-more-btn:focus-visible, :root .hm-chip:focus-visible, :root .hm-icon:focus-visible, :root .hm-cplabel:focus-visible,
