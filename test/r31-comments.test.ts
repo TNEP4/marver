@@ -345,6 +345,22 @@ describe('resolve all (spec 31 B.1-B.4)', () => {
     } finally { done() }
   })
 
+  it('one frame is a scope (0.33, the sidebar frame row): its threads in every log, nothing else', () => {
+    const { root, dir, done } = canvas()
+    try {
+      expect(parseScope({ frame: 'lofi/delta' })).toEqual({ frame: 'lofi/delta' })
+      expect(parseScope({ frame: '../x' })).toMatch(/invalid frame/)
+      expect(parseScope({ frame: 'a//b' })).toMatch(/invalid frame/)
+      expect(scopeFrames(root, { frame: 'nope/frame' })).toEqual({ error: 'no frame "nope/frame"' })
+      // lofi/delta has a thread in its own board's log and one in main's: both, and nothing else
+      const r = ok(resolveAll(root, 'op-frame-01', { frame: 'lofi/delta' }))
+      expect(r.resolved.map((x) => `${x.board}/${x.thread}`).sort()).toEqual(['main/delta2', 'resolve-all/delta1'])
+      expect(open(dir, 'main')).toEqual(['alpha1', 'bravo1', 'zulu1'])
+      expect(open(dir, 'undo')).toEqual(['echo1'])
+      expect(resolveAll(root, 'op-frame-02', { frame: 'nope/frame' })).toMatchObject({ status: 404 })
+    } finally { done() }
+  })
+
   it('a log that cannot be written is reported with its threads; the other logs still land', () => {
     const { root, dir, done } = canvas()
     try {

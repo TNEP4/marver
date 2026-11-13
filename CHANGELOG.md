@@ -2,6 +2,15 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## Unreleased
+
+### Highlights
+
+- **Mark as seen and Resolve comments on one frame.** Right-click a frame in the sidebar: next to Copy path, **Mark as
+  seen** clears its blue dot, and **Resolve comments** resolves every open conversation on it, with Undo (never what Jam
+  is working on). Each shows only when there is something to do. They were only on a scene, a board or a folder before.
+  [Boards and folders](docs/boards-and-folders.md)
+
 ## 0.32.0 - 2026-11-11
 
 ### Highlights

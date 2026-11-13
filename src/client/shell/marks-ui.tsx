@@ -22,8 +22,8 @@ export function markSeenFrom(how: CmdOpts, frames: string[]): void {
   s.markSeen(frames)
 }
 
-/** A resolve-all scope (spec 31 B.1): what you see - a board, a folder, a scene, or the whole canvas (the app's tab). */
-export type ResolveScope = { board: string } | { folder: string } | { scene: string } | { canvas: true }
+/** A resolve-all scope (spec 31 B.1): what you see - a board, a folder, a scene, one frame (0.33), or the whole canvas (the app's tab). */
+export type ResolveScope = { board: string } | { folder: string } | { scene: string } | { frame: string } | { canvas: true }
 
 /** One POST to the dev server's comment actions, tried once more with the same op on no answer (a retry returns the
  *  same receipt). */

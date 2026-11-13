@@ -37,7 +37,7 @@ import { bootSettled, dismissShow, goNow, showTarget, useShowNotice } from './sh
 import { newerVersion } from '../../shared/deep-link.ts'
 import { useNotes } from './notes.ts'
 import { contentOnly } from '../../shared/frames.ts'
-import { nextToLook } from '../../shared/marks.ts'
+import { isNew, nextToLook } from '../../shared/marks.ts'
 import { asksNow, Bubble, MarkedRow, markSeenFrom, resolveAllFrom, useRollup, useSeenOnScreen } from './marks-ui.tsx'
 import { CommentButton, DevicePicker, HideUIButton, LaserButton, Popover, ThemePicker, toggleHideUI, usePopover } from './Toolbar.tsx'
 
@@ -1104,6 +1104,10 @@ export function App() {
                     { label: 'Copy path', icon: <SignpostIcon size={15} />, onClick: () => { recordCopy('path', fr.id); copyToClipboard(framePath(useStore.getState().board, fr), 'path copied', cmd('copy-path', { via: 'context', in: 'shell', frame: fr.id })) } },
                     // the Not on a board view (spec 26): put the frame where it belongs
                     ...(useStore.getState().board === UNPLACED ? [{ label: 'Add to board…', icon: <PlusIcon size={15} />, panel: (close: () => void) => <AddToBoard frame={fr.id} close={close} /> }] : []),
+                    // the scene row's two, for one frame (0.33) - shown only when there is something to do: its blue dot,
+                    // or an open thread on it
+                    ...(!PUBLISHED && isNew(useStore.getState().marks, fr.id) ? [{ label: 'Mark as seen', icon: <CheckIcon size={15} />, onClick: () => markSeenFrom({ via: 'context', in: 'shell', frame: fr.id }, [fr.id]) }] : []),
+                    ...(!PUBLISHED && useComments.getState().threads.some((t) => t.frame === fr.id && !t.resolved && !t.deleted) ? [{ label: 'Resolve comments', icon: <CheckSquareOffsetIcon size={15} />, onClick: () => void resolveAllFrom({ via: 'context', in: 'shell', frame: fr.id }, { frame: fr.id }) }] : []),
                   ]
                   const seen = new Set<string>()
                   const rows: ReactNode[] = []

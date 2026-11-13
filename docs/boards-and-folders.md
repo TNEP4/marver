@@ -91,14 +91,16 @@ every frame reads lights every frame; **Mark all as seen** on the board clears t
 
 "Looked at" means you selected it, opened it from the sidebar or a link, opened it in focus or play,
 kept it on screen at a readable zoom (50 % or more) for two seconds, or chose **Mark all as seen** on
-a scene, board or folder - for the version on screen: a change still loading (or behind **Update** in
+a scene, board or folder (**Mark as seen** on one frame's row, 0.33) - for the version on screen: a change still loading (or behind **Update** in
 focus or play) stays new until its new version shows, and a look you made while it loaded counts as
 soon as it does.
 
 **Resolve all comments** sits beside every **Mark all as seen** - a board's, a folder's, a scene's,
 and the Mac app's tab menu - for when the bubbles are noise (0.31). It resolves what that row shows,
 never a log: a board's every open thread on the frames it shows, a folder's over all its boards and
-sub-folders, a scene's on its frames, the tab's every open thread on the canvas. It is the same as
+sub-folders, a scene's on its frames, the tab's every open thread on the canvas. A frame's own row in
+the sidebar has the pair too (0.33), each only when there is something to do: **Mark as seen** while it
+is new, **Resolve comments** while a conversation on it is open. It is the same as
 resolving each one by hand - Jam's questions, reviews and failed runs on them are finished - except
 live work: a thread Jam is queued or working on is left open and counted ("2 left open: work in
 progress"). The notice says how many, with **Undo**: it reopens each thread nothing happened in since - no

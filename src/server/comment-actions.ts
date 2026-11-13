@@ -2,7 +2,8 @@
  * Resolve all comments, and its Undo (spec 31 B.1-B.5) - one core for the dev server's routes and the CLI.
  *
  * Scope is what you see, never a log: a board = the open threads on frames that board shows; a folder = the union
- * over its boards, sub-folders included; a scene = the threads on that scene's frames; the canvas = every open
+ * over its boards, sub-folders included; a scene = the threads on that scene's frames; a frame = its own threads (the
+ * sidebar's frame row, 0.33); the canvas = every open
  * thread. Each resolve is written to its thread's own log, so it is the same as resolving each by hand - Jam's
  * `asks`, `review` and `failed` items on it complete when the queue ingests it - except live work: a thread whose
  * Jam card is queued or working (or whose tag is written and not yet queued) is skipped and counted. The check and
@@ -25,27 +26,30 @@ import { buildTree, flatten, framesOn, isBoardName, type TreeItem } from '../sha
 import { readRaw } from './jam/journal.ts'
 import { ctxFor, liveThreads } from './jam/queue.ts'
 
-export type Scope = { board: string } | { folder: string } | { scene: string } | { canvas: true }
+export type Scope = { board: string } | { folder: string } | { scene: string } | { frame: string } | { canvas: true }
 export const OP_RE = /^[\w-]{8,64}$/
 const SCENE_RE = /^[A-Za-z0-9_][\w.-]*$/
+/** A frame id: its path under design/scenes/, without the extension (`website-v2/7-urls`). */
+const FRAME_RE = /^[A-Za-z0-9_][\w.-]*(?:\/[A-Za-z0-9_][\w.-]*)*$/
 
 /** Exactly one scope, every name on its grammar - else what is wrong. An empty or malformed one is refused,
  *  never read as the whole canvas. */
 export function parseScope(raw: unknown): Scope | string {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return 'expected a scope: {board} | {folder} | {scene} | {canvas: true}'
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return 'expected a scope: {board} | {folder} | {scene} | {frame} | {canvas: true}'
   const keys = Object.keys(raw)
-  if (keys.length !== 1) return 'name exactly one scope: board, folder, scene or canvas'
+  if (keys.length !== 1) return 'name exactly one scope: board, folder, scene, frame or canvas'
   const o = raw as Record<string, unknown>
   if ('board' in o) return isBoardName(o.board) ? { board: o.board } : 'invalid board name'
   if ('folder' in o) return isBoardName(o.folder) ? { folder: o.folder } : 'invalid folder name'
   // '' is the root scene (frames straight in design/scenes/) - named, never a default
   if ('scene' in o) return typeof o.scene === 'string' && o.scene.length <= 120 && (o.scene === '' || SCENE_RE.test(o.scene)) ? { scene: o.scene } : 'invalid scene name'
+  if ('frame' in o) return typeof o.frame === 'string' && o.frame.length <= 200 && FRAME_RE.test(o.frame) ? { frame: o.frame } : 'invalid frame id'
   if ('canvas' in o) return o.canvas === true ? { canvas: true } : 'canvas scope is {canvas: true}'
-  return 'unknown scope - board, folder, scene or canvas'
+  return 'unknown scope - board, folder, scene, frame or canvas'
 }
 
 export const scopeLabel = (s: Scope): string =>
-  'board' in s ? `board ${s.board}` : 'folder' in s ? `folder ${s.folder}` : 'scene' in s ? (s.scene ? `scene ${s.scene}` : 'the root scene') : 'the canvas'
+  'board' in s ? `board ${s.board}` : 'folder' in s ? `folder ${s.folder}` : 'scene' in s ? (s.scene ? `scene ${s.scene}` : 'the root scene') : 'frame' in s ? `frame ${s.frame}` : 'the canvas'
 
 /** The frames a scope covers (null = the whole canvas), or why it names nothing. */
 export function scopeFrames(root: string, scope: Scope): { frames: Set<string> | null } | { error: string } {
@@ -57,6 +61,7 @@ export function scopeFrames(root: string, scope: Scope): { frames: Set<string> |
     const ids = manifest.filter((f) => f.scene === scope.scene).map((f) => f.id)
     return ids.length ? { frames: new Set(ids) } : { error: scope.scene ? `no scene "${scope.scene}"` : 'no frames in the root scene' }
   }
+  if ('frame' in scope) return live.includes(scope.frame) ? { frames: new Set([scope.frame]) } : { error: `no frame "${scope.frame}"` }
   const dir = join(root, 'design', 'boards')
   const files = checkBoardsDir(root, dir) ? [] : listBoardFiles(dir).boards
   const framesOf = (names: string[]) => new Set(names.flatMap((n) => framesOn(files.find((b) => b.name === n)?.json, live)))
