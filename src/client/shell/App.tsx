@@ -1105,9 +1105,9 @@ export function App() {
                     // the Not on a board view (spec 26): put the frame where it belongs
                     ...(useStore.getState().board === UNPLACED ? [{ label: 'Add to board…', icon: <PlusIcon size={15} />, panel: (close: () => void) => <AddToBoard frame={fr.id} close={close} /> }] : []),
                     // the scene row's two, for one frame (0.33) - shown only when there is something to do: its blue dot,
-                    // or an open thread on it
+                    // or an open thread on it (one whose first comment was deleted counts: replay keeps it only while replies survive)
                     ...(!PUBLISHED && isNew(useStore.getState().marks, fr.id) ? [{ label: 'Mark as seen', icon: <CheckIcon size={15} />, onClick: () => markSeenFrom({ via: 'context', in: 'shell', frame: fr.id }, [fr.id]) }] : []),
-                    ...(!PUBLISHED && useComments.getState().threads.some((t) => t.frame === fr.id && !t.resolved && !t.deleted) ? [{ label: 'Resolve comments', icon: <CheckSquareOffsetIcon size={15} />, onClick: () => void resolveAllFrom({ via: 'context', in: 'shell', frame: fr.id }, { frame: fr.id }) }] : []),
+                    ...(!PUBLISHED && useComments.getState().threads.some((t) => t.frame === fr.id && !t.resolved) ? [{ label: 'Resolve comments', icon: <CheckSquareOffsetIcon size={15} />, onClick: () => void resolveAllFrom({ via: 'context', in: 'shell', frame: fr.id }, { frame: fr.id }) }] : []),
                   ]
                   const seen = new Set<string>()
                   const rows: ReactNode[] = []

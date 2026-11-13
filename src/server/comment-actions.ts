@@ -29,8 +29,11 @@ import { ctxFor, liveThreads } from './jam/queue.ts'
 export type Scope = { board: string } | { folder: string } | { scene: string } | { frame: string } | { canvas: true }
 export const OP_RE = /^[\w-]{8,64}$/
 const SCENE_RE = /^[A-Za-z0-9_][\w.-]*$/
-/** A frame id: its path under design/scenes/, without the extension (`website-v2/7-urls`). */
-const FRAME_RE = /^[A-Za-z0-9_][\w.-]*(?:\/[A-Za-z0-9_][\w.-]*)*$/
+/** A frame id: its path under design/scenes/, without the extension (`website-v2/7-urls`). Only its shape is checked
+ *  here - any name the manifest scans (`demo/-draft`, `demo/café`) - since scopeFrames takes exactly the manifest's ids:
+ *  slash-separated, no empty, `.` or `..` segment, no backslash or NUL. */
+const isFrameId = (v: unknown): v is string =>
+  typeof v === 'string' && v.length > 0 && v.length <= 300 && !/[\\\0]/.test(v) && v.split('/').every((p) => p !== '' && p !== '.' && p !== '..')
 
 /** Exactly one scope, every name on its grammar - else what is wrong. An empty or malformed one is refused,
  *  never read as the whole canvas. */
@@ -43,7 +46,7 @@ export function parseScope(raw: unknown): Scope | string {
   if ('folder' in o) return isBoardName(o.folder) ? { folder: o.folder } : 'invalid folder name'
   // '' is the root scene (frames straight in design/scenes/) - named, never a default
   if ('scene' in o) return typeof o.scene === 'string' && o.scene.length <= 120 && (o.scene === '' || SCENE_RE.test(o.scene)) ? { scene: o.scene } : 'invalid scene name'
-  if ('frame' in o) return typeof o.frame === 'string' && o.frame.length <= 200 && FRAME_RE.test(o.frame) ? { frame: o.frame } : 'invalid frame id'
+  if ('frame' in o) return isFrameId(o.frame) ? { frame: o.frame } : 'invalid frame id'
   if ('canvas' in o) return o.canvas === true ? { canvas: true } : 'canvas scope is {canvas: true}'
   return 'unknown scope - board, folder, scene, frame or canvas'
 }

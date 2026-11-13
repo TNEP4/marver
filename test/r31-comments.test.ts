@@ -351,6 +351,10 @@ describe('resolve all (spec 31 B.1-B.4)', () => {
       expect(parseScope({ frame: 'lofi/delta' })).toEqual({ frame: 'lofi/delta' })
       expect(parseScope({ frame: '../x' })).toMatch(/invalid frame/)
       expect(parseScope({ frame: 'a//b' })).toMatch(/invalid frame/)
+      expect(parseScope({ frame: 'a\\b' })).toMatch(/invalid frame/)
+      // any name the manifest scans: the shape is checked, membership is scopeFrames'
+      expect(parseScope({ frame: 'demo/-draft' })).toEqual({ frame: 'demo/-draft' })
+      expect(parseScope({ frame: 'demo/café' })).toEqual({ frame: 'demo/café' })
       expect(scopeFrames(root, { frame: 'nope/frame' })).toEqual({ error: 'no frame "nope/frame"' })
       // lofi/delta has a thread in its own board's log and one in main's: both, and nothing else
       const r = ok(resolveAll(root, 'op-frame-01', { frame: 'lofi/delta' }))
@@ -358,6 +362,9 @@ describe('resolve all (spec 31 B.1-B.4)', () => {
       expect(open(dir, 'main')).toEqual(['alpha1', 'bravo1', 'zulu1'])
       expect(open(dir, 'undo')).toEqual(['echo1'])
       expect(resolveAll(root, 'op-frame-02', { frame: 'nope/frame' })).toMatchObject({ status: 404 })
+      // a name the scanner takes that a stricter pattern would not: the scope reaches it
+      writeFileSync(join(root, 'design', 'scenes', 'spec', '-draft.tsx'), 'export default () => <main />\n')
+      expect(scopeFrames(root, { frame: 'spec/-draft' })).toEqual({ frames: new Set(['spec/-draft']) })
     } finally { done() }
   })
 
