@@ -2,16 +2,16 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
-## Unreleased
+## 0.34.0 - 2026-11-14
 
 ### Highlights
 
-- **Your agent can resolve one frame's comments.** `npx marver comments resolve --all --frame <scene/frame>` does what
-  a frame's **Resolve comments** does in the sidebar (0.33), with `--dry-run` and `--undo` like the other scopes. Your
-  agent still asks you first. [Boards and folders](docs/boards-and-folders.md)
 - **Your agent can replicate a deck in another presentation tool, ready for others to edit.** Google Slides,
   PowerPoint, Keynote, Canva or any tool it can drive through an MCP or API: every text, shape, line and image becomes
   a native element, never a picture of the slide. [Slides](docs/slides.md)
+- **Your agent can resolve one frame's comments.** `npx marver comments resolve --all --frame <scene/frame>` does what
+  a frame's **Resolve comments** does in the sidebar (0.33), with `--dry-run` and `--undo` like the other scopes. Your
+  agent still asks you first. [Boards and folders](docs/boards-and-folders.md)
 
 ### Upgrading
 
