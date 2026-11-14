@@ -10,8 +10,8 @@ create it. A PDF is not this (slides.md, "A deck as a PDF").
 ## The rule: native and atomic
 
 Rebuild every slide from the tool's own components, one element at a time:
-every text a text box, every shape a shape, every line a line, every table a
-table, every chart a chart (or the shapes and text that draw it), every
+every text a text box, every shape a shape, every line a line (a divider or
+rule too, even one the slide draws as a thin box), every table a table, every chart a chart (or the shapes and text that draw it), every
 image an image. Never paste a picture of a slide, or of any part of one that
 holds text, shapes or lines. A picture is only for what was a picture on the
 slide already: a photo, an illustration. The test is simple: a colleague
