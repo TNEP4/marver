@@ -1,4 +1,4 @@
-<!-- marver:managed 7f87f261260892bedde9a500ed05362e665630d65962938c88dd3b1cac699fb1 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 40c7034bfc77d26269d580e9a89e514514c1a0e8252e058edab2c62c8c14aece - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Iterate - versions are nearly free, so keep them
 
 Read this when you are about to CHANGE a frame the human has already seen, when
@@ -200,7 +200,7 @@ The discipline:
    Many open at once is the human's to clear, never yours: past ten open
    (`npx marver marks` counts them per board), ask - and only on a yes run
    `npx marver comments resolve --all --board <b>` (`--folder`, `--scene`,
-   `--canvas`; `--dry-run` counts first; it prints its `--undo`). It skips
+   `--frame`, `--canvas`; `--dry-run` counts first; it prints its `--undo`). It skips
    every thread Jam is working on.
 6. **A frame with open comments is load-bearing - never delete, rename, or
    gut it.** Its threads are anchored to elements INSIDE it; restructure the

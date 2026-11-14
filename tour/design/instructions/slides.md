@@ -1,4 +1,4 @@
-<!-- marver:managed 8770f6880838458853c3c2cd863b240d2622f03eb9527c3ca13edcf17ee0f51b - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 2430c38e7cc72847ab9821e902b16f80cb5b74fcaf0bdcc5afdc6ac2a18b6a5a - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Slides - decks in code
 
 Run this when the work is a DECK: the human asks for slides, a presentation,
@@ -17,6 +17,7 @@ mechanics of how a slide plays. Take what serves the deck in front of you.
 |---|---|
 | reference/deck-story.md | intake is thin or rich, the room is senior, the slide list reads like a table of contents, or the words need work |
 | reference/deck-layouts.md | a slide needs a composition and none comes - an idea bank, plus rebuilding an existing deck and chart craft |
+| reference/deck-replicate.md | the deck is replicated in another presentation tool (Google Slides, PowerPoint, Keynote, Canva...) for others to edit |
 | craft.md + its references | a slide's type, colour, layout or motion feels off - reference/typography.md, color.md, motion.md and slop.md hold for slides as for screens |
 
 ## What a slide is
@@ -349,6 +350,13 @@ size and time; each line under it names slides that need a look:
 
 The PDF is the finished slide, as at rest: another reason every slide must
 show its final composition without `data-sl-play` (Motion, above).
+
+## A deck in another presentation tool
+
+When the human wants the deck in Google Slides, PowerPoint, Keynote, Canva
+or another tool with a good MCP or API, so others can edit it, rebuild it
+there from native, atomic elements - never pictures of slides. Read
+reference/deck-replicate.md before the first slide.
 
 ## design/slides.md - this project's deck look
 

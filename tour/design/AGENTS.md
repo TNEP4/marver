@@ -1,4 +1,4 @@
-<!-- marver:managed 01872f4a77ef8ba415280b07a8873c90a250ab7e98033131ee0162e6bf299035 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed e3b23361ad080518d22a40083b1ad634b4d617a476f08925b8fc2062ff5abfa5 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Design canvas - agent contract
 
 You design by writing files. The canvas at the printed localhost URL reflects them live.
@@ -45,7 +45,7 @@ file in design/instructions/ - they are short, strict, and part of this contract
 | Review | before presenting anything | instructions/review.md |
 | Boards | creating a board, choosing what ships | instructions/boards.md |
 | Context | any question about what the product does or what is live; a behaviour change; a deploy; no `context/` yet | instructions/context.md |
-| Slides | a deck is asked for; a PDF of a deck or of any board, a flow too (`npx marver pdf <board>`, then give back the path it prints); or `slide: true` frames exist | instructions/slides.md + design/slides.md |
+| Slides | a deck is asked for; a PDF of a deck or of any board, a flow too (`npx marver pdf <board>`, then give back the path it prints); the deck replicated in another presentation tool (Google Slides, PowerPoint, Keynote, Canva...: native elements, never pictures of slides); or `slide: true` frames exist | instructions/slides.md + design/slides.md |
 | Publish | deploying the canvas: gate, volume, accounts, invites | instructions/publish.md |
 | Live Jam | responding to an `@marver` comment (a spawned job), or a "Live Jam: ... new request" message (below) - run `npx marver jam next`; on by default - confirm it names YOUR tool | instructions/jam.md |
 
@@ -310,10 +310,10 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
   badges are noisy, ask - with the count per board it prints ("38 open: launch-plan 22,
   checkout-compare 16 - resolve them?"). A frame on two boards counts on both. Only on a yes, and only for what
   they said yes to: one board is `npx marver comments resolve --all --board <b>`, a folder
-  `--folder <f>`, a scene `--scene <s>`, everything `--canvas` (the only scope that also takes
+  `--folder <f>`, a scene `--scene <s>`, one frame `--frame <scene/frame>`, everything `--canvas` (the only scope that also takes
   threads with no frame or on a frame that is gone; `--scene` takes its frames whether or not a board shows them). `--dry-run` counts first. Give them the `--undo` line it
   prints. It never touches what Jam is working on, and the human has the same in every board,
-  folder and scene menu ("Resolve all comments") and on the Mac app's tab. Never on your own.
+  folder and scene menu ("Resolve all comments"), on a frame's row ("Resolve comments") and on the Mac app's tab. Never on your own.
 - **Undo a resolve-all later.** The canvas's Undo notice lasts 10 seconds. After that, each run
   is kept as `design/.local/comment-ops/<op>.json` (its `scope` and `at` say which; skip the
   `.undo.json` files): `npx marver comments resolve --undo <op>` reopens each thread nothing
