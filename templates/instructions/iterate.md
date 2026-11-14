@@ -199,7 +199,7 @@ The discipline:
    Many open at once is the human's to clear, never yours: past ten open
    (`npx marver marks` counts them per board), ask - and only on a yes run
    `npx marver comments resolve --all --board <b>` (`--folder`, `--scene`,
-   `--canvas`; `--dry-run` counts first; it prints its `--undo`). It skips
+   `--frame`, `--canvas`; `--dry-run` counts first; it prints its `--undo`). It skips
    every thread Jam is working on.
 6. **A frame with open comments is load-bearing - never delete, rename, or
    gut it.** Its threads are anchored to elements INSIDE it; restructure the

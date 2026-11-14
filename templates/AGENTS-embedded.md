@@ -311,10 +311,10 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
   badges are noisy, ask - with the count per board it prints ("38 open: launch-plan 22,
   checkout-compare 16 - resolve them?"). A frame on two boards counts on both. Only on a yes, and only for what
   they said yes to: one board is `npx marver comments resolve --all --board <b>`, a folder
-  `--folder <f>`, a scene `--scene <s>`, everything `--canvas` (the only scope that also takes
+  `--folder <f>`, a scene `--scene <s>`, one frame `--frame <scene/frame>`, everything `--canvas` (the only scope that also takes
   threads with no frame or on a frame that is gone; `--scene` takes its frames whether or not a board shows them). `--dry-run` counts first. Give them the `--undo` line it
   prints. It never touches what Jam is working on, and the human has the same in every board,
-  folder and scene menu ("Resolve all comments") and on the Mac app's tab. Never on your own.
+  folder and scene menu ("Resolve all comments"), on a frame's row ("Resolve comments") and on the Mac app's tab. Never on your own.
 - **Undo a resolve-all later.** The canvas's Undo notice lasts 10 seconds. After that, each run
   is kept as `design/.local/comment-ops/<op>.json` (its `scope` and `at` say which; skip the
   `.undo.json` files): `npx marver comments resolve --undo <op>` reopens each thread nothing

@@ -105,7 +105,7 @@ resolving each one by hand - Jam's questions, reviews and failed runs on them ar
 live work: a thread Jam is queued or working on is left open and counted ("2 left open: work in
 progress"). The notice says how many, with **Undo**: it reopens each thread nothing happened in since - no
 reply, edit, reaction, resolve or reopen ("1 changed since - left as is"); what Jam finished stays finished. From the terminal: `npx marver
-comments resolve --all --board <b>` (`--folder`, `--scene`, `--canvas`, `--dry-run`), then `--undo <op>`
+comments resolve --all --board <b>` (`--folder`, `--scene`, `--frame`, `--canvas`, `--dry-run`), then `--undo <op>`
 with the op it prints. Missed the notice's Undo (it shows for 10 seconds)? Every run is kept as
 `design/.local/comment-ops/<op>.json` (its `scope` and `at` say which), and `npx marver comments resolve --undo <op>`
 undoes it. On the board you have open, it saves your latest edits first; while they are not saved it resolves nothing

@@ -17,7 +17,7 @@
  *                 --ask when the reply asks the human something
  * move <thread>   re-pin a thread on another element (--on / --at) - its author's only
  * resolve <thread>  mark addressed (--addressed-in <frame> records WHICH variant)
- * resolve --all   every open thread in one scope (--board | --folder | --scene | --canvas; --dry-run counts) -
+ * resolve --all   every open thread in one scope (--board | --folder | --scene | --frame | --canvas; --dry-run counts) -
  *                 never what Jam is at work on; --undo <op> reopens what it resolved. Only on the human's yes.
  * invite <email>  mint a single-use invite link (owner only, needs connect first)
  * revoke <email>  revoke an account and its sessions (owner only)
@@ -167,7 +167,7 @@ export async function commentsCommand(root: string, action: string, value: strin
     case 'resolve': {
       if (opts.undo !== undefined) return resolveUndo(root, String(opts.undo))
       if (opts.all) return resolveAllCli(root, value, opts)
-      if (!value) throw new Error('usage: comments resolve <thread-id> [--addressed-in <frame>] | --all (--board b | --folder f | --scene s | --canvas) [--dry-run]')
+      if (!value) throw new Error('usage: comments resolve <thread-id> [--addressed-in <frame>] | --all (--board b | --folder f | --scene s | --frame scene/frame | --canvas) [--dry-run]')
       const t = allThreads(root).find((t) => t.id === value)
       if (!t) throw new Error(`no thread ${value} in design/comments/`)
       appendEvents(join(root, 'design', 'comments'), t.board, [{
@@ -211,11 +211,12 @@ export async function commentsCommand(root: string, action: string, value: strin
  *  memory is the one checked, in the same step as the writes), else here, against the journal on disk. Never decided by
  *  an agent alone: the guide says to ask, with the counts \`--dry-run\` prints. */
 const resolveAllCli = async (root: string, value: string | undefined, opts: any) => {
-  if (value) throw new Error(`resolve --all takes no thread id - name a scope: --board, --folder, --scene or --canvas`)
+  if (value) throw new Error(`resolve --all takes no thread id - name a scope: --board, --folder, --scene, --frame or --canvas`)
   const ca = await import('../server/comment-actions.ts')
   const named = [opts.board !== undefined && { board: String(opts.board) }, opts.folder !== undefined && { folder: String(opts.folder) },
-    opts.scene !== undefined && { scene: String(opts.scene) }, opts.canvas && { canvas: true }].filter(Boolean)
-  if (named.length !== 1) throw new Error('resolve --all needs exactly one scope: --board <b> | --folder <f> | --scene <s> | --canvas')
+    opts.scene !== undefined && { scene: String(opts.scene) }, opts.frame !== undefined && { frame: String(opts.frame) },
+    opts.canvas && { canvas: true }].filter(Boolean)
+  if (named.length !== 1) throw new Error('resolve --all needs exactly one scope: --board <b> | --folder <f> | --scene <s> | --frame <scene/frame> | --canvas')
   const scope = ca.parseScope(named[0])
   if (typeof scope === 'string') throw new Error(scope)
   const op = randomUUID()

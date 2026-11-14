@@ -143,6 +143,16 @@ describe('the dev server (spec 31 B.4, C.2-C.6)', () => {
     expect(open('main')).toEqual(before)
     expect(() => cli('resolve', '--all')).toThrow(/exactly one scope/)
     expect(() => cli('resolve', '--all', '--board', 'main', '--canvas')).toThrow(/exactly one scope/)
+    // one frame (0.33's frame row, from the terminal): only that frame's threads, and a frame the manifest lacks is said
+    const fdry = cli('resolve', '--all', '--frame', 'spec/alpha', '--dry-run')
+    expect(fdry).toMatch(/frame spec\/alpha: \d+ open conversations? would be resolved/)
+    expect(() => cli('resolve', '--all', '--frame', 'spec/nope')).toThrow(/no frame "spec\/nope"/)
+    expect(() => cli('resolve', '--all', '--frame', '../x')).toThrow(/invalid frame id/)
+    const fo = cli('resolve', '--all', '--frame', 'spec/alpha')
+    expect(fo).toMatch(/Resolved \d+ conversations? .*\(frame spec\/alpha\)/)
+    expect(replay(readLog(dir(), 'main')).filter((t) => t.frame === 'spec/alpha').every((t) => t.resolved)).toBe(true)
+    expect(cli('resolve', '--undo', /resolve --undo ([\w-]+)/.exec(fo)![1])).toMatch(/Reopened \d+/)
+    expect(open('main')).toEqual(before)
     const out = cli('resolve', '--all', '--canvas')
     expect(out).toMatch(/Resolved \d+ conversations?/)
     const op = /resolve --undo ([\w-]+)/.exec(out)![1]

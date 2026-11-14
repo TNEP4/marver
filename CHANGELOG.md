@@ -2,6 +2,18 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## Unreleased
+
+### Highlights
+
+- **Your agent can resolve one frame's comments.** `npx marver comments resolve --all --frame <scene/frame>` does what
+  a frame's **Resolve comments** does in the sidebar (0.33), with `--dry-run` and `--undo` like the other scopes. Your
+  agent still asks you first. [Boards and folders](docs/boards-and-folders.md)
+
+### Upgrading
+
+- `npx marver init` - your agent's guide names the new `--frame` scope.
+
 ## 0.33.0 - 2026-11-13
 
 ### Highlights
