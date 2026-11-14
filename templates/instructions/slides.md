@@ -16,6 +16,7 @@ mechanics of how a slide plays. Take what serves the deck in front of you.
 |---|---|
 | reference/deck-story.md | intake is thin or rich, the room is senior, the slide list reads like a table of contents, or the words need work |
 | reference/deck-layouts.md | a slide needs a composition and none comes - an idea bank, plus rebuilding an existing deck and chart craft |
+| reference/deck-replicate.md | the deck is replicated in another presentation tool (Google Slides, PowerPoint, Keynote, Canva...) for others to edit |
 | craft.md + its references | a slide's type, colour, layout or motion feels off - reference/typography.md, color.md, motion.md and slop.md hold for slides as for screens |
 
 ## What a slide is
@@ -348,6 +349,13 @@ size and time; each line under it names slides that need a look:
 
 The PDF is the finished slide, as at rest: another reason every slide must
 show its final composition without `data-sl-play` (Motion, above).
+
+## A deck in another presentation tool
+
+When the human wants the deck in Google Slides, PowerPoint, Keynote, Canva
+or another tool with a good MCP or API, so others can edit it, rebuild it
+there from native, atomic elements - never pictures of slides. Read
+reference/deck-replicate.md before the first slide.
 
 ## design/slides.md - this project's deck look
 

@@ -89,6 +89,14 @@ same from the canvas, and `--notes` prints a handout with each slide's notes. Gl
 soft shadows - the effects Chrome prints wrong - are fixed slide by slide and checked against the screen. See
 [Deck PDFs](pdf.md).
 
+## A deck in another presentation tool
+
+Ask your agent to replicate the deck in Google Slides, PowerPoint, Keynote, Canva or any presentation tool it can
+drive through a good MCP or API. It rebuilds every slide there from the tool's native components, one element at a
+time (every text a text box, every shape a shape, every line a line, every image an image) so anyone can edit it and
+work on it together. It never pastes pictures of slides. It anchors each text box to the middle so the text lines up
+as on the slide, checks each rebuilt slide against the original, and tells you anything it could not rebuild natively.
+
 ## Motion
 
 Motion is yours to write. While a deck plays, the stage puts

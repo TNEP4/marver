@@ -44,7 +44,7 @@ file in design/instructions/ - they are short, strict, and part of this contract
 | Review | before presenting anything | instructions/review.md |
 | Boards | creating a board, choosing what ships | instructions/boards.md |
 | Context | any question about what the product does or what is live; a behaviour change; a deploy; no `context/` yet | instructions/context.md |
-| Slides | a deck is asked for; a PDF of a deck or of any board, a flow too (`npx marver pdf <board>`, then give back the path it prints); or `slide: true` frames exist | instructions/slides.md + design/slides.md |
+| Slides | a deck is asked for; a PDF of a deck or of any board, a flow too (`npx marver pdf <board>`, then give back the path it prints); the deck replicated in another presentation tool (Google Slides, PowerPoint, Keynote, Canva...: native elements, never pictures of slides); or `slide: true` frames exist | instructions/slides.md + design/slides.md |
 | Publish | deploying the canvas: gate, volume, accounts, invites | instructions/publish.md |
 | Live Jam | responding to an `@marver` comment (a spawned job), or a "Live Jam: ... new request" message (below) - run `npx marver jam next`; on by default - confirm it names YOUR tool | instructions/jam.md |
 
