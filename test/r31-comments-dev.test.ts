@@ -143,6 +143,8 @@ describe('the dev server (spec 31 B.4, C.2-C.6)', () => {
     expect(open('main')).toEqual(before)
     expect(() => cli('resolve', '--all')).toThrow(/exactly one scope/)
     expect(() => cli('resolve', '--all', '--board', 'main', '--canvas')).toThrow(/exactly one scope/)
+    expect(() => cli('resolve', '--all', '--board', 'main', '--board', 'undo')).toThrow(/names one --board, not 2/)
+    expect(() => cli('resolve', '--all', '--frame', 'spec/alpha', '--frame=spec/bravo')).toThrow(/names one --frame, not 2/)
     // one frame (0.33's frame row, from the terminal): only that frame's threads, and a frame the manifest lacks is said
     const fdry = cli('resolve', '--all', '--frame', 'spec/alpha', '--dry-run')
     expect(fdry).toMatch(/frame spec\/alpha: \d+ open conversations? would be resolved/)

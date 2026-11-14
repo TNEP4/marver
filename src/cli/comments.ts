@@ -216,6 +216,8 @@ const resolveAllCli = async (root: string, value: string | undefined, opts: any)
   // a name as typed: the parser makes `--frame 001` the number 1 (and `--scene 007` 7), which String() cannot undo -
   // read it back from the arguments (`--frame 001` or `--frame=001`)
   const typed = (flag: string): string => {
+    // named twice: refused - a bulk resolve never guesses which one was meant
+    if (Array.isArray(opts[flag])) throw new Error(`resolve --all names one --${flag}, not ${opts[flag].length}`)
     const argv = process.argv, i = argv.indexOf(`--${flag}`)
     const raw = i >= 0 ? argv[i + 1] : argv.find((t) => t.startsWith(`--${flag}=`))?.slice(flag.length + 3)
     return raw !== undefined && !raw.startsWith('--') ? raw : String(opts[flag])
