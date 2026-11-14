@@ -213,8 +213,15 @@ export async function commentsCommand(root: string, action: string, value: strin
 const resolveAllCli = async (root: string, value: string | undefined, opts: any) => {
   if (value) throw new Error(`resolve --all takes no thread id - name a scope: --board, --folder, --scene, --frame or --canvas`)
   const ca = await import('../server/comment-actions.ts')
-  const named = [opts.board !== undefined && { board: String(opts.board) }, opts.folder !== undefined && { folder: String(opts.folder) },
-    opts.scene !== undefined && { scene: String(opts.scene) }, opts.frame !== undefined && { frame: String(opts.frame) },
+  // a name as typed: the parser makes `--frame 001` the number 1 (and `--scene 007` 7), which String() cannot undo -
+  // read it back from the arguments (`--frame 001` or `--frame=001`)
+  const typed = (flag: string): string => {
+    const argv = process.argv, i = argv.indexOf(`--${flag}`)
+    const raw = i >= 0 ? argv[i + 1] : argv.find((t) => t.startsWith(`--${flag}=`))?.slice(flag.length + 3)
+    return raw !== undefined && !raw.startsWith('--') ? raw : String(opts[flag])
+  }
+  const named = [opts.board !== undefined && { board: typed('board') }, opts.folder !== undefined && { folder: typed('folder') },
+    opts.scene !== undefined && { scene: typed('scene') }, opts.frame !== undefined && { frame: typed('frame') },
     opts.canvas && { canvas: true }].filter(Boolean)
   if (named.length !== 1) throw new Error('resolve --all needs exactly one scope: --board <b> | --folder <f> | --scene <s> | --frame <scene/frame> | --canvas')
   const scope = ca.parseScope(named[0])

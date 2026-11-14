@@ -30,7 +30,7 @@ const id = (p: string) => `${p}-${Date.now().toString(36)}-${++n}`
 beforeAll(async () => {
   root = fixtureRoot('mv-r31-dev-')
   put('design/config.ts', 'export default { jam: false }\n')
-  for (const f of ['spec/alpha', 'spec/bravo', 'lofi/delta']) put(`design/scenes/${f}.tsx`, 'export default () => <main><h1>x</h1></main>\n')
+  for (const f of ['spec/alpha', 'spec/bravo', 'lofi/delta', '001', '1']) put(`design/scenes/${f}.tsx`, 'export default () => <main><h1>x</h1></main>\n')
   put('design/boards/main.json', { version: 1, name: 'main', nodes: [{ frame: 'spec/alpha' }, { frame: 'spec/bravo' }] })
   put('design/boards/resolve-all.json', { version: 1, name: 'resolve-all', nodes: [{ frame: 'lofi/delta' }] })
   put('design/boards/undo.json', { version: 1, name: 'undo', nodes: [{ frame: 'spec/bravo' }] })
@@ -152,14 +152,21 @@ describe('the dev server (spec 31 B.4, C.2-C.6)', () => {
     expect(fo).toMatch(/Resolved \d+ conversations? .*\(frame spec\/alpha\)/)
     expect(replay(readLog(dir(), 'main')).filter((t) => t.frame === 'spec/alpha').every((t) => t.resolved)).toBe(true)
     expect(cli('resolve', '--undo', /resolve --undo ([\w-]+)/.exec(fo)![1])).toMatch(/Reopened \d+/)
-    expect(open('main')).toEqual(before)
+    // a frame id all of digits stays as typed (the parser would make `001` the number 1, another frame)
+    appendEvents(dir(), 'main', [{ id: id('e'), ts: Date.now(), type: 'create', commentId: 'on-001', board: 'main', frame: '001', author: OWNER, body: 'x' },
+      { id: id('e'), ts: Date.now(), type: 'create', commentId: 'on-1', board: 'main', frame: '1', author: OWNER, body: 'y' }])
+    expect(cli('resolve', '--all', '--frame', '001')).toMatch(/Resolved 1 conversation .*\(frame 001\)/)
+    expect(cli('resolve', '--all', '--frame=1', '--dry-run')).toMatch(/frame 1: 1 open conversation would be resolved/)
+    expect(open('main')).toEqual([...before, 'on-1'].sort())
+    expect(cli('resolve', '--undo', /resolve --undo ([\w-]+)/.exec(cli('resolve', '--all', '--frame', '1'))![1])).toMatch(/Reopened 1/)
+    expect(open('main')).toEqual([...before, 'on-1'].sort())
     const out = cli('resolve', '--all', '--canvas')
     expect(out).toMatch(/Resolved \d+ conversations?/)
     const op = /resolve --undo ([\w-]+)/.exec(out)![1]
     expect(readFileSync(join(root, 'design', '.local', 'comment-ops', `${op}.json`), 'utf8')).toContain('"state": "done"')
     expect(open('main')).toEqual([])
     expect(cli('resolve', '--undo', op)).toMatch(/Reopened \d+/)
-    expect(open('main')).toEqual(before)
+    expect(open('main')).toEqual([...before, 'on-1'].sort())
     await dev!.stop()
     // a dev that says it runs but does not answer: refused, never worked around from here
     put('design/.local/dev.json', { port: 5639, token: 'x', pid: process.pid })
