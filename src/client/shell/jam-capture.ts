@@ -16,7 +16,7 @@
 import { onScreen, usable } from './inset.ts'
 import { create } from 'zustand'
 import { slideSize } from '../const.ts'
-import { CONFIG, SLIDE_INTRINSIC, stoppedFor, useStore, type Node } from './store.ts'
+import { CONFIG, SLIDE_INTRINSIC, geometryCause, stoppedFor, useStore, type Node } from './store.ts'
 import { UNPLACED } from './hash.ts'
 import type { Bundle, CaptureRecord, Step, View } from '../../server/jam/types.ts'
 import { forgetHeard, RATE, setWordsListener, voiceBegin, voiceDrop, voiceEnd } from './jam-voice.ts'
@@ -292,7 +292,8 @@ function watchUi() {
     if (s.selection.join() !== p.selection.join() && s.selection.length) {
       addStep(id, { at, event: 'select', frames: [...new Set(s.selection.map((k) => frameIdOf(k)).filter((f): f is string => !!f))] }, s.selection, performance.now() - playLeftAt < 200)
     }
-    for (const n of s.nodes) {
+    // what a person did to a node, never what the manifest did (a frame file's theme edited mid-capture is no step)
+    if (geometryCause() !== 'manifest') for (const n of s.nodes) {
       const o = p.nodes.find((x) => x.key === n.key)
       if (!o) continue
       // a device change: the node took a preset's size (its width names the viewport)

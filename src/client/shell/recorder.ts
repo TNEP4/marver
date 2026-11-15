@@ -72,7 +72,7 @@ const lapsed = new Map<string, Load>()
 let owner: Load | null = null
 /** node key -> what its live document said (page-level: a reload of the same board keeps its documents) */
 const tracks = new Map<string, Track>()
-/** each node's geometry as last seen - numbers, not the node objects (applyManifest edits nodes in place) */
+/** each node's geometry as last seen - numbers, not the node objects (a move is told by its numbers, whichever objects hold them) */
 let baseline = new Map<string, { x: number; y: number; w: number; h: number }>()
 const outbox = new Outbox()
 /** a drag's or a resize's move record per node while it waits to be sent: the next pointermove adds to it */

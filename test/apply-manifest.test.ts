@@ -37,4 +37,28 @@ describe('applyManifest', () => {
     expect(useStore.getState().nodes.map((n) => n.key)).toEqual(['b'])
     expect(seen.at(-1)?.host).toBe('b')
   })
+
+  it('a frame file\'s theme edited while a capture records is no step of it; the person\'s theme change still is one', async () => {
+    vi.useFakeTimers()   // the capture's view sampler and the board's autosave never run
+    try {
+      g.CSS ??= { escape: (x: string) => x }
+      g.fetch = async () => ({ ok: true, status: 200, json: async () => ({}) })
+      const { useStore } = await import('../src/client/shell/store.ts')
+      const { useJamCapture } = await import('../src/client/shell/jam-capture.ts')
+      const frame = (theme?: string) => ({ id: 's/a', file: 's/a.tsx', kind: 'tsx' as const, scene: 's', ...(theme ? { theme } : {}) })
+      const scenes = [{ name: 's', frames: 1 }]
+      useStore.setState({ board: 'home', boardAuto: false, viewTheme: 'light', selection: [], play: null, manifest: { frames: [frame()], scenes },
+        nodes: [{ key: 'a', frame: 's/a', x: 0, y: 0, w: 400, h: 300, theme: 'light', status: 'ready' }] })
+      useJamCapture.getState().start()
+      const id = useJamCapture.getState().current!
+      const themes = () => useJamCapture.getState().caps[id].steps.filter((x) => x.event === 'theme')
+      useStore.getState().applyManifest({ frames: [frame('dark')], scenes })   // the file now declares meta.theme dark
+      expect(useStore.getState().nodes[0].theme).toBe('dark')                  // the node took it...
+      expect(themes()).toEqual([])                                            // ...and the capture holds no step for it
+      useStore.setState({ selection: ['a'] })
+      useStore.getState().setSelectedTheme('light')                            // the shell's control, by the person
+      expect(themes()).toMatchObject([{ frame: 's/a', theme: 'light' }])
+      useJamCapture.getState().drop()
+    } finally { vi.useRealTimers() }
+  })
 })
