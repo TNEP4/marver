@@ -69,7 +69,8 @@ export const clearNoteHeights = (): void => { noteHeights.clear() }
  *  the frames make way. An obstacle is another node's card, or its own note column (two columns
  *  running into each other cramp too) - the two rectangles, never their bounding box: the empty
  *  canvas under a card beside a long column is free. Missing nodes (a deleted frame's card, still
- *  drawn full size) block room but never host a note. `noteH` is the measured column extent. */
+ *  drawn full size) block room but never host a note. `noteH` is the measured column extent - a pure lookup: it is
+ *  asked once per node, when its room is first needed. */
 export function notesCramped(
   nodes: readonly { key: string; frame: string; x: number; y: number; w: number; h: number; missing?: boolean }[],
   manifest: { frames: { id: string; scene: string; note?: string }[]; scenes: { name: string; note?: string }[] } | null,
@@ -96,13 +97,15 @@ export function notesCramped(
     const r = n.missing ? 0 : noteReserve(!!entry(n.frame)?.note, hosts.has(n.key))
     return r ? { x0: n.x - r, x1: n.x, y0: n.y, y1: n.y + Math.max(n.h + NODE_HEADER, noteH(n.key)) } : null
   }
-  const rooms = new Map(nodes.map((n) => [n, room(n)]))   // once per node, not once per pair
+  // each node's room once, when first asked (not once per pair) - so noteH is asked once per node, at most
+  const rooms = new Map<N, R | null>()
+  const roomOf = (n: N): R | null => { let r = rooms.get(n); if (r === undefined) rooms.set(n, r = room(n)); return r }
   return live.some((n) => {
-    const mine = rooms.get(n)
+    const mine = roomOf(n)
     if (!mine) return false
     return nodes.some((o) => {
       if (o === n) return false
-      const theirs = rooms.get(o)
+      const theirs = roomOf(o)
       return hit(mine, card(o)) || (!!theirs && hit(mine, theirs))
     })
   })

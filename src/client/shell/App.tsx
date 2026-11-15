@@ -6,7 +6,7 @@ import { JamButton } from './jam-session.tsx'
 import { useJamCapture } from './jam-capture.ts'
 import { useJamQueue } from './jam-queue.ts'
 import { Component, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
-import { useStore, BOARD_GONE, CONFIG, CANVAS_NAME, DISK_WON, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, stoppedFor, logReload, takeReloadCause, addToBoard, boardLabel, cap, humanize, fetchBoardNames, landingBoard, tabTitle, hydrateBoardPolicy, landingMode, playsAsSlides, sceneLabel, switchCount, type FrameEntry } from './store.ts'
+import { useStore, BOARD_GONE, CONFIG, frameById, CANVAS_NAME, DISK_WON, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, stoppedFor, logReload, takeReloadCause, addToBoard, boardLabel, cap, humanize, fetchBoardNames, landingBoard, tabTitle, hydrateBoardPolicy, landingMode, playsAsSlides, sceneLabel, switchCount, type FrameEntry } from './store.ts'
 import { AddToBoard, BoardList } from './BoardList.tsx'
 import { ContextMenu, copyToClipboard, framePath, useContextMenu, type MenuItem } from './ContextMenu.tsx'
 import { TOP } from './inset.ts'
@@ -978,10 +978,9 @@ export function App() {
   // scene groups follow the CANVAS reading order (earliest node y, then x), the
   // same law as frame rows - a story board's phases list top-to-bottom as laid out.
   // Each scene's first node is found in one pass over the board (this runs on every render), not one per comparison.
-  const sceneOf = new Map(frames.map((f) => [f.id, f.scene]))
   const first = new Map<string, { y: number; x: number }>()
   for (const n of nodes) {
-    const sc = sceneOf.get(n.frame), acc = sc === undefined ? undefined : first.get(sc)
+    const sc = frameById(frames, n.frame)?.scene, acc = sc === undefined ? undefined : first.get(sc)
     if (sc !== undefined && (!acc || n.y < acc.y || (n.y === acc.y && n.x < acc.x))) first.set(sc, { y: n.y, x: n.x })
   }
   const scenes = [...new Set(frames.map((f) => f.scene))].sort((a, b) => {

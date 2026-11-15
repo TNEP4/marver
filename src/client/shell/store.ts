@@ -1484,9 +1484,15 @@ export const useStore = create<State>((set, get) => {
       }
       const live = new Set(m.frames.map((f) => f.id))
       let retinted = false
-      for (const n of next) {
+      for (let i = 0; i < next.length; i++) {
+        // a node the state on screen holds is never written: the one this pass changes is a copy (a subscriber told
+        // before the set below - the pruning toast's - must read the state it was given, and a memo keyed by the
+        // nodes array must hold: same array, same nodes)
+        let n = next[i]
+        const edit = (): Node => (i < nodes.length && n === nodes[i] ? (n = next[i] = { ...n }) : n)
         const missing = !live.has(n.frame)
         if (missing !== !!n.missing) {
+          edit()
           // a node whose frame just ARRIVED (the create-first choreography: the agent
           // appends the board node before the manifest registers the file) was sized by
           // the 390x844 GUESS - its real viewport is only knowable now. ONLY guessed
@@ -1509,16 +1515,16 @@ export const useStore = create<State>((set, get) => {
         // (derived value: re-render yes, dirty/save no)
         const f = m.frames.find((x) => x.id === n.frame)
         const want = n.themeUser ?? f?.theme ?? get().viewTheme
-        if (n.theme !== want) { n.theme = want; retinted = true }
+        if (n.theme !== want) { edit().theme = want; retinted = true }
         // content-ness can change live (agent adds/removes the primitives): reconcile
         // provenance or measurements are rejected / UI dims silently omitted from saves.
         // Under an active device view the newcomer joins it as 'device' - a measurement
         // must not override the preset the whole board is showing
-        if (f?.contentWidth && !n.sizeMode) { n.sizeMode = deviceView ? 'device' : 'auto'; retinted = true }
-        if (!f?.contentWidth && n.sizeMode) { delete n.sizeMode; retinted = true }
+        if (f?.contentWidth && !n.sizeMode) { edit().sizeMode = deviceView ? 'device' : 'auto'; retinted = true }
+        if (!f?.contentWidth && n.sizeMode) { delete edit().sizeMode; retinted = true }
         // an errored frame whose file IS in the fresh manifest gets one automatic retry
         // on a rev-stamped URL - the "unknown frame id" dead end must self-heal (#20)
-        if (!missing && n.status === 'error') { n.status = 'loading'; n.nav = (n.nav ?? 0) + 1; n.readyRetried = false; retinted = true }
+        if (!missing && n.status === 'error') { edit(); n.status = 'loading'; n.nav = (n.nav ?? 0) + 1; n.readyRetried = false; retinted = true }
       }
       // auto boards prune deleted frames outright - "auto-managed" must manage both
       // directions (friction log #15). Curated boards keep the explicit card.
@@ -1531,7 +1537,7 @@ export const useStore = create<State>((set, get) => {
           toast(dropped === 1 ? 'removed 1 deleted frame' : `removed ${dropped} deleted frames`)
         }
       }
-      // a guessed size corrected above (in place) is a move, seen when this set notifies the recorder
+      // a guessed size corrected above is a move, seen when this set notifies the recorder
       withCause('manifest', () => set((s) => ({
         manifest: m,
         nodes: changed || retinted ? [...final] : final,

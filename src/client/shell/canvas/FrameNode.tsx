@@ -56,14 +56,15 @@ function WorkShimmer({ belowBadge }: { belowBadge: boolean }) {
 
 /** A scene note's text and host node, worked out once per board state (nodes, manifest) and scene: every node's selector
  *  asks on every store update, and each scanning the board itself cost the square of the board per update. */
-let sceneNotes: { nodes: readonly Node[]; manifest: Manifest; of: Map<string, { text?: string; host: string | null }> } | null = null
+const sceneNotes = new WeakMap<readonly Node[], { manifest: Manifest; of: Map<string, { text?: string; host: string | null }> }>()
 function sceneNoteOf(nodes: readonly Node[], manifest: Manifest, scene: string) {
-  if (sceneNotes?.nodes !== nodes || sceneNotes.manifest !== manifest) sceneNotes = { nodes, manifest, of: new Map() }
-  let got = sceneNotes.of.get(scene)
+  let memo = sceneNotes.get(nodes)
+  if (memo?.manifest !== manifest) sceneNotes.set(nodes, memo = { manifest, of: new Map() })
+  let got = memo.of.get(scene)
   if (!got) {
     const text = manifest.scenes.find((sc) => sc.name === scene)?.note
     got = { text, host: text ? sceneNoteHost(nodes, (id) => frameById(manifest.frames, id)?.scene, scene) : null }
-    sceneNotes.of.set(scene, got)
+    memo.of.set(scene, got)
   }
   return got
 }
