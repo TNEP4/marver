@@ -1,6 +1,6 @@
 import { navigatedByHand } from '../goto.ts'
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { cap, frameUrl, shownRev, useStore, CONFIG, type Node } from '../store.ts'
+import { cap, frameById, frameUrl, shownRev, useStore, CONFIG, type Manifest, type Node } from '../store.ts'
 import { admit, release } from './admission.ts'
 import { canvasCtl } from './ctl.ts'
 import { CopyIcon, IntentGlyph, ParallelogramFillIcon, ReloadIcon, SlideFrameIcon, XIcon } from '../icons.tsx'
@@ -54,6 +54,20 @@ function WorkShimmer({ belowBadge }: { belowBadge: boolean }) {
   )
 }
 
+/** A scene note's text and host node, worked out once per board state (nodes, manifest) and scene: every node's selector
+ *  asks on every store update, and each scanning the board itself cost the square of the board per update. */
+let sceneNotes: { nodes: readonly Node[]; manifest: Manifest; of: Map<string, { text?: string; host: string | null }> } | null = null
+function sceneNoteOf(nodes: readonly Node[], manifest: Manifest, scene: string) {
+  if (sceneNotes?.nodes !== nodes || sceneNotes.manifest !== manifest) sceneNotes = { nodes, manifest, of: new Map() }
+  let got = sceneNotes.of.get(scene)
+  if (!got) {
+    const text = manifest.scenes.find((sc) => sc.name === scene)?.note
+    got = { text, host: text ? sceneNoteHost(nodes, (id) => frameById(manifest.frames, id)?.scene, scene) : null }
+    sceneNotes.of.set(scene, got)
+  }
+  return got
+}
+
 /**
  * One frame on the canvas. Iframe laws: the iframe element is created once per node key
  * and never remounted - theme changes go through sh:set-theme, size changes are CSS only.
@@ -82,9 +96,9 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   // only its column; a pan never re-renders any node (no position subscription here).
   const sceneNote = useStore((s) => {
     const scene = frame?.scene
-    const text = scene ? s.manifest?.scenes.find((sc) => sc.name === scene)?.note : undefined
-    if (!text) return undefined
-    return sceneNoteHost(s.nodes, (id) => s.manifest?.frames.find((f) => f.id === id)?.scene, scene!) === node.key ? text : undefined
+    if (!scene || !s.manifest) return undefined
+    const { text, host } = sceneNoteOf(s.nodes, s.manifest, scene)
+    return text && host === node.key ? text : undefined
   })
   const notes: NoteSpec[] = []
   if (frame && sceneNote) notes.push({ kind: 'scene', id: noteId('scene', frame.scene), text: sceneNote })

@@ -976,13 +976,16 @@ export function App() {
   const onBoard = new Set(nodes.map((n) => n.frame))
   const frames = (manifest?.frames ?? []).filter((f) => onBoard.has(f.id))
   // scene groups follow the CANVAS reading order (earliest node y, then x), the
-  // same law as frame rows - a story board's phases list top-to-bottom as laid out
+  // same law as frame rows - a story board's phases list top-to-bottom as laid out.
+  // Each scene's first node is found in one pass over the board (this runs on every render), not one per comparison.
+  const sceneOf = new Map(frames.map((f) => [f.id, f.scene]))
+  const first = new Map<string, { y: number; x: number }>()
+  for (const n of nodes) {
+    const sc = sceneOf.get(n.frame), acc = sc === undefined ? undefined : first.get(sc)
+    if (sc !== undefined && (!acc || n.y < acc.y || (n.y === acc.y && n.x < acc.x))) first.set(sc, { y: n.y, x: n.x })
+  }
   const scenes = [...new Set(frames.map((f) => f.scene))].sort((a, b) => {
-    const min = (sc: string) => nodes.reduce((acc, n) => {
-      const f = frames.find((x) => x.id === n.frame)
-      if (f?.scene !== sc) return acc
-      return !acc || n.y < acc.y || (n.y === acc.y && n.x < acc.x) ? { y: n.y, x: n.x } : acc
-    }, null as { y: number; x: number } | null)
+    const min = (sc: string) => first.get(sc) ?? null
     const ma = min(a), mb = min(b)
     if (!ma || !mb) return ma ? -1 : mb ? 1 : a.localeCompare(b)
     return ma.y - mb.y || ma.x - mb.x || a.localeCompare(b)

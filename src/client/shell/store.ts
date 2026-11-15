@@ -588,6 +588,19 @@ export function settleRule(n: Node, manifest: Manifest | null): 'measure' | 'rea
   if (!f) return 'missing'
   return f.contentWidth && n.sizeMode !== 'device' && measures(f.id) ? 'measure' : 'ready'
 }
+/** The manifest's entry for a frame id - the first of that id, as a find gives - from an index built once per frames
+ *  array (a manifest's arrays are replaced, never edited): every node's selectors look their frame up on each store
+ *  update, and a canvas's manifest can hold thousands. */
+const frameIndex = new WeakMap<FrameEntry[], Map<string, FrameEntry>>()
+export function frameById(frames: FrameEntry[], id: string): FrameEntry | undefined {
+  let byId = frameIndex.get(frames)
+  if (!byId) {
+    byId = new Map()
+    for (const f of frames) if (!byId.has(f.id)) byId.set(f.id, f)
+    frameIndex.set(frames, byId)
+  }
+  return byId.get(id)
+}
 /** Did a measuring node open at a height already known (committed in _sizes.json, or measured earlier in this page)? */
 export const knownHeight = (frameId: string, w: number): boolean => hasKnownHeight(frameId, Math.round(w))
 /** What measureNode took: `fit` - the report was taken at the node's width `w` (applied, or its height already) - the
@@ -1541,7 +1554,7 @@ export const useStore = create<State>((set, get) => {
       scheduleSave()
     },
 
-    frameFor(node) { return get().manifest?.frames.find((f) => f.id === node.frame) },
+    frameFor(node) { const m = get().manifest; return m ? frameById(m.frames, node.frame) : undefined },
 
     moveNode(key, x, y) {
       withCause('drag', () => set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, x, y } : n)), dirty: true })))

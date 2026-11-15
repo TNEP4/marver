@@ -76,7 +76,10 @@ export function notesCramped(
   noteH: (key: string) => number = noteHeight,
 ): boolean {
   if (!manifest) return false
-  const entry = (id: string) => manifest.frames.find((f) => f.id === id)
+  // asked at each note a board measures: an index of the manifest (the first entry of an id, as a find gives), not a scan per node
+  const byId = new Map<string, (typeof manifest.frames)[number]>()
+  for (const f of manifest.frames) if (!byId.has(f.id)) byId.set(f.id, f)
+  const entry = (id: string) => byId.get(id)
   const live = nodes.filter((n) => !n.missing)
   const hosts = new Set<string>()
   for (const s of manifest.scenes) {
@@ -93,12 +96,13 @@ export function notesCramped(
     const r = n.missing ? 0 : noteReserve(!!entry(n.frame)?.note, hosts.has(n.key))
     return r ? { x0: n.x - r, x1: n.x, y0: n.y, y1: n.y + Math.max(n.h + NODE_HEADER, noteH(n.key)) } : null
   }
+  const rooms = new Map(nodes.map((n) => [n, room(n)]))   // once per node, not once per pair
   return live.some((n) => {
-    const mine = room(n)
+    const mine = rooms.get(n)
     if (!mine) return false
     return nodes.some((o) => {
       if (o === n) return false
-      const theirs = room(o)
+      const theirs = rooms.get(o)
       return hit(mine, card(o)) || (!!theirs && hit(mine, theirs))
     })
   })
