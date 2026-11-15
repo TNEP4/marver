@@ -124,26 +124,46 @@ function insets(el: HTMLElement) {
  * zooms with the content, and its pitch re-quantizes in octaves so the on-screen
  * spacing always lands in [14, 28)px - zooming out doubles the world spacing instead
  * of dissolving into noise. Alpha fades across the octave so level switches don't pop.
- * Painted via CSS vars on the wrapper - no React re-render per frame.
+ * Painted via CSS vars - no React re-render per frame.
  */
 const GRID = 20
+/** The elements that read the camera's variables: styles.css's readers (test/camera-readers.test.ts holds the two
+ *  in step) and the inline styles of the selection bar, the group captions and the comment card. Their subtrees
+ *  inherit the variables; anything else gets its var() default, as play's pins (outside #sh-world) must. */
+const CAMERA_READERS = '.sh-canvas::before, .sh-edge::before, .sh-ctx, #sh-world :is(.sh-node.sel, .sh-node.interact, '
+  + '.sh-node.working, .sh-handle, .sh-work-ind, .sh-vbadge, .sh-gcaption, .sh-notes-fold, .sh-stranded, .cm-pin, .cm-lead, '
+  + '.cm-stack, .cm-card, .jm-pt, .jm-pickbox)'
+let cameraRule: CSSStyleDeclaration | undefined
+/** Where the camera's variables go. Inline on .sh-app they inherit into every element of the shell, so each tick
+ *  restyled all of it (628 elements on a 23-frame board, more with every frame). Chromium restyles only what an
+ *  edited rule matches, so there they go in one rule over the readers (4 elements a tick when nothing is selected).
+ *  WebKit and Gecko rebuild every style rule of the page on any rule edit, so elsewhere they stay on .sh-app. */
+function cameraStyle(): CSSStyleDeclaration | undefined {
+  if (!('userAgentData' in navigator)) return (document.querySelector('.sh-app') as HTMLElement | null)?.style   // Chromium only
+  if (!cameraRule) {
+    const sheet = new CSSStyleSheet()   // constructed: a page CSP that forbids inline styles cannot block it
+    sheet.replaceSync(`${CAMERA_READERS} {}`)
+    document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet]
+    cameraRule = (sheet.cssRules[0] as CSSStyleRule).style
+  }
+  return cameraRule
+}
 function paintGrid(positionX: number, positionY: number, scale: number) {
-  // on .sh-app, which the canvas's ::before and the scroll edge (A3.8 #31) both inherit them from - the same element the
-  // camera's own variables go on every frame, so the style work per frame does not grow
-  const app = document.querySelector('.sh-app') as HTMLElement | null
-  if (!app) return
+  // the canvas's ::before and the scroll edge (A3.8 #31) paint the grid from these
+  const cam = cameraStyle()
+  if (!cam) return
   let step = GRID * scale
   while (step < 14) step *= 2
   while (step >= 28) step /= 2
   const t = (step - 14) / 14
-  app.style.setProperty('--grid-size', `${step}px ${step}px`)
-  app.style.setProperty('--grid-pos', `${positionX % step}px ${positionY % step}px`)
-  app.style.setProperty('--grid-alpha', (0.35 + 0.65 * Math.min(1, t)).toFixed(3))
+  cam.setProperty('--grid-size', `${step}px ${step}px`)
+  cam.setProperty('--grid-pos', `${positionX % step}px ${positionY % step}px`)
+  cam.setProperty('--grid-alpha', (0.35 + 0.65 * Math.min(1, t)).toFixed(3))
   // screen-space overlays (selection bar) position themselves from these - no re-render per frame
-  app.style.setProperty('--sh-s', String(scale))
-  app.style.setProperty('--sh-inv', String(1 / scale))   // world-units-per-screen-px, for zoom-invariant strokes
-  app.style.setProperty('--sh-tx', `${positionX}px`)
-  app.style.setProperty('--sh-ty', `${positionY}px`)
+  cam.setProperty('--sh-s', String(scale))
+  cam.setProperty('--sh-inv', String(1 / scale))   // world-units-per-screen-px, for zoom-invariant strokes
+  cam.setProperty('--sh-tx', `${positionX}px`)
+  cam.setProperty('--sh-ty', `${positionY}px`)
 }
 
 /**

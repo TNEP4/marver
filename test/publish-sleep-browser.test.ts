@@ -181,10 +181,10 @@ describe('textures at publish time, in a real published browser', () => {
     await wait(200)
     await ev(`window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Digit0', key: ')', shiftKey: true, bubbles: true }))`)
     await wait(700)
-    const [tx, ty] = (await ev(`(() => { const cs = getComputedStyle(document.querySelector('.sh-app')); return [parseFloat(cs.getPropertyValue('--sh-tx')), parseFloat(cs.getPropertyValue('--sh-ty'))] })()`)) as number[]
+    const [tx, ty] = (await ev(`(() => { const cs = getComputedStyle(document.querySelector('.sh-canvas'), '::before'); return [parseFloat(cs.getPropertyValue('--sh-tx')), parseFloat(cs.getPropertyValue('--sh-ty'))] })()`)) as number[]
     await browser!.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 700, y: 500, deltaX: tx - Math.round(tx), deltaY: ty - Math.round(ty) }, tab)
     await wait(700)
-    expect(await ev(`getComputedStyle(document.querySelector('.sh-app')).getPropertyValue('--sh-s')`)).toBe('1')
+    expect(await ev(`getComputedStyle(document.querySelector('.sh-canvas'), '::before').getPropertyValue('--sh-s')`)).toBe('1')
   }
   skippable('identity: the published frame asleep and live are the same pixels', async () => {
     await open('?awake=1')

@@ -157,7 +157,7 @@ const wheel = (dx: number, dy: number) => browser!.send('Input.dispatchMouseEven
  *  paint sits at its true position - at a fractional camera the two differ on an element's edge
  *  rows (measured below), so the identity of the pixels inside is read on the grid. */
 async function pinCamera(): Promise<void> {
-  const [tx, ty] = (await ev(`(() => { const cs = getComputedStyle(document.querySelector('.sh-app')); return [parseFloat(cs.getPropertyValue('--sh-tx')), parseFloat(cs.getPropertyValue('--sh-ty'))] })()`)) as number[]
+  const [tx, ty] = (await ev(`(() => { const cs = getComputedStyle(document.querySelector('.sh-canvas'), '::before'); return [parseFloat(cs.getPropertyValue('--sh-tx')), parseFloat(cs.getPropertyValue('--sh-ty'))] })()`)) as number[]
   await wheel(tx - Math.round(tx), ty - Math.round(ty))
   await wait(400)
 }
@@ -261,7 +261,7 @@ describe('sleep in place, on a real dev canvas', () => {
     await wait(200)
     await ev(`window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Digit0', key: ')', shiftKey: true, bubbles: true }))`)
     await wait(700)
-    expect(await ev(`getComputedStyle(document.querySelector('.sh-app')).getPropertyValue('--sh-s')`)).toBe('1')
+    expect(await ev(`getComputedStyle(document.querySelector('.sh-canvas'), '::before').getPropertyValue('--sh-s')`)).toBe('1')
     await pinCamera()
     await bothAsleep()
     const asleep = await shotGlass()
@@ -408,7 +408,7 @@ describe('sleep in place, on a real dev canvas', () => {
     await onBoard()
     // each admission, with the camera's scale as it came (the grid's --sh-s: the first comes as the board's fit sets
     // off) and how many frames were booting then (started, not ready yet)
-    const scale = `parseFloat(getComputedStyle(document.querySelector('.sh-app')).getPropertyValue('--sh-s'))`
+    const scale = `parseFloat(getComputedStyle(document.querySelector('.sh-canvas'), '::before').getPropertyValue('--sh-s'))`
     const booting = `${ST}.nodes.filter((n) => n.status === 'loading' && document.querySelector('[data-node="' + n.key + '"] iframe.sh-live')?.getAttribute('src')).length`
     await ev(`(() => { window.__mvScales = []; window.__mvBooting = []; window.__mvAdmitted = Object.assign([], { push(k) { window.__mvScales.push(${scale}); window.__mvBooting.push(${booting}); return Array.prototype.push.call(this, k) } }); window.__mvScale0 = ${scale}; location.hash = '#/b/many'; return 1 })()`)
     await until(`${ST}.nodes.length === 12`)
@@ -421,7 +421,7 @@ describe('sleep in place, on a real dev canvas', () => {
     while (Date.now() - t0 < 4000 && (await ev(loading)) > 0) {
       polls++
       peak = Math.max(peak, (await ev(withSrc)) - (12 - (await ev(loading))))   // iframes with a src that are not ready yet
-      if (process.env.MV_TEST_DUMP) cam.push(await ev(`(() => { const cs = getComputedStyle(document.querySelector('.sh-app')); const f = document.querySelector('.sh-node').getBoundingClientRect(); return [performance.now() | 0, ${ST}.nodes.filter((n) => n.status === 'ready').length, cs.getPropertyValue('--sh-tx'), cs.getPropertyValue('--sh-ty'), cs.getPropertyValue('--sh-s'), Math.round(f.x), Math.round(f.y), Math.round(f.width)].join(' ') })()`))
+      if (process.env.MV_TEST_DUMP) cam.push(await ev(`(() => { const cs = getComputedStyle(document.querySelector('.sh-canvas'), '::before'); const f = document.querySelector('.sh-node').getBoundingClientRect(); return [performance.now() | 0, ${ST}.nodes.filter((n) => n.status === 'ready').length, cs.getPropertyValue('--sh-tx'), cs.getPropertyValue('--sh-ty'), cs.getPropertyValue('--sh-s'), Math.round(f.x), Math.round(f.y), Math.round(f.width)].join(' ') })()`))
       await wait(40)
     }
     if (process.env.MV_TEST_DUMP) console.log('CAM polls', polls, cam.join(' | '))
