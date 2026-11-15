@@ -452,10 +452,16 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       // components - anything a frame may import), so a compiled bake (design/.local/bakes/<gen>/) can
       // never outlive an edit; older generations are pruned as they are superseded.
       const localDir = join(root, 'design', '.local'), boardsDirGen = join(root, 'design', 'boards'), manifestPath = join(root, 'design', 'manifest.json')
+      // the pages hear of a new generation (sleep.ts): a frame resting on an answer kept for the old one asks again only
+      // then - once per burst of changes, never on a timer
+      let genPush: ReturnType<typeof setTimeout> | undefined
+      onClose(() => clearTimeout(genPush))
       const bumpGen = (f: string) => {
         if (f.startsWith(localDir) || f.startsWith(boardsDirGen) || f === manifestPath || f.includes('/node_modules/')) return
         bakeGen++
         prune()
+        clearTimeout(genPush)
+        genPush = setTimeout(() => server.ws.send('sh:bake-gen', { gen: bakeGen } as any), 300)
       }
       // pruned against the generation current when the timer fires: an older timer must never delete a newer one
       const pruning = new Set<ReturnType<typeof setTimeout>>()

@@ -35,7 +35,8 @@ import type { BakeWork } from '../../../shared/perf-run.ts'
 /** `doc`: the revision the document shows (spec 26) - the compiler refuses a document behind its frame */
 export interface SleepKey { frame: string; theme: string; w: number; h: number; doc?: string }
 interface Target { sel: string; rect: { x: number; y: number; w: number; h: number }; filter: string; level: number; texture: string; verified: boolean }
-type Answer = { ok: true; targets: Target[] } | { ok: false; error: string }
+/** `gen`: the server's source generation the answer holds for (a dev canvas); `kept`: a refusal the server keeps for it */
+type Answer = ({ ok: true; targets: Target[] } | { ok: false; error: string; kept?: boolean }) & { gen?: number }
 
 const STYLE_ID = 'mv-sleep'
 /** How far (CSS px) any EDGE of an element's border box may sit from the one the compiler measured.
@@ -79,8 +80,9 @@ export function scheduleSleep(fn: () => void, ms: number): () => void {
 const pending = new Map<string, number>()
 let seq = 0
 /** Nodes with a retry of a failed compile in flight - or, in a headless perf run, spent: a run's frame retries once
- *  until it wakes, so the run can reach bake-idle; every other canvas retries every 4 s for as long as the frame
- *  rests, as before 0.27.2, so a frame recovers when the server does. */
+ *  until it wakes, so the run can reach bake-idle; every other canvas retries a failure that may pass (not a settled
+ *  answer: `parked` below) every 4 s for as long as the frame rests, as before 0.27.2, so a frame recovers when the
+ *  server does. */
 const retried = new Set<string>()
 const RETRY_MS = 4000
 /** The server's answer for a compile still running (src/server/bake.ts COMPILING), and how many times a
@@ -90,6 +92,35 @@ const COMPILING_TRIES = 15
 /** Looks so far, per node, for the sleep key they were for: a new key (an edit, a theme, a size)
  *  or a wake starts the count again. */
 const compiling = new Map<string, { key: string; n: number }>()
+/**
+ * Nodes resting on a SETTLED answer - one the server gives again, word for word, until its source generation moves: a
+ * refusal it keeps (`kept`: the frame loops, never stops changing, has too many effects...) or a compile whose textures
+ * none certified (its disk cache). Asking again every 4 s, forever, changed nothing but cost a POST, a computed-style
+ * walk, a style rewrite and a forced layout per frame. Such a node asks again when the generation it was answered
+ * under is superseded - the dev server pushes `sh:bake-gen` on every source change, and a reconnect may be a new
+ * server - or when it wakes (a new document, theme or size: a new key). No timer, so a parked node is bake-idle.
+ */
+const parked = new Map<string, { gen: number | undefined; retry: () => void }>()
+/** The newest generation this page has heard of (answers and pushes). */
+let latestGen: number | undefined
+function park(nodeKey: string, gen: number | undefined, retry: () => void): void {
+  // superseded already (a push overtook the answer): ask again now
+  if (gen !== undefined && latestGen !== undefined && gen < latestGen) { scheduleSleep(retry, 250); return }
+  parked.set(nodeKey, { gen, retry })
+}
+/** A new generation (`gen`), or perhaps a new server (none): every node parked under another asks again, in one batch. */
+function bakeGenChanged(gen?: number): void {
+  if (gen !== undefined) latestGen = latestGen === undefined ? gen : Math.max(latestGen, gen)
+  for (const [nodeKey, p] of [...parked]) {
+    if (gen !== undefined && p.gen === gen) continue
+    parked.delete(nodeKey)
+    scheduleSleep(p.retry, 250)
+  }
+}
+if (import.meta.hot) {
+  import.meta.hot.on('sh:bake-gen', (m: { gen?: unknown }) => bakeGenChanged(typeof m?.gen === 'number' ? m.gen : undefined))
+  import.meta.hot.on('vite:ws:connect', () => bakeGenChanged())
+}
 
 /** Does this document have anything to compile? Cheap: one computed style per element. */
 export function hasEffects(doc: Document): boolean {
@@ -120,7 +151,7 @@ function ask(key: SleepKey): Promise<Answer> {
       const byKey = new Map<string, { key: SleepKey; waiters: ((a: Answer) => void)[] }>()
       for (const q of batch) { const kk = keyOf(q.key); const e = byKey.get(kk); if (e) e.waiters.push(q.resolve); else byKey.set(kk, { key: q.key, waiters: [q.resolve] }) }
       const asks = [...byKey.values()].map((e) => ({ frame: e.key.frame, theme: e.key.theme, w: Math.round(e.key.w), h: Math.round(e.key.h), ...(e.key.doc ? { doc: e.key.doc } : {}) }))
-      let data: { answers?: (Answer & SleepKey)[] } | null = null
+      let data: { gen?: number; answers?: (Answer & SleepKey)[] } | null = null
       inflight++
       try {
         const index = PUBLISHED ? await staticAnswers() : null
@@ -136,10 +167,12 @@ function ask(key: SleepKey): Promise<Answer> {
   })
 }
 /** Every waiter of a batch, its key's answer - before the POST stops counting, so the page is never idle between. */
-function answerAll(byKey: Map<string, { key: SleepKey; waiters: ((a: Answer) => void)[] }>, index: Record<string, Answer> | null, data: { answers?: (Answer & SleepKey)[] } | null): void {
+function answerAll(byKey: Map<string, { key: SleepKey; waiters: ((a: Answer) => void)[] }>, index: Record<string, Answer> | null, data: { gen?: number; answers?: (Answer & SleepKey)[] } | null): void {
+  const gen = typeof data?.gen === 'number' ? data.gen : undefined
+  if (gen !== undefined) latestGen = latestGen === undefined ? gen : Math.max(latestGen, gen)
   for (const e of byKey.values()) {
     const a = index ? index[keyOf(e.key)] : data?.answers?.find((x) => keyOf(x) === keyOf(e.key))
-    const answer: Answer = a ? (a.ok ? { ok: true, targets: a.targets } : { ok: false, error: a.error }) : { ok: false, error: 'no answer' }
+    const answer: Answer = a ? (a.ok ? { ok: true, targets: a.targets, gen } : { ok: false, error: a.error, ...(a.kept === true ? { kept: true } : {}), gen }) : { ok: false, error: 'no answer' }
     for (const w of e.waiters) w(answer)
   }
 }
@@ -189,17 +222,20 @@ async function sleepNow(nodeKey: string, iframe: HTMLIFrameElement, key: SleepKe
   // fails to decode (pruned, missing, corrupt) leaves the glass live
   const decoded = await Promise.all(targets.map((t) => { const im = new Image(); im.src = t.texture; return im.decode().then(() => true, () => false) }))
   if (!current()) return 'live'
-  if (decoded.some((ok) => !ok)) targets = []
+  const undecoded = decoded.some((ok) => !ok)
+  if (undecoded) targets = []
   // a published document names the generation it was built with: textures dress that build only
   if (PUBLISHED && targets.length && doc.querySelector('meta[name="mv-bakes"]')?.getAttribute('content') !== String(BAKES)) targets = []
   if (!install(doc, targets)) return 'live'
   // a certified sleep is remembered; the pause-only fallback is not, so the next lifecycle event
-  // asks again (a compile the source outran, a server hiccup), and a retry is scheduled now. A canvas retries
-  // every 4 s while the frame rests: the retry clears its own mark, so a failure after a failure asks again and
-  // the glass sleeps once the server recovers. A headless perf run's retry keeps its mark until the node wakes -
-  // one retry, then nothing more, or a frame the compiler refuses would keep the run from ever being bake-idle
+  // asks again. A SETTLED answer (a kept refusal, a compile none of whose textures certified) parks the node
+  // until the source generation moves (`park`). Anything else - a compile the source outran, a server hiccup, a
+  // texture that did not decode - schedules a retry now. A canvas retries every 4 s while the frame rests: the
+  // retry clears its own mark, so a failure after a failure asks again and the glass sleeps once the server
+  // recovers. A headless perf run's retry keeps its mark until the node wakes - one retry, then nothing more
   if (targets.length) { asleep.set(nodeKey, { key: k, doc }); compiling.delete(nodeKey); retried.delete(nodeKey) }
   else if (answer.ok === false && answer.error === COMPILING) { /* out of looks: the pause alone, final */ }
+  else if (!PUBLISHED && !undecoded && (answer.ok || answer.kept)) park(nodeKey, answer.gen, () => { if (current()) void sleep(nodeKey, iframe, key) })   // settled until the generation moves
   else if (!PUBLISHED && !retried.has(nodeKey)) { retried.add(nodeKey); scheduleSleep(() => { if (!PERF_RUN) retried.delete(nodeKey); if (current()) void sleep(nodeKey, iframe, key) }, RETRY_MS) }   // a static miss is final
   return 'asleep'
 }
@@ -210,7 +246,9 @@ export function wake(nodeKey: string, iframe: HTMLIFrameElement | null): void {
   asleep.delete(nodeKey)
   compiling.delete(nodeKey)
   retried.delete(nodeKey)
+  parked.delete(nodeKey)
   const doc = iframe?.contentDocument
+  if (doc) resumeSmil(doc)
   const st = doc?.getElementById(STYLE_ID)
   if (!doc || !st) return
   const els = [...doc.querySelectorAll<HTMLElement>('[data-mv-sleep]')]
@@ -254,5 +292,38 @@ function install(doc: Document, targets: Target[]): boolean {
   // one paint, and no authored transition (`transition: all` is common on a pill) may animate the
   // effect out or the texture in
   still(doc, els, () => { els.forEach((el, i) => el.setAttribute('data-mv-sleep', String(i))); style.textContent = rules.join('\n') })
+  pauseSmil(doc)
   return true
+}
+
+/** The SVG time containers this sleep paused, per document: wake resumes exactly these. */
+const smilPaused = new WeakMap<Document, Set<SVGSVGElement>>()
+const SMIL = 'animate,animateTransform,animateMotion,set'
+/** SVG's own animations (SMIL: `<animate>`, `<animateTransform>`, ...) are no CSS animation: `animation-play-state` never
+ *  reaches them, and one running in any document - a rotating gradient - repaints and commits the WHOLE page every
+ *  frame. They pause with the CSS ones, by their time container (the outermost <svg>; every <svg> on the way is paused
+ *  too, whichever one an engine keys the timeline on). An <svg> the author paused is not touched, so stays paused; a
+ *  paused timeline resumes where it stood, so nothing jumps and a finished animation does not restart. Idempotent: a
+ *  sleep installed again (a retry) pauses nothing twice. */
+function pauseSmil(doc: Document): void {
+  const SVG = doc.defaultView?.SVGElement
+  if (!SVG) return
+  const anims = doc.querySelectorAll(SMIL)
+  if (!anims.length) return
+  let mine = smilPaused.get(doc)
+  for (const a of anims) {
+    if (!(a instanceof SVG)) continue
+    for (let s = (a as SVGElement).ownerSVGElement; s; s = s.ownerSVGElement) {
+      if (mine?.has(s) || typeof s.pauseAnimations !== 'function' || s.animationsPaused()) continue
+      s.pauseAnimations()
+      if (!mine) smilPaused.set(doc, mine = new Set())
+      mine.add(s)
+    }
+  }
+}
+function resumeSmil(doc: Document): void {
+  const mine = smilPaused.get(doc)
+  if (!mine) return
+  smilPaused.delete(doc)
+  for (const s of mine) s.unpauseAnimations()
 }

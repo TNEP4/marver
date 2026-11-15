@@ -51,7 +51,9 @@ export type BakeResult =
   /** `posterSkipped`: the frame's document skipped a missing poster (a headless perf run's frame URL, spec 28 A3.8
    *  #19) - a texture of the frame without its poster, which never fills the shared cache */
   | { ok: true; targets: BakeTarget[]; levels: number; rejected: number; ms: number; outside?: Outside; effects?: number; posterSkipped?: true }
-  | { ok: false; error: string }
+  /** `kept`: a refusal of the frame's own the server keeps for this source generation (`failed` below) - it answers the
+   *  same until an edit bumps the generation, so the page asks again only then */
+  | { ok: false; error: string; kept?: true }
 
 const DSF = 2
 /** Texture device px per CSS px. Blur is scale-tolerant: 1x matches 2x on identity at 2x zoom
@@ -618,7 +620,7 @@ export async function bakeBatch(opts: { root: string; gen: number; asks: BakeAsk
   const theirs = owner === NORMAL_OWNER ? undefined : runAnswers.get(owner)
   const answers: (BakeAnswer | null)[] = asks.map((ask) => {
     const error = failed.get(key(ask))
-    if (error !== undefined) return { ...ask, ok: false as const, error }
+    if (error !== undefined) return { ...ask, ok: false as const, error, kept: true as const }
     // the shared cache was filled by compiles with their posters: a run reads it as any caller does
     return readCached(root, gen, ask, urlBase) ?? theirs?.get(key(ask)) ?? (bakesEnded(owner) ? { ...ask, ok: false as const, error: RUN_ENDED } : null)
   })
@@ -674,6 +676,7 @@ export async function bakeBatch(opts: { root: string; gen: number; asks: BakeAsk
         if (!a.ok && keptFor(owner, a.error) && !bakesEnded(owner)) {
           if (failed.size >= FAILED_MAX) failed.clear()
           failed.set(key(job.ask), a.error)
+          a = { ...a, kept: true }
         }
         log?.(a)
         settle(job, a)
