@@ -1,29 +1,36 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { createServer, type Server } from 'node:http'
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Browser } from './browser.ts'
 
 /**
- * A frame at rest costs nothing (sleep.ts): on a real dev canvas,
- *  - an SVG animation (SMIL: <animateTransform>, <animate>) pauses with the CSS ones while its frame sleeps - one left
- *    running repainted and committed the whole page every frame (272 frames: a third of the main thread at rest) - and
- *    resumes where it stood on wake; an <svg> its author paused stays paused through both;
- *  - a frame whose compile the server refuses for the frame's own reason (a looping animation) asks once and then
- *    rests: no ask on a timer (it was every 4 s, forever); it asks again when the source generation moves - a change
- *    anywhere the server watches - and when its own document changes.
+ * A frame at rest costs nothing (sleep.ts), on a real dev canvas:
+ *  - an SVG animation (SMIL) holds still while its frame sleeps - one left running repainted and committed the whole
+ *    page every frame - whatever its author calls meanwhile, and wakes in the state the author last asked for;
+ *  - a frame whose bake answer is settled (a refusal the server keeps; a compile none of whose textures certified)
+ *    asks no more on a timer; it asks again when the server names another generation (a push, or any answer over HTTP
+ *    when the push is lost), and when the server would answer otherwise with the generation unchanged (the backstop),
+ *    and a generation that is merely different - lower, say - is asked about once, not in a loop.
+ * Assertions read state (what a node is parked on, the asks' payloads, the timelines' clocks), not wall-clock bounds.
  */
 
 const PORT = 5700 + Math.floor(Math.random() * 400)
+const EXT = PORT + 500   // a server outside the canvas: content the dev server does not watch
 const CLI = join(import.meta.dirname, '..', 'dist', 'cli.mjs')
 const ORIGIN = `http://localhost:${PORT}`
 
 let root = ''
 let server: ChildProcess | null = null
+let ext: Server | null = null
+let look = ''
 let browser: Browser | null = null
 let log = ''
 let tab = ''
+/** Every bake POST the page sent: the frames it asked about. */
+const posts: string[][] = []
 
 const SMIL = `import { useEffect, useRef } from 'react'
 export const meta = { title: 'Smil' }
@@ -49,7 +56,7 @@ export default () => {
 }
 `
 // glass over a looping animation: the compiler refuses it at once (bake.ts LOOPING) and keeps the refusal
-const LOOP = (label: string) => `export const meta = { title: 'Loop' }
+const LOOP = `export const meta = { title: 'Loop' }
 export default () => (
   <main>
     <style>{\`
@@ -59,15 +66,33 @@ export default () => (
       .dot { position: absolute; left: 60px; top: 200px; width: 20px; height: 20px; border-radius: 10px; background: #fff; animation: spin 1s linear infinite }
       @keyframes spin { to { transform: translateX(200px) } }
     \`}</style>
-    <div className="g">${label}</div>
+    <div className="g">Looping</div>
     <div className="dot" />
   </main>
 )
 `
-const loopFile = () => join(root, 'design', 'scenes', 'app', 'loop.tsx')
+// glass whose look comes from outside the canvas: blended at first (certification refuses it - a successful compile
+// with no texture), plain once that content settles - with no source change, so no new generation
+const EXTF = `export const meta = { title: 'Ext' }
+export default () => (
+  <main>
+    <link rel="stylesheet" href="http://localhost:${EXT}/look.css" />
+    <style>{\`
+      html, body, main { margin: 0; min-height: 100vh }
+      main { position: relative; background: linear-gradient(135deg, #19c2a0, #7b61ff); font: 600 18px system-ui }
+      .g { position: absolute; left: 40px; top: 40px; width: 300px; padding: 18px; border-radius: 16px; background: rgba(255,255,255,.35); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px) }
+    \`}</style>
+    <div className="g">From outside</div>
+  </main>
+)
+`
+const BLENDED = `.g { mix-blend-mode: multiply; background: rgba(255,200,120,.7) }`
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 beforeAll(async () => {
+  look = BLENDED
+  ext = createServer((req, res) => { res.writeHead(200, { 'content-type': 'text/css', 'cache-control': 'no-store' }); res.end(look) })
+  await new Promise<void>((r) => ext!.listen(EXT, r))
   root = mkdtempSync(join(tmpdir(), 'mv-sleep-rest-'))
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'sleep-rest-fixture', private: true, type: 'module' }))
   const repoRoot = join(import.meta.dirname, '..')
@@ -80,12 +105,14 @@ beforeAll(async () => {
   const scenes = join(root, 'design', 'scenes', 'app')
   mkdirSync(scenes, { recursive: true })
   writeFileSync(join(scenes, 'smil.tsx'), SMIL)
-  writeFileSync(loopFile(), LOOP('Looping'))
+  writeFileSync(join(scenes, 'loop.tsx'), LOOP)
+  writeFileSync(join(scenes, 'ext.tsx'), EXTF)
   const boards = join(root, 'design', 'boards')
   mkdirSync(boards, { recursive: true })
   writeFileSync(join(boards, 'main.json'), JSON.stringify({ version: 1, name: 'main', order: 0, auto: false, nodes: [
     { key: 's1', frame: 'app/smil', x: 0, y: 0, w: 500, h: 300 },
     { key: 'l1', frame: 'app/loop', x: 600, y: 0, w: 500, h: 300 },
+    { key: 'e1', frame: 'app/ext', x: 0, y: 400, w: 500, h: 300 },
   ] }))
   server = spawn(process.execPath, [CLI, 'dev', '--root', root, '--port', String(PORT)], { cwd: root, stdio: 'pipe', env: { ...process.env, BROWSER: 'none', CI: '1' } })
   server.stdout?.on('data', (d) => { log += d })
@@ -100,86 +127,176 @@ beforeAll(async () => {
   if (browser) {
     tab = await browser.tab()
     await browser.send('Emulation.setDeviceMetricsOverride', { width: 1600, height: 1000, deviceScaleFactor: 2, mobile: false }, tab)
+    // a lost push, on demand: the shell's socket drops `sh:bake-gen` while `__mvDropBakeGen` is set (Vite's client
+    // listens with addEventListener('message'))
+    await browser.send('Page.addScriptToEvaluateOnNewDocument', { source: `if (window.top === window) { const add = WebSocket.prototype.addEventListener; WebSocket.prototype.addEventListener = function (t, fn, o) { if (t !== 'message') return add.call(this, t, fn, o); return add.call(this, t, function (e) { if (window.__mvDropBakeGen && typeof e.data === 'string' && e.data.includes('sh:bake-gen')) return; return fn.call(this, e) }, o) } }` }, tab)
+    await browser.send('Network.enable', {}, tab)
+    browser.on((m) => {
+      if (m.method !== 'Network.requestWillBeSent' || m.sessionId !== tab || !String(m.params?.request?.url).includes('/__mv/api/bakes')) return
+      try { posts.push(JSON.parse(m.params.request.postData).asks.map((a: { frame: string }) => a.frame)) } catch { posts.push([]) }
+    })
   }
 }, 120_000)
 
 afterAll(() => {
   browser?.close()
   try { server?.kill('SIGTERM') } catch { /* gone */ }
+  ext?.close()
   rmSync(root, { recursive: true, force: true })
 })
 
-const skippable = (name: string, fn: () => Promise<void>, ms = 120_000) =>
+const skippable = (name: string, fn: () => Promise<void>, ms = 150_000) =>
   it(name, async (ctx) => { if (!browser) return ctx.skip(); await fn() }, ms)
 
 const DOC = (frame: string) => `document.querySelector('iframe.sh-live[title="${frame}"]')?.contentDocument`
 const ASLEEP = (frame: string) => `!!${DOC(frame)}?.getElementById('mv-sleep')`
-const SVG = (id: string) => `${DOC('app/smil')}?.getElementById('${id}')`
+const SVG = (id: string) => `${DOC('app/smil')}.getElementById('${id}')`
+/** The timeline's own state, under any shadow the sleep put on the element. */
+const NATIVE_PAUSED = (id: string) => `${DOC('app/smil')}.defaultView.SVGSVGElement.prototype.animationsPaused.call(${SVG(id)})`
 const ST = `window.__mvStore.getState()`
+const SLEEP = `window.__mvSleep`
+const PARKED = (key: string) => `${SLEEP}.parkedOn('${key}')`
+const IDLE = `(() => { const w = ${SLEEP}.bakeWork(); return !w.scheduled && !w.running && !w.queued && !w.inflight })()`
 const ev = (expr: string) => browser!.eval(tab, expr)
 const until = (expr: string, ms = 60_000) => browser!.until(tab, expr, ms)
 async function onBoard(): Promise<void> {
   if (await ev(`location.hash === '#/b/main' && !!window.__mvStore`)) return
   await browser!.go(tab, `${ORIGIN}/#/b/main`)
-  await until(`${ST}.nodes.length === 2 && ${ST}.nodes.every((n) => n.status === 'ready')`)
+  await until(`${ST}.nodes.length === 3 && ${ST}.nodes.every((n) => n.status === 'ready')`)
 }
 /** A timeline's clock, read twice `ms` apart: did it move? */
 const moves = async (id: string, ms = 400) => { const a = await ev(`${SVG(id)}.getCurrentTime()`); await wait(ms); return (await ev(`${SVG(id)}.getCurrentTime()`)) > a }
-/** The bake asks this page sent since the last `asksReset()` (resource timing: every fetch, ours included). */
-const asksReset = () => ev(`(performance.clearResourceTimings(), 1)`)
-const asks = () => ev(`performance.getEntriesByType('resource').filter((e) => e.name.includes('/__mv/api/bakes')).length`)
+/** The server's generation now, from an ask of our own (it changes nothing in the page). */
+const serverGen = async (): Promise<number> => (await ev(`fetch('/__mv/api/bakes', { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': document.cookie.match(/(?:^|; )mv_c=([^;]+)/)?.[1] ?? '' }, body: JSON.stringify({ asks: [{ frame: 'app/loop', theme: 'light', w: 500, h: 300 }] }) }).then((r) => r.json()).then((j) => j.gen)`)) as number
+/** The page's bake POSTs since `from` that asked about `frame`. */
+const asksFor = (frame: string, from: number) => posts.slice(from).filter((p) => p.includes(frame)).length
+const hooked = () => ev(`!!window.__mvSleep`) as Promise<boolean>
+/** Wait in the test (not the page) until `ok()`. */
+async function poll(ok: () => boolean | Promise<boolean>, ms: number, what: string): Promise<void> {
+  const t0 = Date.now()
+  while (!(await ok())) { if (Date.now() - t0 > ms) throw new Error(`timed out waiting for ${what}`); await wait(200) }
+}
+/** A frame parked on a settled answer, the page bake-idle: what it is parked on. A build without the dev hook (the
+ *  parent, for the proof) is read from outside: the frame asleep, its answer asked for, the page left a while. */
+async function parkedRest(key: string, sig: string, frame: string): Promise<{ gen: number; sig: string }> {
+  if (await hooked()) {
+    await until(`${PARKED(key)}?.sig?.startsWith(${JSON.stringify(sig)}) && ${IDLE}`, 90_000)
+    return ev(PARKED(key))
+  }
+  await until(ASLEEP(frame), 90_000)
+  await poll(() => asksFor(frame, 0) > 0, 90_000, `an ask for ${frame}`)
+  await wait(5000)
+  return { gen: await serverGen(), sig }
+}
+const backstopEvery = (ms: number) => ev(`(window.__mvSleep?.backstopEvery(${ms}), 1)`)
 
 describe('a frame at rest costs nothing', () => {
-  skippable('an SVG animation pauses while its frame sleeps and resumes on wake; one its author paused stays paused', async () => {
+  skippable('an SVG animation holds still asleep whatever its author calls, and wakes in the state the author last asked for', async () => {
     await onBoard()
     await until(ASLEEP('app/smil'))
-    expect(await ev(`${SVG('spin')}.animationsPaused()`)).toBe(true)
-    expect(await moves('spin'), 'the rotating gradient holds still asleep').toBe(false)
-    // nothing in the page lays out at rest: the paused gradient invalidates no style, no layout
-    const layouts = async () => (await browser!.send('Performance.getMetrics', {}, tab)).metrics.find((m: { name: string }) => m.name === 'LayoutCount').value
+    expect(await ev(NATIVE_PAUSED('spin')), 'the rotating gradient is held').toBe(true)
+    expect(await ev(`${SVG('spin')}.animationsPaused()`), 'its author still sees it running').toBe(false)
+    expect(await moves('spin')).toBe(false)
+    expect(await ev(`${SVG('held')}.animationsPaused()`), 'the one its author paused reads paused').toBe(true)
+    // nothing in the page lays out at rest: the held gradient invalidates no style, no layout
     await browser!.send('Performance.enable', {}, tab)
-    const l0 = await layouts(); await wait(1000); const l1 = await layouts()
-    expect(l1 - l0, 'layouts in a second at rest').toBeLessThan(5)
-    const at = await ev(`${SVG('spin')}.getCurrentTime()`)
-    // the author's own pause is theirs: held asleep, and still held awake
-    expect(await ev(`${SVG('held')}.animationsPaused()`)).toBe(true)
-    await ev(`${ST}.setInteract('s1')`)
-    await until(`!${ASLEEP('app/smil')}`, 5000)
-    expect(await ev(`${SVG('spin')}.animationsPaused()`)).toBe(false)
-    // resumed where it stood - not jumped ahead by the time it slept
-    expect(await ev(`${SVG('spin')}.getCurrentTime()`) - at).toBeLessThan(0.5)
-    expect(await moves('spin'), 'the gradient turns again awake').toBe(true)
-    expect(await ev(`${SVG('held')}.animationsPaused()`)).toBe(true)
+    const layouts = async () => (await browser!.send('Performance.getMetrics', {}, tab)).metrics.find((m: { name: string }) => m.name === 'LayoutCount').value
+    const l0 = await layouts(); await wait(1000)
+    expect(await layouts() - l0, 'layouts in a second at rest').toBeLessThan(5)
+    // the author speaks while it sleeps: pause the running one, unpause the paused one - neither moves yet
+    await ev(`${SVG('spin')}.pauseAnimations()`)
+    await ev(`${SVG('held')}.unpauseAnimations()`)
+    expect(await ev(`${SVG('spin')}.animationsPaused()`)).toBe(true)
+    expect(await ev(`${SVG('held')}.animationsPaused()`)).toBe(false)
+    expect(await ev(NATIVE_PAUSED('held')), 'unpaused by its author, still held asleep').toBe(true)
     expect(await moves('held')).toBe(false)
+    const at = await ev(`({ spin: ${SVG('spin')}.getCurrentTime(), held: ${SVG('held')}.getCurrentTime() })`)
+    // wake, and read the clocks the moment the sleep is gone - in the page, so no round trip is counted
+    const r = await ev(`(async () => { const t0 = performance.now(); ${ST}.setInteract('s1'); while (${DOC('app/smil')}.getElementById('mv-sleep')) await new Promise((r) => requestAnimationFrame(r)); return { waited: (performance.now() - t0) / 1000, spin: ${SVG('spin')}.getCurrentTime(), held: ${SVG('held')}.getCurrentTime() } })()`)
+    // the author's word holds: the one paused during the sleep stays paused, exactly where it stood
+    expect(await ev(NATIVE_PAUSED('spin'))).toBe(true)
+    expect(r.spin).toBe(at.spin)
+    expect(await moves('spin')).toBe(false)
+    // the one unpaused during the sleep runs - from where it stood, not ahead by the time it slept
+    expect(await ev(NATIVE_PAUSED('held'))).toBe(false)
+    expect(r.held - at.held).toBeLessThanOrEqual(r.waited + 0.05)
+    expect(await moves('held')).toBe(true)
+    // and nothing of the sleep is left on the elements
+    expect(await ev(`['spin', 'held'].some((id) => ['pauseAnimations', 'unpauseAnimations', 'animationsPaused'].some((k) => Object.prototype.hasOwnProperty.call(${DOC('app/smil')}.getElementById(id), k)))`)).toBe(false)
     await ev(`${ST}.setInteract(null)`)
   })
 
-  skippable('a refused frame asks once, then rests: again when the source generation moves, and when its document changes', async () => {
+  skippable('a refused frame asks no more on a timer, and asks again when the generation changes - the same document', async () => {
     await onBoard()
-    await until(ASLEEP('app/loop'))
-    // the refusal landed (the compiler logs it once - kept for the generation) and the frame rests paused, glass live
-    await until(`${DOC('app/loop')}.querySelectorAll('[data-mv-sleep]').length === 0 && performance.getEntriesByType('resource').some((e) => e.name.includes('/__mv/api/bakes'))`, 60_000)
-    for (let i = 0; i < 100 && !/app\/loop .*stays live: a looping animation/.test(log); i++) await wait(300)
-    expect(log).toMatch(/app\/loop .*stays live: a looping animation/)
-    await wait(1500)   // an ask already in flight lands
-    await asksReset()
-    await wait(9000)   // two of the old 4 s retries
-    expect(await asks(), 'no ask on a timer at rest').toBe(0)
-    expect(await ev(ASLEEP('app/loop'))).toBe(true)
-    // the generation moves (a file the server watches, imported by nothing): the parked frame asks again - the same
-    // document, never reloaded
+    await backstopEvery(600000)
+    const p0 = await parkedRest('l1', 'kept:a looping animation', 'app/loop')
+    expect(p0.gen).toBe(await serverGen())
+    const from = posts.length
+    await wait(6000)   // a window of the old retries (every 4 s): nothing asks
+    expect(asksFor('app/loop', from), 'no ask on a timer at rest').toBe(0)
     await ev(`(() => { const d = ${DOC('app/loop')}; d.defaultView.__same = 1; return 1 })()`)
+    writeFileSync(join(root, 'design', 'touch.txt'), String(Date.now()))   // watched, imported by nothing
+    await until(`(${PARKED('l1')}?.gen ?? ${p0.gen}) !== ${p0.gen} && ${IDLE}`, 30_000)
+    expect((await ev(PARKED('l1'))).gen).toBe(await serverGen())
+    expect(await ev(`${DOC('app/loop')}.defaultView.__same`), 'never reloaded').toBe(1)
+  })
+
+  skippable('a lost push: the backstop asks over HTTP, learns the other generation, and the frame asks again', async () => {
+    await onBoard()
+    await backstopEvery(600000)
+    const p0 = await parkedRest('l1', 'kept:a looping animation', 'app/loop')
+    await ev(`(window.__mvDropBakeGen = true, 1)`)
     writeFileSync(join(root, 'design', 'touch.txt'), String(Date.now()))
-    await until(`performance.getEntriesByType('resource').some((e) => e.name.includes('/__mv/api/bakes'))`, 10_000)
-    expect(await ev(`${DOC('app/loop')}.defaultView.__same`)).toBe(1)
-    await wait(2500)
-    await asksReset()
-    await wait(5000)
-    expect(await asks(), 'and rests again').toBe(0)
-    // its own document changes: it wakes, sleeps again under the new revision, and asks
-    writeFileSync(loopFile(), LOOP('Looping, edited'))
-    await until(`${DOC('app/loop')}?.body?.textContent.includes('Looping, edited') && performance.getEntriesByType('resource').some((e) => e.name.includes('/__mv/api/bakes'))`, 30_000)
-    await until(ASLEEP('app/loop'))
-    expect(readFileSync(loopFile(), 'utf8')).toContain('edited')
+    let g = p0.gen
+    for (let i = 0; i < 100 && g === p0.gen; i++) { g = await serverGen(); if (g === p0.gen) await wait(100) }
+    expect(g, 'the server moved on').not.toBe(p0.gen)
+    await wait(1500)   // the push went by, unheard
+    if (await hooked()) expect((await ev(PARKED('l1')))?.gen, 'the push was lost').toBe(p0.gen)
+    const from = posts.length
+    await backstopEvery(500)
+    // the frame learns of the new generation over HTTP and asks again (the parent never does: parked for good)
+    await poll(() => asksFor('app/loop', from) >= 2, 30_000, 'the backstop look and the frame asking again')   // the backstop's look, then the frame's own ask
+    await until(`${PARKED('l1')}?.gen === ${g} && ${IDLE}`, 30_000)
+    await ev(`(window.__mvDropBakeGen = false, 1)`)
+    await backstopEvery(600000)
+  })
+
+  skippable('the server answers otherwise with the generation unchanged (its retained answer gone): the backstop finds it and the frame gets its textures', async () => {
+    await onBoard()
+    await backstopEvery(600000)
+    const p0 = await parkedRest('e1', 'ok:0', 'app/ext')
+    expect(await ev(`${DOC('app/ext')}.querySelectorAll('[data-mv-sleep]').length`)).toBe(0)
+    // the outside content settles, and the server's retained answer goes (design/.local is not a source: no generation)
+    look = '/* settled */'
+    rmSync(join(root, 'design', '.local', 'bakes'), { recursive: true, force: true })
+    await backstopEvery(500)
+    await until(`${DOC('app/ext')}.querySelectorAll('[data-mv-sleep]').length === 1`, 90_000)
+    expect(await serverGen(), 'no new generation').toBe(p0.gen)
+    if (await hooked()) expect(await ev(PARKED('e1'))).toBe(null)
+    await backstopEvery(600000)
+  })
+
+  skippable('another generation - lower, say - is asked about once, never in a loop', async () => {
+    await onBoard()
+    await backstopEvery(600000)
+    const p0 = await parkedRest('l1', 'kept:a looping animation', 'app/loop')
+    const from = posts.length
+    await ev(`(${SLEEP}.pushed(${p0.gen} - 1000), 1)`)   // as a replacement server counting from below would push
+    await until(`${PARKED('l1')}?.gen === ${p0.gen} && ${IDLE}`, 30_000)
+    await wait(3000)
+    expect(asksFor('app/loop', from), 'one ask, then rest').toBe(1)
+    expect(await ev(IDLE)).toBe(true)
+  })
+
+  skippable('its own document changes: it wakes, sleeps again under the new revision, and asks', async () => {
+    await onBoard()
+    const p0 = await parkedRest('l1', 'kept:a looping animation', 'app/loop')
+    const from = posts.length
+    writeFileSync(join(root, 'design', 'scenes', 'app', 'loop.tsx'), LOOP.replace('>Looping<', '>Looping, edited<'))
+    await until(`${DOC('app/loop')}?.body?.textContent.includes('Looping, edited')`, 30_000)
+    await poll(() => asksFor('app/loop', from) >= 1, 60_000, 'an ask under the new revision')
+    if (await hooked()) await until(`${PARKED('l1')}?.sig?.startsWith('kept:') && ${PARKED('l1')}.gen !== ${p0.gen} && ${IDLE}`, 90_000)
+    else await until(ASLEEP('app/loop'), 60_000)
+    expect(await ev(ASLEEP('app/loop'))).toBe(true)
   })
 })

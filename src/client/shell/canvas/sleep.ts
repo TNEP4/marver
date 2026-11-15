@@ -93,33 +93,82 @@ const COMPILING_TRIES = 15
  *  or a wake starts the count again. */
 const compiling = new Map<string, { key: string; n: number }>()
 /**
- * Nodes resting on a SETTLED answer - one the server gives again, word for word, until its source generation moves: a
- * refusal it keeps (`kept`: the frame loops, never stops changing, has too many effects...) or a compile whose textures
- * none certified (its disk cache). Asking again every 4 s, forever, changed nothing but cost a POST, a computed-style
- * walk, a style rewrite and a forced layout per frame. Such a node asks again when the generation it was answered
- * under is superseded - the dev server pushes `sh:bake-gen` on every source change, and a reconnect may be a new
- * server - or when it wakes (a new document, theme or size: a new key). No timer, so a parked node is bake-idle.
+ * Nodes resting on a SETTLED answer - one the server gives again, word for word, while it retains it: a refusal it keeps
+ * for the source generation (`kept`: the frame loops, never stops changing, has too many effects...) or a compile none
+ * of whose textures certified (its disk cache). Asking again every 4 s, forever, changed nothing but cost a POST, a
+ * computed-style walk, a style rewrite and a forced layout per frame. A parked node asks again through the normal sleep:
+ *  - when it learns of a generation DIFFERENT from its answer's - a push (`sh:bake-gen`, every source change), or any
+ *    bake answer over HTTP (the shell's own socket may stay closed: api.ts). Equality only: a replacement server may
+ *    count from anywhere, so no generation is "newer";
+ *  - when the server would now answer otherwise with the generation unchanged (its retained answer evicted, deleted,
+ *    replaced): the BACKSTOP, one batched ask for every parked node each `backstopMs` (30 s: 2 POSTs a minute for
+ *    the whole board where the retries made 76), which touches no document - only a node whose answer changed goes
+ *    back through the sleep;
+ *  - on a reconnect (perhaps a new server), and when it wakes (a new document, theme or size: a new key).
+ * No sleep timer, so a parked node is bake-idle; a headless perf run has no backstop (it goes idle and stays so).
  */
-const parked = new Map<string, { gen: number | undefined; retry: () => void }>()
-/** The newest generation this page has heard of (answers and pushes). */
-let latestGen: number | undefined
-function park(nodeKey: string, gen: number | undefined, retry: () => void): void {
-  // superseded already (a push overtook the answer): ask again now
-  if (gen !== undefined && latestGen !== undefined && gen < latestGen) { scheduleSleep(retry, 250); return }
-  parked.set(nodeKey, { gen, retry })
+interface Parked { key: SleepKey; gen: number | undefined; sig: string; retry: () => void }
+const parked = new Map<string, Parked>()
+/** What an answer says, for "did it change": the kind, the refusal word for word, whether any texture certifies. */
+const sigOf = (a: Answer): string => (a.ok ? `ok:${a.targets.some((t) => t.verified && t.texture) ? 1 : 0}` : `${a.kept ? 'kept' : 'no'}:${a.error}`)
+/** Pushes heard, and the last one's generation: an ask a push overtook asks once more. */
+let pushes = 0, pushGen: number | undefined
+function release(nodeKey: string): void {
+  const p = parked.get(nodeKey)
+  if (!p) return
+  parked.delete(nodeKey)
+  scheduleSleep(p.retry, 250)   // every node released in the same moment shares one batch
 }
-/** A new generation (`gen`), or perhaps a new server (none): every node parked under another asks again, in one batch. */
-function bakeGenChanged(gen?: number): void {
-  if (gen !== undefined) latestGen = latestGen === undefined ? gen : Math.max(latestGen, gen)
-  for (const [nodeKey, p] of [...parked]) {
-    if (gen !== undefined && p.gen === gen) continue
-    parked.delete(nodeKey)
-    scheduleSleep(p.retry, 250)
+/** A generation heard of: every node parked under a DIFFERENT one asks again. `undefined`: perhaps a new server - all do. */
+function heard(gen: number | undefined): void {
+  for (const [nodeKey, p] of [...parked]) if (gen === undefined || (p.gen !== undefined && p.gen !== gen)) release(nodeKey)
+}
+function pushed(gen: number | undefined): void { pushes++; pushGen = gen; heard(gen) }
+function park(nodeKey: string, key: SleepKey, answer: Answer, pushesAtAsk: number, retry: () => void): void {
+  parked.set(nodeKey, { key, gen: answer.gen, sig: sigOf(answer), retry })
+  // a push arrived while the ask was out and named another generation than the answer: once more, now (one re-ask per
+  // push heard - never a loop)
+  if (pushes !== pushesAtAsk && pushGen !== answer.gen) release(nodeKey)
+  backstopSoon()
+}
+/** The backstop's period: 30 s (a test sets another through the dev hook below). */
+let backstopMs = 30_000
+let backstop: ReturnType<typeof setTimeout> | undefined, looking = false
+function backstopSoon(): void {
+  if (backstop !== undefined || looking || !parked.size || PERF_RUN || PUBLISHED) return
+  backstop = setTimeout(() => { backstop = undefined; looking = true; void lookAgain().finally(() => { looking = false; backstopSoon() }) }, backstopMs)
+}
+/** The backstop: what would the server answer every parked node now? Over HTTP, no document touched. */
+async function lookAgain(): Promise<void> {
+  const all = [...parked]
+  for (let i = 0; i < all.length; i += ASKS_MAX) {
+    const part = all.slice(i, i + ASKS_MAX)
+    inflight++
+    try {
+      const data = await post(part.map(([, p]) => p.key))
+      if (!data) continue   // no answer (the server is away): nothing learned, the next look asks again
+      const gen = typeof data.gen === 'number' ? data.gen : undefined
+      if (gen !== undefined) heard(gen)
+      for (const [nodeKey, p] of part) {
+        if (parked.get(nodeKey) !== p) continue   // woke, released or parked anew meanwhile
+        const a = toAnswer(data.answers?.find((x) => keyOf(x) === keyOf(p.key)), gen)
+        if (a.ok === false && a.error === 'no answer') continue
+        if (sigOf(a) !== p.sig) release(nodeKey)
+      }
+    } finally { inflight-- }
   }
 }
 if (import.meta.hot) {
-  import.meta.hot.on('sh:bake-gen', (m: { gen?: unknown }) => bakeGenChanged(typeof m?.gen === 'number' ? m.gen : undefined))
-  import.meta.hot.on('vite:ws:connect', () => bakeGenChanged())
+  import.meta.hot.on('sh:bake-gen', (m: { gen?: unknown }) => pushed(typeof m?.gen === 'number' ? m.gen : undefined))
+  import.meta.hot.on('vite:ws:connect', () => heard(undefined))
+}
+// dev-only inspection hook for tests (never in a published build): what a node is parked on, and a push as the socket
+// would deliver it
+if (import.meta.env.DEV) (window as unknown as { __mvSleep: unknown }).__mvSleep = {
+  parkedOn: (k: string) => { const p = parked.get(k); return p ? { gen: p.gen, sig: p.sig } : null },
+  pushed,
+  bakeWork: () => bakeWork(),
+  backstopEvery: (ms: number) => { backstopMs = ms; clearTimeout(backstop); backstop = undefined; backstopSoon() },
 }
 
 /** Does this document have anything to compile? Cheap: one computed style per element. */
@@ -150,29 +199,35 @@ function ask(key: SleepKey): Promise<Answer> {
       // one ask per key; every waiter for that key gets the same answer
       const byKey = new Map<string, { key: SleepKey; waiters: ((a: Answer) => void)[] }>()
       for (const q of batch) { const kk = keyOf(q.key); const e = byKey.get(kk); if (e) e.waiters.push(q.resolve); else byKey.set(kk, { key: q.key, waiters: [q.resolve] }) }
-      const asks = [...byKey.values()].map((e) => ({ frame: e.key.frame, theme: e.key.theme, w: Math.round(e.key.w), h: Math.round(e.key.h), ...(e.key.doc ? { doc: e.key.doc } : {}) }))
-      let data: { gen?: number; answers?: (Answer & SleepKey)[] } | null = null
+      let data: Answers | null = null
       inflight++
       try {
         const index = PUBLISHED ? await staticAnswers() : null
-        if (!index) {
-          try {
-            const r = await api('bakes', { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify({ asks }) })
-            data = r.ok ? await r.json() : null
-          } catch { data = null }
-        }
+        if (!index) data = await post([...byKey.values()].map((e) => e.key))
         answerAll(byKey, index, data)
       } finally { inflight-- }
     }, 40)
   })
 }
+type Answers = { gen?: number; answers?: (Answer & SleepKey)[] }
+/** The server's asks limit (api.ts: 1-200 a request). */
+const ASKS_MAX = 200
+/** One POST of the bake asks; null when there is no answer (a network failure, a refusal of the request). */
+async function post(keys: SleepKey[]): Promise<Answers | null> {
+  const asks = keys.map((k) => ({ frame: k.frame, theme: k.theme, w: Math.round(k.w), h: Math.round(k.h), ...(k.doc ? { doc: k.doc } : {}) }))
+  try {
+    const r = await api('bakes', { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify({ asks }) })
+    return r.ok ? await r.json() : null
+  } catch { return null }
+}
+const toAnswer = (a: (Answer & SleepKey) | Answer | undefined, gen: number | undefined): Answer =>
+  a ? (a.ok ? { ok: true, targets: a.targets, gen } : { ok: false, error: a.error, ...(a.kept === true ? { kept: true } : {}), gen }) : { ok: false, error: 'no answer' }
 /** Every waiter of a batch, its key's answer - before the POST stops counting, so the page is never idle between. */
-function answerAll(byKey: Map<string, { key: SleepKey; waiters: ((a: Answer) => void)[] }>, index: Record<string, Answer> | null, data: { gen?: number; answers?: (Answer & SleepKey)[] } | null): void {
+function answerAll(byKey: Map<string, { key: SleepKey; waiters: ((a: Answer) => void)[] }>, index: Record<string, Answer> | null, data: Answers | null): void {
   const gen = typeof data?.gen === 'number' ? data.gen : undefined
-  if (gen !== undefined) latestGen = latestGen === undefined ? gen : Math.max(latestGen, gen)
+  if (gen !== undefined) heard(gen)
   for (const e of byKey.values()) {
-    const a = index ? index[keyOf(e.key)] : data?.answers?.find((x) => keyOf(x) === keyOf(e.key))
-    const answer: Answer = a ? (a.ok ? { ok: true, targets: a.targets, gen } : { ok: false, error: a.error, ...(a.kept === true ? { kept: true } : {}), gen }) : { ok: false, error: 'no answer' }
+    const answer = toAnswer(index ? index[keyOf(e.key)] : data?.answers?.find((x) => keyOf(x) === keyOf(e.key)), gen)
     for (const w of e.waiters) w(answer)
   }
 }
@@ -204,6 +259,7 @@ async function sleepNow(nodeKey: string, iframe: HTMLIFrameElement, key: SleepKe
     asleep.set(nodeKey, { key: k, doc })
     return 'asleep'
   }
+  const pushesAtAsk = pushes
   const answer = await ask(key)
   if (!current()) return 'live'
   // still compiling (issue #23): the server answered in seconds and carries on by itself. The frame
@@ -235,7 +291,7 @@ async function sleepNow(nodeKey: string, iframe: HTMLIFrameElement, key: SleepKe
   // recovers. A headless perf run's retry keeps its mark until the node wakes - one retry, then nothing more
   if (targets.length) { asleep.set(nodeKey, { key: k, doc }); compiling.delete(nodeKey); retried.delete(nodeKey) }
   else if (answer.ok === false && answer.error === COMPILING) { /* out of looks: the pause alone, final */ }
-  else if (!PUBLISHED && !undecoded && (answer.ok || answer.kept)) park(nodeKey, answer.gen, () => { if (current()) void sleep(nodeKey, iframe, key) })   // settled until the generation moves
+  else if (!PUBLISHED && !undecoded && (answer.ok || answer.kept)) park(nodeKey, key, answer, pushesAtAsk, () => { if (current()) void sleep(nodeKey, iframe, key) })   // settled until the generation moves
   else if (!PUBLISHED && !retried.has(nodeKey)) { retried.add(nodeKey); scheduleSleep(() => { if (!PERF_RUN) retried.delete(nodeKey); if (current()) void sleep(nodeKey, iframe, key) }, RETRY_MS) }   // a static miss is final
   return 'asleep'
 }
@@ -296,34 +352,49 @@ function install(doc: Document, targets: Target[]): boolean {
   return true
 }
 
-/** The SVG time containers this sleep paused, per document: wake resumes exactly these. */
-const smilPaused = new WeakMap<Document, Set<SVGSVGElement>>()
+/** The SVG time containers this sleep holds, per document, each with what its author last asked for. */
+const smilHeld = new WeakMap<Document, Map<SVGSVGElement, { paused: boolean }>>()
 const SMIL = 'animate,animateTransform,animateMotion,set'
+const SHADOWED = ['pauseAnimations', 'unpauseAnimations', 'animationsPaused'] as const
 /** SVG's own animations (SMIL: `<animate>`, `<animateTransform>`, ...) are no CSS animation: `animation-play-state` never
  *  reaches them, and one running in any document - a rotating gradient - repaints and commits the WHOLE page every
- *  frame. They pause with the CSS ones, by their time container (the outermost <svg>; every <svg> on the way is paused
- *  too, whichever one an engine keys the timeline on). An <svg> the author paused is not touched, so stays paused; a
- *  paused timeline resumes where it stood, so nothing jumps and a finished animation does not restart. Idempotent: a
- *  sleep installed again (a retry) pauses nothing twice. */
+ *  frame. They pause with the CSS ones, by their time container (the outermost <svg>; every <svg> on the way is held
+ *  too, whichever one an engine keys the timeline on). While asleep the timeline holds still whatever the author calls
+ *  - as the CSS pause is !important: on each held <svg>, own `pauseAnimations`/`unpauseAnimations` only record what
+ *  they ask, and `animationsPaused()` answers it (their code sees the state it asked for, as if awake). Wake removes
+ *  the shadows and runs the timeline only if the author's last word is "running" - paused before the sleep and never
+ *  unpaused, or paused during it, it stays paused. A paused timeline resumes where it stood: nothing jumps, a finished
+ *  animation does not restart. Idempotent: a sleep installed again holds nothing twice. */
 function pauseSmil(doc: Document): void {
-  const SVG = doc.defaultView?.SVGElement
-  if (!SVG) return
+  const view = doc.defaultView as (Window & typeof globalThis) | null
+  const SVG = view?.SVGElement, proto = view?.SVGSVGElement?.prototype
+  if (!SVG || !proto || typeof proto.pauseAnimations !== 'function') return
   const anims = doc.querySelectorAll(SMIL)
   if (!anims.length) return
-  let mine = smilPaused.get(doc)
+  let held = smilHeld.get(doc)
   for (const a of anims) {
     if (!(a instanceof SVG)) continue
     for (let s = (a as SVGElement).ownerSVGElement; s; s = s.ownerSVGElement) {
-      if (mine?.has(s) || typeof s.pauseAnimations !== 'function' || s.animationsPaused()) continue
-      s.pauseAnimations()
-      if (!mine) smilPaused.set(doc, mine = new Set())
-      mine.add(s)
+      if (held?.has(s)) continue
+      const intent = { paused: proto.animationsPaused.call(s) }
+      if (!intent.paused) proto.pauseAnimations.call(s)
+      Object.defineProperties(s, {
+        pauseAnimations: { configurable: true, writable: true, value: () => { intent.paused = true } },
+        unpauseAnimations: { configurable: true, writable: true, value: () => { intent.paused = false } },
+        animationsPaused: { configurable: true, writable: true, value: () => intent.paused },
+      })
+      if (!held) smilHeld.set(doc, held = new Map())
+      held.set(s, intent)
     }
   }
 }
 function resumeSmil(doc: Document): void {
-  const mine = smilPaused.get(doc)
-  if (!mine) return
-  smilPaused.delete(doc)
-  for (const s of mine) s.unpauseAnimations()
+  const held = smilHeld.get(doc)
+  if (!held) return
+  smilHeld.delete(doc)
+  const proto = (doc.defaultView as (Window & typeof globalThis) | null)?.SVGSVGElement?.prototype
+  for (const [s, intent] of held) {
+    for (const k of SHADOWED) delete (s as unknown as Record<string, unknown>)[k]
+    if (!intent.paused && proto) proto.unpauseAnimations.call(s)
+  }
 }
