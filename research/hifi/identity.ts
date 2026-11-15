@@ -39,7 +39,7 @@ const capture = async (q: string, zoom: number) => {
   // they land on the same transform
   for (let i = 0; i < zoom; i++) { await b.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 620, y: 470, deltaX: 0, deltaY: -60, modifiers: 2 }, s); await wait(25) }
   await wait(2500)
-  console.log('scale', await b.eval(s, `getComputedStyle(document.querySelector('.sh-app')).getPropertyValue('--sh-s')`))
+  console.log('scale', await b.eval(s, `getComputedStyle(document.querySelector('.sh-canvas'), '::before').getPropertyValue('--sh-s')`))
   return shot()
 }
 const VARIANT = process.argv[5] ?? ''

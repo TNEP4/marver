@@ -15,5 +15,5 @@ await shot('fit')
 for (let i = 0; i < 40; i++) { await b.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 620, y: 470, deltaX: 0, deltaY: -60, modifiers: 2 }, s); await wait(25) }
 const t0 = Date.now()
 for (const ms of [2500, 6000, 12000]) { await wait(ms - (Date.now() - t0) > 0 ? ms - (Date.now() - t0) : 0); await shot(`z40-${ms}`) }
-console.log(await b.eval(s, `getComputedStyle(document.querySelector('.sh-app')).getPropertyValue('--sh-s')`))
+console.log(await b.eval(s, `getComputedStyle(document.querySelector('.sh-canvas'), '::before').getPropertyValue('--sh-s')`))
 b.close()

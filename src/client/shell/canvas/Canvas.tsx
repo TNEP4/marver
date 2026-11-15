@@ -133,20 +133,27 @@ const GRID = 20
 const CAMERA_READERS = '.sh-canvas::before, .sh-edge::before, .sh-ctx, #sh-world :is(.sh-node.sel, .sh-node.interact, '
   + '.sh-node.working, .sh-handle, .sh-work-ind, .sh-vbadge, .sh-gcaption, .sh-notes-fold, .sh-stranded, .cm-pin, .cm-lead, '
   + '.cm-stack, .cm-card, .jm-pt, .jm-pickbox)'
-let cameraRule: CSSStyleDeclaration | undefined
+let cameraRule: CSSStyleDeclaration | null | undefined   // undefined: not chosen yet; null: inline on .sh-app
 /** Where the camera's variables go. Inline on .sh-app they inherit into every element of the shell, so each tick
  *  restyled all of it (628 elements on a 23-frame board, more with every frame). Chromium restyles only what an
  *  edited rule matches, so there they go in one rule over the readers (4 elements a tick when nothing is selected).
- *  WebKit and Gecko rebuild every style rule of the page on any rule edit, so elsewhere they stay on .sh-app. */
+ *  WebKit and Gecko rebuild every style rule of the page on any rule edit, so elsewhere they stay on .sh-app - as
+ *  they do for good if the stylesheet cannot be made. */
 function cameraStyle(): CSSStyleDeclaration | undefined {
-  if (!('userAgentData' in navigator)) return (document.querySelector('.sh-app') as HTMLElement | null)?.style   // Chromium only
-  if (!cameraRule) {
-    const sheet = new CSSStyleSheet()   // constructed: a page CSP that forbids inline styles cannot block it
-    sheet.replaceSync(`${CAMERA_READERS} {}`)
-    document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet]
-    cameraRule = (sheet.cssRules[0] as CSSStyleRule).style
+  if (cameraRule === undefined) {
+    cameraRule = null
+    if ('userAgentData' in navigator) try {   // Chromium only
+      // constructed, so a page CSP that forbids inline styles cannot block it; a hot update of this module takes
+      // over the sheet (and the camera in it) instead of stacking a second, stale one
+      const kept: CSSStyleSheet | undefined = import.meta.hot?.data.cameraSheet
+      const sheet = kept ?? new CSSStyleSheet()
+      sheet.replaceSync(`${CAMERA_READERS} {${kept ? (kept.cssRules[0] as CSSStyleRule).style.cssText : ''}}`)
+      if (!kept) document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet]
+      cameraRule = (sheet.cssRules[0] as CSSStyleRule).style
+      if (import.meta.hot) import.meta.hot.data.cameraSheet = sheet
+    } catch { /* stays inline */ }
   }
-  return cameraRule
+  return cameraRule ?? (document.querySelector('.sh-app') as HTMLElement | null)?.style
 }
 function paintGrid(positionX: number, positionY: number, scale: number) {
   // the canvas's ::before and the scroll edge (A3.8 #31) paint the grid from these

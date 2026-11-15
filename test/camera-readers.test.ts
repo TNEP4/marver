@@ -9,7 +9,7 @@ import { join } from 'node:path'
 const ROOT = join(import.meta.dirname, '..')
 const css = readFileSync(join(ROOT, 'src/client/shell/styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
 const canvas = readFileSync(join(ROOT, 'src/client/shell/canvas/Canvas.tsx'), 'utf8')
-const READS = /var\(--(sh-inv|sh-s|sh-tx|sh-ty|grid-size|grid-pos|grid-alpha)\b/
+const READS = /var\(\s*--(sh-inv|sh-s|sh-tx|sh-ty|grid-size|grid-pos|grid-alpha)\b/
 
 /** The selectors of every rule (inside @media and the like too) whose declarations read a camera variable. */
 function readers(text: string): string[] {

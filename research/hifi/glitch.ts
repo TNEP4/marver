@@ -26,7 +26,7 @@ else if (css) await b.eval(s, `(() => { const st = document.createElement('style
 await wait(500)
 const state = () => b.eval(s, `(() => { const fr = [...document.querySelectorAll('iframe')]; return fr.map((f) => { const d = f.contentDocument; if (!d) return 'no-doc'; const st = d.getElementById('mv-sleep'); const n = d.querySelectorAll('[data-mv-sleep]').length; const bf = [...d.querySelectorAll('*')].filter((e) => { const v = getComputedStyle(e).backdropFilter; return v && v !== 'none' && !/blur\\(0px\\)/.test(v) }).length; return (st ? 'asleep' : 'live') + ':' + n + ' textures, ' + bf + ' live filters' }) })()`)
 console.log('frames:', JSON.stringify(await state()))
-console.log('scale:', await b.eval(s, `getComputedStyle(document.querySelector('.sh-app')).getPropertyValue('--sh-s')`))
+console.log('scale:', await b.eval(s, `getComputedStyle(document.querySelector('.sh-canvas'), '::before').getPropertyValue('--sh-s')`))
 
 // ---- screencast: the presented frames
 const frames: { phase: string; t: number; data: string }[] = []
@@ -46,7 +46,7 @@ const run = async (name: string, n: number, dx: number, dy: number, ctrl: boolea
   await wait(1500)
 }
 await run('zoom-in', 75, 0, -2, true)
-console.log('scale after zoom-in:', await b.eval(s, `getComputedStyle(document.querySelector('.sh-app')).getPropertyValue('--sh-s')`))
+console.log('scale after zoom-in:', await b.eval(s, `getComputedStyle(document.querySelector('.sh-canvas'), '::before').getPropertyValue('--sh-s')`))
 await run('pan', 150, -10, -6, false)
 await run('pan-back', 150, 10, 6, false)
 await run('zoom-out', 75, 0, 2, true)

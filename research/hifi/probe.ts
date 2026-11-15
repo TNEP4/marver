@@ -56,7 +56,7 @@ const metrics = async () => {
 // wheel with modifiers=2 (ctrl) zooms in the shell; plain wheel pans
 const wheel = (dx: number, dy: number, ctrl = false) =>
   b.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: W / 2 + 120, y: H / 2 + 40, deltaX: dx, deltaY: dy, modifiers: ctrl ? 2 : 0 }, s)
-const scale = () => b.eval(s, `Number(getComputedStyle(document.querySelector('.sh-app')).getPropertyValue('--sh-s'))`)
+const scale = () => b.eval(s, `Number(getComputedStyle(document.querySelector('.sh-canvas'), '::before').getPropertyValue('--sh-s'))`)
 
 // ---- tracing helpers: collect the trace into memory, summarise frames/raster/checkerboard
 async function traced<T>(label: string, fn: () => Promise<T>): Promise<T> {
