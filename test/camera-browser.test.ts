@@ -16,6 +16,10 @@ const FRAME = (t: string, extra = '') => `export const meta = { title: '${t}', v
 const me = { email: 'nic@example.com', name: 'Nic' }
 const thread = (i: number, frame: string) => JSON.stringify({ id: `t-${i}`, ts: 1_700_000_000_000 + i, type: 'create', commentId: `c-${i}`, board: 'main', frame, author: me, agent: true, body: `note ${i}` })
 
+/** reader checks this fixture shows at every camera (48 today: the grid, the selection bar and handles, two badges and a
+ *  caption, pins, a stack, a note fold, the shimmer) - fewer means it stopped showing some */
+const MIN_READERS = 40
+
 let root = ''
 let dev: Dev | null = null
 let browser: Browser | null = null
@@ -42,13 +46,24 @@ afterAll(async () => {
   if (root) rmSync(root, { recursive: true, force: true })
 })
 
-/** Every live reader of a camera variable whose computed value is not the camera's, and the readers counted. */
+/** Every live reader of a camera variable whose computed value is not the camera's (the content transform's, through
+ *  paintGrid's arithmetic for the grid), and the readers checked. A sheet it cannot read but cross-origin, or a reader
+ *  selector it cannot check, throws. */
 const CHECK = `(() => {
   const READS = /var\\(\\s*(--(?:sh-inv|sh-s|sh-tx|sh-ty|grid-size|grid-pos|grid-alpha))\\b/g
-  const content = document.querySelector('.sh-content'), canvas = document.querySelector('.sh-canvas')
+  const content = document.querySelector('.sh-content')
   const { a: s, e: tx, f: ty } = new DOMMatrix(content ? getComputedStyle(content).transform : 'none')
-  const want = { '--sh-s': s, '--sh-inv': 1 / s, '--sh-tx': tx, '--sh-ty': ty }
-  const grid = canvas && getComputedStyle(canvas, '::before')
+  let step = 20 * s
+  while (step < 14) step *= 2
+  while (step >= 28) step /= 2
+  const close = (a, b) => Math.abs(a - b) <= 1e-3 * Math.max(1, Math.abs(b))
+  const wrapped = (a, b) => { const d = (((a - b) % step) + step) % step; return Math.min(d, step - d) <= 0.01 }   // a grid offset, either side of a whole step
+  const want = {
+    '--sh-s': ([v]) => close(v, s), '--sh-inv': ([v]) => close(v, 1 / s), '--sh-tx': ([v]) => close(v, tx), '--sh-ty': ([v]) => close(v, ty),
+    '--grid-size': ([w, h]) => close(w, step) && close(h, step),
+    '--grid-pos': ([x, y]) => wrapped(x, tx % step) && wrapped(y, ty % step),
+    '--grid-alpha': ([a]) => close(a, 0.35 + 0.65 * Math.min(1, (step - 14) / 14)),
+  }
   const reads = [], wrong = [], play = []   // reads: [element, pseudo, variable]
   const parts = (sel) => { const out = []; let d = 0, at = 0; for (let i = 0; i < sel.length; i++) { const c = sel[i]; if (c === '(') d++; else if (c === ')') d--; else if (c === ',' && !d) { out.push(sel.slice(at, i)); at = i + 1 } } return [...out, sel.slice(at)] }
   const walk = (rules) => { for (const r of rules) {
@@ -56,14 +71,18 @@ const CHECK = `(() => {
       const vars = [...r.style.cssText.matchAll(READS)].map((m) => m[1])
       if (vars.length) for (const part of parts(r.selectorText)) {
         const pseudo = /::?(before|after)\\s*$/.exec(part)?.[0].replace(/^:+/, '::') ?? null
-        let els = []
-        try { els = document.querySelectorAll(part.replace(/::?(before|after)\\s*$/, '') || '*') } catch { wrong.push('unmatched selector ' + part) }
-        for (const el of els) for (const v of vars) reads.push([el, pseudo, v])
+        const host = part.replace(/::?(before|after)\\s*$/, '')
+        if (/::|:(before|after|first-line|first-letter)\\b/.test(host)) throw new Error('a reader this test cannot check: ' + part)
+        for (const el of document.querySelectorAll(host || '*')) for (const v of vars) reads.push([el, pseudo, v])
       }
     }
     if (r.cssRules) walk(r.cssRules)
   } }
-  for (const sheet of document.styleSheets) { try { walk(sheet.cssRules) } catch { /* a cross-origin sheet: no camera reader of ours */ } }
+  for (const sheet of [...document.styleSheets, ...document.adoptedStyleSheets]) {
+    let rules
+    try { rules = sheet.cssRules } catch (e) { if (e.name === 'SecurityError') continue; throw e }   // a cross-origin sheet: no reader of ours
+    walk(rules)
+  }
   for (const el of document.querySelectorAll('[style]')) for (const m of el.getAttribute('style').matchAll(READS)) reads.push([el, null, m[1]])
   let n = 0
   for (const [el, pseudo, v] of reads) {
@@ -71,8 +90,8 @@ const CHECK = `(() => {
     const name = el.getAttribute('class') + (pseudo ?? '') + ' ' + v + '=' + JSON.stringify(got)
     if (el.closest('.sh-play')) { if (v === '--sh-inv') play.push(got); continue }
     n++
-    const ok = v.startsWith('--grid-') ? got !== '' && got === grid?.getPropertyValue(v).trim() : got !== '' && Math.abs(parseFloat(got) - want[v]) <= 1e-3 * Math.max(1, Math.abs(want[v]))
-    if (!ok) wrong.push(name)
+    const nums = got.split(/\\s+/).map(parseFloat)
+    if (got === '' || nums.some(Number.isNaN) || !want[v](nums)) wrong.push(name)
   }
   return { n, wrong, play, s, classes: [...new Set(reads.filter(([el]) => !el.closest('.sh-play')).flatMap(([el]) => [...el.classList]))] }
 })()`
@@ -92,8 +111,11 @@ describe('the camera reaches its readers', () => {
       await browser.until(s, `!__mvJamCanvas.cameraBusy()`, 5000)
       await new Promise((r) => setTimeout(r, 300))
       const r = await ev(CHECK)
-      expect(r.s, 'a camera other than 1, or a default would pass').not.toBeCloseTo(1, 2)
+      // the camera is where it was sent: a camera stuck at one scale, or at 1 where a default would pass, fails here
+      if (zoom) expect(r.s).toBeCloseTo(zoom, 3)
+      else for (const other of [0.4, 1.7, 1]) expect(Math.abs(r.s - other), `fit at ${r.s}`).toBeGreaterThan(0.01)
       expect(r.wrong, `scale ${r.s}`).toEqual([])
+      expect(r.n, `readers checked at scale ${r.s}`).toBeGreaterThanOrEqual(MIN_READERS)
       for (const c of r.classes) seen.add(c)
     }
     // the fixture showed what it set out to: rule readers in the world and on the grid, inline readers on screen
