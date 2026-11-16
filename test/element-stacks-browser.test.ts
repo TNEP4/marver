@@ -24,7 +24,7 @@ const appGlyphs = (v: number) => `${v === 2 ? 'await new Promise((r) => setTimeo
 import { useEffect, useState } from 'react'
 ;(globalThis as any).__mvReact = React
 const glyphs = [<i key="a" />, <i key="b" />, <i key="c" />]
-${v === 2 ? `;(globalThis as any).__mvV2Loaded = performance.now()\nif (import.meta.hot) import.meta.hot.dispose(() => { throw new Error('a dispose that throws') })\n` : ''}export function Glyphs() {
+${v === 2 ? `;(globalThis as any).__mvV2Loaded = performance.now()\nif (import.meta.hot) import.meta.hot.dispose(() => { ;(globalThis as any).__mvDisposed = performance.now(); throw new Error('a dispose that throws') })\n` : ''}export function Glyphs() {
   const [n, setN] = useState(0)
   useEffect(() => { const t = setInterval(() => { if (!(globalThis as any).__mvNoTick) setN((x) => x + 1) }, 20); return () => clearInterval(t) }, [])
   ;(globalThis as any).__mvBumpHot = () => setN((x) => x + 1)
@@ -116,11 +116,17 @@ describe('element stacks in a frame document', () => {
     expect(during.n).toBeGreaterThan(5)
     expect(during.own).toBe(true)
     expect(during.distinct).toBe(true)
+    // the first render Fast Refresh made of version 2
+    await browser.until(s, `globalThis.__mvTicks.some((t) => t.v === 2)`, 10_000)
+    const refreshed = await browser.eval(s, `(() => { const e = globalThis.__mvTicks.find((t) => t.v === 2).els; return e[0]._debugStack instanceof Error && e[0]._debugStack !== e[1]._debugStack && e[0]._debugStack !== globalThis.__mvHot.glyphs[0]._debugStack && /Glyphs/.test(e[0]._debugStack.stack) })()`)
+    expect(refreshed).toBe(true)
     // version 3: version 2's dispose throws, and Vite sends no vite:afterUpdate. Nothing renders meanwhile
     await browser.eval(s, `(globalThis.__mvNoTick = true, 1)`)
     const ticksBefore = await browser.eval(s, `globalThis.__mvTicks.length`)
     writeFileSync(join(root, 'src/Glyphs.tsx'), appGlyphs(3))
-    await new Promise((r) => setTimeout(r, 2000))
+    // version 3 arrived: version 2's dispose ran (and threw) - fails the test if it never does
+    await browser.until(s, `!!globalThis.__mvDisposed`, 20_000)
+    await new Promise((r) => setTimeout(r, 300))   // what Vite does after the throw, settled
     const count = await browser.eval(s, `globalThis.__mvReact.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE.recentlyCreatedOwnerStacks`)
     expect(count).toBeLessThan(10_000)
     // and the next render's elements have stacks of their own
