@@ -13,7 +13,8 @@ import { Browser } from './browser.ts'
  *  - a frame whose bake answer is settled (a refusal the server keeps; a compile none of whose textures certified)
  *    asks no more on a timer; it asks again when the server names another generation (a push, or any answer over HTTP
  *    when the push is lost), and when the server would answer otherwise with the generation unchanged (the backstop),
- *    and a generation that is merely different - lower, say - is asked about once, not in a loop.
+ *    and an <svg> whose methods its author owns is never broken by the hold. Batching, alternating and lower generations
+ * over HTTP: sleep-many-browser.test.ts.
  * Assertions read state (what a node is parked on, the asks' payloads, the timelines' clocks), not wall-clock bounds.
  */
 
@@ -51,6 +52,26 @@ export default () => {
       <svg id="held" ref={held} width="100" height="100">
         <circle cx="50" cy="50" r="20" fill="#333"><animate attributeName="r" values="20;40;20" dur="2s" repeatCount="indefinite" /></circle>
       </svg>
+    </main>
+  )
+}
+`
+// an author who owns the methods: a non-configurable own unpauseAnimations (the sleep cannot shadow it: left unheld,
+// it animates on), and a configurable own pauseAnimations wrapper (shadowed while asleep, restored at wake)
+const SMIL2 = `import { useEffect, useRef } from 'react'
+export const meta = { title: 'Smil2' }
+export default () => {
+  const locked = useRef(null), wrapped = useRef(null)
+  useEffect(() => {
+    const unpause = SVGSVGElement.prototype.unpauseAnimations, pause = SVGSVGElement.prototype.pauseAnimations
+    Object.defineProperty(locked.current, 'unpauseAnimations', { value: function () { return unpause.call(this) }, configurable: false, writable: false })
+    window.__wrapper = function () { window.__wrapperCalls = (window.__wrapperCalls ?? 0) + 1; return pause.call(this) }
+    Object.defineProperty(wrapped.current, 'pauseAnimations', { value: window.__wrapper, configurable: true, writable: true })
+  }, [])
+  return (
+    <main style={{ margin: 0, padding: 24 }}>
+      <svg id="locked" ref={locked} width="100" height="100"><circle cx="50" cy="50" r="20" fill="#333"><animate attributeName="r" values="20;40;20" dur="2s" repeatCount="indefinite" /></circle></svg>
+      <svg id="wrapped" ref={wrapped} width="100" height="100"><circle cx="50" cy="50" r="20" fill="#933"><animate attributeName="r" values="20;40;20" dur="2s" repeatCount="indefinite" /></circle></svg>
     </main>
   )
 }
@@ -105,6 +126,7 @@ beforeAll(async () => {
   const scenes = join(root, 'design', 'scenes', 'app')
   mkdirSync(scenes, { recursive: true })
   writeFileSync(join(scenes, 'smil.tsx'), SMIL)
+  writeFileSync(join(scenes, 'smil2.tsx'), SMIL2)
   writeFileSync(join(scenes, 'loop.tsx'), LOOP)
   writeFileSync(join(scenes, 'ext.tsx'), EXTF)
   const boards = join(root, 'design', 'boards')
@@ -113,6 +135,9 @@ beforeAll(async () => {
     { key: 's1', frame: 'app/smil', x: 0, y: 0, w: 500, h: 300 },
     { key: 'l1', frame: 'app/loop', x: 600, y: 0, w: 500, h: 300 },
     { key: 'e1', frame: 'app/ext', x: 0, y: 400, w: 500, h: 300 },
+  ] }))
+  writeFileSync(join(boards, 'owned.json'), JSON.stringify({ version: 1, name: 'owned', order: 1, auto: false, nodes: [
+    { key: 's2', frame: 'app/smil2', x: 0, y: 0, w: 400, h: 200 },
   ] }))
   server = spawn(process.execPath, [CLI, 'dev', '--root', root, '--port', String(PORT)], { cwd: root, stdio: 'pipe', env: { ...process.env, BROWSER: 'none', CI: '1' } })
   server.stdout?.on('data', (d) => { log += d })
@@ -150,9 +175,9 @@ const skippable = (name: string, fn: () => Promise<void>, ms = 150_000) =>
 
 const DOC = (frame: string) => `document.querySelector('iframe.sh-live[title="${frame}"]')?.contentDocument`
 const ASLEEP = (frame: string) => `!!${DOC(frame)}?.getElementById('mv-sleep')`
-const SVG = (id: string) => `${DOC('app/smil')}.getElementById('${id}')`
+const SVG = (id: string, frame = 'app/smil') => `${DOC(frame)}.getElementById('${id}')`
 /** The timeline's own state, under any shadow the sleep put on the element. */
-const NATIVE_PAUSED = (id: string) => `${DOC('app/smil')}.defaultView.SVGSVGElement.prototype.animationsPaused.call(${SVG(id)})`
+const NATIVE_PAUSED = (id: string, frame = 'app/smil') => `${DOC(frame)}.defaultView.SVGSVGElement.prototype.animationsPaused.call(${SVG(id, frame)})`
 const ST = `window.__mvStore.getState()`
 const SLEEP = `window.__mvSleep`
 const PARKED = (key: string) => `${SLEEP}.parkedOn('${key}')`
@@ -164,8 +189,12 @@ async function onBoard(): Promise<void> {
   await browser!.go(tab, `${ORIGIN}/#/b/main`)
   await until(`${ST}.nodes.length === 3 && ${ST}.nodes.every((n) => n.status === 'ready')`)
 }
+async function onOwned(): Promise<void> {
+  await browser!.go(tab, `${ORIGIN}/#/b/owned`)
+  await until(`location.hash === '#/b/owned' && ${ST}.nodes.length === 1 && ${ST}.nodes.every((n) => n.status === 'ready')`)
+}
 /** A timeline's clock, read twice `ms` apart: did it move? */
-const moves = async (id: string, ms = 400) => { const a = await ev(`${SVG(id)}.getCurrentTime()`); await wait(ms); return (await ev(`${SVG(id)}.getCurrentTime()`)) > a }
+const moves = async (id: string, ms = 400, frame = 'app/smil') => { const a = await ev(`${SVG(id, frame)}.getCurrentTime()`); await wait(ms); return (await ev(`${SVG(id, frame)}.getCurrentTime()`)) > a }
 /** The server's generation now, from an ask of our own (it changes nothing in the page). */
 const serverGen = async (): Promise<number> => (await ev(`fetch('/__mv/api/bakes', { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': document.cookie.match(/(?:^|; )mv_c=([^;]+)/)?.[1] ?? '' }, body: JSON.stringify({ asks: [{ frame: 'app/loop', theme: 'light', w: 500, h: 300 }] }) }).then((r) => r.json()).then((j) => j.gen)`)) as number
 /** The page's bake POSTs since `from` that asked about `frame`. */
@@ -198,7 +227,11 @@ describe('a frame at rest costs nothing', () => {
     expect(await ev(`${SVG('spin')}.animationsPaused()`), 'its author still sees it running').toBe(false)
     expect(await moves('spin')).toBe(false)
     expect(await ev(`${SVG('held')}.animationsPaused()`), 'the one its author paused reads paused').toBe(true)
-    // nothing in the page lays out at rest: the held gradient invalidates no style, no layout
+    // nothing in the page lays out at rest: the held gradient invalidates no style, no layout - counted once the
+    // whole board rests (both settled frames parked, the page bake-idle)
+    await parkedRest('l1', 'kept:a looping animation', 'app/loop')
+    await parkedRest('e1', 'ok:0', 'app/ext')
+    await until(ASLEEP('app/smil'))
     await browser!.send('Performance.enable', {}, tab)
     const layouts = async () => (await browser!.send('Performance.getMetrics', {}, tab)).metrics.find((m: { name: string }) => m.name === 'LayoutCount').value
     const l0 = await layouts(); await wait(1000)
@@ -276,16 +309,24 @@ describe('a frame at rest costs nothing', () => {
     await backstopEvery(600000)
   })
 
-  skippable('another generation - lower, say - is asked about once, never in a loop', async () => {
-    await onBoard()
-    await backstopEvery(600000)
-    const p0 = await parkedRest('l1', 'kept:a looping animation', 'app/loop')
-    const from = posts.length
-    await ev(`(${SLEEP}.pushed(${p0.gen} - 1000), 1)`)   // as a replacement server counting from below would push
-    await until(`${PARKED('l1')}?.gen === ${p0.gen} && ${IDLE}`, 30_000)
-    await wait(3000)
-    expect(asksFor('app/loop', from), 'one ask, then rest').toBe(1)
-    expect(await ev(IDLE)).toBe(true)
+  skippable('an <svg> whose methods its author owns: a non-configurable one is left unheld (it animates, the sleep still installs); a configurable own property is restored at wake', async () => {
+    await onOwned()
+    await until(ASLEEP('app/smil2'))
+    expect(await ev(NATIVE_PAUSED('locked', 'app/smil2')), 'left unheld').toBe(false)
+    expect(await moves('locked', 400, 'app/smil2'), 'it animates on').toBe(true)
+    expect(await ev(`Object.getOwnPropertyDescriptor(${SVG('locked', 'app/smil2')}, 'unpauseAnimations').configurable`)).toBe(false)
+    expect(await ev(NATIVE_PAUSED('wrapped', 'app/smil2')), 'the other one is held').toBe(true)
+    await ev(`${SVG('wrapped', 'app/smil2')}.pauseAnimations()`)   // asleep: recorded, the author's wrapper not run
+    expect(await ev(`${DOC('app/smil2')}.defaultView.__wrapperCalls ?? 0`)).toBe(0)
+    await ev(`${SVG('wrapped', 'app/smil2')}.unpauseAnimations()`)
+    await ev(`(async () => { ${ST}.setInteract('s2'); while (${DOC('app/smil2')}.getElementById('mv-sleep')) await new Promise((r) => requestAnimationFrame(r)); return 1 })()`)
+    expect(await ev(`Object.getOwnPropertyDescriptor(${SVG('wrapped', 'app/smil2')}, 'pauseAnimations').value === ${DOC('app/smil2')}.defaultView.__wrapper`), 'the author\'s own property is back').toBe(true)
+    expect(await ev(NATIVE_PAUSED('wrapped', 'app/smil2')), 'its last word was "running"').toBe(false)
+    expect(await moves('wrapped', 400, 'app/smil2')).toBe(true)
+    expect(await moves('locked', 400, 'app/smil2')).toBe(true)
+    await ev(`${ST}.setInteract(null)`)
+    await browser!.go(tab, `${ORIGIN}/#/b/main`)
+    await until(`location.hash === '#/b/main' && ${ST}.nodes.length === 3 && ${ST}.nodes.every((n) => n.status === 'ready')`)
   })
 
   skippable('its own document changes: it wakes, sleeps again under the new revision, and asks', async () => {

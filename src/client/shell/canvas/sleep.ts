@@ -113,22 +113,31 @@ const parked = new Map<string, Parked>()
 const sigOf = (a: Answer): string => (a.ok ? `ok:${a.targets.some((t) => t.verified && t.texture) ? 1 : 0}` : `${a.kept ? 'kept' : 'no'}:${a.error}`)
 /** Pushes heard, and the last one's generation: an ask a push overtook asks once more. */
 let pushes = 0, pushGen: number | undefined
-function release(nodeKey: string): void {
+/** When each node was last released for a generation it heard of: a second such release within RETRY_MS waits
+ *  RETRY_MS - two servers alternating their generations cost no more than the old 4 s retry did. */
+const genReleased = new Map<string, number>()
+function release(nodeKey: string, forGen = false): void {
   const p = parked.get(nodeKey)
   if (!p) return
   parked.delete(nodeKey)
-  scheduleSleep(p.retry, 250)   // every node released in the same moment shares one batch
+  let ms = 250   // every node released in the same moment shares one batch
+  if (forGen) {
+    const now = Date.now(), was = genReleased.get(nodeKey)
+    if (was !== undefined && now - was < RETRY_MS) ms = RETRY_MS
+    genReleased.set(nodeKey, now)
+  }
+  scheduleSleep(p.retry, ms)
 }
 /** A generation heard of: every node parked under a DIFFERENT one asks again. `undefined`: perhaps a new server - all do. */
 function heard(gen: number | undefined): void {
-  for (const [nodeKey, p] of [...parked]) if (gen === undefined || (p.gen !== undefined && p.gen !== gen)) release(nodeKey)
+  for (const [nodeKey, p] of [...parked]) if (gen === undefined || (p.gen !== undefined && p.gen !== gen)) release(nodeKey, true)
 }
 function pushed(gen: number | undefined): void { pushes++; pushGen = gen; heard(gen) }
 function park(nodeKey: string, key: SleepKey, answer: Answer, pushesAtAsk: number, retry: () => void): void {
   parked.set(nodeKey, { key, gen: answer.gen, sig: sigOf(answer), retry })
   // a push arrived while the ask was out and named another generation than the answer: once more, now (one re-ask per
   // push heard - never a loop)
-  if (pushes !== pushesAtAsk && pushGen !== answer.gen) release(nodeKey)
+  if (pushes !== pushesAtAsk && pushGen !== answer.gen) release(nodeKey, true)
   backstopSoon()
 }
 /** The backstop's period: 30 s (a test sets another through the dev hook below). */
@@ -142,10 +151,14 @@ function backstopSoon(): void {
 async function lookAgain(): Promise<void> {
   const all = [...parked]
   for (let i = 0; i < all.length; i += ASKS_MAX) {
-    const part = all.slice(i, i + ASKS_MAX)
+    // only nodes still parked on this very answer (a board switch during an earlier chunk sends nothing for them)
+    const part = all.slice(i, i + ASKS_MAX).filter(([nodeKey, p]) => parked.get(nodeKey) === p)
+    if (!part.length) continue
+    const keys = new Map<string, SleepKey>()
+    for (const [, p] of part) keys.set(keyOf(p.key), p.key)
     inflight++
     try {
-      const data = await post(part.map(([, p]) => p.key))
+      const data = await post([...keys.values()])
       if (!data) continue   // no answer (the server is away): nothing learned, the next look asks again
       const gen = typeof data.gen === 'number' ? data.gen : undefined
       if (gen !== undefined) heard(gen)
@@ -199,12 +212,19 @@ function ask(key: SleepKey): Promise<Answer> {
       // one ask per key; every waiter for that key gets the same answer
       const byKey = new Map<string, { key: SleepKey; waiters: ((a: Answer) => void)[] }>()
       for (const q of batch) { const kk = keyOf(q.key); const e = byKey.get(kk); if (e) e.waiters.push(q.resolve); else byKey.set(kk, { key: q.key, waiters: [q.resolve] }) }
-      let data: Answers | null = null
       inflight++
       try {
         const index = PUBLISHED ? await staticAnswers() : null
-        if (!index) data = await post([...byKey.values()].map((e) => e.key))
-        answerAll(byKey, index, data)
+        if (index) answerAll(byKey, index, null)
+        else {
+          // the server takes at most ASKS_MAX a request: a bigger batch (a generation releasing hundreds of parked
+          // frames at once) goes in several, each answering its own waiters
+          const all = [...byKey]
+          for (let i = 0; i < all.length; i += ASKS_MAX) {
+            const part = new Map(all.slice(i, i + ASKS_MAX))
+            answerAll(part, null, await post([...part.values()].map((e) => e.key)))
+          }
+        }
       } finally { inflight-- }
     }, 40)
   })
@@ -303,6 +323,7 @@ export function wake(nodeKey: string, iframe: HTMLIFrameElement | null): void {
   compiling.delete(nodeKey)
   retried.delete(nodeKey)
   parked.delete(nodeKey)
+  genReleased.delete(nodeKey)
   const doc = iframe?.contentDocument
   if (doc) resumeSmil(doc)
   const st = doc?.getElementById(STYLE_ID)
@@ -352,49 +373,94 @@ function install(doc: Document, targets: Target[]): boolean {
   return true
 }
 
-/** The SVG time containers this sleep holds, per document, each with what its author last asked for. */
-const smilHeld = new WeakMap<Document, Map<SVGSVGElement, { paused: boolean }>>()
+/** The SVG time containers this sleep holds, per sleeping document. */
+const smilHeld = new WeakMap<Document, Set<SVGSVGElement>>()
 const SMIL = 'animate,animateTransform,animateMotion,set'
+const SVG_NS = 'http://www.w3.org/2000/svg'
 const SHADOWED = ['pauseAnimations', 'unpauseAnimations', 'animationsPaused'] as const
-/** SVG's own animations (SMIL: `<animate>`, `<animateTransform>`, ...) are no CSS animation: `animation-play-state` never
- *  reaches them, and one running in any document - a rotating gradient - repaints and commits the WHOLE page every
- *  frame. They pause with the CSS ones, by their time container (the outermost <svg>; every <svg> on the way is held
- *  too, whichever one an engine keys the timeline on). While asleep the timeline holds still whatever the author calls
- *  - as the CSS pause is !important: on each held <svg>, own `pauseAnimations`/`unpauseAnimations` only record what
- *  they ask, and `animationsPaused()` answers it (their code sees the state it asked for, as if awake). Wake removes
- *  the shadows and runs the timeline only if the author's last word is "running" - paused before the sleep and never
- *  unpaused, or paused during it, it stays paused. A paused timeline resumes where it stood: nothing jumps, a finished
- *  animation does not restart. Idempotent: a sleep installed again holds nothing twice. */
+/** The native timeline methods, taken once from the shell's own realm: a platform method works on an element of any
+ *  realm, so a hold is undone whatever document the element is in by then, with or without a window. */
+const NATIVE = typeof SVGSVGElement === 'function'
+  ? { pause: SVGSVGElement.prototype.pauseAnimations, unpause: SVGSVGElement.prototype.unpauseAnimations, paused: SVGSVGElement.prototype.animationsPaused }
+  : null
+/** A held <svg>: what its author last asked for, and the own properties it had under our shadows (restored at wake). */
+interface Hold { paused: boolean; saved: (readonly [string, PropertyDescriptor | undefined])[] }
+const holds = new WeakMap<SVGSVGElement, Hold>()
+/** The shadows, one of each for every held <svg>: they honour `this` - a call on an element not held (another <svg>,
+ *  or this one after its wake) goes to the native method. */
+const SHADOWS: Record<(typeof SHADOWED)[number], (this: SVGSVGElement) => unknown> = {
+  pauseAnimations() { const h = holds.get(this); if (h) h.paused = true; else NATIVE!.pause.call(this) },
+  unpauseAnimations() { const h = holds.get(this); if (h) h.paused = false; else NATIVE!.unpause.call(this) },
+  animationsPaused() { const h = holds.get(this); return h ? h.paused : NATIVE!.paused.call(this) },
+}
+/**
+ * SVG's own animations (SMIL: `<animate>`, `<animateTransform>`, ...) are no CSS animation: `animation-play-state` never
+ * reaches them, and one running in any document - a rotating gradient - repaints and commits the WHOLE page every
+ * frame. They pause with the CSS ones, by their time container (the outermost <svg>; every <svg> on the way is held
+ * too, whichever one an engine keys the timeline on). While asleep the timeline holds still whatever the author calls
+ * - as the CSS pause is !important: on each held <svg>, own `pauseAnimations`/`unpauseAnimations` only record what
+ * they ask, and `animationsPaused()` answers it (their code sees the state it asked for, as if awake). Wake restores
+ * the element's own properties as they were and runs the timeline only if the author's last word is "running" -
+ * paused before the sleep and never unpaused, or paused during it, it stays paused. A paused timeline resumes where it
+ * stood: nothing jumps, a finished animation does not restart.
+ *
+ * A hold is all or nothing: an <svg> whose own properties cannot be shadowed (an authored non-configurable one, a
+ * non-extensible element) is left unheld - it animates on, as before sleep paused SMIL at all - and sleep never fails
+ * for an SVG. Idempotent: a sleep installed again holds nothing twice.
+ *
+ * Accepted, not handled - each needs code written against the sleep itself; content that drives its SVG the ordinary
+ * way (declarative SMIL, or direct method calls on the element) behaves as without sleep:
+ *  - code that captured the native method before the sleep (a bound `svg.pauseAnimations`, or
+ *    `SVGSVGElement.prototype.pauseAnimations.call(svg)`) bypasses the record: its pause during a sleep is undone at wake;
+ *  - an <svg> adopted into another document while its own frame sleeps stays held until that frame wakes;
+ *  - Gecko's nested <svg> query differs while held: an inner svg's `animationsPaused()` answers its own recorded
+ *    intent, not its outer container's;
+ *  - an <svg> mounted after the frame fell asleep is not held (it animates).
+ */
+function hold(s: SVGSVGElement): boolean {
+  const saved = SHADOWED.map((k) => [k, Object.getOwnPropertyDescriptor(s, k)] as const)
+  if (saved.some(([, d]) => d && !d.configurable)) return false
+  const h: Hold = { paused: NATIVE!.paused.call(s), saved }
+  holds.set(s, h)
+  try {
+    for (const k of SHADOWED) Object.defineProperty(s, k, { configurable: true, writable: true, value: SHADOWS[k] })
+  } catch {
+    holds.delete(s)
+    unshadow(s, h)
+    return false
+  }
+  if (!h.paused) NATIVE!.pause.call(s)   // last: nothing above can leave it paused unrecorded
+  return true
+}
+/** The element's own properties back as they were before the hold. */
+function unshadow(s: SVGSVGElement, h: Hold): void {
+  for (const [k, d] of h.saved) {
+    try { if (d) Object.defineProperty(s, k, d); else delete (s as unknown as Record<string, unknown>)[k] } catch { /* as it is */ }
+  }
+}
 function pauseSmil(doc: Document): void {
-  const view = doc.defaultView as (Window & typeof globalThis) | null
-  const SVG = view?.SVGElement, proto = view?.SVGSVGElement?.prototype
-  if (!SVG || !proto || typeof proto.pauseAnimations !== 'function') return
+  if (!NATIVE) return
   const anims = doc.querySelectorAll(SMIL)
   if (!anims.length) return
   let held = smilHeld.get(doc)
   for (const a of anims) {
-    if (!(a instanceof SVG)) continue
+    if (a.namespaceURI !== SVG_NS) continue
     for (let s = (a as SVGElement).ownerSVGElement; s; s = s.ownerSVGElement) {
-      if (held?.has(s)) continue
-      const intent = { paused: proto.animationsPaused.call(s) }
-      if (!intent.paused) proto.pauseAnimations.call(s)
-      Object.defineProperties(s, {
-        pauseAnimations: { configurable: true, writable: true, value: () => { intent.paused = true } },
-        unpauseAnimations: { configurable: true, writable: true, value: () => { intent.paused = false } },
-        animationsPaused: { configurable: true, writable: true, value: () => intent.paused },
-      })
-      if (!held) smilHeld.set(doc, held = new Map())
-      held.set(s, intent)
+      if (holds.has(s) || !hold(s)) continue
+      if (!held) smilHeld.set(doc, held = new Set())
+      held.add(s)
     }
   }
 }
 function resumeSmil(doc: Document): void {
   const held = smilHeld.get(doc)
-  if (!held) return
+  if (!held || !NATIVE) return
   smilHeld.delete(doc)
-  const proto = (doc.defaultView as (Window & typeof globalThis) | null)?.SVGSVGElement?.prototype
-  for (const [s, intent] of held) {
-    for (const k of SHADOWED) delete (s as unknown as Record<string, unknown>)[k]
-    if (!intent.paused && proto) proto.unpauseAnimations.call(s)
+  for (const s of held) {
+    const h = holds.get(s)
+    if (!h) continue
+    holds.delete(s)
+    unshadow(s, h)
+    if (!h.paused) NATIVE.unpause.call(s)
   }
 }
