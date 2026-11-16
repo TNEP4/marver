@@ -114,13 +114,18 @@ describe('admission', () => {
     expect(started).toEqual(['a', 'b'])
     unwire()
   })
-  it('under the line a look (the camera at rest, a resize, the page shown) changes nothing: the first pick still waits for the view', async () => {
-    ask('a', 1)
-    await vi.advanceTimersByTimeAsync(100)
-    reconsider(); await vi.advanceTimersByTimeAsync(0)
-    expect(started).toEqual([])          // still settling: the parent's first pick waits SETTLE (or an aim)
-    await settle()
-    expect(started).toEqual(['a'])
+  it('under the line a look (the camera at rest, a resize, the page shown) does nothing: no pump, no memory read', async () => {
+    let reads = 0
+    Object.defineProperty(performance, 'memory', { configurable: true, get: () => { reads++; return { usedJSHeapSize: 0.1 * 4096 * 1048576 + reads, jsHeapSizeLimit: 4096 * 1048576 } } })
+    try {
+      for (const [k, r] of [['a', 1], ['b', 2]] as const) ask(k, r)
+      await settle()
+      expect(started).toEqual(['a'])     // the head start: one slot, taken; 'b' waits
+      const before = reads
+      reconsider(); await vi.advanceTimersByTimeAsync(0)
+      expect(reads).toBe(before)         // no pump ran: the parent's queue, untouched
+      expect(started).toEqual(['a'])
+    } finally { delete (performance as { memory?: unknown }).memory }
   })
   describe('the heap past its safe line (performance.memory)', () => {
     // Chromium's sample, shared by every reader of the page (blink memory_info.cc): refreshed on a read at most every 50 ms
@@ -290,22 +295,29 @@ describe('admission', () => {
     it('readable: past the line a frame boots on screen or near it, by its larger side, no smaller than image-LOD\'s first bucket', () => {
       const rect = (x: number, y: number, w: number, h: number) => ({ left: x, top: y, right: x + w, bottom: y + h, width: w, height: h })
       const c = rect(0, 0, 1600, 1000)
-      const big = 1440   // a desktop frame's larger side, world px
+      const big = { width: 1440, height: 900 }   // a desktop frame, world px
       expect(readable(rect(100, 100, 200, 120), c, 2, big)).toBe(true)      // 400 device px, in view
       expect(readable(rect(100, 100, 100, 60), c, 2, big)).toBe(false)      // 200 device px: a thumbnail
       expect(readable(rect(100, 100, 100, 60), c, 3, big)).toBe(false)      // the ratio counts up to 2, as image-LOD's does
       expect(readable(rect(1900, 100, 400, 240), c, 1, big)).toBe(true)     // half a screen off, readable
       expect(readable(rect(2500, 100, 400, 240), c, 1, big)).toBe(false)    // further
-      expect(readable(rect(100, 100, 70, 280), c, 1, 800)).toBe(true)       // tall and narrow: read by its height
+      expect(readable(rect(100, 100, 70, 280), c, 1, { width: 200, height: 800 })).toBe(true)   // tall and narrow: read by its height
     })
     it('readable: a frame too small ever to reach the bucket boots at the closest the ordinary camera goes (Codex r3)', () => {
       const rect = (x: number, y: number, w: number, h: number) => ({ left: x, top: y, right: x + w, bottom: y + h, width: w, height: h })
       const c = rect(0, 0, 1600, 1000)
       // a 24 px frame: 96 device px at 2x zoom on a 2x display, the most it can be
-      expect(readable(rect(100, 100, 48, 48), c, 2, 24)).toBe(true)
-      expect(readable(rect(100, 100, 24, 24), c, 2, 24)).toBe(false)        // at 1x it is a thumbnail of itself: come closer
+      expect(readable(rect(100, 100, 48, 48), c, 2, { width: 24, height: 24 })).toBe(true)
+      expect(readable(rect(100, 100, 24, 24), c, 2, { width: 24, height: 24 })).toBe(false)        // at 1x it is a thumbnail of itself: come closer
       // a frame at the UI's 120 px minimum on a 1x display: 240 px at 2x zoom
-      expect(readable(rect(100, 100, 240, 240), c, 1, 120)).toBe(true)
+      expect(readable(rect(100, 100, 240, 240), c, 1, { width: 120, height: 120 })).toBe(true)
+    })
+    it('readable: a strip is read by both sides (Codex r4) - 24x6000 world px at 5% is a line, not a frame; at 2x it is', () => {
+      const rect = (x: number, y: number, w: number, h: number) => ({ left: x, top: y, right: x + w, bottom: y + h, width: w, height: h })
+      const c = rect(0, 0, 1600, 1000)
+      const strip = { width: 24, height: 6000 }
+      expect(readable(rect(100, 100, 1.2, 300), c, 1, strip)).toBe(false)   // 1.2 x 300 px: 733 of them fit the screen
+      expect(readable(rect(100, 100, 48, 12000), c, 2, strip)).toBe(true)   // at the ordinary camera's closest it boots
     })
   })
 

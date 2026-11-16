@@ -16,6 +16,9 @@
  * (canvasCtl.landing) - it need not wait out the fit's ~320 ms flight. With no aim it waits SETTLE, as
  * long as that flight. A freed slot pumps on the next microtask, ranking again by the view of that moment.
  *
+ * The gate is no absolute ceiling: a board with hundreds of frames all readable in view at once still boots them, as on
+ * the parent - it holds back only what the person cannot be looking at.
+ *
  * Under the heap's line, with or without a gesture, admission is the parent's exactly: a person's pan or zoom stops
  * nothing (holding boots through a gesture was measured and set aside as a candidate for the owner - it trades frames
  * in view arriving about half the pan's length later for a smoother pan: perf/loop/candidates/i10-gesture-hold).
@@ -74,14 +77,20 @@ const collected = typeof FinalizationRegistry === 'function'
   ? new FinalizationRegistry<number>((e) => { if (e !== epoch) return; watching = false; if (gated && waiting.size) schedule(0) })
   : null
 
+/** A readable frame's smaller side on screen, device px: 16 CSS px at a 2x display - about one line of text; a strip
+ *  thinner than that shows nothing to read whatever its length. */
+const STRIP_MIN_PX = 32
 /** Past the heap's line, may a frame boot? Its iframe on screen where the camera lands (r), against the canvas (c): in
- *  view or within half a screen of it (updates.ts's margin), and large enough to be read - its larger side at least
- *  image-LOD's smallest decode width (LOD_MIN_PX device px), or, for a frame too small ever to get there, as large as the
- *  ordinary camera can make it (its larger side in world px, `side`, at ZOOM_MAX): every frame stays reachable by moving
- *  the camera to it. A thumbnail on a zoomed-out board waits until the camera comes closer. */
-export function readable(r: Box, c: Box, dpr: number, side: number): boolean {
+ *  view or within half a screen of it (updates.ts's margin), and large enough to be read on both sides - the larger at
+ *  least image-LOD's smallest decode width (LOD_MIN_PX device px), the smaller at least STRIP_MIN_PX - each bar capped at
+ *  what the ordinary camera can make of that side (its world size, `world`, at ZOOM_MAX), so every frame stays reachable
+ *  by moving the camera to it. A thumbnail on a zoomed-out board waits until the camera comes closer. */
+export function readable(r: Box, c: Box, dpr: number, world: { width: number; height: number }): boolean {
   const k = Math.min(dpr || 1, 2), mx = c.width / 2, my = c.height / 2
-  return Math.max(r.width, r.height) * k >= Math.min(LOD_MIN_PX, side * ZOOM_MAX * k) - 0.5
+  const big = Math.max(r.width, r.height) * k, small = Math.min(r.width, r.height) * k
+  const reach = (side: number) => side * ZOOM_MAX * k - 0.5
+  return big >= Math.min(LOD_MIN_PX - 0.5, reach(Math.max(world.width, world.height)))
+    && small >= Math.min(STRIP_MIN_PX - 0.5, reach(Math.min(world.width, world.height)))
     && r.right > c.left - mx && r.left < c.right + mx && r.bottom > c.top - my && r.top < c.bottom + my
 }
 type Box = { left: number; right: number; top: number; bottom: number; width: number; height: number }

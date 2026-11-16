@@ -154,7 +154,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
       if (useStore.getState().selection.includes(node.key)) return true
       const now = iframeRef.current?.getBoundingClientRect(), c = canvasRect(), s = canvasCtl.transform()?.s
       if (!now || !c || !s) return true
-      return readable(canvasCtl.landing(now), c, devicePixelRatio, Math.max(now.width, now.height) / s)
+      return readable(canvasCtl.landing(now), c, devicePixelRatio, { width: now.width / s, height: now.height / s })
     }
     const start = () => {
       const s = useStore.getState(), n = s.nodes.find((x) => x.key === node.key), f = n && s.frameFor(n)
