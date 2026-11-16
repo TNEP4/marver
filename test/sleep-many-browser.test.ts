@@ -10,7 +10,9 @@ import { Browser } from './browser.ts'
  * answers itself (CDP Fetch): every ask gets the kept "looping animation" refusal under a generation the test picks,
  * and a request of more than 200 asks gets the server's own 400.
  *  - a generation releasing 201 parked frames at once asks in requests of at most 200, and every frame is answered;
- *  - two servers answering alternating generations cost no more than the old 4 s retry;
+ *  - a node released for a generation asks again no sooner and no later than 4 s after its previous ask, so two servers
+ *    answering alternating generations cost what the old 4 s retry did;
+ *  - frames that left while a request was out are not asked about in the next one; the backstop sends each key once;
  *  - answers whose generation is lower than one heard before are asked about once, not in a loop.
  * Everything is read over the wire (the requests' sizes and count), so the parent commits are measured the same way.
  */
@@ -20,6 +22,9 @@ const CLI = join(import.meta.dirname, '..', 'dist', 'cli.mjs')
 const ORIGIN = `http://localhost:${PORT}`
 const LOOPING = 'a looping animation - the frame rests paused, uncompiled'
 const MANY = 201
+/** Nodes sharing a key with another (its width): 211 nodes, 201 keys. Their twins sit near the board's middle (they
+ *  park early), the duplicates at its far end (they park last). */
+const DUPS = 10, TWIN = 105
 
 let root = ''
 let server: ChildProcess | null = null
@@ -29,6 +34,10 @@ let tab = ''
 let fakeGen: number | (() => number) = 9000
 /** Called with each request's keys before it is answered (a test's server picks its generation by them). */
 let gate: ((keys: string[]) => void) | null = null
+/** A request this test's server holds unanswered while `holdWhen` says so; `answerHeld()` answers it. */
+let holdWhen: ((keys: string[]) => boolean) | null = null
+let held: (() => void) | null = null
+const answerHeld = () => { const h = held; held = null; h?.() }
 /** Every bake POST the page sent: when, how many asks, which keys. */
 const posts: { t: number; n: number; keys: string[] }[] = []
 
@@ -64,9 +73,9 @@ beforeAll(async () => {
   const boards = join(root, 'design', 'boards')
   mkdirSync(boards, { recursive: true })
   writeFileSync(join(boards, 'one.json'), board('one', 0, [{ key: 'z1', w: 400 }]))
-  writeFileSync(join(boards, 'two.json'), board('two', 1, [{ key: 'x1', w: 400 }]))
-  // 201 frames, each its own sleep key (its own width)
-  writeFileSync(join(boards, 'many.json'), board('many', 2, Array.from({ length: MANY }, (_, i) => ({ key: `m${i}`, w: 300 + i }))))
+  writeFileSync(join(boards, 'two.json'), board('two', 1, [{ key: 'x1', w: 410 }, { key: 'y1', w: 420 }]))
+  // 201 keys (each frame its width, 600 and up) on 211 nodes: 10 duplicates
+  writeFileSync(join(boards, 'many.json'), board('many', 2, [...Array.from({ length: MANY }, (_, i) => ({ key: `m${i}`, w: 600 + i })), ...Array.from({ length: DUPS }, (_, j) => ({ key: `d${j}`, w: 600 + TWIN + j }))]))
   server = spawn(process.execPath, [CLI, 'dev', '--root', root, '--port', String(PORT)], { cwd: root, stdio: 'pipe', env: { ...process.env, BROWSER: 'none', CI: '1' } })
   const t0 = Date.now()
   while (Date.now() - t0 < 60_000) {
@@ -84,11 +93,13 @@ beforeAll(async () => {
       const raw = rq.postData ?? (rq.postDataEntries ?? []).map((e: { bytes?: string }) => Buffer.from(e.bytes ?? '', 'base64').toString('utf8')).join('')
       let asks: { frame: string; theme: string; w: number; h: number; doc?: string }[] = []
       try { asks = JSON.parse(raw).asks ?? [] } catch { /* none */ }
-      posts.push({ t: Date.now(), n: asks.length, keys: asks.map((a) => `${a.frame}|${a.w}`) })
-      gate?.(asks.map((a) => `${a.frame}|${a.w}`))
+      const keys = asks.map((a) => `${a.frame}|${a.w}`)
+      posts.push({ t: Date.now(), n: asks.length, keys })
+      gate?.(keys)
       const refuse = !asks.length || asks.length > 200
       const body = refuse ? { error: 'asks must list 1-200 frames' } : { gen: typeof fakeGen === 'function' ? fakeGen() : fakeGen, answers: asks.map((a) => ({ ...a, ok: false, error: LOOPING, kept: true })) }
-      void browser!.send('Fetch.fulfillRequest', { requestId: m.params.requestId, responseCode: refuse ? 400 : 200, responseHeaders: [{ name: 'content-type', value: 'application/json' }], body: Buffer.from(JSON.stringify(body)).toString('base64') }, tab).catch(() => {})
+      const answer = () => void browser!.send('Fetch.fulfillRequest', { requestId: m.params.requestId, responseCode: refuse ? 400 : 200, responseHeaders: [{ name: 'content-type', value: 'application/json' }], body: Buffer.from(JSON.stringify(body)).toString('base64') }, tab).catch(() => {})
+      if (holdWhen?.(keys)) { holdWhen = null; held = answer } else answer()
     })
     await browser.send('Fetch.enable', { patterns: [{ urlPattern: '*/__mv/api/bakes*', requestStage: 'Request' }] }, tab)
   }
@@ -104,6 +115,12 @@ const skippable = (name: string, fn: () => Promise<void>, ms = 240_000) =>
   it(name, async (ctx) => { if (!browser) return ctx.skip(); await fn() }, ms)
 
 const ST = `window.__mvStore.getState()`
+const SLEEP = `window.__mvSleep`
+const IDLE = `(() => { const w = ${SLEEP}.bakeWork(); return !w.scheduled && !w.running && !w.queued && !w.inflight })()`
+const ALL_PARKED = `${ST}.nodes.every((n) => !!${SLEEP}.parkedOn(n.key))`
+const backstopEvery = (ms: number) => ev(`(${SLEEP}.backstopEvery(${ms}), 1)`)
+/** A key of the 211-node board (width 600 and up). */
+const manyKey = (k: string) => Number(k.split('|')[1]) >= 600
 const ev = (expr: string) => browser!.eval(tab, expr)
 const until = (expr: string, ms = 60_000) => browser!.until(tab, expr, ms)
 /** Every frame of the board asleep (its pause installed). */
@@ -141,41 +158,99 @@ describe('parked bake answers at scale and under odd servers', () => {
     expect(posts.length - first, 'asks in the 8 s after the lower answer').toBeLessThanOrEqual(2)
   })
 
-  skippable('two servers answering alternating generations cost no more than the old 4 s retry', async () => {
+  skippable('a node released for a generation asks again no sooner than 4 s and no later than 4 s after its previous ask', async () => {
+    fakeGen = 9000
+    await go('one', 1)
+    await backstopEvery(600000)
+    await until(`${ALL_PARKED} && ${IDLE}`, 30_000)
+    await wait(4500)   // a long rest: the first release asks at once
+    let from = posts.length
+    await ev(`(${SLEEP}.pushed(9001), 1)`)
+    for (let i = 0; i < 100 && posts.length === from; i++) await wait(50)
+    const t1 = posts[from].t
+    await until(`${ALL_PARKED}`, 10_000)
+    await wait(Math.max(0, t1 + 2000 - Date.now()))
+    from = posts.length
+    await ev(`(${SLEEP}.pushed(9002), 1)`)   // invalidated again 2 s after its ask
+    for (let i = 0; i < 200 && posts.length === from; i++) await wait(50)
+    const t2 = posts[from]?.t ?? Infinity
+    expect(t2 - t1, 'second ask after the first, ms').toBeGreaterThanOrEqual(3700)   // never more often than once per 4 s
+    expect(t2 - t1, 'second ask after the first, ms').toBeLessThanOrEqual(4400)      // never later than 4 s after it
+  })
+
+  skippable('two servers answering alternating generations: each frame asks at most once per 4 s, over a minute', async () => {
     fakeGen = 7001
-    writeFileSync(join(root, 'design', 'boards', 'two.json'), board('two', 1, [{ key: 'x1', w: 400 }, { key: 'y1', w: 420 }]))
     await go('two', 2)
-    expect(await quiet(3000, 30_000)).toBe(true)
+    await backstopEvery(600000)
+    await until(`${ALL_PARKED} && ${IDLE}`, 30_000)
     // two servers behind one address: a request for x1 reaches the one at 7001, any other the one at 7002
     let req: string[] = []
-    fakeGen = () => (req.includes('app/glass|400') ? 7001 : 7002)
+    fakeGen = () => (req.includes('app/glass|410') ? 7001 : 7002)
     gate = (keys) => { req = keys }
-    // y1 alone asks again (a reload: a new document) and hears 7002 - x1, parked on 7001, then asks alone and hears
-    // 7001, which releases y1 again, and so on: each answer releases the other frame
+    // y1 alone asks again (a reload: a new document) and hears 7002 - x1, parked on 7001, then asks and hears 7001,
+    // which releases y1 again, and so on: each answer releases the other frame
     const from = posts.length
     await ev(`(() => { ${ST}.reloadFrame('y1'); const f = [...document.querySelectorAll('iframe.sh-live')].find((x) => x.closest('[data-node="y1"]')); f.src = f.src; return 1 })()`)
     for (let i = 0; i < 200 && posts.length === from; i++) await wait(100)
     const first = posts.length
-    await wait(12_000)
-    const n = posts.length - first
-    // the old retry: each of the two frames every 4 s - 6 asks in 12 s; unbounded, one every ~290 ms
-    expect(n, `asks in 12 s: ${JSON.stringify(posts.slice(first).map((p) => p.keys))}`).toBeLessThanOrEqual(10)
-    expect(posts.slice(first).length, 'the loop did start (the frames do hear each other)').toBeGreaterThanOrEqual(2)
+    await wait(60_000)
+    const win = posts.slice(first)
+    const x = win.filter((p) => p.keys.includes('app/glass|410')).length, y = win.filter((p) => p.keys.includes('app/glass|420')).length
+    // the old retry: each frame once per 4 s - 15 in a minute (16 counting both ends)
+    expect(x, 'x1 asks in 60 s').toBeLessThanOrEqual(16)
+    expect(y, 'y1 asks in 60 s').toBeLessThanOrEqual(16)
+    expect(x + y, 'the frames do keep hearing each other').toBeGreaterThanOrEqual(16)
     gate = null
   })
 
-  skippable('a generation releasing 201 parked frames asks in requests of at most 200, and every frame is answered', async () => {
+  skippable('the backstop asks each key once in a look, whatever the chunk', async () => {
     fakeGen = 5000
-    await go('many', MANY)
-    expect(await quiet(5000, 120_000), 'the board at rest').toBe(true)
+    await go('many', MANY + DUPS)
+    await until(`${ALL_PARKED} && ${IDLE}`, 120_000)
     const from = posts.length
-    // a source change: the dev server pushes another generation, and all 201 frames ask again together
+    await backstopEvery(500)
+    for (let i = 0; i < 200 && posts.slice(from).reduce((n, p) => n + p.n, 0) < MANY; i++) await wait(100)
+    await backstopEvery(600000)
+    const look: string[] = []
+    for (const p of posts.slice(from)) { look.push(...p.keys); if (new Set(look).size >= MANY) break }
+    expect(new Set(look).size).toBe(MANY)
+    expect(look.length, 'keys sent in one look').toBe(MANY)
+  })
+
+  skippable('a generation releasing 211 parked frames (201 keys) asks in requests of at most 200, and every frame is answered', async () => {
+    fakeGen = 5000
+    await go('many', MANY + DUPS)
+    await until(`${ALL_PARKED} && ${IDLE}`, 120_000)
+    const from = posts.length
+    // a source change: the dev server pushes another generation, and every frame asks again together
     writeFileSync(join(root, 'design', 'touch.txt'), String(Date.now()))
     for (let i = 0; i < 100 && posts.length === from; i++) await wait(100)
-    const settled = await quiet(6000, 45_000)
+    await until(`${ALL_PARKED} && ${IDLE}`, 45_000).catch(() => {})
     const after = posts.slice(from)
     expect(Math.max(...after.map((p) => p.n)), 'the largest request').toBeLessThanOrEqual(200)
-    expect(new Set(after.flatMap((p) => p.keys)).size, 'every frame asked').toBe(MANY)
-    expect(settled, 'and then rested (each one answered)').toBe(true)
+    expect(new Set(after.flatMap((p) => p.keys)).size, 'every key asked').toBe(MANY)
+    // every waiter answered: each of the 211 frames is parked again on an answer, and nothing is left to do
+    expect(await ev(`${ST}.nodes.filter((n) => !${SLEEP}.parkedOn(n.key)).map((n) => n.key)`), 'frames left unanswered').toEqual([])
+    expect(await ev(IDLE)).toBe(true)
+  })
+
+  skippable('frames that left while the first of several requests was out are not asked about in the next', async () => {
+    fakeGen = 5000
+    await go('many', MANY + DUPS)
+    await until(`${ALL_PARKED} && ${IDLE}`, 120_000)
+    await wait(4500)   // a rest longer than the re-ask floor: every frame is released at once, in one batch of 201 keys
+    holdWhen = (keys) => keys.length === 200   // its first chunk, held unanswered
+    const from = posts.length
+    writeFileSync(join(root, 'design', 'touch.txt'), String(Date.now()))
+    for (let i = 0; i < 200 && !held; i++) await wait(100)
+    expect(held, 'the first request is out').not.toBe(null)
+    const heldAt = posts.length
+    // every frame leaves (another board), then the held request is answered
+    await browser!.go(tab, `${ORIGIN}/#/b/one`)
+    await until(`location.hash === '#/b/one' && ${ST}.nodes.length === 1`, 30_000)
+    answerHeld()
+    await wait(3000)
+    expect(posts.slice(from, heldAt).some((p) => p.n === 200)).toBe(true)
+    expect(posts.slice(heldAt).filter((p) => p.keys.some(manyKey)).map((p) => p.n), 'requests for frames that left').toEqual([])
   })
 })

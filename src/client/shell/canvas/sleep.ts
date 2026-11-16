@@ -113,19 +113,16 @@ const parked = new Map<string, Parked>()
 const sigOf = (a: Answer): string => (a.ok ? `ok:${a.targets.some((t) => t.verified && t.texture) ? 1 : 0}` : `${a.kept ? 'kept' : 'no'}:${a.error}`)
 /** Pushes heard, and the last one's generation: an ask a push overtook asks once more. */
 let pushes = 0, pushGen: number | undefined
-/** When each node was last released for a generation it heard of: a second such release within RETRY_MS waits
- *  RETRY_MS - two servers alternating their generations cost no more than the old 4 s retry did. */
-const genReleased = new Map<string, number>()
+/** When each node last asked (its bake POST went out). A node released for a generation it heard of asks again at
+ *  max(now + 250 ms, its last ask + RETRY_MS): never more than once per 4 s and never later than 4 s after its
+ *  previous ask - the old retry's own cadence, at worst - and at once after a long rest. */
+const lastAsk = new Map<string, number>()
 function release(nodeKey: string, forGen = false): void {
   const p = parked.get(nodeKey)
   if (!p) return
   parked.delete(nodeKey)
   let ms = 250   // every node released in the same moment shares one batch
-  if (forGen) {
-    const now = Date.now(), was = genReleased.get(nodeKey)
-    if (was !== undefined && now - was < RETRY_MS) ms = RETRY_MS
-    genReleased.set(nodeKey, now)
-  }
+  if (forGen) { const was = lastAsk.get(nodeKey); if (was !== undefined) ms = Math.max(ms, was + RETRY_MS - Date.now()) }
   scheduleSleep(p.retry, ms)
 }
 /** A generation heard of: every node parked under a DIFFERENT one asks again. `undefined`: perhaps a new server - all do. */
@@ -149,16 +146,18 @@ function backstopSoon(): void {
 }
 /** The backstop: what would the server answer every parked node now? Over HTTP, no document touched. */
 async function lookAgain(): Promise<void> {
-  const all = [...parked]
+  // each key once in the whole look, whatever the chunk: the nodes parked on it ride with it
+  const byKey = new Map<string, { key: SleepKey; nodes: [string, Parked][] }>()
+  for (const [nodeKey, p] of parked) { const k = keyOf(p.key), e = byKey.get(k); if (e) e.nodes.push([nodeKey, p]); else byKey.set(k, { key: p.key, nodes: [[nodeKey, p]] }) }
+  const all = [...byKey.values()]
   for (let i = 0; i < all.length; i += ASKS_MAX) {
     // only nodes still parked on this very answer (a board switch during an earlier chunk sends nothing for them)
-    const part = all.slice(i, i + ASKS_MAX).filter(([nodeKey, p]) => parked.get(nodeKey) === p)
-    if (!part.length) continue
-    const keys = new Map<string, SleepKey>()
-    for (const [, p] of part) keys.set(keyOf(p.key), p.key)
+    const chunk = all.slice(i, i + ASKS_MAX).map((e) => ({ key: e.key, nodes: e.nodes.filter(([nodeKey, p]) => parked.get(nodeKey) === p) })).filter((e) => e.nodes.length)
+    if (!chunk.length) continue
+    const part = chunk.flatMap((e) => e.nodes)
     inflight++
     try {
-      const data = await post([...keys.values()])
+      const data = await post(chunk.map((e) => e.key))
       if (!data) continue   // no answer (the server is away): nothing learned, the next look asks again
       const gen = typeof data.gen === 'number' ? data.gen : undefined
       if (gen !== undefined) heard(gen)
@@ -201,27 +200,40 @@ const staticAnswers = () => (published ??= (BAKES ? fetch(`${ROUTE}/bakes/${BAKE
   .then((j: { gen?: number; answers?: Record<string, Answer> }) => (j.gen === BAKES && j.answers) || {}).catch((): Record<string, Answer> => ({})))
 
 // ---- one batch per tick: every frame that decides to sleep in the same moment shares a browser
-const queue: { key: SleepKey; resolve: (a: Answer) => void }[] = []
+/** A waiter: the node asking, its answer, and whether it still wants one (its sleep's `current()`). */
+interface Waiter { node: string; resolve: (a: Answer) => void; live: () => boolean }
+const queue: { key: SleepKey; w: Waiter }[] = []
 let flush: ReturnType<typeof setTimeout> | undefined
-function ask(key: SleepKey): Promise<Answer> {
+function ask(key: SleepKey, node: string, live: () => boolean): Promise<Answer> {
   return new Promise((resolve) => {
-    queue.push({ key, resolve })
+    queue.push({ key, w: { node, resolve, live } })
     clearTimeout(flush)
     flush = setTimeout(async () => {
       const batch = queue.splice(0)
       // one ask per key; every waiter for that key gets the same answer
-      const byKey = new Map<string, { key: SleepKey; waiters: ((a: Answer) => void)[] }>()
-      for (const q of batch) { const kk = keyOf(q.key); const e = byKey.get(kk); if (e) e.waiters.push(q.resolve); else byKey.set(kk, { key: q.key, waiters: [q.resolve] }) }
+      const byKey = new Map<string, { key: SleepKey; waiters: Waiter[] }>()
+      for (const q of batch) { const kk = keyOf(q.key); const e = byKey.get(kk); if (e) e.waiters.push(q.w); else byKey.set(kk, { key: q.key, waiters: [q.w] }) }
       inflight++
       try {
         const index = PUBLISHED ? await staticAnswers() : null
         if (index) answerAll(byKey, index, null)
         else {
           // the server takes at most ASKS_MAX a request: a bigger batch (a generation releasing hundreds of parked
-          // frames at once) goes in several, each answering its own waiters
-          const all = [...byKey]
-          for (let i = 0; i < all.length; i += ASKS_MAX) {
-            const part = new Map(all.slice(i, i + ASKS_MAX))
+          // frames at once) goes in several, each answering its own waiters - and before each, a waiter that no longer
+          // wants its answer (woken, its board left) is answered "no answer" and a key with none left is not sent
+          const all = [...byKey.values()]
+          let i = 0
+          while (i < all.length) {
+            const part = new Map<string, { key: SleepKey; waiters: Waiter[] }>()
+            for (; i < all.length && part.size < ASKS_MAX; i++) {
+              const e = all[i]
+              const live = e.waiters.filter((w) => w.live())
+              for (const w of e.waiters) if (!live.includes(w)) w.resolve({ ok: false, error: 'no answer' })
+              if (live.length) part.set(keyOf(e.key), { key: e.key, waiters: live })
+            }
+            if (!part.size) break
+            const now = Date.now()
+            for (const e of part.values()) for (const w of e.waiters) lastAsk.set(w.node, now)
             answerAll(part, null, await post([...part.values()].map((e) => e.key)))
           }
         }
@@ -243,12 +255,12 @@ async function post(keys: SleepKey[]): Promise<Answers | null> {
 const toAnswer = (a: (Answer & SleepKey) | Answer | undefined, gen: number | undefined): Answer =>
   a ? (a.ok ? { ok: true, targets: a.targets, gen } : { ok: false, error: a.error, ...(a.kept === true ? { kept: true } : {}), gen }) : { ok: false, error: 'no answer' }
 /** Every waiter of a batch, its key's answer - before the POST stops counting, so the page is never idle between. */
-function answerAll(byKey: Map<string, { key: SleepKey; waiters: ((a: Answer) => void)[] }>, index: Record<string, Answer> | null, data: Answers | null): void {
+function answerAll(byKey: Map<string, { key: SleepKey; waiters: Waiter[] }>, index: Record<string, Answer> | null, data: Answers | null): void {
   const gen = typeof data?.gen === 'number' ? data.gen : undefined
   if (gen !== undefined) heard(gen)
   for (const e of byKey.values()) {
     const answer = toAnswer(index ? index[keyOf(e.key)] : data?.answers?.find((x) => keyOf(x) === keyOf(e.key)), gen)
-    for (const w of e.waiters) w(answer)
+    for (const w of e.waiters) w.resolve(answer)
   }
 }
 
@@ -280,7 +292,7 @@ async function sleepNow(nodeKey: string, iframe: HTMLIFrameElement, key: SleepKe
     return 'asleep'
   }
   const pushesAtAsk = pushes
-  const answer = await ask(key)
+  const answer = await ask(key, nodeKey, current)
   if (!current()) return 'live'
   // still compiling (issue #23): the server answered in seconds and carries on by itself. The frame
   // stays LIVE meanwhile - pausing now would freeze a finite animation midway, under a texture of its
@@ -323,7 +335,7 @@ export function wake(nodeKey: string, iframe: HTMLIFrameElement | null): void {
   compiling.delete(nodeKey)
   retried.delete(nodeKey)
   parked.delete(nodeKey)
-  genReleased.delete(nodeKey)
+  lastAsk.delete(nodeKey)
   const doc = iframe?.contentDocument
   if (doc) resumeSmil(doc)
   const st = doc?.getElementById(STYLE_ID)
@@ -412,7 +424,12 @@ const SHADOWS: Record<(typeof SHADOWED)[number], (this: SVGSVGElement) => unknow
  * way (declarative SMIL, or direct method calls on the element) behaves as without sleep:
  *  - code that captured the native method before the sleep (a bound `svg.pauseAnimations`, or
  *    `SVGSVGElement.prototype.pauseAnimations.call(svg)`) bypasses the record: its pause during a sleep is undone at wake;
- *  - an <svg> adopted into another document while its own frame sleeps stays held until that frame wakes;
+ *  - an <svg> on which the author installed their OWN pauseAnimations/unpauseAnimations/animationsPaused (a wrapper or
+ *    accessor with side effects - a player updating its controls): while the frame sleeps a call records the intent
+ *    but does not run the author's wrapper; the wrapper is back at wake;
+ *  - an <svg> adopted into another document while its own frame sleeps stays held until that frame wakes - and after
+ *    the frame's document is replaced, wake() works on the new document and does not resume a hold left on the old
+ *    one (the old document is gone from the frame);
  *  - Gecko's nested <svg> query differs while held: an inner svg's `animationsPaused()` answers its own recorded
  *    intent, not its outer container's;
  *  - an <svg> mounted after the frame fell asleep is not held (it animates).
