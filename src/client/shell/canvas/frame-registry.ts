@@ -33,11 +33,6 @@ export function bootOf(iframe: HTMLIFrameElement | undefined): string | undefine
   } catch { return undefined }
 }
 
-/** A theme ack (`boot`) still answers for the node's iframe: the node shows this iframe, and its committed document is
- *  the one that sent it - asked when the store's batch lands (store.ts setThemeOn). */
-export const documentLive = (key: string, iframe: HTMLIFrameElement, boot: unknown): boolean =>
-  typeof boot === 'string' && boot !== '' && boot === bootOf(iframe) && iframeOf(key) === iframe
-
 /** A frame's message comes from the document its iframe shows now: the URL revision the shell gave that document
  *  (`gen`, against the iframe's src) and the document's own id (`boot`, against the live one). A WindowProxy survives
  *  navigation, and a same-URL reload keeps `gen`, so only both tell the document there now from one since replaced

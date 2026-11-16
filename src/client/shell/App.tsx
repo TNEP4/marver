@@ -17,7 +17,7 @@ import { PKG, ROUTE } from '../const.ts'
 import { api, resumed, scoped, useLink } from './api.ts'
 import { animateLayout, Canvas, canvasCtl } from './canvas/Canvas.tsx'
 import { bootCancelled } from './canvas/ctl.ts'
-import { documentLive, frameByWindow, fromLiveDocument } from './canvas/frame-registry.ts'
+import { frameByWindow, fromLiveDocument } from './canvas/frame-registry.ts'
 import { recorder } from './recorder.ts'
 import { perfSeams } from './recorder-seams.ts'
 import { takeNavToken } from './recorder-reloads.ts'
@@ -757,8 +757,7 @@ export function App() {
       } else if (data.type === 'sh:exit-interact') {
         if (s.interact === nodeKey) { cmd('interact-off', { via: 'key', in: 'frame', keys: 'Escape' }); setInteract(null) }
       } else if (data.type === 'sh:theme-applied') {
-        // the ack is its document's: applied only if that document is still the node's when the batch lands
-        if (typeof data.theme === 'string') s.setThemeOn(nodeKey, data.theme, () => documentLive(nodeKey, el, data.boot))
+        if (typeof data.theme === 'string') s.setThemeOn(nodeKey, data.theme)
       } else if (data.type === 'sh:hmr') {
         s.bumpRev(nodeKey)
       } else if (data.type === 'sh:measure') {
