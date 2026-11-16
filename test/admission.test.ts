@@ -189,14 +189,14 @@ describe('admission', () => {
       release('in'); await vi.advanceTimersByTimeAsync(TICK_MS * 4)
       expect(started).toEqual(['in', 'far1', 'far2'])
     })
-    it('a spike past the line, then a reading under the reopen line with no event at all: the tick reopens it', async () => {
+    it('a board that only spikes past the line while it loads and settles under the reopen line finishes on its own: no event at all, the tick reopens it', async () => {
       await board(['a', 'b'], past)
       expect(started).toEqual(['in'])
       heap(under)                            // collected: nobody says so
       await vi.advanceTimersByTimeAsync(TICK_MS)
       expect(started).toEqual(['in', 'a', 'b'])
     })
-    it('a spike, then a plateau between the lines: the far frames wait (the band that changes), and go once it falls under', async () => {
+    it('a spike, then a plateau between the lines: the board stays parked - its far frames wait for the camera (the band that changes) - and go if it ever falls under', async () => {
       await board(['a', 'b'], past)
       heap(between)
       await vi.advanceTimersByTimeAsync(TICK_MS * 5)

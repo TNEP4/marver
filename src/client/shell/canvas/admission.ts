@@ -44,22 +44,22 @@ let holdCap: ReturnType<typeof setTimeout> | undefined
 export const HOLD_MS = 5000
 
 /**
- * The heap gate's lines, fractions of the browser's own limit (jsHeapSizeLimit). Measured in headless Chrome (limit
- * 4,192 MB): a 733-frame board killed the renderer at 97% of it, its boots halving their pace past ~93%; a page that only
- * allocates died at 87% - the earliest death, the one the margin is kept from. With the gate at 0.80/0.78 the parked
- * board came to rest at 83%: the boots in flight when a collection reopens it overshoot by ~3 points. Near frames booted
- * after it (in view or half a screen off, 2-9 per approach) took up to ~5 points more. So it shuts at 0.79: 3 + 5 under
- * 87. It reopens under 0.77: wide enough that the reading's own noise between collections (about a point) does not flap
- * it, no wider - once shut, a frame boots only when a collection takes the heap under 0.77, so the fill ends where the
- * live set reaches it (measured: 25 s of boots after the first shut, then none).
+ * The heap gate's lines, fractions of the browser's own limit (jsHeapSizeLimit), measured in headless Chrome (limit
+ * 4,192 MB). The crash: a 733-frame board killed the renderer at 97% of it, its boots halving their pace past ~93% (a
+ * page that only allocates died at 87%). A load's own transient: the heaviest board that fits (272 frames) peaks at 69%
+ * while it loads and settles at 50% - 19 points of garbage on top of its live heap. Shut at 0.75, reopened under 0.60,
+ * the parked 733-frame board comes to rest at 61-65%, and each approach to its parked frames (2-9 near frames) adds
+ * ~1-2 points live, up to ~5 transient: room for one load-sized transient on top of the rest, and some 30 approaches
+ * before the 97% line. Narrower lines (0.79/0.77) left that board at 81% and six approaches took it to 88% - less room
+ * than one transient; a crash is the worst outcome, a board that stops short and boots the rest on approach the mild one.
  *
- * Changed, against the parent: a board whose full load would sit between 0.77 and the crash line (~3.2-3.6+ GB at this
- * limit, ~1.6-1.8 GB at a 2 GB one) keeps some far frames loading until the camera comes near them. A board whose
- * load only crosses 0.79 with its garbage ends complete - the next look after a collection reopens it. Under 0.79,
- * nothing changes. The heaviest board that fits peaks at 69% while it loads (272 frames, 2,894 MB) and settles at 50%.
+ * Changed, against the parent: a board whose live heap after loading would exceed ~60% of the limit (~2.5 GB here,
+ * ~1.2 GB at a 2 GB limit) stops there and boots the rest as the camera approaches. One that only spikes past 0.75 while
+ * it loads and settles under 0.60 finishes on its own: the next look (TICK_MS) after a collection reopens the gate. One
+ * that plateaus between the lines stays parked: its far frames boot on approach. Under 0.75, nothing changes.
  */
-export const HEAP_SAFE = 0.79
-export const HEAP_RESUME = 0.77
+export const HEAP_SAFE = 0.75
+export const HEAP_RESUME = 0.6
 /** While the gate is shut and frames wait: how often it is asked again, whatever else happens. */
 export const TICK_MS = 3000
 /** Two changes of the reading this close together prove it precise (see heapGated). */
