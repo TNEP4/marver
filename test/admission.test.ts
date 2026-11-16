@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // a collection's callback (FinalizationRegistry) has no deadline and no guarantee: the queue runs here without one, so
 // nothing below depends on it - and a real collection during a test cannot rescue a stall it should show
 vi.hoisted(() => { (globalThis as { FinalizationRegistry?: unknown }).FinalizationRegistry = undefined })
-import { admissionIdle, admit, aimed, HEAD_MS, disposeAdmission, HEAP_RESUME, HEAP_SAFE, HOLD_MS, holdForCamera, onAdmissionIdle, readable, reconsider, TICK_MS, wireAdmission, release, resetAdmission, SLOTS } from '../src/client/shell/canvas/admission.ts'
+import { admissionIdle, admit, aimed, HEAD_MS, disposeAdmission, HEAP_RESUME, HEAP_SAFE, onAdmissionIdle, readable, reconsider, TICK_MS, wireAdmission, release, resetAdmission, SLOTS } from '../src/client/shell/canvas/admission.ts'
 
 // Frame admission: a board's iframes boot on one main thread, so at most SLOTS boot at once, one
 // first, nearest the centre of the view first, and a slot goes back the moment its frame is done.
@@ -103,36 +103,23 @@ describe('admission', () => {
     expect(heard).toBe(2)
     off()
   })
-  it('a person moving the camera holds every new start; the boots running go on; at rest the queue goes on, ranked on the view of then', async () => {
-    let rank = 100
-    admit({ key: 'moving', rank: () => rank, start: () => started.push('moving') })
-    for (const [k, r] of [['a', 1], ['b', 2], ['c', 3], ['d', 4], ['e', 5]] as const) ask(k, r)
+  it('a person\'s gesture stops nothing: a frame waiting with a slot free starts at once, as on the parent', async () => {
+    const motion = new Set<(m: { camera: boolean; preset: boolean }) => void>()
+    const unwire = wireAdmission((fn) => { motion.add(fn); return () => motion.delete(fn) }, new EventTarget(), Object.assign(new EventTarget(), { visibilityState: 'visible' }))
+    for (const [k, r] of [['a', 1], ['b', 2]] as const) ask(k, r)
     await settle()
-    expect(started).toEqual(['a'])
-    holdForCamera(true)
-    release('a')                 // a slot frees mid-gesture: nothing starts in it
-    await vi.advanceTimersByTimeAsync(HEAD_MS)
-    expect(started).toEqual(['a'])
-    rank = 0                     // the pan brought it to the centre
-    holdForCamera(false)
+    for (const fn of motion) fn({ camera: true, preset: false })   // a pan starts
+    release('a')                                                    // a slot frees mid-gesture
     await vi.advanceTimersByTimeAsync(0)
-    expect(started).toEqual(['a', 'moving', 'b', 'c', 'd'])
+    expect(started).toEqual(['a', 'b'])
+    unwire()
   })
-  it('a held first pick waits for the camera too, and goes the moment it rests', async () => {
+  it('under the line a look (the camera at rest, a resize, the page shown) changes nothing: the first pick still waits for the view', async () => {
     ask('a', 1)
-    holdForCamera(true)
+    await vi.advanceTimersByTimeAsync(100)
+    reconsider(); await vi.advanceTimersByTimeAsync(0)
+    expect(started).toEqual([])          // still settling: the parent's first pick waits SETTLE (or an aim)
     await settle()
-    expect(started).toEqual([])
-    holdForCamera(false)
-    await vi.advanceTimersByTimeAsync(0)
-    expect(started).toEqual(['a'])
-  })
-  it('a camera that never says it stopped holds the queue at most HOLD_MS', async () => {
-    holdForCamera(true)
-    ask('a', 1)
-    await vi.advanceTimersByTimeAsync(HOLD_MS - 10)
-    expect(started).toEqual([])
-    await vi.advanceTimersByTimeAsync(20)
     expect(started).toEqual(['a'])
   })
   describe('the heap past its safe line (performance.memory)', () => {
@@ -158,12 +145,14 @@ describe('admission', () => {
     const askNear = (key: string, rank: number) => admit({ key, rank: () => rank, start: () => started.push(key), near: () => near.has(key) })
     /** 'in' booting past the head start (its pump is spent), the reading proven by a few pumps; then the heap, then the
      *  rest of the board asks in - Codex's case: nothing left that would pump on its own */
+    /** pumps that read the heap, as a load's own do: a frame asks (its pump comes SETTLE later) and leaves again */
+    const readings = async (n: number) => { for (let i = 0; i < n; i++) { const k = `r${i}`; admit({ key: k, rank: () => 9, start: () => {} }); await vi.advanceTimersByTimeAsync(400); release(k) } }
     const start = async () => {
       near.clear(); near.add('in')
       askNear('in', 0)
       admit({ key: 'w', rank: () => 0.5, start: () => {} })   // another frame of the load: it waits, then holds a slot
       await settle()                                           // 'in' alone (the head start)
-      for (let i = 0; i < 2; i++) { await vi.advanceTimersByTimeAsync(100); reconsider(); await vi.advanceTimersByTimeAsync(0) }   // pumps with 'w' waiting: readings
+      await readings(2)
       await vi.advanceTimersByTimeAsync(HEAD_MS)               // the head start's pump, spent: 'w' takes a slot
     }
     const board = async (keys: string[], fraction: number) => {
@@ -221,15 +210,6 @@ describe('admission', () => {
       await vi.advanceTimersByTimeAsync(TICK_MS * 5)
       expect(started).toEqual(['in'])
     })
-    it('the hold\'s cap ran out mid-gesture; the camera then rests by a far frame with the gate shut: it boots', async () => {
-      await board(['far'], past)
-      holdForCamera(true)
-      await vi.advanceTimersByTimeAsync(HOLD_MS + 10)   // the cap lets the hold go: nothing near yet
-      expect(started).toEqual(['in'])
-      near.add('far'); holdForCamera(false)             // the real rest, by it
-      await vi.advanceTimersByTimeAsync(0)
-      expect(started).toEqual(['in', 'far'])
-    })
     it('a parked frame brought near with no camera event (tidy, a resize, a dragged frame) boots by the next tick; reconsider() at once', async () => {
       await board(['a', 'b'], past)
       near.add('a')
@@ -239,9 +219,9 @@ describe('admission', () => {
       await vi.advanceTimersByTimeAsync(0)
       expect(started).toEqual(['in', 'a', 'b'])
     })
-    it('a parked frame boots when the camera comes near it: the gesture ends there', async () => {
+    it('a parked frame boots when the camera comes to rest by it (the wiring\'s look at the rest)', async () => {
       await board(['a', 'b'], past)
-      holdForCamera(true); near.add('b'); holdForCamera(false)
+      near.add('b'); reconsider()
       await vi.advanceTimersByTimeAsync(0)
       expect(started).toEqual(['in', 'b'])
     })
@@ -290,7 +270,7 @@ describe('admission', () => {
       near.clear(); near.add('in')
       askNear('in', 0); admit({ key: 'w', rank: () => 0.5, start: () => {} })
       await settle()
-      for (const ms of [120, 140, 90]) { await vi.advanceTimersByTimeAsync(ms); reconsider(); await vi.advanceTimersByTimeAsync(0) }   // a boot's pace
+      await readings(3)                             // a load's pumps, a few hundred ms apart
       await vi.advanceTimersByTimeAsync(HEAD_MS)
       heap(past)
       askNear('far', 1)
@@ -330,7 +310,7 @@ describe('admission', () => {
   })
 
 
-  it('the Canvas wiring: the camera holds the queue; a layout animation\'s end, a resize and the page shown again look again', async () => {
+  it('the Canvas wiring, while the gate is shut: the camera\'s rest, a layout animation\'s end, a resize and the page shown again look again', async () => {
     const motion = new Set<(m: { camera: boolean; preset: boolean }) => void>()
     const win = new EventTarget(), doc = Object.assign(new EventTarget(), { visibilityState: 'hidden' })
     const unwire = wireAdmission((fn) => { motion.add(fn); return () => motion.delete(fn) }, win, doc)
@@ -341,12 +321,11 @@ describe('admission', () => {
     try {
       ask('in', 0); probe('far')
       await settle()
-      for (let i = 0; i < 3; i++) { await vi.advanceTimersByTimeAsync(100); reconsider(); await vi.advanceTimersByTimeAsync(0) }
+      for (let i = 0; i < 3; i++) { const k = `r${i}`; admit({ key: k, rank: () => 9, start: () => {} }); await vi.advanceTimersByTimeAsync(400); release(k) }
       release('in'); await vi.advanceTimersByTimeAsync(0)
       expect(started).toEqual(['in'])                    // parked: 'far' is not near
       const looks = async (fire: () => void) => { const p = pumps; fire(); await vi.advanceTimersByTimeAsync(0); return pumps > p }
-      send({ camera: true, preset: false })
-      expect(await looks(() => win.dispatchEvent(new Event('resize')))).toBe(false)   // held: a moving camera asks nothing
+      expect(await looks(() => send({ camera: true, preset: false }))).toBe(false)    // a gesture starting: nothing to look at yet
       expect(await looks(() => send({ camera: false, preset: false }))).toBe(true)    // its rest looks again
       expect(await looks(() => send({ camera: false, preset: true }))).toBe(false)    // a layout animation running
       expect(await looks(() => send({ camera: false, preset: false }))).toBe(true)    // ...and ended (tidy)

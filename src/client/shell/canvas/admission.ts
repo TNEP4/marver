@@ -16,10 +16,9 @@
  * (canvasCtl.landing) - it need not wait out the fit's ~320 ms flight. With no aim it waits SETTLE, as
  * long as that flight. A freed slot pumps on the next microtask, ranking again by the view of that moment.
  *
- * Nothing new starts while a person moves the camera (a pan, a zoom, a pinch: holdForCamera, from camera-broadcast's
- * `sh-camera`): a boot's main-thread work would land in the gesture's frames. The boots already running go on; when the
- * camera rests the queue goes on, ranked on the view it stopped at. A flight the shell aims (a fit, a zoom) holds
- * nothing - aimed() ranks on where it lands. Untouched, a load runs exactly as before.
+ * Under the heap's line, with or without a gesture, admission is the parent's exactly: a person's pan or zoom stops
+ * nothing (holding boots through a gesture was measured and set aside as a candidate for the owner - it trades frames
+ * in view arriving about half the pan's length later for a smoother pan: perf/loop/candidates/i10-gesture-hold).
  *
  * Nothing unloads, so a board too heavy for the renderer's heap would boot itself into a crash. Past HEAP_SAFE of the
  * browser's own heap limit (performance.memory, where the browser has it), a frame that is not near the view (its
@@ -39,11 +38,6 @@ let primed = false   // the batch may use every slot
 let gen = 0          // the batch: a pump scheduled for an earlier one is void
 let timer: ReturnType<typeof setTimeout> | undefined
 let settling: ReturnType<typeof setTimeout> | undefined   // a pump waiting for the view to settle (SETTLE): aimed() runs it now
-let held = false     // a person moves the camera: nothing new starts (at most HOLD_MS)
-let moving = false   // the camera moves under a person's hand - its rest always reconsiders the queue, held or not
-let holdCap: ReturnType<typeof setTimeout> | undefined
-/** The longest a gesture holds the queue: a camera that never says it stopped must not stop the board. */
-export const HOLD_MS = 5000
 
 /**
  * The heap gate's lines, fractions of the browser's own limit (jsHeapSizeLimit), measured in headless Chrome (limit
@@ -123,24 +117,10 @@ export function aimed(): void {
   schedule(0)
 }
 
-/** A person's camera gesture started (true) or the camera rests again (false). The rest reconsiders the queue even when
- *  HOLD_MS already let the hold go: the camera may have stopped by a frame the gate keeps.
- *  The one exception to "in view first": through a gesture, a frame in view may start up to the gesture's length later
- *  (HOLD_MS at most). Measured on the 112-frame board (3 s pan into a load, n=3): it is not ready later (in view at the
- *  pan's end ready 19.8-20.1 s after it, against 20.5-21.7 s), and the pan drops 0-2 frames over 33 ms instead of 10-11;
- *  booting the in-view frames one at a time through the gesture still dropped 8-10 (one boot lands ~230 ms in it). */
-export function holdForCamera(on: boolean): void {
-  if (moving === on) return
-  moving = on
-  held = on
-  clearTimeout(holdCap)
-  if (on) holdCap = setTimeout(() => { held = false; if (waiting.size) schedule(0) }, HOLD_MS)
-  else if (waiting.size) schedule(0)
-}
-
-/** What a frame is near changed without the camera moving - a layout animation ended, the window was resized: the queue
- *  is looked at again (a frame the gate keeps may be near now). */
-export function reconsider(): void { if (waiting.size && !held) schedule(0) }
+/** What a frame is near may have changed - the camera came to rest, a layout animation ended, the window was resized, the
+ *  page was shown again: while the heap gate is shut, the queue is looked at again (a frame it keeps may be near now).
+ *  Under the line it does nothing - admission there is the parent's. */
+export function reconsider(): void { if (gated && waiting.size) schedule(0) }
 
 /** The frame is done booting (ready, error, gone, or its watchdog took over): free the slot, or
  *  leave the queue if it never started. */
@@ -192,7 +172,7 @@ function pump(): void {
   clearTimeout(tick); tick = undefined
   if (!waiting.size) return
   const high = heapGated()   // every pump reads it: an exact counter proves itself within a load's first boots
-  while (!held && active.size < (primed ? SLOTS : 1) && waiting.size) {
+  while (active.size < (primed ? SLOTS : 1) && waiting.size) {
     let best: Admission | undefined, bestRank = Infinity
     for (const a of waiting.values()) {
       if (high && a.near && !a.near()) continue
@@ -212,26 +192,25 @@ function pump(): void {
 }
 
 /** For tests: nothing queued, nothing active. */
-export function resetAdmission(): void { waiting.clear(); active.clear(); primed = false; scheduled = false; gen++; clearTimeout(timer); clearTimeout(settling); settling = undefined; held = false; moving = false; clearTimeout(holdCap); clearTimeout(tick); tick = undefined; gated = false; precise = false; memLast = undefined; readAt = -Infinity; changeFrom = -Infinity; watching = false; epoch++ }
+export function resetAdmission(): void { waiting.clear(); active.clear(); primed = false; scheduled = false; gen++; clearTimeout(timer); clearTimeout(settling); settling = undefined; clearTimeout(tick); tick = undefined; gated = false; precise = false; memLast = undefined; readAt = -Infinity; changeFrom = -Infinity; watching = false; epoch++ }
 
 /** A hot-replaced module leaves nothing of its own behind: no timer, and no pump already queued (its batch is void). */
 export function disposeAdmission(): void {
-  clearTimeout(timer); clearTimeout(settling); settling = undefined; clearTimeout(holdCap); clearTimeout(tick); tick = undefined
+  clearTimeout(timer); clearTimeout(settling); settling = undefined; clearTimeout(tick); tick = undefined
   gen++; scheduled = false; epoch++
 }
 if (import.meta.hot) import.meta.hot.dispose(disposeAdmission)
 
-/** Canvas.tsx's wiring, in one place (tested): a person's camera holds the queue; what a frame is near changing without
- *  the camera - a layout animation's end, a resize, the page shown again (a hidden page's timers run once a minute) -
- *  looks again. Returns the unwiring. */
+/** Canvas.tsx's wiring, in one place (tested): what a frame is near changing - the camera at rest, a layout animation's
+ *  end, a resize, the page shown again (a hidden page's timers run once a minute) - looks again. Returns the unwiring. */
 export function wireAdmission(
   onMotion: (fn: (m: { camera: boolean; preset: boolean }) => void) => () => void,
   win: Pick<EventTarget, 'addEventListener' | 'removeEventListener'>,
   doc: Pick<EventTarget, 'addEventListener' | 'removeEventListener'> & { visibilityState: string },
 ): () => void {
-  const off = onMotion((m) => { holdForCamera(m.camera); if (!m.preset) reconsider() })
+  const off = onMotion((m) => { if (!m.camera && !m.preset) reconsider() })
   const shown = () => { if (doc.visibilityState === 'visible') reconsider() }
   win.addEventListener('resize', reconsider)
   doc.addEventListener('visibilitychange', shown)
-  return () => { off(); win.removeEventListener('resize', reconsider); doc.removeEventListener('visibilitychange', shown); holdForCamera(false) }
+  return () => { off(); win.removeEventListener('resize', reconsider); doc.removeEventListener('visibilitychange', shown) }
 }
