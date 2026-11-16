@@ -12,7 +12,9 @@ import { Browser } from './browser.ts'
  *  - a generation releasing 201 parked frames at once asks in requests of at most 200, and every frame is answered;
  *  - a node released for a generation asks again no sooner and no later than 4 s after its previous ask, so two servers
  *    answering alternating generations cost what the old 4 s retry did;
- *  - frames that left while a request was out are not asked about in the next one; the backstop sends each key once;
+ *  - the requests of one batch go out together; the backstop sends each key once and its releases keep the cadence;
+ *  - a generation heard over HTTP while a frame's ask is out makes that frame ask once more; the cadence ignores the
+ *    wall clock stepping;
  *  - answers whose generation is lower than one heard before are asked about once, not in a loop.
  * Everything is read over the wire (the requests' sizes and count), so the parent commits are measured the same way.
  */
@@ -30,6 +32,8 @@ let root = ''
 let server: ChildProcess | null = null
 let browser: Browser | null = null
 let tab = ''
+/** The refusal the fake server answers every ask with. */
+let fakeError = LOOPING
 /** The generation the fake server answers with: a number, or a function called once per request. */
 let fakeGen: number | (() => number) = 9000
 /** Called with each request's keys before it is answered (a test's server picks its generation by them). */
@@ -97,7 +101,7 @@ beforeAll(async () => {
       posts.push({ t: Date.now(), n: asks.length, keys })
       gate?.(keys)
       const refuse = !asks.length || asks.length > 200
-      const body = refuse ? { error: 'asks must list 1-200 frames' } : { gen: typeof fakeGen === 'function' ? fakeGen() : fakeGen, answers: asks.map((a) => ({ ...a, ok: false, error: LOOPING, kept: true })) }
+      const body = refuse ? { error: 'asks must list 1-200 frames' } : { gen: typeof fakeGen === 'function' ? fakeGen() : fakeGen, answers: asks.map((a) => ({ ...a, ok: false, error: fakeError, kept: true })) }
       const answer = () => void browser!.send('Fetch.fulfillRequest', { requestId: m.params.requestId, responseCode: refuse ? 400 : 200, responseHeaders: [{ name: 'content-type', value: 'application/json' }], body: Buffer.from(JSON.stringify(body)).toString('base64') }, tab).catch(() => {})
       if (holdWhen?.(keys)) { holdWhen = null; held = answer } else answer()
     })
@@ -234,23 +238,99 @@ describe('parked bake answers at scale and under odd servers', () => {
     expect(await ev(IDLE)).toBe(true)
   })
 
-  skippable('frames that left while the first of several requests was out are not asked about in the next', async () => {
+  skippable('the requests of one batch go out together: the second does not wait for the first answer', async () => {
     fakeGen = 5000
     await go('many', MANY + DUPS)
     await until(`${ALL_PARKED} && ${IDLE}`, 120_000)
     await wait(4500)   // a rest longer than the re-ask floor: every frame is released at once, in one batch of 201 keys
-    holdWhen = (keys) => keys.length === 200   // its first chunk, held unanswered
+    holdWhen = (keys) => keys.length === 200   // its first request, held unanswered
     const from = posts.length
     writeFileSync(join(root, 'design', 'touch.txt'), String(Date.now()))
     for (let i = 0; i < 200 && !held; i++) await wait(100)
     expect(held, 'the first request is out').not.toBe(null)
-    const heldAt = posts.length
-    // every frame leaves (another board), then the held request is answered
-    await browser!.go(tab, `${ORIGIN}/#/b/one`)
-    await until(`location.hash === '#/b/one' && ${ST}.nodes.length === 1`, 30_000)
-    answerHeld()
-    await wait(3000)
-    expect(posts.slice(from, heldAt).some((p) => p.n === 200)).toBe(true)
-    expect(posts.slice(heldAt).filter((p) => p.keys.some(manyKey)).map((p) => p.n), 'requests for frames that left').toEqual([])
+    let sizes: number[] = []
+    try {
+      for (let i = 0; i < 30 && !posts.slice(from).some((p) => p.n === 1); i++) await wait(50)
+      sizes = posts.slice(from).map((p) => p.n)
+    } finally { answerHeld() }   // never leave the page with an unanswered request (the next tests wait for bake-idle)
+    expect(sizes, 'requests while the first is unanswered').toEqual([200, 1])
+    await until(`${ALL_PARKED} && ${IDLE}`, 30_000)
+  })
+
+  skippable('a generation heard over HTTP while a frame\'s ask is out makes that frame ask once more', async () => {
+    fakeGen = 1
+    await go('two', 2)
+    await backstopEvery(600000)
+    await until(`${ALL_PARKED} && ${IDLE}`, 30_000)
+    await wait(4500)
+    // y1's next request reaches a server at generation 2 - once: then y1 is settled there, as a frame that got its
+    // textures asks no more, and nothing else will name 2 again; every other request answers 1. x1's ask is held
+    let req: string[] = [], once = true
+    gate = (keys) => { req = keys }
+    fakeGen = () => { if (once && req.includes('app/glass|420')) { once = false; return 2 } return 1 }
+    holdWhen = (keys) => keys.includes('app/glass|410')
+    const reload = (k: string) => ev(`(() => { ${ST}.reloadFrame('${k}'); const f = [...document.querySelectorAll('iframe.sh-live')].find((x) => x.closest('[data-node="${k}"]')); f.src = f.src; return 1 })()`)
+    await reload('x1')
+    for (let i = 0; i < 200 && !held; i++) await wait(100)
+    if (!held) holdWhen = null
+    expect(held, "x1's ask is out").not.toBe(null)
+    await reload('y1')   // y1 asks and hears generation 2 - x1 is not parked, so nothing is released
+    await until(`${SLEEP}.parkedOn('y1')?.gen === 2`, 30_000)
+    const from = posts.length
+    answerHeld()   // x1's answer: generation 1 - but 2 was heard since its ask went out
+    for (let i = 0; i < 160 && !posts.slice(from).some((p) => p.keys.includes('app/glass|410')); i++) await wait(50)
+    expect(posts.slice(from).some((p) => p.keys.includes('app/glass|410')), 'x1 asks once more').toBe(true)
+    gate = null
+    fakeGen = 1
+    await wait(4500)
+  })
+
+  skippable('the cadence holds when the wall clock steps back a minute', async () => {
+    fakeGen = 9000
+    await go('one', 1)
+    await backstopEvery(600000)
+    await until(`${ALL_PARKED} && ${IDLE}`, 30_000)
+    await wait(4500)
+    let from = posts.length
+    await ev(`(${SLEEP}.pushed(9101), 1)`)
+    for (let i = 0; i < 100 && posts.length === from; i++) await wait(50)
+    const t1 = posts[from].t
+    await until(ALL_PARKED, 10_000)
+    await ev(`(() => { window.__realNow = Date.now; Date.now = () => window.__realNow() - 60000; return 1 })()`)
+    try {
+      from = posts.length
+      await ev(`(${SLEEP}.pushed(9102), 1)`)
+      for (let i = 0; i < 160 && posts.length === from; i++) await wait(50)
+    } finally { await ev(`(() => { Date.now = window.__realNow; return 1 })()`) }
+    const t2 = posts[from]?.t ?? Infinity
+    expect(t2 - t1, 'second ask after the first, ms').toBeGreaterThanOrEqual(3700)
+    expect(t2 - t1, 'second ask after the first, ms').toBeLessThanOrEqual(4400)
+  })
+
+  skippable("the backstop's release keeps the cadence: the frame asks again no sooner than 4 s after its last ask", async () => {
+    fakeGen = 9000
+    await go('one', 1)
+    await backstopEvery(600000)
+    await until(`${ALL_PARKED} && ${IDLE}`, 30_000)
+    await wait(4500)
+    let from = posts.length
+    await ev(`(${SLEEP}.pushed(9201), 1)`)
+    for (let i = 0; i < 100 && posts.length === from; i++) await wait(50)
+    const t1 = posts[from].t
+    await until(`${ALL_PARKED} && ${IDLE}`, 10_000)
+    // the server would now answer otherwise, the generation unchanged: the backstop finds it and releases the frame
+    fakeError = 'the frame never stopped changing - nothing to certify against'
+    from = posts.length
+    await backstopEvery(300)
+    for (let i = 0; i < 100 && posts.length === from; i++) await wait(20)
+    await backstopEvery(600000)   // that one look only
+    const tb = posts[from].t
+    from = posts.length
+    for (let i = 0; i < 160 && posts.length === from; i++) await wait(50)
+    const tn = posts[from]?.t ?? Infinity
+    fakeError = LOOPING
+    expect(tb - t1, 'the backstop looked within 4 s of the ask').toBeLessThan(3000)
+    expect(tn - t1, 'the frame asked again, ms after its last ask').toBeGreaterThanOrEqual(3700)
+    expect(tn - t1).toBeLessThanOrEqual(4400)
   })
 })

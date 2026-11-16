@@ -111,30 +111,40 @@ interface Parked { key: SleepKey; gen: number | undefined; sig: string; retry: (
 const parked = new Map<string, Parked>()
 /** What an answer says, for "did it change": the kind, the refusal word for word, whether any texture certifies. */
 const sigOf = (a: Answer): string => (a.ok ? `ok:${a.targets.some((t) => t.verified && t.texture) ? 1 : 0}` : `${a.kept ? 'kept' : 'no'}:${a.error}`)
-/** Pushes heard, and the last one's generation: an ask a push overtook asks once more. */
-let pushes = 0, pushGen: number | undefined
-/** When each node last asked (its bake POST went out). A node released for a generation it heard of asks again at
- *  max(now + 250 ms, its last ask + RETRY_MS): never more than once per 4 s and never later than 4 s after its
- *  previous ask - the old retry's own cadence, at worst - and at once after a long rest. */
+/** Every generation heard - a push, any bake answer, a reconnect (`undefined`: perhaps a new server) - numbered, the
+ *  last HEARD_KEPT of them kept: an ask that one of them overtook asks once more. */
+let heardSeq = 0
+const HEARD_KEPT = 64
+const heardLog: { seq: number; gen: number | undefined }[] = []
+/** Was a generation other than `gen` heard after `since`? (Forgotten ones count as other: one re-ask too many at worst.) */
+function heardOther(since: number, gen: number | undefined): boolean {
+  if (heardSeq - since > HEARD_KEPT) return true
+  return heardLog.some((e) => e.seq > since && (e.gen === undefined || e.gen !== gen))
+}
+/** When each node last asked (its bake POST went out), on the monotonic clock. Every release of a parked node asks
+ *  again at max(now + 250 ms, its last ask + RETRY_MS): never more than once per 4 s and never later than 4 s after
+ *  its previous ask - the old retry's own cadence, at worst - and at once after a long rest. */
 const lastAsk = new Map<string, number>()
-function release(nodeKey: string, forGen = false): void {
+function release(nodeKey: string): void {
   const p = parked.get(nodeKey)
   if (!p) return
   parked.delete(nodeKey)
-  let ms = 250   // every node released in the same moment shares one batch
-  if (forGen) { const was = lastAsk.get(nodeKey); if (was !== undefined) ms = Math.max(ms, was + RETRY_MS - Date.now()) }
-  scheduleSleep(p.retry, ms)
+  const was = lastAsk.get(nodeKey)
+  // every node released in the same moment shares one batch
+  scheduleSleep(p.retry, was === undefined ? 250 : Math.max(250, was + RETRY_MS - performance.now()))
 }
 /** A generation heard of: every node parked under a DIFFERENT one asks again. `undefined`: perhaps a new server - all do. */
 function heard(gen: number | undefined): void {
-  for (const [nodeKey, p] of [...parked]) if (gen === undefined || (p.gen !== undefined && p.gen !== gen)) release(nodeKey, true)
+  heardLog.push({ seq: ++heardSeq, gen })
+  if (heardLog.length > HEARD_KEPT) heardLog.shift()
+  for (const [nodeKey, p] of [...parked]) if (gen === undefined || (p.gen !== undefined && p.gen !== gen)) release(nodeKey)
 }
-function pushed(gen: number | undefined): void { pushes++; pushGen = gen; heard(gen) }
-function park(nodeKey: string, key: SleepKey, answer: Answer, pushesAtAsk: number, retry: () => void): void {
+const pushed = (gen: number | undefined): void => heard(gen)
+function park(nodeKey: string, key: SleepKey, answer: Answer, heardAtAsk: number, retry: () => void): void {
   parked.set(nodeKey, { key, gen: answer.gen, sig: sigOf(answer), retry })
-  // a push arrived while the ask was out and named another generation than the answer: once more, now (one re-ask per
-  // push heard - never a loop)
-  if (pushes !== pushesAtAsk && pushGen !== answer.gen) release(nodeKey, true)
+  // another generation was heard while the ask was out (a push, another request's answer): once more, under the
+  // cadence (one re-ask per generation heard - never a loop)
+  if (heardOther(heardAtAsk, answer.gen)) release(nodeKey)
   backstopSoon()
 }
 /** The backstop's period: 30 s (a test sets another through the dev hook below). */
@@ -219,23 +229,20 @@ function ask(key: SleepKey, node: string, live: () => boolean): Promise<Answer> 
         if (index) answerAll(byKey, index, null)
         else {
           // the server takes at most ASKS_MAX a request: a bigger batch (a generation releasing hundreds of parked
-          // frames at once) goes in several, each answering its own waiters - and before each, a waiter that no longer
-          // wants its answer (woken, its board left) is answered "no answer" and a key with none left is not sent
-          const all = [...byKey.values()]
-          let i = 0
-          while (i < all.length) {
-            const part = new Map<string, { key: SleepKey; waiters: Waiter[] }>()
-            for (; i < all.length && part.size < ASKS_MAX; i++) {
-              const e = all[i]
-              const live = e.waiters.filter((w) => w.live())
-              for (const w of e.waiters) if (!live.includes(w)) w.resolve({ ok: false, error: 'no answer' })
-              if (live.length) part.set(keyOf(e.key), { key: e.key, waiters: live })
-            }
-            if (!part.size) break
-            const now = Date.now()
-            for (const e of part.values()) for (const w of e.waiters) lastAsk.set(w.node, now)
-            answerAll(part, null, await post([...part.values()].map((e) => e.key)))
+          // frames at once) goes in several, sent together (none waits behind another's answer), each answering its own
+          // waiters - and as they go, a waiter that no longer wants its answer (woken, its board left) is answered
+          // "no answer" and a key with none left is not sent
+          const parts: Map<string, { key: SleepKey; waiters: Waiter[] }>[] = []
+          for (const e of byKey.values()) {
+            const live = e.waiters.filter((w) => w.live())
+            for (const w of e.waiters) if (!live.includes(w)) w.resolve({ ok: false, error: 'no answer' })
+            if (!live.length) continue
+            if (!parts.length || parts[parts.length - 1].size >= ASKS_MAX) parts.push(new Map())
+            parts[parts.length - 1].set(keyOf(e.key), { key: e.key, waiters: live })
           }
+          const now = performance.now()
+          for (const part of parts) for (const e of part.values()) for (const w of e.waiters) lastAsk.set(w.node, now)
+          await Promise.all(parts.map(async (part) => answerAll(part, null, await post([...part.values()].map((e) => e.key)))))
         }
       } finally { inflight-- }
     }, 40)
@@ -291,7 +298,7 @@ async function sleepNow(nodeKey: string, iframe: HTMLIFrameElement, key: SleepKe
     asleep.set(nodeKey, { key: k, doc })
     return 'asleep'
   }
-  const pushesAtAsk = pushes
+  const heardAtAsk = heardSeq
   const answer = await ask(key, nodeKey, current)
   if (!current()) return 'live'
   // still compiling (issue #23): the server answered in seconds and carries on by itself. The frame
@@ -323,7 +330,7 @@ async function sleepNow(nodeKey: string, iframe: HTMLIFrameElement, key: SleepKe
   // recovers. A headless perf run's retry keeps its mark until the node wakes - one retry, then nothing more
   if (targets.length) { asleep.set(nodeKey, { key: k, doc }); compiling.delete(nodeKey); retried.delete(nodeKey) }
   else if (answer.ok === false && answer.error === COMPILING) { /* out of looks: the pause alone, final */ }
-  else if (!PUBLISHED && !undecoded && (answer.ok || answer.kept)) park(nodeKey, key, answer, pushesAtAsk, () => { if (current()) void sleep(nodeKey, iframe, key) })   // settled until the generation moves
+  else if (!PUBLISHED && !undecoded && (answer.ok || answer.kept)) park(nodeKey, key, answer, heardAtAsk, () => { if (current()) void sleep(nodeKey, iframe, key) })   // settled until the generation moves
   else if (!PUBLISHED && !retried.has(nodeKey)) { retried.add(nodeKey); scheduleSleep(() => { if (!PERF_RUN) retried.delete(nodeKey); if (current()) void sleep(nodeKey, iframe, key) }, RETRY_MS) }   // a static miss is final
   return 'asleep'
 }

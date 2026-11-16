@@ -435,8 +435,9 @@ describe('the route (A4.6 #5, #6)', () => {
 
 describe('the hooks: every broadcast of state the stream reads recomputes it (A4.6 #13)', () => {
   const READ = new Set(['sh:marks', 'sh:manifest', 'sh:jam-comment', 'sh:jam-queue', '(notify)'])
-  // not read: invalidations, scene titles, the board list and files, and the working set (the hub subscribes to workActivity)
-  const NOT_READ = new Set(['sh:frame-invalidated', 'sh:scenes', 'sh:boards', 'sh:board', 'sh:jam-activity'])
+  // not read: invalidations, scene titles, the board list and files, the working set (the hub subscribes to workActivity),
+  // and the bake generation (sleep.ts: parked frames ask again; nothing the stream shows)
+  const NOT_READ = new Set(['sh:frame-invalidated', 'sh:scenes', 'sh:boards', 'sh:board', 'sh:jam-activity', 'sh:bake-gen'])
   it('each ws.send in plugin.ts and dev.ts is listed, and the ones the stream reads call liveChanged() beside it', () => {
     const seen: string[] = []
     for (const f of ['plugin.ts', 'dev.ts']) {
