@@ -707,7 +707,7 @@ interface State {
   noteMeasured(key: string, height: number): void
   setStatus(key: string, status: Node['status'], error?: string): void
   bumpRev(key: string): void
-  setThemeOn(key: string, theme: string): void
+  setThemeOn(key: string, theme: string, live?: () => boolean): void
   reloadFrame(key: string, automatic?: boolean): void
   removeNode(key: string): void
   select(key: string | null, additive?: boolean): void
@@ -816,6 +816,14 @@ export const BOARD_GONE = 'this board was renamed or removed - not recreating it
 export const useStore = create<State>((set, get) => {
   let saveTimer: ReturnType<typeof setTimeout> | undefined
   let saveChain: Promise<boolean> = Promise.resolve(true)   // saves are serialized; responses only commit if the board is still active
+  // setThemeOn's batch, waiting for the next animation frame: the board it was heard on, its acks, its two timers
+  const acks: { board?: string; pending: Map<string, { theme: string; live?: () => boolean }>; frame?: number; timer?: ReturnType<typeof setTimeout> } = { pending: new Map() }
+  const cancelAcks = () => {
+    if (acks.frame !== undefined && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(acks.frame)
+    clearTimeout(acks.timer)
+    acks.frame = acks.timer = undefined
+    acks.pending = new Map()
+  }
   let editRev = 0                                    // bumps per edit; a stale save response may never clear dirty over a newer edit
   let loadSeq = 0                                    // stale boot() responses never overwrite a newer board
   let switchSeq = 0                                  // last click wins when board switches race
@@ -1716,7 +1724,29 @@ export const useStore = create<State>((set, get) => {
       else { scheduleSave(); roomForNotes(); recheckLayout() }   // ...unless a note grew meanwhile, or a Doc changed size, under the restored rows
     }) },
     bumpRev(key) { set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, rev: (n.rev ?? 0) + 1 } : n)) })) },
-    setThemeOn(key, theme) { set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, themeOn: theme } : n)) })) },
+    // A switch's acks come in a burst, one message per frame: one store update an animation frame for all of them, not
+    // one each - every update re-renders whatever reads the whole board (112 acks: 0.8 s of the shell re-rendering).
+    // An ack belongs to the DOCUMENT that sent it: `live` (App.tsx) asks, at the flush, whether that document is still
+    // the node's - one replaced meanwhile (a reload of the same board, a board left and come back to, a remount) is
+    // dropped, and its theme never lands on the document there now. A batch switched to another board is dropped whole.
+    // Each batch is flushed once, by whichever of its two timers comes first - the other is cancelled, so it never
+    // flushes a later batch early.
+    setThemeOn(key, theme, live) {
+      const board = get().board
+      if (acks.board !== board) { cancelAcks(); acks.board = board }
+      acks.pending.set(key, { theme, live })
+      if (acks.frame !== undefined || acks.timer !== undefined) return
+      const flush = () => {
+        const mine = acks.pending, onBoard = acks.board
+        cancelAcks()
+        if (get().board !== onBoard) return
+        for (const [k, a] of mine) if (a.live && !a.live()) mine.delete(k)
+        if (!mine.size) return
+        set((s) => ({ nodes: s.nodes.map((n) => { const a = mine.get(n.key); return !a || a.theme === n.themeOn ? n : { ...n, themeOn: a.theme } }) }))
+      }
+      if (typeof requestAnimationFrame === 'function') acks.frame = requestAnimationFrame(flush)
+      acks.timer = setTimeout(flush, 100)   // a hidden page draws no frames
+    },
     setStatus(key, status, error) {
       // any real ready/error resets the one-shot retry allowance, so a later manual reload or a
       // fresh manifest earns its own auto-retry again
@@ -1950,8 +1980,8 @@ export const useStore = create<State>((set, get) => {
       set((s) => ({
         viewTheme: theme,
         nodes: s.nodes.map((n) => {
-          const f = s.manifest?.frames.find((x) => x.id === n.frame)
-          return { ...n, themeUser: undefined, theme: f?.theme ?? theme }
+          const t = (s.manifest ? frameById(s.manifest.frames, n.frame)?.theme : undefined) ?? theme
+          return n.theme === t && n.themeUser === undefined ? n : { ...n, themeUser: undefined, theme: t }   // by the index, not a scan per node
         }),
         dirty: true,
       }))
