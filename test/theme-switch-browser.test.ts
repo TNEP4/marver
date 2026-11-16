@@ -60,6 +60,9 @@ const DOC = (k: string) => `document.querySelector('.sh-node[data-node="${k}"] i
 /** Every frame of the board in its theme - `theme`, k4 its own dark - its document shows it, its ack taken, ready and
  *  asleep again. `k2` overrides k2's (its frame replaced). */
 const ENDED = (theme: string, k2 = theme) => `${ST}.board === 'main' && ${ST}.nodes.length === ${KEYS.length} && ${KEYS.map((k, i) => { const t = i === 4 ? 'dark' : k === 'k2' ? k2 : theme; return `${DOC(k)}?.documentElement.dataset.theme === '${t}' && !!${DOC(k)}?.getElementById('mv-sleep') && ${ST}.nodes.find((n) => n.key === '${k}').themeOn === '${t}' && ${ST}.nodes.find((n) => n.key === '${k}').status === 'ready'` }).join(' && ')}`
+/** Every frame in ITS node's theme (the store's truth, whatever frame it shows now): its document shows it, its ack
+ *  taken, ready and asleep again. */
+const SETTLED = `${ST}.nodes.length === ${KEYS.length} && ${ST}.nodes.every((n) => { const d = document.querySelector('.sh-node[data-node="' + n.key + '"] iframe')?.contentDocument; return d?.documentElement.dataset.theme === n.theme && !!d?.getElementById('mv-sleep') && n.themeOn === n.theme && n.status === 'ready' })`
 async function inLight(): Promise<void> {
   await until(`!!window.__mvStore && ${ST}.board === 'main' && ${ST}.nodes.length === ${KEYS.length} && ${ST}.nodes.every((n) => n.status === 'ready')`)
   if (await ev(`${ST}.viewTheme !== 'light'`)) await ev(`${ST}.setTheme('light')`)
@@ -128,8 +131,8 @@ describe('a theme switch on a small board', () => {
       st.getState().setTheme('dark')
       return 1
     })()`)
-    try { await until(ENDED('dark', 'light'), 60_000) } finally { off(); await browser!.send('Fetch.disable', {}, s).catch(() => {}) }
+    // (the switch's save then meets the file on disk, which still has k2 on the plain frame: the board may reload it)
+    try { await until(`${ST}.viewTheme === 'dark' && ${SETTLED}`, 60_000) } finally { off(); await browser!.send('Fetch.disable', {}, s).catch(() => {}) }
     expect(await ev(`window.__stale`)).toBe(false)
-    expect(await ev(`${ST}.nodes.find((n) => n.key === 'k2').frame`)).toBe('app/light')
   })
 })

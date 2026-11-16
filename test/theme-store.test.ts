@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 //    switches, reloads of the board - incl. a live manifest landing mid-fetch, the fetched-then-live double apply -
 //    manifest changes, frame reloads, reload jobs, the error retry, removals, theme switches, status changes), once
 //    batched and once with each ack written the moment it comes, as before batching; the two stores must be equal after
-//    every other action and at the end;
+//    every other action (the whole state, at once and after the batch's timer) and at the end, through writes from
+//    outside (a functional writer of nodes, a replace) and a subscriber that queues an ack and calls an action;
 //  - a burst is one store update; the 100 ms timer flushes when no animation frame comes; the last ack of a key wins;
 //  - setTheme: the frame index's first match, a frame's own meta.theme kept, pins cleared, an unchanged node kept.
 
@@ -122,9 +123,9 @@ async function pair(): Promise<{ batched: Store; ref: Store }> {
   return { batched, ref }
 }
 const ackRef = (s: Store, key: string, theme: string) => s.setState((st) => ({ nodes: st.nodes.map((n) => (n.key === key ? { ...n, themeOn: theme } : n)) }))
-/** What the comparison reads, once the batch has landed (its timer: the same on every build): the board, the theme,
- *  every node's own fields. */
-const seen = (s: Store) => { const st = s.getState(); return { board: st.board, viewTheme: st.viewTheme, nodes: st.nodes.map((n) => ({ ...n })), frames: st.manifest?.frames.map((f) => `${f.id}:${f.kind}:${f.file}`) } }
+/** The whole state, as any other code would read it: through a write (a functional no-op - acks pending land first;
+ *  React's raw getState alone does not), every field but the actions. */
+const seen = (s: Store) => { s.setState((st) => st); return JSON.parse(JSON.stringify(s.getState(), (_k, v) => (typeof v === 'function' ? undefined : v))) }
 
 describe('theme acks against acks written at once (the model)', () => {
   it('300 seeded interleavings: equal after every other action and at the end', async () => {
@@ -136,20 +137,26 @@ describe('theme acks against acks written at once (the model)', () => {
       server.boards = { a: [at('k1', 's/f'), at('k2', 's/g'), at('k3', 's/h')], b: [at('k1', 's/g'), at('k4', 's/f')] }
       const { batched, ref } = await pair()
       const log: string[] = []
+      // re-entrancy: on each store, the first theme switch's notification queues another ack and calls an action
+      for (const [s, ackOn] of [[batched, (k: string, t: string) => batched.getState().setThemeOn(k, t)], [ref, (k: string, t: string) => ackRef(ref, k, t)]] as const) {
+        let fired = false
+        s.subscribe((st, prev) => { if (!fired && st.viewTheme !== prev.viewTheme) { fired = true; ackOn('k1', st.viewTheme); s.getState().setStatus('k1', 'ready') } })
+      }
       const ack = () => { const k = pick(KEYS), t = pick(['light', 'dark']); log.push(`ack ${k} ${t}`); batched.getState().setThemeOn(k, t); ackRef(ref, k, t) }
       const both = async (name: string, fn: (s: Store) => unknown, during = 0) => {
         log.push(name)
         const pa = fn(batched), pb = fn(ref)
         for (let i = 0; i < during; i++) ack()   // acks that come while the action awaits the server
         await pa; await pb
+        expect(seen(batched), `seq ${seq}: ${log.join(' · ')}`).toEqual(seen(ref))   // at once: as anything else would look
         await vi.advanceTimersByTimeAsync(120)
-        expect(seen(batched), `seq ${seq}: ${log.join(' · ')}`).toEqual(seen(ref))
+        expect(seen(batched), `seq ${seq} (+120 ms): ${log.join(' · ')}`).toEqual(seen(ref))
       }
       for (let step = 0; step < 14; step++) {
         const kind = r()
         if (kind < 0.4) { ack(); continue }
         const k = pick(KEYS), during = Math.floor(r() * 3)
-        const what = Math.floor(r() * 10)
+        const what = Math.floor(r() * 12)
         if (what === 0) await both(`switch ${pick(['a', 'b'])}`, (s) => s.getState().switchBoard(log.at(-1)!.split(' ')[1] as string), during)
         else if (what === 1) { const f = pick(['s/g', 's/h', 's/f']); server.boards.a = server.boards.a.map((n) => (n.key === 'k2' ? { ...n, frame: f } : n)); await both(`boot (k2 ${f})`, (s) => s.getState().boot(), during) }
         else if (what === 2) { const m = pick(MANIFESTS); server.manifest = m; await both(`boot (manifest ${MANIFESTS.indexOf(m)})`, (s) => s.getState().boot(), during) }
@@ -164,7 +171,10 @@ describe('theme acks against acks written at once (the model)', () => {
         else if (what === 6) await both(`startReload ${k}`, (s) => s.getState().startReload(k))
         else if (what === 7) await both(`removeNode ${k}`, (s) => s.getState().removeNode(k))
         else if (what === 8) { const t = pick(['light', 'dark']); await both(`setTheme ${t}`, (s) => s.getState().setTheme(t)) }
-        else { const st = pick(['ready', 'error', 'loading'] as const); await both(`setStatus ${k} ${st}`, (s) => s.getState().setStatus(k, st, st === 'error' ? 'x' : undefined)) }
+        else if (what === 9) { const st = pick(['ready', 'error', 'loading'] as const); await both(`setStatus ${k} ${st}`, (s) => s.getState().setStatus(k, st, st === 'error' ? 'x' : undefined)) }
+        // writes from outside: a functional writer of nodes, and a replace
+        else if (what === 10) await both(`outside nodes ${k}`, (s) => s.setState((st) => ({ nodes: st.nodes.map((n) => (n.key === k ? { ...n, x: n.x + 10 } : n)) })))
+        else await both(`outside replace`, (s) => s.setState((st) => ({ ...st, selection: st.nodes.slice(0, 1).map((n) => n.key) }), true))
       }
       await vi.advanceTimersByTimeAsync(120)   // the last batch lands
       expect(seen(batched), `seq ${seq} (end): ${log.join(' · ')}`).toEqual(seen(ref))

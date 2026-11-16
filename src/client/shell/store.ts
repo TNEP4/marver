@@ -815,11 +815,14 @@ export const BOARD_GONE = 'this board was renamed or removed - not recreating it
 
 export const useStore = create<State>((rawSet, rawGet, storeApi) => {
   // sh:theme-applied acks, batched: one store update for a switch's burst (112 acks were 0.8 s of the shell
-  // re-rendering, one update each). They are applied BEFORE anything else reads or writes the store - every action's
-  // get and set, and setState from outside - so every state any other code acts on, carries or discards is the one
-  // acks written as they came would have made: only a run of acks with nothing else between them becomes one update.
-  // React reads through the store's own getState, unflushed: what the batch defers is that one re-render. Otherwise
-  // they land at the next animation frame (100 ms on a hidden page), by whichever timer comes first.
+  // re-rendering, one update each). They are applied BEFORE the store's own actions read (get) or write (set), and
+  // before any setState from outside, so every state an action or a FUNCTIONAL setState acts on, carries or discards
+  // is the one acks written as they came would have made: only a run of acks with nothing else between them becomes
+  // one update. React reads through the store's own getState, unflushed: what the batch defers is that one re-render.
+  // The one way to break it: a writer outside the store that reads getState(), builds an OBJECT from it and writes it
+  // back (`setState({ nodes: getState().nodes.map(...) })`) overwrites a just-applied ack with its stale copy - write
+  // nodes from outside with the functional form (`setState((s) => ({ nodes: ... }))`); DEV says so once. Otherwise
+  // the acks land at the next animation frame (100 ms on a hidden page), by whichever timer comes first.
   const acks: { pending: Map<string, string>; frame?: number; timer?: ReturnType<typeof setTimeout> } = { pending: new Map() }
   const applyAcks = () => {
     if (acks.frame !== undefined && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(acks.frame)
@@ -832,7 +835,11 @@ export const useStore = create<State>((rawSet, rawGet, storeApi) => {
   }
   const set = ((partial: Parameters<typeof rawSet>[0], replace?: boolean) => { applyAcks(); rawSet(partial as never, replace as never) }) as typeof rawSet
   const get: typeof rawGet = () => { applyAcks(); return rawGet() }
-  storeApi.setState = set
+  let warned = false
+  storeApi.setState = ((partial: Parameters<typeof rawSet>[0], replace?: boolean) => {
+    if (import.meta.env.DEV && !warned && acks.pending.size && partial && typeof partial === 'object' && 'nodes' in partial) { warned = true; console.error('[marver] setState({ nodes }) from outside while theme acks are pending: write nodes with the functional form, setState((s) => ({ nodes: ... })) - an object built from getState() overwrites them (store.ts)') }
+    set(partial as never, replace as never)
+  }) as typeof rawSet
   let saveTimer: ReturnType<typeof setTimeout> | undefined
   let saveChain: Promise<boolean> = Promise.resolve(true)   // saves are serialized; responses only commit if the board is still active
   let editRev = 0                                    // bumps per edit; a stale save response may never clear dirty over a newer edit
