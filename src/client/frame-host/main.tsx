@@ -83,9 +83,12 @@ function Committed({ onCommit, children }: { onCommit: () => void; children?: Re
 
 async function boot() {
   const phases: Record<string, number> = { boot: Math.round(performance.now()) }   // ms since navigation: where a boot spends its time (research/hifi/bootscale.ts)
-  // the elements the theme, the frame and its wrappers make as they load get no debug stack each (inplace.ts, holdElementStacks)
-  const giveStacks = holdElementStacks(React)
+  // the elements the theme, the frame and its wrappers make as they load get no debug stack each (inplace.ts,
+  // holdElementStacks): no root of ours exists yet, so no render of ours can make an element in the window. Updates
+  // applied in place later are NOT held - a root renders meanwhile, and Vite skips vite:afterUpdate when a callback throws
+  let giveStacks = () => {}
   try {
+    giveStacks = holdElementStacks(React)
     await import('virtual:sh-theme' as string)
     phases.theme = Math.round(performance.now())
 
@@ -144,12 +147,5 @@ boot()
 if (import.meta.hot) import.meta.hot.on('vite:afterUpdate', (p: { updates?: { acceptedPath?: string; path?: string }[] }) => {
   if (p.updates?.some((u) => !(u.acceptedPath ?? u.path ?? '').includes('/frame-host/registry'))) post({ type: 'sh:hmr', id })
 })
-// an update applied in place re-evaluates its modules: the elements they make as they load get no stack of their own
-// either, and the count is given back before Fast Refresh renders (its render is debounced past vite:afterUpdate)
-if (import.meta.hot) {
-  let giveUpdate: (() => void) | null = null
-  import.meta.hot.on('vite:beforeUpdate', () => { giveUpdate?.(); giveUpdate = holdElementStacks(React) })
-  import.meta.hot.on('vite:afterUpdate', () => { giveUpdate?.(); giveUpdate = null })
-}
 // spec 30 #15: what this document saw of an update applied in place, and only if it fetched it
 if (import.meta.hot && fullRecorder()) watchInplace(import.meta.hot, (m) => post({ ...m, id, boot: docId() }))

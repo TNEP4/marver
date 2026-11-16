@@ -138,6 +138,12 @@ export function watchInplace(hot: { on(event: string, cb: (p: any) => void): voi
  * elements had never been counted: a render's elements get their stacks as they would on a frame without them - never
  * fewer than before (a load of thousands of glyphs used to spend the budget before the first render, when it finished
  * inside React's one-second reset). A React without the counter (a production build, React 18, 19.0) is left as it is.
+ *
+ * Held only while the frame host BOOTS (main.tsx): no root of the frame host exists yet, so no render of its own can
+ * make an element in the window. A renderer reset during the hold (React's, at most once a second, when it prepares a
+ * render) simply ends it early. One case it does not tell apart: a module that mounts a React root of its own while the
+ * frame is still loading - that root's elements made in the window share the stack too. Never held around an update
+ * applied in place: a root renders meanwhile, and Vite sends no vite:afterUpdate when a dispose or accept callback throws.
  */
 const INTERNALS = '__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE'
 /** Far past any limit React uses, so no element made during the hold is given a stack. */
@@ -154,7 +160,7 @@ export function holdElementStacks(react: object): () => void {
     if (given) return
     given = true
     const now = internals.recentlyCreatedOwnerStacks
-    // the renderer set it back meanwhile (a render during the hold): its count is the true one
+    // the renderer set it back meanwhile (a render during the hold, which ended it): its count is the true one
     if (typeof now !== 'number' || now < SPENT) return
     internals.recentlyCreatedOwnerStacks = was
   }
