@@ -78,6 +78,39 @@ describe('theme acks', () => {
     await vi.advanceTimersByTimeAsync(120)
     expect(on(s, 'k')).toBeUndefined()
   })
+  it('the real guard: an ack queued before a same-board reload replaced the node\'s frame never lands on the replacement - though the iframe element and its old document are still there', async () => {
+    const s = await store('a', ['k'])
+    const { keepDocuments } = await import('../src/client/shell/store.ts')
+    const { documentLive, registerFrame } = await import('../src/client/shell/canvas/frame-registry.ts')
+    const win = { __mvBoot: 'b-old' }
+    const iframe = { contentWindow: win } as unknown as HTMLIFrameElement
+    registerFrame(win as unknown as WindowProxy, { key: 'k', iframe })
+    s.getState().setThemeOn('k', 'dark', () => documentLive('k', iframe, 'b-old'))   // App's own closure
+    // the board file changed: k now shows another frame - keepDocuments discards the old document's state; the iframe
+    // element stays (FrameNode is keyed by k) and still holds the old document until the new one commits
+    const mounted = s.getState().nodes
+    s.setState({ nodes: keepDocuments(mounted, [{ ...node('k'), frame: 's/new', theme: 'light' }]).nodes })
+    expect(documentLive('k', iframe, 'b-old')).toBe(true)   // the committed-document check alone would let it through
+    await vi.advanceTimersByTimeAsync(120)
+    expect(s.getState().nodes[0].frame).toBe('s/new')
+    expect(s.getState().nodes[0].themeOn).toBeUndefined()   // dark never landed on the replacement
+  })
+  it('the 100 ms timeout flushes a batch when no animation frame comes (a hidden page)', async () => {
+    vi.stubGlobal('requestAnimationFrame', () => 1)   // never runs
+    const s = await store('a', ['k'])
+    s.getState().setThemeOn('k', 'dark')
+    await vi.advanceTimersByTimeAsync(99)
+    expect(on(s, 'k')).toBeUndefined()
+    await vi.advanceTimersByTimeAsync(2)
+    expect(on(s, 'k')).toBe('dark')
+  })
+  it('two acks of one key in a batch, two themes: the last one lands', async () => {
+    const s = await store('a', ['k'])
+    s.getState().setThemeOn('k', 'dark')
+    s.getState().setThemeOn('k', 'light')
+    await vi.advanceTimersByTimeAsync(17)
+    expect(on(s, 'k')).toBe('light')
+  })
   it('an ack heard on board a never lands on board b\'s node of the same key', async () => {
     const s = await store('a', ['k'])
     s.getState().setThemeOn('k', 'light')

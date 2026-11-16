@@ -342,7 +342,11 @@ export const bumpManifestRev = () => { manifestRev++ }
  *  A kept content frame keeps the size it measured: the file holds none (auto) or the width alone is the human's
  *  (manual), and a document that stays never measures again unless its width changes. `kept`: the nodes whose
  *  document stands; `carried`: the nodes whose kept size differs from the file's. */
-function keepDocuments(mounted: Node[], nodes: Node[]): { nodes: Node[]; kept: Set<string>; carried: Set<string> } {
+/** Which document a node shows, as keepDocuments decides it: the same frame, present, on the same navigation keeps it;
+ *  anything else is another document (setThemeOn's ack ownership uses the same rule, so "kept" and "its ack still
+ *  lands" never disagree). */
+const docOf = (n: Pick<Node, 'frame' | 'nav' | 'missing'>): string => `${n.frame}|${n.nav ?? 0}|${n.missing ? 1 : 0}`
+export function keepDocuments(mounted: Node[], nodes: Node[]): { nodes: Node[]; kept: Set<string>; carried: Set<string> } {
   const was = new Map(mounted.map((n) => [n.key, n]))
   const kept = new Set<string>(), carried = new Set<string>()
   const next = nodes.map((n) => {
@@ -817,7 +821,7 @@ export const useStore = create<State>((set, get) => {
   let saveTimer: ReturnType<typeof setTimeout> | undefined
   let saveChain: Promise<boolean> = Promise.resolve(true)   // saves are serialized; responses only commit if the board is still active
   // setThemeOn's batch, waiting for the next animation frame: the board it was heard on, its acks, its two timers
-  const acks: { board?: string; pending: Map<string, { theme: string; live?: () => boolean }>; frame?: number; timer?: ReturnType<typeof setTimeout> } = { pending: new Map() }
+  const acks: { board?: string; pending: Map<string, { theme: string; doc: string; live?: () => boolean }>; frame?: number; timer?: ReturnType<typeof setTimeout> } = { pending: new Map() }
   const cancelAcks = () => {
     if (acks.frame !== undefined && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(acks.frame)
     clearTimeout(acks.timer)
@@ -1726,15 +1730,19 @@ export const useStore = create<State>((set, get) => {
     bumpRev(key) { set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, rev: (n.rev ?? 0) + 1 } : n)) })) },
     // A switch's acks come in a burst, one message per frame: one store update an animation frame for all of them, not
     // one each - every update re-renders whatever reads the whole board (112 acks: 0.8 s of the shell re-rendering).
-    // An ack belongs to the DOCUMENT that sent it: `live` (App.tsx) asks, at the flush, whether that document is still
-    // the node's - one replaced meanwhile (a reload of the same board, a board left and come back to, a remount) is
-    // dropped, and its theme never lands on the document there now. A batch switched to another board is dropped whole.
+    // An ack belongs to the DOCUMENT that sent it, twice over: the node it came for must still show that document at the
+    // flush (its frame, its navigation, present: `docOf`, keepDocuments' own rule - a same-board reload that replaces
+    // the node's frame drops it even while the iframe element and its old document are still there), and `live`
+    // (App.tsx, documentLive) asks whether the iframe's committed document is still the one that sent it (a reload of
+    // the same frame, a remount, a board left and come back to). A batch switched to another board is dropped whole.
     // Each batch is flushed once, by whichever of its two timers comes first - the other is cancelled, so it never
     // flushes a later batch early.
     setThemeOn(key, theme, live) {
       const board = get().board
       if (acks.board !== board) { cancelAcks(); acks.board = board }
-      acks.pending.set(key, { theme, live })
+      const at = get().nodes.find((n) => n.key === key)
+      if (!at) return
+      acks.pending.set(key, { theme, doc: docOf(at), live })
       if (acks.frame !== undefined || acks.timer !== undefined) return
       const flush = () => {
         const mine = acks.pending, onBoard = acks.board
@@ -1742,7 +1750,7 @@ export const useStore = create<State>((set, get) => {
         if (get().board !== onBoard) return
         for (const [k, a] of mine) if (a.live && !a.live()) mine.delete(k)
         if (!mine.size) return
-        set((s) => ({ nodes: s.nodes.map((n) => { const a = mine.get(n.key); return !a || a.theme === n.themeOn ? n : { ...n, themeOn: a.theme } }) }))
+        set((s) => ({ nodes: s.nodes.map((n) => { const a = mine.get(n.key); return !a || a.doc !== docOf(n) || a.theme === n.themeOn ? n : { ...n, themeOn: a.theme } }) }))
       }
       if (typeof requestAnimationFrame === 'function') acks.frame = requestAnimationFrame(flush)
       acks.timer = setTimeout(flush, 100)   // a hidden page draws no frames
