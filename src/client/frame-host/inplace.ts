@@ -122,3 +122,40 @@ export function watchInplace(hot: { on(event: string, cb: (p: any) => void): voi
     } catch { /* the same */ }
   })
 }
+
+// ---- element stacks while modules load (item 9) --------------------------------------------------------------
+// here rather than in a module of its own: one module fewer for every frame document to fetch
+/**
+ * React's development build gives each element it makes a debug stack and a console task (an `Error` and a
+ * `console.createTask`), up to 10,000 a second, counted on its shared internals (`recentlyCreatedOwnerStacks`; the
+ * renderer gives the budget back at most once a second). An element a module makes as it LOADS - an icon library's
+ * hoisted glyphs: phosphor makes one per weight, six per icon, for the whole barrel - has no owner, and its stack would
+ * name the import chain. On a heavy frame those were a quarter of a second and megabytes of every document (measured,
+ * item 9: `createElement` was 25 s of a 112-frame board's 44).
+ *
+ * While the frame's own modules evaluate, the budget reads as spent - the path React itself takes past its limit: the
+ * element shares React's "unknown owner" stack and task. After, the count is put back where it was, as if those
+ * elements had never been counted: a render's elements get their stacks as they would on a frame without them - never
+ * fewer than before (a load of thousands of glyphs used to spend the budget before the first render, when it finished
+ * inside React's one-second reset). A React without the counter (a production build, React 18, 19.0) is left as it is.
+ */
+const INTERNALS = '__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE'
+/** Far past any limit React uses, so no element made during the hold is given a stack. */
+const SPENT = 2 ** 40
+
+/** Hold React's element stacks; the function returned gives the count back. Call it once, after the modules loaded. */
+export function holdElementStacks(react: object): () => void {
+  const internals = (react as Record<string, unknown>)[INTERNALS] as { recentlyCreatedOwnerStacks?: unknown } | undefined
+  if (!internals || typeof internals.recentlyCreatedOwnerStacks !== 'number') return () => {}
+  const was = internals.recentlyCreatedOwnerStacks
+  internals.recentlyCreatedOwnerStacks = SPENT
+  let given = false
+  return () => {
+    if (given) return
+    given = true
+    const now = internals.recentlyCreatedOwnerStacks
+    // the renderer set it back meanwhile (a render during the hold): its count is the true one
+    if (typeof now !== 'number' || now < SPENT) return
+    internals.recentlyCreatedOwnerStacks = was
+  }
+}

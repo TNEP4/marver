@@ -3,6 +3,7 @@
  * Boot failures (theme, providers, layouts, the frame itself) render a plain-DOM error card
  * and post sh:error; an ErrorBoundary catches render-time throws the same way.
  */
+import * as React from 'react'
 import { Component, createElement, Profiler, useLayoutEffect, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 
@@ -11,7 +12,7 @@ import { frameRenders } from './signals.js'
 import { frameFile, frames, layoutChain, layouts, providers } from './registry.ts'
 import { SLIDE_DOC_CSS } from '../const.ts'
 import { fullRecorder } from '../recorder-level.ts'
-import { rootCommitted, watchInplace } from './inplace.ts'
+import { holdElementStacks, rootCommitted, watchInplace } from './inplace.ts'
 
 const params = new URLSearchParams(location.search)
 const id = params.get('id') ?? ''
@@ -82,6 +83,8 @@ function Committed({ onCommit, children }: { onCommit: () => void; children?: Re
 
 async function boot() {
   const phases: Record<string, number> = { boot: Math.round(performance.now()) }   // ms since navigation: where a boot spends its time (research/hifi/bootscale.ts)
+  // the elements the theme, the frame and its wrappers make as they load get no debug stack each (inplace.ts, holdElementStacks)
+  const giveStacks = holdElementStacks(React)
   try {
     await import('virtual:sh-theme' as string)
     phases.theme = Math.round(performance.now())
@@ -113,6 +116,7 @@ async function boot() {
     for (const lk of layoutChain(fileKey)) wrappers.push((await layouts[lk]() as any).default)
 
     phases.wrappers = Math.round(performance.now())
+    giveStacks()
     let tree: ReactNode = createElement(Frame)
     for (const W of wrappers.reverse()) if (W != null) tree = createElement(W, null, tree)
 
@@ -126,6 +130,8 @@ async function boot() {
     createRoot(document.getElementById('root')!).render(onRender ? createElement(Profiler, { id: 'frame', onRender }, app) : app)
   } catch (err) {
     fail((err as Error).message, err)
+  } finally {
+    giveStacks()
   }
 }
 
@@ -138,5 +144,12 @@ boot()
 if (import.meta.hot) import.meta.hot.on('vite:afterUpdate', (p: { updates?: { acceptedPath?: string; path?: string }[] }) => {
   if (p.updates?.some((u) => !(u.acceptedPath ?? u.path ?? '').includes('/frame-host/registry'))) post({ type: 'sh:hmr', id })
 })
+// an update applied in place re-evaluates its modules: the elements they make as they load get no stack of their own
+// either, and the count is given back before Fast Refresh renders (its render is debounced past vite:afterUpdate)
+if (import.meta.hot) {
+  let giveUpdate: (() => void) | null = null
+  import.meta.hot.on('vite:beforeUpdate', () => { giveUpdate?.(); giveUpdate = holdElementStacks(React) })
+  import.meta.hot.on('vite:afterUpdate', () => { giveUpdate?.(); giveUpdate = null })
+}
 // spec 30 #15: what this document saw of an update applied in place, and only if it fetched it
 if (import.meta.hot && fullRecorder()) watchInplace(import.meta.hot, (m) => post({ ...m, id, boot: docId() }))
