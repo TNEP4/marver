@@ -10,7 +10,7 @@ import { NOTE_GAP } from '../notes.ts'
 import { onMotion, startCameraBroadcast, setCameraScale } from './camera-broadcast.ts'
 import { attachCanvas, recorder } from '../recorder.ts'
 import { sleepingCount } from './sleep.ts'
-import { aimed, holdForCamera, reconsider } from './admission.ts'
+import { aimed, wireAdmission } from './admission.ts'
 import { keepOverResume, resumed, WS } from '../api.ts'
 import { APP_REOPEN } from '../marver-app.ts'
 import { TOP } from '../inset.ts'
@@ -263,11 +263,7 @@ export function Canvas() {
   // B0.4: frame-time sampler + image-LOD camera signal; the recorder hears when the camera stops and what sleeps (spec 28 A1.7)
   useEffect(() => { startPerf(); startCameraBroadcast(); return attachCanvas({ onMotion, sleeping: sleepingCount }) }, [])
   // a person's pan, zoom or pinch holds the boot queue until the camera rests (admission.ts)
-  useEffect(() => {
-    const off = onMotion((m) => { holdForCamera(m.camera); if (!m.preset) reconsider() })   // a layout animation ended (tidy) too
-    addEventListener('resize', reconsider)
-    return () => { off(); removeEventListener('resize', reconsider); holdForCamera(false) }
-  }, [])
+  useEffect(() => wireAdmission(onMotion, window, document), [])
   // the pending camera written as the page hides or leaves (A3.8 #43), after the recorder's own listeners
   useEffect(() => { watchLeave() }, [])
 
@@ -347,8 +343,10 @@ export function Canvas() {
     }
     // a rect on screen now, where it will be when the flight lands: the same world point under the landing transform
     canvasCtl.landing = (r: DOMRect) => {
-      const el = wrap(), inst = ref.current
-      if (!flight || !el || !inst?.instance.animation) return r
+      const inst = ref.current
+      if (!flight || !inst?.instance.animation) return r   // at rest: no lookup (the boot queue asks for every waiting frame)
+      const el = wrap()
+      if (!el) return r
       const { positionX, positionY, scale } = inst.instance.transformState
       const c = el.getBoundingClientRect(), k = flight.scale / scale
       return new DOMRect(c.left + flight.x + (r.left - c.left - positionX) * k, c.top + flight.y + (r.top - c.top - positionY) * k, r.width * k, r.height * k)

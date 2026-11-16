@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // a collection's callback (FinalizationRegistry) has no deadline and no guarantee: the queue runs here without one, so
 // nothing below depends on it - and a real collection during a test cannot rescue a stall it should show
 vi.hoisted(() => { (globalThis as { FinalizationRegistry?: unknown }).FinalizationRegistry = undefined })
-import { admissionIdle, admit, aimed, HEAD_MS, HEAP_RESUME, HEAP_SAFE, HOLD_MS, holdForCamera, onAdmissionIdle, reconsider, TICK_MS, release, resetAdmission, SLOTS } from '../src/client/shell/canvas/admission.ts'
+import { admissionIdle, admit, aimed, HEAD_MS, disposeAdmission, HEAP_RESUME, HEAP_SAFE, HOLD_MS, holdForCamera, onAdmissionIdle, readable, reconsider, TICK_MS, wireAdmission, release, resetAdmission, SLOTS } from '../src/client/shell/canvas/admission.ts'
 
 // Frame admission: a board's iframes boot on one main thread, so at most SLOTS boot at once, one
 // first, nearest the centre of the view first, and a slot goes back the moment its frame is done.
@@ -136,13 +136,22 @@ describe('admission', () => {
     expect(started).toEqual(['a'])
   })
   describe('the heap past its safe line (performance.memory)', () => {
-    // precise: an exact counter, moved by every allocation (here: by every read); bucketed: Chromium outside a site-locked
-    // process - one value, refreshed at most every twenty minutes (refresh())
+    // Chromium's sample, shared by every reader of the page (blink memory_info.cc): refreshed on a read at most every 50 ms
+    // when exact (a site-locked process), every twenty minutes when bucketed; the heap itself moves with any allocation
     const LIMIT = 4096 * 1048576
-    let at = 0, precise = true, reads = 0, frozen = 0
-    const memory = { get usedJSHeapSize() { reads++; return precise ? Math.round(at * LIMIT) + reads : frozen }, jsHeapSizeLimit: LIMIT }
-    const heap = (fraction: number) => { at = fraction }
-    const refresh = (fraction: number) => { frozen = Math.round(fraction * LIMIT) }
+    let at = 0, precise = true, frozen = 0, sample = 0, sampledAt = -Infinity
+    const heapNow = () => Math.round(at * LIMIT) + Math.floor(performance.now())   // allocation never quite stops
+    const memory = {
+      get usedJSHeapSize() {
+        if (!precise) return frozen
+        const now = performance.now()
+        if (now - sampledAt >= 50) { sample = heapNow(); sampledAt = now }
+        return sample
+      },
+      jsHeapSizeLimit: LIMIT,
+    }
+    const heap = (fraction: number) => { at = fraction; sampledAt = -Infinity }
+    const refresh = (fraction: number) => { frozen = Math.round(fraction * LIMIT) }   // a bucketed sample's refresh
     beforeEach(() => { heap(0); precise = true; refresh(0); Object.defineProperty(performance, 'memory', { value: memory, configurable: true }) })
     afterEach(() => { delete (performance as { memory?: unknown }).memory })
     const near = new Set<string>()
@@ -154,7 +163,7 @@ describe('admission', () => {
       askNear('in', 0)
       admit({ key: 'w', rank: () => 0.5, start: () => {} })   // another frame of the load: it waits, then holds a slot
       await settle()                                           // 'in' alone (the head start)
-      for (let i = 0; i < 2; i++) { reconsider(); await vi.advanceTimersByTimeAsync(0) }   // pumps with 'w' waiting: readings
+      for (let i = 0; i < 2; i++) { await vi.advanceTimersByTimeAsync(100); reconsider(); await vi.advanceTimersByTimeAsync(0) }   // pumps with 'w' waiting: readings
       await vi.advanceTimersByTimeAsync(HEAD_MS)               // the head start's pump, spent: 'w' takes a slot
     }
     const board = async (keys: string[], fraction: number) => {
@@ -258,5 +267,85 @@ describe('admission', () => {
       await settle(); release('x'); await vi.advanceTimersByTimeAsync(0)
       expect(started).toEqual(['in', 'x', 'y'])
     })
+
+    it('a bucketed sample seen across a gap in admission\'s own reads proves nothing (Codex r2): another reader refreshed it meanwhile', async () => {
+      precise = false; refresh(0.1)
+      const MIN = 60_000
+      await start()                                 // admission reads bucket A, then its queue empties
+      release('w'); release('in')
+      await vi.advanceTimersByTimeAsync(20 * MIN)   // another reader (the recorder) refreshes the sample to B
+      refresh(0.2)
+      await vi.advanceTimersByTimeAsync(19 * MIN + 50_000)
+      near.clear(); near.add('in')
+      askNear('in', 0); admit({ key: 'w', rank: () => 0.5, start: () => {} })   // a new batch at 39:50 first sees B: change one
+      await settle()
+      await vi.advanceTimersByTimeAsync(11_000)     // its head start spent: 'in' and 'w' booting
+      refresh(past)                                 // 40:01: the sample's next refresh, above the line: change two, 11 s on
+      askNear('far1', 1); askNear('far2', 2)
+      await settle()
+      release('in'); await vi.advanceTimersByTimeAsync(TICK_MS * 3)
+      expect(started.filter((k) => k !== 'in')).toEqual(['far1', 'far2'])
+    })
+    it('an exact sample (cached 50 ms) proves itself within a load\'s first boots', async () => {
+      near.clear(); near.add('in')
+      askNear('in', 0); admit({ key: 'w', rank: () => 0.5, start: () => {} })
+      await settle()
+      for (const ms of [120, 140, 90]) { await vi.advanceTimersByTimeAsync(ms); reconsider(); await vi.advanceTimersByTimeAsync(0) }   // a boot's pace
+      await vi.advanceTimersByTimeAsync(HEAD_MS)
+      heap(past)
+      askNear('far', 1)
+      await settle()
+      release('in'); await vi.advanceTimersByTimeAsync(0)
+      expect(started).toEqual(['in'])               // proven: past the line, the far frame waits
+    })
+    it('a hot-replaced module leaves nothing behind: not its parked tick, not a pump already queued', async () => {
+      await board(['far'], past)
+      expect(vi.getTimerCount()).toBeGreaterThan(0)   // parked: the tick
+      reconsider()                 // a pump queued...
+      disposeAdmission()           // ...and the module replaced before it runs
+      await vi.advanceTimersByTimeAsync(TICK_MS * 3)
+      expect(vi.getTimerCount()).toBe(0)
+      expect(started).toEqual(['in'])
+    })
+    it('readable: past the line a frame boots only on screen or near it, and no smaller than image-LOD\'s first bucket', () => {
+      const rect = (x: number, y: number, w: number, h: number) => ({ left: x, top: y, right: x + w, bottom: y + h, width: w, height: h })
+      const c = rect(0, 0, 1600, 1000)
+      const box = (x: number, y: number, w: number) => rect(x, y, w, w)
+      expect(readable(box(100, 100, 200), c, 2)).toBe(true)      // 400 device px, in view
+      expect(readable(box(100, 100, 100), c, 2)).toBe(false)     // 200 device px: a thumbnail
+      expect(readable(box(100, 100, 100), c, 3)).toBe(false)     // the ratio counts up to 2, as image-LOD's does
+      expect(readable(box(1900, 100, 400), c, 1)).toBe(true)     // half a screen off, readable
+      expect(readable(box(2500, 100, 400), c, 1)).toBe(false)    // further
+    })
+  })
+
+
+  it('the Canvas wiring: the camera holds the queue; a layout animation\'s end, a resize and the page shown again look again', async () => {
+    const motion = new Set<(m: { camera: boolean; preset: boolean }) => void>()
+    const win = new EventTarget(), doc = Object.assign(new EventTarget(), { visibilityState: 'hidden' })
+    const unwire = wireAdmission((fn) => { motion.add(fn); return () => motion.delete(fn) }, win, doc)
+    const send = (m: { camera: boolean; preset: boolean }) => { for (const fn of motion) fn(m) }
+    let pumps = 0
+    const probe = (k: string) => admit({ key: k, rank: () => 1, start: () => started.push(k), near: () => { pumps++; return false } })
+    Object.defineProperty(performance, 'memory', { configurable: true, get: () => ({ usedJSHeapSize: 0.9 * 4096 * 1048576 + Math.floor(performance.now()), jsHeapSizeLimit: 4096 * 1048576 }) })
+    try {
+      ask('in', 0); probe('far')
+      await settle()
+      for (let i = 0; i < 3; i++) { await vi.advanceTimersByTimeAsync(100); reconsider(); await vi.advanceTimersByTimeAsync(0) }
+      release('in'); await vi.advanceTimersByTimeAsync(0)
+      expect(started).toEqual(['in'])                    // parked: 'far' is not near
+      const looks = async (fire: () => void) => { const p = pumps; fire(); await vi.advanceTimersByTimeAsync(0); return pumps > p }
+      send({ camera: true, preset: false })
+      expect(await looks(() => win.dispatchEvent(new Event('resize')))).toBe(false)   // held: a moving camera asks nothing
+      expect(await looks(() => send({ camera: false, preset: false }))).toBe(true)    // its rest looks again
+      expect(await looks(() => send({ camera: false, preset: true }))).toBe(false)    // a layout animation running
+      expect(await looks(() => send({ camera: false, preset: false }))).toBe(true)    // ...and ended (tidy)
+      expect(await looks(() => win.dispatchEvent(new Event('resize')))).toBe(true)
+      expect(await looks(() => doc.dispatchEvent(new Event('visibilitychange')))).toBe(false)   // hidden: nothing
+      doc.visibilityState = 'visible'
+      expect(await looks(() => doc.dispatchEvent(new Event('visibilitychange')))).toBe(true)    // shown again
+      unwire()
+      expect(await looks(() => win.dispatchEvent(new Event('resize')))).toBe(false)
+    } finally { delete (performance as { memory?: unknown }).memory }
   })
 })

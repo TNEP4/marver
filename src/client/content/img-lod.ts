@@ -11,6 +11,8 @@
 // never triggers a decode/resample storm. Crisp at rest, cheap in motion. This mirrors how tldraw does
 // LOD (resolution by on-screen size, debounced so it never thrashes mid-zoom).
 
+import { LOD_MIN_PX } from '../const.ts'
+
 /** Feature probe: createImageBitmap with resize + a canvas bitmaprenderer that can receive it. */
 export const lodSupported = (() => {
   try {
@@ -22,7 +24,7 @@ export const lodSupported = (() => {
 
 // Quantized resize widths (device px). A `want` above the top bucket decodes at NATIVE (bucket 0 = no
 // resize), reached only when a frame is zoomed in past ~2048 on-screen device px.
-const BUCKETS = [256, 640, 1280, 2048]
+const BUCKETS = [LOD_MIN_PX, 640, 1280, 2048]
 const DPR = (): number => Math.min(window.devicePixelRatio || 1, 2)   // cap at 2; 3x buys nothing here
 
 // Bounded decode pool: never run more than N createImageBitmap jobs at once (peak decode memory + CPU).

@@ -1,7 +1,7 @@
 import { navigatedByHand } from '../goto.ts'
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { cap, frameById, frameUrl, shownRev, useStore, CONFIG, type Manifest, type Node } from '../store.ts'
-import { admit, release } from './admission.ts'
+import { admit, readable, release } from './admission.ts'
 import { canvasCtl } from './ctl.ts'
 import { CopyIcon, IntentGlyph, ParallelogramFillIcon, ReloadIcon, SlideFrameIcon, XIcon } from '../icons.tsx'
 import { CommentLayer } from '../Comments.tsx'
@@ -25,6 +25,16 @@ import { cmd, endOnReady, endOnSave, type CmdHandle } from '../commands.ts'
 
 export const HEADER = 28
 const SNAP = 12
+
+/** The canvas's box, read once per task: the boot queue asks every waiting frame in one pass (admission.ts). */
+let canvasBox: DOMRect | null | undefined
+function canvasRect(): DOMRect | null {
+  if (canvasBox === undefined) {
+    canvasBox = document.querySelector('.sh-canvas')?.getBoundingClientRect() ?? null
+    queueMicrotask(() => { canvasBox = undefined })
+  }
+  return canvasBox
+}
 
 /** The iframe's box in its node: a frame fills the node; a slide renders at its stage and is
  *  scaled uniformly into the node and centred - resizing a slide node never reflows it. The
@@ -110,6 +120,8 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   // Law G-5); the stored scale is only a never-hit fallback, read lazily at drag time.
   const { select, setInteract, moveNode, moveSelectedBy, resizeNode, setStatus, reloadFrame, setGesture, toast } = useStore.getState()
   const iframeRef = useRef<HTMLIFrameElement>(null)
+  const nodeRef = useRef(node)   // the node's place now, for the boot queue's near() (its effect outlives this render)
+  nodeRef.current = node
   const themeRef = useRef(node.theme)
   // The JSX src is set ONCE, at ADMISSION, with the theme and revision of that moment, and never
   // changes again (React would write it back after any later navigation and load the frame twice):
@@ -132,18 +144,18 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
     // visible first, then by distance to the centre of the canvas (the panel offsets the window's) - where the frame
     // will be once the camera lands from a fit or zoom on its way (a board's first pick comes as the fit sets off)
     const rank = () => {
-      const now = iframeRef.current?.getBoundingClientRect(), c = document.querySelector('.sh-canvas')?.getBoundingClientRect()
+      const now = iframeRef.current?.getBoundingClientRect(), c = canvasRect()
       if (!now || !c) return Infinity
       const r = canvasCtl.landing(now)
       const visible = r.right > c.left && r.left < c.right && r.bottom > c.top && r.top < c.bottom
       return (visible ? 0 : 1e7) + Math.hypot(r.x + r.width / 2 - c.x - c.width / 2, r.y + r.height / 2 - c.y - c.height / 2)
     }
-    // in view or within half a screen of it once the camera lands (updates.ts's margin): it boots whatever the heap
+    // past the heap's line, may it boot (admission.ts readable())? From the node's place and the camera - no layout read:
+    // a parked queue asks every waiting frame at each look
     const near = () => {
-      const now = iframeRef.current?.getBoundingClientRect(), c = document.querySelector('.sh-canvas')?.getBoundingClientRect()
-      if (!now || !c) return true
-      const r = canvasCtl.landing(now), mx = c.width / 2, my = c.height / 2
-      return r.right > c.left - mx && r.left < c.right + mx && r.bottom > c.top - my && r.top < c.bottom + my
+      const c = canvasRect(), t = canvasCtl.transform(), n = nodeRef.current
+      if (!c || !t) return true
+      return readable(canvasCtl.landing(new DOMRect(c.left + t.x + n.x * t.s, c.top + t.y + (n.y + HEADER) * t.s, n.w * t.s, n.h * t.s)), c, devicePixelRatio)
     }
     const start = () => {
       const s = useStore.getState(), n = s.nodes.find((x) => x.key === node.key), f = n && s.frameFor(n)

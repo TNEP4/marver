@@ -7,6 +7,9 @@ export const ROUTE = '/__mv'
 /** Content-frame natural widths: Doc layout -> own-size width.
  *  Shared by the Doc primitive (measurement messages) and the server-side
  *  manifest scan (defaultSize for content frames) - one source, no drift. */
+/** Image-LOD's smallest decode width, in device px (content/img-lod.ts's first bucket): under it a frame on screen is a
+ *  thumbnail - the heap gate's "too small to be read" (canvas/admission.ts) uses the same line. */
+export const LOD_MIN_PX = 256
 export const CONTENT_WIDTH: Record<string, number> = { document: 760, wide: 1280 }
 
 /** The default slide stage: 16:9 at 1280×720, deliberately NOT a config viewport - no

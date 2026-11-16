@@ -29,6 +29,8 @@
  * waiting frames' `near`); the events only make that sooner. A board that stays under the line boots every frame, as
  * before. The boards that change are those whose full load would sit between the gate's lines and the crash line.
  */
+import { LOD_MIN_PX } from '../../const.ts'
+
 export const SLOTS = 4
 /** A new batch's head start: one frame alone until it is done, or until this long - one stalled
  *  first frame must not hold the whole board. */
@@ -62,18 +64,29 @@ export const HEAP_SAFE = 0.75
 export const HEAP_RESUME = 0.6
 /** While the gate is shut and frames wait: how often it is asked again, whatever else happens. */
 export const TICK_MS = 3000
-/** Two changes of the reading this close together prove it precise (see heapGated). */
+/** Two changes of the reading known to lie within this window prove it precise (see heapGated). */
 const PRECISE_MS = 60_000
 let gated = false                 // past HEAP_SAFE: only near frames start, until a reading under HEAP_RESUME
 let precise = false               // the page's reading has been seen to move twice within PRECISE_MS: it is exact
 let memLast: number | undefined   // the last usedJSHeapSize read
-let changedAt = -Infinity         // when a read last differed from the one before it
+let readAt = -Infinity            // when admission last read it
+let changeFrom = -Infinity        // the earliest the last change seen can have happened: the read before it
 let tick: ReturnType<typeof setTimeout> | undefined
 let epoch = 0                     // resetAdmission's: a collection's callback from before it does nothing
 let watching = false              // a collection will pump the queue (sooner than the tick)
 const collected = typeof FinalizationRegistry === 'function'
   ? new FinalizationRegistry<number>((e) => { if (e !== epoch) return; watching = false; if (gated && waiting.size) schedule(0) })
   : null
+
+/** Past the heap's line, may a frame boot? Its box on screen where the camera lands, against the canvas's: in view or
+ *  within half a screen of it (updates.ts's margin), and large enough to be read - at least image-LOD's smallest decode
+ *  width (LOD_MIN_PX device px). A thumbnail on a zoomed-out board waits until the camera comes closer. */
+export function readable(r: Box, c: Box, dpr: number): boolean {
+  const mx = c.width / 2, my = c.height / 2
+  return r.width * Math.min(dpr || 1, 2) >= LOD_MIN_PX
+    && r.right > c.left - mx && r.left < c.right + mx && r.bottom > c.top - my && r.top < c.bottom + my
+}
+type Box = { left: number; right: number; top: number; bottom: number; width: number; height: number }
 
 /** `near`: in view or close to it, where the camera will land - a frame that may boot whatever the heap. Absent: always. */
 export interface Admission { key: string; rank: () => number; start: () => void; near?: () => boolean }
@@ -155,8 +168,11 @@ function heapGated(): boolean {
   const m = (performance as { memory?: { usedJSHeapSize: number; jsHeapSizeLimit: number } }).memory
   if (!m || !(m.jsHeapSizeLimit > 0)) return (gated = false)
   const now = performance.now(), used = m.usedJSHeapSize
-  if (memLast !== undefined && used !== memLast) { if (now - changedAt < PRECISE_MS) precise = true; changedAt = now }
-  memLast = used
+  // a change seen now happened after the read before it: two changes prove a fast counter only if both lie, for sure,
+  // inside PRECISE_MS - from the earlier one's lower bound to now. A gap in admission's own reads (the queue empty while
+  // another reader, or time, refreshed Chromium's shared sample) proves nothing.
+  if (memLast !== undefined && used !== memLast) { if (now - changeFrom < PRECISE_MS) precise = true; changeFrom = readAt }
+  memLast = used; readAt = now
   if (!precise) return (gated = false)
   if (used > HEAP_SAFE * m.jsHeapSizeLimit) gated = true
   else if (used < HEAP_RESUME * m.jsHeapSizeLimit) gated = false
@@ -188,7 +204,26 @@ function pump(): void {
 }
 
 /** For tests: nothing queued, nothing active. */
-export function resetAdmission(): void { waiting.clear(); active.clear(); primed = false; scheduled = false; gen++; clearTimeout(timer); clearTimeout(settling); settling = undefined; held = false; moving = false; clearTimeout(holdCap); clearTimeout(tick); tick = undefined; gated = false; precise = false; memLast = undefined; changedAt = -Infinity; watching = false; epoch++ }
+export function resetAdmission(): void { waiting.clear(); active.clear(); primed = false; scheduled = false; gen++; clearTimeout(timer); clearTimeout(settling); settling = undefined; held = false; moving = false; clearTimeout(holdCap); clearTimeout(tick); tick = undefined; gated = false; precise = false; memLast = undefined; readAt = -Infinity; changeFrom = -Infinity; watching = false; epoch++ }
 
-// a hot-replaced module leaves no timer of its own behind
-if (import.meta.hot) import.meta.hot.dispose(() => { clearTimeout(timer); clearTimeout(settling); clearTimeout(holdCap); clearTimeout(tick); epoch++ })
+/** A hot-replaced module leaves nothing of its own behind: no timer, and no pump already queued (its batch is void). */
+export function disposeAdmission(): void {
+  clearTimeout(timer); clearTimeout(settling); settling = undefined; clearTimeout(holdCap); clearTimeout(tick); tick = undefined
+  gen++; scheduled = false; epoch++
+}
+if (import.meta.hot) import.meta.hot.dispose(disposeAdmission)
+
+/** Canvas.tsx's wiring, in one place (tested): a person's camera holds the queue; what a frame is near changing without
+ *  the camera - a layout animation's end, a resize, the page shown again (a hidden page's timers run once a minute) -
+ *  looks again. Returns the unwiring. */
+export function wireAdmission(
+  onMotion: (fn: (m: { camera: boolean; preset: boolean }) => void) => () => void,
+  win: Pick<EventTarget, 'addEventListener' | 'removeEventListener'>,
+  doc: Pick<EventTarget, 'addEventListener' | 'removeEventListener'> & { visibilityState: string },
+): () => void {
+  const off = onMotion((m) => { holdForCamera(m.camera); if (!m.preset) reconsider() })
+  const shown = () => { if (doc.visibilityState === 'visible') reconsider() }
+  win.addEventListener('resize', reconsider)
+  doc.addEventListener('visibilitychange', shown)
+  return () => { off(); win.removeEventListener('resize', reconsider); doc.removeEventListener('visibilitychange', shown); holdForCamera(false) }
+}
