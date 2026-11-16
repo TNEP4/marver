@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { admissionIdle, admit, aimed, HEAD_MS, onAdmissionIdle, release, resetAdmission, SLOTS } from '../src/client/shell/canvas/admission.ts'
+import { admissionIdle, admit, aimed, HEAD_MS, HOLD_MS, holdForCamera, onAdmissionIdle, release, resetAdmission, SLOTS } from '../src/client/shell/canvas/admission.ts'
 
 // Frame admission: a board's iframes boot on one main thread, so at most SLOTS boot at once, one
 // first, nearest the centre of the view first, and a slot goes back the moment its frame is done.
@@ -99,5 +99,37 @@ describe('admission', () => {
     ask('c', 1); release('c')   // a frame that only queued and left
     expect(heard).toBe(2)
     off()
+  })
+  it('a person moving the camera holds every new start; the boots running go on; at rest the queue goes on, ranked on the view of then', async () => {
+    let rank = 100
+    admit({ key: 'moving', rank: () => rank, start: () => started.push('moving') })
+    for (const [k, r] of [['a', 1], ['b', 2], ['c', 3], ['d', 4], ['e', 5]] as const) ask(k, r)
+    await settle()
+    expect(started).toEqual(['a'])
+    holdForCamera(true)
+    release('a')                 // a slot frees mid-gesture: nothing starts in it
+    await vi.advanceTimersByTimeAsync(HEAD_MS)
+    expect(started).toEqual(['a'])
+    rank = 0                     // the pan brought it to the centre
+    holdForCamera(false)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(started).toEqual(['a', 'moving', 'b', 'c', 'd'])
+  })
+  it('a held first pick waits for the camera too, and goes the moment it rests', async () => {
+    ask('a', 1)
+    holdForCamera(true)
+    await settle()
+    expect(started).toEqual([])
+    holdForCamera(false)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(started).toEqual(['a'])
+  })
+  it('a camera that never says it stopped holds the queue at most HOLD_MS', async () => {
+    holdForCamera(true)
+    ask('a', 1)
+    await vi.advanceTimersByTimeAsync(HOLD_MS - 10)
+    expect(started).toEqual([])
+    await vi.advanceTimersByTimeAsync(20)
+    expect(started).toEqual(['a'])
   })
 })

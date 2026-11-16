@@ -15,6 +15,11 @@
  * nearest the centre of the canvas first) on where each frame will be once the camera lands
  * (canvasCtl.landing) - it need not wait out the fit's ~320 ms flight. With no aim it waits SETTLE, as
  * long as that flight. A freed slot pumps on the next microtask, ranking again by the view of that moment.
+ *
+ * Nothing new starts while a person moves the camera (a pan, a zoom, a pinch: holdForCamera, from camera-broadcast's
+ * `sh-camera`): a boot's main-thread work would land in the gesture's frames. The boots already running go on; when the
+ * camera rests the queue goes on, ranked on the view it stopped at. A flight the shell aims (a fit, a zoom) holds
+ * nothing - aimed() ranks on where it lands. Untouched, a load runs exactly as before.
  */
 export const SLOTS = 4
 /** A new batch's head start: one frame alone until it is done, or until this long - one stalled
@@ -24,6 +29,10 @@ let primed = false   // the batch may use every slot
 let gen = 0          // the batch: a pump scheduled for an earlier one is void
 let timer: ReturnType<typeof setTimeout> | undefined
 let settling: ReturnType<typeof setTimeout> | undefined   // a pump waiting for the view to settle (SETTLE): aimed() runs it now
+let held = false     // a person moves the camera: nothing new starts
+let holdCap: ReturnType<typeof setTimeout> | undefined
+/** The longest a gesture holds the queue: a camera that never says it stopped must not stop the board. */
+export const HOLD_MS = 5000
 
 export interface Admission { key: string; rank: () => number; start: () => void }
 
@@ -55,6 +64,15 @@ export function aimed(): void {
   schedule(0)
 }
 
+/** A person's camera gesture started (true) or the camera rests again (false). */
+export function holdForCamera(on: boolean): void {
+  if (held === on) return
+  held = on
+  clearTimeout(holdCap)
+  if (on) holdCap = setTimeout(() => holdForCamera(false), HOLD_MS)
+  else if (waiting.size) schedule(0)
+}
+
 /** The frame is done booting (ready, error, gone, or its watchdog took over): free the slot, or
  *  leave the queue if it never started. */
 export function release(key: string): void {
@@ -78,7 +96,7 @@ function schedule(ms: number): void {
 
 function pump(): void {
   scheduled = false
-  while (active.size < (primed ? SLOTS : 1) && waiting.size) {
+  while (!held && active.size < (primed ? SLOTS : 1) && waiting.size) {
     let best: Admission | undefined, bestRank = Infinity
     for (const a of waiting.values()) { const r = a.rank(); if (r < bestRank || !best) { best = a; bestRank = r } }
     waiting.delete(best!.key)
@@ -89,4 +107,4 @@ function pump(): void {
 }
 
 /** For tests: nothing queued, nothing active. */
-export function resetAdmission(): void { waiting.clear(); active.clear(); primed = false; scheduled = false; gen++; clearTimeout(timer); clearTimeout(settling); settling = undefined }
+export function resetAdmission(): void { waiting.clear(); active.clear(); primed = false; scheduled = false; gen++; clearTimeout(timer); clearTimeout(settling); settling = undefined; held = false; clearTimeout(holdCap) }

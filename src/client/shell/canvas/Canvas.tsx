@@ -10,7 +10,7 @@ import { NOTE_GAP } from '../notes.ts'
 import { onMotion, startCameraBroadcast, setCameraScale } from './camera-broadcast.ts'
 import { attachCanvas, recorder } from '../recorder.ts'
 import { sleepingCount } from './sleep.ts'
-import { aimed } from './admission.ts'
+import { aimed, holdForCamera } from './admission.ts'
 import { keepOverResume, resumed, WS } from '../api.ts'
 import { APP_REOPEN } from '../marver-app.ts'
 import { TOP } from '../inset.ts'
@@ -262,6 +262,8 @@ export function Canvas() {
 
   // B0.4: frame-time sampler + image-LOD camera signal; the recorder hears when the camera stops and what sleeps (spec 28 A1.7)
   useEffect(() => { startPerf(); startCameraBroadcast(); return attachCanvas({ onMotion, sleeping: sleepingCount }) }, [])
+  // a person's pan, zoom or pinch holds the boot queue until the camera rests (admission.ts)
+  useEffect(() => { const off = onMotion((m) => holdForCamera(m.camera)); return () => { off(); holdForCamera(false) } }, [])
   // the pending camera written as the page hides or leaves (A3.8 #43), after the recorder's own listeners
   useEffect(() => { watchLeave() }, [])
 
