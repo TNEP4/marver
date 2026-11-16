@@ -24,7 +24,6 @@ const HTML = '<!doctype html><html><head><style>[data-theme="dark"] body { backg
 const KEYS = Array.from({ length: 6 }, (_, i) => `k${i}`)
 /** k4 shows a frame whose meta.theme is dark (it never follows the view), k5 an HTML frame. */
 const FRAME = (i: number) => (i === 4 ? 'app/fixed' : i === 5 ? 'app/page' : 'app/plain')
-const STORE = new URL('../src/client/shell/store.ts', import.meta.url).pathname
 
 let root = ''
 let dev: Dev | null = null
@@ -103,8 +102,17 @@ describe('a theme switch on a small board', () => {
   skippable('a frame whose frame is replaced (a same-board reload) between its ack and the flush never takes that ack: it ends in its own theme with its own', async () => {
     await inLight()
     // the switch to dark; the moment k2's dark ack is queued, the board's k2 shows another frame - one fixed to light -
-    // through keepDocuments, before the batch lands. Watched: does dark ever land on the replacement?
-    await ev(`import(${JSON.stringify(`/@fs${STORE}`)}).then(({ keepDocuments }) => {
+    // through keepDocuments, before the batch lands. The replacement's document is held at the network for 600 ms, so
+    // the iframe still holds the old one (and its boot) when the batch lands. Watched: does dark ever land on it?
+    await browser!.send('Fetch.enable', { patterns: [{ urlPattern: '*id=app%2Flight*', requestStage: 'Request' }] }, s)
+    const off = browser!.on((m) => { if (m.method === 'Fetch.requestPaused' && m.sessionId === s) setTimeout(() => { void browser!.send('Fetch.continueRequest', { requestId: m.params.requestId }, s).catch(() => {}) }, 600) })
+    // the board file as the server has it, with k2 on the light frame: what a same-board reload reads. boot() - the
+    // real reload, keepDocuments applied - is answered from memory so it commits inside the batch's window
+    await ev(`(async () => {
+      const get = (u) => fetch(u, { headers: { 'x-mv-c': document.cookie.match(/(?:^|; )mv_c=([^;]+)/)?.[1] ?? '' } }).then((r) => r.json())
+      const board = await get('/__mv/api/boards/main'), manifest = await get('/design/manifest.json'), sizes = await get('/__mv/api/sizes')
+      board.board.nodes = board.board.nodes.map((n) => (n.key === 'k2' ? { ...n, frame: 'app/light' } : n)); board.sha256 = 'replaced'
+      const answer = (body) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })
       const st = __mvStore, orig = st.getState().setThemeOn
       let done = false
       window.__stale = false
@@ -113,13 +121,14 @@ describe('a theme switch on a small board', () => {
         orig(k, t, live)
         if (k !== 'k2' || t !== 'dark' || done) return
         done = true
-        const nodes = st.getState().nodes
-        st.setState({ nodes: keepDocuments(nodes, nodes.map((n) => (n.key === 'k2' ? { key: n.key, frame: 'app/light', x: n.x, y: n.y, w: n.w, h: n.h, theme: 'light' } : n))).nodes })
+        const real = window.fetch
+        window.fetch = (u, o) => { const s = String(u); if (s.includes('/api/boards/main')) return Promise.resolve(answer(board)); if (s.includes('manifest.json')) return Promise.resolve(answer(manifest)); if (s.includes('/api/sizes')) return Promise.resolve(answer(sizes)); return real(u, o) }
+        void st.getState().boot().finally(() => { window.fetch = real })
       } })
       st.getState().setTheme('dark')
       return 1
-    })`)
-    await until(ENDED('dark', 'light'), 60_000)
+    })()`)
+    try { await until(ENDED('dark', 'light'), 60_000) } finally { off(); await browser!.send('Fetch.disable', {}, s).catch(() => {}) }
     expect(await ev(`window.__stale`)).toBe(false)
     expect(await ev(`${ST}.nodes.find((n) => n.key === 'k2').frame`)).toBe('app/light')
   })

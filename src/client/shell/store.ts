@@ -342,11 +342,7 @@ export const bumpManifestRev = () => { manifestRev++ }
  *  A kept content frame keeps the size it measured: the file holds none (auto) or the width alone is the human's
  *  (manual), and a document that stays never measures again unless its width changes. `kept`: the nodes whose
  *  document stands; `carried`: the nodes whose kept size differs from the file's. */
-/** Which document a node shows, as keepDocuments decides it: the same frame, present, on the same navigation keeps it;
- *  anything else is another document (setThemeOn's ack ownership uses the same rule, so "kept" and "its ack still
- *  lands" never disagree). */
-const docOf = (n: Pick<Node, 'frame' | 'nav' | 'missing'>): string => `${n.frame}|${n.nav ?? 0}|${n.missing ? 1 : 0}`
-export function keepDocuments(mounted: Node[], nodes: Node[]): { nodes: Node[]; kept: Set<string>; carried: Set<string> } {
+function keepDocuments(mounted: Node[], nodes: Node[]): { nodes: Node[]; kept: Set<string>; carried: Set<string> } {
   const was = new Map(mounted.map((n) => [n.key, n]))
   const kept = new Set<string>(), carried = new Set<string>()
   const next = nodes.map((n) => {
@@ -820,8 +816,10 @@ export const BOARD_GONE = 'this board was renamed or removed - not recreating it
 export const useStore = create<State>((set, get) => {
   let saveTimer: ReturnType<typeof setTimeout> | undefined
   let saveChain: Promise<boolean> = Promise.resolve(true)   // saves are serialized; responses only commit if the board is still active
-  // setThemeOn's batch, waiting for the next animation frame: the board it was heard on, its acks, its two timers
-  const acks: { board?: string; pending: Map<string, { theme: string; doc: string; live?: () => boolean }>; frame?: number; timer?: ReturnType<typeof setTimeout> } = { pending: new Map() }
+  // setThemeOn's batch, waiting for the next animation frame: its acks, its two timers. An ack is dropped the moment its
+  // node's document is given up (cancelAcks at a board switch, dropAck where a document goes) - never compared later
+  const acks: { pending: Map<string, { theme: string; live?: () => boolean }>; frame?: number; timer?: ReturnType<typeof setTimeout> } = { pending: new Map() }
+  const dropAck = (key: string) => { acks.pending.delete(key) }
   const cancelAcks = () => {
     if (acks.frame !== undefined && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(acks.frame)
     clearTimeout(acks.timer)
@@ -1256,6 +1254,7 @@ export const useStore = create<State>((set, get) => {
       installSizes(loaded.sizes)              // the sizes this load read are the page's from its commit
       // after the install: which frames measure is this load's word
       const { nodes, kept, carried } = keepDocuments(get().nodes, loaded.state.nodes as Node[])
+      for (const k of [...acks.pending.keys()]) if (!kept.has(k)) dropAck(k)   // a document not kept: its ack goes with it
       const next = { ...loaded.state, nodes }
       recorderHooks.commit(request, next.nodes, next.manifest as Manifest, kept)   // before the set: mounting is not a move
       set(next)
@@ -1312,6 +1311,7 @@ export const useStore = create<State>((set, get) => {
       recorderHooks.handover(request)          // the load that was up ends by its own sizes
       installSizes(loaded.sizes)               // the sizes this load read are the page's from its commit
       recorderHooks.commit(request, next.nodes as Node[], next.manifest as Manifest)   // before the set: mounting is not a move
+      cancelAcks()   // the documents of the board left go: their acks with them
       set({ board: name, interact: null, ...next })
       cancelReflow(); dropHolds(); reloadCause.clear()
       if (next.dirty) scheduleSave()           // load-time prune must reach the disk
@@ -1520,12 +1520,16 @@ export const useStore = create<State>((set, get) => {
           // next document boots fresh through admission (a reload job must never stand in for it)
           delete n.stale; delete n.shown; delete n.want
           if (missing) letGo(n.key, false)
+          dropAck(n.key)   // its document goes (or there was none): no ack of it may land on the next
           n.missing = missing
           changed = true
         }
         // a frame's declared meta.theme may have changed - re-resolve unpinned nodes
         // (derived value: re-render yes, dirty/save no)
         const f = m.frames.find((x) => x.id === n.frame)
+        // another file or kind for the frame: FrameNode navigates to the new one - the old document's ack goes
+        const was = get().manifest ? frameById(get().manifest!.frames, n.frame) : undefined
+        if (was && f && (was.kind !== f.kind || was.file !== f.file)) dropAck(n.key)
         const want = n.themeUser ?? f?.theme ?? get().viewTheme
         if (n.theme !== want) { edit().theme = want; retinted = true }
         // content-ness can change live (agent adds/removes the primitives): reconcile
@@ -1730,27 +1734,23 @@ export const useStore = create<State>((set, get) => {
     bumpRev(key) { set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, rev: (n.rev ?? 0) + 1 } : n)) })) },
     // A switch's acks come in a burst, one message per frame: one store update an animation frame for all of them, not
     // one each - every update re-renders whatever reads the whole board (112 acks: 0.8 s of the shell re-rendering).
-    // An ack belongs to the DOCUMENT that sent it, twice over: the node it came for must still show that document at the
-    // flush (its frame, its navigation, present: `docOf`, keepDocuments' own rule - a same-board reload that replaces
-    // the node's frame drops it even while the iframe element and its old document are still there), and `live`
-    // (App.tsx, documentLive) asks whether the iframe's committed document is still the one that sent it (a reload of
-    // the same frame, a remount, a board left and come back to). A batch switched to another board is dropped whole.
+    // An ack belongs to the DOCUMENT that sent it. It is dropped the moment the store gives that document up - a board
+    // switch drops the whole batch; a same-board reload that does not keep the node's document, a frame reloaded, a
+    // frame gone, back or swapped for another file each drop that node's - so no later state, however alike, can revive
+    // it (the iframe element is kept by key and holds the old document until the new one commits). At the flush `live`
+    // (App.tsx, documentLive) asks whether the iframe's committed document is still the one that sent it (a document
+    // that reloaded itself, a remount).
     // Each batch is flushed once, by whichever of its two timers comes first - the other is cancelled, so it never
     // flushes a later batch early.
     setThemeOn(key, theme, live) {
-      const board = get().board
-      if (acks.board !== board) { cancelAcks(); acks.board = board }
-      const at = get().nodes.find((n) => n.key === key)
-      if (!at) return
-      acks.pending.set(key, { theme, doc: docOf(at), live })
+      acks.pending.set(key, { theme, live })
       if (acks.frame !== undefined || acks.timer !== undefined) return
       const flush = () => {
-        const mine = acks.pending, onBoard = acks.board
+        const mine = acks.pending
         cancelAcks()
-        if (get().board !== onBoard) return
         for (const [k, a] of mine) if (a.live && !a.live()) mine.delete(k)
         if (!mine.size) return
-        set((s) => ({ nodes: s.nodes.map((n) => { const a = mine.get(n.key); return !a || a.doc !== docOf(n) || a.theme === n.themeOn ? n : { ...n, themeOn: a.theme } }) }))
+        set((s) => ({ nodes: s.nodes.map((n) => { const a = mine.get(n.key); return !a || a.theme === n.themeOn ? n : { ...n, themeOn: a.theme } }) }))
       }
       if (typeof requestAnimationFrame === 'function') acks.frame = requestAnimationFrame(flush)
       acks.timer = setTimeout(flush, 100)   // a hidden page draws no frames
@@ -1770,6 +1770,7 @@ export const useStore = create<State>((set, get) => {
       const n = get().nodes.find((x) => x.key === key)
       if (!n) return
       if (automatic && !canAutoReload(n)) return
+      dropAck(key)   // its document is given up: an ack it sent goes with it
       reloadCause.set(key, automatic ? 'retry' : 'manual')
       bumpManifestRev()
       set((s) => ({ nodes: s.nodes.map((x) => (x.key === key
