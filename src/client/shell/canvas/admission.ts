@@ -120,7 +120,11 @@ export function aimed(): void {
 }
 
 /** A person's camera gesture started (true) or the camera rests again (false). The rest reconsiders the queue even when
- *  HOLD_MS already let the hold go: the camera may have stopped by a frame the gate keeps. */
+ *  HOLD_MS already let the hold go: the camera may have stopped by a frame the gate keeps.
+ *  The one exception to "in view first": through a gesture, a frame in view may start up to the gesture's length later
+ *  (HOLD_MS at most). Measured on the 112-frame board (3 s pan into a load, n=3): it is not ready later (in view at the
+ *  pan's end ready 19.8-20.1 s after it, against 20.5-21.7 s), and the pan drops 0-2 frames over 33 ms instead of 10-11;
+ *  booting the in-view frames one at a time through the gesture still dropped 8-10 (one boot lands ~230 ms in it). */
 export function holdForCamera(on: boolean): void {
   if (moving === on) return
   moving = on
