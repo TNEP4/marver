@@ -138,6 +138,13 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
       const visible = r.right > c.left && r.left < c.right && r.bottom > c.top && r.top < c.bottom
       return (visible ? 0 : 1e7) + Math.hypot(r.x + r.width / 2 - c.x - c.width / 2, r.y + r.height / 2 - c.y - c.height / 2)
     }
+    // in view or within half a screen of it once the camera lands (updates.ts's margin): it boots whatever the heap
+    const near = () => {
+      const now = iframeRef.current?.getBoundingClientRect(), c = document.querySelector('.sh-canvas')?.getBoundingClientRect()
+      if (!now || !c) return true
+      const r = canvasCtl.landing(now), mx = c.width / 2, my = c.height / 2
+      return r.right > c.left - mx && r.left < c.right + mx && r.bottom > c.top - my && r.top < c.bottom + my
+    }
     const start = () => {
       const s = useStore.getState(), n = s.nodes.find((x) => x.key === node.key), f = n && s.frameFor(n)
       if (!n || !f) { release(node.key); return }
@@ -146,7 +153,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
       setSrc(frameUrl(f, n.theme))
       recorder.admitted(node.key)
     }
-    admit({ key: node.key, rank, start })
+    admit({ key: node.key, rank, start, near })
     return () => release(node.key)
   }, [frame?.id, node.key, node.missing])
   useEffect(() => { if (node.status !== 'loading') release(node.key) }, [node.status, node.key])

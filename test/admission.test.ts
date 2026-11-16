@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { admissionIdle, admit, aimed, HEAD_MS, HOLD_MS, holdForCamera, onAdmissionIdle, release, resetAdmission, SLOTS } from '../src/client/shell/canvas/admission.ts'
+import { admissionIdle, admit, aimed, HEAD_MS, HEAP_SAFE, HOLD_MS, holdForCamera, onAdmissionIdle, PARK_MS, release, resetAdmission, SLOTS } from '../src/client/shell/canvas/admission.ts'
 
 // Frame admission: a board's iframes boot on one main thread, so at most SLOTS boot at once, one
 // first, nearest the centre of the view first, and a slot goes back the moment its frame is done.
@@ -131,5 +131,55 @@ describe('admission', () => {
     expect(started).toEqual([])
     await vi.advanceTimersByTimeAsync(20)
     expect(started).toEqual(['a'])
+  })
+  describe('the heap past its safe line (performance.memory)', () => {
+    const memory = { usedJSHeapSize: 0, jsHeapSizeLimit: 4096 }
+    const heap = (fraction: number) => { memory.usedJSHeapSize = fraction * memory.jsHeapSizeLimit }
+    beforeEach(() => { heap(0); Object.defineProperty(performance, 'memory', { value: memory, configurable: true }) })
+    afterEach(() => { delete (performance as { memory?: unknown }).memory })
+    const near = new Set<string>()
+    const askNear = (key: string, rank: number) => admit({ key, rank: () => rank, start: () => started.push(key), near: () => near.has(key) })
+
+    it('under the line, every frame boots, near or not, in rank order - as without it', async () => {
+      heap(HEAP_SAFE - 0.01)
+      for (const [k, r] of [['in', 1], ['far1', 2], ['far2', 3]] as const) askNear(k, r)
+      near.add('in')
+      await settle(); release('in'); await vi.advanceTimersByTimeAsync(0)
+      expect(started).toEqual(['in', 'far1', 'far2'])
+    })
+    it('past it, a frame not near the view waits; near ones and jobs with no `near` (a stale reload) still go', async () => {
+      near.clear(); near.add('in'); near.add('edge')
+      for (const [k, r] of [['in', 1], ['far', 2], ['edge', 3]] as const) askNear(k, r)
+      ask('reload', 4)
+      await settle()
+      heap(HEAP_SAFE + 0.01)
+      release('in'); await vi.advanceTimersByTimeAsync(0)
+      expect(started).toEqual(['in', 'edge', 'reload'])
+      expect(admissionIdle()).toBe(false)   // 'far' still waits: the load is not done
+    })
+    it('a parked frame boots when the camera comes near it (the gesture ends there), or the heap falls (the slow look)', async () => {
+      near.clear(); near.add('in')
+      for (const [k, r] of [['in', 1], ['a', 2], ['b', 3]] as const) askNear(k, r)
+      await settle()
+      heap(HEAP_SAFE + 0.01)
+      release('in'); await vi.advanceTimersByTimeAsync(0)
+      expect(started).toEqual(['in'])
+      holdForCamera(true); near.add('b'); holdForCamera(false)   // a pan brought b near
+      await vi.advanceTimersByTimeAsync(0)
+      expect(started).toEqual(['in', 'b'])
+      release('b'); heap(HEAP_SAFE - 0.1)                          // collected
+      await vi.advanceTimersByTimeAsync(PARK_MS)
+      expect(started).toEqual(['in', 'b', 'a'])
+    })
+    it('a parked queue hears an aim: a link flown to a far frame boots it on landing', async () => {
+      near.clear(); near.add('in')
+      for (const [k, r] of [['in', 1], ['far', 2]] as const) askNear(k, r)
+      await settle()
+      heap(HEAP_SAFE + 0.01)
+      release('in'); await vi.advanceTimersByTimeAsync(0)
+      near.add('far'); aimed()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(started).toEqual(['in', 'far'])
+    })
   })
 })
