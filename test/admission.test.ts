@@ -307,15 +307,25 @@ describe('admission', () => {
       expect(vi.getTimerCount()).toBe(0)
       expect(started).toEqual(['in'])
     })
-    it('readable: past the line a frame boots only on screen or near it, and no smaller than image-LOD\'s first bucket', () => {
+    it('readable: past the line a frame boots on screen or near it, by its larger side, no smaller than image-LOD\'s first bucket', () => {
       const rect = (x: number, y: number, w: number, h: number) => ({ left: x, top: y, right: x + w, bottom: y + h, width: w, height: h })
       const c = rect(0, 0, 1600, 1000)
-      const box = (x: number, y: number, w: number) => rect(x, y, w, w)
-      expect(readable(box(100, 100, 200), c, 2)).toBe(true)      // 400 device px, in view
-      expect(readable(box(100, 100, 100), c, 2)).toBe(false)     // 200 device px: a thumbnail
-      expect(readable(box(100, 100, 100), c, 3)).toBe(false)     // the ratio counts up to 2, as image-LOD's does
-      expect(readable(box(1900, 100, 400), c, 1)).toBe(true)     // half a screen off, readable
-      expect(readable(box(2500, 100, 400), c, 1)).toBe(false)    // further
+      const big = 1440   // a desktop frame's larger side, world px
+      expect(readable(rect(100, 100, 200, 120), c, 2, big)).toBe(true)      // 400 device px, in view
+      expect(readable(rect(100, 100, 100, 60), c, 2, big)).toBe(false)      // 200 device px: a thumbnail
+      expect(readable(rect(100, 100, 100, 60), c, 3, big)).toBe(false)      // the ratio counts up to 2, as image-LOD's does
+      expect(readable(rect(1900, 100, 400, 240), c, 1, big)).toBe(true)     // half a screen off, readable
+      expect(readable(rect(2500, 100, 400, 240), c, 1, big)).toBe(false)    // further
+      expect(readable(rect(100, 100, 70, 280), c, 1, 800)).toBe(true)       // tall and narrow: read by its height
+    })
+    it('readable: a frame too small ever to reach the bucket boots at the closest the ordinary camera goes (Codex r3)', () => {
+      const rect = (x: number, y: number, w: number, h: number) => ({ left: x, top: y, right: x + w, bottom: y + h, width: w, height: h })
+      const c = rect(0, 0, 1600, 1000)
+      // a 24 px frame: 96 device px at 2x zoom on a 2x display, the most it can be
+      expect(readable(rect(100, 100, 48, 48), c, 2, 24)).toBe(true)
+      expect(readable(rect(100, 100, 24, 24), c, 2, 24)).toBe(false)        // at 1x it is a thumbnail of itself: come closer
+      // a frame at the UI's 120 px minimum on a 1x display: 240 px at 2x zoom
+      expect(readable(rect(100, 100, 240, 240), c, 1, 120)).toBe(true)
     })
   })
 

@@ -29,7 +29,7 @@
  * waiting frames' `near`); the events only make that sooner. A board that stays under the line boots every frame, as
  * before. The boards that change are those whose full load would sit between the gate's lines and the crash line.
  */
-import { LOD_MIN_PX } from '../../const.ts'
+import { LOD_MIN_PX, ZOOM_MAX } from '../../const.ts'
 
 export const SLOTS = 4
 /** A new batch's head start: one frame alone until it is done, or until this long - one stalled
@@ -62,7 +62,9 @@ export const HOLD_MS = 5000
  */
 export const HEAP_SAFE = 0.75
 export const HEAP_RESUME = 0.6
-/** While the gate is shut and frames wait: how often it is asked again, whatever else happens. */
+/** While the gate is shut and frames wait: how often it is asked again, whatever else happens. One look reads every
+ *  waiting frame's iframe as drawn (getBoundingClientRect, one canvas rect per pass): 6.0-6.9 ms on the parked 733-frame
+ *  archive (~460 waiting), about 11 ms per 5 s - and only on a board the gate has parked. */
 export const TICK_MS = 3000
 /** Two changes of the reading known to lie within this window prove it precise (see heapGated). */
 const PRECISE_MS = 60_000
@@ -78,12 +80,14 @@ const collected = typeof FinalizationRegistry === 'function'
   ? new FinalizationRegistry<number>((e) => { if (e !== epoch) return; watching = false; if (gated && waiting.size) schedule(0) })
   : null
 
-/** Past the heap's line, may a frame boot? Its box on screen where the camera lands, against the canvas's: in view or
- *  within half a screen of it (updates.ts's margin), and large enough to be read - at least image-LOD's smallest decode
- *  width (LOD_MIN_PX device px). A thumbnail on a zoomed-out board waits until the camera comes closer. */
-export function readable(r: Box, c: Box, dpr: number): boolean {
-  const mx = c.width / 2, my = c.height / 2
-  return r.width * Math.min(dpr || 1, 2) >= LOD_MIN_PX
+/** Past the heap's line, may a frame boot? Its iframe on screen where the camera lands (r), against the canvas (c): in
+ *  view or within half a screen of it (updates.ts's margin), and large enough to be read - its larger side at least
+ *  image-LOD's smallest decode width (LOD_MIN_PX device px), or, for a frame too small ever to get there, as large as the
+ *  ordinary camera can make it (its larger side in world px, `side`, at ZOOM_MAX): every frame stays reachable by moving
+ *  the camera to it. A thumbnail on a zoomed-out board waits until the camera comes closer. */
+export function readable(r: Box, c: Box, dpr: number, side: number): boolean {
+  const k = Math.min(dpr || 1, 2), mx = c.width / 2, my = c.height / 2
+  return Math.max(r.width, r.height) * k >= Math.min(LOD_MIN_PX, side * ZOOM_MAX * k) - 0.5
     && r.right > c.left - mx && r.left < c.right + mx && r.bottom > c.top - my && r.top < c.bottom + my
 }
 type Box = { left: number; right: number; top: number; bottom: number; width: number; height: number }

@@ -14,6 +14,7 @@ import { aimed, wireAdmission } from './admission.ts'
 import { keepOverResume, resumed, WS } from '../api.ts'
 import { APP_REOPEN } from '../marver-app.ts'
 import { TOP } from '../inset.ts'
+import { ZOOM_MAX } from '../../const.ts'
 import { answerProbesWith } from '../app-perf.ts'
 import { pick, verify } from '../whiteout-probes.ts'
 
@@ -497,7 +498,7 @@ export function Canvas() {
       beginGesture(!zooming)
       if (!zooming) { inst.setTransform(positionX - w.deltaX, positionY - w.deltaY, scale, 0, 'linear'); return }
       const f = Math.min(1.4, Math.max(1 / 1.4, Math.exp(-w.deltaY * 0.0075 * (CONFIG.zoomSpeed ?? 1))))
-      const next = Math.min(2, Math.max(0.05, scale * f))
+      const next = Math.min(ZOOM_MAX, Math.max(0.05, scale * f))
       if (next === scale) return
       const r = canvas.getBoundingClientRect()
       const cx = w.clientX - r.left, cy = w.clientY - r.top

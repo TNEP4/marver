@@ -10,6 +10,8 @@ export const ROUTE = '/__mv'
 /** Image-LOD's smallest decode width, in device px (content/img-lod.ts's first bucket): under it a frame on screen is a
  *  thumbnail - the heap gate's "too small to be read" (canvas/admission.ts) uses the same line. */
 export const LOD_MIN_PX = 256
+/** The ordinary camera's closest zoom: a wheel or pinch (Canvas.tsx) and the zoom menu's top preset. */
+export const ZOOM_MAX = 2
 export const CONTENT_WIDTH: Record<string, number> = { document: 760, wide: 1280 }
 
 /** The default slide stage: 16:9 at 1280×720, deliberately NOT a config viewport - no

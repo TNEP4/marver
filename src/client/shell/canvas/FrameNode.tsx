@@ -120,8 +120,6 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
   // Law G-5); the stored scale is only a never-hit fallback, read lazily at drag time.
   const { select, setInteract, moveNode, moveSelectedBy, resizeNode, setStatus, reloadFrame, setGesture, toast } = useStore.getState()
   const iframeRef = useRef<HTMLIFrameElement>(null)
-  const nodeRef = useRef(node)   // the node's place now, for the boot queue's near() (its effect outlives this render)
-  nodeRef.current = node
   const themeRef = useRef(node.theme)
   // The JSX src is set ONCE, at ADMISSION, with the theme and revision of that moment, and never
   // changes again (React would write it back after any later navigation and load the frame twice):
@@ -150,12 +148,13 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
       const visible = r.right > c.left && r.left < c.right && r.bottom > c.top && r.top < c.bottom
       return (visible ? 0 : 1e7) + Math.hypot(r.x + r.width / 2 - c.x - c.width / 2, r.y + r.height / 2 - c.y - c.height / 2)
     }
-    // past the heap's line, may it boot (admission.ts readable())? From the node's place and the camera - no layout read:
-    // a parked queue asks every waiting frame at each look
+    // past the heap's line, may it boot (admission.ts readable())? Its iframe as drawn - measured, so a slide fitted onto
+    // its stage, a custom size or a frame mid-tidy is what the person sees. Selected: asked for, it boots.
     const near = () => {
-      const c = canvasRect(), t = canvasCtl.transform(), n = nodeRef.current
-      if (!c || !t) return true
-      return readable(canvasCtl.landing(new DOMRect(c.left + t.x + n.x * t.s, c.top + t.y + (n.y + HEADER) * t.s, n.w * t.s, n.h * t.s)), c, devicePixelRatio)
+      if (useStore.getState().selection.includes(node.key)) return true
+      const now = iframeRef.current?.getBoundingClientRect(), c = canvasRect(), s = canvasCtl.transform()?.s
+      if (!now || !c || !s) return true
+      return readable(canvasCtl.landing(now), c, devicePixelRatio, Math.max(now.width, now.height) / s)
     }
     const start = () => {
       const s = useStore.getState(), n = s.nodes.find((x) => x.key === node.key), f = n && s.frameFor(n)
