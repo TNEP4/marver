@@ -108,8 +108,12 @@ export function updatesPlugin(root: string, manifest: () => Manifest, hooks: () 
 
 /** Wraps the client's hot channel: the reload guard and refused refreshes. `onStyles`: this server's, for a scanned file no
  *  document imports - it names the stylesheets that scan it, any of which may have new classes; no frame needs a reload. */
-export function guardUpdates(server: ViteDevServer, root: string, manifest: () => Manifest, hooks: UpdateHooks, changes: Changes, onStyles: (sheets: string[]) => void): void {
+export function guardUpdates(server: ViteDevServer, root: string, manifest: () => Manifest, hooks: UpdateHooks, changes: Changes, onStyles: (sheets: string[]) => void, registryFile?: string): void {
   const env = server.environments.client
+  // the frame host's registry (registry.ts) as an update's boundary - this package's own file, by its resolved path, never
+  // a host app's module of the same name: it takes every design update and does nothing with it
+  const registry = registryFile ? safeReal(registryFile) : null
+  const viaRegistry = (u: { path?: string }) => { const f = u.path ? env.moduleGraph.urlToModuleMap.get(u.path)?.file : undefined; return !!f && safeReal(f) === registry }
   // Tailwind's own test for a file it reloads for: known to the graph as a watched file at most, imported by no document
   const notImported = (file: string) => [...env.moduleGraph.getModulesByFile(file) ?? []].every((m) => m.id == null || m.type === 'asset')
   // the stylesheets a scanned file feeds, walked as Tailwind walks to the root it invalidates: up the importers. Told
@@ -141,6 +145,13 @@ export function guardUpdates(server: ViteDevServer, root: string, manifest: () =
     const send = ch.send.bind(ch)
     ch.send = (...a: any[]) => {
       const p = a[0] as HotPayload | string
+      // the registry takes every design update and changes nothing in a document (registry.ts): no document hears it - the
+      // frames an edit touched reload from the shell. Vite has already moved the modules on (updateModules), as before
+      if (registry && typeof p === 'object' && p?.type === 'update' && p.updates.some(viaRegistry)) {
+        const updates = p.updates.filter((u) => !viaRegistry(u))
+        if (!updates.length) return
+        a = [{ ...p, updates }, ...a.slice(1)]
+      }
       if (typeof p === 'object' && p?.type === 'full-reload') {
         // the one that passes reloads every page and names no file: the dependency optimiser's (module
         // URLs changed) or a restart's. A dead end in the graph names its file, Tailwind names no page,

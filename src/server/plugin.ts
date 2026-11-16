@@ -381,7 +381,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       const before = devServer
       devServer = server
       onClose(() => { if (devServer === server) devServer = before })
-      guardUpdates(server, root, () => manifest, hooks, changes, (sheets) => rescanTheme(sheets))   // this server's: a restart that fails leaves the old one its own
+      guardUpdates(server, root, () => manifest, hooks, changes, (sheets) => rescanTheme(sheets), join(clientDir, 'frame-host', 'registry.ts'))   // this server's: a restart that fails leaves the old one its own
       // Boot manifest + watcher (scenes/components only; boards, .local, manifest.json excluded by scope).
       // Broadcast only when the FRAMES changed - plain content edits ride HMR alone (spec
       // §5.6), and a board/folder/description edit (the manifest carries those now) must
