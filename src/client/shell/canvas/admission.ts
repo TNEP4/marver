@@ -23,10 +23,11 @@
  *
  * Nothing unloads, so a board too heavy for the renderer's heap would boot itself into a crash. Past HEAP_SAFE of the
  * browser's own heap limit (performance.memory, where the browser has it), a frame that is not near the view (its
- * `near`) waits: it boots when the camera comes near it - a gesture's end, an aim - like any frame still loading. The
- * gate opens again only under HEAP_RESUME, and is asked again only when its answer can change: a slot freed, the camera
- * at rest, an aim, a new batch, a collection (heapGated). Parked, the queue does nothing at all. A board that stays
- * under the line boots every frame, as before.
+ * `near`) waits: it boots when the camera comes near it - a gesture's end, an aim, a layout or window change, or at
+ * the latest the next look TICK_MS later - like any frame still loading. The gate opens again under HEAP_RESUME. While it
+ * is shut and frames wait, it is asked again every TICK_MS whatever else happens (one memory read and one pass over the
+ * waiting frames' `near`); the events only make that sooner. A board that stays under the line boots every frame, as
+ * before. The boards that change are those whose full load would sit between the gate's lines and the crash line.
  */
 export const SLOTS = 4
 /** A new batch's head start: one frame alone until it is done, or until this long - one stalled
@@ -36,29 +37,41 @@ let primed = false   // the batch may use every slot
 let gen = 0          // the batch: a pump scheduled for an earlier one is void
 let timer: ReturnType<typeof setTimeout> | undefined
 let settling: ReturnType<typeof setTimeout> | undefined   // a pump waiting for the view to settle (SETTLE): aimed() runs it now
-let held = false     // a person moves the camera: nothing new starts
+let held = false     // a person moves the camera: nothing new starts (at most HOLD_MS)
+let moving = false   // the camera moves under a person's hand - its rest always reconsiders the queue, held or not
 let holdCap: ReturnType<typeof setTimeout> | undefined
 /** The longest a gesture holds the queue: a camera that never says it stopped must not stop the board. */
 export const HOLD_MS = 5000
 
-/** The heap's safe line, a fraction of the browser's own limit (jsHeapSizeLimit). Measured in headless Chrome (limit
- *  4,192 MB): a 733-frame board killed the renderer at 97% of it, boots halving their pace past ~93%; a page that only
- *  allocates died at 87%. The heaviest board that fits peaks at 69% while it loads (272 frames, 2,894 MB) and settles at
- *  50%. HEAP_RESUME: a gated fill goes on only under it - above that settled 50% with room for a load's own garbage, and
- *  far enough under the line that a collection alone (a parked board's live set sits near the line) never reopens it:
- *  without it the parked 733-frame board booted a frame after each collection, the heap climbing back each time. */
-export const HEAP_SAFE = 0.75
-export const HEAP_RESUME = 0.6
-/** A reading is live for this long after it was seen to move. */
-const LIVE_MS = 1000
-let gated = false                 // past HEAP_SAFE on a live reading: only near frames start, until one under HEAP_RESUME
+/**
+ * The heap gate's lines, fractions of the browser's own limit (jsHeapSizeLimit). Measured in headless Chrome (limit
+ * 4,192 MB): a 733-frame board killed the renderer at 97% of it, its boots halving their pace past ~93%; a page that only
+ * allocates died at 87% - the earliest death, the one the margin is kept from. Past the shut line the fill overshot by
+ * the boots in flight, ~2% (4 slots); near frames booted after it (in view or half a screen off, 2-9 per approach on that
+ * board) took up to ~5% more. So the gate shuts at 0.80: 2% + 5% under 87%. It reopens under 0.78: wide enough that the
+ * reading's own noise between collections (about a point) does not flap it, no wider - once shut, a frame boots only
+ * when a collection takes the heap under 0.78, so the fill ends where the live set reaches it.
+ *
+ * Changed, against the parent: a board whose full load would sit between 0.78 and the crash line (~3.3-3.6+ GB at this
+ * limit, ~1.6-1.8 GB at a 2 GB one) keeps some far frames loading until the camera comes near them. A board whose
+ * load only crosses 0.80 with its garbage ends complete - the next look after a collection reopens it. Under 0.80,
+ * nothing changes. The heaviest board that fits peaks at 69% while it loads (272 frames, 2,894 MB) and settles at 50%.
+ */
+export const HEAP_SAFE = 0.8
+export const HEAP_RESUME = 0.78
+/** While the gate is shut and frames wait: how often it is asked again, whatever else happens. */
+export const TICK_MS = 3000
+/** Two changes of the reading this close together prove it precise (see heapGated). */
+const PRECISE_MS = 60_000
+let gated = false                 // past HEAP_SAFE: only near frames start, until a reading under HEAP_RESUME
+let precise = false               // the page's reading has been seen to move twice within PRECISE_MS: it is exact
 let memLast: number | undefined   // the last usedJSHeapSize read
-let memLiveAt = -Infinity         // when a read last differed from the one before it
-let watching = false              // a collection will pump the queue
-/** A collection is an answer that may have changed: an object no one holds, registered while gated, is collected by the
- *  next one - and its callback pumps. No timer: a parked queue at rest costs nothing. */
+let changedAt = -Infinity         // when a read last differed from the one before it
+let tick: ReturnType<typeof setTimeout> | undefined
+let epoch = 0                     // resetAdmission's: a collection's callback from before it does nothing
+let watching = false              // a collection will pump the queue (sooner than the tick)
 const collected = typeof FinalizationRegistry === 'function'
-  ? new FinalizationRegistry<number>(() => { watching = false; if (gated && waiting.size) schedule(0) })
+  ? new FinalizationRegistry<number>((e) => { if (e !== epoch) return; watching = false; if (gated && waiting.size) schedule(0) })
   : null
 
 /** `near`: in view or close to it, where the camera will land - a frame that may boot whatever the heap. Absent: always. */
@@ -92,14 +105,20 @@ export function aimed(): void {
   schedule(0)
 }
 
-/** A person's camera gesture started (true) or the camera rests again (false). */
+/** A person's camera gesture started (true) or the camera rests again (false). The rest reconsiders the queue even when
+ *  HOLD_MS already let the hold go: the camera may have stopped by a frame the gate keeps. */
 export function holdForCamera(on: boolean): void {
-  if (held === on) return
+  if (moving === on) return
+  moving = on
   held = on
   clearTimeout(holdCap)
-  if (on) holdCap = setTimeout(() => holdForCamera(false), HOLD_MS)
+  if (on) holdCap = setTimeout(() => { held = false; if (waiting.size) schedule(0) }, HOLD_MS)
   else if (waiting.size) schedule(0)
 }
+
+/** What a frame is near changed without the camera moving - a layout animation ended, the window was resized: the queue
+ *  is looked at again (a frame the gate keeps may be near now). */
+export function reconsider(): void { if (waiting.size && !held) schedule(0) }
 
 /** The frame is done booting (ready, error, gone, or its watchdog took over): free the slot, or
  *  leave the queue if it never started. */
@@ -124,18 +143,20 @@ function schedule(ms: number): void {
 
 /**
  * Is the heap gate shut? Only on a reading it can trust. Chromium gives performance.memory exact only to a process locked
- * to one site; elsewhere it is bucketed and refreshed once every twenty minutes (blink's memory_info.cc). A precise
- * counter moves with any allocation, so a reading counts only when it differs from the one before it (and for LIVE_MS
- * after): a frozen one - a page that held a huge board, then opened a small one - never shuts the gate, and the queue
- * runs as it always did. Never where the browser does not say (Safari, Firefox).
+ * to one site (cached 50 ms); elsewhere it is bucketed and refreshed at most once every twenty minutes (blink's
+ * memory_info.cc). Precision is the process's, so it is proven once: two changes of the reading within PRECISE_MS - a
+ * load moves an exact counter at every boot; a bucketed one changes once per twenty minutes, never twice in a minute.
+ * Until then - and for good where the reading is bucketed - the gate stays open and the queue runs as it always did. A
+ * proven reading is trusted even when it holds still (nothing allocated). Never where the browser does not say (Safari,
+ * Firefox).
  */
 function heapGated(): boolean {
   const m = (performance as { memory?: { usedJSHeapSize: number; jsHeapSizeLimit: number } }).memory
   if (!m || !(m.jsHeapSizeLimit > 0)) return (gated = false)
   const now = performance.now(), used = m.usedJSHeapSize
-  if (memLast !== undefined && used !== memLast) memLiveAt = now
+  if (memLast !== undefined && used !== memLast) { if (now - changedAt < PRECISE_MS) precise = true; changedAt = now }
   memLast = used
-  if (now - memLiveAt >= LIVE_MS) return (gated = false)
+  if (!precise) return (gated = false)
   if (used > HEAP_SAFE * m.jsHeapSizeLimit) gated = true
   else if (used < HEAP_RESUME * m.jsHeapSizeLimit) gated = false
   return gated
@@ -143,15 +164,21 @@ function heapGated(): boolean {
 
 function pump(): void {
   scheduled = false
-  let high: boolean | undefined
+  clearTimeout(tick); tick = undefined
+  if (!waiting.size) return
+  const high = heapGated()   // every pump reads it: an exact counter proves itself within a load's first boots
   while (!held && active.size < (primed ? SLOTS : 1) && waiting.size) {
-    high ??= heapGated()
     let best: Admission | undefined, bestRank = Infinity
     for (const a of waiting.values()) {
       if (high && a.near && !a.near()) continue
       const r = a.rank(); if (r < bestRank || !best) { best = a; bestRank = r }
     }
-    if (!best) { if (collected && !watching) { watching = true; collected.register({}, 0) } return }   // parked
+    if (!best) {   // parked: asked again at the next tick at the latest, sooner on a collection
+      const g = gen
+      tick = setTimeout(() => { tick = undefined; if (g === gen) pump() }, TICK_MS)
+      if (collected && !watching) { watching = true; collected.register({}, epoch) }
+      return
+    }
     waiting.delete(best!.key)
     active.add(best!.key)
     ;(globalThis as { __mvAdmitted?: string[] }).__mvAdmitted?.push(best!.key)   // diagnostic: the order, when a probe asks for it
@@ -160,4 +187,7 @@ function pump(): void {
 }
 
 /** For tests: nothing queued, nothing active. */
-export function resetAdmission(): void { waiting.clear(); active.clear(); primed = false; scheduled = false; gen++; clearTimeout(timer); clearTimeout(settling); settling = undefined; held = false; clearTimeout(holdCap); gated = false; memLast = undefined; memLiveAt = -Infinity; watching = false }
+export function resetAdmission(): void { waiting.clear(); active.clear(); primed = false; scheduled = false; gen++; clearTimeout(timer); clearTimeout(settling); settling = undefined; held = false; moving = false; clearTimeout(holdCap); clearTimeout(tick); tick = undefined; gated = false; precise = false; memLast = undefined; changedAt = -Infinity; watching = false; epoch++ }
+
+// a hot-replaced module leaves no timer of its own behind
+if (import.meta.hot) import.meta.hot.dispose(() => { clearTimeout(timer); clearTimeout(settling); clearTimeout(holdCap); clearTimeout(tick); epoch++ })

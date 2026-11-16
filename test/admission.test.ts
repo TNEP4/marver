@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { admissionIdle, admit, aimed, HEAD_MS, HEAP_RESUME, HEAP_SAFE, HOLD_MS, holdForCamera, onAdmissionIdle, release, resetAdmission, SLOTS } from '../src/client/shell/canvas/admission.ts'
+// a collection's callback (FinalizationRegistry) has no deadline and no guarantee: the queue runs here without one, so
+// nothing below depends on it - and a real collection during a test cannot rescue a stall it should show
+vi.hoisted(() => { (globalThis as { FinalizationRegistry?: unknown }).FinalizationRegistry = undefined })
+import { admissionIdle, admit, aimed, HEAD_MS, HEAP_RESUME, HEAP_SAFE, HOLD_MS, holdForCamera, onAdmissionIdle, reconsider, TICK_MS, release, resetAdmission, SLOTS } from '../src/client/shell/canvas/admission.ts'
 
 // Frame admission: a board's iframes boot on one main thread, so at most SLOTS boot at once, one
 // first, nearest the centre of the view first, and a slot goes back the moment its frame is done.
@@ -133,76 +136,123 @@ describe('admission', () => {
     expect(started).toEqual(['a'])
   })
   describe('the heap past its safe line (performance.memory)', () => {
-    // a live counter moves with every read (any allocation moves it); a bucketed one (Chromium outside a site-locked
-    // process) stays put for twenty minutes
-    let at = 0, live = true, reads = 0
-    const memory = { get usedJSHeapSize() { reads++; return Math.round(at * 4096 * 1048576) + (live ? reads : 0) }, jsHeapSizeLimit: 4096 * 1048576 }
+    // precise: an exact counter, moved by every allocation (here: by every read); bucketed: Chromium outside a site-locked
+    // process - one value, refreshed at most every twenty minutes (refresh())
+    const LIMIT = 4096 * 1048576
+    let at = 0, precise = true, reads = 0, frozen = 0
+    const memory = { get usedJSHeapSize() { reads++; return precise ? Math.round(at * LIMIT) + reads : frozen }, jsHeapSizeLimit: LIMIT }
     const heap = (fraction: number) => { at = fraction }
-    beforeEach(() => { heap(0); live = true; Object.defineProperty(performance, 'memory', { value: memory, configurable: true }) })
+    const refresh = (fraction: number) => { frozen = Math.round(fraction * LIMIT) }
+    beforeEach(() => { heap(0); precise = true; refresh(0); Object.defineProperty(performance, 'memory', { value: memory, configurable: true }) })
     afterEach(() => { delete (performance as { memory?: unknown }).memory })
     const near = new Set<string>()
     const askNear = (key: string, rank: number) => admit({ key, rank: () => rank, start: () => started.push(key), near: () => near.has(key) })
-    /** a board: 'in' first (near), then the rest by rank; the heap set once 'in' is booting */
-    const board = async (keys: string[], fraction: number) => {
+    /** 'in' booting past the head start (its pump is spent), the reading proven by a few pumps; then the heap, then the
+     *  rest of the board asks in - Codex's case: nothing left that would pump on its own */
+    const start = async () => {
       near.clear(); near.add('in')
-      askNear('in', 0); keys.forEach((k, i) => askNear(k, i + 1))
-      await settle()
+      askNear('in', 0)
+      admit({ key: 'w', rank: () => 0.5, start: () => {} })   // another frame of the load: it waits, then holds a slot
+      await settle()                                           // 'in' alone (the head start)
+      for (let i = 0; i < 2; i++) { reconsider(); await vi.advanceTimersByTimeAsync(0) }   // pumps with 'w' waiting: readings
+      await vi.advanceTimersByTimeAsync(HEAD_MS)               // the head start's pump, spent: 'w' takes a slot
+    }
+    const board = async (keys: string[], fraction: number) => {
+      await start()
       heap(fraction)
+      keys.forEach((k, i) => askNear(k, i + 1))
+      await settle()
       release('in'); await vi.advanceTimersByTimeAsync(0)
     }
+    const past = HEAP_SAFE + 0.01, between = (HEAP_SAFE + HEAP_RESUME) / 2, under = HEAP_RESUME - 0.01
 
     it('under the line, every frame boots, near or not, in rank order - as without it', async () => {
       await board(['far1', 'far2'], HEAP_SAFE - 0.01)
       expect(started).toEqual(['in', 'far1', 'far2'])
     })
-    it('past it on a live reading, a frame not near the view waits; near ones and jobs with no `near` (a stale reload) still go', async () => {
+    it('past it, a frame not near the view waits; near ones and jobs with no `near` (a stale reload) still go', async () => {
+      await start()
+      heap(past)
       near.add('edge')
-      askNear('in', 0); askNear('far', 2); askNear('edge', 3); ask('reload', 4)
-      near.add('in')
+      askNear('far', 2); askNear('edge', 3); ask('reload', 4)
       await settle()
-      heap(HEAP_SAFE + 0.01)
       release('in'); await vi.advanceTimersByTimeAsync(0)
       expect(started).toEqual(['in', 'edge', 'reload'])
       expect(admissionIdle()).toBe(false)   // 'far' still waits: the load is not done
     })
-    it('a frozen reading above the line parks nothing (a bucketed counter: twenty minutes old, maybe another board\'s)', async () => {
-      live = false; heap(HEAP_SAFE + 0.2)     // the same value at every read
-      await board(['far1', 'far2'], HEAP_SAFE + 0.2)
+    it('a bucketed reading that refreshes once above the line and freezes parks nothing: one change is no proof', async () => {
+      precise = false; refresh(0.1)
+      await start()                          // the same bucket at every read
+      refresh(past)                          // its twenty-minute refresh lands above the line, then holds
+      askNear('far1', 1); askNear('far2', 2)
+      await settle()
+      release('in'); await vi.advanceTimersByTimeAsync(TICK_MS * 4)
       expect(started).toEqual(['in', 'far1', 'far2'])
     })
-    it('parked, nothing runs on its own: no timer, whatever the heap does meanwhile', async () => {
-      await board(['a', 'b'], HEAP_SAFE + 0.01)
-      await vi.advanceTimersByTimeAsync(HEAD_MS)   // the head start's own pump: still past the line
+    it('a spike past the line, then a reading under the reopen line with no event at all: the tick reopens it', async () => {
+      await board(['a', 'b'], past)
       expect(started).toEqual(['in'])
-      heap(HEAP_RESUME - 0.1)
-      await vi.advanceTimersByTimeAsync(60_000)
+      heap(under)                            // collected: nobody says so
+      await vi.advanceTimersByTimeAsync(TICK_MS)
+      expect(started).toEqual(['in', 'a', 'b'])
+    })
+    it('a spike, then a plateau between the lines: the far frames wait (the band that changes), and go once it falls under', async () => {
+      await board(['a', 'b'], past)
+      heap(between)
+      await vi.advanceTimersByTimeAsync(TICK_MS * 5)
+      expect(started).toEqual(['in'])
+      expect(admissionIdle()).toBe(false)
+      heap(under)
+      await vi.advanceTimersByTimeAsync(TICK_MS)
+      expect(started).toEqual(['in', 'a', 'b'])
+    })
+    it('a proven reading that holds still is still trusted: parked stays parked', async () => {
+      await board(['a'], past)
+      precise = false; refresh(past)         // nothing allocates at rest: the same exact value at every read
+      await vi.advanceTimersByTimeAsync(TICK_MS * 5)
       expect(started).toEqual(['in'])
     })
-    it('hysteresis: once shut, the gate opens only under HEAP_RESUME - between the two marks a far frame still waits', async () => {
-      await board(['a', 'b', 'c'], HEAP_SAFE + 0.01)
-      heap((HEAP_SAFE + HEAP_RESUME) / 2)
-      holdForCamera(true); holdForCamera(false); await vi.advanceTimersByTimeAsync(0)   // the camera rests: asked again
+    it('the hold\'s cap ran out mid-gesture; the camera then rests by a far frame with the gate shut: it boots', async () => {
+      await board(['far'], past)
+      holdForCamera(true)
+      await vi.advanceTimersByTimeAsync(HOLD_MS + 10)   // the cap lets the hold go: nothing near yet
       expect(started).toEqual(['in'])
-      heap(HEAP_RESUME - 0.01)
-      holdForCamera(true); holdForCamera(false); await vi.advanceTimersByTimeAsync(0)
-      expect(started).toEqual(['in', 'a', 'b', 'c'])
+      near.add('far'); holdForCamera(false)             // the real rest, by it
+      await vi.advanceTimersByTimeAsync(0)
+      expect(started).toEqual(['in', 'far'])
+    })
+    it('a parked frame brought near with no camera event (tidy, a resize, a dragged frame) boots by the next tick; reconsider() at once', async () => {
+      await board(['a', 'b'], past)
+      near.add('a')
+      await vi.advanceTimersByTimeAsync(TICK_MS)
+      expect(started).toEqual(['in', 'a'])
+      near.add('b'); reconsider()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(started).toEqual(['in', 'a', 'b'])
     })
     it('a parked frame boots when the camera comes near it: the gesture ends there', async () => {
-      await board(['a', 'b'], HEAP_SAFE + 0.01)
+      await board(['a', 'b'], past)
       holdForCamera(true); near.add('b'); holdForCamera(false)
       await vi.advanceTimersByTimeAsync(0)
       expect(started).toEqual(['in', 'b'])
     })
     it('a parked queue hears an aim: a link flown to a far frame boots it on landing', async () => {
-      await board(['far'], HEAP_SAFE + 0.01)
+      await board(['far'], past)
       near.add('far'); aimed()
       await vi.advanceTimersByTimeAsync(0)
       expect(started).toEqual(['in', 'far'])
     })
+    it('nothing runs while nothing waits: the tick stops when the parked frames leave', async () => {
+      await board(['a'], past)
+      expect(vi.getTimerCount()).toBeGreaterThan(0)   // parked: the tick
+      release('a')                                    // the board went away
+      await vi.advanceTimersByTimeAsync(TICK_MS)
+      expect(vi.getTimerCount()).toBe(0)
+    })
     it('a new batch decides afresh: another board under the line boots every frame', async () => {
-      await board(['a'], HEAP_SAFE + 0.01)
-      release('a'); release('in')              // the board went away
-      heap(HEAP_RESUME + 0.05)                 // between the marks: the old board's gate would hold
+      await board(['a'], past)
+      release('a'); release('w')               // the board went away
+      heap(between)                            // between the marks: the old board's gate would hold
       near.clear()
       askNear('x', 1); askNear('y', 2)
       await settle(); release('x'); await vi.advanceTimersByTimeAsync(0)
