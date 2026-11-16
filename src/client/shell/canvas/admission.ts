@@ -46,19 +46,20 @@ export const HOLD_MS = 5000
 /**
  * The heap gate's lines, fractions of the browser's own limit (jsHeapSizeLimit). Measured in headless Chrome (limit
  * 4,192 MB): a 733-frame board killed the renderer at 97% of it, its boots halving their pace past ~93%; a page that only
- * allocates died at 87% - the earliest death, the one the margin is kept from. Past the shut line the fill overshot by
- * the boots in flight, ~2% (4 slots); near frames booted after it (in view or half a screen off, 2-9 per approach on that
- * board) took up to ~5% more. So the gate shuts at 0.80: 2% + 5% under 87%. It reopens under 0.78: wide enough that the
- * reading's own noise between collections (about a point) does not flap it, no wider - once shut, a frame boots only
- * when a collection takes the heap under 0.78, so the fill ends where the live set reaches it.
+ * allocates died at 87% - the earliest death, the one the margin is kept from. With the gate at 0.80/0.78 the parked
+ * board came to rest at 83%: the boots in flight when a collection reopens it overshoot by ~3 points. Near frames booted
+ * after it (in view or half a screen off, 2-9 per approach) took up to ~5 points more. So it shuts at 0.79: 3 + 5 under
+ * 87. It reopens under 0.77: wide enough that the reading's own noise between collections (about a point) does not flap
+ * it, no wider - once shut, a frame boots only when a collection takes the heap under 0.77, so the fill ends where the
+ * live set reaches it (measured: 25 s of boots after the first shut, then none).
  *
- * Changed, against the parent: a board whose full load would sit between 0.78 and the crash line (~3.3-3.6+ GB at this
+ * Changed, against the parent: a board whose full load would sit between 0.77 and the crash line (~3.2-3.6+ GB at this
  * limit, ~1.6-1.8 GB at a 2 GB one) keeps some far frames loading until the camera comes near them. A board whose
- * load only crosses 0.80 with its garbage ends complete - the next look after a collection reopens it. Under 0.80,
+ * load only crosses 0.79 with its garbage ends complete - the next look after a collection reopens it. Under 0.79,
  * nothing changes. The heaviest board that fits peaks at 69% while it loads (272 frames, 2,894 MB) and settles at 50%.
  */
-export const HEAP_SAFE = 0.8
-export const HEAP_RESUME = 0.78
+export const HEAP_SAFE = 0.79
+export const HEAP_RESUME = 0.77
 /** While the gate is shut and frames wait: how often it is asked again, whatever else happens. */
 export const TICK_MS = 3000
 /** Two changes of the reading this close together prove it precise (see heapGated). */
