@@ -279,4 +279,36 @@ describe('every old All Scenes link lands on a real board', () => {
     await browser!.eval(s, `location.hash = '#/p/big?at=other/far'`)
     await playing(s, `v.board === 'big' && v.at === 'other/far' && v.hash.startsWith('#/p/big?at=other%2Ffar')`)
   })
+
+  // A second navigation to where a board load is already going - a second click on the same link (a popstate with no
+  // hashchange), or the same link again while the URL shows the board still on screen (a render projected it back):
+  // the load under way is the one that lands, the board read once.
+  skippable('the same link again while its board loads: one load, and it lands', async () => {
+    const hashes = (n: number) => `new Promise((r) => { let k = 0; addEventListener('hashchange', () => { if (++k === ${n}) setTimeout(r, 50) }) })`
+    const s = await open('#/b/flow')
+    const reads = (b: string) => browser!.eval(s, `window.__reads.filter((x) => x === '${b}').length`)
+    await settled(s, `v.board === 'flow' && v.frames.length === 2`)
+    // every board read counted; big's held until released
+    await browser!.eval(s, `(() => { window.__reads = []; window.__arm = () => { window.__gate = new Promise((r) => { window.__release = r }) }; window.__arm(); const f = window.fetch; window.fetch = function (u, ...r) { const m = String(u).match(/\\/api\\/boards\\/([^/?]+)$/); if (!m) return f.call(this, u, ...r); window.__reads.push(m[1]); return m[1] === 'big' ? window.__gate.then(() => f.call(this, u, ...r)) : f.call(this, u, ...r) }; window.__pops = 0; addEventListener('popstate', () => window.__pops++); window.__changes = 0; addEventListener('hashchange', () => window.__changes++) })()`)
+    // the link, its board held; a render projects flow, still on screen, back over the URL; the link again
+    await browser!.eval(s, `(() => { const done = ${hashes(1)}; location.hash = '#/b/big'; return done })()`)
+    await browser!.until(s, `window.__reads.includes('big')`)
+    await browser!.eval(s, `window.__mvStore.getState().toast('unrelated')`)
+    await browser!.until(s, `location.hash.startsWith('#/b/flow')`)
+    await browser!.eval(s, `(() => { const done = ${hashes(1)}; location.hash = '#/b/big'; return done })()`)
+    await new Promise((r) => setTimeout(r, 300))
+    await browser!.eval(s, `window.__release()`)
+    await settled(s, `v.board === 'big' && v.hash.startsWith('#/b/big')`)
+    expect(await reads('big')).toBe(1)
+    // back on flow: two clicks on one link - the second is a popstate alone
+    await browser!.eval(s, `location.hash = '#/b/flow'`)
+    await settled(s, `v.board === 'flow' && v.hash.startsWith('#/b/flow')`)
+    await browser!.eval(s, `window.__reads.length = 0; window.__pops = 0; window.__changes = 0; window.__arm()`)
+    await browser!.eval(s, `(() => { const a = document.createElement('a'); a.href = '#/b/big'; document.body.append(a); a.click(); a.click(); a.remove() })()`)
+    await new Promise((r) => setTimeout(r, 300))
+    expect(await browser!.eval(s, `[window.__pops, window.__changes]`)).toEqual([2, 1])
+    await browser!.eval(s, `window.__release()`)
+    await settled(s, `v.board === 'big' && v.hash.startsWith('#/b/big')`)
+    expect(await reads('big')).toBe(1)
+  })
 })

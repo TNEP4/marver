@@ -6,7 +6,7 @@ import { JamButton } from './jam-session.tsx'
 import { useJamCapture } from './jam-capture.ts'
 import { useJamQueue } from './jam-queue.ts'
 import { Component, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
-import { useStore, BOARD_GONE, CONFIG, frameById, CANVAS_NAME, DISK_WON, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, stoppedFor, logReload, takeReloadCause, addToBoard, boardLabel, cap, humanize, fetchBoardNames, landingBoard, tabTitle, hydrateBoardPolicy, landingMode, playsAsSlides, sceneLabel, type FrameEntry } from './store.ts'
+import { useStore, BOARD_GONE, CONFIG, frameById, CANVAS_NAME, DISK_WON, LOCKED_SHELL, PUBLISHED, SOURCE_REVEALED, stoppedFor, logReload, takeReloadCause, addToBoard, boardLabel, cap, humanize, fetchBoardNames, landingBoard, tabTitle, hydrateBoardPolicy, landingMode, playsAsSlides, sceneLabel, switchCount, type FrameEntry } from './store.ts'
 import { AddToBoard, BoardList } from './BoardList.tsx'
 import { ContextMenu, copyToClipboard, framePath, useContextMenu, type MenuItem } from './ContextMenu.tsx'
 import { TOP } from './inset.ts'
@@ -517,6 +517,11 @@ export function App() {
   // selection against the newly loaded state. writeHash skips identical hashes, so
   // restores never echo back into history.
   useEffect(() => {
+    // the switch a navigation started, while it may still run: a second navigation to that same hash before it lands -
+    // the link followed again (the projection may have written the board still on screen back over the URL meanwhile),
+    // a second click on the same link (a popstate alone) - would supersede it: a second board fetch, and a load that
+    // never committed in perf --loads. Not the second EVENT of one navigation: routedHash drops that one first.
+    let routing: { hash: string; switches: number } | null = null
     // the recorder's (spec 30): an event of the same hash just after another - one routedHash cannot pair with its
     // popstate (no newURL) - carries that one's command on
     let recorded: { hash: string; at: number; h: CmdHandle | null; run: number } = { hash: '', at: -1_000, h: null, run: 0 }
@@ -526,6 +531,9 @@ export function App() {
       // undo whatever came between (hash.ts routedHash)
       const raw = routedHash(e)
       if (raw === null) return
+      // the same hash, and no switch or cancel since this router started its own (a board picked, a goto, a newer
+      // navigation): a navigation to where the one under way is going - its board, frame and view
+      if (routing && routing.hash === raw && routing.switches === switchCount()) return
       // the second carries the first's command on; the first, overtaken by it, does not end it
       const again = raw === recorded.hash && performance.now() - recorded.at < 250
       const run = recorded.run + 1
@@ -558,7 +566,10 @@ export function App() {
       if (h.board && h.board !== s.board) {
         if (s.play) s.setPlay(null)            // a stale overlay must never survive into another board
         if (nav_) endOnLoad(nav_, h.board)     // another board: its load's way ends it (#49)
-        const landed = await switchFor(h.board, nav)
+        const switched = switchFor(h.board, nav)
+        const mine = routing = { hash: raw, switches: switchCount() }
+        const landed = await switched
+        if (routing === mine) routing = null
         // the switch failed (the projection effect re-syncs the URL), or a newer navigation came while this one's board
         // was read - a link, a goto, a board picked - and may have landed on this same board first: the board is the
         // newer one's then, and so are the selection, the mode and the camera
