@@ -12,7 +12,7 @@
 import { Component, useEffect, useRef, type ReactNode } from 'react'
 import { useStore, landingBoard, landingMode, tabTitle } from './store.ts'
 import { enterFocus, enterPlay, enterSlides, PlayOverlay, playCtl } from './Play.tsx'
-import { UNPLACED, bootHash, eventHash, parseHash, retargetBoot, writeHash } from './hash.ts'
+import { UNPLACED, bootHash, parseHash, retargetBoot, routedHash, writeHash } from './hash.ts'
 import { isLegacyLink, landLegacy } from './legacy-links.ts'
 import { useComments } from './comments-store.ts'
 import { isLatest, navigated, switchFor } from './goto.ts'
@@ -103,10 +103,11 @@ export function App() {
   useEffect(() => {
     let recorded: { hash: string; at: number; h: CmdHandle | null; run: number } = { hash: '', at: -1_000, h: null, run: 0 }
     const onPop = async (e: Event) => {
+      // back/forward and a pasted link fire popstate AND hashchange: the second is the same navigation, already routed
+      const hash = routedHash(e)
+      if (hash === null) return
       // a lookup newer navigation overtook - a link, a goto, a step on the stage - is dropped
       const nav = navigated(), was = useStore.getState()
-      // spec 30: back/forward fires popstate AND hashchange; the second carries the first's command on
-      const hash = eventHash(e)
       const again = hash === recorded.hash && performance.now() - recorded.at < 250
       const run = recorded.run + 1
       const nav_ = again ? recorded.h : cmd('history-nav', { via: 'click', in: 'shell' })

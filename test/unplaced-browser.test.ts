@@ -225,4 +225,35 @@ describe('every old All Scenes link lands on a real board', () => {
     await browser!.eval(s3, `window.__ackOnPop = true; history.forward()`)
     await settled(s3, `v.board === 'flow' && v.sel.join() === 'shop/pay' && v.hash.startsWith('#/b/flow')`)
   })
+
+  // A popstate routes its navigation; its hashchange, queued behind it, is the same navigation and is never routed
+  // again - whatever came between (a goto, a click, a second link) is newer than it.
+  skippable('the hashchange that follows a popstate is that navigation, not a newer one: a goto, a second link and back stand', async () => {
+    const hashes = (n: number) => `new Promise((r) => { let k = 0; addEventListener('hashchange', () => { if (++k === ${n}) setTimeout(r, 50) }) })`
+    const s = await open('#/b/flow')
+    await settled(s, `v.board === 'flow' && v.frames.length === 2`)
+    // a link to Cart, then - before its hashchange - a goto (a frame's, a click) selects Pay: Pay stands
+    await browser!.eval(s, `(() => { const done = ${hashes(1)}; location.hash = '#/b/flow?f=shop/cart'; const st = window.__mvStore.getState(); st.select(st.nodes.find((n) => n.frame === 'shop/pay').key); return done })()`)
+    let v = await state(s)
+    expect(v.sel).toEqual(['shop/pay'])
+    expect(v.hash).toMatch(/^#\/b\/flow\?n=/)
+    // two links before the first one's hashchange (popstate A, popstate B, hashchange A, hashchange B): the second
+    // lands, the first's board never commits
+    await browser!.eval(s, `window.__boards = []; window.__mvStore.subscribe((x) => window.__boards.push(x.board))`)
+    await browser!.eval(s, `(() => { const done = ${hashes(2)}; location.hash = '#/b/big'; location.hash = '#/b/flow?f=shop/cart'; return done })()`)
+    await new Promise((r) => setTimeout(r, 1500))   // the first link's board would have loaded by now
+    v = await settled(s, `v.board === 'flow' && v.sel.join() === 'shop/cart' && v.hash.startsWith('#/b/flow?n=')`)
+    expect(await browser!.eval(s, `window.__boards.includes('big')`)).toBe(false)
+    // a URL pasted in the address bar (a same-document navigation the browser makes); back returns
+    await browser!.send('Page.navigate', { url: `${ORIGIN}/#/b/archive` }, s)
+    await settled(s, `v.board === 'archive' && v.hash.startsWith('#/b/archive')`)
+    await browser!.eval(s, `history.back()`)
+    await settled(s, `v.board === 'flow' && v.sel.join() === 'shop/cart'`)
+    // a hashchange with no popstate before it (a browser that fires only that) is routed from the URL it carries; a
+    // synthetic one with none, from the URL
+    await browser!.eval(s, `history.replaceState(null, '', '#/b/big'); dispatchEvent(new HashChangeEvent('hashchange', { oldURL: location.href, newURL: location.href }))`)
+    await settled(s, `v.board === 'big' && v.hash === '#/b/big'`)
+    await browser!.eval(s, `history.replaceState(null, '', '#/b/archive'); dispatchEvent(new Event('hashchange'))`)
+    await settled(s, `v.board === 'archive' && v.hash.startsWith('#/b/archive')`)
+  })
 })

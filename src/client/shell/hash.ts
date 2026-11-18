@@ -113,10 +113,25 @@ export function buildHash(s: HashState): string {
   return `#/b/${s.board}${q ? `?${decodeURIComponent(q)}` : ''}`
 }
 
-/** The hash a history event goes to. A hashchange carries it (newURL): location.hash may hold the projection by then -
- *  a store update rendered between the URL changing and the event (an ack applied by the popstate's own handler, a
- *  frame's message) writes the state on screen back over the URL not yet routed. A popstate fires as the URL changes. */
-export const eventHash = (e: Event): string => (e instanceof HashChangeEvent && e.newURL ? new URL(e.newURL).hash : location.hash)
+/** The hashes popstates routed whose hashchange is still to come: a navigation that changes the hash fires popstate
+ *  (synchronously under `location.hash =`, in its own task for back/forward) and queues a hashchange - other tasks,
+ *  and the next navigation's popstate, can run before it. `seen`: the hash as the router or the projection left it. */
+const owed: string[] = []
+let seen = typeof location === 'undefined' ? '' : location.hash
+/** The hash a history event asks the router to apply - or null: the hashchange of a navigation its popstate already
+ *  routed, the same navigation, never routed again (whatever came since - a goto, a click, the next link - is newer;
+ *  and by then location.hash may hold the projection, written by a store update rendered in between). A hashchange
+ *  with no popstate before it is routed from the URL it carries; a synthetic one carrying none, from location.hash. */
+export function routedHash(e: Event): string | null {
+  if (e.type === 'popstate') {
+    if (location.hash !== seen) { owed.push(location.hash); owed.splice(0, owed.length - 8) }   // no hashchange for a same-hash entry
+    return seen = location.hash
+  }
+  const h = e instanceof HashChangeEvent && e.newURL ? new URL(e.newURL).hash : null
+  const i = h === null ? -1 : owed.indexOf(h)
+  if (i >= 0) { owed.splice(0, i + 1); return null }
+  return seen = h ?? location.hash
+}
 
 /** Write the hash; identical URLs are skipped so restore paths never loop. */
 export function writeHash(s: HashState, push = false) {
@@ -124,6 +139,7 @@ export function writeHash(s: HashState, push = false) {
   if (h === location.hash || (h === '#/' && !location.hash)) return
   if (push) history.pushState(null, '', h)
   else history.replaceState(null, '', h)
+  seen = h
 }
 
 /** The hash as it stood when the app loaded - boot intent, captured once; re-aimed only when an old
