@@ -228,32 +228,55 @@ describe('every old All Scenes link lands on a real board', () => {
 
   // A popstate routes its navigation; its hashchange, queued behind it, is the same navigation and is never routed
   // again - whatever came between (a goto, a click, a second link) is newer than it.
-  skippable('the hashchange that follows a popstate is that navigation, not a newer one: a goto, a second link and back stand', async () => {
+  skippable('the hashchange that follows a popstate is that navigation, not a newer one: a second link, nine in one task, a goto and back stand', async () => {
     const hashes = (n: number) => `new Promise((r) => { let k = 0; addEventListener('hashchange', () => { if (++k === ${n}) setTimeout(r, 50) }) })`
     const s = await open('#/b/flow')
     await settled(s, `v.board === 'flow' && v.frames.length === 2`)
-    // a link to Cart, then - before its hashchange - a goto (a frame's, a click) selects Pay: Pay stands
-    await browser!.eval(s, `(() => { const done = ${hashes(1)}; location.hash = '#/b/flow?f=shop/cart'; const st = window.__mvStore.getState(); st.select(st.nodes.find((n) => n.frame === 'shop/pay').key); return done })()`)
-    let v = await state(s)
-    expect(v.sel).toEqual(['shop/pay'])
-    expect(v.hash).toMatch(/^#\/b\/flow\?n=/)
     // two links before the first one's hashchange (popstate A, popstate B, hashchange A, hashchange B): the second
-    // lands, the first's board never commits
-    await browser!.eval(s, `window.__boards = []; window.__mvStore.subscribe((x) => window.__boards.push(x.board))`)
+    // lands; the first's board is read once, by its popstate - its hashchange, routed again, read it a second time
+    // (and the second link's hashchange then cancelled that) - and never commits
+    await browser!.eval(s, `window.__boards = []; window.__mvStore.subscribe((x) => window.__boards.push(x.board)); window.__reads = []; const f = window.fetch; window.fetch = function (u, ...r) { const m = String(u).match(/\\/api\\/boards\\/([^/?]+)$/); if (m) window.__reads.push(m[1]); return f.call(this, u, ...r) }`)
     await browser!.eval(s, `(() => { const done = ${hashes(2)}; location.hash = '#/b/big'; location.hash = '#/b/flow?f=shop/cart'; return done })()`)
     await new Promise((r) => setTimeout(r, 1500))   // the first link's board would have loaded by now
-    v = await settled(s, `v.board === 'flow' && v.sel.join() === 'shop/cart' && v.hash.startsWith('#/b/flow?n=')`)
+    let v = await settled(s, `v.board === 'flow' && v.sel.join() === 'shop/cart' && v.hash.startsWith('#/b/flow?n=')`)
     expect(await browser!.eval(s, `window.__boards.includes('big')`)).toBe(false)
+    expect(await browser!.eval(s, `window.__reads.filter((b) => b === 'big').length`)).toBe(1)
+    // nine links in one task: nine popstates, then nine hashchanges - the first one's, still owed, is never routed again
+    await browser!.eval(s, `window.__reads.length = 0`)
+    const nine = ['#/b/big', ...[2, 3, 4, 5, 6, 7, 8].map((k) => `#/b/flow?f=shop/cart&v=${k}`), '#/b/flow?f=shop/pay']
+    await browser!.eval(s, `(() => { const done = ${hashes(9)}; for (const h of ${JSON.stringify(nine)}) location.hash = h; return done })()`)
+    await new Promise((r) => setTimeout(r, 1500))
+    v = await settled(s, `v.board === 'flow' && v.sel.join() === 'shop/pay' && v.hash.startsWith('#/b/flow?n=')`)
+    expect(await browser!.eval(s, `window.__boards.includes('big')`)).toBe(false)
+    expect(await browser!.eval(s, `window.__reads.filter((b) => b === 'big').length`)).toBe(1)
+    // a link to Cart, then - before its hashchange - a goto (a frame's, a click) selects Pay: Pay stands
+    await browser!.eval(s, `(() => { const done = ${hashes(1)}; location.hash = '#/b/flow?f=shop/cart'; const st = window.__mvStore.getState(); st.select(st.nodes.find((n) => n.frame === 'shop/pay').key); return done })()`)
+    v = await state(s)
+    expect(v.sel).toEqual(['shop/pay'])
+    expect(v.hash).toMatch(/^#\/b\/flow\?n=/)
     // a URL pasted in the address bar (a same-document navigation the browser makes); back returns
     await browser!.send('Page.navigate', { url: `${ORIGIN}/#/b/archive` }, s)
     await settled(s, `v.board === 'archive' && v.hash.startsWith('#/b/archive')`)
     await browser!.eval(s, `history.back()`)
-    await settled(s, `v.board === 'flow' && v.sel.join() === 'shop/cart'`)
+    await settled(s, `v.board === 'flow' && v.sel.join() === 'shop/pay'`)
     // a hashchange with no popstate before it (a browser that fires only that) is routed from the URL it carries; a
     // synthetic one with none, from the URL
     await browser!.eval(s, `history.replaceState(null, '', '#/b/big'); dispatchEvent(new HashChangeEvent('hashchange', { oldURL: location.href, newURL: location.href }))`)
     await settled(s, `v.board === 'big' && v.hash === '#/b/big'`)
     await browser!.eval(s, `history.replaceState(null, '', '#/b/archive'); dispatchEvent(new Event('hashchange'))`)
     await settled(s, `v.board === 'archive' && v.hash.startsWith('#/b/archive')`)
+  })
+
+  // A play link to another board, followed in play: the stage closes while that board loads (a render that wrote the
+  // canvas over the link before its hashchange, which then read that and undid the link) - it lands in play there.
+  // Where its landing leaves the history (it pushes an entry) is not settled here.
+  skippable('a play link to another board, followed in play, lands in play there', async () => {
+    const PLAY = `(() => { const st = window.__mvStore.getState(); return { board: st.board, at: st.play?.at, hash: location.hash } })()`
+    const playing = (s: string, cond: string) => browser!.until(s, `(() => { const v = ${PLAY}; return (${cond}) && v })()`, 20_000)
+      .catch(async (e) => { throw new Error(`${(e as Error).message.slice(0, 60)}... - the page: ${JSON.stringify(await browser!.eval(s, PLAY))}`) })
+    const s = await open('#/p/flow?at=shop/cart')
+    await playing(s, `v.board === 'flow' && v.at === 'shop/cart' && v.hash.startsWith('#/p/flow?at=shop%2Fcart')`)
+    await browser!.eval(s, `location.hash = '#/p/big?at=other/far'`)
+    await playing(s, `v.board === 'big' && v.at === 'other/far' && v.hash.startsWith('#/p/big?at=other%2Ffar')`)
   })
 })

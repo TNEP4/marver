@@ -115,7 +115,10 @@ export function buildHash(s: HashState): string {
 
 /** The hashes popstates routed whose hashchange is still to come: a navigation that changes the hash fires popstate
  *  (synchronously under `location.hash =`, in its own task for back/forward) and queues a hashchange - other tasks,
- *  and the next navigation's popstate, can run before it. `seen`: the hash as the router or the projection left it. */
+ *  and the next navigation's popstate, can run before it. `seen`: the hash as the router or the projection left it.
+ *  Never cut by count - a mark dropped while its hashchange can still come would route that navigation again over
+ *  the newer ones (nine `location.hash =` in one task: nine popstates, then nine hashchanges): each mark goes when its
+ *  own hashchange comes, with any older one before it, so the list holds the navigations still owed a hashchange. */
 const owed: string[] = []
 let seen = typeof location === 'undefined' ? '' : location.hash
 /** The hash a history event asks the router to apply - or null: the hashchange of a navigation its popstate already
@@ -124,7 +127,7 @@ let seen = typeof location === 'undefined' ? '' : location.hash
  *  with no popstate before it is routed from the URL it carries; a synthetic one carrying none, from location.hash. */
 export function routedHash(e: Event): string | null {
   if (e.type === 'popstate') {
-    if (location.hash !== seen) { owed.push(location.hash); owed.splice(0, owed.length - 8) }   // no hashchange for a same-hash entry
+    if (location.hash !== seen) owed.push(location.hash)   // a same-hash entry has no hashchange to come
     return seen = location.hash
   }
   const h = e instanceof HashChangeEvent && e.newURL ? new URL(e.newURL).hash : null
