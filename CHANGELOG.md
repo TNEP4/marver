@@ -2,6 +2,48 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## 0.35.0 - 2026-11-19
+
+### Highlights
+
+- **Heavy boards are about 2x faster to open and up to 10x faster to work on.** The canvas engine now does far less
+  work to start a frame, switch a tool on and save an edit. On a board of 112 rich frames in the Mac app:
+
+  | | 0.34 | 0.35 | |
+  |---|---|---|---|
+  | Every frame ready | 32 s | 18 s | 1.8x faster |
+  | Frames on screen ready | 24 s | 12 s | 2x |
+  | Comment mode on | 8.4 s | 0.8 s | 10x |
+  | Laser on | 8 s | 0.9 s | 9x |
+  | Theme switch | 4.4 s | 1.3 s | 3.4x |
+  | Panning, slowest frames | about 75 ms | about 25 ms | 3x smoother |
+  | Memory | 1,080 MB | 950 MB | 12% less |
+  | Requests per saved edit | 650 | 530 | 17-40% fewer |
+
+  A board of 103 phone screens reloads in 15 s instead of 56 s (3.8x, in a fresh Chrome profile), a 270-frame board
+  that never finished loading is ready in under a minute, and boards that were already fast stay fast.
+  [Performance](docs/performance.md)
+- **A board too big for one browser tab no longer crashes it.** Past a few hundred heavy frames the tab ran out of
+  memory and died. The canvas now stops starting frames before that point and starts the ones you look at when you
+  get to them, so the board stays open and usable. [Performance](docs/performance.md#making-a-board-faster)
+- **A board at rest really rests.** A frame with a moving SVG - a spinner, an animated mark - kept the whole board
+  drawing sixty times a second with nothing happening. A resting frame's SVG animation now stands still, like its CSS
+  animation already did, and moves again the moment the frame wakes: about 50x less work at rest on such a board.
+
+### Fixed
+
+- **Adding or deleting a file no longer restarts every frame** on a canvas whose theme is a module
+  (`design/theme.ts`). Each frame started itself again, lost what it was showing and kept its old copy in memory. A
+  theme that is a stylesheet was never affected.
+- **A link, Back or Forward used while a board is still loading is no longer lost.** The canvas could write the
+  board's own address back over the one you had just asked for.
+
+### Changed
+
+- While a frame starts in `marver dev`, React no longer records where each element was created, which was most of a
+  heavy frame's start. An element created at the top of a module shows React's generic stack in DevTools; elements
+  created in a render are unchanged.
+
 ## 0.34.0 - 2026-11-14
 
 ### Highlights

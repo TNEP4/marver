@@ -162,6 +162,10 @@ Read the load, name the lever, change it, compare the next load - you, or your a
   file was deleted or renamed.
 - **The weight** (`settled.weight`) says how heavy the settled board is: elements in the page and its
   frames, frames awake and asleep, the heap.
+- **A board too heavy for one tab** (in Chrome and the Mac app, which report the heap): past three quarters of the
+  tab's memory limit the canvas starts no more frames on its own. A frame you can read on screen - or select - still
+  starts within a few seconds, and the rest follow once memory is back under 60%. The board stays open where it used
+  to crash; frames not yet started show their placeholder. The lasting fix is still a smaller board: split it.
 - **Late moves** came after the load ended - settled, or cut. After a cut at 120 s, or while the page was
   hidden, they are the board still loading. After it settled - and any **`unknown`** move, with no cause
   named - they say something moved the board after it looked done: worth a look, or an
