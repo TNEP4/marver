@@ -113,6 +113,11 @@ export function buildHash(s: HashState): string {
   return `#/b/${s.board}${q ? `?${decodeURIComponent(q)}` : ''}`
 }
 
+/** The hash a history event goes to. A hashchange carries it (newURL): location.hash may hold the projection by then -
+ *  a store update rendered between the URL changing and the event (an ack applied by the popstate's own handler, a
+ *  frame's message) writes the state on screen back over the URL not yet routed. A popstate fires as the URL changes. */
+export const eventHash = (e: Event): string => (e instanceof HashChangeEvent && e.newURL ? new URL(e.newURL).hash : location.hash)
+
 /** Write the hash; identical URLs are skipped so restore paths never loop. */
 export function writeHash(s: HashState, push = false) {
   const h = buildHash(s)

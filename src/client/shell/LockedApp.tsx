@@ -12,7 +12,7 @@
 import { Component, useEffect, useRef, type ReactNode } from 'react'
 import { useStore, landingBoard, landingMode, tabTitle } from './store.ts'
 import { enterFocus, enterPlay, enterSlides, PlayOverlay, playCtl } from './Play.tsx'
-import { UNPLACED, bootHash, parseHash, retargetBoot, writeHash } from './hash.ts'
+import { UNPLACED, bootHash, eventHash, parseHash, retargetBoot, writeHash } from './hash.ts'
 import { isLegacyLink, landLegacy } from './legacy-links.ts'
 import { useComments } from './comments-store.ts'
 import { isLatest, navigated, switchFor } from './goto.ts'
@@ -102,17 +102,17 @@ export function App() {
   // back/forward + pasted links, within what the lock allows
   useEffect(() => {
     let recorded: { hash: string; at: number; h: CmdHandle | null; run: number } = { hash: '', at: -1_000, h: null, run: 0 }
-    const onPop = async () => {
+    const onPop = async (e: Event) => {
       // a lookup newer navigation overtook - a link, a goto, a step on the stage - is dropped
       const nav = navigated(), was = useStore.getState()
       // spec 30: back/forward fires popstate AND hashchange; the second carries the first's command on
-      const hash = location.hash
+      const hash = eventHash(e)
       const again = hash === recorded.hash && performance.now() - recorded.at < 250
       const run = recorded.run + 1
       const nav_ = again ? recorded.h : cmd('history-nav', { via: 'click', in: 'shell' })
       recorded = { hash, at: performance.now(), h: nav_, run }
       const giveUp = () => { if (recorded.run === run) nav_?.cancel('superseded') }
-      const parsed = parseHash()
+      const parsed = parseHash(hash)
       const raw = parsed.board === UNPLACED ? {} : parsed   // dev's view, and what it names: not here
       // an old All Scenes link lands on a real board; it, and the bare #/, with no board: the landing one
       const r = isLegacyLink(raw) ? await landLegacy(raw) : { hash: raw, notice: null }

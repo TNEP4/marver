@@ -24,7 +24,7 @@ import { takeNavToken } from './recorder-reloads.ts'
 import { cmd, endAfterFrames, endOnCamera, endOnLoad, endOnStage, foldsIntoSave, keysOf, shellReload, type CmdHandle, type CmdOpts } from './commands.ts'
 import { enterFocus, enterPlay, enterSlides, playCtl, PlayOverlay } from './Play.tsx'
 import { PdfNotice } from './pdf-export.tsx'
-import { bootHash, linkTargets, parseHash, retargetBoot, UNPLACED, writeHash } from './hash.ts'
+import { bootHash, eventHash, linkTargets, parseHash, retargetBoot, UNPLACED, writeHash } from './hash.ts'
 import { isLegacyLink, landLegacy } from './legacy-links.ts'
 import { CaretIcon, CheckIcon, CheckSquareOffsetIcon, ColumnsIcon, FrameRectIcon, ImagesSquareIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ParallelogramFillIcon, PencilSimpleIcon, PlayIcon, PlusIcon, SignpostIcon, SlideFrameIcon, SunIcon, VariantsIcon, XIcon } from './icons.tsx'
 import { deviceIcon, deviceLabel } from './devices.tsx'
@@ -523,11 +523,11 @@ export function App() {
     let routing: { hash: string; switches: number } | null = null
     // the recorder's (spec 30): back/forward fires both events, a same-board one with no switch to tell them apart
     let recorded: { hash: string; at: number; h: CmdHandle | null; run: number } = { hash: '', at: -1_000, h: null, run: 0 }
-    const onPop = async () => {
+    const onPop = async (e: Event) => {
+      const raw = eventHash(e)
       // the same hash, and no switch or cancel since this router started its own (a board picked, a goto, a newer
       // navigation): the second event of the navigation the first is carrying through - board, frame and view
-      if (routing && routing.hash === location.hash && routing.switches === switchCount()) return
-      const raw = location.hash
+      if (routing && routing.hash === raw && routing.switches === switchCount()) return
       // the second event carries the first's command on; the first, overtaken by its own twin, does not end it
       const again = raw === recorded.hash && performance.now() - recorded.at < 250
       const run = recorded.run + 1
@@ -538,7 +538,7 @@ export function App() {
       // a lookup below still running when newer navigation lands - a link, a board picked, a step in play - is dropped
       const at = useStore.getState().board, step = useStore.getState().play?.at
       const overtaken = () => !isLatest(nav) || useStore.getState().board !== at || useStore.getState().play?.at !== step
-      let h = parseHash()
+      let h = parseHash(raw)
       if (PUBLISHED && h.board === UNPLACED) h = {}   // the Not on a board view is dev's: published, the default board
       const legacy = isLegacyLink(h)
       if (legacy) {

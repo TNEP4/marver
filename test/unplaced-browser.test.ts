@@ -74,8 +74,9 @@ afterAll(async () => {
 
 const skippable = (name: string, fn: () => Promise<void>, ms = 60_000) =>
   it(name, async (ctx) => { if (!browser) return ctx.skip(); await fn() }, ms)
-async function open(hash: string): Promise<string> {
+async function open(hash: string, early?: string): Promise<string> {
   const s = await browser!.tab({ width: 1500, height: 950 })
+  if (early) await browser!.send('Page.addScriptToEvaluateOnNewDocument', { source: early }, s)
   await browser!.go(s, `${ORIGIN}/${hash}`)
   await browser!.until(s, `!!window.__mvStore && !!window.__mvStore.getState().manifest`, 30_000)
   await browser!.send('Page.bringToFront', {}, s)
@@ -198,5 +199,30 @@ describe('every old All Scenes link lands on a real board', () => {
     await settled(s, `v.board === 'big' && v.hash.startsWith('#/b/big')`)
     await browser!.eval(s, `history.forward()`)
     await settled(s, `v.board === 'flow' && v.sel.join() === 'shop/pay'`)
+  })
+
+  // A link followed while the board's frames are still acknowledging their theme: the router's first store read applies
+  // the pending acks, the shell renders, and its projection writes the board on screen over the URL before the
+  // hashchange arrives - which read location.hash and found nothing to do, and the first event gave way to it. Forced,
+  // not left to timing: an ack queued as the link is followed, or as back/forward's popstate arrives (a listener the
+  // page installs before the shell's); and, theme acks aside, any update the shell renders in that moment (a toast).
+  skippable('a link, back and forward land while a theme ack or any update lands in the same moment', async () => {
+    const ack = `(() => { const st = window.__mvStore.getState(), n = st.nodes[0]; st.setThemeOn(n.key, n.themeOn === 'dark' ? 'light' : 'dark') })()`
+    const s = await open('#/b/big')
+    await settled(s, `v.board === 'big' && v.frames.length > 0`)
+    await browser!.eval(s, `${ack}; location.hash = '#/'`)
+    await settled(s, `v.board === 'archive' && v.hash.startsWith('#/b/archive')`)
+    const s2 = await open('#/b/big')
+    await settled(s2, `v.board === 'big' && v.frames.length > 0`)
+    await browser!.eval(s2, `location.hash = '#/'; window.__mvStore.getState().toast('unrelated')`)
+    await settled(s2, `v.board === 'archive' && v.hash.startsWith('#/b/archive')`)
+    const s3 = await open('#/b/big', `addEventListener('popstate', () => { if (window.__ackOnPop) { window.__ackOnPop = false; ${ack} } })`)
+    await settled(s3, `v.board === 'big' && v.frames.length > 0`)
+    await browser!.eval(s3, `${ack}; location.hash = '#/b/all-scenes?f=shop/pay'`)
+    await settled(s3, `v.board === 'flow' && v.sel.join() === 'shop/pay' && v.hash.startsWith('#/b/flow')`)
+    await browser!.eval(s3, `window.__ackOnPop = true; history.back()`)
+    await settled(s3, `v.board === 'big' && v.hash.startsWith('#/b/big')`)
+    await browser!.eval(s3, `window.__ackOnPop = true; history.forward()`)
+    await settled(s3, `v.board === 'flow' && v.sel.join() === 'shop/pay' && v.hash.startsWith('#/b/flow')`)
   })
 })
