@@ -420,17 +420,21 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       //   1. invalidate the theme module chain SYNCHRONOUSLY - an iframe mounting off
       //      the manifest event can then never fetch the pre-change compiled CSS;
       //   2. reloadModule (debounced) pushes the recompiled CSS to already-open frames.
+      // Stylesheets only: a theme that is a module (design/theme.ts importing its sheets) is walked through, never
+      // reloaded - its update has no boundary but the frame host's entry (main.tsx, under Fast Refresh), which then ran
+      // again in every frame document: a second React root on the same container, the frame's state lost, the old root left alive
       const themeModules = (): any[] => {
         const f = themeFile()
         if (!f) return []
         const out: any[] = []
         const seen = new Set<any>()
+        const css = (mod: any) => String(mod.id ?? '').split('?')[0].endsWith('.css')
         const walk = (mod: any) => {
           if (!mod || seen.has(mod)) return
           seen.add(mod)
-          out.push(mod)
+          if (css(mod)) out.push(mod)
           for (const im of mod.clientImportedModules ?? mod.importedModules ?? [])
-            if (String(im.id ?? '').split('?')[0].endsWith('.css')) walk(im)
+            if (css(im)) walk(im)
         }
         for (const mod of server.moduleGraph.getModulesByFile(f) ?? []) walk(mod)
         return out
