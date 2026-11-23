@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { adoptable, BAKE_SCHEMA, bootFiles, neverBumps, digestOf, drifted, extraKey, ignoredByWatch, readRecord, removeRecord, sigOf, unwatchedAtStart, WATCH_IGNORED, writeRecord, type DigestInputs } from '../src/server/bake-reuse.ts'
+import { adoptable, BAKE_SCHEMA, bootFiles, marverData, neverBumps, digestOf, drifted, extraKey, ignoredByWatch, readRecord, removeRecord, sigOf, unwatchedAtStart, WATCH_IGNORED, writeRecord, type DigestInputs } from '../src/server/bake-reuse.ts'
 import { pruneBakes } from '../src/server/bake.ts'
 
 /**
@@ -190,6 +190,11 @@ describe('what the watcher cannot see', () => {
     expect(unwatchedAtStart(root, join(root, 'design', '.a.tsx.swp'))).toBe(true)
     expect(unwatchedAtStart(root, join(root, 'design', 'a.subl.tmp.js'))).toBe(true)
     expect(unwatchedAtStart(root, join(root, 'design', 'a.tsx'))).toBe(false)
+  })
+
+  it("Marver's own data is never a bake's input; anything else under an ignored folder is", () => {
+    for (const p of ['design/boards/main.json', 'design/comments/main.jsonl', 'design/.local/x', 'design/manifest.json', 'context/sync/s.json', 'context/map.json']) expect(marverData(root, join(root, p))).toBe(true)
+    for (const p of ['dist/plugin.js', 'dist/logo.svg', 'design/comments-theme.css', 'design/scenes/a.tsx', 'context/brief.md']) expect(marverData(root, join(root, p))).toBe(false)
   })
 
   it('what never moves the generation, on folder boundaries', () => {
