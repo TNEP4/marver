@@ -430,6 +430,9 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
     },
   }
   plugins.push(...marverPlugin({ root, clientDir, config, bakeBoot, detectedThemeCss: host.themeCss, workspace: run.ws, startup: { ...startup, watch: watch.add }, proof: { instance, key: claim.key, port: claim.port } }), iconsPlugin(root))
+  // the bake digest's first sight (plugin.ts bakeInputs) sees a module's code before any other pre transform (loc's
+  // attributes, Tailwind's) changes it
+  { const i = plugins.findIndex((p) => p?.name === 'marver:bake-inputs'); if (i > 0) plugins.unshift(...plugins.splice(i, 1)) }
   plugins.unshift({
     name: 'marver:startup-owns-server',
     configResolved(resolved: ResolvedConfig) {

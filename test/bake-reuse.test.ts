@@ -177,6 +177,18 @@ describe('what the watcher cannot see', () => {
     expect(unwatchedAtStart(root, join(ws, 'node_modules', 'react', 'index.js'))).toBe(false)
   })
 
+  it('a config whose imports cannot be followed gives no digest (outside the root, resolving nowhere, .mts)', () => {
+    write(join(root, 'design', 'config.ts'), "import x from '../../shared/theme'\nexport default x")
+    expect(digestOf(inputs())).toBeNull()
+    write(join(root, 'design', 'config.ts'), "import x from './missing'\nexport default x")
+    expect(digestOf(inputs())).toBeNull()
+    write(join(root, 'design', 'config.ts'), "import x from './t.mts'\nexport default x")
+    write(join(root, 'design', 't.mts'), 'export default 1')
+    expect(digestOf(inputs())).toBeNull()
+    write(join(root, 'design', 'config.ts'), "import { defineConfig } from 'marver'\nexport default defineConfig({})")
+    expect(digestOf(inputs())).not.toBeNull()   // a package import is the install stamps' to cover
+  })
+
   it('the files read at boot: the configs and what they import', () => {
     write(join(root, 'design', 'config.ts'), "import { themes } from './themes'\nexport default { themes }")
     write(join(root, 'design', 'themes.ts'), 'export const themes = []')

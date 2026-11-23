@@ -27,7 +27,7 @@ import { workspaceId } from './workspace.ts'
 import { originOf } from './slots.ts'
 import { perfRunBarrier, runs, runT } from './perf-run.ts'
 import { loadedFiles, type InputsWatch } from './perf-inputs.ts'
-import { adoptable, digestOf, drifted, extraKey, QUIET_MS, readRecord, removeRecord, trySig, under, unwatchedAtStart, WATCH_LATENCY_MS, writeRecord } from './bake-reuse.ts'
+import { adoptable, digestOf, drifted, extraKey, QUIET_MS, readRecord, rel, removeRecord, trySig, under, unwatchedAtStart, WATCH_LATENCY_MS, writeRecord } from './bake-reuse.ts'
 import { findChrome } from './cdp.ts'
 import { searchForWorkspaceRoot } from 'vite'
 import type { DocProof } from './proof.ts'
@@ -120,6 +120,8 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
     if (seenPaths.has(file)) return
     seenPaths.add(file)
     if (!unwatchedAtStart(root, file) || under(pkgReal, file) || file === pkgReal) return
+    // a virtual module that looks like a path (Vite's /@react-refresh, /@vite/client): no file, nothing to list
+    if (file.startsWith('/@') || !existsSync(file)) return
     const key = extraKey(root, file)
     const s1 = trySig(file)
     if (code != null) {
@@ -127,8 +129,8 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       try { bytes = readFileSync(file, 'utf8') } catch { /* below */ }
       const s2 = trySig(file)
       if (!s1 || s1 !== s2 || bytes !== code) return taint(`${key.slice(2)} changed while it was compiled`)
-    } else if (!s1) return taint(`${key.slice(2)} could not be read`)
-    seenSig.set(key, s1!)
+    } else return taint(`${key.slice(2)} was compiled in a way its bytes cannot be checked against`)
+    seenSig.set(key, s1)
     if (!reuse.extraKnown.has(file)) {
       if (reuse.recordOnDisk) { reuse.recordOnDisk = false; try { removeRecord(root) } catch { /* best-effort */ } }
       reuse.onExtra()
@@ -358,6 +360,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       let genEvents = 0   // watched events this server has seen: one before the decision means no adoption
       let genClosed = false
       onClose(() => { genClosed = true })
+      const serving = () => !genClosed && watching.server === server
       let genDecided!: () => void
       let bakedNow = () => { /* set once the start decided */ }
       const genReady = new Promise<void>((r) => { genDecided = r })
@@ -528,7 +531,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       // pruned against the generation current when the timer fires: an older timer must never delete a newer one
       const pruning = new Set<ReturnType<typeof setTimeout>>()
       const prune = () => {
-        const t = setTimeout(async () => { pruning.delete(t); try { (await import('./bake.ts')).pruneBakes(root, bakeGen) } catch { /* best-effort */ } }, 500)
+        const t = setTimeout(async () => { pruning.delete(t); try { const { pruneBakes } = await import('./bake.ts'); if (serving()) pruneBakes(root, bakeGen) } catch { /* best-effort */ } }, 500)
         pruning.add(t)
       }
       onClose(() => { for (const t of pruning) clearTimeout(t) })
@@ -538,7 +541,10 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       const reuseInputs = (extra: readonly string[]) => ({ root, workspaceRoot: wsRoot !== root ? wsRoot : undefined, pkgDir, version: installedVersion() ?? '0.0.0', chrome: findChrome(), watched: viteWatcher.getWatched(), extra, viteEnv: server.config.env, publicDir: typeof server.config.publicDir === 'string' && server.config.publicDir ? server.config.publicDir : (false as const) })
       let recordTimer: ReturnType<typeof setTimeout> | undefined
       onClose(() => clearTimeout(recordTimer))
-      const serving = () => !genClosed && watching.server === server
+      const graphFiles = (): string[] => {
+        const g = (server.environments?.client?.moduleGraph ?? null) as unknown as { fileToModulesMap?: Map<string, unknown> } | null
+        return g?.fileToModulesMap ? [...g.fileToModulesMap.keys()].filter((f) => isAbsolute(f) && !f.includes(`${sep}node_modules${sep}`)) : []
+      }
       const record = async () => {
         if (!serving() || reuse.tainted || !reuse.bootU) return
         const g = bakeGen
@@ -546,7 +552,10 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
         let d: ReturnType<typeof digestOf> = null
         try { d = digestOf(reuseInputs([...reuse.extraKnown, ...seenPaths])) } catch { return }
         if (!d || !serving() || bakeGen !== g) return
-        const moved = drifted(reuse.bootU, d.u, (k) => seenSig.get(k))
+        // a file the client graph holds that no transform showed us (a stylesheet's inlined @import of an ignored
+        // file): its bytes at the compile are unknown
+        for (const f of graphFiles()) if (!seenPaths.has(f) && unwatchedAtStart(root, f) && !under(pkgReal, f)) return taint(`${rel(root, f)} was compiled unseen`)
+        const moved = drifted(reuse.bootU, d.u, (k) => seenSig.get(k), d.live)
         if (moved) return taint(`${moved.replace(/^\w+ /, '')} changed while the server ran`)
         // an edit the walk read is heard within the watcher's latency: it moves the generation, and nothing is written
         await new Promise((r) => { recordTimer = setTimeout(r, WATCH_LATENCY_MS) })
@@ -572,6 +581,8 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
           if (!serving()) return
           // a Vite restart in this process keeps what the boot set up (the config, Tailwind): never certified again
           if (served > 1) { taint('the dev server restarted in place'); return }
+          // a polling watcher hears an edit as late as its interval: no fence holds
+          if ((viteWatcher as unknown as { options?: { usePolling?: boolean } }).options?.usePolling || process.env.CHOKIDAR_USEPOLLING) { taint('the file watcher polls'); return }
           if (!ok) return
           const rec = readRecord(root)
           const d = digestOf(reuseInputs(rec?.extra ?? []))
@@ -596,7 +607,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
           }
         } catch { reuse.bootU = null }
         finally {
-          if (!genClosed) { try { (await import('./bake.ts')).pruneBakes(root, bakeGen) } catch { /* best-effort */ } }
+          try { const { pruneBakes } = await import('./bake.ts'); if (serving()) pruneBakes(root, bakeGen) } catch { /* best-effort */ }
           genDecided()
           scheduleRecord()
         }

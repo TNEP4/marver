@@ -27,7 +27,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
-import { imports } from './imports.ts'
+import { CODE, imports } from './imports.ts'
 
 /** Bump when bake.json, the texture format or the bake key change: every older record misses. */
 export const BAKE_SCHEMA = 1
@@ -110,6 +110,22 @@ function walk(dir: string, into: string[], budget: { left: number }, depth = 0):
   }
 }
 
+/** The root's files the watcher watches: everything but its ignores, Vite's own (node_modules, .git, test-results)
+ *  and the symlinked folders it would follow out of the tree. */
+function walkRoot(root: string, dir: string, into: string[], budget: { left: number }, depth = 0): void {
+  if (depth > 40) throw new Incomplete(dir)
+  let names: string[]
+  try { names = readdirSync(dir) } catch (e) { if (dir !== root && (e as NodeJS.ErrnoException).code === 'ENOENT') return; throw new Incomplete(dir) }
+  for (const n of names) {
+    if (n === 'node_modules' || n === '.git' || n === 'test-results') continue
+    const p = join(dir, n)
+    const r = rel(root, p)
+    let s; try { s = lstatSync(p) } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') continue; throw new Incomplete(p) }
+    if (s.isDirectory()) { if (!ignoredByWatch(`${r}/`)) walkRoot(root, p, into, budget, depth + 1) }
+    else if (!ignoredByWatch(r)) { if (--budget.left < 0) throw new Incomplete('budget'); into.push(p) }
+  }
+}
+
 const INSTALL_STAMPS = ['node_modules/.package-lock.json', 'node_modules/.modules.yaml', 'node_modules/.pnpm/lock.yaml', 'node_modules/.yarn-state.yml', 'node_modules/.yarn-integrity']
 const LOCKFILES = ['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'bun.lock', 'bun.lockb', 'npm-shrinkwrap.json', 'pnpm-workspace.yaml', 'package.json']
 /** Compiler configs Vite, PostCSS and TypeScript look for upward from the root. */
@@ -119,8 +135,12 @@ const BOOT_ROOT = /^(postcss\.config\.|\.postcssrc|tailwind\.config\.|\.env)/
 const BOOT_DESIGN = /^config\.(ts|js|mjs|cjs|mts|cts)$/
 const BROWSER_ENV = ['MV_CHROME_FLAGS', 'MV_CHROME_HEADED', 'MARVER_CHROME']
 
+/** At most this many files read at boot (the configs and their imports). */
+const MAX_BOOT = 2000
+
 /** The files read once at boot, relative to the root: the configs and every local file they import (a theme list
- *  design/config.ts imports is as boot-bound as the config). */
+ *  design/config.ts imports is as boot-bound as the config). Incomplete when one cannot be followed: unreadable, an
+ *  import that resolves nowhere or outside the root, a module kind the follower does not read (.mts, .cts). */
 export function bootFiles(root: string): string[] {
   let names: string[] = [], design: string[] = []
   try { names = readdirSync(root) } catch { /* none */ }
@@ -132,7 +152,13 @@ export function bootFiles(root: string): string[] {
     const f = queue.shift()!
     if (out.has(f)) continue
     out.add(f)
-    for (const r of im.of(f).resolved) queue.push(r)
+    if (out.size > MAX_BOOT) throw new Incomplete('boot budget')
+    if (/\.(mts|cts)$/.test(f)) throw new Incomplete(f)
+    if (!CODE.test(f)) continue   // .env, a JSON config: no imports
+    try { readFileSync(join(root, f)) } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') continue; throw new Incomplete(f) }
+    const of = im.of(f)
+    if (of.unresolved.length) throw new Incomplete(f)
+    for (const r of of.resolved) queue.push(r)
   }
   return [...out].sort()
 }
@@ -182,6 +208,8 @@ export interface Digest {
   /** the files listed by path, as hashed */
   extra: string[]
   files: number
+  /** keys of `u` the watcher watches now (public/ files): their change is an event, not a drift */
+  live: Set<string>
 }
 
 /** The digest of the inputs now; null when any input cannot be read, a walk is cut short, or past MAX_FILES. */
@@ -196,14 +224,25 @@ function digest(o: DigestInputs): Digest {
   const take = (n = 1) => { budget.left -= n; if (budget.left < 0) throw new Incomplete('budget') }
   // the root's watched files; a watched file outside it (Vite watches one once a page loaded it) is listed by path
   // with the unwatched compiled ones - so a start, whose watcher has not reached it yet, hashes the same line
+  // The root's files by a walk of our own with the watcher's own ignores - never the watcher's list, which says
+  // 'ready' before it has reached every folder (seen on Calepin: 17 of 7,303 files at the start), so the same tree
+  // must give the same lines whenever it is read. The watcher's list gives only what it took from outside the root.
   const watched = new Set<string>(), watchedOutside = new Set<string>()
+  const mine: string[] = []
+  walkRoot(root, root, mine, budget)
+  for (const p of mine) if (!neverBumps(root, p)) watched.add(p)
   for (const [dir, names] of Object.entries(o.watched)) {
     const d = isAbsolute(dir) ? dir : join(root, dir)
+    if (under(root, d) || d === root) continue
     take(names.length)
-    for (const n of names) { const p = join(d, n); if (neverBumps(root, p)) continue; (under(root, p) ? watched : watchedOutside).add(p) }
+    for (const n of names) { const p = join(d, n); if (!neverBumps(root, p)) watchedOutside.add(p) }
   }
+  // public/ is listed whole below - never as watched files: Vite adds it to its watcher on its own schedule, and a
+  // line must not depend on when
+  const pub = o.publicDir === false ? null : (o.publicDir ?? join(root, 'public'))
+  const inPub = (p: string) => !!pub && (p === pub || under(pub, p))
   const lines: string[] = []
-  for (const p of watched) { const s = sigOf(p); if (s !== 'dir' && s !== '-') lines.push(`w ${rel(root, p)} ${s}`) }
+  for (const p of watched) { if (inPub(p)) continue; const s = sigOf(p); if (s !== 'dir' && s !== '-') lines.push(`w ${rel(root, p)} ${s}`) }
   const u = new Map<string, string>()
   const extra = [...new Set([...o.extra, ...watchedOutside])].filter((p) => !watched.has(p) && !p.includes(`${sep}node_modules${sep}`)).sort()
   take(extra.length)
@@ -214,15 +253,16 @@ function digest(o: DigestInputs): Digest {
     // only what the watcher does not watch can drift unseen; a watched one's change moves the generation
     if (!watchedOutside.has(p)) u.set(extraKey(root, p), s)
   }
-  // public/: served as it is, never compiled - every file of it, by path
-  const pub = o.publicDir === false ? null : (o.publicDir ?? join(root, 'public'))
+  // public/: served as it is, never compiled - every file of it, by path; one the watcher watches now is not drift-
+  // checked (its change is an event)
+  const live = new Set<string>()
   if (pub) {
     const files: string[] = []
     walk(pub, files, budget)
     for (const p of files) {
-      const s = sigOf(p)
-      if (watched.has(p)) continue   // a watched one is in the lines already
-      u.set(`pub ${rel(root, p)}`, s)
+      const k = `pub ${rel(root, p)}`
+      u.set(k, sigOf(p))
+      if (watched.has(p)) live.add(k)
     }
   }
   for (const r of [...new Set([root, o.workspaceRoot].filter((x): x is string => !!x))]) {
@@ -234,7 +274,7 @@ function digest(o: DigestInputs): Digest {
   const stop = under(homedir(), root) ? dirname(homedir()) : '/'
   for (let d = dirname(root); d !== stop && d !== dirname(d); d = dirname(d)) {
     let names: string[] = []
-    try { names = readdirSync(d) } catch (e) { if ((e as NodeJS.ErrnoException).code === 'EACCES' || (e as NodeJS.ErrnoException).code === 'EPERM') continue; throw new Incomplete(d) }
+    try { names = readdirSync(d) } catch { throw new Incomplete(d) }   // a folder above that cannot be read: its configs are unknown
     for (const n of names.filter((x) => UPWARD.test(x)).sort()) u.set(`up ${d}/${n}`, sigOf(join(d, n)))
   }
   for (const f of bootFiles(root)) u.set(`boot ${f}`, sigOf(join(root, f)))
@@ -252,14 +292,15 @@ function digest(o: DigestInputs): Digest {
   u.set('env vite', createHash('sha256').update(JSON.stringify(Object.keys(exposed).sort().map((k) => [k, exposed[k]]))).digest('hex'))
   for (const [k, v] of u) if (!k.startsWith('x ')) lines.push(`${k} ${v}`)
   lines.sort()
-  return { digest: createHash('sha256').update(lines.join('\n')).digest('hex'), u, extra, files: lines.length }
+  return { digest: createHash('sha256').update(lines.join('\n')).digest('hex'), u, extra, files: lines.length, live }
 }
 
 /** Did what a session cannot see drift since the boot? The first key that did, or null. A key both have whose sig
  *  differs; a key only one has, except a compiled file first seen later - it counts from the sig it had when
  *  compiled (`seenSig`) - and one the watcher took over since (it is a watched file now). */
-export function drifted(boot: Map<string, string>, now: Map<string, string>, seenSig: (key: string) => string | undefined): string | null {
+export function drifted(boot: Map<string, string>, now: Map<string, string>, seenSig: (key: string) => string | undefined, live: ReadonlySet<string> = new Set()): string | null {
   for (const [k, v] of now) {
+    if (live.has(k) && boot.has(k)) continue
     const was = boot.get(k) ?? seenSig(k)
     if (was === undefined) { if (!k.startsWith('x ')) return k; continue }
     if (was !== v) return k

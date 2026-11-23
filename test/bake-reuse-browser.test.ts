@@ -70,7 +70,7 @@ async function baked(): Promise<{ gen: number; answer: Answer; asks: number }> {
 }
 async function until(fn: () => boolean, ms = 20_000): Promise<void> {
   const t0 = Date.now()
-  while (!fn()) { if (Date.now() - t0 > ms) throw new Error('timed out'); await wait(100) }
+  while (!fn()) { if (Date.now() - t0 > ms) throw new Error(`timed out; the server said:\n${log.slice(-1500)}`); await wait(100) }
 }
 
 beforeAll(() => {
@@ -131,7 +131,9 @@ maybe('bakes that survive a restart (a real dev server)', () => {
   it('a file under an ignored folder a frame imports (dist/): listed by the record, and edited while stopped, a fresh start', async () => {
     mkdirSync(join(root, 'dist'), { recursive: true })
     writeFileSync(join(root, 'dist', 'tone.js'), "export default 'rgba(255,255,255,.35)'\n")
+    const before = (await ask()).gen
     writeFileSync(join(root, 'design', 'scenes', 'app', 'glass.tsx'), GLASS.replace("export const meta", "import tone from '../../../dist/tone.js'\nexport const meta").replace("background: 'rgba(255,255,255,.35)'", 'background: tone'))
+    for (let i = 0; i < 100 && (await ask()).gen === before; i++) await wait(100)   // the edit heard: a new generation
     const b = await baked()
     expect(b.answer.ok, b.answer.error).toBe(true)
     await until(() => (record() as { gen: number; extra?: string[] } | null)?.extra?.some((x) => x.endsWith('/dist/tone.js')) === true && record()?.gen === b.gen)
@@ -166,6 +168,8 @@ maybe('bakes that survive a restart (a real dev server)', () => {
   it('a config read at boot edited while it runs: no record from this session, so the next start is fresh', async () => {
     writeFileSync(join(root, 'design', 'config.ts'), 'export default { description: "edited in the session" }\n')
     await until(() => record() === null, 30_000)
+    await baked()   // a bake in the new generation asks for a record: the session cannot give one
+    await until(() => /design\/config\.ts changed while the server ran/.test(log), 30_000)
     expect(log).toMatch(/design\/config\.ts changed while the server ran/)
     await stop()
     await start()
