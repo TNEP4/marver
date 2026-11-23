@@ -36,7 +36,7 @@ export const RECORD = 'reuse.json'
 export const QUIET_MS = 2000
 /** How late a watcher event may come (FSEvents' latency and then some): a record waits this long after its digest,
  *  so an edit the walk already read is heard - it moves the generation - before the record is written. */
-export const WATCH_LATENCY_MS = 1500
+export const WATCH_LATENCY_MS = 3000
 /** Past this many files in all no digest is taken: no record, no adoption. */
 export const MAX_FILES = 200_000
 
@@ -59,6 +59,12 @@ const IGNORED_RE = WATCH_IGNORED.map((g) => {
 })
 /** Does the watcher ignore this path (relative to the root, `/`-separated)? */
 export const ignoredByWatch = (relPath: string): boolean => IGNORED_RE.some((r) => r.test(relPath))
+/** Vite's own ignores, and chokidar's atomic-save names (an editor's swap and backup files). */
+const VITE_IGNORED = /(^|\/)(node_modules|\.git|test-results)\//
+const ATOMIC = /(^|\/)(\.#[^/]*|[^/]*~|[^/]*\.sw[px]|[^/]*\.subl[^/]*\.tmp|#[^/]*#)$/
+/** Does the dev server's watcher ignore this ABSOLUTE path - as chokidar matches it, the globs against the whole path,
+ *  so a canvas under a folder named `build` is ignored whole? */
+export const watcherIgnores = (abs: string): boolean => { const p = abs.split(sep).join('/'); return ignoredByWatch(p) || VITE_IGNORED.test(p) || ATOMIC.test(p) }
 
 class Incomplete extends Error {}
 
@@ -93,7 +99,7 @@ export function neverBumps(root: string, abs: string): boolean {
 /** Is this compiled file one the watcher does not watch at a start - so one the digest must list by path? */
 export function unwatchedAtStart(root: string, abs: string): boolean {
   if (abs.includes(`${sep}node_modules${sep}`)) return false
-  return !under(root, abs) || ignoredByWatch(rel(root, abs))
+  return !under(root, abs) || watcherIgnores(abs)
 }
 
 /** Every file under a folder, `node_modules` and `.git` left out; Incomplete when a folder cannot be read or is too deep. */
@@ -105,13 +111,17 @@ function walk(dir: string, into: string[], budget: { left: number }, depth = 0):
     if (n === 'node_modules' || n === '.git') continue
     const p = join(dir, n)
     let s; try { s = lstatSync(p) } catch { throw new Incomplete(p) }
+    if (s.isSymbolicLink() && isDir(p)) throw new Incomplete(p)   // a linked folder: its files are not followed
     if (s.isDirectory()) walk(p, into, budget, depth + 1)
     else { if (--budget.left < 0) throw new Incomplete('budget'); into.push(p) }
   }
 }
 
+const isDir = (p: string): boolean => { try { return statSync(p).isDirectory() } catch { return false } }
+
 /** The root's files the watcher watches: everything but its ignores, Vite's own (node_modules, .git, test-results)
- *  and the symlinked folders it would follow out of the tree. */
+ *  and chokidar's atomic-save names, matched on the absolute path as chokidar does. A symlinked folder: Incomplete
+ *  (its files would be the link's, not followed here). */
 function walkRoot(root: string, dir: string, into: string[], budget: { left: number }, depth = 0): void {
   if (depth > 40) throw new Incomplete(dir)
   let names: string[]
@@ -119,10 +129,10 @@ function walkRoot(root: string, dir: string, into: string[], budget: { left: num
   for (const n of names) {
     if (n === 'node_modules' || n === '.git' || n === 'test-results') continue
     const p = join(dir, n)
-    const r = rel(root, p)
     let s; try { s = lstatSync(p) } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') continue; throw new Incomplete(p) }
-    if (s.isDirectory()) { if (!ignoredByWatch(`${r}/`)) walkRoot(root, p, into, budget, depth + 1) }
-    else if (!ignoredByWatch(r)) { if (--budget.left < 0) throw new Incomplete('budget'); into.push(p) }
+    if (s.isDirectory()) { if (!watcherIgnores(`${p}${sep}`)) walkRoot(root, p, into, budget, depth + 1) }
+    else if (s.isSymbolicLink() && isDir(p)) { if (!watcherIgnores(`${p}${sep}`)) throw new Incomplete(p) }
+    else if (!watcherIgnores(p)) { if (--budget.left < 0) throw new Incomplete('budget'); into.push(p) }
   }
 }
 
@@ -143,8 +153,8 @@ const MAX_BOOT = 2000
  *  import that resolves nowhere or outside the root, a module kind the follower does not read (.mts, .cts). */
 export function bootFiles(root: string): string[] {
   let names: string[] = [], design: string[] = []
-  try { names = readdirSync(root) } catch { /* none */ }
-  try { design = readdirSync(join(root, 'design')) } catch { /* none */ }
+  try { names = readdirSync(root) } catch { throw new Incomplete(root) }
+  try { design = readdirSync(join(root, 'design')) } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw new Incomplete('design') }
   const start = [...names.filter((n) => BOOT_ROOT.test(n)), ...design.filter((n) => BOOT_DESIGN.test(n)).map((n) => `design/${n}`)]
   const im = imports(root)
   const out = new Set<string>(), queue = [...start]
@@ -228,6 +238,8 @@ function digest(o: DigestInputs): Digest {
   // 'ready' before it has reached every folder (seen on Calepin: 17 of 7,303 files at the start), so the same tree
   // must give the same lines whenever it is read. The watcher's list gives only what it took from outside the root.
   const watched = new Set<string>(), watchedOutside = new Set<string>()
+  // a root the watcher ignores whole (under a folder named build, out, dist...): no edit is ever heard
+  if (watcherIgnores(`${root}${sep}`)) throw new Incomplete(root)
   const mine: string[] = []
   walkRoot(root, root, mine, budget)
   for (const p of mine) if (!neverBumps(root, p)) watched.add(p)

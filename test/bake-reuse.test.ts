@@ -160,6 +160,29 @@ describe('the digest (bake-reuse.ts)', () => {
 })
 
 describe('what the watcher cannot see', () => {
+  it('a symlinked folder in the tree or in public/ gives no digest (its files are not followed)', () => {
+    write(join(base, 'shared', 'bg.svg'), '<svg/>')
+    symlinkSync(join(base, 'shared'), join(root, 'design', 'linked'))
+    expect(digestOf(inputs())).toBeNull()
+    unlinkSync(join(root, 'design', 'linked'))
+    mkdirSync(join(root, 'public'), { recursive: true })
+    symlinkSync(join(base, 'shared'), join(root, 'public', 'assets'))
+    expect(digestOf(inputs())).toBeNull()
+  })
+
+  it('a canvas under a folder the watcher ignores (build/) gives no digest: no edit there is ever heard', () => {
+    const deep = join(base, 'build', 'canvas')
+    write(join(deep, 'design', 'scenes', 'app', 'a.tsx'), 'a')
+    expect(digestOf(inputs({ root: deep }))).toBeNull()
+  })
+
+  it("Vite's ignores and chokidar's atomic-save names count as unwatched", () => {
+    expect(unwatchedAtStart(root, join(root, 'test-results', 'x.js'))).toBe(true)
+    expect(unwatchedAtStart(root, join(root, 'design', 'a.tsx~'))).toBe(true)
+    expect(unwatchedAtStart(root, join(root, 'design', '.a.tsx.swp'))).toBe(true)
+    expect(unwatchedAtStart(root, join(root, 'design', 'a.tsx'))).toBe(false)
+  })
+
   it("one ignore list: the watcher's globs, read as paths", () => {
     expect(WATCH_IGNORED).toContain('**/dist/**')
     expect(ignoredByWatch('dist/lib.js')).toBe(true)

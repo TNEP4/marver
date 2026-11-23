@@ -120,10 +120,12 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
     if (seenPaths.has(file)) return
     seenPaths.add(file)
     if (!unwatchedAtStart(root, file) || under(pkgReal, file) || file === pkgReal) return
-    // a virtual module that looks like a path (Vite's /@react-refresh, /@vite/client): no file, nothing to list
-    if (file.startsWith('/@') || !existsSync(file)) return
+    // a virtual module that looks like a path (Vite's /@react-refresh, /@vite/client, a plugin's /__x): no file, and no
+    // folder of its first segment - a real file deleted since Vite read it is not one, and taints below
+    if (file.startsWith('/@') || !existsSync(file.split(sep).slice(0, 2).join(sep) || sep)) return
     const key = extraKey(root, file)
     const s1 = trySig(file)
+    if (s1 === '-') return taint(`${key.slice(2)} was gone when it was compiled`)
     if (code != null) {
       let bytes: string | null = null
       try { bytes = readFileSync(file, 'utf8') } catch { /* below */ }
@@ -545,6 +547,12 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
         const g = (server.environments?.client?.moduleGraph ?? null) as unknown as { fileToModulesMap?: Map<string, unknown> } | null
         return g?.fileToModulesMap ? [...g.fileToModulesMap.keys()].filter((f) => isAbsolute(f) && !f.includes(`${sep}node_modules${sep}`)) : []
       }
+      /** A file the client graph holds that no transform showed us (a stylesheet's inlined @import of an ignored file):
+       *  its bytes at the compile are unknown - the session is tainted. */
+      const graphUnseen = (): boolean => {
+        for (const f of graphFiles()) if (!seenPaths.has(f) && unwatchedAtStart(root, f) && !under(pkgReal, f)) { taint(`${rel(root, f)} was compiled unseen`); return true }
+        return false
+      }
       const record = async () => {
         if (!serving() || reuse.tainted || !reuse.bootU) return
         const g = bakeGen
@@ -554,13 +562,14 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
         if (!d || !serving() || bakeGen !== g) return
         // a file the client graph holds that no transform showed us (a stylesheet's inlined @import of an ignored
         // file): its bytes at the compile are unknown
-        for (const f of graphFiles()) if (!seenPaths.has(f) && unwatchedAtStart(root, f) && !under(pkgReal, f)) return taint(`${rel(root, f)} was compiled unseen`)
+        if (graphUnseen()) return
         const moved = drifted(reuse.bootU, d.u, (k) => seenSig.get(k), d.live)
         if (moved) return taint(`${moved.replace(/^\w+ /, '')} changed while the server ran`)
         // an edit the walk read is heard within the watcher's latency: it moves the generation, and nothing is written
         await new Promise((r) => { recordTimer = setTimeout(r, WATCH_LATENCY_MS) })
         recordTimer = undefined
-        if (!serving() || reuse.tainted || bakeGen !== g) return
+        // a stylesheet dependency that entered the graph during the wait is checked too
+        if (!serving() || reuse.tainted || bakeGen !== g || graphUnseen()) return
         try {
           if (writeRecord(root, { digest: d.digest, gen: g, extra: d.extra })) { reuse.recordOnDisk = true; reuse.extraKnown = new Set(d.extra) }
         } catch { /* best-effort: the next start is fresh */ }
@@ -573,7 +582,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       }
       // a compile that landed asks for a record (the start's quiet moment came before any bake) - never postponing one
       // already due, so a long first load is recorded as it goes
-      bakedNow = () => { if (!recordTimer) scheduleRecord() }
+      bakedNow = () => { if (serving() && !reuse.tainted && graphUnseen()) return; if (!recordTimer) scheduleRecord() }
       reuse.onExtra = () => { if (serving()) scheduleRecord() }
       void (async () => {
         try {
@@ -582,7 +591,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
           // a Vite restart in this process keeps what the boot set up (the config, Tailwind): never certified again
           if (served > 1) { taint('the dev server restarted in place'); return }
           // a polling watcher hears an edit as late as its interval: no fence holds
-          if ((viteWatcher as unknown as { options?: { usePolling?: boolean } }).options?.usePolling || process.env.CHOKIDAR_USEPOLLING) { taint('the file watcher polls'); return }
+          if ((viteWatcher as unknown as { options?: { usePolling?: boolean } }).options?.usePolling) { taint('the file watcher polls'); return }
           if (!ok) return
           const rec = readRecord(root)
           const d = digestOf(reuseInputs(rec?.extra ?? []))
