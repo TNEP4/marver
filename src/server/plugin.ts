@@ -592,7 +592,15 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       reuse.onExtra = () => { if (serving()) scheduleRecord() }
       void (async () => {
         try {
-          const ok = await inputs.ready()
+          // the watcher's 'ready', on a timer of this server's own: its close clears it (a restart whose new server
+          // fails at configure must leave nothing running - startup.test A1.1)
+          const ok = await new Promise<boolean>((resolve) => {
+            if (watching.ready && watching.watcher === viteWatcher) return resolve(true)
+            const done = () => { clearTimeout(t); resolve(true) }
+            const t = setTimeout(() => { watching.waiters.delete(done); resolve(false) }, runT().watcherReadyMs)
+            watching.waiters.add(done)
+            onClose(() => { clearTimeout(t); watching.waiters.delete(done); resolve(false) })
+          })
           if (!serving()) return
           // a Vite restart in this process keeps what the boot set up (the config, Tailwind): never certified again
           if (served > 1) { taint('the dev server restarted in place'); return }
