@@ -105,8 +105,9 @@ export function neverBumps(root: string, abs: string): boolean {
 export function marverData(root: string, abs: string): boolean {
   if (!under(root, abs)) return false
   const r = rel(root, abs)
-  // their JSON, or a file with no extension (a .gitkeep a folder is committed with)
-  return r === 'design/manifest.json' || r === 'context/map.json' || /^(design\/(\.local|boards|comments)|context\/sync)\/(.*\.jsonl?|(.*\/)?\.?[^./]+)$/.test(r)
+  // design/.local whole (Marver's private, gitignored state: logs, locks, its own bakes); the committed data folders
+  // by shape - their JSON, or a file with no extension (a .gitkeep a folder is committed with)
+  return r === 'design/manifest.json' || r === 'context/map.json' || r.startsWith('design/.local/') || /^(design\/(boards|comments)|context\/sync)\/(.*\.jsonl?|(.*\/)?\.?[^./]+)$/.test(r)
 }
 
 /** Is this compiled file one the watcher does not watch at a start - so one the digest must list by path? */

@@ -193,8 +193,8 @@ describe('what the watcher cannot see', () => {
   })
 
   it("Marver's own data is never a bake's input; anything else under an ignored folder is", () => {
-    for (const p of ['design/boards/main.json', 'design/comments/main.jsonl', 'design/.local/jam-jobs.json', 'design/manifest.json', 'context/sync/s.json', 'context/map.json', 'design/boards/.gitkeep', 'design/comments/.gitkeep']) expect(marverData(root, join(root, p))).toBe(true)
-    for (const p of ['dist/plugin.js', 'dist/logo.svg', 'design/comments-theme.css', 'design/scenes/a.tsx', 'context/brief.md', 'design/comments/x.css', 'design/.dist/assets/a.css', 'design/.local/x.css', 'design/boards/x.txt', 'design/.dist/.gitkeep']) expect(marverData(root, join(root, p))).toBe(false)
+    for (const p of ['design/boards/main.json', 'design/comments/main.jsonl', 'design/.local/jam-jobs.json', 'design/manifest.json', 'context/sync/s.json', 'context/map.json', 'design/boards/.gitkeep', 'design/comments/.gitkeep', 'design/.local/dev.log', 'design/.local/bakes/1/k/0.png']) expect(marverData(root, join(root, p))).toBe(true)
+    for (const p of ['dist/plugin.js', 'dist/logo.svg', 'design/comments-theme.css', 'design/scenes/a.tsx', 'context/brief.md', 'design/comments/x.css', 'design/.dist/assets/a.css', 'design/boards/x.txt', 'design/.dist/.gitkeep']) expect(marverData(root, join(root, p))).toBe(false)
   })
 
   it('what never moves the generation, on folder boundaries', () => {
