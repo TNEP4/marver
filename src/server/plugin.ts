@@ -66,6 +66,8 @@ export interface PluginCtx {
 /** Vite's virtual modules whose ids look like paths (/@react-refresh, /@vite/client, /@id/...) - named, never guessed
  *  from a missing file: a real file deleted since Vite read it taints instead. */
 const VIRTUAL = /^\/@/
+/** A stylesheet another may inline with @import - reaching the module graph with no transform of its own. */
+const STYLESHEET = /\.(css|scss|sass|less|styl|pcss|postcss)$/
 
 /** A module whose code reaches a pre transform as the file's own bytes (an asset reaches it as `export default url`). */
 const TEXT_MODULE = /\.(m?[jt]sx?|c[jt]s|css|scss|sass|less|styl|json|html|md|mdx)$/
@@ -556,9 +558,9 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       /** A file the client graph holds that no transform showed us (a stylesheet's inlined @import of an ignored file):
        *  its bytes at the compile are unknown - the session is tainted. */
       const graphUnseen = (): boolean => {
-        // what never moves the generation (a board file, Marver's own writes) is out of a bake's inputs here too: Tailwind
-        // registers every file it scans for class names, design/boards/*.json among them, as the stylesheet's
-        for (const f of graphFiles()) if (!seenPaths.has(f) && unwatchedAtStart(root, f) && !under(pkgReal, f) && !neverBumps(root, f)) { taint(`${rel(root, f)} was compiled unseen`); return true }
+        // only a stylesheet: a module is always transformed (seen), and Tailwind registers every file it scans for class
+        // names (design/boards/*.json, design/comments/*.jsonl) as the stylesheet's dependency - data, not an @import
+        for (const f of graphFiles()) if (STYLESHEET.test(f) && !seenPaths.has(f) && unwatchedAtStart(root, f) && !under(pkgReal, f) && !neverBumps(root, f)) { taint(`${rel(root, f)} was compiled unseen`); return true }
         return false
       }
       const record = async () => {
