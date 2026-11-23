@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { adoptable, BAKE_SCHEMA, bootFiles, digestOf, drifted, extraKey, ignoredByWatch, readRecord, removeRecord, sigOf, unwatchedAtStart, WATCH_IGNORED, writeRecord, type DigestInputs } from '../src/server/bake-reuse.ts'
+import { adoptable, BAKE_SCHEMA, bootFiles, neverBumps, digestOf, drifted, extraKey, ignoredByWatch, readRecord, removeRecord, sigOf, unwatchedAtStart, WATCH_IGNORED, writeRecord, type DigestInputs } from '../src/server/bake-reuse.ts'
 import { pruneBakes } from '../src/server/bake.ts'
 
 /**
@@ -180,7 +180,15 @@ describe('what the watcher cannot see', () => {
     expect(unwatchedAtStart(root, join(root, 'test-results', 'x.js'))).toBe(true)
     expect(unwatchedAtStart(root, join(root, 'design', 'a.tsx~'))).toBe(true)
     expect(unwatchedAtStart(root, join(root, 'design', '.a.tsx.swp'))).toBe(true)
+    expect(unwatchedAtStart(root, join(root, 'design', 'a.subl.tmp.js'))).toBe(true)
     expect(unwatchedAtStart(root, join(root, 'design', 'a.tsx'))).toBe(false)
+  })
+
+  it('what never moves the generation, on folder boundaries', () => {
+    expect(neverBumps(root, join(root, 'design', 'boards', 'main.json'))).toBe(true)
+    expect(neverBumps(root, join(root, 'design', '.local', 'x'))).toBe(true)
+    expect(neverBumps(root, join(root, 'design', 'boards-theme.ts'))).toBe(false)
+    expect(neverBumps(root, join(root, 'design', '.local-theme.ts'))).toBe(false)
   })
 
   it("one ignore list: the watcher's globs, read as paths", () => {

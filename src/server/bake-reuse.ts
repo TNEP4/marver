@@ -61,7 +61,8 @@ const IGNORED_RE = WATCH_IGNORED.map((g) => {
 export const ignoredByWatch = (relPath: string): boolean => IGNORED_RE.some((r) => r.test(relPath))
 /** Vite's own ignores, and chokidar's atomic-save names (an editor's swap and backup files). */
 const VITE_IGNORED = /(^|\/)(node_modules|\.git|test-results)\//
-const ATOMIC = /(^|\/)(\.#[^/]*|[^/]*~|[^/]*\.sw[px]|[^/]*\.subl[^/]*\.tmp|#[^/]*#)$/
+// chokidar 3's own (nodefs-handler / index.js, `atomic`): matched on the whole path, unanchored
+const ATOMIC = /\..*\.(sw[px])$|~$|\.subl.*\.tmp/
 /** Does the dev server's watcher ignore this ABSOLUTE path - as chokidar matches it, the globs against the whole path,
  *  so a canvas under a folder named `build` is ignored whole? */
 export const watcherIgnores = (abs: string): boolean => { const p = abs.split(sep).join('/'); return ignoredByWatch(p) || VITE_IGNORED.test(p) || ATOMIC.test(p) }

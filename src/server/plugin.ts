@@ -27,7 +27,7 @@ import { workspaceId } from './workspace.ts'
 import { originOf } from './slots.ts'
 import { perfRunBarrier, runs, runT } from './perf-run.ts'
 import { loadedFiles, type InputsWatch } from './perf-inputs.ts'
-import { adoptable, digestOf, drifted, extraKey, QUIET_MS, readRecord, rel, removeRecord, trySig, under, unwatchedAtStart, WATCH_LATENCY_MS, writeRecord } from './bake-reuse.ts'
+import { adoptable, digestOf, drifted, extraKey, neverBumps, QUIET_MS, readRecord, rel, removeRecord, trySig, under, unwatchedAtStart, WATCH_LATENCY_MS, writeRecord } from './bake-reuse.ts'
 import { findChrome } from './cdp.ts'
 import { searchForWorkspaceRoot } from 'vite'
 import type { DocProof } from './proof.ts'
@@ -62,6 +62,10 @@ export interface PluginCtx {
    *  file's key and port. Never logged, never served */
   proof?: DocProof
 }
+
+/** Vite's virtual modules whose ids look like paths (/@react-refresh, /@vite/client, /@id/...) - named, never guessed
+ *  from a missing file: a real file deleted since Vite read it taints instead. */
+const VIRTUAL = /^\/@/
 
 /** A module whose code reaches a pre transform as the file's own bytes (an asset reaches it as `export default url`). */
 const TEXT_MODULE = /\.(m?[jt]sx?|c[jt]s|css|scss|sass|less|styl|json|html|md|mdx)$/
@@ -122,7 +126,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
     if (!unwatchedAtStart(root, file) || under(pkgReal, file) || file === pkgReal) return
     // a virtual module that looks like a path (Vite's /@react-refresh, /@vite/client, a plugin's /__x): no file, and no
     // folder of its first segment - a real file deleted since Vite read it is not one, and taints below
-    if (file.startsWith('/@') || !existsSync(file.split(sep).slice(0, 2).join(sep) || sep)) return
+    if (VIRTUAL.test(file)) return
     const key = extraKey(root, file)
     const s1 = trySig(file)
     if (s1 === '-') return taint(`${key.slice(2)} was gone when it was compiled`)
@@ -519,7 +523,9 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       let genPush: ReturnType<typeof setTimeout> | undefined
       onClose(() => clearTimeout(genPush))
       const bumpGen = (f: string) => {
-        if (f.startsWith(localDir) || f.startsWith(boardsDirGen) || f === manifestPath || f.includes('/node_modules/')) return
+        // one predicate with the digest's (bake-reuse.ts neverBumps), on folder boundaries: design/boards-theme.ts is an
+        // input like any other, design/boards/main.json is not
+        if (neverBumps(root, f)) return
         bakeGen++
         genEvents++
         // the record named the generation just superseded: gone at once (an edit the record's walk already read must
