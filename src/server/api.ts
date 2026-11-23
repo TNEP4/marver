@@ -136,7 +136,7 @@ function contained(target: string, base: string): boolean {
   } catch { return false }
 }
 
-export function apiMiddleware(root: string, opts: { viewports?: Record<string, { width: number; height: number }>; origin?: () => string | null; bakeGen?: () => number; notify?: (event: string) => void; manifest?: () => Manifest; settled?: () => boolean; workspace?: string; inputs?: InputsWatch
+export function apiMiddleware(root: string, opts: { viewports?: Record<string, { width: number; height: number }>; origin?: () => string | null; bakeGen?: () => number; bakeReady?: () => Promise<void>; baked?: () => void; notify?: (event: string) => void; manifest?: () => Manifest; settled?: () => boolean; workspace?: string; inputs?: InputsWatch
   /** an event with its payload to every open shell tab (spec 31 D3: `sh:show`) */
   broadcast?: (event: string, payload: unknown) => void
   /** the config's themes, and the canvas's name as the shell shows it (a deck PDF's Author, spec 31) */
@@ -1037,6 +1037,17 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const behind = docs.map((d, i) => d !== undefined && (pending || d !== docRev(root, all, asks[i].frame)))
         const origin = opts.origin?.() ?? `http://${req.headers.host ?? 'localhost'}`
         const { ROUTE } = await import('../cli/name.ts')
+        // a start decides first whether it reuses the last session's bakes (bake-reuse.ts): waited for as long as a
+        // compile is (waitMs below), then the page asks again
+        if (opts.bakeReady) {
+          let t: ReturnType<typeof setTimeout> | undefined
+          const decided = await Promise.race([opts.bakeReady().then(() => true), new Promise<boolean>((r) => { t = setTimeout(() => r(false), 2500) })])
+          clearTimeout(t)
+          if (!decided) {
+            const { stillCompiling } = await import('./bake.ts')
+            return json(res, 200, { gen: opts.bakeGen?.() ?? 0, answers: asks.map((a, i) => ({ ...a, ok: false as const, error: stillCompiling(), ...(docs[i] ? { doc: docs[i] } : {}) })) })
+          }
+        }
         const gen = opts.bakeGen?.() ?? 0
         const current = asks.filter((_, i) => !behind[i])
         const named = (u: string) => (run ? `${u}&${RUN_PARAM}=${run}` : u)
@@ -1049,6 +1060,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           // comment or a board save must not queue behind a frame compiling (issue #23)
           waitMs: 2500,
         })
+        if (baked.some((a) => a.ok)) opts.baked?.()
         // and after: an edit published while it compiled means the textures may show newer code than the stamp
         const after = docs.map((d, i) => d !== undefined && (!!opts.settled && !opts.settled() || d !== docRev(root, devManifest().frames, asks[i].frame)))
         let k = 0

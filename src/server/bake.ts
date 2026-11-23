@@ -489,6 +489,9 @@ export function pruneBakes(root: string, keep: number): void {
   try {
     for (const name of readdirSync(base)) {
       if (name === String(keep)) continue
+      // the reuse record (bake-reuse.ts) is no generation: kept, and a start alone decides on it
+      if (name === 'reuse.json') continue
+      if (name.startsWith('reuse.json.tmp-')) { const pid = Number(name.slice('reuse.json.tmp-'.length)); if (pid && pid !== process.pid && alive(pid)) continue }
       // another server on the same project owns its generation for as long as it lives
       let owner = 0
       try { owner = Number(readFileSync(join(base, name, 'owner'), 'utf8')) } catch { /* no owner: nothing was ever written */ }
@@ -584,7 +587,7 @@ const holdMs = (): number => {
 }
 /** The suite's answer for a compile still running, under MV_BAKE_STOP_ASKING (above). */
 export const STOP_ASKING = 'still compiling - the suite asks the page to stop asking'
-const stillCompiling = (): string => (TEST_BUILD && (bakeSeams.stopAsking ?? (!!process.env.MARVER_SLOT_BASE && process.env.MV_BAKE_STOP_ASKING === '1')) ? STOP_ASKING : COMPILING)
+export const stillCompiling = (): string => (TEST_BUILD && (bakeSeams.stopAsking ?? (!!process.env.MARVER_SLOT_BASE && process.env.MV_BAKE_STOP_ASKING === '1')) ? STOP_ASKING : COMPILING)
 
 /** Compiles in flight, by generation and key: identical asks - inside one request or across
  *  concurrent ones - share one compile. */
