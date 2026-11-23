@@ -2,7 +2,7 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
-## Unreleased
+## 0.35.1 - 2026-11-23
 
 ### Highlights
 
