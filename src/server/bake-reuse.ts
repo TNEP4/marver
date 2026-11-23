@@ -99,12 +99,14 @@ export function neverBumps(root: string, abs: string): boolean {
 
 /** Marver's own data files under the root, by their exact shape - the boards' and comments' JSON, its private
  *  state's JSON, the manifest, context's state: never a bake's input. Tailwind lists such files as a stylesheet's
- *  dependency only because it scans them for class names. Anything else in those folders (a stylesheet placed there,
+ *  dependency only because it scans them for class names - their JSON and an extensionless file (.gitkeep). Anything
+ *  else in those folders (a stylesheet placed there,
  *  what `design/.dist` holds) is not exempt. */
 export function marverData(root: string, abs: string): boolean {
   if (!under(root, abs)) return false
   const r = rel(root, abs)
-  return r === 'design/manifest.json' || r === 'context/map.json' || /^(design\/(\.local|boards|comments)|context\/sync)\/.*\.jsonl?$/.test(r)
+  // their JSON, or a file with no extension (a .gitkeep a folder is committed with)
+  return r === 'design/manifest.json' || r === 'context/map.json' || /^(design\/(\.local|boards|comments)|context\/sync)\/(.*\.jsonl?|(.*\/)?\.?[^./]+)$/.test(r)
 }
 
 /** Is this compiled file one the watcher does not watch at a start - so one the digest must list by path? */
