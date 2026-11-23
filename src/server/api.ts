@@ -1060,7 +1060,8 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           // comment or a board save must not queue behind a frame compiling (issue #23)
           waitMs: 2500,
         })
-        if (baked.some((a) => a.ok)) opts.baked?.()
+        // a compile that landed (a cache answer is ms 0) asks for a reuse record
+        if (baked.some((a) => a.ok && a.ms > 0)) opts.baked?.()
         // and after: an edit published while it compiled means the textures may show newer code than the stamp
         const after = docs.map((d, i) => d !== undefined && (!!opts.settled && !opts.settled() || d !== docRev(root, devManifest().frames, asks[i].frame)))
         let k = 0

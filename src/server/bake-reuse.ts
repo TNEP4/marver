@@ -3,19 +3,22 @@
  * at a start, `++` on every watched event (plugin.ts) - and this module adds a REUSE RECORD,
  * `design/.local/bakes/reuse.json`: "generation G's bakes were compiled from inputs whose digest is D". A start adopts
  * G only when the inputs it finds hash to D exactly; anything else is a fresh generation, as before. Fail closed: a
- * miss costs seconds, a stale texture shows the wrong design.
+ * miss costs seconds, a stale texture shows the wrong design - so an input that cannot be read, a walk cut short or
+ * a budget passed gives no digest at all.
  *
- * The digest, sha256 over sorted lines, in two parts:
- *  - W, the watched part: every file the dev server's watcher watches (its own ignores and what never bumps the
- *    generation left out), and the files Vite compiled that it does not watch at a start (`extra`: a monorepo
- *    sibling's source outside the root, a file under an ignored folder such as `dist/`) - the record keeps that list,
- *    so a start hashes the same paths. A change to a watched file during a session moves the generation; a start
- *    sees one made while the server was stopped.
- *  - U, what a session cannot see change: the compiled files the watcher does not watch, the install stamps and the
- *    workspace root's lockfiles, the compiler configs above the root, the config read once at boot (design/config,
- *    Tailwind/PostCSS configs, .env), and the identity - the schema, Marver's own package (dist/ AND the served
- *    src/client, src/shared), the bake browser, the env Vite exposes. U must equal U at the boot for a record to be
- *    written: when it drifted, the running compiler may not match the disk, and the session writes none again.
+ * The digest, sha256 over sorted lines:
+ *  - the root's watched files (the dev server's watcher: its ignores and what never bumps the generation left out);
+ *  - by path, the files outside them a frame used: compiled files the watcher does not watch at a start (a monorepo
+ *    sibling's source outside the root - Vite watches it only once a page loaded it -, a file under an ignored folder
+ *    such as `dist/`) - the record keeps that list, so a start hashes the same lines - and every file of `public/`
+ *    (served as it is, never compiled);
+ *  - the install stamps and the workspace root's lockfiles, the compiler configs above the root;
+ *  - the config read once at boot (design/config and what it imports, Tailwind/PostCSS configs, .env);
+ *  - the identity: the schema, Marver's own package (dist/ AND the served src/client, src/shared), the bake browser,
+ *    the env Vite resolved.
+ * What a session cannot see change (all but the watched files) is also kept apart, `u`: it must equal the boot's for
+ * a record to be written - when it drifted, the running compiler may not match the disk, and the session writes none
+ * again.
  *
  * A file's sig is size, mtime, ctime and inode (ns): ctime cannot be set back by a user's tool, so an edit that
  * restores the length and the mtime is still seen.
@@ -24,33 +27,59 @@ import { createHash } from 'node:crypto'
 import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
+import { imports } from './imports.ts'
 
 /** Bump when bake.json, the texture format or the bake key change: every older record misses. */
 export const BAKE_SCHEMA = 1
 export const RECORD = 'reuse.json'
 /** A generation's first quiet moment: this long with no watched event. */
 export const QUIET_MS = 2000
-/** Past this many files no digest is taken: no record, no adoption. */
+/** How late a watcher event may come (FSEvents' latency and then some): a record waits this long after its digest,
+ *  so an edit the walk already read is heard - it moves the generation - before the record is written. */
+export const WATCH_LATENCY_MS = 1500
+/** Past this many files in all no digest is taken: no record, no adoption. */
 export const MAX_FILES = 200_000
 
 export interface ReuseRecord { schema: number; digest: string; gen: number; extra: string[]; at: string }
 
-/** A file's signature; `-` when it is not there, `?` when it is there and cannot be read. A symlink: its target too. */
+/** The folders and files the dev server's watcher ignores (dev.ts server.watch.ignored - one list, used by both). */
+export const WATCH_IGNORED = [
+  '**/design/manifest.json', '**/design/boards/**', '**/design/.local/**', '**/design/.dist/**', '**/design/comments/**',
+  '**/.next/**', '**/.turbo/**', '**/.vercel/**', '**/.output/**', '**/dist/**', '**/build/**', '**/out/**', '**/coverage/**',
+  // tool-output dirs written into the project must never reload the canvas
+  '**/.gstack/**', '**/.git/**', '**/.playwright-mcp/**',
+  // context/'s JSON (the map, sync state): read by the check and the status pass, never by a frame
+  '**/context/map.json', '**/context/sync/**',
+]
+const IGNORED_RE = WATCH_IGNORED.map((g) => {
+  const body = g.replace(/^\*\*\//, '')
+  const folder = body.endsWith('/**')
+  const esc = (folder ? body.slice(0, -3) : body).replace(/[.+^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(^|/)${esc}${folder ? '/' : '$'}`)
+})
+/** Does the watcher ignore this path (relative to the root, `/`-separated)? */
+export const ignoredByWatch = (relPath: string): boolean => IGNORED_RE.some((r) => r.test(relPath))
+
+class Incomplete extends Error {}
+
+/** A file's signature; `-` when it is not there; Incomplete when it is there and cannot be read. A symlink: its target too. */
 export function sigOf(p: string): string {
   let l
-  try { l = lstatSync(p, { bigint: true }) } catch (e) { return (e as NodeJS.ErrnoException).code === 'ENOENT' || (e as NodeJS.ErrnoException).code === 'ENOTDIR' ? '-' : '?' }
+  try { l = lstatSync(p, { bigint: true }) } catch (e) { const c = (e as NodeJS.ErrnoException).code; if (c === 'ENOENT' || c === 'ENOTDIR') return '-'; throw new Incomplete(p) }
   let link = ''
-  if (l.isSymbolicLink()) { try { link = `->${readlinkSync(p)}|` } catch { return '?' } }
+  if (l.isSymbolicLink()) { try { link = `->${readlinkSync(p)}|` } catch { throw new Incomplete(p) } }
   let s
-  try { s = statSync(p, { bigint: true }) } catch (e) { return (e as NodeJS.ErrnoException).code === 'ENOENT' ? `${link}-` : '?' }
+  try { s = statSync(p, { bigint: true }) } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return `${link}-`; throw new Incomplete(p) }
   if (!s.isFile()) return `${link}dir`
   return `${link}${s.size}:${s.mtimeNs}:${s.ctimeNs}:${s.ino}`
 }
+/** sigOf, or null when it cannot be read (the plugin's first sight: never throws). */
+export const trySig = (p: string): string | null => { try { return sigOf(p) } catch { return null } }
 
 export const rel = (root: string, p: string) => { const r = relative(root, p); return r.startsWith('..') || isAbsolute(r) ? p : r.split(sep).join('/') }
-const under = (root: string, p: string): boolean => { const r = relative(root, p); return r !== '' && r !== '..' && !r.startsWith(`..${sep}`) && !isAbsolute(r) }
+export const under = (root: string, p: string): boolean => { const r = relative(root, p); return r !== '' && r !== '..' && !r.startsWith(`..${sep}`) && !isAbsolute(r) }
 
-/** U's key for a compiled file the watcher does not watch. */
+/** The key for a file a frame used outside the root's watched files. */
 export const extraKey = (root: string, p: string) => `x ${rel(root, p)}`
 
 /** What never moved the generation in a session (plugin.ts bumpGen), so never part of the watched part. */
@@ -61,29 +90,23 @@ export function neverBumps(root: string, abs: string): boolean {
   return r === 'design/manifest.json' || r.startsWith('design/.local/') || r.startsWith('design/boards/')
 }
 
-/** The bake browser's signature: its version (a macOS app's Info.plist) and the binary's size and mtime - never its
- *  ctime, which macOS moves at every launch (a provenance attribute), so a session that baked would always drift. */
-export function browserSig(bin: string): string {
-  let out = ''
-  try { const s = statSync(bin, { bigint: true }); out = `${s.size}:${s.mtimeNs}` } catch { return '?' }
-  const i = bin.indexOf('.app/Contents/MacOS/')
-  if (i >= 0) {
-    try { out += ` plist ${createHash('sha256').update(readFileSync(join(bin.slice(0, i + 4), 'Contents', 'Info.plist'))).digest('hex').slice(0, 16)}` } catch { out += ' plist ?' }
-  }
-  return out
+/** Is this compiled file one the watcher does not watch at a start - so one the digest must list by path? */
+export function unwatchedAtStart(root: string, abs: string): boolean {
+  if (abs.includes(`${sep}node_modules${sep}`)) return false
+  return !under(root, abs) || ignoredByWatch(rel(root, abs))
 }
 
-/** Every file under a folder (Marver's own package: a few hundred), `node_modules` left out. */
-function walk(dir: string, into: string[], depth = 0): void {
-  if (depth > 12) return
+/** Every file under a folder, `node_modules` and `.git` left out; Incomplete when a folder cannot be read or is too deep. */
+function walk(dir: string, into: string[], budget: { left: number }, depth = 0): void {
+  if (depth > 24) throw new Incomplete(dir)
   let names: string[]
-  try { names = readdirSync(dir) } catch { return }
+  try { names = readdirSync(dir) } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return; throw new Incomplete(dir) }
   for (const n of names) {
     if (n === 'node_modules' || n === '.git') continue
     const p = join(dir, n)
-    let s; try { s = lstatSync(p) } catch { continue }
-    if (s.isDirectory()) walk(p, into, depth + 1)
-    else into.push(p)
+    let s; try { s = lstatSync(p) } catch { throw new Incomplete(p) }
+    if (s.isDirectory()) walk(p, into, budget, depth + 1)
+    else { if (--budget.left < 0) throw new Incomplete('budget'); into.push(p) }
   }
 }
 
@@ -96,6 +119,43 @@ const BOOT_ROOT = /^(postcss\.config\.|\.postcssrc|tailwind\.config\.|\.env)/
 const BOOT_DESIGN = /^config\.(ts|js|mjs|cjs|mts|cts)$/
 const BROWSER_ENV = ['MV_CHROME_FLAGS', 'MV_CHROME_HEADED', 'MARVER_CHROME']
 
+/** The files read once at boot, relative to the root: the configs and every local file they import (a theme list
+ *  design/config.ts imports is as boot-bound as the config). */
+export function bootFiles(root: string): string[] {
+  let names: string[] = [], design: string[] = []
+  try { names = readdirSync(root) } catch { /* none */ }
+  try { design = readdirSync(join(root, 'design')) } catch { /* none */ }
+  const start = [...names.filter((n) => BOOT_ROOT.test(n)), ...design.filter((n) => BOOT_DESIGN.test(n)).map((n) => `design/${n}`)]
+  const im = imports(root)
+  const out = new Set<string>(), queue = [...start]
+  while (queue.length) {
+    const f = queue.shift()!
+    if (out.has(f)) continue
+    out.add(f)
+    for (const r of im.of(f).resolved) queue.push(r)
+  }
+  return [...out].sort()
+}
+/** The boot files' sigs - taken by the dev server before it loads the config (dev.ts), compared at the start. */
+export function bootSnapshot(root: string): Map<string, string> {
+  const m = new Map<string, string>()
+  try { for (const f of bootFiles(root)) m.set(`boot ${f}`, sigOf(join(root, f))) } catch { m.set('boot ?', String(Date.now())) }
+  return m
+}
+
+/** The bake browser's signature: its version (a macOS app's Info.plist) and the binary's size and mtime - never its
+ *  ctime, which macOS moves at every launch (a provenance attribute), so a session that baked would always drift. */
+export function browserSig(bin: string): string {
+  let s
+  try { s = statSync(bin, { bigint: true }) } catch { throw new Incomplete(bin) }
+  let out = `${s.size}:${s.mtimeNs}`
+  const i = bin.indexOf('.app/Contents/MacOS/')
+  if (i >= 0) {
+    try { out += ` plist ${createHash('sha256').update(readFileSync(join(bin.slice(0, i + 4), 'Contents', 'Info.plist'))).digest('hex').slice(0, 16)}` } catch { throw new Incomplete(bin) }
+  }
+  return out
+}
+
 export interface DigestInputs {
   root: string
   /** the workspace root (searchForWorkspaceRoot), when it is not the root */
@@ -106,42 +166,64 @@ export interface DigestInputs {
   chrome: string | null
   /** the watcher's getWatched() */
   watched: Record<string, string[]>
-  /** compiled files outside the watched set: the record's, and those this session compiled */
+  /** files a frame used outside the root's watched files: the record's, and those this session compiled */
   extra: readonly string[]
+  /** the env Vite resolved (server.config.env: .env files expanded, the shell's VITE_*) */
+  viteEnv?: Record<string, unknown>
   env?: NodeJS.ProcessEnv
+  /** Vite's public folder (served as it is); default `<root>/public` */
+  publicDir?: string | false
 }
 
 export interface Digest {
   digest: string
-  /** U, line by line: key -> sig (compared with the boot's) */
+  /** what a session cannot see change, key -> sig (compared with the boot's) */
   u: Map<string, string>
-  /** `extra` as hashed: those still not watched */
+  /** the files listed by path, as hashed */
   extra: string[]
   files: number
 }
 
-/** The digest of the inputs now; null past MAX_FILES. */
+/** The digest of the inputs now; null when any input cannot be read, a walk is cut short, or past MAX_FILES. */
 export function digestOf(o: DigestInputs): Digest | null {
+  try { return digest(o) } catch (e) { if (e instanceof Incomplete) return null; throw e }
+}
+
+function digest(o: DigestInputs): Digest {
   const { root } = o
   const env = o.env ?? process.env
-  // the root's watched files are W; a watched file outside it (Vite watches one once a page loaded it) is listed by
-  // path with the unwatched compiled ones - so a start, whose watcher has not reached it yet, hashes the same line
+  const budget = { left: MAX_FILES }
+  const take = (n = 1) => { budget.left -= n; if (budget.left < 0) throw new Incomplete('budget') }
+  // the root's watched files; a watched file outside it (Vite watches one once a page loaded it) is listed by path
+  // with the unwatched compiled ones - so a start, whose watcher has not reached it yet, hashes the same line
   const watched = new Set<string>(), watchedOutside = new Set<string>()
   for (const [dir, names] of Object.entries(o.watched)) {
     const d = isAbsolute(dir) ? dir : join(root, dir)
+    take(names.length)
     for (const n of names) { const p = join(d, n); if (neverBumps(root, p)) continue; (under(root, p) ? watched : watchedOutside).add(p) }
-    if (watched.size + watchedOutside.size > MAX_FILES) return null
   }
   const lines: string[] = []
   for (const p of watched) { const s = sigOf(p); if (s !== 'dir' && s !== '-') lines.push(`w ${rel(root, p)} ${s}`) }
   const u = new Map<string, string>()
   const extra = [...new Set([...o.extra, ...watchedOutside])].filter((p) => !watched.has(p) && !p.includes(`${sep}node_modules${sep}`)).sort()
+  take(extra.length)
   for (const p of extra) {
     const s = sigOf(p)
     if (s === 'dir') continue
     lines.push(`${extraKey(root, p)} ${s}`)
     // only what the watcher does not watch can drift unseen; a watched one's change moves the generation
     if (!watchedOutside.has(p)) u.set(extraKey(root, p), s)
+  }
+  // public/: served as it is, never compiled - every file of it, by path
+  const pub = o.publicDir === false ? null : (o.publicDir ?? join(root, 'public'))
+  if (pub) {
+    const files: string[] = []
+    walk(pub, files, budget)
+    for (const p of files) {
+      const s = sigOf(p)
+      if (watched.has(p)) continue   // a watched one is in the lines already
+      u.set(`pub ${rel(root, p)}`, s)
+    }
   }
   for (const r of [...new Set([root, o.workspaceRoot].filter((x): x is string => !!x))]) {
     const tag = r === root ? '.' : 'ws'
@@ -152,38 +234,33 @@ export function digestOf(o: DigestInputs): Digest | null {
   const stop = under(homedir(), root) ? dirname(homedir()) : '/'
   for (let d = dirname(root); d !== stop && d !== dirname(d); d = dirname(d)) {
     let names: string[] = []
-    try { names = readdirSync(d) } catch { continue }
+    try { names = readdirSync(d) } catch (e) { if ((e as NodeJS.ErrnoException).code === 'EACCES' || (e as NodeJS.ErrnoException).code === 'EPERM') continue; throw new Incomplete(d) }
     for (const n of names.filter((x) => UPWARD.test(x)).sort()) u.set(`up ${d}/${n}`, sigOf(join(d, n)))
   }
-  let rootNames: string[] = []
-  try { rootNames = readdirSync(root) } catch { /* none */ }
-  for (const n of rootNames.filter((x) => BOOT_ROOT.test(x)).sort()) u.set(`boot ${n}`, sigOf(join(root, n)))
-  let designNames: string[] = []
-  try { designNames = readdirSync(join(root, 'design')) } catch { /* none */ }
-  for (const n of designNames.filter((x) => BOOT_DESIGN.test(x)).sort()) u.set(`boot design/${n}`, sigOf(join(root, 'design', n)))
+  for (const f of bootFiles(root)) u.set(`boot ${f}`, sigOf(join(root, f)))
   // the identity
   u.set('schema', String(BAKE_SCHEMA))
   u.set('marver', o.version)
   let pkg = o.pkgDir
-  try { pkg = realpathSync(o.pkgDir) } catch { /* as given */ }
+  try { pkg = realpathSync(o.pkgDir) } catch { throw new Incomplete(o.pkgDir) }
   const own: string[] = []
-  walk(pkg, own)
+  walk(pkg, own, budget)
   u.set('pkg', `${pkg} ${createHash('sha256').update(own.sort().map((p) => `${relative(pkg, p)} ${sigOf(p)}`).join('\n')).digest('hex')}`)
   u.set('chrome', o.chrome ? `${o.chrome} ${browserSig(o.chrome)}` : '-')
   for (const k of BROWSER_ENV) u.set(`env ${k}`, env[k] ?? '-')
-  const exposed = Object.keys(env).filter((k) => k.startsWith('VITE_') || k === 'NODE_ENV').sort()
-  u.set('env vite', createHash('sha256').update(exposed.map((k) => `${k}=${env[k]}`).join('\n')).digest('hex'))
+  const exposed = o.viteEnv ?? Object.fromEntries(Object.keys(env).filter((k) => k.startsWith('VITE_') || k === 'NODE_ENV').map((k) => [k, env[k]]))
+  u.set('env vite', createHash('sha256').update(JSON.stringify(Object.keys(exposed).sort().map((k) => [k, exposed[k]]))).digest('hex'))
   for (const [k, v] of u) if (!k.startsWith('x ')) lines.push(`${k} ${v}`)
   lines.sort()
   return { digest: createHash('sha256').update(lines.join('\n')).digest('hex'), u, extra, files: lines.length }
 }
 
-/** Did U drift since the boot? A key both have whose sig differs - a compiled file first seen later counts from the
- *  sig it had when compiled (`seenSig`). */
+/** Did what a session cannot see drift since the boot? The first key that did, or null. A key both have whose sig
+ *  differs; a key only one has, except a compiled file first seen later - it counts from the sig it had when
+ *  compiled (`seenSig`) - and one the watcher took over since (it is a watched file now). */
 export function drifted(boot: Map<string, string>, now: Map<string, string>, seenSig: (key: string) => string | undefined): string | null {
   for (const [k, v] of now) {
     const was = boot.get(k) ?? seenSig(k)
-    // a config, stamp or folder file that appeared since the boot is a drift; a compiled file first seen now is not
     if (was === undefined) { if (!k.startsWith('x ')) return k; continue }
     if (was !== v) return k
   }

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { adoptable, BAKE_SCHEMA, digestOf, drifted, extraKey, readRecord, removeRecord, sigOf, writeRecord, type DigestInputs } from '../src/server/bake-reuse.ts'
+import { adoptable, BAKE_SCHEMA, bootFiles, digestOf, drifted, extraKey, ignoredByWatch, readRecord, removeRecord, sigOf, unwatchedAtStart, WATCH_IGNORED, writeRecord, type DigestInputs } from '../src/server/bake-reuse.ts'
 import { pruneBakes } from '../src/server/bake.ts'
 
 /**
@@ -128,9 +128,61 @@ describe('the digest (bake-reuse.ts)', () => {
     expect(digest()).not.toBe(d0)
   })
 
-  it('a missing file and an unreadable one never sign as a real file', () => {
+  it('a missing file signs as missing; one that cannot be read gives no digest at all', () => {
     expect(sigOf(join(base, 'nope'))).toBe('-')
     expect(sigOf(join(root, 'design', 'components', 'Card.tsx'))).toMatch(/^\d+:\d+:\d+:\d+$/)
+    const locked = join(root, 'design', 'locked'), f = join(locked, 'x.tsx')
+    write(f, 'x'); files.push(f)
+    chmodSync(locked, 0o000)
+    try { expect(digestOf(inputs())).toBeNull() } finally { chmodSync(locked, 0o755) }
+    expect(digestOf(inputs())).not.toBeNull()
+  })
+
+  it('every file of public/ is in it, watched or not', () => {
+    const d0 = digest()
+    write(join(root, 'public', 'dist', 'bg.png'), 'png')
+    const d1 = digest()
+    expect(d1).not.toBe(d0)
+    write(join(root, 'public', 'dist', 'bg.png'), 'png2')
+    expect(digest()).not.toBe(d1)
+  })
+
+  it("the env Vite resolved (a .env value expanded from the shell) moves it", () => {
+    const d0 = digest({ viteEnv: { VITE_COLOR: 'red', MODE: 'development' } })
+    expect(digest({ viteEnv: { VITE_COLOR: 'red', MODE: 'development' } })).toBe(d0)
+    expect(digest({ viteEnv: { VITE_COLOR: 'blue', MODE: 'development' } })).not.toBe(d0)
+  })
+
+  it('past the budget, no digest (the extras count too)', () => {
+    const many = Array.from({ length: 200_001 }, (_, i) => join(root, 'dist', `f${i}.js`))
+    expect(digestOf(inputs({ extra: many }))).toBeNull()
+  })
+})
+
+describe('what the watcher cannot see', () => {
+  it("one ignore list: the watcher's globs, read as paths", () => {
+    expect(WATCH_IGNORED).toContain('**/dist/**')
+    expect(ignoredByWatch('dist/lib.js')).toBe(true)
+    expect(ignoredByWatch('packages/ui/dist/lib.js')).toBe(true)
+    expect(ignoredByWatch('design/manifest.json')).toBe(true)
+    expect(ignoredByWatch('context/map.json')).toBe(true)
+    expect(ignoredByWatch('design/scenes/app/a.tsx')).toBe(false)
+    expect(ignoredByWatch('distant/a.tsx')).toBe(false)
+  })
+
+  it('a compiled file outside the root or under an ignored folder is listed by path; a watched one, a package, never', () => {
+    expect(unwatchedAtStart(root, join(root, 'dist', 'lib.js'))).toBe(true)
+    expect(unwatchedAtStart(root, join(ws, 'packages', 'ui', 'B.tsx'))).toBe(true)
+    expect(unwatchedAtStart(root, join(root, 'design', 'scenes', 'app', 'a.tsx'))).toBe(false)
+    expect(unwatchedAtStart(root, join(ws, 'node_modules', 'react', 'index.js'))).toBe(false)
+  })
+
+  it('the files read at boot: the configs and what they import', () => {
+    write(join(root, 'design', 'config.ts'), "import { themes } from './themes'\nexport default { themes }")
+    write(join(root, 'design', 'themes.ts'), 'export const themes = []')
+    write(join(root, 'tailwind.config.js'), 'module.exports = {}')
+    write(join(root, '.env.local'), 'VITE_A=1')
+    expect(bootFiles(root)).toEqual(['.env.local', 'design/config.ts', 'design/themes.ts', 'tailwind.config.js'])
   })
 })
 
@@ -154,6 +206,23 @@ describe('the drift (a session that may not write a record)', () => {
     expect(drifted(boot, digestOf(inputs({ extra: [lib] }))!.u, (k) => (k === extraKey(root, lib) ? atCompile : undefined))).toBeNull()
     writeFileSync(lib, 'changed')
     expect(drifted(boot, digestOf(inputs({ extra: [lib] }))!.u, (k) => (k === extraKey(root, lib) ? atCompile : undefined))).toBe(extraKey(root, lib))
+  })
+
+  it("a file the config imports edited in the session drifts", () => {
+    write(join(root, 'design', 'config.ts'), "import { themes } from './themes'\nexport default { themes }")
+    write(join(root, 'design', 'themes.ts'), 'export const themes = []')
+    const boot = digestOf(inputs())!.u
+    write(join(root, 'design', 'themes.ts'), 'export const themes = ["dark"]')
+    expect(drifted(boot, digestOf(inputs())!.u, () => undefined)).toBe('boot design/themes.ts')
+  })
+
+  it('an unwatched public/ file edited or removed in the session drifts', () => {
+    write(join(root, 'public', 'dist', 'bg.png'), 'a')
+    const boot = digestOf(inputs())!.u
+    write(join(root, 'public', 'dist', 'bg.png'), 'ab')
+    expect(drifted(boot, digestOf(inputs())!.u, () => undefined)).toBe('pub public/dist/bg.png')
+    unlinkSync(join(root, 'public', 'dist', 'bg.png'))
+    expect(drifted(boot, digestOf(inputs())!.u, () => undefined)).toBe('pub public/dist/bg.png')
   })
 
   it('a watched file edited is no drift - it moves the generation instead', () => {

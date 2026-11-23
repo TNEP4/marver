@@ -6,6 +6,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve as resolvePath }
 import { fileURLToPath } from 'node:url'
 import { NAME, PKG } from '../cli/name.ts'
 import { loadConfig } from './config.ts'
+import { bootSnapshot, WATCH_IGNORED } from './bake-reuse.ts'
 import { canvasIdentity, identityNudge } from './identity.ts'
 import { detectHost } from './detect.ts'
 import { marverPlugin, tailwind3Css, tailwind4Plugin } from './plugin.ts'
@@ -303,6 +304,9 @@ export async function dev(root: string, opts: DevOptions = {}) {
 
 async function boot(root: string, opts: DevOptions, instance: string, t: Startup, ctx: { ranBefore: boolean; watch: WatchGuard }) {
   const { watch } = ctx
+  // the config's files as they are before it is loaded (bake-reuse.ts): one edited between the load and the start's
+  // digest means the compiler runs what the disk no longer says
+  const bakeBoot = bootSnapshot(root)
   const config = await loadConfig(root)
   const host = detectHost(root)
   const pkgDir = packageDir()
@@ -425,7 +429,7 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
       return () => { c.mine.delete(once); withdraw() }
     },
   }
-  plugins.push(...marverPlugin({ root, clientDir, config, detectedThemeCss: host.themeCss, workspace: run.ws, startup: { ...startup, watch: watch.add }, proof: { instance, key: claim.key, port: claim.port } }), iconsPlugin(root))
+  plugins.push(...marverPlugin({ root, clientDir, config, bakeBoot, detectedThemeCss: host.themeCss, workspace: run.ws, startup: { ...startup, watch: watch.add }, proof: { instance, key: claim.key, port: claim.port } }), iconsPlugin(root))
   plugins.unshift({
     name: 'marver:startup-owns-server',
     configResolved(resolved: ResolvedConfig) {
@@ -528,14 +532,8 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
       // Host build output is ignored too: `next build` (etc.) writing .next/ was firing
       // a storm of full page reloads at the open canvas (friction log #21).
       watch: {
-        ignored: [
-          '**/design/manifest.json', '**/design/boards/**', '**/design/.local/**', '**/design/.dist/**', '**/design/comments/**',
-          '**/.next/**', '**/.turbo/**', '**/.vercel/**', '**/.output/**', '**/dist/**', '**/build/**', '**/out/**', '**/coverage/**',
-          // tool-output dirs written into the project must never reload the canvas
-          '**/.gstack/**', '**/.git/**', '**/.playwright-mcp/**',
-          // context/'s JSON (the map, sync state): read by the check and the status pass, never by a frame
-          '**/context/map.json', '**/context/sync/**',
-        ],
+        // one list with the bake digest's (bake-reuse.ts): what the watcher cannot see, the digest lists by path
+        ignored: [...WATCH_IGNORED],
       },
       // A8: pre-transform the frame boot chain at server start so the FIRST frame load never
       // races Vite's on-demand transform/optimize (the cold-boot "frame never reported ready"

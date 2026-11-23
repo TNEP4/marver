@@ -1,6 +1,6 @@
 import type { Plugin, ViteDevServer } from 'vite'
 import { boardsChanged, pinningBoards, workActivity, workClock } from './work.ts'
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, watch, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, watch, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, sep } from 'node:path'
 import { hash } from './manifest.ts'
 import { NAME, PKG, ROUTE } from '../cli/name.ts'
@@ -27,7 +27,7 @@ import { workspaceId } from './workspace.ts'
 import { originOf } from './slots.ts'
 import { perfRunBarrier, runs, runT } from './perf-run.ts'
 import { loadedFiles, type InputsWatch } from './perf-inputs.ts'
-import { adoptable, digestOf, drifted, extraKey, QUIET_MS, readRecord, removeRecord, sigOf, writeRecord } from './bake-reuse.ts'
+import { adoptable, digestOf, drifted, extraKey, QUIET_MS, readRecord, removeRecord, trySig, under, unwatchedAtStart, WATCH_LATENCY_MS, writeRecord } from './bake-reuse.ts'
 import { findChrome } from './cdp.ts'
 import { searchForWorkspaceRoot } from 'vite'
 import type { DocProof } from './proof.ts'
@@ -43,6 +43,8 @@ export interface PluginCtx {
   root: string
   clientDir: string
   config: ShConfig
+  /** the config's files' sigs before the boot loaded it (bake-reuse.ts bootSnapshot) */
+  bakeBoot?: Map<string, string>
   detectedThemeCss: string | null
   /** spec 28 A1.6: this run's workspace - a `--recover` run serves under an earlier address's key.
    *  Default: the project's own (workspace.ts). */
@@ -60,6 +62,9 @@ export interface PluginCtx {
    *  file's key and port. Never logged, never served */
   proof?: DocProof
 }
+
+/** A module whose code reaches a pre transform as the file's own bytes (an asset reaches it as `export default url`). */
+const TEXT_MODULE = /\.(m?[jt]sx?|c[jt]s|css|scss|sass|less|styl|json|html|md|mdx)$/
 
 export function marverPlugin(ctx: PluginCtx): Plugin[] {
   const { root, clientDir, config } = ctx
@@ -97,7 +102,38 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
   // across Vite restarts. Those the watcher does not watch (outside the root, an ignored folder) join the digest
   const seenSig = new Map<string, string>()   // extraKey -> sig
   const seenPaths = new Set<string>()
+  // the reuse state of this process, kept across Vite restarts (the config and Tailwind set up at boot are too): the
+  // boot's view of what a session cannot see, whether the session may still write a record, the record's own list
+  const reuse = { bootU: null as Map<string, string> | null, tainted: false, extraKnown: new Set<string>(), recordOnDisk: false, onExtra: () => { /* the serving server's */ } }
+  const taint = (why: string) => {
+    if (!reuse.tainted) console.log(`  bakes: ${why} - this session's bakes are not kept for the next start`)
+    reuse.tainted = true
+    reuse.recordOnDisk = false
+    try { removeRecord(root) } catch { /* best-effort */ }
+  }
   const pkgDir = dirname(dirname(clientDir))
+  const pkgReal = (() => { try { return realpathSync(pkgDir) } catch { return pkgDir } })()
+  /** A file a frame used that the digest must list by path, first seen: its sig when Vite read it - proved by reading it
+   *  again between two stats and finding the code Vite compiled (a text module), else the session is tainted. A new
+   *  one drops the record at once: a bake that used it must never land under a record that does not list it. */
+  const firstSight = (file: string, code: string | null) => {
+    if (seenPaths.has(file)) return
+    seenPaths.add(file)
+    if (!unwatchedAtStart(root, file) || under(pkgReal, file) || file === pkgReal) return
+    const key = extraKey(root, file)
+    const s1 = trySig(file)
+    if (code != null) {
+      let bytes: string | null = null
+      try { bytes = readFileSync(file, 'utf8') } catch { /* below */ }
+      const s2 = trySig(file)
+      if (!s1 || s1 !== s2 || bytes !== code) return taint(`${key.slice(2)} changed while it was compiled`)
+    } else if (!s1) return taint(`${key.slice(2)} could not be read`)
+    seenSig.set(key, s1!)
+    if (!reuse.extraKnown.has(file)) {
+      if (reuse.recordOnDisk) { reuse.recordOnDisk = false; try { removeRecord(root) } catch { /* best-effort */ } }
+      reuse.onExtra()
+    }
+  }
   const wsRoot = (() => { try { return searchForWorkspaceRoot(root) } catch { return root } })()
   const bootId = String(process.hrtime.bigint())   // opaque, boot-scoped: a restart never mints a "lower" rev
   let invRev = 0
@@ -210,13 +246,6 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
 
   const main: Plugin = {
     name: 'marver',
-    // what Vite compiles, first sight: its sig then (bake-reuse.ts - an unwatched file's change since is a drift)
-    transform(_code, id) {
-      const file = id.split('?')[0]
-      if (!file || file.startsWith('\0') || !isAbsolute(file) || file.includes(`${sep}node_modules${sep}`) || seenPaths.has(file)) return
-      seenPaths.add(file)
-      seenSig.set(extraKey(root, file), sigOf(file))
-    },
     watchChange(id, change) { if (devServer) { flying(id); changes.watch(id, change.event) } },
     // A7: run our handleHotUpdate BEFORE @vitejs/plugin-react's. A marver frame exports `meta`
     // (a non-component) alongside its component, so React Fast Refresh refuses to hot-update it
@@ -391,7 +420,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
         if (!(req.url ?? '').startsWith(`${ROUTE}/handout/`)) return next()
         import('./pdf.ts').then((m) => m.handoutMiddleware()(req, res as never, next), next)
       })
-      server.middlewares.use(apiMiddleware(root, { viewports: config.viewports, origin: listeningOrigin, bakeGen: () => bakeGen, bakeReady: () => genReady, baked: () => bakedNow(), notify: (event) => { server.ws.send(event, {} as any); liveChanged() }, broadcast: (event, payload) => server.ws.send(event, payload as any), manifest: () => manifest, settled, workspace: ws, inputs,
+      server.middlewares.use(apiMiddleware(root, { viewports: config.viewports, origin: listeningOrigin, bakeGen: () => (genClosed ? -1 : bakeGen), bakeReady: () => genReady, baked: () => bakedNow(), notify: (event) => { server.ws.send(event, {} as any); liveChanged() }, broadcast: (event, payload) => server.ws.send(event, payload as any), manifest: () => manifest, settled, workspace: ws, inputs,
         themes: config.themes, canvasName: () => canvasIdentity(root, config).local }))
       // the canvas's logo for the Mac app's tab (spec 28 A2.4, A2.9): proved like the document when asked with a nonce
       server.middlewares.use(logoRoute(root, () => canvasIdentity(root, config).logos, ctx.proof))
@@ -488,6 +517,9 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
         if (f.startsWith(localDir) || f.startsWith(boardsDirGen) || f === manifestPath || f.includes('/node_modules/')) return
         bakeGen++
         genEvents++
+        // the record named the generation just superseded: gone at once (an edit the record's walk already read must
+        // never leave it pairing the old bakes with the new disk)
+        if (reuse.recordOnDisk) { reuse.recordOnDisk = false; try { removeRecord(root) } catch { /* best-effort */ } }
         prune()
         scheduleRecord()
         clearTimeout(genPush)
@@ -503,60 +535,66 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       // A start (bake-reuse.ts): once the watcher is ready, the inputs' digest; the record's generation adopted when it
       // matches and no watched event came first, else today's fresh one. Then the prune - never before: it would
       // delete the generation a start may adopt
-      const reuseInputs = (extra: readonly string[]) => ({ root, workspaceRoot: wsRoot !== root ? wsRoot : undefined, pkgDir, version: installedVersion() ?? '0.0.0', chrome: findChrome(), watched: viteWatcher.getWatched(), extra })
-      let bootU: Map<string, string> | null = null   // null: no record is ever written by this server
-      let extraKnown: string[] = []
-      let tainted = false
+      const reuseInputs = (extra: readonly string[]) => ({ root, workspaceRoot: wsRoot !== root ? wsRoot : undefined, pkgDir, version: installedVersion() ?? '0.0.0', chrome: findChrome(), watched: viteWatcher.getWatched(), extra, viteEnv: server.config.env, publicDir: typeof server.config.publicDir === 'string' && server.config.publicDir ? server.config.publicDir : (false as const) })
       let recordTimer: ReturnType<typeof setTimeout> | undefined
       onClose(() => clearTimeout(recordTimer))
-      const seenExtra = () => [...seenPaths]
-      const record = () => {
-        if (genClosed || tainted || !bootU || watching.server !== server) return
+      const serving = () => !genClosed && watching.server === server
+      const record = async () => {
+        if (!serving() || reuse.tainted || !reuse.bootU) return
         const g = bakeGen
+        if (!existsSync(join(root, 'design', '.local', 'bakes', String(g)))) return   // nothing baked: no walk
         let d: ReturnType<typeof digestOf> = null
-        try { d = digestOf(reuseInputs([...extraKnown, ...seenExtra()])) } catch { return }
-        if (!d || genClosed || bakeGen !== g) return
-        const moved = drifted(bootU, d.u, (k) => seenSig.get(k))
-        if (moved) {
-          // the running compiler may not match the disk any more (a config read at boot, an install, an unwatched file
-          // a frame compiled): no record from this session again, and none left behind
-          tainted = true
-          try { removeRecord(root) } catch { /* best-effort */ }
-          console.log(`  bakes: ${moved.replace(/^\w+ /, '')} changed while the server ran - this session's bakes are not kept for the next start`)
-          return
-        }
-        extraKnown = d.extra
-        try { if (writeRecord(root, { digest: d.digest, gen: g, extra: d.extra })) recordedFor = g } catch { /* best-effort: the next start is fresh */ }
+        try { d = digestOf(reuseInputs([...reuse.extraKnown, ...seenPaths])) } catch { return }
+        if (!d || !serving() || bakeGen !== g) return
+        const moved = drifted(reuse.bootU, d.u, (k) => seenSig.get(k))
+        if (moved) return taint(`${moved.replace(/^\w+ /, '')} changed while the server ran`)
+        // an edit the walk read is heard within the watcher's latency: it moves the generation, and nothing is written
+        await new Promise((r) => { recordTimer = setTimeout(r, WATCH_LATENCY_MS) })
+        recordTimer = undefined
+        if (!serving() || reuse.tainted || bakeGen !== g) return
+        try {
+          if (writeRecord(root, { digest: d.digest, gen: g, extra: d.extra })) { reuse.recordOnDisk = true; reuse.extraKnown = new Set(d.extra) }
+        } catch { /* best-effort: the next start is fresh */ }
       }
-      // the first bake of a generation with no record yet asks for one (the start's quiet moment came before any bake)
-      let recordedFor: number | null = null
-      bakedNow = () => { if (recordedFor !== bakeGen && !recordTimer) scheduleRecord() }
       const scheduleRecord = () => {
         clearTimeout(recordTimer)
         recordTimer = undefined
-        if (genClosed || tainted || !bootU) return
-        recordTimer = setTimeout(() => { recordTimer = undefined; record() }, QUIET_MS)
+        if (!serving() || reuse.tainted || !reuse.bootU) return
+        recordTimer = setTimeout(() => { recordTimer = undefined; void record() }, QUIET_MS)
       }
+      // a compile that landed asks for a record (the start's quiet moment came before any bake) - never postponing one
+      // already due, so a long first load is recorded as it goes
+      bakedNow = () => { if (!recordTimer) scheduleRecord() }
+      reuse.onExtra = () => { if (serving()) scheduleRecord() }
       void (async () => {
         try {
           const ok = await inputs.ready()
-          if (genClosed || watching.server !== server) return
-          if (ok) {
-            const rec = readRecord(root)
-            const d = digestOf(reuseInputs(rec?.extra ?? []))
-            bootU = d?.u ?? null
-            extraKnown = d?.extra ?? []
-            const g = genEvents === 0 ? adoptable(root, rec, d) : null
-            if (g != null) {
-              bakeGen = g
-              try { writeFileSync(join(root, 'design', '.local', 'bakes', String(g), 'owner'), String(process.pid)) } catch { /* best-effort */ }
-              console.log(`  bakes: reusing the last session's (${d!.files} inputs unchanged)`)
-            } else if (rec) {
-              removeRecord(root)
-              console.log(`  bakes: compiled again - ${genEvents ? 'a file changed while the server started' : d && rec.digest !== d.digest ? 'what they depend on changed since the last session' : 'the last session\'s are gone'}`)
-            }
+          if (!serving()) return
+          // a Vite restart in this process keeps what the boot set up (the config, Tailwind): never certified again
+          if (served > 1) { taint('the dev server restarted in place'); return }
+          if (!ok) return
+          const rec = readRecord(root)
+          const d = digestOf(reuseInputs(rec?.extra ?? []))
+          if (!d) { if (rec) removeRecord(root); return }
+          // the config's files as the boot loaded them: one edited since, and the compiler runs what the disk no longer says
+          const boot = ctx.bakeBoot
+          if (boot) {
+            const now = [...d.u].filter(([k]) => k.startsWith('boot '))
+            if (now.length !== boot.size || now.some(([k, v]) => boot.get(k) !== v)) { taint('the config changed while the server started'); return }
           }
-        } catch { bootU = null }
+          reuse.bootU = d.u
+          reuse.extraKnown = new Set(d.extra)
+          const g = genEvents === 0 ? adoptable(root, rec, d) : null
+          if (g != null) {
+            bakeGen = g
+            reuse.recordOnDisk = true
+            try { writeFileSync(join(root, 'design', '.local', 'bakes', String(g), 'owner'), String(process.pid)) } catch { /* best-effort */ }
+            console.log(`  bakes: reusing the last session's (${d.files} inputs unchanged)`)
+          } else if (rec) {
+            removeRecord(root)
+            console.log(`  bakes: compiled again - ${genEvents ? 'a file changed while the server started' : rec.digest !== d.digest ? 'what they depend on changed since the last session' : 'the last session\'s are gone'}`)
+          }
+        } catch { reuse.bootU = null }
         finally {
           if (!genClosed) { try { (await import('./bake.ts')).pruneBakes(root, bakeGen) } catch { /* best-effort */ } }
           genDecided()
@@ -726,7 +764,18 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       } catch { /* no inbox watcher - the HTTP/CLI transport still serves shell-ful agents */ }
     },
   }
-  return [main, updatesBeginPlugin(changes), updatesPlugin(root, () => manifest, () => devServer && hooks, landed, changes)]
+  // what Vite compiles, at first sight (firstSight): before any other plugin's transform, so a text module's code is
+  // the bytes Vite read
+  const bakeInputs: Plugin = {
+    name: 'marver:bake-inputs',
+    enforce: 'pre',
+    transform(code, id) {
+      const [file, query] = id.split('?')
+      if (!file || file.startsWith('\0') || !isAbsolute(file) || file.includes(`${sep}node_modules${sep}`)) return
+      firstSight(file, !query && TEXT_MODULE.test(file) ? code : null)
+    },
+  }
+  return [bakeInputs, main, updatesBeginPlugin(changes), updatesPlugin(root, () => manifest, () => devServer && hooks, landed, changes)]
 }
 
 /**

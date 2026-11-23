@@ -128,6 +128,41 @@ maybe('bakes that survive a restart (a real dev server)', () => {
     first = b.gen
   }, 180_000)
 
+  it('a file under an ignored folder a frame imports (dist/): listed by the record, and edited while stopped, a fresh start', async () => {
+    mkdirSync(join(root, 'dist'), { recursive: true })
+    writeFileSync(join(root, 'dist', 'tone.js'), "export default 'rgba(255,255,255,.35)'\n")
+    writeFileSync(join(root, 'design', 'scenes', 'app', 'glass.tsx'), GLASS.replace("export const meta", "import tone from '../../../dist/tone.js'\nexport const meta").replace("background: 'rgba(255,255,255,.35)'", 'background: tone'))
+    const b = await baked()
+    expect(b.answer.ok, b.answer.error).toBe(true)
+    await until(() => (record() as { gen: number; extra?: string[] } | null)?.extra?.some((x) => x.endsWith('/dist/tone.js')) === true && record()?.gen === b.gen)
+    await stop()
+    await start()
+    expect((await ask()).gen).toBe(b.gen)   // nothing changed: reused, dist/ and all
+    await stop()
+    writeFileSync(join(root, 'dist', 'tone.js'), "export default 'rgba(0,0,0,.35)'\n")
+    await start()
+    const c = await baked()
+    expect(c.gen).not.toBe(b.gen)
+    expect(log).toMatch(/what they depend on changed since the last session/)
+    await until(() => record()?.gen === c.gen)
+    first = c.gen
+  }, 240_000)
+
+  it('.env edited while it runs: no record from this session', async () => {
+    writeFileSync(join(root, '.env'), 'VITE_TONE=1\n')
+    await until(() => record() === null, 30_000)
+    await wait(3000)   // a restart in place, if Vite makes one for the .env
+    await baked()      // a bake in the new generation asks for a record: the session cannot give one
+    await until(() => /not kept for the next start/.test(log), 30_000)
+    await stop()
+    rmSync(join(root, '.env'))
+    await start()
+    const b = await baked()
+    expect(b.gen).not.toBe(first)
+    await until(() => record()?.gen === b.gen)
+    first = b.gen
+  }, 180_000)
+
   it('a config read at boot edited while it runs: no record from this session, so the next start is fresh', async () => {
     writeFileSync(join(root, 'design', 'config.ts'), 'export default { description: "edited in the session" }\n')
     await until(() => record() === null, 30_000)
