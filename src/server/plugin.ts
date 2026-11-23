@@ -556,7 +556,9 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       /** A file the client graph holds that no transform showed us (a stylesheet's inlined @import of an ignored file):
        *  its bytes at the compile are unknown - the session is tainted. */
       const graphUnseen = (): boolean => {
-        for (const f of graphFiles()) if (!seenPaths.has(f) && unwatchedAtStart(root, f) && !under(pkgReal, f)) { taint(`${rel(root, f)} was compiled unseen`); return true }
+        // what never moves the generation (a board file, Marver's own writes) is out of a bake's inputs here too: Tailwind
+        // registers every file it scans for class names, design/boards/*.json among them, as the stylesheet's
+        for (const f of graphFiles()) if (!seenPaths.has(f) && unwatchedAtStart(root, f) && !under(pkgReal, f) && !neverBumps(root, f)) { taint(`${rel(root, f)} was compiled unseen`); return true }
         return false
       }
       const record = async () => {
