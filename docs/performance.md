@@ -166,6 +166,24 @@ Read the load, name the lever, change it, compare the next load - you, or your a
   tab's memory limit the canvas starts no more frames on its own. A frame you can read on screen - or select - still
   starts within a few seconds, and the rest follow once memory is back under 60%. The board stays open where it used
   to crash; frames not yet started show their placeholder. The lasting fix is still a smaller board: split it.
+- **The first load after `marver dev` starts** used to be the slowest of all: a hi-fi frame rests under glass the
+  dev server compiles once (its *bakes*, in `design/.local/bakes/`), and every start threw them away, so a heavy
+  board compiled all of them again - minutes on a board of a hundred phone screens. From 0.35.1 a start reuses the
+  last session's bakes when nothing they depend on has changed, and the first load is as fast as any other. The
+  dev server says which it did:
+
+  ```
+  bakes: reusing the last session's (7453 inputs unchanged)
+  bakes: compiled again - what they depend on changed since the last session
+  ```
+
+  "What they depend on" is everything that could change a frame's look, checked file by file: your project's files
+  (an edit while the server was stopped counts), a file a frame imports from outside them (a `dist/` folder, a
+  sibling package), `public/`, your configs and `.env`, your installed packages, Marver itself and the Chrome that
+  compiles. When the dev server cannot be sure - a config edited while it ran, a dev server that restarted in place,
+  a watcher that polls, a folder it cannot read, a symlinked folder - it says so and the next start compiles again:
+  `bakes: <why> - this session's bakes are not kept for the next start`. Nothing to do on your side; to force a
+  fresh compile, delete `design/.local/bakes/`.
 - **Late moves** came after the load ended - settled, or cut. After a cut at 120 s, or while the page was
   hidden, they are the board still loading. After it settled - and any **`unknown`** move, with no cause
   named - they say something moved the board after it looked done: worth a look, or an

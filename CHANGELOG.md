@@ -2,6 +2,23 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## Unreleased
+
+### Highlights
+
+- **A heavy board opens as fast after `marver dev` restarts as it does any other time.** Every start used to throw
+  away the glass the dev server had compiled for your hi-fi frames, so the first load after a restart compiled all
+  of it again. On a board of 103 phone screens that first load took 154-175 s; it now takes 15 s, the same as every
+  later load, and the dev server does 6x less work. When anything a frame's look depends on changed while the server
+  was stopped - a file, a config, an install, Marver or Chrome - it compiles again, as before, and says why.
+  [Performance](docs/performance.md#making-a-board-faster)
+
+### Fixed
+
+- **Editing a file whose name starts like a Marver folder now refreshes the glass at rest.** A change to, say,
+  `design/boards-theme.ts` or `design/.local-colors.ts` was taken for one of Marver's own writes, so frames resting
+  under glass kept their old look until the next start.
+
 ## 0.35.0 - 2026-11-19
 
 ### Highlights
