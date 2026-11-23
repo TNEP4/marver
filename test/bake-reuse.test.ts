@@ -75,6 +75,14 @@ describe('the digest (bake-reuse.ts)', () => {
     expect(digest({ extra: [lib, sib] })).not.toBe(d1)
   })
 
+  it("Marver's own package: only what it ships and serves - a checkout's other folders never count", () => {
+    const d0 = digest()
+    write(join(pkg, 'test', 'x.test.ts'), 'a'); write(join(pkg, '.archive', 'runs', 'r.json'), '{}'); write(join(pkg, 'docs', 'a.md'), 'a')
+    expect(digest()).toBe(d0)
+    write(join(pkg, 'src', 'shared', 'a.ts'), 'a')
+    expect(digest()).not.toBe(d0)
+  })
+
   it("Marver's own package - its served src/client as well as dist/ - and its version move it", () => {
     const d0 = digest()
     write(join(pkg, 'src', 'client', 'frame-host', 'main.tsx'), 'host2')

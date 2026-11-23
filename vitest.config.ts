@@ -13,6 +13,6 @@ export default defineConfig({
     maxWorkers: 4,
     // agent worktrees live inside the repo (.claude/worktrees/): their copies of the suite are theirs;
     // the Mac app (app/) has its own suite and config (app/vitest.config.ts)
-    exclude: ['**/node_modules/**', '**/dist/**', '.claude/**', 'app/**'],
+    exclude: ['**/node_modules/**', '**/dist/**', '.claude/**', '.archive/**', 'app/**'],
   },
 })

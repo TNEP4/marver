@@ -137,6 +137,9 @@ function walkRoot(root: string, dir: string, into: string[], budget: { left: num
   }
 }
 
+/** The folders of Marver's own package a bake depends on (package.json `files`, less docs and templates). */
+const PKG_SERVED = ['dist', join('src', 'client'), join('src', 'shared')]
+
 const INSTALL_STAMPS = ['node_modules/.package-lock.json', 'node_modules/.modules.yaml', 'node_modules/.pnpm/lock.yaml', 'node_modules/.yarn-state.yml', 'node_modules/.yarn-integrity']
 const LOCKFILES = ['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'bun.lock', 'bun.lockb', 'npm-shrinkwrap.json', 'pnpm-workspace.yaml', 'package.json']
 /** Compiler configs Vite, PostCSS and TypeScript look for upward from the root. */
@@ -297,7 +300,11 @@ function digest(o: DigestInputs): Digest {
   let pkg = o.pkgDir
   try { pkg = realpathSync(o.pkgDir) } catch { throw new Incomplete(o.pkgDir) }
   const own: string[] = []
-  walk(pkg, own, budget)
+  // what the package ships and serves (its `files`: the built CLI and server, the frame host and content it serves,
+  // their shared code) - never the whole folder: a canvas linked to a Marver checkout would walk its tests, its app
+  // and whatever else sits there (past the budget: no digest at all)
+  for (const d of PKG_SERVED) walk(join(pkg, d), own, budget)
+  own.push(join(pkg, 'package.json'))
   u.set('pkg', `${pkg} ${createHash('sha256').update(own.sort().map((p) => `${relative(pkg, p)} ${sigOf(p)}`).join('\n')).digest('hex')}`)
   u.set('chrome', o.chrome ? `${o.chrome} ${browserSig(o.chrome)}` : '-')
   for (const k of BROWSER_ENV) u.set(`env ${k}`, env[k] ?? '-')
