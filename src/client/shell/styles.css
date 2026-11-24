@@ -2173,13 +2173,18 @@ textarea.jm-field:focus { border-color: transparent; box-shadow: 0 0 0 1px var(-
 .sr-fix button { border: 1px solid var(--glass-brd); border-radius: 9px; padding: 5px 10px; font: 500 12px -apple-system, system-ui, sans-serif; color: var(--glass-ink); background: none; cursor: pointer }
 /* the live preview: the frame itself; two slots, one on screen, one prefetched (rendered, invisible) */
 .sr-live { position: relative; display: grid; place-items: center; background: color-mix(in srgb, var(--ground) 60%, transparent) }
-.sr-stage { position: absolute; left: 50%; top: calc(50% - 10px); transform: translate(-50%, -50%); overflow: hidden; border-radius: 8px; background: var(--node-bg);
+.sr-stage { position: absolute; z-index: 1; left: 50%; top: calc(50% - 10px); transform: translate(-50%, -50%); overflow: hidden; border-radius: 8px; background: var(--node-bg);
   box-shadow: 0 1px 2px rgba(24, 24, 27, .06), 0 10px 30px -12px rgba(24, 24, 27, .25); opacity: 0; transition: opacity .09s linear; pointer-events: none }
 .sr-stage.on { opacity: 1 }
 .sr-stage iframe { position: absolute; left: 0; top: 0; border: 0; transform-origin: 0 0; pointer-events: none }
-.sr-card { position: absolute; left: 50%; top: calc(50% - 10px); transform: translate(-50%, -50%); display: grid; place-items: center; border-radius: 8px;
-  background: var(--node-bg); border: 1px solid var(--node-brd); color: var(--glass-ink-3); font-size: 12.5px; padding: 12px; text-align: center }
-.sr-card.idle { width: 260px; height: 180px; opacity: .5 }
+/* the skeleton: the frame's exact shape before it renders - glass grey with a touch of blue, no border, no shadow,
+   gently pulsing; the real frame fades in over it */
+.sr-skel { position: absolute; left: 50%; top: calc(50% - 10px); transform: translate(-50%, -50%); border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 7%, color-mix(in srgb, var(--glass-ink) 9%, transparent)); animation: sr-pulse 1.4s ease-in-out infinite;
+  display: grid; place-items: center; color: var(--glass-ink-3); font-size: 12px; text-align: center; padding: 12px; box-sizing: border-box }
+.sr-skel.failed { animation: none }
+@keyframes sr-pulse { 50% { opacity: .55 } }
+@media (prefers-reduced-motion: reduce) { .sr-skel { animation: none } }
 .sr-cap { position: absolute; left: 18px; right: 18px; bottom: 10px; display: flex; justify-content: space-between; gap: 12px; font-size: 11.5px; color: var(--glass-ink-3); white-space: nowrap; overflow: hidden }
 .sr-cap b { color: var(--glass-ink-2); font-weight: 500; overflow: hidden; text-overflow: ellipsis }
 @media (max-width: 1100px) { .sr-lens { width: 500px } .sr-body { grid-template-columns: 1fr } .sr-live { display: none } .sr-list { border-right: 0 } }

@@ -5,9 +5,11 @@
  * telemetry), the shell's canvas registry never hears of these windows, the iframe is inert and sandboxed, and the
  * frame's dimensions never reach the board's sizes.
  *
- * States: card (its shape and title, at once) → committed (sh:ready) → visually ready (fonts, two animation frames) →
- * shown. The frame on screen stays until the next is ready or 300 ms pass; then the next one's card - a caption always
- * belongs to what is drawn. Prefetch only while the canvas loads nothing and the heap is under 60 %.
+ * States: skeleton → committed (sh:ready) → visually ready (fonts, two animation frames) → shown. The skeleton (Nic, 24
+ * Nov) is the frame's exact shape - its size is known before it loads (the canvas's own rule, frameSize) - scaled and
+ * placed exactly where the frame will be: one translucent glass-grey fill with a touch of blue, no border, no shadow,
+ * gently pulsing; the real frame fades in over it. The frame renders at its real size and is scaled down whole, as a
+ * zoomed-out canvas frame is. A caption always belongs to what is drawn. Prefetch only while the canvas loads nothing and the heap is under 60 %.
  */
 import { useEffect, useRef, useState } from 'react'
 import { frameSize, frameUrl, useStore, type FrameEntry } from '../store.ts'
@@ -16,7 +18,8 @@ import { admissionIdle } from '../canvas/admission.ts'
 export interface PreviewTarget { frame: FrameEntry; board?: string; title: string; where: string }
 
 const STAGE = { w: 424, h: 396 }
-const CARD_AFTER = 300, FAIL_AFTER = 5000
+// a target not ready yet shows its skeleton at once (Nic, 24 Nov): the picture never lags the selection
+const CARD_AFTER = 0, FAIL_AFTER = 5000
 
 interface Slot { key: string; t: PreviewTarget; src: string; state: 'loading' | 'ready' | 'failed'; at: number }
 
@@ -32,7 +35,8 @@ const fit = (f: FrameEntry) => { const { w, h } = frameSize(f); const s = Math.m
 export function Preview({ target, next }: { target: PreviewTarget | null; next: PreviewTarget | null }) {
   const [slots, setSlots] = useState<(Slot | null)[]>([null, null])
   const [shown, setShown] = useState<number | null>(null)   // the slot on screen (visually ready)
-  const [card, setCard] = useState<PreviewTarget | null>(null)   // a card standing in for a target still loading
+  const [card, setCard] = useState<PreviewTarget | null>(null)   // the skeleton standing in for a target still loading
+  const [under, setUnder] = useState<PreviewTarget | null>(null)   // the skeleton kept beneath a frame while it fades in
   const frames = useRef<(HTMLIFrameElement | null)[]>([null, null])
   const want = useRef<string | null>(null)
   // the slot on screen, always current - an effect's closure must never overwrite it with a new target
@@ -60,7 +64,7 @@ export function Preview({ target, next }: { target: PreviewTarget | null; next: 
   // show the wanted slot the moment it is ready
   useEffect(() => {
     const i = slots.findIndex((s) => s?.key === want.current)
-    if (i >= 0 && slots[i]!.state === 'ready' && shown !== i) { setShown(i); setCard(null) }
+    if (i >= 0 && slots[i]!.state === 'ready' && shown !== i) { setUnder(card ?? slots[i]!.t); setShown(i); setCard(null) }
     if (i >= 0 && slots[i]!.state === 'failed') setCard(slots[i]!.t)
   }, [slots, shown])
 
@@ -100,9 +104,16 @@ export function Preview({ target, next }: { target: PreviewTarget | null; next: 
     return () => { window.removeEventListener('message', onMsg); clearInterval(deadline) }
   }, [slots])
 
+  useEffect(() => { if (!under) return; const t = setTimeout(() => setUnder(null), 150); return () => clearTimeout(t) }, [under])
   const caption = card ?? (shown !== null ? slots[shown]?.t : null) ?? null
+  const skel = card ?? under
   return (
     <>
+      {skel && (() => {
+        const { w, h, s } = fit(skel.frame)
+        const failed = !!card && slots.find((x) => x?.key === keyOf(card))?.state === 'failed'
+        return <div className={`sr-skel${failed ? ' failed' : ''}`} style={{ width: Math.round(w * s), height: Math.round(h * s) }}>{failed ? 'This frame could not render here' : null}</div>
+      })()}
       {slots.map((s, i) => {
         if (!s) return null
         const { w, h, s: scale } = fit(s.t.frame)
@@ -115,8 +126,6 @@ export function Preview({ target, next }: { target: PreviewTarget | null; next: 
           </div>
         )
       })}
-      {card && (() => { const { w, h, s } = fit(card.frame); return <div className="sr-card" style={{ width: Math.round(w * s), height: Math.round(h * s) }}>{slots.find((x) => x?.key === keyOf(card))?.state === 'failed' ? 'This frame could not render here' : card.title}</div> })()}
-      {!caption && !target && <div className="sr-card idle" />}
       {caption && <div className="sr-cap"><b>{caption.title}</b><span>{caption.where}</span></div>}
     </>
   )
