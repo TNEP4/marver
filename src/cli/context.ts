@@ -146,6 +146,10 @@ export function contextCheck(root: string, opts: CheckOpts = {}): CheckResult {
   // a large monorepo's file list runs to megabytes: a deliberate ceiling, and NUL-separated paths
   const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 512 * 1024 * 1024 })
 
+  // search (spec 35) reads these folders as archive by their name alone: say so, with the fix - first, so a canvas
+  // without context/ hears it too
+  const byName = archiveByNameOnly(root)
+  if (byName.length) note('archive', `${byName.length} folder${byName.length === 1 ? '' : 's'} read as archive by name only (${byName.slice(0, 5).join(', ')}) - add "type": "archive" to make it explicit`)
   if (!exists(CONTEXT)) {
     fail('context', `${CONTEXT}/`, `missing - run \`npx ${NAME} context init\``)
     return { exit: 1, failures, unsure, notes }
@@ -162,9 +166,6 @@ export function contextCheck(root: string, opts: CheckOpts = {}): CheckResult {
     }
     return out
   }
-  // search (spec 35) reads these folders as archive by their name alone: say so, with the explicit fix
-  const byName = archiveByNameOnly(root)
-  if (byName.length) note('archive', `${byName.length} folder${byName.length === 1 ? '' : 's'} read as archive by name only (${byName.slice(0, 5).join(', ')}) - add "type": "archive" to make it explicit`)
   const docs = walk(CONTEXT).filter((p) => p.endsWith('.md')).map((path) => {
     const text = read(path)
     return { path, text, ...frontMatter(text) }
