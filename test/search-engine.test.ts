@@ -28,7 +28,9 @@ describe('words', () => {
   it('splits camelCase, kebab, snake, paths and digits; folds accents', () => {
     expect(words('feed-night/04-filter')).toEqual(['feed', 'night', '04', 'filter'])
     expect(words('ipad-13-landscape')).toEqual(['ipad', '13', 'landscape'])
-    expect(words('PeopleMac_v2')).toEqual(['people', 'mac', 'v', '2'])
+    expect(words('PeopleMac_v2')).toEqual(['peoplemac', 'people', 'mac', 'v2', 'v', '2'])
+    // a word split by its case is kept whole too: people type "ipad", not "i pad"
+    expect(words('Sign in · iPad')).toEqual(['sign', 'in', 'ipad', 'i', 'pad'])
     expect(words('Café')).toEqual(['cafe'])
   })
 })

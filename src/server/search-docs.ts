@@ -237,7 +237,7 @@ export function buildSearchDocs(root: string, manifest: Manifest = scanFrames(ro
       file: s.brief ?? `design/scenes/${s.name}`, at: mtime(root, s.brief),
       ...(ids[0] ? { preview: ids[0] } : {}), dest: { scene: s.name, ...(board ? { board } : { unplaced: true }) },
     })
-    if (s.note) docs.push({ id: `note:scene:${s.name}`, kind: 'note', key: `${s.name}/_note`, title: firstLine(s.note), notes: s.note, kinds: 'note', where: `Note by ${title}`, boards: bs, folders: foldersOfBoards(bs), board, scene: s.name, archived: archivedOn(bs), file: `design/scenes/${s.name}/_note.md`, ...(ids[0] ? { preview: ids[0] } : {}), dest: { scene: s.name, notes: true, ...(board ? { board } : { unplaced: true }) } })
+    if (s.note) docs.push({ id: `note:scene:${s.name}`, kind: 'note', key: `${s.name}/_note`, title: firstLine(s.note), notes: s.note, kinds: 'note', summary: title, where: `Note by ${title}`, boards: bs, folders: foldersOfBoards(bs), board, scene: s.name, archived: archivedOn(bs), file: `design/scenes/${s.name}/_note.md`, ...(ids[0] ? { preview: ids[0] } : {}), dest: { scene: s.name, notes: true, ...(board ? { board } : { unplaced: true }) } })
   }
 
   // ---- frames, and their notes
@@ -256,7 +256,7 @@ export function buildSearchDocs(root: string, manifest: Manifest = scanFrames(ro
       file: f.file, at: mtime(root, f.file),
       ...(f.variantGroup ? { variantGroup: f.variantGroup, variant: f.variant } : {}), dest,
     })
-    if (f.note) docs.push({ id: `note:${f.id}`, kind: 'note', key: `${f.id}.note`, title: firstLine(f.note), notes: f.note, kinds: 'note', where: `Note by ${title}`, ...common, file: noteFileFor(f.file), at: mtime(root, noteFileFor(f.file)), dest: { ...dest, notes: true } })
+    if (f.note) docs.push({ id: `note:${f.id}`, kind: 'note', key: `${f.id}.note`, title: firstLine(f.note), notes: f.note, kinds: 'note', summary: title, where: `Note by ${title}`, ...common, file: noteFileFor(f.file), at: mtime(root, noteFileFor(f.file)), dest: { ...dest, notes: true } })
   }
 
   // ---- comment threads, replayed per board (edits, deletions, resolution applied)
@@ -278,6 +278,8 @@ export function buildSearchDocs(root: string, manifest: Manifest = scanFrames(ro
         docs.push({
           id: `comment:${board}:${t.id}`, kind: 'comment', key: `${board}:${t.id}`, title: firstLine(t.deleted ? (t.replies[0]?.body ?? '') : (t.body ?? '')),
           comments: cap(msgs.join(' · ')), kinds: 'comment thread',
+          // what it is on: "the comment on the feed filter frame" is found by the frame's and the board's names
+          summary: [onFrame, boardTitle.get(board) ?? board].filter(Boolean).join(' · '),
           where: [t.agent ? 'Marver' : authorName, t.resolved ? 'resolved' : 'open', onFrame ?? `${boardTitle.get(board) ?? board}${t.frame ? ' (frame gone)' : ''}`].filter(Boolean).join(' · '),
           boards: [board], folders: chainOf(meta.get(board)?.folder), board, frame: onFrame ? t.frame : undefined,
           archived: arch.boards.has(board), open: !t.resolved, waiting, asks: waiting && asks(last, !t.replies.length),

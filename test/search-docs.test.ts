@@ -45,6 +45,8 @@ describe('the document builder', () => {
     expect(by('note:feed/filter')).toMatchObject({ kind: 'note', dest: { frame: 'feed/filter', notes: true } })
     expect(by('scene:feed')?.summary).toContain('what Delos picked for today')   // the brief's body, not only its first line
     expect(by('board:feed')).toMatchObject({ kind: 'board', folders: ['e-ink'] })
+    // a thread is found by what it is on: its frame's and its board's names
+    expect(docs.find((d) => d.kind === 'comment')?.summary).toContain('Feed')
     expect(by('folder:e-ink')).toMatchObject({ kind: 'folder', title: 'E-ink' })
   })
   it('archive: an arch- folder with no type is archive by its name; an explicit other type never is', () => {

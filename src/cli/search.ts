@@ -23,7 +23,9 @@ function hashOf(h: Hit): string | null {
 export async function searchCommand(root: string, wordsArg: string[], opts: SearchCliOptions): Promise<void> {
   const query = wordsArg.join(' ').trim()
   if (!query) throw new Error(`name what to find: ${NAME} search <words>`)
-  const kinds = opts.kind ? String(opts.kind).split(',').map((k) => k.trim().replace(/s$/, '')).filter(Boolean) as SearchKind[] : undefined
+  // the words people reach for: a thread is a comment, a sticky a note, a screen a frame
+  const ALIAS: Record<string, SearchKind> = { thread: 'comment', sticky: 'note', screen: 'frame', page: 'frame', slide: 'frame' }
+  const kinds = opts.kind ? String(opts.kind).split(',').map((k) => k.trim().toLowerCase().replace(/s$/, '')).filter(Boolean).map((k) => ALIAS[k] ?? k) as SearchKind[] : undefined
   const bad = kinds?.filter((k) => !KIND_ORDER.includes(k))
   if (bad?.length) throw new Error(`--kind takes ${KIND_ORDER.join(', ')} (got ${bad.join(', ')})`)
   const n = Number(opts.limit ?? 8)
@@ -58,6 +60,11 @@ export async function searchCommand(root: string, wordsArg: string[], opts: Sear
   }
   if (!r.groups.length) {
     console.log(`nothing for "${query}"${r.partial.length ? ` - ${r.partial.length} partial match${r.partial.length === 1 ? '' : 'es'} (not every word)` : ''}${r.archived.count ? `; ${r.archived.count} in the archive (--archive)` : ''}`)
+    // only archived things match: name them (an agent told "54 in the archive" learns nothing, and greps)
+    if (r.archived.hits.length) {
+      console.log(`\nin the archive (--archive for all):`)
+      for (const h of r.archived.hits.slice(0, 5)) { const x = row(h); console.log(`  ${x.key}  ${x.title}${x.where ? `  - ${x.where}` : ''}`); if (x.file) console.log(`      ${x.file}`) }
+    }
     for (const h of r.partial.slice(0, 3)) console.log(`  partial: ${h.doc.key}  ${h.doc.title}`)
     console.log(`  (${NAME} search reads what the files say; words that only shared screen components show are not in it - grep those)`)
     return

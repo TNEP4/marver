@@ -47,6 +47,15 @@ describe('the engine, after review', () => {
     const idx = buildIndex([frame('k/1', 'Glass keyboard'), { id: 'board:x', kind: 'board', key: 'x', title: 'keybaord notes', dest: { board: 'x' } }])
     expect(keys(search(idx, 'glass keybaord', { kinds: ['frame'] }))).toContain('k/1')
   })
+  it('"iPad" is a word: the frame titled "Sign in · iPad" is the best match for "ipad sign in", and typed "iPad" finds "ipad" keys', () => {
+    const idx = buildIndex([
+      frame('glass-signin/tablet', 'Sign in · iPad', { device: 'ipad' }),
+      frame('glass-v7-ipad-signin/01-signin-portrait', 'Sign in · iPad upright', { device: 'ipad' }),
+      frame('ipad-13/home', 'Home'),
+    ])
+    expect(search(idx, 'ipad sign in').top?.doc.key).toBe('glass-signin/tablet')
+    expect(keys(search(idx, 'iPad home'))).toEqual(['ipad-13/home'])
+  })
   it('an id is never corrected', () => {
     const idx = buildIndex([frame('feed-night/04-filter', 'Filter')])
     const r = search(idx, 'feed-night/04-filtre')

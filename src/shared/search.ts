@@ -75,16 +75,30 @@ export interface SearchDoc {
 /** Lower case, accents folded. */
 export const fold = (s: string): string => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
 
-/** The words of a string: camelCase, kebab-case, snake_case, paths, digits split; folded. */
+/** A word with nothing to split: all lower case, or a capital then lower case, or all digits. */
+const PLAIN = /^(?:[A-Z]?[a-z]+|\d+)$/
+const tokens = (s: string): string[] => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[^A-Za-z0-9]+/).filter(Boolean)
+const split = (tok: string): string[] => tok
+  .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+  .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+  .replace(/([a-zA-Z])(\d)/g, '$1 $2')
+  .replace(/(\d)([a-zA-Z])/g, '$1 $2')
+  .toLowerCase().split(' ').filter(Boolean)
+
+/** The words of a document's text: kebab-case, snake_case and paths split; camelCase and digits split too, and such a
+ *  word kept whole beside its parts - "iPad" is ipad (what people type) as well as i and pad; folded. */
 export function words(s: string | undefined): string[] {
   if (!s) return []
-  const spaced = s
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
-    .replace(/([a-zA-Z])(\d)/g, '$1 $2')
-    .replace(/(\d)([a-zA-Z])/g, '$1 $2')
-  return fold(spaced).split(/[^a-z0-9]+/).filter(Boolean)
+  const out: string[] = []
+  for (const tok of tokens(s)) {
+    if (PLAIN.test(tok)) { out.push(tok.toLowerCase()); continue }   // most words: nothing to split
+    const parts = split(tok); if (parts.length > 1) out.push(tok.toLowerCase()); out.push(...parts)
+  }
+  return out
 }
+
+/** The words of a query: what was typed as one word stays one word ("iPad" is ipad; a prefix of any document word). */
+export const queryWords = (s: string): string[] => tokens(s).map((t) => t.toLowerCase())
 
 /** A letter mask (a-z, and one bit for any digit): a cheap "could these characters be in this title" prefilter. */
 function maskOf(s: string): number {
@@ -328,7 +342,7 @@ export function search(index: SearchIndex, query: string, opts: SearchOptions = 
   }
 
   // a lone letter beside longer words says nothing ("s12/12", "sign in a"); a digit does ("feed 4")
-  const all = words(q)
+  const all = queryWords(q)
   const terms = all.length > 1 && all.some((t) => t.length > 1) ? all.filter((t) => t.length > 1 || /\d/.test(t)) : all
   if (!terms.length) return finish(index, q, [], [], opts, perGroup)
   const qFold = fold(q)
