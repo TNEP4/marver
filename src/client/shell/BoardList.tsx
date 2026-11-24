@@ -91,6 +91,26 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   const [read, setRead] = useState(false)                             // the first tree read has answered
   const [naming, setNaming] = useState<Naming | null>(null)
   const [closed, setClosed] = useState<Record<string, true>>(readClosed)
+  // search (spec 35): a folder result opens that folder (and its parent) and scrolls its row into view
+  useEffect(() => {
+    const onReveal = (e: Event) => {
+      const name = (e as CustomEvent<string>).detail
+      if (typeof name !== 'string') return
+      setClosed((c) => {
+        if (!c[name]) return c
+        const next = { ...c }; delete next[name]
+        try { localStorage.setItem(CLOSED_KEY, JSON.stringify(next)) } catch { /* private mode */ }
+        return next
+      })
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const row = document.querySelector(`[data-folder-row="${CSS.escape(name)}"]`)
+        row?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+        row?.classList.add('sr-flash'); setTimeout(() => row?.classList.remove('sr-flash'), 900)
+      }))
+    }
+    window.addEventListener('mv:reveal-folder', onReveal)
+    return () => window.removeEventListener('mv:reveal-folder', onReveal)
+  }, [])
   const [drag, setDrag] = useState<Drag | null>(null)
   const [drop, setDrop] = useState<Drop | null>(null)
   // What the sidebar shows = the CONFIRMED tree (the last read of the files) with every

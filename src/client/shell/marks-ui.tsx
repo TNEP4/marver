@@ -161,6 +161,8 @@ export function useSeenOnScreen() {
       } else if (m && !document.hidden && s.scale >= 0.5) {
         // in view: some of it inside the window and not all of that under the open sidebar
         const P = document.querySelector('.sh-panel:not(.closed)')?.getBoundingClientRect()
+        // and not all of it under the open search lens (spec 35): a frame behind the glass is not looked at
+        const L = document.querySelector('.sr-lens')?.getBoundingClientRect()
         for (const n of s.nodes) {
           if (n.status !== 'ready' || n.stale || !isNew(m, n.frame) || shownRev(n, m) < (m.doc[n.frame] ?? 0)) continue
           const r = document.querySelector<HTMLElement>(`.sh-node[data-node="${CSS.escape(n.key)}"]`)?.getBoundingClientRect()
@@ -170,6 +172,7 @@ export function useSeenOnScreen() {
           if (!on) continue
           const x0 = on.left, x1 = on.right, y0 = on.top, y1 = on.bottom
           if (P && x0 >= P.left && x1 <= P.right && y0 >= P.top && y1 <= P.bottom) continue
+          if (L && x0 >= L.left && x1 <= L.right && y0 >= L.top && y1 <= L.bottom) continue
           shown.set(`${n.key}@${m.changed[n.frame] ?? 0}:${n.shown}`, n.key)
         }
       }

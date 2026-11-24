@@ -71,11 +71,13 @@ export function frameReady(key: string) {
 
 // ---- owned keys, mirrored into every frame ------------------------------------------------------------
 
-let ownedNow: string[] = []
+/** Always owned: ⌘K / Ctrl+K open search (spec 35) - forwarded by a focused frame like any owned key. */
+const ALWAYS = ['Ctrl+k', 'Meta+k']
+let ownedNow: string[] = [...ALWAYS]
 /** The keys the shell owns right now (`[Ctrl+][Meta+][Alt+][Shift+]key`), posted to every instance on
  *  change: a frame consumes them itself (before a focused button sees ⏎) and forwards them. */
 export function setOwnedKeys(keys: string[]) {
-  const next = [...new Set(keys)].sort()
+  const next = [...new Set([...keys, ...ALWAYS])].sort()
   if (next.join() === ownedNow.join()) return
   ownedNow = next
   for (const inst of instances.values()) post(inst, { type: 'sh:keys', owned: ownedNow })

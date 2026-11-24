@@ -734,6 +734,8 @@ export function App() {
       // Jam (spec 27): a capture's trail, handshake, probes and flushes; a key the shell owns
       if (onFrameMessage(nodeKey, data)) return
       // a key the frame forwards: the person's, so a show or link still loading gives way (spec 31 D3)
+      // ⌘K forwarded by a focused frame (spec 35): search, never Jam's
+      if (data.type === 'sh:key' && (data.meta || data.ctrl) && !data.alt && !data.shift && data.key === 'k') { if (!s.play) toggleSearch(); return }
       if (data.type === 'sh:key') { if (typeof data.key === 'string') { navigatedByHand(); jamKey({ key: data.key, shift: !!data.shift, alt: !!data.alt, meta: !!data.meta, ctrl: !!data.ctrl }, 'frame') } return }
 
       if (data.type === 'sh:ready') {
