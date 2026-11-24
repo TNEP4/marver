@@ -27,7 +27,11 @@ if (PREVIEW) {
   // muted from birth, however it is made - autoplay needs no play() call (new Audio(src) with autoplay set)
   const NativeAudio = window.Audio
   if (NativeAudio) {
-    const Audio = function (...args) { const el = new NativeAudio(...args); mute(el); return el }
+    // a subclass (class Tone extends Audio) keeps its own prototype: built for new.target
+    const Audio = function (...args) {
+      if (!new.target) throw new TypeError("Failed to construct 'Audio': Please use the 'new' operator")
+      const el = Reflect.construct(NativeAudio, args, new.target); mute(el); return el
+    }
     Audio.prototype = NativeAudio.prototype
     window.Audio = Audio
   }

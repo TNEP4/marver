@@ -52,8 +52,8 @@ beforeAll(async () => {
   writeFileSync(join(scenes, 'mail', 'compose.tsx'), page('Compose a reply', 'To Josh, about staging'))
   // not on a board: a frame that makes a sound off the page and unmutes it - the preview must keep it muted
   writeFileSync(join(scenes, 'mail', 'chime.tsx'), `export const meta = { title: 'Chime check' }
-const a = new Audio(); a.muted = false; const b = document.createElement('video'); b.muted = false\nconst c = new Audio(); c.autoplay = true\n;(window as any).__media = [a, b, c]
-export default () => <main><h1>Chime check</h1><p data-muted={String(a.muted && b.muted && c.muted && (c instanceof HTMLAudioElement))}>chime</p></main>
+const a = new Audio(); a.muted = false; const b = document.createElement('video'); b.muted = false\nconst c = new Audio(); c.autoplay = true\nclass Tone extends Audio { ping() { return 'ping' } }\nconst d = new Tone()\n;(window as any).__media = [a, b, c, d]
+export default () => <main><h1>Chime check</h1><p data-muted={String(a.muted && b.muted && c.muted && c instanceof HTMLAudioElement && d instanceof Tone && d.ping() === 'ping')}>chime</p></main>
 `)
   writeFileSync(join(scenes, 'feed', 'filter.note.md'), 'Keep the chips at the same weight as day')
   const boards = join(root, 'design', 'boards')
@@ -189,7 +189,7 @@ describe('search on a real canvas (spec 35)', () => {
     await until(`document.querySelector('.sr-cap')?.dataset.frame === 'mail/chime' && !!document.querySelector('.sr-stage.on iframe')?.contentDocument?.querySelector('[data-muted]')`)
     expect(await ev(`document.querySelector('.sr-stage.on iframe').contentDocument.querySelector('[data-muted]').dataset.muted`)).toBe('true')
     // the real mute state, read with the shell's own (unpatched) getter - not the preview's override, which always says true
-    expect(await ev(`(() => { const get = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'muted').get; return document.querySelector('.sr-stage.on iframe').contentWindow.__media.map((m) => get.call(m)) })()`)).toEqual([true, true, true])
+    expect(await ev(`(() => { const get = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'muted').get; return document.querySelector('.sr-stage.on iframe').contentWindow.__media.map((m) => get.call(m)) })()`)).toEqual([true, true, true, true])
     await key('Escape')
     await until(`!document.querySelector('.sr-lens')`)
   }, 60_000)
