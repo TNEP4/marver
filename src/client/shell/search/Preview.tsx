@@ -21,7 +21,7 @@ import { admissionIdle } from '../canvas/admission.ts'
 
 export interface PreviewTarget { frame: FrameEntry; board?: string; title: string; where: string }
 
-const STAGE = { w: 432, h: 560 }   // the 460 px pane less 14 px each side; its full height less 40 above and 60 below (Nic)
+const STAGE = { w: 432, h: 592 }   // the 460 px pane less 14 px each side; its full height less 24 above and 44 below (Nic)
 const COMMIT_WITHIN = 5000, FADE = 150
 
 type Phase = 'loading' | 'committed' | 'ready' | 'failed'
@@ -35,8 +35,8 @@ export const heapOk = (): boolean => {
   const m = (performance as unknown as { memory?: { usedJSHeapSize: number; jsHeapSizeLimit: number } }).memory
   return !m || m.usedJSHeapSize / m.jsHeapSizeLimit < 0.6
 }
-/** the lens is min(660, 100vh - 170) tall; the frame fills it but for 40 px above and 60 px below (the caption) - Nic: taller */
-const fit = (f: FrameEntry) => { const { w, h } = frameSize(f); const room = Math.min(STAGE.h, Math.min(660, innerHeight - 170) - 100); const s = Math.min(STAGE.w / w, Math.max(120, room) / h); return { w, h, s } }
+/** the lens is min(660, 100vh - 170) tall; the frame fills it but for 24 px above and 44 px below (the caption) - Nic: taller */
+const fit = (f: FrameEntry) => { const { w, h } = frameSize(f); const room = Math.min(STAGE.h, Math.min(660, innerHeight - 170) - 68); const s = Math.min(STAGE.w / w, Math.max(120, room) / h); return { w, h, s } }
 let gens = 0
 
 /**
