@@ -114,6 +114,7 @@ export function buildSearchDocs(root: string, manifest: Manifest = scanFrames(ro
       summary: [b.description, b.type && b.type !== 'plain' ? b.type : '', b.status?.status ?? ''].filter(Boolean).join(' · ') || undefined,
       where: [folderPath(b.folder), `${n} frame${n === 1 ? '' : 's'}`].filter(Boolean).join(' · '),
       board: b.name, folder: b.folder, archived: archivedBoards.has(b.name), dest: { board: b.name },
+      ...(framesOnBoard.get(b.name)?.[0] ? { preview: framesOnBoard.get(b.name)![0] } : {}),
     })
   }
   /** A thing on boards is archived when every board showing it is archived (one live board keeps it live). */
@@ -132,6 +133,7 @@ export function buildSearchDocs(root: string, manifest: Manifest = scanFrames(ro
       summary: [s.description, briefBody(root, s.name)].filter(Boolean).join(' · ') || undefined,
       notes: s.note, where: [board ? boardTitle.get(board) : undefined, `${ids.length} frame${ids.length === 1 ? '' : 's'}`].filter(Boolean).join(' · '),
       board, scene: s.name, archived: archivedOn(bs), dest: { scene: s.name, ...(board ? { board } : {}) },
+      ...(ids[0] ? { preview: ids[0] } : {}),
     })
     if (s.note) docs.push({ id: `note:scene:${s.name}`, kind: 'note', key: `${s.name}/_note`, title: firstLine(s.note), notes: s.note, where: `Note by ${s.title ?? s.name}`, board, scene: s.name, archived: archivedOn(bs), dest: { scene: s.name, notes: true, ...(board ? { board } : {}) } })
   }

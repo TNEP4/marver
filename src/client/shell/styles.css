@@ -2121,3 +2121,65 @@ textarea.jm-field:focus { border-color: transparent; box-shadow: 0 0 0 1px var(-
   -webkit-mask-position: center; mask-position: center }
 /* a Jam view line's device, as it reads, with its icon */
 .jm-dev { display: inline-flex; align-items: center; gap: 3px; vertical-align: -2px }
+
+/* ---- search (spec 35): the ⌘K lens - small floating glass, the list and the live frame ---------------------- */
+.sr-scrim { position: fixed; inset: 0; z-index: 60 }
+.sr-lens { position: absolute; left: 50%; top: max(84px, calc(var(--mv-top, 0px) + 56px)); transform: translateX(-50%); width: 860px; max-width: calc(100vw - 32px);
+  background: var(--glass); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--glass-brd); border-radius: 22px; box-shadow: var(--shadow-glass), 0 24px 60px -24px rgba(24, 24, 27, .28);
+  color: var(--glass-ink); font: 400 13px -apple-system, system-ui, sans-serif; animation: sr-open .12s cubic-bezier(.2, .8, .2, 1) }
+@keyframes sr-open { from { opacity: 0; transform: translateX(-50%) scale(.97) } }
+@media (prefers-reduced-motion: reduce) { .sr-lens { animation: sr-fade .06s linear } @keyframes sr-fade { from { opacity: 0 } } }
+.sr-lens::after { content: ''; position: absolute; inset: -1px; padding: 1px; border-radius: inherit; background: var(--edge-light); pointer-events: none;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite: exclude }
+.sr-input { display: flex; align-items: center; gap: 10px; padding: 0 12px 0 18px; height: 56px; border-bottom: 1px solid var(--glass-brd) }
+.sr-input .mag { flex: none; color: var(--glass-ink-3) }
+.sr-input input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: var(--glass-ink); font: 400 18px -apple-system, system-ui, sans-serif; letter-spacing: -.01em; caret-color: var(--accent) }
+.sr-input input::placeholder { color: var(--glass-ink-3) }
+.sr-ready { flex: none; color: var(--glass-ink-3); font-size: 12px }
+.sr-kinds-wrap { position: relative; flex: none }
+.sr-kinds { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 10px 0 12px; border-radius: 15px; border: 0; cursor: pointer;
+  background: var(--glass-hover); color: var(--glass-ink-2); font: 500 12.5px -apple-system, system-ui, sans-serif }
+.sr-kinds.on { background: var(--glass-accent-bg); color: var(--glass-accent) }
+.sr-menu.sh-menu { right: 0; top: 38px; width: 220px; z-index: 70 }
+.sr-menu.sh-menu button { height: 32px; gap: 9px; font-size: 12.5px }
+.sr-menu.sh-menu button span { text-transform: none }
+.sr-menu.sh-menu button .gl { flex: none; width: 16px; display: grid; place-items: center; color: var(--glass-ink-3) }
+.sr-menu.sh-menu button.on .gl { color: var(--glass-accent) }
+.sr-menu.sh-menu .ck { flex: none; width: 16px; height: 16px; border-radius: 5px; border: 1.5px solid var(--glass-ink-3); display: grid; place-items: center; box-sizing: border-box }
+.sr-menu.sh-menu .ck.on { background: var(--accent); border-color: var(--accent); color: #fff }
+.sr-menu.sh-menu .div { margin: 4px -5px }
+.sr-body { display: grid; grid-template-columns: 400px 1fr; height: 460px; border-radius: 0 0 22px 22px; overflow: hidden }
+.sr-list { padding: 6px 6px 6px 8px; overflow-y: auto; scrollbar-width: thin; border-right: 1px solid var(--glass-brd) }
+.sr-group { padding: 10px 10px 4px; font: 600 11px -apple-system, system-ui, sans-serif; letter-spacing: .02em; color: var(--glass-ink-3) }
+.sr-row { display: flex; align-items: center; gap: 11px; height: 50px; padding: 0 10px; border-radius: 12px; cursor: default }
+.sr-row.sel { background: var(--glass-accent-bg) }
+.sr-row .ic { flex: none; width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; background: var(--glass-hover); color: var(--glass-ink-3) }
+.sr-row.sel .ic { background: var(--solid); color: var(--glass-accent); box-shadow: 0 1px 2px rgba(24, 24, 27, .08) }
+.sr-row .tx { flex: 1; min-width: 0 }
+.sr-row .t { font: 500 13.5px -apple-system, system-ui, sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--glass-ink) }
+.sr-row .s { color: var(--glass-ink-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px }
+.sr-row .s em { font-style: normal; color: var(--glass-ink-2) }
+.sr-row .end { flex: none; display: flex; align-items: center; gap: 6px }
+.sr-row.dim { opacity: .55 }
+.sr-pill { display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 6px; border-radius: 9px; font: 500 11px -apple-system, system-ui, sans-serif; background: var(--glass-hover); color: var(--glass-ink-2) }
+.sr-pill.ask { background: color-mix(in srgb, var(--mk-ask) 16%, transparent); color: var(--mk-ask) }
+.sr-more { padding: 8px 12px; color: var(--glass-ink-3); font-size: 12px }
+.sr-fold { display: flex; align-items: center; gap: 8px; margin: 6px 4px 2px; height: 32px; padding: 0 10px; border-radius: 10px; border: 1px dashed var(--glass-brd); color: var(--glass-ink-2); font-size: 12px; cursor: pointer }
+.sr-empty { padding: 34px 16px 12px; text-align: center; color: var(--glass-ink-2) }
+.sr-empty .big { font-weight: 600; color: var(--glass-ink); font-size: 14px; margin-bottom: 4px }
+.sr-fix { display: flex; gap: 8px; justify-content: center; margin-top: 12px; flex-wrap: wrap }
+.sr-fix button { border: 1px solid var(--glass-brd); border-radius: 9px; padding: 5px 10px; font: 500 12px -apple-system, system-ui, sans-serif; color: var(--glass-ink); background: none; cursor: pointer }
+/* the live preview: the frame itself; two slots, one on screen, one prefetched (rendered, invisible) */
+.sr-live { position: relative; display: grid; place-items: center; background: color-mix(in srgb, var(--ground) 60%, transparent) }
+.sr-stage { position: absolute; left: 50%; top: calc(50% - 10px); transform: translate(-50%, -50%); overflow: hidden; border-radius: 8px; background: var(--node-bg);
+  box-shadow: 0 1px 2px rgba(24, 24, 27, .06), 0 10px 30px -12px rgba(24, 24, 27, .25); opacity: 0; transition: opacity .09s linear; pointer-events: none }
+.sr-stage.on { opacity: 1 }
+.sr-stage iframe { position: absolute; left: 0; top: 0; border: 0; transform-origin: 0 0; pointer-events: none }
+.sr-card { position: absolute; left: 50%; top: calc(50% - 10px); transform: translate(-50%, -50%); display: grid; place-items: center; border-radius: 8px;
+  background: var(--node-bg); border: 1px solid var(--node-brd); color: var(--glass-ink-3); font-size: 12.5px; padding: 12px; text-align: center }
+.sr-card.idle { width: 260px; height: 180px; opacity: .5 }
+.sr-cap { position: absolute; left: 18px; right: 18px; bottom: 10px; display: flex; justify-content: space-between; gap: 12px; font-size: 11.5px; color: var(--glass-ink-3); white-space: nowrap; overflow: hidden }
+.sr-cap b { color: var(--glass-ink-2); font-weight: 500; overflow: hidden; text-overflow: ellipsis }
+@media (max-width: 1100px) { .sr-lens { width: 500px } .sr-body { grid-template-columns: 1fr } .sr-live { display: none } .sr-list { border-right: 0 } }

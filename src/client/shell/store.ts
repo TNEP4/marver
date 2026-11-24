@@ -518,6 +518,9 @@ const readLaidOut = (v: unknown): LaidOut | null => {
   return out
 }
 
+/** A frame's size as the canvas gives it (search's preview renders it at exactly this size). */
+export const frameSize = (frame: FrameEntry) => defaultSize(frame)
+
 function defaultSize(frame: FrameEntry) {
   // the precedence chain (spec 09 slice 1): slide stage → authored
   // viewport → content sizing → default (one helper, shared with shot) -

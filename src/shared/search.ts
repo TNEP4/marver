@@ -47,6 +47,8 @@ export interface SearchDoc {
   archived?: boolean
   variantGroup?: string
   variant?: string
+  /** the frame the live preview renders for a board or scene (its first frame) */
+  preview?: string
   /** comment threads: open, and whether the last word asks the person */
   open?: boolean
   asks?: boolean

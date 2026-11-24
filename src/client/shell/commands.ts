@@ -115,6 +115,7 @@ export const COMMANDS = {
   goto: se('goto', { failed: ['no-target'] }),
   'history-nav': se('where', { deadlineMs: S120, ...LOAD_CODES, failed: [...LOAD_CODES.failed, 'stage-error'], steps: ['visible', 'visible-ready', 'commit-late'] }),
   panel: se('2raf'),
+  search: se('2raf'),   // spec 35: the ⌘K lens opened or closed
   toolbar: se('2raf'),
   select: se('selection'),
   'select-all': se('selection'),

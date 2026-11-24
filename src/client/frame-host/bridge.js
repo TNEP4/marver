@@ -11,6 +11,11 @@ import { createRecorder } from './trail.js'
 import { startDocumentSignals } from './signals.js'
 
 const isHtmlFrame = new URL(import.meta.url).searchParams.get('html') === '1'
+// A search preview (spec 35): the selected result's frame, rendered in the search lens - never a canvas frame. Read
+// here, the first module a frame page runs, before the providers or the frame's own code: no telemetry from this
+// document, and `window.__mvPreview` lets project code skip analytics, mutations and polling (`usePreview()`).
+const PREVIEW = new URLSearchParams(location.search).get('purpose') === 'search-preview'
+if (PREVIEW) window.__mvPreview = true
 // same-origin parent (the shell): a fixed target origin keeps posts (incl. picked anchor
 // bundles) from leaking if this frame is ever navigated cross-origin
 const post = (msg) => { if (window.parent !== window) window.parent.postMessage(msg, location.origin) }
@@ -26,7 +31,7 @@ const GEN = new URLSearchParams(location.search).get('r') ?? ''
 post({ type: 'sh:boot', id, gen: GEN, boot: BOOT })
 // the recorder's hooks in this document (spec 30 #28, #32, #33: console, element errors, their budget), before anything
 // the frame's own code runs; null where nothing records (a published canvas, a `core` run)
-const signals = startDocumentSignals({ post, id, gen: GEN, boot: BOOT })
+const signals = PREVIEW ? null : startDocumentSignals({ post, id, gen: GEN, boot: BOOT })
 /** An error's first three stack lines (Chrome's "at …", else "fn@url:line:col"), when it has them. */
 const stackOf = (err) => {
   if (typeof err?.stack !== 'string') return undefined

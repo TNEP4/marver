@@ -34,6 +34,8 @@ import { poweredByUrl } from '../../shared/utm.ts'
 import { avatarFallback, NO_COMMENTS_HERE, useComments } from './comments-store.ts'
 import { goTo, isLatest, navigated, navigatedByHand, navNow, revealFrame, switchFor, watchHands } from './goto.ts'
 import { bootSettled, dismissShow, goNow, showTarget, useShowNotice } from './show.ts'
+import { Search, toggleSearch } from './search/Search.tsx'
+import { MagnifierIcon } from './icons.tsx'
 import { newerVersion } from '../../shared/deep-link.ts'
 import { useNotes } from './notes.ts'
 import { contentOnly } from '../../shared/frames.ts'
@@ -841,6 +843,10 @@ export function App() {
   // keyboard: t tidy · d theme · ⌘\ panel · Escape exit · shift+0/1/2 zoom
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // ⌘K (spec 35): search, from anywhere but play - also from a text field (as in every app); not mid-composition
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k' && !e.isComposing && !useStore.getState().play) {
+        e.preventDefault(); cmd('search', { via: 'key', in: 'shell', keys: keysOf(e, 'k') }); toggleSearch(); return
+      }
       // anything that edits text owns its keys: inputs, textareas, selects, contenteditable (the
       // comment composer), and an IME mid-composition
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return
@@ -1031,6 +1037,7 @@ export function App() {
       {/* the scroll edge under the Mac app's transparent strip (0.27.2, A3.8 #31): over the world, under the chrome */}
       {TOP ? <div className="sh-edge" aria-hidden="true" /> : null}
       <SelectionBar />
+      <Search />
 
       {/* floating pill panel (no top bar - spec); panel and fab are both always
           mounted so collapse/expand can crossfade-morph between them */}
@@ -1044,6 +1051,7 @@ export function App() {
               </a>
             </Tip>
             <span className="name" title={CONFIG.projectName || 'Marver'}>{CANVAS_NAME}</span>
+            <Tip side="bottom" label={<><b>Search</b><span>⌘K</span></>}><button className="sh-ibtn" onClick={() => { cmd('search', { via: 'click', in: 'shell' }); toggleSearch() }} tabIndex={panelOpen ? 0 : -1} aria-label="Search"><MagnifierIcon size={16} /></button></Tip>
             <Tip side="bottom" label={<><b>Collapse panel</b><span>⌘\</span></>}><button className="sh-ibtn" onClick={() => { cmd('panel', { via: 'click', in: 'shell' }); togglePanel() }} tabIndex={panelOpen ? 0 : -1}><PanelFilledIcon size={17} /></button></Tip>
           </div>
           <div className="sh-panel-scroll">

@@ -523,6 +523,13 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
       // The folder registry: which folders exist and where they rank at the root. A separate
       // resource (not boards/<name>) so it can never shadow a board named "folders". Malformed
       // is a 422 the sidebar shows - never a silently empty registry the next drag overwrites.
+      // ---- search (spec 35): the canvas's search documents, for the ⌘K lens. Built from the files (search-docs.ts),
+      // kept while nothing changed (a manifest revision and the comment logs' times key it)
+      if (path === 'search' && req.method === 'GET') {
+        const { searchDocsCached } = await import('./search-index.ts')
+        return json(res, 200, searchDocsCached(root))
+      }
+
       if (path === 'folders' && req.method === 'GET') {
         const de = dirError(); if (de) return json(res, 422, { error: de })
         const reg = readRegistry(boardsDir)
