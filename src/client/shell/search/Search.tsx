@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { create } from 'zustand'
 import { buildIndex, search, KIND_ORDER, type Hit, type SearchDoc, type SearchIndex, type SearchKind, type SearchResult } from '../../../shared/search.ts'
 import { api, scoped } from '../api.ts'
+import { UNPLACED } from '../hash.ts'
 import { useStore } from '../store.ts'
 import { showTarget } from '../show.ts'
 import { ArchiveIcon, CardsIcon, CaretIcon, CheckIcon, CommentIcon, FolderIcon, FrameRectIcon, GridIcon, IntentGlyph, MagnifierIcon, NoteStickyIcon } from '../icons.tsx'
@@ -79,9 +80,10 @@ function go(doc: SearchDoc): void {
   remember(doc.id)
   const d = doc.dest
   if (d.folder) { window.dispatchEvent(new CustomEvent('mv:reveal-folder', { detail: d.folder })); return }
-  const board = d.board ?? useStore.getState().board
+  // a frame on no board lands in Not on a board; a thread pinned to one of two instances selects that one (its node)
+  const board = d.board ?? (d.unplaced ? UNPLACED : useStore.getState().board)
   if (!board) return
-  void showTarget({ board, ...(d.frame ? { f: [d.frame] } : d.scene ? { s: [d.scene] } : {}), ...(d.thread ? { c: d.thread } : {}) }, 'app')
+  void showTarget({ board, ...(d.node ? { n: [d.node] } : d.frame ? { f: [d.frame] } : d.scene ? { s: [d.scene] } : {}), ...(d.thread ? { c: d.thread } : {}) }, 'app')
 }
 
 interface Row { hit: Hit; group?: string }
@@ -121,7 +123,7 @@ export function Search() {
     if (!q.trim()) {
       const byId = new Map(index.docs.map((p) => [p.doc.id, p.doc]))
       return readJson<{ id: string; at: number }[]>(RECENT_KEY, []).map((r) => byId.get(r.id)).filter((d): d is SearchDoc => !!d).slice(0, 6)
-        .map((doc, i) => ({ hit: { doc, tier: 0, score: 0 }, group: i === 0 ? 'Recent' : undefined }))
+        .map((doc, i) => ({ hit: { doc, i: -1, tier: 0, score: 0 }, group: i === 0 ? 'Recent' : undefined }))
     }
     if (!result) return []
     const out: Row[] = []

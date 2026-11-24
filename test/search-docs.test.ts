@@ -44,7 +44,7 @@ describe('the document builder', () => {
     expect(by('frame:feed/filter')).toMatchObject({ title: 'Filter the feed', device: 'boox', board: 'feed', where: 'Feed › Feed - lo-fi', archived: false })
     expect(by('note:feed/filter')).toMatchObject({ kind: 'note', dest: { frame: 'feed/filter', notes: true } })
     expect(by('scene:feed')?.summary).toContain('what Delos picked for today')   // the brief's body, not only its first line
-    expect(by('board:feed')).toMatchObject({ kind: 'board', folder: 'e-ink' })
+    expect(by('board:feed')).toMatchObject({ kind: 'board', folders: ['e-ink'] })
     expect(by('folder:e-ink')).toMatchObject({ kind: 'folder', title: 'E-ink' })
   })
   it('archive: an arch- folder with no type is archive by its name; an explicit other type never is', () => {
@@ -61,9 +61,9 @@ describe('the document builder', () => {
     expect(t1).toMatchObject({ open: true, asks: true, dest: { board: 'feed', thread: 't1', frame: 'feed/filter' } })
     expect(t1.comments).toContain('Which choice first?')
     const idx = buildIndex(docs)
-    expect(search(idx, 'old idea filtering').groups.flatMap((g) => g.hits.map((h) => h.doc.key))).toContain('t2')   // nothing else matches
-    expect(search(idx, 'filter').groups.flatMap((g) => g.hits.map((h) => h.doc.key))).not.toContain('t2')
-    expect(search(idx, 'filter', { kinds: ['comment'] }).groups.flatMap((g) => g.hits.map((h) => h.doc.key))).toContain('t2')
+    expect(search(idx, 'old idea filtering').groups.flatMap((g) => g.hits.map((h) => h.doc.key))).toContain('feed:t2')   // nothing else matches
+    expect(search(idx, 'filter').groups.flatMap((g) => g.hits.map((h) => h.doc.key))).not.toContain('feed:t2')
+    expect(search(idx, 'filter', { kinds: ['comment'] }).groups.flatMap((g) => g.hits.map((h) => h.doc.key))).toContain('feed:t2')
   })
   it("a frame's own words: its prose and the Markdown it binds, never class lists", () => {
     const w1 = frameWords(root, 'design/scenes/feed/filter.tsx')!

@@ -19,7 +19,7 @@ const DOCS: SearchDoc[] = [
   { id: 'board:feed', kind: 'board', key: 'feed', title: 'Feed', summary: 'E-ink feature', dest: { board: 'feed' } },
   { id: 'folder:e-ink', kind: 'folder', key: 'e-ink', title: 'E-ink', dest: { folder: 'e-ink' } },
   { id: 'note:feed-lofi/05-filter.note', kind: 'note', key: 'feed-lofi/05-filter.note', title: 'Two ready filters cover 90%', notes: 'Two ready filters cover 90% of the gaps', dest: { frame: 'feed-lofi/05-filter', notes: true } },
-  { id: 'comment:feed:t1', kind: 'comment', key: 't1', title: 'Should the feed filter remember the last choice?', comments: 'Should the feed filter remember the last choice?', open: true, asks: true, dest: { board: 'feed', thread: 't1' } },
+  { id: 'comment:feed:t1', kind: 'comment', key: 't1', title: 'Should the feed filter remember the last choice?', comments: 'Should the feed filter remember the last choice?', open: true, waiting: true, asks: true, dest: { board: 'feed', thread: 't1' } },
 ]
 const idx = buildIndex(DOCS)
 const keys = (r: ReturnType<typeof search>) => r.groups.flatMap((g) => g.hits.map((h) => h.doc.key))
@@ -83,14 +83,15 @@ describe('the query', () => {
     expect(hits[0].variants).toHaveLength(1)
     expect(search(idx, 'yearly').top?.doc.variant).toBe('b')
   })
-  it('archived apart, unless nothing live matches - then the archived matches are the answer', () => {
+  it('archived apart behind the fold, even when only archived things match (spec v5); an exact id still a result', () => {
     const live = search(idx, 'sign in')
     expect(keys(live)).toContain('app-sign-in/01-sign-in')
     expect(keys(live)).not.toContain('glass-v6-ipad-signin/01-signin-portrait')
     expect(live.archived.count).toBe(1)
     const only = search(idx, 'ipad portrait')
-    expect(only.archivedOnly).toBe(true)
-    expect(keys(only)).toContain('glass-v6-ipad-signin/01-signin-portrait')
+    expect(keys(only)).not.toContain('glass-v6-ipad-signin/01-signin-portrait')
+    expect(only.archived.count).toBe(1)
+    expect(keys(search(idx, 'glass-v6-ipad-signin/01-signin-portrait'))).toContain('glass-v6-ipad-signin/01-signin-portrait')
     expect(keys(search(idx, 'sign in', { archive: true }))).toContain('glass-v6-ipad-signin/01-signin-portrait')
   })
   it('groups go by level: folders, boards, scenes, frames, notes, comments', () => {
