@@ -2,7 +2,7 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
-## Unreleased
+## 0.36.0 - 2026-11-24
 
 ### Highlights
 
@@ -20,6 +20,11 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 
 - `export const meta = { preview: false }` keeps a frame out of search's live preview (it shows the frame's shape).
 - `marver context check` lists the folders search reads as archive by their name alone, with the fix.
+
+### Changed
+
+- Board type icons in the sidebar (feature, project, deck and the rest) are drawn at the same line weight as the
+  folder and board icons beside them, instead of a heavier one.
 
 ## 0.35.1 - 2026-11-23
 
