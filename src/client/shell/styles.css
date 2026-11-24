@@ -2150,13 +2150,13 @@ textarea.jm-field:focus { border-color: transparent; box-shadow: 0 0 0 1px var(-
 .sr-menu.sh-menu .ck { flex: none; width: 16px; height: 16px; border-radius: 5px; border: 1.5px solid var(--glass-ink-3); display: grid; place-items: center; box-sizing: border-box }
 .sr-menu.sh-menu .ck.on { background: var(--accent); border-color: var(--accent); color: #fff }
 .sr-menu.sh-menu .div { margin: 4px -5px }
-.sr-body { display: grid; grid-template-columns: 400px 1fr; height: 460px; border-radius: 0 0 22px 22px; overflow: hidden }
+.sr-body { display: grid; grid-template-columns: 400px 1fr; height: min(580px, calc(100vh - 200px)); border-radius: 0 0 22px 22px; overflow: hidden }
 .sr-list { padding: 6px 6px 6px 8px; overflow-y: auto; scrollbar-width: thin; border-right: 1px solid var(--glass-brd) }
 .sr-group { padding: 10px 10px 4px; font: 600 11px -apple-system, system-ui, sans-serif; letter-spacing: .02em; color: var(--glass-ink-3) }
 .sr-row { display: flex; align-items: center; gap: 11px; height: 50px; padding: 0 10px; border-radius: 12px; cursor: default }
 .sr-row.sel { background: var(--glass-accent-bg) }
 .sr-row .ic { flex: none; width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; background: var(--glass-hover); color: var(--glass-ink-3) }
-.sr-row.sel .ic { background: var(--solid); color: var(--glass-accent); box-shadow: 0 1px 2px rgba(24, 24, 27, .08) }
+.sr-row.sel .ic { background: var(--solid); color: var(--glass-accent) }
 .sr-row .tx { flex: 1; min-width: 0 }
 .sr-row .t { font: 500 13.5px -apple-system, system-ui, sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--glass-ink) }
 .sr-row .s { color: var(--glass-ink-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px }
@@ -2178,7 +2178,7 @@ textarea.jm-field:focus { border-color: transparent; box-shadow: 0 0 0 1px var(-
 /* the live preview: the frame itself; two slots, one on screen, one prefetched (rendered, invisible) */
 .sr-live { position: relative; display: grid; place-items: center; background: color-mix(in srgb, var(--ground) 60%, transparent) }
 .sr-stage { position: absolute; z-index: 1; left: 50%; top: calc(50% - 10px); transform: translate(-50%, -50%); overflow: hidden; border-radius: 8px; background: var(--node-bg);
-  box-shadow: 0 1px 2px rgba(24, 24, 27, .06), 0 10px 30px -12px rgba(24, 24, 27, .25); opacity: 0; pointer-events: none }
+  opacity: 0; pointer-events: none }
 /* only the selected frame fades - in; one no longer selected is gone in the same paint (its caption has moved on) */
 .sr-stage.on { opacity: 1; transition: opacity .09s linear }
 @media (prefers-reduced-motion: reduce) { .sr-stage.on { transition-duration: .06s } }

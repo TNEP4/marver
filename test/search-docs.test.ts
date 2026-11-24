@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildSearchDocs, frameWords } from '../src/server/search-docs.ts'
+import { buildSearchDocs, frameWords, plain } from '../src/server/search-docs.ts'
 import { buildIndex, search } from '../src/shared/search.ts'
 
 /** Search (spec 35), the document builder on a small canvas: every kind, archive rules, comments replayed, briefs. */
@@ -72,5 +72,18 @@ describe('the document builder', () => {
     expect(w1).toContain('Unread from people')
     expect(w1).not.toContain('px-4')
     expect(frameWords(root, 'design/scenes/spec/overview.tsx')).toContain('Search finds anything on the canvas')
+  })
+})
+
+describe('titles read as plain text (Nic, 24 Nov: "**Area A on iPhone**" showed its stars)', () => {
+  it('drops Markdown marks and keeps everything else', () => {
+    const cases: [string, string][] = [
+      ['**Area A on iPhone: shell and Home**', 'Area A on iPhone: shell and Home'],
+      ['**Time and People, iPhone** (20 frames)', 'Time and People, iPhone (20 frames)'],
+      ['- see [the doc](http://x) and `code`', 'see the doc and code'],
+      ['## Title', 'Title'], ['*em* text', 'em text'],
+      ['snake_case_name stays', 'snake_case_name stays'], ['2 * 3 = 6', '2 * 3 = 6'], ['a * b * c', 'a * b * c'],
+    ]
+    for (const [md, text] of cases) expect(plain(md)).toBe(text)
   })
 })

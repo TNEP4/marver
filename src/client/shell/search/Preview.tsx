@@ -21,7 +21,7 @@ import { admissionIdle } from '../canvas/admission.ts'
 
 export interface PreviewTarget { frame: FrameEntry; board?: string; title: string; where: string }
 
-const STAGE = { w: 424, h: 396 }
+const STAGE = { w: 380, h: 440 }   // the pane less a margin all round (Nic: white space around the preview)
 const COMMIT_WITHIN = 5000, FADE = 150
 
 type Phase = 'loading' | 'committed' | 'ready' | 'failed'
@@ -35,7 +35,8 @@ export const heapOk = (): boolean => {
   const m = (performance as unknown as { memory?: { usedJSHeapSize: number; jsHeapSizeLimit: number } }).memory
   return !m || m.usedJSHeapSize / m.jsHeapSizeLimit < 0.6
 }
-const fit = (f: FrameEntry) => { const { w, h } = frameSize(f); const s = Math.min(STAGE.w / w, STAGE.h / h); return { w, h, s } }
+/** the lens is min(580, 100vh - 200) tall; the frame keeps 70 px clear above and below in a short window too */
+const fit = (f: FrameEntry) => { const { w, h } = frameSize(f); const room = Math.min(STAGE.h, Math.min(580, innerHeight - 200) - 140); const s = Math.min(STAGE.w / w, Math.max(120, room) / h); return { w, h, s } }
 let gens = 0
 
 /**

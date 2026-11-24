@@ -302,7 +302,17 @@ function briefBody(root: string, scene: string): string | undefined {
   } catch { return undefined }
 }
 
+/** Markdown to the words a person reads: no emphasis marks, code ticks, link targets, list or quote markers. */
+export const plain = (l: string): string => l
+  .replace(/^\s*(?:#+|>|[-*+]|\d+[.)])\s+/, '')
+  .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+  .replace(/(\*\*|__)(?=\S)(.+?)(?<=\S)\1/g, '$2')
+  .replace(/(^|[^\w*])([*_])(?=\S)(.+?)(?<=\S)\2(?![\w*])/g, '$1$3')
+  .replace(/~~(.+?)~~/g, '$1')
+  .replace(/`([^`]*)`/g, '$1')
+  .replace(/\*\*|__/g, '')
+  .trim()
 const firstLine = (s: string): string => {
-  const line = s.split('\n').map((l) => l.replace(/^#+\s*/, '').trim()).find(Boolean) ?? ''
+  const line = s.split('\n').map(plain).find(Boolean) ?? ''
   return line.length > 90 ? `${line.slice(0, 89)}…` : line
 }
