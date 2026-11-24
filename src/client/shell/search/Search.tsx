@@ -103,7 +103,8 @@ export function Search() {
     if (!open) return
     void loadSearchDocs()
     setSel(0); frozen.current = false; setMenu(false)
-    requestAnimationFrame(() => input.current?.focus())
+    // the last query, selected: typing replaces it, ↓ walks it again (Spotlight)
+    requestAnimationFrame(() => { input.current?.focus(); input.current?.select() })
   }, [open])
   useEffect(() => { writeJson(KINDS_KEY, filter) }, [filter])
 
@@ -158,6 +159,8 @@ export function Search() {
   const pill = allOn ? 'All' : filter.kinds.length === 1 ? LABEL[filter.kinds[0]] : `${filter.kinds.length} kinds`
   const toggleKind = (k: SearchKind | 'all') => setFilter((f) => {
     if (k === 'all') return { ...f, kinds: ALL }
+    // with All on, ticking a kind narrows to that kind alone
+    if (f.kinds.length === ALL.length) return { ...f, kinds: [k] }
     const has = f.kinds.includes(k)
     const kinds = has ? f.kinds.filter((x) => x !== k) : [...f.kinds, k]
     return { ...f, kinds: kinds.length ? KIND_ORDER.filter((x) => kinds.includes(x)) : ALL }   // never zero kinds
@@ -168,7 +171,7 @@ export function Search() {
       <div className="sr-lens" role="dialog" aria-label="Search">
         <div className="sr-input">
           <MagnifierIcon size={20} className="mag" />
-          <input ref={input} value={q} placeholder="Search" spellCheck={false} autoComplete="off"
+          <input ref={input} value={q} placeholder="Search" spellCheck={false} autoComplete="off" data-mv-transient=""
             role="combobox" aria-expanded="true" aria-controls="sr-list" aria-activedescendant={selRow ? `sr-row-${sel}` : undefined}
             onChange={(e) => { frozen.current = false; setQ(e.target.value) }} onKeyDown={onKey} onKeyUp={onKeyUp} />
           {!index && <span className="sr-ready">Loading…</span>}
@@ -179,7 +182,7 @@ export function Search() {
                 <button className={allOn ? 'on' : undefined} onClick={() => toggleKind('all')}><i className="gl"><GridIcon size={14} /></i><span>All</span><i className={`ck${allOn ? ' on' : ''}`}>{allOn && <CheckIcon size={11} />}</i></button>
                 <i className="div" />
                 {KIND_ORDER.map((k) => { const on = !allOn && filter.kinds.includes(k); return (
-                  <button key={k} className={on ? 'on' : undefined} onClick={() => toggleKind(allOn ? k : k)}><i className="gl">{MENU_ICON[k]}</i><span>{LABEL[k]}</span><i className={`ck${on ? ' on' : ''}`}>{on && <CheckIcon size={11} />}</i></button>
+                  <button key={k} className={on ? 'on' : undefined} onClick={() => toggleKind(k)}><i className="gl">{MENU_ICON[k]}</i><span>{LABEL[k]}</span><i className={`ck${on ? ' on' : ''}`}>{on && <CheckIcon size={11} />}</i></button>
                 ) })}
                 <i className="div" />
                 <button className={filter.archive ? 'on' : undefined} onClick={() => setFilter((f) => ({ ...f, archive: !f.archive }))}><i className="gl"><ArchiveIcon size={14} /></i><span>Include archive</span><i className={`ck${filter.archive ? ' on' : ''}`}>{filter.archive && <CheckIcon size={11} />}</i></button>

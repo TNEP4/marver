@@ -225,7 +225,9 @@ const TEXT_FIELDS = 'textarea, input:not([type]), input[type=text], input[type=s
  *  click reads before every move (spec 28 A4.6 #30, r2 #1): a board change, another thread or a panel replaced would
  *  unmount the field and lose them. Words the shell keeps with no field on screen (a More work draft, a read-back's
  *  edit still saving) are not here: they survive a move. */
-export const typedUnsent = (): boolean => [...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(TEXT_FIELDS)].some((el) => typed.has(el) && el.value.trim() !== '')
+/** Words typed and not sent. A field marked `data-mv-transient` (the search lens's query, spec 35) is never work: it
+ *  holds no reload, asks nothing before leaving, and never stops a show. */
+export const typedUnsent = (): boolean => [...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(TEXT_FIELDS)].some((el) => typed.has(el) && el.value.trim() !== '' && !el.hasAttribute('data-mv-transient'))
 if (WS) {
   document.addEventListener('input', (e) => { if (e.target) typed.add(e.target); if (canvasStopped()) noteUnsaved(); workChanged() }, true)
   holdsReload(typedUnsent)
