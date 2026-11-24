@@ -8,7 +8,7 @@
 
 Screens, prototypes, specs, and now slide decks - all real code, all on one canvas, all shareable with people who sign in as themselves.
 
-[marver.design](https://marver.design) · [Mac app](docs/app.md) · [Boards and folders](docs/boards-and-folders.md) · [Context](docs/context.md) · [Slides](docs/slides.md) · [Deck PDFs](docs/pdf.md) · [Sticky notes](docs/sticky-notes.md) · [Live Jam](docs/live-jam.md) · [Jam sessions](docs/jam-session.md) · [Performance](docs/performance.md) · [Deploying a canvas](docs/publish.md) · [Sharing](docs/sharing.md) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Issues](https://github.com/TNEP4/marver/issues)
+[marver.design](https://marver.design) · [Mac app](docs/app.md) · [Boards and folders](docs/boards-and-folders.md) · [Search](docs/search.md) · [Context](docs/context.md) · [Slides](docs/slides.md) · [Deck PDFs](docs/pdf.md) · [Sticky notes](docs/sticky-notes.md) · [Live Jam](docs/live-jam.md) · [Jam sessions](docs/jam-session.md) · [Performance](docs/performance.md) · [Deploying a canvas](docs/publish.md) · [Sharing](docs/sharing.md) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Issues](https://github.com/TNEP4/marver/issues)
 
 ## Quickstart
 
@@ -121,6 +121,7 @@ The same glow, driven from the terminal. When your agent takes a request, it cre
 | `npx marver show <scene/frame \| scene ... \| board> [--thread <id>]` | Move every open tab of this canvas to that place, fitted (in the Mac app, its tab comes forward); a tab with words not yet sent shows a notice instead; then the link |
 | `npx marver shot <frame ...> \| --scene <name> \| --all [--scale 1-4] [--json]` | Render frames headless and print the PNG paths (needs `dev` running); a scene is one browser, several frames at a time; 2x by default |
 | `npx marver pdf <board> [--notes [--paper letter\|a4]] [--theme t] [--out file] [--raster \| --vector] [--keep-going] [--json]` | A board as a PDF: a deck one page per slide, any other board one page per frame - vector text, links, bookmarks; glass and other effects Chrome prints wrong fixed and checked against the screen (needs `dev` running; [Deck PDFs](docs/pdf.md)) |
+| `npx marver search <words> [--kind ...] [--json]` | Find a frame, scene, board, folder, sticky note or comment thread by what it is - the canvas's ⌘K search, from the files ([Search](docs/search.md)) |
 | `npx marver perf [--loads \| --jam \| --runs] [--json]` | What the canvas did lately: each edit's reloads; `--loads` each board load (time to settled, how many moves and why, the slowest frames, errors); `--jam` Jam's timings; `--runs` the headless runs compared ([Performance](docs/performance.md)) |
 | `npx marver perf --all` / `--live` | Every canvas on this Mac in one summary, no repo needed; or the records as they happen, in a terminal. |
 | `npx marver perf run <board> [--slow] [--repeat n]` | Measure a board the same way every time - a load, a fit, a zoom and a pan in the canvas's own headless Chrome, read-only - so you or your agent can compare before and after a change (needs `dev` running; [Headless runs](docs/performance.md#headless-runs)) |

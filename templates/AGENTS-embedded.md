@@ -293,6 +293,11 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
   `description` when one was written, and its `title` when the human (or you) named it.
   Read it before exploring; `marver dev` keeps it fresh. `npx marver boards` prints the
   boards part as a tree.
+- **Finding one thing by what it is: `npx marver search <words>`** - the canvas's own search, the one the human
+  opens with ⌘K: frames, scenes, boards, folders, sticky notes and comment threads, every word matched and ranked,
+  each with where it sits and its file (`--json`, `--kind frame,scene`, `--archive`). One call instead of grepping the
+  frame files, notes, board files and comment logs - "the iPad sign-in" is a search, not a grep. It reads what the
+  files say: words only shared screen components show are not in it yet - grep those.
 - **What the human has not reviewed.** At the start of a session, `npx marver marks`: the frames
   waiting on them (your notes and replies they have not resolved - the ones that ask first), the
   frames new since they last looked, and the open conversations per board. When it bears on the work, say so in your first message

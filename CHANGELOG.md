@@ -2,6 +2,20 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## Unreleased
+
+### Highlights
+
+- **Search the canvas with ⌘K.** A small glass search finds any folder, board, scene, frame, sticky note or comment
+  thread as you type - by its title, description, device, notes, comments and the words in its file - and draws the
+  selected frame live beside the list, the next one already prepared, so you can see it before you go. Enter takes the
+  canvas there; the pill at the right narrows to the kinds you want and remembers it. On a canvas of 2,600 frames a
+  result is on screen a few milliseconds after a key, and each next preview in under a tenth of a second.
+  [Search](docs/search.md)
+- **`marver search` for agents.** The same search from the command line, no dev server needed: your agent finds "the
+  iPad sign-in" in one call instead of grepping frame files, notes, boards and comment logs.
+  The guide teaches it - run `npx marver init` to update it.
+
 ## 0.35.1 - 2026-11-23
 
 ### Highlights
