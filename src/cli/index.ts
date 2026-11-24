@@ -232,6 +232,22 @@ cli
   })
 
 cli
+  .command('search [...words]', 'Find a folder, board, scene, frame, sticky note or comment thread by what it is - the canvas\'s own search, built from the files (no dev server needed): its id, title, where it is, its file and a link. Every word must match; ranked like the ⌘K search')
+  .option('--root <dir>', 'Host repo root', { default: '.' })
+  .option('--kind <kinds>', 'Only these kinds, comma-separated: folder, board, scene, frame, note, comment')
+  .option('--archive', 'Include archived things in the results')
+  .option('--limit <n>', 'Results per kind (default 8, at most 50)')
+  .option('--json', 'The results as JSON ({ query, coverage, results, partial, archived })')
+  .action(async (words: string[], opts) => {
+    const { searchCommand } = await import('./search.ts')
+    try { await searchCommand(resolve(opts.root), words ?? [], opts) }
+    catch (err) {
+      console.error(`[${NAME}] ${(err as Error).message}`)
+      process.exit(1)
+    }
+  })
+
+cli
   .command('show [...targets]', 'Show the human a place - only when they ask to be shown (needs `dev` running): show <scene/frame | scene ... | board> - a bare name is a frame or scene first, else a board, fitted whole; every open tab of this canvas goes there, selected and fitted (a tab holding unsent words shows a notice instead); then the link')
   .option('--root <dir>', 'Host repo root', { default: '.' })
   .option('--board <board>', 'The board to show them on (default: the first board that shows them all)')
