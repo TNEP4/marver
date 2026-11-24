@@ -42,7 +42,9 @@ export function createKeys({ post, trusted }) {
     const m = e.data
     if (m && m.type === 'sh:keys' && Array.isArray(m.owned)) owned = new Set(m.owned.filter((k) => typeof k === 'string'))
   }
-  const owns = (e) => owned.size > 0 && keyAllowed(e) && owned.has(keyDescriptor(e))
+  // ⌘K / Ctrl+K (search, spec 35) reaches the shell from a field too - as in every app; never mid-composition
+  const always = (e) => (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && keyName(e) === 'k' && !composing(e)
+  const owns = (e) => owned.size > 0 && owned.has(keyDescriptor(e)) && (keyAllowed(e) || always(e))
   const onKey = (e) => {
     if (!owns(e)) return
     e.preventDefault()

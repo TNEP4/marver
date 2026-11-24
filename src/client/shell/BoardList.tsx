@@ -94,19 +94,26 @@ export function BoardList({ onMenu }: { onMenu: MenuOpener }) {
   // search (spec 35): a folder result opens that folder (and its parent) and scrolls its row into view
   useEffect(() => {
     const onReveal = (e: Event) => {
-      const name = (e as CustomEvent<string>).detail
-      if (typeof name !== 'string') return
+      // the folder's chain, outermost first (a name alone is a chain of one); every one of them opened
+      const d = (e as CustomEvent<string | string[]>).detail
+      const chain = (Array.isArray(d) ? d : [d]).filter((x): x is string => typeof x === 'string')
+      const name = chain[chain.length - 1]
+      if (!name) return
       setClosed((c) => {
-        if (!c[name]) return c
-        const next = { ...c }; delete next[name]
+        if (!chain.some((n) => c[n])) return c
+        const next = { ...c }; for (const n of chain) delete next[n]
         try { localStorage.setItem(CLOSED_KEY, JSON.stringify(next)) } catch { /* private mode */ }
         return next
       })
-      requestAnimationFrame(() => requestAnimationFrame(() => {
+      // the row mounts once its parents open and the sidebar slides in: looked for until it is there (2 s at most)
+      const t0 = performance.now()
+      const find = () => {
         const row = document.querySelector(`[data-folder-row="${CSS.escape(name)}"]`)
-        row?.scrollIntoView({ block: 'center', behavior: 'smooth' })
-        row?.classList.add('sr-flash'); setTimeout(() => row?.classList.remove('sr-flash'), 900)
-      }))
+        if (!row) { if (performance.now() - t0 < 2000) requestAnimationFrame(find); return }
+        row.scrollIntoView({ block: 'center', behavior: 'smooth' })
+        row.classList.add('sr-flash'); setTimeout(() => row.classList.remove('sr-flash'), 900)
+      }
+      requestAnimationFrame(find)
     }
     window.addEventListener('mv:reveal-folder', onReveal)
     return () => window.removeEventListener('mv:reveal-folder', onReveal)

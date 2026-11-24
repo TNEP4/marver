@@ -2167,6 +2167,10 @@ textarea.jm-field:focus { border-color: transparent; box-shadow: 0 0 0 1px var(-
 .sr-pill.ask { background: color-mix(in srgb, var(--mk-ask) 16%, transparent); color: var(--mk-ask) }
 .sr-more { padding: 8px 12px; color: var(--glass-ink-3); font-size: 12px }
 .sr-fold { display: flex; align-items: center; gap: 8px; margin: 6px 4px 2px; height: 32px; padding: 0 10px; border-radius: 10px; border: 1px dashed var(--glass-brd); color: var(--glass-ink-2); font-size: 12px; cursor: pointer }
+.sr-fold.sel { background: var(--glass-accent-bg); border-color: transparent; color: var(--glass-accent) }
+.sr-fold.more { border: 0; height: 28px; margin: 0 4px; color: var(--glass-ink-2) }
+/* what was typed, in the title: weight, not colour (calm) */
+.sr-row .t mark { background: none; color: inherit; font-weight: 650 }
 .sr-empty { padding: 34px 16px 12px; text-align: center; color: var(--glass-ink-2) }
 .sr-empty .big { font-weight: 600; color: var(--glass-ink); font-size: 14px; margin-bottom: 4px }
 .sr-fix { display: flex; gap: 8px; justify-content: center; margin-top: 12px; flex-wrap: wrap }
@@ -2174,8 +2178,10 @@ textarea.jm-field:focus { border-color: transparent; box-shadow: 0 0 0 1px var(-
 /* the live preview: the frame itself; two slots, one on screen, one prefetched (rendered, invisible) */
 .sr-live { position: relative; display: grid; place-items: center; background: color-mix(in srgb, var(--ground) 60%, transparent) }
 .sr-stage { position: absolute; z-index: 1; left: 50%; top: calc(50% - 10px); transform: translate(-50%, -50%); overflow: hidden; border-radius: 8px; background: var(--node-bg);
-  box-shadow: 0 1px 2px rgba(24, 24, 27, .06), 0 10px 30px -12px rgba(24, 24, 27, .25); opacity: 0; transition: opacity .09s linear; pointer-events: none }
-.sr-stage.on { opacity: 1 }
+  box-shadow: 0 1px 2px rgba(24, 24, 27, .06), 0 10px 30px -12px rgba(24, 24, 27, .25); opacity: 0; pointer-events: none }
+/* only the selected frame fades - in; one no longer selected is gone in the same paint (its caption has moved on) */
+.sr-stage.on { opacity: 1; transition: opacity .09s linear }
+@media (prefers-reduced-motion: reduce) { .sr-stage.on { transition-duration: .06s } }
 .sr-stage iframe { position: absolute; left: 0; top: 0; border: 0; transform-origin: 0 0; pointer-events: none }
 /* the skeleton: the frame's exact shape before it renders - glass grey with a touch of blue, no border, no shadow,
    gently pulsing; the real frame fades in over it */

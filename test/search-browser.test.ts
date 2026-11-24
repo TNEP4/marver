@@ -29,7 +29,7 @@ const page = (title: string, body: string, extra = '') => `export const meta = {
 export default () => <main style={{ padding: 40, font: '24px system-ui' }}><h1>${title}</h1><p>${body}</p></main>
 `
 async function key(k: string, mods: { meta?: boolean } = {}) {
-  const base = { key: k, code: k.length === 1 ? `Key${k.toUpperCase()}` : k, windowsVirtualKeyCode: k.length === 1 ? k.toUpperCase().charCodeAt(0) : ({ ArrowDown: 40, ArrowUp: 38, Enter: 13, Escape: 27 } as Record<string, number>)[k], modifiers: mods.meta ? 4 : 0 }
+  const base = { key: k, code: k.length === 1 ? `Key${k.toUpperCase()}` : k, windowsVirtualKeyCode: k.length === 1 ? k.toUpperCase().charCodeAt(0) : ({ ArrowDown: 40, ArrowUp: 38, Enter: 13, Escape: 27, Tab: 9 } as Record<string, number>)[k], modifiers: mods.meta ? 4 : 0 }
   await browser!.send('Input.dispatchKeyEvent', { type: 'keyDown', ...base, ...(k.length === 1 && !mods.meta ? { text: k } : {}) }, tab)
   await browser!.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base }, tab)
 }
@@ -131,6 +131,39 @@ describe('search on a real canvas (spec 35)', () => {
     await until(`document.querySelector('.sr-kinds')?.textContent.startsWith('Notes')`)
     await key('Escape')
   }, 60_000)
+
+  maybe('arrowing fast: at most one frame drawn, always the one the caption names; a prefetched frame shows, never stuck behind its skeleton', async (ctx) => {
+    if (!browser) return ctx.skip()
+    await key('k', { meta: true })
+    await until(`!!document.querySelector('.sr-lens input')`)
+    // all kinds again, then the frames of the feed
+    await ev(`localStorage.clear()`)
+    await ev(`document.querySelector('.sr-kinds').click()`); await until(`!!document.querySelector('.sr-menu')`)
+    await ev(`[...document.querySelectorAll('.sr-menu button')].find((b) => b.textContent.includes('All')).click()`)
+    await ev(`[...document.querySelectorAll('.sr-menu button')].find((b) => b.textContent.includes('Frames')).click()`)
+    await key('Escape')
+    expect(await ev(`!!document.querySelector('.sr-lens') && !document.querySelector('.sr-menu')`)).toBe(true)   // Esc closed the menu, not the lens
+    await type('feed')
+    await until(`document.querySelectorAll('.sr-row').length >= 3 && !!document.querySelector('.sr-stage.on')`)
+    const sample = `(() => { const on = [...document.querySelectorAll('.sr-stage.on iframe')]; return { n: on.length, drawn: on[0]?.dataset.frame ?? null, cap: document.querySelector('.sr-cap')?.dataset.frame ?? null } })()`
+    const bad: unknown[] = []
+    for (let k = 0; k < 6; k++) {
+      await key(k % 3 === 2 ? 'ArrowUp' : 'ArrowDown')
+      for (let t = 0; t < 8; t++) { const x = await ev(sample); if (x.n > 1 || (x.n === 1 && x.drawn !== x.cap)) bad.push(x); await wait(30) }
+    }
+    if (bad.length) console.log("BAD", JSON.stringify(bad.slice(0, 4)))
+    expect(bad).toEqual([])
+    // resting on a result whose frame was prefetched: it shows, and the skeleton goes
+    await until(`!!document.querySelector('.sr-stage.on') && !document.querySelector('.sr-skel')`, 10_000)
+    expect(await ev(`document.querySelectorAll('.sr-live iframe').length`)).toBeLessThanOrEqual(2)
+    // Tab stays in the dialog; Esc from the pill closes the lens
+    for (let k = 0; k < 3; k++) await key('Tab')
+    expect(await ev(`!!document.activeElement?.closest('.sr-lens')`)).toBe(true)
+    await ev(`document.querySelector('.sr-kinds').focus()`)
+    await key('Escape')
+    await until(`!document.querySelector('.sr-lens')`)
+    await ev(`localStorage.clear()`)
+  }, 90_000)
 
   maybe('keys typed the instant after ⌘K land in the field and replace the last query (no frame of delay)', async (ctx) => {
     if (!browser) return ctx.skip()

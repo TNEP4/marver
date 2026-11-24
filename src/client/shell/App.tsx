@@ -34,7 +34,7 @@ import { poweredByUrl } from '../../shared/utm.ts'
 import { avatarFallback, NO_COMMENTS_HERE, useComments } from './comments-store.ts'
 import { goTo, isLatest, navigated, navigatedByHand, navNow, revealFrame, switchFor, watchHands } from './goto.ts'
 import { bootSettled, dismissShow, goNow, showTarget, useShowNotice } from './show.ts'
-import { Search, toggleSearch } from './search/Search.tsx'
+import { Search, toggleSearch, useSearch } from './search/Search.tsx'
 import { MagnifierIcon } from './icons.tsx'
 import { newerVersion } from '../../shared/deep-link.ts'
 import { useNotes } from './notes.ts'
@@ -849,6 +849,8 @@ export function App() {
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k' && !e.isComposing && !useStore.getState().play) {
         e.preventDefault(); cmd('search', { via: 'key', in: 'shell', keys: keysOf(e, 'k') }); toggleSearch(); return
       }
+      // the search lens owns the keyboard while it is open (its own Escape, Tab, arrows): no canvas shortcut fires
+      if (useSearch.getState().open) return
       // anything that edits text owns its keys: inputs, textareas, selects, contenteditable (the
       // comment composer), and an IME mid-composition
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return
