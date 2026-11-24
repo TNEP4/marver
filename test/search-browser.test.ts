@@ -50,13 +50,19 @@ beforeAll(async () => {
   writeFileSync(join(scenes, 'feed', 'filter-night.tsx'), page('Filter the feed · Night', 'White on black'))
   writeFileSync(join(scenes, 'feed', 'today.tsx'), page('Feed - today', 'What Delos picked'))
   writeFileSync(join(scenes, 'mail', 'compose.tsx'), page('Compose a reply', 'To Josh, about staging'))
+  // not on a board: a frame that makes a sound off the page and unmutes it - the preview must keep it muted
+  writeFileSync(join(scenes, 'mail', 'chime.tsx'), `export const meta = { title: 'Chime check' }
+const a = new Audio(); a.muted = false; const b = document.createElement('video'); b.muted = false
+export default () => <main><h1>Chime check</h1><p data-muted={String(a.muted && b.muted)}>chime</p></main>
+`)
   writeFileSync(join(scenes, 'feed', 'filter.note.md'), 'Keep the chips at the same weight as day')
   const boards = join(root, 'design', 'boards')
   mkdirSync(boards, { recursive: true })
   writeFileSync(join(boards, 'feed.json'), JSON.stringify({ version: 1, name: 'feed', title: 'Feed', order: 0, auto: false, nodes: [
     { key: 'a', frame: 'feed/today', x: 0, y: 0, w: 600, h: 400 }, { key: 'b', frame: 'feed/filter', x: 700, y: 0, w: 600, h: 400 }, { key: 'c', frame: 'feed/filter-night', x: 1400, y: 0, w: 600, h: 400 },
   ] }))
-  writeFileSync(join(boards, '_folders.json'), JSON.stringify({ version: 1, folders: [{ name: 'inbox-work', order: 0, title: 'Inbox work' }] }))
+  writeFileSync(join(boards, '_folders.json'), JSON.stringify({ version: 2, folders: [{ name: 'inbox-work', order: 0, title: 'Inbox work' }, { name: 'drafts', order: 1, title: 'Drafts', parent: 'inbox-work' }] }))
+  writeFileSync(join(boards, 'later.json'), JSON.stringify({ version: 1, name: 'later', title: 'Later', folder: 'drafts', order: 2, auto: false, nodes: [] }))
   writeFileSync(join(boards, 'mail.json'), JSON.stringify({ version: 1, name: 'mail', title: 'Mail', folder: 'inbox-work', order: 1, auto: false, nodes: [{ key: 'm', frame: 'mail/compose', x: 0, y: 0, w: 600, h: 400 }] }))
   server = spawn(process.execPath, [CLI, 'dev', '--root', root, '--port', String(PORT)], { cwd: root, stdio: 'pipe', env: { ...process.env, BROWSER: 'none', CI: '1' } })
   server.stdout?.on('data', (d) => { log += d }); server.stderr?.on('data', (d) => { log += d })
@@ -175,6 +181,17 @@ describe('search on a real canvas (spec 35)', () => {
     await until(`!document.querySelector('.sr-lens')`)
   }, 60_000)
 
+  maybe('a preview plays no sound: media made off the page stays muted when the frame unmutes it', async (ctx) => {
+    if (!browser) return ctx.skip()
+    await key('k', { meta: true })
+    await until(`!!document.querySelector('.sr-lens input')`)
+    await type('chime check')
+    await until(`document.querySelector('.sr-cap')?.dataset.frame === 'mail/chime' && !!document.querySelector('.sr-stage.on iframe')?.contentDocument?.querySelector('[data-muted]')`)
+    expect(await ev(`document.querySelector('.sr-stage.on iframe').contentDocument.querySelector('[data-muted]').dataset.muted`)).toBe('true')
+    await key('Escape')
+    await until(`!document.querySelector('.sr-lens')`)
+  }, 60_000)
+
   maybe('every row has its icon - an untyped board too (Nic, rc.10: "Quarry Brain, mapped" drew an empty tile)', async (ctx) => {
     if (!browser) return ctx.skip()
     await key('k', { meta: true })
@@ -192,7 +209,9 @@ describe('search on a real canvas (spec 35)', () => {
     await ev(`(() => { const i = document.querySelector('.sr-lens input'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, ''); i.dispatchEvent(new Event('input', { bubbles: true })) })()`)
     await type('inbox work')
     await until(`document.querySelector('.sr-row.sel .t')?.textContent === 'Inbox work'`)
-    await until(`[...document.querySelectorAll('.sr-folder .b .t')].map((e) => e.textContent).join() === 'Mail'`)
+    await until(`[...document.querySelectorAll('.sr-folder .b .t')].map((e) => e.textContent).sort().join() === 'Later,Mail'`)
+    // a board in a sub-folder names it (Codex, final review)
+    expect(await ev(`[...document.querySelectorAll('.sr-folder .b')].find((b) => b.querySelector('.t').textContent === 'Later').querySelector('.w').textContent`)).toBe('Drafts · 0 frames')
     await key('Escape')
     await until(`!document.querySelector('.sr-lens')`)
   }, 60_000)

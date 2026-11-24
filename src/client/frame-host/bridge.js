@@ -17,7 +17,17 @@ const isHtmlFrame = new URL(import.meta.url).searchParams.get('html') === '1'
 const PREVIEW = new URLSearchParams(location.search).get('purpose') === 'search-preview'
 if (PREVIEW) window.__mvPreview = true
 // a preview is seen, never heard (spec 35): every audio or video in it plays muted, whatever the frame asks for
-if (PREVIEW) document.addEventListener('play', (e) => { if (e.target instanceof HTMLMediaElement) e.target.muted = true }, true)
+// - on the page or not (`new Audio(src).play()`), and it stays muted: `muted` reads true and ignores a set
+if (PREVIEW) {
+  const native = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'muted')
+  const mute = (m) => { try { native?.set?.call(m, true) } catch { /* not a media element */ } }
+  if (native?.set) Object.defineProperty(HTMLMediaElement.prototype, 'muted', { configurable: true, enumerable: native.enumerable, get() { return true }, set() { mute(this) } })
+  const play = HTMLMediaElement.prototype.play
+  HTMLMediaElement.prototype.play = function () { mute(this); return play.call(this) }
+  // autoplay, and anything that starts without play(): muted as it starts
+  document.addEventListener('play', (e) => { if (e.target instanceof HTMLMediaElement) mute(e.target) }, true)
+  document.addEventListener('volumechange', (e) => { if (e.target instanceof HTMLMediaElement) mute(e.target) }, true)
+}
 // same-origin parent (the shell): a fixed target origin keeps posts (incl. picked anchor
 // bundles) from leaking if this frame is ever navigated cross-origin
 const post = (msg) => { if (window.parent !== window) window.parent.postMessage(msg, location.origin) }

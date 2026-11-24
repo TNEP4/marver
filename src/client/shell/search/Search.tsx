@@ -65,13 +65,17 @@ function BoardIcon({ doc }: { doc: SearchDoc }) {
 /** A folder's preview (spec 35): no render - its boards as a short list, each with its own icon, nested ones under
  *  their folder's name. */
 function FolderPreview({ folder }: { folder: SearchDoc }) {
-  const boards = (index?.docs ?? []).map((p) => p.doc).filter((d) => d.kind === 'board' && d.folders?.includes(folder.key))
+  const docs = (index?.docs ?? []).map((p) => p.doc)
+  const boards = docs.filter((d) => d.kind === 'board' && d.folders?.includes(folder.key))
   const shown = boards.slice(0, 10)
+  const titleOf = new Map(docs.filter((d) => d.kind === 'folder').map((d) => [d.key, d.title]))
+  // a board's own folder is the first of its chain; one inside a sub-folder names it before its frame count
+  const sub = (b: SearchDoc) => (b.folders?.[0] && b.folders[0] !== folder.key ? `${titleOf.get(b.folders[0]) ?? b.folders[0]} · ` : '')
   return (
     <div className="sr-folder">
       <div className="h"><FolderIcon size={16} />{folder.title}<span>{boards.length} board{boards.length === 1 ? '' : 's'}</span></div>
       {shown.map((b) => (
-        <div key={b.id} className="b"><BoardIcon doc={b} /><span className="t">{b.title}</span><span className="w">{b.where?.split(' · ').pop()}</span></div>
+        <div key={b.id} className="b"><BoardIcon doc={b} /><span className="t">{b.title}</span><span className="w">{sub(b)}{b.where?.split(' · ').pop()}</span></div>
       ))}
       {boards.length > shown.length && <div className="more">+{boards.length - shown.length} more</div>}
       {!boards.length && <div className="more">No boards yet</div>}

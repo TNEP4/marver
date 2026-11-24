@@ -57,7 +57,9 @@ export function Preview({ target, next, paused }: { target: PreviewTarget | null
 
   // the selection: reuse a slot that has it (a failed one once more), else load it into a slot not holding the next
   useEffect(() => {
-    if (paused || !target || target.frame.preview === false) return   // opted out (meta.preview: false): its shape only
+    if (paused || !target) return
+    // opted out (meta.preview: false), even while search is open: its shape only, and any render of it released
+    if (target.frame.preview === false) { const id = target.frame.id; setSlots((cur) => (cur.some((x) => x?.t.frame.id === id) ? cur.map((x) => (x?.t.frame.id === id ? null : x)) : cur)); return }
     const key = keyOf(target)
     if (!heapOk()) { setMemory(false); return }
     setMemory(true)
@@ -157,7 +159,7 @@ export function Preview({ target, next, paused }: { target: PreviewTarget | null
       )}
       {slots.map((sl, i) => {
         // a failed load is released: no iframe kept running for it
-        if (!sl || sl.phase === 'failed') return null
+        if (!sl || sl.phase === 'failed' || (optOut && sl.t.frame.id === shownTarget.frame.id)) return null
         const f = fit(sl.t.frame)
         const visible = sl.key === want && sl.phase === 'ready'
         return (

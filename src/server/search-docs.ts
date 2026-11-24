@@ -315,15 +315,22 @@ function briefBody(root: string, scene: string): string | undefined {
 }
 
 /** Markdown to the words a person reads: no emphasis marks, code ticks, link targets, list or quote markers. */
-export const plain = (l: string): string => l
-  .replace(/^\s*(?:#+|>|[-*+]|\d+[.)])\s+/, '')
-  .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
-  .replace(/(\*\*|__)(?=\S)(.+?)(?<=\S)\1/g, '$2')
-  .replace(/(^|[^\w*])([*_])(?=\S)(.+?)(?<=\S)\2(?![\w*])/g, '$1$3')
-  .replace(/~~(.+?)~~/g, '$1')
-  .replace(/`([^`]*)`/g, '$1')
-  .replace(/\*\*|__/g, '')
-  .trim()
+export const plain = (l: string): string => {
+  // code spans keep their contents exactly (`__dirname` stays `__dirname`): set aside, the rest cleaned, put back
+  const code: string[] = []
+  const out = l.replace(/`([^`]*)`/g, (_, c: string) => `\u0000${code.push(c) - 1}\u0000`)
+    .replace(/^\s*(?:#+|>|[-*+]|\d+[.)])\s+/, '')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    // strong: ** anywhere, __ only at word edges (foo__bar is a name, not emphasis)
+    .replace(/\*\*(?=\S)(.+?)(?<=\S)\*\*/g, '$1')
+    .replace(/(^|[^\w])__(?=\S)(.+?)(?<=\S)__(?!\w)/g, '$1$2')
+    .replace(/(^|[^\w*])([*_])(?=\S)(.+?)(?<=\S)\2(?![\w*])/g, '$1$3')
+    .replace(/~~(.+?)~~/g, '$1')
+    // a strong left open where a note's first line ends (its close is on a later line)
+    .replace(/^\*\*(?=\S)/, '')
+    .trim()
+  return out.replace(/\u0000(\d+)\u0000/g, (_, i: string) => code[Number(i)] ?? '')
+}
 const firstLine = (s: string): string => {
   const line = s.split('\n').map(plain).find(Boolean) ?? ''
   return line.length > 90 ? `${line.slice(0, 89)}…` : line

@@ -20,10 +20,13 @@ const TYPE_PATHS: Record<Exclude<BoardType, 'plain'>, ReactNode> = {
 }
 
 /** A board type's glyph; `plain` is null - the caller keeps its own board icon. */
+/** The type glyphs' line, at Phosphor regular's weight - the sidebar's other icons (16 on its 256 grid = 0.875 on
+ *  this 14 grid; Nic, 24 Nov: the cube read far heavier than the folders and cards beside it, more so at search's 18 px). */
+const TYPE_STROKE = 0.9
 export function TypeIcon({ type, size = 14 }: { type: BoardType; size?: number }) {
   if (type === 'plain') return null
   return (
-    <svg width={size} height={size} viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" strokeLinecap="round" aria-hidden data-type-icon={type}>
+    <svg width={size} height={size} viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth={TYPE_STROKE} strokeLinejoin="round" strokeLinecap="round" aria-hidden data-type-icon={type}>
       {TYPE_PATHS[type]}
     </svg>
   )
