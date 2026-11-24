@@ -9,6 +9,7 @@ import { buildIndex, fold, search, words, KIND_ORDER, type Hit, type SearchDoc, 
 import { api, scoped } from '../api.ts'
 import { UNPLACED } from '../hash.ts'
 import { useStore } from '../store.ts'
+import { cmd } from '../commands.ts'
 import { showTarget } from '../show.ts'
 import { ArchiveIcon, CardsIcon, CaretIcon, CheckIcon, CommentIcon, FolderIcon, FrameRectIcon, GridIcon, IntentGlyph, MagnifierIcon, NoteStickyIcon } from '../icons.tsx'
 import { TypeIcon } from '../board-icons.tsx'
@@ -151,7 +152,9 @@ export function Search() {
     void loadSearchDocs()
     setSel(0); frozen.current = false; setMenu(false); setExpanded([])
   }, [open])
-  useEffect(() => { writeJson(KINDS_KEY, filter); if (useSearch.getState().open) input.current?.focus() }, [filter])
+  // remembered only once chosen (nothing written for a canvas whose search was never used)
+  const firstFilter = useRef(true)
+  useEffect(() => { if (firstFilter.current) { firstFilter.current = false; return } writeJson(KINDS_KEY, filter); if (useSearch.getState().open) input.current?.focus() }, [filter])
 
   const board = useStore((s) => s.board)
   const result: SearchResult | null = useMemo(() => {
@@ -204,16 +207,17 @@ export function Search() {
   const next = nextRow?.type === 'hit' ? previewOf(nextRow.hit.doc) : null
 
   if (!open) return null
-  const activate = (r: Row, keep: boolean) => {
+  const activate = (r: Row, keep: boolean, via: 'key' | 'click') => {
     if (r.type === 'more') { setExpanded((x) => [...x, r.kind]); return }   // the selection stays put: on the first revealed row
-    if (r.type === 'archive') { setFilter((f) => ({ ...f, archive: true })); return }
+    if (r.type === 'archive') { cmd('search-kinds', { via, in: 'shell', arg: 'archive' }); setFilter((f) => ({ ...f, archive: true })); return }
+    cmd('search-go', { via, in: 'shell', arg: r.hit.doc.kind })
     go(r.hit.doc)
     if (!keep) toggleSearch(false)
   }
   // the lens's keys, wherever focus is inside it (the field, the kind pill, the menu)
   const onKey = (e: React.KeyboardEvent) => {
     if (e.nativeEvent.isComposing || e.keyCode === 229) return   // an IME's Enter confirms its word
-    if (e.key === 'Escape') { e.preventDefault(); if (menu) { setMenu(false); input.current?.focus() } else toggleSearch(false); return }
+    if (e.key === 'Escape') { e.preventDefault(); if (menu) { setMenu(false); input.current?.focus() } else { cmd('search', { via: 'key', in: 'shell', keys: 'Escape' }); toggleSearch(false) }; return }
     if (e.key === 'Tab') {
       // focus stays in the dialog: the field, the pill, the menu's rows
       e.preventDefault()
@@ -229,24 +233,24 @@ export function Search() {
       setSel((s) => (rows.length ? (Math.min(s, rows.length - 1) + (e.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length : 0))
       return
     }
-    if (e.key === 'Enter' && selRow) { e.preventDefault(); activate(selRow, e.metaKey || e.ctrlKey) }
+    if (e.key === 'Enter' && selRow) { e.preventDefault(); activate(selRow, e.metaKey || e.ctrlKey, 'key') }
   }
   const onKeyUp = (e: React.KeyboardEvent) => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { clearTimeout(repeatTimer.current); setResting(true) } }
 
   const allOn = filter.kinds.length === ALL.length
   const pill = allOn ? 'All' : filter.kinds.length === 1 ? LABEL[filter.kinds[0]] : `${filter.kinds.length} kinds`
-  const toggleKind = (k: SearchKind | 'all') => setFilter((f) => {
+  const toggleKind = (k: SearchKind | 'all') => { cmd('search-kinds', { via: 'click', in: 'shell', arg: k }); setFilter((f) => {
     if (k === 'all') return { ...f, kinds: ALL }
     // with All on, ticking a kind narrows to that kind alone
     if (f.kinds.length === ALL.length) return { ...f, kinds: [k] }
     const has = f.kinds.includes(k)
     const kinds = has ? f.kinds.filter((x) => x !== k) : [...f.kinds, k]
     return { ...f, kinds: kinds.length ? KIND_ORDER.filter((x) => kinds.includes(x)) : ALL }   // never zero kinds
-  })
+  }) }
   const hits = rows.filter((r) => r.type === 'hit').length
 
   return (
-    <div className="sr-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) toggleSearch(false) }}>
+    <div className="sr-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) { cmd('search', { via: 'click', in: 'shell' }); toggleSearch(false) } }}>
       {/* a press anywhere in the lens leaves the caret in the field: pick kinds, click a row, keep typing (Spotlight) */}
       <div ref={lens} className="sr-lens" role="dialog" aria-modal="true" aria-label="Search the canvas" onKeyDown={onKey} onKeyUp={onKeyUp}
         onMouseDown={(e) => { if (e.target !== input.current) e.preventDefault() }}>
@@ -267,7 +271,7 @@ export function Search() {
                   <button key={k} role="menuitemcheckbox" aria-checked={on} className={on ? 'on' : undefined} onClick={() => toggleKind(k)}><i className="gl">{MENU_ICON[k]}</i><span>{LABEL[k]}</span><i className={`ck${on ? ' on' : ''}`}>{on && <CheckIcon size={11} />}</i></button>
                 ) })}
                 <i className="div" />
-                <button role="menuitemcheckbox" aria-checked={filter.archive} className={filter.archive ? 'on' : undefined} onClick={() => setFilter((f) => ({ ...f, archive: !f.archive }))}><i className="gl"><ArchiveIcon size={14} /></i><span>Include archive</span><i className={`ck${filter.archive ? ' on' : ''}`}>{filter.archive && <CheckIcon size={11} />}</i></button>
+                <button role="menuitemcheckbox" aria-checked={filter.archive} className={filter.archive ? 'on' : undefined} onClick={() => { cmd('search-kinds', { via: 'click', in: 'shell', arg: 'archive' }); setFilter((f) => ({ ...f, archive: !f.archive })) }}><i className="gl"><ArchiveIcon size={14} /></i><span>Include archive</span><i className={`ck${filter.archive ? ' on' : ''}`}>{filter.archive && <CheckIcon size={11} />}</i></button>
               </div>
             )}
           </span>
@@ -275,7 +279,7 @@ export function Search() {
         <div className="sr-body">
           <div className="sr-list" id="sr-list" role="listbox" aria-label="Results">
             {rows.map((r, i) => {
-              const props = { id: `sr-row-${i}`, role: 'option', 'aria-selected': i === at, onMouseMove: () => { if (at !== i) setSel(i) }, onClick: (e: React.MouseEvent) => activate(r, e.metaKey || e.ctrlKey) }
+              const props = { id: `sr-row-${i}`, role: 'option', 'aria-selected': i === at, onMouseMove: () => { if (at !== i) setSel(i) }, onClick: (e: React.MouseEvent) => activate(r, e.metaKey || e.ctrlKey, 'click') }
               if (r.type === 'more') return <div key={rowId(r)} {...props} className={`sr-fold more${i === at ? ' sel' : ''}`}>+{r.n} more {LABEL[r.kind].toLowerCase()}</div>
               if (r.type === 'archive') return <div key={rowId(r)} {...props} className={`sr-fold${i === at ? ' sel' : ''}`}><ArchiveIcon size={14} />+{r.n} in archive</div>
               const d = r.hit.doc

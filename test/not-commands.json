@@ -306,5 +306,19 @@
     "prop": "addEventListener:keydown",
     "label": "",
     "reason": "not an input of its own: it notes that the person acted (spec 31 D3), so a marver show or app link still loading gives way; the input itself records its command where it is handled"
+  },
+  {
+    "file": "src/client/shell/search/Search.tsx",
+    "fn": "Search",
+    "prop": "onClick",
+    "label": "`Kinds: ${pill}`",
+    "reason": "only opens the kinds menu; each choice records search-kinds"
+  },
+  {
+    "file": "src/client/shell/search/Search.tsx",
+    "fn": "Search",
+    "prop": "onMouseDown",
+    "label": "Search the canvas",
+    "reason": "keeps the caret in the search field when anything in the lens is pressed; each control records its own command"
   }
 ]

@@ -1056,7 +1056,7 @@ export function App() {
             </Tip>
             <span className="name" title={CONFIG.projectName || 'Marver'}>{CANVAS_NAME}</span>
             <Tip side="bottom" label={<><b>Search</b><span>⌘K</span></>}><button className="sh-ibtn" onClick={() => { cmd('search', { via: 'click', in: 'shell' }); toggleSearch() }} tabIndex={panelOpen ? 0 : -1} aria-label="Search"><MagnifierIcon size={16} /></button></Tip>
-            <Tip side="bottom" label={<><b>Collapse panel</b><span>⌘\</span></>}><button className="sh-ibtn" onClick={() => { cmd('panel', { via: 'click', in: 'shell' }); togglePanel() }} tabIndex={panelOpen ? 0 : -1}><PanelFilledIcon size={17} /></button></Tip>
+            <Tip side="bottom" label={<><b>Collapse panel</b><span>⌘\</span></>}><button className="sh-ibtn" onClick={() => { cmd('panel', { via: 'click', in: 'shell' }); togglePanel() }} tabIndex={panelOpen ? 0 : -1} aria-label="Collapse panel"><PanelFilledIcon size={17} /></button></Tip>
           </div>
           <div className="sh-panel-scroll">
             <BoardList onMenu={cm.open} />

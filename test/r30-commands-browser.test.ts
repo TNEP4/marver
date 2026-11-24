@@ -280,7 +280,9 @@ describe('clicks', () => {
   it('the toolbar and the panel', async (ctx) => {
     if (!browser) return ctx.skip()
     const t = await open()
-    await expectDone(t, 'panel', () => click(t, '.sh-panel-top .sh-ibtn'), { via: 'click', in: 'shell' })
+    await expectDone(t, 'search', () => click(t, '.sh-panel-top .sh-ibtn[aria-label="Search"]'), { via: 'click', in: 'shell' })
+    await expectDone(t, 'search', () => ev(t, `document.querySelector('.sr-scrim').dispatchEvent(new MouseEvent('mousedown', { bubbles: true })), 1`), { via: 'click', in: 'shell' })   // a press outside the lens closes it
+    await expectDone(t, 'panel', () => click(t, '.sh-panel-top .sh-ibtn[aria-label="Collapse panel"]'), { via: 'click', in: 'shell' })
     await expectDone(t, 'panel', () => click(t, '.sh-fab'), { via: 'click' })
     await expectDone(t, 'toolbar', () => click(t, 'nav.sh-pill > .sh-pill-btn:last-of-type'), { via: 'click', in: 'pill' })
     await expectDone(t, 'toolbar', () => click(t, '.sh-pill-fab'), { via: 'click', in: 'pill' })

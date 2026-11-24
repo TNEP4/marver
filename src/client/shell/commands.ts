@@ -116,6 +116,8 @@ export const COMMANDS = {
   'history-nav': se('where', { deadlineMs: S120, ...LOAD_CODES, failed: [...LOAD_CODES.failed, 'stage-error'], steps: ['visible', 'visible-ready', 'commit-late'] }),
   panel: se('2raf'),
   search: se('2raf'),   // spec 35: the ⌘K lens opened or closed
+  'search-kinds': se('2raf'),   // the kinds searched, or the archive, changed
+  'search-go': se('2raf'),   // a result chosen: the show path records the landing itself
   toolbar: se('2raf'),
   select: se('selection'),
   'select-all': se('selection'),
