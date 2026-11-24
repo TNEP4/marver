@@ -2181,6 +2181,8 @@ textarea.jm-field:focus { border-color: transparent; box-shadow: 0 0 0 1px var(-
   opacity: 0; pointer-events: none }
 /* only the selected frame fades - in; one no longer selected is gone in the same paint (its caption has moved on) */
 .sr-stage.on { opacity: 1; transition: opacity .09s linear }
+/* the frame's edge, as on the canvas (Nic): a 1px line drawn over the frame, never a shadow */
+.sr-stage::after { content: ''; position: absolute; inset: 0; z-index: 1; border: 1px solid var(--node-brd); border-radius: inherit; pointer-events: none }
 @media (prefers-reduced-motion: reduce) { .sr-stage.on { transition-duration: .06s } }
 .sr-stage iframe { position: absolute; left: 0; top: 0; border: 0; transform-origin: 0 0; pointer-events: none }
 /* the skeleton: the frame's exact shape before it renders - glass grey with a touch of blue, no border, no shadow,
