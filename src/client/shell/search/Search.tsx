@@ -55,6 +55,11 @@ function remember(id: string) {
 const LABEL: Record<SearchKind, string> = { folder: 'Folders', board: 'Boards', scene: 'Scenes', frame: 'Frames', note: 'Notes', comment: 'Comments' }
 
 /** The kind's icon - the sidebar's own glyph. */
+/** A board's own type icon, as the sidebar draws it; an untyped board the cards (TypeIcon draws nothing for 'plain'). */
+function BoardIcon({ doc }: { doc: SearchDoc }) {
+  const type = doc.kinds?.split(' ').find((w) => /^(feature|project|deck|archive|start|surface|feedback|context)$/.test(w))
+  return type ? <TypeIcon type={type as never} /> : <CardsIcon size={18} />
+}
 export function KindIcon({ doc, size = 18 }: { doc: SearchDoc; size?: number }) {
   if (doc.kind === 'folder') return <FolderIcon size={size} />
   if (doc.kind === 'board') return <CardsIcon size={size} />
@@ -287,7 +292,7 @@ export function Search() {
                 <div key={rowId(r)}>
                   {r.group && <div className="sr-group">{r.group}</div>}
                   <div {...props} className={`sr-row${i === at ? ' sel' : ''}${d.archived ? ' dim' : ''}`}>
-                    <span className="ic">{d.kind === 'board' ? <TypeIcon type={(d.kinds?.split(' ').find((w) => /^(feature|project|deck|archive|start|surface|feedback|context)$/.test(w)) ?? 'plain') as never} /> : d.kind === 'frame' && d.kinds && /\b(spec|flow|copy|moodboard)\b/.test(d.kinds) ? <IntentGlyph intent={d.kinds.split(' ')[0]} size={17} /> : <KindIcon doc={d} />}</span>
+                    <span className="ic">{d.kind === 'board' ? <BoardIcon doc={d} /> : d.kind === 'frame' && d.kinds && /\b(spec|flow|copy|moodboard)\b/.test(d.kinds) ? <IntentGlyph intent={d.kinds.split(' ')[0]} size={17} /> : <KindIcon doc={d} />}</span>
                     <div className="tx">
                       <div className="t"><Marked hit={r.hit} q={result?.didYouMean ?? q} /></div>
                       <div className="s">{r.hit.matchedIn && r.hit.matchedIn !== 'summary' ? <><em>in {r.hit.matchedIn}</em> · </> : null}{d.where}</div>

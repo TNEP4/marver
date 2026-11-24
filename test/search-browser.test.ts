@@ -173,4 +173,21 @@ describe('search on a real canvas (spec 35)', () => {
     await key('Escape')
     await until(`!document.querySelector('.sr-lens')`)
   }, 60_000)
+
+  maybe('every row has its icon - an untyped board too (Nic, rc.10: "Quarry Brain, mapped" drew an empty tile)', async (ctx) => {
+    if (!browser) return ctx.skip()
+    await key('k', { meta: true })
+    await until(`!!document.querySelector('.sr-lens input')`)
+    // the earlier case left "Frames" picked (remembered); back to All
+    await ev(`document.querySelector('.sr-kinds').click()`); await until(`!!document.querySelector('.sr-menu')`)
+    await ev(`[...document.querySelectorAll('.sr-menu button')].find((b) => b.textContent.includes('All')).click()`)
+    await until(`document.querySelector('.sr-kinds').textContent.startsWith('All')`)
+    await key('Escape')
+    await type('mail')
+    await until(`[...document.querySelectorAll('.sr-row .t')].some((t) => t.textContent === 'Mail')`).catch(async (e) => { console.log('DBG', await ev(`JSON.stringify({ kinds: document.querySelector('.sr-kinds')?.textContent, groups: [...document.querySelectorAll('.sr-group')].map((g) => g.textContent), rows: [...document.querySelectorAll('.sr-row .t')].map((e) => e.textContent) })`)); throw e })
+    const empty = await ev(`[...document.querySelectorAll('.sr-row')].filter((r) => !r.querySelector('.ic svg')).map((r) => r.querySelector('.t')?.textContent)`)
+    expect(empty).toEqual([])
+    await key('Escape')
+    await until(`!document.querySelector('.sr-lens')`)
+  }, 60_000)
 })
