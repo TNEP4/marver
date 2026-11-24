@@ -369,6 +369,8 @@ describe('Live Jam on a slot (A1.10)', () => {
     writeFileSync(join(r, '.env'), 'MV_RESTART=1\n')
     for (let by = Date.now() + 30_000; Date.now() < by && !/server restarted/.test(d.out()); await new Promise((res) => setTimeout(res, 100)));
     expect(d.out()).toMatch(/server restarted/)
+    // "server restarted" is logged as the new server starts; under a loaded machine it may not answer yet - wait for it
+    for (let by = Date.now() + 10_000; Date.now() < by && !(await fetch(`${d.origin}/`).then((x) => x.ok, () => false)); await new Promise((res) => setTimeout(res, 100)));
     expect(await audio()).toBe(true)
     expect(record('slot-1.json')).toMatchObject({ state: 'ready', pid: d.proc.pid })
     const capture = (workspace: string) => fetch(`${d.origin}/__mv/api/jam/capture`, { method: 'POST', headers: owner, body: JSON.stringify({ workspace, record: {} }) })
