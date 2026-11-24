@@ -3,7 +3,7 @@
  * result's frame rendered live on the right (Preview.tsx). Kinds by level; every word must match (shared/search.ts);
  * Enter lands the canvas through the show path (never goTo: it can place a frame on the current board).
  */
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { create } from 'zustand'
 import { buildIndex, search, KIND_ORDER, type Hit, type SearchDoc, type SearchIndex, type SearchKind, type SearchResult } from '../../../shared/search.ts'
 import { api, scoped } from '../api.ts'
@@ -101,14 +101,18 @@ export function Search() {
   const [resting, setResting] = useState(true)   // false while an arrow is held (key repeat): the preview waits
 
   useEffect(() => { const l = () => bump((n) => n + 1); listeners.add(l); return () => { listeners.delete(l) } }, [])
+  // the field takes the keys in the same task as ⌘K - never a frame later, or the first letters typed fast land on the
+  // canvas (a backgrounded or busy window runs animation frames late); the last query, selected: typing replaces it
+  useLayoutEffect(() => {
+    if (!open) return
+    input.current?.focus(); input.current?.select()
+  }, [open])
   useEffect(() => {
     if (!open) return
     void loadSearchDocs()
     setSel(0); frozen.current = false; setMenu(false)
-    // the last query, selected: typing replaces it, ↓ walks it again (Spotlight)
-    requestAnimationFrame(() => { input.current?.focus(); input.current?.select() })
   }, [open])
-  useEffect(() => { writeJson(KINDS_KEY, filter) }, [filter])
+  useEffect(() => { writeJson(KINDS_KEY, filter); if (useSearch.getState().open) input.current?.focus() }, [filter])
 
   const board = useStore((s) => s.board)
   const result: SearchResult | null = useMemo(() => {
@@ -170,7 +174,8 @@ export function Search() {
 
   return (
     <div className="sr-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) toggleSearch(false) }}>
-      <div className="sr-lens" role="dialog" aria-label="Search">
+      {/* a press anywhere in the lens leaves the caret in the field: pick kinds, click a row, keep typing (Spotlight) */}
+      <div className="sr-lens" role="dialog" aria-label="Search" onMouseDown={(e) => { if (e.target !== input.current) e.preventDefault() }}>
         <div className="sr-input">
           <MagnifierIcon size={20} className="mag" />
           <input ref={input} value={q} placeholder="Search" spellCheck={false} autoComplete="off" data-mv-transient=""

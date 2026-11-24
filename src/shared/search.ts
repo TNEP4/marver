@@ -327,7 +327,9 @@ export function search(index: SearchIndex, query: string, opts: SearchOptions = 
     return finish(index, q, scored, [], opts, perGroup)
   }
 
-  const terms = words(q)
+  // a lone letter beside longer words says nothing ("s12/12", "sign in a"); a digit does ("feed 4")
+  const all = words(q)
+  const terms = all.length > 1 && all.some((t) => t.length > 1) ? all.filter((t) => t.length > 1 || /\d/.test(t)) : all
   if (!terms.length) return finish(index, q, [], [], opts, perGroup)
   const qFold = fold(q)
   const idQuery = ID_LIKE.test(q)
