@@ -2177,7 +2177,7 @@ textarea.jm-field:focus { border-color: transparent; box-shadow: 0 0 0 1px var(-
 .sr-fix button { border: 1px solid var(--glass-brd); border-radius: 9px; padding: 5px 10px; font: 500 12px -apple-system, system-ui, sans-serif; color: var(--glass-ink); background: none; cursor: pointer }
 /* the live preview: the frame itself; two slots, one on screen, one prefetched (rendered, invisible) */
 .sr-live { position: relative; display: grid; place-items: center; background: color-mix(in srgb, var(--ground) 60%, transparent) }
-.sr-stage { position: absolute; z-index: 1; left: 50%; top: calc(50% - 10px); transform: translate(-50%, -50%); overflow: hidden; border-radius: 8px; background: var(--node-bg);
+.sr-stage { position: absolute; z-index: 1; left: 50%; top: calc(50% - 10px); transform: translate(-50%, -50%); overflow: hidden; border-radius: 3px; background: var(--node-bg);
   opacity: 0; pointer-events: none }
 /* only the selected frame fades - in; one no longer selected is gone in the same paint (its caption has moved on) */
 .sr-stage.on { opacity: 1; transition: opacity .09s linear }
@@ -2187,7 +2187,7 @@ textarea.jm-field:focus { border-color: transparent; box-shadow: 0 0 0 1px var(-
 .sr-stage iframe { position: absolute; left: 0; top: 0; border: 0; transform-origin: 0 0; pointer-events: none }
 /* the skeleton: the frame's exact shape before it renders - glass grey with a touch of blue, no border, no shadow,
    gently pulsing; the real frame fades in over it */
-.sr-skel { position: absolute; left: 50%; top: calc(50% - 10px); transform: translate(-50%, -50%); border-radius: 8px;
+.sr-skel { position: absolute; left: 50%; top: calc(50% - 10px); transform: translate(-50%, -50%); border-radius: 3px;
   background: color-mix(in srgb, var(--accent) 7%, color-mix(in srgb, var(--glass-ink) 9%, transparent)); animation: sr-pulse 1.4s ease-in-out infinite;
   display: grid; place-items: center; color: var(--glass-ink-3); font-size: 12px; text-align: center; padding: 12px; box-sizing: border-box }
 .sr-skel.failed { animation: none }

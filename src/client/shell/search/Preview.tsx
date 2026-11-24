@@ -21,7 +21,7 @@ import { admissionIdle } from '../canvas/admission.ts'
 
 export interface PreviewTarget { frame: FrameEntry; board?: string; title: string; where: string }
 
-const STAGE = { w: 380, h: 520 }   // the pane less a margin all round (Nic: white space around the preview)
+const STAGE = { w: 432, h: 520 }   // the 460 px pane less 14 px each side (Nic: wide frames read larger), more above and below
 const COMMIT_WITHIN = 5000, FADE = 150
 
 type Phase = 'loading' | 'committed' | 'ready' | 'failed'
