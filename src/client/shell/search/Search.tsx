@@ -8,7 +8,7 @@ import { create } from 'zustand'
 import { buildIndex, fold, search, words, KIND_ORDER, type Hit, type SearchDoc, type SearchIndex, type SearchKind, type SearchResult } from '../../../shared/search.ts'
 import { api, scoped } from '../api.ts'
 import { UNPLACED } from '../hash.ts'
-import { useStore } from '../store.ts'
+import { PUBLISHED, useStore } from '../store.ts'
 import { cmd } from '../commands.ts'
 import { showTarget } from '../show.ts'
 import { ArchiveIcon, CardsIcon, CaretIcon, CheckIcon, CommentIcon, FolderIcon, FrameRectIcon, GridIcon, IntentGlyph, MagnifierIcon, NoteStickyIcon } from '../icons.tsx'
@@ -19,7 +19,11 @@ import { Preview, type PreviewTarget } from './Preview.tsx'
 // ---- open / close, from anywhere (⌘K in App.tsx, the magnifier, the Mac app) -------------------------------
 export const useSearch = create<{ open: boolean }>(() => ({ open: false }))
 let returnFocus: Element | null = null
+/** Search needs the dev server's documents: a published canvas has none (spec 35: its own search is for later), so
+ *  there it is not offered at all - no magnifier, ⌘K left to the browser, nothing fetched. */
+export const SEARCH_ON = !PUBLISHED
 export function toggleSearch(force?: boolean): void {
+  if (!SEARCH_ON) return
   const open = force ?? !useSearch.getState().open
   if (open && !useSearch.getState().open) returnFocus = document.activeElement
   useSearch.setState({ open })
@@ -37,7 +41,7 @@ export function loadSearchDocs(): Promise<void> {
   }).catch(() => {}).finally(() => { loading = null })
   return loading
 }
-if (typeof window !== 'undefined') {
+if (typeof window !== 'undefined' && SEARCH_ON) {
   const idle = (cb: () => void) => ('requestIdleCallback' in window ? (window as unknown as { requestIdleCallback: (f: () => void, o: { timeout: number }) => void }).requestIdleCallback(cb, { timeout: 4000 }) : setTimeout(cb, 1500))
   setTimeout(() => idle(() => { void loadSearchDocs() }), 3000)
 }

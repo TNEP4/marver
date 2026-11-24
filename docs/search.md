@@ -5,6 +5,9 @@ button - and a small glass search opens over the canvas. Type: folders, boards, 
 comment threads are found as you type, and **the selected one's frame is drawn live on the right**, so you can tell
 "Filter the feed" from "Filter the feed · Night" before you go. **Enter** takes the canvas there.
 
+Search runs on your canvas while `marver dev` serves it. A published canvas (`marver build`, `marver serve`) does not
+offer it yet: no magnifier, and ⌘K is left to the browser.
+
 ## What it finds
 
 Everything Marver knows about each thing, from your files:

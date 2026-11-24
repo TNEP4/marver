@@ -16,7 +16,7 @@
 import { onScreen, usable } from './inset.ts'
 import { create } from 'zustand'
 import { slideSize } from '../const.ts'
-import { CONFIG, SLIDE_INTRINSIC, geometryCause, stoppedFor, useStore, type Node } from './store.ts'
+import { CONFIG, PUBLISHED, SLIDE_INTRINSIC, geometryCause, stoppedFor, useStore, type Node } from './store.ts'
 import { UNPLACED } from './hash.ts'
 import type { Bundle, CaptureRecord, Step, View } from '../../server/jam/types.ts'
 import { forgetHeard, RATE, setWordsListener, voiceBegin, voiceDrop, voiceEnd } from './jam-voice.ts'
@@ -71,8 +71,9 @@ export function frameReady(key: string) {
 
 // ---- owned keys, mirrored into every frame ------------------------------------------------------------
 
-/** Always owned: ⌘K / Ctrl+K open search (spec 35) - forwarded by a focused frame like any owned key. */
-const ALWAYS = ['Ctrl+k', 'Meta+k']
+/** Always owned: ⌘K / Ctrl+K open search (spec 35) - forwarded by a focused frame like any owned key. Not on a
+ *  published canvas, which has no search: there the key stays the browser's. */
+const ALWAYS = PUBLISHED ? [] : ['Ctrl+k', 'Meta+k']
 let ownedNow: string[] = [...ALWAYS]
 /** The keys the shell owns right now (`[Ctrl+][Meta+][Alt+][Shift+]key`), posted to every instance on
  *  change: a frame consumes them itself (before a focused button sees ⏎) and forwards them. */

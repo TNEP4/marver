@@ -34,7 +34,7 @@ import { poweredByUrl } from '../../shared/utm.ts'
 import { avatarFallback, NO_COMMENTS_HERE, useComments } from './comments-store.ts'
 import { goTo, isLatest, navigated, navigatedByHand, navNow, revealFrame, switchFor, watchHands } from './goto.ts'
 import { bootSettled, dismissShow, goNow, showTarget, useShowNotice } from './show.ts'
-import { Search, toggleSearch, useSearch } from './search/Search.tsx'
+import { Search, SEARCH_ON, toggleSearch, useSearch } from './search/Search.tsx'
 import { MagnifierIcon } from './icons.tsx'
 import { newerVersion } from '../../shared/deep-link.ts'
 import { useNotes } from './notes.ts'
@@ -735,7 +735,7 @@ export function App() {
       if (onFrameMessage(nodeKey, data)) return
       // a key the frame forwards: the person's, so a show or link still loading gives way (spec 31 D3)
       // ⌘K forwarded by a focused frame (spec 35): search, never Jam's
-      if (data.type === 'sh:key' && (data.meta || data.ctrl) && !data.alt && !data.shift && data.key === 'k') { if (!s.play) toggleSearch(); return }
+      if (SEARCH_ON && data.type === 'sh:key' && (data.meta || data.ctrl) && !data.alt && !data.shift && data.key === 'k') { if (!s.play) toggleSearch(); return }
       if (data.type === 'sh:key') { if (typeof data.key === 'string') { navigatedByHand(); jamKey({ key: data.key, shift: !!data.shift, alt: !!data.alt, meta: !!data.meta, ctrl: !!data.ctrl }, 'frame') } return }
 
       if (data.type === 'sh:ready') {
@@ -846,7 +846,7 @@ export function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // ⌘K (spec 35): search, from anywhere but play - also from a text field (as in every app); not mid-composition
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k' && !e.isComposing && !useStore.getState().play) {
+      if (SEARCH_ON && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k' && !e.isComposing && !useStore.getState().play) {
         e.preventDefault(); cmd('search', { via: 'key', in: 'shell', keys: keysOf(e, 'k') }); toggleSearch(); return
       }
       // the search lens owns the keyboard while it is open (its own Escape, Tab, arrows): no canvas shortcut fires
@@ -1055,7 +1055,7 @@ export function App() {
               </a>
             </Tip>
             <span className="name" title={CONFIG.projectName || 'Marver'}>{CANVAS_NAME}</span>
-            <Tip side="bottom" label={<><b>Search</b><span>⌘K</span></>}><button className="sh-ibtn" onClick={() => { cmd('search', { via: 'click', in: 'shell' }); toggleSearch() }} tabIndex={panelOpen ? 0 : -1} aria-label="Search"><MagnifierIcon size={16} /></button></Tip>
+            {SEARCH_ON && <Tip side="bottom" label={<><b>Search</b><span>⌘K</span></>}><button className="sh-ibtn" onClick={() => { cmd('search', { via: 'click', in: 'shell' }); toggleSearch() }} tabIndex={panelOpen ? 0 : -1} aria-label="Search"><MagnifierIcon size={16} /></button></Tip>}
             <Tip side="bottom" label={<><b>Collapse panel</b><span>⌘\</span></>}><button className="sh-ibtn" onClick={() => { cmd('panel', { via: 'click', in: 'shell' }); togglePanel() }} tabIndex={panelOpen ? 0 : -1} aria-label="Collapse panel"><PanelFilledIcon size={17} /></button></Tip>
           </div>
           <div className="sh-panel-scroll">

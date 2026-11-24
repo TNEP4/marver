@@ -2,6 +2,14 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## Unreleased
+
+### Fixed
+
+- A published canvas no longer shows search's magnifier or opens it on ⌘K. Search needs `marver dev`, so on a
+  published canvas it opened and kept saying "Loading…"; now ⌘K is left to the browser there.
+  [Search](docs/search.md)
+
 ## 0.36.0 - 2026-11-24
 
 ### Highlights

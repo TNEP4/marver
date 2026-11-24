@@ -129,6 +129,16 @@ async function diff(a: string, b: string): Promise<{ pixels: number; gt8: number
 }
 
 describe('textures at publish time, in a real published browser', () => {
+  skippable('a published canvas offers no search (it has no dev server to search with): no magnifier, ⌘K does nothing, nothing fetched', async () => {
+    await open()
+    expect(await ev(`!!document.querySelector('button[aria-label="Search"]')`)).toBe(false)
+    await browser!.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'k', code: 'KeyK', windowsVirtualKeyCode: 75, modifiers: 4 }, tab)
+    await browser!.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'k', code: 'KeyK', windowsVirtualKeyCode: 75, modifiers: 4 }, tab)
+    await wait(400)
+    expect(await ev(`!!document.querySelector('.sr-lens')`)).toBe(false)
+    expect(await ev(`performance.getEntriesByType('resource').some((r) => r.name.includes('/api/search'))`)).toBe(false)
+  })
+
   skippable('the build compiles every published node in every theme and ships an index of what certified', async () => {
     const out = (globalThis as { __buildOut?: string }).__buildOut ?? ''
     expect(out).toMatch(/textures: 4 frame views asleep under certified glass, 0 with live glass, 2 without effects \(6 asked/)
