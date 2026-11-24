@@ -2185,10 +2185,10 @@ textarea.jm-field:focus { border-color: transparent; box-shadow: 0 0 0 1px var(-
 .sr-stage::after { content: ''; position: absolute; inset: 0; z-index: 1; border: 1px solid var(--node-brd); border-radius: inherit; pointer-events: none }
 @media (prefers-reduced-motion: reduce) { .sr-stage.on { transition-duration: .06s } }
 .sr-stage iframe { position: absolute; left: 0; top: 0; border: 0; transform-origin: 0 0; pointer-events: none }
-/* the skeleton: the frame's exact shape before it renders - glass grey with a touch of blue, no border, no shadow,
+/* the skeleton: the frame's exact shape before it renders - the selected row's grey with a breath of blue (Nic, rc.7), no border, no shadow,
    gently pulsing; the real frame fades in over it */
 .sr-skel { position: absolute; left: 50%; top: calc(50% - 10px); transform: translate(-50%, -50%); border-radius: 3px;
-  background: color-mix(in srgb, var(--accent) 7%, color-mix(in srgb, var(--glass-ink) 9%, transparent)); animation: sr-pulse 1.4s ease-in-out infinite;
+  background: color-mix(in srgb, var(--accent) 2%, color-mix(in srgb, var(--glass-ink) 7%, transparent)); animation: sr-pulse 1.4s ease-in-out infinite;
   display: grid; place-items: center; color: var(--glass-ink-3); font-size: 12px; text-align: center; padding: 12px; box-sizing: border-box }
 .sr-skel.failed { animation: none }
 @keyframes sr-pulse { 50% { opacity: .55 } }
