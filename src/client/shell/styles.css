@@ -2154,7 +2154,7 @@ textarea.jm-field:focus { border-color: transparent; box-shadow: 0 0 0 1px var(-
 .sr-list { padding: 6px 6px 6px 8px; overflow-y: auto; scrollbar-width: thin; border-right: 1px solid var(--glass-brd) }
 .sr-group { padding: 10px 10px 4px; font: 600 11px -apple-system, system-ui, sans-serif; letter-spacing: .02em; color: var(--glass-ink-3) }
 .sr-row { display: flex; align-items: center; gap: 11px; height: 50px; padding: 0 10px; border-radius: 12px; cursor: pointer }
-.sr-row.sel { background: var(--glass-accent-bg) }
+.sr-row.sel { background: color-mix(in srgb, var(--glass-ink) 6%, transparent) }   /* grey, the blue only on the icon (Nic, option F) */
 .sr-row .ic { flex: none; width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; background: var(--glass-hover); color: var(--glass-ink-3) }
 .sr-row.sel .ic { background: var(--solid); color: var(--glass-accent) }
 .sr-row .tx { flex: 1; min-width: 0 }
@@ -2167,7 +2167,7 @@ textarea.jm-field:focus { border-color: transparent; box-shadow: 0 0 0 1px var(-
 .sr-pill.ask { background: color-mix(in srgb, var(--mk-ask) 16%, transparent); color: var(--mk-ask) }
 .sr-more { padding: 8px 12px; color: var(--glass-ink-3); font-size: 12px }
 .sr-fold { display: flex; align-items: center; gap: 8px; margin: 6px 4px 2px; height: 32px; padding: 0 10px; border-radius: 10px; border: 1px dashed var(--glass-brd); color: var(--glass-ink-2); font-size: 12px; cursor: pointer }
-.sr-fold.sel { background: var(--glass-accent-bg); border-color: transparent; color: var(--glass-accent) }
+.sr-fold.sel { background: color-mix(in srgb, var(--glass-ink) 6%, transparent); border-color: transparent; color: var(--glass-ink) }
 .sr-fold.more { border: 0; height: 28px; margin: 0 4px; color: var(--glass-ink-2) }
 /* what was typed, in the title: weight, not colour (calm) */
 .sr-row .t mark { background: none; color: inherit; font-weight: 650 }
