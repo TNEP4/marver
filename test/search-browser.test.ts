@@ -56,7 +56,8 @@ beforeAll(async () => {
   writeFileSync(join(boards, 'feed.json'), JSON.stringify({ version: 1, name: 'feed', title: 'Feed', order: 0, auto: false, nodes: [
     { key: 'a', frame: 'feed/today', x: 0, y: 0, w: 600, h: 400 }, { key: 'b', frame: 'feed/filter', x: 700, y: 0, w: 600, h: 400 }, { key: 'c', frame: 'feed/filter-night', x: 1400, y: 0, w: 600, h: 400 },
   ] }))
-  writeFileSync(join(boards, 'mail.json'), JSON.stringify({ version: 1, name: 'mail', title: 'Mail', order: 1, auto: false, nodes: [{ key: 'm', frame: 'mail/compose', x: 0, y: 0, w: 600, h: 400 }] }))
+  writeFileSync(join(boards, '_folders.json'), JSON.stringify({ version: 1, folders: [{ name: 'inbox-work', order: 0, title: 'Inbox work' }] }))
+  writeFileSync(join(boards, 'mail.json'), JSON.stringify({ version: 1, name: 'mail', title: 'Mail', folder: 'inbox-work', order: 1, auto: false, nodes: [{ key: 'm', frame: 'mail/compose', x: 0, y: 0, w: 600, h: 400 }] }))
   server = spawn(process.execPath, [CLI, 'dev', '--root', root, '--port', String(PORT)], { cwd: root, stdio: 'pipe', env: { ...process.env, BROWSER: 'none', CI: '1' } })
   server.stdout?.on('data', (d) => { log += d }); server.stderr?.on('data', (d) => { log += d })
   for (let t0 = Date.now(); Date.now() - t0 < 60_000; await wait(200)) if (await fetch(`${ORIGIN}/`).then((r) => r.ok, () => false)) break
@@ -187,6 +188,11 @@ describe('search on a real canvas (spec 35)', () => {
     await until(`[...document.querySelectorAll('.sr-row .t')].some((t) => t.textContent === 'Mail')`).catch(async (e) => { console.log('DBG', await ev(`JSON.stringify({ kinds: document.querySelector('.sr-kinds')?.textContent, groups: [...document.querySelectorAll('.sr-group')].map((g) => g.textContent), rows: [...document.querySelectorAll('.sr-row .t')].map((e) => e.textContent) })`)); throw e })
     const empty = await ev(`[...document.querySelectorAll('.sr-row')].filter((r) => !r.querySelector('.ic svg')).map((r) => r.querySelector('.t')?.textContent)`)
     expect(empty).toEqual([])
+    // a folder's preview is its boards, listed (spec 35) - not an empty pane
+    await ev(`(() => { const i = document.querySelector('.sr-lens input'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, ''); i.dispatchEvent(new Event('input', { bubbles: true })) })()`)
+    await type('inbox work')
+    await until(`document.querySelector('.sr-row.sel .t')?.textContent === 'Inbox work'`)
+    await until(`[...document.querySelectorAll('.sr-folder .b .t')].map((e) => e.textContent).join() === 'Mail'`)
     await key('Escape')
     await until(`!document.querySelector('.sr-lens')`)
   }, 60_000)

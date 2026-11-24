@@ -13,6 +13,7 @@ import { NAME } from './name.ts'
 import { pkgDir } from '../server/managed.ts'
 import { writeManaged } from './managed-write.ts'
 import { checkRealDirs } from '../server/boards.ts'
+import { archiveByNameOnly } from '../server/search-docs.ts'
 import { readStatusWord } from '../shared/board-types.ts'
 import {
   CITATION, CITED_FILE, EVIDENCE_COLUMN, GENERATED, LEVEL, availableLevels, capabilityTable, frontMatter, globRe, hasGlob, isRecordTable, levelsIn, lf,
@@ -161,6 +162,9 @@ export function contextCheck(root: string, opts: CheckOpts = {}): CheckResult {
     }
     return out
   }
+  // search (spec 35) reads these folders as archive by their name alone: say so, with the explicit fix
+  const byName = archiveByNameOnly(root)
+  if (byName.length) note('archive', `${byName.length} folder${byName.length === 1 ? '' : 's'} read as archive by name only (${byName.slice(0, 5).join(', ')}) - add "type": "archive" to make it explicit`)
   const docs = walk(CONTEXT).filter((p) => p.endsWith('.md')).map((path) => {
     const text = read(path)
     return { path, text, ...frontMatter(text) }

@@ -167,6 +167,18 @@ export function frameWords(root: string, file: string): string | undefined {
 
 export interface BuiltDocs { docs: SearchDoc[]; manifest: Manifest }
 
+/** Folders read as archive by their name alone - nothing in their chain declares a type (spec 35: `marver context
+ *  check` names them, with the fix). The outermost only: an archive-named folder inside another is covered by it. */
+export function archiveByNameOnly(root: string): string[] {
+  const reg = readRegistry(join(root, 'design', 'boards'))
+  if (reg.state !== 'ok') return []
+  const by = new Map(reg.folders.map((f) => [f.name, f]))
+  const chain = (n?: string) => { const out: typeof reg.folders = []; for (let f = n ? by.get(n) : undefined; f && out.length < 8; f = f.parent ? by.get(f.parent) : undefined) out.push(f); return out }
+  const named = (f: { name: string; title?: string }) => ARCHIVE_NAME.test(f.name) || ARCHIVE_NAME.test(f.title ?? '')
+  const flagged = (n: string) => { const c = chain(n); return !c.some((f) => f.type) && c.some(named) }
+  return reg.folders.filter((f) => named(f) && flagged(f.name) && !(f.parent && flagged(f.parent))).map((f) => f.name)
+}
+
 /** Every search document of the canvas at `root`. */
 export function buildSearchDocs(root: string, manifest: Manifest = scanFrames(root)): BuiltDocs {
   const docs: SearchDoc[] = []

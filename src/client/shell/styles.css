@@ -2191,6 +2191,17 @@ textarea.jm-field:focus { border-color: transparent; box-shadow: 0 0 0 1px var(-
   background: color-mix(in srgb, var(--accent) 2%, color-mix(in srgb, var(--glass-ink) 7%, transparent)); animation: sr-pulse 1.4s ease-in-out infinite;
   display: grid; place-items: center; color: var(--glass-ink-3); font-size: 12px; text-align: center; padding: 12px; box-sizing: border-box }
 .sr-skel.failed { animation: none }
+/* a folder's preview: its boards, as a short list (spec 35) */
+.sr-folder { align-self: start; justify-self: stretch; margin: 24px 22px; display: flex; flex-direction: column; gap: 2px }
+.sr-folder .h { display: flex; align-items: center; gap: 8px; padding: 0 8px 10px; font: 600 14px -apple-system, system-ui, sans-serif; color: var(--glass-ink) }
+.sr-folder .h svg { color: var(--glass-ink-3) }
+.sr-folder .h span { margin-left: auto; font-weight: 400; font-size: 12px; color: var(--glass-ink-3) }
+.sr-folder .b { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 8px; color: var(--glass-ink-3) }
+.sr-folder .b svg { flex: none; width: 15px; height: 15px }
+.sr-folder .b .t { flex: 1; min-width: 0; color: var(--glass-ink); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.sr-folder .b .w { flex: none; font-size: 12px }
+.sr-folder .more { padding: 6px 8px; font-size: 12px; color: var(--glass-ink-3) }
+.sr-skel .sr-err { display: block; margin-top: 6px; font: 400 11px ui-monospace, SFMono-Regular, monospace; color: var(--glass-ink-3); overflow-wrap: anywhere }
 @keyframes sr-pulse { 50% { opacity: .55 } }
 @media (prefers-reduced-motion: reduce) { .sr-skel { animation: none } }
 .sr-cap { position: absolute; left: 18px; right: 18px; bottom: 10px; display: flex; justify-content: space-between; gap: 12px; font-size: 11.5px; color: var(--glass-ink-3); white-space: nowrap; overflow: hidden }

@@ -16,6 +16,11 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
   iPad sign-in" in one call instead of grepping frame files, notes, boards and comment logs.
   The guide teaches it - run `npx marver init` to update it.
 
+### Added
+
+- `export const meta = { preview: false }` keeps a frame out of search's live preview (it shows the frame's shape).
+- `marver context check` lists the folders search reads as archive by their name alone, with the fix.
+
 ## 0.35.1 - 2026-11-23
 
 ### Highlights

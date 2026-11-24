@@ -13,6 +13,7 @@ import { cmd } from '../commands.ts'
 import { showTarget } from '../show.ts'
 import { ArchiveIcon, CardsIcon, CaretIcon, CheckIcon, CommentIcon, FolderIcon, FrameRectIcon, GridIcon, IntentGlyph, MagnifierIcon, NoteStickyIcon } from '../icons.tsx'
 import { TypeIcon } from '../board-icons.tsx'
+import { BOARD_TYPES, type BoardType } from '../../../shared/board-types.ts'
 import { Preview, type PreviewTarget } from './Preview.tsx'
 
 // ---- open / close, from anywhere (⌘K in App.tsx, the magnifier, the Mac app) -------------------------------
@@ -57,8 +58,25 @@ const LABEL: Record<SearchKind, string> = { folder: 'Folders', board: 'Boards', 
 /** The kind's icon - the sidebar's own glyph. */
 /** A board's own type icon, as the sidebar draws it; an untyped board the cards (TypeIcon draws nothing for 'plain'). */
 function BoardIcon({ doc }: { doc: SearchDoc }) {
-  const type = doc.kinds?.split(' ').find((w) => /^(feature|project|deck|archive|start|surface|feedback|context)$/.test(w))
-  return type ? <TypeIcon type={type as never} /> : <CardsIcon size={18} />
+  const type = doc.kinds?.split(' ').find((w) => (BOARD_TYPES as readonly string[]).includes(w))
+  // at the rows' 18 px, as every other kind's icon (the sidebar draws its 14 px rows at 14) - Nic
+  return type ? <TypeIcon type={type as BoardType} size={18} /> : <CardsIcon size={18} />
+}
+/** A folder's preview (spec 35): no render - its boards as a short list, each with its own icon, nested ones under
+ *  their folder's name. */
+function FolderPreview({ folder }: { folder: SearchDoc }) {
+  const boards = (index?.docs ?? []).map((p) => p.doc).filter((d) => d.kind === 'board' && d.folders?.includes(folder.key))
+  const shown = boards.slice(0, 10)
+  return (
+    <div className="sr-folder">
+      <div className="h"><FolderIcon size={16} />{folder.title}<span>{boards.length} board{boards.length === 1 ? '' : 's'}</span></div>
+      {shown.map((b) => (
+        <div key={b.id} className="b"><BoardIcon doc={b} /><span className="t">{b.title}</span><span className="w">{b.where?.split(' · ').pop()}</span></div>
+      ))}
+      {boards.length > shown.length && <div className="more">+{boards.length - shown.length} more</div>}
+      {!boards.length && <div className="more">No boards yet</div>}
+    </div>
+  )
 }
 export function KindIcon({ doc, size = 18 }: { doc: SearchDoc; size?: number }) {
   if (doc.kind === 'folder') return <FolderIcon size={size} />
@@ -311,7 +329,9 @@ export function Search() {
             )}
             {result?.didYouMean && <div className="sr-more">Showing results for “{result.didYouMean}”</div>}
           </div>
-          {!small && <div className="sr-live"><Preview target={target} next={next} paused={!resting} /></div>}
+          {!small && <div className="sr-live">{selRow?.type === 'hit' && selRow.hit.doc.kind === 'folder'
+            ? <FolderPreview folder={selRow.hit.doc} />
+            : <Preview target={target} next={next} paused={!resting} />}</div>}
         </div>
       </div>
     </div>

@@ -40,15 +40,21 @@ Comments - and whether to **Include archive**. The choice is remembered per canv
 
 Archived things (a board whose status is `archived`, a board or folder typed `archive`, or - when nothing says
 otherwise - a folder named like `archive`, `old` or `arch-...`) sit behind a "+9 in archive" row unless you include
-the archive; when only archived things match, they are shown. To mark a folder as an archive for good, give it
-`"type": "archive"` in `design/boards/_folders.json`.
+the archive - an archived thing whose exact id or name you type still comes up. To mark a folder as an archive for
+good, give it `"type": "archive"` in `design/boards/_folders.json`; `npx marver context check` lists the folders read
+as archive by their name alone.
 
 ## The preview
 
 The frame on the right is the frame itself - the same page the canvas draws, scaled down - not a picture, so it is
 always current. Its shape shows at once, then the frame; the next result's frame is prepared while you look, so moving
-down is instant. Frames in the preview cannot be clicked or focused and do not count as looked at. Project code can
-tell it is in a preview with `window.__mvPreview` (skip analytics or polling there).
+down is instant. Frames in the preview cannot be clicked or focused, play no sound, and do not count as looked at. A
+folder shows its boards instead. Project code can tell it is in a preview with `window.__mvPreview` (skip analytics or
+polling there), and a frame that should never render there says so in its meta:
+
+```tsx
+export const meta = { title: 'Live call', preview: false }   // search shows its shape: "No live preview for this frame"
+```
 
 ## For agents: `marver search`
 

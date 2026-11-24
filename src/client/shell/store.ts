@@ -71,7 +71,7 @@ export function hydrateBoardPolicy(boards: Record<string, { type?: string; open?
   for (const [k, v] of Object.entries(boards)) if (!BOARD_POLICY[k]) BOARD_POLICY[k] = v
 }
 
-export interface FrameEntry { id: string; file: string; kind: 'tsx' | 'html'; scene: string; title?: string; viewport?: string; theme?: string; variantGroup?: string; variant?: string; intent?: string; contentWidth?: number; slide?: boolean; note?: string }
+export interface FrameEntry { id: string; file: string; kind: 'tsx' | 'html'; scene: string; title?: string; viewport?: string; theme?: string; variantGroup?: string; variant?: string; intent?: string; contentWidth?: number; slide?: boolean; preview?: false; note?: string }
 export interface Manifest { frames: FrameEntry[]; scenes: { name: string; frames: number; title?: string; description?: string; note?: string }[] }
 export interface Node {
   key: string; frame: string; x: number; y: number; w: number; h: number

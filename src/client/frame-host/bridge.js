@@ -16,6 +16,8 @@ const isHtmlFrame = new URL(import.meta.url).searchParams.get('html') === '1'
 // document, and `window.__mvPreview` lets project code skip analytics, mutations and polling (`usePreview()`).
 const PREVIEW = new URLSearchParams(location.search).get('purpose') === 'search-preview'
 if (PREVIEW) window.__mvPreview = true
+// a preview is seen, never heard (spec 35): every audio or video in it plays muted, whatever the frame asks for
+if (PREVIEW) document.addEventListener('play', (e) => { if (e.target instanceof HTMLMediaElement) e.target.muted = true }, true)
 // same-origin parent (the shell): a fixed target origin keeps posts (incl. picked anchor
 // bundles) from leaking if this frame is ever navigated cross-origin
 const post = (msg) => { if (window.parent !== window) window.parent.postMessage(msg, location.origin) }

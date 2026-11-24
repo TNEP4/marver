@@ -2,7 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildSearchDocs, frameWords, plain } from '../src/server/search-docs.ts'
+import { archiveByNameOnly, buildSearchDocs, frameWords, plain } from '../src/server/search-docs.ts'
+import { scanFrames } from '../src/server/manifest.ts'
 import { buildIndex, search } from '../src/shared/search.ts'
 
 /** Search (spec 35), the document builder on a small canvas: every kind, archive rules, comments replayed, briefs. */
@@ -85,5 +86,26 @@ describe('titles read as plain text (Nic, 24 Nov: "**Area A on iPhone**" showed 
       ['snake_case_name stays', 'snake_case_name stays'], ['2 * 3 = 6', '2 * 3 = 6'], ['a * b * c', 'a * b * c'],
     ]
     for (const [md, text] of cases) expect(plain(md)).toBe(text)
+  })
+})
+
+describe('the spec\'s last pieces (final check, 24 Nov)', () => {
+  it('names the folders read as archive by their name alone, outermost only, never a typed one', () => {
+    expect(archiveByNameOnly(root)).toEqual(['arch-glass'])
+  })
+  it('a frame opts out of the live preview with meta.preview: false - both meta readers', () => {
+    const r = mkdtempSync(join(tmpdir(), 'mv-search-optout-'))
+    try {
+      mkdirSync(join(r, 'design/scenes/s'), { recursive: true })
+      writeFileSync(join(r, 'package.json'), '{"name":"fixture","private":true}')
+      writeFileSync(join(r, 'design/scenes/s/a.tsx'), `export const meta = { title: 'A', preview: false }\nexport default () => <main>a</main>`)
+      // a meta the strict tokenizer cannot follow (a computed value) falls back to the lenient reader
+      writeFileSync(join(r, 'design/scenes/s/b.tsx'), `const t = 1\nexport const meta = { title: 'B', preview: false, n: t + 1 }\nexport default () => <main>b</main>`)
+      writeFileSync(join(r, 'design/scenes/s/c.tsx'), `export const meta = { title: 'C', preview: true }\nexport default () => <main>c</main>`)
+      const by = new Map(scanFrames(r).frames.map((f) => [f.id, f]))
+      expect(by.get('s/a')?.preview).toBe(false)
+      expect(by.get('s/b')?.preview).toBe(false)
+      expect(by.get('s/c')?.preview).toBeUndefined()
+    } finally { rmSync(r, { recursive: true, force: true }) }
   })
 })

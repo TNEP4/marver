@@ -9,7 +9,7 @@ import type { Phase, Status } from '../shared/status.ts'
 import type { Audience } from '../shared/context.ts'
 import { hash } from './hash.ts'
 
-export interface FrameMeta { title?: string; viewport?: string; theme?: string; of?: string; variant?: string; intent?: string; slide?: boolean; description?: string }
+export interface FrameMeta { title?: string; viewport?: string; theme?: string; of?: string; variant?: string; intent?: string; slide?: boolean; preview?: boolean; description?: string }
 export interface FrameEntry {
   id: string
   file: string
@@ -22,6 +22,9 @@ export interface FrameEntry {
    *  else 1280×720), the slideshow badge, and a place in the board's deck -
    *  slides mode plays it scaled to the screen. Literal-only. */
   slide?: boolean
+  /** `meta.preview: false` (spec 35): the frame opts out of search's live preview - search shows its shape and says so.
+   *  Present only when false. Literal-only. */
+  preview?: false
   /** Variant group id: inferred from 2+ letter-prefixed siblings in one
    *  directory, or declared via meta.of. Present only on grouped frames. */
   variantGroup?: string
@@ -170,8 +173,9 @@ function lenientMeta(src: string): FrameMeta {
     const r = new RegExp(`(?:^|[{,])\\s*${key}\\s*:\\s*(?:'((?:[^'\\\\\\n]|\\\\.)*)'|"((?:[^"\\\\\\n]|\\\\.)*)"|\`((?:[^\`\\\\\\n]|\\\\.)*)\`)\\s*(?=[,}\\n]|$)`).exec(body)
     if (r && !(r[3] !== undefined && /(^|[^\\])(\\\\)*\$\{/.test(r[3]))) strings.set(key, unescapeJs(r[1] ?? r[2] ?? r[3]))
   }
-  const b = /(?:^|[{,])\s*slide\s*:\s*(true|false)\b/.exec(body)
-  return metaOf(strings, new Map(b ? [['slide', b[1] === 'true']] : []))
+  const bools = new Map<string, boolean>()
+  for (const key of ['slide', 'preview']) { const b = new RegExp(`(?:^|[{,])\\s*${key}\\s*:\\s*(true|false)\\b`).exec(body); if (b) bools.set(key, b[1] === 'true') }
+  return metaOf(strings, bools)
 }
 
 /** The meta from its literal properties. */
@@ -185,6 +189,7 @@ function metaOf(strings: Map<string, string>, bools: Map<string, boolean>): Fram
   const variant = pick('variant'); if (variant) out.variant = variant
   const intent = pick('intent'); if (intent) out.intent = intent
   const slide = bools.get('slide'); if (slide !== undefined) out.slide = slide
+  const preview = bools.get('preview'); if (preview !== undefined) out.preview = preview
   const description = readDescription(pick('description')); if (description) out.description = description
   return out
 }
@@ -491,6 +496,7 @@ export function scanFrames(root: string, project?: ProjectInfo): Manifest {
         if (meta.of) entry.variantGroup = meta.of         // declared membership
         if (meta.variant) entry.variant = meta.variant
         if (meta.slide) entry.slide = true
+        if (meta.preview === false) entry.preview = false
         if (meta.description) entry.description = meta.description
         const content = contentScan(src)
         // declared meta.intent DECLARES a content frame even when the primitives

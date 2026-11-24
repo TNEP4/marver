@@ -25,7 +25,7 @@ const STAGE = { w: 432, h: 592 }   // the 460 px pane less 14 px each side; its 
 const COMMIT_WITHIN = 5000, FADE = 150
 
 type Phase = 'loading' | 'committed' | 'ready' | 'failed'
-interface Slot { key: string; gen: number; t: PreviewTarget; phase: Phase; at: number; readyAt?: number }
+interface Slot { key: string; gen: number; t: PreviewTarget; phase: Phase; at: number; readyAt?: number; error?: string }
 
 const themeOf = (f: FrameEntry) => f.theme ?? useStore.getState().viewTheme
 /** The full rendering identity: the frame's URL carries its id, revision and theme; the board it renders on. */
@@ -57,7 +57,7 @@ export function Preview({ target, next, paused }: { target: PreviewTarget | null
 
   // the selection: reuse a slot that has it (a failed one once more), else load it into a slot not holding the next
   useEffect(() => {
-    if (paused || !target) return
+    if (paused || !target || target.frame.preview === false) return   // opted out (meta.preview: false): its shape only
     const key = keyOf(target)
     if (!heapOk()) { setMemory(false); return }
     setMemory(true)
@@ -77,7 +77,7 @@ export function Preview({ target, next, paused }: { target: PreviewTarget | null
   // prefetch the next result into the other slot - when the selected one is ready, the canvas loads nothing and memory
   // allows; checked again every half second until it can (admission clears later)
   useEffect(() => {
-    if (paused || !next || !want) return
+    if (paused || !next || !want || next.frame.preview === false) return
     const key = keyOf(next)
     if (key === want) return
     const tryNow = () => {
@@ -118,7 +118,9 @@ export function Preview({ target, next, paused }: { target: PreviewTarget | null
       if (!s) return
       const gen = s.gen, win = e.source
       const still = (cur: (Slot | null)[]) => cur[i]?.gen === gen && frames.current[i]?.contentWindow === win
-      if (type === 'sh:error') { setSlots((cur) => (still(cur) && cur[i]!.phase !== 'ready' ? cur.map((x, k) => (k === i ? { ...x!, phase: 'failed' as const } : x)) : cur)); return }
+      // the error's first line, shown on the skeleton (spec 35: "its card and the error's first line")
+      const error = typeof e.data?.message === 'string' ? e.data.message.split('\n')[0].slice(0, 160) : undefined
+      if (type === 'sh:error') { setSlots((cur) => (still(cur) && cur[i]!.phase !== 'ready' ? cur.map((x, k) => (k === i ? { ...x!, phase: 'failed' as const, error } : x)) : cur)); return }
       if (s.phase !== 'loading') return
       setSlots((cur) => (still(cur) ? cur.map((x, k) => (k === i ? { ...x!, phase: 'committed' as const } : x)) : cur))
       const doc = frames.current[i]?.contentDocument
@@ -141,13 +143,16 @@ export function Preview({ target, next, paused }: { target: PreviewTarget | null
 
   if (!shownTarget) return null
   const ready = shownSlot?.phase === 'ready'
+  const optOut = shownTarget.frame.preview === false
   const failed = shownSlot?.phase === 'failed'
   const { w, h, s } = fit(shownTarget.frame)
   return (
     <>
       {(!ready || fading) && (
-        <div className={`sr-skel${failed || !memory ? ' failed' : ''}`} style={{ width: Math.round(w * s), height: Math.round(h * s) }}>
-          {failed ? 'This frame could not render here' : !memory ? 'Preview paused - memory is short' : null}
+        <div className={`sr-skel${failed || optOut || !memory ? ' failed' : ''}`} style={{ width: Math.round(w * s), height: Math.round(h * s) }}>
+          {optOut ? 'No live preview for this frame'
+            : failed ? <span>This frame could not render here{shownSlot?.error && <small className="sr-err">{shownSlot.error}</small>}</span>
+            : !memory ? 'Preview paused - memory is short' : null}
         </div>
       )}
       {slots.map((sl, i) => {
