@@ -24,7 +24,18 @@ if (PREVIEW) {
   if (native?.set) Object.defineProperty(HTMLMediaElement.prototype, 'muted', { configurable: true, enumerable: native.enumerable, get() { return true }, set() { mute(this) } })
   const play = HTMLMediaElement.prototype.play
   HTMLMediaElement.prototype.play = function () { mute(this); return play.call(this) }
-  // autoplay, and anything that starts without play(): muted as it starts
+  // muted from birth, however it is made - autoplay needs no play() call (new Audio(src) with autoplay set)
+  const NativeAudio = window.Audio
+  if (NativeAudio) {
+    const Audio = function (...args) { const el = new NativeAudio(...args); mute(el); return el }
+    Audio.prototype = NativeAudio.prototype
+    window.Audio = Audio
+  }
+  const create = Document.prototype.createElement
+  Document.prototype.createElement = function (...args) { const el = create.apply(this, args); if (el instanceof HTMLMediaElement) mute(el); return el }
+  const auto = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'autoplay')
+  if (auto?.set) Object.defineProperty(HTMLMediaElement.prototype, 'autoplay', { ...auto, set(v) { mute(this); auto.set.call(this, v) } })
+  // autoplay on the page, and anything that starts without play(): muted as it starts
   document.addEventListener('play', (e) => { if (e.target instanceof HTMLMediaElement) mute(e.target) }, true)
   document.addEventListener('volumechange', (e) => { if (e.target instanceof HTMLMediaElement) mute(e.target) }, true)
 }

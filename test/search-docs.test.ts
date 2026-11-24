@@ -84,7 +84,7 @@ describe('titles read as plain text (Nic, 24 Nov: "**Area A on iPhone**" showed 
       ['- see [the doc](http://x) and `code`', 'see the doc and code'],
       ['## Title', 'Title'], ['*em* text', 'em text'],
       ['snake_case_name stays', 'snake_case_name stays'], ['2 * 3 = 6', '2 * 3 = 6'], ['a * b * c', 'a * b * c'],
-      ['foo__bar and a__b__c', 'foo__bar and a__b__c'], ['run `__dirname` here', 'run __dirname here'], ['__strong__ word', 'strong word'],
+      ['foo__bar and a__b__c', 'foo__bar and a__b__c'], ['run `__dirname` here', 'run __dirname here'], ['``__dirname__``', '__dirname__'], ['`` **bold** `` stays', '**bold** stays'], ['__strong__ word', 'strong word'],
       ['**Open strong to the next line', 'Open strong to the next line'],
     ]
     for (const [md, text] of cases) expect(plain(md)).toBe(text)

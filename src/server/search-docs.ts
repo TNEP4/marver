@@ -318,7 +318,8 @@ function briefBody(root: string, scene: string): string | undefined {
 export const plain = (l: string): string => {
   // code spans keep their contents exactly (`__dirname` stays `__dirname`): set aside, the rest cleaned, put back
   const code: string[] = []
-  const out = l.replace(/`([^`]*)`/g, (_, c: string) => `\u0000${code.push(c) - 1}\u0000`)
+  // a span opens and closes with the same run of backticks (``a `b` c``); one space inside each end is padding
+  const out = l.replace(/(`+)(?!`)([\s\S]*?[^`])\1(?!`)/g, (_, _run: string, c: string) => `\u0000${code.push(/^ .* $/.test(c) ? c.slice(1, -1) : c) - 1}\u0000`)
     .replace(/^\s*(?:#+|>|[-*+]|\d+[.)])\s+/, '')
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
     // strong: ** anywhere, __ only at word edges (foo__bar is a name, not emphasis)

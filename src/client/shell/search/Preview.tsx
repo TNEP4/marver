@@ -51,6 +51,13 @@ export function Preview({ target, next, paused }: { target: PreviewTarget | null
   const [held, setHeld] = useState<PreviewTarget | null>(null)   // what stays drawn while paused
   const [memory, setMemory] = useState(true)
 
+  // frames that opt out (meta.preview: false), read from the live manifest: no slot ever renders one, selected or not
+  const optedOut = useStore((st) => st.manifest?.frames.filter((f) => f.preview === false).map((f) => f.id).join('\n') ?? '')
+  const isOut = (id: string) => !!optedOut && optedOut.split('\n').includes(id)
+  useEffect(() => {
+    if (!optedOut) return
+    setSlots((cur) => (cur.some((x) => x && isOut(x.t.frame.id)) ? cur.map((x) => (x && isOut(x.t.frame.id) ? null : x)) : cur))
+  }, [optedOut])   // eslint-disable-line react-hooks/exhaustive-deps
   const shownTarget = paused ? held : target
   const want = shownTarget ? keyOf(shownTarget) : null
   useEffect(() => { if (!paused) setHeld(target) }, [paused, target ? keyOf(target) : null])   // eslint-disable-line react-hooks/exhaustive-deps
@@ -58,8 +65,7 @@ export function Preview({ target, next, paused }: { target: PreviewTarget | null
   // the selection: reuse a slot that has it (a failed one once more), else load it into a slot not holding the next
   useEffect(() => {
     if (paused || !target) return
-    // opted out (meta.preview: false), even while search is open: its shape only, and any render of it released
-    if (target.frame.preview === false) { const id = target.frame.id; setSlots((cur) => (cur.some((x) => x?.t.frame.id === id) ? cur.map((x) => (x?.t.frame.id === id ? null : x)) : cur)); return }
+    if (target.frame.preview === false || isOut(target.frame.id)) return   // opted out: its shape only (released above)
     const key = keyOf(target)
     if (!heapOk()) { setMemory(false); return }
     setMemory(true)
@@ -79,7 +85,7 @@ export function Preview({ target, next, paused }: { target: PreviewTarget | null
   // prefetch the next result into the other slot - when the selected one is ready, the canvas loads nothing and memory
   // allows; checked again every half second until it can (admission clears later)
   useEffect(() => {
-    if (paused || !next || !want || next.frame.preview === false) return
+    if (paused || !next || !want || next.frame.preview === false || isOut(next.frame.id)) return
     const key = keyOf(next)
     if (key === want) return
     const tryNow = () => {
@@ -145,7 +151,7 @@ export function Preview({ target, next, paused }: { target: PreviewTarget | null
 
   if (!shownTarget) return null
   const ready = shownSlot?.phase === 'ready'
-  const optOut = shownTarget.frame.preview === false
+  const optOut = shownTarget.frame.preview === false || isOut(shownTarget.frame.id)
   const failed = shownSlot?.phase === 'failed'
   const { w, h, s } = fit(shownTarget.frame)
   return (
@@ -159,7 +165,7 @@ export function Preview({ target, next, paused }: { target: PreviewTarget | null
       )}
       {slots.map((sl, i) => {
         // a failed load is released: no iframe kept running for it
-        if (!sl || sl.phase === 'failed' || (optOut && sl.t.frame.id === shownTarget.frame.id)) return null
+        if (!sl || sl.phase === 'failed' || isOut(sl.t.frame.id)) return null
         const f = fit(sl.t.frame)
         const visible = sl.key === want && sl.phase === 'ready'
         return (
