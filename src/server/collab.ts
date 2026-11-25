@@ -443,6 +443,8 @@ export function collabHandler(dataDir: string, distDir: string) {
   // and so do sessionless requests: CSRF defends the SESSION cookie, and with no
   // mv_s there is nothing to ride - those requests fall through to a clean 401,
   // which is what tells the client to open the sign-in dialog.
+  /** How a signed-out viewer gets back in - told with every 401, so the shell offers the door this canvas has. */
+  const signInMode = process.env.MARVER_ID_ISSUER ? 'marver-id' : 'password'
   const csrfOk = (req: IncomingMessage): boolean =>
     !!/^Bearer /.test(String(req.headers.authorization ?? '')) ||
     !cookie(req, 'mv_s') ||
@@ -779,7 +781,7 @@ export function collabHandler(dataDir: string, distDir: string) {
         // the canvas's own client calling home: ordinary session, no CORS -
         // and a cookie session pays the same double-submit toll as every
         // other mutation (this route sits above the shared POST gate)
-        if (!csrfOk(req)) return json(res, 403, { error: 'missing or stale request token - reload the page' }), true
+        if (!csrfOk(req)) return json(res, 403, { error: 'missing or stale request token - reload the page', code: 'csrf' }), true
         const u = currentUser(req)
         if (!u) return json(res, 401, { error: 'sign in first' }), true
         const b = await readBody(req)
@@ -802,12 +804,19 @@ export function collabHandler(dataDir: string, distDir: string) {
           // their effective per-board roles, so the client can render locked
           // capabilities honestly ("commenting is not available for you yet")
           const u = currentUser(req)
-          if (!u) return json(res, 401, { error: 'signed out' }), true
+          if (!u) return json(res, 401, { error: 'signed out', signIn: signInMode }), true
+          // a session without its double-submit half could never write again, and a reload did not mend it: /me does
+          if (cookie(req, 'mv_s') && !cookie(req, 'mv_c')) {
+            const prev = res.getHeader('set-cookie')
+            res.setHeader('set-cookie', [...(Array.isArray(prev) ? prev : prev ? [String(prev)] : []),
+              `mv_c=${randomBytes(16).toString('base64url')}; Path=/; Max-Age=${MONTH}; SameSite=Lax${secureSuffix(req)}`])
+          }
           const share = shareState(dataDir)
           const boards = share
             ? resolveAccess({ email: u.email, userRole: u.role, store: share, ceilings: ceilingsFromRights(rights) }).boards
             : Object.fromEntries(Object.entries(rights).map(([b, r]) => [b, r === 'comment' ? 'comment' : 'view']))
-          return json(res, 200, { user: publicUser(u), role: u.role, id: opaqueId(dataDir, u.email), boards }), true
+          // `now`: the server's clock - the shell stamps its events with it, so a reviewer's fast clock is not refused (spec 36 §3)
+          return json(res, 200, { user: publicUser(u), role: u.role, id: opaqueId(dataDir, u.email), boards, now: Date.now(), signIn: signInMode }), true
         }
         if (path === 'boards') {
           const name = ownerName(dataDir)
@@ -867,7 +876,7 @@ export function collabHandler(dataDir: string, distDir: string) {
       // none to ride (the scrypt cost + rate limit carry the abuse load)
       const preAuth = path === 'auth/claim' || path === 'auth/signin'
       if (!preAuth && !csrfOk(req))
-        return json(res, 403, { error: 'missing or stale request token - reload the page' }), true
+        return json(res, 403, { error: 'missing or stale request token - reload the page', code: 'csrf' }), true
 
       if (path === 'auth/claim') {
         if (limited(`ip:${ip}`)) return json(res, 429, { error: 'too many attempts - wait a minute' }), true
@@ -877,7 +886,7 @@ export function collabHandler(dataDir: string, distDir: string) {
           avatar: validAvatar(b.avatar) ? b.avatar : undefined,
         }, ceilings)
         setSession(req, res, session)
-        return json(res, 200, { user: publicUser(user) }), true
+        return json(res, 200, { user: publicUser(user), id: opaqueId(dataDir, user.email) }), true
       }
       if (path === 'auth/signin') {
         const b = await readBody(req)
@@ -886,7 +895,8 @@ export function collabHandler(dataDir: string, distDir: string) {
         const hit = signIn(dataDir, email, String(b.password ?? ''), ceilings)
         if (!hit) return json(res, 401, { error: 'wrong email or password' }), true
         setSession(req, res, hit.session)
-        return json(res, 200, { user: publicUser(hit.user) }), true
+        // with the viewer's own opaque id, as /me gives it: without it a dialog sign-in left "mine" unknown (spec 36)
+        return json(res, 200, { user: publicUser(hit.user), id: opaqueId(dataDir, hit.user.email) }), true
       }
       if (path === 'auth/signout') {
         const tok = cookie(req, 'mv_s')
@@ -946,7 +956,7 @@ export function collabHandler(dataDir: string, distDir: string) {
         const u = currentUser(req)
         const legacy = isLegacy(m[1])
         if (legacy ? !u : !can(u, rights, m[1], 'comment', dataDir))
-          return json(res, u ? 403 : 401, { error: u ? `this board is read-only - ask ${ownerName(dataDir) ?? 'the canvas owner'} for commenting access` : 'sign in to comment' }), true
+          return json(res, u ? 403 : 401, u ? { error: `this board is read-only - ask ${ownerName(dataDir) ?? 'the canvas owner'} for commenting access` } : { error: 'signed out', signIn: signInMode }), true
         const b = await readBody(req)
         const incoming: CommentEvent[] = Array.isArray(b.events) ? b.events : []
         if (incoming.length > 100) return json(res, 400, { error: 'too many events in one push' }), true

@@ -207,15 +207,53 @@ export async function serve(root: string, portFlag?: number) {
   // RANDOM per-boot secret, so a captured cookie is not offline brute-force material
   // for the password; a restart just re-prompts.
   const verifier = password ? scryptSync(password, 'marver-gate', 32) : null
-  const cookieKey = randomBytes(32)
+  // A canvas with a data dir keeps its cookie key on the volume (derived from the canvas secret), so a redeploy signs
+  // no guest out: a per-boot key did, and a guest mid-review then lost every comment (spec 36 §2). Without a data dir
+  // there is nothing to comment on, and a restart re-prompting is harmless - the key stays per boot there.
+  const cookieKey = process.env.MARVER_DATA_DIR && verifier
+    ? createHmac('sha256', (await import('./auth.ts')).canvasSecret((await import('./comments.ts')).dataDir())).update('mv_a gate cookie v1').digest()
+    : randomBytes(32)
   const sign = (exp: number) => createHmac('sha256', cookieKey).update(`v1.${exp}`).digest('hex')
-  const authed = (req: any): boolean => {
+  /** The guest cookie's expiry (seconds) when it is genuine and alive, else 0. */
+  const authedExp = (req: any): number => {
     const m = /(?:^|;\s*)mv_a=(\d+)\.([0-9a-f]+)/.exec(String(req.headers.cookie ?? ''))
-    if (!m) return false
+    if (!m) return 0
     const exp = Number(m[1])
-    if (!Number.isFinite(exp) || exp * 1000 < Date.now()) return false
+    if (!Number.isFinite(exp) || exp * 1000 < Date.now()) return 0
     const want = Buffer.from(sign(exp)), got = Buffer.from(m[2])
-    return want.length === got.length && timingSafeEqual(want, got)
+    return want.length === got.length && timingSafeEqual(want, got) ? exp : 0
+  }
+  const authed = (req: any): boolean => authedExp(req) > 0
+  const guestCookie = (req: any) => {
+    const exp = Math.floor(Date.now() / 1000) + MONTH
+    return `${COOKIE}=${exp}.${sign(exp)}; Path=/; Max-Age=${MONTH}; HttpOnly; SameSite=Lax${secureSuffix(req)}`
+  }
+  /** Sliding sessions (spec 36 §2): a guest cookie or a member session used with less than half its life left gets
+   *  its full life back - set on this response, before any handler that sets its own cookies (a sign-in, a sign-out)
+   *  replaces them. A member's renewal re-issues the double-submit cookie with it, keeping its value. */
+  let renewMember: ((req: any) => string[]) | null = null
+  if (process.env.MARVER_DATA_DIR) {
+    const { renewSession, SESSION_SECONDS } = await import('./auth.ts')
+    const { dataDir } = await import('./comments.ts')
+    const dir = dataDir()
+    renewMember = (req) => {
+      const cookies = String(req.headers.cookie ?? '')
+      const fromCookie = /(?:^|;\s*)mv_s=([\w-]+)/.exec(cookies)?.[1]
+      const tok = fromCookie ?? /^Bearer ([\w-]+)$/.exec(String(req.headers.authorization ?? ''))?.[1]
+      if (!tok || !renewSession(dir, tok) || !fromCookie) return []
+      const secure = secureSuffix(req)
+      const c = /(?:^|;\s*)mv_c=([\w-]+)/.exec(cookies)?.[1] ?? randomBytes(16).toString('base64url')
+      return [
+        `mv_s=${fromCookie}; Path=/; Max-Age=${SESSION_SECONDS}; HttpOnly; SameSite=Lax${secure}`,
+        `mv_c=${c}; Path=/; Max-Age=${SESSION_SECONDS}; SameSite=Lax${secure}`,
+      ]
+    }
+  }
+  const renew = (req: any, res: any) => {
+    const out = renewMember?.(req) ?? []
+    const exp = verifier ? authedExp(req) : 0
+    if (exp && exp - Date.now() / 1000 < MONTH / 2) out.push(guestCookie(req))
+    if (out.length) res.setHeader('set-cookie', out)
   }
 
   // Is this canvas private at all? One answer, used for routing AND for cache
@@ -244,7 +282,7 @@ export async function serve(root: string, portFlag?: number) {
     reclampShare(dir, ceilings)
   }
 
-  const server = createServer((req, res) => {
+  const handle = (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => {
     const url = new URL(req.url ?? '/', 'http://x')
 
     if (gated) {
@@ -261,13 +299,11 @@ export async function serve(root: string, portFlag?: number) {
           const form = new URLSearchParams(body)
           const given = form.get('password') ?? ''
           if (timingSafeEqual(scryptSync(given, 'marver-gate', 32), verifier)) {
-            const exp = Math.floor(Date.now() / 1000) + MONTH
             // Same rule as the collaboration session cookie, and for the same
             // reason - this one is a thirty-day cookie too, and a password
             // canvas behind nginx's bare `proxy_pass` sends no X-Forwarded-*,
             // so guessing from the header drops Secure on a live https gate.
-            const secure = secureSuffix(req)
-            res.setHeader('set-cookie', `${COOKIE}=${exp}.${sign(exp)}; Path=/; Max-Age=${MONTH}; HttpOnly; SameSite=Lax${secure}`)
+            res.setHeader('set-cookie', guestCookie(req))
             // deep links survive the gate: the page posts its hash, redirects carry it
             // back. Whitelisted charset - no CR/LF, no absolute URLs, no header games.
             const next = form.get('next') ?? ''
@@ -326,9 +362,21 @@ export async function serve(root: string, portFlag?: number) {
             // handler, never waved through
             (req.method === 'POST' && url.pathname === '/__mv/api/request-access') ||
             url.pathname.startsWith('/__mv/api/share/')))
-        if (!bearerOk && !preGate) return gate(res, meta, !!collab, undefined, !!idIssuer)
+        if (!bearerOk && !preGate) {
+          // The API never gets the sign-in PAGE (spec 36 §1). A 200 page read as success by the shell and by sync, and
+          // a reviewer's comments looked sent and were gone (#31). A page is for a person's navigation; a call is told.
+          if (url.pathname.startsWith('/__mv/api/')) {
+            if (req.method !== 'GET') console.log(`  ${req.method} ${url.pathname} refused: signed out`)
+            res.statusCode = 401
+            res.setHeader('content-type', 'application/json')
+            res.setHeader('cache-control', 'no-store')
+            return res.end(JSON.stringify({ error: 'signed out', signIn: idIssuer ? 'marver-id' : 'password' }))
+          }
+          return gate(res, meta, !!collab, undefined, !!idIssuer)
+        }
       }
     }
+    renew(req, res)
 
     if (idHandler && url.pathname.startsWith('/__mv/id/')) {
       // Never let a rejected promise leave the socket open: an unanswered request
@@ -404,6 +452,18 @@ export async function serve(root: string, portFlag?: number) {
       res.setHeader('cache-control', cache)
       res.end(content)
     } catch { res.statusCode = 404; res.end('not found') }
+  }
+  // A store the gate cannot read (auth.json, share.json) throws inside the request: it answers 500 and the canvas
+  // stays up, rather than one bad read ending the process for everyone mid-review (spec 36 §1).
+  const server = createServer((req, res) => {
+    try { handle(req, res) } catch (err) {
+      console.error(`[${NAME}] request failed:`, (err as Error)?.message ?? err)
+      if (!res.headersSent) {
+        res.statusCode = 500
+        res.setHeader('content-type', 'application/json')
+        res.end('{"error":"internal"}')
+      } else res.destroy()
+    }
   })
 
   const port = portFlag ?? (Number(process.env.PORT) || 4199)

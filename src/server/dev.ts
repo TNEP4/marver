@@ -663,12 +663,16 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
   const { loadCollab, syncOnce } = await import('./sync.ts')
   if (loadCollab(root)) console.log(`  comments: syncing with the published canvas\n`)
   let syncing = false
+  let syncSaid = ''
   const tick = async () => {
     if (syncing) return
     syncing = true
     try {
       const collab = loadCollab(root)
-      if (collab) await syncOnce(root, collab).catch(() => { /* next tick heals */ })
+      // a network blip heals at the next tick, silently; an ended session does not heal - said once, until it changes
+      if (collab) await syncOnce(root, collab).then(() => { syncSaid = '' }, (e: Error) => {
+        if (/session ended/.test(e.message) && syncSaid !== e.message) console.log(`\n  [${NAME}] comments sync: ${(syncSaid = e.message)}\n`)
+      })
     } finally { syncing = false }
   }
   void tick()

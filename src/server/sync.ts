@@ -128,7 +128,9 @@ export async function syncOnce(root: string, collab: Collab): Promise<Record<str
   const base = collab.url.replace(/\/+$/, '')
 
   const bres = await fetch(`${base}/__mv/api/boards`, { headers: auth })
-  if (bres.status === 401) throw new Error('the connect token was rejected - run `comments connect` again')
+  // a canvas before 0.37 answers an ended session with its sign-in PAGE and a 200 - that is signed out too, not data
+  if (bres.status === 401 || (bres.ok && !/json/.test(bres.headers.get('content-type') ?? '')))
+    throw new Error('the canvas session ended - run `marver comments connect <url>` again')
   if (!bres.ok) throw new Error(`published canvas answered ${bres.status} - is it up?`)
   // `legacy`: the old all-scenes log (spec 26), served for the threads on frames a commentable
   // published board shows - a canvas built before 0.25 names none

@@ -670,6 +670,25 @@ export function issueDeviceSession(dir: string, presented: string): { token: str
   })
 }
 
+/**
+ * Sliding sessions (spec 36 §2): a session used with less than half its life left gets its full life back. A reviewer
+ * who is using the canvas is never signed out by the calendar - the fixed 30 days cut one off mid-visit (#31). At most
+ * one write per session a fortnight. Returns the new expiry when it renewed, else null (not due, or no such session).
+ */
+export function renewSession(dir: string, rawToken: string): number | null {
+  const hash = sha256(rawToken)
+  const due = (s: Session | undefined) => !!s && s.exp > Date.now() && s.exp - Date.now() < SESSION_TTL / 2
+  if (!due(loadStore(dir).sessions.find((s) => s.tokenHash === hash))) return null
+  return withLock(dir, () => {
+    const store = loadStore(dir)
+    const s = store.sessions.find((s) => s.tokenHash === hash)
+    if (!s || !due(s)) return null
+    s.exp = Date.now() + SESSION_TTL
+    saveStore(dir, store)
+    return s.exp
+  })
+}
+
 export function signOut(dir: string, rawToken: string) {
   withLock(dir, () => {
   const store = loadStore(dir)
@@ -722,3 +741,5 @@ export function revokeUser(dir: string, email: string) {
 
 /** The public shape of a user - what other viewers (and events) may see. */
 export const publicUser = (u: User) => ({ email: u.email, name: u.name, avatar: u.avatar })
+/** The SESSION_TTL in seconds - a renewed cookie's Max-Age. */
+export const SESSION_SECONDS = SESSION_TTL / 1000
