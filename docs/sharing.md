@@ -285,7 +285,10 @@ under "Comment deleted"). A canvas older than 0.31 takes no deletes: a delete ma
 held back by `marver dev`'s sync, until the canvas is upgraded, and its shell offers no Delete. Connected under a new
 address, an edit or delete of a comment the old address wrote (or anything still signed with the old address) stays on
 your machine - the canvas would refuse it - and `marver comments sync` says so ("1 edit kept local: its comment was
-written under another account"); everything else still syncs.
+written under another account"); everything else still syncs. Comments written on `marver dev` before the repo was
+connected carry no address at all, so they stay on your machine the same way, said once for their board ("3 events
+kept local: written on marver dev before this repo was connected - the next publish carries them"): the published
+build seeds the board's history as it is, and the canvas shows them from then on.
 
 ## Mail, mentions, and the bell (v1.1)
 

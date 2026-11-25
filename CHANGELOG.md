@@ -2,6 +2,18 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## 0.37.1 - 2026-11-25
+
+### Fixed
+
+- `marver comments sync` resolves, and carries your replies on, a note Marver pinned that the published canvas
+  already shows. Before, it stayed open there however often you resolved it here - only a click in the browser closed
+  it. Marver's own replies still stay on your machine. ([#30](https://github.com/TNEP4/marver/issues/30))
+- Comments you wrote on `marver dev` before connecting the repo to its published canvas no longer read as "written
+  under another account". `marver comments sync` keeps them in the repo, says so in one line for their board, and
+  the rest of the board still syncs. The next publish carries them to the canvas as they were written.
+  ([#25](https://github.com/TNEP4/marver/issues/25))
+
 ## 0.37.0 - 2026-11-25
 
 ### Highlights

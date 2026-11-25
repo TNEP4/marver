@@ -159,16 +159,18 @@ export async function syncOnce(root: string, collab: Collab): Promise<Record<str
     let pushed = 0
     if (rights[board] === 'comment' || old) {
       // Live Jam: agent-authored events are dev-local in v1 - never pushed to the published canvas
-      // (the published client validator rejects agent provenance; publishing them is a P3 feature
-      // needing a trusted path). Filter them out of the push set - and with them every event in a
-      // thread Marver STARTED (a note an agent pinned, `comments new`): the owner's reply in it, a
+      // (the published validator refuses agent provenance from every session, the operator's too).
+      // Filter them out of the push set - and with them every event in a thread Marver STARTED (a note
+      // an agent pinned, `comments new`) that the canvas does not hold: the owner's reply in it, a
       // resolve, a reaction would reach a server that never saw the thread, which rejects the batch.
+      // A thread an older build seeded there (its very create event is in the pull) is the canvas's
+      // too (#30): a resolve or the owner's reply on it goes; Marver's own messages in it still do not.
       const local = readLog(dir, board)
-      const marverThreads = localOnlyThreads(local)
+      const marverThreads = localOnlyThreads(local, remote)
       const shipped = old ? threadIds(local, (e) => legacy!.frames.includes(e.frame ?? '')) : null
       // an edit of a message deleted since (here or there) is never sent: the server refuses it, and with it the batch
       const gone = deletedMessages([...local, ...remote])
-      const candidates = diffEvents(local, remote.map((e) => e.id)).filter((e) => !(e as { agent?: boolean }).agent && !marverThreads.has(threadOf(e)) && (!shipped || shipped.has(threadOf(e))) && (caps.delete || e.type !== 'delete') && !(e.type === 'edit' && gone.has(e.commentId ?? '')))
+      const candidates = diffEvents(local, remote.map((e) => e.id)).filter((e) => !e.agent && !e.agentMeta && !marverThreads.has(threadOf(e)) && (!shipped || shipped.has(threadOf(e))) && (caps.delete || e.type !== 'delete') && !(e.type === 'edit' && gone.has(e.commentId ?? '')))
       // what the server would refuse - and with it the whole batch, every exchange - is kept here, said, never sent
       const keptHere = unauthorized(candidates, [...local, ...remote], { email: collab.email, id: myId })
       if (keptHere.length) held[board] = keptHere
@@ -195,7 +197,7 @@ export async function syncOnce(root: string, collab: Collab): Promise<Record<str
  *  account and every edit, delete or re-pin against the original message's author. After connecting under another
  *  address, an event written under the old one - or a change to a message the old one wrote, which this machine still
  *  lets you make (own.json) - would be refused there, and with it every comment in its batch, every 30 s. */
-export interface Held { id: string; type: string; why: 'another-account' | 'message-of-another-account' | 'thread-kept-here' }
+export interface Held { id: string; type: string; why: 'another-account' | 'message-of-another-account' | 'thread-kept-here' | 'before-connect' }
 export function unauthorized(events: CommentEvent[], log: CommentEvent[], account?: string | { email?: string; id?: string }): Held[] {
   const acct = typeof account === 'string' ? { email: account } : account ?? {}
   const myEmail = (acct.email ?? '').toLowerCase(), myId = acct.id ?? ''
@@ -211,25 +213,34 @@ export function unauthorized(events: CommentEvent[], log: CommentEvent[], accoun
     if (e.type === 'reply' && e.commentId && e.parentId) rootOf.set(e.commentId, e.parentId)
     if (e.type === 'create' && e.commentId) rootOf.set(e.commentId, e.commentId)
   }
+  // no address and no id: written on `marver dev` before this repo was connected (the dev profile's "You", or a name).
+  // The published validator takes no author but the session's account, and neither side may change the words to fit
+  // (sync compares ids - a rewritten copy forks the stores), so they stay here; the build seeds them as they are (#25)
+  const unsigned = (a?: { email?: string; id?: string }) => !a?.email && !a?.id
   const byAuthor = new Set(['create', 'reply', 'react', 'edit', 'reanchor', 'profile', 'delete'])
   const held = new Map<string, Held>()
   for (const e of events) {
     let why: Held['why'] | null = null
-    if (byAuthor.has(e.type) && mine(e.author) === false) why = 'another-account'
-    else if ((e.type === 'edit' || e.type === 'delete' || e.type === 'reanchor') && mine(authorOf.get(e.commentId ?? '')) === false) why = 'message-of-another-account'
+    const target = e.commentId ?? ''
+    if (byAuthor.has(e.type) && unsigned(e.author)) why = 'before-connect'
+    else if (byAuthor.has(e.type) && mine(e.author) === false) why = 'another-account'
+    else if ((e.type === 'edit' || e.type === 'delete' || e.type === 'reanchor') && authorOf.has(target) && unsigned(authorOf.get(target))) why = 'before-connect'
+    else if ((e.type === 'edit' || e.type === 'delete' || e.type === 'reanchor') && mine(authorOf.get(target)) === false) why = 'message-of-another-account'
     if (why) held.set(e.id, { id: e.id, type: e.type, why })
   }
   // what depends on a kept message stays too, whatever the order: a reply to a kept thread, an edit or a reaction of a
-  // kept reply - every event whose message, or whose message's thread, is kept
+  // kept reply - every event whose message, or whose message's thread, is kept. One written before connecting carries
+  // its reason on to what hangs on it, so the board says one thing about them.
   for (let grew = true; grew;) {
     grew = false
-    const keptMsgs = new Set(events.filter((e) => held.has(e.id) && (e.type === 'create' || e.type === 'reply') && e.commentId).map((e) => e.commentId!))
-    const keptThreads = new Set([...keptMsgs].map((m) => rootOf.get(m) ?? m).filter((m) => keptMsgs.has(m)))
+    const keptMsgs = new Map(events.filter((e) => held.has(e.id) && (e.type === 'create' || e.type === 'reply') && e.commentId).map((e) => [e.commentId!, held.get(e.id)!.why]))
+    const keptThreads = new Set([...keptMsgs.keys()].map((m) => rootOf.get(m) ?? m).filter((m) => keptMsgs.has(m)))
     for (const e of events) {
       if (held.has(e.id)) continue
       const target = e.type === 'reply' ? e.parentId : e.commentId
       const root = target ? rootOf.get(target) ?? target : ''
-      if ((target && keptMsgs.has(target)) || (root && keptThreads.has(root))) { held.set(e.id, { id: e.id, type: e.type, why: 'thread-kept-here' }); grew = true }
+      const on = target && keptMsgs.has(target) ? target : root && keptThreads.has(root) ? root : ''
+      if (on) { held.set(e.id, { id: e.id, type: e.type, why: keptMsgs.get(on) === 'before-connect' ? 'before-connect' : 'thread-kept-here' }); grew = true }
     }
   }
   return events.filter((e) => held.has(e.id)).map((e) => held.get(e.id)!)
@@ -279,7 +290,7 @@ export function heldWords(held: Held[]): string[] {
   const by = new Map<string, Held[]>()
   for (const h of held) by.set(h.why, [...(by.get(h.why) ?? []), h])
   const what = (hs: Held[]) => { const types = [...new Set(hs.map((h) => h.type))]; const n = hs.length; return types.length === 1 ? `${n} ${types[0]}${n === 1 ? '' : 's'}` : `${n} events` }
-  const words = { 'another-account': 'written under another account', 'message-of-another-account': 'its comment was written under another account', 'thread-kept-here': 'its thread is kept local' } as const
+  const words = { 'another-account': 'written under another account', 'message-of-another-account': 'its comment was written under another account', 'thread-kept-here': 'its thread is kept local', 'before-connect': 'written on marver dev before this repo was connected - the next publish carries them' } as const
   return [...by].map(([why, hs]) => `${what(hs)} kept local: ${words[why as Held['why']]}`)
 }
 export function readHeld(root: string): Record<string, Held[]> {
@@ -310,7 +321,7 @@ export function admitted(local: CommentEvent[], remote: CommentEvent[], bindings
   for (const e of remote) if (e && (e.type === 'create' || e.type === 'reply') && e.commentId && !theirs.has(e.commentId)) theirs.set(e.commentId, e)
   const key = (a?: { email?: string; id?: string }) => (a?.email ?? a?.id ?? '').toLowerCase()
   const localIds = new Set(local.map((e) => e.id))
-  const offLimits = localOnlyThreads(local)
+  const offLimits = localOnlyThreads(local, remote)
   const out: CommentEvent[] = []
   for (const e of remote) {
     if (!e || typeof e.id !== 'string' || localIds.has(e.id)) { out.push(e); continue }   // already here: appendEvents keeps one
@@ -476,9 +487,19 @@ const threadOf = (e: CommentEvent): string => e.parentId ?? e.commentId ?? ''
 /** Threads that live on this machine only: started by Marver (an agent's `comments new`) or by a Jam
  *  capture (its words, spoken or typed - 0.26). Every id that resolves to one - the thread, and each reply
  *  in it (an edit or reaction names the reply) - is in the set, so `threadOf` of any event in such a
- *  thread hits it. */
-export function localOnlyThreads(events: CommentEvent[]): Set<string> {
-  return threadIds(events, (e) => !!e.agent || !!e.capture)
+ *  thread hits it.
+ *
+ *  `remote`, the published canvas's events (#30): a thread whose very create event is there - a build
+ *  before 0.26 seeded Marver's notes - is not this machine's alone, so it leaves the set; Marver's own
+ *  messages the canvas lacks (its reply in such a thread) stay in it, and with them what names them. The
+ *  same EVENT, never just its comment id: anyone commenting there chooses comment ids, and a guessed one
+ *  must not open a local thread to the canvas. */
+export function localOnlyThreads(events: CommentEvent[], remote: CommentEvent[] = []): Set<string> {
+  const there = new Set(remote.flatMap((e) => (e && typeof e.id === 'string' ? [e.id] : [])))
+  const out = threadIds(events, (e) => (!!e.agent || !!e.capture) && !there.has(e.id))
+  const shipped = threadIds(events, (e) => (!!e.agent || !!e.capture) && there.has(e.id))
+  for (const e of events) if (e.type === 'reply' && e.agent && e.commentId && shipped.has(e.commentId) && !there.has(e.id)) out.add(e.commentId)
+  return out
 }
 
 /** Every id that resolves to a thread whose root passes `root` - the thread, and each reply in it. */

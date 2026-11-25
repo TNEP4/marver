@@ -231,7 +231,7 @@ describe('a comment is never lost (spec 36), on a published Marver ID canvas', (
     await browser!.go(tab, `${ORIGIN}/#/b/main`)
     await until(`document.querySelector('.sh-signedout')?.dataset.refused === '1'`, 45_000)
     await ev(`document.querySelector('.sh-signedout .sh-banner-act').click()`)
-    await until(`!!document.querySelector('.cm-card[data-thread="thread-0001"] .cm-unsent.refused')`)
+    await until(`!!document.querySelector('.cm-card[data-thread="thread-0001"] .cm-unsent.refused')`, 45_000)
     // only the person lets it go
     await ev(`[...document.querySelectorAll('.cm-unsent-acts button')].find((b) => b.textContent === 'Discard').click()`)
     await until(`${OUTBOX}.length === 0 && !document.querySelector('.cm-unsent') && !document.querySelector('.sh-signedout')`)
