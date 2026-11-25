@@ -10,12 +10,13 @@ import { iframeOf } from '../canvas/frame-registry.ts'
 import { framePath } from '../ContextMenu.tsx'
 import { TOP } from '../inset.ts'
 import { canvasCtl } from '../canvas/ctl.ts'
-import { ROUTE } from '../../const.ts'
+import { api } from '../api.ts'
 import { DrawBar } from './DrawBar.tsx'
 import { DrawPanel } from './DrawPanel.tsx'
 import { DrawView } from './DrawView.tsx'
 import { CANVAS_TOOLS } from './kit.tsx'
 import { exportDrawing, useDraw, type DrawLink } from './link.ts'
+import { cmd } from '../commands.ts'
 
 const HEAD = 28            // the frame head (world px)
 const PANEL_W = 232, GAP = 16
@@ -44,6 +45,7 @@ export function DrawCanvasChrome() {
   const panel: CSSProperties = { left: `max(8px, calc(${sx(node.x)} - ${PANEL_W + GAP}px))`, top: `max(${TOP + 8}px, ${sy(node.y + HEAD)})` }
   const view: CSSProperties = { left: `calc(${sx(node.x + node.w)} - 8px)`, top: `calc(${sy(node.y + HEAD + node.h)} - 8px)`, transform: 'translate(-100%, -100%)' }
   const copyPath = () => {
+    cmd('copy-path', { via: 'click', in: 'shell', frames: 1 })
     const text = framePath(useStore.getState().board, frame)
     navigator.clipboard.writeText(text).then(() => { toast('path copied'); setCopied('path') }, () => toast('copy blocked - click the canvas first'))
   }
@@ -86,7 +88,8 @@ export async function newDrawingAtPointer(): Promise<void> {
     if (d < best) { best = d; scene = f.scene }
   }
   const W = 960, H = 640
-  const res = await fetch(`${ROUTE}/api/draw/new`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify({ scene }) }).catch(() => null)
+  // the shell's own transport: it names this canvas's workspace, and a canvas that stopped answers as one
+  const res = await api('draw/new', { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify({ scene }) }).catch(() => null)
   const body = await res?.json().catch(() => null)
   if (!res?.ok || !body?.id) { st.toast(body?.error ? `no drawing: ${body.error}` : 'could not make a drawing'); return }
   const id: string = body.id

@@ -164,7 +164,7 @@ export const frameUrl = (origin: string, frame: ManifestFrame, theme: string) =>
   : `${origin}${ROUTE}/${frame.kind === 'draw' ? 'draw' : 'frame'}/?id=${encodeURIComponent(frame.id)}&theme=${encodeURIComponent(theme)}`
 
 /** True once the frame has mounted: #root (or the body, for an HTML frame) has children. */
-export const MOUNTED = `(() => { const el = document.getElementById('root') ?? document.body; if (location.pathname.includes('/draw/') && !window.__mvDrawReady && !window.__mvFrameError) return false; return !!el && el.childElementCount > 0 && document.readyState !== 'loading' })()`
+export const MOUNTED = `(() => { const el = document.getElementById('root') ?? document.body; if ((location.pathname === '${ROUTE}/draw/' || location.pathname === '${ROUTE}/draw/index.html') && !window.__mvDrawReady && !window.__mvFrameError) return false; return !!el && el.childElementCount > 0 && document.readyState !== 'loading' })()`
 
 export type FrameShot =
   | { ok: true; path: string; width: number; height: number; scale: number; truncated?: boolean; unsettled?: boolean; note?: string; recaptures: number }

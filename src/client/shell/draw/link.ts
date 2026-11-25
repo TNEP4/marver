@@ -5,6 +5,7 @@
  */
 import { create } from 'zustand'
 import type { DrawCmd, DrawState } from '../../../shared/draw-protocol.ts'
+import { cmd } from '../commands.ts'
 
 type Cmd = DrawCmd extends infer C ? C extends { type: 'sh:draw-cmd' } ? Omit<C, 'type'> : never : never
 
@@ -26,8 +27,14 @@ export const useDraw = create<DrawStore>((set) => ({
 /** Where a drawing's commands go: its iframe's window, found when sent (an iframe can be replaced). */
 export interface DrawLink { key: string; title: string; frame: string; win: () => Window | null | undefined }
 
-export function send(link: DrawLink, cmd: Cmd): void {
-  try { link.win()?.postMessage({ type: 'sh:draw-cmd', ...cmd }, location.origin) } catch { /* the frame is going away */ }
+/** A command the person gave from the bar, the panel or the view controls - recorded (spec 30's discipline), then sent. */
+export function drawSend(link: DrawLink, c: Cmd): void {
+  cmd('draw-cmd', { via: 'click', in: 'shell', arg: c.op === 'action' ? c.name : c.op === 'tool' ? c.tool : c.op === 'view' ? c.v : c.op })
+  sendQuiet(link, c)
+}
+/** The same, when it is no input of the person's (a flush on leaving, the UI's hidden state). */
+export function sendQuiet(link: DrawLink, c: Cmd): void {
+  try { link.win()?.postMessage({ type: 'sh:draw-cmd', ...c }, location.origin) } catch { /* the frame is going away */ }
 }
 
 // ---- exports: the host renders, the shell saves or copies ----------------------------------------------------
@@ -36,7 +43,7 @@ const wants = new Map<string, Want>()
 
 export function exportDrawing(link: DrawLink, kind: Want['kind'], toast: (t: string) => void, dark: boolean): void {
   wants.set(link.key, { kind, title: link.title, toast })
-  send(link, { op: 'export', format: kind === 'clipboard' ? 'clipboard' : 'png', dark })
+  drawSend(link, { op: 'export', format: kind === 'clipboard' ? 'clipboard' : 'png', dark })
 }
 
 /** A drawing frame's message the shell acts on. Called by App's dispatcher (canvas frames, already authenticated) and

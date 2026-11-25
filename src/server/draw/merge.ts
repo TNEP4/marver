@@ -39,7 +39,7 @@ export function ownerOps(cur: Map<string, DrawElement>, tomb: Map<string, number
  * An agent's file, three-way. `base` = the state the agent's file was derived from (null = no trusted base: two-way);
  * `theirs` = the file; `cur` = now; `ownerSince` = ids the person changed after the base (with the rev); `tomb` = deleted.
  */
-export function agentOps(base: Map<string, DrawElement> | null, theirs: Map<string, DrawElement>, cur: Map<string, DrawElement>, tomb: Map<string, number>, ownerSince: Map<string, number>, by: string, now: number): { ops: Op[]; lost: Lost[] } {
+export function agentOps(base: Map<string, DrawElement> | null, theirs: Map<string, DrawElement>, cur: Map<string, DrawElement>, tomb: Map<string, number>, ownerSince: Map<string, number>, by: string, now: number, deletedSince: Map<string, { by: string; rev: number }> = new Map()): { ops: Op[]; lost: Lost[] } {
   const ops: Op[] = []
   const lost: Lost[] = []
   const bump = (id: string) => Math.max(cur.get(id)?.version ?? 0, tomb.get(id) ?? 0, base?.get(id)?.version ?? 0) + 1
@@ -57,7 +57,12 @@ export function agentOps(base: Map<string, DrawElement> | null, theirs: Map<stri
       if (c) ops.push({ id, el: null, v: bump(id) })
       continue
     }
-    if (!c && tomb.has(id) && !b) continue                  // a stale resurrection: deleted, and not alive at its base
+    // a stale resurrection: deleted and not alive at its base - or deleted by anyone after the base it was read at
+    if (!c && tomb.has(id)) {
+      const del = deletedSince.get(id)
+      if (del) { lost.push({ id, by: del.by, rev: del.rev }); continue }
+      if (!b) continue
+    }
     const v = bump(id)
     const el = wholeElement({ ...t, version: v, versionNonce: nonce() }, by, now)
     el.version = v

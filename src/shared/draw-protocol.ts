@@ -134,6 +134,8 @@ export interface DrawPatch {
   header?: Partial<DrawHeader>
   /** image data added in this rev, by file id (Excalidraw's `files`) */
   files?: Record<string, unknown>
+  /** the whole state (the log did not reach back that far): applied as one replacement */
+  full?: boolean
 }
 
 /** A save from the frame: only what the person changed since `baseRev`. */

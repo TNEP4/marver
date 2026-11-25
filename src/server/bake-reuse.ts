@@ -96,7 +96,8 @@ export function neverBumps(root: string, abs: string): boolean {
   if (abs.includes(`${sep}node_modules${sep}`)) return true
   if (!under(root, abs)) return false
   const r = rel(root, abs)
-  return r === 'design/manifest.json' || r.startsWith('design/.local/') || r.startsWith('design/boards/')
+  // a drawing (spec 38) is rendered by Excalidraw at rest - no texture of any frame reads it
+  return r === 'design/manifest.json' || r.startsWith('design/.local/') || r.startsWith('design/boards/') || r.endsWith('.excalidraw') || /\.excalidraw\.[\w]+\.tmp$/.test(r)
 }
 
 /** Marver's own data files under the root, by their exact shape - the boards' and comments' JSON, its private

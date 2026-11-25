@@ -15,7 +15,8 @@ import { DrawBar } from './DrawBar.tsx'
 import { DrawPanel } from './DrawPanel.tsx'
 import { DrawView } from './DrawView.tsx'
 import { HoverTip, MAIN_TOOLS, MI, Ph } from './kit.tsx'
-import { drawMessage, exportDrawing, send, useDraw, type DrawLink } from './link.ts'
+import { drawMessage, exportDrawing, sendQuiet, useDraw, type DrawLink } from './link.ts'
+import { cmd } from '../commands.ts'
 
 export const useDrawPlay = create<{ at: string | null; open(id: string): void; close(): void }>((set) => ({
   at: null,
@@ -27,7 +28,9 @@ export const useDrawPlay = create<{ at: string | null; open(id: string): void; c
 export function playDrawingIfSelected(): boolean {
   const s = useStore.getState()
   const key = s.interact ?? (s.selection.length === 1 ? s.selection[0] : null)
-  const n = key ? s.nodes.find((x) => x.key === key) : undefined
+  let n = key ? s.nodes.find((x) => x.key === key) : undefined
+  // a board of drawings only: play its first one (the prototype play has nothing to show there)
+  if (!n && !s.nodes.some((x) => !x.missing && s.frameFor(x)?.kind === 'tsx')) n = s.nodes.find((x) => !x.missing && s.frameFor(x)?.kind === 'draw')
   const f = n ? s.frameFor(n) : undefined
   if (!n || !f || f.kind !== 'draw' || n.missing) return false
   if (s.interact) s.setInteract(null)
@@ -51,6 +54,7 @@ export function DrawPlay() {
   const [hidden, setHidden] = useState(false)
   const [menu, setMenu] = useState(false)
   const src = useRef('')
+  const flushed = useRef<(() => void) | null>(null)
   if (at && !src.current) src.current = withWs(`${ROUTE}/draw/?id=${encodeURIComponent(at)}&theme=${theme}&r=play`)
   if (!at) src.current = ''
 
@@ -62,7 +66,9 @@ export function DrawPlay() {
     const onMsg = (e: MessageEvent) => {
       if (e.source !== iframe.current?.contentWindow || (e.origin && e.origin !== location.origin)) return
       const d = e.data
-      if (d?.type === 'sh:ready') { try { iframe.current?.contentWindow?.postMessage({ type: 'sh:interactive', on: !PUBLISHED }, location.origin) } catch { /* gone */ } return }
+      // play owns the drawing's wheel and keys - published too (view only there: the host keeps it in view mode)
+      if (d?.type === 'sh:ready') { try { iframe.current?.contentWindow?.postMessage({ type: 'sh:interactive', on: true }, location.origin) } catch { /* gone */ } return }
+      if (d?.type === 'sh:draw-flushed') { flushed.current?.(); return }
       if (d?.type === 'sh:exit-interact') { leave(); return }
       if (d?.type === 'sh:draw-key') {
         if (d.key === 'reveal') setHidden(false)
@@ -78,10 +84,18 @@ export function DrawPlay() {
   // theme follows the canvas's
   useEffect(() => { try { iframe.current?.contentWindow?.postMessage({ type: 'sh:set-theme', theme }, location.origin) } catch { /* not yet */ } }, [theme])
   // the host intercepts H while the UI is hidden (it reveals), Excalidraw's hand otherwise
-  useEffect(() => { if (link) send(link, { op: 'ui', hidden }) }, [hidden, at])
+  useEffect(() => { if (link) sendQuiet(link, { op: 'ui', hidden }) }, [hidden, at])
 
   if (!at || !link) return null
-  const leave = () => { if (link) send(link, { op: 'flush' }); setTimeout(() => { useDraw.getState().drop(key); close() }, 60) }
+  // leaving waits for the drawing's last save (3 s at most - a dead server never traps the person in play)
+  const leave = () => {
+    const done = () => { flushed.current = null; useDraw.getState().drop(key); close() }
+    cmd('play-exit', { via: 'click', in: 'stage' })
+    if (!link || PUBLISHED) { done(); return }
+    flushed.current = done
+    sendQuiet(link, { op: 'flush' })
+    setTimeout(() => { if (flushed.current === done) done() }, 3000)
+  }
   const dark = theme === 'dark'
   const copyPath = () => { if (!frame) return; navigator.clipboard.writeText(framePath(useStore.getState().board, frame)).then(() => toast('path copied'), () => toast('copy blocked - click the drawing first')) }
   const copyImage = () => exportDrawing(link, 'clipboard', toast, dark)
@@ -93,7 +107,7 @@ export function DrawPlay() {
         <button className="dk-b name" aria-label="Drawing menu" onClick={() => setMenu((m) => !m)}><Ph n="PenNib" size={14} /><span>{link.title}</span><Ph n="CaretDown" size={10} className="cv" /></button>
       </HoverTip>
       <HoverTip label="Collapse panel" keys="⌘\" side="bottom">
-        <button className="dk-b ic" aria-label="Collapse panel" onClick={() => setPanelOpen(false)}><PanelFilledIcon size={17} /></button>
+        <button className="dk-b ic" aria-label="Collapse panel" onClick={() => { cmd('panel', { via: 'click', in: 'stage' }); setPanelOpen(false) }}><PanelFilledIcon size={17} /></button>
       </HoverTip>
     </div>
   )
@@ -104,23 +118,23 @@ export function DrawPlay() {
       </div>
       {panelOpen
         ? <DrawPanel link={link} state={state} top={head} popSide="right" style={{ ...EDGE, left: 10 }} />
-        : <div className="dk-anchor" style={{ ...EDGE, left: 10 }}><HoverTip label="Expand panel" keys="⌘\" side="right"><button className="dk-glass dk-fab" aria-label="Expand panel" onClick={() => setPanelOpen(true)}><PanelHollowIcon size={18} /></button></HoverTip></div>}
+        : <div className="dk-anchor" style={{ ...EDGE, left: 10 }}><HoverTip label="Expand panel" keys="⌘\" side="right"><button className="dk-glass dk-fab" aria-label="Expand panel" onClick={() => { cmd('panel', { via: 'click', in: 'stage' }); setPanelOpen(true) }}><PanelHollowIcon size={18} /></button></HoverTip></div>}
       {menu && panelOpen && (
         <div className="sh-menu dk-menu" style={{ position: 'absolute', top: 'calc(max(10px, var(--mv-top, 0px)) + 44px)', left: 20, zIndex: 50 }} onMouseLeave={() => setMenu(false)}>
           <MI icon={<Ph n="FilePng" size={15} />} label="Export as PNG" onClick={() => { setMenu(false); exportDrawing(link, 'png', toast, dark) }} />
           <MI icon={<Ph n="FilePdf" size={15} />} label="Export as PDF" onClick={() => { setMenu(false); exportDrawing(link, 'pdf', toast, dark) }} />
           <div className="div" />
           <MI icon={<Ph n="Copy" size={15} />} label="Copy as image" k="⇧I" onClick={() => { setMenu(false); copyImage() }} />
-          <MI icon={<Ph n="Link" size={15} />} label="Copy path" k="⇧P" onClick={() => { setMenu(false); copyPath() }} />
+          <MI icon={<Ph n="Link" size={15} />} label="Copy path" k="⇧P" onClick={() => { cmd('copy-path', { via: 'click', in: 'stage' }); setMenu(false); copyPath() }} />
           <div className="div" />
-          <MI icon={<Ph n="EyeSlash" size={15} />} label="Hide all UI" k="H" onClick={() => { setMenu(false); setHidden(true) }} />
+          <MI icon={<Ph n="EyeSlash" size={15} />} label="Hide all UI" k="H" onClick={() => { cmd('hide-ui', { via: 'click', in: 'stage' }); setMenu(false); setHidden(true) }} />
         </div>
       )}
       {state?.editable !== false && (barOpen
         ? <DrawBar link={link} state={state} tools={MAIN_TOOLS} mode="play" style={{ ...EDGE, right: 10 }}
             onExport={(k) => exportDrawing(link, k, toast, dark)} onCopyImage={copyImage}
-            onCollapse={() => setBarOpen(false)} onHideUI={() => setHidden(true)} onBack={leave} />
-        : <div className="dk-anchor" style={{ ...EDGE, right: 10 }}><HoverTip label="Expand toolbar" keys="⌘/" side="bottom"><button className="dk-glass dk-fab" aria-label="Expand toolbar" onClick={() => setBarOpen(true)}><PanelHollowIcon size={18} style={{ transform: 'rotate(90deg)' }} /></button></HoverTip></div>)}
+            onCollapse={() => { cmd('toolbar', { via: 'click', in: 'stage' }); setBarOpen(false) }} onHideUI={() => { cmd('hide-ui', { via: 'click', in: 'stage' }); setHidden(true) }} onBack={leave} />
+        : <div className="dk-anchor" style={{ ...EDGE, right: 10 }}><HoverTip label="Expand toolbar" keys="⌘/" side="bottom"><button className="dk-glass dk-fab" aria-label="Expand toolbar" onClick={() => { cmd('toolbar', { via: 'click', in: 'stage' }); setBarOpen(true) }}><PanelHollowIcon size={18} style={{ transform: 'rotate(90deg)' }} /></button></HoverTip></div>)}
       <DrawView link={link} state={state} size="lg" map menuSide="top" style={{ right: 10, bottom: 10 }} />
       {state?.editable === false && (
         <div className="dk-anchor" style={{ ...EDGE, right: 10 }}>

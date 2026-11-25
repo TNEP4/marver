@@ -6,7 +6,7 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { DrawAction, DrawProps, DrawState } from '../../../shared/draw-protocol.ts'
 import { ArrowKind, BGS, Corner, Distribute, EditPoints, FONTS, FillIcon, HEADS, HEAD_LABEL, HeadIcon, HoverTip, Ln, PALETTE, Ph, STROKES, Sw, VAlign, colorName, type Head } from './kit.tsx'
-import { send, type DrawLink } from './link.ts'
+import { drawSend, type DrawLink } from './link.ts'
 
 type Picker = 'stroke' | 'background' | 'font' | 'start' | 'end'
 
@@ -48,7 +48,7 @@ export function DrawPanel({ link, state, top, popSide = 'right', style, cam }: {
   }, [sections.join(), open])
 
   if (!state || (!sections.length && !top)) return null
-  const act = (name: DrawAction, value?: unknown) => send(link, { op: 'action', name, value })
+  const act = (name: DrawAction, value?: unknown) => drawSend(link, { op: 'action', name, value })
   const has = (s: string) => sections.includes(s as never)
 
   const seg = (items: ReactNode[], values: unknown[], current: unknown, tips: (string | [string, string])[], onPick: (v: unknown, i: number) => void, openAt?: number) => (
@@ -124,16 +124,16 @@ export function DrawPanel({ link, state, top, popSide = 'right', style, cam }: {
     out.push(<div className="sec" key="layers"><div className="lb">Layers</div><div className="dk-row">{lay}</div></div>)
   }
   if (has('actions')) {
-    const A: [string, ReactNode, string, () => void, boolean?][] = [
-      ['Duplicate', <Ph n="Copy" size={13} />, '⌘D', () => act('duplicateSelection')],
-      ['Delete', <Ph n="Trash" size={13} />, '⌫', () => act('deleteSelectedElements'), true],
+    const A: [string, ReactNode, string, DrawAction, boolean?][] = [
+      ['Duplicate', <Ph n="Copy" size={13} />, '⌘D', 'duplicateSelection'],
+      ['Delete', <Ph n="Trash" size={13} />, '⌫', 'deleteSelectedElements', true],
     ]
-    if (state.sel.count > 1) A.push(state.sel.grouped ? ['Ungroup', <Ph n="SelectionAll" size={13} />, '⇧⌘G', () => act('ungroup')] : ['Group', <Ph n="SelectionAll" size={13} />, '⌘G', () => act('group')])
-    else A.push(['Link', <Ph n="Link" size={13} />, '⌘K', () => act('hyperlink')])
-    if (state.sel.isLinear && state.sel.types.includes('arrow')) A.push(['Edit points', <EditPoints />, '⌘↵', () => act('toggleLinearEditor')])
+    if (state.sel.count > 1) A.push(state.sel.grouped ? ['Ungroup', <Ph n="SelectionAll" size={13} />, '⇧⌘G', 'ungroup'] : ['Group', <Ph n="SelectionAll" size={13} />, '⌘G', 'group'])
+    else A.push(['Link', <Ph n="Link" size={13} />, '⌘K', 'hyperlink'])
+    if (state.sel.isLinear && state.sel.types.includes('arrow')) A.push(['Edit points', <EditPoints />, '⌘↵', 'toggleLinearEditor'])
     out.push(
       <div className="sec" key="actions"><div className="lb">Actions</div><div className="dk-row">
-        {A.map(([t, ic, k, f, warn]) => <HoverTip key={t} label={t} keys={k}><button className={warn ? 'warn' : undefined} aria-label={t} onClick={f}>{ic}</button></HoverTip>)}
+        {A.map(([t, ic, k, a, warn]) => <HoverTip key={t} label={t} keys={k}><button className={warn ? 'warn' : undefined} aria-label={t} onClick={() => act(a)}>{ic}</button></HoverTip>)}
       </div></div>,
     )
   }

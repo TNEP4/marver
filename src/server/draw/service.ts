@@ -4,7 +4,7 @@
  * file atomically, broadcast the patch. The log line goes first (decision 7); a foreign version on disk is ingested
  * before any commit (decision 1).
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, sep } from 'node:path'
 import { createHash, randomBytes } from 'node:crypto'
 import type { DrawElement, DrawHeader, DrawPatch, DrawSave } from '../../shared/draw-protocol.ts'
@@ -40,6 +40,8 @@ const newEpoch = () => randomBytes(6).toString('hex')
 
 interface Drawing {
   id: string
+  /** the merged state is newer than the file, and the file changed under us: written once that change is ingested */
+  pendingWrite?: boolean
   /** the file carried its epoch (else this session gave it one, written at the first commit) */
   fileEpoch: boolean
   abs: string
@@ -67,7 +69,9 @@ export class DrawService {
   private drawings = new Map<string, Drawing>()
   private dir: string
   private sweep: ReturnType<typeof setInterval> | null = null
-  constructor(private deps: DrawServiceDeps) {
+  private deps: DrawServiceDeps
+  constructor(deps: DrawServiceDeps) {
+    this.deps = deps
     this.dir = join(deps.root, 'design', '.local', 'draw')
   }
   private now() { return this.deps.now?.() ?? Date.now() }
@@ -134,11 +138,20 @@ export class DrawService {
       let ops: Op[] = []
       const els = d.doc.elements
       if (op.kind === 'add') {
+        // ids already taken get new ones, and every reference inside the batch follows them (r1 #13)
+        const remap = new Map<string, string>()
         const fresh = op.elements.map((raw) => {
           const e = wholeElement(raw, by, now)
-          if (els.has(e.id) || d.tomb.has(e.id)) e.id = `${e.id}-${randomBytes(2).toString('hex')}`
+          if (els.has(e.id) || d.tomb.has(e.id)) { const nid = `${e.id}-${randomBytes(3).toString('hex')}`; remap.set(e.id, nid); e.id = nid }
           return e
         })
+        if (remap.size) for (const e of fresh) {
+          const to = (id: unknown) => (typeof id === 'string' && remap.has(id) ? remap.get(id)! : id)
+          if (e.containerId) e.containerId = to(e.containerId)
+          if (e.frameId) e.frameId = to(e.frameId)
+          if (Array.isArray(e.boundElements)) e.boundElements = (e.boundElements as { id: string; type: string }[]).map((b) => ({ ...b, id: to(b.id) as string }))
+          for (const k of ['startBinding', 'endBinding']) { const bnd = e[k] as { elementId?: string } | null; if (bnd?.elementId) e[k] = { ...bnd, elementId: to(bnd.elementId) } }
+        }
         if (op.at && fresh.length) {
           const minX = Math.min(...fresh.filter((e) => !e.containerId).map((e) => Number(e.x)))
           const minY = Math.min(...fresh.filter((e) => !e.containerId).map((e) => Number(e.y)))
@@ -179,10 +192,13 @@ export class DrawService {
     for (const [id, d] of this.drawings) if (d.abs === abs) this.drawings.delete(id)
   }
 
-  private async checkDisk(id: string): Promise<void> {
+  private async checkDisk(id: string, force = false): Promise<void> {
     const d = this.drawings.get(id)
-    if (!d || mtime(d.abs) === d.diskMtime) return
-    await this.locked(d, async () => { this.absorb(d) })
+    if (!d || (!force && !d.pendingWrite && mtime(d.abs) === d.diskMtime)) return
+    await this.locked(d, async () => {
+      this.absorb(d)
+      if (d.pendingWrite) this.writeFile(d)
+    })
   }
 
   // ---- internals --------------------------------------------------------------------------------------------------
@@ -210,6 +226,7 @@ export class DrawService {
     }
     this.loadLog(d)
     this.drawings.set(id, d)
+    await this.locked(d, async () => { this.absorb(d); if (d.pendingWrite) this.writeFile(d) })
     return d
   }
 
@@ -238,11 +255,26 @@ export class DrawService {
     d.snaps = snaps
     for (const l of lines) for (const o of l.ops) if (o.el === null) d.tomb.set(o.id, o.v)
     const lastRev = lines[lines.length - 1].rev
-    if (lastRev > d.doc.header.rev) {
-      const state = this.stateAt(d, lastRev)
-      if (state) {
-        d.doc = state.doc
-        d.tomb = state.tomb
+    // the truth is the log; the disk mapping says whether the file is still what we left (r1 #4)
+    let disk: { epoch?: string; hash?: string; rev?: number; headerRev?: number } | null = null
+    try { disk = JSON.parse(readFileSync(join(this.dir, `${d.key}.disk.json`), 'utf8')) } catch { /* none yet */ }
+    const state = this.stateAt(d, lastRev)
+    if (state) {
+      const fileText = readText(d.abs)
+      const fileDoc = d.doc
+      d.doc = state.doc
+      d.tomb = state.tomb
+      if (disk && disk.epoch === d.epoch && typeof disk.hash === 'string') {
+        d.diskRev = disk.rev ?? lastRev
+        d.diskHeaderRev = disk.headerRev ?? fileDoc.header.rev
+        if (sha(fileText) === disk.hash) {
+          d.diskHash = disk.hash
+          if (d.diskRev < lastRev) this.writeFile(d, true)      // the log went further than the file (a crash between)
+        } else {
+          d.diskHash = disk.hash                               // edited while we were down: the first absorb merges it
+        }
+      } else if (lastRev > fileDoc.header.rev) {
+        d.diskHash = sha(fileText)
         this.writeFile(d, true)
       }
     }
@@ -287,7 +319,7 @@ export class DrawService {
     const first = d.log.find((l) => l.rev > rev)
     if (!first || first.rev !== rev + 1) {
       // the log does not reach back that far: one patch with everything
-      return [{ frame: d.id, rev: d.doc.header.rev, by: 'server', upserts: [...d.doc.elements.values()], deletes: [...d.tomb].map(([id, version]) => ({ id, version })), header: d.doc.header, files: d.doc.files } as DrawPatch]
+      return [{ frame: d.id, rev: d.doc.header.rev, by: 'server', upserts: [...d.doc.elements.values()], deletes: [...d.tomb].map(([id, version]) => ({ id, version })), header: d.doc.header, files: d.doc.files, full: true }]
     }
     return d.log.filter((l) => l.rev > rev).map((l) => toPatch(d.id, l))
   }
@@ -298,7 +330,8 @@ export class DrawService {
     try { text = readFileSync(d.abs, 'utf8') } catch { return }
     const h = sha(text)
     d.diskMtime = mtime(d.abs)
-    if (h === d.diskHash || d.own.includes(h)) { d.diskHash = h; return }
+    // our own write's echo is the disk's current expected content - an older write's bytes coming back are a change
+    if (h === d.diskHash) return
     let theirs: DrawDoc
     try { theirs = parseDrawFile(text) } catch (err) {
       if (err instanceof DrawFileError) { console.error(`[marver] ${relative(this.deps.root, d.abs)} is not a drawing right now (${err.message}) - left as it was; the next valid write is merged`); return }
@@ -313,9 +346,17 @@ export class DrawService {
     const baseState = baseRev !== null ? this.stateAt(d, baseRev) : null
     const from = baseState ? baseRev! : d.diskRev
     const ownerSince = new Map<string, number>()
-    for (const l of d.log) if (l.rev > from && l.by === 'owner') for (const o of l.ops) ownerSince.set(o.id, l.rev)
+    const deletedSince = new Map<string, { by: string; rev: number }>()
+    for (const l of d.log) {
+      if (l.rev <= from) continue
+      for (const o of l.ops) {
+        if (l.by === 'owner') ownerSince.set(o.id, l.rev)
+        if (o.el === null) deletedSince.set(o.id, { by: l.by, rev: l.rev })
+        else deletedSince.delete(o.id)
+      }
+    }
     const now = this.now()
-    const { ops, lost } = agentOps(baseState ? baseState.doc.elements : null, theirs.elements, d.doc.elements, d.tomb, ownerSince, 'agent', now)
+    const { ops, lost } = agentOps(baseState ? baseState.doc.elements : null, theirs.elements, d.doc.elements, d.tomb, ownerSince, 'agent', now, deletedSince)
     const header: Partial<DrawHeader> = {}
     if (theirs.header.title !== undefined && theirs.header.title !== d.doc.header.title) header.title = theirs.header.title
     if (theirs.header.size && (theirs.header.size.w !== d.doc.header.size?.w || theirs.header.size.h !== d.doc.header.size?.h)) header.size = theirs.header.size
@@ -329,7 +370,7 @@ export class DrawService {
     if (!ops.length && !Object.keys(header).length && !Object.keys(files).length) {
       // nothing of the agent's survived (the person won, or it changed nothing): the disk must show the truth again
       if (lost.length || !sameDocContent(d.doc, theirs)) this.writeFile(d)
-      else d.diskRev = d.doc.header.rev
+      else { d.diskRev = d.doc.header.rev; this.saveDisk(d) }
       return
     }
     this.commit(d, ops, 'agent', 'file', Object.keys(header).length ? header : undefined, Object.keys(files).length ? files : undefined, lost, theirs)
@@ -356,18 +397,30 @@ export class DrawService {
     // an agent's file that already says everything the merge kept: not rewritten, so its next Edit still applies
     const rewrite = !agentFile || !sameDocContent(d.doc, agentFile)
     if (rewrite) this.writeFile(d)
-    else d.diskRev = rev
+    else { d.diskRev = rev; this.saveDisk(d) }
     if (rev % SNAP_EVERY === 0) this.writeSnap(d)
     this.deps.broadcast('sh:draw', toPatch(d.id, entry))
     if (d.doc.header.title !== titleWas || JSON.stringify(d.doc.header.size) !== sizeWas) this.deps.headerChanged(d.id)
   }
 
-  private writeFile(d: Drawing, quiet = false): void {
+  /** Write the merged state over the file - unless the file changed since we last read it (an agent's write landing
+   *  meanwhile, or one still being written): then nothing is written now, the change is ingested first (the sweep or
+   *  the watcher) and the write follows (decision 1, review r1 #5). */
+  private writeFile(d: Drawing, quiet = false): boolean {
     const text = serializeDrawFile({ ...d.doc, header: { ...d.doc.header, epoch: d.epoch } })
-    d.fileEpoch = true
     const tmp = `${d.abs}.${randomBytes(4).toString('hex')}.tmp`
     writeFileSync(tmp, text, { flag: 'wx' })
+    let onDisk = ''
+    try { onDisk = sha(readFileSync(d.abs, 'utf8')) } catch { /* gone: written fresh */ }
+    if (onDisk && onDisk !== d.diskHash) {
+      try { rmSync(tmp) } catch { /* best-effort */ }
+      d.pendingWrite = true
+      setTimeout(() => { void this.checkDisk(d.id, true) }, 60)
+      return false
+    }
     renameSync(tmp, d.abs)
+    d.fileEpoch = true
+    d.pendingWrite = false
     const h = sha(text)
     d.own.push(h)
     if (d.own.length > OWN_HASHES) d.own.shift()
@@ -375,7 +428,14 @@ export class DrawService {
     d.diskRev = d.doc.header.rev
     d.diskHeaderRev = d.doc.header.rev
     d.diskMtime = mtime(d.abs)
+    this.saveDisk(d)
     void quiet
+    return true
+  }
+
+  /** what the disk holds, persisted: a restart tells its own file from one edited while it was down (r1 #4) */
+  private saveDisk(d: Drawing): void {
+    try { writeFileSync(join(this.dir, `${d.key}.disk.json`), JSON.stringify({ epoch: d.epoch, hash: d.diskHash, rev: d.diskRev, headerRev: d.diskHeaderRev })) } catch { /* best-effort */ }
   }
 
   // ---- creating a drawing -----------------------------------------------------------------------------------------
@@ -393,7 +453,13 @@ export class DrawService {
     }
     const abs = join(dir, `${n}.excalidraw`)
     if (['.tsx', '.jsx', '.html', '.excalidraw'].some((ext) => existsSync(join(dir, `${n}${ext}`)))) throw new DrawOpError(`a frame "${scene}/${n}" already exists`)
-    mkdirSync(dirname(abs), { recursive: true })
+    // a scene folder that is (or sits under) a link out of the repo is refused (r1 #14)
+    const scenes = join(root, 'design', 'scenes')
+    mkdirSync(scenes, { recursive: true })
+    const realScenes = realpathSync(scenes)
+    if (existsSync(dir) && !realpathSync(dir).startsWith(realScenes + sep)) throw new DrawOpError(`scene "${scene}" points outside design/scenes`)
+    mkdirSync(dir, { recursive: true })
+    if (!realpathSync(dir).startsWith(realScenes + sep)) throw new DrawOpError(`scene "${scene}" points outside design/scenes`)
     const doc = emptyDoc({ title: opts.title, size: opts.size ?? { w: 960, h: 640 } })
     writeFileSync(abs, serializeDrawFile({ ...doc, header: { ...doc.header, epoch: newEpoch() } }), { flag: 'wx' })
     return { id: `${scene}/${n}`, file: `design/scenes/${scene}/${n}.excalidraw` }

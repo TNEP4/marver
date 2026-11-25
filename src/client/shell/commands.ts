@@ -271,6 +271,7 @@ export const COMMANDS = {
   'jam-thread': se('answer', { deadlineMs: S30, cancelled: true, failed: REFUSED }),
   // drawings (spec 38)
   'new-drawing': se('2raf'),
+  'draw-cmd': se('2raf'),
   draw: se('mode'),
   'focus-drawing': se('mode'),
 } as const satisfies Record<string, CmdSpec>

@@ -7,7 +7,7 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import type { DrawState } from '../../../shared/draw-protocol.ts'
 import { FrameCornersIcon } from '../icons.tsx'
 import { HoverTip, MI, Ph, ResetView, type TipSide } from './kit.tsx'
-import { send, type DrawLink } from './link.ts'
+import { drawSend, type DrawLink } from './link.ts'
 
 export function DrawView({ link, state, size = 'sm', map, menuSide = 'top', tipSide = 'top', style, cam }: {
   link: DrawLink; state: DrawState | undefined; size?: 'sm' | 'lg'; map?: boolean; menuSide?: 'top' | 'bottom'; tipSide?: TipSide; style?: CSSProperties; cam?: boolean
@@ -27,7 +27,7 @@ export function DrawView({ link, state, size = 'sm', map, menuSide = 'top', tipS
     <HoverTip key={label} label={label} keys={key} side={tipSide}><button className={`dk-b${cls}`} aria-label={label} disabled={disabled} onClick={onClick}>{icon}</button></HoverTip>
   )
   const zoom = Math.round((state?.zoom ?? 1) * 100)
-  const view = (v: 'in' | 'out' | 'fit' | 'frame' | 'save' | 'reset') => { send(link, { op: 'view', v }); setMenu(false) }
+  const view = (v: 'in' | 'out' | 'fit' | 'frame' | 'save' | 'reset') => { drawSend(link, { op: 'view', v }); setMenu(false) }
   return (
     <div ref={ref} className={`dk-anchor${cam ? ' dk-cam' : ''}`} style={{ zIndex: menu ? 45 : 30, ...style }}>
       <div className={`dk-glass dk-view dk-draw${size === 'lg' ? ' lg' : ''}`}>
@@ -40,8 +40,8 @@ export function DrawView({ link, state, size = 'sm', map, menuSide = 'top', tipS
         {map && B('Minimap', undefined, <Ph n="MapTrifold" size={s} />, () => setMapOn((m) => !m), mapOn ? ' on' : '')}
         {editable && <>
           <i className="dk-sep" />
-          {B('Undo', '⌘Z', <Ph n="ArrowUUpLeft" size={s} />, () => send(link, { op: 'undo' }), '', !state?.canUndo)}
-          {B('Redo', '⇧⌘Z', <Ph n="ArrowUUpRight" size={s} />, () => send(link, { op: 'redo' }), '', !state?.canRedo)}
+          {B('Undo', '⌘Z', <Ph n="ArrowUUpLeft" size={s} />, () => drawSend(link, { op: 'undo' }), '', !state?.canUndo)}
+          {B('Redo', '⇧⌘Z', <Ph n="ArrowUUpRight" size={s} />, () => drawSend(link, { op: 'redo' }), '', !state?.canRedo)}
         </>}
       </div>
       {menu && (

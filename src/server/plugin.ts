@@ -435,7 +435,8 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       const draw = new DrawService({
         root,
         fileOf: (id) => manifest.frames.find((f) => f.id === id && f.kind === 'draw')?.file ?? null,
-        broadcast: (event, patch) => server.ws.send(event, patch as any),
+        // a drawing's merged rev (spec 38): its open frames apply it; the live stream (app-live) reads nothing of it
+        broadcast: (_event, patch) => server.ws.send('sh:draw', patch as any),
         headerChanged: () => drawHeaderChanged(),
       })
       draw.startSweep()

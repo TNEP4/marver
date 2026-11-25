@@ -173,8 +173,7 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
       sync.current!.receive(p)
     }
     hot?.on('sh:draw', onPatch)
-    // a rev may have landed between the load and this subscription, or while the socket was down (decision 8)
-    sync.current!.resync()
+    // a rev may have landed while the socket was down (decision 8); the first catch-up runs once the engine is ready
     const onConnect = () => sync.current!.resync()
     hot?.on('vite:ws:connect', onConnect)
     const hide = () => { if (document.visibilityState === 'hidden') void sync.current!.flush(true) }
@@ -205,7 +204,7 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
   const run = (c: DrawCmd) => {
     const eng = engine.current
     if (!eng) return
-    if (c.op === 'flush') { void sync.current!.flush(); return }
+    if (c.op === 'flush') { void sync.current!.flush().then(() => post({ type: 'sh:draw-flushed', id })); return }
     if (c.op === 'ui') { uiHidden.current = c.hidden; return }
     if (!editable && c.op !== 'view' && c.op !== 'export') return
     switch (c.op) {
@@ -255,6 +254,9 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
       engine.current = eng
       // a handle for tests and `marver shot`: the engine, the sync, and readiness (spec 38 decision 22)
       w.__mvDraw = { engine: eng, sync: sync.current, ready: true, setEdit: (on: boolean) => setEdit(on && editable) }
+      // what arrived before the engine applies now, then the first catch-up (a rev between the load and the socket)
+      sync.current!.ready()
+      sync.current!.resync()
       void document.fonts.ready.then(() => { w.__mvDrawReady = true })
       post({ type: 'sh:ready', id, gen, boot: docId(), doc: document.querySelector('meta[name="mv-doc"]')?.getAttribute('content') ?? '', meta: { kind: 'draw' } })
       sendState()

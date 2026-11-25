@@ -191,3 +191,67 @@ describe('DrawService', () => {
     expect(disk().elements.get('cart')?.x).toBe(80)
   })
 })
+
+describe('DrawService - review r1 regressions', () => {
+  it('merges an edit made to the file while the server was down, instead of overwriting it (r1 #4)', async () => {
+    await save([el('a', { x: 0 })], 1)
+    // an agent's no-rewrite edit: the file holds its text, the log is ahead of the header
+    const doc = disk(); doc.elements.set('b', el('b', { index: 'a1' })); writeAgent(doc)
+    await service.onDisk(abs)
+    const revBefore = log().at(-1)!.rev
+    service.stop()
+    // offline: the agent edits again
+    const offline = disk(); offline.elements.set('c', el('c', { index: 'a2', x: 300 })); writeAgent(offline)
+    service = makeService()
+    const got = await service.get(ID)
+    expect(got.elements.map((e) => e.id).sort()).toEqual(['a', 'b', 'c'])
+    expect(got.rev).toBeGreaterThan(revBefore)
+    expect(disk().elements.has('c')).toBe(true)
+  })
+
+  it('refuses a stale agent file bringing back what another write deleted after its base (r1 #9)', async () => {
+    await save([el('a'), el('b', { index: 'a1' })], 1)
+    const stale = disk()                                   // the agent reads at rev 1
+    await service.op(ID, { kind: 'rm', ids: ['b'] }, 'op-1')  // rev 2: a CLI delete
+    stale.elements.set('b', el('b', { index: 'a1', x: 500 }))  // the stale file changes b
+    stale.elements.set('a', el('a', { x: 77 }))
+    writeAgent(stale)
+    await service.onDisk(abs)
+    const got = await service.get(ID)
+    expect(got.elements.some((e) => e.id === 'b')).toBe(false)
+    expect(got.elements.find((e) => e.id === 'a')!.x).toBe(77)
+  })
+
+  it('re-adding a box and its label gives both new ids and the label follows its box (r1 #13)', async () => {
+    const box = { id: 'box', type: 'rectangle', x: 0, y: 0, width: 100, height: 50, boundElements: [{ id: 'lbl', type: 'text' }] }
+    const lbl = { id: 'lbl', type: 'text', x: 10, y: 10, text: 'Hi', containerId: 'box' }
+    await service.op(ID, { kind: 'add', elements: [box, lbl] }, 'add-1')
+    const r = await service.op(ID, { kind: 'add', elements: [box, lbl] }, 'add-2')
+    const got = await service.get(ID)
+    const [nb, nl] = r.ids.map((id) => got.elements.find((e) => e.id === id)!)
+    expect(nb.id).not.toBe('box')
+    expect(nl.containerId).toBe(nb.id)
+    expect((nb.boundElements as { id: string }[]).map((b) => b.id)).toContain(nl.id)
+  })
+
+  it('old bytes of ours written back are a change, reconciled to the truth (r1 #10)', async () => {
+    await save([el('a')], 1)
+    const rev1 = readFileSync(abs, 'utf8')
+    await save([el('a'), el('stroke', { index: 'a1' })], 2)
+    writeFileSync(abs, rev1)                               // the exact rev-1 bytes come back
+    const at = new Date(1_700_000_000_000 + ++clock * 1000); utimesSync(abs, at, at)
+    await service.onDisk(abs)
+    expect(disk().elements.has('stroke')).toBe(true)
+  })
+
+  it('never writes over a file that changed under it: the change is merged first (r1 #5)', async () => {
+    await save([el('a')], 1)
+    // an agent's write lands without the watcher having told us yet
+    const doc = disk(); doc.elements.set('agent', el('agent', { index: 'a1' }))
+    writeFileSync(abs, serializeDrawFile(doc))
+    await save([el('a', { x: 5 }), el('mine', { index: 'a2' })], 2)
+    const got = await service.get(ID)
+    expect(got.elements.map((e) => e.id).sort()).toEqual(['a', 'agent', 'mine'])
+    expect([...disk().elements.keys()].sort()).toEqual(['a', 'agent', 'mine'])
+  })
+})

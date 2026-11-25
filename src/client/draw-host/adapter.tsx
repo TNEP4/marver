@@ -140,8 +140,14 @@ export function DrawEngine({ initial, theme, edit, editable, onReady, onChange, 
       const local = api.getSceneElementsIncludingDeleted() as DrawElement[]
       const map = new Map(local.map((e) => [e.id, e]))
       const incoming = upserts.filter((u) => !protect.has(u.id))
-      const restored = incoming.length ? restoreElements(incoming as any, null, { refreshDimensions: repair, repairBindings: repair }) as unknown as DrawElement[] : []
-      for (const el of restored) map.set(el.id, el)
+      if (incoming.length) {
+        // repaired against the WHOLE scene (an arrow's unchanged endpoints, a label's unchanged container), and only the
+        // incoming elements taken from the result - a partial patch must never strip a binding
+        const ids = new Set(incoming.map((u) => u.id))
+        const scene = [...map.values()].filter((e) => !ids.has(e.id)).concat(incoming as DrawElement[])
+        const restored = restoreElements(scene as any, null, { refreshDimensions: repair, repairBindings: repair }) as unknown as DrawElement[]
+        for (const el of restored) if (ids.has(el.id)) map.set(el.id, el)
+      }
       for (const d of deletes) {
         if (protect.has(d.id)) continue
         const m = map.get(d.id)

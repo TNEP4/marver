@@ -896,16 +896,9 @@ export function App() {
       // drawings (spec 38): W drops a new one at the pointer; Enter or F on a selected drawing opens it for drawing
       // (F fits it to the window first)
       if (key === 'w' && !e.shiftKey && !e.altKey && !s.interact && !PUBLISHED) { e.preventDefault(); cmd('new-drawing', how()); void newDrawingAtPointer(); return }
-      if ((e.key === 'Enter' || (key === 'f' && !e.shiftKey && !e.altKey)) && !s.interact && s.selection.length === 1 && !PUBLISHED) {
-        const n = s.nodes.find((x) => x.key === s.selection[0])
-        if (n && s.frameFor(n)?.kind === 'draw') {
-          e.preventDefault()
-          cmd(e.key === 'Enter' ? 'draw' : 'focus-drawing', how())
-          if (key === 'f') canvasCtl.fitNode(n.key)
-          setInteract(n.key)
-          return
-        }
-      }
+      const selectedDrawing = () => { const n = s.selection.length === 1 && !s.interact && !PUBLISHED ? s.nodes.find((x) => x.key === s.selection[0]) : undefined; return n && s.frameFor(n)?.kind === 'draw' ? n : undefined }
+      if (e.key === 'Enter') { const n = selectedDrawing(); if (n) { e.preventDefault(); cmd('draw', how()); setInteract(n.key); return } }
+      if (key === 'f' && !e.shiftKey && !e.altKey) { const n = selectedDrawing(); if (n) { e.preventDefault(); cmd('focus-drawing', how()); canvasCtl.fitNode(n.key); setInteract(n.key); return } }
       // a slides board PLAYS as slides even when its landing is the canvas -
       // the deck is what the board IS; landing only says where viewers arrive
       if (e.key === 'p') enterPlayFrom(how())

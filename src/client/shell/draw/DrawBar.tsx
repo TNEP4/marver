@@ -7,7 +7,7 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import type { DrawState, DrawTool } from '../../../shared/draw-protocol.ts'
 import { ImagesSquareIcon, PanelFilledIcon, ParallelogramFillIcon, SignpostIcon, CheckIcon } from '../icons.tsx'
 import { HoverTip, MI, MAIN_TOOLS, MORE_TOOLS, Ph, TOOL, type TipSide } from './kit.tsx'
-import { send, type DrawLink } from './link.ts'
+import { drawSend, type DrawLink } from './link.ts'
 
 export function DrawBar({ link, state, tools, mode, tipSide, menuSide = 'below', style, cam, onCopyPath, onCopyImage, onExport, onCollapse, onHideUI, onBack, copied }: {
   link: DrawLink
@@ -41,7 +41,7 @@ export function DrawBar({ link, state, tools, mode, tipSide, menuSide = 'below',
   const tool = state?.tool ?? 'selection'
   const side: TipSide = tipSide ?? (mode === 'canvas' ? 'top' : 'bottom')
   const inMore = !tools.includes(tool) && tool !== 'selection' ? tool : null
-  const pick = (t: DrawTool) => { send(link, { op: 'tool', tool: t }); setOpen(false) }
+  const pick = (t: DrawTool) => { drawSend(link, { op: 'tool', tool: t }); setOpen(false) }
   const btn = (id: DrawTool | 'more', on: boolean, onClick: () => void, icon?: ReactNode, cls = '') => (
     <HoverTip key={id} label={TOOL[id].label} keys={TOOL[id].key} side={side}>
       <button className={`dk-b${on ? ' on' : ''}${cls}`} aria-label={TOOL[id].label} disabled={!editable && id !== 'hand' && id !== 'more'} onClick={onClick}>{icon ?? TOOL[id].icon}</button>
@@ -54,7 +54,7 @@ export function DrawBar({ link, state, tools, mode, tipSide, menuSide = 'below',
     <div ref={ref} className={`dk-anchor${cam ? ' dk-cam' : ''}`} style={{ zIndex: open ? 45 : 30, ...style }}>
       <div className={`dk-glass dk-tools h${mode === 'canvas' ? ' sh-ctx dk-ctx dk-draw' : ''}`}>
         <HoverTip label={state?.locked ? 'Keep tool active - on' : 'Keep tool active'} keys="Q" side={side}>
-          <button className={`dk-b lock${state?.locked ? ' on' : ''}`} aria-label="Keep tool active" disabled={!editable} onClick={() => send(link, { op: 'lock' })}>
+          <button className={`dk-b lock${state?.locked ? ' on' : ''}`} aria-label="Keep tool active" disabled={!editable} onClick={() => drawSend(link, { op: 'lock' })}>
             <Ph n={state?.locked ? 'LockSimple' : 'LockSimpleOpen'} size={16} />
           </button>
         </HoverTip>
