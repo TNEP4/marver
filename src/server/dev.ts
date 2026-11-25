@@ -573,9 +573,12 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
         // the chart runtime: imported from inside the excluded package, so never pre-bundled on its own - a
         // first chart frame fetched ~600 separate echarts modules (40 with these)
         `${PKG} > echarts/core`, `${PKG} > echarts/renderers`, `${PKG} > echarts/charts`, `${PKG} > echarts/components`,
+        // the drawing frame's engine (spec 38): bundled up front, so a canvas's first drawing never makes Vite
+        // re-optimise and reload every open page
+        `${PKG} > @excalidraw/excalidraw`,
         ...iconModules(root),   // the per-icon modules the design imports (icons.ts), bundled up front
       ],
-      entries: [join(clientDir, 'frame-host', 'index.html'), 'design/**/*.{tsx,jsx}'],
+      entries: [join(clientDir, 'frame-host', 'index.html'), join(clientDir, 'draw-host', 'index.html'), 'design/**/*.{tsx,jsx}'],
     },
     logLevel: 'info',
   })
