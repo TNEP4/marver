@@ -27,6 +27,11 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 - An unreadable `auth.json` or `share.json` answers `500` instead of ending the server process.
 - `marver comments sync` and `marver dev` say when the canvas session has ended, and how to connect again.
 
+### Changed
+
+- Marver's mark is the Mac app's, as marver.design shows it: on the sign-in pages and their "Powered by" line, in the
+  canvas's brand slot and play, on Marver's own comments, and in the browser tab (the interact-mode icons too).
+
 ## 0.36.1 - 2026-11-24
 
 ### Fixed
