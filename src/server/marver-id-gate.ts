@@ -36,6 +36,7 @@ import { attachAvatar, avatarSourceFor, provisionFromMarverId } from './auth.ts'
 import { fetchAvatar } from './avatar.ts'
 import { TransactionStore, browserBinding, verifyAssertion } from './marver-id.ts'
 import { poweredByUrl } from '../shared/utm.ts'
+import { markSvg } from '../shared/brand.ts'
 import { logoIconLink } from './logo.ts'
 
 /**
@@ -402,12 +403,11 @@ export function marverIdHandler(dir: string, issuer: string, canvasName?: string
  * The mark and the escaper, defined here rather than imported from serve.ts.
  *
  * serve.ts imports this module, so reaching back for them would be a cycle. The
- * paths are the same ones the gate draws - if one changes, both change, which
- * is exactly the coupling the shared look depends on.
+ * mark comes from src/shared/brand.ts, the one the gate and the shell draw too,
+ * so the shared look cannot drift.
  */
-const MARK_AT = (size: number) => `<svg viewBox="0 0 256 256" width="${size}" height="${size}" fill="currentColor" aria-hidden><path d="M239.29,59.28l-64.8,144a8,8,0,0,1-7.3,4.72H24a8,8,0,0,1-7.3-11.28l64.8-144A8,8,0,0,1,88.81,48H232A8,8,0,0,1,239.29,59.28Z" opacity=".1"/><path d="M245.43,47.31A15.94,15.94,0,0,0,232,40H88.81a16,16,0,0,0-14.59,9.43l-64.8,144A16,16,0,0,0,24,216H167.19a16,16,0,0,0,14.59-9.43l64.8-144A16,16,0,0,0,245.43,47.31ZM167.19,200H24L88.81,56H232Z"/></svg>`
-const MARK = MARK_AT(18)
-const MARK_LG = MARK_AT(24)
+const MARK = markSvg(14)
+const MARK_LG = markSvg(18)
 const ARROW = `<svg class="up" viewBox="0 0 256 256" width="11" height="11" fill="currentColor" aria-hidden><path d="M200,64V168a8,8,0,0,1-16,0V83.31L69.66,197.66a8,8,0,0,1-11.32-11.32L172.69,72H88a8,8,0,0,1,0-16H192A8,8,0,0,1,200,64Z"/></svg>`
 
 /** The canvas name is the operator's own, but it still lands in HTML. */

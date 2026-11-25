@@ -11,6 +11,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { extname, isAbsolute, join, relative, resolve } from 'node:path'
 import { NAME } from '../cli/name.ts'
 import { poweredByUrl } from '../shared/utm.ts'
+import { markSvg } from '../shared/brand.ts'
 import { secureSuffix } from './secure-cookie.ts'
 import { logoIconLink } from './logo.ts'
 
@@ -517,10 +518,10 @@ function isCosmetic(pathname: string): boolean {
   return /^\/__mv\/favicon\/[\w-]+(?:\.[\w-]+)+$/.test(decoded) || /^\/__mv\/logo\.(?:svg|png|ico)$/.test(decoded)
 }
 
-/** The Marver logo mark (ParallelogramDuo, same as the shell's sidebar). */
-const MARK_AT = (size: number) => `<svg viewBox="0 0 256 256" width="${size}" height="${size}" fill="currentColor" aria-hidden><path d="M239.29,59.28l-64.8,144a8,8,0,0,1-7.3,4.72H24a8,8,0,0,1-7.3-11.28l64.8-144A8,8,0,0,1,88.81,48H232A8,8,0,0,1,239.29,59.28Z" opacity=".1"/><path d="M245.43,47.31A15.94,15.94,0,0,0,232,40H88.81a16,16,0,0,0-14.59,9.43l-64.8,144A16,16,0,0,0,24,216H167.19a16,16,0,0,0,14.59-9.43l64.8-144A16,16,0,0,0,245.43,47.31ZM167.19,200H24L88.81,56H232Z"/></svg>`
-const MARK = MARK_AT(17)
-const MARK_LG = MARK_AT(24)
+/** Marver's mark (src/shared/brand.ts, the shell's MarverMark): the footer's beside "Powered by", the header's when the
+ *  build found no repo logo. Sized by height - the mark is a little wider than tall. */
+const MARK = markSvg(15)
+const MARK_LG = markSvg(18)
 /** Marver's own tab icons: the gate's only when the build found no repo logo, whose icon is then the one there is
  *  (spec 28 A4.6 #46; release review P2 - beside it, a browser could still pick one of these). */
 const MARVER_ICONS = `<link rel="icon" href="/__mv/favicon/favicon.ico" sizes="48x48" />
@@ -696,7 +697,7 @@ ${logoIconLink(meta.logo) || MARVER_ICONS}
   .err:empty { display: none }
   footer a { display: inline-flex; align-items: center; gap: 7px; font: 600 12.5px -apple-system, system-ui, sans-serif;
     color: rgba(24, 24, 27, .55); text-decoration: none }
-  footer a > svg:first-of-type { width: 20px; height: 20px; color: #0088ff }
+  footer a > svg:first-of-type { color: #0088ff }
   footer .md, footer .up { transition: color .15s, opacity .15s }
   footer a:hover .md { color: #0088ff; text-decoration: underline; text-underline-offset: 3px }
   footer .up { opacity: .45; margin-left: -3px }

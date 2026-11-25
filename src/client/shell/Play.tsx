@@ -38,7 +38,7 @@ import { Tip } from './Tip.tsx'
 import { keyAllowed } from '../frame-host/keys.js'
 import { CommentButton, DevicePicker, HideUIButton, isHideUI, LaserButton, Popover, ThemePicker, toggleHideUI, usePopover } from './Toolbar.tsx'
 import { cardSelectAll, DraftComposer, Pins, placePins, ThreadCard } from './Comments.tsx'
-import { ArrowLeftIcon, ArrowRightIcon, BrowsersIcon, CaretIcon, CheckIcon, ExportIcon, GridIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ReloadIcon, SpecDocIcon } from './icons.tsx'
+import { ArrowLeftIcon, ArrowRightIcon, BrowsersIcon, CaretIcon, CheckIcon, ExportIcon, GridIcon, PanelFilledIcon, MarverMark, PanelHollowIcon, ReloadIcon, SpecDocIcon } from './icons.tsx'
 import { deviceLabel } from './devices.tsx'
 
 const commentsStore = () => useComments.getState()
@@ -793,7 +793,7 @@ function PlayInner() {
             href={poweredByUrl(CONFIG.projectName, PUBLISHED ? 'published-canvas' : 'dev-canvas', 'play-brand')}
             target="_blank" rel="noreferrer" aria-label="marver.design"
           >
-            <ParallelogramDuoIcon size={19} /><span className="wd">Marver</span>
+            <MarverMark size={14} /><span className="wd">Marver</span>
           </a>
           <i className="sep" />
         </>}

@@ -14,7 +14,7 @@ import { speechLines } from '../../shared/speech.ts'
 import {
   ArrowBendUpLeftIcon, ArrowLeftIcon, ArrowRightIcon, ArrowUpIcon, CopyIcon, CursorClickIcon, CursorIcon, EyeIcon, FileCodeIcon,
   FrameRectIcon, ImagesSquareIcon, LaserIcon, MicrophoneIcon, MoonIcon, PencilSimpleIcon, SignpostIcon, SunIcon, TextboxIcon,
-  ParallelogramFillIcon, WarningIcon, WaveformIcon, XIcon,
+  MarverMark, WarningIcon, WaveformIcon, XIcon,
 } from './icons.tsx'
 import { LANE_H } from './jam-lane.tsx'
 import { deviceIcon, deviceLabel } from './devices.tsx'
@@ -33,7 +33,7 @@ const cutShort = (el: HTMLElement) => el.scrollWidth > el.clientWidth + 1
 /** Marver's mark, as the thread draws it (Comments.tsx MarverAvatar) - drawn here from the same classes
  *  so the panels never import the comments module (which will import these panels). */
 export const Marver = ({ size = 20 }: { size?: number }) => (
-  <span className="cm-avatar cm-marver" style={{ width: size, height: size }} aria-label="Marver"><ParallelogramFillIcon size={Math.round(size * 0.5)} /></span>
+  <span className="cm-avatar cm-marver" style={{ width: size, height: size }} aria-label="Marver"><MarverMark size={Math.round(size * 0.42)} /></span>
 )
 
 // ---- the focus panel ---------------------------------------------------------------------------------

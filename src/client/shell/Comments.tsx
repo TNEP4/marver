@@ -19,7 +19,7 @@ import { navigatedByHand } from './goto.ts'
 import { MARKER, placeMarkers, type Placed } from './pin-layout.ts'
 import { bootHash, buildHash, parseHash, writeHash } from './hash.ts'
 import { isLegacyLink } from './legacy-links.ts'
-import { ArrowUpIcon, CheckIcon, CheckSquareOffsetIcon, LinkIcon, ParallelogramFillIcon, PencilSimpleIcon, PlusIcon, XIcon } from './icons.tsx'
+import { ArrowUpIcon, CheckIcon, CheckSquareOffsetIcon, LinkIcon, MarverMark, PencilSimpleIcon, PlusIcon, XIcon } from './icons.tsx'
 import { Tip } from './Tip.tsx'
 import { TagStatus } from './jam-ui.tsx'
 import { CaptureBlock } from './jam-panel.tsx'
@@ -58,14 +58,15 @@ const rel = (ts: number) => {
   return `${Math.round(m / 1440)}d`
 }
 
-/** The Marver mark avatar: accent-blue disc + the solid white parallelogram. One place, reused
- *  by the thread header, the pin/stack marker, and the notification pill. */
+/** The Marver mark avatar: accent-blue disc + Marver's mark in white (front ring solid, rear piece
+ *  at 45%). One place, reused by the thread header, the pin/stack marker, and the notification pill. */
 export function MarverAvatar({ size = 24 }: { size?: number }) {
-  // 0.5 keeps clear blue padding around the mark even in the marker, where a 2px white border
-  // shrinks the visible disc (a bigger mark looked nearly cut there).
+  // the mark's height at .42 of the disc (its width ~.48, near what the old parallelogram spanned) keeps clear
+  // blue padding around it even in the marker, where a 2px white border shrinks the visible disc (a
+  // bigger mark looked nearly cut there).
   return (
     <span className="cm-avatar cm-marver" style={{ width: size, height: size }} aria-label="Marver">
-      <ParallelogramFillIcon size={Math.round(size * 0.5)} />
+      <MarverMark size={Math.round(size * 0.42)} />
     </span>
   )
 }

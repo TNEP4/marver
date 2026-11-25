@@ -26,7 +26,7 @@ import { enterFocus, enterPlay, enterSlides, playCtl, PlayOverlay } from './Play
 import { PdfNotice } from './pdf-export.tsx'
 import { bootHash, linkTargets, parseHash, retargetBoot, routedHash, UNPLACED, writeHash } from './hash.ts'
 import { isLegacyLink, landLegacy } from './legacy-links.ts'
-import { CaretIcon, CheckIcon, CheckSquareOffsetIcon, ColumnsIcon, FrameRectIcon, ImagesSquareIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, ParallelogramDuoIcon, ParallelogramFillIcon, PencilSimpleIcon, PlayIcon, PlusIcon, SignpostIcon, SlideFrameIcon, SunIcon, VariantsIcon, XIcon } from './icons.tsx'
+import { CaretIcon, CheckIcon, CheckSquareOffsetIcon, ColumnsIcon, FrameRectIcon, ImagesSquareIcon, IntentGlyph, MoonIcon, PanelFilledIcon, PanelHollowIcon, MarverMark, PencilSimpleIcon, PlayIcon, PlusIcon, SignpostIcon, SlideFrameIcon, SunIcon, VariantsIcon, XIcon } from './icons.tsx'
 import { deviceIcon, deviceLabel } from './devices.tsx'
 import { ALL_SCENES, humanize as slugLabel, readTitle } from '../../shared/board-tree.ts'
 import { cardSelectAll, CommentsController, parkThread, revealThread } from './Comments.tsx'
@@ -1053,7 +1053,7 @@ export function App() {
                 the project so two concurrent canvases are never confused), ellipsed if long */}
             <Tip side="bottom" label="marver.design">
               <a className="mark-link" href={poweredByUrl(CONFIG.projectName, PUBLISHED ? 'published-canvas' : 'dev-canvas', 'shell')} target="_blank" rel="noreferrer" aria-label="marver.design" tabIndex={panelOpen ? 0 : -1}>
-                <ParallelogramDuoIcon size={21} className="mark" />
+                <MarverMark size={16} className="mark" />
               </a>
             </Tip>
             <span className="name" title={CONFIG.projectName || 'Marver'}>{CANVAS_NAME}</span>
@@ -1511,7 +1511,7 @@ function JamToast({ id, note, badge, inert }: { id: number; note: import('./stor
     <div className="sh-toast jam">
       {human
         ? <JamAvatar author={note.author!} />
-        : <span className="sh-jam-mark"><ParallelogramFillIcon size={17} /></span>}
+        : <span className="sh-jam-mark"><MarverMark size={14} /></span>}
       <div className="sh-jam-txt">
         {human
           ? <b className="sh-jam-frame"><span className="t">{note.author!.name ?? 'Someone'}</span> <span className="v">{note.kind === 'mention' ? 'mentioned you' : 'replied'}</span></b>

@@ -1,4 +1,5 @@
 import type { ReactNode, SVGProps } from 'react'
+import { MARK_FRONT, MARK_REAR, MARK_REAR_OPACITY, MARK_VIEWBOX, markWidth } from '../../shared/brand.ts'
 
 /**
  * Phosphor icons (regular weight), path data inlined from @phosphor-icons/core
@@ -42,8 +43,17 @@ export const MonitorIcon = icon(<path d="M208,40H48A24,24,0,0,0,24,64V176a24,24,
 export const TvIcon = icon(<path d="M216,64H147.31l34.35-34.34a8,8,0,1,0-11.32-11.32L128,60.69,85.66,18.34A8,8,0,0,0,74.34,29.66L108.69,64H40A16,16,0,0,0,24,80V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V80A16,16,0,0,0,216,64Zm0,136H40V80H216V200Z" />)
 export const ImagesSquareIcon = icon(<path d="M208,32H80A16,16,0,0,0,64,48V64H48A16,16,0,0,0,32,80V208a16,16,0,0,0,16,16H176a16,16,0,0,0,16-16V192h16a16,16,0,0,0,16-16V48A16,16,0,0,0,208,32ZM80,48H208v69.38l-16.7-16.7a16,16,0,0,0-22.62,0L93.37,176H80Zm96,160H48V80H64v96a16,16,0,0,0,16,16h96Zm32-32H116l64-64,28,28v36Zm-88-64A24,24,0,1,0,96,88,24,24,0,0,0,120,112Zm0-32a8,8,0,1,1-8,8A8,8,0,0,1,120,80Z" />)
 export const SignpostIcon = icon(<path d="M246,106.65,212.33,69.3A16,16,0,0,0,200.44,64H136V32a8,8,0,0,0-16,0V64H40A16,16,0,0,0,24,80v64a16,16,0,0,0,16,16h80v64a8,8,0,0,0,16,0V160h64.44a16,16,0,0,0,11.89-5.3L246,117.35A8,8,0,0,0,246,106.65ZM200.44,144H40V80H200.44l28.8,32Z" />)
-export const ParallelogramDuoIcon = icon(<><path d="M239.29,59.28l-64.8,144a8,8,0,0,1-7.3,4.72H24a8,8,0,0,1-7.3-11.28l64.8-144A8,8,0,0,1,88.81,48H232A8,8,0,0,1,239.29,59.28Z" opacity=".1" /><path d="M245.43,47.31A15.94,15.94,0,0,0,232,40H88.81a16,16,0,0,0-14.59,9.43l-64.8,144A16,16,0,0,0,24,216H167.19a16,16,0,0,0,14.59-9.43l64.8-144A16,16,0,0,0,245.43,47.31ZM167.19,200H24L88.81,56H232Z" /></>)
-/** The marver mark, SOLID fill (for the Marver avatar - a filled white parallelogram on accent). */
+/** Marver's mark (src/shared/brand.ts): the two glass shapes, the front ring solid and the rear piece at 45%,
+ *  in currentColor. `size` is its HEIGHT - the mark is a little wider than tall, so it is sized by height. */
+export function MarverMark({ size = 16, ...rest }: IconProps) {
+  return (
+    <svg width={markWidth(size)} height={size} viewBox={MARK_VIEWBOX} fill="none" aria-hidden {...rest}>
+      <path d={MARK_REAR} fill="currentColor" fillOpacity={MARK_REAR_OPACITY} />
+      <path d={MARK_FRONT} fillRule="evenodd" fill="currentColor" />
+    </svg>
+  )
+}
+/** A solid parallelogram: the building-frame shimmer's motif (FrameNode) - no longer the logo, which is MarverMark. */
 export const ParallelogramFillIcon = icon(<path d="M245.43,47.31A15.94,15.94,0,0,0,232,40H88.81a16,16,0,0,0-14.59,9.43l-64.8,144A16,16,0,0,0,24,216H167.19a16,16,0,0,0,14.59-9.43l64.8-144A16,16,0,0,0,245.43,47.31Z" />)
 /** Sidebar trigger, custom in Phosphor 256-space: outer frame + panel pill -
  *  pill filled while the sidebar is open, hollow while collapsed. */
