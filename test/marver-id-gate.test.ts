@@ -333,7 +333,9 @@ describe('gate providers - three modes, one server each', { timeout: 30_000 }, (
       const res = await fetch(`http://localhost:${identity.port}${p}`, { method: 'POST' })
       const html = await res.text()
       expect(bundleServed(html)).toBe(false)
-      expect(html).toContain('id-go')   // the gate answered, not the API
+      // the gate answered, not the API - and to an API call it answers signed out, in JSON (spec 36), never a page
+      expect(res.status).toBe(401)
+      expect(JSON.parse(html)).toEqual({ error: 'signed out', signIn: 'marver-id' })
     }
   })
 

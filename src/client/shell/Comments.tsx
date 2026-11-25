@@ -940,8 +940,8 @@ function Unsent({ p, what, signedOut }: { p: Pending; what: string; signedOut: b
     <div className="cm-unsent refused" data-unsent="refused">
       {Not} - {p.refused}
       <span className="cm-unsent-acts">
-        <button onClick={() => retry(p.key)}>Retry</button>
-        <button onClick={() => discard(p.key)}>Discard</button>
+        <button onClick={() => { cmd('comment-retry', { via: 'click', in: 'shell' }).done(); retry(p.key) }}>Retry</button>
+        <button onClick={() => { cmd('comment-discard', { via: 'click', in: 'shell' }).done(); discard(p.key) }}>Discard</button>
       </span>
     </div>
   )
@@ -951,7 +951,7 @@ function Unsent({ p, what, signedOut }: { p: Pending; what: string; signedOut: b
   )
   if (signedOut || !me) return (
     <div className="cm-unsent" data-unsent="signed-out">
-      {Not} yet - kept here until you <button onClick={() => signInAgain()}>sign in again</button>
+      {Not} yet - kept here until you <button onClick={() => { cmd('identity-open', { via: 'click', in: 'shell' }); signInAgain() }}>sign in again</button>
     </div>
   )
   return <div className="cm-unsent" data-unsent="sending">{thing ? `${thing} sending…` : 'Sending…'}</div>

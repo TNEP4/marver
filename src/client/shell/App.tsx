@@ -1293,12 +1293,12 @@ function OutboxBanner() {
   return signedOut ? (
     <div ref={ref} className={`sh-banner sh-stopped sh-signedout${play ? ' dark' : ''}`} role="status" data-signed-out={waiting}>
       You're signed out{waiting ? <> - your {many(waiting)} kept here</> : null}
-      <button className="sh-banner-act" onClick={() => useComments.getState().signInAgain()}>Sign in again</button>
+      <button className="sh-banner-act" onClick={() => { cmd('identity-open', { via: 'click', in: 'shell' }); useComments.getState().signInAgain() }}>Sign in again</button>
     </div>
   ) : (
     <div ref={ref} className={`sh-banner sh-stopped sh-signedout${play ? ' dark' : ''}`} role="status" data-refused={refused.length}>
       {refused.length === 1 ? 'A comment could not be sent' : `${refused.length} comments could not be sent`}
-      <button className="sh-banner-act" onClick={() => { const id = threadOf(refused[0]); if (id) revealThread(id) }}>Show</button>
+      <button className="sh-banner-act" onClick={() => { cmd('thread-open', { via: 'click', in: 'shell' }); navigatedByHand(); const id = threadOf(refused[0]); if (id) revealThread(id) }}>Show</button>
     </div>
   )
 }

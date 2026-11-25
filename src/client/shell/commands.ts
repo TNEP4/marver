@@ -182,6 +182,9 @@ export const COMMANDS = {
   'thread-close': se('2raf', { silent: true }),
   'ask-to-comment': se('answer', { deadlineMs: S30, noop: ['too-soon'], failed: ['api'] }),
   'identity-open': se('2raf'),
+  // spec 36: a write the server refused for good - sent again by the person, or let go
+  'comment-retry': once(),
+  'comment-discard': once(),
   'identity-switch': se('2raf'),
   'sign-in': se('answer', { deadlineMs: S30, failed: ['rejected', 'api'] }),
   claim: se('answer', { deadlineMs: S30, failed: ['rejected', 'api'] }),

@@ -230,7 +230,7 @@ describe('a revoked or blocked member is refused at every door', () => {
     // the API doors, Bearer included (it pierces the gate only for the still-admitted)
     const bearer = { headers: { authorization: `Bearer ${member.session}` } }
     const cg = await fetch(`http://localhost:${PORT}/__mv/api/comments/main`, bearer)
-    expect(cg.headers.get('content-type')).toContain('text/html')   // the gate page, not events
+    expect([cg.status, await cg.json()]).toEqual([401, { error: 'signed out', signIn: 'password' }])   // the gate, not events (spec 36: told in JSON)
     const ev = await fetch(`http://localhost:${PORT}/__mv/api/events`, bearer)
     expect(ev.headers.get('content-type')).not.toContain('event-stream')
     // a fresh sign-in attempt
