@@ -8,12 +8,13 @@ import type { CSSProperties, ReactNode } from 'react'
 export const cn = (...xs: Array<string | false | null | undefined>) =>
   xs.filter(Boolean).join(' ')
 
-/** The marver mark (ParallelogramDuo - same path as the shell's sidebar). */
+/** The Marver mark: the Mac app's two glass shapes, as marver.design and the shell draw them (copied from the
+ *  package's src/shared/brand.ts) - the front ring solid, the rear piece at 45%, in currentColor. */
 export function MarverMark({ className }: { className?: string }) {
   return (
-    <svg viewBox="0 0 256 256" className={className} fill="currentColor" aria-hidden>
-      <path d="M239.29,59.28l-64.8,144a8,8,0,0,1-7.3,4.72H24a8,8,0,0,1-7.3-11.28l64.8-144A8,8,0,0,1,88.81,48H232A8,8,0,0,1,239.29,59.28Z" opacity=".12" />
-      <path d="M245.43,47.31A15.94,15.94,0,0,0,232,40H88.81a16,16,0,0,0-14.59,9.43l-64.8,144A16,16,0,0,0,24,216H167.19a16,16,0,0,0,14.59-9.43l64.8-144A16,16,0,0,0,245.43,47.31ZM167.19,200H24L88.81,56H232Z" />
+    <svg viewBox="219 248 588 518" className={className} fill="currentColor" aria-hidden>
+      <path d="M625.05 323.34C633.38 314.04 644.14 307.53 662.74 307.53L749.23 307.53C784.57 307.53 808.49 333.57 806.22 367.98C806.07 376.35 804.25 385.65 802.43 394.95L737.25 722.31C732.53 749.28 718.09 765.09 689.26 765.09L355.39 765.09C319.12 765.09 292.62 744.63 290.81 713.01L584.69 713.01C615.38 713.01 637.62 694.41 643.82 665.58L708.93 365.19C711.66 351.24 714.94 335.43 716.93 322.41Z" opacity=".45" />
+      <path d="M360.42 248.01L657.09 248.01C691.50 248.01 719.14 274.05 716.51 311.25C716.21 327.99 712.76 347.52 708.93 365.19L643.82 665.58C637.62 694.41 615.38 713.01 584.69 713.01L283.37 713.01C242.45 713.01 214.81 686.97 220.04 648.84C220.57 642.33 222.03 635.82 223.49 629.31L296.30 302.88C302.67 270.33 326.01 248.01 360.42 248.01ZM402.80 327.99C384.20 327.99 372.34 338.22 369.25 354.96L311.72 601.41C306.79 622.80 318.20 637.68 338.66 637.68L532.10 637.68C549.77 637.68 562.37 626.52 565.46 609.78L620.03 367.05C626.44 343.80 612.05 327.99 590.66 327.99Z" fillRule="evenodd" />
     </svg>
   )
 }
