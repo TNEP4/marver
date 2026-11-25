@@ -13,6 +13,7 @@ import { ALL_SCENES } from '../../shared/board-tree.ts'
 import { UNPLACED } from './hash.ts'
 import { api as request, canvasStopped, scoped, stoppedLink, useLink } from './api.ts'
 import type { CmdHandle } from './commands.ts'
+import { hasDraftWords } from './drafts.ts'
 
 /** What the Not on a board view says when asked for a comment: a note needs a board to live on. */
 export const NO_COMMENTS_HERE = 'pin it on a board to comment'
@@ -58,6 +59,20 @@ interface CommentsState {
   ownership: Record<string, Set<string>> | null
   /** what the server's comment API takes (spec 31 C.6): an older published server has no `delete` - the shell hides it */
   caps: { delete: boolean }
+  /** Spec 36: every write not yet stored by the server - kept in this browser until it is, shown where it will be. */
+  pending: Pending[]
+  /** Spec 36: the server said this viewer's session is gone (a 401) - set until a request proves it is back. */
+  signedOut: boolean
+  /** How this canvas lets a person back in, as the server says: Marver ID or a password (null: dev, or not told yet). */
+  signInMode: 'marver-id' | 'password' | null
+  /** Take the signed-out viewer back in: Marver ID through its own pages (nothing is lost - the outbox is on disk), a
+   *  password canvas through the dialog, a guest through the gate. */
+  signInAgain(): void
+  /** Send what waits now (after a sign-in, back online, a Retry). */
+  flush(): Promise<void>
+  /** Try a refused write again, or let it go - the only way a person's words leave the outbox unsent. */
+  retry(key: string): void
+  discard(key: string): void
 
   load(board: string): Promise<void>
   live(board: string): () => void
@@ -104,13 +119,42 @@ const loadMentionSeen = (): Record<string, number> => {
   try { return JSON.parse(localStorage.getItem(scoped('mv-mention-seen')) ?? '{}') } catch { return {} }
 }
 const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
+/** One call to the comment API. Only JSON is an answer (spec 36): a page - an old server's sign-in page with its 200,
+ *  a proxy's error page - or a body that will not parse is status 0, never `ok`. That 200 page once made a reviewer's
+ *  comments look sent (#31). A write that has no answer in 20 s is abandoned (thrown) - the outbox sends it again. */
 const api = async (path: string, body?: unknown) => {
   const res = await request(path, body === undefined ? undefined : {
     method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() },
-    body: JSON.stringify(body),
+    body: JSON.stringify(body), signal: AbortSignal.timeout(20_000),
   })
-  return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) }
+  const data = /json/.test(res.headers.get('content-type') ?? '') ? await res.json().catch(() => null) : null
+  return { ok: res.ok && data !== null, status: data === null && res.ok ? 0 : res.status, data: (data ?? {}) as any }
 }
+
+/** A write the server has not stored yet (spec 36 §3): its events exactly as they will be posted, the board's log it
+ *  goes to, and the account that wrote it - it is sent only while that account is signed in. `refused`: the server
+ *  said no and saying it again will not change that - kept, with the reason, until the person retries or lets it go. */
+export interface Pending { key: string; board: string; events: CommentEvent[]; account: string; refused?: string }
+/** The outbox lives in localStorage, per canvas: it survives a reload, a closed tab, a crash, and the sign-in pages a
+ *  Marver ID canvas sends the tab through. Storage that throws (a private window) leaves it in this page alone. */
+const OUTBOX = () => scoped('mv-outbox')
+const readOutbox = (): Pending[] | null => {
+  try {
+    const v = JSON.parse(localStorage.getItem(OUTBOX()) ?? '[]')
+    return Array.isArray(v) ? v.filter((p) => p && typeof p.key === 'string' && typeof p.board === 'string' && Array.isArray(p.events)) : []
+  } catch { return null }
+}
+const writeOutbox = (list: Pending[]): boolean => {
+  try { if (list.length) localStorage.setItem(OUTBOX(), JSON.stringify(list)); else localStorage.removeItem(OUTBOX()); return true }
+  catch { return false }
+}
+const sameAccount = (a: string, b?: string) => !!b && a.trim().toLowerCase() === b.trim().toLowerCase()
+/** The server's clock less this browser's (from /me, spec 36): events are stamped on the server's time, so a reviewer
+ *  whose clock runs fast is not refused ("timestamp out of bounds") on every write. */
+let skew = 0
+const now = () => Date.now() + skew
+/** Set while the tab leaves on purpose (to sign in): the leave-page question is for leaving by accident. */
+let leaving = false
 /** An identity write and the command behind it (spec 30's `sign-in`, `claim`, `profile-save`): ok → done, the answer
  *  said no → `rejected`, no answer → `api`. */
 const identityWrite = async (path: string, body: unknown, h?: CmdHandle) => {
@@ -124,9 +168,12 @@ const identityWrite = async (path: string, body: unknown, h?: CmdHandle) => {
 export const useComments = create<CommentsState>((set, get) => {
   // replay PER BOARD, then concatenate: replay keys threads by commentId alone, so a
   // (copied, malicious, or just colliding) id in two logs must not merge across boards
-  const derive = (events: CommentEvent[]) => {
+  const derive = (events: CommentEvent[], pending: Pending[] = get()?.pending ?? []) => {
     const byBoard = new Map<string, CommentEvent[]>()
-    for (const e of events) {
+    // what waits in the outbox shows where it will be (spec 36): as mine, beside what is stored - never twice
+    const stored = new Set(events.map((e) => `${e.board ?? ''}|${e.id}`))
+    const waiting = pending.flatMap((p) => asSentBy(p.events, get()?.me?.id)).filter((e) => !stored.has(`${e.board ?? ''}|${e.id}`))
+    for (const e of [...events, ...waiting]) {
       const k = e.board ?? ''
       const arr = byBoard.get(k) ?? []
       arr.push(e)
@@ -260,8 +307,9 @@ export const useComments = create<CommentsState>((set, get) => {
     const results = await Promise.all(names.map((n) =>
       api(`comments/${n}`).then((r) => {
         if (n === ALL_SCENES && r.status === 404) allScenesOff = true   // a canvas published before 0.25 serves none
+        heard(r)
         return r.ok ? stamped(r.data.events as CommentEvent[] | undefined, n) : null
-      })))
+      }, () => null)))
     union(results.flatMap((evs) => evs ?? []))
     names.forEach((n, i) => { if (results[i] !== null) baselinedBoards.add(n) })
     if (get().local) await readOwnership()
@@ -291,7 +339,94 @@ export const useComments = create<CommentsState>((set, get) => {
     } catch { /* keep what we have */ }
   }
 
+  /** What every answer says about the session (spec 36 §4): a 401 is signed out, said at once - by the poll, the live
+   *  stream, a send - so a reviewer learns it before writing, not after. Only /me or a stored write says it is back. */
+  const heard = (r: { status: number; data: any }) => {
+    if (r.status !== 401 || get().local) return
+    const mode = r.data?.signIn === 'marver-id' || r.data?.signIn === 'password' ? r.data.signIn : get().signInMode
+    if (!get().signedOut || mode !== get().signInMode) set({ signedOut: true, signInMode: mode ?? 'password' })
+  }
+  /** Change the outbox: read what storage holds (another tab of this canvas may have changed it), apply, write back. */
+  const mutate = (fn: (list: Pending[]) => Pending[]) => {
+    const next = fn(readOutbox() ?? get().pending)
+    writeOutbox(next)
+    set({ pending: next, ...derive(get().events, next) })
+  }
+  /** Post one waiting write. `stored`: the server took it (JSON `accepted` - a resend it already holds answers 0, which
+   *  is stored too: ids are idempotent). `wait`: signed out, down, a page, no answer - kept, sent again. `refused`: a
+   *  4xx that saying it again will not change - kept with its reason. */
+  const post = async (p: Pending): Promise<'stored' | 'wait' | 'refused'> => {
+    let r: Awaited<ReturnType<typeof api>>
+    try { r = await api(`comments/${p.board}`, { events: p.events }) } catch { return 'wait' }
+    heard(r)
+    if (r.ok && typeof r.data?.accepted === 'number') {
+      union(asSentBy(p.events, get().me?.id))   // stored first, then out of the outbox: the message never blinks
+      mutate((list) => list.filter((x) => x.key !== p.key))
+      if (get().signedOut) set({ signedOut: false })
+      return 'stored'
+    }
+    if (r.status === 403 && r.data?.code === 'csrf') { void api('me').catch(() => {}); return 'wait' }   // /me mends mv_c
+    if (r.status >= 400 && r.status < 500 && r.status !== 401 && r.status !== 408 && r.status !== 429) {
+      const why = String(r.data?.error ?? 'refused')
+      mutate((list) => list.map((x) => (x.key === p.key ? { ...x, refused: why } : x)))
+      return 'refused'
+    }
+    return 'wait'
+  }
+  /** Send what waits, oldest first, for the account signed in now. A `wait` stops the round: the next one comes on the
+   *  timer, on focus, on `online`, after a sign-in, at the next load. */
+  let flushing = false
+  const flush = async () => {
+    if (flushing || get().local || apiOff) return
+    flushing = true
+    try {
+      for (const p of readOutbox() ?? get().pending) {
+        if (p.refused || !sameAccount(p.account, get().me?.email)) continue
+        if (await post(p) === 'wait') break
+      }
+    } finally { flushing = false }
+  }
+  /** While anything waits: try again every 10 s - and while signed out, ask /me first, so a sign-in in another tab is
+   *  noticed here too. */
+  const probe = async () => {
+    if (get().local || apiOff || !get().pending.some((p) => !p.refused)) return
+    if (get().signedOut) {
+      const me = await api('me').catch(() => null)
+      if (!me?.ok) return
+      adoptMe(me.data)
+    }
+    await flush()
+  }
+  /** /me's answer, taken in: who I am, my boards, the server's clock and how this canvas signs people in. */
+  const adoptMe = (d: any) => {
+    if (typeof d.now === 'number') skew = d.now - Date.now()
+    set({
+      me: d.user ? { ...d.user, ...(d.id ? { id: d.id } : {}) } : null,
+      myBoards: d.boards && typeof d.boards === 'object' ? d.boards : null,
+      local: !!d.local, connected: !!d.connected,
+      ...(d.signIn === 'marver-id' || d.signIn === 'password' ? { signInMode: d.signIn } : {}),
+      ...(d.user ? { signedOut: false } : {}),
+    })
+  }
+  if (typeof window !== 'undefined') {
+    setInterval(() => { void probe() }, 10_000)
+    window.addEventListener('online', () => { void probe() })
+    window.addEventListener('focus', () => { void probe() })
+    // another tab of this canvas sent (or kept) something: this one shows the same outbox
+    window.addEventListener('storage', (e) => {
+      if (e.key !== OUTBOX()) return
+      const list = readOutbox()
+      if (list) set({ pending: list, ...derive(get().events, list) })
+    })
+    // a published canvas asks before the tab closes on words not stored (spec 36 §3) - dev has its own guard
+    window.addEventListener('beforeunload', (e) => {
+      if (leaving || get().local) return
+      if (get().pending.length || hasDraftWords()) { e.preventDefault(); e.returnValue = '' }
+    })
+  }
+
   return {
+    pending: readOutbox() ?? [], signedOut: false, signInMode: null,
     events: [], threads: [], board: null, me: null, myBoards: null, local: false, connected: false,
     mentionSeen: loadMentionSeen(),
     commentMode: false, show: true, showAnchor: true, active: null, draft: null, needsIdentity: false, inviteToken: null,
@@ -323,15 +458,26 @@ export const useComments = create<CommentsState>((set, get) => {
       // frame on another board keeps its pins); only the open card and a draft reset
       if (get().board !== board) set({ board, active: null, draft: null, ...(board === UNPLACED ? { commentMode: false } : {}) })
       else set({ board })
-      const me = await api('me')
+      // /me is asked again while it has no answer (a redeploy's 502, no network): one bad moment at load must not
+      // leave the tab signed out for the whole visit (spec 36 §4)
+      let me: Awaited<ReturnType<typeof api>> | null = null
+      for (const wait of [0, 2_000, 5_000, 10_000, 20_000]) {
+        if (wait) await new Promise((r) => setTimeout(r, wait))
+        me = await api('me').catch(() => null)
+        if (me && (me.ok || (me.status >= 400 && me.status < 500))) break
+      }
+      if (!me) return
       if (me.status === 404) { apiOff = true; return }   // static serve: no comments API at all
-      if (me.ok) set({
-        me: me.data.user ? { ...me.data.user, ...(me.data.id ? { id: me.data.id } : {}) } : null,
-        myBoards: me.data.boards && typeof me.data.boards === 'object' ? me.data.boards : null,
-        local: !!me.data.local, connected: !!me.data.connected,
-      })
+      if (me.ok) adoptMe(me.data)
+      else if (me.status === 401) {
+        if (me.data?.signIn === 'marver-id' || me.data?.signIn === 'password') set({ signInMode: me.data.signIn })
+        // a guest on a password canvas is signed out by nature; it is NEWS only for someone who was in, or who left
+        // words waiting
+        if (get().me || get().pending.length) heard(me)
+      }
       await readCaps()
       await fetchAll()
+      void flush()
       // mark-seen: the board was actually PRESENTED (load runs on open, never
       // from the background poll), so the viewer's unread mark advances - the
       // front door's counter moves on this and nothing else (02-home §4)
@@ -354,7 +500,14 @@ export const useComments = create<CommentsState>((set, get) => {
           } catch { /* ignore */ }
         })
         es.addEventListener('resync', () => { void get().load(board) })
-        es.onerror = () => { /* EventSource retries itself; the poll covers the gap */ }
+        // EventSource retries itself - until an answer that is not a stream (a 401 once the session is gone) closes it
+        // for good. Then it is opened again in 30 s, so a viewer back in gets live comments again (spec 36 §4).
+        es.onerror = () => {
+          if (es?.readyState !== EventSource.CLOSED) return
+          es = null
+          const t = setTimeout(wantSSE, 30_000)
+          stops.push(() => clearTimeout(t))
+        }
       }
       // `local` is only known once load() has answered - defer the SSE decision past it
       const t = setTimeout(wantSSE, 1500)
@@ -375,6 +528,23 @@ export const useComments = create<CommentsState>((set, get) => {
       // board-less on the next load and its replies could then route to the wrong log.
       // Stamping client-side keeps the stored bytes and the optimistic copy identical.
       const stamped = events.map((e) => ({ ...e, board: e.board ?? target }))
+      // published (spec 36 §3): into the outbox FIRST, then posted. It is "sent" when the server says it stored it;
+      // until then it waits, shown as not sent yet, and goes again by itself. Only a refusal that will not change
+      // gives the words back to the composer.
+      if (!get().local && !apiOff) {
+        const p: Pending = { key: uuid(), board: target, events: stamped, account: get().me?.email ?? '' }
+        mutate((list) => [...list, p])
+        const r = await post(p)
+        if (r === 'stored') { h?.done(); return true }
+        if (r === 'wait') { h?.fail('queued'); return true }
+        // refused at once: the person is still here, words in hand - back to the composer, said out loud
+        const why = (readOutbox() ?? get().pending).find((x) => x.key === p.key)?.refused
+        mutate((list) => list.filter((x) => x.key !== p.key))
+        h?.fail('send-failed')
+        const { useStore } = await import('./store.ts')
+        useStore.getState().toast(why ?? 'comment rejected')
+        return false
+      }
       const res = await api(`comments/${target}`, { events: stamped }).catch((e: unknown) => { h?.fail('send-failed'); throw e })
       if (res.status === 401) { h?.fail('signed-out'); set({ needsIdentity: true }); return false }
       // any other refusal gets said out loud - a silent dead Enter key reads as a bug
@@ -411,7 +581,7 @@ export const useComments = create<CommentsState>((set, get) => {
       const id = uuid()
       const mentions = mentionsIn(body.trim(), mentionPeople(get().events, me ?? undefined))
       const ok = await get().send([{
-        id: uuid(), ts: Date.now(), type: 'create', commentId: id,
+        id: uuid(), ts: now(), type: 'create', commentId: id,
         nodeKey: draft.nodeKey, frame: draft.frame, anchor: draft.anchor,
         author: postAuthor(me), body: body.trim(), ...(mentions ? { mentions } : {}),
       }], draft.board, h)
@@ -426,7 +596,7 @@ export const useComments = create<CommentsState>((set, get) => {
       const origin = get().threads.find((t) => t.id === threadId)?.board
       const mentions = mentionsIn(body.trim(), mentionPeople(get().events, get().me ?? undefined))
       return get().send([{
-        id: uuid(), ts: Date.now(), type: 'reply', commentId: uuid(), parentId: threadId,
+        id: uuid(), ts: now(), type: 'reply', commentId: uuid(), parentId: threadId,
         author: postAuthor(get().me), body: body.trim(), ...(mentions ? { mentions } : {}),
       }], origin, h)
     },
@@ -434,7 +604,7 @@ export const useComments = create<CommentsState>((set, get) => {
     async resolve(threadId, reopen = false, h) {
       const origin = get().threads.find((t) => t.id === threadId)?.board
       // `comment-resolve`'s one code: a resolve refused for any reason did not send
-      const sent = await get().send([{ id: uuid(), ts: Date.now(), type: reopen ? 'reopen' : 'resolve', commentId: threadId }], origin)
+      const sent = await get().send([{ id: uuid(), ts: now(), type: reopen ? 'reopen' : 'resolve', commentId: threadId }], origin)
         .catch((e: unknown) => { h?.fail('send-failed'); throw e })
       if (sent) h?.done(); else h?.fail('send-failed')
     },
@@ -450,12 +620,12 @@ export const useComments = create<CommentsState>((set, get) => {
       const words = body.trim()
       if (!words) { h?.fail('send-failed'); return false }
       const origin = get().threads.find((t) => t.id === threadId)?.board
-      return get().send([{ id: uuid(), ts: Date.now(), type: 'edit', commentId: msgId, author: postAuthor(get().me), body: words }], origin, h)
+      return get().send([{ id: uuid(), ts: now(), type: 'edit', commentId: msgId, author: postAuthor(get().me), body: words }], origin, h)
     },
 
     async remove(threadId, msgId, h) {
       const origin = get().threads.find((t) => t.id === threadId)?.board
-      const ok = await get().send([{ id: uuid(), ts: Date.now(), type: 'delete', commentId: msgId, author: postAuthor(get().me) }], origin, h)
+      const ok = await get().send([{ id: uuid(), ts: now(), type: 'delete', commentId: msgId, author: postAuthor(get().me) }], origin, h)
       // a deleted first comment with nothing under it is gone: its card closes
       if (ok && get().active === threadId && !get().threads.some((t) => t.id === threadId)) set({ active: null })
       return ok
@@ -490,14 +660,16 @@ export const useComments = create<CommentsState>((set, get) => {
 
     async signIn(email, password, h) {
       const res = await identityWrite('auth/signin', { email, password }, h)
-      if (!res.ok) return res.data?.error ?? 'sign-in failed'
-      set({ me: res.data.user, needsIdentity: false })
+      if (!res.ok || !res.data?.user) return res.data?.error ?? 'sign-in failed'
+      set({ me: { ...res.data.user, ...(res.data.id ? { id: res.data.id } : {}) }, needsIdentity: false, signedOut: false })
+      void get().flush()
       return null
     },
     async claim(token, password, name, avatar, h) {
       const res = await identityWrite('auth/claim', { token, password, name, avatar }, h)
-      if (!res.ok) return res.data?.error ?? 'claim failed'
-      set({ me: res.data.user, needsIdentity: false, inviteToken: null })
+      if (!res.ok || !res.data?.user) return res.data?.error ?? 'claim failed'
+      set({ me: { ...res.data.user, ...(res.data.id ? { id: res.data.id } : {}) }, needsIdentity: false, inviteToken: null, signedOut: false })
+      void get().flush()
       return null
     },
     async saveProfile(patch, h) {
@@ -506,6 +678,27 @@ export const useComments = create<CommentsState>((set, get) => {
       set({ me: res.data.user })
       return null
     },
+    signInAgain() {
+      const { signInMode, me, pending } = get()
+      if (signInMode === 'marver-id') {
+        // Marver ID signs in through its own pages: the tab leaves and comes back to this board. Nothing is lost on the
+        // way - the outbox and the drafts are on disk, and the canvas sends them when it is back.
+        leaving = true
+        location.assign(`${ROUTE}/id/start${location.hash ? `?next=${encodeURIComponent(location.hash)}` : ''}`)
+        return
+      }
+      // a password canvas: a member signs in in the dialog, here; a guest's door is the gate page
+      if (me || pending.length) { set({ needsIdentity: true }); return }
+      leaving = true
+      location.reload()
+    },
+    flush,
+    retry(key) {
+      mutate((list) => list.map((x) => (x.key === key ? { ...x, refused: undefined } : x)))
+      void flush()
+    },
+    discard(key) { mutate((list) => list.filter((x) => x.key !== key)) },
+
     async askToComment() {
       const res = await api('request-access', { requestedRole: 'comment' })
       return res.ok

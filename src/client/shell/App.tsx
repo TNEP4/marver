@@ -408,6 +408,7 @@ export function App() {
   useSeenOnScreen()
   const manifest = useStore((s) => s.manifest)
   const stopped = useLink((s) => s.shown)   // the canvas stopped (spec 28 A1.11): nothing leaves this page
+  const signedOut = useComments((s) => s.signedOut)   // spec 36: the server says this viewer's session is gone
   const nodes = useStore((s) => s.nodes)
   const panelOpen = useStore((s) => s.panelOpen)
   const laneLift = useLaneLift()
@@ -1237,7 +1238,7 @@ export function App() {
       {CONFIG.setup
         ? <div className="sh-banner">no app detected - designs would be built from nothing. See design/instructions/setup.md, then restart</div>
         : CONFIG.noTheme && !contentOnly(manifest?.frames ?? []) && <div className="sh-banner">no theme configured - frames render unstyled. Create design/theme.css importing your app's stylesheet (or set theme in design/config.ts)</div>}
-      {stopped && <StoppedBanner />}
+      {stopped ? <StoppedBanner /> : signedOut && <SignedOutBanner />}
       <UpdatePill />
       <ShowNotice />
 
@@ -1262,6 +1263,33 @@ function StoppedBanner() {
     : link === 'elsewhere' ? <>Another canvas is running on this address - stop it and run {cmd} to bring this one back</>
     : <>This canvas stopped - run {cmd} to bring it back</>
   const kept = unsaved && link !== 'resuming'
+  usePlacedBanner(ref, [link, unsaved, play])
+  return (
+    <div ref={ref} className={`sh-banner sh-stopped${play ? ' dark' : ''}`} role="status" data-link={link}>
+      {what}{kept && <><span className="dot"> · </span><span className="kept">your unsaved edits are kept in this tab</span></>}
+    </div>
+  )
+}
+
+/** Signed out on a published canvas (spec 36 §4): said the moment the server says it - before a reviewer writes for
+ *  half an hour into a session that is gone - with what waits, that it is kept, and the one way back in. Placed like
+ *  the stopped banner, and like it, Hide UI leaves it up. */
+function SignedOutBanner() {
+  const waiting = useComments((s) => s.pending.length)
+  const play = useStore((s) => !!s.play)
+  const ref = useRef<HTMLDivElement>(null)
+  usePlacedBanner(ref, [waiting, play])
+  return (
+    <div ref={ref} className={`sh-banner sh-stopped sh-signedout${play ? ' dark' : ''}`} role="status" data-signed-out={waiting}>
+      You're signed out{waiting ? <> - your {waiting === 1 ? 'comment is' : `${waiting} comments are`} kept here</> : null}
+      <button className="sh-banner-act" onClick={() => useComments.getState().signInAgain()}>Sign in again</button>
+    </div>
+  )
+}
+
+/** A banner on the toolbar's centre line, in the free gap between the sidebar and the toolbar - placed again whenever
+ *  what moves that gap moves. */
+function usePlacedBanner(ref: React.RefObject<HTMLDivElement | null>, deps: unknown[]) {
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
@@ -1279,12 +1307,8 @@ function StoppedBanner() {
     mo.observe(document.body, { attributes: true, attributeFilter: ['class'] })
     window.addEventListener('resize', soon)
     return () => { cancelAnimationFrame(raf); ro.disconnect(); mo.disconnect(); window.removeEventListener('resize', soon) }
-  }, [link, unsaved, play])
-  return (
-    <div ref={ref} className={`sh-banner sh-stopped${play ? ' dark' : ''}`} role="status" data-link={link}>
-      {what}{kept && <><span className="dot"> · </span><span className="kept">your unsaved edits are kept in this tab</span></>}
-    </div>
-  )
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps)
 }
 
 /** The chrome the stopped banner keeps clear of: the sidebar (or its button) on the left, the toolbar (or its

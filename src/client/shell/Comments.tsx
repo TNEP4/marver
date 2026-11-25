@@ -8,7 +8,8 @@
 import { TOP } from './inset.ts'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { avatarFallback, useComments } from './comments-store.ts'
+import { avatarFallback, useComments, type Pending } from './comments-store.ts'
+import { readDraft, useDraft, writeDraft } from './drafts.ts'
 import { api } from './api.ts'
 import { CONFIG, useStore, type Node } from './store.ts'
 import { threadHostKey } from './keys.ts'
@@ -685,7 +686,14 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
   // the event behind each message - a tag's card names its events, the status icon finds it by them
   const events = useComments((s) => s.events)
   const eventOf = (msg: string) => events.find((e) => (e.type === 'create' || e.type === 'reply') && e.commentId === msg && (!e.board || !thread.board || e.board === thread.board))?.id
-  const [text, setText] = useState('')
+  const [text, setText] = useDraft(`r:${thread.id}`)
+  // a message the server has not stored yet says so (spec 36), under its words
+  const pending = useComments((s) => s.pending)
+  const signedOut = useComments((s) => s.signedOut)
+  const unsent = (msg: string) => {
+    const p = pending.find((p) => p.events.some((e) => (e.type === 'create' || e.type === 'reply') && e.commentId === msg))
+    return p ? <Unsent p={p} signedOut={signedOut} /> : null
+  }
   const [copied, setCopied] = useState(false)
   const copyTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   // your own messages (spec 31 C.3-C.4): the one being edited, with its words; the one asking "delete?"
@@ -868,12 +876,14 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
             {words(thread, true, thread.capture
               ? <CaptureBlock id={thread.capture} facts={thread.facts} words={thread.body ?? ''} />
               : <CommentBody body={thread.body} owner={isOwner(thread.author)} />)}
+            {unsent(thread.id)}
           </>}
         {/* replies repeat the root's exact message shape (Figma's pattern) - only the icons differ */}
         {thread.replies.map((r) => (
           <div key={r.id} className="cm-msg" data-msg={r.id}>
             <MessageHead author={r.author} agent={r.agent} agentMeta={r.agentMeta} ts={r.ts} board={thread.board} eventId={eventOf(r.id)} edited={r.edited} tools={tools(r)} />
             {words(r, false, <CommentBody body={r.body} owner={isOwner(r.author)} />)}
+            {unsent(r.id)}
             {/* a jam job changed a shared file it was not given: one line, so the reply says it (spec 27) */}
             {r.agent && r.alsoChanged?.length ? <div className="cm-also">Also changed {r.alsoChanged.map((f) => f.split('/').pop()).join(', ')}</div> : null}
           </div>
@@ -885,7 +895,7 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
           <CommentInput value={text} onChange={setText} onSubmit={submit} onCancel={closeCard} placeholder="Reply…" sendLabel="Send" owner={local} sendCmd="comment-reply" frame={thread.frame} />
         </div>
       ) : (
-        <button className="cm-signin-cta" onClick={() => { cmd('identity-open', { via: 'click', in: 'shell' }); useComments.setState({ needsIdentity: true }) }}>
+        <button className="cm-signin-cta" onClick={() => { cmd('identity-open', { via: 'click', in: 'shell' }); useComments.getState().signInAgain() }}>
           Sign in to comment
         </button>
       )}
@@ -900,10 +910,14 @@ export function DraftComposer({ at, bounds, hue }: { at: { x: number; y: number 
   const { create, setDraft } = useComments.getState()
   const local = useComments((s) => s.local)
   const frame = useComments((s) => s.draft?.frame)
-  const [text, setText] = useState('')
+  const nodeKey = useComments((s) => s.draft?.nodeKey)
+  // kept per element (spec 36): picked again after a board switch or a reload, its words are still there
+  const key = `n:${frame ?? ''}:${nodeKey ?? ''}`
+  const [text, setText] = useDraft(key)
   const flip = at.x > bounds.w * 0.55
-  const send = (h: CmdHandle) => create(text, h)
-  const discard = () => setDraft(null)
+  // taken (sent or kept in the outbox): the composer closes, and its kept words go - unless more were typed meanwhile
+  const send = async (h: CmdHandle) => { const sent = text; await create(sent, h); if (!useComments.getState().draft && readDraft(key) === sent) writeDraft(key, '') }
+  const discard = () => { setText(''); setDraft(null) }   // Escape: the words go with the composer, on purpose
   return (
     <div data-sh-wheel-local className={`cm-card cm-draft sh-no-pan${flip ? ' flip' : ''}`} style={{ left: at.x, top: Math.min(at.y + 14, bounds.h - 40), ...hueVars(hue) }}
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
@@ -913,6 +927,27 @@ export function DraftComposer({ at, bounds, hue }: { at: { x: number; y: number 
       </div>
     </div>
   )
+}
+
+/** Under a message the server has not stored (spec 36): on its way, waiting for a sign-in, or refused - with the
+ *  reason, a Retry and a Discard. The words are never let go by the code; only the person can. */
+function Unsent({ p, signedOut }: { p: Pending; signedOut: boolean }) {
+  const { retry, discard, signInAgain } = useComments.getState()
+  if (p.refused) return (
+    <div className="cm-unsent refused" data-unsent="refused">
+      Not sent - {p.refused}
+      <span className="cm-unsent-acts">
+        <button onClick={() => retry(p.key)}>Retry</button>
+        <button onClick={() => discard(p.key)}>Discard</button>
+      </span>
+    </div>
+  )
+  if (signedOut) return (
+    <div className="cm-unsent" data-unsent="signed-out">
+      Not sent yet - kept here until you <button onClick={() => signInAgain()}>sign in again</button>
+    </div>
+  )
+  return <div className="cm-unsent" data-unsent="sending">Sending…</div>
 }
 
 /** Avatar picker: dashed circle → file input → client-side 128px downscale →
@@ -1146,7 +1181,14 @@ export function CommentsController() {
       (f as HTMLIFrameElement).contentWindow?.postMessage({ type: 'sh:pick', on: commentMode, quiet: !ctlShowAnchor }, location.origin)
   }, [commentMode, ctlShowAnchor])
 
-  return <IdentityDialog />
+  // a Marver ID canvas has no password to type: whatever asks for a sign-in goes through Marver ID's own pages
+  const needs = useComments((s) => s.needsIdentity)
+  const mode = useComments((s) => s.signInMode)
+  useEffect(() => {
+    if (needs && mode === 'marver-id') { useComments.setState({ needsIdentity: false }); useComments.getState().signInAgain() }
+  }, [needs, mode])
+
+  return mode === 'marver-id' ? null : <IdentityDialog />
 }
 
 /** ⌘A inside a comment card (spec 31 C.1): its messages' text, never every frame - when the selection or the focus is

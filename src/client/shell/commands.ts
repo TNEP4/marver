@@ -165,16 +165,16 @@ export const COMMANDS = {
 
   // ---- comments
   'comment-pick': se('2raf'),
-  'comment-send': se('answer', { deadlineMs: S30, failed: ['send-failed', 'signed-out'] }),
-  'comment-reply': se('answer', { deadlineMs: S30, failed: ['send-failed', 'signed-out'] }),
+  'comment-send': se('answer', { deadlineMs: S30, failed: ['send-failed', 'signed-out', 'queued'] }),
+  'comment-reply': se('answer', { deadlineMs: S30, failed: ['send-failed', 'signed-out', 'queued'] }),
   'draft-discard': se('2raf'),
-  'comment-resolve': se('answer', { deadlineMs: S30, failed: ['send-failed'] }),
+  'comment-resolve': se('answer', { deadlineMs: S30, failed: ['send-failed', 'queued'] }),
   // spec 31 C: your own message - open its editor, save the words, delete it (asked first, then for real); ⌘A in a card
   'comment-edit': se('2raf'),
-  'comment-edit-save': se('answer', { deadlineMs: S30, failed: ['send-failed', 'signed-out'] }),
+  'comment-edit-save': se('answer', { deadlineMs: S30, failed: ['send-failed', 'signed-out', 'queued'] }),
   'comment-delete-cancel': se('2raf'),
   'comment-delete-ask': se('2raf'),
-  'comment-delete': se('answer', { deadlineMs: S30, failed: ['send-failed', 'signed-out'] }),
+  'comment-delete': se('answer', { deadlineMs: S30, failed: ['send-failed', 'signed-out', 'queued'] }),
   'thread-select-all': se('selection'),
   'mention-pick': once(),
   'mention-dismiss': once(),
