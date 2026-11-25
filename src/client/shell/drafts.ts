@@ -17,7 +17,8 @@ export function readDraft(key: string): string {
   // storage is the record - another tab may have written newer words there; only words storage would not take are
   // newer in this page
   if (unsaved.has(key)) return mem.get(key) ?? ''
-  try { return localStorage.getItem(storageKey(key)) ?? mem.get(key) ?? '' } catch { return mem.get(key) ?? '' }
+  // storage answered: its answer is the record, nothing there included (memory only when storage cannot be read)
+  try { return localStorage.getItem(storageKey(key)) ?? '' } catch { return mem.get(key) ?? '' }
 }
 export function writeDraft(key: string, words: string) {
   if (words.trim()) mem.set(key, words); else mem.delete(key)
@@ -26,6 +27,8 @@ export function writeDraft(key: string, words: string) {
     unsaved.delete(key)
   } catch { if (words.trim()) unsaved.add(key); else unsaved.delete(key) }
 }
+/** This page's own copy goes (sent), leaving what storage holds untouched. */
+export function forgetDraft(key: string) { mem.delete(key); unsaved.delete(key) }
 /** Does this page hold a draft storage would not take? A deliberate leave (to sign in) asks then too. */
 export const draftsVolatile = () => unsaved.size > 0
 

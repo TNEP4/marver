@@ -13,7 +13,7 @@ import { ALL_SCENES } from '../../shared/board-tree.ts'
 import { UNPLACED } from './hash.ts'
 import { api as request, canvasStopped, scoped, stoppedLink, useLink } from './api.ts'
 import type { CmdHandle } from './commands.ts'
-import { draftsVolatile, hasDraftWords, readDraft, writeDraft } from './drafts.ts'
+import { draftsVolatile, forgetDraft, hasDraftWords, readDraft, writeDraft } from './drafts.ts'
 import * as outbox from './outbox.ts'
 import type { Pending } from './outbox.ts'
 export type { Pending } from './outbox.ts'
@@ -154,6 +154,7 @@ const now = () => Date.now() + skew
 const clearDraftIf = (key: string | undefined, events: CommentEvent[]) => {
   const body = events.find((e) => e.body !== undefined)?.body?.trim()
   if (key && body !== undefined && readDraft(key).trim() === body) writeDraft(key, '')
+  else if (key) forgetDraft(key)   // newer words are there (another tab's): this page lets go of its sent copy
 }
 /** Set while the tab leaves on purpose (to sign in): the leave-page question is for leaving by accident. */
 let leaving = false
