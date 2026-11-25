@@ -1289,7 +1289,8 @@ function OutboxBanner() {
     const id = e?.type === 'reply' ? e.parentId : e?.commentId
     return useComments.getState().threads.find((t) => t.id === id || t.replies.some((r) => r.id === id))?.id ?? id
   }
-  const shown = (p: (typeof pending)[number]) => { const id = threadOf(p); return !!id && useComments.getState().threads.some((t) => t.id === id) }
+  // a thread a card can open: there, and not resolved (a resolved thread has no card to show the choices in)
+  const shown = (p: (typeof pending)[number]) => { const id = threadOf(p); return !!id && useComments.getState().threads.some((t) => t.id === id && !t.resolved) }
   const many = (n: number) => (n === 1 ? 'comment is' : `${n} comments are`)
   return signedOut ? (
     <div ref={ref} className={`sh-banner sh-stopped sh-signedout${play ? ' dark' : ''}`} role="status" data-signed-out={waiting}>

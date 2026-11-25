@@ -13,7 +13,7 @@ import { ALL_SCENES } from '../../shared/board-tree.ts'
 import { UNPLACED } from './hash.ts'
 import { api as request, canvasStopped, scoped, stoppedLink, useLink } from './api.ts'
 import type { CmdHandle } from './commands.ts'
-import { draftsVolatile, hasDraftWords, writeDraft } from './drafts.ts'
+import { draftsVolatile, hasDraftWords, readDraft, writeDraft } from './drafts.ts'
 import * as outbox from './outbox.ts'
 import type { Pending } from './outbox.ts'
 export type { Pending } from './outbox.ts'
@@ -138,8 +138,9 @@ const api = async (path: string, body?: unknown) => {
 export const replyDraftKey = (threadId: string) => `r:${threadId}`
 export const newDraftKey = (d: { board?: string; frame: string; nodeKey: string; anchor: unknown }) => {
   // the element, not the click: where in it, and its measured box, change with every pick of the same element
-  const a = (d.anchor ?? null) as { el?: { cssPath?: string; source?: string }; pos?: unknown; rect?: unknown } | null
-  const id = a?.el ? `${a.el.cssPath ?? ''}|${a.el.source ?? ''}` : JSON.stringify(a && typeof a === 'object' ? { ...a, pos: undefined, rect: undefined } : a)
+  // (a note's scope too: a scene note and a frame note on one node can hold the same paragraph)
+  const a = (d.anchor ?? null) as { el?: { cssPath?: string; source?: string; note?: string }; pos?: unknown; rect?: unknown } | null
+  const id = a?.el ? `${a.el.note ?? ''}|${a.el.cssPath ?? ''}|${a.el.source ?? ''}` : JSON.stringify(a && typeof a === 'object' ? { ...a, pos: undefined, rect: undefined } : a)
   let h = 0
   for (const c of id) h = (h * 31 + c.charCodeAt(0)) | 0
   return `n:${d.board ?? ''}:${d.frame}:${d.nodeKey}:${(h >>> 0).toString(36)}`
@@ -149,6 +150,11 @@ const sameAccount = (a: string, b?: string) => !!b && a.trim().toLowerCase() ===
  *  whose clock runs fast is not refused ("timestamp out of bounds") on every write. */
 let skew = 0
 const now = () => Date.now() + skew
+/** A composer's kept words go when the write that carried them is taken - and only when they are still those words. */
+const clearDraftIf = (key: string | undefined, events: CommentEvent[]) => {
+  const body = events.find((e) => e.body !== undefined)?.body?.trim()
+  if (key && body !== undefined && readDraft(key).trim() === body) writeDraft(key, '')
+}
 /** Set while the tab leaves on purpose (to sign in): the leave-page question is for leaving by accident. */
 let leaving = false
 /** An identity write and the command behind it (spec 30's `sign-in`, `claim`, `profile-save`): ok → done, the answer
@@ -172,7 +178,7 @@ export const useComments = create<CommentsState>((set, get) => {
     // Words show at once - a comment, a reply, an edit, each marked not sent yet. A resolve, a reopen or a delete
     // waits to be applied until it is stored: a thread that looked resolved, or a message that looked gone, would hide
     // the very mark that says it did not happen (and its Retry).
-    const waiting = pending.flatMap((p) => (sameAccount(p.account, get()?.me?.email) ? asSentBy(p.events, get()?.me?.id) : p.events))
+    const waiting = pending.flatMap((p) => asSentBy(p.events, p.id ?? (sameAccount(p.account, get()?.me?.email) ? get()?.me?.id : undefined)))
       .filter((e) => (e.type === 'create' || e.type === 'reply' || e.type === 'edit') && !stored.has(`${e.board ?? ''}|${e.id}`))
     for (const e of [...events, ...waiting]) {
       const k = e.board ?? ''
@@ -362,7 +368,7 @@ export const useComments = create<CommentsState>((set, get) => {
     if (r.status === 200 && r.ok && typeof r.data?.accepted === 'number') {
       // stored first, then out of the outbox: the message never blinks. Mine only if I am still the one who wrote it
       // (an answer can arrive after another account signed in).
-      union(sameAccount(p.account, get().me?.email) ? asSentBy(p.events, get().me?.id) : p.events)
+      union(asSentBy(p.events, p.id ?? (sameAccount(p.account, get().me?.email) ? get().me?.id : undefined)))
       outbox.drop(p.key)
       showOutbox()
       if (get().signedOut) set({ signedOut: false })
@@ -435,9 +441,10 @@ export const useComments = create<CommentsState>((set, get) => {
   /** Into the outbox, and its composer's words out of the drafts - in one synchronous step, so no reload, redirect or
    *  unmount can leave the same words both waiting and in a composer (sent twice), or in neither. */
   const keep = (board: string, events: CommentEvent[], draftKey?: string): Pending => {
-    const p: Pending = { key: uuid(), board, events, account: get().me?.email ?? '', at: Date.now() }
+    // the writer's opaque id rides along: an answer that comes after another account signed in still marks it theirs
+    const p: Pending = { key: uuid(), board, events, account: get().me?.email ?? '', ...(get().me?.id ? { id: get().me!.id } : {}), at: Date.now() }
     outbox.put(p)
-    if (draftKey) writeDraft(draftKey, '')
+    clearDraftIf(draftKey, events)
     showOutbox()
     return p
   }
@@ -587,8 +594,9 @@ export const useComments = create<CommentsState>((set, get) => {
             set({ ownership: own })
           }
         }
-        // dev: stored, so its composer's kept words go (a composer still open writes back anything typed since)
-        if (draftKey) writeDraft(draftKey, '')
+        // dev: stored, so its composer's kept words go - only if they are still these words (a newer comment may be
+        // being written in the same place by now)
+        clearDraftIf(draftKey, stamped)
         h?.done()
       }
       return res.ok
@@ -604,7 +612,8 @@ export const useComments = create<CommentsState>((set, get) => {
         nodeKey: draft.nodeKey, frame: draft.frame, anchor: draft.anchor,
         author: postAuthor(me), body: body.trim(), ...(mentions ? { mentions } : {}),
       }], draft.board, h, newDraftKey(draft))
-      if (ok) set({ draft: null, active: id, commentMode: false })
+      // only the composer that sent it closes: another opened since (on the same element) keeps its words
+      if (ok && get().draft === draft) set({ draft: null, active: id, commentMode: false })
     },
 
     async reply(threadId, body) { await get().replyOk(threadId, body) },

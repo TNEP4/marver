@@ -11,7 +11,7 @@ import { scoped } from './api.ts'
 
 /** A write the server has not stored: its events exactly as they are posted, the log they go to, the account that
  *  wrote them (sent only while it is the one signed in), and - when the server said no for good - why. */
-export interface Pending { key: string; board: string; events: CommentEvent[]; account: string; at: number; refused?: string }
+export interface Pending { key: string; board: string; events: CommentEvent[]; account: string; id?: string; at: number; refused?: string }
 
 const PREFIX = 'mv-ob:'
 const memory = new Map<string, Pending>()   // this page's entries storage would not take

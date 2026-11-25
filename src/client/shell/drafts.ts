@@ -14,9 +14,10 @@ const storageKey = (key: string) => scoped(PREFIX + key)
 const unsaved = new Set<string>()
 
 export function readDraft(key: string): string {
-  // this page's words are the newest - storage may hold an older copy it could not overwrite
-  if (mem.has(key)) return mem.get(key)!
-  try { return localStorage.getItem(storageKey(key)) ?? '' } catch { return '' }
+  // storage is the record - another tab may have written newer words there; only words storage would not take are
+  // newer in this page
+  if (unsaved.has(key)) return mem.get(key) ?? ''
+  try { return localStorage.getItem(storageKey(key)) ?? mem.get(key) ?? '' } catch { return mem.get(key) ?? '' }
 }
 export function writeDraft(key: string, words: string) {
   if (words.trim()) mem.set(key, words); else mem.delete(key)
