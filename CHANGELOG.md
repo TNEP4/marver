@@ -2,6 +2,31 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## 0.37.0 - 2026-11-25
+
+### Highlights
+
+- **A reviewer's comments are never lost on a published canvas.** A comment is sent when the canvas has stored it -
+  until then it is kept in the browser, shown as *Sending…* or *Not sent yet*, and sent again by itself after a
+  reload, a closed tab, a redeploy or a sign-in. Before, a reviewer whose session ended mid-visit saw every comment
+  as posted while the canvas stored none of them, and they were gone at the next reload.
+  [What a reviewer's comments survive](docs/publish.md#what-a-reviewers-comments-survive)
+
+### Fixed
+
+- A call to a published canvas's API without a session is answered `401` with JSON, never with the sign-in page and
+  a `200` - which the canvas, and `marver comments sync`, read as success.
+- A session that ends is said at once, with *Sign in again*: on Marver Sign In through its own pages, back to the same
+  board. The sign-in dialog asked for a password a Marver Sign In canvas does not have.
+- Sessions and guest cookies are renewed while they are used, instead of ending 30 days after sign-in.
+- A password canvas with a data dir keeps its cookie key on the volume: a redeploy no longer signs every guest out.
+- A reply typed and not sent is kept per thread, across a click outside, a board switch or a reload; a published
+  canvas asks before its tab closes on words not stored.
+- A comment is stamped with the canvas's clock, so a reviewer whose clock runs fast is not refused.
+- `/me` is asked again when it fails at load (a redeploy's 502), and the live comment stream reopens after a sign-in.
+- An unreadable `auth.json` or `share.json` answers `500` instead of ending the server process.
+- `marver comments sync` and `marver dev` say when the canvas session has ended, and how to connect again.
+
 ## 0.36.1 - 2026-11-24
 
 ### Fixed

@@ -295,7 +295,10 @@ export function collabHandler(dataDir: string, distDir: string) {
   }
   setInterval(() => {
     for (const [res, c] of clients) {
-      if (streamAllowed(c.tok)) continue
+      // a store this cannot read (spec 36): the stream ends, the process does not - it was outside any request
+      let ok = false
+      try { ok = streamAllowed(c.tok) } catch { /* closed below */ }
+      if (ok) continue
       clients.delete(res)
       try { res.end() } catch { /* already gone */ }
     }
@@ -958,8 +961,12 @@ export function collabHandler(dataDir: string, distDir: string) {
         if (legacy ? !u : !can(u, rights, m[1], 'comment', dataDir))
           return json(res, u ? 403 : 401, u ? { error: `this board is read-only - ask ${ownerName(dataDir) ?? 'the canvas owner'} for commenting access` } : { error: 'signed out', signIn: signInMode }), true
         const b = await readBody(req)
-        const incoming: CommentEvent[] = Array.isArray(b.events) ? b.events : []
-        if (incoming.length > 100) return json(res, 400, { error: 'too many events in one push' }), true
+        // `as` (spec 36): the account the browser wrote these as. Another tab may have signed this browser in as
+        // someone else since; their session must not carry the first person's words, or resolve as them.
+        if (typeof b.as === 'string' && b.as && normEmail(b.as) !== normEmail(u!.email))
+          return json(res, 409, { error: `written as ${b.as} - signed in as someone else now`, code: 'account' }), true
+        const posted: CommentEvent[] = Array.isArray(b.events) ? b.events : []
+        if (posted.length > 100) return json(res, 400, { error: 'too many events in one push' }), true
         // VALIDATE, never rewrite: an accepted event must be byte-identical everywhere
         // (sync compares ids only - a server that mutates content forks the stores).
         // The author claim must match the session; ownership gates edits; timestamps
@@ -968,6 +975,14 @@ export function collabHandler(dataDir: string, distDir: string) {
         // projecting the stored form returns byte-for-value what the browser sent.
         const operator = rawTransport(req)
         const log = readLog(commentsDir, m[1])
+        // A resend of what is stored (spec 36): the browser keeps a write until it hears 200, so a 200 lost on the way
+        // brings the same event again. It is stored - say so (accepted 0), never "that id already exists", which
+        // would leave it refused for ever. Only the SAME event counts: one id reused for other words is refused below.
+        const held = new Map(log.map((e) => [e.id, e]))
+        const same = (a: CommentEvent, b: CommentEvent) => a.type === b.type && a.commentId === b.commentId &&
+          (a.body ?? '') === (b.body ?? '') && (a.author?.email ?? '').toLowerCase() === (b.author?.email ?? '').toLowerCase()
+        const incoming = posted.filter((e) => !(e && typeof e === 'object' && typeof e.id === 'string' && held.has(e.id) && same(held.get(e.id)!, e)))
+        if (posted.length && !incoming.length) return json(res, 200, { accepted: 0 }), true
         // the old all-scenes log: every event needs comment rights on a published board showing its
         // thread's frame; a new thread arrives only by sync (the owner's repo carried it all along)
         if (legacy) {

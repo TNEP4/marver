@@ -210,8 +210,10 @@ export async function serve(root: string, portFlag?: number) {
   // A canvas with a data dir keeps its cookie key on the volume (derived from the canvas secret), so a redeploy signs
   // no guest out: a per-boot key did, and a guest mid-review then lost every comment (spec 36 §2). Without a data dir
   // there is nothing to comment on, and a restart re-prompting is harmless - the key stays per boot there.
+  // Bound to the password too: rotating MARVER_PASSWORD - the documented way to remove a guest - still ends every
+  // guest cookie, while a plain restart or redeploy keeps them.
   const cookieKey = process.env.MARVER_DATA_DIR && verifier
-    ? createHmac('sha256', (await import('./auth.ts')).canvasSecret((await import('./comments.ts')).dataDir())).update('mv_a gate cookie v1').digest()
+    ? createHmac('sha256', (await import('./auth.ts')).canvasSecret((await import('./comments.ts')).dataDir())).update('mv_a gate cookie v1').update(verifier).digest()
     : randomBytes(32)
   const sign = (exp: number) => createHmac('sha256', cookieKey).update(`v1.${exp}`).digest('hex')
   /** The guest cookie's expiry (seconds) when it is genuine and alive, else 0. */

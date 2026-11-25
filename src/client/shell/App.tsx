@@ -409,6 +409,7 @@ export function App() {
   const manifest = useStore((s) => s.manifest)
   const stopped = useLink((s) => s.shown)   // the canvas stopped (spec 28 A1.11): nothing leaves this page
   const signedOut = useComments((s) => s.signedOut)   // spec 36: the server says this viewer's session is gone
+  const refusedCount = useComments((s) => s.pending.filter((p) => p.refused).length)   // ...or refused a write for good
   const nodes = useStore((s) => s.nodes)
   const panelOpen = useStore((s) => s.panelOpen)
   const laneLift = useLaneLift()
@@ -1238,7 +1239,7 @@ export function App() {
       {CONFIG.setup
         ? <div className="sh-banner">no app detected - designs would be built from nothing. See design/instructions/setup.md, then restart</div>
         : CONFIG.noTheme && !contentOnly(manifest?.frames ?? []) && <div className="sh-banner">no theme configured - frames render unstyled. Create design/theme.css importing your app's stylesheet (or set theme in design/config.ts)</div>}
-      {stopped ? <StoppedBanner /> : signedOut && <SignedOutBanner />}
+      {stopped ? <StoppedBanner /> : (signedOut || refusedCount > 0) && <OutboxBanner />}
       <UpdatePill />
       <ShowNotice />
 
@@ -1274,15 +1275,30 @@ function StoppedBanner() {
 /** Signed out on a published canvas (spec 36 §4): said the moment the server says it - before a reviewer writes for
  *  half an hour into a session that is gone - with what waits, that it is kept, and the one way back in. Placed like
  *  the stopped banner, and like it, Hide UI leaves it up. */
-function SignedOutBanner() {
-  const waiting = useComments((s) => s.pending.length)
+function OutboxBanner() {
+  const signedOut = useComments((s) => s.signedOut)
+  const pending = useComments((s) => s.pending)
   const play = useStore((s) => !!s.play)
   const ref = useRef<HTMLDivElement>(null)
-  usePlacedBanner(ref, [waiting, play])
-  return (
+  const waiting = pending.length
+  const refused = pending.filter((p) => p.refused)
+  usePlacedBanner(ref, [signedOut, waiting, refused.length, play])
+  // the thread a refused write belongs to - Show opens it, wherever it is on the canvas
+  const threadOf = (p: (typeof pending)[number]) => {
+    const e = p.events[0]
+    const id = e?.type === 'reply' ? e.parentId : e?.commentId
+    return useComments.getState().threads.find((t) => t.id === id || t.replies.some((r) => r.id === id))?.id ?? id
+  }
+  const many = (n: number) => (n === 1 ? 'comment is' : `${n} comments are`)
+  return signedOut ? (
     <div ref={ref} className={`sh-banner sh-stopped sh-signedout${play ? ' dark' : ''}`} role="status" data-signed-out={waiting}>
-      You're signed out{waiting ? <> - your {waiting === 1 ? 'comment is' : `${waiting} comments are`} kept here</> : null}
+      You're signed out{waiting ? <> - your {many(waiting)} kept here</> : null}
       <button className="sh-banner-act" onClick={() => useComments.getState().signInAgain()}>Sign in again</button>
+    </div>
+  ) : (
+    <div ref={ref} className={`sh-banner sh-stopped sh-signedout${play ? ' dark' : ''}`} role="status" data-refused={refused.length}>
+      {refused.length === 1 ? 'A comment could not be sent' : `${refused.length} comments could not be sent`}
+      <button className="sh-banner-act" onClick={() => { const id = threadOf(refused[0]); if (id) revealThread(id) }}>Show</button>
     </div>
   )
 }

@@ -125,7 +125,8 @@ const skippable = (name: string, fn: () => Promise<void>, ms = 120_000) =>
 const ev = (expr: string) => browser!.eval(tab, expr)
 const until = (expr: string, ms = 20_000) => browser!.until(tab, expr, ms)
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
-const OUTBOX = `JSON.parse(localStorage.getItem('mv-outbox') ?? '[]')`
+/** The outbox as storage holds it: one key per waiting write. */
+const OUTBOX = `Object.keys(localStorage).filter((k) => k.startsWith('mv-ob:')).map((k) => JSON.parse(localStorage.getItem(k)))`
 
 /** Open a thread on the published canvas, its reply box ready. */
 async function openThread(n: number) {
@@ -216,13 +217,34 @@ describe('a comment is never lost (spec 36), on a published Marver ID canvas', (
     expect(await ev(`localStorage.getItem('mv-draft:r:thread-0001')`)).toBe(null)
   })
 
-  skippable('a write the server refuses at once keeps its words in the composer, said out loud', async () => {
+  skippable('a write the server refuses for good keeps its words - under its message, with the reason, Retry and Discard, and said in the bar', async () => {
     await openThread(1)
-    // over the server's body limit: refused with a 400 that will not change on retry
+    // over the server's body limit: a 400 that will not change on retry
     await reply('x'.repeat(10_050))
-    await until(`!!document.querySelector('.sh-toast')`)
-    expect((await ev(`document.querySelector('.cm-card .cm-compose textarea').value`)).length).toBe(10_050)
-    expect(await ev(`${OUTBOX}.length`)).toBe(0)
+    await until(`document.querySelector('.cm-unsent')?.dataset.unsent === 'refused'`)
+    expect(await ev(`document.querySelector('.cm-unsent').textContent`)).toMatch(/Not sent - body too long/)
+    expect(await ev(`document.querySelector('.sh-signedout')?.dataset.refused`)).toBe('1')
+    expect(await ev(`${OUTBOX}.length`)).toBe(1)
+    // kept across a reload, Show in the bar opens its thread
+    await browser!.go(tab, 'about:blank')
+    await browser!.go(tab, `${ORIGIN}/#/b/main`)
+    await until(`document.querySelector('.sh-signedout')?.dataset.refused === '1'`, 45_000)
+    await ev(`document.querySelector('.sh-signedout .sh-banner-act').click()`)
+    await until(`!!document.querySelector('.cm-card[data-thread="thread-0001"] .cm-unsent.refused')`)
+    // only the person lets it go
+    await ev(`[...document.querySelectorAll('.cm-unsent-acts button')].find((b) => b.textContent === 'Discard').click()`)
+    await until(`${OUTBOX}.length === 0 && !document.querySelector('.cm-unsent') && !document.querySelector('.sh-signedout')`)
+  })
+
+  skippable('a resend of a stored write is stored (accepted 0), the same id with other words is refused, and a write made as another account waits', async () => {
+    await openThread(1)
+    const post = (body: object) => ev(`fetch('/__mv/api/comments/main', { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': document.cookie.match(/mv_c=([\\w-]+)/)[1] }, body: ${JSON.stringify(JSON.stringify(body))} }).then(async (r) => [r.status, await r.json()])`)
+    const e = { id: 'resend-00001', ts: Date.now(), type: 'reply', commentId: 'resend-reply-1', parentId: 'thread-0001', board: 'main', author: { email: REVIEWER, name: 'Ana' }, body: 'once' }
+    expect(await post({ events: [e], as: REVIEWER })).toEqual([200, { accepted: 1 }])
+    expect(await post({ events: [e], as: REVIEWER })).toEqual([200, { accepted: 0 }])
+    expect((await post({ events: [{ ...e, body: 'other words' }], as: REVIEWER }))[0]).toBe(400)
+    expect(await post({ events: [{ ...e, id: 'resend-00002', commentId: 'resend-reply-2' }], as: 'bob@client.test' })).toEqual([409, { error: 'written as bob@client.test - signed in as someone else now', code: 'account' }])
+    expect(replies('once')).toHaveLength(1)
   })
 
   skippable('a session used near its end gets its full life back, cookie and store', async () => {

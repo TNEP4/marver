@@ -8,8 +8,8 @@
 import { TOP } from './inset.ts'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { avatarFallback, useComments, type Pending } from './comments-store.ts'
-import { readDraft, useDraft, writeDraft } from './drafts.ts'
+import { avatarFallback, newDraftKey, replyDraftKey, useComments, type Pending } from './comments-store.ts'
+import { useDraft } from './drafts.ts'
 import { api } from './api.ts'
 import { CONFIG, useStore, type Node } from './store.ts'
 import { threadHostKey } from './keys.ts'
@@ -686,14 +686,15 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
   // the event behind each message - a tag's card names its events, the status icon finds it by them
   const events = useComments((s) => s.events)
   const eventOf = (msg: string) => events.find((e) => (e.type === 'create' || e.type === 'reply') && e.commentId === msg && (!e.board || !thread.board || e.board === thread.board))?.id
-  const [text, setText] = useDraft(`r:${thread.id}`)
-  // a message the server has not stored yet says so (spec 36), under its words
+  const [text, setText] = useDraft(replyDraftKey(thread.id))
+  // what the server has not stored yet says so (spec 36), under the message it touches: its words, an edit, a delete -
+  // and under the first message, a resolve or reopen of the thread
   const pending = useComments((s) => s.pending)
   const signedOut = useComments((s) => s.signedOut)
-  const unsent = (msg: string) => {
-    const p = pending.find((p) => p.events.some((e) => (e.type === 'create' || e.type === 'reply') && e.commentId === msg))
-    return p ? <Unsent p={p} signedOut={signedOut} /> : null
-  }
+  const unsent = (msg: string) => pending.flatMap((p) => {
+    const e = p.events.find((e) => e.commentId === msg && (['create', 'reply', 'edit', 'delete'].includes(e.type) || (msg === thread.id && (e.type === 'resolve' || e.type === 'reopen'))))
+    return e ? [<Unsent key={p.key} p={p} what={e.type} signedOut={signedOut} />] : []
+  })
   const [copied, setCopied] = useState(false)
   const copyTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   // your own messages (spec 31 C.3-C.4): the one being edited, with its words; the one asking "delete?"
@@ -910,13 +911,12 @@ export function DraftComposer({ at, bounds, hue }: { at: { x: number; y: number 
   const { create, setDraft } = useComments.getState()
   const local = useComments((s) => s.local)
   const frame = useComments((s) => s.draft?.frame)
-  const nodeKey = useComments((s) => s.draft?.nodeKey)
-  // kept per element (spec 36): picked again after a board switch or a reload, its words are still there
-  const key = `n:${frame ?? ''}:${nodeKey ?? ''}`
-  const [text, setText] = useDraft(key)
+  const draft = useComments((s) => s.draft)
+  // kept per element picked (spec 36): picked again after a board switch or a reload, its words are still there.
+  // Taken, they leave the drafts in the same step as they enter the outbox (the store does it) - never in neither.
+  const [text, setText] = useDraft(draft ? newDraftKey(draft) : 'n:')
   const flip = at.x > bounds.w * 0.55
-  // taken (sent or kept in the outbox): the composer closes, and its kept words go - unless more were typed meanwhile
-  const send = async (h: CmdHandle) => { const sent = text; await create(sent, h); if (!useComments.getState().draft && readDraft(key) === sent) writeDraft(key, '') }
+  const send = (h: CmdHandle) => create(text, h)
   const discard = () => { setText(''); setDraft(null) }   // Escape: the words go with the composer, on purpose
   return (
     <div data-sh-wheel-local className={`cm-card cm-draft sh-no-pan${flip ? ' flip' : ''}`} style={{ left: at.x, top: Math.min(at.y + 14, bounds.h - 40), ...hueVars(hue) }}
@@ -931,23 +931,30 @@ export function DraftComposer({ at, bounds, hue }: { at: { x: number; y: number 
 
 /** Under a message the server has not stored (spec 36): on its way, waiting for a sign-in, or refused - with the
  *  reason, a Retry and a Discard. The words are never let go by the code; only the person can. */
-function Unsent({ p, signedOut }: { p: Pending; signedOut: boolean }) {
+function Unsent({ p, what, signedOut }: { p: Pending; what: string; signedOut: boolean }) {
   const { retry, discard, signInAgain } = useComments.getState()
+  const me = useComments((s) => s.me)
+  const thing = what === 'edit' ? 'Edit' : what === 'delete' ? 'Delete' : what === 'resolve' ? 'Resolve' : what === 'reopen' ? 'Reopen' : ''
+  const Not = thing ? `${thing} not sent` : 'Not sent'
   if (p.refused) return (
     <div className="cm-unsent refused" data-unsent="refused">
-      Not sent - {p.refused}
+      {Not} - {p.refused}
       <span className="cm-unsent-acts">
         <button onClick={() => retry(p.key)}>Retry</button>
         <button onClick={() => discard(p.key)}>Discard</button>
       </span>
     </div>
   )
-  if (signedOut) return (
+  // written as another account than the one signed in now: it waits for that account
+  if (me && p.account && p.account.toLowerCase() !== me.email.toLowerCase()) return (
+    <div className="cm-unsent" data-unsent="other-account">{Not} yet - waiting for {p.account} to sign in</div>
+  )
+  if (signedOut || !me) return (
     <div className="cm-unsent" data-unsent="signed-out">
-      Not sent yet - kept here until you <button onClick={() => signInAgain()}>sign in again</button>
+      {Not} yet - kept here until you <button onClick={() => signInAgain()}>sign in again</button>
     </div>
   )
-  return <div className="cm-unsent" data-unsent="sending">Sending…</div>
+  return <div className="cm-unsent" data-unsent="sending">{thing ? `${thing} sending…` : 'Sending…'}</div>
 }
 
 /** Avatar picker: dashed circle → file input → client-side 128px downscale →

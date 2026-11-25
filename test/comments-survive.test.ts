@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
-import { createHmac } from 'node:crypto'
+import { createHmac, scryptSync } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -21,10 +21,10 @@ let data = ''
 let server: ChildProcess | null = null
 let log = ''
 
-function start() {
+function start(password = 'open sesame') {
   log = ''
   server = spawn(process.execPath, [CLI, 'serve', '--port', String(PORT)], { cwd: root, stdio: 'pipe', env: {
-    ...process.env, MARVER_DATA_DIR: data, MARVER_PASSWORD: 'open sesame', MARVER_ID_ISSUER: '', MARVER_CLI_TOKEN: '', MARVER_OWNER_EMAIL: '',
+    ...process.env, MARVER_DATA_DIR: data, MARVER_PASSWORD: password, MARVER_ID_ISSUER: '', MARVER_CLI_TOKEN: '', MARVER_OWNER_EMAIL: '',
   } })
   server.stdout?.on('data', (d) => { log += d })
   server.stderr?.on('data', (d) => { log += d })
@@ -91,6 +91,12 @@ describe('spec 36 on the server: told, kept, renewed', () => {
     const r = await fetch(`${ORIGIN}/__mv/api/boards`, { headers: { cookie: guest } })
     expect(r.status).toBe(200)
     expect(r.headers.get('content-type')).toMatch(/json/)
+    // ...but a NEW password ends every guest cookie: rotating it is how a guest is removed
+    await stop()
+    await start('a new secret')
+    expect((await fetch(`${ORIGIN}/__mv/api/boards`, { headers: { cookie: guest } })).status).toBe(401)
+    await stop()
+    await start()
   })
 
   it('a guest cookie used past half its life is renewed; a fresh one is left alone', async () => {
@@ -98,7 +104,7 @@ describe('spec 36 on the server: told, kept, renewed', () => {
     expect((await fetch(`${ORIGIN}/`, { headers: { cookie: fresh } })).headers.getSetCookie()).toEqual([])
     // a cookie with 5 days left, signed with the key the server keeps on the volume (the canvas secret's derivation)
     const secret = Buffer.from(readFileSync(join(data, 'canvas.secret'), 'utf8').trim(), 'hex')
-    const key = createHmac('sha256', secret).update('mv_a gate cookie v1').digest()
+    const key = createHmac('sha256', secret).update('mv_a gate cookie v1').update(scryptSync('open sesame', 'marver-gate', 32)).digest()
     const old = Math.floor(Date.now() / 1000) + 5 * 86_400
     const aging = `mv_a=${old}.${createHmac('sha256', key).update(`v1.${old}`).digest('hex')}`
     const r = await fetch(`${ORIGIN}/`, { headers: { cookie: aging } })

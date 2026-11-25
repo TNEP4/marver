@@ -113,8 +113,10 @@ still works in ten years on a disconnected network, this is it.
 `MARVER_PASSWORD` on its own is a simpler thing: one shared secret in front of the
 bundle, with no accounts behind it. Add the volume when you want named people.
 
-Auth is an HMAC-signed 30-day cookie with a per-boot secret (a server restart
-re-prompts), and each password attempt pays an scrypt cost. Invite people with
+Auth is an HMAC-signed 30-day cookie, renewed while it is used, and each password
+attempt pays an scrypt cost. With `MARVER_DATA_DIR` its key is kept on the volume,
+so a redeploy signs nobody out; without one the key is made at each boot and a
+restart asks for the password again (there is nothing to comment on there). Invite people with
 `marver comments invite <email>`; they claim it in the browser and choose a
 password.
 
@@ -130,6 +132,31 @@ gate cookie guessed regardless.
 The costs are the ordinary costs of passwords. It is one secret shared by
 everybody, so removing one person means rotating it for all of them; there is no
 password reset; and a person with five canvases keeps five passwords.
+
+### What a reviewer's comments survive
+
+A person reviewing a canvas may spend an hour in one tab. Nothing they write is lost
+to anything that can happen in that hour:
+
+- **A comment is sent when the canvas has stored it.** Until then it is kept in the
+  browser and shown under its words as *Sending…* or *Not sent yet*. It is sent again
+  by itself - after a reload, a closed tab, a redeploy, the network coming back.
+- **Sessions do not run out while they are used.** A session (or a guest cookie) used
+  with less than half of its 30 days left gets all 30 back.
+- **A session that ends is said at once.** If it ends anyway (the owner's access date
+  passed, the person was removed, general access went Private), a bar says *You're
+  signed out* the next time the canvas reads its comments, with *Sign in again*. On
+  Marver Sign In that goes through the sign-in pages and back to the same board;
+  what was waiting then sends itself.
+- **A refusal keeps the words.** A write the canvas refuses for good (a board made
+  read-only) stays under its message with the reason, *Retry* and *Discard*. Only the
+  person lets it go.
+- **A reply typed and not sent is kept** per thread, across a click outside, a board
+  switch or a reload; the tab asks before closing on words not stored.
+
+For the operator: a refused write leaves one line in the server log
+(`POST /__mv/api/comments/<board> refused: signed out`), and `marver comments sync`
+says when its own session has ended instead of failing quietly.
 
 ### Marver Sign In (`MARVER_ID_ISSUER`) - recommended for teams
 
