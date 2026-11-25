@@ -50,9 +50,12 @@ export function DrawCanvasChrome() {
   const copyImage = () => { exportDrawing(link, 'clipboard', (t) => { toast(t); if (t === 'image copied') setCopied('image') }, dark) }
   return (
     <Hold>
-      <DrawBar link={link} state={state} tools={CANVAS_TOOLS} mode="canvas" style={bar} cam copied={copied}
-        onCopyPath={copyPath} onCopyImage={copyImage} onExport={(k) => exportDrawing(link, k, toast, dark)} />
-      <DrawPanel link={link} state={state} popSide="left" style={panel} cam />
+      {/* a published drawing is view-only (spec 38): its own pan and zoom, nothing to draw with */}
+      {state?.editable !== false && <>
+        <DrawBar link={link} state={state} tools={CANVAS_TOOLS} mode="canvas" style={bar} cam copied={copied}
+          onCopyPath={copyPath} onCopyImage={copyImage} onExport={(k) => exportDrawing(link, k, toast, dark)} />
+        <DrawPanel link={link} state={state} popSide="left" style={panel} cam />
+      </>}
       <DrawView link={link} state={state} style={view} cam />
     </Hold>
   )
