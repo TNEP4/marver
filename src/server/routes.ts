@@ -1,6 +1,7 @@
 import type { Connect, ViteDevServer } from 'vite'
 import { readFileSync, realpathSync } from 'node:fs'
-import { join, sep } from 'node:path'
+import { dirname, join, sep } from 'node:path'
+import { createRequire } from 'node:module'
 import { ROUTE } from '../cli/name.ts'
 import { proofHeaders, type DocProof } from './proof.ts'
 
@@ -32,6 +33,15 @@ export function routesMiddleware(server: ViteDevServer, clientDir: string, stamp
     if (path === '/' || path === '/index.html') dir = 'shell'
     else if (path === `${ROUTE}/frame/` || path === `${ROUTE}/frame/index.html`) dir = 'frame-host'
     else if (path === `${ROUTE}/stage/` || path === `${ROUTE}/stage/index.html`) dir = 'stage'
+    else if (path === `${ROUTE}/draw/` || path === `${ROUTE}/draw/index.html`) dir = 'draw-host'
+    else if (path.startsWith(`${ROUTE}/draw-assets/`)) {
+      // spec 38: Excalidraw's fonts, self-hosted (offline, the Mac app, published canvases) - never its CDN
+      const file = drawAsset(path.slice(`${ROUTE}/draw-assets/`.length))
+      if (!file) { res.statusCode = 404; return res.end() }
+      res.setHeader('content-type', file.endsWith('.woff2') ? 'font/woff2' : 'application/octet-stream')
+      res.setHeader('cache-control', 'public, max-age=31536000, immutable')   // the package version is pinned
+      return res.end(readFileSync(file))
+    }
     else if (path.startsWith(`${ROUTE}/favicon/`)) {
       // static icon pack from the shell dir; basename-only lookup, no traversal
       const name = path.slice(`${ROUTE}/favicon/`.length)
@@ -85,4 +95,24 @@ export function routesMiddleware(server: ViteDevServer, clientDir: string, stamp
       res.end(`marver route error: ${(err as Error).message}`)
     }
   }
+}
+
+/** Excalidraw's own asset folder (`dist/prod`), resolved from this package - where `EXCALIDRAW_ASSET_PATH` points. */
+export function drawAssetDir(): string | null {
+  try {
+    // the package's exports hide package.json: resolve its main entry (dist/prod/index.js) - its folder is the asset root
+    const req = createRequire(import.meta.url)
+    return dirname(req.resolve('@excalidraw/excalidraw'))
+  } catch { return null }
+}
+/** One file under Excalidraw's fonts, by its relative path - realpath-contained, fonts only. */
+export function drawAsset(rel: string): string | null {
+  if (!/^fonts\/[\w-]+\/[\w.@-]+\.woff2$/.test(rel)) return null
+  const base = drawAssetDir()
+  if (!base) return null
+  try {
+    const root = realpathSync(join(base, 'fonts'))
+    const file = realpathSync(join(base, rel))
+    return file.startsWith(root + sep) ? file : null
+  } catch { return null }
 }

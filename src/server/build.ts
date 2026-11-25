@@ -793,7 +793,7 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
       root, outDir, gen: bakeGen, boards, themes: config.themes, log: (l) => console.log(l),
       frames: pubFrames, viewports: config.viewports, autoBoard: Object.values(boards).some((b) => b?.auto === true),
       // the frame's PUBLISHED url (an html frame's opaque path when the source is stripped)
-      urlFor: (id, theme) => { const f = pubFrameFile.get(id); if (!f) return null; return f.kind === 'html' ? `/${f.file}?theme=${encodeURIComponent(theme)}&r=${bakeGen}` : `/__mv/frame/?id=${encodeURIComponent(id)}&theme=${encodeURIComponent(theme)}&r=${bakeGen}` },
+      urlFor: (id, theme) => { const f = pubFrameFile.get(id); if (!f) return null; return f.kind === 'html' ? `/${f.file}?theme=${encodeURIComponent(theme)}&r=${bakeGen}` : `/__mv/${f.kind === 'draw' ? 'draw' : 'frame'}/?id=${encodeURIComponent(id)}&theme=${encodeURIComponent(theme)}&r=${bakeGen}` },
     })
     textureLine = r === null
       ? `  textures: none - no Chrome on this machine; frames with glass will rest live (install Chrome, or ship as is)`

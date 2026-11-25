@@ -156,7 +156,7 @@ export function manifestFrame(root: string, frameId: string): ManifestFrame | nu
 /** The URL a frame renders at on its own: an HTML frame is its file, a TSX frame the frame host. */
 export const frameUrl = (origin: string, frame: ManifestFrame, theme: string) => frame.kind === 'html'
   ? `${origin}/${frame.file}?theme=${encodeURIComponent(theme)}`
-  : `${origin}${ROUTE}/frame/?id=${encodeURIComponent(frame.id)}&theme=${encodeURIComponent(theme)}`
+  : `${origin}${ROUTE}/${frame.kind === 'draw' ? 'draw' : 'frame'}/?id=${encodeURIComponent(frame.id)}&theme=${encodeURIComponent(theme)}`
 
 /** True once the frame has mounted: #root (or the body, for an HTML frame) has children. */
 export const MOUNTED = `(() => { const el = document.getElementById('root') ?? document.body; return !!el && el.childElementCount > 0 && document.readyState !== 'loading' })()`

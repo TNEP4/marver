@@ -26,7 +26,7 @@ export interface PublishedIndex { gen: number; answers: Record<string, { ok: tru
 /** The shell's plain key for an ask (sleep.ts keyOf): frame|theme|w|h. */
 export const indexKey = (a: BakeAsk) => `${a.frame}|${a.theme}|${Math.round(a.w)}|${Math.round(a.h)}`
 
-export interface PublishedFrame { id: string; kind: 'tsx' | 'html'; file: string; viewport?: string; contentWidth?: number; slide?: boolean }
+export interface PublishedFrame { id: string; kind: 'tsx' | 'html' | 'draw'; file: string; viewport?: string; contentWidth?: number; slide?: boolean }
 type Node = { frame?: string; w?: number; h?: number }
 
 /** Every (frame, theme, size) a visitor can rest on: each published board's nodes, sized the way

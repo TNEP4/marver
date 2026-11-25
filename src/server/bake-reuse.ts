@@ -48,6 +48,8 @@ export const WATCH_IGNORED = [
   '**/.next/**', '**/.turbo/**', '**/.vercel/**', '**/.output/**', '**/dist/**', '**/build/**', '**/out/**', '**/coverage/**',
   // tool-output dirs written into the project must never reload the canvas
   '**/.gstack/**', '**/.git/**', '**/.playwright-mcp/**',
+  // a drawing's atomic write (spec 38): its temporary file is never a change
+  '**/*.excalidraw.*.tmp',
   // context/'s JSON (the map, sync state): read by the check and the status pass, never by a frame
   '**/context/map.json', '**/context/sync/**',
 ]

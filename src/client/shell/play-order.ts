@@ -3,7 +3,7 @@
  *  frames come back for a ONE-TIME warning at entry; this file stays
  *  dependency-free so unit tests import it without React or virtual modules. */
 export interface OrderNode { frame: string; x: number; y: number; missing?: boolean }
-export interface OrderFrame { id: string; kind: 'tsx' | 'html'; slide?: boolean }
+export interface OrderFrame { id: string; kind: 'tsx' | 'html' | 'draw'; slide?: boolean }
 
 export function deckOrder(
   nodes: OrderNode[], frames: Map<string, OrderFrame>,

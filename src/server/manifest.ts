@@ -13,8 +13,11 @@ export interface FrameMeta { title?: string; viewport?: string; theme?: string; 
 export interface FrameEntry {
   id: string
   file: string
-  kind: 'tsx' | 'html'
+  /** `draw` (spec 38): an Excalidraw drawing, `<name>.excalidraw` - the file is the frame, its header the meta */
+  kind: 'tsx' | 'html' | 'draw'
   scene: string
+  /** A drawing's size on the board (spec 38: `marver.size` in its file, default 960x640). Present only on draw frames. */
+  size?: { w: number; h: number }
   title?: string
   viewport?: string
   theme?: string
@@ -59,7 +62,7 @@ export interface Manifest {
 /** What a project says about itself - from design/config.ts, handed in by whoever loaded it. */
 export interface ProjectInfo { name?: string; description?: string }
 
-const FRAME_EXT = /\.(tsx|jsx|html)$/
+const FRAME_EXT = /\.(tsx|jsx|html|excalidraw)$/
 const RESERVED_SCENES = new Set(['components', 'screens'])
 
 /** Sticky notes (spec 18): the longest note the manifest carries - a note is an aside, not a spec. */
@@ -296,6 +299,23 @@ export function contentScan(src: string): { intent: string; width: number } | nu
   return { intent, width: contentWidthOf(src) }
 }
 
+/** A drawing's meta (spec 38), from the `marver` header of its `.excalidraw` file: title, description and size on
+ *  the board. A file that does not parse still lists (an empty drawing at the default size) - the host says why. */
+export const DRAW_SIZE = { w: 960, h: 640 }
+export function drawMeta(abs: string): Pick<FrameEntry, 'title' | 'description' | 'size'> {
+  const out: Pick<FrameEntry, 'title' | 'description' | 'size'> = { size: { ...DRAW_SIZE } }
+  try {
+    const mv = JSON.parse(readFileSync(abs, 'utf8'))?.marver
+    if (mv && typeof mv === 'object') {
+      if (typeof mv.title === 'string' && mv.title.trim()) out.title = mv.title.trim().slice(0, 200)
+      if (typeof mv.description === 'string' && mv.description.trim()) out.description = mv.description.trim().slice(0, 500)
+      const w = Number(mv.size?.w), h = Number(mv.size?.h)
+      if (Number.isFinite(w) && Number.isFinite(h) && w >= 120 && h >= 80 && w <= 8000 && h <= 8000) out.size = { w: Math.round(w), h: Math.round(h) }
+    }
+  } catch { /* unreadable or not JSON yet (an agent mid-write): listed at the default size */ }
+  return out
+}
+
 /** id = path relative to design/, extension dropped, `scenes/` prefix dropped. Always `/`-separated. */
 export function toFrameId(designRelPath: string): string {
   const posix = designRelPath.split(sep).join('/')
@@ -483,10 +503,11 @@ export function scanFrames(root: string, project?: ProjectInfo): Manifest {
         console.error(`[marver] scene "${scene}" is a reserved name - "${rel}" skipped. Rename the scene.`)
         continue
       }
-      const kind = name.endsWith('.html') ? 'html' as const : 'tsx' as const
+      const kind = name.endsWith('.html') ? 'html' as const : name.endsWith('.excalidraw') ? 'draw' as const : 'tsx' as const
       const entry: FrameEntry = { id, file: `design/${rel}`, kind, scene }
       const note = readNote(noteFileFor(abs))
       if (note) entry.note = note
+      if (kind === 'draw') Object.assign(entry, drawMeta(abs))
       if (kind === 'tsx') {
         const src = readFileSync(abs, 'utf8')
         const meta = extractMeta(src)
@@ -514,7 +535,7 @@ export function scanFrames(root: string, project?: ProjectInfo): Manifest {
   }
   // sort: id, then extension rank matching frame-host resolution (tsx > jsx > html),
   // then path - so the dedup winner below is fully deterministic and loadable
-  const extRank = (file: string) => (file.endsWith('.tsx') ? 0 : file.endsWith('.jsx') ? 1 : 2)
+  const extRank = (file: string) => (file.endsWith('.tsx') ? 0 : file.endsWith('.jsx') ? 1 : file.endsWith('.html') ? 2 : 3)
   frames.sort((a, b) => a.id.localeCompare(b.id) || extRank(a.file) - extRank(b.file) || a.file.localeCompare(b.file))
   // duplicate ids (e.g. foo.tsx + foo.html): keep the first (deterministic after sort),
   // drop the rest - duplicate React keys downstream are worse than a hidden file

@@ -142,7 +142,9 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
   /** the config's themes, and the canvas's name as the shell shows it (a deck PDF's Author, spec 31) */
   themes?: string[]; canvasName?: () => string
   /** a live picture's whole upload, read and checked, at most (A4.6 #37: 10 s; shorter in tests) */
-  livePictureMs?: number } = {}): Connect.NextHandleFunction {
+  livePictureMs?: number
+  /** the drawings (spec 38): every write to a `.excalidraw` goes through it */
+  draw?: import('./draw/service.ts').DrawService } = {}): Connect.NextHandleFunction {
   // the run's workspace (spec 28 A1.6): a --recover run serves under an earlier address's key
   const ws = opts.workspace ?? workspaceId(root)
   // the frames as the dev server knows them now (its cached manifest), else as the disk says
@@ -547,6 +549,91 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
       // Add to board (the Not on a board view): `{ board, frames }` appended as nodes, the ones the
       // board already shows skipped - `marver boards pin` from the canvas. Owner-gated (a mutation);
       // placed BEFORE the boards/<name> regex.
+      // ---- drawings (spec 38) ------------------------------------------------------------------------------------
+      // GET draw/<id> - the drawing; ?since=<rev> - the revs after it; ?describe=1[&since] - as text for an agent.
+      // PUT draw/<id> - the person's save (owner only: `by` is never the client's to choose).
+      // POST draw/<id> - an agent's op {op, opId} (the work token, or the owner). POST draw/new - a new drawing file.
+      if (path === 'draw/new' && req.method === 'POST') {
+        const { readDevInfo } = await import('./work.ts')
+        const token = readDevInfo(root)?.token
+        const agent = !!token && req.headers['x-mv-work'] === token
+        if (!ownerGated(req) && !agent) return json(res, 403, { error: 'forbidden' })
+        const raw = await readBody(req)
+        if (raw == null) return json(res, 400, { error: 'body too large or unreadable' })
+        let b: { scene?: unknown; name?: unknown; title?: unknown; size?: { w?: unknown; h?: unknown }; board?: unknown }
+        try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+        const { DrawService, DrawOpError } = await import('./draw/service.ts')
+        const w = Number(b.size?.w), h = Number(b.size?.h)
+        try {
+          const made = DrawService.create(root, typeof b.scene === 'string' && b.scene ? b.scene : 'sketches', typeof b.name === 'string' && b.name ? b.name : undefined,
+            { title: typeof b.title === 'string' ? b.title.slice(0, 200) : undefined, size: Number.isFinite(w) && Number.isFinite(h) && w >= 120 && h >= 80 && w <= 8000 && h <= 8000 ? { w: Math.round(w), h: Math.round(h) } : undefined })
+          let pinned: unknown
+          if (validName(b.board)) {
+            const live = [...scanFrames(root).frames.map((f) => f.id)]
+            if (!live.includes(made.id)) live.push(made.id)
+            pinned = pinFrames(root, b.board, [made.id], live)
+            wroteBoard(req, b.board, readFileSync(join(boardsDir, `${b.board}.json`), 'utf8'))
+          }
+          return json(res, 200, { ...made, pinned })
+        } catch (err) {
+          if (err instanceof DrawOpError) return json(res, 409, { error: err.message })
+          throw err
+        }
+      }
+      const drawPath = /^draw\/([^/]+)$/.exec(path)
+      if (drawPath && opts.draw) {
+        const id = decodeURIComponent(drawPath[1])
+        const { readDevInfo } = await import('./work.ts')
+        const token = readDevInfo(root)?.token
+        const agent = !!token && req.headers['x-mv-work'] === token
+        const owner = ownerGated(req)
+        if (!owner && !agent) return json(res, 403, { error: 'forbidden' })
+        const { DrawOpError } = await import('./draw/service.ts')
+        const { DrawFileError } = await import('./draw/file.ts')
+        try {
+          if (req.method === 'GET') {
+            if (url.searchParams.get('describe') === '1') {
+              const since = url.searchParams.has('since') ? Number(url.searchParams.get('since')) : undefined
+              res.setHeader('content-type', 'text/plain; charset=utf-8')
+              return res.end(await opts.draw.describe(id, Number.isInteger(since) ? since : undefined))
+            }
+            if (url.searchParams.has('since')) {
+              const since = Number(url.searchParams.get('since'))
+              if (!Number.isInteger(since) || since < 0) return json(res, 400, { error: 'since: a rev' })
+              return json(res, 200, await opts.draw.since(id, since))
+            }
+            return json(res, 200, await opts.draw.get(id))
+          }
+          if (req.method === 'PUT') {
+            if (!owner) return json(res, 403, { error: 'the person saves from the frame; an agent edits with marver draw' })
+            const raw = await readBody(req, 25_000_000)
+            if (raw == null) return json(res, 413, { error: 'save too large (25 MB)' })
+            let body: any
+            try { body = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+            if (!Number.isInteger(body?.baseRev) || !Array.isArray(body?.upserts ?? []) || !Array.isArray(body?.deletes ?? [])) return json(res, 400, { error: 'a save: {baseRev, upserts, deletes}' })
+            const sid = typeof body.sid === 'string' ? body.sid.slice(0, 64) : 'anon'
+            const seq = Number.isInteger(body.seq) ? body.seq : Number.MAX_SAFE_INTEGER
+            return json(res, 200, await opts.draw.save(id, body, sid, seq))
+          }
+          if (req.method === 'POST') {
+            const raw = await readBody(req, 25_000_000)
+            if (raw == null) return json(res, 413, { error: 'op too large (25 MB)' })
+            let body: any
+            try { body = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+            const op = body?.op
+            const ok = op && ((op.kind === 'add' && Array.isArray(op.elements)) || (op.kind === 'set' && typeof op.id === 'string' && op.fields && typeof op.fields === 'object')
+              || (op.kind === 'move' && Array.isArray(op.ids) && Number.isFinite(op.dx) && Number.isFinite(op.dy)) || (op.kind === 'rm' && Array.isArray(op.ids)))
+            if (!ok) return json(res, 400, { error: 'an op: add {elements, at?} | set {id, fields} | move {ids, dx, dy} | rm {ids}' })
+            const by = agent ? (typeof body.by === 'string' && /^agent(:[\w.-]{1,40})?$/.test(body.by) ? body.by : 'agent') : 'owner'
+            return json(res, 200, await opts.draw.op(id, op, typeof body.opId === 'string' ? body.opId.slice(0, 80) : '', by))
+          }
+          return json(res, 405, { error: 'GET, PUT or POST' })
+        } catch (err) {
+          if (err instanceof DrawOpError || err instanceof DrawFileError) return json(res, 409, { error: err.message })
+          throw err
+        }
+      }
+
       if (path === 'boards/pin' && req.method === 'POST') {
         if (!ownerGated(req)) return json(res, 403, { error: 'forbidden' })
         const raw = await readBody(req)
@@ -1063,7 +1150,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           // a compile that landed in the cache asks for a reuse record - from the commit itself, whether or not this
           // request still waits for it
           log: (a) => { if (a.ok) opts.baked?.(); if (a.ok) console.log(`  bake: ${a.frame} ${a.theme} ${a.w}x${a.h} - ${a.targets.length} effects, ${a.rejected} stay live, ${a.ms} ms`); else console.log(`  bake: ${a.frame} ${a.theme} ${a.w}x${a.h} - stays live: ${a.error}`) },
-          urlFor: (ask) => { const f = frames.get(ask.frame)!; return named(f.kind === 'html' ? `${origin}/${f.file}?theme=${encodeURIComponent(ask.theme)}` : `${origin}${ROUTE}/frame/?id=${encodeURIComponent(ask.frame)}&theme=${encodeURIComponent(ask.theme)}`) },
+          urlFor: (ask) => { const f = frames.get(ask.frame)!; return named(f.kind === 'html' ? `${origin}/${f.file}?theme=${encodeURIComponent(ask.theme)}` : `${origin}${ROUTE}/${f.kind === 'draw' ? 'draw' : 'frame'}/?id=${encodeURIComponent(ask.frame)}&theme=${encodeURIComponent(ask.theme)}`) },
           urlBase: `${ROUTE}/bakes`,
           // never hold the page's connection for a compile: the browser has six per host, and a
           // comment or a board save must not queue behind a frame compiling (issue #23)
