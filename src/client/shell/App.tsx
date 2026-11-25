@@ -1306,8 +1306,8 @@ function OutboxBanner() {
         ? <button className="sh-banner-act" onClick={() => { cmd('thread-open', { via: 'click', in: 'shell' }); navigatedByHand(); revealThread(threadOf(refused[0])!) }}>Show</button>
         : <>
           <span className="kept"> - {refused[0].refused}</span>
-          <button className="sh-banner-act" onClick={() => { cmd('comment-retry', { via: 'click', in: 'shell' }).done(); useComments.getState().retry(refused[0].key) }}>Retry</button>
-          <button className="sh-banner-act" onClick={() => { cmd('comment-discard', { via: 'click', in: 'shell' }).done(); useComments.getState().discard(refused[0].key) }}>Discard</button>
+          <button className="sh-banner-act" onClick={() => { cmd('comment-retry', { via: 'click', in: 'shell' }); useComments.getState().retry(refused[0].key) }}>Retry</button>
+          <button className="sh-banner-act" onClick={() => { cmd('comment-discard', { via: 'click', in: 'shell' }); useComments.getState().discard(refused[0].key) }}>Discard</button>
         </>}
     </div>
   )

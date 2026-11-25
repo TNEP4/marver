@@ -183,8 +183,8 @@ export const COMMANDS = {
   'ask-to-comment': se('answer', { deadlineMs: S30, noop: ['too-soon'], failed: ['api'] }),
   'identity-open': se('2raf'),
   // spec 36: a write the server refused for good - sent again by the person, or let go
-  'comment-retry': once(),
-  'comment-discard': once(),
+  'comment-retry': se('2raf'),
+  'comment-discard': se('2raf'),
   'identity-switch': se('2raf'),
   'sign-in': se('answer', { deadlineMs: S30, failed: ['rejected', 'api'] }),
   claim: se('answer', { deadlineMs: S30, failed: ['rejected', 'api'] }),

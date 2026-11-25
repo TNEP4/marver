@@ -27,8 +27,12 @@ export function writeDraft(key: string, words: string) {
     unsaved.delete(key)
   } catch { if (words.trim()) unsaved.add(key); else unsaved.delete(key) }
 }
-/** This page's own copy goes (sent), leaving what storage holds untouched. */
-export function forgetDraft(key: string) { mem.delete(key); unsaved.delete(key) }
+/** These words were sent: every copy of them goes - on disk and in this page - and only of them. Newer words in
+ *  the same place (another tab's, or typed here while storage refused them) stay. */
+export function clearSent(key: string, words: string) {
+  if (mem.get(key)?.trim() === words) { mem.delete(key); unsaved.delete(key) }
+  try { if (localStorage.getItem(storageKey(key))?.trim() === words) localStorage.removeItem(storageKey(key)) } catch { /* nothing on disk */ }
+}
 /** Does this page hold a draft storage would not take? A deliberate leave (to sign in) asks then too. */
 export const draftsVolatile = () => unsaved.size > 0
 

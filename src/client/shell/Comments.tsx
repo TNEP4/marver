@@ -942,8 +942,8 @@ function Unsent({ p, what, signedOut }: { p: Pending; what: string; signedOut: b
     <div className="cm-unsent refused" data-unsent="refused">
       {Not} - {p.refused}
       <span className="cm-unsent-acts">
-        <button onClick={() => { cmd('comment-retry', { via: 'click', in: 'shell' }).done(); retry(p.key) }}>Retry</button>
-        <button onClick={() => { cmd('comment-discard', { via: 'click', in: 'shell' }).done(); discard(p.key) }}>Discard</button>
+        <button onClick={() => { cmd('comment-retry', { via: 'click', in: 'shell' }); retry(p.key) }}>Retry</button>
+        <button onClick={() => { cmd('comment-discard', { via: 'click', in: 'shell' }); discard(p.key) }}>Discard</button>
       </span>
     </div>
   )
