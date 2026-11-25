@@ -6,32 +6,35 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 
 ### Highlights
 
-- **A reviewer's comments are never lost on a published canvas.** A comment is sent when the canvas has stored it -
-  until then it is kept in the browser, shown as *Sending…* or *Not sent yet*, and sent again by itself after a
-  reload, a closed tab, a redeploy or a sign-in. Before, a reviewer whose session ended mid-visit saw every comment
-  as posted while the canvas stored none of them, and they were gone at the next reload.
+- **A reviewer's comments are never lost on a published canvas.** A comment counts as sent only once the canvas has
+  stored it. Until then it is kept in the reviewer's browser, marked *Sending…* or *Not sent yet* under its words, and
+  sent again by itself - after a reload, a closed tab, a redeploy, the network coming back or a sign-in. Before, a
+  reviewer whose session ended mid-visit saw every comment as posted while the canvas stored none of them.
   [What a reviewer's comments survive](docs/publish.md#what-a-reviewers-comments-survive)
+- **A session that ends is said at once.** A bar says *You're signed out*, counts what is kept, and offers *Sign in
+  again* - on Marver Sign In through its own pages and back to the same board, where the waiting comments send
+  themselves. On a canvas locked to present or slides too.
 
 ### Fixed
 
-- A call to a published canvas's API without a session is answered `401` with JSON, never with the sign-in page and
-  a `200` - which the canvas, and `marver comments sync`, read as success.
-- A session that ends is said at once, with *Sign in again*: on Marver Sign In through its own pages, back to the same
-  board. The sign-in dialog asked for a password a Marver Sign In canvas does not have.
-- Sessions and guest cookies are renewed while they are used, instead of ending 30 days after sign-in.
-- A password canvas with a data dir keeps its cookie key on the volume: a redeploy no longer signs every guest out.
-- A reply typed and not sent is kept per thread, across a click outside, a board switch or a reload; a published
-  canvas asks before its tab closes only if the browser would not store them.
-- A comment is stamped with the canvas's clock, so a reviewer whose clock runs fast is not refused.
-- `/me` is asked again when it fails at load (a redeploy's 502), and the live comment stream reopens after a sign-in.
-- An unreadable `auth.json` or `share.json` answers `500` instead of ending the server process.
-- `marver comments sync` and `marver dev` say when the canvas session has ended, and how to connect again.
+- Sessions and guest cookies are renewed while they are used, instead of ending 30 days after sign-in; a password
+  canvas with a data dir keeps its guest cookie key on the volume, so a redeploy no longer signs every guest out.
+- A comment the canvas refuses for good (a board made read-only) keeps its words, under its message, with the reason,
+  *Retry* and *Discard*. Only the person lets it go.
+- A reply typed and not sent is kept per thread, across a click outside, a board switch or a reload.
+- The sign-in dialog no longer asks for a password on a Marver Sign In canvas, which has none.
+- A reviewer whose computer clock runs fast is no longer refused.
+- The published canvas's API answers a missing session with `401` and JSON, never with the sign-in page and a `200`,
+  which the canvas and `marver comments sync` read as success. A refused write leaves a line in the server log.
+- `marver comments sync` and `marver dev` say when their canvas session has ended, and how to connect again.
+- An unreadable `auth.json` or `share.json` answers `500` instead of stopping the server.
 
 ### Changed
 
 - Marver's mark is the Mac app's, as marver.design shows it: on the sign-in pages and their "Powered by" line, in the
-  canvas's brand slot and play, on Marver's own comments, and in the browser tab (the interact-mode icons too).
-- Search (⌘K) opens in the middle of the window, top to bottom as well as left to right.
+  canvas's brand slot and in play, on Marver's own comments, and in the browser tab.
+- Search (⌘K) opens in the middle of the window, top to bottom as well as left to right (below the Mac app's tab
+  strip).
 
 ## 0.36.1 - 2026-11-24
 
