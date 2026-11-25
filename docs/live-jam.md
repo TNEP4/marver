@@ -284,7 +284,8 @@ stands on its own, and the frame wears the orange question
 bubble in the sidebar until the thread is resolved. A plain reply in a note starts nothing - only
 a tag does: tag `@marver` in your reply and it is a jam job, with the note in its brief; while
 the chat agent still has that frame lit (`marver work start`), the job waits for it. Your plain
-answers are listed by `npx marver marks` ("answered by you") for your chat agent. Notes stay on your machine for now, like jam replies; a reply to a
+answers are listed by `npx marver marks` ("answered by you") for your chat agent. Notes stay on your machine for now, like jam replies (a note an older build already put on the published canvas
+gets your resolves and replies there through `marver comments sync`, never Marver's own); a reply to a
 collaborator's thread keeps your voice, the one that reaches them on the published canvas.
 
 ## Parallelism

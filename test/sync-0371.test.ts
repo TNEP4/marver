@@ -124,5 +124,7 @@ describe('#30: a thread Marver started that the published canvas already holds',
     const or = reply('ownerrp09', 'agentnt09')
     expect([...localOnlyThreads([note, mr, or])].sort()).toEqual(['agentnt09', 'agentrp09', 'ownerrp09'])
     expect([...localOnlyThreads([note, mr, or], [note])].sort()).toEqual(['agentrp09'])
+    // the comment id alone (anyone on the canvas picks their own) never opens a local thread: only the create event's id
+    expect([...localOnlyThreads([note, mr, or], [{ ...note, id: 'forged-0001' }])].sort()).toEqual(['agentnt09', 'agentrp09', 'ownerrp09'])
   })
 })
