@@ -131,7 +131,7 @@ const GRID = 20
 /** The elements that read the camera's variables: styles.css's readers (test/camera-readers.test.ts holds the two
  *  in step) and the inline styles of the selection bar, the group captions and the comment card. Their subtrees
  *  inherit the variables; anything else gets its var() default, as play's pins (outside #sh-world) must. */
-const CAMERA_READERS = '.sh-canvas::before, .sh-edge::before, .sh-ctx, #sh-world :is(.sh-node.sel, .sh-node.interact, '
+const CAMERA_READERS = '.sh-canvas::before, .sh-edge::before, .sh-ctx, .dk-cam, #sh-world :is(.sh-node.sel, .sh-node.interact, '
   + '.sh-node.working, .sh-handle, .sh-work-ind, .sh-vbadge, .sh-gcaption, .sh-notes-fold, .sh-stranded, .cm-pin, .cm-lead, '
   + '.cm-stack, .cm-card, .jm-pt, .jm-pickbox)'
 let cameraRule: CSSStyleDeclaration | null | undefined   // undefined: not chosen yet; null: inline on .sh-app

@@ -10,13 +10,14 @@ import { send, type DrawLink } from './link.ts'
 
 type Picker = 'stroke' | 'background' | 'font' | 'start' | 'end'
 
-export function DrawPanel({ link, state, top, popSide = 'right', style }: {
+export function DrawPanel({ link, state, top, popSide = 'right', style, cam }: {
   link: DrawLink
   state: DrawState | undefined
   /** content placed at the top of the same glass (play's left panel: the drawing's name over its properties) */
   top?: ReactNode
   popSide?: 'right' | 'left'
   style?: CSSProperties
+  cam?: boolean
 }) {
   const [open, setOpen] = useState<Picker | null>(null)
   const [moreHeads, setMoreHeads] = useState(false)
@@ -154,7 +155,7 @@ export function DrawPanel({ link, state, top, popSide = 'right', style }: {
 
   const popPos: CSSProperties = popSide === 'right' ? { left: 'calc(100% + 10px)', top: popTop } : { right: 'calc(100% + 10px)', top: popTop }
   return (
-    <div ref={anchor} className="dk-anchor" style={{ zIndex: open ? 46 : 31, ...style }}>
+    <div ref={anchor} className={`dk-anchor${cam ? ' dk-cam' : ''}`} style={{ zIndex: open ? 46 : 31, ...style }}>
       <div ref={panel} className="dk-glass dk-props dk-draw" style={{ position: 'relative' }}>{top}{out}</div>
       {(open === 'stroke' || open === 'background') && (
         <ColorPicker current={(open === 'stroke' ? p?.strokeColor : p?.backgroundColor) ?? 'transparent'} allowTransparent={open === 'background'} style={{ position: 'absolute', ...popPos }}

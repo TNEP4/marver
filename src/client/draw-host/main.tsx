@@ -61,7 +61,8 @@ function fail(message: string) {
 }
 
 function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('./adapter.tsx').DrawEngine }) {
-  const [edit, setEdit] = useState(false)
+  // opened on its own (no shell around it) with ?edit=1: drawing mode from the start - tests and debugging
+  const [edit, setEdit] = useState(window.parent === window && params.get('edit') === '1' && !PUBLISHED)
   const [th, setTh] = useState(theme)
   const engine = useRef<Engine | null>(null)
   const frameView = useRef<DrawHeader['view'] | null>(data.header.view ?? null)
@@ -238,6 +239,9 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
     theme: th, edit, editable,
     onReady: (eng: Engine) => {
       engine.current = eng
+      // a handle for tests and `marver shot`: the engine, the sync, and readiness (spec 38 decision 22)
+      w.__mvDraw = { engine: eng, sync: sync.current, ready: true, setEdit: (on: boolean) => setEdit(on && editable) }
+      void document.fonts.ready.then(() => { w.__mvDrawReady = true })
       post({ type: 'sh:ready', id, gen, boot: docId(), doc: document.querySelector('meta[name="mv-doc"]')?.getAttribute('content') ?? '', meta: { kind: 'draw' } })
       sendState()
     },

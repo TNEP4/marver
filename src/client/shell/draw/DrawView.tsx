@@ -9,8 +9,8 @@ import { FrameCornersIcon } from '../icons.tsx'
 import { HoverTip, MI, Ph, ResetView, type TipSide } from './kit.tsx'
 import { send, type DrawLink } from './link.ts'
 
-export function DrawView({ link, state, size = 'sm', map, menuSide = 'top', tipSide = 'top', style }: {
-  link: DrawLink; state: DrawState | undefined; size?: 'sm' | 'lg'; map?: boolean; menuSide?: 'top' | 'bottom'; tipSide?: TipSide; style?: CSSProperties
+export function DrawView({ link, state, size = 'sm', map, menuSide = 'top', tipSide = 'top', style, cam }: {
+  link: DrawLink; state: DrawState | undefined; size?: 'sm' | 'lg'; map?: boolean; menuSide?: 'top' | 'bottom'; tipSide?: TipSide; style?: CSSProperties; cam?: boolean
 }) {
   const [menu, setMenu] = useState(false)
   const [mapOn, setMapOn] = useState(false)
@@ -29,7 +29,7 @@ export function DrawView({ link, state, size = 'sm', map, menuSide = 'top', tipS
   const zoom = Math.round((state?.zoom ?? 1) * 100)
   const view = (v: 'in' | 'out' | 'fit' | 'frame' | 'save' | 'reset') => { send(link, { op: 'view', v }); setMenu(false) }
   return (
-    <div ref={ref} className="dk-anchor" style={{ zIndex: menu ? 45 : 30, ...style }}>
+    <div ref={ref} className={`dk-anchor${cam ? ' dk-cam' : ''}`} style={{ zIndex: menu ? 45 : 30, ...style }}>
       <div className={`dk-glass dk-view dk-draw${size === 'lg' ? ' lg' : ''}`}>
         {B('Zoom out', '⌘−', <Ph n="Minus" size={s} />, () => view('out'))}
         {B('Zoom', undefined, <>{zoom}%</>, () => setMenu((m) => !m), ` pct${menu ? ' on' : ''}`)}

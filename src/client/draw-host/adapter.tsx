@@ -81,6 +81,16 @@ export function DrawEngine({ initial, theme, edit, editable, onReady, onChange, 
     if (appRef.current) return true
     const host = document.querySelector('.excalidraw')
     if (!host) return false
+    // 1. React's tree: from Excalidraw's container up to the component that owns the action manager. Works in view
+    //    mode too (Excalidraw ignores keys there, so the key path below cannot reach the hidden action at rest)
+    const fiberKey = Object.keys(host).find((k) => k.startsWith('__reactFiber$'))
+    let f = fiberKey ? (host as unknown as Record<string, any>)[fiberKey] : null
+    for (let i = 0; f && i < 60; i++, f = f.return) {
+      const sn = f.stateNode
+      if (sn && typeof sn === 'object' && sn.actionManager && typeof sn.actionManager.executeAction === 'function') { appRef.current = sn; break }
+    }
+    if (appRef.current) return true
+    // 2. the hidden action's key (edit mode only)
     const ev = new KeyboardEvent('keydown', { key: GRAB_KEY, bubbles: true, cancelable: true }) as KeyboardEvent & { mvGrab?: boolean }
     ev.mvGrab = true
     host.dispatchEvent(ev)
@@ -89,6 +99,7 @@ export function DrawEngine({ initial, theme, edit, editable, onReady, onChange, 
 
   const engine: Engine = {
     run(name, value) {
+      if (!appRef.current) tryGrab()
       const app = appRef.current
       if (!app || !(DRAW_ACTIONS as readonly string[]).includes(name)) return false
       const action = app.actionManager?.actions?.[name]
@@ -192,6 +203,9 @@ export function DrawEngine({ initial, theme, edit, editable, onReady, onChange, 
     const api = apiRef.current
     if (!api) return
     if (!edit) api.updateScene({ appState: { selectedElementIds: {}, editingTextElement: null }, captureUpdate: CU.NEVER })
+    // Excalidraw keeps a pan begun in view mode in a module flag that only its window pointer-up clears: entering
+    // drawing mode releases it, or the person's first stroke would be eaten as the end of that pan
+    else for (const type of ['pointerup', 'pointercancel']) window.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, pointerType: 'mouse' }))
   }, [edit])
 
   return (
@@ -209,6 +223,7 @@ export function DrawEngine({ initial, theme, edit, editable, onReady, onChange, 
             if (initial.view) setView(api, initial.view)
             else fitContent(api, true)
             readyRef.current = true
+            ;(window as unknown as { __mvApp?: App }).__mvApp = appRef.current   // tests read it
             cbs.current.onReady(engine)
           }
           requestAnimationFrame(() => start())

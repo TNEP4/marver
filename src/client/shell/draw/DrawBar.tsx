@@ -9,7 +9,7 @@ import { ImagesSquareIcon, PanelFilledIcon, ParallelogramFillIcon, SignpostIcon,
 import { HoverTip, MI, MAIN_TOOLS, MORE_TOOLS, Ph, TOOL, type TipSide } from './kit.tsx'
 import { send, type DrawLink } from './link.ts'
 
-export function DrawBar({ link, state, tools, mode, tipSide, menuSide = 'below', style, onCopyPath, onCopyImage, onExport, onCollapse, onHideUI, onBack, copied }: {
+export function DrawBar({ link, state, tools, mode, tipSide, menuSide = 'below', style, cam, onCopyPath, onCopyImage, onExport, onCollapse, onHideUI, onBack, copied }: {
   link: DrawLink
   state: DrawState | undefined
   tools: DrawTool[]
@@ -17,6 +17,8 @@ export function DrawBar({ link, state, tools, mode, tipSide, menuSide = 'below',
   tipSide?: TipSide
   menuSide?: 'below' | 'above'
   style?: CSSProperties
+  /** placed from the camera's variables (the canvas) */
+  cam?: boolean
   onCopyPath?: () => void
   onCopyImage?: () => void
   onExport: (kind: 'png' | 'pdf') => void
@@ -49,7 +51,7 @@ export function DrawBar({ link, state, tools, mode, tipSide, menuSide = 'below',
   const more = MORE_TOOLS.filter((t) => !tools.includes(t))
   const menuPos: CSSProperties = menuSide === 'below' ? { top: 'calc(100% + 6px)', right: 0 } : { bottom: 'calc(100% + 6px)', right: 0 }
   return (
-    <div ref={ref} className="dk-anchor" style={{ zIndex: open ? 45 : 30, ...style }}>
+    <div ref={ref} className={`dk-anchor${cam ? ' dk-cam' : ''}`} style={{ zIndex: open ? 45 : 30, ...style }}>
       <div className={`dk-glass dk-tools h${mode === 'canvas' ? ' sh-ctx dk-ctx dk-draw' : ''}`}>
         <HoverTip label={state?.locked ? 'Keep tool active - on' : 'Keep tool active'} keys="Q" side={side}>
           <button className={`dk-b lock${state?.locked ? ' on' : ''}`} aria-label="Keep tool active" disabled={!editable} onClick={() => send(link, { op: 'lock' })}>
