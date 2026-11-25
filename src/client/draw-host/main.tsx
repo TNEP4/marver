@@ -64,6 +64,7 @@ async function load(): Promise<Loaded> {
 
 function fail(message: string) {
   w.__mvFrameError = message
+  w.__mvDrawReady = true          // a shot waits for ready - a failure is ready too (the error is what it reports)
   post({ type: 'sh:error', id, gen, boot: docId(), message })
   const root = document.getElementById('root')!
   root.innerHTML = `<div class="mv-draw-error"><b>drawing failed</b><div>${message.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)}</div></div>`

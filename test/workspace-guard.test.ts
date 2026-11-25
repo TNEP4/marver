@@ -135,6 +135,9 @@ describe('the workspace guard', () => {
       'shell/jam-voice.ts': [/new WebSocket\(/],                                                  // bound by its single-use ticket, asked through api()
       'content/video.tsx': [/\bfetch\(`\$\{ROUTE\}\/api\/policy`, \{ headers: named\(\) \}\)/, /\bfetch\(`\$\{ROUTE\}\/api\/poster`, \{ method: 'POST', headers: named\(/],   // a frame: names the workspace from its URL
       'content/img-lod.ts': [/\bfetch\(it\.src\)/],                                               // a frame's own image, never the API
+      // the drawing host (spec 38): a frame - its API calls name the workspace from its URL (x-mv-ws in headers());
+      // the draw-data copy is a published canvas's static file
+      'draw-host/main.tsx': [/\bfetch\(apiUrl\(/, /\bfetch\(`\$\{ROUTE\}\/draw-data\//],
     }
     const dir = join(import.meta.dirname, '..', 'src', 'client')
     const found: string[] = []
@@ -160,6 +163,7 @@ describe('the workspace guard', () => {
       'shell/jam-voice.ts': [/new WebSocket\(.*\/api\/jam\/audio\?ticket=/],                      // bound by its single-use ticket, asked through api()
       'content/video.tsx': [/\bfetch\(`\$\{ROUTE\}\/api\/(policy|poster)`, \{.*headers: named\(/],   // a frame: names the workspace from its URL
       'shell/perf-run.ts': [/const base = `\$\{ROUTE\}\/api\/`/],                                  // the run's barrier reads the path of a URL mvFetch was given: it builds none
+      'draw-host/main.tsx': [/const apiUrl = /],                                                   // a frame: every call through it sends x-mv-ws from its URL
     }
     const dir = join(import.meta.dirname, '..', 'src', 'client')
     // comments blanked in place (offsets kept): a comment may name a route, and its parentheses are not code
