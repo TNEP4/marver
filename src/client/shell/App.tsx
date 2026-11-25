@@ -44,6 +44,7 @@ import { isNew, nextToLook } from '../../shared/marks.ts'
 import { asksNow, Bubble, MarkedRow, markSeenFrom, resolveAllFrom, useRollup, useSeenOnScreen } from './marks-ui.tsx'
 import { CommentButton, DevicePicker, HideUIButton, LaserButton, Popover, ThemePicker, toggleHideUI, usePopover } from './Toolbar.tsx'
 import { DrawCanvasChrome, newDrawingAtPointer } from './draw/DrawChrome.tsx'
+import { Ph } from './draw/kit.tsx'
 import { DrawPlay, playDrawingIfSelected } from './draw/DrawPlay.tsx'
 import { drawMessage } from './draw/link.ts'
 
@@ -1209,7 +1210,9 @@ export function App() {
                         {/* every frame leads with an icon: the slide badge first (a deck
                             frame is a deck frame whatever it imports), intent glyph for
                             content frames, the plain rectangle for UI frames */}
-                        {f.slide
+                        {f.kind === 'draw'
+                          ? <Ph n="PenNib" size={13} className="iicon" role="img" aria-hidden={false} aria-label="drawing" />
+                          : f.slide
                           ? <SlideFrameIcon size={13} className="iicon" role="img" aria-hidden={false} aria-label="slide" />
                           : f.intent
                             ? <IntentGlyph intent={f.intent} size={13} className="iicon" aria-label={f.intent} />
