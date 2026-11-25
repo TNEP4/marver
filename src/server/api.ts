@@ -587,7 +587,11 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
         const token = readDevInfo(root)?.token
         const agent = !!token && req.headers['x-mv-work'] === token
         const owner = ownerGated(req)
-        if (!owner && !agent) return json(res, 403, { error: 'forbidden' })
+        // a read is side-effect free and the page reading it is this canvas's own (a frame, a headless shot - whose
+        // first request has no cookie yet): same-origin GETs pass; every write needs the owner or the work token
+        const sameOriginRead = req.method === 'GET' && String(req.headers['sec-fetch-site'] ?? 'same-origin') !== 'cross-site'
+          && (() => { const o = req.headers.origin; if (!o) return true; try { return new URL(String(o)).host === String(req.headers.host ?? '') } catch { return false } })()
+        if (!owner && !agent && !sameOriginRead) return json(res, 403, { error: 'forbidden' })
         const { DrawOpError } = await import('./draw/service.ts')
         const { DrawFileError } = await import('./draw/file.ts')
         try {

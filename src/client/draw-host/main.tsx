@@ -28,6 +28,15 @@ w.EXCALIDRAW_ASSET_PATH = `${location.origin}${ROUTE}/draw-assets/`
 // the draw host decides what Escape means (Excalidraw finishing a line or leaving a text keeps it)
 w.__mvOwnEscape = true
 
+// Excalidraw ends any gesture in progress when its window gains focus (its "missed pointer-up" cleanup). In a frame
+// the shell holds focus, so the first stroke's own press focuses this window and Excalidraw would drop the shape it
+// just started. While a pointer is down, that focus event never reaches it (registered before Excalidraw mounts)
+let pointerDown = false
+addEventListener('pointerdown', () => { pointerDown = true }, true)
+addEventListener('pointerup', () => { pointerDown = false }, true)
+addEventListener('pointercancel', () => { pointerDown = false }, true)
+addEventListener('focus', (e) => { if (pointerDown) e.stopImmediatePropagation() }, true)
+
 let theme: 'light' | 'dark' = params.get('theme') === 'dark' ? 'dark' : 'light'
 document.documentElement.dataset.theme = theme
 document.documentElement.classList.toggle('dark', theme === 'dark')
@@ -145,7 +154,12 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
     const onMsg = (e: MessageEvent) => {
       if (!trusted(e)) return
       const m = e.data
-      if (m?.type === 'sh:interactive') { setEdit(!!m.on && editable); if (!m.on) { void sync.current!.flush(); engine.current?.view('frame', frameView.current) } }
+      if (m?.type === 'sh:interactive') {
+        setEdit(!!m.on && editable)
+        // drawing mode takes the keyboard at once (Excalidraw's letters work from the first key)
+        if (m.on && editable) { try { window.focus(); (document.querySelector('.excalidraw') as HTMLElement | null)?.focus({ preventScroll: true }) } catch { /* not allowed: the first click focuses */ } }
+        if (!m.on) { void sync.current!.flush(); engine.current?.view('frame', frameView.current) }
+      }
       else if (m?.type === 'sh:set-theme') { theme = m.theme === 'dark' ? 'dark' : 'light'; setTh(theme) }
       else if (m?.type === 'sh:draw-crisp') crisp(m.scale)
       else if (m?.type === 'sh:draw-cmd') run(m as DrawCmd)
