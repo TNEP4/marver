@@ -51,6 +51,8 @@ export class DrawSync {
   private sid = Math.random().toString(36).slice(2, 12)
   private seq = 0
   private drains: (() => void)[] = []
+  private retryTimer: ReturnType<typeof setTimeout> | null = null
+  private failures = 0
   pending = 0
   onState: () => void = () => {}
   onError: (msg: string) => void = () => {}
@@ -85,6 +87,8 @@ export class DrawSync {
   pointer(down: boolean): void {
     this.down = down
     if (down) return
+    if (this.holdTimer) clearTimeout(this.holdTimer)
+    this.holdTimer = null; this.holdSince = 0
     this.drainBuffer()
     this.changed()
   }
@@ -119,7 +123,7 @@ export class DrawSync {
   // ---- receiving ------------------------------------------------------------------------------------------------
 
   receive(p: DrawPatch): void {
-    if ((p as DrawPatch & { full?: boolean }).full) { this.applyFull(p); return }
+    if (p.full) { if (p.rev > this.rev || (p.rev === this.rev && this.buffer.size)) this.applyFull(p); return }
     if (p.rev <= this.rev) return
     this.buffer.set(p.rev, p)
     this.drainBuffer()
@@ -129,9 +133,10 @@ export class DrawSync {
     if (!this.engine()) return
     while (this.buffer.has(this.rev + 1)) {
       const p = this.buffer.get(this.rev + 1)!
-      if (this.down && this.touchesActive(p) && Date.now() - this.holdSince < HOLD_MAX_MS) {
-        if (!this.holdTimer) { this.holdSince = Date.now(); this.holdTimer = setTimeout(() => { this.holdTimer = null; this.holdSince = -Infinity; this.drainBuffer() }, HOLD_MAX_MS) }
-        return
+      if (this.down && this.touchesActive(p)) {
+        // the first time: start the hold; held at most HOLD_MAX_MS (holdSince -Infinity = expired)
+        if (this.holdSince === 0) { this.holdSince = Date.now(); this.holdTimer = setTimeout(() => { this.holdTimer = null; this.holdSince = -Infinity; this.drainBuffer() }, HOLD_MAX_MS) }
+        if (this.holdSince !== -Infinity && Date.now() - this.holdSince < HOLD_MAX_MS) return
       }
       this.buffer.delete(this.rev + 1)
       this.apply(p)
@@ -152,8 +157,8 @@ export class DrawSync {
     const eng = this.engine()!
     const protect = this.protectedIds()
     const local = new Map(eng.elements().map((e) => [e.id, e]))
-    for (const u of p.upserts) if (protect.has(u.id)) this.deferred.set(u.id, { el: u, version: u.version, by: p.by })
-    for (const d of p.deletes) if (protect.has(d.id)) this.deferred.set(d.id, { el: null, version: d.version, by: p.by })
+    for (const u of p.upserts) { if (protect.has(u.id)) this.deferred.set(u.id, { el: u, version: u.version, by: p.by }); else this.deferred.delete(u.id) }
+    for (const d of p.deletes) { if (protect.has(d.id)) this.deferred.set(d.id, { el: null, version: d.version, by: p.by }); else this.deferred.delete(d.id) }
     const ups = p.upserts.filter((u) => !protect.has(u.id)).filter((u) => { const l = local.get(u.id); return !l || l.version !== u.version || l.versionNonce !== u.versionNonce })
     const dels = p.deletes.filter((d) => !protect.has(d.id)).filter((d) => { const l = local.get(d.id); return l && !l.isDeleted })
     const files = p.files && Object.keys(p.files).length ? p.files : undefined
@@ -181,7 +186,7 @@ export class DrawSync {
     const extra = eng.elements().filter((e) => !e.isDeleted && !have.has(e.id) && !protect.has(e.id)).map((e) => ({ id: e.id, version: e.version + 1 }))
     for (const r of [...this.buffer.keys()]) if (r <= p.rev) this.buffer.delete(r)
     this.apply({ ...p, deletes: [...p.deletes, ...extra] })
-    this.rev = p.rev
+    this.rev = Math.max(this.rev, p.rev)
     this.drainBuffer()
   }
 
@@ -197,6 +202,8 @@ export class DrawSync {
       if (protect.has(id)) continue
       this.deferred.delete(id)
       const l = local.get(id)
+      // superseded: what is here (or was confirmed) is at least as new as what was kept aside
+      if (l && (l.version >= d.version || (this.known.get(id) ?? -1) > d.version)) continue
       if (d.el) { if (!l || l.version !== d.el.version || l.versionNonce !== d.el.versionNonce) ups.push(d.el) }
       else if (l && !l.isDeleted) dels.push({ id, version: d.version })
     }
@@ -257,25 +264,32 @@ export class DrawSync {
     for (const u of upserts) this.sending.add(u.id)
     for (const d of deletes) this.sending.add(d.id)
     const seq = ++this.seq
+    let failed = false
     try {
       const ans = await this.io.put({ baseRev: this.rev, upserts, deletes, sid: this.sid, seq, ...(header ? { header } : {}), ...(Object.keys(files).length ? { files } : {}) }, keepalive)
       for (const u of upserts) this.known.set(u.id, Math.max(this.known.get(u.id) ?? 0, u.version))
       for (const d of deletes) this.known.set(d.id, Math.max(this.known.get(d.id) ?? 0, d.version))
       for (const fid of Object.keys(files)) this.sentFiles.add(fid)
+      // the echo of this very save, kept aside while it was in flight, is not news
+      for (const u of upserts) { const df = this.deferred.get(u.id); if (df && df.by === 'owner' && df.el && df.el.versionNonce === u.versionNonce) this.deferred.delete(u.id) }
       this.sending.clear()
       for (const p of ans.patches ?? []) this.receive(p)
       this.applyDeferred()
     } catch (err) {
+      failed = true
       this.sending.clear()
       if (header) this.headerNext = { ...header, ...(this.headerNext ?? {}) }
       this.onError((err as Error).message || 'save failed')
-      setTimeout(() => this.changed(), 2000)
+      // one retry timer, backing off: 2 s, 4 s, ... 30 s
+      this.failures++
+      if (!this.retryTimer) this.retryTimer = setTimeout(() => { this.retryTimer = null; this.changed(); if (this.drains.length) void this.save() }, Math.min(30_000, 1000 * 2 ** this.failures))
     } finally {
       this.inFlight = false
+      if (!failed) this.failures = 0
       const eng2 = this.engine()
       // someone waits for everything to be saved (leaving play, the page hiding): what was drawn meanwhile goes now
-      const owed = this.drains.length > 0 && !!eng2 && this.dirty(eng2.elements())
-      if (this.again || owed) { this.again = false; if (this.timer) { clearTimeout(this.timer); this.timer = null } void this.save() }
+      const owed = !failed && this.drains.length > 0 && !!eng2 && this.dirty(eng2.elements())
+      if ((this.again && !failed) || owed) { this.again = false; if (this.timer) { clearTimeout(this.timer); this.timer = null } void this.save() }
       else if (!this.timer) { this.pending = 0; this.onState() }
       this.settle()
     }

@@ -144,7 +144,9 @@ export function DrawEngine({ initial, theme, edit, editable, onReady, onChange, 
         // repaired against the WHOLE scene (an arrow's unchanged endpoints, a label's unchanged container), and only the
         // incoming elements taken from the result - a partial patch must never strip a binding
         const ids = new Set(incoming.map((u) => u.id))
-        const scene = [...map.values()].filter((e) => !ids.has(e.id)).concat(incoming as DrawElement[])
+        // in fractional-index order: restoreElements normalises indices by array order (r2 #3)
+        const byIndex = (a: DrawElement, b: DrawElement) => { const ia = a.index ?? '', ib = b.index ?? ''; return ia < ib ? -1 : ia > ib ? 1 : 0 }
+        const scene = [...map.values()].filter((e) => !ids.has(e.id)).concat(incoming as DrawElement[]).sort(byIndex)
         const restored = restoreElements(scene as any, null, { refreshDimensions: repair, repairBindings: repair }) as unknown as DrawElement[]
         for (const el of restored) if (ids.has(el.id)) map.set(el.id, el)
       }

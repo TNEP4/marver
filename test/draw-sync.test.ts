@@ -116,4 +116,48 @@ describe('the draw host sync', () => {
     await tick()
     expect(puts[0]?.body.upserts[0]).toMatchObject({ id: 'a', version: 3, x: 6 })
   })
+
+  it('a kept-aside echo of an older save never rolls back a newer one (r2 #1)', async () => {
+    const { eng, sync, puts } = harness([el('a', 1)])
+    eng.edit('a', { x: 2 })                   // v2
+    void sync.flush()
+    sync.receive({ frame: 'f', rev: 1, by: 'owner', upserts: [{ ...eng.els.get('a')! }], deletes: [] })   // its echo, deferred
+    eng.edit('a', { x: 3 })                   // v3 while the first save waits
+    puts[0].resolve({ rev: 1, patches: [] })
+    await tick(); await tick()
+    void sync.flush()
+    await tick()
+    puts[1].resolve({ rev: 2, patches: [{ frame: 'f', rev: 2, by: 'owner', upserts: [el('a', 3, { x: 3 })], deletes: [] }] })
+    await tick(); await tick()
+    expect(eng.els.get('a')).toMatchObject({ version: 3, x: 3 })
+  })
+
+  it('an obsolete full snapshot is ignored and the rev never goes back (r2 #2)', () => {
+    const { eng, sync } = harness([el('a', 1)])
+    sync.receive({ frame: 'f', rev: 1, by: 'agent', upserts: [el('a', 2, { x: 9 })], deletes: [] })
+    sync.receive({ frame: 'f', rev: 1, by: 'server', upserts: [el('a', 1, { x: 0 })], deletes: [], full: true })
+    expect(eng.els.get('a')!.x).toBe(9)
+    expect(sync.rev).toBe(1)
+  })
+
+  it('a failed save retries once, on a backoff - never in a loop (r2 #4)', async () => {
+    const eng = new FakeEngine([el('a', 1)])
+    let puts = 0
+    const sync = new DrawSync(() => eng, { put: async () => { puts++; throw new Error('down') }, since: async () => ({ rev: 0, patches: [] }) }, 0, [el('a', 1)], true)
+    eng.edit('a', { x: 1 })
+    void sync.flush()
+    for (let i = 0; i < 20; i++) await tick()
+    expect(puts).toBe(1)
+  })
+
+  it("a rev touching what the person holds waits for pointer-up (r2 #5)", () => {
+    const eng = new FakeEngine([el('a', 1)])
+    eng.appState = () => ({ selectedElementIds: { a: true } })
+    const sync = new DrawSync(() => eng, { put: async () => ({ rev: 0 }), since: async () => ({ rev: 0, patches: [] }) }, 0, [el('a', 1)], true)
+    sync.pointer(true)
+    sync.receive({ frame: 'f', rev: 1, by: 'agent', upserts: [el('a', 2, { x: 4 })], deletes: [] })
+    expect(eng.els.get('a')!.x).toBe(0)       // held
+    sync.pointer(false)
+    expect(eng.els.get('a')!.x).toBe(4)       // applied at pointer-up
+  })
 })

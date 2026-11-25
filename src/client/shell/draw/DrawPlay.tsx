@@ -55,6 +55,7 @@ export function DrawPlay() {
   const [menu, setMenu] = useState(false)
   const src = useRef('')
   const flushed = useRef<(() => void) | null>(null)
+  const [closing, setClosing] = useState(false)
   if (at && !src.current) src.current = withWs(`${ROUTE}/draw/?id=${encodeURIComponent(at)}&theme=${theme}&r=play`)
   if (!at) src.current = ''
 
@@ -88,13 +89,15 @@ export function DrawPlay() {
 
   if (!at || !link) return null
   // leaving waits for the drawing's last save (3 s at most - a dead server never traps the person in play)
+  // leaving hides play at once; the drawing's document stays (out of sight) until its last save has landed, so a slow
+  // save never loses a stroke
   const leave = () => {
-    const done = () => { flushed.current = null; useDraw.getState().drop(key); close() }
+    const done = () => { flushed.current = null; setClosing(false); useDraw.getState().drop(key); close() }
     cmd('play-exit', { via: 'click', in: 'stage' })
     if (!link || PUBLISHED) { done(); return }
     flushed.current = done
+    setClosing(true)
     sendQuiet(link, { op: 'flush' })
-    setTimeout(() => { if (flushed.current === done) done() }, 3000)
   }
   const dark = theme === 'dark'
   const copyPath = () => { if (!frame) return; navigator.clipboard.writeText(framePath(useStore.getState().board, frame)).then(() => toast('path copied'), () => toast('copy blocked - click the drawing first')) }
@@ -112,7 +115,8 @@ export function DrawPlay() {
     </div>
   )
   return (
-    <div className={`sh-play dk-playhost${hidden ? ' hidden-ui' : ''}`} onMouseDown={keepFocus} style={{ position: 'fixed', inset: 0, zIndex: 60, paddingTop: 'var(--mv-top, 0px)', boxSizing: 'border-box' }}>
+    <div className={`sh-play dk-playhost${hidden ? ' hidden-ui' : ''}`} onMouseDown={keepFocus} aria-hidden={closing || undefined}
+      style={{ position: 'fixed', inset: 0, zIndex: 60, paddingTop: 'var(--mv-top, 0px)', boxSizing: 'border-box', ...(closing ? { visibility: 'hidden', pointerEvents: 'none' } : {}) }}>
       <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, top: 'var(--mv-top, 0px)' }}>
         <iframe ref={iframe} src={src.current} title={link.title} />
       </div>

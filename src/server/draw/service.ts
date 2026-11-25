@@ -42,6 +42,8 @@ interface Drawing {
   id: string
   /** the merged state is newer than the file, and the file changed under us: written once that change is ingested */
   pendingWrite?: boolean
+  retry?: ReturnType<typeof setTimeout>
+  retries?: number
   /** the file carried its epoch (else this session gave it one, written at the first commit) */
   fileEpoch: boolean
   abs: string
@@ -82,7 +84,11 @@ export class DrawService {
     this.sweep = setInterval(() => { for (const d of this.drawings.values()) void this.checkDisk(d.id) }, ms)
     this.sweep.unref?.()
   }
-  stop(): void { if (this.sweep) clearInterval(this.sweep); this.sweep = null }
+  stop(): void {
+    if (this.sweep) clearInterval(this.sweep)
+    this.sweep = null
+    for (const d of this.drawings.values()) if (d.retry) { clearTimeout(d.retry); d.retry = undefined }
+  }
 
   // ---- reads ------------------------------------------------------------------------------------------------------
 
@@ -189,12 +195,13 @@ export class DrawService {
 
   /** A file removed: forget it (its log stays, keyed by the id, for a file that comes back). */
   forget(abs: string): void {
-    for (const [id, d] of this.drawings) if (d.abs === abs) this.drawings.delete(id)
+    for (const [id, d] of this.drawings) if (d.abs === abs) { if (d.retry) clearTimeout(d.retry); this.drawings.delete(id) }
   }
 
   private async checkDisk(id: string, force = false): Promise<void> {
     const d = this.drawings.get(id)
-    if (!d || (!force && !d.pendingWrite && mtime(d.abs) === d.diskMtime)) return
+    // a pending write already has its own retry: the sweep only looks at files that changed
+    if (!d || (!force && (d.retry || mtime(d.abs) === d.diskMtime))) return
     await this.locked(d, async () => {
       this.absorb(d)
       if (d.pendingWrite) this.writeFile(d)
@@ -233,6 +240,7 @@ export class DrawService {
   /** read the op log and snapshots; a log ahead of the file rebuilds it (decision 7); none: snapshot what we found */
   private loadLog(d: Drawing): void {
     mkdirSync(this.dir, { recursive: true })
+    if (!realpathSync(this.dir).startsWith(realpathSync(this.deps.root) + sep)) throw new DrawOpError('design/.local/draw points outside the repo')
     const logPath = join(this.dir, `${d.key}.jsonl`)
     const lines: LogEntry[] = []
     if (existsSync(logPath)) {
@@ -273,9 +281,12 @@ export class DrawService {
         } else {
           d.diskHash = disk.hash                               // edited while we were down: the first absorb merges it
         }
-      } else if (lastRev > fileDoc.header.rev) {
-        d.diskHash = sha(fileText)
-        this.writeFile(d, true)
+      } else {
+        // no mapping (a lost .local file): the log's state is what we last wrote - anything else in the file is an
+        // edit, merged by the first absorb, never overwritten
+        d.diskHash = sha(serializeDrawFile({ ...d.doc, header: { ...d.doc.header, epoch: d.epoch } }))
+        d.diskRev = lastRev
+        d.diskHeaderRev = lastRev
       }
     }
     if (!d.snaps.length || d.snaps[d.snaps.length - 1] < d.doc.header.rev - SNAP_EVERY) this.writeSnap(d)
@@ -415,9 +426,17 @@ export class DrawService {
     if (onDisk && onDisk !== d.diskHash) {
       try { rmSync(tmp) } catch { /* best-effort */ }
       d.pendingWrite = true
-      setTimeout(() => { void this.checkDisk(d.id, true) }, 60)
+      // one retry per drawing, backing off (60 ms .. 5 s) - a file left invalid is retried calmly, never in a storm
+      if (!d.retry) {
+        const wait = Math.min(5000, 60 * 2 ** (d.retries ?? 0))
+        d.retries = (d.retries ?? 0) + 1
+        d.retry = setTimeout(() => { d.retry = undefined; void this.checkDisk(d.id, true) }, wait)
+        d.retry.unref?.()
+      }
       return false
     }
+    if (d.retry) { clearTimeout(d.retry); d.retry = undefined }
+    d.retries = 0
     renameSync(tmp, d.abs)
     d.fileEpoch = true
     d.pendingWrite = false
@@ -457,6 +476,7 @@ export class DrawService {
     const scenes = join(root, 'design', 'scenes')
     mkdirSync(scenes, { recursive: true })
     const realScenes = realpathSync(scenes)
+    if (!realScenes.startsWith(realpathSync(root) + sep)) throw new DrawOpError('design/scenes points outside the repo')
     if (existsSync(dir) && !realpathSync(dir).startsWith(realScenes + sep)) throw new DrawOpError(`scene "${scene}" points outside design/scenes`)
     mkdirSync(dir, { recursive: true })
     if (!realpathSync(dir).startsWith(realScenes + sep)) throw new DrawOpError(`scene "${scene}" points outside design/scenes`)

@@ -254,4 +254,17 @@ describe('DrawService - review r1 regressions', () => {
     expect(got.elements.map((e) => e.id).sort()).toEqual(['a', 'agent', 'mine'])
     expect([...disk().elements.keys()].sort()).toEqual(['a', 'agent', 'mine'])
   })
+
+  it('a file left invalid gets one calm retry, not a storm, and stop() cancels it (r2 #6)', async () => {
+    await save([el('a')], 1)
+    writeFileSync(abs, '{ not json')
+    await save([el('a', { x: 1 })], 2)
+    await save([el('a', { x: 2 })], 3)
+    const draw = (service as unknown as { drawings: Map<string, { retry?: unknown; pendingWrite?: boolean }> }).drawings.get(ID)!
+    expect(draw.pendingWrite).toBe(true)
+    expect(draw.retry).toBeDefined()
+    service.stop()
+    expect(draw.retry).toBeUndefined()
+    expect((await service.get(ID)).elements[0].x).toBe(2)   // the truth is kept
+  })
 })
