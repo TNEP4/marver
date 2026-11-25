@@ -31,6 +31,7 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 
 - Marver's mark is the Mac app's, as marver.design shows it: on the sign-in pages and their "Powered by" line, in the
   canvas's brand slot and play, on Marver's own comments, and in the browser tab (the interact-mode icons too).
+- Search (⌘K) opens in the middle of the window, top to bottom as well as left to right.
 
 ## 0.36.1 - 2026-11-24
 

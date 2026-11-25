@@ -87,6 +87,11 @@ describe('search on a real canvas (spec 35)', () => {
     if (!browser) return ctx.skip()
     await key('k', { meta: true })
     await until(`!!document.querySelector('.sr-lens input') && document.activeElement === document.querySelector('.sr-lens input')`)
+    // centred in the window, top to bottom as left to right (Nic, 25 Nov) - once its opening scale has settled
+    await new Promise((r) => setTimeout(r, 300))
+    const gap = await ev(`(() => { const r = document.querySelector('.sr-lens').getBoundingClientRect(); return [Math.round(r.top), Math.round(innerHeight - r.bottom), Math.round(r.left), Math.round(innerWidth - r.right)] })()`)
+    expect(Math.abs(gap[0] - gap[1])).toBeLessThanOrEqual(2)
+    expect(Math.abs(gap[2] - gap[3])).toBeLessThanOrEqual(2)
     await type('feed filter')
     await until(`[...document.querySelectorAll('.sr-row .t')].map((e) => e.textContent).includes('Filter the feed')`)
     const titles: string[] = await ev(`[...document.querySelectorAll('.sr-row .t')].map((e) => e.textContent)`)

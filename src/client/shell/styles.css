@@ -2124,11 +2124,11 @@ textarea.jm-field:focus { border-color: transparent; box-shadow: 0 0 0 1px var(-
 
 /* ---- search (spec 35): the ⌘K lens - small floating glass, the list and the live frame ---------------------- */
 .sr-scrim { position: fixed; inset: 0; z-index: 60 }
-.sr-lens { position: absolute; left: 50%; top: max(60px, calc(var(--mv-top, 0px) + 40px)); transform: translateX(-50%); width: 860px; max-width: calc(100vw - 32px);
+.sr-lens { position: absolute; left: 50%; top: calc(50% + var(--mv-top, 0px) / 2); transform: translate(-50%, -50%);   /* centred in the view below the app's strip (Nic, 25 Nov) */ width: 860px; max-width: calc(100vw - 32px);
   background: var(--glass); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
   border: 1px solid var(--glass-brd); border-radius: 22px; box-shadow: var(--shadow-glass), 0 24px 60px -24px rgba(24, 24, 27, .28);
   color: var(--glass-ink); font: 400 13px -apple-system, system-ui, sans-serif; animation: sr-open .12s cubic-bezier(.2, .8, .2, 1) }
-@keyframes sr-open { from { opacity: 0; transform: translateX(-50%) scale(.97) } }
+@keyframes sr-open { from { opacity: 0; transform: translate(-50%, -50%) scale(.97) } }
 @media (prefers-reduced-motion: reduce) { .sr-lens { animation: sr-fade .06s linear } @keyframes sr-fade { from { opacity: 0 } } }
 .sr-lens::after { content: ''; position: absolute; inset: -1px; padding: 1px; border-radius: inherit; background: var(--edge-light); pointer-events: none;
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
