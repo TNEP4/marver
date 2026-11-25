@@ -235,14 +235,22 @@ export async function serve(root: string, portFlag?: number) {
    *  replaces them. A member's renewal re-issues the double-submit cookie with it, keeping its value. */
   let renewMember: ((req: any) => string[]) | null = null
   if (process.env.MARVER_DATA_DIR) {
-    const { renewSession, SESSION_SECONDS } = await import('./auth.ts')
+    const { renewSession, sessionUser, SESSION_SECONDS } = await import('./auth.ts')
     const { dataDir } = await import('./comments.ts')
+    const share = await import('./share.ts')
     const dir = dataDir()
+    const ceilings = share.ceilingsFromRights(meta.rights ?? {})
     renewMember = (req) => {
       const cookies = String(req.headers.cookie ?? '')
       const fromCookie = /(?:^|;\s*)mv_s=([\w-]+)/.exec(cookies)?.[1]
       const tok = fromCookie ?? /^Bearer ([\w-]+)$/.exec(String(req.headers.authorization ?? ''))?.[1]
-      if (!tok || !renewSession(dir, tok) || !fromCookie) return []
+      if (!tok) return []
+      // only a session that is valid NOW (its account there, an operator session from the current secret) and whose
+      // person is still let in: a blocked, revoked or expired-grant session must run out, not be kept alive by a
+      // favicon request (Codex r2)
+      const u = sessionUser(dir, tok)
+      if (!u || !share.entryAllowed(dir, u, ceilings)) return []
+      if (!renewSession(dir, tok) || !fromCookie) return []
       const secure = secureSuffix(req)
       const c = /(?:^|;\s*)mv_c=([\w-]+)/.exec(cookies)?.[1] ?? randomBytes(16).toString('base64url')
       return [

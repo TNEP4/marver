@@ -245,6 +245,12 @@ describe('a comment is never lost (spec 36), on a published Marver ID canvas', (
     expect((await post({ events: [{ ...e, body: 'other words' }], as: REVIEWER }))[0]).toBe(400)
     expect(await post({ events: [{ ...e, id: 'resend-00002', commentId: 'resend-reply-2' }], as: 'bob@client.test' })).toEqual([409, { error: 'written as bob@client.test - signed in as someone else now', code: 'account' }])
     expect(replies('once')).toHaveLength(1)
+    // someone else's event, its author guessed right or wrong: the same refusal - no answer maps an author to an address
+    const seed = stored().find((x) => x.id === 'seed-00001')
+    const right = await post({ events: [seed], as: REVIEWER })
+    const wrong = await post({ events: [{ ...seed, author: { ...seed.author, email: 'guess@studio.test' } }], as: REVIEWER })
+    expect(right[0]).toBe(400)
+    expect(wrong).toEqual(right)
   })
 
   skippable('a session used near its end gets its full life back, cookie and store', async () => {

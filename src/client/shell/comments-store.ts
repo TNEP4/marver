@@ -13,7 +13,7 @@ import { ALL_SCENES } from '../../shared/board-tree.ts'
 import { UNPLACED } from './hash.ts'
 import { api as request, canvasStopped, scoped, stoppedLink, useLink } from './api.ts'
 import type { CmdHandle } from './commands.ts'
-import { hasDraftWords, writeDraft } from './drafts.ts'
+import { draftsVolatile, hasDraftWords, writeDraft } from './drafts.ts'
 import * as outbox from './outbox.ts'
 import type { Pending } from './outbox.ts'
 export type { Pending } from './outbox.ts'
@@ -137,8 +137,11 @@ const api = async (path: string, body?: unknown) => {
 /** The drafts' keys (spec 36): a reply per thread; a first comment per board, frame, node and the element picked. */
 export const replyDraftKey = (threadId: string) => `r:${threadId}`
 export const newDraftKey = (d: { board?: string; frame: string; nodeKey: string; anchor: unknown }) => {
+  // the element, not the click: where in it, and its measured box, change with every pick of the same element
+  const a = (d.anchor ?? null) as { el?: { cssPath?: string; source?: string }; pos?: unknown; rect?: unknown } | null
+  const id = a?.el ? `${a.el.cssPath ?? ''}|${a.el.source ?? ''}` : JSON.stringify(a && typeof a === 'object' ? { ...a, pos: undefined, rect: undefined } : a)
   let h = 0
-  for (const c of JSON.stringify(d.anchor ?? null)) h = (h * 31 + c.charCodeAt(0)) | 0
+  for (const c of id) h = (h * 31 + c.charCodeAt(0)) | 0
   return `n:${d.board ?? ''}:${d.frame}:${d.nodeKey}:${(h >>> 0).toString(36)}`
 }
 const sameAccount = (a: string, b?: string) => !!b && a.trim().toLowerCase() === b.trim().toLowerCase()
@@ -357,7 +360,9 @@ export const useComments = create<CommentsState>((set, get) => {
     try { r = await api(`comments/${p.board}`, { events: p.events, as: p.account }) } catch { return 'wait' }
     heard(r)
     if (r.status === 200 && r.ok && typeof r.data?.accepted === 'number') {
-      union(asSentBy(p.events, get().me?.id))   // stored first, then out of the outbox: the message never blinks
+      // stored first, then out of the outbox: the message never blinks. Mine only if I am still the one who wrote it
+      // (an answer can arrive after another account signed in).
+      union(sameAccount(p.account, get().me?.email) ? asSentBy(p.events, get().me?.id) : p.events)
       outbox.drop(p.key)
       showOutbox()
       if (get().signedOut) set({ signedOut: false })
@@ -366,6 +371,8 @@ export const useComments = create<CommentsState>((set, get) => {
     if (r.status === 403 && r.data?.code === 'csrf') { void api('me').catch(() => {}); return 'wait' }   // /me mends mv_c
     if (r.status === 409 && r.data?.code === 'account') { void identify(); return 'wait' }               // who is in, now?
     if (r.status >= 400 && r.status < 500 && r.status !== 401 && r.status !== 408 && r.status !== 429) {
+      // a late answer for an entry already stored or let go (here or in another tab) changes nothing
+      if (!outbox.list().some((x) => x.key === p.key)) return 'stored'
       outbox.put({ ...p, refused: String(r.data?.error ?? 'refused') })
       showOutbox()
       return 'refused'
@@ -374,16 +381,22 @@ export const useComments = create<CommentsState>((set, get) => {
   }
   /** Send what waits, oldest first, for the account signed in now. A `wait` ends the round: the next comes on the
    *  timer, on focus, on `online`, after a sign-in, at the next load. */
-  let flushing = false
-  const flush = async () => {
-    if (flushing || get().local || apiOff) return
-    flushing = true
-    try {
-      for (const p of outbox.list()) {
-        if (p.refused || !sameAccount(p.account, get().me?.email)) continue
-        if (await post(p) === 'wait') break
-      }
-    } finally { flushing = false }
+  // One round at a time, in order: a first send and a retry go through the same queue, so a reply never overtakes
+  // the thread it answers, and no entry is posted twice at once. A call while a round runs waits for one more round.
+  let round: Promise<void> = Promise.resolve()
+  let queued = false
+  const runRound = async () => {
+    queued = false
+    if (get().local || apiOff) return
+    for (const p of outbox.list()) {
+      if (p.refused || !sameAccount(p.account, get().me?.email)) continue
+      if (!outbox.list().some((x) => x.key === p.key)) continue   // stored or let go in another tab meanwhile
+      if (await post(p) === 'wait') break
+    }
+  }
+  const flush = (): Promise<void> => {
+    if (!queued) { queued = true; round = round.then(runRound, runRound) }
+    return round
   }
   /** Ask the server who this is - until it has answered once (an outage at load must not leave the tab unknown for
    *  the visit), and while signed out (a sign-in in another tab is noticed here). */
@@ -402,7 +415,9 @@ export const useComments = create<CommentsState>((set, get) => {
   }
   const probe = async () => {
     if (get().local || apiOff) return
-    if (!known || get().signedOut) await identify()
+    // while a write waits for another account than mine, ask who is in: that account may be back (another tab)
+    const forOther = get().pending.some((p) => !p.refused && !sameAccount(p.account, get().me?.email))
+    if (!known || get().signedOut || forOther) await identify()
     if (get().pending.some((p) => !p.refused)) await flush()
   }
   /** /me's answer, taken in: who I am, my boards, the server's clock and how this canvas signs people in. */
@@ -436,7 +451,7 @@ export const useComments = create<CommentsState>((set, get) => {
     window.addEventListener('beforeunload', (e) => {
       if (get().local) return
       // a deliberate leave (to sign in) is safe only for what is on disk: words storage would not take still ask
-      if ((leaving && !outbox.volatile()) || !(get().pending.length || hasDraftWords())) return
+      if ((leaving && !outbox.volatile() && !draftsVolatile()) || !(get().pending.length || hasDraftWords())) return
       e.preventDefault(); e.returnValue = ''
     })
   }
@@ -542,8 +557,9 @@ export const useComments = create<CommentsState>((set, get) => {
       if (!get().local && !apiOff) {
         if (!get().me) { h?.fail('signed-out'); get().signInAgain(); return false }   // no account to write as: sign in first
         const p = keep(target, stamped, draftKey)
-        const r = await post(p)
-        if (r === 'stored') h?.done(); else h?.fail(r === 'wait' ? 'queued' : 'send-failed')
+        await flush()
+        const left = outbox.list().find((x) => x.key === p.key)
+        if (!left) h?.done(); else h?.fail(left.refused ? 'send-failed' : 'queued')
         return true
       }
       const res = await api(`comments/${target}`, { events: stamped }).catch((e: unknown) => { h?.fail('send-failed'); throw e })
@@ -571,6 +587,8 @@ export const useComments = create<CommentsState>((set, get) => {
             set({ ownership: own })
           }
         }
+        // dev: stored, so its composer's kept words go (a composer still open writes back anything typed since)
+        if (draftKey) writeDraft(draftKey, '')
         h?.done()
       }
       return res.ok

@@ -1289,6 +1289,7 @@ function OutboxBanner() {
     const id = e?.type === 'reply' ? e.parentId : e?.commentId
     return useComments.getState().threads.find((t) => t.id === id || t.replies.some((r) => r.id === id))?.id ?? id
   }
+  const shown = (p: (typeof pending)[number]) => { const id = threadOf(p); return !!id && useComments.getState().threads.some((t) => t.id === id) }
   const many = (n: number) => (n === 1 ? 'comment is' : `${n} comments are`)
   return signedOut ? (
     <div ref={ref} className={`sh-banner sh-stopped sh-signedout${play ? ' dark' : ''}`} role="status" data-signed-out={waiting}>
@@ -1298,7 +1299,15 @@ function OutboxBanner() {
   ) : (
     <div ref={ref} className={`sh-banner sh-stopped sh-signedout${play ? ' dark' : ''}`} role="status" data-refused={refused.length}>
       {refused.length === 1 ? 'A comment could not be sent' : `${refused.length} comments could not be sent`}
-      <button className="sh-banner-act" onClick={() => { cmd('thread-open', { via: 'click', in: 'shell' }); navigatedByHand(); const id = threadOf(refused[0]); if (id) revealThread(id) }}>Show</button>
+      {/* its thread on the canvas, with the reason, Retry and Discard - or, when that thread is nowhere to be shown
+          (its board unpublished, its thread gone), the reason and both choices here */}
+      {shown(refused[0])
+        ? <button className="sh-banner-act" onClick={() => { cmd('thread-open', { via: 'click', in: 'shell' }); navigatedByHand(); revealThread(threadOf(refused[0])!) }}>Show</button>
+        : <>
+          <span className="kept"> - {refused[0].refused}</span>
+          <button className="sh-banner-act" onClick={() => { cmd('comment-retry', { via: 'click', in: 'shell' }).done(); useComments.getState().retry(refused[0].key) }}>Retry</button>
+          <button className="sh-banner-act" onClick={() => { cmd('comment-discard', { via: 'click', in: 'shell' }).done(); useComments.getState().discard(refused[0].key) }}>Discard</button>
+        </>}
     </div>
   )
 }

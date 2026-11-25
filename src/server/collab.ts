@@ -978,10 +978,20 @@ export function collabHandler(dataDir: string, distDir: string) {
         // A resend of what is stored (spec 36): the browser keeps a write until it hears 200, so a 200 lost on the way
         // brings the same event again. It is stored - say so (accepted 0), never "that id already exists", which
         // would leave it refused for ever. Only the SAME event counts: one id reused for other words is refused below.
+        // Two guards keep this from answering anything a probe could use: the stored event must be the caller's OWN
+        // (its author is this session's account - else it falls to the validator, which answers the same whatever
+        // was guessed), and it must be the WHOLE event, byte for byte (mentions aside: the browser sends ids, the log
+        // holds addresses).
         const held = new Map(log.map((e) => [e.id, e]))
-        const same = (a: CommentEvent, b: CommentEvent) => a.type === b.type && a.commentId === b.commentId &&
-          (a.body ?? '') === (b.body ?? '') && (a.author?.email ?? '').toLowerCase() === (b.author?.email ?? '').toLowerCase()
-        const incoming = posted.filter((e) => !(e && typeof e === 'object' && typeof e.id === 'string' && held.has(e.id) && same(held.get(e.id)!, e)))
+        const me = normEmail(u!.email)
+        const canon = (e: CommentEvent) => JSON.stringify({ ...e, mentions: undefined })
+        const resent = (e: CommentEvent) => {
+          if (!e || typeof e !== 'object' || typeof e.id !== 'string') return false
+          const h = held.get(e.id)
+          if (!h || (h.author?.email ? normEmail(h.author.email) !== me : !operator && !!e.author)) return false
+          return canon(h) === canon(e)
+        }
+        const incoming = posted.filter((e) => !resent(e))
         if (posted.length && !incoming.length) return json(res, 200, { accepted: 0 }), true
         // the old all-scenes log: every event needs comment rights on a published board showing its
         // thread's frame; a new thread arrives only by sync (the owner's repo carried it all along)

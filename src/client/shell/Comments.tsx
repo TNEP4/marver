@@ -877,8 +877,10 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
             {words(thread, true, thread.capture
               ? <CaptureBlock id={thread.capture} facts={thread.facts} words={thread.body ?? ''} />
               : <CommentBody body={thread.body} owner={isOwner(thread.author)} />)}
-            {unsent(thread.id)}
           </>}
+        {/* the thread's own pending writes (its first message, a resolve, a reopen) - shown whatever its first message
+            became, a deleted one included, so their reason, Retry and Discard are always reachable */}
+        {unsent(thread.id)}
         {/* replies repeat the root's exact message shape (Figma's pattern) - only the icons differ */}
         {thread.replies.map((r) => (
           <div key={r.id} className="cm-msg" data-msg={r.id}>
