@@ -15,6 +15,8 @@ import { enterFocus, enterPlay, enterSlides, PlayOverlay, playCtl } from './Play
 import { UNPLACED, bootHash, parseHash, retargetBoot, routedHash, writeHash } from './hash.ts'
 import { isLegacyLink, landLegacy } from './legacy-links.ts'
 import { useComments } from './comments-store.ts'
+import { OutboxBanner } from './banner.tsx'
+import { SignIn } from './Comments.tsx'
 import { isLatest, navigated, switchFor } from './goto.ts'
 import { cmd, endAfterFrames, endOnLoad, endOnStage, shellReload, type CmdHandle } from './commands.ts'
 
@@ -160,12 +162,17 @@ export function App() {
     return c.live(board)
   }, [board])
 
+  const signedOut = useComments((s) => s.signedOut)
+  const refusedCount = useComments((s) => s.pending.filter((p) => p.refused).length)
   const titles = useStore((s) => s.boardTitles)
   useEffect(() => { document.title = tabTitle(board) }, [board, titles])
 
   return (
     <div tabIndex={-1} className="sh-app dark">
       <PlayOverlay />
+      {/* spec 36: signed out, or a comment refused - said on the stage too, with the way back in */}
+      {(signedOut || refusedCount > 0) && <OutboxBanner stage />}
+      <SignIn />
       <div className="sh-toasts">{toasts.map((t) => <div className="sh-toast" key={t.id}>{t.text}</div>)}</div>
     </div>
   )

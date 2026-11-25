@@ -21,11 +21,13 @@ export function readDraft(key: string): string {
   try { return localStorage.getItem(storageKey(key)) ?? '' } catch { return mem.get(key) ?? '' }
 }
 export function writeDraft(key: string, words: string) {
-  if (words.trim()) mem.set(key, words); else mem.delete(key)
+  // on disk when storage takes them; this page keeps its own copy only of words storage refused
   try {
     if (words.trim()) localStorage.setItem(storageKey(key), words); else localStorage.removeItem(storageKey(key))
-    unsaved.delete(key)
-  } catch { if (words.trim()) unsaved.add(key); else unsaved.delete(key) }
+    mem.delete(key); unsaved.delete(key)
+  } catch {
+    if (words.trim()) { mem.set(key, words); unsaved.add(key) } else { mem.delete(key); unsaved.delete(key) }
+  }
 }
 /** These words were sent: every copy of them goes - on disk and in this page - and only of them. Newer words in
  *  the same place (another tab's, or typed here while storage refused them) stay. */
@@ -33,14 +35,8 @@ export function clearSent(key: string, words: string) {
   if (mem.get(key)?.trim() === words) { mem.delete(key); unsaved.delete(key) }
   try { if (localStorage.getItem(storageKey(key))?.trim() === words) localStorage.removeItem(storageKey(key)) } catch { /* nothing on disk */ }
 }
-/** Does this page hold a draft storage would not take? A deliberate leave (to sign in) asks then too. */
+/** Does this page hold a draft storage would not take? Then leaving would lose it - the only draft the leave question asks about. */
 export const draftsVolatile = () => unsaved.size > 0
-
-/** Does a composer on this page hold words not sent? The leave-page question asks it. (Words kept from an earlier
- *  visit are on disk already and wait for their composer - they ask nothing.) */
-export function hasDraftWords(): boolean {
-  return [...mem.values()].some((w) => w.trim())
-}
 
 /** A composer's text, kept under `key` as it is typed. The setter takes a value or an update, like useState's. */
 export function useDraft(key: string): [string, (next: string | ((cur: string) => string)) => void] {

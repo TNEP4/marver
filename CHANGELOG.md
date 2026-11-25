@@ -21,7 +21,7 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 - Sessions and guest cookies are renewed while they are used, instead of ending 30 days after sign-in.
 - A password canvas with a data dir keeps its cookie key on the volume: a redeploy no longer signs every guest out.
 - A reply typed and not sent is kept per thread, across a click outside, a board switch or a reload; a published
-  canvas asks before its tab closes on words not stored.
+  canvas asks before its tab closes only if the browser would not store them.
 - A comment is stamped with the canvas's clock, so a reviewer whose clock runs fast is not refused.
 - `/me` is asked again when it fails at load (a redeploy's 502), and the live comment stream reopens after a sign-in.
 - An unreadable `auth.json` or `share.json` answers `500` instead of ending the server process.

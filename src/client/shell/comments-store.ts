@@ -13,7 +13,7 @@ import { ALL_SCENES } from '../../shared/board-tree.ts'
 import { UNPLACED } from './hash.ts'
 import { api as request, canvasStopped, scoped, stoppedLink, useLink } from './api.ts'
 import type { CmdHandle } from './commands.ts'
-import { clearSent, draftsVolatile, hasDraftWords } from './drafts.ts'
+import { clearSent, draftsVolatile } from './drafts.ts'
 import * as outbox from './outbox.ts'
 import type { Pending } from './outbox.ts'
 export type { Pending } from './outbox.ts'
@@ -155,8 +155,6 @@ const clearDraftIf = (key: string | undefined, events: CommentEvent[]) => {
   const body = events.find((e) => e.body !== undefined)?.body?.trim()
   if (key && body !== undefined) clearSent(key, body)
 }
-/** Set while the tab leaves on purpose (to sign in): the leave-page question is for leaving by accident. */
-let leaving = false
 /** An identity write and the command behind it (spec 30's `sign-in`, `claim`, `profile-save`): ok → done, the answer
  *  said no → `rejected`, no answer → `api`. */
 const identityWrite = async (path: string, body: unknown, h?: CmdHandle) => {
@@ -454,11 +452,13 @@ export const useComments = create<CommentsState>((set, get) => {
     window.addEventListener('focus', () => { void probe() })
     // another tab of this canvas sent, kept or discarded something: this one shows the same outbox
     window.addEventListener('storage', (e) => { if (outbox.isOutboxKey(e.key)) showOutbox() })
-    // a published canvas asks before the tab closes on words not stored (spec 36 §3) - dev has its own guard
+    // A published canvas asks before the tab closes only when leaving would LOSE words: what storage would not take
+    // (a full quota, a private window). Everything else - the outbox, the drafts - is on disk and comes back at the next
+    // visit, so asking would only be in the way: in the Mac app a page's refusal has no "Leave" answer at all, and a
+    // tab holding one unsent comment could not be closed, nor the app quit or updated (spec 36, app check 25 Nov).
+    // Dev has its own guard.
     window.addEventListener('beforeunload', (e) => {
-      if (get().local) return
-      // a deliberate leave (to sign in) is safe only for what is on disk: words storage would not take still ask
-      if ((leaving && !outbox.volatile() && !draftsVolatile()) || !(get().pending.length || hasDraftWords())) return
+      if (get().local || !(outbox.volatile() || draftsVolatile())) return
       e.preventDefault(); e.returnValue = ''
     })
   }
@@ -717,7 +717,6 @@ export const useComments = create<CommentsState>((set, get) => {
       if (signInMode === 'marver-id') {
         // Marver ID signs in through its own pages: the tab leaves and comes back to this board. Nothing is lost on the
         // way - the outbox and the drafts are on disk, and the canvas sends them when it is back.
-        leaving = true
         location.assign(`${ROUTE}/id/start${location.hash ? `?next=${encodeURIComponent(location.hash)}` : ''}`)
         return
       }

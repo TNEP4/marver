@@ -2223,3 +2223,7 @@ textarea.jm-field:focus { border-color: transparent; box-shadow: 0 0 0 1px var(-
 .sh-banner-act { height: 24px; padding: 0 10px; border: 0; border-radius: 999px; cursor: pointer;
   background: var(--glass-ink); color: var(--glass); font: 600 12px -apple-system, system-ui, sans-serif }
 .sh-banner-act:hover { opacity: .88 }
+/* the bar's button on play's dark skin: light, so it reads as a button there too (app check, 25 Nov) */
+.sh-banner.sh-stopped.dark .sh-banner-act { background: #f5f5f7; color: #18181b }
+/* the first message's marks sit under its words as a reply's do (the scroller's gap is pulled back, as for the body) */
+.cm-scroll > .cm-unsent { margin-top: -8px }

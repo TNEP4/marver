@@ -1191,13 +1191,17 @@ export function CommentsController() {
       (f as HTMLIFrameElement).contentWindow?.postMessage({ type: 'sh:pick', on: commentMode, quiet: !ctlShowAnchor }, location.origin)
   }, [commentMode, ctlShowAnchor])
 
-  // a Marver ID canvas has no password to type: whatever asks for a sign-in goes through Marver ID's own pages
+  return <SignIn />
+}
+
+/** The way back in, for the canvas shell and the locked stage alike (spec 36): a Marver ID canvas has no password to
+ *  type - whatever asks for a sign-in goes through Marver ID's own pages; a password canvas opens the dialog. */
+export function SignIn() {
   const needs = useComments((s) => s.needsIdentity)
   const mode = useComments((s) => s.signInMode)
   useEffect(() => {
     if (needs && mode === 'marver-id') { useComments.setState({ needsIdentity: false }); useComments.getState().signInAgain() }
   }, [needs, mode])
-
   return mode === 'marver-id' ? null : <IdentityDialog />
 }
 

@@ -209,7 +209,8 @@ describe('a comment is never lost (spec 36), on a published Marver ID canvas', (
     await reply('Half a thought', false)
     asked.length = 0
     await openThread(1)
-    expect(asked).toEqual(['beforeunload'])   // asked before the words could go
+    // on disk, so leaving loses nothing and nothing is asked: in the Mac app a page's refusal has no Leave answer
+    expect(asked).toEqual([])
     expect(await ev(`document.querySelector('.cm-card .cm-compose textarea').value`)).toBe('Half a thought')
     // sent, it leaves the drafts
     await reply('', true)

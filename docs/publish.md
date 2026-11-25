@@ -152,7 +152,8 @@ to anything that can happen in that hour:
   read-only) stays under its message with the reason, *Retry* and *Discard*. Only the
   person lets it go.
 - **A reply typed and not sent is kept** per thread, across a click outside, a board
-  switch or a reload; the tab asks before closing on words not stored.
+  switch or a reload. Everything kept is on disk, so closing the tab loses nothing; it asks first only in the rare
+  case the browser would not store the words (a full quota, a private window).
 
 For the operator: a refused write leaves one line in the server log
 (`POST /__mv/api/comments/<board> refused: signed out`), and `marver comments sync`
