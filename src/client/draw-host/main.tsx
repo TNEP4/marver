@@ -73,6 +73,7 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
   const editable = !PUBLISHED
   const editRef = useRef(edit)
   editRef.current = edit
+  const uiHidden = useRef(false)
 
   if (!sync.current) {
     sync.current = new DrawSync(() => engine.current, {
@@ -145,7 +146,7 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
       const m = e.data
       if (m?.type === 'sh:interactive') { setEdit(!!m.on && editable); if (!m.on) { void sync.current!.flush(); engine.current?.view('frame', frameView.current) } }
       else if (m?.type === 'sh:set-theme') { theme = m.theme === 'dark' ? 'dark' : 'light'; setTh(theme) }
-      else if (m?.type === 'sh:camera' && m.moving === false) crisp(m.scale)
+      else if (m?.type === 'sh:draw-crisp') crisp(m.scale)
       else if (m?.type === 'sh:draw-cmd') run(m as DrawCmd)
     }
     addEventListener('message', onMsg)
@@ -167,9 +168,13 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
     return () => { removeEventListener('message', onMsg); hot?.off?.('sh:draw', onPatch); document.removeEventListener('visibilitychange', hide) }
   }, [])
 
-  // Escape: Excalidraw keeps it while it is finishing something (a line, a text, a crop); otherwise it leaves drawing mode
+  // Escape: Excalidraw keeps it while it is finishing something (a line, a text, a crop); otherwise it leaves drawing mode.
+  // Play's keys come back to the shell: ⌘\ and ⌘/ (collapse), and H while the UI is hidden (reveal)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const typing = !!engine.current?.appState()?.editingTextElement || (e.target as HTMLElement)?.closest?.('textarea, input')
+      if ((e.metaKey || e.ctrlKey) && (e.key === '\\' || e.key === '/') && !typing) { e.preventDefault(); e.stopPropagation(); post({ type: 'sh:draw-key', key: e.key === '/' ? 'toolbar' : 'panel' }); return }
+      if (uiHidden.current && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'h') { e.preventDefault(); e.stopPropagation(); post({ type: 'sh:draw-key', key: 'reveal' }); return }
       if (e.key !== 'Escape') return
       const s = engine.current?.appState()
       const busy = s && (s.editingTextElement || s.newElement || s.multiElement || s.editingLinearElement || s.croppingElementId || s.openDialog || s.openPopup || s.contextMenu)
@@ -186,6 +191,7 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
     const eng = engine.current
     if (!eng) return
     if (c.op === 'flush') { void sync.current!.flush(); return }
+    if (c.op === 'ui') { uiHidden.current = c.hidden; return }
     if (!editable && c.op !== 'view' && c.op !== 'export') return
     switch (c.op) {
       case 'tool': eng.setTool(c.tool); break

@@ -1,0 +1,106 @@
+/**
+ * The drawing mode on the canvas (spec 38, frame `drawing-frame/2-top-bar-canvas`): the tool bar centred above the
+ * frame, the properties panel 16 px to its left, the frame's own view controls inside its bottom-right corner. All in
+ * screen space from the camera's CSS variables (--sh-s/tx/ty), so a pan or zoom costs no render; constant size.
+ * Clicks on these controls keep keyboard focus in the drawing (Excalidraw's keys keep working).
+ */
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
+import { useStore, PUBLISHED } from '../store.ts'
+import { iframeOf } from '../canvas/frame-registry.ts'
+import { framePath } from '../ContextMenu.tsx'
+import { TOP } from '../inset.ts'
+import { canvasCtl } from '../canvas/ctl.ts'
+import { ROUTE } from '../../const.ts'
+import { DrawBar } from './DrawBar.tsx'
+import { DrawPanel } from './DrawPanel.tsx'
+import { DrawView } from './DrawView.tsx'
+import { CANVAS_TOOLS } from './kit.tsx'
+import { exportDrawing, useDraw, type DrawLink } from './link.ts'
+
+const HEAD = 28            // the frame head (world px)
+const PANEL_W = 232, GAP = 16
+
+/** A pointer-down on a control keeps focus where it was (the drawing's iframe) - inputs excepted. */
+const keepFocus = (e: React.MouseEvent) => {
+  const t = e.target as HTMLElement
+  if (t.closest('input, textarea, select')) return
+  e.preventDefault()
+}
+const Hold = ({ children }: { children: ReactNode }) => <div style={{ display: 'contents' }} onMouseDown={keepFocus}>{children}</div>
+
+export function DrawCanvasChrome() {
+  const node = useStore((s) => (s.interact ? s.nodes.find((n) => n.key === s.interact) : undefined))
+  const frame = useStore((s) => (node ? s.frameFor(node) : undefined))
+  const state = useDraw((s) => (node ? s.states[node.key] : undefined))
+  const toast = useStore((s) => s.toast)
+  const dark = useStore((s) => s.viewTheme) === 'dark'
+  const [copied, setCopied] = useState<'path' | 'image' | null>(null)
+  useEffect(() => { if (!copied) return; const t = setTimeout(() => setCopied(null), 1400); return () => clearTimeout(t) }, [copied])
+  if (!node || !frame || frame.kind !== 'draw' || node.missing) return null
+  const link: DrawLink = { key: node.key, title: frame.title ?? frame.id.split('/').pop() ?? 'drawing', frame: frame.id, win: () => iframeOf(node.key)?.contentWindow }
+  const sx = (wx: number) => `calc(var(--sh-tx, 0px) + var(--sh-s, 1) * ${wx}px)`
+  const sy = (wy: number) => `calc(var(--sh-ty, 0px) + var(--sh-s, 1) * ${wy}px)`
+  const bar: CSSProperties = { left: sx(node.x + node.w / 2), top: `max(${TOP + 8}px, calc(${sy(node.y)} - 50px))`, transform: 'translateX(-50%)' }
+  const panel: CSSProperties = { left: `max(8px, calc(${sx(node.x)} - ${PANEL_W + GAP}px))`, top: `max(${TOP + 8}px, ${sy(node.y + HEAD)})` }
+  const view: CSSProperties = { left: `calc(${sx(node.x + node.w)} - 8px)`, top: `calc(${sy(node.y + HEAD + node.h)} - 8px)`, transform: 'translate(-100%, -100%)' }
+  const copyPath = () => {
+    const text = framePath(useStore.getState().board, frame)
+    navigator.clipboard.writeText(text).then(() => { toast('path copied'); setCopied('path') }, () => toast('copy blocked - click the canvas first'))
+  }
+  const copyImage = () => { exportDrawing(link, 'clipboard', (t) => { toast(t); if (t === 'image copied') setCopied('image') }, dark) }
+  return (
+    <Hold>
+      <DrawBar link={link} state={state} tools={CANVAS_TOOLS} mode="canvas" style={bar} copied={copied}
+        onCopyPath={copyPath} onCopyImage={copyImage} onExport={(k) => exportDrawing(link, k, toast, dark)} />
+      <DrawPanel link={link} state={state} popSide="left" style={panel} />
+      <DrawView link={link} state={state} style={view} />
+    </Hold>
+  )
+}
+
+// ---- W: a new drawing at the pointer (spec 38) ---------------------------------------------------------------
+let pointer: { x: number; y: number } | null = null
+if (typeof window !== 'undefined') addEventListener('pointermove', (e) => { pointer = { x: e.clientX, y: e.clientY } }, { passive: true, capture: true })
+
+const csrf = () => /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
+
+/** Drop a 960x640 drawing centred on the pointer (else the middle of the view), in the scene of the nearest frame,
+ *  and open it in drawing mode. Owner only (a published canvas has no W). */
+export async function newDrawingAtPointer(): Promise<void> {
+  if (PUBLISHED) return
+  const st = useStore.getState()
+  const t = canvasCtl.transform()
+  if (!t || !st.manifest) return
+  const at = pointer ?? { x: innerWidth / 2, y: innerHeight / 2 }
+  const wx = (at.x - t.x) / t.s, wy = (at.y - t.y) / t.s
+  // the nearest frame's scene, else `sketches`
+  let scene = 'sketches', best = Infinity
+  for (const n of st.nodes) {
+    const f = st.frameFor(n)
+    if (!f?.scene || n.missing) continue
+    const dx = Math.max(n.x - wx, 0, wx - (n.x + n.w)), dy = Math.max(n.y - wy, 0, wy - (n.y + n.h))
+    const d = Math.hypot(dx, dy)
+    if (d < best) { best = d; scene = f.scene }
+  }
+  const W = 960, H = 640
+  const res = await fetch(`${ROUTE}/api/draw/new`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf() }, body: JSON.stringify({ scene }) }).catch(() => null)
+  const body = await res?.json().catch(() => null)
+  if (!res?.ok || !body?.id) { st.toast(body?.error ? `no drawing: ${body.error}` : 'could not make a drawing'); return }
+  const id: string = body.id
+  // the manifest names it within a moment; then it lands where the pointer was, and opens for drawing
+  const place = () => {
+    const s = useStore.getState()
+    if (!s.manifest?.frames.some((f) => f.id === id)) return false
+    let node = s.nodes.find((n) => n.frame === id)
+    if (!node) node = s.spawn(id) ?? undefined
+    if (!node) return false
+    const key = node.key
+    useStore.setState((x) => ({ nodes: x.nodes.map((n) => (n.key === key ? { ...n, x: Math.round(wx - W / 2), y: Math.round(wy - H / 2 - HEAD), w: W, h: H } : n)), dirty: true }))
+    useStore.getState().select(key, false)
+    useStore.getState().setInteract(key)
+    return true
+  }
+  if (place()) return
+  const unsub = useStore.subscribe((s, prev) => { if (s.manifest !== prev.manifest && place()) unsub() })
+  setTimeout(unsub, 8000)
+}

@@ -1,0 +1,221 @@
+/* The drawing frame's controls (spec 38) - ported from the approved design kit (platform canvas, drawing-frame/_kit.css). Only the shell's tokens and glass recipe
+   (styles.css, loaded by ../excalidraw/_shell.tsx), plus the drawing mode's own purple, taken from Excalidraw's family. */
+
+/* ---- tokens --------------------------------------------------------------------------------------- */
+/* --draw: the ring and handles. --draw-ring: the soft 4 px ring. --draw-ink: an active control's glyph on glass.
+   --draw-bg: an active control's wash. --dk-mv: Marver's own blue, kept for Marver's actions inside the purple mode. */
+.sh-app { --draw: #6965db; --draw-ring: rgba(105, 101, 219, .18); --draw-ink: #5b57d1; --draw-bg: rgba(105, 101, 219, .13);
+  --draw-beam: rgba(105, 101, 219, .4); --draw-edge: rgba(105, 101, 219, .75); --draw-tint: rgba(105, 101, 219, .12);
+  --dk-mv: #0077e6; --dk-sel: #6965db }
+:is(.dark .sh-app:not(.light), .sh-app.dark) { --draw: #6965db; --draw-ring: rgba(105, 101, 219, .3); --draw-ink: #a8a5ff; --draw-bg: rgba(105, 101, 219, .3);
+  --draw-beam: rgba(105, 101, 219, .5); --draw-edge: rgba(168, 165, 255, .8); --draw-tint: rgba(168, 165, 255, .14);
+  --dk-mv: #5cb3ff; --dk-sel: #a8a5ff }
+
+/* the drawing mode: one token swap, as .sh-app.interacting does - every accent-derived surface (the node's .sel ring,
+   .sh-ctx's beam and on-state, menus' checks) turns purple without knowing the mode exists */
+.dk-draw { --accent: var(--draw); --accent-ring: var(--draw-ring); --beam: var(--draw-beam); --edge-accent: var(--draw-edge);
+  --inner-tint: var(--draw-tint); --glass-accent: var(--draw-ink); --glass-accent-bg: var(--draw-bg) }
+
+/* ---- glass (the shell's recipe, for the kit's own capsules) --------------------------------------- */
+.dk-glass { position: absolute; background: var(--glass); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--glass-brd); box-shadow: var(--shadow-glass); color: var(--glass-ink); user-select: none }
+.dk-glass::after { content: ''; position: absolute; inset: -1px; padding: 1px; border-radius: inherit; background: var(--edge-light);
+  pointer-events: none; -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite: exclude }
+.dk-flow { position: relative !important; left: auto !important; top: auto !important; right: auto !important; bottom: auto !important; transform: none !important; width: fit-content }
+
+/* glass never nests: a kit piece is an anchor (plain, positioned) holding its glass and the layers it opens, side by
+   side - so a menu's backdrop-filter blurs the page, not the bar's own glass */
+.dk-anchor { position: absolute; width: max-content; z-index: 30 }
+.dk-anchor.fixed { position: fixed }
+.dk-anchor > .dk-glass:first-child, .dk-anchor > .sh-ctx:first-child, .dk-layer > .sh-menu:first-child { position: relative !important; left: auto; top: auto; right: auto; bottom: auto }
+.dk-anchor > .sh-menu, .dk-anchor > .dk-pop, .dk-anchor > .dk-layer { position: absolute }
+.dk-layer { position: absolute; width: max-content; z-index: 2 }
+
+/* one icon button, every capsule */
+.dk-b { position: relative; display: inline-grid; place-items: center; flex: none; border: 0; padding: 0; background: none; cursor: pointer;
+  color: var(--glass-ink-2); border-radius: 9px; font: 500 12px -apple-system, system-ui, sans-serif }
+.dk-b:hover:not(.on) { background: var(--glass-hover); color: var(--glass-ink) }
+.dk-b.on { background: var(--draw-bg); color: var(--draw-ink) }
+.dk-b.mv { color: var(--dk-mv) }
+.dk-b.dim { opacity: .38 }
+.dk-b svg { display: block }
+.dk-sep { flex: none; background: var(--glass-brd) }
+
+/* ---- the tooltip, shown open for a mockup (the shell's .sh-tip, placed on its trigger) -------------- */
+.dk-tipw { position: relative; display: inline-flex; flex: none }
+.dk-tipw > .sh-tip { animation: none }
+.dk-tipw > .sh-tip.dk-left { transform: translate(-100%, -50%) }
+
+/* ---- the tool set ------------------------------------------------------------------------------------ */
+.dk-tools { z-index: 30; display: flex; align-items: center; gap: 1px; padding: 4px }
+.dk-tools.h { border-radius: 999px }
+.dk-tools.v { flex-direction: column; border-radius: 18px }
+.dk-tools .dk-b { width: 30px; height: 30px }
+.dk-tools.h .dk-b { border-radius: 999px }
+.dk-tools.v .dk-b { border-radius: 10px }
+.dk-tools.h .dk-sep { width: 1px; height: 16px; margin: 0 3px }
+.dk-tools.v .dk-sep { height: 1px; width: 16px; margin: 3px 0 }
+.dk-tools .dk-b.lock.on::after { content: ''; position: absolute; right: 5px; top: 5px; width: 4px; height: 4px; border-radius: 50%; background: var(--draw-ink) }
+
+/* ---- menus (the shell's .sh-menu, labels verbatim) ------------------------------------------------------ */
+.dk-menu { z-index: 45; width: 214px; animation: none }
+.dk-menu button span { text-transform: none !important }
+.dk-menu button svg { color: var(--glass-ink-2); flex: none }
+.dk-menu button.on { background: var(--draw-bg) }
+.dk-menu button.on, .dk-menu button.on svg { color: var(--draw-ink) }
+.dk-menu button.mv, .dk-menu button.mv svg { color: var(--dk-mv) }
+.dk-menu button.mv span { font-weight: 600 }
+.dk-menu .cap { font: 600 10px -apple-system, system-ui, sans-serif; letter-spacing: .04em; text-transform: uppercase; color: var(--glass-ink-3); padding: 6px 10px 3px }
+.dk-menu kbd { min-width: 16px; text-align: right }
+.dk-menu button svg.sub { margin-left: auto; color: var(--glass-ink-3) }
+.dk-menu button .ck { width: 14px; flex: none; display: grid; place-items: center; color: var(--draw-ink) }
+.dk-menu button .ck svg { color: var(--draw-ink) }
+.dk-menu button .z1 { width: 15px; flex: none; font: 700 8.5px -apple-system, system-ui, sans-serif; letter-spacing: -.02em; color: var(--glass-ink-2); text-align: center }
+.dk-menu .opt { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 32px; padding: 0 6px 0 32px;
+  font: 500 13px -apple-system, system-ui, sans-serif; color: var(--glass-ink) }
+.dk-seg.mini { flex: none; display: inline-flex }
+.dk-seg.mini button { flex: none; height: 22px; padding: 0 8px; font: 600 11px -apple-system, system-ui, sans-serif }
+.dk-send .cap { padding-top: 5px }
+
+/* ---- properties ------------------------------------------------------------------------------------------- */
+/* room to scan (Nic, 25 Nov: 'too crammed'): 14 px inset, 14 px between sections, 6 px label to control - the
+   sidebar's rhythm; one control group per column, never three squeezed in a row */
+.dk-props { position: relative; width: 232px; border-radius: 18px; padding: 14px 14px 16px; font: 500 11px -apple-system, system-ui, sans-serif; box-sizing: border-box }
+.dk-props .sec { margin-bottom: 14px }
+.dk-props .sec:last-child { margin-bottom: 0 }
+.dk-props .lb { font: 500 11px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3); margin: 0 0 6px; padding-left: 1px; display: flex; justify-content: space-between }
+.dk-props .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px }
+.dk-sws { display: flex; gap: 6px; align-items: center }
+.dk-sw { position: relative; flex: none; width: 22px; height: 22px; border-radius: 7px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--glass-ink) 14%, transparent) }
+.dk-sw.on { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--glass-ink) 14%, transparent), 0 0 0 1.5px var(--solid), 0 0 0 3px var(--draw) }
+.dk-sw.none { background: repeating-conic-gradient(color-mix(in srgb, var(--glass-ink) 11%, transparent) 0 25%, transparent 0 50%) 0 0 / 8px 8px }
+.dk-sw.cur { width: 24px; height: 24px; border-radius: 8px; margin-left: auto }
+.dk-sw.cur.open { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--glass-ink) 14%, transparent), 0 0 0 1.5px var(--solid), 0 0 0 3px var(--draw) }
+.dk-sws .vsep { width: 1px; height: 16px; background: var(--glass-brd); margin: 0 0 0 2px; flex: none }
+.dk-seg { display: flex; gap: 2px; padding: 3px; border-radius: 10px; background: var(--glass-hover) }
+.dk-seg button { flex: 1; height: 26px; min-width: 0; border: 0; border-radius: 7px; background: none; color: var(--glass-ink-2); display: grid; place-items: center; padding: 0;
+  font: 600 10.5px -apple-system, system-ui, sans-serif; cursor: pointer }
+.dk-seg button.on { background: var(--solid); color: var(--draw-ink); box-shadow: 0 1px 2px rgba(0, 0, 0, .1), 0 0 0 .5px var(--glass-brd) }
+.dk-seg button.open { box-shadow: 0 0 0 1.5px var(--draw) }
+.dk-seg > .dk-tipw { flex: 1; min-width: 0 }
+.dk-seg > .dk-tipw > button { width: 100% }
+.dk-row > .dk-tipw { flex: none }
+.dk-sw.nil { background: none; box-shadow: inset 0 0 0 1px var(--glass-brd) }
+.dk-seg .hand { font: 400 12.5px var(--dr-hand) }
+.dk-seg .mono { font: 500 10px var(--dr-mono) }
+.dk-row { display: flex; gap: 4px; align-items: center }
+.dk-row button { width: 30px; height: 30px; border: 0; border-radius: 9px; background: var(--glass-hover); color: var(--glass-ink-2); display: grid; place-items: center; padding: 0; cursor: pointer }
+.dk-row button.warn { color: #e5484d }
+.dk-props .dk-row button svg { width: 15px; height: 15px }
+.dk-row .gap { flex: 1 }
+.dk-slider { display: flex; align-items: center; gap: 10px; height: 16px; padding-left: 1px }
+.dk-slider .tr { flex: 1; height: 4px; border-radius: 2px; background: var(--glass-hover); position: relative }
+.dk-slider .tr i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; background: var(--draw) }
+.dk-slider .tr b { position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: var(--solid);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .25), 0 0 0 .5px var(--glass-brd) }
+.dk-slider span { font: 600 11px -apple-system, system-ui, sans-serif; font-variant-numeric: tabular-nums; color: var(--glass-ink-2); width: 24px; text-align: right }
+
+/* nested pickers: a glass card beside the panel, its arrow on the row that opened it */
+.dk-pop { z-index: 46; --dk-pop-bg: var(--solid); border-radius: 14px; padding: 10px; font: 500 11px -apple-system, system-ui, sans-serif }
+.dk-pop .lb { font: 500 10px -apple-system, system-ui, sans-serif; color: var(--glass-ink-3); margin: 0 0 4px }
+.dk-pop .sec + .sec { margin-top: 9px }
+.dk-pop .grid { display: grid; grid-template-columns: repeat(5, 22px); gap: 4px }
+.dk-pop .grid .dk-sw { width: 22px; height: 22px }
+.dk-pop .hex { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 4px 0 9px; border-radius: 8px; border: 1px solid var(--glass-brd); background: var(--solid);
+  font: 500 11.5px var(--dr-mono); color: var(--glass-ink) }
+.dk-pop .hex .h { color: var(--glass-ink-3) }
+.dk-pop .hex .sp { flex: 1 }
+.dk-pop .hex button { width: 22px; height: 22px; border: 0; border-left: 1px solid var(--glass-brd); background: none; color: var(--glass-ink-2); display: grid; place-items: center; padding: 0 0 0 4px }
+.dk-pop .search { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border-radius: 8px; background: var(--glass-hover); color: var(--glass-ink-3); font: 500 11.5px -apple-system, system-ui, sans-serif }
+.dk-pop .font { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: 8px; color: var(--glass-ink); font-size: 13px }
+.dk-pop .font svg { color: var(--glass-ink-2); flex: none }
+.dk-pop .font.on { background: var(--draw-bg); color: var(--draw-ink) }
+.dk-pop .heads { display: grid; grid-template-columns: repeat(4, 30px); gap: 3px }
+.dk-pop .more { display: flex; align-items: center; justify-content: space-between; width: 100%; height: 22px; margin: 7px 0 3px; padding: 0 2px; border: 0; background: none;
+  font: 500 10px -apple-system, system-ui, sans-serif; color: var(--glass-ink-2); cursor: pointer }
+.dk-pop .more svg { color: var(--glass-ink-3) }
+.dk-pop .heads button { width: 30px; height: 26px; border: 0; border-radius: 7px; background: var(--glass-hover); color: var(--glass-ink-2); display: grid; place-items: center; padding: 0 }
+.dk-pop .heads button.on { background: var(--draw-bg); color: var(--draw-ink) }
+.dk-pop .tabs { display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--glass-hover); margin-bottom: 8px }
+.dk-pop .tabs span { flex: 1; height: 20px; display: grid; place-items: center; border-radius: 6px; font: 600 10.5px -apple-system, system-ui, sans-serif; color: var(--glass-ink-2) }
+.dk-pop .tabs span.on { background: var(--solid); color: var(--glass-ink); box-shadow: 0 1px 2px rgba(0, 0, 0, .1) }
+
+/* ---- view controls (canvas: the frame's own pan and zoom) ---------------------------------------------- */
+.dk-view { display: flex; align-items: center; gap: 1px; padding: 3px; border-radius: 999px }
+.dk-view .dk-b { width: 26px; height: 26px; border-radius: 999px }
+.dk-view .pct { width: auto; min-width: 40px; padding: 0 6px; font: 600 11px -apple-system, system-ui, sans-serif; font-variant-numeric: tabular-nums }
+.dk-view .dk-sep { width: 1px; height: 14px; margin: 0 2px }
+.dk-view.lg { padding: 4px }
+.dk-view.lg .dk-b { width: 30px; height: 30px }
+.dk-view.lg .pct { min-width: 46px; font-size: 12px }
+
+/* the frame-view marker: a tiny map in a corner of the frame body (drawing filled, the frame's view dashed, now purple) */
+.dk-vmark { position: absolute; z-index: 4; border-radius: 6px; background: color-mix(in srgb, var(--node-bg) 88%, transparent); box-shadow: 0 0 0 1px var(--node-brd), 0 2px 6px -2px rgba(0, 0, 0, .18); pointer-events: none }
+.dk-vmark i { position: absolute; margin: 4px 0 0 4px; box-sizing: border-box; border-radius: 1.5px }
+.dk-vmark .d { background: color-mix(in srgb, var(--head-ink) 10%, transparent) }
+.dk-vmark .f { border: 1px dashed color-mix(in srgb, var(--head-ink) 45%, transparent) }
+.dk-vmark .v { border: 1.5px solid var(--draw); background: var(--draw-ring) }
+
+/* the merged left panel's head: the drawing's name (opens the drawing's menu) - no divider under it (Nic) */
+.dk-props .dk-phead { display: flex; align-items: center; margin: -6px -6px 10px }
+.dk-props .dk-phead .dk-b { display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 8px; border-radius: 9px; font: 600 12.5px -apple-system, system-ui, sans-serif; color: var(--glass-ink); white-space: nowrap; width: 100%; justify-content: flex-start }
+.dk-props .dk-phead .dk-b > svg:first-child { color: var(--draw-ink) }
+.dk-props .dk-phead .dk-b .cv { color: var(--glass-ink-3); margin-left: -2px }
+.dk-props .dk-phead > .dk-tipw:first-child { flex: 1; min-width: 0 }
+.dk-props .dk-phead .dk-b.name { width: auto; max-width: 100% }
+.dk-props .dk-phead .dk-b.ic { width: 28px; padding: 0; justify-content: center; color: var(--glass-ink-2); flex: none; margin-left: auto }
+.dk-props .dk-phead .dk-b.ic > svg:first-child { color: var(--glass-ink-2) }
+/* a collapsed panel or bar: the shell's floating button */
+.dk-fab { position: relative; width: 40px; height: 40px; border-radius: 13px; display: grid; place-items: center; padding: 0; border: 0; color: var(--glass-ink-2); cursor: pointer }
+/* ---- the frame head's drawing glyph, the sidebar row --------------------------------------------------------- */
+.sh-node-head .dk-kind { color: var(--head-dim); flex: none }
+.sh-node.dk-draw .sh-node-head .dk-kind { color: var(--draw-ink) }
+/* the canvas bar as the selection bar: .sh-ctx's edge accent and beam, kept in flow inside its anchor */
+.dk-tools.sh-ctx.dk-ctx { position: relative; z-index: auto; padding: 4px }
+/* the selection bar's effect, in the drawing purple (Nic, 25 Nov): .dk-glass's own fill and edge would cover it - the
+   inner glow hugging the bottom edge, the accent ON the bottom border, the beam down to the frame, as .sh-ctx draws them */
+.dk-glass.sh-ctx { background: radial-gradient(46% 8px at 50% calc(100% + 1px), var(--inner-tint), transparent 80%), var(--glass) }
+.dk-glass.sh-ctx::after { background: radial-gradient(52% 16px at 50% 100%, var(--edge-accent), transparent 75%), var(--edge-light) }
+.dk-glass.sh-ctx::before { content: ''; position: absolute; left: var(--beam-inset); right: var(--beam-inset); bottom: var(--beam-bottom);
+  height: var(--beam-h); background: radial-gradient(50% 100% at 50% 0%, var(--beam), transparent 70%); filter: blur(var(--beam-blur, 4px));
+  pointer-events: none; z-index: -1 }
+.dk-tools.sh-ctx .dk-b:not(.o2-lbl) { padding: 0; height: 30px; gap: 0 }   /* the selection bar's 11 px side padding would squeeze the 30 px icon cells */
+
+/* ---- live-only additions -------------------------------------------------------------------------------------- */
+/* a swatch is a button */
+.dk-sw { border: 0; padding: 0; cursor: pointer; display: inline-block }
+.dk-sw:focus-visible { outline: 2px solid var(--draw); outline-offset: 2px }
+/* dark: swatches show the colour as the dark canvas draws it (Excalidraw inverts the drawing) */
+.sh-app.dark .dk-sws .dk-sw:not(.none), .sh-app.dark .dk-pop .grid .dk-sw:not(.none) { filter: invert(93%) hue-rotate(180deg) }
+.dk-menu button[disabled] { opacity: .45; cursor: default }
+.dk-b[disabled] { opacity: .38; cursor: default }
+.dk-seg button:hover:not(.on) { color: var(--glass-ink) }
+.dk-row button:hover { color: var(--glass-ink) }
+.dk-row button.warn:hover { color: #e5484d; background: color-mix(in srgb, #e5484d 12%, transparent) }
+/* the opacity slider: a real range input, drawn as the design's track */
+.dk-slider input[type=range] { flex: 1; appearance: none; -webkit-appearance: none; height: 4px; border-radius: 2px; margin: 0; cursor: pointer;
+  background: linear-gradient(var(--draw), var(--draw)) 0 0 / var(--v, 100%) 100% no-repeat, var(--glass-hover) }
+.dk-slider input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: var(--solid);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .25), 0 0 0 .5px var(--glass-brd) }
+/* the hex field is a real input */
+.dk-pop .hex input { flex: 1; min-width: 0; border: 0; background: none; font: inherit; color: inherit; outline: none; padding: 0 }
+.dk-pop .font { width: 100%; border: 0; background: none; cursor: pointer; text-align: left }
+.dk-pop .font:hover:not(.on) { background: var(--glass-hover) }
+.dk-pop .heads button:hover:not(.on) { color: var(--glass-ink) }
+/* the mini-map: shown while the drawing pans (spec 38) */
+.dk-map { position: absolute; z-index: 31; border-radius: 8px; background: var(--glass); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--glass-brd); box-shadow: var(--shadow-glass); pointer-events: none; transition: opacity .2s; overflow: hidden }
+.dk-map i { position: absolute; box-sizing: border-box; border-radius: 2px }
+.dk-map .d { background: color-mix(in srgb, var(--glass-ink) 14%, transparent) }
+.dk-map .v { border: 1.5px solid var(--draw); background: var(--draw-ring) }
+/* the drawing mode: the shell's accent turns the drawing purple, as interact turns it magenta */
+.sh-app.drawing { --accent: var(--draw); --accent-ring: var(--draw-ring); --beam: var(--draw-beam); --edge-accent: var(--draw-edge);
+  --inner-tint: var(--draw-tint); --glass-accent: var(--draw-ink); --glass-accent-bg: var(--draw-bg) }
+.sh-node.interact.dk-draw { --interact: var(--draw); --interact-ring: var(--draw-ring) }
+/* a thin ring like the selection's (2 px + a soft 4 px), never the interact mode's orbiting glow (Nic, 25 Nov) */
+.sh-node.interact.dk-draw::before, .sh-node.interact.dk-draw::after { display: none }
+/* play: the drawing fills the stage */
+.dk-playhost { position: absolute; inset: 0; background: var(--node-bg); overflow: hidden }
+.dk-playhost iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block }
+.dk-playhost.hidden-ui .dk-anchor { opacity: 0; pointer-events: none; transition: opacity .2s }

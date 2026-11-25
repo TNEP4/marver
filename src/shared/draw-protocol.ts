@@ -79,6 +79,8 @@ export type DrawCmd =
   | { type: 'sh:draw-cmd'; op: 'export'; format: 'png' | 'svg' | 'clipboard'; dark?: boolean }
   | { type: 'sh:draw-cmd'; op: 'insert-image' }
   | { type: 'sh:draw-cmd'; op: 'flush' }
+  /** play's Hide all UI: while hidden, the host takes H (it reveals) instead of Excalidraw's hand */
+  | { type: 'sh:draw-cmd'; op: 'ui'; hidden: boolean }
 
 /** The Excalidraw actions the shell may run - the allow-list the adapter checks (a test runs each one). */
 export const DRAW_ACTIONS = [
