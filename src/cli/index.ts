@@ -410,6 +410,27 @@ cli
   })
 
 cli
+  .command('draw [action] [...args]', 'Edit a live drawing (needs `dev` running): new · describe · add · set · move · rm')
+  .option('--root <dir>', 'Host repo root', { default: '.' })
+  .option('--scene <scene>', 'new: scene (default: sketches)')
+  .option('--name <name>', 'new: file name without .excalidraw')
+  .option('--title <title>', 'new: drawing title')
+  .option('--size <size>', 'new: frame size, e.g. 960x640')
+  .option('--since <rev>', 'describe: changes since this revision')
+  .option('--elements <file>', 'add: JSON array of elements, or {elements: [...]}')
+  .option('--mermaid [file]', 'Not available yet - write elements (see draw.md)')
+  .option('--at <x,y>', 'add: place the elements at these drawing coordinates')
+  .option('--by <dx,dy>', 'move: offset in drawing coordinates')
+  .action(async (action: string | undefined, args: string[], opts) => {
+    const { drawCommand } = await import('./draw.ts')
+    try { await drawCommand(resolve(opts.root), action, args ?? [], opts) }
+    catch (err) {
+      console.error(`[${NAME}] ${(err as Error).message}`)
+      process.exit(1)
+    }
+  })
+
+cli
   .command('shot [...frames]', 'Render frames headless and print the PNG paths (needs `dev` running): ids, --scene <name> or --all')
   .option('--root <dir>', 'Host repo root', { default: '.' })
   .option('--scene <name>', 'Every frame of one scene')
@@ -448,4 +469,9 @@ cli
 
 cli.help()
 cli.version(version())
-cli.parse()
+// cac reads a negative coordinate pair after a space as another option. Accept both --by -10,20 and --by=-10,20.
+const argv = [...process.argv]
+if (argv[2] === 'draw') for (let i = 3; i < argv.length - 1; i++) {
+  if ((argv[i] === '--at' || argv[i] === '--by') && /^-\d[^,]*,/.test(argv[i + 1])) argv.splice(i, 2, `${argv[i]}=${argv[i + 1]}`)
+}
+cli.parse(argv)

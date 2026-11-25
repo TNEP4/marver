@@ -85,6 +85,16 @@ export function repairRefs(all: Map<string, DrawElement>, touched: Iterable<stri
       const bnd = e[k] as { elementId?: string } | null | undefined
       if (bnd && !alive(bnd.elementId)) fix(e, { [k]: null })
     }
+    // an element an arrow binds to must list that arrow (Excalidraw moves bound arrows with it from that list)
+    if ((e.type === 'arrow' || e.type === 'line') && (scope.has(e.id) || ['startBinding', 'endBinding'].some((k) => scope.has((all.get(e.id)![k] as { elementId?: string } | null)?.elementId ?? '')))) {
+      for (const k of ['startBinding', 'endBinding']) {
+        const tid = (all.get(e.id)![k] as { elementId?: string } | null)?.elementId
+        const t = tid ? all.get(tid) : undefined
+        if (!t) continue
+        const list = (t.boundElements as { id: string; type: string }[] | null) ?? []
+        if (!list.some((b) => b.id === e.id)) fix(t, { boundElements: [...list, { id: e.id, type: 'arrow' }] })
+      }
+    }
     // a container must list the text that names it, and the arrows bound to it
     if (scope.has(e.id) || [...scope].some((id) => all.get(id)?.containerId === e.id)) {
       const listed = new Set(((e.boundElements as { id: string }[] | null) ?? []).map((b) => b.id))
@@ -112,13 +122,15 @@ export function moveOps(all: Map<string, DrawElement>, ids: string[], dx: number
     if (!sm && !tm) continue
     if (sm && tm) { put(e, { x: Number(e.x) + dx, y: Number(e.y) + dy }); continue }
     const pts = (e.points as number[][]).map((p) => [p[0], p[1]])
+    // the box the points span (Excalidraw keeps width/height equal to it)
+    const span = (ps: number[][]) => ({ width: Math.max(...ps.map((p) => p[0])) - Math.min(...ps.map((p) => p[0])), height: Math.max(...ps.map((p) => p[1])) - Math.min(...ps.map((p) => p[1])) })
     if (sm) {   // the start moves: the arrow's origin moves, every other point stays where it is
       for (let i = 1; i < pts.length; i++) { pts[i][0] -= dx; pts[i][1] -= dy }
-      put(e, { x: Number(e.x) + dx, y: Number(e.y) + dy, points: pts })
+      put(e, { x: Number(e.x) + dx, y: Number(e.y) + dy, points: pts, ...span(pts) })
     } else {
       const last = pts.length - 1
       pts[last][0] += dx; pts[last][1] += dy
-      put(e, { points: pts })
+      put(e, { points: pts, ...span(pts) })
     }
   }
   return ops

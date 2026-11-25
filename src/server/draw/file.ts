@@ -154,10 +154,15 @@ export function wholeElement(raw: Record<string, unknown>, by: string, now = Dat
 
 /** Give every element without a valid index one, after the highest index in use - Excalidraw's own scheme. */
 export function assignIndexes(all: Map<string, DrawElement>, fresh: DrawElement[]): void {
+  // indexes in use: every element already there, and every fresh one that keeps its own (valid and not taken)
+  const used = new Set<string>()
+  for (const e of all.values()) if (!fresh.includes(e) && typeof e.index === 'string' && validIndex(e.index)) used.add(e.index)
+  const keep = new Set<DrawElement>()
+  for (const e of fresh) if (typeof e.index === 'string' && validIndex(e.index) && !used.has(e.index)) { used.add(e.index); keep.add(e) }
   let last: string | null = null
-  for (const e of all.values()) if (typeof e.index === 'string' && validIndex(e.index) && (last === null || e.index > last)) last = e.index
+  for (const i of used) if (last === null || i > last) last = i
   for (const e of fresh) {
-    if (typeof e.index === 'string' && validIndex(e.index) && ![...all.values()].some((o) => o.id !== e.id && o.index === e.index)) continue
+    if (keep.has(e)) continue
     last = generateKeyBetween(last, null)
     e.index = last
   }

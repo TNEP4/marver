@@ -326,7 +326,12 @@ export class DrawService {
     // the disk now holds the agent's text; it stands for the rev this commit makes (or the current one)
     d.diskHash = h
     d.diskHeaderRev = theirs.header.rev
-    if (!ops.length && !Object.keys(header).length && !Object.keys(files).length) { d.diskRev = d.doc.header.rev; return }
+    if (!ops.length && !Object.keys(header).length && !Object.keys(files).length) {
+      // nothing of the agent's survived (the person won, or it changed nothing): the disk must show the truth again
+      if (lost.length || !sameDocContent(d.doc, theirs)) this.writeFile(d)
+      else d.diskRev = d.doc.header.rev
+      return
+    }
     this.commit(d, ops, 'agent', 'file', Object.keys(header).length ? header : undefined, Object.keys(files).length ? files : undefined, lost, theirs)
   }
 
