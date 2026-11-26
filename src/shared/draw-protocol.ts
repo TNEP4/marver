@@ -98,7 +98,7 @@ export type DrawCmd =
   /** spec 39: a shell menu over the drawing is open - the host forwards arrows, Enter and Escape to it */
   | { type: 'sh:draw-cmd'; op: 'menu'; open: boolean }
   /** spec 39 B8: what a clipboard row of the right-click writes - asked inside the click, written by the shell */
-  | { type: 'sh:draw-cmd'; op: 'menu-data'; what: 'copy' | 'svg' | 'text' | 'png'; dark?: boolean; rid: string }
+  | { type: 'sh:draw-cmd'; op: 'menu-data'; what: 'copy' | 'svg' | 'text' | 'png'; dark?: boolean; rid: string; ids?: string[] }
   /** spec 39 B8: the right-click's Paste - the clipboard read by the shell inside the click, pasted by the drawing */
   | { type: 'sh:draw-cmd'; op: 'paste'; text: string }
 

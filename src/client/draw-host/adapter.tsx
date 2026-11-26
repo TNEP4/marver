@@ -67,8 +67,8 @@ export interface Engine {
   closeMenu(): void
   /** the selection as Excalidraw's own clipboard JSON (what its Copy writes) - written by the shell, inside the click */
   clipboardJson(): string
-  /** the selection's words, as Excalidraw's Copy as text */
-  selectionText(): string
+  /** the selection's words (or these elements'), as Excalidraw's Copy as text */
+  selectionText(ids?: string[]): string
   /** the selection (bound text and frame children included) as SVG; all of it when nothing is selected */
   selectionSvg(dark: boolean): Promise<string>
   /** paste Excalidraw clipboard JSON or plain text at the pointer, as its own paste does */
@@ -348,10 +348,10 @@ export function DrawEngine({ initial, theme, edit, editable, picking = false, on
       for (const e of elements as any[]) if (e.fileId && all[e.fileId]) files[e.fileId] = all[e.fileId]
       return JSON.stringify({ type: 'excalidraw/clipboard', elements, files })
     },
-    selectionText() {
+    selectionText(ids) {
       const api = apiRef.current
       const sel = api.getAppState().selectedElementIds ?? {}
-      return getTextFromElements(withAttached(api.getSceneElements(), Object.keys(sel).filter((k) => sel[k])) as any)
+      return getTextFromElements(withAttached(api.getSceneElements(), ids?.length ? ids : Object.keys(sel).filter((k) => sel[k])) as any)
     },
     async selectionSvg(dark) {
       const api = apiRef.current

@@ -27,7 +27,7 @@ import { MI, Ph, keyGlyphs } from './kit.tsx'
 import { useDrawPlay } from './play-state.ts'
 
 type Row = { name: string; labelKey: string }
-type Open = { key: string; frame: string; x: number; y: number; rows: Row[]; element: boolean; anchor: unknown; editable: boolean }
+type Open = { key: string; frame: string; x: number; y: number; rows: Row[]; element: boolean; anchor: unknown; editable: boolean; hitId?: string }
 
 export const useDrawMenu = create<{ m: Open | null; open(m: Open): void; close(): void }>((set) => ({
   m: null,
@@ -45,11 +45,11 @@ const iframeEl = (key: string): HTMLIFrameElement | null =>
 // ---- what the drawing hands back for a clipboard row -------------------------------------------------------------
 const pending = new Map<string, { res: (b: Blob) => void; rej: (e: Error) => void }>()
 let ridN = 0
-const askData = (key: string, what: 'copy' | 'svg' | 'text' | 'png', dark: boolean): Promise<Blob> => new Promise((res, rej) => {
+const askData = (key: string, what: 'copy' | 'svg' | 'text' | 'png', dark: boolean, ids?: string[]): Promise<Blob> => new Promise((res, rej) => {
   const rid = `m${++ridN}`
   const timer = setTimeout(() => { pending.delete(rid); rej(new Error('timed out')) }, 10_000)
   pending.set(rid, { res: (b) => { clearTimeout(timer); res(b) }, rej: (e) => { clearTimeout(timer); rej(e) } })
-  post(key, { type: 'sh:draw-cmd', op: 'menu-data', what, dark, rid })
+  post(key, { type: 'sh:draw-cmd', op: 'menu-data', what, dark, rid, ...(ids?.length ? { ids } : {}) })
 })
 
 /** The drawing's menu messages - called from drawMessage. True when the message was one. */
@@ -60,7 +60,7 @@ export function drawMenuMessage(key: string, data: any): boolean {
     const r = el.getBoundingClientRect()
     const k = el.offsetWidth ? r.width / el.offsetWidth : 1
     const frame = String(data.id ?? '')
-    useDrawMenu.getState().open({ key, frame, x: r.left + Number(data.point?.x ?? 0) * k, y: r.top + Number(data.point?.y ?? 0) * k, rows: Array.isArray(data.rows) ? data.rows : [], element: !!data.element, anchor: data.anchor ?? null, editable: !!data.editable })
+    useDrawMenu.getState().open({ key, frame, x: r.left + Number(data.point?.x ?? 0) * k, y: r.top + Number(data.point?.y ?? 0) * k, rows: Array.isArray(data.rows) ? data.rows : [], element: !!data.element, anchor: data.anchor ?? null, editable: !!data.editable, ...(typeof data.hitId === 'string' ? { hitId: data.hitId } : {}) })
     return true
   }
   if (data?.type === 'sh:draw-menu-data') {
@@ -145,7 +145,8 @@ function itemsFor(m: Open): Item[] {
   const write = (what: Exclude<Clip, 'paste' | 'cut'>, label: string, after?: () => void) => {
     const h = cmd('draw-cmd', { ...how, arg: what } as any)
     const mime = what === 'png' ? 'image/png' : 'text/plain'
-    const data = askData(m.key, what, dark)
+    // a view-only drawing has no selection: the element right-clicked is what is copied
+    const data = askData(m.key, what, dark, !m.editable && m.hitId ? [m.hitId] : undefined)
     // inside the click: a clipboard item whose data the drawing fills (a browser allows the write only here)
     navigator.clipboard.write([new ClipboardItem({ [mime]: data })]).then(
       () => { h.done(); toast(label); after?.() },

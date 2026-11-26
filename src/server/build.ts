@@ -672,7 +672,7 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
         return out
       })
       const mv = doc?.marver ?? {}
-      const pub = { type: 'excalidraw', version: 2, source: 'marver', marver: { rev: mv.rev ?? 0, ...(mv.title ? { title: mv.title } : {}), ...(mv.size ? { size: mv.size } : {}), ...(mv.view ? { view: mv.view } : {}) },
+      const pub = { type: 'excalidraw', version: 2, source: 'marver', marver: { rev: mv.rev ?? 0, ...(typeof mv.epoch === 'string' ? { epoch: mv.epoch } : {}), ...(mv.title ? { title: mv.title } : {}), ...(mv.size ? { size: mv.size } : {}), ...(mv.view ? { view: mv.view } : {}) },
         elements, appState: { viewBackgroundColor: doc?.appState?.viewBackgroundColor ?? '#ffffff', gridSize: null }, files: doc?.files ?? {} }
       const dest = join(outDir, ROUTE.slice(1), 'draw-data', `${f.id}.excalidraw`)
       mkdirSync(dirname(dest), { recursive: true })

@@ -166,7 +166,13 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
     eng.closeMenu()
     // its keys are the menu's from now (the shell confirms with op 'menu' a paint later - a quick arrow must not nudge)
     menuOpen.current = true
-    post({ type: 'sh:draw-menu', id, rows: m.rows, element: m.element, point: { x: m.left, y: m.top }, anchor: comments.anchorFor(m.left, m.top), editable: editable && editRef.current })
+    // shape or paper by the drawing's own hit (Excalidraw's view mode calls everything paper); a view-only drawing's rows
+    // are the read-only ones, on the element right-clicked (view mode has no selection)
+    const anchor = comments.anchorFor(m.left, m.top) as any
+    const hitId: string | undefined = anchor?.el?.draw?.id
+    const live = editable && editRef.current
+    const rows = live ? m.rows : hitId ? [{ name: 'copyAsPng', labelKey: '' }, { name: 'copyText', labelKey: '' }] : [{ name: 'copyAsPng', labelKey: '' }]
+    post({ type: 'sh:draw-menu', id, rows, element: !!hitId, hitId, point: { x: m.left, y: m.top }, anchor, editable: live })
   }
   const onChange = (snap: EngineSnapshot) => {
     if (snap.appState?.contextMenu) { openMenu(); return }
@@ -263,7 +269,7 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
     if (c.op === 'flush') { void sync.current!.flush().then(() => post({ type: 'sh:draw-flushed', id })); return }
     if (c.op === 'ui') { uiHidden.current = c.hidden; return }
     if (c.op === 'menu') { menuOpen.current = !!c.open; return }
-    if (c.op === 'menu-data') { void menuData(eng, c.what, c.dark ?? theme === 'dark', c.rid); return }
+    if (c.op === 'menu-data') { void menuData(eng, c.what, c.dark ?? theme === 'dark', c.rid, c.ids); return }
     if (c.op === 'reveal') { comments.reveal(c.anchor as any); return }
     if (c.op === 'focus') { try { window.focus(); (document.querySelector('.excalidraw') as HTMLElement | null)?.focus({ preventScroll: true }) } catch { /* the next click focuses */ } return }
     // a view-only drawing runs only the commands that change nothing (spec 39 B2)
@@ -287,13 +293,13 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
   }
 
   /** what a right-click clipboard row writes (spec 39 B8): the shell writes it, inside the person's click */
-  async function menuData(eng: Engine, what: 'copy' | 'svg' | 'text' | 'png', dark: boolean, rid: string) {
+  async function menuData(eng: Engine, what: 'copy' | 'svg' | 'text' | 'png', dark: boolean, rid: string, given?: string[]) {
     try {
       if (what === 'copy') { post({ type: 'sh:draw-menu-data', id, rid, mime: 'text/plain', data: eng.clipboardJson() }); return }
-      if (what === 'text') { post({ type: 'sh:draw-menu-data', id, rid, mime: 'text/plain', data: eng.selectionText() }); return }
+      if (what === 'text') { post({ type: 'sh:draw-menu-data', id, rid, mime: 'text/plain', data: eng.selectionText(given) }); return }
       if (what === 'svg') { post({ type: 'sh:draw-menu-data', id, rid, mime: 'text/plain', data: await eng.selectionSvg(dark) }); return }
       const sel = eng.appState()?.selectedElementIds ?? {}
-      const ids = Object.keys(sel).filter((k) => sel[k])
+      const ids = given?.length ? given : Object.keys(sel).filter((k) => sel[k])
       const { blob } = await eng.exportPng(dark, ids.length ? ids : undefined)
       post({ type: 'sh:draw-menu-data', id, rid, mime: 'image/png', blob })
     } catch (err) { post({ type: 'sh:draw-menu-data', id, rid, error: (err as Error).message }) }
