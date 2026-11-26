@@ -69,6 +69,14 @@ export function classifyArchive(input: ArchiveInput): { boards: Set<string>; fol
 export function frameWords(root: string, file: string): string | undefined {
   let src: string
   try { src = readFileSync(join(root, file), 'utf8') } catch { return undefined }
+  // a drawing (spec 38): its words are its text elements, and its title
+  if (file.endsWith('.excalidraw')) {
+    try {
+      const doc = JSON.parse(src)
+      const words = (Array.isArray(doc?.elements) ? doc.elements : []).filter((e: any) => e && !e.isDeleted && e.type === 'text' && typeof e.text === 'string').map((e: any) => e.text)
+      return [doc?.marver?.title, ...words].filter(Boolean).join('\n').slice(0, CAP) || undefined
+    } catch { return undefined }
+  }
   if (src.length > SCAN_MAX) src = src.slice(0, SCAN_MAX)
   const out: string[] = []
   const dir = file.split('/').slice(0, -1).join('/')

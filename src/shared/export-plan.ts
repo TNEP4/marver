@@ -28,7 +28,7 @@ export interface PlanNode extends OrderNode {
 }
 export interface PlanPage {
   frame: string
-  kind: 'tsx' | 'html'
+  kind: 'tsx' | 'html' | 'draw'
   width: number
   height: number
   theme: string

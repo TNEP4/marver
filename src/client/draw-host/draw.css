@@ -1,0 +1,28 @@
+/* The draw host (spec 38): Excalidraw's engine with its own chrome hidden - Marver's bar, panel and view controls live
+   in the shell. What stays Excalidraw's: the canvas, text editing, link popups, the context menu, dialogs it opens. */
+html, body, #root { margin: 0; height: 100%; overflow: hidden; background: transparent }
+html { overscroll-behavior: none }
+
+/* the chrome: toolbar, menus, the shape panel, the footer (zoom, undo, help), the welcome screen, the library */
+.mv-draw .layer-ui__wrapper,
+.mv-draw .welcome-screen-center,
+.mv-draw .welcome-screen-decor,
+.mv-draw .App-menu,
+.mv-draw .App-bottom-bar,
+.mv-draw .main-menu-trigger,
+.mv-draw .help-icon,
+.mv-draw .undo-redo-buttons,
+.mv-draw .zoom-actions,
+.mv-draw .layer-ui__wrapper__footer,
+.mv-draw .HintViewer,
+.mv-draw .default-sidebar-trigger { display: none !important }
+
+/* at rest the drawing is a picture of itself: no cursor of its own, no focus ring */
+.mv-draw.mv-view .excalidraw .interactive { cursor: default !important }
+.mv-draw .excalidraw:focus, .mv-draw .excalidraw:focus-visible { outline: none }
+
+/* the paper: real white in light, Excalidraw's own dark in dark (spec 38, Nic: real white / black) */
+.mv-draw .excalidraw { --color-primary: #6965db }
+
+.mv-draw-error { font: 12px ui-monospace, monospace; padding: 16px; color: #b42318; white-space: pre-wrap }
+.mv-draw-error b { display: block; margin-bottom: 8px }

@@ -95,6 +95,9 @@ export function updatesPlugin(root: string, manifest: () => Manifest, hooks: () 
         landed(opts.file)   // this environment is done with the file; the last one releases it
         try {
           if (this.environment.name !== 'client') return
+          // a drawing (spec 38) never invalidates or reloads its frame: the draw service merges the change and
+          // patches the open frames - a reload would lose a stroke in progress and the undo stack
+          if (opts.file.endsWith('.excalidraw')) return []
           const h = hooks()
           if (!h) return
           const t = framesFor(root, manifest(), opts.file, opts.modules)

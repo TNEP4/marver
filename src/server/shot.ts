@@ -54,7 +54,7 @@ export interface FrameSizing { width: number; initialHeight: number; fullHeight:
 export interface SizeOverride { w?: number; h?: number }
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined)
 export function planShot(
-  frame: { viewport?: string; contentWidth?: number; slide?: boolean },
+  frame: { viewport?: string; contentWidth?: number; slide?: boolean; kind?: string; size?: { w: number; h: number } },
   viewports: Record<string, { width: number; height: number }>,
   override: SizeOverride = {},
 ): FrameSizing {
@@ -66,6 +66,11 @@ export function planShot(
   // node's size - the slide as it plays is the artwork, ready to paste anywhere
   const sl = slideSize(frame, viewports)
   if (sl) return { width: sl.width, initialHeight: sl.height, fullHeight: false }
+  // a drawing (spec 38): its own size on the board (the node's when the canvas asks for "what the node shows")
+  if (frame.kind === 'draw') {
+    const w = num(frame.size?.w) ?? 960, h = num(frame.size?.h) ?? 640
+    return { width: clamp(ow ?? w, 120, 3840), initialHeight: clamp(oh ?? h, 80, 2160), fullHeight: false }
+  }
   if (cw) {
     const width = clamp(ow ?? vpObj?.width ?? cw, 320, 1600)                 // node > vpw > contentWidth
     return { width, initialHeight: Math.round(width * 0.75), fullHeight: true }
@@ -146,7 +151,7 @@ export async function shootFrame(opts: {
 }
 
 /** A frame as design/manifest.json lists it, or null. */
-export type ManifestFrame = { id: string; file: string; kind: string; viewport?: string; contentWidth?: number; slide?: boolean }
+export type ManifestFrame = { id: string; file: string; kind: string; viewport?: string; contentWidth?: number; slide?: boolean; size?: { w: number; h: number } }
 export function manifestFrame(root: string, frameId: string): ManifestFrame | null {
   let manifest: { frames?: ManifestFrame[] } = {}
   try { manifest = JSON.parse(readFileSync(join(root, 'design', 'manifest.json'), 'utf8')) } catch { /* no manifest yet */ }
@@ -156,10 +161,10 @@ export function manifestFrame(root: string, frameId: string): ManifestFrame | nu
 /** The URL a frame renders at on its own: an HTML frame is its file, a TSX frame the frame host. */
 export const frameUrl = (origin: string, frame: ManifestFrame, theme: string) => frame.kind === 'html'
   ? `${origin}/${frame.file}?theme=${encodeURIComponent(theme)}`
-  : `${origin}${ROUTE}/frame/?id=${encodeURIComponent(frame.id)}&theme=${encodeURIComponent(theme)}`
+  : `${origin}${ROUTE}/${frame.kind === 'draw' ? 'draw' : 'frame'}/?id=${encodeURIComponent(frame.id)}&theme=${encodeURIComponent(theme)}`
 
 /** True once the frame has mounted: #root (or the body, for an HTML frame) has children. */
-export const MOUNTED = `(() => { const el = document.getElementById('root') ?? document.body; return !!el && el.childElementCount > 0 && document.readyState !== 'loading' })()`
+export const MOUNTED = `(() => { const el = document.getElementById('root') ?? document.body; if ((location.pathname === '${ROUTE}/draw/' || location.pathname === '${ROUTE}/draw/index.html') && !window.__mvDrawReady) return false; return !!el && el.childElementCount > 0 && document.readyState !== 'loading' })()`
 
 export type FrameShot =
   | { ok: true; path: string; width: number; height: number; scale: number; truncated?: boolean; unsettled?: boolean; note?: string; recaptures: number }

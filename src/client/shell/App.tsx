@@ -43,6 +43,10 @@ import { contentOnly } from '../../shared/frames.ts'
 import { isNew, nextToLook } from '../../shared/marks.ts'
 import { asksNow, Bubble, MarkedRow, markSeenFrom, resolveAllFrom, useRollup, useSeenOnScreen } from './marks-ui.tsx'
 import { CommentButton, DevicePicker, HideUIButton, LaserButton, Popover, ThemePicker, toggleHideUI, usePopover } from './Toolbar.tsx'
+import { DrawCanvasChrome, newDrawingAtPointer } from './draw/DrawChrome.tsx'
+import { Ph } from './draw/kit.tsx'
+import { DrawPlay, playDrawingIfSelected } from './draw/DrawPlay.tsx'
+import { drawMessage } from './draw/link.ts'
 
 const commentsStore = () => useComments.getState()
 
@@ -145,6 +149,9 @@ function SelectionBar() {
     return () => clearTimeout(t)
   }, [imagePulse])
   if (!node || !frame || node.missing) return null
+  // a drawing in drawing mode shows its own bar (spec 38, DrawCanvasChrome)
+  if (frame.kind === 'draw' && useStore.getState().interact === node.key) return null
+  const isDraw = frame.kind === 'draw'
   // anchor: centered over the bounding box of ALL selected frames, above the topmost
   const selNodes = nodes.filter((n) => selection.includes(n.key))
   const bx0 = Math.min(...selNodes.map((n) => n.x))
@@ -195,7 +202,7 @@ function SelectionBar() {
         <Tip label={`${selection.length} frames selected`}><span className="cnt">{selection.length}</span></Tip>
         <i className="sep" />
       </>}
-      {Object.entries(CONFIG.viewports).map(([name, vp], vi) => {
+      {!isDraw && Object.entries(CONFIG.viewports).map(([name, vp], vi) => {
         const active = node.w === vp.width
         return (
           <Tip key={name} label={<><b>{deviceLabel(name)}</b><span>{vp.width} × {vp.height}</span><span className="k">{vi + 1}</span></>}>
@@ -205,7 +212,7 @@ function SelectionBar() {
           </Tip>
         )
       })}
-      <i className="sep" />
+      {!isDraw && <i className="sep" />}
       {CONFIG.themes.map((t) => (
         <Tip key={t} label={`${cap(t)} theme`}>
           <button className={`icon${node.theme === t ? ' on' : ''}`} onClick={() => setNodeTheme(t)}>
@@ -386,6 +393,8 @@ function ThemeMenu() {
 
 /** P and the pill's Prototype (spec 30): `play` or `slides` as the board plays; nothing to play is a noop. */
 function enterPlayFrom(how: CmdOpts) {
+  // a selected drawing (or one in drawing mode) plays on its own, full-tab (spec 38)
+  if (!playsAsSlides(useStore.getState().board) && playDrawingIfSelected()) { cmd('play', how).done(); return }
   const slides = playsAsSlides(useStore.getState().board)
   const h = cmd(slides ? 'slides' : 'play', how)
   if (slides) enterSlides(); else enterPlay()
@@ -736,6 +745,8 @@ export function App() {
       perfSeams.frameMessage.emit(nodeKey, data)
       // Jam (spec 27): a capture's trail, handshake, probes and flushes; a key the shell owns
       if (onFrameMessage(nodeKey, data)) return
+      // a drawing frame's state, export or error (spec 38) - its bar and panel read it
+      if (drawMessage(nodeKey, data)) return
       // a key the frame forwards: the person's, so a show or link still loading gives way (spec 31 D3)
       // ⌘K forwarded by a focused frame (spec 35): search, never Jam's
       if (SEARCH_ON && data.type === 'sh:key' && (data.meta || data.ctrl) && !data.alt && !data.shift && data.key === 'k') { if (!s.play) toggleSearch(); return }
@@ -882,6 +893,12 @@ export function App() {
         else { h.step('deselect'); navigatedByHand(); select(null) }
         endAfterFrames(h)
       }
+      // drawings (spec 38): W drops a new one at the pointer; Enter or F on a selected drawing opens it for drawing
+      // (F fits it to the window first)
+      if (key === 'w' && !e.shiftKey && !e.altKey && !s.interact && !PUBLISHED) { e.preventDefault(); cmd('new-drawing', how()); void newDrawingAtPointer(); return }
+      const selectedDrawing = () => { const n = s.selection.length === 1 && !s.interact && !PUBLISHED ? s.nodes.find((x) => x.key === s.selection[0]) : undefined; return n && s.frameFor(n)?.kind === 'draw' ? n : undefined }
+      if (e.key === 'Enter') { const n = selectedDrawing(); if (n) { e.preventDefault(); cmd('draw', how()); setInteract(n.key); return } }
+      if (key === 'f' && !e.shiftKey && !e.altKey) { const n = selectedDrawing(); if (n) { e.preventDefault(); cmd('focus-drawing', how()); canvasCtl.fitNode(n.key); setInteract(n.key); return } }
       // a slides board PLAYS as slides even when its landing is the canvas -
       // the deck is what the board IS; landing only says where viewers arrive
       if (e.key === 'p') enterPlayFrom(how())
@@ -1016,6 +1033,8 @@ export function App() {
   // interact mode re-accents the ENTIRE shell purple - one token override class,
   // everything derived from --accent follows (mark, sidebar, bars, handles, beams)
   const interacting = useStore((s) => s.interact !== null)
+  // a drawing in drawing mode (spec 38): the accent turns the drawing purple, not interact's magenta
+  const drawing = useStore((s) => { const n = s.interact ? s.nodes.find((x) => x.key === s.interact) : undefined; return !!n && s.frameFor(n)?.kind === 'draw' })
 
   // leaving interact returns keyboard focus to the shell: while a frame held focus its
   // document swallowed every shortcut (the bridge only forwards Escape), so d/t/digits
@@ -1041,11 +1060,13 @@ export function App() {
   }
 
   return (
-    <div ref={appRef} tabIndex={-1} className={`sh-app${dark ? ' dark' : ''}${interacting ? ' interacting' : ''}${laneLift}`}>
+    <div ref={appRef} tabIndex={-1} className={`sh-app${dark ? ' dark' : ''}${interacting ? (drawing ? ' drawing' : ' interacting') : ''}${laneLift}`}>
       <Canvas />
       {/* the scroll edge under the Mac app's transparent strip (0.27.2, A3.8 #31): over the world, under the chrome */}
       {TOP ? <div className="sh-edge" aria-hidden="true" /> : null}
       <SelectionBar />
+      <DrawCanvasChrome />
+      <DrawPlay />
       <Search />
 
       {/* floating pill panel (no top bar - spec); panel and fab are both always
@@ -1182,7 +1203,9 @@ export function App() {
                         {/* every frame leads with an icon: the slide badge first (a deck
                             frame is a deck frame whatever it imports), intent glyph for
                             content frames, the plain rectangle for UI frames */}
-                        {f.slide
+                        {f.kind === 'draw'
+                          ? <Ph n="PenNib" size={13} className="iicon" role="img" aria-hidden={false} aria-label="drawing" />
+                          : f.slide
                           ? <SlideFrameIcon size={13} className="iicon" role="img" aria-hidden={false} aria-label="slide" />
                           : f.intent
                             ? <IntentGlyph intent={f.intent} size={13} className="iicon" aria-label={f.intent} />

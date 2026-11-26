@@ -2,6 +2,24 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## Unreleased
+
+### Highlights
+
+- **Drawings.** Sketch on the board, with your agent at the same time. A drawing is a plain `.excalidraw` file in
+  `design/scenes/` (it opens as-is on excalidraw.com) shown as a frame. Press **W** to drop one at the pointer, or
+  double-click any drawing to draw in place: the tools sit in one bar above the frame, the properties on its left, its
+  own zoom in its corner. **P** plays it full-tab on its own paper. See [docs/drawings.md](docs/drawings.md).
+- **Your agent draws with you.** `npx marver draw describe|add|set|move|rm` - or a plain edit of the file - lands in
+  the open drawing live: no reload, never under your pointer, and ⌘Z still undoes only your own changes. If you both
+  change one element, you win, and `draw describe` tells the agent what to redo.
+
+### Added
+
+- Drawings publish view-only (pan, zoom, play, comments), `marver shot` renders them at their own size, and search
+  finds their words.
+- `templates/instructions/draw.md` teaches agents to describe, edit and look at a drawing.
+
 ## 0.37.1 - 2026-11-25
 
 ### Fixed

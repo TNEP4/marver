@@ -122,7 +122,8 @@ document.addEventListener('click', (e) => {
 
 // Escape leaves interact mode - unless the shell owns it right now (a capture, a review): keys.js
 // consumed and forwarded it already, so this never sees it
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') post({ type: 'sh:exit-interact' }) })
+// A drawing frame (spec 38) decides for itself: Excalidraw keeps Escape while it finishes a line or a text
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !window.__mvOwnEscape) post({ type: 'sh:exit-interact' }) })
 
 // A window error or an unhandled rejection always reaches the shell: `sh:error` is what marks the frame failed
 // (App.tsx), and the recorder never stands in the way of that (spec 30 #5). It spends the document's budget (#33), which

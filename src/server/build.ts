@@ -611,6 +611,8 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
           shell: join(clientDir, 'shell', 'main.tsx'),
           frame: join(clientDir, 'frame-host', 'main.tsx'),
           stage: join(clientDir, 'stage', 'main.tsx'),
+          // the drawing host (spec 38), only when a published board holds a drawing - Excalidraw never ships otherwise
+          ...(frames.some((f) => f.kind === 'draw') ? { draw: join(clientDir, 'draw-host', 'main.tsx') } : {}),
         },
         output: {
           entryFileNames: 'assets/[name]-[hash].js',
@@ -655,6 +657,31 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   page('shell', 'shell', 'index.html')
   page('frame-host', 'frame', `${ROUTE.slice(1)}/frame/index.html`)
   page('stage', 'stage', `${ROUTE.slice(1)}/stage/index.html`)
+
+  // drawings (spec 38): the host, each published drawing as a view-only copy (who-drew-it stripped), Excalidraw's fonts
+  const drawFrames = frames.filter((f) => f.kind === 'draw')
+  if (drawFrames.length) {
+    page('draw-host', 'draw', `${ROUTE.slice(1)}/draw/index.html`)
+    for (const f of drawFrames) {
+      let doc: any
+      try { doc = JSON.parse(readFileSync(join(root, f.file), 'utf8')) } catch { throw new Error(`${f.file} is not a drawing (invalid JSON) - fix it or take it off the published boards`) }
+      const elements = (Array.isArray(doc?.elements) ? doc.elements : []).filter((e: any) => e && !e.isDeleted).map((e: any) => {
+        const { mv: _mv, ...rest } = (e.customData ?? {}) as Record<string, unknown>
+        const out = { ...e }
+        if (Object.keys(rest).length) out.customData = rest; else delete out.customData
+        return out
+      })
+      const mv = doc?.marver ?? {}
+      const pub = { type: 'excalidraw', version: 2, source: 'marver', marver: { rev: mv.rev ?? 0, ...(mv.title ? { title: mv.title } : {}), ...(mv.size ? { size: mv.size } : {}), ...(mv.view ? { view: mv.view } : {}) },
+        elements, appState: { viewBackgroundColor: doc?.appState?.viewBackgroundColor ?? '#ffffff', gridSize: null }, files: doc?.files ?? {} }
+      const dest = join(outDir, ROUTE.slice(1), 'draw-data', `${f.id}.excalidraw`)
+      mkdirSync(dirname(dest), { recursive: true })
+      writeFileSync(dest, JSON.stringify(pub))
+    }
+    const { drawAssetDir } = await import('./routes.ts')
+    const assets = drawAssetDir()
+    if (assets) cpSync(join(assets, 'fonts'), join(outDir, ROUTE.slice(1), 'draw-assets', 'fonts'), { recursive: true })
+  }
 
   // favicon pack + the shared bridge (plain module, ships verbatim)
   cpSync(join(clientDir, 'shell', 'favicon'), join(outDir, ROUTE.slice(1), 'favicon'), { recursive: true })
@@ -793,7 +820,7 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
       root, outDir, gen: bakeGen, boards, themes: config.themes, log: (l) => console.log(l),
       frames: pubFrames, viewports: config.viewports, autoBoard: Object.values(boards).some((b) => b?.auto === true),
       // the frame's PUBLISHED url (an html frame's opaque path when the source is stripped)
-      urlFor: (id, theme) => { const f = pubFrameFile.get(id); if (!f) return null; return f.kind === 'html' ? `/${f.file}?theme=${encodeURIComponent(theme)}&r=${bakeGen}` : `/__mv/frame/?id=${encodeURIComponent(id)}&theme=${encodeURIComponent(theme)}&r=${bakeGen}` },
+      urlFor: (id, theme) => { const f = pubFrameFile.get(id); if (!f) return null; return f.kind === 'html' ? `/${f.file}?theme=${encodeURIComponent(theme)}&r=${bakeGen}` : `/__mv/${f.kind === 'draw' ? 'draw' : 'frame'}/?id=${encodeURIComponent(id)}&theme=${encodeURIComponent(theme)}&r=${bakeGen}` },
     })
     textureLine = r === null
       ? `  textures: none - no Chrome on this machine; frames with glass will rest live (install Chrome, or ship as is)`

@@ -245,9 +245,9 @@ export interface SlideOut {
 export const captureScale = (w: number, h: number): number => Math.max(1, Math.min(3, Math.floor(Math.sqrt(16e6 / (w * h)) * 4) / 4))
 
 /** The URL a page renders at: the frame host (or an html frame's own file) with `export=1` - images at full resolution. */
-export const exportUrl = (origin: string, page: { frame: string; kind: 'tsx' | 'html'; theme: string }, file?: string): string => page.kind === 'html' && file
+export const exportUrl = (origin: string, page: { frame: string; kind: 'tsx' | 'html' | 'draw'; theme: string }, file?: string): string => page.kind === 'html' && file
   ? `${origin}/${file.split('/').map(encodeURIComponent).join('/')}?theme=${encodeURIComponent(page.theme)}&export=1`
-  : `${origin}${ROUTE}/frame/?id=${encodeURIComponent(page.frame)}&theme=${encodeURIComponent(page.theme)}&export=1`
+  : `${origin}${ROUTE}/${page.kind === 'draw' ? 'draw' : 'frame'}/?id=${encodeURIComponent(page.frame)}&theme=${encodeURIComponent(page.theme)}&export=1`
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 

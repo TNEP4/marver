@@ -71,7 +71,7 @@ export function hydrateBoardPolicy(boards: Record<string, { type?: string; open?
   for (const [k, v] of Object.entries(boards)) if (!BOARD_POLICY[k]) BOARD_POLICY[k] = v
 }
 
-export interface FrameEntry { id: string; file: string; kind: 'tsx' | 'html'; scene: string; title?: string; viewport?: string; theme?: string; variantGroup?: string; variant?: string; intent?: string; contentWidth?: number; slide?: boolean; preview?: false; note?: string }
+export interface FrameEntry { id: string; file: string; kind: 'tsx' | 'html' | 'draw'; size?: { w: number; h: number }; scene: string; title?: string; viewport?: string; theme?: string; variantGroup?: string; variant?: string; intent?: string; contentWidth?: number; slide?: boolean; preview?: false; note?: string }
 export interface Manifest { frames: FrameEntry[]; scenes: { name: string; frames: number; title?: string; description?: string; note?: string }[] }
 export interface Node {
   key: string; frame: string; x: number; y: number; w: number; h: number
@@ -369,7 +369,7 @@ function keepDocuments(mounted: Node[], nodes: Node[]): { nodes: Node[]; kept: S
 export function frameUrl(frame: FrameEntry, theme: string): string {
   return withWs(frame.kind === 'html'
     ? `/${frame.file}?theme=${theme}&r=${manifestRev}`   // r= carries the generation for the sh:ready guard (static serving ignores it)
-    : `${ROUTE}/frame/?id=${encodeURIComponent(frame.id)}&theme=${theme}&r=${manifestRev}`)
+    : `${ROUTE}/${frame.kind === 'draw' ? 'draw' : 'frame'}/?id=${encodeURIComponent(frame.id)}&theme=${theme}&r=${manifestRev}`)
 }
 
 /** The global view theme: the user's sticky preference, applied across boards and
@@ -527,6 +527,8 @@ function defaultSize(frame: FrameEntry) {
   // a slide's stage is its declared viewport, else 1280×720
   const sl = slideSize(frame, CONFIG.viewports)
   if (sl) return { w: sl.width, h: sl.height }
+  // a drawing (spec 38): the size its file's header gives it on the board
+  if (frame.kind === 'draw') return { w: frame.size?.w ?? 960, h: frame.size?.h ?? 640 }
   // content frames: own width from Doc layout (meta.viewport, when declared, wins - the existing
   // precedence); height from this session's measurement at that width, else the committed one,
   // else a placeholder until sh:measure lands

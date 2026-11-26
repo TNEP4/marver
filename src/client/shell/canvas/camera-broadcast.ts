@@ -20,6 +20,23 @@ function frameWindows(): Window[] {
 function broadcast(moving: boolean): void {
   const msg = moving ? { type: 'sh:camera', moving: true } : { type: 'sh:camera', moving: false, scale: lastScale }
   for (const w of frameWindows()) { try { w.postMessage(msg, location.origin) } catch { /* cross-doc timing */ } }
+  if (!moving) crispDrawings()
+}
+
+/** Drawings (spec 38, decision 23) re-render at the camera's scale only while on screen - at most 6 at a time, the
+ *  largest first; every other drawing goes back to its native pixel ratio (its canvas memory with it). */
+export const CRISP_MAX = 6
+function crispDrawings(): void {
+  const vw = innerWidth, vh = innerHeight
+  const draws = [...document.querySelectorAll<HTMLIFrameElement>('#sh-world iframe[data-kind="draw"]')].map((f) => {
+    const r = f.getBoundingClientRect()
+    const vis = Math.max(0, Math.min(r.right, vw) - Math.max(r.left, 0)) * Math.max(0, Math.min(r.bottom, vh) - Math.max(r.top, 0))
+    return { f, vis }
+  })
+  const sharp = new Set(draws.filter((d) => d.vis > 0).sort((a, b) => b.vis - a.vis).slice(0, CRISP_MAX).map((d) => d.f))
+  for (const { f } of draws) {
+    try { f.contentWindow?.postMessage({ type: 'sh:draw-crisp', scale: sharp.has(f) ? lastScale : 1 }, location.origin) } catch { /* timing */ }
+  }
 }
 
 /** What is moving on the canvas: the camera (a pan or zoom, `sh-camera`) and the layout (a preset or tidy animation,
@@ -51,4 +68,5 @@ export function startCameraBroadcast(): void {
 export function primeCameraFor(win: Window | null | undefined): void {
   if (!win) return
   try { win.postMessage({ type: 'sh:camera', moving: false, scale: lastScale }, location.origin) } catch { /* timing */ }
+  crispDrawings()
 }

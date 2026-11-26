@@ -131,7 +131,7 @@ const GRID = 20
 /** The elements that read the camera's variables: styles.css's readers (test/camera-readers.test.ts holds the two
  *  in step) and the inline styles of the selection bar, the group captions and the comment card. Their subtrees
  *  inherit the variables; anything else gets its var() default, as play's pins (outside #sh-world) must. */
-const CAMERA_READERS = '.sh-canvas::before, .sh-edge::before, .sh-ctx, #sh-world :is(.sh-node.sel, .sh-node.interact, '
+const CAMERA_READERS = '.sh-canvas::before, .sh-edge::before, .sh-ctx, .dk-cam, #sh-world :is(.sh-node.sel, .sh-node.interact, '
   + '.sh-node.working, .sh-handle, .sh-work-ind, .sh-vbadge, .sh-gcaption, .sh-notes-fold, .sh-stranded, .cm-pin, .cm-lead, '
   + '.cm-stack, .cm-card, .jm-pt, .jm-pickbox)'
 let cameraRule: CSSStyleDeclaration | null | undefined   // undefined: not chosen yet; null: inline on .sh-app
@@ -336,6 +336,12 @@ export function Canvas() {
       const cx = el.clientWidth / 2, cy = TOP + (el.clientHeight - TOP) / 2
       const k = target / scale   // zoom about the usable rectangle's centre (below the Mac app's strip with the inset)
       fly(cx - (cx - positionX) * k, cy - (cy - positionY) * k, target, 250)
+    }
+    canvasCtl.panBy = (dx: number, dy: number) => {
+      const inst = ref.current
+      if (!inst || (!dx && !dy)) return
+      const { positionX, positionY, scale } = inst.instance.transformState
+      fly(positionX + dx, positionY + dy, scale, 250)
     }
     canvasCtl.cameraBusy = () => !!ref.current?.instance.animation
     canvasCtl.layoutBusy = () => !!document.getElementById('sh-world')?.classList.contains('sh-preset')

@@ -320,5 +320,82 @@
     "prop": "onMouseDown",
     "label": "Search the canvas",
     "reason": "keeps the caret in the search field when anything in the lens is pressed; each control records its own command"
+  },
+  {
+    "file": "src/client/shell/draw/DrawBar.tsx",
+    "fn": "DrawBar",
+    "prop": "addEventListener:pointerdown",
+    "label": "",
+    "reason": "closes the tools ⋯ on a click elsewhere; each item records draw-cmd"
+  },
+  {
+    "file": "src/client/shell/draw/DrawBar.tsx",
+    "fn": "DrawBar",
+    "prop": "addEventListener:keydown",
+    "label": "",
+    "reason": "Escape closes the tools ⋯; nothing else"
+  },
+  {
+    "file": "src/client/shell/draw/DrawChrome.tsx",
+    "fn": "Hold",
+    "prop": "onMouseDown",
+    "label": "",
+    "reason": "a guard: a press on the drawing's controls keeps keyboard focus in the drawing (spec 38)"
+  },
+  {
+    "file": "src/client/shell/draw/DrawPanel.tsx",
+    "fn": "DrawPanel",
+    "prop": "addEventListener:pointerdown",
+    "label": "",
+    "reason": "closes a picker on a click elsewhere; each pick records draw-cmd"
+  },
+  {
+    "file": "src/client/shell/draw/DrawPanel.tsx",
+    "fn": "DrawPanel",
+    "prop": "addEventListener:keydown",
+    "label": "",
+    "reason": "Escape closes a picker; nothing else"
+  },
+  {
+    "file": "src/client/shell/draw/DrawPanel.tsx",
+    "fn": "swatches",
+    "prop": "onClick",
+    "label": "cur ? `${colorName(cur)} - more colours` : 'Mixed - more col",
+    "reason": "only opens the colour picker; each colour records draw-cmd"
+  },
+  {
+    "file": "src/client/shell/draw/DrawPanel.tsx",
+    "fn": "DrawPanel",
+    "prop": "onMore",
+    "label": "",
+    "reason": "only expands the arrowhead picker; each head records draw-cmd"
+  },
+  {
+    "file": "src/client/shell/draw/DrawPlay.tsx",
+    "fn": "DrawPlay",
+    "prop": "onClick",
+    "label": "Drawing menu",
+    "reason": "only opens the drawing menu; each item records"
+  },
+  {
+    "file": "src/client/shell/draw/DrawPlay.tsx",
+    "fn": "DrawPlay",
+    "prop": "onMouseDown",
+    "label": "",
+    "reason": "a guard: a press on play's controls keeps keyboard focus in the drawing (spec 38)"
+  },
+  {
+    "file": "src/client/shell/draw/DrawView.tsx",
+    "fn": "DrawView",
+    "prop": "addEventListener:pointerdown",
+    "label": "",
+    "reason": "closes the zoom menu on a click elsewhere; each item records draw-cmd"
+  },
+  {
+    "file": "src/client/shell/draw/kit.tsx",
+    "fn": "HoverTip",
+    "prop": "onMouseDown",
+    "label": "",
+    "reason": "hides the tooltip as the press starts; the button's own click records"
   }
 ]

@@ -48,6 +48,8 @@ export const WATCH_IGNORED = [
   '**/.next/**', '**/.turbo/**', '**/.vercel/**', '**/.output/**', '**/dist/**', '**/build/**', '**/out/**', '**/coverage/**',
   // tool-output dirs written into the project must never reload the canvas
   '**/.gstack/**', '**/.git/**', '**/.playwright-mcp/**',
+  // a drawing's atomic write (spec 38): its temporary file is never a change
+  '**/*.excalidraw.*.tmp',
   // context/'s JSON (the map, sync state): read by the check and the status pass, never by a frame
   '**/context/map.json', '**/context/sync/**',
 ]
@@ -94,7 +96,8 @@ export function neverBumps(root: string, abs: string): boolean {
   if (abs.includes(`${sep}node_modules${sep}`)) return true
   if (!under(root, abs)) return false
   const r = rel(root, abs)
-  return r === 'design/manifest.json' || r.startsWith('design/.local/') || r.startsWith('design/boards/')
+  // a drawing (spec 38) is rendered by Excalidraw at rest - no texture of any frame reads it
+  return r === 'design/manifest.json' || r.startsWith('design/.local/') || r.startsWith('design/boards/') || r.endsWith('.excalidraw') || /\.excalidraw\.[\w]+\.tmp$/.test(r)
 }
 
 /** Marver's own data files under the root, by their exact shape - the boards' and comments' JSON, its private

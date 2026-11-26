@@ -4,6 +4,7 @@ import { cap, frameById, frameUrl, shownRev, useStore, CONFIG, type Manifest, ty
 import { admit, readable, release } from './admission.ts'
 import { canvasCtl } from './ctl.ts'
 import { CopyIcon, IntentGlyph, ParallelogramFillIcon, ReloadIcon, SlideFrameIcon, XIcon } from '../icons.tsx'
+import { Ph } from '../draw/kit.tsx'
 import { CommentLayer } from '../Comments.tsx'
 import { useComments } from '../comments-store.ts'
 import { threadHostKey } from '../keys.ts'
@@ -443,7 +444,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
 
   return (
     <div
-      className={`sh-node${selected ? ' sel' : ''}${interact ? ' interact' : ''}${working ? ' working' : ''}`}
+      className={`sh-node${selected ? ' sel' : ''}${interact ? ' interact' : ''}${working ? ' working' : ''}${frame.kind === 'draw' ? ' dk-draw' : ''}`}
       data-theme={node.theme}
       style={{ transform: `translate(${node.x}px, ${node.y}px)`, width: node.w, height: node.h + HEADER, zIndex: hostsCard ? 30 : undefined,
         // the sticky column's width (spec 18): the docked comment card clears it on the left
@@ -465,7 +466,9 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
       )}
       <div className={`sh-node-head sh-no-pan${toneOf(mark)}`} onPointerDown={(e) => drag(e, 'move')} title={frame.file}>
         {/* the chrome badge: slide first, else the content intent glyph */}
-        {frame.slide
+        {frame.kind === 'draw'
+          ? <Ph n="PenNib" size={12} className="iicon dk-kind sh-no-pan" role="img" aria-hidden={false} aria-label="drawing" />
+          : frame.slide
           ? <SlideFrameIcon size={12} className="iicon sh-no-pan" role="img" aria-hidden={false} aria-label="slide" />
           : frame.intent && <IntentGlyph intent={frame.intent} size={12} className="iicon sh-no-pan" aria-label={frame.intent} />}
         <span className="id sh-no-pan">{frame.title ?? frame.id}</span>
@@ -503,6 +506,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
         <iframe
           ref={bindIframe}
           className="sh-live"
+          data-kind={frame.kind === 'draw' ? 'draw' : undefined}
           src={src}
           title={frame.id}
           onLoad={() => { setAway(stranded(iframeRef.current)); registerWin(); frameLoaded(node.key, iframeRef.current); recorder.loaded(node.key) }}

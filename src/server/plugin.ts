@@ -1,3 +1,4 @@
+import { DrawService } from './draw/service.ts'
 import type { Plugin, ViteDevServer } from 'vite'
 import { boardsChanged, pinningBoards, workActivity, workClock } from './work.ts'
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, watch, writeFileSync } from 'node:fs'
@@ -429,7 +430,18 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
         if (!(req.url ?? '').startsWith(`${ROUTE}/handout/`)) return next()
         import('./pdf.ts').then((m) => m.handoutMiddleware()(req, res as never, next), next)
       })
-      server.middlewares.use(apiMiddleware(root, { viewports: config.viewports, origin: listeningOrigin, bakeGen: () => (genClosed ? -1 : bakeGen), bakeReady: () => genReady, baked: () => bakedNow(), notify: (event) => { server.ws.send(event, {} as any); liveChanged() }, broadcast: (event, payload) => server.ws.send(event, payload as any), manifest: () => manifest, settled, workspace: ws, inputs,
+      // the drawings (spec 38): one service every write to a `.excalidraw` goes through
+      let drawHeaderChanged = () => {}
+      const draw = new DrawService({
+        root,
+        fileOf: (id) => manifest.frames.find((f) => f.id === id && f.kind === 'draw')?.file ?? null,
+        // a drawing's merged rev (spec 38): its open frames apply it; the live stream (app-live) reads nothing of it
+        broadcast: (_event, patch) => server.ws.send('sh:draw', patch as any),
+        headerChanged: () => drawHeaderChanged(),
+      })
+      draw.startSweep()
+      onClose(() => draw.stop())
+      server.middlewares.use(apiMiddleware(root, { draw, viewports: config.viewports, origin: listeningOrigin, bakeGen: () => (genClosed ? -1 : bakeGen), bakeReady: () => genReady, baked: () => bakedNow(), notify: (event) => { server.ws.send(event, {} as any); liveChanged() }, broadcast: (event, payload) => server.ws.send(event, payload as any), manifest: () => manifest, settled, workspace: ws, inputs,
         themes: config.themes, canvasName: () => canvasIdentity(root, config).local }))
       // the canvas's logo for the Mac app's tab (spec 28 A2.4, A2.9): proved like the document when asked with a nonce
       server.middlewares.use(logoRoute(root, () => canvasIdentity(root, config).logos, ctx.proof))
@@ -473,6 +485,10 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       }, 150)
       onClose(regen.cancel)
 
+      drawHeaderChanged = () => regen()
+      server.watcher.on('change', (f) => { if (f.endsWith('.excalidraw')) void draw.onDisk(f).catch((err) => console.error(`[${NAME}] drawing ${f}: ${(err as Error).message}`)) })
+      server.watcher.on('add', (f) => { if (f.endsWith('.excalidraw')) void draw.onDisk(f).catch(() => {}) })
+      server.watcher.on('unlink', (f) => { if (f.endsWith('.excalidraw')) draw.forget(f) })
       const watched = [join(root, 'design', 'scenes'), join(root, 'design', 'components')]
       const inScope = (file: string) => watched.some((w) => file.startsWith(w))
 
