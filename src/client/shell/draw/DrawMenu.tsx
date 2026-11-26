@@ -237,11 +237,9 @@ export function DrawContextMenu() {
     // its layout height (offsetHeight): the open animation scales it, so its on-screen box reads short at first
     const place = () => { const h = ref.current?.offsetHeight ?? 0; setTop(Math.max(TOP + 8, Math.min(m.y, window.innerHeight - h - 8))) }
     place()
-    // shown only at its final place - it never jumps under the pointer; placed again whenever its size settles
+    // shown only at its final place, and never moved after - a row never slides under a click on its way
     const raf = requestAnimationFrame(() => { place(); setShown(true) })
-    const ro = new ResizeObserver(place)
-    ro.observe(ref.current)
-    return () => { cancelAnimationFrame(raf); ro.disconnect() }
+    return () => cancelAnimationFrame(raf)
   }, [m])
   // it closes on a press anywhere (in the drawing too: its frame-down), when the board or the drawing moves under it,
   // on resize - one drawing menu at a time
