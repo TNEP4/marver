@@ -262,7 +262,10 @@ const DrawPlayComments = memo(function DrawPlayComments({ iframe, frameId, ready
   const [points, setPoints] = useState<Record<string, { x: number; y: number } | null>>({})
   const [offs, setOffs] = useState<Set<string>>(() => new Set())
   const placedAt = useRef<Record<string, { x: number; y: number }>>({})
+  const crowd = useRef<{ ids: string[]; i: number }>({ ids: [], i: -1 })
   const layer = useRef<HTMLDivElement>(null)
+  // Hide all UI changes what covers a pin: ask again (review r3 #3)
+  const hiddenUI = useHideUI()
   const [box, setBox] = useState({ w: innerWidth, h: innerHeight })
   useEffect(() => {
     const measure = () => { const r = layer.current?.getBoundingClientRect(); if (r) setBox({ w: r.width, h: r.height }) }
@@ -310,7 +313,7 @@ const DrawPlayComments = memo(function DrawPlayComments({ iframe, frameId, ready
     ask()
     const iv = setInterval(ask, 8000)
     return () => { clearInterval(iv); removeEventListener('message', onMsg); if (!list.length) ask() }
-  }, [frameId, threads.map((t) => `${t.id}:${JSON.stringify(t.anchor)}`).join(','), JSON.stringify(draftHere), iframe, ready])
+  }, [frameId, threads.map((t) => `${t.id}:${JSON.stringify(t.anchor)}`).join(','), JSON.stringify(draftHere), iframe, ready, hiddenUI])
 
   // the open thread's or the draft's element lit (⇧L), and a thread opened on purpose brought into view once
   useEffect(() => {
@@ -329,14 +332,16 @@ const DrawPlayComments = memo(function DrawPlayComments({ iframe, frameId, ready
   // a comment sent or closed gives the keyboard back to the drawing (the next letter is its tool - review r1 #6)
   const hadDraft = useRef(false)
   const hadThread = useRef(false)
+  // the card actually there - closed here, resolved by someone else, or gone (review r3 #4)
+  const cardOpen = !!active && threads.some((t) => t.id === active)
   useEffect(() => {
-    const thread = !!active && threads.some((t) => t.id === active)
+    const thread = cardOpen
     if (hadThread.current && !thread && !draftHere) {
       const ae = document.activeElement as HTMLElement | null
       if (!ae || ae === document.body || !ae.closest('input, textarea, [contenteditable]')) iframe.current?.contentWindow?.postMessage({ type: 'sh:draw-cmd', op: 'focus' }, location.origin)
     }
     hadThread.current = thread
-  }, [active])
+  }, [cardOpen])
   useEffect(() => {
     const has = !!draftHere
     if (hadDraft.current && !has) {
@@ -359,8 +364,16 @@ const DrawPlayComments = memo(function DrawPlayComments({ iframe, frameId, ready
   const overflow = threads.filter((t) => (placed.get(t.id)?.y ?? 0) > box.h - 28)
   const below = overflow.filter((t) => t.id !== active)
   const shownThreads = below.length ? threads.filter((t) => !below.includes(t)) : threads
-  // each click opens the next of the whole group (review r2 #5: never two of them in turn)
-  const nextBelow = () => { const i = overflow.findIndex((t) => t.id === active); return overflow[(i + 1) % overflow.length] }
+  // each click opens the next of the whole group, in a stable order on a cursor of its own - opening one can move it
+  // out of the group, and that must never send the stack back to the start (review r2 #5, r3 #2)
+  if (!overflow.length) crowd.current = { ids: [], i: -1 }
+  else for (const t of overflow) if (!crowd.current.ids.includes(t.id)) crowd.current.ids.push(t.id)
+  const nextBelow = () => {
+    const live = crowd.current.ids.filter((id) => threads.some((t) => t.id === id))
+    crowd.current.ids = live
+    crowd.current.i = (crowd.current.i + 1) % Math.max(1, live.length)
+    return threads.find((t) => t.id === live[crowd.current.i]) ?? overflow[0]
+  }
   const activeThread = threads.find((t) => t.id === active)
   const draftAt = draftHere ? (points.draft ?? (draftHere as any)?.point ?? null) : null
   return (

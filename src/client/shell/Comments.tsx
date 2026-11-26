@@ -916,7 +916,14 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
     const el = document.querySelector('.sh-play-stage')
     const ro = el ? new ResizeObserver(re) : null
     if (el && ro) ro.observe(el)
-    return () => { window.removeEventListener('resize', re); ro?.disconnect() }
+    // drawing play: its panel expanding, collapsing or hiding re-docks the card (review r3 #5)
+    const host = document.querySelector('.dk-playhost')
+    const mo = host ? new MutationObserver(re) : null
+    if (host && mo) mo.observe(host, { childList: true, subtree: false, attributes: true, attributeFilter: ['class'] })
+    const panel = host?.querySelector('.dk-props')
+    const pro = panel ? new ResizeObserver(re) : null
+    if (panel && pro) pro.observe(panel)
+    return () => { window.removeEventListener('resize', re); ro?.disconnect(); mo?.disconnect(); pro?.disconnect() }
   }, [stage, bounds.w, bounds.h])
   const flip = !float && !stage && at.x > bounds.w * 0.55
   // The card scales EXACTLY like the pins - screen-constant via --sh-inv, pure
@@ -1362,7 +1369,7 @@ export const DrawWorkLayer = memo(function DrawWorkLayer({ frameId, iframe, read
         for (const r of e.data.rects ?? []) {
           const was = placedAt.current[r.key]
           const el = layerRef.current?.querySelector(`[data-work="${CSS.escape(String(r.key))}"]`) as HTMLElement | null
-          if (el && was && r.rect) el.style.translate = `${r.rect.x - was.x}px ${r.rect.y - was.y}px`
+          if (el && was && r.rect) { el.style.translate = `${r.rect.x - was.x}px ${r.rect.y - was.y}px`; el.style.width = `${r.rect.w + 8}px`; el.style.height = `${r.rect.h + 8}px` }
         }
         return
       }

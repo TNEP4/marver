@@ -373,9 +373,11 @@ export function DrawEngine({ initial, theme, edit, editable, picking = false, on
       // render later - review r2 #1) and recorded on the undo stack as its own delete is
       const action = app.actionManager?.actions?.deleteSelectedElements
       if (!action) return false
-      const r = action.perform(app.scene.getElementsIncludingDeleted(), { ...app.state, selectedElementIds: Object.fromEntries(ids.map((id) => [id, true])) }, null, app)
+      // only these elements: no point editor, no group selection of another moment (review r3 #1)
+      const st = { ...app.state, selectedElementIds: Object.fromEntries(ids.map((id) => [id, true])), selectedGroupIds: {}, editingLinearElement: null, selectedLinearElement: null, editingGroupId: null }
+      const r = action.perform(app.scene.getElementsIncludingDeleted(), st, null, app)
       if (!r || !r.elements) return false
-      api.updateScene({ elements: r.elements, ...(r.appState ? { appState: { selectedElementIds: r.appState.selectedElementIds ?? {} } } : {}), captureUpdate: CU.IMMEDIATELY })
+      api.updateScene({ elements: r.elements, appState: { selectedElementIds: r.appState?.selectedElementIds ?? {}, editingLinearElement: null, selectedLinearElement: null }, captureUpdate: CU.IMMEDIATELY })
       return true
     },
     selectionText(ids) {

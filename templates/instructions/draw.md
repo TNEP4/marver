@@ -85,7 +85,16 @@ threads it strands. Re-pin only when needed with
 `--paper x,y` pins it on blank paper. Screen flags do not apply to drawings.
 
 Polish a drawing in place, with no scene snapshot, including rounds begun in
-chat. Its revisions and git preserve the before. Reply in each thread and name
-the revision. Siblings mean the same kind of element in the SAME drawing:
+chat. Its revisions and git preserve the before.
+
+**Answer every comment in its thread, and never resolve the owner's.** For each
+thread you addressed, run `npx marver comments reply <thread> --body "..."`
+naming what changed and the revision. The owner's own threads stay open - they
+resolve them after looking at the drawing. Only a collaborator's thread is
+yours to resolve, after replying: `npx marver comments resolve <thread>
+--addressed-in <drawing>`. If your sandbox keeps you off the canvas, say in
+your answer which threads you could not reply to. After a raw file edit the
+revision is the canvas's to give: read it back with `draw describe` (or say
+"saved to the file") rather than guessing a number. Siblings mean the same kind of element in the SAME drawing:
 change them only when asked; otherwise ask about them in the thread.
 A published reply is read by the owner's people: name elements, never file paths.
