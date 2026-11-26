@@ -175,12 +175,34 @@ export function DrawPanel({ link, state, top, popSide = 'right', style, cam }: {
 
 function Opacity({ value, onChange }: { value: number | null; onChange: (v: number) => void }) {
   const [v, setV] = useState(value ?? 100)
+  const cur = useRef(v)
+  cur.current = v
   useEffect(() => { if (value !== null) setV(value) }, [value])
+  // dragged by hand, never focused: a focused slider would take the caret from a text being typed in the drawing, and
+  // Excalidraw ends the edit on that blur - the panel then went away (Nic, 26 Nov). Keys still work once it has focus.
+  const drag = (e: React.PointerEvent<HTMLInputElement>) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    const el = e.currentTarget
+    const set = (x: number) => {
+      const r = el.getBoundingClientRect()
+      const n = Math.round(Math.max(0, Math.min(1, (x - r.left) / r.width)) * 10) * 10
+      if (n === cur.current) return
+      cur.current = n
+      setV(n)
+      onChange(n)
+    }
+    set(e.clientX)
+    el.setPointerCapture(e.pointerId)
+    const move = (m: PointerEvent) => set(m.clientX)
+    const up = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up) }
+    el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up)
+  }
   return (
     <div className="sec">
       <div className="lb">Opacity</div>
       <div className="dk-slider">
-        <input type="range" min={0} max={100} step={10} value={v} aria-label="Opacity" style={{ ['--v' as string]: `${v}%` }}
+        <input type="range" min={0} max={100} step={10} value={v} aria-label="Opacity" style={{ ['--v' as string]: `${v}%` }} onPointerDown={drag}
           onChange={(e) => { const n = Number(e.target.value); setV(n); onChange(n) }} />
         <span>{value === null ? '-' : v}</span>
       </div>
