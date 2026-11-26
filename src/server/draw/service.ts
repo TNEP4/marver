@@ -6,7 +6,11 @@
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, sep } from 'node:path'
-import { createHash, randomBytes } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
+import { drawHash as sha, drawLogKey } from './history.ts'
+import { drawingWork } from './work.ts'
+import { drawingThreads } from './comments.ts'
+import { isDrawAnchor } from '../../shared/anchor.ts'
 import { validElementId } from '../../shared/anchor.ts'
 import type { DrawElement, DrawHeader, DrawPatch, DrawSave } from '../../shared/draw-protocol.ts'
 import { DrawFileError, assignIndexes, emptyDoc, parseDrawFile, serializeDrawFile, contentKey, wholeElement, type DrawDoc } from './file.ts'
@@ -14,6 +18,7 @@ import { agentOps, moveOps, ownerOps, repairRefs, remapElementIds, type Lost, ty
 
 export interface LogEntry {
   rev: number
+  run?: string
   at: number
   by: string
   via: 'frame' | 'file' | 'cli' | 'create' | 'recover'
@@ -36,7 +41,6 @@ export interface DrawServiceDeps {
 
 export const SNAP_EVERY = 50
 const OWN_HASHES = 16
-const sha = (s: string) => createHash('sha1').update(s).digest('hex')
 const newEpoch = () => randomBytes(6).toString('hex')
 
 interface Drawing {
@@ -77,6 +81,11 @@ export class DrawService {
     this.deps = deps
     this.dir = join(deps.root, 'design', '.local', 'draw')
   }
+  /** Register the manifest inventory before Jam starts, without loading any page. */
+  async register(ids: readonly string[]): Promise<void> {
+    await Promise.all(ids.map(async (id) => { try { await this.open(id) } catch (err) { console.error(`[marver] drawing ${id}: ${(err as Error).message}`) } }))
+  }
+  async flush(): Promise<void> { for (const d of this.drawings.values()) await this.checkDisk(d.id, true) }
   private now() { return this.deps.now?.() ?? Date.now() }
 
   /** watch open drawings' mtimes (the watcher can miss events across atomic renames) */
@@ -111,7 +120,8 @@ export class DrawService {
     const d = await this.open(id)
     const { describeDrawing } = await import('./describe.ts')
     return this.locked(d, async () => {
-      const text = describeDrawing(id, d.doc, d.log, since, d.lost)
+      this.absorb(d)
+      const text = describeDrawing(id, d.doc, d.log, since, d.lost, this.now(), drawingThreads(this.deps.root, id))
       d.lost = []
       return text
     })
@@ -136,7 +146,7 @@ export class DrawService {
   }
 
   /** An agent's op (`marver draw add|set|move|rm`), applied to the current state. `opId` makes a retry a no-op. */
-  async op(id: string, op: AgentOp, opId: string, by = 'agent'): Promise<{ rev: number; ids: string[] }> {
+  async op(id: string, op: AgentOp, opId: string, by = 'agent', run?: string): Promise<{ rev: number; ids: string[]; stranded?: string[] }> {
     const d = await this.open(id)
     return this.locked(d, async () => {
       this.absorb(d)
@@ -172,9 +182,10 @@ export class DrawService {
         for (const e of els.values()) if (e.containerId && gone.has(e.containerId as string)) gone.add(e.id)
         ops = [...gone].map((i) => ({ id: i, el: null, v: els.get(i)!.version + 1 }))
       }
-      this.commit(d, ops, by, 'cli')
+      const stranded = op.kind === 'rm' ? drawingThreads(this.deps.root, id).filter((t) => { const a = t.anchor; return isDrawAnchor(a) && 'id' in a.el.draw && ops.some((o) => o.id === (a.el.draw as { id: string }).id) }).map((t) => t.id) : []
+      this.commit(d, ops, by, 'cli', undefined, undefined, undefined, undefined, run)
       if (opId) { d.ops.push(opId); if (d.ops.length > 200) d.ops.shift() }
-      return { rev: d.doc.header.rev, ids: ops.map((o) => o.id) }
+      return { rev: d.doc.header.rev, ids: ops.map((o) => o.id), ...(stranded.length ? { stranded } : {}) }
     })
   }
 
@@ -216,7 +227,7 @@ export class DrawService {
     if (!abs.startsWith(design)) throw new DrawOpError(`drawing "${id}" is outside design/`)
     const text = readText(abs)
     const doc = parseDrawFile(text)
-    const key = sha(id).slice(0, 12) + '-' + id.replace(/[^\w-]+/g, '_').slice(-40)
+    const key = drawLogKey(id)
     const d: Drawing = {
       id, abs, key, epoch: doc.header.epoch ?? newEpoch(), fileEpoch: !!doc.header.epoch, doc, tomb: new Map(), log: [], snaps: [], own: [],
       diskHash: sha(text), diskRev: doc.header.rev, diskHeaderRev: doc.header.rev, diskMtime: mtime(abs), seqs: new Map(), ops: [], lock: Promise.resolve(), lost: [],
@@ -374,15 +385,16 @@ export class DrawService {
       else { d.diskRev = d.doc.header.rev; this.saveDisk(d) }
       return
     }
-    this.commit(d, ops, 'agent', 'file', Object.keys(header).length ? header : undefined, Object.keys(files).length ? files : undefined, lost, theirs)
+    this.commit(d, ops, 'agent', 'file', Object.keys(header).length ? header : undefined, Object.keys(files).length ? files : undefined, lost, theirs, undefined, d.diskMtime)
   }
 
-  private commit(d: Drawing, ops: Op[], by: string, via: LogEntry['via'], header?: Partial<DrawHeader>, files?: Record<string, unknown>, lost?: Lost[], agentFile?: DrawDoc): void {
+  private commit(d: Drawing, ops: Op[], by: string, via: LogEntry['via'], header?: Partial<DrawHeader>, files?: Record<string, unknown>, lost?: Lost[], agentFile?: DrawDoc, run?: string, changedAt?: number): void {
     if (!ops.length && !header && !files) return
     const now = this.now()
     const rev = d.doc.header.rev + 1
     // apply, then repair what an agent's change may have broken (decision 11)
     const entry: LogEntry = { rev, at: now, by, via, epoch: d.epoch, ops, ...(header ? { header } : {}), ...(files ? { files } : {}), ...(lost?.length ? { lost } : {}) }
+    if (by !== 'owner') { const claim = drawingWork(this.deps.root).attribute(d.id, changedAt ?? now, run); if (claim) entry.run = claim }
     const titleWas = d.doc.header.title, sizeWas = JSON.stringify(d.doc.header.size)
     applyEntry(d.doc, d.tomb, entry)
     if (by !== 'owner') {
@@ -395,6 +407,7 @@ export class DrawService {
     mkdirSync(this.dir, { recursive: true })
     appendFileSync(join(this.dir, `${d.key}.jsonl`), JSON.stringify(entry) + '\n')
     d.log.push(entry)
+    drawingWork(this.deps.root).committed(d.id, entry)
     // an agent's file that already says everything the merge kept: not rewritten, so its next Edit still applies
     const rewrite = !agentFile || !sameDocContent(d.doc, agentFile)
     if (rewrite) this.writeFile(d)

@@ -691,7 +691,7 @@ async function boot(root: string, opts: DevOptions, instance: string, t: Startup
   // with its place in the order (the page's snapshot of the same state carries it too)
   let sent = ''
   const broadcast = (frames: string[]) => {
-    const state = { frames: [...frames].sort(), boards: boardsShowing(root, frames) }
+    const state = { frames: [...frames].sort(), boards: boardsShowing(root, frames), drawings: workActivity.drawings() }
     const key = JSON.stringify(state)
     if (key === sent) return
     sent = key

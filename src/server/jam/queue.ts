@@ -10,6 +10,7 @@
  * The functions here are synchronous over a journal held in memory; `createQueue` adds the lock
  * and the writes. The daemon (daemon.ts) runs what `form` claims and hands the results back.
  */
+import { drawingContext } from './drawing.ts'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -663,7 +664,7 @@ export function form(j: Journal, ctx: Ctx, o: FormOpts, now = Date.now()): { bat
       members.push({ id, card: c.id, board: c.board, brief })
       const t = c.thread ? threads.find((x) => x.id === c.thread) : undefined
       packetMembers.push({ id, card: c.id, kind: c.kind, board: c.board, ...(c.thread ? { thread: c.thread } : {}), frames: c.frames,
-        ...(t?.anchor !== undefined ? { anchor: t.anchor } : {}), brief })
+        ...drawingContext(ctx.root, c.board, t), brief })
     }
     const files = f.exclusive ? [...new Set(f.cards.flatMap((c) => c.exclusive ?? []))] : undefined
     // back from a run that left its session (F4): it runs as it was going to - spawned, saying why - and goes on from

@@ -16,8 +16,10 @@ export type WorkSource = 'jam' | 'cli'
 
 export interface Activity {
   /** Mark a frame working for a source. `ttlMs` overrides the default lease (caller clamps). */
-  mark(frame: string, ttlMs?: number, src?: WorkSource): void
-  clear(frame: string, src?: WorkSource): void
+  mark(frame: string, ttlMs?: number, src?: WorkSource, ids?: readonly string[], key?: string): void
+  addIds(frame: string, ids: readonly string[], src: WorkSource): void
+  drawings(): Record<string, { ids: string[]; lease: number }>
+  clear(frame: string, src?: WorkSource, key?: string): void
   clearAll(src?: WorkSource): void
   active(): string[]
   /** Is `frame` marked by `src` right now (an unexpired lease)? */
@@ -32,31 +34,53 @@ export interface Activity {
 }
 
 export function createActivity(ttlMs = 90_000): Activity {
-  const m = new Map<string, number>()   // "src|frame" -> expiry (ms epoch)
+  const m = new Map<string, { frame: string; src: WorkSource; until: number; ids: Set<string> }>()
+  const live = () => [...m.values()].filter((v) => v.until > Date.now())
+  const frames = () => [...new Set(live().map((v) => v.frame))]
   const cbs: ((frames: string[]) => void)[] = []
-  const frames = () => [...new Set([...m.keys()].map((k) => k.slice(k.indexOf('|') + 1)))]
   const emit = () => { const f = frames(); for (const cb of cbs) cb(f) }
   return {
-    mark(frame, ttl, src = 'cli') { if (!frame) return; m.set(`${src}|${frame}`, Date.now() + (ttl ?? ttlMs)); emit() },
-    clear(frame, src = 'cli') { if (m.delete(`${src}|${frame}`)) emit() },
+    mark(frame, ttl, src = 'cli', ids = [], key = '') {
+      if (!frame) return
+      const k = JSON.stringify([src, frame, key]), old = m.get(k)
+      m.set(k, { frame, src, until: Date.now() + (ttl ?? ttlMs), ids: new Set([...(old && old.until > Date.now() ? old.ids : []), ...ids]) }); emit()
+    },
+    addIds(frame, ids, src) {
+      let changed = false
+      for (const v of live()) if (v.frame === frame && v.src === src) for (const id of ids) if (!v.ids.has(id)) { v.ids.add(id); changed = true }
+      if (changed) emit()
+    },
+    drawings() {
+      const out: Record<string, { ids: string[]; lease: number }> = Object.create(null)
+      for (const v of live()) if (v.ids.size) {
+        const before = out[v.frame]
+        out[v.frame] = { ids: [...new Set([...(before?.ids ?? []), ...v.ids])].sort(), lease: Math.max(before?.lease ?? 0, v.until) }
+      }
+      return out
+    },
+    clear(frame, src = 'cli', key) {
+      let changed = false
+      for (const [k, v] of m) if (v.frame === frame && v.src === src && (key === undefined || k === JSON.stringify([src, frame, key]))) { m.delete(k); changed = true }
+      if (changed) emit()
+    },
     clearAll(src = 'cli') {
       let changed = false
-      for (const k of [...m.keys()]) if (k.startsWith(`${src}|`)) { m.delete(k); changed = true }
+      for (const [k, v] of m) if (v.src === src) { m.delete(k); changed = true }
       if (changed) emit()
     },
     active: frames,
-    has(frame, src) { const until = m.get(`${src}|${frame}`); return until !== undefined && until > Date.now() },
+    has(frame, src) { return live().some((v) => v.frame === frame && v.src === src) },
     sweep() {
-      const now = Date.now()
       let changed = false
-      for (const [k, until] of m) if (until <= now) { m.delete(k); changed = true }
+      for (const [k, v] of m) if (v.until <= Date.now()) { m.delete(k); changed = true }
       if (changed) emit()
     },
     leases(src) {
-      const now = Date.now()
-      return [...m].filter(([k, until]) => k.startsWith(`${src}|`) && until > now).map(([k, until]) => [k.slice(src.length + 1), until] as [string, number])
+      const out = new Map<string, number>()
+      for (const v of live()) if (v.src === src) out.set(v.frame, Math.max(out.get(v.frame) ?? 0, v.until))
+      return [...out]
     },
-    restore(frame, until, src) { if (frame && until > Date.now()) { m.set(`${src}|${frame}`, until); emit() } },
+    restore(frame, until, src) { if (frame && until > Date.now()) { m.set(JSON.stringify([src, frame, '']), { frame, src, until, ids: new Set() }); emit() } },
     onChange(fn) {
       cbs.push(fn)
       return () => { const i = cbs.indexOf(fn); if (i !== -1) cbs.splice(i, 1) }

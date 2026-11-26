@@ -1,3 +1,4 @@
+import { readDrawing } from '../src/server/draw/comments.ts'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -38,6 +39,20 @@ beforeEach(() => {
 afterEach(() => { service.stop(); rmSync(root, { recursive: true, force: true }) })
 
 describe('DrawService', () => {
+  it('reports the logged revision of retained raw-file bytes to drawing comments', async () => {
+    await save([el('cart')], 1)
+    const doc = disk(); doc.elements.get('cart')!.x = 100
+    writeAgent(doc)
+    const raw = readFileSync(abs, 'utf8')
+    await service.flush()
+    expect(readFileSync(abs, 'utf8')).toBe(raw)
+    expect(disk().header.rev).toBe(1)
+    expect(readDrawing(root, ID)!.doc.header).toMatchObject({ rev: 2, epoch: 'test-history' })
+    // A later edit has not been absorbed yet: it cannot borrow that mapping's revision.
+    doc.elements.get('cart')!.x = 200; writeAgent(doc)
+    expect(readDrawing(root, ID)!.doc.header.rev).toBe(1)
+  })
+
   it('saves one revision to the file and log, then broadcasts that same patch', async () => {
     const answer = await service.save(ID, { baseRev: 0, upserts: [el('cart')], deletes: [], header: { title: 'Cart', size: { w: 1200, h: 800 } } }, 'tab', 1)
     expect(answer.rev).toBe(1)

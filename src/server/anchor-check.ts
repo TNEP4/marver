@@ -9,6 +9,7 @@
  * the check - no Chrome, a browser that will not start, a frame that throws, the deadline - comes
  * back `unchecked`, and the caller writes the note unchecked with a warning.
  */
+import { checkDrawingAnchor, readDrawing, targetOnFrame } from './draw/comments.ts'
 import { planShot, frameUrl, manifestFrame, MOUNTED, withBrowser } from './shot.ts'
 import type { AnchorCheck, AnchorTarget } from '../shared/anchor.ts'
 
@@ -32,6 +33,9 @@ export interface CheckRequest {
 export class CheckInputError extends Error {}
 
 export async function checkAnchor(req: CheckRequest, deadlineMs = CHECK_MS - 1_000): Promise<AnchorCheck> {
+  const drawing = readDrawing(req.root, req.frameId)
+  try { targetOnFrame(!!drawing, req.target, req) } catch (err) { throw new CheckInputError((err as Error).message) }
+  if (drawing) return checkDrawingAnchor(drawing.doc, req.target, req.others)
   const theme = req.theme ?? 'light'
   // any name the canvas config may give a theme; it reaches the frame URL-encoded
   if (!theme.trim() || theme.length > 64) throw new CheckInputError(`invalid theme "${theme}"`)

@@ -651,8 +651,10 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
             const ok = op && ((op.kind === 'add' && Array.isArray(op.elements)) || (op.kind === 'set' && typeof op.id === 'string' && op.fields && typeof op.fields === 'object')
               || (op.kind === 'move' && Array.isArray(op.ids) && Number.isFinite(op.dx) && Number.isFinite(op.dy)) || (op.kind === 'rm' && Array.isArray(op.ids)))
             if (!ok) return json(res, 400, { error: 'an op: add {elements, at?} | set {id, fields} | move {ids, dx, dy} | rm {ids}' })
+            const { drawingWork } = await import('./draw/work.ts')
+            if (body.run !== undefined && (!agent || typeof body.run !== 'string' || !drawingWork(root).claim(body.run))) return json(res, 409, { error: 'the owner moved this run elsewhere - stop editing and release it' })
             const by = agent ? (typeof body.by === 'string' && /^agent(:[\w.-]{1,40})?$/.test(body.by) ? body.by : 'agent') : 'owner'
-            return json(res, 200, await opts.draw.op(id, op, typeof body.opId === 'string' ? body.opId.slice(0, 80) : '', by))
+            return json(res, 200, await opts.draw.op(id, op, typeof body.opId === 'string' ? body.opId.slice(0, 80) : '', by, body.run))
           }
           return json(res, 405, { error: 'GET, PUT or POST' })
         } catch (err) {
@@ -1308,7 +1310,7 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           // the frames, and the boards showing them
           const { boardsShowing, activityClock } = await import('./work.ts')
           const frames = workActivity.active()
-          return json(res, 200, { frames, boards: boardsShowing(root, frames), seq: activityClock.seq })
+          return json(res, 200, { frames, boards: boardsShowing(root, frames), drawings: workActivity.drawings(), seq: activityClock.seq })
         }
         if (req.method === 'POST') {
           if (!ownerGated(req) && !tokenOk()) return json(res, 403, { error: 'forbidden' })
