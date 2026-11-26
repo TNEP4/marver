@@ -33,6 +33,7 @@ import { cardSelectAll, CommentsController, parkThread, revealThread, SignIn } f
 import { OutboxBanner, usePlacedBanner } from './banner.tsx'
 import { poweredByUrl } from '../../shared/utm.ts'
 import { avatarFallback, NO_COMMENTS_HERE, useComments } from './comments-store.ts'
+import { commentsEscape, toggleCommentMode, toggleLaserComment, togglePins } from './comment-keys.ts'
 import { goTo, isLatest, navigated, navigatedByHand, navNow, revealFrame, switchFor, watchHands } from './goto.ts'
 import { bootSettled, dismissShow, goNow, showTarget, useShowNotice } from './show.ts'
 import { Search, SEARCH_ON, toggleSearch, useSearch } from './search/Search.tsx'
@@ -781,6 +782,10 @@ export function App() {
       } else if (data.type === 'sh:boot') {
         recorder.booted(nodeKey, data)   // a new document: its node's outcome starts over (spec 28 A1.7)
       } else if (data.type === 'sh:exit-interact') {
+        // Escape from inside a frame: comments close first, as on every surface (spec 39 B4); then drawing mode ends
+        const c = commentsStore()
+        if (c.commentMode || c.active || c.draft) { commentsEscape(cmd('escape', { via: 'key', in: 'frame', keys: 'Escape' })); return }
+        if (data.comments && s.interact !== nodeKey) return   // a view-only drawing's Escape with nothing to close
         if (s.interact === nodeKey) { cmd('interact-off', { via: 'key', in: 'frame', keys: 'Escape' }); setInteract(null) }
       } else if (data.type === 'sh:theme-applied') {
         if (typeof data.theme === 'string') s.setThemeOn(nodeKey, data.theme)
@@ -887,9 +892,8 @@ export function App() {
       if ((e.metaKey || e.ctrlKey) && e.key === 'a') { e.preventDefault(); cmd('select-all', how()); navigatedByHand(); s.selectAll(); return }
       if (e.metaKey || e.ctrlKey) return
       if (e.key === 'Escape') {
-        const c = commentsStore()
         const h = cmd('escape', how())
-        if (c.commentMode || c.active || c.draft) { h.step('comments-off'); c.setMode(false); c.setActive(null); c.setDraft(null) }
+        if (commentsEscape(h)) { /* comments close first, on every surface (spec 39 B4) */ }
         else if (s.laser) { h.step('laser-off'); s.setLaser(false) }          // Escape also exits laser mode (parity with comment)
         else if (s.interact) { h.step('interact-off'); setInteract(null) }
         else { h.step('deselect'); navigatedByHand(); select(null) }
@@ -929,16 +933,8 @@ export function App() {
       }
       // C = comment mode (the Figma/Miro convention) · Shift+C = hide/show
       // pins · Shift+P = copy file path(s) (P alone is play; D6, changelog 0.4.0)
-      if (e.key === 'c' && !e.shiftKey) {
-        const c = commentsStore()
-        const h = cmd('comments', how())
-        if (!c.commentMode && s.board === UNPLACED) { h.noop('unplaced'); return void toast(NO_COMMENTS_HERE) }
-        if (!c.commentMode && stoppedFor('Comments need the canvas running')) { h.noop('stopped'); return }
-        if (!c.commentMode) s.setLaser(false)
-        c.setMode(!c.commentMode)
-        toast(c.commentMode ? 'comment mode off' : 'comment mode - click an element in a frame')
-      }
-      if (e.key === 'C' && e.shiftKey) { const c = commentsStore(); cmd('pins', how()); c.setShow(!c.show) }
+      if (e.key === 'c' && !e.shiftKey) toggleCommentMode(how())
+      if (e.key === 'C' && e.shiftKey) togglePins(how())
       // sticky notes (spec 18): any note visible -> hide all; none -> show all
       // U: the next frame that needs you, else the next new one (spec 25)
       if (e.key === 'u' && !e.shiftKey && !PUBLISHED) {
@@ -955,12 +951,7 @@ export function App() {
       // Shift+L = laser comment: the laser-sharp lighting on the element a comment tags
       // (pick hover, compose lock, open-thread highlight). Pins and cards stay - this
       // only dims the lighting inside the artwork.
-      if (e.key === 'L' && e.shiftKey) {
-        const c = commentsStore()
-        cmd('laser-comment', how())
-        c.setShowAnchor(!c.showAnchor)
-        toast(c.showAnchor ? 'laser comment off' : 'laser comment on')
-      }
+      if (e.key === 'L' && e.shiftKey) toggleLaserComment(how())
       // I = copy the selected frame as a 2x PNG · Shift+I = 4x (dev only; one frame at a time)
       if ((e.key === 'i' || e.key === 'I') && !PUBLISHED && !e.altKey && !e.repeat) { s.copyFrameImage(e.shiftKey ? 4 : 2, how()); return }
       if (e.key === 'P' && e.shiftKey) {

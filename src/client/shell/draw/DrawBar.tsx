@@ -5,11 +5,11 @@
  */
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { DrawState, DrawTool } from '../../../shared/draw-protocol.ts'
-import { ImagesSquareIcon, MoonIcon, PanelFilledIcon, ParallelogramFillIcon, SignpostIcon, SunIcon, CheckIcon } from '../icons.tsx'
+import { ImagesSquareIcon, MoonIcon, PanelFilledIcon, SignpostIcon, SunIcon, CheckIcon } from '../icons.tsx'
 import { HoverTip, MI, MAIN_TOOLS, MORE_TOOLS, Ph, TOOL, type TipSide } from './kit.tsx'
 import { drawSend, type DrawLink } from './link.ts'
 
-export function DrawBar({ link, state, tools, mode, tipSide, menuSide = 'below', style, cam, onCopyPath, onCopyImage, onExport, onCollapse, onHideUI, onBack, onTheme, dark, copied }: {
+export function DrawBar({ link, state, tools, mode, tipSide, menuSide = 'below', style, cam, onCopyPath, onCopyImage, onExport, onCollapse, onHideUI, onBack, onTheme, dark, copied, comment }: {
   link: DrawLink
   state: DrawState | undefined
   tools: DrawTool[]
@@ -28,6 +28,8 @@ export function DrawBar({ link, state, tools, mode, tipSide, menuSide = 'below',
   onTheme?: () => void
   dark?: boolean
   onBack?: () => void
+  /** spec 39: drawing play's comment button (the canvas has the toolbar's) */
+  comment?: ReactNode
   copied?: 'path' | 'image' | null
 }) {
   const [open, setOpen] = useState(false)
@@ -74,6 +76,7 @@ export function DrawBar({ link, state, tools, mode, tipSide, menuSide = 'below',
             <button className="dk-b" aria-label="Copy as image" onClick={onCopyImage}>{copied === 'image' ? <CheckIcon size={16} /> : <ImagesSquareIcon size={16} />}</button>
           </HoverTip>
         </>}
+        {mode === 'play' && comment && <><i className="dk-sep" />{comment}</>}
         {mode === 'play' && onCollapse && <>
           <i className="dk-sep" />
           <HoverTip label="Collapse toolbar" keys="⌘/" side={side}>
@@ -87,9 +90,8 @@ export function DrawBar({ link, state, tools, mode, tipSide, menuSide = 'below',
           {editable && left.length > 0 && more.length > 0 && <div className="div" />}
           {editable && more.map((t) => <MI key={t} icon={TOOL[t].icon} label={TOOL[t].label} k={TOOL[t].key} on={tool === t} onClick={() => pick(t)} />)}
           {editable && <div className="div" />}
-          {/* the drawing's own actions: History and Send to Marver arrive with their releases (spec 38: not in this one) */}
+          {/* History arrives with its release; Marver is reached by @marver in a thread or the coding agent (spec 39, decision 2) */}
           <MI icon={<Ph n="ClockCounterClockwise" size={15} />} label="History" off />
-          {mode === 'canvas' && <MI icon={<ParallelogramFillIcon size={13} />} label="Send to Marver" k="⇧⌘↵" mv off />}
           <MI icon={<Ph n="FilePng" size={15} />} label="Export as PNG" onClick={() => { setOpen(false); onExport('png') }} />
           <MI icon={<Ph n="FilePdf" size={15} />} label="Export as PDF" onClick={() => { setOpen(false); onExport('pdf') }} />
           {mode === 'play' && <MI icon={<ImagesSquareIcon size={15} />} label="Copy as image" k="⇧I" onClick={() => { setOpen(false); onCopyImage?.() }} />}

@@ -5,8 +5,16 @@
  * Positions are the canvas's own: right under the Mac app's strip, 10 px in. Published: view only (name, view).
  */
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import { create } from 'zustand'
 import { useStore, PUBLISHED } from '../store.ts'
+import { useComments } from '../comments-store.ts'
+import { DraftComposer, Pins, ThreadCard, isDrawAnchorish, placePins } from '../Comments.tsx'
+import { commentGate, commentsEscape, toggleCommentMode, toggleLaserComment, togglePins } from '../comment-keys.ts'
+import { toggleHideUI, useHideUI } from '../Toolbar.tsx'
+import { jamKey } from '../jam-keys.ts'
+import { frameGone, frameLoaded, frameReady } from '../jam-capture.ts'
+import { CommentIcon } from '../icons.tsx'
+import { useDrawPlay } from './play-state.ts'
+export { useDrawPlay } from './play-state.ts'
 import { withWs } from '../api.ts'
 import { ROUTE } from '../../const.ts'
 import { framePath } from '../ContextMenu.tsx'
@@ -25,11 +33,6 @@ function switchTheme(via: 'click' | 'key'): void {
   st.setTheme(st.viewTheme === 'dark' ? 'light' : 'dark')
 }
 
-export const useDrawPlay = create<{ at: string | null; open(id: string): void; close(): void }>((set) => ({
-  at: null,
-  open: (id) => set({ at: id }),
-  close: () => set({ at: null }),
-}))
 
 /** P on a selected drawing (or the board's play while one is selected or in drawing mode) plays the drawing. */
 export function playDrawingIfSelected(): boolean {
@@ -41,7 +44,7 @@ export function playDrawingIfSelected(): boolean {
   const f = n ? s.frameFor(n) : undefined
   if (!n || !f || f.kind !== 'draw' || n.missing) return false
   if (s.interact) s.setInteract(null)
-  useDrawPlay.getState().open(f.id)
+  useDrawPlay.getState().open(f.id, n.key)
   return true
 }
 
@@ -58,7 +61,9 @@ export function DrawPlay() {
   const iframe = useRef<HTMLIFrameElement>(null)
   const [panelOpen, setPanelOpen] = useState(true)
   const [barOpen, setBarOpen] = useState(true)
-  const [hidden, setHidden] = useState(false)
+  // Hide all UI is the shell's one state (spec 39 B5): H, the ⋯ row, the bar and the Mac app's menu check share it
+  const hidden = useHideUI()
+  const setHidden = (on: boolean) => { if (on !== hidden) toggleHideUI() }
   const hiddenRef = useRef(false)
   hiddenRef.current = hidden
   const [menu, setMenu] = useState(false)
@@ -81,13 +86,32 @@ export function DrawPlay() {
         try { iframe.current?.contentWindow?.postMessage({ type: 'sh:interactive', on: true }, location.origin) } catch { /* gone */ }
         // the UI's state again, now that the drawing listens (the first one can land before it does): H is Hide all UI
         if (link) sendQuiet(link, { op: 'ui', hidden: hiddenRef.current })
+        // comment mode too (spec 39 B5), and the keys the shell owns mirrored into it (⌘K, the laser's, Jam's)
+        pickNow()
+        frameReady('draw-play')
         return
       }
       if (d?.type === 'sh:draw-flushed') { flushed.current?.(); return }
-      if (d?.type === 'sh:exit-interact') { leave(); return }
+      // Escape: comments close first (spec 39 B4), then play ends
+      if (d?.type === 'sh:exit-interact') { if (commentsEscape(cmd('escape', { via: 'key', in: 'stage', keys: 'Escape' }))) return; leave(); return }
+      // comment mode: the drawing reports the element (or paper point) picked - the draft goes on the played node
+      if (d?.type === 'sh:picked') {
+        const c = useComments.getState()
+        if (!c.commentMode || String(d.id ?? '') !== at) return
+        if (c.active) c.setActive(null)
+        cmd('comment-pick', { via: 'click', in: 'stage', frame: at })
+        c.setDraft({ nodeKey: useDrawPlay.getState().node ?? `play:${at}`, frame: at, anchor: d.anchor })
+        return
+      }
+      // a press in the drawing closes an open card (the shell's own listeners never see it)
+      if (d?.type === 'sh:frame-down') { const c = useComments.getState(); if (c.active) { cmd('thread-close', { via: 'click', in: 'stage' }); c.setActive(null) } return }
+      if (d?.type === 'sh:key') { if (typeof d.key === 'string') jamKey({ key: d.key, shift: !!d.shift, alt: !!d.alt, meta: !!d.meta, ctrl: !!d.ctrl }, 'stage'); return }
       if (d?.type === 'sh:draw-key') {
         if (d.key === 'reveal') setHidden(false)
         else if (d.key === 'hide') { cmd('hide-ui', { via: 'key', in: 'stage' }); setHidden(true) }
+        else if (d.key === 'comments') toggleCommentMode({ via: 'key', in: 'stage', keys: 'c' })
+        else if (d.key === 'pins') togglePins({ via: 'key', in: 'stage', keys: '⇧c' })
+        else if (d.key === 'laser-comment') toggleLaserComment({ via: 'key', in: 'stage', keys: '⇧l' })
         else if (d.key === 'theme') switchTheme('key')
         else if (d.key === 'panel') setPanelOpen((o) => !o)
         else if (d.key === 'toolbar') setBarOpen((o) => !o)
@@ -97,11 +121,17 @@ export function DrawPlay() {
     }
     addEventListener('message', onMsg)
     return () => removeEventListener('message', onMsg)
-  }, [at])
+  }, [at, hidden])
+  // comment mode follows the shared store - the toolbar, C anywhere and the Mac app's Comments item all drive it (B5)
+  const commentMode = useComments((s) => s.commentMode)
+  const showAnchor = useComments((s) => s.showAnchor)
+  const pickNow = () => { try { iframe.current?.contentWindow?.postMessage({ type: 'sh:pick', on: useComments.getState().commentMode, quiet: !useComments.getState().showAnchor }, location.origin) } catch { /* not yet */ } }
+  useEffect(() => { if (at) pickNow() }, [at, commentMode, showAnchor])
+  useEffect(() => () => frameGone('draw-play'), [at])
   // theme follows the canvas's
   useEffect(() => { try { iframe.current?.contentWindow?.postMessage({ type: 'sh:set-theme', theme }, location.origin) } catch { /* not yet */ } }, [theme])
   // play tells the host the UI's state: H toggles Hide all UI here (Excalidraw's hand keeps H on the canvas)
-  useEffect(() => { if (link) sendQuiet(link, { op: 'ui', hidden }) }, [hidden, at])
+  useEffect(() => { hiddenRef.current = hidden; if (link) sendQuiet(link, { op: 'ui', hidden }) }, [hidden, at])
 
   if (!at || !link) return null
   // leaving waits for the drawing's last save (3 s at most - a dead server never traps the person in play)
@@ -118,7 +148,9 @@ export function DrawPlay() {
   const dark = theme === 'dark'
   const copyPath = () => { if (!frame) return; navigator.clipboard.writeText(framePath(useStore.getState().board, frame)).then(() => toast('path copied'), () => toast('copy blocked - click the drawing first')) }
   const copyImage = () => exportDrawing(link, 'clipboard', toast, dark)
-  const keepFocus = (e: React.MouseEvent) => { if (!(e.target as HTMLElement).closest('input, textarea')) e.preventDefault() }
+  // keeps the keyboard in the drawing - but text in a comment card can still be selected (spec 39 B4)
+  const keepFocus = (e: React.MouseEvent) => { if (!(e.target as HTMLElement).closest('input, textarea, .cm-card, .cm-pin, .cm-stack, .cm-composer')) e.preventDefault() }
+  const commentBtn = <DrawCommentButton />
 
   const head = (
     <div className="dk-phead">
@@ -135,7 +167,8 @@ export function DrawPlay() {
       // the drawing's own paper fills the tab, the strip behind the app's tabs included (the play frames' note)
       style={{ position: 'fixed', inset: 0, zIndex: 60, paddingTop: 'var(--mv-top, 0px)', boxSizing: 'border-box', background: state?.paper ?? (dark ? '#121212' : '#ffffff'), ...(closing ? { visibility: 'hidden', pointerEvents: 'none' } : {}) }}>
       <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, top: 'var(--mv-top, 0px)' }}>
-        <iframe ref={iframe} src={src.current} title={link.title} />
+        <iframe ref={iframe} src={src.current} title={link.title} onLoad={() => frameLoaded('draw-play', iframe.current)} />
+        <DrawPlayComments iframe={iframe} frameId={at} />
       </div>
       {panelOpen
         ? <DrawPanel link={link} state={state} top={head} popSide="right" style={{ ...EDGE, left: 10 }} />
@@ -156,14 +189,137 @@ export function DrawPlay() {
         ? <DrawBar link={link} state={state} tools={MAIN_TOOLS} mode="play" style={{ ...EDGE, right: 10 }}
             onExport={(k) => exportDrawing(link, k, toast, dark)} onCopyImage={copyImage}
             onCollapse={() => { cmd('toolbar', { via: 'click', in: 'stage' }); setBarOpen(false) }} onHideUI={() => { cmd('hide-ui', { via: 'click', in: 'stage' }); setHidden(true) }} onBack={leave}
-            onTheme={() => switchTheme('click')} dark={dark} />
+            onTheme={() => switchTheme('click')} dark={dark} comment={commentBtn} />
         : <div className="dk-anchor" style={{ ...EDGE, right: 10 }}><HoverTip label="Expand toolbar" keys="⌘/" side="bottom"><button className="dk-glass dk-fab" aria-label="Expand toolbar" onClick={() => { cmd('toolbar', { via: 'click', in: 'stage' }); setBarOpen(true) }}><PanelHollowIcon size={18} style={{ transform: 'rotate(90deg)' }} /></button></HoverTip></div>)}
       <DrawView link={link} state={state} size="lg" map menuSide="top" style={{ right: 10, bottom: 10 }} />
       {state?.editable === false && (
-        <div className="dk-anchor" style={{ ...EDGE, right: 10 }}>
+        <div className="dk-anchor dk-row" style={{ ...EDGE, right: 10 }}>
+          {/* a view-only (published) drawing has no bar: the comment button sits beside the Back X (spec 39 A2) */}
+          <DrawCommentButton fab />
           <HoverTip label="Back to the canvas" keys="esc" side="bottom"><button className="dk-glass dk-fab" aria-label="Back to the canvas" onClick={leave}><Ph n="X" size={16} /></button></HoverTip>
         </div>
       )}
+    </div>
+  )
+}
+
+/** Drawing play's comment button (spec 39 B5): the comment button's own rules - unplaced, stopped, a view-only role
+ *  ("Ask to comment"), signed out (sign in) - in the drawing's skin. */
+function DrawCommentButton({ fab = false }: { fab?: boolean }) {
+  const commentMode = useComments((s) => s.commentMode)
+  const show = useComments((s) => s.show)
+  const asked = useRef(0)
+  useComments((s) => s.myBoards)
+  const locked = commentGate() === 'locked'
+  if (locked) {
+    return (
+      <HoverTip label="Commenting is not available for you yet - click to ask the owner" side="bottom">
+        <button className={fab ? 'dk-glass dk-fab' : 'dk-b'} aria-label="Ask to comment" style={{ opacity: .55 }} onClick={() => {
+          const h = cmd('ask-to-comment', { via: 'click', in: 'stage' })
+          if (Date.now() - asked.current < 8000) { h.noop('too-soon'); return }
+          asked.current = Date.now()
+          void useComments.getState().askToComment().then((ok) => { if (ok) h.done(); else h.fail('api'); useStore.getState().toast(ok ? 'asked the owner for comment access - they decide' : 'could not send the request - try again') })
+        }}><CommentIcon size={16} /></button>
+      </HoverTip>
+    )
+  }
+  return (
+    <HoverTip label={show ? 'Comment' : 'Comment (pins hidden: ⇧C)'} keys="C" side="bottom">
+      <button className={`${fab ? 'dk-glass dk-fab' : 'dk-b'}${commentMode ? ' on' : ''}`} aria-label="Comment" onClick={() => { toggleCommentMode({ via: 'click', in: 'stage' }) }}><CommentIcon size={16} /></button>
+    </HoverTip>
+  )
+}
+
+/** The comment overlay over the played drawing (spec 39 B5): the canvas's pins, card and composer, placed from what the
+ *  drawing pushes - moving with it by translation while it moves, landing once it stops, out-of-view pins parked. */
+function DrawPlayComments({ iframe, frameId }: { iframe: React.RefObject<HTMLIFrameElement | null>; frameId: string }) {
+  const show = useComments((s) => s.show)
+  const showAnchor = useComments((s) => s.showAnchor)
+  const active = useComments((s) => s.active)
+  const draft = useComments((s) => s.draft)
+  const allThreads = useComments((s) => s.threads)
+  const node = useDrawPlay((s) => s.node)
+  const threads = allThreads.filter((t) => t.frame === frameId && !t.resolved && isDrawAnchorish(t.anchor))
+  const [points, setPoints] = useState<Record<string, { x: number; y: number } | null>>({})
+  const [offs, setOffs] = useState<Set<string>>(() => new Set())
+  const placedAt = useRef<Record<string, { x: number; y: number }>>({})
+  const layer = useRef<HTMLDivElement>(null)
+  const [box, setBox] = useState({ w: innerWidth, h: innerHeight })
+  useEffect(() => {
+    const measure = () => { const r = layer.current?.getBoundingClientRect(); if (r) setBox({ w: r.width, h: r.height }) }
+    measure()
+    addEventListener('resize', measure)
+    return () => removeEventListener('resize', measure)
+  }, [])
+  const draftHere = draft?.frame === frameId && isDrawAnchorish(draft.anchor) ? draft.anchor : null
+
+  useEffect(() => {
+    const win = iframe.current?.contentWindow
+    if (!win) return
+    const list = threads.map((t) => ({ key: t.id, anchor: t.anchor }))
+    if (draftHere) list.push({ key: 'draft', anchor: draftHere })
+    const ask = () => { try { win.postMessage({ type: 'sh:resolve-anchors', anchors: list }, location.origin) } catch { /* gone */ } }
+    const onMsg = (e: MessageEvent) => {
+      if (e.source !== win || e.origin !== location.origin || e.data?.type !== 'sh:anchor-rects' || e.data.id !== frameId) return
+      const rects: any[] = e.data.rects ?? []
+      if (e.data.moving) {
+        layer.current?.classList.add('cm-moving')
+        for (const r of rects) {
+          if (r.orphan || !r.point) continue
+          const was = placedAt.current[r.key]
+          const pin = layer.current?.querySelector(`[data-thread="${CSS.escape(r.key)}"]`) as HTMLElement | null
+          if (pin && was) pin.style.translate = `${r.point.x - was.x}px ${r.point.y - was.y}px`
+        }
+        return
+      }
+      if (layer.current) { layer.current.classList.remove('cm-moving'); for (const pin of layer.current.querySelectorAll<HTMLElement>('.cm-pin')) pin.style.translate = '' }
+      const next: typeof points = {}
+      const off = new Set<string>()
+      for (const r of rects) {
+        if (r.orphan) { next[r.key] = null; continue }
+        if (r.off && r.key !== 'draft') { off.add(r.key); next[r.key] = null; continue }
+        next[r.key] = r.point
+        placedAt.current[r.key] = r.point
+      }
+      setPoints((cur) => (JSON.stringify(cur) === JSON.stringify(next) ? cur : next))
+      setOffs((cur) => (cur.size === off.size && [...off].every((k) => cur.has(k)) ? cur : off))
+    }
+    addEventListener('message', onMsg)
+    ask()
+    const iv = setInterval(ask, 8000)
+    return () => { clearInterval(iv); removeEventListener('message', onMsg); if (!list.length) ask() }
+  }, [frameId, threads.map((t) => `${t.id}:${JSON.stringify(t.anchor)}`).join(','), JSON.stringify(draftHere), iframe])
+
+  // the open thread's or the draft's element lit (⇧L), and a thread opened on purpose brought into view once
+  useEffect(() => {
+    const win = iframe.current?.contentWindow
+    if (!win) return
+    const a = !show || !showAnchor ? null : draftHere ?? (active ? threads.find((t) => t.id === active)?.anchor ?? null : null)
+    win.postMessage({ type: 'sh:highlight-anchor', frame: frameId, anchor: a ?? null }, location.origin)
+  }, [active, JSON.stringify(draftHere), show, showAnchor, frameId])
+  const revealed = useRef<string | null>(null)
+  useEffect(() => {
+    const t = active ? threads.find((x) => x.id === active) : undefined
+    if (t && revealed.current !== t.id) { revealed.current = t.id; iframe.current?.contentWindow?.postMessage({ type: 'sh:draw-cmd', op: 'reveal', anchor: t.anchor }, location.origin) }
+    if (!t) revealed.current = null
+  }, [active])
+
+  if (!show) return <div ref={layer} className="sh-play-comments" />
+  const stagePoints = new Map<string, { x: number; y: number } | null>()
+  const orphans = new Set<string>()
+  for (const t of threads) {
+    const p = points[t.id]
+    if (p === null && !offs.has(t.id)) orphans.add(t.id)
+    stagePoints.set(t.id, p ?? null)
+  }
+  const placed = placePins(threads, stagePoints, box.w, 1)
+  const activeThread = threads.find((t) => t.id === active)
+  const draftAt = draftHere ? (points.draft ?? (draftHere as any)?.point ?? null) : null
+  return (
+    <div ref={layer} className="sh-play-comments">
+      <Pins threads={threads} placed={placed} orphans={orphans} inv={1} active={active} offs={offs} published={PUBLISHED} />
+      {activeThread && <ThreadCard key={active!} thread={activeThread} at={placed.get(activeThread.id)!} bounds={box} nodeKey={node ?? undefined} stage />}
+      {draftAt && <DraftComposer at={draftAt} bounds={box} hue={(draftHere as any)?.el?.hue} />}
     </div>
   )
 }

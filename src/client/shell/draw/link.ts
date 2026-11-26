@@ -3,6 +3,7 @@
  * the bar and panel send it (`sh:draw-cmd`), and what comes back from an export. One store for the canvas's frames
  * (keyed by node key) and play's (keyed `play:<frame>`).
  */
+import { toggleCommentMode, toggleLaserComment, togglePins } from '../comment-keys.ts'
 import { create } from 'zustand'
 import type { DrawCmd, DrawState } from '../../../shared/draw-protocol.ts'
 import { cmd } from '../commands.ts'
@@ -84,6 +85,12 @@ export function drawMessage(key: string, data: any): boolean {
   if (data?.type === 'sh:draw-state') { useDraw.getState().put(key, data as DrawState); return true }
   // ⌥⇧D inside a drawing on the canvas: the drawing frame's theme (D alone stays the diamond in a drawing - Nic, 26 Nov)
   if (data?.type === 'sh:draw-key' && data.key === 'theme') { toggleDrawingTheme(key, 'key'); return true }
+  // C, ⇧C, ⇧L from inside a drawing (spec 39 B4): the shell's comment keys, the same rules as everywhere
+  if (data?.type === 'sh:draw-key' && (data.key === 'comments' || data.key === 'pins' || data.key === 'laser-comment')) {
+    const how = { via: 'key' as const, in: 'frame' as const, keys: data.key === 'comments' ? 'c' : data.key === 'pins' ? '⇧c' : '⇧l' }
+    if (data.key === 'comments') toggleCommentMode(how); else if (data.key === 'pins') togglePins(how); else toggleLaserComment(how)
+    return true
+  }
   if (data?.type === 'sh:draw-error') {
     useDraw.getState().fail(key, String(data.message ?? 'drawing error'))
     const hit = data.rid ? wantFor(key, data.rid) : undefined

@@ -324,6 +324,12 @@ const checkTarget = ({ on, at, nth } = {}, others = []) => {
 }
 if (typeof window !== 'undefined') window.__mvAnchorCheck = checkTarget
 
+/** spec 39 B1: a page whose content is not the DOM (a drawing: one <canvas>) answers for itself - hover, pick, lock and
+ *  resolve ask `window.__mvAnchorProvider`, read at each call (the draw host installs it after this module loads). Inside
+ *  such a page the DOM is never used for comments: a canvas-wide comment can never be stored. The laser stays the DOM's
+ *  (spec 39: the laser on a drawing is frame-level in this release). */
+const provider = () => (typeof window !== 'undefined' ? window.__mvAnchorProvider : null) || null
+
 export function createInspect({ post, getId, getBoot, onModeChange, onLaserPick }) {
   let laserOn = false, pickOn = false
   // the laser as inspect (⌥L): every element outlined. Off, the laser is a pointer - the element under the cursor lit,
@@ -406,7 +412,10 @@ body [data-mv-hover] { outline: 2px solid hsl(var(--mv-hue) 95% 45%); outline-of
     if (hoverEl) { delete hoverEl.dataset.mvHover; hoverEl = null }
     if (labelEl) { labelEl.remove(); labelEl = null }
     clearTimeout(copiedTimer)
+    provider()?.unhover?.()
   }
+  // a provider's lock (spec 39): the shell-owned highlight or a fresh pick, drawn by the provider
+  let providerLocked = false
 
   // the persistent lock (#4/#5): one element at a time, its own attribute so a
   // hover clear never touches it and the mode-off teardown leaves it alone.
@@ -425,6 +434,7 @@ body [data-mv-hover] { outline: 2px solid hsl(var(--mv-hue) 95% 45%); outline-of
   const clearLock = () => {
     if (lockedEl) { delete lockedEl.dataset.mvLocked; lockedEl.style.removeProperty('--mv-lock-hue') }
     lockedEl = null; highlightAnchor = null
+    if (providerLocked) { providerLocked = false; provider()?.lock?.(null) }
   }
 
   const showCopied = (seq) => {
@@ -469,6 +479,17 @@ body [data-mv-hover] { outline: 2px solid hsl(var(--mv-hue) 95% 45%); outline-of
   on(document, 'mousemove', (e) => {
     if (!modeActive() || lockedEl) return
     if (pickOn && pickQuiet) return   // quiet pick: no hover visuals, clicks still land
+    const P = pickOn && provider()
+    if (P) {
+      // a drawing names its own element (spec 39 A1): the inspector's chip, the provider's outline
+      if (providerLocked) return
+      const h = P.hover(e)
+      if (!h) { clearHover(); return }
+      if (!labelEl) { labelEl = document.createElement('div'); labelEl.id = 'mv-laser-label'; document.body.appendChild(labelEl) }
+      if (labelEl.textContent !== h.label) labelEl.textContent = h.label
+      place(labelEl, e)
+      return
+    }
     const el = e.target instanceof Element && e.target.closest('body *:not(#mv-laser-label)')
     if (!el || el === hoverEl) { if (labelEl && hoverEl) place(labelEl, e); return }
     clearHover()
@@ -501,6 +522,16 @@ body [data-mv-hover] { outline: 2px solid hsl(var(--mv-hue) 95% 45%); outline-of
     if (!modeActive()) return
     e.preventDefault()
     e.stopPropagation()
+    const P = pickOn && provider()
+    if (P) {
+      // spec 39: the provider anchors it - null for a press that panned, a page not ready, an element that cannot take one
+      const anchor = P.ready?.() ? P.pick(e) : null
+      if (!anchor) return
+      if (!pickQuiet) { providerLocked = true; P.lock?.(anchor) }
+      clearHover()
+      post({ type: 'sh:picked', id: getId(), anchor })
+      return
+    }
     const el = e.target instanceof Element && e.target.closest('body *:not(#mv-laser-label)')
     if (!el) return
     if (pickOn) {
@@ -524,6 +555,8 @@ body [data-mv-hover] { outline: 2px solid hsl(var(--mv-hue) 95% 45%); outline-of
   // instead of stranding a stale outline / a stuck hover-suppression.
   const reapplyHighlight = () => {
     if (!highlightAnchor) return
+    const P = provider()
+    if (P) { providerLocked = true; P.lock?.(highlightAnchor); return }
     applyLock(resolveAnchor(highlightAnchor), highlightAnchor?.el?.hue)
   }
 
@@ -560,9 +593,19 @@ body [data-mv-hover] { outline: 2px solid hsl(var(--mv-hue) 95% 45%); outline-of
       // the next resolve tick once the new frame has committed.
       if (!m.anchor) { clearLock(); return }
       highlightAnchor = m.anchor
+      const P = provider()
+      if (P) { providerLocked = true; P.lock?.(m.anchor); return }
       applyLock(resolveAnchor(m.anchor), m.anchor?.el?.hue)
     }
     else if (m.type === 'sh:resolve-anchors' && Array.isArray(m.anchors)) {
+      const P = provider()
+      if (P) {
+        // the provider places every pin (no cap: the shell aggregates) and keeps pushing them as the drawing moves
+        const rects = P.resolve(m.anchors)
+        reapplyHighlight()
+        post({ type: 'sh:anchor-rects', id: getId(), rects })
+        return
+      }
       const rects = m.anchors.slice(0, 200).map((a) => {
         let el = null
         try { el = resolveAnchor(a.anchor) } catch { /* one bad anchor, not the batch */ }

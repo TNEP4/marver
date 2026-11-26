@@ -6,6 +6,7 @@
  * selection/board; play mutates play.device/theme). usePopover + Popover live here too so
  * both App and Play share the popover chrome.
  */
+import { toggleCommentMode } from './comment-keys.ts'
 import { createPortal } from 'react-dom'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useStore, CONFIG, SOURCE_REVEALED, stoppedFor } from './store.ts'
@@ -149,15 +150,7 @@ export function CommentButton() {
   }
   return (
     <Tip side="bottom" label={<TipRows rows={[['Comment', 'C'], [show ? 'Hide pins' : 'Show pins', '⇧C']]} />}>
-      <button className={`sh-pill-btn${commentMode ? ' on' : ''}`} onClick={() => {
-        const c = commentsStore()
-        const h = cmd('comments', { via: 'click', in: 'pill' })
-        if (!c.commentMode && useStore.getState().board === UNPLACED) { h.noop('unplaced'); return useStore.getState().toast(NO_COMMENTS_HERE) }
-        if (!c.commentMode && stoppedFor('Comments need the canvas running')) { h.noop('stopped'); return }
-        if (!c.commentMode) useStore.getState().setLaser(false)
-        c.setMode(!c.commentMode)
-        useStore.getState().toast(c.commentMode ? 'comment mode off' : 'comment mode - click an element in a frame')
-      }}><CommentIcon size={16} /></button>
+      <button className={`sh-pill-btn${commentMode ? ' on' : ''}`} onClick={() => { toggleCommentMode({ via: 'click', in: 'pill' }) }}><CommentIcon size={16} /></button>
     </Tip>
   )
 }

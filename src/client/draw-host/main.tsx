@@ -13,6 +13,8 @@ import '../frame-host/bridge.js'
 import './draw.css'
 import { ROUTE } from '../const.ts'
 import type { DrawCmd, DrawElement, DrawPatch, DrawSave, DrawState, DrawHeader } from '../../shared/draw-protocol.ts'
+import { READ_ONLY_OPS } from '../../shared/draw-protocol.ts'
+import { installCommentProvider } from './comments.ts'
 import { DrawSync } from './sync.ts'
 import { panelModel } from './state.ts'
 import type { Engine, EngineSnapshot } from './adapter.tsx'
@@ -50,6 +52,11 @@ const apiUrl = (q = '') => `${ROUTE}/api/draw/${encodeURIComponent(id)}${q}`
 
 interface Loaded { rev: number; header: DrawHeader; elements: DrawElement[]; files: Record<string, unknown>; background?: string }
 
+// spec 39: the drawing answers the comment inspector for itself - installed now (the bridge reads it at each call), ready
+// once the engine is
+const live: { engine: Engine | null; header: DrawHeader; rev: () => number } = { engine: null, header: { rev: 0 }, rev: () => 0 }
+const comments = installCommentProvider({ engine: () => live.engine, header: () => live.header, rev: () => live.rev(), post, id })
+
 async function load(): Promise<Loaded> {
   if (PUBLISHED) {
     const r = await fetch(`${ROUTE}/draw-data/${id.split('/').map(encodeURIComponent).join('/')}.excalidraw`)
@@ -74,6 +81,17 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
   // opened on its own (no shell around it) with ?edit=1: drawing mode from the start - tests and debugging
   const [edit, setEdit] = useState(window.parent === window && params.get('edit') === '1' && !PUBLISHED)
   const [th, setTh] = useState(theme)
+  // spec 39 B1: comment mode picking in this drawing - its own flag, never `edit` (the tool pauses, the selection stays)
+  const [picking, setPicking] = useState(false)
+  const pickingRef = useRef(false)
+  pickingRef.current = picking
+  /** a shell menu is open over the drawing: arrows, Enter and Escape are the menu's (spec 39 B4) */
+  const menuOpen = useRef(false)
+  // B2: what moves the pins - the camera (panning), a gesture on an element, remote edits arriving
+  const gesture = useRef(false)
+  const remoteUntil = useRef(0)
+  const moving = () => panning.current || gesture.current || Date.now() < remoteUntil.current
+  live.header = data.header
   const engine = useRef<Engine | null>(null)
   const frameView = useRef<DrawHeader['view'] | null>(data.header.view ?? null)
   const sync = useRef<DrawSync | null>(null)
@@ -87,6 +105,7 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
   /** play's Hide all UI: null outside play (H is Excalidraw's hand there), else whether the UI is hidden */
   const uiHidden = useRef<boolean | null>(null)
 
+  live.rev = () => sync.current?.rev ?? 0
   if (!sync.current) {
     sync.current = new DrawSync(() => engine.current, {
       put: async (body: DrawSave & { sid: string; seq: number }, keepalive?: boolean) => {
@@ -126,6 +145,7 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
         panning: panning.current, map: { content: eng.contentBox(), view: eng.viewBox() },
         offFrameView: !fv ? false : Math.abs(v.x - fv.x) > 1 || Math.abs(v.y - fv.y) > 1 || Math.abs(v.zoom - fv.zoom) > 0.005,
         rev: sync.current!.rev, pending: sync.current!.pending,
+        ...(pickingRef.current ? { picking: true } : {}),
       }
       const key = JSON.stringify(state)
       if (key === lastSent.current) return
@@ -145,11 +165,12 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
       if (lastScroll.current) {
         panning.current = true
         if (panTimer.current) clearTimeout(panTimer.current)
-        panTimer.current = setTimeout(() => { panning.current = false; sendState() }, 700)
+        panTimer.current = setTimeout(() => { panning.current = false; sendState(); comments.changed(moving()) }, 700)
       }
       lastScroll.current = scroll
     }
     sendState()
+    comments.changed(moving())
   }
 
   useEffect(() => {
@@ -163,6 +184,8 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
         if (!m.on) { void sync.current!.flush(); engine.current?.view('frame', frameView.current) }
       }
       else if (m?.type === 'sh:set-theme') { theme = m.theme === 'dark' ? 'dark' : 'light'; setTh(theme) }
+      // comment mode (the inspector takes the clicks; the drawing pauses its tool while it is on)
+      else if (m?.type === 'sh:pick') setPicking(!!m.on)
       else if (m?.type === 'sh:draw-crisp') crisp(m.scale)
       else if (m?.type === 'sh:draw-cmd') run(m as DrawCmd)
     }
@@ -172,6 +195,10 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
     const onPatch = (p: DrawPatch) => {
       if (p.frame !== id) return
       if (p.header?.view !== undefined) frameView.current = p.header.view ?? null
+      if (p.header) live.header = { ...live.header, ...p.header }
+      // remote and agent edits: pins move with them and land once they stop (300 ms after the last)
+      remoteUntil.current = Date.now() + 300
+      setTimeout(() => comments.changed(moving()), 320)
       sync.current!.receive(p)
     }
     hot?.on('sh:draw', onPatch)
@@ -188,7 +215,17 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
   // Play's keys come back to the shell: ⌘\ and ⌘/ (collapse), and H while the UI is hidden (reveal)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const typing = !!engine.current?.appState()?.editingTextElement || (e.target as HTMLElement)?.closest?.('textarea, input')
+      const typing = !!engine.current?.appState()?.editingTextElement || (e.target as HTMLElement)?.closest?.('textarea, input') || e.isComposing
+      // a shell menu over the drawing (spec 39 B4): its keys, never the drawing's (arrows would nudge, Enter would edit)
+      if (menuOpen.current && ['ArrowUp', 'ArrowDown', 'Enter', 'Escape'].includes(e.key)) {
+        e.preventDefault(); e.stopPropagation()
+        post({ type: 'sh:draw-key', key: e.key === 'ArrowUp' ? 'menu-up' : e.key === 'ArrowDown' ? 'menu-down' : e.key === 'Enter' ? 'menu-enter' : 'menu-close' })
+        return
+      }
+      // C, ⇧C, ⇧L are the shell's inside a drawing (spec 39 B4, amends spec 38 decisions 19-20): comment mode, pins,
+      // laser comment - Excalidraw uses C only with Alt
+      if (!typing && !e.metaKey && !e.ctrlKey && !e.altKey && e.code === 'KeyC') { e.preventDefault(); e.stopPropagation(); post({ type: 'sh:draw-key', key: e.shiftKey ? 'pins' : 'comments' }); return }
+      if (!typing && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && e.code === 'KeyL') { e.preventDefault(); e.stopPropagation(); post({ type: 'sh:draw-key', key: 'laser-comment' }); return }
       if ((e.metaKey || e.ctrlKey) && (e.key === '\\' || e.key === '/') && !typing) { e.preventDefault(); e.stopPropagation(); post({ type: 'sh:draw-key', key: e.key === '/' ? 'toolbar' : 'panel' }); return }
       // ⌥⇧D - the theme (Excalidraw's own key for it): D alone stays the diamond inside a drawing (Nic, 26 Nov)
       if (e.altKey && e.shiftKey && !e.metaKey && !e.ctrlKey && e.code === 'KeyD' && !typing) { e.preventDefault(); e.stopPropagation(); post({ type: 'sh:draw-key', key: 'theme' }); return }
@@ -197,7 +234,9 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
       if (e.key !== 'Escape') return
       const s = engine.current?.appState()
       const busy = s && (s.editingTextElement || s.newElement || s.multiElement || s.editingLinearElement || s.croppingElementId || s.openDialog || s.openPopup || s.contextMenu)
-      if (busy || !editRef.current) return
+      if (busy) return
+      // comment mode or a view-only drawing (published, at rest): the shell decides - comments close first (spec 39 B4)
+      if (pickingRef.current || !editRef.current) { e.preventDefault(); e.stopPropagation(); post({ type: 'sh:exit-interact', comments: true }); return }
       e.preventDefault(); e.stopPropagation()
       void sync.current!.flush()
       post({ type: 'sh:exit-interact' })
@@ -211,7 +250,11 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
     if (!eng) return
     if (c.op === 'flush') { void sync.current!.flush().then(() => post({ type: 'sh:draw-flushed', id })); return }
     if (c.op === 'ui') { uiHidden.current = c.hidden; return }
-    if (!editable && c.op !== 'view' && c.op !== 'export') return
+    if (c.op === 'menu') { menuOpen.current = !!c.open; return }
+    if (c.op === 'reveal') { comments.reveal(c.anchor as any); return }
+    if (c.op === 'focus') { try { window.focus(); (document.querySelector('.excalidraw') as HTMLElement | null)?.focus({ preventScroll: true }) } catch { /* the next click focuses */ } return }
+    // a view-only drawing runs only the commands that change nothing (spec 39 B2)
+    if (!editable && !READ_ONLY_OPS.has(c.op)) return
     switch (c.op) {
       case 'tool': eng.setTool(c.tool); break
       case 'lock': eng.toggleLock(); break
@@ -254,9 +297,10 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
 
   return createElement(DrawEngine, {
     initial: { elements: data.elements, files: data.files, view: data.header.view ?? null, background: data.background },
-    theme: th, edit, editable,
+    theme: th, edit, editable, picking,
     onReady: (eng: Engine) => {
       engine.current = eng
+      live.engine = eng
       // a handle for tests and `marver shot`: the engine, the sync, and readiness (spec 38 decision 22)
       w.__mvDraw = { engine: eng, sync: sync.current, ready: true, setEdit: (on: boolean) => setEdit(on && editable) }
       // what arrived before the engine applies now, then the first catch-up (a rev between the load and the socket)
@@ -267,8 +311,8 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
       sendState()
     },
     onChange,
-    onPointerDown: () => sync.current!.pointer(true),
-    onPointerUp: () => sync.current!.pointer(false),
+    onPointerDown: () => { sync.current!.pointer(true); gesture.current = true },
+    onPointerUp: () => { sync.current!.pointer(false); gesture.current = false; comments.changed(moving()) },
   })
 }
 

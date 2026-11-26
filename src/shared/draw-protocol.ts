@@ -71,6 +71,8 @@ export interface DrawState {
   pending: number
   /** a load failure, said in the frame and here */
   error?: string
+  /** spec 39: comment mode is picking in this drawing - the tool is paused, not changed */
+  picking?: boolean
 }
 export interface Box { x: number; y: number; w: number; h: number }
 
@@ -89,6 +91,19 @@ export type DrawCmd =
   | { type: 'sh:draw-cmd'; op: 'flush' }
   /** play's Hide all UI: while hidden, the host takes H (it reveals) instead of Excalidraw's hand */
   | { type: 'sh:draw-cmd'; op: 'ui'; hidden: boolean }
+  /** spec 39: scroll the drawing to a comment's element or paper point, once (a thread opened on purpose) */
+  | { type: 'sh:draw-cmd'; op: 'reveal'; anchor: unknown }
+  /** spec 39: give the keyboard back to the drawing (after a comment is sent in drawing mode) */
+  | { type: 'sh:draw-cmd'; op: 'focus' }
+  /** spec 39: a shell menu over the drawing is open - the host forwards arrows, Enter and Escape to it */
+  | { type: 'sh:draw-cmd'; op: 'menu'; open: boolean }
+
+/** The commands a published (view-only) drawing runs - none of them changes the drawing (spec 39 B2). */
+export const READ_ONLY_OPS: ReadonlySet<DrawCmd['op']> = new Set(['view', 'export', 'reveal', 'focus', 'menu', 'flush', 'ui'])
+
+/** spec 39 B2: the drawing's camera, posted (at most once a frame) while it pans or zooms - the shell moves pins with CSS
+ *  variables, never a render. `moving`: a camera or element gesture is under way (pins are placed again when it ends). */
+export interface DrawCamera { type: 'sh:draw-camera'; id: string; scrollX: number; scrollY: number; zoom: number; moving: boolean }
 
 /** The Excalidraw actions the shell may run - the allow-list the adapter checks (a test runs each one). */
 export const DRAW_ACTIONS = [

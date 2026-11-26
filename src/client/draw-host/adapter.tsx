@@ -9,7 +9,7 @@
  * runs every action in DRAW_ACTIONS against it.
  */
 import { useEffect, useRef } from 'react'
-import { Excalidraw, CaptureUpdateAction, FONT_FAMILY, reconcileElements, restoreElements, exportToBlob, exportToSvg, getSceneVersion, getCommonBounds } from '@excalidraw/excalidraw'
+import { Excalidraw, CaptureUpdateAction, FONT_FAMILY, reconcileElements, restoreElements, exportToBlob, exportToSvg, getSceneVersion, getCommonBounds, viewportCoordsToSceneCoords, sceneCoordsToViewportCoords } from '@excalidraw/excalidraw'
 import '@excalidraw/excalidraw/index.css'
 import type { DrawAction, DrawElement, DrawTool, DrawViewOp, Box } from '../../shared/draw-protocol.ts'
 import { DRAW_ACTIONS } from '../../shared/draw-protocol.ts'
@@ -49,18 +49,54 @@ export interface Engine {
   /** re-render every element canvas at the current pixel ratio (after a crispness change) */
   rerender(): void
   insertImage(): void
+  /** spec 39: the element a comment would go on at this point of the iframe (client px) - by its own geometry, never
+   *  by the selection's box; locked elements count; a closed shape by its inside too; null = the paper */
+  hit(clientX: number, clientY: number): Hit | null
+  /** spec 39: a live element's geometry in drawing units (null: gone or deleted) */
+  geo(id: string): Geo | null
+  /** drawing units -> iframe px, and back */
+  toView(x: number, y: number): { x: number; y: number }
+  toScene(clientX: number, clientY: number): { x: number; y: number }
+  /** the camera: scroll and zoom */
+  camera(): { scrollX: number; scrollY: number; zoom: number }
+  /** scroll so this box of the drawing is in view (a comment opened on purpose) */
+  reveal(box: Box): void
 }
+
+/** spec 39: a hit element, as a comment needs it */
+export interface Hit { id: string; type: string; label: string }
+/** spec 39: an element's unrotated box, its angle, and where a pin with no click point attaches (drawing units) */
+export interface Geo { type: string; x: number; y: number; w: number; h: number; angle: number; label: string; attach: { x: number; y: number } }
+
+/** shapes whose inside takes a comment even with no fill (spec 39 A1); a frame's inside only when nothing else is hit */
+const CLOSED = new Set(['rectangle', 'diamond', 'ellipse', 'text', 'image', 'frame', 'magicframe', 'embeddable', 'iframe'])
+/** a point in an element's unrotated box, as fractions (rotated back around its centre first) */
+function local(el: any, x: number, y: number): { fx: number; fy: number } {
+  const cx = el.x + el.width / 2, cy = el.y + el.height / 2, a = -(el.angle || 0)
+  const dx = x - cx, dy = y - cy
+  const rx = dx * Math.cos(a) - dy * Math.sin(a) + cx, ry = dx * Math.sin(a) + dy * Math.cos(a) + cy
+  return { fx: el.width ? (rx - el.x) / el.width : 0.5, fy: el.height ? (ry - el.y) / el.height : 0.5 }
+}
+function inside(el: any, x: number, y: number): boolean {
+  const { fx, fy } = local(el, x, y)
+  if (el.type === 'ellipse') return (fx - 0.5) ** 2 + (fy - 0.5) ** 2 <= 0.25
+  if (el.type === 'diamond') return Math.abs(fx - 0.5) + Math.abs(fy - 0.5) <= 0.5
+  return fx >= 0 && fx <= 1 && fy >= 0 && fy <= 1
+}
+export { local as localPoint }
 
 const CU = CaptureUpdateAction
 /** Excalidraw's font ids to the faces it registers */
 const FAMILY_NAME: Record<number, string> = Object.fromEntries(Object.entries(FONT_FAMILY as Record<string, number>).map(([name, id]) => [id, name]))
 const GRAB_KEY = 'F19'
 
-export function DrawEngine({ initial, theme, edit, editable, onReady, onChange, onPointerDown, onPointerUp }: {
+export function DrawEngine({ initial, theme, edit, editable, picking = false, onReady, onChange, onPointerDown, onPointerUp }: {
   initial: { elements: DrawElement[]; files?: Record<string, unknown>; view?: { x: number; y: number; zoom: number } | null; background?: string }
   theme: 'light' | 'dark'
   edit: boolean
   editable: boolean
+  /** spec 39: comment mode picking - the drawing shows read-only while it lasts; its tool and selection come back after */
+  picking?: boolean
   onReady: (engine: Engine) => void
   onChange: (snap: EngineSnapshot) => void
   onPointerDown?: () => void
@@ -213,6 +249,70 @@ export function DrawEngine({ initial, theme, edit, editable, onReady, onChange, 
       if (!api) return
       api.setActiveTool({ type: 'image', insertOnCanvasDirectly: true })
     },
+    hit(clientX, clientY) {
+      const api = apiRef.current
+      if (!api) return null
+      if (!appRef.current) tryGrab()
+      const app = appRef.current
+      const { x, y } = engine.toScene(clientX, clientY)
+      const els = (api.getSceneElements() as any[])
+      const byId = new Map(els.map((e) => [e.id, e]))
+      let top: any = null, frame: any = null
+      for (const el of els) {
+        if (el.type === 'text' && el.containerId) continue          // a label is its shape (its hit counts for it)
+        // Excalidraw's own geometry, never the selection's box (considerBoundingBox false): strokes by their distance
+        let hit = false
+        try { hit = app ? !!app.hitElement(x, y, el, false) : false } catch { hit = false }
+        const isFrame = el.type === 'frame' || el.type === 'magicframe'
+        if (!hit && CLOSED.has(el.type) && !isFrame) hit = inside(el, x, y)
+        // frame clipping: an element in a frame is hit only inside that frame
+        if (hit && el.frameId) { const f = byId.get(el.frameId); if (f && !inside(f, x, y)) hit = false }
+        if (hit) top = el
+        else if (isFrame && inside(el, x, y)) frame = el
+      }
+      const el = top ?? frame
+      return el ? { id: el.id, type: el.type, label: labelOf(el, byId) } : null
+    },
+    geo(id) {
+      const api = apiRef.current
+      if (!api) return null
+      const els = api.getSceneElements() as any[]
+      const byId = new Map(els.map((e) => [e.id, e]))
+      const el = byId.get(id)
+      if (!el) return null
+      return { type: el.type, x: el.x, y: el.y, w: el.width, h: el.height, angle: el.angle || 0, label: labelOf(el, byId), attach: attachOf(el, byId) }
+    },
+    toView(x, y) {
+      const s = apiRef.current?.getAppState()
+      if (!s) return { x, y }
+      const p = sceneCoordsToViewportCoords({ sceneX: x, sceneY: y }, s)
+      return { x: p.x - (s.offsetLeft || 0), y: p.y - (s.offsetTop || 0) }
+    },
+    toScene(clientX, clientY) {
+      const s = apiRef.current?.getAppState()
+      if (!s) return { x: clientX, y: clientY }
+      return viewportCoordsToSceneCoords({ clientX: clientX + (s.offsetLeft || 0), clientY: clientY + (s.offsetTop || 0) }, s)
+    },
+    camera() {
+      const s = apiRef.current?.getAppState()
+      return s ? { scrollX: s.scrollX, scrollY: s.scrollY, zoom: s.zoom.value } : { scrollX: 0, scrollY: 0, zoom: 1 }
+    },
+    reveal(box) {
+      const api = apiRef.current
+      if (!api) return
+      const s = api.getAppState()
+      const z = s.zoom.value
+      const vw = s.width / z, vh = s.height / z
+      const vx = -s.scrollX, vy = -s.scrollY
+      const pad = 60 / z
+      // already comfortably in view: leave the camera alone
+      if (box.x >= vx + pad && box.y >= vy + pad && box.x + box.w <= vx + vw - pad && box.y + box.h <= vy + vh - pad) return
+      // centred, at the current zoom unless it cannot fit (then just enough to fit, never above 100 %)
+      const fit = Math.min(z, (s.width - 120) / Math.max(1, box.w), (s.height - 120) / Math.max(1, box.h))
+      const nz = Math.max(0.1, Math.min(z, fit))
+      const cx = box.x + box.w / 2, cy = box.y + box.h / 2
+      api.updateScene({ appState: { zoom: { value: nz }, scrollX: s.width / nz / 2 - cx, scrollY: s.height / nz / 2 - cy }, captureUpdate: CU.NEVER })
+    },
   }
 
   // view mode follows `edit` (at rest and published: view; drawing mode: tools live)
@@ -225,8 +325,28 @@ export function DrawEngine({ initial, theme, edit, editable, onReady, onChange, 
     else for (const type of ['pointerup', 'pointercancel']) window.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, pointerType: 'mouse' }))
   }, [edit])
 
+  // picking pauses the tool (spec 39 B1): the tool and the selection are remembered and put back, and a pan begun while
+  // picking is released as on entering drawing mode (or the first stroke after would be eaten)
+  const paused = useRef<{ tool: any; sel: Record<string, true> } | null>(null)
+  useEffect(() => {
+    const api = apiRef.current
+    if (!api || !edit) return
+    if (picking) {
+      const st = api.getAppState()
+      paused.current = { tool: st.activeTool, sel: { ...(st.selectedElementIds ?? {}) } }
+    } else if (paused.current) {
+      const p = paused.current
+      paused.current = null
+      for (const type of ['pointerup', 'pointercancel']) window.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 1, pointerType: 'mouse' }))
+      requestAnimationFrame(() => {
+        if (p.tool?.type && p.tool.type !== 'custom') api.setActiveTool({ type: p.tool.type, locked: !!p.tool.locked })
+        api.updateScene({ appState: { selectedElementIds: p.sel }, captureUpdate: CU.NEVER })
+      })
+    }
+  }, [picking])
+
   return (
-    <div className={`mv-draw ${edit ? 'mv-edit' : 'mv-view'}`} style={{ position: 'absolute', inset: 0 }}>
+    <div className={`mv-draw ${edit ? 'mv-edit' : 'mv-view'}${picking ? ' mv-picking' : ''}`} style={{ position: 'absolute', inset: 0 }}>
       <Excalidraw
         excalidrawAPI={(api: Api) => {
           if (apiRef.current) return
@@ -290,7 +410,7 @@ export function DrawEngine({ initial, theme, edit, editable, onReady, onChange, 
           scrollToContent: false,
         }}
         theme={theme}
-        viewModeEnabled={!edit || !editable}
+        viewModeEnabled={!edit || !editable || picking}
         zenModeEnabled={false}
         gridModeEnabled={false}
         handleKeyboardGlobally={false}
@@ -338,4 +458,30 @@ function labelPosition(box: DrawElement, t: DrawElement): { x: number; y: number
   const y = va === 'top' ? cy : va === 'bottom' ? cy + (mh - th) : cy + (mh / 2 - th / 2)
   const x = ta === 'left' ? cx : ta === 'right' ? cx + (mw - tw) : cx + (mw / 2 - tw / 2)
   return { x, y }
+}
+
+/** An element's words: a text's own, a shape's label (its bound text), else none. */
+function labelOf(el: any, byId: Map<string, any>): string {
+  if (el.type === 'text') return String(el.originalText ?? el.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 200)
+  const t = (el.boundElements ?? []).find((b: any) => b?.type === 'text')
+  const te = t && byId.get(t.id)
+  return te ? String(te.originalText ?? te.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 200) : ''
+}
+
+/** Where a pin with no click point attaches (spec 39 B3): a shape's or text's first label line's end, a line's, arrow's
+ *  or stroke's top-right, in drawing units. */
+function attachOf(el: any, byId: Map<string, any>): { x: number; y: number } {
+  const lin = el.type === 'line' || el.type === 'arrow' || el.type === 'freedraw'
+  const t = el.type === 'text' ? el : (() => { const b = (el.boundElements ?? []).find((x: any) => x?.type === 'text'); return b ? byId.get(b.id) : null })()
+  if (!lin && t) {
+    const lh = (Number(t.fontSize) || 20) * (Number(t.lineHeight) || 1.25)
+    const lines = String(t.text ?? '').split('\n')
+    // the first line's width, in proportion to its share of the longest line (no measuring context here)
+    const longest = Math.max(1, ...lines.map((l: string) => l.length))
+    const w = Number(t.width) * Math.min(1, (lines[0]?.length ?? 0) / longest)
+    const left = t.textAlign === 'center' ? t.x + (t.width - w) / 2 : t.textAlign === 'right' ? t.x + t.width - w : t.x
+    return { x: left + w, y: t.y + lh / 2 }
+  }
+  const [x1, y1, x2] = getCommonBounds([el])
+  return { x: x2, y: y1 }
 }

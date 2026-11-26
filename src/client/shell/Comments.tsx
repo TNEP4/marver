@@ -5,13 +5,14 @@
  * size via --sh-inv (the vbadge pattern) so zoom never shrinks them away, and never
  * overlap (pin-layout.ts places them).
  */
+import { useDrawPlay } from './draw/play-state.ts'
 import { TOP } from './inset.ts'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { avatarFallback, newDraftKey, replyDraftKey, useComments, type Pending } from './comments-store.ts'
 import { useDraft } from './drafts.ts'
 import { api } from './api.ts'
-import { CONFIG, useStore, type Node } from './store.ts'
+import { CONFIG, PUBLISHED, useStore, type Node } from './store.ts'
 import { threadHostKey } from './keys.ts'
 import { isNoteAnchor, resolveNoteAnchor, useNotes } from './notes.ts'
 import { bootCancelled, canvasCtl } from './canvas/ctl.ts'
@@ -128,6 +129,8 @@ export function MarkerFace({ threads, max = 3 }: { threads: Thread[]; max?: numb
 }
 
 type Point = { x: number; y: number }
+/** spec 39: a comment on a drawing's element or paper (el.draw) */
+export const isDrawAnchorish = (a: unknown): boolean => !!(a as any)?.el?.draw
 
 /** Open threads in creation order - the order markers are placed in, so a newer one moves, never
  *  an older one. */
@@ -140,9 +143,13 @@ export const placePins = (threads: Thread[], points: Map<string, Point | null>, 
   placeMarkers(byCreation(threads).map((t) => ({ id: t.id, point: points.get(t.id) ?? null })), frameW, inv)
 
 /** The placed markers, with a thin line from each one that had to move to its point. */
-export function Pins({ threads, placed, orphans, inv, active, alertIds }: {
+export function Pins({ threads, placed, orphans, inv, active, alertIds, offs, published }: {
   threads: Thread[]; placed: Map<string, Placed>; orphans: Set<string>
   inv: number; active: string | null; alertIds?: Set<string>
+  /** spec 39: a drawing's pins whose element is outside the drawing's own view - parked in the column, a click brings it */
+  offs?: Set<string>
+  /** a published canvas: a gone element there is one changed since it was published */
+  published?: boolean
 }) {
   const { setActive } = useComments.getState()
   // a pin wears the thin Marver-blue working ring while the agent works on its thread (spec 27)
@@ -152,13 +159,14 @@ export function Pins({ threads, placed, orphans, inv, active, alertIds }: {
       {threads.map((t) => {
         const p = placed.get(t.id)!
         const orphan = orphans.has(t.id)
+        const off = !orphan && !!offs?.has(t.id)
         return [
           p.lead && <i key={`${t.id}-lead`} data-lead={t.id} className="cm-lead" aria-hidden style={{ left: p.lead.x, top: p.lead.y, height: p.y - MARKER.h * inv - p.lead.y }} />,
-          <div key={t.id} data-thread={t.id} className={`cm-pin sh-no-pan${t.id === active ? ' on' : ''}${orphan ? ' orphan' : ''}${alertIds?.has(t.id) ? ' mention' : ''}${working.includes(t.id) ? ' working' : ''}`}
+          <div key={t.id} data-thread={t.id} className={`cm-pin sh-no-pan${t.id === active ? ' on' : ''}${orphan ? ' orphan' : ''}${off ? ' off' : ''}${alertIds?.has(t.id) ? ' mention' : ''}${working.includes(t.id) ? ' working' : ''}`}
             style={{ left: p.x, top: p.y, ...hueVars(anchorHue(t.anchor)) }}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); cmd(t.id === active ? 'thread-close' : 'thread-open', { via: 'click', in: 'shell', frame: t.frame }); setActive(t.id === active ? null : t.id) }}
-            title={orphan ? 'the anchored element is gone - comment parked' : undefined}>
+            title={off ? "out of the drawing's view - click to bring it in" : orphan ? (isDrawAnchorish(t.anchor) && published ? 'changed since this was published - comment parked' : 'the anchored element is gone - comment parked') : undefined}>
             <MarkerFace threads={[t]} max={2} />
           </div>,
         ]
@@ -191,6 +199,10 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
   // a slide renders at its stage and the node scales it (FrameNode): rects the frame reports are
   // in stage px, so they map through the same fit into the node's coordinates
   const frameEntry = useStore((s) => s.frameFor(node))
+  // spec 39: a drawing answers for its own elements - pins follow them (pushed), park when out of its view
+  const isDraw = frameEntry?.kind === 'draw'
+  const [offKeys, setOffKeys] = useState<Set<string>>(() => new Set())
+  const placedAt = useRef<Record<string, Point>>({})
   const stage = frameEntry ? slideSize(frameEntry, CONFIG.viewports) : null
   const fit = stage ? stageFit(stage, { w: node.w, h: node.h }) : null
   const inNode = <R extends { x: number; y: number; w: number; h: number }>(r: R): R =>
@@ -209,21 +221,80 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
   const onNote = anchored.filter((t) => isNoteAnchor(t.anchor))
   // resolve anchors against the live frame whenever threads, their anchors (a re-pin) or the
   // document change
+  // a drawing's composing draft is followed too (key 'draft'): the composer moves with its element (spec 39 B2)
+  const draftOnDraw = isDraw && draft?.nodeKey === node.key && isDrawAnchorish(draft.anchor) ? draft.anchor : null
   useEffect(() => {
     const win = iframe.current?.contentWindow
-    if (!win || node.status !== 'ready' || !inFrame.length) return
-    const ask = () => win.postMessage({ type: 'sh:resolve-anchors', anchors: inFrame.map((t) => ({ key: t.id, anchor: t.anchor })) }, location.origin)
+    if (!win || node.status !== 'ready' || (!inFrame.length && !draftOnDraw)) {
+      // nothing to follow: a drawing stops pushing (an explicit unsubscribe, spec 39 B2)
+      if (win && isDraw) win.postMessage({ type: 'sh:resolve-anchors', anchors: [] }, location.origin)
+      return
+    }
+    const list = inFrame.map((t) => ({ key: t.id, anchor: t.anchor }))
+    if (draftOnDraw) list.push({ key: 'draft', anchor: draftOnDraw })
+    const ask = () => win.postMessage({ type: 'sh:resolve-anchors', anchors: list }, location.origin)
+    const layer = () => document.querySelector(`[data-node="${CSS.escape(node.key)}"] .cm-layer`) as HTMLElement | null
     const onMsg = (e: MessageEvent) => {
       if (e.source !== win || e.origin !== location.origin || e.data?.type !== 'sh:anchor-rects') return
+      const rects: any[] = e.data.rects ?? []
+      // a drawing mid-gesture (a pan, a zoom, a drag, edits arriving): pins move by translation only, written straight to
+      // their style - no render; leads hide; the overlap pass runs once it stops (spec 39 B2, "land once")
+      if (isDraw && e.data.moving) {
+        const L = layer()
+        L?.classList.add('cm-moving')
+        for (const r of rects) {
+          if (r.orphan || !r.point) continue
+          const was = placedAt.current[r.key]
+          const pin = L?.querySelector(`[data-thread="${CSS.escape(r.key)}"]`) as HTMLElement | null
+          if (pin && was) pin.style.translate = `${r.point.x - was.x}px ${r.point.y - was.y}px`
+        }
+        return
+      }
+      const L = layer()
+      if (L) { L.classList.remove('cm-moving'); for (const pin of L.querySelectorAll<HTMLElement>('.cm-pin')) pin.style.translate = '' }
       const next: typeof framePoints = {}
-      for (const r of e.data.rects ?? []) next[r.key] = r.orphan ? null : r.point
+      const off = new Set<string>()
+      for (const r of rects) {
+        if (r.orphan) { next[r.key] = null; continue }
+        if (r.off && r.key !== 'draft') { off.add(r.key); next[r.key] = null; continue }
+        next[r.key] = r.point
+        placedAt.current[r.key] = r.point
+      }
       setFramePoints((cur) => (JSON.stringify(cur) === JSON.stringify(next) ? cur : next))
+      setOffKeys((cur) => (cur.size === off.size && [...off].every((k) => cur.has(k)) ? cur : off))
     }
     window.addEventListener('message', onMsg)
     ask()
-    const iv = setInterval(ask, 4000)          // re-renders, scroll, hot reloads - cheap to re-ask
+    const iv = setInterval(ask, isDraw ? 8000 : 4000)   // re-renders, scroll, hot reloads - cheap to re-ask (a drawing pushes)
     return () => { clearInterval(iv); window.removeEventListener('message', onMsg) }
-  }, [node.status, inFrame.map((t) => `${t.id}:${JSON.stringify(t.anchor)}`).join(','), iframe])
+  }, [node.status, inFrame.map((t) => `${t.id}:${JSON.stringify(t.anchor)}`).join(','), JSON.stringify(draftOnDraw), iframe, isDraw])
+
+  // spec 39 A2/B2: a drawing thread opened on purpose brings its element into the drawing's view, once; at rest the
+  // drawing goes back to its frame view when the thread closes (spec 38 keeps the at-rest view the frame's)
+  const revealed = useRef<string | null>(null)
+  useEffect(() => {
+    const win = iframe.current?.contentWindow
+    if (!win || !isDraw || node.status !== 'ready') return
+    const t = active ? open.find((x) => x.id === active && isDrawAnchorish(x.anchor)) : undefined
+    if (t && revealed.current !== t.id) {
+      revealed.current = t.id
+      win.postMessage({ type: 'sh:draw-cmd', op: 'reveal', anchor: t.anchor }, location.origin)
+    } else if (!t && revealed.current) {
+      revealed.current = null
+      if (useStore.getState().interact !== node.key) win.postMessage({ type: 'sh:draw-cmd', op: 'view', v: 'frame' }, location.origin)
+    }
+  }, [active, isDraw, node.status, node.key])
+
+  // spec 39 B4: in drawing mode, a comment sent or closed gives the keyboard back to the drawing (the next R draws)
+  const hadComment = useRef(false)
+  useEffect(() => {
+    const here = (!!draft && draft.nodeKey === node.key) || (!!active && open.some((t) => t.id === active))
+    if (hadComment.current && !here && isDraw && useStore.getState().interact === node.key) {
+      const ae = document.activeElement as HTMLElement | null
+      if (!ae || ae === document.body || ae.closest('.cm-card, .cm-composer')) iframe.current?.contentWindow?.postMessage({ type: 'sh:draw-cmd', op: 'focus' }, location.origin)
+    }
+    hadComment.current = here
+  }, [draft, active, isDraw, node.key])
   // note anchors: their own map, measured in the shell, in node-body coordinates (negative x -
   // the note is left of the frame). The composing draft is measured too (key 'draft'), so it
   // follows a fold like a saved pin. A folded column parks pins on the fold; a note whose file
@@ -300,7 +371,9 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
   // (a sticky column is read from the DOM at render: it is per viewer and per host node)
   const drafting = draft?.nodeKey === node.key
   const alertIds = useMentionAlerts()
-  if (!show || (!open.length && !drafting)) return null
+  // the drawing is in play (spec 39 B5): its pins, card and composer are play's - never a second set under it
+  const inPlay = useDrawPlay((s) => s.at) === frameId
+  if (!show || inPlay || (!open.length && !drafting)) return null
 
   // inactive frame: the stack - count + avatars, top-right
   const engaged = selected || open.some((t) => t.id === active) || drafting
@@ -323,7 +396,7 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
     if (!a?.el) continue
     const r = isNoteAnchor(a) ? noteRects[t.id] : undefined
     const p = isNoteAnchor(a) ? (r ? { x: r.x + (a.pos?.fx ?? 0.5) * r.w, y: r.y + (a.pos?.fy ?? 0.5) * r.h } : r) : framePoints[t.id] && pointInNode(framePoints[t.id]!)
-    if (p === null) orphans.add(t.id)
+    if (p === null && !offKeys.has(t.id)) orphans.add(t.id)
     points.set(t.id, p ?? null)
   }
   const inv = 1 / Math.max(0.01, scale)
@@ -365,13 +438,16 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
 
   return (
     <>
-      <Pins threads={open} placed={placed} orphans={orphans} inv={inv} active={active} alertIds={alertIds} />
+      <Pins threads={open} placed={placed} orphans={orphans} inv={inv} active={active} alertIds={alertIds} offs={offKeys} published={PUBLISHED} />
       {activeThread2 && (
         <ThreadCard key={active} thread={activeThread2} at={pinAt(activeThread2)} bounds={{ w: node.w, h: node.h }} nodeKey={node.key} side={cardSide}
           flank={cardSide === 'l' ? (noteColumn() ? 'note' : flankBadge ? 'badge' : flankShim ? 'shim' : null) : null} />
       )}
       {draft?.nodeKey === node.key && (() => {
         const a = draft.anchor as any
+        // a drawing's draft: its pushed point (it follows its element), else where it was clicked
+        const dp = draftOnDraw ? (framePoints.draft ?? a?.point ?? null) : null
+        if (dp) return <DraftComposer at={dp} bounds={{ w: node.w, h: node.h }} hue={anchorHue(draft.anchor)} />
         const r = (draftOnNote && noteRects.draft) || (a?.rect && inNode(a.rect))
         return <DraftComposer at={{ x: (r?.x ?? 0) + (a?.pos?.fx ?? 0.5) * (r?.w ?? 0), y: (r?.y ?? 0) + (a?.pos?.fy ?? 0.5) * (r?.h ?? 0) }} bounds={{ w: node.w, h: node.h }} hue={anchorHue(draft.anchor)} />
       })()}
@@ -926,7 +1002,7 @@ export function DraftComposer({ at, bounds, hue }: { at: { x: number; y: number 
       onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
       {/* the draft is JUST the tight pill - no avatar chrome on a first comment */}
       <div className="cm-compose">
-        <CommentInput value={text} onChange={setText} onSubmit={send} onCancel={discard} placeholder="Comment on this element…" autoFocus sendLabel="Comment" owner={local} sendCmd="comment-send" frame={frame} />
+        <CommentInput value={text} onChange={setText} onSubmit={send} onCancel={discard} placeholder={(useComments.getState().draft?.anchor as any)?.el?.draw?.at ? 'Comment here…' : 'Comment on this element…'} autoFocus sendLabel="Comment" owner={local} sendCmd="comment-send" frame={frame} />
       </div>
     </div>
   )
