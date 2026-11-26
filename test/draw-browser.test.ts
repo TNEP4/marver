@@ -182,6 +182,19 @@ describe('the drawing frame (spec 38), in a real browser', () => {
     await until(`!document.querySelector('.sh-app').classList.contains('drawing')`, 5000)
     await b.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, s)
     await sleep(300)
+    // the frame's top off screen: the bar pins under the shell's toolbar pill, never over it
+    const t0 = await rectOf('iframe[data-kind="draw"]')
+    await b.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 900, y: 500, deltaX: t0.x - 500, deltaY: t0.y + 60 }, s)
+    await sleep(300)
+    const t = await rectOf('iframe[data-kind="draw"]')
+    expect(t.y).toBeLessThan(0)
+    await click(t.x + t.w / 2, t.y + t.h / 2); await click(t.x + t.w / 2, t.y + t.h / 2, 2)
+    await until(`!!document.querySelector('.dk-tools.sh-ctx')`)
+    await sleep(400)
+    const pill = await rectOf('nav.sh-pill'), tb = await rectOf('.dk-tools.sh-ctx')
+    expect(tb.y).toBeGreaterThanOrEqual(pill.y + pill.h + 8)
+    await escape()
+    await until(`!document.querySelector('.sh-app').classList.contains('drawing')`, 5000)
   }, 30_000)
 
   it('plays a selected drawing full-tab: the panel, the tool bar, the view; collapse; Escape back', async (ctx) => {
