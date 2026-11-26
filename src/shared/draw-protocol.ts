@@ -53,6 +53,8 @@ export interface DrawState {
   sel: { count: number; types: string[]; hasLink: boolean; isLinear: boolean; grouped: boolean }
   sections: DrawSection[]
   props: DrawProps
+  /** the paper as it is drawn now (the theme applied): play paints the whole tab with it - the app's strip too */
+  paper?: string
   /** what the drawing uses: its custom colours by kind (the pickers' Most used) and its fonts (In this drawing) */
   used?: DrawUsed
   zoom: number

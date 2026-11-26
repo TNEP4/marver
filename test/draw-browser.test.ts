@@ -244,6 +244,12 @@ describe('the drawing frame (spec 38), in a real browser', () => {
     await until(`!!document.querySelector('.dk-playhost iframe')`, 10_000)
     await until(`(() => { try { return !!document.querySelector('.dk-playhost iframe').contentWindow.__mvDraw } catch { return false } })()`, 20_000)
     await until(`!!document.querySelector('.dk-playhost .dk-tools') && !!document.querySelector('.dk-playhost .dk-view.lg')`, 10_000)
+    // the drawing's own paper fills the whole tab - in the Mac app the strip behind its tabs sits on it (the play note)
+    await until(`getComputedStyle(document.querySelector('.dk-playhost')).backgroundColor === 'rgb(255, 255, 255)'`, 5000)
+    await ev(`window.__mvStore.getState().setTheme('dark')`)
+    await until(`getComputedStyle(document.querySelector('.dk-playhost')).backgroundColor === 'rgb(18, 18, 18)'`, 5000)   // Excalidraw's dark paper
+    await ev(`window.__mvStore.getState().setTheme('light')`)
+    await until(`getComputedStyle(document.querySelector('.dk-playhost')).backgroundColor === 'rgb(255, 255, 255)'`, 5000)
     await press('.dk-playhost button[aria-label="Collapse toolbar"]')
     await until(`!document.querySelector('.dk-playhost .dk-tools') && !!document.querySelector('.dk-playhost button[aria-label="Expand toolbar"]')`, 5000)
     await press('.dk-playhost button[aria-label="Expand toolbar"]')

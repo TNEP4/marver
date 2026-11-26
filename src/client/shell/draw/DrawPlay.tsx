@@ -124,7 +124,8 @@ export function DrawPlay() {
   )
   return (
     <div className={`sh-play dk-playhost${hidden ? ' hidden-ui' : ''}`} onMouseDown={keepFocus} aria-hidden={closing || undefined}
-      style={{ position: 'fixed', inset: 0, zIndex: 60, paddingTop: 'var(--mv-top, 0px)', boxSizing: 'border-box', ...(closing ? { visibility: 'hidden', pointerEvents: 'none' } : {}) }}>
+      // the drawing's own paper fills the tab, the strip behind the app's tabs included (the play frames' note)
+      style={{ position: 'fixed', inset: 0, zIndex: 60, paddingTop: 'var(--mv-top, 0px)', boxSizing: 'border-box', background: state?.paper ?? (dark ? '#121212' : '#ffffff'), ...(closing ? { visibility: 'hidden', pointerEvents: 'none' } : {}) }}>
       <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, top: 'var(--mv-top, 0px)' }}>
         <iframe ref={iframe} src={src.current} title={link.title} />
       </div>

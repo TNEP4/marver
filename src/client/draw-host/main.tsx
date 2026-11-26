@@ -120,7 +120,7 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
       const state: DrawState = {
         type: 'sh:draw-state', id, boot: docId(), mode: editRef.current ? 'edit' : 'view', editable,
         tool: s.activeTool?.type ?? 'selection', locked: !!s.activeTool?.locked,
-        sel: model.sel, sections: model.sections, props: model.props, used: model.used,
+        sel: model.sel, sections: model.sections, props: model.props, used: model.used, paper: paperOf(s.viewBackgroundColor, theme === 'dark'),
         zoom: s.zoom?.value ?? 1,
         canUndo: eng.canUndo(), canRedo: eng.canRedo(),
         panning: panning.current, map: { content: eng.contentBox(), view: eng.viewBox() },
@@ -279,3 +279,19 @@ async function boot() {
   }
 }
 boot()
+
+/** The paper as Excalidraw draws it: in dark its canvas wears invert(93%) hue-rotate(180deg), so white is #121212 - the
+ *  same filter applied here (the hue rotation undoes the inversion's hue flip, so only lightness turns). */
+function paperOf(bg: string | undefined, dark: boolean): string {
+  const c = (bg ?? '#ffffff').toLowerCase()
+  if (!dark) return c
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/.exec(c.length === 4 ? `#${c[1]}${c[1]}${c[2]}${c[2]}${c[3]}${c[3]}` : c)
+  if (!m) return '#121212'
+  const [r, g, b] = m.slice(1).map((h) => parseInt(h, 16))
+  // invert(93%) per channel, then a 180° hue turn: keep the inverted lightness, take the original hue
+  const inv = (v: number) => Math.round(v * 0.07 + (255 - v) * 0.93)
+  const l = (Math.max(r, g, b) + Math.min(r, g, b)) / 2, li = (Math.max(inv(r), inv(g), inv(b)) + Math.min(inv(r), inv(g), inv(b))) / 2
+  const k = l === 0 ? 0 : li / l
+  const to = (v: number) => Math.max(0, Math.min(255, Math.round(v * k))).toString(16).padStart(2, '0')
+  return `#${to(r)}${to(g)}${to(b)}`
+}

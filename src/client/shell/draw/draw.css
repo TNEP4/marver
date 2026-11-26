@@ -233,6 +233,7 @@
 /* a thin ring like the selection's (2 px + a soft 4 px), never the interact mode's orbiting glow (Nic, 25 Nov) */
 .sh-node.interact.dk-draw::before, .sh-node.interact.dk-draw::after { display: none }
 /* play: the drawing fills the stage */
-.dk-playhost { position: absolute; inset: 0; background: var(--node-bg); overflow: hidden }
+/* (its background is the drawing's own paper, set inline from the drawing's state - the app's strip sits on it too) */
+.dk-playhost { position: absolute; inset: 0; overflow: hidden }
 .dk-playhost iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block }
 .dk-playhost.hidden-ui .dk-anchor { opacity: 0; pointer-events: none; transition: opacity .2s }
