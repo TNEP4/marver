@@ -4,7 +4,7 @@
  * an agent's file edit landing live (no reload, ⌘Z still the person's), W, play, a shot, and a published build.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Browser } from './browser.ts'
@@ -304,7 +304,42 @@ describe('the drawing frame (spec 38), in a real browser', () => {
     expect(pub.elements.some((e: any) => e.id === 'agent-note')).toBe(true)
     expect(pub.elements.every((e: any) => !e.customData?.mv)).toBe(true)     // who drew what stays local
     expect(existsSync(join(out, '__mv/draw/index.html'))).toBe(true)
-  }, 200_000)
+    // served as a published canvas (no dev server, no API): play the drawing and export it - a real PDF and PNG come out
+    const port = 4790 + Math.floor(Math.random() * 7)
+    const server = spawn(process.execPath, [CLI, 'serve', '--port', String(port)], { cwd: root, stdio: 'pipe', env: { ...process.env, MARVER_DATA_DIR: '', MARVER_PASSWORD: '', MARVER_ID_ISSUER: '' } })
+    const t2 = await b.tab({ width: 1440, height: 900 })
+    try {
+      const pev = async (x: string): Promise<any> => { for (let i = 0; i < 8; i++) { try { return await b!.eval(t2, x) } catch { await sleep(300) } } throw new Error(`eval: ${x}`) }
+      const puntil = async (x: string, ms = 30_000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await pev(x).catch(() => false)) return; await sleep(200) } throw new Error(`timed out: ${x}`) }
+      for (let i = 0; i < 60; i++) { try { if ((await fetch(`http://localhost:${port}/`)).ok) break } catch { /* not yet */ } await sleep(250) }
+      await b.go(t2, `http://localhost:${port}/#/b/main`)
+      await puntil(`(() => { try { return !!document.querySelector('iframe[data-kind="draw"]').contentWindow.__mvDraw } catch { return false } })()`, 60_000)
+      // every download the page starts, kept: its name and its bytes' first four characters and size
+      await pev(`(() => { window.__dl = []; const click = HTMLAnchorElement.prototype.click; HTMLAnchorElement.prototype.click = function () { if (this.download) { const name = this.download; fetch(this.href).then((r) => r.arrayBuffer()).then((ab) => { const u = new Uint8Array(ab); window.__dl.push({ name, size: u.length, head: String.fromCharCode(...u.slice(0, 4)) }) }); return } return click.call(this) }; return true })()`)
+      // a click on the frame's head selects it (a published build has no store handle), then P
+      const fr = await pev(`(() => { const r = document.querySelector('iframe[data-kind="draw"]').getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width } })()`)
+      for (const type of ['mousePressed', 'mouseReleased']) await b.send('Input.dispatchMouseEvent', { type, x: fr.x + fr.w / 2, y: fr.y - 10, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1 }, t2)
+      await sleep(300)
+      await b.press(t2, 'p')
+      await puntil(`(() => { try { return !!document.querySelector('.dk-playhost iframe').contentWindow.__mvDraw } catch { return false } })()`)
+      expect(await pev(`!!document.querySelector('.dk-playhost .dk-tools')`)).toBe(false)          // view-only: no tools
+      for (const item of ['Export as PDF', 'Export as PNG']) {
+        await pev(`document.querySelector('.dk-playhost button[aria-label="Drawing menu"]').click()`)
+        await sleep(300)
+        await pev(`[...document.querySelectorAll('.dk-playhost .dk-menu button')].find((x) => x.textContent.includes(${JSON.stringify(item)})).click()`)
+        await sleep(200)
+      }
+      await puntil(`window.__dl.length === 2`, 20_000)
+      const dl = await pev(`window.__dl`)
+      const pdf = dl.find((d: any) => d.name.endsWith('.pdf')), png = dl.find((d: any) => d.name.endsWith('.png'))
+      expect(pdf?.head).toBe('%PDF')
+      expect(pdf.size).toBeGreaterThan(5_000)
+      expect(png?.head.slice(1)).toBe('PNG')
+    } finally {
+      await b.closeTab(t2).catch(() => {})
+      server.kill('SIGTERM')
+    }
+  }, 240_000)
 
   it('a text whose stored box is too small shows whole once the drawing loads - measured in its own font (seen in the Mac app)', async (ctx) => {
     if (!b) return ctx.skip('no Chrome')
