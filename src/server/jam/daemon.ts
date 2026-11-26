@@ -847,7 +847,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       const ids = drawIds.get(m.draw.frame) ?? new Set<string>()
       ids.add(m.draw.element.id); drawIds.set(m.draw.frame, ids)
     }
-    const light = (f?: string) => { if (f) { hooks.work?.(f, true, [...drawIds.get(f) ?? []], b.batchId); lit.add(f) } }
+    const light = (f?: string, refresh = false) => { if (f && (refresh || !lit.has(f))) { hooks.work?.(f, true, [...drawIds.get(f) ?? []], b.batchId); lit.add(f) } }
     const clearGlow = () => { for (const f of lit) hooks.work?.(f, false, [], b.batchId); lit.clear() }
     const drawings = new Set<string>()
     const startMtimes = sceneFrameMtimes(root, drawings)
@@ -865,7 +865,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         changedDrawings.add(frame)
         const ids = drawIds.get(frame) ?? new Set<string>()
         for (const op of entry.ops) ids.add(op.id)
-        drawIds.set(frame, ids); light(frame)
+        drawIds.set(frame, ids); light(frame, true)
       },
     })
     const sharedBefore = b.exclusive ? null : sharedMtimes(root)
@@ -888,10 +888,18 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     const one0 = b.members.length === 1 ? q.j.cards.find((c) => c.id === b.members[0].card) : undefined
     const discover = async () => {
       if (one0?.kind !== 'capture' || b.crowded || crowded || !aloneAtStart || batchStarts !== myStart || hooks.anyHold?.()) return
-      const found = newFrames(new Set(b.before ?? []), b).filter((f) => !(b.created ?? []).includes(f))
-      if (!found.length) return
-      await q.lock(() => { b.created = [...(b.created ?? []), ...found]; b.frames = [...new Set([...b.frames, ...b.created])]; for (const f of found) madeScene(b, f); q.persist() })
-      reserve()
+      const candidates = newFrames(new Set(b.before ?? []), b).filter((f) => !(b.created ?? []).includes(f))
+      if (!candidates.length) return
+      const changed = await q.lock(() => {
+        // A heartbeat's discovery may still be queued when the run's final discovery begins.
+        const found = candidates.filter((f) => !(b.created ?? []).includes(f))
+        if (!found.length) return false
+        b.created = [...(b.created ?? []), ...found]; b.frames = [...new Set([...b.frames, ...b.created])]
+        for (const f of found) madeScene(b, f)
+        q.persist()
+        return true
+      })
+      if (changed) reserve()
     }
     const touched = new Set<string>()
     for (const f of b.frames) light(f)
@@ -911,7 +919,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       await q.lock(() => { b.shots = shots; q.persist() })
     }
     if (!b.shots?.some((s) => s.before)) { const t = performance.now(); await shoot('before'); if (capturing) timing.beforeMs = performance.now() - t }   // a retry keeps the first attempt's
-    const followWork = () => {
+    const followWork = (heartbeat = true) => {
       // A session that crashed or was stopped must not keep its element lease alive through the daemon's heartbeat.
       if (stopped || b.claim && (b.claim.stalled || b.claim.stopping || b.claim.progress + 15 * 60_000 <= Date.now())
         || b.runner && b.runner.kind !== 'session' && b.leaseUntil <= Date.now()) return
@@ -924,7 +932,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         if (foundDrawings.has(id)) drawings.add(id)
       }
       for (const id of touched) light(id)
-      for (const f of lit) light(f)   // heartbeat: keep every lit frame's lease alive
+      if (heartbeat) for (const f of lit) light(f, true)   // keep every lit frame's lease alive
     }
     let early: { body: string; asks: boolean; commentId: string; ts: number } | undefined
     let run: Awaited<ReturnType<typeof runAgent>> = { reply: '', asks: false, ok: false, reanchors: [] }
@@ -1079,7 +1087,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       }
       if (stopped) return
       await work.flush()
-      followWork()
+      followWork(false)   // discover last edits without renewing leases just before clearing them
       if (!run.ok) {
         // what it made before it failed is still its own (a last look, then the card holds them)
         await discover()

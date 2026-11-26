@@ -38,7 +38,8 @@ export function createActivity(ttlMs = 90_000): Activity {
   const live = () => [...m.values()].filter((v) => v.until > Date.now())
   const frames = () => [...new Set(live().map((v) => v.frame))]
   const cbs: ((frames: string[]) => void)[] = []
-  const emit = () => { const f = frames(); for (const cb of cbs) cb(f) }
+  // Change callbacks retain unswept entries; readers of current work use the live leases.
+  const emit = () => { const f = [...new Set([...m.values()].map((v) => v.frame))]; for (const cb of cbs) cb(f) }
   return {
     mark(frame, ttl, src = 'cli', ids = [], key = '') {
       if (!frame) return

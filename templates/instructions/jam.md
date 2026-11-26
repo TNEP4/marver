@@ -84,9 +84,9 @@ beside it.
 
 ## Drawings in runs from the canvas
 
-A `.excalidraw` drawing is a frame. A member's `draw` block describes its target
-by exact id from the file: words, box, arrows in/out, a label's shape, nearby
-elements, open threads and the comment/current revisions. Use
+A `.excalidraw` drawing is a frame. A member's supplied `draw` block describes its target
+by exact id from the file: words, box, arrows in/out, a label's shape, surrounding
+elements, open thread ids and the comment/current revisions. Use
 `npx marver draw describe <drawing> --run <handle> [--as <connection>]`, and pass
 that handle on edits too. Spawned runs inherit it. Use `--since` only when the
 epochs match. If the canvas is unreachable, edit the file directly, keeping ids
