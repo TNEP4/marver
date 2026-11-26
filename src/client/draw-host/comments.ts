@@ -233,6 +233,11 @@ export function installCommentProvider(host: CommentHost) {
     },
     /** the camera, elements or gestures changed: pins follow */
     changed(isMoving: boolean) { moving = isMoving; if (watched.length) push(); if (locked) outline(lock, locked) },
+    /** the anchor a comment would take at this point - the right-click's Comment row (spec 39 A6) */
+    anchorFor(cx: number, cy: number): (Anchor & Record<string, unknown>) | null {
+      const a = anchorAt(cx, cy, true)
+      return a && !('refused' in a) ? a.anchor : null
+    },
     /** a comment opened on purpose: bring its element into view, once */
     reveal(a: Anchor) {
       const eng = host.engine()

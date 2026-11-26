@@ -202,7 +202,7 @@ export function DrawPlay() {
         : <div className="dk-anchor" style={{ ...EDGE, right: 10 }}><HoverTip label="Expand toolbar" keys="⌘/" side="bottom"><button className="dk-glass dk-fab" aria-label="Expand toolbar" onClick={() => { cmd('toolbar', { via: 'click', in: 'stage' }); setBarOpen(true) }}><PanelHollowIcon size={18} style={{ transform: 'rotate(90deg)' }} /></button></HoverTip></div>)}
       <DrawView link={link} state={state} size="lg" map menuSide="top" style={{ right: 10, bottom: 10 }} />
       {state?.editable === false && (
-        <div className="dk-anchor dk-row" style={{ ...EDGE, right: 10 }}>
+        <div className="dk-anchor dk-pair" style={{ ...EDGE, right: 10 }}>
           {/* a view-only (published) drawing has no bar: the comment button sits beside the Back X (spec 39 A2) */}
           <DrawCommentButton fab />
           <HoverTip label="Back to the canvas" keys="esc" side="bottom"><button className="dk-glass dk-fab" aria-label="Back to the canvas" onClick={leave}><Ph n="X" size={16} /></button></HoverTip>

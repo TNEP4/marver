@@ -3,6 +3,7 @@
  * the bar and panel send it (`sh:draw-cmd`), and what comes back from an export. One store for the canvas's frames
  * (keyed by node key) and play's (keyed `play:<frame>`).
  */
+import { drawMenuMessage } from './DrawMenu.tsx'
 import { toggleCommentMode, toggleLaserComment, togglePins } from '../comment-keys.ts'
 import { create } from 'zustand'
 import type { DrawCmd, DrawState } from '../../../shared/draw-protocol.ts'
@@ -83,6 +84,8 @@ const pdfAgain = new Map<string, { link: DrawLink; dark: boolean }>()
  *  by play's host (its own iframe). Returns true when the message was a drawing's. */
 export function drawMessage(key: string, data: any): boolean {
   if (data?.type === 'sh:draw-state') { useDraw.getState().put(key, data as DrawState); return true }
+  // the right-click (spec 39 A6): Marver's menu, and what its clipboard rows write
+  if (drawMenuMessage(key, data)) return true
   // ⌥⇧D inside a drawing on the canvas: the drawing frame's theme (D alone stays the diamond in a drawing - Nic, 26 Nov)
   if (data?.type === 'sh:draw-key' && data.key === 'theme') { toggleDrawingTheme(key, 'key'); return true }
   // C, ⇧C, ⇧L from inside a drawing (spec 39 B4): the shell's comment keys, the same rules as everywhere

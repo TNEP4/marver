@@ -397,5 +397,19 @@
     "prop": "onMouseDown",
     "label": "",
     "reason": "hides the tooltip as the press starts; the button's own click records"
+  },
+  {
+    "file": "src/client/shell/draw/DrawMenu.tsx",
+    "fn": "useMenuKeys",
+    "prop": "addEventListener:keydown",
+    "label": "",
+    "reason": "walks a drawing menu's rows (arrows light one, Escape closes it): Enter clicks the lit row, which records its own command (spec 39 A6)"
+  },
+  {
+    "file": "src/client/shell/draw/DrawMenu.tsx",
+    "fn": "DrawContextMenu",
+    "prop": "addEventListener:pointerdown",
+    "label": "",
+    "reason": "a press outside the drawing's right-click closes it - the press itself is what records (as the sidebar's context menu)"
   }
 ]

@@ -47,6 +47,7 @@ import { CommentButton, DevicePicker, HideUIButton, LaserButton, Popover, ThemeP
 import { DrawCanvasChrome, newDrawingAtPointer } from './draw/DrawChrome.tsx'
 import { Ph } from './draw/kit.tsx'
 import { DrawPlay, playDrawingIfSelected, useDrawPlay } from './draw/DrawPlay.tsx'
+import { DrawContextMenu } from './draw/DrawMenu.tsx'
 import { drawMessage } from './draw/link.ts'
 
 const commentsStore = () => useComments.getState()
@@ -1069,6 +1070,7 @@ export function App() {
       <SelectionBar />
       <DrawCanvasChrome />
       <DrawPlay />
+      <DrawContextMenu />
       <Search />
 
       {/* floating pill panel (no top bar - spec); panel and fab are both always

@@ -5,7 +5,7 @@
  */
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { DrawAction, DrawProps, DrawState } from '../../../shared/draw-protocol.ts'
-import { ArrowKind, BGS, Corner, Distribute, EditPoints, FONTS, FillIcon, HEADS, HEAD_LABEL, HeadIcon, HoverTip, Ln, PALETTE, Ph, STROKES, Sw, VAlign, colorName, loadPreviewFonts, previewFamily, type Head } from './kit.tsx'
+import { ArrowKind, BGS, Corner, Distribute, EditPoints, FONTS, FillIcon, HEADS, HEAD_LABEL, HeadIcon, HoverTip, Ln, PALETTE, Ph, STROKES, Sw, VAlign, colorName, keyGlyphs, loadPreviewFonts, previewFamily, type Head } from './kit.tsx'
 import { shadesOf } from '../../../shared/draw-colors.ts'
 import { drawSend, type DrawLink } from './link.ts'
 
@@ -121,7 +121,8 @@ export function DrawPanel({ link, state, top, popSide = 'right', style, cam }: {
   }
   if (has('opacity')) out.push(<Opacity key="opacity" value={p!.opacity} onChange={(v) => act('changeOpacity', v)} />)
   if (has('layers')) {
-    const lay = ([['Send to back', 'ArrowLineDown', '⌘⇧[', 'sendToBack'], ['Send backward', 'ArrowDown', '⌘[', 'sendBackward'], ['Bring forward', 'ArrowUp', '⌘]', 'bringForward'], ['Bring to front', 'ArrowLineUp', '⌘⇧]', 'bringToFront']] as const)
+    // Excalidraw's own keys, in Apple's order (the right-click menu shows the same - spec 39 A6)
+    const lay = ([['Send to back', 'ArrowLineDown', keyGlyphs('Alt+Mod+['), 'sendToBack'], ['Send backward', 'ArrowDown', keyGlyphs('Mod+['), 'sendBackward'], ['Bring forward', 'ArrowUp', keyGlyphs('Mod+]'), 'bringForward'], ['Bring to front', 'ArrowLineUp', keyGlyphs('Alt+Mod+]'), 'bringToFront']] as const)
       .map(([t, n, k, a]) => <HoverTip key={t} label={t} keys={k}><button aria-label={t} onClick={() => act(a)}><Ph n={n} size={13} /></button></HoverTip>)
     out.push(<div className="sec" key="layers"><div className="lb">Layers</div><div className="dk-row">{lay}</div></div>)
   }

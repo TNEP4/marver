@@ -9,7 +9,7 @@
  * runs every action in DRAW_ACTIONS against it.
  */
 import { useEffect, useRef } from 'react'
-import { Excalidraw, CaptureUpdateAction, FONT_FAMILY, reconcileElements, restoreElements, exportToBlob, exportToSvg, getSceneVersion, getCommonBounds, viewportCoordsToSceneCoords, sceneCoordsToViewportCoords } from '@excalidraw/excalidraw'
+import { Excalidraw, CaptureUpdateAction, FONT_FAMILY, reconcileElements, restoreElements, exportToBlob, exportToSvg, getSceneVersion, getCommonBounds, viewportCoordsToSceneCoords, sceneCoordsToViewportCoords, getTextFromElements } from '@excalidraw/excalidraw'
 import '@excalidraw/excalidraw/index.css'
 import type { DrawAction, DrawElement, DrawTool, DrawViewOp, Box } from '../../shared/draw-protocol.ts'
 import { DRAW_ACTIONS } from '../../shared/draw-protocol.ts'
@@ -43,8 +43,9 @@ export interface Engine {
   appState(): any
   contentBox(): Box | null
   viewBox(): Box
-  /** the drawing at 3x (its longest side capped at 8192 px), and the scale it came out at */
-  exportPng(dark: boolean): Promise<{ blob: Blob; scale: number }>
+  /** the drawing at 3x (its longest side capped at 8192 px), and the scale it came out at; `ids`: only those elements
+   *  (and what belongs to them - a shape's label, a frame's children) */
+  exportPng(dark: boolean, ids?: string[]): Promise<{ blob: Blob; scale: number }>
   exportSvg(dark: boolean): Promise<string>
   /** re-render every element canvas at the current pixel ratio (after a crispness change) */
   rerender(): void
@@ -61,6 +62,17 @@ export interface Engine {
   camera(): { scrollX: number; scrollY: number; zoom: number }
   /** scroll so this box of the drawing is in view (a comment opened on purpose) */
   reveal(box: Box): void
+  /** spec 39 A6: Excalidraw's right-click menu as it stands (its own actions, filtered by their predicates), or null */
+  menu(): { rows: { name: string; labelKey: string }[]; top: number; left: number; element: boolean } | null
+  closeMenu(): void
+  /** the selection as Excalidraw's own clipboard JSON (what its Copy writes) - written by the shell, inside the click */
+  clipboardJson(): string
+  /** the selection's words, as Excalidraw's Copy as text */
+  selectionText(): string
+  /** the selection (bound text and frame children included) as SVG; all of it when nothing is selected */
+  selectionSvg(dark: boolean): Promise<string>
+  /** paste Excalidraw clipboard JSON or plain text at the pointer, as its own paste does */
+  paste(text: string): void
 }
 
 /** spec 39: a hit element, as a comment needs it */
@@ -143,6 +155,12 @@ export function DrawEngine({ initial, theme, edit, editable, picking = false, on
       if (!app || !(DRAW_ACTIONS as readonly string[]).includes(name)) return false
       const action = app.actionManager?.actions?.[name]
       if (!action) return false
+      // its own predicate, checked again as it runs (a menu row from a moment ago may no longer apply - spec 39 B8)
+      if (action.predicate) {
+        let ok = true
+        try { ok = !!action.predicate(app.scene?.getNonDeletedElements?.() ?? [], app.state, app.props, app) } catch { ok = true }
+        if (!ok) return false
+      }
       app.actionManager.executeAction(action, 'ui', value)
       return true
     },
@@ -213,13 +231,13 @@ export function DrawEngine({ initial, theme, edit, editable, picking = false, on
       const z = s.zoom.value
       return { x: -s.scrollX, y: -s.scrollY, w: s.width / z, h: s.height / z }
     },
-    async exportPng(dark) {
+    async exportPng(dark, ids) {
       const api = apiRef.current
       // the scale through getDimensions - the one way exportToBlob reads it (appState.exportScale is the dialog's): 3x,
       // sharp on any screen and in a slide, the longest side kept within 8192 px
       let scale = 1
       const blob = await exportToBlob({
-        elements: api.getSceneElements(), files: api.getFiles(), mimeType: 'image/png', exportPadding: 24,
+        elements: ids ? withAttached(api.getSceneElements(), ids) : api.getSceneElements(), files: api.getFiles(), mimeType: 'image/png', exportPadding: 24,
         appState: { exportBackground: true, viewBackgroundColor: dark ? '#121212' : '#ffffff', exportWithDarkMode: dark },
         getDimensions: (w: number, h: number) => { scale = Math.max(1, Math.min(3, 8192 / Math.max(w, h, 1))); return { width: Math.round(w * scale), height: Math.round(h * scale), scale } },
       } as any)
@@ -296,6 +314,60 @@ export function DrawEngine({ initial, theme, edit, editable, picking = false, on
     camera() {
       const s = apiRef.current?.getAppState()
       return s ? { scrollX: s.scrollX, scrollY: s.scrollY, zoom: s.zoom.value } : { scrollX: 0, scrollY: 0, zoom: 1 }
+    },
+    menu() {
+      const api = apiRef.current
+      if (!api) return null
+      if (!appRef.current) tryGrab()
+      const app = appRef.current
+      const st = api.getAppState()
+      const cm = st.contextMenu
+      if (!cm || !app) return null
+      const els = app.scene?.getNonDeletedElements?.() ?? api.getSceneElements()
+      const rows: { name: string; labelKey: string }[] = []
+      for (const item of cm.items as any[]) {
+        if (!item) continue
+        if (item === 'separator') { rows.push({ name: '|', labelKey: '' }); continue }
+        let ok = true
+        try { ok = !item.predicate || !!item.predicate(els, st, app.props, app) } catch { ok = false }
+        if (!ok) continue
+        let labelKey = ''
+        try { labelKey = typeof item.label === 'function' ? String(item.label(els, st, app)) : String(item.label ?? '') } catch { labelKey = '' }
+        rows.push({ name: String(item.name), labelKey })
+      }
+      const element = (cm.items as any[]).some((i) => i?.name === 'copy' || i?.name === 'cut' || i?.name === 'deleteSelectedElements')
+      return { rows, top: cm.top - (st.offsetTop || 0), left: cm.left - (st.offsetLeft || 0), element }
+    },
+    closeMenu() { apiRef.current?.updateScene({ appState: { contextMenu: null }, captureUpdate: CU.NEVER }) },
+    clipboardJson() {
+      const api = apiRef.current
+      const sel = api.getAppState().selectedElementIds ?? {}
+      const elements = withAttached(api.getSceneElements(), Object.keys(sel).filter((k) => sel[k]))
+      const files: Record<string, unknown> = {}
+      const all = api.getFiles() ?? {}
+      for (const e of elements as any[]) if (e.fileId && all[e.fileId]) files[e.fileId] = all[e.fileId]
+      return JSON.stringify({ type: 'excalidraw/clipboard', elements, files })
+    },
+    selectionText() {
+      const api = apiRef.current
+      const sel = api.getAppState().selectedElementIds ?? {}
+      return getTextFromElements(withAttached(api.getSceneElements(), Object.keys(sel).filter((k) => sel[k])) as any)
+    },
+    async selectionSvg(dark) {
+      const api = apiRef.current
+      const sel = api.getAppState().selectedElementIds ?? {}
+      const ids = Object.keys(sel).filter((k) => sel[k])
+      const svg = await exportToSvg({
+        elements: ids.length ? withAttached(api.getSceneElements(), ids) : api.getSceneElements(), files: api.getFiles(), exportPadding: 24,
+        appState: { exportBackground: false, viewBackgroundColor: dark ? '#121212' : '#ffffff', exportWithDarkMode: dark },
+      } as any)
+      return svg.outerHTML
+    },
+    paste(text) {
+      // Excalidraw's own paste path (its document listener), at the pointer: a clipboard event carrying the data
+      const dt = new DataTransfer()
+      dt.setData('text/plain', text)
+      document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }))
     },
     reveal(box) {
       const api = apiRef.current
@@ -484,4 +556,18 @@ function attachOf(el: any, byId: Map<string, any>): { x: number; y: number } {
   }
   const [x1, y1, x2] = getCommonBounds([el])
   return { x: x2, y: y1 }
+}
+
+/** These elements and what belongs to them - a shape's label, an arrow's label, a frame's children (Excalidraw's own
+ *  selection export takes them too) */
+function withAttached(all: readonly any[], ids: string[]): any[] {
+  const want = new Set(ids)
+  for (const e of all) {
+    if (want.has(e.id)) for (const b of e.boundElements ?? []) if (b?.type === 'text') want.add(b.id)
+  }
+  for (const e of all) {
+    if (e.frameId && want.has(e.frameId)) want.add(e.id)
+    if (e.type === 'text' && e.containerId && want.has(e.containerId)) want.add(e.id)
+  }
+  return all.filter((e) => want.has(e.id))
 }

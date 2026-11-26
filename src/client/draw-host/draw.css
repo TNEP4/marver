@@ -26,3 +26,6 @@ html { overscroll-behavior: none }
 
 .mv-draw-error { font: 12px ui-monospace, monospace; padding: 16px; color: #b42318; white-space: pre-wrap }
 .mv-draw-error b { display: block; margin-bottom: 8px }
+
+/* spec 39 A6: Excalidraw's own right-click menu never shows - the shell draws Marver's */
+.excalidraw .context-menu, .excalidraw .popover:has(> .context-menu) { display: none !important }

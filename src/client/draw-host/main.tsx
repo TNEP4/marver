@@ -157,7 +157,19 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
   sync.current.onError = (message) => post({ type: 'sh:draw-error', id, message })
 
   const lastScroll = useRef('')
+  // spec 39 A6: Excalidraw opened its right-click menu - the shell draws Marver's instead (its rows: Excalidraw's own
+  // actions as they apply now, plus the comment the point would take); Excalidraw's own is closed at once
+  const openMenu = () => {
+    const eng = engine.current
+    const m = eng?.menu()
+    if (!eng || !m) return
+    eng.closeMenu()
+    // its keys are the menu's from now (the shell confirms with op 'menu' a paint later - a quick arrow must not nudge)
+    menuOpen.current = true
+    post({ type: 'sh:draw-menu', id, rows: m.rows, element: m.element, point: { x: m.left, y: m.top }, anchor: comments.anchorFor(m.left, m.top), editable: editable && editRef.current })
+  }
   const onChange = (snap: EngineSnapshot) => {
+    if (snap.appState?.contextMenu) { openMenu(); return }
     sync.current!.changed()
     const s = snap.appState
     const scroll = `${s.scrollX}|${s.scrollY}|${s.zoom?.value}`
@@ -251,6 +263,7 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
     if (c.op === 'flush') { void sync.current!.flush().then(() => post({ type: 'sh:draw-flushed', id })); return }
     if (c.op === 'ui') { uiHidden.current = c.hidden; return }
     if (c.op === 'menu') { menuOpen.current = !!c.open; return }
+    if (c.op === 'menu-data') { void menuData(eng, c.what, c.dark ?? theme === 'dark', c.rid); return }
     if (c.op === 'reveal') { comments.reveal(c.anchor as any); return }
     if (c.op === 'focus') { try { window.focus(); (document.querySelector('.excalidraw') as HTMLElement | null)?.focus({ preventScroll: true }) } catch { /* the next click focuses */ } return }
     // a view-only drawing runs only the commands that change nothing (spec 39 B2)
@@ -268,8 +281,22 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
         else eng.view(c.v, frameView.current)
         break
       case 'export': void exportAs(eng, c.format, c.dark ?? theme === 'dark', c.rid); break
+      case 'paste': eng.paste(c.text); break
     }
     sendState()
+  }
+
+  /** what a right-click clipboard row writes (spec 39 B8): the shell writes it, inside the person's click */
+  async function menuData(eng: Engine, what: 'copy' | 'svg' | 'text' | 'png', dark: boolean, rid: string) {
+    try {
+      if (what === 'copy') { post({ type: 'sh:draw-menu-data', id, rid, mime: 'text/plain', data: eng.clipboardJson() }); return }
+      if (what === 'text') { post({ type: 'sh:draw-menu-data', id, rid, mime: 'text/plain', data: eng.selectionText() }); return }
+      if (what === 'svg') { post({ type: 'sh:draw-menu-data', id, rid, mime: 'text/plain', data: await eng.selectionSvg(dark) }); return }
+      const sel = eng.appState()?.selectedElementIds ?? {}
+      const ids = Object.keys(sel).filter((k) => sel[k])
+      const { blob } = await eng.exportPng(dark, ids.length ? ids : undefined)
+      post({ type: 'sh:draw-menu-data', id, rid, mime: 'image/png', blob })
+    } catch (err) { post({ type: 'sh:draw-menu-data', id, rid, error: (err as Error).message }) }
   }
 
   async function exportAs(eng: Engine, format: 'png' | 'svg' | 'clipboard', dark: boolean, rid?: string) {

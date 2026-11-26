@@ -239,8 +239,13 @@
 .dk-playhost.hidden-ui .dk-anchor { opacity: 0; pointer-events: none; transition: opacity .2s }
 
 /* spec 39: a view-only drawing in play - the comment button beside the Back X */
-.dk-anchor.dk-row { display: flex; gap: 8px; align-items: flex-start }
+.dk-anchor.dk-pair { display: flex; gap: 8px; align-items: flex-start }
 /* spec 39 A3: notices stay over drawing play (z 60) - the toasts, Marver's questions, the outbox and signed-out bars */
 body:has(.dk-playhost) .sh-toasts, body:has(.dk-playhost) .sh-show-notice, body:has(.dk-playhost) .sh-banner { z-index: 61 }
 /* the view-only play's comment button: on, as a bar button is */
 .dk-fab.on { background: var(--draw-bg); color: var(--draw-ink) }
+
+/* spec 39 A6: the right-click - the drawing menus' glass and rows; the lit row under the keys; Delete in the panel's warn */
+.dk-ctxmenu > span { display: contents }
+.dk-ctxmenu button.hi { background: var(--glass-hover, rgba(127,127,127,.12)) }
+.dk-ctxmenu .warn button, .dk-ctxmenu .warn button .ic { color: #e5484d }
