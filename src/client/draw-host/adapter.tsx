@@ -9,7 +9,7 @@
  * runs every action in DRAW_ACTIONS against it.
  */
 import { useEffect, useRef } from 'react'
-import { Excalidraw, CaptureUpdateAction, reconcileElements, restoreElements, exportToBlob, exportToSvg, getSceneVersion, getCommonBounds } from '@excalidraw/excalidraw'
+import { Excalidraw, CaptureUpdateAction, FONT_FAMILY, reconcileElements, restoreElements, exportToBlob, exportToSvg, getSceneVersion, getCommonBounds } from '@excalidraw/excalidraw'
 import '@excalidraw/excalidraw/index.css'
 import type { DrawAction, DrawElement, DrawTool, DrawViewOp, Box } from '../../shared/draw-protocol.ts'
 import { DRAW_ACTIONS } from '../../shared/draw-protocol.ts'
@@ -51,6 +51,8 @@ export interface Engine {
 }
 
 const CU = CaptureUpdateAction
+/** Excalidraw's font ids to the faces it registers */
+const FAMILY_NAME: Record<number, string> = Object.fromEntries(Object.entries(FONT_FAMILY as Record<string, number>).map(([name, id]) => [id, name]))
 const GRAB_KEY = 'F19'
 
 export function DrawEngine({ initial, theme, edit, editable, onReady, onChange, onPointerDown, onPointerUp }: {
@@ -233,6 +235,33 @@ export function DrawEngine({ initial, theme, edit, editable, onReady, onChange, 
             readyRef.current = true
             ;(window as unknown as { __mvApp?: App }).__mvApp = appRef.current   // tests read it
             cbs.current.onReady(engine)
+            // texts measured again once the hand-drawn fonts are in: measured with a fallback font first, a box is too
+            // narrow and the words are cut off. Only the boxes change - nothing to save, nothing to undo.
+            const remeasure = () => {
+              const els = api.getSceneElementsIncludingDeleted() as unknown as DrawElement[]
+              if (!els.some((e) => e.type === 'text' && !e.isDeleted)) return
+              // (0.18.1 refreshes dimensions only inside its binding repair: both flags, and only the boxes are taken)
+              const fresh = new Map((restoreElements(els as any, null, { refreshDimensions: true, repairBindings: true }) as unknown as DrawElement[]).map((e) => [e.id, e]))
+              let changed = false
+              const next = els.map((e) => {
+                const f = fresh.get(e.id)
+                if (e.type !== 'text' || !f || (f.width === e.width && f.height === e.height)) return e
+                changed = true
+                return { ...e, width: f.width, height: f.height }
+              })
+              if (changed) api.updateScene({ elements: next as any, captureUpdate: CU.NEVER })
+            }
+            // the exact faces the texts need (Excalidraw loads them by unicode range, lazily): loaded, then measured
+            const texts = (api.getSceneElements() as unknown as DrawElement[]).filter((e) => e.type === 'text')
+            const wants = new Map<string, string>()
+            for (const t of texts) {
+              const fam = FAMILY_NAME[Number((t as any).fontFamily)] ?? 'Excalifont'
+              const key = `${Number((t as any).fontSize) || 20}px "${fam}"`
+              wants.set(key, (wants.get(key) ?? '') + String((t as any).text ?? ''))
+            }
+            void Promise.all([...wants].map(([font, sample]) => document.fonts.load(font, sample).catch(() => []))).then(remeasure)
+            document.fonts.addEventListener('loadingdone', remeasure)
+            for (const ms of [500, 1500, 4000]) setTimeout(remeasure, ms)   // faces Excalidraw registers after mount
           }
           requestAnimationFrame(() => start())
         }}

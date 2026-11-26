@@ -255,4 +255,28 @@ describe('the drawing frame (spec 38), in a real browser', () => {
     expect(pub.elements.every((e: any) => !e.customData?.mv)).toBe(true)     // who drew what stays local
     expect(existsSync(join(out, '__mv/draw/index.html'))).toBe(true)
   }, 200_000)
+
+  it('a text whose stored box is too small shows whole once the drawing loads - measured in its own font (seen in the Mac app)', async (ctx) => {
+    if (!b) return ctx.skip('no Chrome')
+    const doc = disk()
+    doc.elements.push({ id: 'tight-label', type: 'text', x: 60, y: 40, width: 40, height: 25, text: 'agent: is login needed?', fontSize: 28 })
+    writeFileSync(file(), JSON.stringify(doc, null, 2))
+    await until(`(() => { const e = document.querySelector('iframe[data-kind="draw"]').contentWindow.__mvDraw.engine.elements(); return e.some((x) => x.id === 'tight-label') })()`, 10_000)
+    // a fresh load with the fonts held back 1.5 s (a slow network, a cold cache): the first measure runs on a fallback
+    // font, so the box must be measured again once the hand-drawn face is in
+    await b.send('Network.enable', {}, s)
+    await b.send('Network.setCacheDisabled', { cacheDisabled: true }, s)                // the earlier steps cached the fonts
+    await b.send('Fetch.enable', { patterns: [{ urlPattern: '*draw-assets/fonts*' }] }, s)
+    const off = b.on((m: any) => {
+      if (m.method === 'Fetch.requestPaused' && m.sessionId === s) setTimeout(() => { b!.send('Fetch.continueRequest', { requestId: m.params.requestId }, s).catch(() => {}) }, 1500)
+    })
+    await b.send('Page.reload', { ignoreCache: true }, s)                                 // a real reload (a hash change is none)
+    await sleep(300)
+    await until(`(() => { try { const w = document.querySelector('iframe[data-kind="draw"]').contentWindow; return !!w.__mvDraw && w.__mvDraw.engine.elements().some((x) => x.id === 'tight-label') } catch { return false } })()`, 60_000)
+    const words = `(() => { const d = document.querySelector('iframe[data-kind="draw"]').contentDocument; const c = d.createElement('canvas').getContext('2d'); c.font = '28px Excalifont'; return c.measureText('agent: is login needed?').width })()`
+    await until(`(() => { const w = document.querySelector('iframe[data-kind="draw"]').contentWindow; const t = w.__mvDraw.engine.elements().find((x) => x.id === 'tight-label'); return w.document.fonts.check('28px Excalifont') && t && t.width >= ${words} - 1 })()`, 10_000)
+    off()
+    await b.send('Fetch.disable', {}, s)
+    await b.send('Network.setCacheDisabled', { cacheDisabled: false }, s)
+  }, 90_000)
 })
