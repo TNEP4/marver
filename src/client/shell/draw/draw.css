@@ -172,7 +172,10 @@
 .dk-fab { position: relative; width: 40px; height: 40px; border-radius: 13px; display: grid; place-items: center; padding: 0; border: 0; color: var(--glass-ink-2); cursor: pointer }
 /* ---- the frame head's drawing glyph, the sidebar row --------------------------------------------------------- */
 .sh-node-head .dk-kind { color: var(--head-dim); flex: none }
+/* the nib follows the FRAME's theme, as its header does (a dark drawing on a light board wears the dark ink) */
 .sh-node.dk-draw .sh-node-head .dk-kind { color: var(--draw-ink) }
+.sh-node.dk-draw[data-theme="light"] .sh-node-head .dk-kind { color: #5b57d1 }
+.sh-node.dk-draw[data-theme="dark"] .sh-node-head .dk-kind { color: #a8a5ff }
 /* the canvas bar as the selection bar: .sh-ctx's edge accent and beam, kept in flow inside its anchor */
 .dk-tools.sh-ctx.dk-ctx { position: relative; z-index: auto; padding: 4px }
 /* the selection bar's effect, in the drawing purple (Nic, 25 Nov): .dk-glass's own fill and edge would cover it - the
