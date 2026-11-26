@@ -10,7 +10,7 @@ import { useStore, PUBLISHED } from '../store.ts'
 import { withWs } from '../api.ts'
 import { ROUTE } from '../../const.ts'
 import { framePath } from '../ContextMenu.tsx'
-import { PanelFilledIcon, PanelHollowIcon } from '../icons.tsx'
+import { ImagesSquareIcon, PanelFilledIcon, PanelHollowIcon } from '../icons.tsx'
 import { DrawBar } from './DrawBar.tsx'
 import { DrawPanel } from './DrawPanel.tsx'
 import { DrawView } from './DrawView.tsx'
@@ -52,6 +52,8 @@ export function DrawPlay() {
   const [panelOpen, setPanelOpen] = useState(true)
   const [barOpen, setBarOpen] = useState(true)
   const [hidden, setHidden] = useState(false)
+  const hiddenRef = useRef(false)
+  hiddenRef.current = hidden
   const [menu, setMenu] = useState(false)
   const src = useRef('')
   const flushed = useRef<(() => void) | null>(null)
@@ -68,11 +70,17 @@ export function DrawPlay() {
       if (e.source !== iframe.current?.contentWindow || (e.origin && e.origin !== location.origin)) return
       const d = e.data
       // play owns the drawing's wheel and keys - published too (view only there: the host keeps it in view mode)
-      if (d?.type === 'sh:ready') { try { iframe.current?.contentWindow?.postMessage({ type: 'sh:interactive', on: true }, location.origin) } catch { /* gone */ } return }
+      if (d?.type === 'sh:ready') {
+        try { iframe.current?.contentWindow?.postMessage({ type: 'sh:interactive', on: true }, location.origin) } catch { /* gone */ }
+        // the UI's state again, now that the drawing listens (the first one can land before it does): H is Hide all UI
+        if (link) sendQuiet(link, { op: 'ui', hidden: hiddenRef.current })
+        return
+      }
       if (d?.type === 'sh:draw-flushed') { flushed.current?.(); return }
       if (d?.type === 'sh:exit-interact') { leave(); return }
       if (d?.type === 'sh:draw-key') {
         if (d.key === 'reveal') setHidden(false)
+        else if (d.key === 'hide') { cmd('hide-ui', { via: 'key', in: 'stage' }); setHidden(true) }
         else if (d.key === 'panel') setPanelOpen((o) => !o)
         else if (d.key === 'toolbar') setBarOpen((o) => !o)
         return
@@ -84,7 +92,7 @@ export function DrawPlay() {
   }, [at])
   // theme follows the canvas's
   useEffect(() => { try { iframe.current?.contentWindow?.postMessage({ type: 'sh:set-theme', theme }, location.origin) } catch { /* not yet */ } }, [theme])
-  // the host intercepts H while the UI is hidden (it reveals), Excalidraw's hand otherwise
+  // play tells the host the UI's state: H toggles Hide all UI here (Excalidraw's hand keeps H on the canvas)
   useEffect(() => { if (link) sendQuiet(link, { op: 'ui', hidden }) }, [hidden, at])
 
   if (!at || !link) return null
@@ -124,11 +132,11 @@ export function DrawPlay() {
         ? <DrawPanel link={link} state={state} top={head} popSide="right" style={{ ...EDGE, left: 10 }} />
         : <div className="dk-anchor" style={{ ...EDGE, left: 10 }}><HoverTip label="Expand panel" keys="⌘\" side="right"><button className="dk-glass dk-fab" aria-label="Expand panel" onClick={() => { cmd('panel', { via: 'click', in: 'stage' }); setPanelOpen(true) }}><PanelHollowIcon size={18} /></button></HoverTip></div>}
       {menu && panelOpen && (
-        <div className="sh-menu dk-menu" style={{ position: 'absolute', top: 'calc(max(10px, var(--mv-top, 0px)) + 44px)', left: 20, zIndex: 50 }} onMouseLeave={() => setMenu(false)}>
+        <div className="sh-menu dk-menu" style={{ position: 'absolute', top: 'calc(max(10px, var(--mv-top, 0px)) + 52px)', left: 20, zIndex: 50 }} onMouseLeave={() => setMenu(false)}>
           <MI icon={<Ph n="FilePng" size={15} />} label="Export as PNG" onClick={() => { setMenu(false); exportDrawing(link, 'png', toast, dark) }} />
           <MI icon={<Ph n="FilePdf" size={15} />} label="Export as PDF" onClick={() => { setMenu(false); exportDrawing(link, 'pdf', toast, dark) }} />
           <div className="div" />
-          <MI icon={<Ph n="Copy" size={15} />} label="Copy as image" k="⇧I" onClick={() => { setMenu(false); copyImage() }} />
+          <MI icon={<ImagesSquareIcon size={15} />} label="Copy as image" k="⇧I" onClick={() => { setMenu(false); copyImage() }} />
           <MI icon={<Ph n="Link" size={15} />} label="Copy path" k="⇧P" onClick={() => { cmd('copy-path', { via: 'click', in: 'stage' }); setMenu(false); copyPath() }} />
           <div className="div" />
           <MI icon={<Ph n="EyeSlash" size={15} />} label="Hide all UI" k="H" onClick={() => { cmd('hide-ui', { via: 'click', in: 'stage' }); setMenu(false); setHidden(true) }} />

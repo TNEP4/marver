@@ -5,10 +5,10 @@
 /* --draw: the ring and handles. --draw-ring: the soft 4 px ring. --draw-ink: an active control's glyph on glass.
    --draw-bg: an active control's wash. --dk-mv: Marver's own blue, kept for Marver's actions inside the purple mode. */
 .sh-app { --draw: #6965db; --draw-ring: rgba(105, 101, 219, .18); --draw-ink: #5b57d1; --draw-bg: rgba(105, 101, 219, .13);
-  --draw-beam: rgba(105, 101, 219, .4); --draw-edge: rgba(105, 101, 219, .75); --draw-tint: rgba(105, 101, 219, .12);
+  --draw-beam: rgba(105, 101, 219, .4); --draw-edge: rgba(105, 101, 219, .75); --draw-tint: rgba(105, 101, 219, .12); --draw-wash: rgba(105, 101, 219, .1);
   --dk-mv: #0077e6; --dk-sel: #6965db }
 :is(.dark .sh-app:not(.light), .sh-app.dark) { --draw: #6965db; --draw-ring: rgba(105, 101, 219, .3); --draw-ink: #a8a5ff; --draw-bg: rgba(105, 101, 219, .3);
-  --draw-beam: rgba(105, 101, 219, .5); --draw-edge: rgba(168, 165, 255, .8); --draw-tint: rgba(168, 165, 255, .14);
+  --draw-beam: rgba(105, 101, 219, .5); --draw-edge: rgba(168, 165, 255, .8); --draw-tint: rgba(168, 165, 255, .14); --draw-wash: rgba(105, 101, 219, .22);
   --dk-mv: #5cb3ff; --dk-sel: #a8a5ff }
 
 /* the drawing mode: one token swap, as .sh-app.interacting does - every accent-derived surface (the node's .sel ring,
@@ -63,6 +63,8 @@
 .dk-menu { z-index: 45; width: 214px; animation: none }
 .dk-menu button span { text-transform: none !important }
 .dk-menu button svg { color: var(--glass-ink-2); flex: none }
+/* one icon slot: every label starts on the same line, whatever the glyph's size */
+.dk-menu button > .ic { width: 16px; flex: none; display: grid; place-items: center; font-style: normal }
 .dk-menu button.on { background: var(--draw-bg) }
 .dk-menu button.on, .dk-menu button.on svg { color: var(--draw-ink) }
 .dk-menu button.mv, .dk-menu button.mv svg { color: var(--dk-mv) }
@@ -103,6 +105,8 @@
 .dk-seg > .dk-tipw > button { width: 100% }
 .dk-row > .dk-tipw { flex: none }
 .dk-sw.nil { background: none; box-shadow: inset 0 0 0 1px var(--glass-brd) }
+/* a lone segmented row (Fill) keeps the half-column width of the paired ones */
+.dk-props .sec.solo .dk-seg { width: calc(50% - 6px) }
 .dk-seg .hand { font: 400 12.5px var(--dr-hand) }
 .dk-seg .mono { font: 500 10px var(--dr-mono) }
 .dk-row { display: flex; gap: 4px; align-items: center }
@@ -193,7 +197,9 @@
 .dk-sw { border: 0; padding: 0; cursor: pointer; display: inline-block }
 .dk-sw:focus-visible { outline: 2px solid var(--draw); outline-offset: 2px }
 /* dark: swatches show the colour as the dark canvas draws it (Excalidraw inverts the drawing) */
-.sh-app.dark .dk-sws .dk-sw:not(.none), .sh-app.dark .dk-pop .grid .dk-sw:not(.none) { filter: invert(93%) hue-rotate(180deg) }
+.sh-app.dark .dk-sws .dk-sw:not(.none), .sh-app.dark .dk-pop .grid .dk-sw:not(.none):not(.nil) { filter: invert(93%) hue-rotate(180deg) }
+/* the filter inverts a swatch's edge too: drawn dark, it reads light - a near-black swatch keeps a visible edge on the dark glass */
+.sh-app.dark .dk-sws .dk-sw:not(.none):not(.on):not(.open), .sh-app.dark .dk-pop .grid .dk-sw:not(.none):not(.nil):not(.on) { box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .42) }
 .dk-menu button[disabled] { opacity: .45; cursor: default }
 .dk-b[disabled] { opacity: .38; cursor: default }
 .dk-seg button:hover:not(.on) { color: var(--glass-ink) }
@@ -216,10 +222,13 @@
 .dk-map .d { background: color-mix(in srgb, var(--glass-ink) 14%, transparent) }
 .dk-map .v { border: 1.5px solid var(--draw); background: var(--draw-ring) }
 /* the drawing mode: the shell's accent turns the drawing purple, as interact turns it magenta */
-.sh-app.drawing { --accent: var(--draw); --accent-ring: var(--draw-ring); --beam: var(--draw-beam); --edge-accent: var(--draw-edge);
-  --inner-tint: var(--draw-tint); --glass-accent: var(--draw-ink); --glass-accent-bg: var(--draw-bg) }
+/* (dark too: .sh-app.dark sets the accents at the same weight, so the dark drawing mode names itself - as .dark.interacting) */
+.sh-app.drawing, .sh-app.dark.drawing { --accent: var(--draw); --accent-ring: var(--draw-ring); --beam: var(--draw-beam); --edge-accent: var(--draw-edge);
+  --inner-tint: var(--draw-tint); --glass-accent: var(--draw-ink); --glass-accent-bg: var(--draw-bg); --accent-wash: var(--draw-wash) }
 /* the drawing's own sidebar row in drawing mode: its "new" mark and tone in the drawing purple, not the marks' blue */
 .sh-panel .sub.dk-now { --mk-new: var(--draw-ink) }
+/* and its frame head in drawing mode: the title and the new-mark dot in the purple too */
+.sh-node.dk-draw.interact { --mk-new: var(--draw-ink) }
 .sh-node.interact.dk-draw { --interact: var(--draw); --interact-ring: var(--draw-ring) }
 /* a thin ring like the selection's (2 px + a soft 4 px), never the interact mode's orbiting glow (Nic, 25 Nov) */
 .sh-node.interact.dk-draw::before, .sh-node.interact.dk-draw::after { display: none }

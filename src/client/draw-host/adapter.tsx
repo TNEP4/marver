@@ -128,6 +128,7 @@ export function DrawEngine({ initial, theme, edit, editable, onReady, onChange, 
       else if (op === 'out' && am) am.executeAction(am.actions.zoomOut, 'ui')
       else if (op === 'reset' && am) am.executeAction(am.actions.resetZoom, 'ui')
       else if (op === 'fit') fitContent(api)
+      else if (op === 'selection' && am) am.executeAction(am.actions.zoomToFitSelection, 'ui')
       else if (op === 'frame') { if (frameView) setView(api, frameView); else fitContent(api) }
       void z
     },

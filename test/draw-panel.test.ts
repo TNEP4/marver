@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { panelModel } from '../src/client/draw-host/state.ts'
+import { mostUsedCustom, shadesOf } from '../src/shared/draw-colors.ts'
 
 const text = (id: string, extra: Record<string, unknown> = {}) => ({ id, type: 'text', fontFamily: 5, fontSize: 20, textAlign: 'left', verticalAlign: 'top', strokeColor: '#1e1e1e', opacity: 100, ...extra })
 
@@ -32,5 +33,25 @@ describe('the drawing panel model', () => {
     const m = panelModel(els, { activeTool: { type: 'selection' }, selectedElementIds: { box: true } }, true)
     expect(m.props).toMatchObject({ strokeColor: '#e03131', fontSize: 16, textAlign: 'center', verticalAlign: 'middle' })
     expect(m.sections).toContain('valign')
+  })
+
+  it("reports the drawing's own custom colours (most used first, palette ones left out) and its fonts", () => {
+    const els = [
+      { id: 'a', type: 'rectangle', strokeColor: '#123456', backgroundColor: '#ffec99' },
+      { id: 'b', type: 'ellipse', strokeColor: '#123456', backgroundColor: '#abcdef' },
+      { id: 'c', type: 'arrow', strokeColor: '#e03131', backgroundColor: '#999999' },
+      text('t1', { fontFamily: 8 }), text('t2', { fontFamily: 8 }), text('t3', { fontFamily: 5 }),
+    ]
+    const m = panelModel(els, { activeTool: { type: 'selection' }, selectedElementIds: {} }, true)
+    expect(m.used.stroke).toEqual(['#123456'])                 // #e03131 and the text black are the palette's
+    expect(m.used.background).toEqual(['#abcdef'])             // #ffec99 is a palette shade; an arrow has no background
+    expect(m.used.fonts).toEqual([8, 5])
+  })
+
+  it('a colour of the palette has its hue\'s five shades; black, white and custom ones have none', () => {
+    expect(shadesOf('#FFEC99')).toEqual(['#fff9db', '#ffec99', '#ffd43b', '#fab005', '#f08c00'])
+    expect(shadesOf('#1e1e1e')).toBeNull()
+    expect(shadesOf('#123456')).toBeNull()
+    expect(mostUsedCustom(['#111', '#222', '#222', 'transparent', null], 1)).toEqual(['#222'])
   })
 })

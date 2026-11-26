@@ -3,7 +3,8 @@
  * which properties a type has (its SelectedShapeActions), read from the selection, else from the tool in hand
  * (`currentItem*`). Pure: no DOM, no Excalidraw import.
  */
-import type { DrawProps, DrawSection, DrawTool } from '../../shared/draw-protocol.ts'
+import type { DrawProps, DrawSection, DrawTool, DrawUsed } from '../../shared/draw-protocol.ts'
+import { mostUsedCustom } from '../../shared/draw-colors.ts'
 
 const STROKE_COLOR = new Set(['rectangle', 'diamond', 'ellipse', 'arrow', 'line', 'freedraw', 'text', 'embeddable', 'iframe'])
 const BACKGROUND = new Set(['rectangle', 'diamond', 'ellipse', 'line', 'freedraw', 'embeddable', 'iframe'])
@@ -27,7 +28,7 @@ function common<T>(targets: El[], read: (e: El) => T | undefined): T | null {
   return v ?? null
 }
 
-export interface PanelModel { sections: DrawSection[]; props: DrawProps; sel: { count: number; types: string[]; hasLink: boolean; isLinear: boolean; grouped: boolean } }
+export interface PanelModel { sections: DrawSection[]; props: DrawProps; used: DrawUsed; sel: { count: number; types: string[]; hasLink: boolean; isLinear: boolean; grouped: boolean } }
 
 export function panelModel(elements: readonly El[], appState: any, editable: boolean): PanelModel {
   const live = elements.filter((e) => !e.isDeleted)
@@ -87,9 +88,18 @@ export function panelModel(elements: readonly El[], appState: any, editable: boo
     if (selected.length) sections.push('layers', 'actions')
     if (selected.length >= 2) sections.push('alignment')
   }
+  // what the drawing itself uses: its custom colours (the pickers' Most used) and its fonts (the font picker's In this drawing)
+  const fontCount = new Map<number, number>()
+  for (const e of live) if (e.type === 'text' && typeof e.fontFamily === 'number') fontCount.set(e.fontFamily as number, (fontCount.get(e.fontFamily as number) ?? 0) + 1)
+  const used: DrawUsed = {
+    stroke: mostUsedCustom(live.map((e) => e.strokeColor as string)),
+    background: mostUsedCustom(live.filter((e) => BACKGROUND.has(e.type)).map((e) => e.backgroundColor as string)),
+    fonts: [...fontCount].sort((a, b) => b[1] - a[1]).map(([f]) => f),
+  }
   return {
     sections,
     props,
+    used,
     sel: {
       count: selected.length,
       types,

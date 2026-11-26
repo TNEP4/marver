@@ -84,7 +84,8 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
   const editable = !PUBLISHED
   const editRef = useRef(edit)
   editRef.current = edit
-  const uiHidden = useRef(false)
+  /** play's Hide all UI: null outside play (H is Excalidraw's hand there), else whether the UI is hidden */
+  const uiHidden = useRef<boolean | null>(null)
 
   if (!sync.current) {
     sync.current = new DrawSync(() => engine.current, {
@@ -119,7 +120,7 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
       const state: DrawState = {
         type: 'sh:draw-state', id, boot: docId(), mode: editRef.current ? 'edit' : 'view', editable,
         tool: s.activeTool?.type ?? 'selection', locked: !!s.activeTool?.locked,
-        sel: model.sel, sections: model.sections, props: model.props,
+        sel: model.sel, sections: model.sections, props: model.props, used: model.used,
         zoom: s.zoom?.value ?? 1,
         canUndo: eng.canUndo(), canRedo: eng.canRedo(),
         panning: panning.current, map: { content: eng.contentBox(), view: eng.viewBox() },
@@ -189,7 +190,8 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
     const onKey = (e: KeyboardEvent) => {
       const typing = !!engine.current?.appState()?.editingTextElement || (e.target as HTMLElement)?.closest?.('textarea, input')
       if ((e.metaKey || e.ctrlKey) && (e.key === '\\' || e.key === '/') && !typing) { e.preventDefault(); e.stopPropagation(); post({ type: 'sh:draw-key', key: e.key === '/' ? 'toolbar' : 'panel' }); return }
-      if (uiHidden.current && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'h') { e.preventDefault(); e.stopPropagation(); post({ type: 'sh:draw-key', key: 'reveal' }); return }
+      // H in play: Hide all UI, as play's menus say (Nic, 26 Nov) - reveal when hidden
+      if (uiHidden.current !== null && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'h') { e.preventDefault(); e.stopPropagation(); post({ type: 'sh:draw-key', key: uiHidden.current ? 'reveal' : 'hide' }); return }
       if (e.key !== 'Escape') return
       const s = engine.current?.appState()
       const busy = s && (s.editingTextElement || s.newElement || s.multiElement || s.editingLinearElement || s.croppingElementId || s.openDialog || s.openPopup || s.contextMenu)

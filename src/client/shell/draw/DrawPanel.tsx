@@ -5,7 +5,8 @@
  */
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { DrawAction, DrawProps, DrawState } from '../../../shared/draw-protocol.ts'
-import { ArrowKind, BGS, Corner, Distribute, EditPoints, FONTS, FillIcon, HEADS, HEAD_LABEL, HeadIcon, HoverTip, Ln, PALETTE, Ph, STROKES, Sw, VAlign, colorName, type Head } from './kit.tsx'
+import { ArrowKind, BGS, Corner, Distribute, EditPoints, FONTS, FillIcon, HEADS, HEAD_LABEL, HeadIcon, HoverTip, Ln, PALETTE, Ph, STROKES, Sw, VAlign, colorName, loadPreviewFonts, previewFamily, type Head } from './kit.tsx'
+import { shadesOf } from '../../../shared/draw-colors.ts'
 import { drawSend, type DrawLink } from './link.ts'
 
 type Picker = 'stroke' | 'background' | 'font' | 'start' | 'end'
@@ -81,7 +82,7 @@ export function DrawPanel({ link, state, top, popSide = 'right', style, cam }: {
   if (has('stroke')) out.push(swatches(textOnly ? 'Text colour' : 'Stroke', STROKES, p!.strokeColor, 'stroke'))
   if (has('background')) out.push(swatches('Background', BGS, p!.backgroundColor, 'background'))
   if (has('fill')) out.push(
-    <div className="sec" key="fill"><div className="lb">Fill</div>
+    <div className="sec solo" key="fill"><div className="lb">Fill</div>
       {seg([<FillIcon k="hachure" />, <FillIcon k="cross" />, <FillIcon k="solid" />], ['hachure', 'cross-hatch', 'solid'], p!.fillStyle, ['Hachure', 'Cross-hatch', 'Solid'], (v) => act('changeFillStyle', v))}
     </div>,
   )
@@ -98,7 +99,8 @@ export function DrawPanel({ link, state, top, popSide = 'right', style, cam }: {
       return ['Font', seg([<Ph n="PencilSimple" size={12} />, 'A', <Ph n="Code" size={12} />, <Ph n="CaretDown" size={10} />], [5, 6, 8, cur != null && !quick.includes(cur) ? cur : -1], cur,
         ['Hand-drawn', 'Normal', 'Code', 'More fonts'], (v, i) => { if (i === 3) setOpen(open === 'font' ? null : 'font'); else act('changeFontFamily', { currentItemFontFamily: v }) }, open === 'font' ? 3 : undefined)]
     },
-    fontSize: () => ['Size', seg(['S', 'M', 'L', 'XL'], [16, 20, 28, 36], p!.fontSize, ['Small', 'Medium', 'Large', 'Extra large'], (v) => act('changeFontSize', v))],
+    // a size between the presets (an agent's 24, a resized text) lights the nearest one - never none (Nic, 26 Nov)
+    fontSize: () => ['Size', seg(['S', 'M', 'L', 'XL'], [16, 20, 28, 36], nearest([16, 20, 28, 36], p!.fontSize), ['Small', 'Medium', 'Large', 'Extra large'], (v) => act('changeFontSize', v))],
     align: () => ['Text align', seg([<Ph n="TextAlignLeft" size={13} />, <Ph n="TextAlignCenter" size={13} />, <Ph n="TextAlignRight" size={13} />], ['left', 'center', 'right'], p!.textAlign,
       [['Left', '⌘⇧L'], ['Centre', '⌘⇧E'], ['Right', '⌘⇧R']], (v) => act('changeTextAlign', v))],
     valign: () => ['Vertical', seg([<VAlign k="top" />, <VAlign k="mid" />, <VAlign k="bottom" />], ['top', 'middle', 'bottom'], p!.verticalAlign, ['Top', 'Middle', 'Bottom'], (v) => act('changeVerticalAlign', v))],
@@ -145,7 +147,8 @@ export function DrawPanel({ link, state, top, popSide = 'right', style, cam }: {
         {state.sel.count > 2 && <HoverTip label={dist[0]} keys={dist[2]}><button aria-label={dist[0]} onClick={() => act(dist[3])}><Distribute k={dist[1]} /></button></HoverTip>}
       </div>
     )
-    out.push(
+    // several selected: Align / Distribute first - the main thing a multi-selection is for (the kit)
+    out.unshift(
       <div className="sec" key="alignment"><div className="lb"><span>Align</span>{state.sel.count > 2 && <span>Distribute</span>}</div>
         {row([['Align left', 'AlignLeft', '⌘⇧←', 'alignLeft'], ['Centre horizontally', 'AlignCenterHorizontal', '', 'alignHorizontallyCentered'], ['Align right', 'AlignRight', '⌘⇧→', 'alignRight']] as const, ['Distribute horizontally', 'h', '⌥H', 'distributeHorizontally'])}
         {row([['Align top', 'AlignTop', '⌘⇧↑', 'alignTop'], ['Centre vertically', 'AlignCenterVertical', '', 'alignVerticallyCentered'], ['Align bottom', 'AlignBottom', '⌘⇧↓', 'alignBottom']] as const, ['Distribute vertically', 'v', '⌥V', 'distributeVertically'])}
@@ -158,10 +161,10 @@ export function DrawPanel({ link, state, top, popSide = 'right', style, cam }: {
     <div ref={anchor} className={`dk-anchor${cam ? ' dk-cam' : ''}`} style={{ zIndex: open ? 46 : 31, ...style }}>
       <div ref={panel} className="dk-glass dk-props dk-draw" style={{ position: 'relative' }}>{top}{out}</div>
       {(open === 'stroke' || open === 'background') && (
-        <ColorPicker current={(open === 'stroke' ? p?.strokeColor : p?.backgroundColor) ?? 'transparent'} allowTransparent={open === 'background'} style={{ position: 'absolute', ...popPos }}
+        <ColorPicker current={(open === 'stroke' ? p?.strokeColor : p?.backgroundColor) ?? 'transparent'} mostUsed={state.used?.[open] ?? []} style={{ position: 'absolute', ...popPos }}
           onPick={(c) => setColor(open, c)} />
       )}
-      {open === 'font' && <FontPicker current={p?.fontFamily ?? null} style={{ position: 'absolute', ...popPos }} onPick={(id) => { act('changeFontFamily', { currentItemFontFamily: id }); setOpen(null) }} />}
+      {open === 'font' && <FontPicker current={p?.fontFamily ?? null} inDrawing={state.used?.fonts ?? []} style={{ position: 'absolute', ...popPos }} onPick={(id) => { act('changeFontFamily', { currentItemFontFamily: id }); setOpen(null) }} />}
       {(open === 'start' || open === 'end') && (
         <ArrowheadPicker side={open} current={((open === 'start' ? p?.startArrowhead : p?.endArrowhead) ?? 'none') as Head} more={moreHeads} onMore={() => setMoreHeads((m) => !m)}
           style={{ position: 'absolute', ...popPos }} onPick={(h) => act('changeArrowhead', { position: open, type: h === 'none' ? null : h })} />
@@ -185,39 +188,59 @@ function Opacity({ value, onChange }: { value: number | null; onChange: (v: numb
   )
 }
 
-/** Excalidraw's colour popover: the 15 colours and the hex, editable. */
-function ColorPicker({ current, allowTransparent, onPick, style }: { current: string; allowTransparent: boolean; onPick: (c: string) => void; style?: CSSProperties }) {
-  const [hex, setHex] = useState(current.startsWith('#') ? current.slice(1) : '')
-  useEffect(() => { setHex(current.startsWith('#') ? current.slice(1) : '') }, [current])
+/** Excalidraw's colour popover (the kit): Most used (the drawing's own custom colours), the 15 colours, the current colour's
+ *  five shades, its hex - editable - with the eyedropper where the browser has one. */
+function ColorPicker({ current, mostUsed, onPick, style }: { current: string; mostUsed: string[]; onPick: (c: string) => void; style?: CSSProperties }) {
+  const cur = current.toLowerCase()
+  const [hex, setHex] = useState(cur.startsWith('#') ? cur.slice(1) : '')
+  useEffect(() => { setHex(cur.startsWith('#') ? cur.slice(1) : '') }, [cur])
   const commit = () => { const h = hex.trim().replace(/^#/, ''); if (/^([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(h)) onPick(`#${h.toLowerCase()}`) }
+  const shades = shadesOf(cur)
+  const Dropper = (globalThis as { EyeDropper?: new () => { open(): Promise<{ sRGBHex: string }> } }).EyeDropper
+  const pickFromScreen = () => { if (Dropper) void new Dropper().open().then((r) => onPick(r.sRGBHex.toLowerCase()), () => { /* cancelled */ }) }
   return (
     <div className="dk-glass dk-pop dk-draw" style={{ width: 148, ...style }}>
+      {mostUsed.length > 0 && <div className="sec"><div className="lb">Most used</div>
+        <div className="grid">{mostUsed.map((c) => <Sw key={c} c={c} on={c === cur} onClick={() => onPick(c)} />)}</div></div>}
       <div className="sec"><div className="lb">Colours</div>
-        <div className="grid">{PALETTE.filter((c) => allowTransparent || c !== 'transparent').map((c) => <Sw key={c} c={c} on={c === current.toLowerCase()} onClick={() => onPick(c)} />)}</div></div>
+        <div className="grid">{PALETTE.map((c) => <Sw key={c} c={c} on={c === cur} onClick={() => onPick(c)} />)}</div></div>
+      <div className="sec"><div className="lb">Shades</div>
+        <div className="grid">{shades ? shades.map((c) => <Sw key={c} c={c} on={c === cur} onClick={() => onPick(c)} />) : [0, 1, 2, 3, 4].map((i) => <i key={i} className="dk-sw nil" />)}</div></div>
       <div className="sec"><div className="lb">Hex</div>
         <div className="hex"><span className="h">#</span>
           <input value={hex} aria-label="Hex colour" spellCheck={false} maxLength={8} onChange={(e) => setHex(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') commit() }} onBlur={commit} />
+          {Dropper && <HoverTip label="Pick from the screen" side="bottom"><button aria-label="Eyedropper" onClick={pickFromScreen}><Ph n="Eyedropper" size={13} /></button></HoverTip>}
         </div></div>
     </div>
   )
 }
 
-function FontPicker({ current, onPick, style }: { current: number | null; onPick: (id: number) => void; style?: CSSProperties }) {
+/** The font picker (the kit): search, the fonts this drawing uses, then the others - each name in its own face. */
+function FontPicker({ current, inDrawing, onPick, style }: { current: number | null; inDrawing: number[]; onPick: (id: number) => void; style?: CSSProperties }) {
   const [q, setQ] = useState('')
-  const list = FONTS.filter((f) => f.name.toLowerCase().includes(q.toLowerCase()))
+  useEffect(() => { loadPreviewFonts() }, [])
+  const match = (f: (typeof FONTS)[number]) => f.name.toLowerCase().includes(q.toLowerCase())
+  const here = inDrawing.map((id) => FONTS.find((f) => f.id === id)).filter((f): f is (typeof FONTS)[number] => !!f && match(f))
+  const more = FONTS.filter((f) => match(f) && !inDrawing.includes(f.id))
+  const row = (f: (typeof FONTS)[number]) => (
+    <button key={f.id} className={`font${f.id === current ? ' on' : ''}`} onClick={() => onPick(f.id)}>
+      <Ph n={f.kind === 'hand' ? 'PencilSimple' : f.kind === 'code' ? 'Code' : 'TextT'} size={13} /><span style={{ fontFamily: previewFamily(f.id) }}>{f.name}</span>
+    </button>
+  )
   return (
     <div className="dk-glass dk-pop dk-draw" style={{ width: 188, ...style }}>
       <div className="search"><Ph n="MagnifyingGlass" size={13} /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search fonts" aria-label="Search fonts"
         style={{ flex: 1, border: 0, background: 'none', outline: 'none', font: 'inherit', color: 'var(--glass-ink)' }} /></div>
-      <div className="sec" style={{ marginTop: 8 }}>
-        {list.map((f) => (
-          <button key={f.id} className={`font${f.id === current ? ' on' : ''}`} onClick={() => onPick(f.id)}>
-            <Ph n={f.kind === 'hand' ? 'PencilSimple' : f.kind === 'code' ? 'Code' : 'TextT'} size={13} /><span>{f.name}</span>
-          </button>
-        ))}
-      </div>
+      {here.length > 0 && <div className="sec" style={{ marginTop: 8 }}><div className="lb">In this drawing</div>{here.map(row)}</div>}
+      {more.length > 0 && <div className="sec" style={here.length ? undefined : { marginTop: 8 }}><div className="lb">{here.length ? 'More fonts' : 'Fonts'}</div>{more.map(row)}</div>}
     </div>
   )
+}
+
+/** The preset closest to a value (null stays null: a mixed selection lights none). */
+function nearest(presets: number[], v: number | null): number | null {
+  if (v == null) return null
+  return presets.reduce((best, x) => (Math.abs(x - v) < Math.abs(best - v) ? x : best), presets[0])
 }
 
 function ArrowheadPicker({ side, current, more, onMore, onPick, style }: { side: 'start' | 'end'; current: Head; more: boolean; onMore: () => void; onPick: (h: Head) => void; style?: CSSProperties }) {

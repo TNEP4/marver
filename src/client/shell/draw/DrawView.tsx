@@ -4,7 +4,7 @@
  * own view: go back to it, or make this view the frame's. The mini-map shows only while the drawing pans.
  */
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import type { DrawState } from '../../../shared/draw-protocol.ts'
+import type { DrawState, DrawViewOp } from '../../../shared/draw-protocol.ts'
 import { FrameCornersIcon } from '../icons.tsx'
 import { HoverTip, MI, Ph, ResetView, type TipSide } from './kit.tsx'
 import { drawSend, type DrawLink } from './link.ts'
@@ -27,7 +27,7 @@ export function DrawView({ link, state, size = 'sm', map, menuSide = 'top', tipS
     <HoverTip key={label} label={label} keys={key} side={tipSide}><button className={`dk-b${cls}`} aria-label={label} disabled={disabled} onClick={onClick}>{icon}</button></HoverTip>
   )
   const zoom = Math.round((state?.zoom ?? 1) * 100)
-  const view = (v: 'in' | 'out' | 'fit' | 'frame' | 'save' | 'reset') => { drawSend(link, { op: 'view', v }); setMenu(false) }
+  const view = (v: DrawViewOp) => { drawSend(link, { op: 'view', v }); setMenu(false) }
   return (
     <div ref={ref} className={`dk-anchor${cam ? ' dk-cam' : ''}`} style={{ zIndex: menu ? 45 : 30, ...style }}>
       <div className={`dk-glass dk-view dk-draw${size === 'lg' ? ' lg' : ''}`}>
@@ -49,7 +49,8 @@ export function DrawView({ link, state, size = 'sm', map, menuSide = 'top', tipS
           <MI icon={<Ph n="Plus" size={14} />} label="Zoom in" k="⌘+" onClick={() => view('in')} />
           <MI icon={<Ph n="Minus" size={14} />} label="Zoom out" k="⌘−" onClick={() => view('out')} />
           <MI icon={<FrameCornersIcon size={14} />} label="Zoom to fit" k="⇧1" onClick={() => view('fit')} />
-          <MI icon={<span className="z1">1:1</span>} label="Zoom to 100 %" k="⇧0" onClick={() => view('reset')} />
+          <MI icon={<Ph n="Scan" size={14} />} label="Zoom to selection" k="⇧2" off={!state?.sel.count} onClick={() => view('selection')} />
+          <MI icon={<span className="z1">1:1</span>} label="Zoom to 100%" k="⇧0" onClick={() => view('reset')} />
           <div className="div" />
           <MI icon={<ResetView size={13} />} label="Back to the frame’s view" onClick={() => view('frame')} />
           {editable && <MI icon={<Ph n="Crop" size={14} />} label="Use this view for the frame" onClick={() => view('save')} />}

@@ -10,6 +10,7 @@ import { iframeOf } from '../canvas/frame-registry.ts'
 import { framePath } from '../ContextMenu.tsx'
 import { TOP } from '../inset.ts'
 import { canvasCtl } from '../canvas/ctl.ts'
+import { onMotion } from '../canvas/camera-broadcast.ts'
 import { api } from '../api.ts'
 import { DrawBar } from './DrawBar.tsx'
 import { DrawPanel } from './DrawPanel.tsx'
@@ -43,14 +44,28 @@ export function DrawCanvasChrome() {
   // opened beside the open sidebar: the camera makes room once, so the panel sits left of the frame and clear of the
   // sidebar - never over the drawing (it would cover where the person draws), never under the sidebar
   useEffect(() => { if (drawKey) makeRoom(drawKey) }, [drawKey])
+  // where the camera could not make room (a frame too wide for the window), the panel drops below the sidebar instead of
+  // covering it: a floor for its top, measured when drawing mode opens, when the camera settles, on resize, and when the
+  // sidebar opens or closes
+  const sideOpen = useStore((s) => s.panelOpen)
+  const [floor, setFloor] = useState(0)
+  useEffect(() => {
+    if (!drawKey) { setFloor(0); return }
+    const measure = () => setFloor(sidebarFloor(drawKey))
+    const first = setTimeout(measure, 320)   // after makeRoom's flight (250 ms) lands
+    const offMotion = onMotion((m) => { if (!m.camera) measure() })
+    addEventListener('resize', measure)
+    return () => { clearTimeout(first); offMotion(); removeEventListener('resize', measure) }
+  }, [drawKey, sideOpen])
   useEffect(() => { if (!copied) return; const t = setTimeout(() => setCopied(null), 1400); return () => clearTimeout(t) }, [copied])
   if (!node || !frame || frame.kind !== 'draw' || node.missing) return null
   const link: DrawLink = { key: node.key, title: frame.title ?? frame.id.split('/').pop() ?? 'drawing', frame: frame.id, win: () => iframeOf(node.key)?.contentWindow }
   const sx = (wx: number) => `calc(var(--sh-tx, 0px) + var(--sh-s, 1) * ${wx}px)`
   const sy = (wy: number) => `calc(var(--sh-ty, 0px) + var(--sh-s, 1) * ${wy}px)`
-  // above the frame; with the frame's top off screen it pins just below the shell's toolbar row (never over it)
-  const bar: CSSProperties = { left: sx(node.x + node.w / 2), top: `max(${BAR_FLOOR}, calc(${sy(node.y)} - 50px))`, transform: 'translateX(-50%)' }
-  const panel: CSSProperties = { left: `max(8px, calc(${sx(node.x)} - ${PANEL_W + GAP}px))`, top: `max(${TOP + 8}px, ${sy(node.y + HEAD)})` }
+  // above the frame with the frame bar's own 14 px gap (its 40 px + 14: one click and drawing mode keep the same air - Nic,
+  // 26 Nov); with the frame's top off screen it pins just below the shell's toolbar row (never over it)
+  const bar: CSSProperties = { left: sx(node.x + node.w / 2), top: `max(${BAR_FLOOR}, calc(${sy(node.y)} - 54px))`, transform: 'translateX(-50%)' }
+  const panel: CSSProperties = { left: `max(8px, calc(${sx(node.x)} - ${PANEL_W + GAP}px))`, top: `max(${TOP + 8}px, ${sy(node.y + HEAD)}, ${floor}px)` }
   const view: CSSProperties = { left: `calc(${sx(node.x + node.w)} - 8px)`, top: `calc(${sy(node.y + HEAD + node.h)} - 8px)`, transform: 'translate(-100%, -100%)' }
   const copyPath = () => {
     cmd('copy-path', { via: 'click', in: 'shell', frames: 1 })
@@ -64,7 +79,7 @@ export function DrawCanvasChrome() {
       {state?.editable !== false && <>
         <DrawBar link={link} state={state} tools={CANVAS_TOOLS} mode="canvas" style={bar} cam copied={copied}
           onCopyPath={copyPath} onCopyImage={copyImage} onExport={(k) => exportDrawing(link, k, toast, dark)} />
-        <DrawPanel link={link} state={state} popSide="left" style={panel} cam />
+        <DrawPanel link={link} state={state} popSide="right" style={panel} cam />
       </>}
       <DrawView link={link} state={state} style={view} cam />
     </Hold>
@@ -74,6 +89,18 @@ export function DrawCanvasChrome() {
 /** Pan right just enough that the panel's place (PANEL_W + GAP left of the frame) clears the open sidebar, when the
  *  two would overlap on screen - as far as the frame's right edge stays on screen. Nothing moves when they do not
  *  overlap, or when the sidebar is closed. */
+/** The top a canvas panel must keep to stay clear of the open sidebar: its bottom + 14 px when the panel's column overlaps
+ *  the sidebar's, else 0 (no floor). */
+function sidebarFloor(key: string): number {
+  const side = document.querySelector('.sh-panel:not(.closed)')?.getBoundingClientRect()
+  const f = iframeOf(key)?.getBoundingClientRect()
+  if (!side || !f) return 0
+  const panelLeft = Math.max(8, f.left - (PANEL_W + GAP))
+  if (panelLeft >= side.right + 10) return 0
+  // a sidebar too tall to clear (many boards): below it the panel would leave the window - it keeps its place
+  return side.bottom + 14 > innerHeight - 320 ? 0 : Math.round(side.bottom + 14)
+}
+
 function makeRoom(key: string): void {
   const side = document.querySelector('.sh-panel:not(.closed)')?.getBoundingClientRect()
   const f = iframeOf(key)?.getBoundingClientRect()

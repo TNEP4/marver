@@ -36,6 +36,9 @@ export interface DrawProps {
 }
 
 /** The draw host's state, posted to the shell on every change that matters (rAF-batched, deduped). */
+/** A drawing's own custom colours (most used first, at most 5) and its fonts (most used first). */
+export interface DrawUsed { stroke: string[]; background: string[]; fonts: number[] }
+
 export interface DrawState {
   type: 'sh:draw-state'
   id: string
@@ -50,6 +53,8 @@ export interface DrawState {
   sel: { count: number; types: string[]; hasLink: boolean; isLinear: boolean; grouped: boolean }
   sections: DrawSection[]
   props: DrawProps
+  /** what the drawing uses: its custom colours by kind (the pickers' Most used) and its fonts (In this drawing) */
+  used?: DrawUsed
   zoom: number
   canUndo: boolean
   canRedo: boolean
@@ -67,7 +72,7 @@ export interface DrawState {
 }
 export interface Box { x: number; y: number; w: number; h: number }
 
-export type DrawViewOp = 'in' | 'out' | 'fit' | 'frame' | 'save' | 'reset'
+export type DrawViewOp = 'in' | 'out' | 'fit' | 'selection' | 'frame' | 'save' | 'reset'
 /** Commands from the shell. `action` runs Excalidraw's own action by name (adapter.ts), with its own value shape. */
 export type DrawCmd =
   | { type: 'sh:draw-cmd'; op: 'tool'; tool: DrawTool }
