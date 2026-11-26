@@ -68,7 +68,8 @@ export function DrawCanvasChrome() {
 }
 
 /** Pan right just enough that the panel's place (PANEL_W + GAP left of the frame) clears the open sidebar, when the
- *  two would overlap on screen. Nothing moves when they do not, or when the sidebar is closed. */
+ *  two would overlap on screen - as far as the frame's right edge stays on screen. Nothing moves when they do not
+ *  overlap, or when the sidebar is closed. */
 function makeRoom(key: string): void {
   const side = document.querySelector('.sh-panel:not(.closed)')?.getBoundingClientRect()
   const f = iframeOf(key)?.getBoundingClientRect()
@@ -76,7 +77,10 @@ function makeRoom(key: string): void {
   const panelLeft = f.left - (PANEL_W + GAP), panelTop = Math.max(TOP + 8, f.top)
   if (panelTop >= side.bottom + 8) return            // below the sidebar: no overlap
   const need = side.right + 10 - panelLeft
-  if (need > 0) canvasCtl.panBy(need, 0)
+  // never at the drawing's cost: the frame keeps its right edge on screen (a narrow window makes what room it can)
+  const room = innerWidth - 10 - f.right
+  const dx = Math.min(need, Math.max(0, room))
+  if (dx > 0) canvasCtl.panBy(dx, 0)
 }
 
 // ---- W: a new drawing at the pointer (spec 38) ---------------------------------------------------------------

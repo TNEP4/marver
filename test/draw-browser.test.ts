@@ -160,8 +160,28 @@ describe('the drawing frame (spec 38), in a real browser', () => {
     const after = await rectOf('iframe[data-kind="draw"]')
     expect(after.y).toBeCloseTo(r.y, 0)                                         // a sideways move only
     expect(after.w).toBeCloseTo(r.w, 0)                                         // no zoom
+    expect(after.x + after.w).toBeLessThanOrEqual(await ev('innerWidth'))       // never pushed off screen
     await escape()
     await until(`!document.querySelector('.sh-app').classList.contains('drawing')`, 5000)
+    // a window too narrow for sidebar + panel + frame: the camera moves only as far as the frame stays on screen
+    await b.send('Emulation.setDeviceMetricsOverride', { width: 800, height: 900, deviceScaleFactor: 1, mobile: false }, s)
+    await sleep(300)
+    const n0 = await rectOf('iframe[data-kind="draw"]')
+    await b.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 600, y: 500, deltaX: n0.x - 150, deltaY: n0.y - 120 }, s)
+    await sleep(300)
+    const n = await rectOf('iframe[data-kind="draw"]')
+    expect(side.x + side.w + 10 + 248 + n.w).toBeGreaterThan(800 - 10)            // the case: no room for sidebar, panel and frame
+    await click(n.x + n.w / 2, n.y + n.h / 2); await click(n.x + n.w / 2, n.y + n.h / 2, 2)
+    await until(`document.querySelector('.sh-app').classList.contains('drawing')`)
+    await sleep(500)                                                              // the flight (250 ms) has landed
+    const na = await rectOf('iframe[data-kind="draw"]')
+    // never pushed (further) off screen: a frame that fit still fits; one already past the edge does not move
+    expect(na.x + na.w).toBeLessThanOrEqual(Math.max(800, n.x + n.w) + 1)
+    expect(na.x).toBeGreaterThanOrEqual(n.x - 1)                                  // it moved right, or stayed
+    await escape()
+    await until(`!document.querySelector('.sh-app').classList.contains('drawing')`, 5000)
+    await b.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, s)
+    await sleep(300)
   }, 30_000)
 
   it('plays a selected drawing full-tab: the panel, the tool bar, the view; collapse; Escape back', async (ctx) => {
