@@ -10,13 +10,20 @@ import { useStore, PUBLISHED } from '../store.ts'
 import { withWs } from '../api.ts'
 import { ROUTE } from '../../const.ts'
 import { framePath } from '../ContextMenu.tsx'
-import { ImagesSquareIcon, PanelFilledIcon, PanelHollowIcon, SignpostIcon } from '../icons.tsx'
+import { ImagesSquareIcon, MoonIcon, PanelFilledIcon, PanelHollowIcon, SignpostIcon, SunIcon } from '../icons.tsx'
 import { DrawBar } from './DrawBar.tsx'
 import { DrawPanel } from './DrawPanel.tsx'
 import { DrawView } from './DrawView.tsx'
 import { HoverTip, MAIN_TOOLS, MI, Ph } from './kit.tsx'
 import { drawMessage, exportDrawing, sendQuiet, useDraw, type DrawLink } from './link.ts'
 import { cmd } from '../commands.ts'
+
+/** Play follows the canvas's theme: the switch turns it (⋯, the name menu, ⌥⇧D - D alone stays the diamond in a drawing). */
+function switchTheme(via: 'click' | 'key'): void {
+  cmd('theme', { via, in: 'stage' })
+  const st = useStore.getState()
+  st.setTheme(st.viewTheme === 'dark' ? 'light' : 'dark')
+}
 
 export const useDrawPlay = create<{ at: string | null; open(id: string): void; close(): void }>((set) => ({
   at: null,
@@ -81,6 +88,7 @@ export function DrawPlay() {
       if (d?.type === 'sh:draw-key') {
         if (d.key === 'reveal') setHidden(false)
         else if (d.key === 'hide') { cmd('hide-ui', { via: 'key', in: 'stage' }); setHidden(true) }
+        else if (d.key === 'theme') switchTheme('key')
         else if (d.key === 'panel') setPanelOpen((o) => !o)
         else if (d.key === 'toolbar') setBarOpen((o) => !o)
         return
@@ -140,13 +148,15 @@ export function DrawPlay() {
           <MI icon={<ImagesSquareIcon size={15} />} label="Copy as image" k="⇧I" onClick={() => { setMenu(false); copyImage() }} />
           <MI icon={<SignpostIcon size={15} />} label="Copy path" k="⇧P" onClick={() => { cmd('copy-path', { via: 'click', in: 'stage' }); setMenu(false); copyPath() }} />
           <div className="div" />
+          <MI icon={dark ? <SunIcon size={15} /> : <MoonIcon size={15} />} label={dark ? 'Light mode' : 'Dark mode'} k="⌥⇧D" onClick={() => { setMenu(false); switchTheme('click') }} />
           <MI icon={<Ph n="EyeSlash" size={15} />} label="Hide all UI" k="H" onClick={() => { cmd('hide-ui', { via: 'click', in: 'stage' }); setMenu(false); setHidden(true) }} />
         </div>
       )}
       {state?.editable !== false && (barOpen
         ? <DrawBar link={link} state={state} tools={MAIN_TOOLS} mode="play" style={{ ...EDGE, right: 10 }}
             onExport={(k) => exportDrawing(link, k, toast, dark)} onCopyImage={copyImage}
-            onCollapse={() => { cmd('toolbar', { via: 'click', in: 'stage' }); setBarOpen(false) }} onHideUI={() => { cmd('hide-ui', { via: 'click', in: 'stage' }); setHidden(true) }} onBack={leave} />
+            onCollapse={() => { cmd('toolbar', { via: 'click', in: 'stage' }); setBarOpen(false) }} onHideUI={() => { cmd('hide-ui', { via: 'click', in: 'stage' }); setHidden(true) }} onBack={leave}
+            onTheme={() => switchTheme('click')} dark={dark} />
         : <div className="dk-anchor" style={{ ...EDGE, right: 10 }}><HoverTip label="Expand toolbar" keys="⌘/" side="bottom"><button className="dk-glass dk-fab" aria-label="Expand toolbar" onClick={() => { cmd('toolbar', { via: 'click', in: 'stage' }); setBarOpen(true) }}><PanelHollowIcon size={18} style={{ transform: 'rotate(90deg)' }} /></button></HoverTip></div>)}
       <DrawView link={link} state={state} size="lg" map menuSide="top" style={{ right: 10, bottom: 10 }} />
       {state?.editable === false && (

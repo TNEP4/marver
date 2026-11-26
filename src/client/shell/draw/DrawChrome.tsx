@@ -16,7 +16,7 @@ import { DrawBar } from './DrawBar.tsx'
 import { DrawPanel } from './DrawPanel.tsx'
 import { DrawView } from './DrawView.tsx'
 import { CANVAS_TOOLS } from './kit.tsx'
-import { exportDrawing, useDraw, type DrawLink } from './link.ts'
+import { exportDrawing, toggleDrawingTheme, useDraw, type DrawLink } from './link.ts'
 import { cmd } from '../commands.ts'
 
 const HEAD = 28            // the frame head (world px)
@@ -78,7 +78,8 @@ export function DrawCanvasChrome() {
       {/* a published drawing is view-only (spec 38): its own pan and zoom, nothing to draw with */}
       {state?.editable !== false && <>
         <DrawBar link={link} state={state} tools={CANVAS_TOOLS} mode="canvas" style={bar} cam copied={copied}
-          onCopyPath={copyPath} onCopyImage={copyImage} onExport={(k) => exportDrawing(link, k, toast, dark)} />
+          onCopyPath={copyPath} onCopyImage={copyImage} onExport={(k) => exportDrawing(link, k, toast, dark)}
+          onTheme={() => toggleDrawingTheme(node.key, 'click')} dark={node.theme === 'dark'} />
         <DrawPanel link={link} state={state} popSide="right" style={panel} cam />
       </>}
       <DrawView link={link} state={state} style={view} cam />

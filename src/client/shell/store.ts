@@ -731,6 +731,8 @@ interface State {
   applyPlayUpdate(): void
   moveSelectedBy(dx: number, dy: number, starts: Record<string, { x: number; y: number }>): void
   setSelectedTheme(theme: string): void
+  /** one frame's theme, pinned as the person's (a drawing in drawing mode: its ⋯ menu and ⌥⇧D - spec 38) */
+  setNodeTheme(key: string, theme: string): void
   setDeviceView(name: string | null): void
   resizeSelected(name: string | null): void
   /** `mayCommit`, read last before the new board commits: false leaves the board shown as it is (a notice's request,
@@ -1614,6 +1616,10 @@ export const useStore = create<State>((rawSet, rawGet, storeApi) => {
         const sel = new Set(s.selection)
         return { nodes: s.nodes.map((n) => (sel.has(n.key) ? { ...n, theme, themeUser: theme } : n)), dirty: true }
       })
+      scheduleSave()
+    },
+    setNodeTheme(key, theme) {
+      set((s) => ({ nodes: s.nodes.map((n) => (n.key === key ? { ...n, theme, themeUser: theme } : n)), dirty: true }))
       scheduleSave()
     },
     resizeNode(key, w, h) {

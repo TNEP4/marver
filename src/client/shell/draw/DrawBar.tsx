@@ -5,11 +5,11 @@
  */
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { DrawState, DrawTool } from '../../../shared/draw-protocol.ts'
-import { ImagesSquareIcon, PanelFilledIcon, ParallelogramFillIcon, SignpostIcon, CheckIcon } from '../icons.tsx'
+import { ImagesSquareIcon, MoonIcon, PanelFilledIcon, ParallelogramFillIcon, SignpostIcon, SunIcon, CheckIcon } from '../icons.tsx'
 import { HoverTip, MI, MAIN_TOOLS, MORE_TOOLS, Ph, TOOL, type TipSide } from './kit.tsx'
 import { drawSend, type DrawLink } from './link.ts'
 
-export function DrawBar({ link, state, tools, mode, tipSide, menuSide = 'below', style, cam, onCopyPath, onCopyImage, onExport, onCollapse, onHideUI, onBack, copied }: {
+export function DrawBar({ link, state, tools, mode, tipSide, menuSide = 'below', style, cam, onCopyPath, onCopyImage, onExport, onCollapse, onHideUI, onBack, onTheme, dark, copied }: {
   link: DrawLink
   state: DrawState | undefined
   tools: DrawTool[]
@@ -24,6 +24,9 @@ export function DrawBar({ link, state, tools, mode, tipSide, menuSide = 'below',
   onExport: (kind: 'png' | 'pdf') => void
   onCollapse?: () => void
   onHideUI?: () => void
+  /** the theme switch (⌥⇧D inside a drawing: D alone is the diamond) and whether the drawing shows dark now */
+  onTheme?: () => void
+  dark?: boolean
   onBack?: () => void
   copied?: 'path' | 'image' | null
 }) {
@@ -90,8 +93,13 @@ export function DrawBar({ link, state, tools, mode, tipSide, menuSide = 'below',
           <MI icon={<Ph n="FilePng" size={15} />} label="Export as PNG" onClick={() => { setOpen(false); onExport('png') }} />
           <MI icon={<Ph n="FilePdf" size={15} />} label="Export as PDF" onClick={() => { setOpen(false); onExport('pdf') }} />
           {mode === 'play' && <MI icon={<ImagesSquareIcon size={15} />} label="Copy as image" k="⇧I" onClick={() => { setOpen(false); onCopyImage?.() }} />}
+          {mode === 'canvas' && onTheme && <>
+            <div className="div" />
+            <MI icon={dark ? <SunIcon size={15} /> : <MoonIcon size={15} />} label={dark ? 'Light mode' : 'Dark mode'} k="⌥⇧D" onClick={() => { setOpen(false); onTheme() }} />
+          </>}
           {mode === 'play' && <>
             <div className="div" />
+            {onTheme && <MI icon={dark ? <SunIcon size={15} /> : <MoonIcon size={15} />} label={dark ? 'Light mode' : 'Dark mode'} k="⌥⇧D" onClick={() => { setOpen(false); onTheme() }} />}
             <MI icon={<Ph n="EyeSlash" size={15} />} label="Hide all UI" k="H" onClick={() => { setOpen(false); onHideUI?.() }} />
             <MI icon={<Ph n="ArrowLeft" size={15} />} label="Back to the canvas" k="esc" onClick={() => { setOpen(false); onBack?.() }} />
           </>}

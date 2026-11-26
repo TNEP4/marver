@@ -6,6 +6,7 @@
 import { create } from 'zustand'
 import type { DrawCmd, DrawState } from '../../../shared/draw-protocol.ts'
 import { cmd } from '../commands.ts'
+import { useStore } from '../store.ts'
 
 type Cmd = DrawCmd extends infer C ? C extends { type: 'sh:draw-cmd' } ? Omit<C, 'type'> : never : never
 
@@ -64,6 +65,8 @@ export function exportDrawing(link: DrawLink, kind: Want['kind'], toast: (t: str
  *  by play's host (its own iframe). Returns true when the message was a drawing's. */
 export function drawMessage(key: string, data: any): boolean {
   if (data?.type === 'sh:draw-state') { useDraw.getState().put(key, data as DrawState); return true }
+  // ⌥⇧D inside a drawing on the canvas: the drawing frame's theme (D alone stays the diamond in a drawing - Nic, 26 Nov)
+  if (data?.type === 'sh:draw-key' && data.key === 'theme') { toggleDrawingTheme(key, 'key'); return true }
   if (data?.type === 'sh:draw-error') {
     useDraw.getState().fail(key, String(data.message ?? 'drawing error'))
     const w = wants.get(key)
@@ -112,4 +115,13 @@ function download(blob: Blob, filename: string): void {
   a.click()
   a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 5000)
+}
+
+/** A drawing frame's theme on the canvas, light and dark: its ⋯ menu and ⌥⇧D (play turns the canvas's theme instead). */
+export function toggleDrawingTheme(key: string, via: 'click' | 'key'): void {
+  const st = useStore.getState()
+  const n = st.nodes.find((x) => x.key === key)
+  if (!n) return
+  cmd('theme', { via, in: 'shell', frames: 1 })
+  st.setNodeTheme(key, n.theme === 'dark' ? 'light' : 'dark')
 }

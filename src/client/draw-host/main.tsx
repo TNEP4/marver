@@ -190,6 +190,8 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
     const onKey = (e: KeyboardEvent) => {
       const typing = !!engine.current?.appState()?.editingTextElement || (e.target as HTMLElement)?.closest?.('textarea, input')
       if ((e.metaKey || e.ctrlKey) && (e.key === '\\' || e.key === '/') && !typing) { e.preventDefault(); e.stopPropagation(); post({ type: 'sh:draw-key', key: e.key === '/' ? 'toolbar' : 'panel' }); return }
+      // ⌥⇧D - the theme (Excalidraw's own key for it): D alone stays the diamond inside a drawing (Nic, 26 Nov)
+      if (e.altKey && e.shiftKey && !e.metaKey && !e.ctrlKey && e.code === 'KeyD' && !typing) { e.preventDefault(); e.stopPropagation(); post({ type: 'sh:draw-key', key: 'theme' }); return }
       // H in play: Hide all UI, as play's menus say (Nic, 26 Nov) - reveal when hidden
       if (uiHidden.current !== null && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'h') { e.preventDefault(); e.stopPropagation(); post({ type: 'sh:draw-key', key: uiHidden.current ? 'reveal' : 'hide' }); return }
       if (e.key !== 'Escape') return
