@@ -311,7 +311,8 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
     }
     hadDraft.current = draftHere
     hadThread.current = threadHere
-  }, [draft, active, isDraw, node.key])
+    // activeShown: the card itself (a thread resolved by someone else closes it with `active` unchanged - review r4)
+  }, [draft, active, activeShown, isDraw, node.key])
   // note anchors: their own map, measured in the shell, in node-body coordinates (negative x -
   // the note is left of the frame). The composing draft is measured too (key 'draft'), so it
   // follows a fold like a saved pin. A folded column parks pins on the fold; a note whose file
