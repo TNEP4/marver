@@ -75,6 +75,14 @@ describe('the drawing frame (spec 38), in a real browser', () => {
     expect(await inner(`w.__mvDraw.engine.elements().length`)).toBe(2)
     expect(await inner(`getComputedStyle(d.querySelector('.layer-ui__wrapper') ?? d.body).display`)).toBe('none')
     expect(await inner(`w.__mvDraw.engine.appState().viewModeEnabled`)).toBe(true)
+    // the head's pen nib follows the FRAME's theme, as the head does: a dark drawing on a light board wears the light ink
+    const nib = `getComputedStyle(document.querySelector('.sh-node.dk-draw .sh-node-head .dk-kind')).color`
+    expect(await ev(nib)).toBe('rgb(91, 87, 209)')
+    await ev(`(() => { const st = window.__mvStore.getState(); st.select('n_flow'); window.__mvStore.getState().setSelectedTheme('dark') })()`)
+    await until(`document.querySelector('.sh-node.dk-draw').dataset.theme === 'dark'`)
+    expect(await ev(nib)).toBe('rgb(168, 165, 255)')
+    await ev(`(() => { const st = window.__mvStore.getState(); window.__mvStore.getState().setSelectedTheme('light'); st.select(null) })()`)
+    await until(`document.querySelector('.sh-node.dk-draw').dataset.theme === 'light'`)
   }, 90_000)
 
   it('double-click opens drawing mode: the bar above, the panel left, the view controls inside, the purple accent', async (ctx) => {
