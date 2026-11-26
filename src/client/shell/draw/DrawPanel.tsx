@@ -95,7 +95,7 @@ export function DrawPanel({ link, state, top, popSide = 'right', style, cam }: {
     font: () => {
       const quick = [5, 6, 8]
       const cur = p!.fontFamily
-      return ['Font', seg([<Ph n="PencilSimple" size={12} />, 'A', <Ph n="Code" size={12} />, <Ph n="CaretDown" size={10} />], [5, 6, 8, quick.includes(cur ?? -1) ? -1 : cur], cur,
+      return ['Font', seg([<Ph n="PencilSimple" size={12} />, 'A', <Ph n="Code" size={12} />, <Ph n="CaretDown" size={10} />], [5, 6, 8, cur != null && !quick.includes(cur) ? cur : -1], cur,
         ['Hand-drawn', 'Normal', 'Code', 'More fonts'], (v, i) => { if (i === 3) setOpen(open === 'font' ? null : 'font'); else act('changeFontFamily', { currentItemFontFamily: v }) }, open === 'font' ? 3 : undefined)]
     },
     fontSize: () => ['Size', seg(['S', 'M', 'L', 'XL'], [16, 20, 28, 36], p!.fontSize, ['Small', 'Medium', 'Large', 'Extra large'], (v) => act('changeFontSize', v))],

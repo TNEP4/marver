@@ -46,7 +46,9 @@ export function panelModel(elements: readonly El[], appState: any, editable: boo
 
   const ai = appState ?? {}
   const pick = <T,>(read: (e: El) => T | undefined, current: T): T | null => (selected.length ? common(targets, read) : current)
-  const textPick = <T,>(read: (e: El) => T | undefined, current: T): T | null => (texts.length ? common(texts, read) : current)
+  // the text tool with nothing selected shows the tool's own values (the placeholder target has no font, size or align)
+  const selectedTexts = [...selected.filter((t) => t.type === 'text'), ...boundTexts]
+  const textPick = <T,>(read: (e: El) => T | undefined, current: T): T | null => (selectedTexts.length ? common(selectedTexts, read) : current)
   const props: DrawProps = {
     strokeColor: pick((e) => e.strokeColor as string, ai.currentItemStrokeColor ?? '#1e1e1e'),
     backgroundColor: pick((e) => (BACKGROUND.has(e.type) ? e.backgroundColor as string : undefined), ai.currentItemBackgroundColor ?? 'transparent'),

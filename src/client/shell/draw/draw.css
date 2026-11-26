@@ -13,7 +13,8 @@
 
 /* the drawing mode: one token swap, as .sh-app.interacting does - every accent-derived surface (the node's .sel ring,
    .sh-ctx's beam and on-state, menus' checks) turns purple without knowing the mode exists */
-.dk-draw { --accent: var(--draw); --accent-ring: var(--draw-ring); --beam: var(--draw-beam); --edge-accent: var(--draw-edge);
+/* (the frame node itself only once it is in drawing mode: selected, it wears the shell's blue like every frame - Nic, 26 Nov) */
+.dk-draw:not(.sh-node), .sh-node.dk-draw.interact { --accent: var(--draw); --accent-ring: var(--draw-ring); --beam: var(--draw-beam); --edge-accent: var(--draw-edge);
   --inner-tint: var(--draw-tint); --glass-accent: var(--draw-ink); --glass-accent-bg: var(--draw-bg) }
 
 /* ---- glass (the shell's recipe, for the kit's own capsules) --------------------------------------- */
@@ -217,6 +218,8 @@
 /* the drawing mode: the shell's accent turns the drawing purple, as interact turns it magenta */
 .sh-app.drawing { --accent: var(--draw); --accent-ring: var(--draw-ring); --beam: var(--draw-beam); --edge-accent: var(--draw-edge);
   --inner-tint: var(--draw-tint); --glass-accent: var(--draw-ink); --glass-accent-bg: var(--draw-bg) }
+/* the drawing's own sidebar row in drawing mode: its "new" mark and tone in the drawing purple, not the marks' blue */
+.sh-panel .sub.dk-now { --mk-new: var(--draw-ink) }
 .sh-node.interact.dk-draw { --interact: var(--draw); --interact-ring: var(--draw-ring) }
 /* a thin ring like the selection's (2 px + a soft 4 px), never the interact mode's orbiting glow (Nic, 25 Nov) */
 .sh-node.interact.dk-draw::before, .sh-node.interact.dk-draw::after { display: none }

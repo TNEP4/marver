@@ -633,8 +633,10 @@ export function App() {
   // The links are rebuilt (not toggled) so the set stays deterministic; the .ico is
   // design-blue only, so interact mode omits it and the browser takes the purple PNGs.
   const interactingIcon = useStore((s) => s.interact !== null)
+  // a drawing in drawing mode wears the drawing purple, as interact wears magenta (Nic, 26 Nov)
+  const drawingIcon = useStore((s) => { const n = s.interact ? s.nodes.find((x) => x.key === s.interact) : undefined; return !!n && s.frameFor(n)?.kind === 'draw' })
   useEffect(() => {
-    const sfx = interactingIcon ? '-interactive' : ''
+    const sfx = drawingIcon ? '-drawing' : interactingIcon ? '-interactive' : ''
     document.head.querySelectorAll('link[rel="icon"], link[rel="apple-touch-icon"]').forEach((l) => l.remove())
     const add = (rel: string, href: string, attrs: Record<string, string> = {}) => {
       const l = document.createElement('link')
@@ -647,7 +649,7 @@ export function App() {
     add('icon', `${ROUTE}/favicon/favicon-32x32${sfx}.png`, { type: 'image/png', sizes: '32x32' })
     add('icon', `${ROUTE}/favicon/favicon-16x16${sfx}.png`, { type: 'image/png', sizes: '16x16' })
     add('apple-touch-icon', `${ROUTE}/favicon/apple-touch-icon${sfx}.png`)
-  }, [interactingIcon])
+  }, [interactingIcon, drawingIcon])
 
   // focus rings appear ONLY during real Tab navigation: the browser flips into keyboard
   // modality on ANY keystroke, so a shortcut press painted the stock double ring on
@@ -1035,6 +1037,8 @@ export function App() {
   const interacting = useStore((s) => s.interact !== null)
   // a drawing in drawing mode (spec 38): the accent turns the drawing purple, not interact's magenta
   const drawing = useStore((s) => { const n = s.interact ? s.nodes.find((x) => x.key === s.interact) : undefined; return !!n && s.frameFor(n)?.kind === 'draw' })
+  /** the frame in drawing mode: its sidebar row wears the drawing purple, mark included (Nic, 26 Nov) */
+  const drawingFrame = useStore((s) => { const n = s.interact ? s.nodes.find((x) => x.key === s.interact) : undefined; return n && s.frameFor(n)?.kind === 'draw' ? n.frame : null })
 
   // leaving interact returns keyboard focus to the shell: while a frame held focus its
   // document swallowed every shortcut (the bridge only forwards Escape), so d/t/digits
@@ -1199,7 +1203,7 @@ export function App() {
                     const n = nodeFor(f.id)
                     const on = !!n && selection.includes(n.key)
                     rows.push(
-                      <MarkedRow key={f.id} frame={f.id} className={`sub${on ? ' on' : ''}`} onClick={(e) => go(f.id, e.shiftKey)} onContextMenu={(e) => cm.open(e, frameMenu(f))} title={f.intent}>
+                      <MarkedRow key={f.id} frame={f.id} className={`sub${on ? ' on' : ''}${f.id === drawingFrame ? ' dk-now' : ''}`} onClick={(e) => go(f.id, e.shiftKey)} onContextMenu={(e) => cm.open(e, frameMenu(f))} title={f.intent}>
                         {/* every frame leads with an icon: the slide badge first (a deck
                             frame is a deck frame whatever it imports), intent glyph for
                             content frames, the plain rectangle for UI frames */}

@@ -88,8 +88,18 @@ describe('the drawing frame (spec 38), in a real browser', () => {
   it('double-click opens drawing mode: the bar above, the panel left, the view controls inside, the purple accent', async (ctx) => {
     if (!b) return ctx.skip('no Chrome')
     const r = await rectOf('iframe[data-kind="draw"]')
-    await click(r.x + r.w / 2, r.y + r.h / 2); await click(r.x + r.w / 2, r.y + r.h / 2, 2)
+    // one click selects it in the shell's blue, as every frame (purple is for drawing mode only - Nic, 26 Nov)
+    const border = `getComputedStyle(document.querySelector('.sh-node.dk-draw')).borderTopColor`
+    const favicon = `[...document.querySelectorAll('link[rel="icon"]')].map((l) => l.getAttribute('href')).join(' ')`
+    await click(r.x + r.w / 2, r.y + r.h / 2)
+    await until(`document.querySelector('.sh-node.dk-draw').classList.contains('sel')`)
+    expect(await ev(border)).not.toBe('rgb(105, 101, 219)')
+    expect(await ev(favicon)).not.toMatch(/-drawing/)
+    await click(r.x + r.w / 2, r.y + r.h / 2, 2)
     await until(`document.querySelector('.sh-app').classList.contains('drawing')`)
+    // drawing mode: the purple ring and the purple favicon, as interact wears magenta
+    await until(`${border} === 'rgb(105, 101, 219)'`, 3000)
+    await until(`/favicon-32x32-drawing/.test(${favicon})`, 3000)
     // the bar and the view controls mount a frame apart: wait for both, then measure against the frame as it is now
     await until(`!!document.querySelector('.dk-tools.sh-ctx') && !!document.querySelector('.dk-view')`)
     await sleep(100)
@@ -161,6 +171,7 @@ describe('the drawing frame (spec 38), in a real browser', () => {
     await escape()
     await until(`!document.querySelector('.sh-app').classList.contains('drawing')`, 5000)
     await until(`document.querySelector('iframe[data-kind="draw"]').contentWindow.__mvDraw.engine.appState().viewModeEnabled === true`, 5000)
+    expect(await ev(`[...document.querySelectorAll('link[rel="icon"]')].map((l) => l.getAttribute('href')).join(' ')`)).not.toMatch(/-drawing/)
     expect(await ev(`!!document.querySelector('.dk-tools.sh-ctx')`)).toBe(false)
   }, 15_000)
 
