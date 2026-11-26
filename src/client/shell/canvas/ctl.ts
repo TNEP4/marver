@@ -55,4 +55,6 @@ export const canvasCtl = {
   /** The camera now, `{ x, y, s }` as the world is drawn (null with no canvas): the white-out probes' bracket (spec 28
    *  A3.8 #16) and a hide mid-flight (A3.8 #43). Assigned by Canvas.tsx from its camera. */
   transform(): { x: number; y: number; s: number } | null { return null },
+  /** Move the camera by screen px, flown (a drawing opened beside the open sidebar makes room for its panel, spec 38). */
+  panBy(_dx: number, _dy: number) {},
 }

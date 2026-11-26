@@ -36,6 +36,10 @@ export function DrawCanvasChrome() {
   const toast = useStore((s) => s.toast)
   const dark = useStore((s) => s.viewTheme) === 'dark'
   const [copied, setCopied] = useState<'path' | 'image' | null>(null)
+  const drawKey = node && frame?.kind === 'draw' && !node.missing ? node.key : null
+  // opened beside the open sidebar: the camera makes room once, so the panel sits left of the frame and clear of the
+  // sidebar - never over the drawing (it would cover where the person draws), never under the sidebar
+  useEffect(() => { if (drawKey) makeRoom(drawKey) }, [drawKey])
   useEffect(() => { if (!copied) return; const t = setTimeout(() => setCopied(null), 1400); return () => clearTimeout(t) }, [copied])
   if (!node || !frame || frame.kind !== 'draw' || node.missing) return null
   const link: DrawLink = { key: node.key, title: frame.title ?? frame.id.split('/').pop() ?? 'drawing', frame: frame.id, win: () => iframeOf(node.key)?.contentWindow }
@@ -61,6 +65,18 @@ export function DrawCanvasChrome() {
       <DrawView link={link} state={state} style={view} cam />
     </Hold>
   )
+}
+
+/** Pan right just enough that the panel's place (PANEL_W + GAP left of the frame) clears the open sidebar, when the
+ *  two would overlap on screen. Nothing moves when they do not, or when the sidebar is closed. */
+function makeRoom(key: string): void {
+  const side = document.querySelector('.sh-panel:not(.closed)')?.getBoundingClientRect()
+  const f = iframeOf(key)?.getBoundingClientRect()
+  if (!side || !f) return
+  const panelLeft = f.left - (PANEL_W + GAP), panelTop = Math.max(TOP + 8, f.top)
+  if (panelTop >= side.bottom + 8) return            // below the sidebar: no overlap
+  const need = side.right + 10 - panelLeft
+  if (need > 0) canvasCtl.panBy(need, 0)
 }
 
 // ---- W: a new drawing at the pointer (spec 38) ---------------------------------------------------------------

@@ -103,6 +103,10 @@ describe('the drawing frame (spec 38), in a real browser', () => {
     await until(`document.querySelector('iframe[data-kind="draw"]').contentWindow.__mvDraw.engine.elements().length === 3`)
     // the panel follows the selection: the new rectangle's sections, with Layers and Actions
     await until(`[...document.querySelectorAll('.dk-props .lb')].some((e) => e.textContent === 'Actions')`)
+    // opened beside the open sidebar, the camera made room: the panel sits clear of the sidebar, left of the frame
+    const side = await rectOf('.sh-panel:not(.closed)'), props = await rectOf('.dk-props'), fr = await rectOf('iframe[data-kind="draw"]')
+    if (side && props.y < side.y + side.h) expect(props.x).toBeGreaterThanOrEqual(side.x + side.w)
+    expect(props.x + props.w).toBeLessThanOrEqual(fr.x)
     const t = Date.now()
     while (Date.now() - t < 5000 && disk().elements.length !== 3) await sleep(100)
     expect(disk().elements).toHaveLength(3)
@@ -138,6 +142,27 @@ describe('the drawing frame (spec 38), in a real browser', () => {
     await until(`document.querySelector('iframe[data-kind="draw"]').contentWindow.__mvDraw.engine.appState().viewModeEnabled === true`, 5000)
     expect(await ev(`!!document.querySelector('.dk-tools.sh-ctx')`)).toBe(false)
   }, 15_000)
+
+  it('opened beside the open sidebar, the camera makes room: the panel clears the sidebar, off the drawing', async (ctx) => {
+    if (!b) return ctx.skip('no Chrome')
+    const side = await rectOf('.sh-panel:not(.closed)')
+    if (!side) return ctx.skip('no sidebar open')
+    // scroll the frame up beside the sidebar, where its panel would land under it
+    const r0 = await rectOf('iframe[data-kind="draw"]')
+    await b.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 900, y: 500, deltaX: r0.x - 150, deltaY: r0.y - 120 }, s)
+    await sleep(300)
+    const r = await rectOf('iframe[data-kind="draw"]')
+    expect(r.y).toBeLessThan(side.y + side.h)                                  // the case: beside the sidebar
+    expect(r.x - 248).toBeLessThan(side.x + side.w)                            // its panel's place under it
+    await click(r.x + r.w / 2, r.y + r.h / 2); await click(r.x + r.w / 2, r.y + r.h / 2, 2)
+    await until(`document.querySelector('.sh-app').classList.contains('drawing')`)
+    await until(`(() => { const f = document.querySelector('iframe[data-kind="draw"]').getBoundingClientRect(); return f.left - 248 >= ${side.x + side.w} })()`, 3000)
+    const after = await rectOf('iframe[data-kind="draw"]')
+    expect(after.y).toBeCloseTo(r.y, 0)                                         // a sideways move only
+    expect(after.w).toBeCloseTo(r.w, 0)                                         // no zoom
+    await escape()
+    await until(`!document.querySelector('.sh-app').classList.contains('drawing')`, 5000)
+  }, 30_000)
 
   it('plays a selected drawing full-tab: the panel, the tool bar, the view; collapse; Escape back', async (ctx) => {
     if (!b) return ctx.skip('no Chrome')

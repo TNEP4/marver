@@ -337,6 +337,12 @@ export function Canvas() {
       const k = target / scale   // zoom about the usable rectangle's centre (below the Mac app's strip with the inset)
       fly(cx - (cx - positionX) * k, cy - (cy - positionY) * k, target, 250)
     }
+    canvasCtl.panBy = (dx: number, dy: number) => {
+      const inst = ref.current
+      if (!inst || (!dx && !dy)) return
+      const { positionX, positionY, scale } = inst.instance.transformState
+      fly(positionX + dx, positionY + dy, scale, 250)
+    }
     canvasCtl.cameraBusy = () => !!ref.current?.instance.animation
     canvasCtl.layoutBusy = () => !!document.getElementById('sh-world')?.classList.contains('sh-preset')
     // the camera as the world is drawn now, mid-flight included: the white-out probes' bracket (spec 28 A3.8 #16)
