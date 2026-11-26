@@ -42,7 +42,7 @@ export function parseDrawFile(text: string): DrawDoc {
   if (Number.isFinite(vx) && Number.isFinite(vy) && Number.isFinite(vz) && vz > 0) header.view = { x: vx, y: vy, zoom: vz }
   const elements = new Map<string, DrawElement>()
   for (const e of (raw.elements ?? []) as any[]) {
-    if (!e || typeof e !== 'object' || typeof e.id !== 'string' || !e.id || typeof e.type !== 'string') continue
+    if (!e || typeof e !== 'object' || typeof e.id !== 'string' || typeof e.type !== 'string') continue
     if (e.isDeleted) continue
     elements.set(e.id, e as DrawElement)
   }

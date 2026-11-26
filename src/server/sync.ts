@@ -18,10 +18,12 @@ import { createHash, randomBytes } from 'node:crypto'
 import { join } from 'node:path'
 import { appendEvents, diffEvents, listBoards, readLog, type CommentEvent } from './comments.ts'
 import { deletedMessages } from '../shared/events.ts'
+import { isDrawAnchor, validDrawAnchor } from '../shared/anchor.ts'
+import { operatorId, publicCommentEvent, publishableAgentEvent, reservedMarverName } from '../shared/agent-events.ts'
 import { CLI_TOKEN_CHARS, MIN_CLI_TOKEN } from './auth.ts'
 import { marverHome } from './slots.ts'
 
-export interface Collab { url: string; token: string; email?: string; name?: string; avatar?: string }
+export interface Collab { url: string; token: string; email?: string; name?: string; avatar?: string; operator?: boolean }
 
 /**
  * The credential does not live in the repository.
@@ -137,7 +139,8 @@ export async function syncOnce(root: string, collab: Collab): Promise<Record<str
   const { rights, legacy } = await bres.json() as { rights: Record<string, 'read' | 'comment'>; legacy?: { board: string; frames: string[] } }
 
   // who this session is there - its opaque id, which a password or invite session's events carry instead of emails
-  const myId = await fetch(`${base}/__mv/api/me`, { headers: auth }).then(async (r) => (r.ok ? ((await r.json()) as { id?: string }).id : undefined), () => undefined)
+  const session = await fetch(`${base}/__mv/api/me`, { headers: auth }).then(async (r) => (r.ok ? await r.json() as { id?: string; operator?: boolean } : undefined), () => undefined)
+  const myId = session?.id
   // what this canvas has told us, signed in, about who each address is there - kept across reconnects (Codex r9)
   if (myId && collab.email) bindIdentity(root, base, collab.email, myId)
   const bindings = identityBindings(root, base)
@@ -158,28 +161,22 @@ export async function syncOnce(root: string, collab: Collab): Promise<Record<str
     const pulled = appendEvents(dir, board, admitted(readLog(dir, board), remote, bindings)).length
     let pushed = 0
     if (rights[board] === 'comment' || old) {
-      // Live Jam: agent-authored events are dev-local in v1 - never pushed to the published canvas
-      // (the published validator refuses agent provenance from every session, the operator's too).
-      // Filter them out of the push set - and with them every event in a thread Marver STARTED (a note
-      // an agent pinned, `comments new`) that the canvas does not hold: the owner's reply in it, a
-      // resolve, a reaction would reach a server that never saw the thread, which rejects the batch.
-      // A thread an older build seeded there (its very create event is in the pull) is the canvas's
-      // too (#30): a resolve or the owner's reply on it goes; Marver's own messages in it still do not.
+      // Agent replies share the ordinary thread log; notes and captures stay on this machine.
       const local = readLog(dir, board)
       const marverThreads = localOnlyThreads(local, remote)
       const shipped = old ? threadIds(local, (e) => legacy!.frames.includes(e.frame ?? '')) : null
       // an edit of a message deleted since (here or there) is never sent: the server refuses it, and with it the batch
       const gone = deletedMessages([...local, ...remote])
-      const candidates = diffEvents(local, remote.map((e) => e.id)).filter((e) => !e.agent && !e.agentMeta && !marverThreads.has(threadOf(e)) && (!shipped || shipped.has(threadOf(e))) && (caps.delete || e.type !== 'delete') && !(e.type === 'edit' && gone.has(e.commentId ?? '')))
+      const candidates = diffEvents(local, remote.map((e) => e.id)).filter((e) => (!e.agent || publishableAgentEvent(e, local)) && !marverThreads.has(threadOf(e)) && (!shipped || shipped.has(threadOf(e))) && (caps.delete || e.type !== 'delete') && !(e.type === 'edit' && gone.has(e.commentId ?? '')))
       // what the server would refuse - and with it the whole batch, every exchange - is kept here, said, never sent
-      const keptHere = unauthorized(candidates, [...local, ...remote], { email: collab.email, id: myId })
+      const keptHere = unauthorized(candidates, [...local, ...remote], { email: collab.email, id: myId }, { ...caps, operator: session?.operator ?? collab.operator ?? (caps.agentEvents ? true : undefined) })
       if (keptHere.length) held[board] = keptHere
       const keep = new Set(keptHere.map((h) => h.id))
       const missing = candidates.filter((e) => !keep.has(e.id))
       for (let i = 0; i < missing.length; i += 100) {
         const r = await fetch(`${base}/__mv/api/comments/${board}`, {
           method: 'POST', headers: { ...auth, 'content-type': 'application/json' },
-          body: JSON.stringify({ events: missing.slice(i, i + 100) }),
+          body: JSON.stringify({ events: missing.slice(i, i + 100).map(publicCommentEvent) }),
         })
         if (r.ok) pushed += (await r.json() as any).accepted ?? 0
         else failures.push(`${board}: push ${r.status} ${((await r.json().catch(() => null)) as any)?.error ?? ''}`.trim())
@@ -197,15 +194,15 @@ export async function syncOnce(root: string, collab: Collab): Promise<Record<str
  *  account and every edit, delete or re-pin against the original message's author. After connecting under another
  *  address, an event written under the old one - or a change to a message the old one wrote, which this machine still
  *  lets you make (own.json) - would be refused there, and with it every comment in its batch, every 30 s. */
-export interface Held { id: string; type: string; why: 'another-account' | 'message-of-another-account' | 'thread-kept-here' | 'before-connect' }
-export function unauthorized(events: CommentEvent[], log: CommentEvent[], account?: string | { email?: string; id?: string }): Held[] {
+export interface Held { id: string; type: string; why: 'another-account' | 'message-of-another-account' | 'thread-kept-here' | 'before-connect' | 'anchor-refused' | 'body-refused' | 'needs-operator' | 'old-canvas' | 'agent-refused' | 'name-refused' }
+export function unauthorized(events: CommentEvent[], log: CommentEvent[], account?: string | { email?: string; id?: string }, caps?: { operator?: boolean; agentEvents?: boolean; drawAnchors?: boolean }): Held[] {
   const acct = typeof account === 'string' ? { email: account } : account ?? {}
   const myEmail = (acct.email ?? '').toLowerCase(), myId = acct.id ?? ''
-  if (!myEmail && !myId) return []
   // mine: my address, or - where this transport carries opaque ids (a password or invite session) - my id; unknown
   // (an id, and mine unknown) is the server's to decide
   const mine = (a?: { email?: string; id?: string }): boolean | null =>
     a?.email ? (myEmail ? a.email.toLowerCase() === myEmail : null) : a?.id ? (myId ? a.id === myId : null) : false
+  const context = [...log, ...events]
   const authorOf = new Map<string, CommentEvent['author']>()
   const rootOf = new Map<string, string>()
   for (const e of [...log, ...events]) {
@@ -222,7 +219,19 @@ export function unauthorized(events: CommentEvent[], log: CommentEvent[], accoun
   for (const e of events) {
     let why: Held['why'] | null = null
     const target = e.commentId ?? ''
-    if (byAuthor.has(e.type) && unsigned(e.author)) why = 'before-connect'
+    const draw = (e.type === 'create' || e.type === 'reanchor') && isDrawAnchor(e.anchor)
+    const original = context.find((m) => (m.type === 'create' || m.type === 'reply') && m.commentId === target)
+    if (draw && !validDrawAnchor(e.anchor)) why = 'anchor-refused'
+    else if (e.body !== undefined && (typeof e.body !== 'string' || e.body.length > 10_000)) why = 'body-refused'
+    else if ((e.agent || draw) && caps && caps.operator === false) why = 'needs-operator'
+    else if ((e.agent && caps && !caps.agentEvents) || (draw && caps && !caps.drawAnchors)) why = 'old-canvas'
+    else if ((e.agent !== undefined || e.agentMeta !== undefined) && !publishableAgentEvent(e, context)) why = 'agent-refused'
+    else if ((e.type === 'edit' || e.type === 'delete') && original?.agent && !e.agent) why = 'agent-refused'
+    else if (caps?.operator === false && (operatorId(e.id) || operatorId(e.commentId))) why = 'needs-operator'
+    else if (caps?.operator !== true && reservedMarverName(e.author?.name)) why = 'name-refused'
+    else if (e.agent && publishableAgentEvent(e, context)) continue
+    else if (!myEmail && !myId) continue
+    else if (byAuthor.has(e.type) && unsigned(e.author)) why = 'before-connect'
     else if (byAuthor.has(e.type) && mine(e.author) === false) why = 'another-account'
     else if ((e.type === 'edit' || e.type === 'delete' || e.type === 'reanchor') && authorOf.has(target) && unsigned(authorOf.get(target))) why = 'before-connect'
     else if ((e.type === 'edit' || e.type === 'delete' || e.type === 'reanchor') && mine(authorOf.get(target)) === false) why = 'message-of-another-account'
@@ -290,7 +299,18 @@ export function heldWords(held: Held[]): string[] {
   const by = new Map<string, Held[]>()
   for (const h of held) by.set(h.why, [...(by.get(h.why) ?? []), h])
   const what = (hs: Held[]) => { const types = [...new Set(hs.map((h) => h.type))]; const n = hs.length; return types.length === 1 ? `${n} ${types[0]}${n === 1 ? '' : 's'}` : `${n} events` }
-  const words = { 'another-account': 'written under another account', 'message-of-another-account': 'its comment was written under another account', 'thread-kept-here': 'its thread is kept local', 'before-connect': 'written on marver dev before this repo was connected - the next publish carries them' } as const
+  const words: Record<Held['why'], string> = {
+    'another-account': 'written under another account',
+    'message-of-another-account': 'its comment was written under another account',
+    'thread-kept-here': 'its thread is kept local',
+    'before-connect': 'written on marver dev before this repo was connected - the next publish carries them',
+    'anchor-refused': 'the drawing anchor is invalid',
+    'body-refused': 'the body exceeds 10,000 characters',
+    'needs-operator': "connect with --token to publish Marver's replies and drawing anchors",
+    'old-canvas': 'the canvas runs an older marver - publish it again',
+    'agent-refused': 'this Marver event cannot be published',
+    'name-refused': 'Marver is a reserved name',
+  }
   return [...by].map(([why, hs]) => `${what(hs)} kept local: ${words[why as Held['why']]}`)
 }
 export function readHeld(root: string): Record<string, Held[]> {
@@ -299,19 +319,19 @@ export function readHeld(root: string): Record<string, Held[]> {
 
 /** What a server's comment API takes (`GET /__mv/api/capabilities`, 0.31): anything but a JSON answer that says so
  *  (an older server's 404, its gate page) is an older server - nothing new is sent to it. */
-export async function serverCapabilities(base: string, headers: Record<string, string> = {}): Promise<{ delete: boolean }> {
+export async function serverCapabilities(base: string, headers: Record<string, string> = {}): Promise<{ delete: boolean; agentEvents?: true; drawAnchors?: true }> {
   try {
     const r = await fetch(`${base.replace(/\/+$/, '')}/__mv/api/capabilities`, { headers })
     if (!r.ok || !(r.headers.get('content-type') ?? '').includes('application/json')) return { delete: false }
-    const b = await r.json() as { delete?: unknown }
-    return { delete: b?.delete === true }
+    const b = await r.json() as { delete?: unknown; agentEvents?: unknown; drawAnchors?: unknown }
+    return { delete: b?.delete === true, ...(b?.agentEvents === true ? { agentEvents: true } : {}), ...(b?.drawAnchors === true ? { drawAnchors: true } : {}) }
   } catch { return { delete: false } }
 }
 
 /** What of a pull may join the local log (spec 31, Codex r4): the server validated each event against ITS log, which
  *  never held this machine's own messages (Marver's notes, captures - never pushed). So a message id already here is
  *  one message's: another event claiming it as a new message is refused, and an edit or a delete of it must come from
- *  its original author - never touching Marver's or a local-only message at all. */
+ *  its original author. Agent corrections require agent provenance too; local-only messages stay untouched. */
 export function admitted(local: CommentEvent[], remote: CommentEvent[], bindings: Readonly<Record<string, string>> = {}): CommentEvent[] {
   const msgs = new Map<string, CommentEvent>()
   for (const e of local) if ((e.type === 'create' || e.type === 'reply') && e.commentId && !msgs.has(e.commentId)) msgs.set(e.commentId, e)
@@ -324,14 +344,15 @@ export function admitted(local: CommentEvent[], remote: CommentEvent[], bindings
   const offLimits = localOnlyThreads(local, remote)
   const out: CommentEvent[] = []
   for (const e of remote) {
+    if (e && !e.agent && (operatorId(e.id) || operatorId(e.commentId))) continue
     if (!e || typeof e.id !== 'string' || localIds.has(e.id)) { out.push(e); continue }   // already here: appendEvents keeps one
     if ((e.type === 'create' || e.type === 'reply') && e.commentId) {
       if (msgs.has(e.commentId)) continue
       msgs.set(e.commentId, e)
     } else if ((e.type === 'edit' || e.type === 'delete') && e.commentId) {
       const orig = msgs.get(e.commentId), there = theirs.get(e.commentId)
-      // the message here must be the very one the server holds (same event), never Marver's or a local-only one
-      if (!orig || !there || there.id !== orig.id || orig.agent || offLimits.has(e.commentId)) continue
+      // The message here must be the very one the server holds; Marver mutations must carry agent provenance.
+      if (!orig || !there || there.id !== orig.id || !!orig.agent !== !!there.agent || ((e.agent || orig.agent) && !publishableAgentEvent(e, remote)) || offLimits.has(e.commentId)) continue
       // ids are a client's to choose (Codex r8): the server's copy must be written by whoever wrote the one here - the
       // same address, the same opaque id, or an address here and the opaque id this canvas told us, signed in as that
       // address, is its (a binding - any account this machine has connected as). Otherwise someone reused the ids of a
@@ -396,7 +417,7 @@ export async function connect(root: string, url: string, email: string, password
       `    npx marver comments connect ${base} --token <that same value>`)
   const token = await sessionFrom(res, 'sign-in')
   const user = (await res.clone().json().catch(() => null) as any)?.user
-  saveCollab(root, { url: base, token, email: user?.email ?? email, name: user?.name, avatar: user?.avatar })
+  saveCollab(root, { url: base, token, email: user?.email ?? email, name: user?.name, avatar: user?.avatar, operator: false })
 }
 
 /** Claim an invite from the CLI (the dev-first path - no published UI needed). */
@@ -409,7 +430,7 @@ export async function connectClaim(root: string, url: string, invite: string, pr
   })
   const token = await sessionFrom(res, 'claim')
   const user = (await res.clone().json().catch(() => null) as any)?.user
-  saveCollab(root, { url: base, token, email: user?.email, name: user?.name ?? profile.name, avatar: user?.avatar })
+  saveCollab(root, { url: base, token, email: user?.email, name: user?.name ?? profile.name, avatar: user?.avatar, operator: false })
 }
 
 /**
@@ -478,7 +499,7 @@ export async function connectToken(root: string, url: string, token: string): Pr
   const body = await res.json().catch(() => null) as any
   if (!body?.token || !body?.user?.email)
     throw new Error('the canvas accepted the token but issued nothing - is it running a current marver?')
-  saveCollab(root, { url: base, token: body.token, email: body.user.email, name: body.user.name, avatar: body.user.avatar })
+  saveCollab(root, { url: base, token: body.token, email: body.user.email, name: body.user.name, avatar: body.user.avatar, operator: true })
 }
 
 /** The thread an event belongs to: a reply names its root; everything else names its comment. */
@@ -498,7 +519,7 @@ export function localOnlyThreads(events: CommentEvent[], remote: CommentEvent[] 
   const there = new Set(remote.flatMap((e) => (e && typeof e.id === 'string' ? [e.id] : [])))
   const out = threadIds(events, (e) => (!!e.agent || !!e.capture) && !there.has(e.id))
   const shipped = threadIds(events, (e) => (!!e.agent || !!e.capture) && there.has(e.id))
-  for (const e of events) if (e.type === 'reply' && e.agent && e.commentId && shipped.has(e.commentId) && !there.has(e.id)) out.add(e.commentId)
+  for (const e of events) if (e.type === 'reply' && e.agent && e.commentId && shipped.has(e.commentId) && !publishableAgentEvent(e, events) && !there.has(e.id)) out.add(e.commentId)
   return out
 }
 

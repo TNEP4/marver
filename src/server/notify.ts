@@ -24,6 +24,7 @@
 import { createHash } from 'node:crypto'
 import { signCanvasJws } from './summary.ts'
 import type { CommentEvent } from '../shared/events.ts'
+import { COMMENT_FRESH_MS } from '../shared/comment-notices.ts'
 
 export type RelayTemplate = 'invited' | 'request-approved' | 'access-requested' | 'reply' | 'mentioned'
 
@@ -81,7 +82,7 @@ export function relayNotify(ctx: NotifyCtx, template: RelayTemplate, recipient: 
 
 // ---- comment activity (v1.1) ----
 
-const FRESH_MS = 15 * 60_000            // the intent line: live writes notify, history imports never do
+const FRESH_MS = COMMENT_FRESH_MS            // the intent line: live writes notify, history imports never do
 const REPLY_WINDOW_MS = 6 * 3600_000    // one reply mail per recipient per thread per window (a throttle, not a digest)
 const MAX_REPLY_RECIPIENTS = 10         // the most recent distinct participants; bounds every fan-out
 
@@ -119,14 +120,16 @@ export function activityJobs(
     threadId ? `/#/b/${encodeURIComponent(board)}?c=${encodeURIComponent(threadId)}` : undefined
   for (const ev of accepted) {
     if ((ev.type !== 'create' && ev.type !== 'reply') || Math.abs(now - ev.ts) > FRESH_MS) continue
-    const author = ev.author?.email?.toLowerCase()
+    if (ev.agent && (ev.type !== 'reply' || ev.id.startsWith('jam-e'))) continue
+    const actor = ev.agent ? 'Marver' : ev.author?.name
+    const author = ev.agent ? undefined : ev.author?.email?.toLowerCase()
     const mentioned = new Set<string>()
-    for (const m of ev.mentions ?? []) {
+    for (const m of ev.agent ? [] : ev.mentions ?? []) {
       const email = m.email?.toLowerCase()
       if (!email || email === author || !allowed(email)) continue
       mentioned.add(email)
       jobs.set(transitionId('mention', email, board, ev.commentId ?? ev.id),
-        { template: 'mentioned', recipient: email, actor: ev.author?.name, snippet: ev.body,
+        { template: 'mentioned', recipient: email, actor, snippet: ev.body,
           link: threadLink(ev.type === 'reply' ? ev.parentId : ev.commentId) })
     }
     if (ev.type !== 'reply' || !ev.parentId) continue
@@ -137,14 +140,14 @@ export function activityJobs(
       const p = log[i]
       if (p.id === ev.id) continue
       const inThread = p.type === 'reply' ? p.parentId === ev.parentId : p.type === 'create' && p.commentId === ev.parentId
-      const email = inThread ? p.author?.email?.toLowerCase() : undefined
+      const email = inThread && !p.agent ? p.author?.email?.toLowerCase() : undefined
       if (email && email !== author && !mentioned.has(email) && !recent.includes(email)) recent.push(email)
     }
     const window = String(Math.floor(now / REPLY_WINDOW_MS))
     for (const email of recent) {
       if (!allowed(email)) continue
       jobs.set(transitionId('reply', email, board, ev.parentId, window),
-        { template: 'reply', recipient: email, actor: ev.author?.name, snippet: ev.body, link: threadLink(ev.parentId) })
+        { template: 'reply', recipient: email, actor, snippet: ev.body, link: threadLink(ev.parentId) })
     }
   }
   return jobs

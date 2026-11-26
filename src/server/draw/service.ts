@@ -7,9 +7,10 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, sep } from 'node:path'
 import { createHash, randomBytes } from 'node:crypto'
+import { validElementId } from '../../shared/anchor.ts'
 import type { DrawElement, DrawHeader, DrawPatch, DrawSave } from '../../shared/draw-protocol.ts'
 import { DrawFileError, assignIndexes, emptyDoc, parseDrawFile, serializeDrawFile, contentKey, wholeElement, type DrawDoc } from './file.ts'
-import { agentOps, moveOps, ownerOps, repairRefs, type Lost, type Op } from './merge.ts'
+import { agentOps, moveOps, ownerOps, repairRefs, remapElementIds, type Lost, type Op } from './merge.ts'
 
 export interface LogEntry {
   rev: number
@@ -144,20 +145,8 @@ export class DrawService {
       let ops: Op[] = []
       const els = d.doc.elements
       if (op.kind === 'add') {
-        // ids already taken get new ones, and every reference inside the batch follows them (r1 #13)
-        const remap = new Map<string, string>()
-        const fresh = op.elements.map((raw) => {
-          const e = wholeElement(raw, by, now)
-          if (els.has(e.id) || d.tomb.has(e.id)) { const nid = `${e.id}-${randomBytes(3).toString('hex')}`; remap.set(e.id, nid); e.id = nid }
-          return e
-        })
-        if (remap.size) for (const e of fresh) {
-          const to = (id: unknown) => (typeof id === 'string' && remap.has(id) ? remap.get(id)! : id)
-          if (e.containerId) e.containerId = to(e.containerId)
-          if (e.frameId) e.frameId = to(e.frameId)
-          if (Array.isArray(e.boundElements)) e.boundElements = (e.boundElements as { id: string; type: string }[]).map((b) => ({ ...b, id: to(b.id) as string }))
-          for (const k of ['startBinding', 'endBinding']) { const bnd = e[k] as { elementId?: string } | null; if (bnd?.elementId) e[k] = { ...bnd, elementId: to(bnd.elementId) } }
-        }
+        const fresh = remapElementIds(op.elements, [...els.keys(), ...d.tomb.keys()], true)
+          .map((raw) => wholeElement(raw, by, now))
         if (op.at && fresh.length) {
           const minX = Math.min(...fresh.filter((e) => !e.containerId).map((e) => Number(e.x)))
           const minY = Math.min(...fresh.filter((e) => !e.containerId).map((e) => Number(e.y)))
@@ -166,6 +155,7 @@ export class DrawService {
         assignIndexes(els, fresh)
         ops = fresh.map((e) => ({ id: e.id, el: e, v: e.version }))
       } else if (op.kind === 'set') {
+        if (!validElementId(op.id) || ('id' in op.fields && !validElementId(op.fields.id))) throw new DrawOpError('element id must be non-empty, at most 256 characters, with no control characters')
         const e = els.get(op.id)
         if (!e) throw new DrawOpError(`no element "${op.id}" in ${id}`)
         const patch: Record<string, unknown> = { ...op.fields }

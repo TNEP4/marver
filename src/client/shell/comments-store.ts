@@ -6,6 +6,7 @@
  */
 import { create } from 'zustand'
 import { asks, asSentBy, replay, type CommentEvent, type Thread } from '../../shared/events.ts'
+import { COMMENT_FRESH_MS, commentNotice } from '../../shared/comment-notices.ts'
 import { mentionPeople, mentionsIn } from './mentions.ts'
 import { playPing } from './sound.ts'
 import { ROUTE } from '../const.ts'
@@ -43,6 +44,7 @@ interface CommentsState {
   /** The viewer's effective role per board (published) - what makes a locked
    *  capability honest: `view` on a comment board = "not available for you YET". */
   myBoards: Record<string, string> | null
+  owner: boolean                      // published owner; only they answer Marver
   local: boolean                      // dev mirror (identity is the local profile)
   connected: boolean                  // dev only: a connect account provides name/email (read-only here)
   commentMode: boolean                // C - picking + composing
@@ -201,9 +203,15 @@ export const useComments = create<CommentsState>((set, get) => {
   // reply that does not ask raises nothing (spec 27): it is read in its thread. A jam job whose
   // final block asks what its opening line already said re-flags that line (an edit carrying
   // `asks`): the question gets its notice.
+  const notice = (e: CommentEvent) => {
+    const s = get()
+    if (!s.local && s.signedOut) return null
+    const t = s.threads.find((t) => t.board === e.board && (t.id === (e.parentId ?? e.commentId) || t.replies.some((r) => r.id === e.commentId)))
+    return commentNotice(e, t, s.me, s.local, s.owner)
+  }
   const notifyAgent = (fresh: CommentEvent[]) => {
     const news = fresh.flatMap((e) => {
-      if (!e.agent) return []
+      if (notice(e) !== 'question') return []
       if (e.type === 'reply' || e.type === 'create') return [{ e, threadId: e.parentId ?? e.commentId ?? '', body: e.body, ask: asks(e, e.type === 'create') }]
       if (e.type !== 'edit' || e.asks !== true) return []
       const t = get().threads.find((t) => t.id === e.commentId || t.replies.some((r) => r.id === e.commentId))
@@ -240,20 +248,10 @@ export const useComments = create<CommentsState>((set, get) => {
   // part of. Same freshness rules as notifyAgent; one ping per batch, not per
   // event - a burst must not become a drum roll.
   const notifyHuman = (fresh: CommentEvent[]) => {
-    const me = get().me
-    if (!me) return
-    const isMe = (a?: { id?: string; email?: string }) =>
-      !!a && ((!!a.id && a.id === me.id) || (!!a.email && !!me.email && a.email.toLowerCase() === me.email.toLowerCase()))
-    const news = fresh.filter((e) => !e.agent && (e.type === 'create' || e.type === 'reply') && e.author && !isMe(e.author))
-    if (!news.length) return
-    const notes: { e: CommentEvent; kind: 'mention' | 'reply' }[] = []
-    for (const e of news) {
-      if ((e.mentions ?? []).some((m) => isMe(m))) { notes.push({ e, kind: 'mention' }); continue }
-      if (e.type !== 'reply' || !e.parentId) continue
-      const t = get().threads.find((t) => t.id === e.parentId)
-      const mine = !!t && (isMe(t.author) || t.replies.some((r) => r.id !== e.commentId && isMe(r.author)))
-      if (mine) notes.push({ e, kind: 'reply' })
-    }
+    const notes = fresh.flatMap((e) => {
+      const kind = notice(e)
+      return kind === 'reply' || kind === 'mention' ? [{ e, kind }] : []
+    })
     if (!notes.length) return
     playPing()
     void import('./store.ts').then(({ useStore }) => {
@@ -263,7 +261,7 @@ export const useComments = create<CommentsState>((set, get) => {
         const t = get().threads.find((t) => t.id === threadId)
         const entry = t?.frame ? s.manifest?.frames.find((f) => f.id === t.frame) : undefined
         s.jamToast({
-          threadId, board: t?.board ?? e.board ?? get().board ?? '', ts: e.ts, kind, author: e.author,
+          threadId, board: t?.board ?? e.board ?? get().board ?? '', ts: e.ts, kind, author: e.agent ? { name: 'Marver' } : e.author,
           preview: (e.body ?? '').replace(/\s+/g, ' ').slice(0, 90),
           frame: t?.frame, frameTitle: entry?.title ?? t?.frame, intent: entry?.intent,
         })
@@ -283,7 +281,7 @@ export const useComments = create<CommentsState>((set, get) => {
     const fresh = events.filter((e) => !have.has(key(e)) && (have.add(key(e)), true))
     if (!fresh.length) return
     set(derive([...get().events, ...fresh]))
-    const news = fresh.filter((e) => (e.board && baselinedBoards.has(e.board)) || e.ts > bootTs)
+    const news = fresh.filter((e) => (get().local || Math.abs(now() - e.ts) <= COMMENT_FRESH_MS) && ((e.board && baselinedBoards.has(e.board)) || e.ts > bootTs))
     notifyAgent(news)
     notifyHuman(news)
   }
@@ -432,7 +430,7 @@ export const useComments = create<CommentsState>((set, get) => {
     set({
       me: d.user ? { ...d.user, ...(d.id ? { id: d.id } : {}) } : null,
       myBoards: d.boards && typeof d.boards === 'object' ? d.boards : null,
-      local: !!d.local, connected: !!d.connected,
+      local: !!d.local, owner: d.role === 'owner', connected: !!d.connected,
       ...(d.signIn === 'marver-id' || d.signIn === 'password' ? { signInMode: d.signIn } : {}),
       ...(d.user ? { signedOut: false } : {}),
     })
@@ -469,7 +467,7 @@ export const useComments = create<CommentsState>((set, get) => {
   return {
     // what waits from an earlier visit shows at once - before any server answer (a pending-only thread included)
     pending: restored, ...derive([], restored), signedOut: false, signInMode: null,
-    board: null, me: null, myBoards: null, local: false, connected: false,
+    board: null, me: null, myBoards: null, owner: false, local: false, connected: false,
     mentionSeen: loadMentionSeen(),
     commentMode: false, show: true, showAnchor: true, active: null, draft: null, needsIdentity: false, inviteToken: null,
     ownership: null, caps: { delete: false },
@@ -697,14 +695,14 @@ export const useComments = create<CommentsState>((set, get) => {
     async signIn(email, password, h) {
       const res = await identityWrite('auth/signin', { email, password }, h)
       if (!res.ok || !res.data?.user) return res.data?.error ?? 'sign-in failed'
-      set({ me: { ...res.data.user, ...(res.data.id ? { id: res.data.id } : {}) }, needsIdentity: false, signedOut: false })
+      set({ me: { ...res.data.user, ...(res.data.id ? { id: res.data.id } : {}) }, owner: res.data.role === 'owner', needsIdentity: false, signedOut: false })
       void get().flush()
       return null
     },
     async claim(token, password, name, avatar, h) {
       const res = await identityWrite('auth/claim', { token, password, name, avatar }, h)
       if (!res.ok || !res.data?.user) return res.data?.error ?? 'claim failed'
-      set({ me: { ...res.data.user, ...(res.data.id ? { id: res.data.id } : {}) }, needsIdentity: false, inviteToken: null, signedOut: false })
+      set({ me: { ...res.data.user, ...(res.data.id ? { id: res.data.id } : {}) }, owner: res.data.role === 'owner', needsIdentity: false, inviteToken: null, signedOut: false })
       void get().flush()
       return null
     },
