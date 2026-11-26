@@ -72,10 +72,13 @@ export function MarverAvatar({ size = 24 }: { size?: number }) {
   )
 }
 
+/** The face a marker uses for Marver - built here from a message's own `agent: true`, so no author data can claim it */
+export const MARVER_FACE = Object.freeze({ agent: true as const })
+
 export function Avatar({ author, size = 22 }: { author?: { email?: string; name?: string; avatar?: string; agent?: boolean }; size?: number }) {
   const me = useComments((s) => s.me)
   const local = useComments((s) => s.local)
-  if (author?.agent) return <MarverAvatar size={size} />   // Marver shows as its own participant
+  if (author === MARVER_FACE) return <MarverAvatar size={size} />   // Marver shows as its own participant
   // dev: an account-less author IS the person at this keyboard - render the CURRENT identity,
   // not the snapshot the event happened to store (old "Designer" events become you, live)
   const a = local && me && !author?.email ? { ...author, ...me } : author
@@ -102,7 +105,8 @@ function markerDigest(threads: Thread[]): { faces: Face[]; count: number } {
   // dev those snapshots ("Designer", "You", nothing) are all the person at this keyboard, and
   // Avatar renders them all as the live identity - two keys would show identical twin faces.
   const add = (a: Face | undefined, agent?: boolean) => {
-    const face: Face | undefined = agent ? { agent: true } : a
+    // the message's own flag decides (spec 39 B7) - never an author object that says it is an agent
+    const face: Face | undefined = agent ? MARVER_FACE : a
     // published transport carries the opaque id instead of an email - same
     // namespacing rule, different stable key
     const k = agent ? 'marver' : a?.email ? `e:${a.email.toLowerCase()}` : a?.id ? `i:${a.id}` : 'local'
