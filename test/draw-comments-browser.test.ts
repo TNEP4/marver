@@ -121,6 +121,34 @@ describe('comments on a drawing (spec 39), in a real browser', () => {
     expect(t.anchor.el.draw.id).toBeUndefined()
   }, 60_000)
 
+  it('while the drawing pans, pins move by translation only (no React placement per frame) and land once it stops', async (ctx) => {
+    if (!b) return ctx.skip('no Chrome')
+    const t = await threadWith('a legend goes here')
+    await ev(`window.__mvComments.getState().setActive(null)`)
+    await ev(`window.__mvStore.getState().setInteract('n_flow')`)
+    await until(`document.querySelector('.sh-app').classList.contains('drawing')`)
+    await sleep(500)
+    const pin = `document.querySelector('.cm-pin[data-thread="${t.id}"]')`
+    await until(`!!${pin}`)
+    const top0 = await ev(`${pin}.style.top`)
+    // a wheel pan inside the drawing (its own camera), sampled while it moves
+    const r = await ev(`(() => { const q = document.querySelector('${CANVAS}').getBoundingClientRect(); return { x: q.x + q.width / 2, y: q.y + q.height / 2 } })()`)
+    const seen: { top: string; tr: string }[] = []
+    for (let i = 0; i < 10; i++) {
+      await b!.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: r.x, y: r.y, deltaX: 0, deltaY: 40 }, s)
+      await sleep(30)
+      seen.push(await ev(`({ top: ${pin}.style.top, tr: ${pin}.style.translate })`))
+    }
+    // mid-gesture: React's placement holds still, the pin moves by translation
+    expect(seen.some((x) => x.tr && x.tr !== '0px 0px')).toBe(true)
+    expect(seen.every((x) => x.top === top0)).toBe(true)
+    // once it stops (the drawing's 700 ms settle): placed again by React, the translation gone
+    await until(`${pin}.style.top !== ${JSON.stringify(top0)} && !${pin}.style.translate`, 5000)
+    await ev(`document.querySelector('${CANVAS}').contentWindow.__mvDraw.engine.view('frame', { x: 0, y: 0, zoom: 1 })`)
+    await ev(`window.__mvStore.getState().setInteract(null)`)
+    await until(`!document.querySelector('.sh-app').classList.contains('drawing')`)
+  }, 60_000)
+
   it('in drawing mode C is the comment key, and Escape closes comments before it leaves the drawing', async (ctx) => {
     if (!b) return ctx.skip('no Chrome')
     await ev(`window.__mvComments.getState().setMode(false)`)
