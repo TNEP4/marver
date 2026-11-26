@@ -155,8 +155,10 @@ export function wholeElement(raw: Record<string, unknown>, by: string, now = Dat
     if (typeof el.originalText !== 'string') el.originalText = text
     if (!Number.isFinite(Number(el.fontSize))) el.fontSize = 20
     if (!Number.isFinite(Number(el.fontFamily))) el.fontFamily = 5
-    if (typeof el.textAlign !== 'string') el.textAlign = 'left'
-    if (typeof el.verticalAlign !== 'string') el.verticalAlign = 'top'
+    // a label inside a shape (containerId) sits in its middle, as Excalidraw puts one - a free text at its top left
+    const inShape = typeof el.containerId === 'string' && !!el.containerId
+    if (typeof el.textAlign !== 'string') el.textAlign = inShape ? 'center' : 'left'
+    if (typeof el.verticalAlign !== 'string') el.verticalAlign = inShape ? 'middle' : 'top'
     if (el.containerId === undefined) el.containerId = null
     if (el.autoResize === undefined) el.autoResize = true
     if (!Number.isFinite(Number(el.lineHeight))) el.lineHeight = 1.25

@@ -250,11 +250,14 @@ export function DrawEngine({ initial, theme, edit, editable, onReady, onChange, 
               // (0.18.1 refreshes dimensions only inside its binding repair: both flags, and only the boxes are taken)
               const fresh = new Map((restoreElements(els as any, null, { refreshDimensions: true, repairBindings: true }) as unknown as DrawElement[]).map((e) => [e.id, e]))
               let changed = false
+              // the whole refreshed layout - its line breaks and place with its box (a label wrapped anew in its shape, a
+              // fixed-width text that now takes two lines), never a new box around the old lines (release review)
               const next = els.map((e) => {
-                const f = fresh.get(e.id)
-                if (e.type !== 'text' || !f || (f.width === e.width && f.height === e.height)) return e
+                const f = fresh.get(e.id) as (DrawElement & { text?: string }) | undefined
+                const t = e as DrawElement & { text?: string }
+                if (e.type !== 'text' || !f || (f.width === e.width && f.height === e.height && f.text === t.text && f.x === e.x && f.y === e.y)) return e
                 changed = true
-                return { ...e, width: f.width, height: f.height }
+                return { ...e, text: f.text, x: f.x, y: f.y, width: f.width, height: f.height }
               })
               if (changed) api.updateScene({ elements: next as any, captureUpdate: CU.NEVER })
             }

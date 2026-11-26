@@ -410,7 +410,7 @@ cli
   })
 
 cli
-  .command('draw [action] [...args]', 'Edit a live drawing (needs `dev` running): new · describe · add · set · move · rm')
+  .command('draw [action] [...args]', 'Edit a live drawing (needs `dev` running): new <board> · describe · add · set · move · rm - the guide: design/instructions/draw.md')
   .option('--root <dir>', 'Host repo root', { default: '.' })
   .option('--scene <scene>', 'new: scene (default: sketches)')
   .option('--name <name>', 'new: file name without .excalidraw')
@@ -418,8 +418,8 @@ cli
   .option('--size <size>', 'new: frame size, e.g. 960x640')
   .option('--since <rev>', 'describe: changes since this revision')
   .option('--elements <file>', 'add: JSON array of elements, or {elements: [...]}')
-  .option('--mermaid [file]', 'Not available yet - write elements (see draw.md)')
-  .option('--at <x,y>', 'add: place the elements at these drawing coordinates')
+  .option('--mermaid [file]', 'Not available yet - write elements (see design/instructions/draw.md)')
+  .option('--at <x,y>', 'add: move the group so its top-left corner lands at x,y (default: your coordinates as given)')
   .option('--by <dx,dy>', 'move: offset in drawing coordinates')
   .action(async (action: string | undefined, args: string[], opts) => {
     const { drawCommand } = await import('./draw.ts')

@@ -79,6 +79,9 @@ describe('drawing files', () => {
     expect(two.height).toBe(Math.ceil(2 * 20 * 1.25))
     expect(two.width).toBeGreaterThanOrEqual(24 * 20 * 0.55)        // the longest line
     expect(element('given', { type: 'text', text: 'Cart', width: 300, height: 40 })).toMatchObject({ width: 300, height: 40 })   // an explicit box kept
+    // a label inside a shape sits in its middle (an agent's label added with containerId alone)
+    expect(element('lab', { type: 'text', text: 'Pay', containerId: 'box-pay' })).toMatchObject({ textAlign: 'center', verticalAlign: 'middle' })
+    expect(element('free', { type: 'text', text: 'Note' })).toMatchObject({ textAlign: 'left', verticalAlign: 'top' })
   })
 
   it('assigns missing, invalid and colliding indexes after the current maximum', () => {

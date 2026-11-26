@@ -83,7 +83,8 @@ export type DrawCmd =
   | { type: 'sh:draw-cmd'; op: 'view'; v: DrawViewOp }
   | { type: 'sh:draw-cmd'; op: 'undo' | 'redo' }
   | { type: 'sh:draw-cmd'; op: 'mode'; edit: boolean }
-  | { type: 'sh:draw-cmd'; op: 'export'; format: 'png' | 'svg' | 'clipboard'; dark?: boolean }
+  /** `rid`: the request's own id, echoed in its answer - two exports at once never take each other's (release review) */
+  | { type: 'sh:draw-cmd'; op: 'export'; format: 'png' | 'svg' | 'clipboard'; dark?: boolean; rid?: string }
   | { type: 'sh:draw-cmd'; op: 'insert-image' }
   | { type: 'sh:draw-cmd'; op: 'flush' }
   /** play's Hide all UI: while hidden, the host takes H (it reveals) instead of Excalidraw's hand */

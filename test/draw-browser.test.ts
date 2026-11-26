@@ -305,13 +305,22 @@ describe('the drawing frame (spec 38), in a real browser', () => {
     expect(pub.elements.every((e: any) => !e.customData?.mv)).toBe(true)     // who drew what stays local
     expect(existsSync(join(out, '__mv/draw/index.html'))).toBe(true)
     // served as a published canvas (no dev server, no API): play the drawing and export it - a real PDF and PNG come out
-    const port = 4790 + Math.floor(Math.random() * 7)
+    // a port no other suite uses (a free one in a high block), and readiness from THIS server's own line - never an
+    // answer from another suite's server on a shared port (release review)
+    const { createServer } = await import('node:net')
+    const free = (p: number) => new Promise<boolean>((r) => { const t = createServer(); t.once('error', () => r(false)); t.listen(p, '127.0.0.1', () => t.close(() => r(true))) })
+    let port = 46_000 + Math.floor(Math.random() * 2000)
+    while (!(await free(port))) port++
     const server = spawn(process.execPath, [CLI, 'serve', '--port', String(port)], { cwd: root, stdio: 'pipe', env: { ...process.env, MARVER_DATA_DIR: '', MARVER_PASSWORD: '', MARVER_ID_ISSUER: '' } })
+    let served = ''
+    server.stdout!.on('data', (d) => { served += String(d) })
+    server.stderr!.on('data', (d) => { served += String(d) })
     const t2 = await b.tab({ width: 1440, height: 900 })
     try {
       const pev = async (x: string): Promise<any> => { for (let i = 0; i < 8; i++) { try { return await b!.eval(t2, x) } catch { await sleep(300) } } throw new Error(`eval: ${x}`) }
       const puntil = async (x: string, ms = 30_000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await pev(x).catch(() => false)) return; await sleep(200) } throw new Error(`timed out: ${x}`) }
-      for (let i = 0; i < 60; i++) { try { if ((await fetch(`http://localhost:${port}/`)).ok) break } catch { /* not yet */ } await sleep(250) }
+      for (let i = 0; i < 80 && !served.includes(`localhost:${port}`); i++) await sleep(250)
+      expect(served, served).toContain(`localhost:${port}`)
       await b.go(t2, `http://localhost:${port}/#/b/main`)
       await puntil(`(() => { try { return !!document.querySelector('iframe[data-kind="draw"]').contentWindow.__mvDraw } catch { return false } })()`, 60_000)
       // every download the page starts, kept: its name and its bytes' first four characters and size
@@ -474,5 +483,28 @@ describe('the drawing frame (spec 38), in a real browser', () => {
     expect(doc.getTitle()).toBe('Checkout flow')
     // a canvas page can ask too (the owner), and anything else is refused
     expect((await fetch(`${dev!.origin}/__mv/api/draw-pdf`, { method: 'POST', body: JSON.stringify({ svg }) })).status).toBe(403)
+    // only one SVG document is ever printed - HTML after it (a sandboxed iframe that would run apart) or active content
+    // inside it is refused before any Chrome starts (release review P1)
+    const ask = (body: string) => fetch(`${dev!.origin}/__mv/api/draw-pdf`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-work': info.token }, body: JSON.stringify({ svg: body }) }).then((r) => r.status)
+    expect(await ask(`${svg}<iframe sandbox="allow-scripts" srcdoc="<script>fetch('http://example.com')</script>"></iframe>`)).toBe(400)
+    expect(await ask(svg.replace('</svg>', '<foreignObject><iframe src="http://example.com"></iframe></foreignObject></svg>'))).toBe(400)
+    expect(await ask(svg.replace('</svg>', '<script>1</script></svg>'))).toBe(400)
+    // two exports at once each get their own answer: a PDF (printed by the server, slower) and a PNG asked right after
+    await ev(`(() => { window.__dl = []; const click = HTMLAnchorElement.prototype.click; HTMLAnchorElement.prototype.click = function () { if (this.download) { const name = this.download; fetch(this.href).then((r) => r.arrayBuffer()).then((ab) => { const u = new Uint8Array(ab); window.__dl.push({ name, head: String.fromCharCode(...u.slice(0, 4)) }) }); return } return click.call(this) }; return true })()`)
+    await ev(`window.__mvStore.getState().select('n_flow')`)
+    await b.press(s, 'p')
+    await until(`(() => { try { return !!document.querySelector('.dk-playhost iframe').contentWindow.__mvDraw } catch { return false } })()`, 20_000)
+    // the PDF's first answer (the SVG) held back, so the PNG is asked while the PDF still waits - the race itself
+    await ev(`(() => { const e = document.querySelector('.dk-playhost iframe').contentWindow.__mvDraw.engine; const o = e.exportSvg.bind(e); e.exportSvg = async (d) => { await new Promise((r) => setTimeout(r, 800)); return o(d) }; return true })()`)
+    for (const item of ['Export as PDF', 'Export as PNG']) {
+      await ev(`document.querySelector('.dk-playhost button[aria-label="Drawing menu"]').click()`)
+      await sleep(150)
+      await ev(`[...document.querySelectorAll('.dk-playhost .dk-menu button')].find((x) => x.textContent.includes(${JSON.stringify(item)})).click()`)
+    }
+    await until(`window.__dl.length === 2`, 20_000)
+    const both = await ev(`window.__dl.map((d) => d.head).sort().join(',')`)
+    expect(both).toBe('%PDF,\u0089PNG')
+    await escape()
+    await until(`!document.querySelector('.dk-playhost')`, 5000)
   }, 60_000)
 })

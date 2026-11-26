@@ -29,7 +29,7 @@ function pair(value: unknown, flag: string): [number, number] {
 
 /** Validate before making a request; exported so argument errors can be tested without a server. */
 export function parseDrawArgs(action: string | undefined, args: string[], opts: DrawOptions = {}): DrawRequest {
-  if (opts.mermaid !== undefined) throw new Error('Mermaid conversion is not available yet - write elements (see draw.md)')
+  if (opts.mermaid !== undefined) throw new Error('Mermaid conversion is not available yet - write elements (see design/instructions/draw.md)')
   const flags: Record<string, string[]> = { new: ['scene', 'name', 'title', 'size'], describe: ['since'], add: ['elements', 'at'], set: [], move: ['by'], rm: [] }
   if (!action || !Object.hasOwn(flags, action)) throw new Error(`use: ${NAME} draw new|describe|add|set|move|rm …`)
   for (const key of ['scene', 'name', 'title', 'size', 'since', 'elements', 'at', 'by'] as const) {

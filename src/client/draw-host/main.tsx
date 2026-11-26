@@ -224,21 +224,21 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
         if (c.v === 'save') { const v = eng.currentView(); frameView.current = v; sync.current!.header({ view: v }) }
         else eng.view(c.v, frameView.current)
         break
-      case 'export': void exportAs(eng, c.format, c.dark ?? theme === 'dark'); break
+      case 'export': void exportAs(eng, c.format, c.dark ?? theme === 'dark', c.rid); break
     }
     sendState()
   }
 
-  async function exportAs(eng: Engine, format: 'png' | 'svg' | 'clipboard', dark: boolean) {
+  async function exportAs(eng: Engine, format: 'png' | 'svg' | 'clipboard', dark: boolean, rid?: string) {
     try {
-      if (format === 'svg') { const svg = await eng.exportSvg(dark); post({ type: 'sh:draw-export', id, format, data: svg }); return }
+      if (format === 'svg') { const svg = await eng.exportSvg(dark); post({ type: 'sh:draw-export', id, rid, format, data: svg }); return }
       const { blob, scale } = await eng.exportPng(dark)
       if (format === 'clipboard') {
-        try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); post({ type: 'sh:draw-export', id, format, ok: true }); return }
+        try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); post({ type: 'sh:draw-export', id, rid, format, ok: true }); return }
         catch { /* not focused here: the shell writes it */ }
       }
-      post({ type: 'sh:draw-export', id, format, blob, scale })
-    } catch (err) { post({ type: 'sh:draw-error', id, message: `export failed: ${(err as Error).message}` }) }
+      post({ type: 'sh:draw-export', id, rid, format, blob, scale })
+    } catch (err) { post({ type: 'sh:draw-error', id, rid, message: `export failed: ${(err as Error).message}` }) }
   }
 
   // crisp at the canvas's zoom: the engine's pixel ratio follows the camera's scale (capped), re-rendered on settle

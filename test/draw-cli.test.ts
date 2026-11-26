@@ -64,7 +64,7 @@ describe('draw arguments and transport', () => {
 
   it('rejects Mermaid before trying discovery or reading a file', async () => {
     const fetch = vi.spyOn(globalThis, 'fetch')
-    await expect(drawCommand(root, 'add', ['s/f'], { mermaid: 'missing.mmd' })).rejects.toThrow('Mermaid conversion is not available yet - write elements (see draw.md)')
+    await expect(drawCommand(root, 'add', ['s/f'], { mermaid: 'missing.mmd' })).rejects.toThrow('Mermaid conversion is not available yet - write elements (see design/instructions/draw.md)')
     expect(fetch).not.toHaveBeenCalled()
   })
 
@@ -203,7 +203,7 @@ describe('built draw CLI against a real dev server', () => {
     for (const args of [['--mermaid', 'flow.mmd'], ['--mermaid']]) {
       const result = await run(['add', 'checkout/cart', ...args])
       expect(result.code).toBe(1)
-      expect(result.err).toContain('Mermaid conversion is not available yet - write elements (see draw.md)')
+      expect(result.err).toContain('Mermaid conversion is not available yet - write elements (see design/instructions/draw.md)')
     }
   })
 
