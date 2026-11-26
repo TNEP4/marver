@@ -82,12 +82,15 @@ describe('the drawing frame (spec 38), in a real browser', () => {
     const r = await rectOf('iframe[data-kind="draw"]')
     await click(r.x + r.w / 2, r.y + r.h / 2); await click(r.x + r.w / 2, r.y + r.h / 2, 2)
     await until(`document.querySelector('.sh-app').classList.contains('drawing')`)
-    await until(`!!document.querySelector('.dk-tools.sh-ctx')`)
+    // the bar and the view controls mount a frame apart: wait for both, then measure against the frame as it is now
+    await until(`!!document.querySelector('.dk-tools.sh-ctx') && !!document.querySelector('.dk-view')`)
+    await sleep(100)
+    const f = await rectOf('iframe[data-kind="draw"]')
     const bar = await rectOf('.dk-tools.sh-ctx'), view = await rectOf('.dk-view')
-    expect(bar.y + bar.h).toBeLessThanOrEqual(r.y)                           // above the frame
-    expect(Math.abs(bar.x + bar.w / 2 - (r.x + r.w / 2))).toBeLessThan(4)  // centred on it
-    expect(view.x + view.w).toBeLessThanOrEqual(r.x + r.w + 1)             // inside its corner
-    expect(view.y + view.h).toBeLessThanOrEqual(r.y + r.h + 1)
+    expect(bar.y + bar.h).toBeLessThanOrEqual(f.y)                           // above the frame
+    expect(Math.abs(bar.x + bar.w / 2 - (f.x + f.w / 2))).toBeLessThan(4)  // centred on it
+    expect(view.x + view.w).toBeLessThanOrEqual(f.x + f.w + 1)             // inside its corner
+    expect(view.y + view.h).toBeLessThanOrEqual(f.y + f.h + 1)
     await until(`document.querySelector('iframe[data-kind="draw"]').contentWindow.__mvDraw.engine.appState().viewModeEnabled === false`, 5000)
   }, 30_000)
 

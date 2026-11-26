@@ -159,6 +159,8 @@
 
 /* the merged left panel's head: the drawing's name (opens the drawing's menu) - no divider under it (Nic) */
 .dk-props .dk-phead { display: flex; align-items: center; margin: -6px -6px 10px }
+/* nothing selected in play: the name alone, as much air under it as over it */
+.dk-props .dk-phead:last-child { margin-bottom: -8px }
 .dk-props .dk-phead .dk-b { display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 8px; border-radius: 9px; font: 600 12.5px -apple-system, system-ui, sans-serif; color: var(--glass-ink); white-space: nowrap; width: 100%; justify-content: flex-start }
 .dk-props .dk-phead .dk-b > svg:first-child { color: var(--draw-ink) }
 .dk-props .dk-phead .dk-b .cv { color: var(--glass-ink-3); margin-left: -2px }
