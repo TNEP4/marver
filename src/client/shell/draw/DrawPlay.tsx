@@ -14,6 +14,7 @@ import { jamKey } from '../jam-keys.ts'
 import { frameGone, frameLoaded, frameReady } from '../jam-capture.ts'
 import { CommentIcon } from '../icons.tsx'
 import { useDrawPlay } from './play-state.ts'
+import { useMenuKeys } from './DrawMenu.tsx'
 export { useDrawPlay } from './play-state.ts'
 import { withWs } from '../api.ts'
 import { ROUTE } from '../../const.ts'
@@ -67,6 +68,8 @@ export function DrawPlay() {
   const hiddenRef = useRef(false)
   hiddenRef.current = hidden
   const [menu, setMenu] = useState(false)
+  const nameMenu = useRef<HTMLDivElement>(null)
+  useMenuKeys(nameMenu, menu, () => setMenu(false), key || undefined)
   const src = useRef('')
   const flushed = useRef<(() => void) | null>(null)
   const [closing, setClosing] = useState(false)
@@ -183,7 +186,7 @@ export function DrawPlay() {
         ? <DrawPanel link={link} state={state} top={head} popSide="right" style={{ ...EDGE, left: 10 }} />
         : <div className="dk-anchor" style={{ ...EDGE, left: 10 }}><HoverTip label="Expand panel" keys="⌘\" side="right"><button className="dk-glass dk-fab" aria-label="Expand panel" onClick={() => { cmd('panel', { via: 'click', in: 'stage' }); setPanelOpen(true) }}><PanelHollowIcon size={18} /></button></HoverTip></div>}
       {menu && panelOpen && (
-        <div className="sh-menu dk-menu" style={{ position: 'absolute', top: 'calc(max(10px, var(--mv-top, 0px)) + 52px)', left: 20, zIndex: 50 }} onMouseLeave={() => setMenu(false)}>
+        <div ref={nameMenu} className="sh-menu dk-menu" style={{ position: 'absolute', top: 'calc(max(10px, var(--mv-top, 0px)) + 52px)', left: 20, zIndex: 50 }} onMouseLeave={() => setMenu(false)}>
           <MI icon={<Ph n="FilePng" size={15} />} label="Export as PNG" onClick={() => { setMenu(false); exportDrawing(link, 'png', toast, dark) }} />
           <MI icon={<Ph n="FilePdf" size={15} />} label="Export as PDF" onClick={() => { setMenu(false); exportDrawing(link, 'pdf', toast, dark) }} />
           <div className="div" />

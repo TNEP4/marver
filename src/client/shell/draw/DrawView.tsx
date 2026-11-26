@@ -3,6 +3,7 @@
  * frame's corner on the canvas (constant size), bottom right in play. The % opens the zoom menu - with the frame's
  * own view: go back to it, or make this view the frame's. The mini-map shows only while the drawing pans.
  */
+import { useMenuKeys } from './DrawMenu.tsx'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import type { DrawState, DrawViewOp } from '../../../shared/draw-protocol.ts'
 import { FrameCornersIcon } from '../icons.tsx'
@@ -13,6 +14,8 @@ export function DrawView({ link, state, size = 'sm', map, menuSide = 'top', tipS
   link: DrawLink; state: DrawState | undefined; size?: 'sm' | 'lg'; map?: boolean; menuSide?: 'top' | 'bottom'; tipSide?: TipSide; style?: CSSProperties; cam?: boolean
 }) {
   const [menu, setMenu] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+  useMenuKeys(menuRef, menu, () => setMenu(false), link.key)
   const [mapOn, setMapOn] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -45,7 +48,7 @@ export function DrawView({ link, state, size = 'sm', map, menuSide = 'top', tipS
         </>}
       </div>
       {menu && (
-        <div className="sh-menu dk-menu" style={{ position: 'absolute', width: 224, ...(menuSide === 'top' ? { bottom: 'calc(100% + 6px)' } : { top: 'calc(100% + 6px)' }), right: 0 }}>
+        <div ref={menuRef} className="sh-menu dk-menu" style={{ position: 'absolute', width: 224, ...(menuSide === 'top' ? { bottom: 'calc(100% + 6px)' } : { top: 'calc(100% + 6px)' }), right: 0 }}>
           <MI icon={<Ph n="Plus" size={14} />} label="Zoom in" k="⌘+" onClick={() => view('in')} />
           <MI icon={<Ph n="Minus" size={14} />} label="Zoom out" k="⌘−" onClick={() => view('out')} />
           <MI icon={<FrameCornersIcon size={14} />} label="Zoom to fit" k="⇧1" onClick={() => view('fit')} />

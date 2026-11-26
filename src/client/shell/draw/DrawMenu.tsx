@@ -229,12 +229,18 @@ export function DrawContextMenu() {
   const [top, setTop] = useState<number | null>(null)
   useMenuKeys(ref, !!m, close, m?.key)
   // kept inside the window: placed once laid out, and again a frame later (its icons and fonts can still grow it)
+  const [shown, setShown] = useState(false)
   useLayoutEffect(() => {
+    setShown(false)
     if (!m || !ref.current) { setTop(null); return }
-    const place = () => { const h = ref.current?.getBoundingClientRect().height ?? 0; setTop(Math.max(TOP + 8, Math.min(m.y, window.innerHeight - h - 8))) }
+    // its layout height (offsetHeight): the open animation scales it, so its on-screen box reads short at first
+    const place = () => { const h = ref.current?.offsetHeight ?? 0; setTop(Math.max(TOP + 8, Math.min(m.y, window.innerHeight - h - 8))) }
     place()
-    const raf = requestAnimationFrame(place)
-    return () => cancelAnimationFrame(raf)
+    // shown only at its final place - it never jumps under the pointer; placed again whenever its size settles
+    const raf = requestAnimationFrame(() => { place(); setShown(true) })
+    const ro = new ResizeObserver(place)
+    ro.observe(ref.current)
+    return () => { cancelAnimationFrame(raf); ro.disconnect() }
   }, [m])
   // it closes on a press anywhere (in the drawing too: its frame-down), when the board or the drawing moves under it,
   // on resize - one drawing menu at a time
@@ -254,7 +260,7 @@ export function DrawContextMenu() {
   if (!items.length) return null
   const W = 248
   return createPortal(
-    <div ref={ref} className="sh-menu sh-ctxmenu dk-menu dk-ctxmenu" role="menu" style={{ position: 'fixed', left: Math.max(8, Math.min(m.x, window.innerWidth - W - 8)), top: top ?? m.y, width: W, zIndex: 70, maxHeight: `calc(100vh - ${TOP + 16}px)`, overflowY: 'auto', visibility: top === null ? 'hidden' : undefined }}>
+    <div ref={ref} className="sh-menu sh-ctxmenu dk-menu dk-ctxmenu" role="menu" style={{ position: 'fixed', left: Math.max(8, Math.min(m.x, window.innerWidth - W - 8)), top: top ?? m.y, width: W, zIndex: 70, maxHeight: `calc(100vh - ${TOP + 16}px)`, overflowY: 'auto', visibility: top === null || !shown ? 'hidden' : undefined }}>
       {items.map((it, i) => it === '|'
         ? <div key={`sep${i}`} className="div" />
         : <span key={it.id} className={it.warn ? 'warn' : undefined}><MI icon={it.icon} label={it.label} k={it.k} onClick={() => { close(); it.run() }} /></span>)}

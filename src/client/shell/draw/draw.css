@@ -247,5 +247,5 @@ body:has(.dk-playhost) .sh-toasts, body:has(.dk-playhost) .sh-show-notice, body:
 
 /* spec 39 A6: the right-click - the drawing menus' glass and rows; the lit row under the keys; Delete in the panel's warn */
 .dk-ctxmenu > span { display: contents }
-.dk-ctxmenu button.hi { background: var(--glass-hover, rgba(127,127,127,.12)) }
+.dk-menu button.hi { background: var(--glass-hover, rgba(127,127,127,.12)) }
 .dk-ctxmenu .warn button, .dk-ctxmenu .warn button .ic { color: #e5484d }

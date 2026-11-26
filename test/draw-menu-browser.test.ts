@@ -65,6 +65,7 @@ describe("a drawing's right-click in Marver's design (spec 39), in a real browse
   const rows = () => ev(`[...document.querySelectorAll('.dk-ctxmenu button')].map((b) => b.textContent)`)
   // a real click on the row (a trusted gesture: the clipboard rows write only inside one)
   const row = async (label: string) => {
+    await until(`document.querySelector('.dk-ctxmenu')?.style.visibility !== 'hidden'`, 3000)
     const r = await ev(`(() => { const b = [...document.querySelectorAll('.dk-ctxmenu button')].find((b) => b.querySelector('span')?.textContent === ${JSON.stringify(label)}); if (!b) return null; const q = b.getBoundingClientRect(); return { x: q.x + q.width / 2, y: q.y + q.height / 2 } })()`)
     if (!r) return false
     await click(r.x, r.y)

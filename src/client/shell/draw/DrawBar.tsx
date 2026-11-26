@@ -3,6 +3,7 @@
  * image (as the frame selection bar ends), in play the collapse button. The ⋯ holds the tools the bar leaves out, then
  * the drawing's own actions. Glass, constant size; the bar wears the selection bar's glow in the drawing purple.
  */
+import { useMenuKeys } from './DrawMenu.tsx'
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { DrawState, DrawTool } from '../../../shared/draw-protocol.ts'
 import { ImagesSquareIcon, MoonIcon, PanelFilledIcon, SignpostIcon, SunIcon, CheckIcon } from '../icons.tsx'
@@ -33,6 +34,9 @@ export function DrawBar({ link, state, tools, mode, tipSide, menuSide = 'below',
   copied?: 'path' | 'image' | null
 }) {
   const [open, setOpen] = useState(false)
+  // arrows walk its rows, Enter runs, Escape closes - as every drawing menu (spec 39 A6)
+  const menuRef = useRef<HTMLDivElement>(null)
+  useMenuKeys(menuRef, open, () => setOpen(false), link.key)
   const ref = useRef<HTMLDivElement>(null)
   // the ⋯ closes on a click elsewhere, Escape, or a pick
   useEffect(() => {
@@ -85,7 +89,7 @@ export function DrawBar({ link, state, tools, mode, tipSide, menuSide = 'below',
         </>}
       </div>
       {open && (
-        <div className="sh-menu dk-menu" style={{ position: 'absolute', ...menuPos }}>
+        <div ref={menuRef} className="sh-menu dk-menu" style={{ position: 'absolute', ...menuPos }}>
           {editable && left.map((t) => <MI key={t} icon={TOOL[t].icon} label={TOOL[t].label} k={TOOL[t].key} on={tool === t} onClick={() => pick(t)} />)}
           {editable && left.length > 0 && more.length > 0 && <div className="div" />}
           {editable && more.map((t) => <MI key={t} icon={TOOL[t].icon} label={TOOL[t].label} k={TOOL[t].key} on={tool === t} onClick={() => pick(t)} />)}
