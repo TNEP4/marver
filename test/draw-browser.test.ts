@@ -329,4 +329,36 @@ describe('the drawing frame (spec 38), in a real browser', () => {
     await b.send('Fetch.disable', {}, s)
     await b.send('Network.setCacheDisabled', { cacheDisabled: false }, s)
   }, 90_000)
+
+  it("typing in a shape keeps the text's panel up, and the panel acts on the text being typed (Nic, 26 Nov)", async (ctx) => {
+    if (!b) return ctx.skip('no Chrome')
+    // the checkout drawing (W made a second one); in view first - the reload before may have left the camera anywhere
+    const F = '[data-node="n_flow"] iframe[data-kind="draw"]'
+    await until(`(() => { try { return !!document.querySelector('${F}').contentWindow.__mvDraw } catch { return false } })()`, 30_000)
+    await ev(`window.__mvStore.getState().select('n_flow')`)
+    await sleep(200)
+    await b.press(s, 'f')
+    await sleep(800)
+    const r = await rectOf(F)
+    await click(r.x + r.w / 2, r.y + r.h / 2); await click(r.x + r.w / 2, r.y + r.h / 2, 2)
+    await until(`document.querySelector('.sh-app').classList.contains('drawing')`)
+    // the cart box selected, then Enter: Excalidraw opens its label for typing (and clears the selection)
+    const fin = (x: string) => ev(`(() => { const f = document.querySelector('${F}'); const d = f.contentDocument, w = f.contentWindow; return (${x}) })()`)
+    await fin(`(w.__mvApp.setState({ selectedElementIds: { cart: true } }), w.focus(), d.querySelector(".excalidraw")?.focus(), true)`)
+    await sleep(300)
+    const enter = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 }
+    await b.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...enter }, s); await b.send('Input.dispatchKeyEvent', { type: 'char', ...enter, text: '\r' }, s); await b.send('Input.dispatchKeyEvent', { type: 'keyUp', ...enter }, s)
+    await until(`!!document.querySelector('${F}').contentWindow.__mvApp.state.editingTextElement`, 5000)
+    await b.send('Input.insertText', { text: 'Cart' }, s)
+    await sleep(300)
+    const labels = `[...document.querySelectorAll('.dk-props .lb')].map((e) => e.textContent).join('|')`
+    await until(`/Font/.test(${labels}) && /Vertical/.test(${labels})`, 3000)
+    expect(await ev(labels)).not.toMatch(/Actions/)
+    // Size XL from the panel while typing: the label being typed takes it, and the typing goes on
+    await press('.dk-props button[aria-label="Extra large"]')
+    await until(`(() => { const w = document.querySelector('${F}').contentWindow; const t = w.__mvApp.state.editingTextElement; const e = t && w.__mvDraw.engine.elements().find((x) => x.id === t.id); return !!e && e.fontSize === 36 })()`, 3000)
+    expect(await fin(`!!w.__mvApp.state.editingTextElement`)).toBe(true)
+    await escape(); await sleep(200); await escape()
+    await until(`!document.querySelector('.sh-app').classList.contains('drawing')`, 5000)
+  }, 40_000)
 })

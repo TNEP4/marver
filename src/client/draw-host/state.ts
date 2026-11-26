@@ -34,7 +34,11 @@ export function panelModel(elements: readonly El[], appState: any, editable: boo
   const live = elements.filter((e) => !e.isDeleted)
   const byId = new Map(live.map((e) => [e.id, e]))
   const selectedIds = Object.keys(appState?.selectedElementIds ?? {}).filter((id) => appState.selectedElementIds[id])
-  const selected = selectedIds.map((id) => byId.get(id)).filter((e): e is El => !!e)
+  // typing in a text (a label inside a shape too): Excalidraw clears the selection while it edits, yet keeps the text's
+  // panel up - the text being edited is what the panel shows (Nic, 26 Nov)
+  const editing = appState?.editingTextElement as El | null | undefined
+  const editEl = editing?.id ? (byId.get(editing.id) ?? editing) : null
+  const selected = editEl ? [editEl] : selectedIds.map((id) => byId.get(id)).filter((e): e is El => !!e)
   // a bound text belongs to its container: text properties come from the text, shape ones from the container
   const boundTexts = selected.flatMap((c) => (c.boundElements ?? []).filter((b) => b.type === 'text').map((b) => byId.get(b.id)).filter((e): e is El => !!e))
   const tool: DrawTool = appState?.activeTool?.type ?? 'selection'
@@ -85,7 +89,8 @@ export function panelModel(elements: readonly El[], appState: any, editable: boo
       if (boundTexts.length || (selected.some((s) => s.type === 'text' && s.containerId))) sections.push('valign')
     }
     sections.push('opacity')
-    if (selected.length) sections.push('layers', 'actions')
+    // while typing: Layers, as Excalidraw - no Duplicate or Delete under the caret
+    if (selected.length) sections.push(...(editEl ? ['layers' as const] : ['layers' as const, 'actions' as const]))
     if (selected.length >= 2) sections.push('alignment')
   }
   // what the drawing itself uses: its custom colours (the pickers' Most used) and its fonts (the font picker's In this drawing)

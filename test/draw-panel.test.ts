@@ -54,4 +54,16 @@ describe('the drawing panel model', () => {
     expect(shadesOf('#123456')).toBeNull()
     expect(mostUsedCustom(['#111', '#222', '#222', 'transparent', null], 1)).toEqual(['#222'])
   })
+
+  it("typing in a shape's label keeps the text's panel up - colour, font, size, align, vertical align, opacity, layers (Nic, 26 Nov)", () => {
+    const els = [{ id: 'box', type: 'rectangle', strokeColor: '#1e1e1e', boundElements: [{ id: 'lab', type: 'text' }] }, text('lab', { containerId: 'box', textAlign: 'center', verticalAlign: 'middle', fontSize: 20 })]
+    // Excalidraw clears the selection while it edits
+    const m = panelModel(els, { activeTool: { type: 'selection' }, selectedElementIds: {}, editingTextElement: { id: 'lab', type: 'text' } }, true)
+    expect(m.sections).toEqual(['stroke', 'font', 'fontSize', 'align', 'valign', 'opacity', 'layers'])
+    expect(m.props).toMatchObject({ fontFamily: 5, fontSize: 20, textAlign: 'center', verticalAlign: 'middle' })
+    // a new text not yet in the scene: its own values
+    const fresh = panelModel([], { activeTool: { type: 'text' }, selectedElementIds: {}, editingTextElement: text('new', { fontSize: 28 }) }, true)
+    expect(fresh.props.fontSize).toBe(28)
+    expect(fresh.sections).toContain('font')
+  })
 })
