@@ -10,7 +10,7 @@ import { useStore, PUBLISHED } from '../store.ts'
 import { withWs } from '../api.ts'
 import { ROUTE } from '../../const.ts'
 import { framePath } from '../ContextMenu.tsx'
-import { ImagesSquareIcon, PanelFilledIcon, PanelHollowIcon } from '../icons.tsx'
+import { ImagesSquareIcon, PanelFilledIcon, PanelHollowIcon, SignpostIcon } from '../icons.tsx'
 import { DrawBar } from './DrawBar.tsx'
 import { DrawPanel } from './DrawPanel.tsx'
 import { DrawView } from './DrawView.tsx'
@@ -138,7 +138,7 @@ export function DrawPlay() {
           <MI icon={<Ph n="FilePdf" size={15} />} label="Export as PDF" onClick={() => { setMenu(false); exportDrawing(link, 'pdf', toast, dark) }} />
           <div className="div" />
           <MI icon={<ImagesSquareIcon size={15} />} label="Copy as image" k="⇧I" onClick={() => { setMenu(false); copyImage() }} />
-          <MI icon={<Ph n="Link" size={15} />} label="Copy path" k="⇧P" onClick={() => { cmd('copy-path', { via: 'click', in: 'stage' }); setMenu(false); copyPath() }} />
+          <MI icon={<SignpostIcon size={15} />} label="Copy path" k="⇧P" onClick={() => { cmd('copy-path', { via: 'click', in: 'stage' }); setMenu(false); copyPath() }} />
           <div className="div" />
           <MI icon={<Ph n="EyeSlash" size={15} />} label="Hide all UI" k="H" onClick={() => { cmd('hide-ui', { via: 'click', in: 'stage' }); setMenu(false); setHidden(true) }} />
         </div>
