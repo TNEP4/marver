@@ -10,6 +10,7 @@
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, writeSync } from 'node:fs'
 import { join } from 'node:path'
 import type { CommentEvent } from '../shared/events.ts'
+import { publicCommentEvent, publishableAgentEvent } from '../shared/agent-events.ts'
 
 export { diffEvents, replay, type CommentEvent, type EventType, type Thread } from '../shared/events.ts'
 
@@ -104,14 +105,14 @@ export function legacyExposure(events: CommentEvent[], rights: Record<string, 'r
   return (e) => boards.get(rootOf.get((e.type === 'reply' ? e.parentId : e.commentId) ?? '') ?? '') ?? []
 }
 
-/** What of a board's log may leave this machine (a published build's seeds): never an agent's event,
- *  nor any event in a thread Marver started (a note) or a Jam capture started (its words, 0.26) - the
- *  thread, each reply in it, and every edit, reaction or resolve naming one of them. The rule
+/** What of a board's log may leave this machine (a published build's seeds): human threads and eligible
+ *  agent replies, edits and re-pins. Notes Marver started and captures stay local, including every
+ *  event naming a message in them. The rule
  *  `marver comments sync` starts from (sync.ts localOnlyThreads) - sync also pushes the owner's resolves and replies
  *  on such a thread once the canvas holds it (an older build seeded it; 0.37.1). */
 export function shareable(events: CommentEvent[]): CommentEvent[] {
   const roots = new Set(events.filter((e) => e.type === 'create' && e.commentId && (e.agent || e.capture)).map((e) => e.commentId!))
   const local = new Set(roots)
   for (const e of events) if (e.type === 'reply' && e.parentId && roots.has(e.parentId) && e.commentId) local.add(e.commentId)
-  return events.filter((e) => !e.agent && !local.has(e.parentId ?? e.commentId ?? ''))
+  return events.filter((e) => (!e.agent || publishableAgentEvent(e, events)) && !local.has(e.parentId ?? e.commentId ?? '')).map(publicCommentEvent)
 }

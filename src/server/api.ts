@@ -1648,6 +1648,9 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           if (raw == null) return json(res, 400, { error: 'body too large' })
           let b: any; try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
           const incoming = Array.isArray(b.events) ? b.events : []
+          const { isDrawAnchor, validDrawAnchor } = await import('../shared/anchor.ts')
+          if (incoming.some((ev: any) => (ev?.type === 'create' || ev?.type === 'reanchor') && isDrawAnchor(ev.anchor) && !validDrawAnchor(ev.anchor)))
+            return json(res, 400, { error: 'invalid drawing anchor' })
           const me = localProfile(root)
           // an event names the log it is written to, or none (Codex r5): one naming another board would pass the checks
           // below against this log and be read by the shell as that board's - refused

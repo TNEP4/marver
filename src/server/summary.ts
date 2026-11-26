@@ -113,12 +113,14 @@ export function deriveThreads(events: CommentEvent[]): BoardThreads {
 
 /** Unread for one board = open-thread events after the caller's mark; no mark
  *  (or a mark the log no longer holds) = every open-thread event counts. */
-export function unreadCount(state: BoardThreads, markId: string | undefined): number {
+export function unreadCount(state: BoardThreads, markId: string | undefined, reader?: string): number {
   const from = markId ? state.events.findIndex((e) => e.id === markId) : -1
+  const mine = new Set(state.events.filter((e) => !e.agent && !!reader && e.author?.email?.toLowerCase() === reader.toLowerCase() && (e.type === 'create' || e.type === 'reply')).map((e) => e.parentId ?? e.commentId))
   let n = 0
   for (let i = from + 1; i < state.events.length; i++) {
     const e = state.events[i]
     const root = e.type === 'reply' ? e.parentId : e.commentId
+    if (e.agent && (e.type !== 'reply' || !mine.has(root))) continue
     if (root && state.open.has(root)) n++
   }
   return n

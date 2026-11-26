@@ -15,7 +15,7 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createHash, randomBytes } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { appendEvents, legacyExposure, listBoards, readLog, type CommentEvent } from './comments.ts'
 import { claimInvite, createInvite, inviteInfo, issueDeviceSession, loadStore, normEmail, opaqueId, ownerName, publicUser, revokeUser, sessionIsOperator, sessionUser, signIn, signOut, updateProfile, type User } from './auth.ts'
@@ -25,6 +25,8 @@ import { notifyCommentActivity, relayNotify, transitionId, type NotifyCtx } from
 import { deletedMessages, withoutDeletedWords, type Mention } from '../shared/events.ts'
 import { ALL_SCENES } from '../shared/board-tree.ts'
 import { secureSuffix } from './secure-cookie.ts'
+import { isDrawAnchor, validDrawAnchor } from '../shared/anchor.ts'
+import { operatorId, publicCommentEvent, publishableAgentEvent, reservedMarverName } from '../shared/agent-events.ts'
 
 const MONTH = 30 * 24 * 3600
 const MAX_BODY = 256 * 1024
@@ -113,15 +115,17 @@ export function validateEvents(incoming: CommentEvent[], log: CommentEvent[], u:
     }
   }
   const me = u.email.toLowerCase()
+  const context = [...log, ...incoming]
   for (const ev of incoming) {
     if (!ev || typeof ev !== 'object') return 'malformed event'
     if (typeof ev.id !== 'string' || !ID_RE.test(ev.id)) return 'event id must be an 8-64 char token'
     if (!EVENT_TYPES.has(ev.type as string)) return `unknown event type "${ev.type}"`
-    // Live Jam: agent provenance is daemon-only. A published client must never forge it
-    // (would render a human comment as Marver). Synced agent replies, if ever enabled, take a
-    // separate trusted path, not this authenticated-client validator.
-    if ((ev as { agent?: unknown }).agent !== undefined || (ev as { agentMeta?: unknown }).agentMeta !== undefined)
+    if (!opts.operator && (operatorId(ev.id) || operatorId(ev.commentId))) return 'jam- ids are reserved for the operator'
+    if (!opts.operator && reservedMarverName(ev.author?.name)) return 'Marver is a reserved name'
+    if (ev.author && 'agent' in ev.author) return 'agent provenance belongs on the event'
+    if ((ev.agent !== undefined || ev.agentMeta !== undefined) && (!opts.operator || !publishableAgentEvent(ev, context)))
       return 'agent provenance is daemon-only'
+    if ((ev.type === 'create' || ev.type === 'reanchor') && isDrawAnchor(ev.anchor) && !validDrawAnchor(ev.anchor)) return 'invalid drawing anchor'
     // the opaque author id is a SERVER-projected field - a client-sent one would
     // land in the canonical log and fork it from every other copy
     if (ev.author && (ev.author as { id?: unknown }).id !== undefined)
@@ -142,7 +146,7 @@ export function validateEvents(incoming: CommentEvent[], log: CommentEvent[], u:
     // `profile` is in this set deliberately: an unbound author on a profile event let a
     // browser submit arbitrary emails and read their opaque ids off the projection
     const needsAuthor = ev.type === 'create' || ev.type === 'reply' || ev.type === 'react' || ev.type === 'edit' || ev.type === 'reanchor' || ev.type === 'profile' || ev.type === 'delete'
-    if (needsAuthor && ev.author?.email?.toLowerCase() !== me)
+    if (needsAuthor && !ev.agent && ev.author?.email?.toLowerCase() !== me)
       return 'event author must be the signed-in account'
     if (typeof ev.commentId !== 'string' || !ID_RE.test(ev.commentId)) {
       if (ev.type !== 'profile') return 'event needs a commentId'
@@ -167,18 +171,22 @@ export function validateEvents(incoming: CommentEvent[], log: CommentEvent[], u:
         if (ev.author?.email) authors.set(ev.commentId!, ev.author.email.toLowerCase())
         break
       case 'edit': {
+        const original = context.find((e) => (e.type === 'create' || e.type === 'reply') && e.commentId === ev.commentId)
+        if (original?.agent && !(opts.operator && ev.agent === true)) return 'only an operator agent event can edit a Marver message'
         const owner = authors.get(ev.commentId!)
-        if (!owner) return 'cannot edit a comment that does not exist'
-        if (owner !== me) return 'only the author can edit a comment'
+        if (!owner && !ev.agent) return 'cannot edit a comment that does not exist'
+        if (owner !== me && !ev.agent) return 'only the author can edit a comment'
         // a tombstone is terminal (spec 31 C.4): replay would ignore the edit, so the log never takes it
         if (deleted.has(ev.commentId!)) return 'that comment was deleted'
         break
       }
       case 'delete': {
+        const original = context.find((e) => (e.type === 'create' || e.type === 'reply') && e.commentId === ev.commentId)
+        if (original?.agent && !(opts.operator && ev.agent === true)) return 'only an operator agent event can delete a Marver message'
         // the author of the original create or reply, as for an edit - the canonical email decides
         const owner = authors.get(ev.commentId!)
-        if (!owner) return 'cannot delete a comment that does not exist'
-        if (owner !== me) return 'only the author can delete a comment'
+        if (!owner && !ev.agent) return 'cannot delete a comment that does not exist'
+        if (owner !== me && !ev.agent) return 'only the author can delete a comment'
         if (ev.body !== undefined || ev.mentions !== undefined) return 'a delete carries no words'
         deleted.add(ev.commentId!)
         break
@@ -198,7 +206,7 @@ export function validateEvents(incoming: CommentEvent[], log: CommentEvent[], u:
         // never through a shared canvas, where the frame decides who may comment
         if (ev.frame !== undefined) return 'a thread cannot move to another frame here'
         const owner = authors.get(ev.commentId!)
-        if (owner && owner !== me) return 'only the thread author can reanchor'
+        if (owner && owner !== me && !ev.agent) return 'only the thread author can reanchor'
         break
       }
     }
@@ -215,7 +223,7 @@ export function mailable(fresh: CommentEvent[], log: CommentEvent[]): CommentEve
 
 export function collabHandler(dataDir: string, distDir: string) {
   let rights: Rights = {}
-  let meta: { name?: string; boards?: Record<string, { type?: string }>; frontDoor?: boolean } = {}
+  let meta: { name?: string; boards?: Record<string, { type?: string; nodes?: Record<string, { frame?: string }> }>; frontDoor?: boolean } = {}
   try {
     meta = JSON.parse(readFileSync(join(distDir, 'meta.json'), 'utf8'))
     rights = (meta as any).rights ?? {}
@@ -328,9 +336,9 @@ export function collabHandler(dataDir: string, distDir: string) {
   // every SSE subscriber - nothing per-viewer is ever fanned out. Only the
   // operator's own sessions (the CLI sync) receive canonical bytes.
   const project = (ev: CommentEvent): CommentEvent => {
-    let out = ev
-    if (ev.author?.email) {
-      const { email, ...rest } = ev.author
+    let out = publicCommentEvent(ev)
+    if (out.author?.email) {
+      const { email, ...rest } = out.author
       out = { ...out, author: { ...rest, id: opaqueId(dataDir, email) } }
     }
     // the mention leg is independent of the author leg on purpose, and FAIL-CLOSED:
@@ -511,7 +519,7 @@ export function collabHandler(dataDir: string, distDir: string) {
         // totals from the maintained counters + this caller's seen marks
         const marks = loadSeen(dataDir)[normEmail(v.email)] ?? {}
         let open = 0, unread = 0
-        for (const [b, st] of threads) { open += st.open.size; unread += unreadCount(st, marks[b]) }
+        for (const [b, st] of threads) { open += st.open.size; unread += unreadCount(st, marks[b], v.email) }
         const boardNames = Object.keys(rights)
         const payload = {
           v: 1,
@@ -800,7 +808,7 @@ export function collabHandler(dataDir: string, distDir: string) {
       if (req.method === 'GET') {
         // what this server's comment API takes (spec 31 C.6) - a client that finds no `delete` (an older server) holds
         // its deletes back. Resolve-all is the dev server's alone: here a thread is resolved one at a time
-        if (path === 'capabilities') return json(res, 200, { delete: true }), true
+        if (path === 'capabilities') return json(res, 200, { delete: true, ...(rawTransport(req) ? { agentEvents: true, drawAnchors: true } : {}) }), true
         if (path === 'me') {
           // the session response carries the viewer's OWN opaque id once -
           // "is this mine" is a client-side id comparison from then on - plus
@@ -819,7 +827,7 @@ export function collabHandler(dataDir: string, distDir: string) {
             ? resolveAccess({ email: u.email, userRole: u.role, store: share, ceilings: ceilingsFromRights(rights) }).boards
             : Object.fromEntries(Object.entries(rights).map(([b, r]) => [b, r === 'comment' ? 'comment' : 'view']))
           // `now`: the server's clock - the shell stamps its events with it, so a reviewer's fast clock is not refused (spec 36 §3)
-          return json(res, 200, { user: publicUser(u), role: u.role, id: opaqueId(dataDir, u.email), boards, now: Date.now(), signIn: signInMode }), true
+          return json(res, 200, { user: publicUser(u), role: u.role, operator: rawTransport(req), id: opaqueId(dataDir, u.email), boards, now: Date.now(), signIn: signInMode }), true
         }
         if (path === 'boards') {
           const name = ownerName(dataDir)
@@ -884,12 +892,13 @@ export function collabHandler(dataDir: string, distDir: string) {
       if (path === 'auth/claim') {
         if (limited(`ip:${ip}`)) return json(res, 429, { error: 'too many attempts - wait a minute' }), true
         const b = await readBody(req)
+        if (reservedMarverName(b.name)) return json(res, 400, { error: 'Marver is a reserved name' }), true
         const { user, session } = claimInvite(dataDir, String(b.token ?? ''), {
           password: String(b.password ?? ''), name: String(b.name ?? ''),
           avatar: validAvatar(b.avatar) ? b.avatar : undefined,
         }, ceilings)
         setSession(req, res, session)
-        return json(res, 200, { user: publicUser(user), id: opaqueId(dataDir, user.email) }), true
+        return json(res, 200, { user: publicUser(user), role: user.role, id: opaqueId(dataDir, user.email) }), true
       }
       if (path === 'auth/signin') {
         const b = await readBody(req)
@@ -899,7 +908,7 @@ export function collabHandler(dataDir: string, distDir: string) {
         if (!hit) return json(res, 401, { error: 'wrong email or password' }), true
         setSession(req, res, hit.session)
         // with the viewer's own opaque id, as /me gives it: without it a dialog sign-in left "mine" unknown (spec 36)
-        return json(res, 200, { user: publicUser(hit.user), id: opaqueId(dataDir, hit.user.email) }), true
+        return json(res, 200, { user: publicUser(hit.user), role: hit.user.role, id: opaqueId(dataDir, hit.user.email) }), true
       }
       if (path === 'auth/signout') {
         const tok = cookie(req, 'mv_s')
@@ -911,6 +920,7 @@ export function collabHandler(dataDir: string, distDir: string) {
         const u = currentUser(req)
         if (!u) return json(res, 401, { error: 'sign in first' }), true
         const b = await readBody(req)
+        if (!rawTransport(req) && reservedMarverName(b.name)) return json(res, 400, { error: 'Marver is a reserved name' }), true
         const next = updateProfile(dataDir, u.email, {
           name: typeof b.name === 'string' ? b.name : undefined,
           avatar: b.avatar === '' ? '' : validAvatar(b.avatar) ? b.avatar : undefined,
@@ -974,6 +984,9 @@ export function collabHandler(dataDir: string, distDir: string) {
         // The ONE exception is the inverse projection below, which is convergence-safe:
         // projecting the stored form returns byte-for-value what the browser sent.
         const operator = rawTransport(req)
+        // Authentication applies to retries too: a byte-identical resend is not an agent transport.
+        if (!operator && posted.some((e) => e && (e.agent !== undefined || e.agentMeta !== undefined || operatorId(e.id) || operatorId(e.commentId) || reservedMarverName(e.author?.name))))
+          return json(res, 400, { error: 'agent provenance, jam- ids and the Marver name are reserved for the operator' }), true
         const log = readLog(commentsDir, m[1])
         // A resend of what is stored (spec 36): the browser keeps a write until it hears 200, so a 200 lost on the way
         // brings the same event again. It is stored - say so (accepted 0), never "that id already exists", which
@@ -1006,6 +1019,19 @@ export function collabHandler(dataDir: string, distDir: string) {
         }
         const bad = validateEvents(incoming, log, u!, m[1], { operator })
         if (bad) return json(res, 400, { error: bad }), true
+        for (const e of incoming) {
+          if (e.type !== 'create' || !isDrawAnchor(e.anchor)) continue
+          const frame = e.frame
+          let published = false
+          if (frame && shows?.[m[1]]?.includes(frame) && !frame.split('/').some((p) => p === '..' || p === '.')) {
+            try { published = statSync(join(distDir, '__mv', 'draw-data', `${frame}.excalidraw`)).isFile() } catch { /* no published copy */ }
+          }
+          if (!published)
+            return json(res, 400, { error: 'drawing anchor needs a published drawing on this board' }), true
+          const nodes = meta.boards?.[m[1]]?.nodes
+          if (nodes && (!e.nodeKey || !Object.hasOwn(nodes, e.nodeKey) || nodes[e.nodeKey].frame !== frame))
+            return json(res, 400, { error: 'drawing anchor needs a node of this board showing its frame' }), true
+        }
         // the inverse projection (07-v1.1 §B): browser mentions arrive as opaque ids
         // and are stored canonically as emails - the exact mirror of `project`. An
         // unknown or self id is REFUSED with the same generic error as every other
