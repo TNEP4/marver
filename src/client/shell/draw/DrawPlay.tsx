@@ -4,10 +4,10 @@
  * (collapse ⌘/), the view controls bottom right; Hide all UI (H brings it back); Esc goes back to the canvas.
  * Positions are the canvas's own: right under the Mac app's strip, 10 px in. Published: view only (name, view).
  */
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { memo, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useStore, PUBLISHED } from '../store.ts'
 import { useComments } from '../comments-store.ts'
-import { DraftComposer, DrawWorkLayer, Pins, ThreadCard, isDrawAnchorish, placePins } from '../Comments.tsx'
+import { DraftComposer, DrawWorkLayer, MarkerFace, Pins, ThreadCard, isDrawAnchorish, placePins } from '../Comments.tsx'
 import { commentGate, commentsEscape, toggleCommentMode, toggleLaserComment, togglePins } from '../comment-keys.ts'
 import { toggleHideUI, useHideUI } from '../Toolbar.tsx'
 import { jamKey } from '../jam-keys.ts'
@@ -68,6 +68,7 @@ export function DrawPlay() {
   const hiddenRef = useRef(false)
   hiddenRef.current = hidden
   const [menu, setMenu] = useState(false)
+  const [readyTick, setReadyTick] = useState(0)
   const nameMenu = useRef<HTMLDivElement>(null)
   useMenuKeys(nameMenu, menu, () => setMenu(false), key || undefined)
   const src = useRef('')
@@ -92,6 +93,8 @@ export function DrawPlay() {
         // comment mode too (spec 39 B5), and the keys the shell owns mirrored into it (⌘K, the laser's, Jam's)
         pickNow()
         frameReady('draw-play')
+        // the comments re-drive what they told it (subscriptions, the highlight, a pending reveal) - review r1 #7
+        setReadyTick((n) => n + 1)
         return
       }
       if (d?.type === 'sh:draw-flushed') { flushed.current?.(); return }
@@ -180,8 +183,8 @@ export function DrawPlay() {
       style={{ position: 'fixed', inset: 0, zIndex: 60, paddingTop: 'var(--mv-top, 0px)', boxSizing: 'border-box', background: state?.paper ?? (dark ? '#121212' : '#ffffff'), ...(closing ? { visibility: 'hidden', pointerEvents: 'none' } : {}) }}>
       <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, top: 'var(--mv-top, 0px)' }}>
         <iframe ref={iframe} src={src.current} title={link.title} onLoad={() => frameLoaded('draw-play', iframe.current)} />
-        <DrawPlayComments iframe={iframe} frameId={at} />
-        <DrawWorkLayer frameId={at} iframe={iframe} ready={!!state} />
+        <DrawPlayComments iframe={iframe} frameId={at} ready={readyTick} />
+        <DrawWorkLayer frameId={at} iframe={iframe} ready={readyTick > 0} />
       </div>
       {panelOpen
         ? <DrawPanel link={link} state={state} top={head} popSide="right" style={{ ...EDGE, left: 10 }} />
@@ -245,7 +248,8 @@ function DrawCommentButton({ fab = false }: { fab?: boolean }) {
 
 /** The comment overlay over the played drawing (spec 39 B5): the canvas's pins, card and composer, placed from what the
  *  drawing pushes - moving with it by translation while it moves, landing once it stops, out-of-view pins parked. */
-function DrawPlayComments({ iframe, frameId }: { iframe: React.RefObject<HTMLIFrameElement | null>; frameId: string }) {
+// memoised: a pan changes the drawing's state every frame, and that must never re-render the comments (review r1 #5)
+const DrawPlayComments = memo(function DrawPlayComments({ iframe, frameId, ready }: { iframe: React.RefObject<HTMLIFrameElement | null>; frameId: string; ready: number }) {
   const show = useComments((s) => s.show)
   const showAnchor = useComments((s) => s.showAnchor)
   const active = useComments((s) => s.active)
@@ -280,12 +284,12 @@ function DrawPlayComments({ iframe, frameId }: { iframe: React.RefObject<HTMLIFr
         for (const r of rects) {
           if (r.orphan || !r.point) continue
           const was = placedAt.current[r.key]
-          const pin = layer.current?.querySelector(`[data-thread="${CSS.escape(r.key)}"]`) as HTMLElement | null
+          const pin = (r.key === 'draft' ? layer.current?.querySelector('.cm-draft') : layer.current?.querySelector(`[data-thread="${CSS.escape(r.key)}"]`)) as HTMLElement | null
           if (pin && was) pin.style.translate = `${r.point.x - was.x}px ${r.point.y - was.y}px`
         }
         return
       }
-      if (layer.current) { layer.current.classList.remove('cm-moving'); for (const pin of layer.current.querySelectorAll<HTMLElement>('.cm-pin')) pin.style.translate = '' }
+      if (layer.current) { layer.current.classList.remove('cm-moving'); for (const pin of layer.current.querySelectorAll<HTMLElement>('.cm-pin, .cm-draft')) pin.style.translate = '' }
       const next: typeof points = {}
       const off = new Set<string>()
       for (const r of rects) {
@@ -301,7 +305,7 @@ function DrawPlayComments({ iframe, frameId }: { iframe: React.RefObject<HTMLIFr
     ask()
     const iv = setInterval(ask, 8000)
     return () => { clearInterval(iv); removeEventListener('message', onMsg); if (!list.length) ask() }
-  }, [frameId, threads.map((t) => `${t.id}:${JSON.stringify(t.anchor)}`).join(','), JSON.stringify(draftHere), iframe])
+  }, [frameId, threads.map((t) => `${t.id}:${JSON.stringify(t.anchor)}`).join(','), JSON.stringify(draftHere), iframe, ready])
 
   // the open thread's or the draft's element lit (⇧L), and a thread opened on purpose brought into view once
   useEffect(() => {
@@ -309,13 +313,24 @@ function DrawPlayComments({ iframe, frameId }: { iframe: React.RefObject<HTMLIFr
     if (!win) return
     const a = !show || !showAnchor ? null : draftHere ?? (active ? threads.find((t) => t.id === active)?.anchor ?? null : null)
     win.postMessage({ type: 'sh:highlight-anchor', frame: frameId, anchor: a ?? null }, location.origin)
-  }, [active, JSON.stringify(draftHere), show, showAnchor, frameId])
+  }, [active, JSON.stringify(draftHere), show, showAnchor, frameId, ready])
   const revealed = useRef<string | null>(null)
   useEffect(() => {
+    if (!ready) return
     const t = active ? threads.find((x) => x.id === active) : undefined
-    if (t && revealed.current !== t.id) { revealed.current = t.id; iframe.current?.contentWindow?.postMessage({ type: 'sh:draw-cmd', op: 'reveal', anchor: t.anchor }, location.origin) }
+    if (t && revealed.current !== `${t.id}@${ready}`) { revealed.current = `${t.id}@${ready}`; iframe.current?.contentWindow?.postMessage({ type: 'sh:draw-cmd', op: 'reveal', anchor: t.anchor }, location.origin) }
     if (!t) revealed.current = null
-  }, [active])
+  }, [active, ready])
+  // a comment sent or closed gives the keyboard back to the drawing (the next letter is its tool - review r1 #6)
+  const hadDraft = useRef(false)
+  useEffect(() => {
+    const has = !!draftHere
+    if (hadDraft.current && !has) {
+      const ae = document.activeElement as HTMLElement | null
+      if (!ae || ae === document.body || !ae.closest('input, textarea, [contenteditable]')) iframe.current?.contentWindow?.postMessage({ type: 'sh:draw-cmd', op: 'focus' }, location.origin)
+    }
+    hadDraft.current = has
+  }, [JSON.stringify(draftHere)])
 
   if (!show) return <div ref={layer} className="sh-play-comments" />
   const stagePoints = new Map<string, { x: number; y: number } | null>()
@@ -326,13 +341,22 @@ function DrawPlayComments({ iframe, frameId }: { iframe: React.RefObject<HTMLIFr
     stagePoints.set(t.id, p ?? null)
   }
   const placed = placePins(threads, stagePoints, box.w, 1)
+  // a crowd pushed past the window's foot is never lost: those pins gather in one stack (review r1 #12)
+  const below = threads.filter((t) => (placed.get(t.id)?.y ?? 0) > box.h - 28 && t.id !== active)
+  const shownThreads = below.length ? threads.filter((t) => !below.includes(t)) : threads
   const activeThread = threads.find((t) => t.id === active)
   const draftAt = draftHere ? (points.draft ?? (draftHere as any)?.point ?? null) : null
   return (
     <div ref={layer} className="sh-play-comments">
-      <Pins threads={threads} placed={placed} orphans={orphans} inv={1} active={active} offs={offs} published={PUBLISHED} />
+      <Pins threads={shownThreads} placed={placed} orphans={orphans} inv={1} active={active} offs={offs} published={PUBLISHED} />
+      {below.length > 0 && (
+        <button className="cm-stack sh-no-pan dk-crowd" style={{ top: 'auto', bottom: 70, right: 14 }} title={`${below.length} more ${below.length === 1 ? 'comment' : 'comments'} below`}
+          onClick={(e) => { e.stopPropagation(); cmd('thread-open', { via: 'click', in: 'stage', frame: frameId }); useComments.getState().setActive(below[0].id) }}>
+          <MarkerFace threads={below} />
+        </button>
+      )}
       {activeThread && <ThreadCard key={active!} thread={activeThread} at={placed.get(activeThread.id)!} bounds={box} nodeKey={node ?? undefined} stage />}
       {draftAt && <DraftComposer at={draftAt} bounds={box} hue={(draftHere as any)?.el?.hue} />}
     </div>
   )
-}
+})

@@ -172,7 +172,9 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
     const hitId: string | undefined = anchor?.el?.draw?.id
     const live = editable && editRef.current
     const rows = live ? m.rows : hitId ? [{ name: 'copyAsPng', labelKey: '' }, { name: 'copyText', labelKey: '' }] : [{ name: 'copyAsPng', labelKey: '' }]
-    post({ type: 'sh:draw-menu', id, rows, element: !!hitId, hitId, point: { x: m.left, y: m.top }, anchor, editable: live })
+    const selNow = eng.appState()?.selectedElementIds ?? {}
+    const sel = Object.keys(selNow).filter((k) => selNow[k])
+    post({ type: 'sh:draw-menu', id, rows, element: !!hitId, hitId, sel, point: { x: m.left, y: m.top }, anchor, editable: live })
   }
   const onChange = (snap: EngineSnapshot) => {
     if (snap.appState?.contextMenu) { openMenu(); return }
@@ -287,7 +289,8 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
         else eng.view(c.v, frameView.current)
         break
       case 'export': void exportAs(eng, c.format, c.dark ?? theme === 'dark', c.rid); break
-      case 'paste': eng.paste(c.text); break
+      case 'paste': eng.paste(c.text, c.files); break
+      case 'delete-ids': eng.deleteIds(c.ids); break
     }
     sendState()
   }
@@ -295,7 +298,7 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
   /** what a right-click clipboard row writes (spec 39 B8): the shell writes it, inside the person's click */
   async function menuData(eng: Engine, what: 'copy' | 'svg' | 'text' | 'png', dark: boolean, rid: string, given?: string[]) {
     try {
-      if (what === 'copy') { post({ type: 'sh:draw-menu-data', id, rid, mime: 'text/plain', data: eng.clipboardJson() }); return }
+      if (what === 'copy') { post({ type: 'sh:draw-menu-data', id, rid, mime: 'text/plain', data: eng.clipboardJson(given) }); return }
       if (what === 'text') { post({ type: 'sh:draw-menu-data', id, rid, mime: 'text/plain', data: eng.selectionText(given) }); return }
       if (what === 'svg') { post({ type: 'sh:draw-menu-data', id, rid, mime: 'text/plain', data: await eng.selectionSvg(dark) }); return }
       const sel = eng.appState()?.selectedElementIds ?? {}

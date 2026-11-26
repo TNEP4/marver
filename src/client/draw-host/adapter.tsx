@@ -65,14 +65,17 @@ export interface Engine {
   /** spec 39 A6: Excalidraw's right-click menu as it stands (its own actions, filtered by their predicates), or null */
   menu(): { rows: { name: string; labelKey: string }[]; top: number; left: number; element: boolean } | null
   closeMenu(): void
-  /** the selection as Excalidraw's own clipboard JSON (what its Copy writes) - written by the shell, inside the click */
-  clipboardJson(): string
+  /** the selection (or these elements) as Excalidraw's own clipboard JSON (what its Copy writes) - written by the shell,
+   *  inside the click */
+  clipboardJson(ids?: string[]): string
+  /** delete exactly these elements (a Cut finishing) - nothing when any of them is gone or changed hands */
+  deleteIds(ids: string[]): boolean
   /** the selection's words (or these elements'), as Excalidraw's Copy as text */
   selectionText(ids?: string[]): string
   /** the selection (bound text and frame children included) as SVG; all of it when nothing is selected */
   selectionSvg(dark: boolean): Promise<string>
-  /** paste Excalidraw clipboard JSON or plain text at the pointer, as its own paste does */
-  paste(text: string): void
+  /** paste Excalidraw clipboard JSON, plain text or images at the pointer, as its own paste does */
+  paste(text: string, files?: { name: string; type: string; data: Blob }[]): void
 }
 
 /** spec 39: a hit element, as a comment needs it */
@@ -82,6 +85,16 @@ export interface Geo { type: string; x: number; y: number; w: number; h: number;
 
 /** shapes whose inside takes a comment even with no fill (spec 39 A1); a frame's inside only when nothing else is hit */
 const CLOSED = new Set(['rectangle', 'diamond', 'ellipse', 'text', 'image', 'frame', 'magicframe', 'embeddable', 'iframe'])
+/** An element's unrotated box in drawing units: a line's, arrow's or stroke's from its points (they may run left or up
+ *  from x,y - review r1 #2), any other's from x, y, width, height. Excalidraw rotates an element about this box's centre. */
+export function boxOf(el: any): { x: number; y: number; width: number; height: number; angle: number } {
+  if (Array.isArray(el.points) && el.points.length && (el.type === 'line' || el.type === 'arrow' || el.type === 'freedraw')) {
+    let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity
+    for (const p of el.points) { if (!Array.isArray(p)) continue; x1 = Math.min(x1, p[0]); y1 = Math.min(y1, p[1]); x2 = Math.max(x2, p[0]); y2 = Math.max(y2, p[1]) }
+    if (Number.isFinite(x1)) return { x: el.x + x1, y: el.y + y1, width: x2 - x1, height: y2 - y1, angle: el.angle || 0 }
+  }
+  return { x: el.x, y: el.y, width: el.width, height: el.height, angle: el.angle || 0 }
+}
 /** a point in an element's unrotated box, as fractions (rotated back around its centre first) */
 function local(el: any, x: number, y: number): { fx: number; fy: number } {
   const cx = el.x + el.width / 2, cy = el.y + el.height / 2, a = -(el.angle || 0)
@@ -298,7 +311,8 @@ export function DrawEngine({ initial, theme, edit, editable, picking = false, on
       const byId = new Map(els.map((e) => [e.id, e]))
       const el = byId.get(id)
       if (!el) return null
-      return { type: el.type, x: el.x, y: el.y, w: el.width, h: el.height, angle: el.angle || 0, label: labelOf(el, byId), attach: attachOf(el, byId) }
+      const b = boxOf(el)
+      return { type: el.type, x: b.x, y: b.y, w: b.width, h: b.height, angle: b.angle, label: labelOf(el, byId), attach: attachOf(el, byId) }
     },
     toView(x, y) {
       const s = apiRef.current?.getAppState()
@@ -339,14 +353,22 @@ export function DrawEngine({ initial, theme, edit, editable, picking = false, on
       return { rows, top: cm.top - (st.offsetTop || 0), left: cm.left - (st.offsetLeft || 0), element }
     },
     closeMenu() { apiRef.current?.updateScene({ appState: { contextMenu: null }, captureUpdate: CU.NEVER }) },
-    clipboardJson() {
+    clipboardJson(ids) {
       const api = apiRef.current
       const sel = api.getAppState().selectedElementIds ?? {}
-      const elements = withAttached(api.getSceneElements(), Object.keys(sel).filter((k) => sel[k]))
+      const elements = withAttached(api.getSceneElements(), ids?.length ? ids : Object.keys(sel).filter((k) => sel[k]))
       const files: Record<string, unknown> = {}
       const all = api.getFiles() ?? {}
       for (const e of elements as any[]) if (e.fileId && all[e.fileId]) files[e.fileId] = all[e.fileId]
       return JSON.stringify({ type: 'excalidraw/clipboard', elements, files })
+    },
+    deleteIds(ids) {
+      const api = apiRef.current
+      if (!api || !ids.length) return false
+      const live = new Set((api.getSceneElements() as any[]).map((e) => e.id))
+      if (!ids.every((id) => live.has(id))) return false
+      api.updateScene({ appState: { selectedElementIds: Object.fromEntries(ids.map((id) => [id, true])) }, captureUpdate: CU.NEVER })
+      return engine.run('deleteSelectedElements')
     },
     selectionText(ids) {
       const api = apiRef.current
@@ -363,10 +385,12 @@ export function DrawEngine({ initial, theme, edit, editable, picking = false, on
       } as any)
       return svg.outerHTML
     },
-    paste(text) {
-      // Excalidraw's own paste path (its document listener), at the pointer: a clipboard event carrying the data
+    paste(text, files) {
+      // Excalidraw's own paste path (its document listener), at the pointer: a clipboard event carrying the data -
+      // images as files, as a real paste carries them (review r1 #10)
       const dt = new DataTransfer()
-      dt.setData('text/plain', text)
+      if (text) dt.setData('text/plain', text)
+      for (const f of files ?? []) { try { dt.items.add(new File([f.data], f.name, { type: f.type })) } catch { /* not a file this browser takes */ } }
       document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }))
     },
     reveal(box) {
@@ -400,6 +424,8 @@ export function DrawEngine({ initial, theme, edit, editable, picking = false, on
   // picking pauses the tool (spec 39 B1): the tool and the selection are remembered and put back, and a pan begun while
   // picking is released as on entering drawing mode (or the first stroke after would be eaten)
   const paused = useRef<{ tool: any; sel: Record<string, true> } | null>(null)
+  const pickingRef = useRef(picking)
+  pickingRef.current = picking
   useEffect(() => {
     const api = apiRef.current
     if (!api || !edit) return
@@ -493,6 +519,8 @@ export function DrawEngine({ initial, theme, edit, editable, picking = false, on
           canvasActions: { changeViewBackgroundColor: false, clearCanvas: false, export: false, loadScene: false, saveToActiveFile: false, toggleTheme: false, saveAsImage: false },
           tools: { image: true },
         }}
+        // picking a comment never opens an element's link (review r1 #4)
+        onLinkOpen={(_el: any, ev: any) => { if (pickingRef.current) ev.preventDefault() }}
         onChange={(elements: any, appState: any) => {
           if (!readyRef.current) return
           cbs.current.onChange({ elements: elements as DrawElement[], appState, sceneVersion: getSceneVersion(elements) })
@@ -554,8 +582,9 @@ function attachOf(el: any, byId: Map<string, any>): { x: number; y: number } {
     const left = t.textAlign === 'center' ? t.x + (t.width - w) / 2 : t.textAlign === 'right' ? t.x + t.width - w : t.x
     return { x: left + w, y: t.y + lh / 2 }
   }
-  const [x1, y1, x2] = getCommonBounds([el])
-  return { x: x2, y: y1 }
+  // its unrotated box's top-right (the provider turns it with the element)
+  const b = boxOf(el)
+  return { x: b.x + b.width, y: b.y }
 }
 
 /** These elements and what belongs to them - a shape's label, an arrow's label, a frame's children (Excalidraw's own

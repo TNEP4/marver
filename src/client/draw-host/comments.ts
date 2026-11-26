@@ -11,6 +11,7 @@
  */
 import type { Engine, Geo } from './adapter.tsx'
 import { localPoint } from './adapter.tsx'
+import { validElementId } from '../../shared/anchor.ts'
 import type { DrawHeader } from '../../shared/draw-protocol.ts'
 
 type Anchor = { el?: { draw?: { id?: string; type?: string; label?: string; at?: { x: number; y: number }; rev?: number; epoch?: string }; semantics?: { tag?: string; quote?: string }; hue?: number }; pos?: { fx: number; fy: number } }
@@ -19,9 +20,8 @@ export type PinRect =
   | { key: string; orphan: true }
   | { key: string; rect: { x: number; y: number; w: number; h: number }; point: { x: number; y: number }; scene: { x: number; y: number }; off: boolean }
 
-/** one id rule for drawings and comments (spec 39 B3) - mirrors src/shared/anchor.ts validElementId */
-// eslint-disable-next-line no-control-regex
-const okId = (id: unknown): id is string => typeof id === 'string' && id.length > 0 && id.length <= 256 && !/[\u0000-\u001f\u007f]/.test(id)
+/** one id rule for drawings and comments (spec 39 B3): the shared one, never a copy */
+const okId = validElementId
 
 /** the hue a pin, outline and composer share: the element's stroke hue, Marver's blue (210) for black, grey, paper */
 export function hueOf(color: unknown): number {

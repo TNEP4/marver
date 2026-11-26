@@ -100,7 +100,9 @@ export type DrawCmd =
   /** spec 39 B8: what a clipboard row of the right-click writes - asked inside the click, written by the shell */
   | { type: 'sh:draw-cmd'; op: 'menu-data'; what: 'copy' | 'svg' | 'text' | 'png'; dark?: boolean; rid: string; ids?: string[] }
   /** spec 39 B8: the right-click's Paste - the clipboard read by the shell inside the click, pasted by the drawing */
-  | { type: 'sh:draw-cmd'; op: 'paste'; text: string }
+  | { type: 'sh:draw-cmd'; op: 'paste'; text: string; files?: { name: string; type: string; data: Blob }[] }
+  /** spec 39 B8: a Cut finishing - exactly the elements it copied, never the selection at that later moment */
+  | { type: 'sh:draw-cmd'; op: 'delete-ids'; ids: string[] }
 
 /** The commands a published (view-only) drawing runs - none of them changes the drawing (spec 39 B2). */
 export const READ_ONLY_OPS: ReadonlySet<DrawCmd['op']> = new Set(['view', 'export', 'reveal', 'focus', 'menu', 'menu-data', 'flush', 'ui'])

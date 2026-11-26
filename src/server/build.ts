@@ -804,8 +804,13 @@ export async function buildSite(root: string, boardsFlag?: string, allBoardsFlag
   if (logo) writeFileSync(join(outDir, 'index.html'), logoIcons(readFileSync(join(outDir, 'index.html'), 'utf8'), logo))
   // rights ride in meta.json so serve can enforce the policy on comment APIs without parsing the bundle - hiding UI controls is not authorization;
   // `shows` (each published board's frames) lets the old all-scenes log serve the threads whose frame ships (collab.ts, spec 26)
+  // each published board's nodes (key -> frame): a reviewer's comment on a drawing must name a node of its board that
+  // shows its frame (spec 39 B3) - an `auto` board makes its nodes as it shows, and is checked by its frames alone
+  const nodes = Object.fromEntries(publishedNames
+    .filter((n) => !boards[n]?.auto && Array.isArray(boards[n]?.nodes))
+    .map((n) => [n, Object.fromEntries((boards[n].nodes as { key?: unknown; frame?: unknown }[]).filter((x) => typeof x?.key === 'string' && typeof x?.frame === 'string').map((x) => [x.key as string, { frame: x.frame as string }]))]))
   writeFileSync(join(outDir, 'meta.json'), JSON.stringify({
-    name, branding: config.share.branding, logo, rights, shows,
+    name, branding: config.share.branding, logo, rights, shows, nodes,
     boards: boardsMeta, reveal: policy.reveal,
     ...(config.share.frontDoor === false ? { frontDoor: false } : {}),
     ...(config.share.notify === false ? { notify: false } : {}),

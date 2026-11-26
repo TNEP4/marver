@@ -1028,7 +1028,8 @@ export function collabHandler(dataDir: string, distDir: string) {
           }
           if (!published)
             return json(res, 400, { error: 'drawing anchor needs a published drawing on this board' }), true
-          const nodes = meta.boards?.[m[1]]?.nodes
+          // the build's node map (review r1 #1: real builds write it - an `auto` board has none and is checked by its frames)
+          const nodes = (meta as any).nodes?.[m[1]] ?? meta.boards?.[m[1]]?.nodes
           if (nodes && (!e.nodeKey || !Object.hasOwn(nodes, e.nodeKey) || nodes[e.nodeKey].frame !== frame))
             return json(res, 400, { error: 'drawing anchor needs a node of this board showing its frame' }), true
         }

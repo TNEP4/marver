@@ -27,7 +27,7 @@ import { MI, Ph, keyGlyphs } from './kit.tsx'
 import { useDrawPlay } from './play-state.ts'
 
 type Row = { name: string; labelKey: string }
-type Open = { key: string; frame: string; x: number; y: number; rows: Row[]; element: boolean; anchor: unknown; editable: boolean; hitId?: string }
+type Open = { key: string; frame: string; x: number; y: number; rows: Row[]; element: boolean; anchor: unknown; editable: boolean; hitId?: string; sel: string[] }
 
 export const useDrawMenu = create<{ m: Open | null; open(m: Open): void; close(): void }>((set) => ({
   m: null,
@@ -60,7 +60,7 @@ export function drawMenuMessage(key: string, data: any): boolean {
     const r = el.getBoundingClientRect()
     const k = el.offsetWidth ? r.width / el.offsetWidth : 1
     const frame = String(data.id ?? '')
-    useDrawMenu.getState().open({ key, frame, x: r.left + Number(data.point?.x ?? 0) * k, y: r.top + Number(data.point?.y ?? 0) * k, rows: Array.isArray(data.rows) ? data.rows : [], element: !!data.element, anchor: data.anchor ?? null, editable: !!data.editable, ...(typeof data.hitId === 'string' ? { hitId: data.hitId } : {}) })
+    useDrawMenu.getState().open({ key, frame, x: r.left + Number(data.point?.x ?? 0) * k, y: r.top + Number(data.point?.y ?? 0) * k, rows: Array.isArray(data.rows) ? data.rows : [], element: !!data.element, anchor: data.anchor ?? null, editable: !!data.editable, sel: Array.isArray(data.sel) ? data.sel.filter((x: unknown): x is string => typeof x === 'string') : [], ...(typeof data.hitId === 'string' ? { hitId: data.hitId } : {}) })
     return true
   }
   if (data?.type === 'sh:draw-menu-data') {
@@ -142,11 +142,13 @@ function itemsFor(m: Open): Item[] {
     })
     out.push('|')
   }
+  // the elements the menu was opened on, captured then (a selection changed while a write is in flight never stands in -
+  // review r1 #3); a view-only drawing has no selection: the element right-clicked
+  const ids = !m.editable && m.hitId ? [m.hitId] : m.sel
   const write = (what: Exclude<Clip, 'paste' | 'cut'>, label: string, after?: () => void) => {
     const h = cmd('draw-cmd', { ...how, arg: what } as any)
     const mime = what === 'png' ? 'image/png' : 'text/plain'
-    // a view-only drawing has no selection: the element right-clicked is what is copied
-    const data = askData(m.key, what, dark, !m.editable && m.hitId ? [m.hitId] : undefined)
+    const data = askData(m.key, what, dark, ids.length ? ids : undefined)
     // inside the click: a clipboard item whose data the drawing fills (a browser allows the write only here)
     navigator.clipboard.write([new ClipboardItem({ [mime]: data })]).then(
       () => { h.done(); toast(label); after?.() },
@@ -162,14 +164,14 @@ function itemsFor(m: Open): Item[] {
     const label = r.name === 'copyAsPng' && !m.element ? 'Copy as image' : typeof spec.label === 'function' ? spec.label(r.labelKey) : spec.label
     const k = r.name === 'copyAsPng' && !m.element ? '⇧I' : spec.k
     const run = spec.clip === 'copy' ? () => write('copy', 'copied')
-      : spec.clip === 'cut' ? () => write('copy', 'cut', () => post(m.key, { type: 'sh:draw-cmd', op: 'action', name: 'deleteSelectedElements' }))
+      : spec.clip === 'cut' ? () => write('copy', 'cut', () => post(m.key, { type: 'sh:draw-cmd', op: 'delete-ids', ids }))
       : spec.clip === 'svg' ? () => write('svg', 'SVG copied')
       : spec.clip === 'text' ? () => write('text', 'text copied')
       : spec.clip === 'png' ? () => write('png', 'image copied')
       : spec.clip === 'paste' ? () => {
           const h = cmd('draw-cmd', { ...how, arg: 'paste' } as any)
-          // read inside the click, pasted by the drawing at the pointer
-          navigator.clipboard.readText().then((text) => { h.done(); post(m.key, { type: 'sh:draw-cmd', op: 'paste', text }) }, () => { h.fail('clipboard-blocked'); toast('paste blocked - press ⌘V in the drawing') })
+          // read inside the click (text and images), pasted by the drawing at the pointer
+          void readClipboard().then((got) => { h.done(); post(m.key, { type: 'sh:draw-cmd', op: 'paste', text: got.text, files: got.files }) }, () => { h.fail('clipboard-blocked'); toast('paste blocked - press ⌘V in the drawing') })
         }
       : () => action(r.name)
     out.push({ id: r.name, label, icon: spec.icon, k, warn: spec.warn, run })
@@ -187,35 +189,72 @@ function itemsFor(m: Open): Item[] {
   return out
 }
 
+/** The clipboard as a paste carries it: its text and its images (navigator.clipboard.read where the browser has it). */
+async function readClipboard(): Promise<{ text: string; files: { name: string; type: string; data: Blob }[] }> {
+  const files: { name: string; type: string; data: Blob }[] = []
+  let text = ''
+  if (navigator.clipboard.read) {
+    for (const item of await navigator.clipboard.read()) {
+      for (const type of item.types) {
+        if (type === 'text/plain' && !text) text = await (await item.getType(type)).text()
+        else if (type.startsWith('image/')) files.push({ name: `pasted.${type.split('/')[1] || 'png'}`, type, data: await item.getType(type) })
+      }
+    }
+    return { text, files }
+  }
+  return { text: await navigator.clipboard.readText(), files }
+}
+
 /** Arrows walk a menu's rows, Enter runs the lit one, Escape closes it - for the drawing's menus (spec 39 A6), from the
  *  shell's keys and from the keys a drawing forwards while a menu is open over it */
+// one drawing menu open at a time (review r1 #8): opening one closes the other; only the open one takes keys
+let activeMenu: { id: number; close: () => void } | null = null
+let menuIds = 0
+
 export function useMenuKeys(ref: React.RefObject<HTMLElement | null>, open: boolean, close: () => void, key?: string) {
   const [hi, setHi] = useState(-1)
+  const closeRef = useRef(close)
+  closeRef.current = close
   useEffect(() => { setHi(-1) }, [open])
   useEffect(() => {
     if (!open) return
+    const me = { id: ++menuIds, close: () => closeRef.current() }
+    if (activeMenu && activeMenu.id !== me.id) activeMenu.close()
+    activeMenu = me
+    const mine = () => activeMenu?.id === me.id
     if (key) post(key, { type: 'sh:draw-cmd', op: 'menu', open: true })
     const buttons = () => [...(ref.current?.querySelectorAll<HTMLButtonElement>('button:not([disabled])') ?? [])]
     const step = (d: number) => setHi((i) => { const n = buttons().length; return n ? (i + d + n) % n : -1 })
     const act = (k: string) => {
+      if (!mine()) return
       if (k === 'up') step(-1)
       else if (k === 'down') step(1)
       else if (k === 'enter') setHi((i) => { buttons()[i]?.click(); return i })
       else if (k === 'close') close()
     }
     const onKey = (e: KeyboardEvent) => {
+      if (!mine()) return
       const k = e.key === 'ArrowUp' ? 'up' : e.key === 'ArrowDown' ? 'down' : e.key === 'Enter' ? 'enter' : e.key === 'Escape' ? 'close' : ''
       if (!k) return
       e.preventDefault(); e.stopPropagation()
       act(k)
     }
     const onMsg = (e: MessageEvent) => {
-      if (e.origin !== location.origin || e.data?.type !== 'sh:draw-key' || typeof e.data.key !== 'string' || !e.data.key.startsWith('menu-')) return
+      if (e.origin !== location.origin || !mine()) return
+      // a press inside any frame closes it (the shell's own listeners never see those)
+      if (e.data?.type === 'sh:frame-down') { closeRef.current(); return }
+      if (e.data?.type !== 'sh:draw-key' || typeof e.data.key !== 'string' || !e.data.key.startsWith('menu-')) return
+      // only from the drawing this menu belongs to
+      if (key && e.source !== winOf(key)) return
       act(e.data.key.slice(5))
     }
     addEventListener('keydown', onKey, true)
     addEventListener('message', onMsg)
-    return () => { removeEventListener('keydown', onKey, true); removeEventListener('message', onMsg); if (key) post(key, { type: 'sh:draw-cmd', op: 'menu', open: false }) }
+    return () => {
+      removeEventListener('keydown', onKey, true); removeEventListener('message', onMsg)
+      if (activeMenu?.id === me.id) activeMenu = null
+      if (key) post(key, { type: 'sh:draw-cmd', op: 'menu', open: false })
+    }
   }, [open, key])
   useEffect(() => {
     const b = [...(ref.current?.querySelectorAll<HTMLButtonElement>('button:not([disabled])') ?? [])]

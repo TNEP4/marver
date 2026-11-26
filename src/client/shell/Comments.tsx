@@ -7,7 +7,7 @@
  */
 import { useDrawPlay } from './draw/play-state.ts'
 import { TOP } from './inset.ts'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { avatarFallback, newDraftKey, replyDraftKey, useComments, type Pending } from './comments-store.ts'
 import { useDraft } from './drafts.ts'
@@ -249,13 +249,14 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
         for (const r of rects) {
           if (r.orphan || !r.point) continue
           const was = placedAt.current[r.key]
-          const pin = L?.querySelector(`[data-thread="${CSS.escape(r.key)}"]`) as HTMLElement | null
+          // the composing draft moves with its element too (review r1 #9)
+          const pin = (r.key === 'draft' ? L?.querySelector('.cm-draft') : L?.querySelector(`[data-thread="${CSS.escape(r.key)}"]`)) as HTMLElement | null
           if (pin && was) pin.style.translate = `${r.point.x - was.x}px ${r.point.y - was.y}px`
         }
         return
       }
       const L = layer()
-      if (L) { L.classList.remove('cm-moving'); for (const pin of L.querySelectorAll<HTMLElement>('.cm-pin')) pin.style.translate = '' }
+      if (L) { L.classList.remove('cm-moving'); for (const pin of L.querySelectorAll<HTMLElement>('.cm-pin, .cm-draft')) pin.style.translate = '' }
       const next: typeof framePoints = {}
       const off = new Set<string>()
       for (const r of rects) {
@@ -276,6 +277,8 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
   // spec 39 A2/B2: a drawing thread opened on purpose brings its element into the drawing's view, once; at rest the
   // drawing goes back to its frame view when the thread closes (spec 38 keeps the at-rest view the frame's)
   const revealed = useRef<string | null>(null)
+  // a reloaded drawing has forgotten what it was shown: reveal again (review r1 #7)
+  useEffect(() => { if (node.status !== 'ready') revealed.current = null }, [node.status])
   useEffect(() => {
     const win = iframe.current?.contentWindow
     if (!win || !isDraw || node.status !== 'ready') return
@@ -289,15 +292,20 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
     }
   }, [active, isDraw, node.status, node.key])
 
-  // spec 39 B4: in drawing mode, a comment sent or closed gives the keyboard back to the drawing (the next R draws)
-  const hadComment = useRef(false)
+  // spec 39 B4: in drawing mode, a comment sent or closed gives the keyboard back to the drawing (the next R draws) - a
+  // sent draft opens its new thread, so the draft's end counts on its own (review r1 #6)
+  const hadDraft = useRef(false)
+  const hadThread = useRef(false)
   useEffect(() => {
-    const here = (!!draft && draft.nodeKey === node.key) || (!!active && open.some((t) => t.id === active))
-    if (hadComment.current && !here && isDraw && useStore.getState().interact === node.key) {
+    const draftHere = !!draft && draft.nodeKey === node.key
+    const threadHere = !!active && open.some((t) => t.id === active)
+    const ended = (hadDraft.current && !draftHere) || (hadThread.current && !threadHere && !draftHere)
+    if (ended && isDraw && useStore.getState().interact === node.key) {
       const ae = document.activeElement as HTMLElement | null
-      if (!ae || ae === document.body || ae.closest('.cm-card, .cm-composer')) iframe.current?.contentWindow?.postMessage({ type: 'sh:draw-cmd', op: 'focus' }, location.origin)
+      if (!ae || ae === document.body || !ae.closest('input, textarea, [contenteditable]')) iframe.current?.contentWindow?.postMessage({ type: 'sh:draw-cmd', op: 'focus' }, location.origin)
     }
-    hadComment.current = here
+    hadDraft.current = draftHere
+    hadThread.current = threadHere
   }, [draft, active, isDraw, node.key])
   // note anchors: their own map, measured in the shell, in node-body coordinates (negative x -
   // the note is left of the frame). The composing draft is measured too (key 'draft'), so it
@@ -871,6 +879,18 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
     if (!stage) return null
     // the view below the Mac app's strip when the shell took the inset (TOP 44)
     const W = 320, M = 12, maxH = Math.min(660, window.innerHeight - TOP - 2 * M)
+    // drawing play (spec 39 A3, review r1 #11): the drawing fills the window - the card sits beside its pin, in the room
+    // right of the drawing's panel, over the drawing's chrome
+    const playhost = document.querySelector('.dk-playhost')
+    if (playhost) {
+      const layerRect = playhost.querySelector('.sh-play-comments')?.getBoundingClientRect()
+      const panelRight = (playhost.querySelector('.dk-props') ?? playhost.querySelector('.dk-anchor'))?.getBoundingClientRect().right ?? 0
+      const px = (layerRect?.left ?? 0) + at.x, py = (layerRect?.top ?? 0) + at.y
+      const right = px + 24 + W <= window.innerWidth - M
+      const x = right ? px + 24 : Math.max(panelRight + M, px - 24 - W)
+      const y = Math.min(Math.max(py - 36, TOP + M), Math.max(TOP + M, window.innerHeight - maxH - M))
+      return { position: 'fixed', left: Math.min(x, window.innerWidth - W - M), top: y, maxHeight: maxH, zIndex: 55 }
+    }
     const rect = document.querySelector('.sh-play-stage')?.getBoundingClientRect()
     if (!rect) return { position: 'fixed', left: M, top: TOP + 72, maxHeight: maxH }
     const roomR = window.innerWidth - rect.right >= W + 30
@@ -1309,7 +1329,7 @@ export function cardSelectAll(): boolean {
 /** spec 39 A4: the elements Marver works on in a drawing shimmer in Marver blue - drawn here, over the frame, never on
  *  Excalidraw's canvas (a sleeping frame never renders for it). Placed from the drawing's own answer (the pins' path),
  *  each gone when its lease ends. */
-export function DrawWorkLayer({ frameId, iframe, ready }: { frameId: string; iframe: React.RefObject<HTMLIFrameElement | null>; ready: boolean }) {
+export const DrawWorkLayer = memo(function DrawWorkLayer({ frameId, iframe, ready }: { frameId: string; iframe: React.RefObject<HTMLIFrameElement | null>; ready: boolean }) {
   const entry = useStore((s) => s.workingDrawings[frameId])
   const since = useStore((s) => s.workingSince[frameId])
   const [rects, setRects] = useState<{ key: string; rect: { x: number; y: number; w: number; h: number } }[]>([])
@@ -1344,4 +1364,4 @@ export function DrawWorkLayer({ frameId, iframe, ready }: { frameId: string; ifr
       {rects.map((r) => <i key={r.key} className="dk-work" style={{ left: r.rect.x - 4, top: r.rect.y - 4, width: r.rect.w + 8, height: r.rect.h + 8 }} />)}
     </div>
   )
-}
+})

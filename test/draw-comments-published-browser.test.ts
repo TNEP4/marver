@@ -169,5 +169,16 @@ describe('comments on a published drawing (spec 39 A5), in a real browser', () =
     })()`)
     expect(res).toBeGreaterThanOrEqual(400)
     expect(stored().some((e) => e.body === 'smuggled')).toBe(false)
+    // the right frame, but a node that is not the board's (the build's node map is checked - review r1 #1)
+    const res2 = await ev(`(async () => {
+      const csrf = /(?:^|;\s*)mv_c=([\w-]+)/.exec(document.cookie)?.[1] ?? ''
+      const me = await (await fetch('/__mv/api/me')).json()
+      const ev = { id: 'forged-node-1', ts: me.now ?? Date.now(), type: 'create', commentId: 'forged-thread-2', board: 'main', nodeKey: 'not-a-node', frame: 'sketches/flow',
+        anchor: { el: { draw: { id: 'cart', type: 'rectangle' } } }, author: { id: me.id }, body: 'wrong node' }
+      const r = await fetch('/__mv/api/comments/main', { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-c': csrf }, body: JSON.stringify({ events: [ev], as: me.id }) })
+      return r.status
+    })()`)
+    expect(res2).toBeGreaterThanOrEqual(400)
+    expect(stored().some((e) => e.body === 'wrong node')).toBe(false)
   }, 120_000)
 })

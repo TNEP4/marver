@@ -17,7 +17,9 @@ const el = (id: string, x: number, y: number, extra: Record<string, unknown> = {
 })
 const DRAWING = {
   type: 'excalidraw', version: 2, source: 'marver', marver: { rev: 0, epoch: 'e1', title: 'Checkout flow', size: { w: 960, h: 640 }, view: { x: 0, y: 0, zoom: 1 } },
-  elements: [el('cart', 80, 200, { index: 'a0' }), el('pay', 420, 200, { index: 'a1', seed: 2, versionNonce: 2, strokeColor: '#1e1e1e' })],
+  elements: [el('cart', 80, 200, { index: 'a0' }), el('pay', 420, 200, { index: 'a1', seed: 2, versionNonce: 2, strokeColor: '#1e1e1e' }),
+    // an arrow drawn leftwards: its points run back from x,y (its box is not x,y,width,height - review r1 #2)
+    el('back', 860, 110, { index: 'a2', type: 'arrow', width: 240, height: 0, points: [[0, 0], [-240, 0]], roundness: null, seed: 4, versionNonce: 4, startArrowhead: null, endArrowhead: 'arrow', lastCommittedPoint: null, startBinding: null, endBinding: null })],
   appState: { viewBackgroundColor: '#ffffff', gridSize: null }, files: {},
 }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -92,6 +94,21 @@ describe('comments on a drawing (spec 39), in a real browser', () => {
     expect(Math.abs(pin.x - (at.x + 2))).toBeLessThan(8)
     expect(Math.abs(pin.y - (at.y + 1))).toBeLessThan(8)
   }, 120_000)
+
+  it('a pin on a leftward arrow sits where it was clicked', async (ctx) => {
+    if (!b) return ctx.skip('no Chrome')
+    await ev(`window.__mvComments.getState().setMode(true)`)
+    const at = await page(CANVAS, 700, 110)
+    await click(at.x, at.y)
+    await comment('this arrow goes back')
+    const t = await threadWith('this arrow goes back')
+    expect(t.anchor.el.draw.id).toBe('back')
+    await until(`!!document.querySelector('.cm-pin[data-thread="${t.id}"]')`)
+    await sleep(400)
+    const pin = await pinOf(t.id)
+    expect(Math.abs(pin.x - at.x)).toBeLessThan(8)
+    expect(Math.abs(pin.y - at.y)).toBeLessThan(8)
+  }, 60_000)
 
   it('the pin follows its element when an agent moves it', async (ctx) => {
     if (!b) return ctx.skip('no Chrome')
