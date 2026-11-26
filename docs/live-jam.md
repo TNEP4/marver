@@ -260,6 +260,15 @@ recovered after a restart is rebuilt the same way. Work already handed to an age
 deleted message it read is in that run's context, though its reply never quotes it back. `marver comments
 list` and the context the agent reads never show a deleted message's words.
 
+## On a drawing
+
+Tag **@marver** in a thread on a drawing's element (spec 39): the run gets the element itself - its id, type, words,
+box, the arrows in and out, the elements near it and the drawing's revision when you commented - and is told to change
+it by its id (`npx marver draw`, or the `.excalidraw` file when its sandbox keeps it off the canvas), so the pin stays
+on it. The elements it works on shimmer in blue in the drawing, on the canvas and in play, while you keep drawing
+elsewhere; tags on one drawing join one run, each answered in its own thread. A thread it moved by replacing the
+element is re-pinned by the element's id.
+
 ## Provenance
 
 Every jam reply is stamped with who acted: your dev user, the harness that ran, and the

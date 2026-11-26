@@ -34,7 +34,33 @@ design/scenes/<scene>/<name>.excalidraw
 - The frame has its own view: zoom, fit and zoom to selection in its corner, the minimap while you pan. **Use this
   view for the frame** (in the zoom menu) makes it the view the frame rests at.
 - Opened next to the sidebar, the board moves just enough for the panel to clear it.
+- **Right-click** a selection for its menu, in the drawing's own design: **Comment**, Cut, Copy, Paste, Duplicate,
+  **Copy selection as image** (3x), Copy as SVG, Copy as text, Copy and Paste styles, Group, Unbind text, Wrap in
+  drawing frame, Link, the four layer moves, Flip, Lock and Delete - each with its shortcut. Right-click the paper for
+  **Comment here**, Paste, Select all, Copy as image, Zoom to fit and Copy path. The arrows walk any drawing menu,
+  Enter runs a row, Esc closes it.
 - **Esc** (or a click outside) leaves drawing mode. Everything is saved as you go - there is no save button.
+
+## Comment
+
+A comment goes on **one element** - a shape, an arrow, a line, a stroke, a text, an image - or on a point of the
+paper.
+
+- Press **C** (inside a drawing too) or the comment button, then hover: the element under the pointer is outlined
+  and named (`rectangle · "Account sweep"`). Click it, or the paper, and write. **Comment** in the right-click does
+  the same for what you right-clicked.
+- The pin sits where you clicked and **follows its element** when anyone moves, resizes or rotates it - you, the
+  agent, a reviewer's view - and follows the paper as the drawing pans and zooms.
+- An element out of the drawing's own view parks its pin in the frame's pin column (click it to bring the element
+  into view); an element that is deleted parks it as gone, and an undo brings it back. A cut and paste makes a new
+  element: its comment parks.
+- Opening a thread from anywhere - the sidebar, search, a mail's link, a Marver question - brings its element into
+  view and outlines it.
+- In drawing mode the tool you had waits while you pick; **Esc** closes the comment first, then leaves the drawing.
+- Comments work the same in play, and on a published canvas for the people invited to comment.
+- **@marver** in a thread on an element starts Marver on that element, the usual way - or ask your coding agent to go
+  through the comments (`npx marver comments list --open` names each drawing comment's element). The elements Marver
+  works on shimmer in blue while it works; you can keep drawing elsewhere.
 
 ## Export
 
@@ -48,7 +74,9 @@ design/scenes/<scene>/<name>.excalidraw
 Select a drawing and press **P**: it fills the tab on its own paper - in the Mac app the strip behind the tabs
 too. The left panel holds its name (its menu: export, copy, theme, Hide all UI) and its properties, the tools sit
 top right, the view bottom right. **⌘\\** and **⌘/** collapse the panel and the tools; **H** hides all the UI and
-brings it back; **⌥⇧D** (or **Dark mode / Light mode** in the ⋯) turns the theme. **Esc** goes back to the canvas.
+brings it back (the pins stay - **⇧C** hides them); **⌥⇧D** (or **Dark mode / Light mode** in the ⋯) turns the theme.
+The comment button sits in the tool bar (beside **×** on a published drawing). **Esc** closes an open comment first,
+then goes back to the canvas.
 
 ## The agent draws with you
 
@@ -62,7 +90,13 @@ npx marver draw set <scene/name> <id> key=value…
 npx marver draw move <scene/name> <ids…> --by dx,dy
 npx marver draw rm <scene/name> <ids…>
 npx marver shot <scene/name>                                 # look at it
+npx marver comments new <scene/name> --element <id> --body "…"   # a note on an element (or --paper x,y)
+npx marver comments move <thread> --element <id>                  # re-pin a thread to an element
 ```
+
+An element that holds an open comment is the comment's anchor: agents change it with `set` and `move` and keep its
+id; `draw rm` names the threads an element it removes was holding, and `draw describe` marks the elements that have
+open comments.
 
 A text the agent adds without a width and height is sized from its words and its font size, and every text is
 measured again in its own font when the drawing opens - an agent's label is never cut off.
@@ -79,12 +113,15 @@ the history a later release will let you scrub.
 
 ## Published
 
-On a published canvas a drawing is view-only: pan and zoom inside it, open it in play, comment on it as on any
-frame. Who drew what stays on your machine.
+On a published canvas a drawing is view-only: pan and zoom inside it, open it in play, export it. The people you
+invited to comment on the board comment on its elements and its paper, at rest and in play; their comments reach your
+canvas through sync, and Marver's replies in their threads reach them (see [publish.md](publish.md)). The right-click
+there keeps Comment, Copy selection as image and Copy as text. Who drew what stays on your machine.
 
 ## Limits in this release
 
 - Excalidraw 0.18.1's tools: no sticky note, lasso, draw-to-shape, bucket fill or pen pressure setting.
-- **History** and **Send to Marver** show in the ⋯, greyed: they arrive with a later release.
+- **History** shows in the ⋯, greyed: it arrives with a later release.
+- The laser and Jam captures treat a drawing as one frame; a comment goes on one element, never a whole group.
 - Pasted images are stored inside the drawing file for now.
 - Mermaid to drawing (`draw add --mermaid`) is not available yet - the agent writes elements.

@@ -260,6 +260,24 @@ next. A rename onto an address someone else already holds is refused outright.
 > (One instance at a time, as ever: during a rolling restart an old replica still
 > honours old sessions until it drains.)
 >
+
+### What your reviewers see of Marver
+
+When your canvas runs Marver (Live Jam, or your coding agent replying with `marver comments reply`), its replies in
+a reviewer's thread reach the published canvas - so the person who asked sees what Marver did. They travel only
+through your own sync, and only when you connected with `MARVER_CLI_TOKEN` (the operator): a password-connected
+device, and every browser session including yours, can never post as Marver. A canvas published with an older marver
+keeps them local until you publish again; `marver comments sync` says why when it holds them.
+
+- A reviewer sees Marver's words and its model - never your machine's name, your file paths or the files it also
+  changed.
+- A Marver reply notifies the people of that thread as a new reply (and mails them, as any reply); an "On it" first
+  answer, an edit or a re-pin mails nobody. Only you are asked Marver's questions.
+- Nobody can write as Marver: a name that reads "Marver" is refused, the Marver face is drawn only for Marver's own
+  messages, and nobody can edit or delete them from a browser.
+- Marver's re-pins follow an element it moved or replaced, on any thread. A published drawing is a snapshot of the
+  last publish: a pin on an element the snapshot does not have yet parks as "changed since this was published".
+- Threads Marver starts itself (its notes) stay on your machine, as before.
 > It is a deployment variable rather than something a page hands out, and that is
 > deliberate. A browser-approved sign-in for the CLI was built for this and then
 > removed before release: authored frames run same-origin in a canvas, so frame

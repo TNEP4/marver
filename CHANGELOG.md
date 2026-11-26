@@ -2,6 +2,44 @@
 
 Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 
+## Unreleased
+
+### Highlights
+
+- **Comment on any element of a drawing.** Press **C** (inside a drawing too) and hover: the shape, arrow, line, stroke
+  or text under the pointer is outlined and named; click it - or a point of the paper - and write. The pin sits where
+  you clicked and follows its element when anyone moves it, and the drawing as it pans and zooms. It works on the
+  canvas, while you draw, in play and on the Mac app. See [docs/drawings.md](docs/drawings.md).
+- **Marver on an element.** **@marver** in a thread on a drawing's element puts Marver on exactly that element - it
+  changes it by its id, so the pin stays on it - and the elements it works on shimmer in blue while you keep drawing
+  elsewhere. Or ask your coding agent to go through the comments: `comments list` names each drawing comment's element.
+- **Your people comment on published drawings, and see Marver's answers.** Everyone you invited to comment on a board
+  pins comments to its drawings' elements, at rest and in play. Marver's replies in their threads now reach the
+  published canvas - only through your own `MARVER_CLI_TOKEN` connection, never your machine's name or paths, and
+  nobody can write as Marver. See [docs/publish.md](docs/publish.md).
+- **A right-click in Marver's design.** Right-click in a drawing for its own menu: Comment first, then cut, copy, paste,
+  duplicate, copy selection as image (3x), SVG or text, styles, group, layers, flip, lock, delete - each with its
+  shortcut, the arrows walk it. On the paper: comment here, paste, copy as image, zoom to fit, copy path.
+
+### Added
+
+- `npx marver comments new|move --element <id>` (or `--paper x,y`) for drawings; `comments list` and `marks` print each
+  comment's element; `draw describe` marks the elements that hold open comments, and `draw rm` names the threads an
+  element it removes was holding.
+- A run's drawing edits are attributed to it (`marver draw --run`), new drawings are found by the canvas at once, and
+  an agent's raw edit to a drawing nobody has opened since a restart still becomes a revision.
+
+### Fixed
+
+- Live Jam treated a drawing as a shared file: it now runs on drawings like on any frame.
+- The drawing panel showed the wrong keys for Send to back and Bring to front (they are ⌥⌘[ and ⌥⌘]).
+- A published drawing kept its revision history id (epoch), so a comment made there knows which drawing it saw.
+
+### Upgrading
+
+- `npx marver init` - the managed instructions (jam, draw, iterate, AGENTS) learn drawing comments.
+- Publish again after upgrading, and connect with `MARVER_CLI_TOKEN`, for Marver's replies to reach your reviewers.
+
 ## 0.38.0 - 2026-11-26
 
 ### Highlights
