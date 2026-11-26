@@ -102,6 +102,14 @@ const BASE: Record<string, unknown> = {
   roughness: 1, opacity: 100, groupIds: [], frameId: null, roundness: null, boundElements: null, link: null, locked: false,
 }
 
+/** A text's box from its words, a little generous: the hand-drawn fonts run ~0.5-0.55 em a glyph, and a box too wide
+ *  only pads the selection where one too narrow cuts the words off. The draw host measures exactly when it loads. */
+export function textBox(text: string, fontSize: number, lineHeight = 1.25): { w: number; h: number } {
+  const lines = text.split('\n')
+  const longest = Math.max(1, ...lines.map((l) => [...l].length))
+  return { w: Math.ceil(longest * fontSize * 0.62), h: Math.ceil(lines.length * fontSize * lineHeight) }
+}
+
 /** An element as an agent may write it (id, type, x, y, width, height, text…) made whole: Excalidraw's defaults, a seed,
  *  a version. `index` is given by `assignIndexes`. Elements already whole keep every field. */
 export function wholeElement(raw: Record<string, unknown>, by: string, now = Date.now()): DrawElement {
@@ -109,8 +117,14 @@ export function wholeElement(raw: Record<string, unknown>, by: string, now = Dat
   const el: Record<string, unknown> = { ...BASE, ...raw, type }
   if (typeof el.id !== 'string' || !el.id) el.id = `mv-${Math.random().toString(36).slice(2, 12)}`
   for (const k of ['x', 'y']) el[k] = Number.isFinite(Number(el[k])) ? Number(el[k]) : 0
-  if (!Number.isFinite(Number(el.width))) el.width = type === 'text' ? 100 : 160
-  if (!Number.isFinite(Number(el.height))) el.height = type === 'text' ? 25 : 80
+  if (type === 'text') {
+    // an agent's text with no box: sized from its words (Excalidraw clips a text to its box when it loads a file)
+    const est = textBox(String(raw.text ?? raw.originalText ?? ''), Number(raw.fontSize) || 20, Number(raw.lineHeight) || 1.25)
+    if (!Number.isFinite(Number(el.width))) el.width = est.w
+    if (!Number.isFinite(Number(el.height))) el.height = est.h
+  }
+  if (!Number.isFinite(Number(el.width))) el.width = 160
+  if (!Number.isFinite(Number(el.height))) el.height = 80
   el.width = Number(el.width); el.height = Number(el.height)
   if (!Number.isInteger(el.seed)) el.seed = rand()
   if (!Number.isInteger(el.version) || (el.version as number) < 1) el.version = 1

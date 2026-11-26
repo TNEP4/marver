@@ -18,7 +18,8 @@ path it prints. The scene defaults to `sketches`; the size defaults to 960x640.
 Write a JSON array of partial Excalidraw elements (or `{"elements":[...]}`), then
 run `npx marver draw add <frame> --elements elements.json --at 40,40`.
 Use rectangle, diamond, ellipse, arrow, line and text elements. Give each an
-`id`, `type`, `x`, `y`, `width` and `height`; give text its `text` too. Keep ids
+`id`, `type`, `x`, `y`, `width` and `height`; give text its `text` too (a text
+with no `width`/`height` is sized from its words and `fontSize`). Keep ids
 stable and meaningful, such as `box-cart` and `label-cart`.
 
 ```json

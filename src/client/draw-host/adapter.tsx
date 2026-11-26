@@ -237,7 +237,8 @@ export function DrawEngine({ initial, theme, edit, editable, onReady, onChange, 
           requestAnimationFrame(() => start())
         }}
         initialData={{
-          elements: initial.elements as any,
+          // measured as it loads: a text's stored box (an agent's estimate, another font's) never cuts its words off
+          elements: restoreElements(initial.elements as any, null, { refreshDimensions: true, repairBindings: true }) as any,
           files: initial.files as any,
           appState: { viewBackgroundColor: initial.background ?? '#ffffff', currentItemRoughness: 1, theme, gridSize: null } as any,
           scrollToContent: false,

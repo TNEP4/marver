@@ -65,10 +65,20 @@ describe('drawing files', () => {
   })
 
   it('fills text, arrow, line and freedraw defaults', () => {
-    expect(element('label', { type: 'text', text: 'Cart' })).toMatchObject({ width: 100, height: 25, text: 'Cart', originalText: 'Cart', fontSize: 20, fontFamily: 5, lineHeight: 1.25, textAlign: 'left', verticalAlign: 'top', containerId: null, autoResize: true })
+    expect(element('label', { type: 'text', text: 'Cart' })).toMatchObject({ width: 50, height: 25, text: 'Cart', originalText: 'Cart', fontSize: 20, fontFamily: 5, lineHeight: 1.25, textAlign: 'left', verticalAlign: 'top', containerId: null, autoResize: true })
     expect(element('arrow', { type: 'arrow', width: 200, height: 0 })).toMatchObject({ points: [[0, 0], [200, 0]], startBinding: null, endBinding: null, startArrowhead: null, endArrowhead: 'arrow', elbowed: false, roundness: { type: 2 } })
     expect(element('line', { type: 'line' })).toMatchObject({ points: [[0, 0], [160, 80]], lastCommittedPoint: null })
     expect(element('pen', { type: 'freedraw' })).toMatchObject({ points: [], pressures: [], simulatePressure: true, lastCommittedPoint: null })
+  })
+
+  it("sizes an agent's text from its words when it gives no box - a long, large label is never cut to a default (seen in the Mac app)", () => {
+    const t = element('ask', { type: 'text', text: 'agent: is login needed?', fontSize: 28 })
+    expect(t.width).toBeGreaterThanOrEqual(23 * 28 * 0.55)          // wider than the words at the hand-drawn font's width
+    expect(t.height).toBe(Math.ceil(28 * 1.25))
+    const two = element('two', { type: 'text', text: 'one line\nand a longer second line', fontSize: 20 })
+    expect(two.height).toBe(Math.ceil(2 * 20 * 1.25))
+    expect(two.width).toBeGreaterThanOrEqual(24 * 20 * 0.55)        // the longest line
+    expect(element('given', { type: 'text', text: 'Cart', width: 300, height: 40 })).toMatchObject({ width: 300, height: 40 })   // an explicit box kept
   })
 
   it('assigns missing, invalid and colliding indexes after the current maximum', () => {

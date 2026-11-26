@@ -20,8 +20,9 @@ import { cmd } from '../commands.ts'
 
 const HEAD = 28            // the frame head (world px)
 const PANEL_W = 232, GAP = 16
-/** where a pinned drawing bar may start: 10 px under the shell's toolbar pill (nav.sh-pill: top max(10px, the inset), 44 px tall) */
-const BAR_FLOOR = Math.max(TOP, 10) + 44 + 10
+/** where a pinned drawing bar may start: 10 px under the shell's toolbar pill - its own rule (styles.css .sh-pill:
+ *  top max(var(--edge), var(--mv-top)), 44 px tall), so the two never disagree */
+const BAR_FLOOR = 'calc(max(var(--edge, 10px), var(--mv-top, 0px)) + 54px)'
 
 /** A pointer-down on a control keeps focus where it was (the drawing's iframe) - inputs excepted. */
 const keepFocus = (e: React.MouseEvent) => {
@@ -48,7 +49,7 @@ export function DrawCanvasChrome() {
   const sx = (wx: number) => `calc(var(--sh-tx, 0px) + var(--sh-s, 1) * ${wx}px)`
   const sy = (wy: number) => `calc(var(--sh-ty, 0px) + var(--sh-s, 1) * ${wy}px)`
   // above the frame; with the frame's top off screen it pins just below the shell's toolbar row (never over it)
-  const bar: CSSProperties = { left: sx(node.x + node.w / 2), top: `max(${BAR_FLOOR}px, calc(${sy(node.y)} - 50px))`, transform: 'translateX(-50%)' }
+  const bar: CSSProperties = { left: sx(node.x + node.w / 2), top: `max(${BAR_FLOOR}, calc(${sy(node.y)} - 50px))`, transform: 'translateX(-50%)' }
   const panel: CSSProperties = { left: `max(8px, calc(${sx(node.x)} - ${PANEL_W + GAP}px))`, top: `max(${TOP + 8}px, ${sy(node.y + HEAD)})` }
   const view: CSSProperties = { left: `calc(${sx(node.x + node.w)} - 8px)`, top: `calc(${sy(node.y + HEAD + node.h)} - 8px)`, transform: 'translate(-100%, -100%)' }
   const copyPath = () => {
