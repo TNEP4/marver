@@ -1,4 +1,4 @@
-<!-- marver:managed 8fd9753cb0da4ff15ec4fac223f97bcc1b2c875345421729907243e0ad7d0269 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed fb23d14650c2bedcfc666930b62383d4d2a4e4a2306a9232fc010d258f107f95 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Design canvas - agent contract
 
 You design by writing files. The canvas at the printed localhost URL reflects them live.
@@ -38,6 +38,7 @@ file in design/instructions/ - they are short, strict, and part of this contract
 | Configure | first session in a repo, frames render unstyled, or the canvas does not wear the product's name and logo: `marver dev`'s boot line says "this canvas still shows ...", `name` in design/config.ts is missing or still init's guess from package.json ("My repo" for `my-repo`), or the logo is the Marver mark - do step 6, identity | instructions/configure.md |
 | Discover | any new surface, feature, or flow | instructions/discover.md |
 | Shape | thinking a feature through on canvas (specs, diagrams, mood boards) - never the first session | instructions/shape.md |
+| Draw | creating or editing a drawing frame with the person | instructions/draw.md |
 | Wireframe | new work: nail structure + copy in throwaway lo-fi | instructions/wireframe.md |
 | Brand | before the first hi-fi work: extract or create the world | instructions/brand.md |
 | Build | hi-fi frames from real components | instructions/craft.md + components.md |
