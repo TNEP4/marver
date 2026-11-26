@@ -373,6 +373,9 @@ describe('the drawing frame (spec 38), in a real browser', () => {
     const words = `(() => { const d = document.querySelector('iframe[data-kind="draw"]').contentDocument; const c = d.createElement('canvas').getContext('2d'); c.font = '28px Excalifont'; return c.measureText('agent: is login needed?').width })()`
     await until(`(() => { const w = document.querySelector('iframe[data-kind="draw"]').contentWindow; const t = w.__mvDraw.engine.elements().find((x) => x.id === 'tight-label'); return w.document.fonts.check('28px Excalifont') && t && t.width >= ${words} - 1 })()`, 10_000)
     await until(`(() => { const w = document.querySelector('iframe[data-kind="draw"]').contentWindow; const t = w.__mvDraw.engine.elements().find((x) => x.id === 'wide-label'); return !!t && t.text === 'Guest checkout' })()`, 10_000)
+    // and placed again in the middle of its box (one line now, not where the two lines began)
+    const lab = await ev(`(() => { const e = document.querySelector('iframe[data-kind="draw"]').contentWindow.__mvDraw.engine.elements(); const t = e.find((x) => x.id === 'wide-label'), b = e.find((x) => x.id === 'wide-box'); return { mid: t.y + t.height / 2, boxMid: b.y + b.height / 2 } })()`)
+    expect(Math.abs(lab.mid - lab.boxMid)).toBeLessThan(1)
     off()
     await b.send('Fetch.disable', {}, s)
     await b.send('Network.setCacheDisabled', { cacheDisabled: false }, s)

@@ -260,7 +260,11 @@ export function DrawEngine({ initial, theme, edit, editable, onReady, onChange, 
                 const t = e as DrawElement & { text?: string }
                 if (e.type !== 'text' || !f || (f.width === e.width && f.height === e.height && f.text === t.text && f.x === e.x && f.y === e.y)) return e
                 changed = true
-                return { ...e, text: f.text, x: f.x, y: f.y, width: f.width, height: f.height }
+                const laid = { ...e, text: f.text, x: f.x, y: f.y, width: f.width, height: f.height }
+                // a shape's label placed again in it by its alignment (restoreElements resizes it but leaves it where it
+                // was - a two-line label that is now one line would sit high: release review r5); arrows place their own
+                const box = (e as any).containerId ? els.find((c) => c.id === (e as any).containerId) : undefined
+                return box && box.type !== 'arrow' && box.type !== 'line' ? { ...laid, ...labelPosition(box, laid) } : laid
               })
               if (changed) api.updateScene({ elements: next as any, captureUpdate: CU.NEVER })
             }
@@ -318,4 +322,20 @@ function fitContent(api: Api, initial = false) {
   if (!els.length) { api.updateScene({ appState: { scrollX: 0, scrollY: 0, zoom: { value: 1 } }, captureUpdate: CU.NEVER }); return }
   // fit with a margin, never above 100 % (a three-box sketch should not fill the frame at 400 %)
   api.scrollToContent(els, { fitToViewport: true, viewportZoomFactor: 0.9, animate: !initial, duration: 220, maxZoom: 1 } as any)
+}
+
+/** Where a label sits in its shape - Excalidraw 0.18.1's computeBoundTextPosition (element/textElement.ts), not exported
+ *  from the package: the shape's inner box (padding 5; an ellipse's and a diamond's inscribed one), then the label's
+ *  alignment in it. */
+function labelPosition(box: DrawElement, t: DrawElement): { x: number; y: number } {
+  const P = 5
+  const w = Number(box.width), h = Number(box.height)
+  let ox = P, oy = P, mw = w - P * 2, mh = h - P * 2
+  if (box.type === 'ellipse') { ox += (w / 2) * (1 - Math.SQRT2 / 2); oy += (h / 2) * (1 - Math.SQRT2 / 2); mw = Math.round((w / 2) * Math.SQRT2) - P * 2; mh = Math.round((h / 2) * Math.SQRT2) - P * 2 }
+  if (box.type === 'diamond') { ox += w / 4; oy += h / 4; mw = Math.round(w / 2) - P * 2; mh = Math.round(h / 2) - P * 2 }
+  const cx = Number(box.x) + ox, cy = Number(box.y) + oy, tw = Number(t.width), th = Number(t.height)
+  const va = (t as any).verticalAlign, ta = (t as any).textAlign
+  const y = va === 'top' ? cy : va === 'bottom' ? cy + (mh - th) : cy + (mh / 2 - th / 2)
+  const x = ta === 'left' ? cx : ta === 'right' ? cx + (mw - tw) : cx + (mw / 2 - tw / 2)
+  return { x, y }
 }
