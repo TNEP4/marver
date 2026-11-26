@@ -10,11 +10,42 @@
  */
 import type { DrawElement } from '../../shared/draw-protocol.ts'
 import { sameContent, wholeElement } from './file.ts'
+import { randomBytes } from 'node:crypto'
+import { validElementId } from '../../shared/anchor.ts'
 
 export interface Op { id: string; el: DrawElement | null; v: number }
 export interface Lost { id: string; by: string; rev: number }
 
 const nonce = () => Math.floor(Math.random() * 2 ** 31)
+
+/** Rename ids and all references together, before maps or ops are keyed by them. */
+export function remapElementIds<T extends Record<string, unknown>>(elements: T[], occupied: Iterable<string> = [], duplicates = false): T[] {
+  const used = new Set([...occupied, ...elements.flatMap((e) => typeof e.id === 'string' ? [e.id] : [])])
+  const taken = new Set(occupied), remap = new Map<string, string>()
+  const renamed = elements.map((e) => {
+    let id = e.id
+    if (!validElementId(id) || (duplicates && taken.has(id))) {
+      let fresh: string
+      do { fresh = `mv-${randomBytes(12).toString('hex')}` } while (used.has(fresh))
+      used.add(fresh)
+      if (typeof id === 'string') remap.set(id, fresh)
+      id = fresh
+    }
+    taken.add(id as string)
+    return { ...e, id }
+  })
+  const to = (id: unknown) => typeof id === 'string' ? remap.get(id) ?? id : id
+  return renamed.map((e) => {
+    const next: Record<string, unknown> = { ...e }
+    for (const k of ['containerId', 'frameId']) if (k in next) next[k] = to(next[k])
+    if (Array.isArray(next.boundElements)) next.boundElements = next.boundElements.map((b) => ({ ...b, id: to(b.id) }))
+    for (const k of ['startBinding', 'endBinding']) {
+      const b = next[k] as { elementId?: unknown } | null | undefined
+      if (b && typeof b === 'object') next[k] = { ...b, elementId: to(b.elementId) }
+    }
+    return next as T
+  })
+}
 
 /** The person's save: their elements win. `cur` = live elements now, `tomb` = deleted ids -> version. */
 export function ownerOps(cur: Map<string, DrawElement>, tomb: Map<string, number>, upserts: DrawElement[], deletes: { id: string; version: number }[], now: number): Op[] {
@@ -40,6 +71,7 @@ export function ownerOps(cur: Map<string, DrawElement>, tomb: Map<string, number
  * `theirs` = the file; `cur` = now; `ownerSince` = ids the person changed after the base (with the rev); `tomb` = deleted.
  */
 export function agentOps(base: Map<string, DrawElement> | null, theirs: Map<string, DrawElement>, cur: Map<string, DrawElement>, tomb: Map<string, number>, ownerSince: Map<string, number>, by: string, now: number, deletedSince: Map<string, { by: string; rev: number }> = new Map()): { ops: Op[]; lost: Lost[] } {
+  theirs = new Map(remapElementIds([...theirs.values()], [...cur.keys(), ...tomb.keys()]).map((e) => [e.id, e]))
   const ops: Op[] = []
   const lost: Lost[] = []
   const bump = (id: string) => Math.max(cur.get(id)?.version ?? 0, tomb.get(id) ?? 0, base?.get(id)?.version ?? 0) + 1

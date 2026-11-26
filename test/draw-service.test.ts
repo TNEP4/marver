@@ -268,3 +268,54 @@ describe('DrawService - review r1 regressions', () => {
     expect((await service.get(ID)).elements[0].x).toBe(2)   // the truth is kept
   })
 })
+
+describe('drawing ids shared with comment anchors', () => {
+  const batch = (bad: string) => [
+    { id: bad, type: 'rectangle', boundElements: [{ id: 'label', type: 'text' }, { id: 'arrow', type: 'arrow' }] },
+    { id: 'label', type: 'text', text: 'Label', containerId: bad },
+    { id: 'arrow', type: 'arrow', startBinding: { elementId: bad }, endBinding: { elementId: bad } },
+    { id: 'child', type: 'rectangle', frameId: bad },
+  ]
+  const check = (bad: string) => {
+    const doc = disk(), ids = [...doc.elements.keys()]
+    const id = ids.find((x) => !['label', 'arrow', 'child'].includes(x))!
+    expect(id).toMatch(/^mv-[0-9a-f]{24}$/)
+    expect(id).not.toBe(bad)
+    expect(doc.elements.get('label')?.containerId).toBe(id)
+    expect(doc.elements.get('child')?.frameId).toBe(id)
+    expect(doc.elements.get('arrow')).toMatchObject({ startBinding: { elementId: id }, endBinding: { elementId: id } })
+    expect(doc.elements.get(id)?.boundElements).toEqual(expect.arrayContaining([{ id: 'label', type: 'text' }, { id: 'arrow', type: 'arrow' }]))
+    for (const op of log().at(-1)!.ops) if (op.el) expect(op.id).toBe(op.el.id)
+    expect(ids).not.toContain(bad)
+  }
+  for (const bad of ['', 'x'.repeat(257), 'bad\nid']) {
+    it(`draw add remaps ${bad === '' ? 'an empty' : bad.length === 257 ? 'a long' : 'a control-character'} id and all references`, async () => {
+      await service.op(ID, { kind: 'add', elements: batch(bad) }, 'add-invalid')
+      check(bad)
+    })
+    it(`a raw edit remaps ${bad === '' ? 'an empty' : bad.length === 257 ? 'a long' : 'a control-character'} id, map/op keys and references`, async () => {
+      await service.get(ID)
+      const doc = disk()
+      for (const e of batch(bad)) doc.elements.set(e.id, { ...el(e.id, e), id: e.id })
+      writeAgent(doc)
+      await service.onDisk(abs)
+      check(bad)
+      const rev = (await service.get(ID)).rev
+      expect((await service.get(ID)).rev).toBe(rev)
+    })
+  }
+  it('keeps checkout:submit and refuses draw set with an invalid target or id field', async () => {
+    await service.op(ID, { kind: 'add', elements: [{ id: 'checkout:submit', type: 'rectangle' }] }, 'valid-id')
+    expect(disk().elements.has('checkout:submit')).toBe(true)
+    await expect(service.op(ID, { kind: 'set', id: 'checkout:submit', fields: { id: 'bad\nid' } }, 'bad-field')).rejects.toThrow(/element id/)
+    await expect(service.op(ID, { kind: 'set', id: 'bad\nid', fields: { x: 10 } }, 'bad-target')).rejects.toThrow(/element id/)
+  })
+  it('a duplicate 256-character id also gets a fresh id instead of a longer suffix', async () => {
+    const id = 'x'.repeat(256)
+    await service.op(ID, { kind: 'add', elements: [{ id }] }, 'first')
+    const result = await service.op(ID, { kind: 'add', elements: [{ id }, { id: 'label', type: 'text', containerId: id }] }, 'second')
+    expect(result.ids[0]).toMatch(/^mv-[0-9a-f]{24}$/)
+    expect(disk().elements.get('label')?.containerId).toBe(result.ids[0])
+    expect(disk().elements.has(id)).toBe(true)
+  })
+})
