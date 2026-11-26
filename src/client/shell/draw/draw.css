@@ -251,7 +251,9 @@ body:has(.dk-playhost) .sh-toasts, body:has(.dk-playhost) .sh-show-notice, body:
 .dk-ctxmenu .warn button, .dk-ctxmenu .warn button .ic { color: #e5484d }
 
 /* spec 39 A4: the elements Marver works on, shimmering in Marver blue (the work wave's colour and beat) */
-.dk-work-layer { position: absolute; inset: 0; pointer-events: none; z-index: 29 }
+/* never takes a press or a wheel - the person keeps drawing while Marver works (beats .cm-layer > *'s auto) */
+.cm-layer > .dk-work-layer, .dk-work-layer, .dk-work { position: absolute; inset: 0; pointer-events: none !important; z-index: 29 }
+.dk-work { inset: auto }
 .dk-work { position: absolute; border-radius: 6px; box-shadow: 0 0 0 2px color-mix(in srgb, var(--mv-blue, #0088ff) 55%, transparent);
   background: color-mix(in srgb, var(--mv-blue, #0088ff) 10%, transparent); animation: dk-work-shim 1.6s ease-in-out infinite;
   animation-delay: var(--mv-w0, 0s) }

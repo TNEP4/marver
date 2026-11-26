@@ -29,11 +29,13 @@ import { useDrawPlay } from './play-state.ts'
 type Row = { name: string; labelKey: string }
 type Open = { key: string; frame: string; x: number; y: number; rows: Row[]; element: boolean; anchor: unknown; editable: boolean; hitId?: string; sel: string[] }
 
-export const useDrawMenu = create<{ m: Open | null; open(m: Open): void; close(): void }>((set) => ({
+export const useDrawMenu = create<{ m: Open | null; why: string; open(m: Open): void; close(why?: string): void }>((set) => ({
   m: null,
+  why: '',
   open: (m) => set({ m }),
-  close: () => set({ m: null }),
+  close: (why = '') => set({ m: null, why }),
 }))
+if (typeof window !== 'undefined' && (import.meta as any).env?.DEV) (window as any).__mvDrawMenu = useDrawMenu
 
 /** the window of the drawing a menu belongs to: a canvas frame by its node, play's own */
 const winOf = (key: string): Window | null | undefined =>
@@ -267,7 +269,7 @@ export function DrawContextMenu() {
   const close = useDrawMenu((s) => s.close)
   const ref = useRef<HTMLDivElement>(null)
   const [top, setTop] = useState<number | null>(null)
-  useMenuKeys(ref, !!m, close, m?.key)
+  useMenuKeys(ref, !!m, () => close('keys'), m?.key)
   // kept inside the window: placed once laid out, and again a frame later (its icons and fonts can still grow it)
   const [shown, setShown] = useState(false)
   useLayoutEffect(() => {
@@ -284,13 +286,14 @@ export function DrawContextMenu() {
   // on resize - one drawing menu at a time
   useEffect(() => {
     if (!m) return
-    const onDown = (e: PointerEvent) => { if (!ref.current?.contains(e.target as globalThis.Node)) close() }
-    const onMsg = (e: MessageEvent) => { if (e.origin === location.origin && (e.data?.type === 'sh:frame-down' || (e.data?.type === 'sh:draw-state' && e.data.panning))) close() }
-    const offMotion = onMotion((mo) => { if (mo.camera) close() })
+    const onDown = (e: PointerEvent) => { if (!ref.current?.contains(e.target as globalThis.Node)) close('press') }
+    const onMsg = (e: MessageEvent) => { if (e.origin === location.origin && (e.data?.type === 'sh:frame-down' || (e.data?.type === 'sh:draw-state' && e.data.panning))) close(e.data.type) }
+    const offMotion = onMotion((mo) => { if (mo.camera) close('camera') })
+    const onResize = () => close('resize')
     addEventListener('pointerdown', onDown, true)
     addEventListener('message', onMsg)
-    addEventListener('resize', close)
-    return () => { removeEventListener('pointerdown', onDown, true); removeEventListener('message', onMsg); removeEventListener('resize', close); offMotion() }
+    addEventListener('resize', onResize)
+    return () => { removeEventListener('pointerdown', onDown, true); removeEventListener('message', onMsg); removeEventListener('resize', onResize); offMotion() }
   }, [m])
   const app = document.querySelector('.sh-app')
   if (!m || !app) return null
@@ -301,7 +304,7 @@ export function DrawContextMenu() {
     <div ref={ref} className="sh-menu sh-ctxmenu dk-menu dk-ctxmenu" role="menu" style={{ position: 'fixed', left: Math.max(8, Math.min(m.x, window.innerWidth - W - 8)), top: top ?? m.y, width: W, zIndex: 70, maxHeight: `calc(100vh - ${TOP + 16}px)`, overflowY: 'auto', visibility: top === null || !shown ? 'hidden' : undefined }}>
       {items.map((it, i) => it === '|'
         ? <div key={`sep${i}`} className="div" />
-        : <span key={it.id} className={it.warn ? 'warn' : undefined}><MI icon={it.icon} label={it.label} k={it.k} onClick={() => { close(); it.run() }} /></span>)}
+        : <span key={it.id} className={it.warn ? 'warn' : undefined}><MI icon={it.icon} label={it.label} k={it.k} onClick={() => { close('row'); it.run() }} /></span>)}
     </div>,
     app,
   )

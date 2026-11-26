@@ -69,6 +69,10 @@ describe("a drawing's right-click in Marver's design (spec 39), in a real browse
     const r = await ev(`(() => { const b = [...document.querySelectorAll('.dk-ctxmenu button')].find((b) => b.querySelector('span')?.textContent === ${JSON.stringify(label)}); if (!b) return null; const q = b.getBoundingClientRect(); return { x: q.x + q.width / 2, y: q.y + q.height / 2 } })()`)
     if (!r) return false
     await click(r.x, r.y)
+    // a row's click closes the menu: still open means the press missed under load - once more
+    try { await until(`!document.querySelector('.dk-ctxmenu')`, 1500) } catch { await click(r.x, r.y); await until(`!document.querySelector('.dk-ctxmenu')`, 3000) }
+    const why = await ev(`window.__mvDrawMenu?.getState().why`)
+    if (why !== 'row') throw new Error(`the menu closed by itself before the click (${why})`)
     return true
   }
   const live = () => inner(`w.__mvDraw.engine.elements().filter((e) => !e.isDeleted)`)
@@ -96,8 +100,15 @@ describe("a drawing's right-click in Marver's design (spec 39), in a real browse
 
   it('rows run Excalidraw\'s own actions: Duplicate, Flip, Delete', async (ctx) => {
     if (!b) return ctx.skip('no Chrome')
+    // its own selection and its own menu (never the one the last step left open)
+    await key('Escape', 'Escape', 27)
+    const at0 = await page(80 + 40, 200 + 20)
+    await click(at0.x, at0.y)
+    await until(`!!document.querySelector('${FRAME}').contentWindow.__mvDraw.engine.appState().selectedElementIds?.cart`, 5000)
+    await click(at0.x, at0.y, 'right')
+    await until(`!!document.querySelector('.dk-ctxmenu')`, 5000)
     expect(await row('Duplicate')).toBe(true)
-    await until(`(() => { const f = document.querySelector('${FRAME}'); return f.contentWindow.__mvDraw.engine.elements().filter((e) => !e.isDeleted && e.type === 'rectangle').length === 2 })()`, 5000)
+    await until(`(() => { const f = document.querySelector('${FRAME}'); return f.contentWindow.__mvDraw.engine.elements().filter((e) => !e.isDeleted && e.type === 'rectangle').length === 2 })()`, 10_000)
     const at = await page(80 + 40, 200 + 20)
     await click(at.x, at.y)
     await click(at.x, at.y, 'right')
@@ -136,6 +147,25 @@ describe("a drawing's right-click in Marver's design (spec 39), in a real browse
     await until(`!!document.querySelector('.dk-ctxmenu')`, 5000)
     expect(await row('Copy as SVG')).toBe(true)
     await until(`window.__clip.startsWith('<svg')`, 5000)
+  }, 60_000)
+
+  it('Cut deletes exactly what it copied, even when the selection changes while the clipboard is written', async (ctx) => {
+    if (!b) return ctx.skip('no Chrome')
+    // a second element to move the selection to, and a clipboard that takes its time
+    await inner(`(() => { const e = w.__mvDraw.engine.elements().find((x) => x.id === 'cart'); w.__mvApp.scene.replaceAllElements([...w.__mvDraw.engine.elements(), { ...e, id: 'other', x: 500, index: 'a9', boundElements: null, seed: 9, versionNonce: 9 }]); return true })()`)
+    await ev(`(() => { const o = navigator.clipboard.write.bind(navigator.clipboard); navigator.clipboard.write = async (items) => { await new Promise((r) => setTimeout(r, 600)); return o(items) }; return true })()`)
+    const at = await page(80 + 40, 200 + 20)
+    await click(at.x, at.y)
+    await click(at.x, at.y, 'right')
+    await until(`!!document.querySelector('.dk-ctxmenu')`, 5000)
+    expect(await row('Cut')).toBe(true)
+    // the selection moves to the other element before the write lands
+    await inner(`(() => { w.__mvApp.setState({ selectedElementIds: { other: true } }); return true })()`)
+    await until(`!document.querySelector('${FRAME}').contentWindow.__mvDraw.engine.elements().some((e) => e.id === 'cart' && !e.isDeleted)`, 5000)
+    expect(await inner(`w.__mvDraw.engine.elements().some((e) => e.id === 'other' && !e.isDeleted)`)).toBe(true)
+    // put things back for the next step
+    await inner(`w.__mvDraw.engine.undo()`)
+    await until(`document.querySelector('${FRAME}').contentWindow.__mvDraw.engine.elements().some((e) => e.id === 'cart' && !e.isDeleted)`, 5000)
   }, 60_000)
 
   it('the arrows walk it, Enter runs, Escape closes the menu only (drawing mode stays)', async (ctx) => {

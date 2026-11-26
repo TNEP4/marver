@@ -6,6 +6,7 @@
  * overlap (pin-layout.ts places them).
  */
 import { useDrawPlay } from './draw/play-state.ts'
+import { underChrome } from './draw/chrome.ts'
 import { TOP } from './inset.ts'
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
@@ -259,9 +260,13 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
       if (L) { L.classList.remove('cm-moving'); for (const pin of L.querySelectorAll<HTMLElement>('.cm-pin, .cm-draft')) pin.style.translate = '' }
       const next: typeof framePoints = {}
       const off = new Set<string>()
+      const origin = isDraw ? L?.getBoundingClientRect() : undefined
+      const k = origin && L?.offsetWidth ? origin.width / L.offsetWidth : 1
       for (const r of rects) {
         if (r.orphan) { next[r.key] = null; continue }
-        if (r.off && r.key !== 'draft') { off.add(r.key); next[r.key] = null; continue }
+        // under the drawing's chrome (its view controls, its bar) is out of view too (review r2 #6)
+        const covered = !!origin && !!r.point && underChrome(origin.left + r.point.x * k, origin.top + r.point.y * k)
+        if ((r.off || covered) && r.key !== 'draft') { off.add(r.key); next[r.key] = null; continue }
         next[r.key] = r.point
         placedAt.current[r.key] = r.point
       }
@@ -886,8 +891,9 @@ export function ThreadCard({ thread, at, bounds, nodeKey, side = 'r', flank, sta
       const layerRect = playhost.querySelector('.sh-play-comments')?.getBoundingClientRect()
       const panelRight = (playhost.querySelector('.dk-props') ?? playhost.querySelector('.dk-anchor'))?.getBoundingClientRect().right ?? 0
       const px = (layerRect?.left ?? 0) + at.x, py = (layerRect?.top ?? 0) + at.y
-      const right = px + 24 + W <= window.innerWidth - M
-      const x = right ? px + 24 : Math.max(panelRight + M, px - 24 - W)
+      // both sides clear of the panel (review r2 #4)
+      const right = Math.max(px + 24, panelRight + M) + W <= window.innerWidth - M
+      const x = right ? Math.max(px + 24, panelRight + M) : Math.max(panelRight + M, px - 24 - W)
       const y = Math.min(Math.max(py - 36, TOP + M), Math.max(TOP + M, window.innerHeight - maxH - M))
       return { position: 'fixed', left: Math.min(x, window.innerWidth - W - M), top: y, maxHeight: maxH, zIndex: 55 }
     }
@@ -1334,6 +1340,8 @@ export const DrawWorkLayer = memo(function DrawWorkLayer({ frameId, iframe, read
   const since = useStore((s) => s.workingSince[frameId])
   const [rects, setRects] = useState<{ key: string; rect: { x: number; y: number; w: number; h: number } }[]>([])
   const [now, setNow] = useState(() => Date.now())
+  const placedAt = useRef<Record<string, { x: number; y: number }>>({})
+  const layerRef = useRef<HTMLDivElement>(null)
   const live = entry && entry.lease > now ? entry.ids : []
   // the lease is honoured here too: a run that died never leaves elements shimmering
   useEffect(() => {
@@ -1349,7 +1357,18 @@ export const DrawWorkLayer = memo(function DrawWorkLayer({ frameId, iframe, read
     const ask = () => win.postMessage({ type: 'sh:resolve-anchors', anchors: list, work: true }, location.origin)
     const onMsg = (e: MessageEvent) => {
       if (e.source !== win || e.origin !== location.origin || e.data?.type !== 'sh:anchor-rects' || e.data.channel !== 'work') return
+      // mid-gesture the shimmer moves by translation, written to its style - no render per frame (review r2 #7)
+      if (e.data.moving) {
+        for (const r of e.data.rects ?? []) {
+          const was = placedAt.current[r.key]
+          const el = layerRef.current?.querySelector(`[data-work="${CSS.escape(String(r.key))}"]`) as HTMLElement | null
+          if (el && was && r.rect) el.style.translate = `${r.rect.x - was.x}px ${r.rect.y - was.y}px`
+        }
+        return
+      }
+      for (const el of layerRef.current?.querySelectorAll<HTMLElement>('[data-work]') ?? []) el.style.translate = ''
       const got = (e.data.rects ?? []).filter((r: any) => typeof r.key === 'string' && r.key.startsWith('work:') && r.rect && !r.off)
+      for (const r of got) placedAt.current[r.key] = { x: r.rect.x, y: r.rect.y }
       setRects((cur) => (JSON.stringify(cur) === JSON.stringify(got.map((r: any) => ({ key: r.key, rect: r.rect }))) ? cur : got.map((r: any) => ({ key: r.key, rect: r.rect }))))
     }
     addEventListener('message', onMsg)
@@ -1360,8 +1379,8 @@ export const DrawWorkLayer = memo(function DrawWorkLayer({ frameId, iframe, read
   if (!rects.length) return null
   const w0 = since ? `${since - Date.now()}ms` : '0s'
   return (
-    <div className="dk-work-layer" aria-hidden="true" style={{ ['--mv-w0' as string]: w0 } as React.CSSProperties}>
-      {rects.map((r) => <i key={r.key} className="dk-work" style={{ left: r.rect.x - 4, top: r.rect.y - 4, width: r.rect.w + 8, height: r.rect.h + 8 }} />)}
+    <div ref={layerRef} className="dk-work-layer" aria-hidden="true" style={{ ['--mv-w0' as string]: w0 } as React.CSSProperties}>
+      {rects.map((r) => <i key={r.key} data-work={r.key} className="dk-work" style={{ left: r.rect.x - 4, top: r.rect.y - 4, width: r.rect.w + 8, height: r.rect.h + 8 }} />)}
     </div>
   )
 })

@@ -365,10 +365,18 @@ export function DrawEngine({ initial, theme, edit, editable, picking = false, on
     deleteIds(ids) {
       const api = apiRef.current
       if (!api || !ids.length) return false
+      if (!appRef.current) tryGrab()
+      const app = appRef.current
       const live = new Set((api.getSceneElements() as any[]).map((e) => e.id))
-      if (!ids.every((id) => live.has(id))) return false
-      api.updateScene({ appState: { selectedElementIds: Object.fromEntries(ids.map((id) => [id, true])) }, captureUpdate: CU.NEVER })
-      return engine.run('deleteSelectedElements')
+      if (!app || !ids.every((id) => live.has(id))) return false
+      // Excalidraw's own delete, run on exactly these elements in one step (a selection set through React would land a
+      // render later - review r2 #1) and recorded on the undo stack as its own delete is
+      const action = app.actionManager?.actions?.deleteSelectedElements
+      if (!action) return false
+      const r = action.perform(app.scene.getElementsIncludingDeleted(), { ...app.state, selectedElementIds: Object.fromEntries(ids.map((id) => [id, true])) }, null, app)
+      if (!r || !r.elements) return false
+      api.updateScene({ elements: r.elements, ...(r.appState ? { appState: { selectedElementIds: r.appState.selectedElementIds ?? {} } } : {}), captureUpdate: CU.IMMEDIATELY })
+      return true
     },
     selectionText(ids) {
       const api = apiRef.current

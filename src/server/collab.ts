@@ -1019,7 +1019,10 @@ export function collabHandler(dataDir: string, distDir: string) {
         }
         const bad = validateEvents(incoming, log, u!, m[1], { operator })
         if (bad) return json(res, 400, { error: bad }), true
+        // the board binding holds a reviewer (spec 39 B3): the owner's own sync - a drawing or a node made since the last
+        // publish - is never refused for it, so it can never hold back the rest of a batch (review r2 #2)
         for (const e of incoming) {
+          if (operator || u?.role === 'owner') break
           if (e.type !== 'create' || !isDrawAnchor(e.anchor)) continue
           const frame = e.frame
           let published = false

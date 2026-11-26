@@ -148,19 +148,26 @@ describe('comments on a drawing (spec 39), in a real browser', () => {
     const pin = `document.querySelector('.cm-pin[data-thread="${t.id}"]')`
     await until(`!!${pin}`)
     const top0 = await ev(`${pin}.style.top`)
+    // Marver at work on the cart meanwhile: its shimmer moves with the pan the same way (review r2 #7)
+    await ev(`window.__mvStore.getState().setWorkingFrom({ frames: ['sketches/flow'], boards: ['main'], drawings: { 'sketches/flow': { ids: ['cart'], lease: Date.now() + 20000 } } })`)
+    await until(`!!document.querySelector('.dk-work')`, 8000)
+    const workTop0 = await ev(`document.querySelector('.dk-work').style.top`)
     // a wheel pan inside the drawing (its own camera), sampled while it moves
     const r = await ev(`(() => { const q = document.querySelector('${CANVAS}').getBoundingClientRect(); return { x: q.x + q.width / 2, y: q.y + q.height / 2 } })()`)
-    const seen: { top: string; tr: string }[] = []
+    const seen: { top: string; tr: string; wt?: string; wtr?: string }[] = []
     for (let i = 0; i < 10; i++) {
       await b!.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: r.x, y: r.y, deltaX: 0, deltaY: 40 }, s)
       await sleep(30)
-      seen.push(await ev(`({ top: ${pin}.style.top, tr: ${pin}.style.translate })`))
+      seen.push(await ev(`({ top: ${pin}.style.top, tr: ${pin}.style.translate, wt: document.querySelector('.dk-work')?.style.top, wtr: document.querySelector('.dk-work')?.style.translate })`))
     }
     // mid-gesture: React's placement holds still, the pin moves by translation
     expect(seen.some((x) => x.tr && x.tr !== '0px 0px')).toBe(true)
     expect(seen.every((x) => x.top === top0)).toBe(true)
+    expect(seen.some((x) => x.wtr && x.wtr !== '0px 0px')).toBe(true)
+    expect(seen.every((x) => x.wt === workTop0)).toBe(true)
     // once it stops (the drawing's 700 ms settle): placed again by React, the translation gone
     await until(`${pin}.style.top !== ${JSON.stringify(top0)} && !${pin}.style.translate`, 5000)
+    await ev(`window.__mvStore.getState().setWorkingFrom({ frames: [], boards: [], drawings: {} })`)
     await ev(`document.querySelector('${CANVAS}').contentWindow.__mvDraw.engine.view('frame', { x: 0, y: 0, zoom: 1 })`)
     await ev(`window.__mvStore.getState().setInteract(null)`)
     await until(`!document.querySelector('.sh-app').classList.contains('drawing')`)

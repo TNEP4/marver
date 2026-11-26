@@ -5,6 +5,7 @@
  * Positions are the canvas's own: right under the Mac app's strip, 10 px in. Published: view only (name, view).
  */
 import { memo, useEffect, useRef, useState, type CSSProperties } from 'react'
+import { createPortal } from 'react-dom'
 import { useStore, PUBLISHED } from '../store.ts'
 import { useComments } from '../comments-store.ts'
 import { DraftComposer, DrawWorkLayer, MarkerFace, Pins, ThreadCard, isDrawAnchorish, placePins } from '../Comments.tsx'
@@ -14,6 +15,7 @@ import { jamKey } from '../jam-keys.ts'
 import { frameGone, frameLoaded, frameReady } from '../jam-capture.ts'
 import { CommentIcon } from '../icons.tsx'
 import { useDrawPlay } from './play-state.ts'
+import { underChrome } from './chrome.ts'
 import { useMenuKeys } from './DrawMenu.tsx'
 export { useDrawPlay } from './play-state.ts'
 import { withWs } from '../api.ts'
@@ -292,9 +294,12 @@ const DrawPlayComments = memo(function DrawPlayComments({ iframe, frameId, ready
       if (layer.current) { layer.current.classList.remove('cm-moving'); for (const pin of layer.current.querySelectorAll<HTMLElement>('.cm-pin, .cm-draft')) pin.style.translate = '' }
       const next: typeof points = {}
       const off = new Set<string>()
+      const origin = layer.current?.getBoundingClientRect()
       for (const r of rects) {
         if (r.orphan) { next[r.key] = null; continue }
-        if (r.off && r.key !== 'draft') { off.add(r.key); next[r.key] = null; continue }
+        // under the drawing's chrome (its panel, bar, view) is out of view too - parked, never unclickable (review r2 #6)
+        const covered = !!origin && r.point && underChrome(origin.left + r.point.x, origin.top + r.point.y)
+        if ((r.off || covered) && r.key !== 'draft') { off.add(r.key); next[r.key] = null; continue }
         next[r.key] = r.point
         placedAt.current[r.key] = r.point
       }
@@ -323,6 +328,15 @@ const DrawPlayComments = memo(function DrawPlayComments({ iframe, frameId, ready
   }, [active, ready])
   // a comment sent or closed gives the keyboard back to the drawing (the next letter is its tool - review r1 #6)
   const hadDraft = useRef(false)
+  const hadThread = useRef(false)
+  useEffect(() => {
+    const thread = !!active && threads.some((t) => t.id === active)
+    if (hadThread.current && !thread && !draftHere) {
+      const ae = document.activeElement as HTMLElement | null
+      if (!ae || ae === document.body || !ae.closest('input, textarea, [contenteditable]')) iframe.current?.contentWindow?.postMessage({ type: 'sh:draw-cmd', op: 'focus' }, location.origin)
+    }
+    hadThread.current = thread
+  }, [active])
   useEffect(() => {
     const has = !!draftHere
     if (hadDraft.current && !has) {
@@ -342,8 +356,11 @@ const DrawPlayComments = memo(function DrawPlayComments({ iframe, frameId, ready
   }
   const placed = placePins(threads, stagePoints, box.w, 1)
   // a crowd pushed past the window's foot is never lost: those pins gather in one stack (review r1 #12)
-  const below = threads.filter((t) => (placed.get(t.id)?.y ?? 0) > box.h - 28 && t.id !== active)
+  const overflow = threads.filter((t) => (placed.get(t.id)?.y ?? 0) > box.h - 28)
+  const below = overflow.filter((t) => t.id !== active)
   const shownThreads = below.length ? threads.filter((t) => !below.includes(t)) : threads
+  // each click opens the next of the whole group (review r2 #5: never two of them in turn)
+  const nextBelow = () => { const i = overflow.findIndex((t) => t.id === active); return overflow[(i + 1) % overflow.length] }
   const activeThread = threads.find((t) => t.id === active)
   const draftAt = draftHere ? (points.draft ?? (draftHere as any)?.point ?? null) : null
   return (
@@ -351,12 +368,14 @@ const DrawPlayComments = memo(function DrawPlayComments({ iframe, frameId, ready
       <Pins threads={shownThreads} placed={placed} orphans={orphans} inv={1} active={active} offs={offs} published={PUBLISHED} />
       {below.length > 0 && (
         <button className="cm-stack sh-no-pan dk-crowd" style={{ top: 'auto', bottom: 70, right: 14 }} title={`${below.length} more ${below.length === 1 ? 'comment' : 'comments'} below`}
-          onClick={(e) => { e.stopPropagation(); cmd('thread-open', { via: 'click', in: 'stage', frame: frameId }); useComments.getState().setActive(below[0].id) }}>
+          onClick={(e) => { e.stopPropagation(); cmd('thread-open', { via: 'click', in: 'stage', frame: frameId }); useComments.getState().setActive(nextBelow().id) }}>
           <MarkerFace threads={below} />
         </button>
       )}
-      {activeThread && <ThreadCard key={active!} thread={activeThread} at={placed.get(activeThread.id)!} bounds={box} nodeKey={node ?? undefined} stage />}
+      {/* in the play host's own layer, over the drawing's chrome (the comment layer's stack sits under it - review r2 #4) */}
+      {activeThread && createPortal(<ThreadCard key={active!} thread={activeThread} at={placed.get(activeThread.id)!} bounds={box} nodeKey={node ?? undefined} stage />, document.querySelector('.dk-playhost') ?? document.body)}
       {draftAt && <DraftComposer at={draftAt} bounds={box} hue={(draftHere as any)?.el?.hue} />}
     </div>
   )
 })
+
