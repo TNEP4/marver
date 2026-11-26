@@ -139,8 +139,10 @@ export const replyDraftKey = (threadId: string) => `r:${threadId}`
 export const newDraftKey = (d: { board?: string; frame: string; nodeKey: string; anchor: unknown }) => {
   // the element, not the click: where in it, and its measured box, change with every pick of the same element
   // (a note's scope too: a scene note and a frame note on one node can hold the same paragraph)
-  const a = (d.anchor ?? null) as { el?: { cssPath?: string; source?: string; note?: string }; pos?: unknown; rect?: unknown } | null
-  const id = a?.el ? `${a.el.note ?? ''}|${a.el.cssPath ?? ''}|${a.el.source ?? ''}` : JSON.stringify(a && typeof a === 'object' ? { ...a, pos: undefined, rect: undefined } : a)
+  const a = (d.anchor ?? null) as { el?: { cssPath?: string; source?: string; note?: string; draw?: { id?: string; at?: unknown } }; pos?: unknown; rect?: unknown } | null
+  // a drawing's element by its id; its paper is one draft per drawing node (spec 39 B3) - never one key for the whole canvas
+  const draw = a?.el?.draw ? (a.el.draw.id ? `draw:${a.el.draw.id}` : 'draw:paper') : ''
+  const id = a?.el ? `${a.el.note ?? ''}|${a.el.cssPath ?? ''}|${a.el.source ?? ''}${draw ? `|${draw}` : ''}` : JSON.stringify(a && typeof a === 'object' ? { ...a, pos: undefined, rect: undefined } : a)
   let h = 0
   for (const c of id) h = (h * 31 + c.charCodeAt(0)) | 0
   return `n:${d.board ?? ''}:${d.frame}:${d.nodeKey}:${(h >>> 0).toString(36)}`

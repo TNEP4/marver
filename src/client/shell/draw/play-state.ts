@@ -6,9 +6,12 @@
  */
 import { create } from 'zustand'
 
-export const useDrawPlay = create<{ at: string | null; node: string | null; open(id: string, node?: string | null): void; close(): void }>((set) => ({
+export const useDrawPlay = create<{ at: string | null; node: string | null; open(id: string, node?: string | null): void; close(): void
+  /** play's own way out - its last save first (set by drawing play while it is open) */
+  leave: (() => void) | null }>((set) => ({
   at: null,
   node: null,
+  leave: null,
   open: (id, node = null) => set({ at: id, node }),
   close: () => set({ at: null, node: null }),
 }))

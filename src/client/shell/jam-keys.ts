@@ -228,7 +228,11 @@ async function whileAlive<T>(p: Promise<T>, alive: Alive): Promise<T | false> {
  *  would run outside the request, and land on another board over a reply typed after the thread opened (code review r2
  *  P1). False when `alive` failed, or when Play could not be left - a board locked to its mode has no way out (Play.tsx
  *  `noDoor`); the caller tells them apart by `alive()` and opens over Play instead. */
-async function leavePlay(alive: Alive): Promise<boolean> {
+async function leavePlay(alive: Alive, frame?: string): Promise<boolean> {
+  // drawing play (spec 39 A3): a thread on the played drawing opens in play; one elsewhere leaves it, its save first
+  const { useDrawPlay } = await import('./draw/play-state.ts')
+  const dp = useDrawPlay.getState()
+  if (dp.at && dp.at !== frame) { dp.leave?.(); await waitFor(() => !useDrawPlay.getState().at, alive, 3500) }
   if (!useStore.getState().play) return true
   const { playCtl } = await import('./Play.tsx')
   if (!alive()) return false
@@ -285,7 +289,7 @@ export async function openThreadAt(board: string, thread: string, o: { card?: Ja
   const ok = (sel: string) => waitFor(() => drawn(sel)() && (!o.status || drawn(statusOpen(o.status))()), alive, ms)
   // only an open thread has a card (the layer keeps open threads); Play kept, a card would draw under it
   let host = t && !t.resolved ? threadHostKey(t, useStore.getState().nodes) : null
-  if (host && !(await leavePlay(alive))) {
+  if (host && !(await leavePlay(alive, t?.frame))) {
     if (!alive()) return false
     host = null
   }

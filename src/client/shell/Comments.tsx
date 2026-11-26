@@ -430,6 +430,9 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
       const panelRight = document.querySelector('.sh-panel:not(.closed)')?.getBoundingClientRect().right ?? 0
       const room = (s: 'l' | 'r') => (s === 'r' ? window.innerWidth - rect.right : rect.left - gutter - panelRight) >= W + GAP
       const prefer: ('l' | 'r')[] = pinAt(activeThread2).x < node.w / 2 ? ['l', 'r'] : ['r', 'l']
+      // a drawing in drawing mode: its properties panel holds the left flank (spec 39 A3) - the card takes the right
+      const panelLeft = isDraw && useStore.getState().interact === node.key && !!document.querySelector('.dk-props')
+      if (panelLeft) return room('r') ? 'r' : 'l'
       return prefer.find((s) => room(s) && !occupied(s)) ?? prefer.find(room) ?? prefer[0]
     }
     sideRef.current = { id: activeThread2.id, side: compute() }
@@ -1183,6 +1186,9 @@ export function revealThread(c: string, alive: () => boolean = () => true): bool
   // must not consume the deep link (the board switch that CAN show it comes later)
   const key = threadHostKey(t, useStore.getState().nodes)
   if (!key) return false
+  // drawing play up on another drawing: it leaves first, its last save kept (spec 39 A3); on this one the thread opens in play
+  const dp = useDrawPlay.getState()
+  if (dp.at && dp.at !== t.frame) dp.leave?.()
   useComments.getState().setActive(c)
   useStore.getState().select(key)
   setTimeout(() => { if (alive()) canvasCtl.fitNode(key) }, 80)

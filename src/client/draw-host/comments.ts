@@ -181,23 +181,37 @@ export function installCommentProvider(host: CommentHost) {
     })
   }
 
+
+  let lastHoverAt = 0
+  let lastHover: { label: string } | null | undefined
+  const hoverAt = (eng: Engine, e: MouseEvent): { label: string } | null => {
+    void eng
+    const a = anchorAt(e.clientX, e.clientY, false)
+    if (!a) return null
+    if ('refused' in a) { outline(box, null); hoverKey = ''; return { label: a.refused } }
+    const d = a.anchor.el!.draw!
+    const key = d.id ?? 'paper'
+    if (key !== hoverKey) { hoverKey = key; outline(box, a.anchor) }
+    else if (d.at) outline(box, a.anchor)
+    const words = d.id ? (a.anchor.el as any).semantics.quote : ''
+    return { label: d.id ? (words ? `${d.type} · “${String(words).slice(0, 40)}”` : String(d.type)) : 'paper' }
+  }
+
   const provider = {
     /** true once the engine is up: before that a pick is refused, never a canvas-wide comment */
     ready: () => !!host.engine(),
     hover(e: MouseEvent): { label: string } | null {
       const eng = host.engine()
       if (!eng || locked) return null
-      const a = anchorAt(e.clientX, e.clientY, false)
-      if (!a) return null
-      if ('refused' in a) { outline(box, null); hoverKey = ''; return { label: a.refused } }
-      const d = a.anchor.el!.draw!
-      const key = d.id ?? 'paper'
-      if (key !== hoverKey) { hoverKey = key; outline(box, a.anchor) }
-      else if (d.at) outline(box, a.anchor)
-      const words = d.id ? (a.anchor.el as any).semantics.quote : ''
-      return { label: d.id ? (words ? `${d.type} · “${String(words).slice(0, 40)}”` : String(d.type)) : 'paper' }
+      // at most one hit-test an animation frame (a heavy drawing's long strokes): the last answer in between (B1)
+      const now = performance.now()
+      if (now - lastHoverAt < 16 && lastHover !== undefined) return lastHover
+      lastHoverAt = now
+      lastHover = hoverAt(eng, e)
+      return lastHover
     },
-    unhover() { hoverKey = ''; box.style.display = 'none' },
+    unhover() { hoverKey = ''; lastHover = undefined; box.style.display = 'none' },
+
     /** a click: the anchor, or null (a drag that panned, not ready, an unusual id) */
     pick(e: MouseEvent): (Anchor & Record<string, unknown>) | null {
       if (travelled >= 4) return null

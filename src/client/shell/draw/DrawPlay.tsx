@@ -133,6 +133,14 @@ export function DrawPlay() {
   // play tells the host the UI's state: H toggles Hide all UI here (Excalidraw's hand keeps H on the canvas)
   useEffect(() => { hiddenRef.current = hidden; if (link) sendQuiet(link, { op: 'ui', hidden }) }, [hidden, at])
 
+  // a thread on another drawing opened from a notice or the sidebar leaves play through this - its last save first
+  const leaveRef = useRef<() => void>(() => {})
+  useEffect(() => {
+    if (!at) return
+    useDrawPlay.setState({ leave: () => leaveRef.current() })
+    return () => useDrawPlay.setState({ leave: null })
+  }, [at])
+
   if (!at || !link) return null
   // leaving waits for the drawing's last save (3 s at most - a dead server never traps the person in play)
   // leaving hides play at once; the drawing's document stays (out of sight) until its last save has landed, so a slow
@@ -145,6 +153,7 @@ export function DrawPlay() {
     setClosing(true)
     sendQuiet(link, { op: 'flush' })
   }
+  leaveRef.current = leave
   const dark = theme === 'dark'
   const copyPath = () => { if (!frame) return; navigator.clipboard.writeText(framePath(useStore.getState().board, frame)).then(() => toast('path copied'), () => toast('copy blocked - click the drawing first')) }
   const copyImage = () => exportDrawing(link, 'clipboard', toast, dark)
