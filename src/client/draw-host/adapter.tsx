@@ -248,7 +248,10 @@ export function DrawEngine({ initial, theme, edit, editable, onReady, onChange, 
               const els = api.getSceneElementsIncludingDeleted() as unknown as DrawElement[]
               if (!els.some((e) => e.type === 'text' && !e.isDeleted)) return
               // (0.18.1 refreshes dimensions only inside its binding repair: both flags, and only the boxes are taken)
-              const fresh = new Map((restoreElements(els as any, null, { refreshDimensions: true, repairBindings: true }) as unknown as DrawElement[]).map((e) => [e.id, e]))
+              // wrapped anew from the words as written (originalText): restoreElements keeps the line breaks a text
+              // holds, so breaks made under the fallback font would stay (release review)
+              const unwrapped = els.map((e) => (e.type === 'text' && typeof (e as any).originalText === 'string' ? { ...e, text: (e as any).originalText } : e))
+              const fresh = new Map((restoreElements(unwrapped as any, null, { refreshDimensions: true, repairBindings: true }) as unknown as DrawElement[]).map((e) => [e.id, e]))
               let changed = false
               // the whole refreshed layout - its line breaks and place with its box (a label wrapped anew in its shape, a
               // fixed-width text that now takes two lines), never a new box around the old lines (release review)

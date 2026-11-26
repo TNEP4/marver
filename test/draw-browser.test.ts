@@ -305,12 +305,12 @@ describe('the drawing frame (spec 38), in a real browser', () => {
     expect(pub.elements.every((e: any) => !e.customData?.mv)).toBe(true)     // who drew what stays local
     expect(existsSync(join(out, '__mv/draw/index.html'))).toBe(true)
     // served as a published canvas (no dev server, no API): play the drawing and export it - a real PDF and PNG come out
-    // a port no other suite uses (a free one in a high block), and readiness from THIS server's own line - never an
-    // answer from another suite's server on a shared port (release review)
-    const { createServer } = await import('node:net')
-    const free = (p: number) => new Promise<boolean>((r) => { const t = createServer(); t.once('error', () => r(false)); t.listen(p, '127.0.0.1', () => t.close(() => r(true))) })
-    let port = 46_000 + Math.floor(Math.random() * 2000)
-    while (!(await free(port))) port++
+    // a port of this run's own block (slot-block.ts: the slots take its first 20 - nothing else in the package uses
+    // +180..+199), checked on both families; readiness from THIS server's own line (release review)
+    const { portInUse } = await import('../src/server/exclusive.ts')
+    const base = Number(process.env.MARVER_SLOT_BASE)
+    let port = Number.isFinite(base) && base > 0 ? base + 180 : 47_500
+    while (await portInUse(port)) port++
     const server = spawn(process.execPath, [CLI, 'serve', '--port', String(port)], { cwd: root, stdio: 'pipe', env: { ...process.env, MARVER_DATA_DIR: '', MARVER_PASSWORD: '', MARVER_ID_ISSUER: '' } })
     let served = ''
     server.stdout!.on('data', (d) => { served += String(d) })
@@ -354,6 +354,9 @@ describe('the drawing frame (spec 38), in a real browser', () => {
     if (!b) return ctx.skip('no Chrome')
     const doc = disk()
     doc.elements.push({ id: 'tight-label', type: 'text', x: 60, y: 40, width: 40, height: 25, text: 'agent: is login needed?', fontSize: 28 })
+    // a label in a wide box, stored with a line break an earlier (fallback) font made: wrapped anew from its words
+    doc.elements.push({ id: 'wide-box', type: 'rectangle', x: 60, y: 420, width: 420, height: 80, boundElements: [{ id: 'wide-label', type: 'text' }] })
+    doc.elements.push({ id: 'wide-label', type: 'text', x: 70, y: 440, width: 100, height: 50, text: 'Guest\ncheckout', originalText: 'Guest checkout', fontSize: 20, containerId: 'wide-box', autoResize: true })
     writeFileSync(file(), JSON.stringify(doc, null, 2))
     await until(`(() => { const e = document.querySelector('iframe[data-kind="draw"]').contentWindow.__mvDraw.engine.elements(); return e.some((x) => x.id === 'tight-label') })()`, 10_000)
     // a fresh load with the fonts held back 1.5 s (a slow network, a cold cache): the first measure runs on a fallback
@@ -369,6 +372,7 @@ describe('the drawing frame (spec 38), in a real browser', () => {
     await until(`(() => { try { const w = document.querySelector('iframe[data-kind="draw"]').contentWindow; return !!w.__mvDraw && w.__mvDraw.engine.elements().some((x) => x.id === 'tight-label') } catch { return false } })()`, 60_000)
     const words = `(() => { const d = document.querySelector('iframe[data-kind="draw"]').contentDocument; const c = d.createElement('canvas').getContext('2d'); c.font = '28px Excalifont'; return c.measureText('agent: is login needed?').width })()`
     await until(`(() => { const w = document.querySelector('iframe[data-kind="draw"]').contentWindow; const t = w.__mvDraw.engine.elements().find((x) => x.id === 'tight-label'); return w.document.fonts.check('28px Excalifont') && t && t.width >= ${words} - 1 })()`, 10_000)
+    await until(`(() => { const w = document.querySelector('iframe[data-kind="draw"]').contentWindow; const t = w.__mvDraw.engine.elements().find((x) => x.id === 'wide-label'); return !!t && t.text === 'Guest checkout' })()`, 10_000)
     off()
     await b.send('Fetch.disable', {}, s)
     await b.send('Network.setCacheDisabled', { cacheDisabled: false }, s)

@@ -45,9 +45,10 @@ type Want = { kind: 'png' | 'pdf' | 'clipboard'; key: string; title: string; toa
 const wants = new Map<string, Want>()
 let ridN = 0
 const nextRid = (key: string) => `${key}#${++ridN}`
-/** the answer's request: by its id; a drawing that sent none (older) - the oldest of its frame's */
+/** the answer's request: exactly its id (and its frame) when it carries one - a late answer to a request that timed
+ *  out claims nothing; a drawing that sends no id (older) - the oldest of its frame's */
 const wantFor = (key: string, rid: unknown): [string, Want] | undefined => {
-  if (typeof rid === 'string' && wants.has(rid)) return [rid, wants.get(rid)!]
+  if (typeof rid === 'string') { const w = wants.get(rid); return w && w.key === key ? [rid, w] : undefined }
   for (const e of wants) if (e[1].key === key) return e
   return undefined
 }
