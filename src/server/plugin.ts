@@ -1,3 +1,4 @@
+import { drawingWork } from './draw/work.ts'
 import { DrawService } from './draw/service.ts'
 import type { Plugin, ViteDevServer } from 'vite'
 import { boardsChanged, pinningBoards, workActivity, workClock } from './work.ts'
@@ -322,7 +323,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       },
     },
 
-    configureServer(server: ViteDevServer) {
+    async configureServer(server: ViteDevServer) {
       // A1.1: what is made here closes with the server - a Vite restart closes the old one and keeps the start
       // - or, when the start fails before Vite listens (Vite then skips its HTTP server's close, so 'close'
       // never comes), with the start that made it, and when a restart's server is never made, with it
@@ -439,6 +440,9 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
         broadcast: (_event, patch) => server.ws.send('sh:draw', patch as any),
         headerChanged: () => drawHeaderChanged(),
       })
+      await draw.register(manifest.frames.filter((f) => f.kind === 'draw').map((f) => f.id))
+      const offDrawWork = drawingWork(root).service(() => draw.flush())
+      onClose(offDrawWork)
       draw.startSweep()
       onClose(() => draw.stop())
       server.middlewares.use(apiMiddleware(root, { draw, viewports: config.viewports, origin: listeningOrigin, bakeGen: () => (genClosed ? -1 : bakeGen), bakeReady: () => genReady, baked: () => bakedNow(), notify: (event) => { server.ws.send(event, {} as any); liveChanged() }, broadcast: (event, payload) => server.ws.send(event, payload as any), manifest: () => manifest, settled, workspace: ws, inputs,
@@ -473,6 +477,7 @@ export function marverPlugin(ctx: PluginCtx): Plugin[] {
       sayUnplaced()
       const regen = debounce(() => {
         manifest = scanFrames(root, projectInfo())   // keep the cached manifest fresh for affectedFrameIds
+        void draw.register(manifest.frames.filter((f) => f.kind === 'draw').map((f) => f.id))
         sayUnplaced()
         const changed = writeManifest(root, manifest)
         observeLater()   // a frame added (a new id, a rename) or gone

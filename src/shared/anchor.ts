@@ -6,7 +6,7 @@
  * the dev server turns it into that bundle by finding the element in the rendered frame.
  */
 
-export interface AnchorTarget { on?: string; at?: string; nth?: number }
+export interface AnchorTarget { on?: string; at?: string; nth?: number; element?: string; paper?: [number, number] }
 /** Where to look for a target only another viewport or theme shows (`--viewport`, `--theme`). */
 export interface AnchorLook { viewport?: string; theme?: string }
 
@@ -71,10 +71,18 @@ export type AnchorCheck =
 
 /** Read a target from untrusted input - CLI flags, a Live Jam block: exactly one of `on` / `at`, an
  *  optional whole `nth` from 1. A string is the reason it is not one. */
-export function readTarget(raw: { on?: unknown; at?: unknown; nth?: unknown }): AnchorTarget | string {
+export function readTarget(raw: { on?: unknown; at?: unknown; nth?: unknown; element?: unknown; paper?: unknown }): AnchorTarget | string {
+  if (raw.element !== undefined || raw.paper !== undefined) {
+    if ([raw.on, raw.at, raw.element, raw.paper].filter((v) => v !== undefined).length !== 1) return 'use exactly one of --on / --at / --element / --paper'
+    if (raw.nth !== undefined) return 'on a drawing use --element <id> or --paper x,y; --nth is for screens'
+    if (raw.element !== undefined) return validElementId(raw.element) ? { element: raw.element } : '--element: id must be non-empty, at most 256 characters, with no control characters'
+    const p = typeof raw.paper === 'string' ? raw.paper.split(',').map((v) => v.trim() ? Number(v) : NaN) : raw.paper
+    if (!Array.isArray(p) || p.length !== 2 || !p.every((v) => typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= 1e6)) return '--paper: use two finite drawing coordinates x,y, each within +/-1000000'
+    return { paper: [p[0], p[1]] }
+  }
   const clean = (v: unknown) => (typeof v === 'string' || typeof v === 'number' ? String(v).replace(/\s+/g, ' ').trim() : '')
   const on = clean(raw.on), at = clean(raw.at)
-  if (!on === !at) return 'name the element with --on "<words it shows>" or --at "<css selector or data-testid>" (one of them)'
+  if (!on === !at) return 'name the element with exactly one of --on "<words it shows>" / --at "<css selector or data-testid>" / --element <id> / --paper x,y (one of them)'
   // never cut short: a shortened target could match an element that shows only its beginning
   if ((on || at).length > MAX_TARGET) return `--on / --at take at most ${MAX_TARGET} characters - name fewer words`
   const nth = raw.nth === undefined ? undefined : Number(raw.nth)

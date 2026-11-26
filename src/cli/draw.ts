@@ -8,7 +8,7 @@ import { NAME } from './name.ts'
 
 export interface DrawOptions {
   scene?: unknown; name?: unknown; title?: unknown; size?: unknown; since?: unknown
-  elements?: unknown; mermaid?: unknown; at?: unknown; by?: unknown
+  elements?: unknown; mermaid?: unknown; at?: unknown; by?: unknown; run?: unknown; as?: unknown
 }
 
 export type DrawRequest =
@@ -29,6 +29,9 @@ function pair(value: unknown, flag: string): [number, number] {
 
 /** Validate before making a request; exported so argument errors can be tested without a server. */
 export function parseDrawArgs(action: string | undefined, args: string[], opts: DrawOptions = {}): DrawRequest {
+  if (opts.run !== undefined && (typeof opts.run !== 'string' || !/^r-[0-9a-f]{8}\.\d+$/.test(opts.run))) throw new Error('--run: name a run handle (r-xxxxxxxx.N, from jam next)')
+  if (opts.as !== undefined && (typeof opts.as !== 'string' || !opts.as.trim())) throw new Error('--as: name a connection')
+  if (opts.as !== undefined && opts.run === undefined) throw new Error('--as needs --run <handle>')
   if (opts.mermaid !== undefined) throw new Error('Mermaid conversion is not available yet - write elements (see design/instructions/draw.md)')
   const flags: Record<string, string[]> = { new: ['scene', 'name', 'title', 'size'], describe: ['since'], add: ['elements', 'at'], set: [], move: ['by'], rm: [] }
   if (!action || !Object.hasOwn(flags, action)) throw new Error(`use: ${NAME} draw new|describe|add|set|move|rm …`)
@@ -90,13 +93,20 @@ export function parseDrawArgs(action: string | undefined, args: string[], opts: 
 }
 
 export async function drawCommand(root: string, action: string | undefined, args: string[], opts: DrawOptions = {}): Promise<void> {
-  const request = parseDrawArgs(action, args, opts)
+  const run = opts.run ?? process.env.MARVER_JAM_RUN
+  const request = parseDrawArgs(action, args, { ...opts, ...(run ? { run } : {}) })
   const info = readDevInfo(root)
   if (!info) throw new Error(`\`npx ${NAME} dev\` must be running in this repo (no live design/.local/dev.json) - start it first.`)
+  if (run && run !== process.env.MARVER_JAM_RUN) {
+    const { ownConn } = await import('./jam.ts')
+    const { request: ask } = await import('../server/jam/transport.ts')
+    const answer = await ask(root, ownConn(root, process.env, typeof opts.as === 'string' ? opts.as : undefined), 'progress', { handle: run })
+    if (answer.ok === false) throw new Error(String(answer.error ?? 'the owner moved this run elsewhere'))
+  }
   const path = request.action === 'new' ? 'new' : encodeURIComponent(request.frame)
   const query = request.action === 'describe' ? `?describe=1${request.since !== undefined ? `&since=${request.since}` : ''}` : ''
   // Freeze the body, including the fresh opId, before either attempt. A lost reply must not apply an op twice.
-  const body = request.action === 'op' ? JSON.stringify({ op: request.op, opId: randomUUID() }) : request.action === 'new' ? JSON.stringify(request.body) : undefined
+  const body = request.action === 'op' ? JSON.stringify({ op: request.op, opId: randomUUID(), ...(run ? { run } : {}) }) : request.action === 'new' ? JSON.stringify(request.body) : undefined
   const attempts = request.action === 'op' ? 2 : 1 // creation has no dedupe key
   for (let attempt = 0; attempt < attempts; attempt++) {
     let res: Response, text: string
@@ -123,6 +133,7 @@ export async function drawCommand(root: string, action: string | undefined, args
     } else {
       if (!Number.isSafeInteger(data?.rev) || !Array.isArray(data?.ids)) throw new Error('draw: invalid server response')
       frame = request.frame
+      if (Array.isArray(data.stranded) && data.stranded.length) console.log(`threads stranded: ${data.stranded.join(', ')} - re-pin with comments move --element <id> or --paper x,y`)
       console.log(`rev ${data.rev}${data.ids.length ? ` · ${data.ids.join(', ')}` : ''}`)
     }
     console.log(`then: npx ${NAME} shot ${frame}`)

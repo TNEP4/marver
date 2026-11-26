@@ -16,6 +16,9 @@
  * `createJam` is the loop with no timers or lock (a test drives `tick()` directly with an
  * injected adapter); `startJam` wraps it with the repo lock, dir-watch, and rescan interval.
  */
+import { drawingWork } from '../draw/work.ts'
+import { drawingFile, checkDrawingAnchor, readDrawing, targetOnFrame } from '../draw/comments.ts'
+import { drawingContext } from './drawing.ts'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { StringDecoder } from 'node:string_decoder'
 import { tmpdir } from 'node:os'
@@ -29,7 +32,7 @@ import { adapters } from './adapter/index.ts'
 import { workActivity } from '../work.ts'
 import { acquireLock, releaseLock } from './journal.ts'
 import { buildPacket, goalText, packetPath, parseAgentText, parseMembers, refusedAsk, sharedWhy } from './packet.ts'
-import { uncheckedAnchor, type AnchorCheck, type AnchorLook, type AnchorTarget } from '../../shared/anchor.ts'
+import { isDrawAnchor, uncheckedAnchor, type AnchorCheck, type AnchorLook, type AnchorTarget } from '../../shared/anchor.ts'
 import { deletedEvents, dropDeleted, liveThreads, tombstonesOf, withdrawnCaptures, ownerOnly, act, addCapture, addWrapup, endSession, moreWrapup, startSession, textOf, wrapupIntact, wrapupOf, answeredSince, captureIntact, beginStep, captureComment, conflictStep, createQueue, ctxFor, endStep, looksGood, payloadKey, redelivering, requeue, joinAlone, runsAlone, sameComment, stillOwned, undelivered, fail, failCard, form, pending, prune, settle, type Queue, type Settled } from './queue.ts'
 import { jamReservations, restoreHolds } from './reserve.ts'
 import { jamLive, type QueueView } from './live.ts'
@@ -93,7 +96,7 @@ export interface JamCore {
 /** Side-effect hooks the dev server wires up (presence glow, instant reply delivery).
  *  Optional, so tests stay pure. */
 export interface JamHooks {
-  work?(frame: string | undefined, on: boolean): void
+  work?(frame: string | undefined, on: boolean, ids?: readonly string[], key?: string): void
   /** The daemon wrote events (reply/reanchor) to `board` - nudge clients to fetch NOW
    *  instead of waiting out the 30s comment poll. */
   changed?(board: string): void
@@ -142,16 +145,16 @@ export function agentEnv(from: NodeJS.ProcessEnv = process.env): NodeJS.ProcessE
   // ...and a session's own handles (spec 29b): a `marver dev` started from inside Claude Code or Codex carries
   // that session's inbox and ids, and a run Marver spawns must never post to that inbox, register as that
   // session, or pass for it. MARVER_JAM_BACKGROUND keeps every hook of ours quiet inside it.
-  const { MARVER_CLI_TOKEN: _withheld, CLAUDE_CODE_MESSAGING_SOCKET: _s, CLAUDE_CODE_MESSAGING_TOKEN: _t, CLAUDE_CODE_SESSION_ID: _i, CLAUDE_PID: _p, CLAUDE_CODE_SESSION_ATTENDED: _a, CODEX_THREAD_ID: _ct, CODEX_SESSION_ID: _cs, ...rest } = from
+  const { MARVER_CLI_TOKEN: _withheld, CLAUDE_CODE_MESSAGING_SOCKET: _s, CLAUDE_CODE_MESSAGING_TOKEN: _t, CLAUDE_CODE_SESSION_ID: _i, CLAUDE_PID: _p, CLAUDE_CODE_SESSION_ATTENDED: _a, CODEX_THREAD_ID: _ct, CODEX_SESSION_ID: _cs, MARVER_JAM_RUN: _run, ...rest } = from
   return { ...rest, MARVER_JAM_BACKGROUND: '1' }
 }
 
-const FRAME_FILE = /\.(tsx|jsx|html)$/
+const FRAME_FILE = /\.(tsx|jsx|html|excalidraw)$/
 
 /** Every frame FILE under design/scenes, as `frame id -> mtimeMs`. Used to see which frames the
  *  agent creates or edits mid-job (so the working glow can follow the work, not sit on the frame
  *  the comment happened to be pinned to). Infra files (`_layout`, `_fixtures`) are skipped. */
-const sceneFrameMtimes = (root: string): Map<string, number> => {
+const sceneFrameMtimes = (root: string, drawings?: Set<string>): Map<string, number> => {
   const scenesDir = join(root, 'design', 'scenes')
   const out = new Map<string, number>()
   let entries: string[]
@@ -160,7 +163,7 @@ const sceneFrameMtimes = (root: string): Map<string, number> => {
     const parts = rel.split(/[\\/]/)
     const base = parts[parts.length - 1]
     if (!FRAME_FILE.test(base) || base.startsWith('_') || parts.slice(1, -1).some((s) => s.startsWith('_'))) continue   // as scanFrames: #8
-    try { out.set(toFrameId(`scenes/${rel}`), statSync(join(scenesDir, rel)).mtimeMs) } catch { /* vanished mid-walk */ }
+    try { const id = toFrameId(`scenes/${rel}`); out.set(id, statSync(join(scenesDir, rel)).mtimeMs); if (base.endsWith('.excalidraw')) drawings?.add(id) } catch { /* vanished mid-walk */ }
   }
   return out
 }
@@ -250,7 +253,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   /** every run that starts, counted: a run knows whether another began while it ran */
   let batchStarts = 0
 
-  const runAgent = (ad: JamAdapter, opts: SpawnOpts | undefined, goal: string, onSpawn: (pid?: number) => void, onEarly?: (text: string, asks: boolean, model?: string) => void): Promise<AgentRun> =>
+  const runAgent = (ad: JamAdapter, opts: SpawnOpts | undefined, goal: string, handle: string, onSpawn: (pid?: number) => void, onEarly?: (text: string, asks: boolean, model?: string) => void): Promise<AgentRun> =>
     new Promise((resolve) => {
       const adapter = ad
       const { cmd, args, env } = adapter.spawnArgs(goal, opts)
@@ -259,7 +262,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       // PWD is pinned to the workspace: spawn's cwd does not update the inherited env var, and
       // some CLIs (opencode, verified) trust PWD over getcwd - without this, a dev server whose
       // own cwd differs from the repo root would have the agent editing the WRONG directory.
-      try { child = spawn(cmd, args, { cwd: root, detached: true, stdio: ['ignore', 'pipe', 'ignore'], env: { ...agentEnv(), ...env, PWD: root } }) }
+      try { child = spawn(cmd, args, { cwd: root, detached: true, stdio: ['ignore', 'pipe', 'ignore'], env: { ...agentEnv(), ...env, MARVER_JAM_RUN: handle, PWD: root } }) }
       catch { return resolve({ reply: '', asks: false, ok: false, reanchors: [] }) }
       activeChildren.add(child)
       try { onSpawn(child.pid) } catch { /* pgid persist failed; the run still proceeds, fencing degrades */ }
@@ -526,11 +529,19 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       const t = threads.find((t) => t.id === r.thread)
       if (!t?.frame) { log(`  jam: re-pin skipped - no thread ${r.thread} on ${board}`); continue }
       const others = threads.filter((o) => !o.resolved && o.frame === t.frame && o.id !== t.id).map((o) => ({ key: o.id, anchor: o.anchor }))
-      const check: AnchorCheck = hooks.anchor
+      let drawing: ReturnType<typeof readDrawing>
+      try {
+        drawing = readDrawing(root, t.frame)
+        targetOnFrame(!!drawing, r.target, r.look)
+      } catch (err) { log(`  jam: re-pin skipped - ${(err as Error).message}`); continue }
+      const check: AnchorCheck = drawing
+        ? checkDrawingAnchor(drawing.doc, r.target, others)
+        : hooks.anchor
         ? await hooks.anchor(t.frame, r.target, others, r.look).catch((err) => ({ ok: false as const, unchecked: (err as Error).message }))
         : { ok: false, unchecked: 'no anchor check here' }
       if (stopped) return n   // stopped while the check ran: a successor owns the log now
-      if (!check.ok && 'refused' in check) { log(`  jam: re-pin skipped - ${t.frame} shows ${check.refused === 'none' ? 'no' : 'several'} matching elements`); continue }
+      if (!check.ok && (drawing || 'refused' in check)) { log(`  jam: re-pin skipped - thread ${t.id}${r.target.element ? `, element ${r.target.element}` : ''}: ${t.frame} shows ${'refused' in check && check.refused === 'several' ? 'several' : 'no'} matching elements`); continue }
+      if (check.ok && isDrawAnchor(t.anchor) && isDrawAnchor(check.anchor) && 'id' in t.anchor.el.draw && 'id' in check.anchor.el.draw && t.anchor.el.draw.id === check.anchor.el.draw.id && t.anchor.pos) check.anchor.pos = t.anchor.pos
       const who = me()
       appendEvents(commentsDir, board, [{
         id: `jam-${b.batchId}-${m.id}-r${k}`, ts: Date.now(), type: 'reanchor',
@@ -681,7 +692,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     // results still to be posted (the barrier, a retried delivery): no new hold until they settle
     jamReservations.settling = !ready || delivering.size > 0
   }
-  const queueChanged = () => { noteQueued(); try { hooks.queue?.() } catch { /* a push is advisory */ } }
+  const queueChanged = () => { drawingWork(root).refresh(); noteQueued(); try { hooks.queue?.() } catch { /* a push is advisory */ } }
   const settled = (out: Settled[]) => {
     for (const s of out) if (s.notice === 'failed') log(`  jam: ${s.card.id} failed - ${s.card.note}`)
   }
@@ -755,6 +766,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
   }
 
   const runBatch = async (b: Batch) => {
+    let unwatchDraw = () => {}
+    let clearDrawGlow = () => {}
     // its timing (spec 27a Part D): the pictures before and after, each agent attempt, the delivery; logged once, at its end
     const timing: { beforeMs?: number; agentMs: number[]; afterMs?: number; deliverMs?: number } = { agentMs: [] }
     let timed = false
@@ -781,6 +794,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     const unwatch = hooks.watchHolds?.(() => { crowded = true; markCrowded(b) }) ?? (() => {})
     // a run starting beside others: each of them has company too, from now
     for (const o of runningBatches.values()) if (o !== b) markCrowded(o)
+    await drawingWork(root).flush()
     // The packet the agent reads is made again from the journal right before every run - its members,
     // their kinds, their frozen briefs - never trusted from the file on disk; a session record's content
     // comes from its seal, checked (a changed file cannot point the agent anywhere else)
@@ -809,7 +823,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       // the pictures its brief names, as files (A4.6 #38): beside the brief, never in its hash
       const pictures = packetPictures(root, brief)
       members.push({ id: m.id, card: c.id, kind: c.kind, board: m.board, ...(c.thread ? { thread: c.thread } : {}), frames: c.frames,
-        ...(t?.anchor !== undefined ? { anchor: t.anchor } : {}), brief, ...(pictures.length ? { pictures } : {}) })
+        ...drawingContext(root, m.board, t), brief, ...(pictures.length ? { pictures } : {}) })
     }
     if (bad.length) {
       await q.lock((j) => { for (const id of bad) { const c = j.cards.find((x) => x.id === id); if (c && c.state === 'working') failCard(j, c, c.kind === 'wrapup' ? 'the session record changed after it was written - write it again' : 'interrupted - Retry', Date.now()) } q.persist() })
@@ -828,9 +842,32 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     // the agent CREATES or EDITS frames the glow moves to those. The tick also re-marks every lit
     // frame to keep its lease alive.
     const lit = new Set<string>()
-    const light = (f?: string) => { if (f && !lit.has(f)) { hooks.work?.(f, true); lit.add(f) } }
-    const clearGlow = () => { for (const f of lit) hooks.work?.(f, false); lit.clear() }
-    const startMtimes = sceneFrameMtimes(root)
+    const drawIds = new Map<string, Set<string>>()
+    for (const m of packet.members) if (m.draw?.element) {
+      const ids = drawIds.get(m.draw.frame) ?? new Set<string>()
+      ids.add(m.draw.element.id); drawIds.set(m.draw.frame, ids)
+    }
+    const light = (f?: string) => { if (f) { hooks.work?.(f, true, [...drawIds.get(f) ?? []], b.batchId); lit.add(f) } }
+    const clearGlow = () => { for (const f of lit) hooks.work?.(f, false, [], b.batchId); lit.clear() }
+    const drawings = new Set<string>()
+    const startMtimes = sceneFrameMtimes(root, drawings)
+    const changedDrawings = new Set<string>()
+    const work = drawingWork(root)
+    // Registered before a run is watched; eligibility changes synchronously with its claim/runner.
+    clearDrawGlow = clearGlow
+    unwatchDraw = work.watch({
+      read: () => {
+        const since = b.claim?.at ?? b.runAt
+        if (stopped || !since || b.state !== 'claimed' || b.results || b.claim?.stopping || b.claim?.stalled || slotWaiting.has(b.batchId)) return
+        return { handle: handleOf(b, b.claim?.gen ?? b.gen ?? 0), frames: b.frames, since, lease: b.claim ? b.claim.progress + 15 * 60_000 : b.leaseUntil }
+      },
+      changed: (frame, entry) => {
+        changedDrawings.add(frame)
+        const ids = drawIds.get(frame) ?? new Set<string>()
+        for (const op of entry.ops) ids.add(op.id)
+        drawIds.set(frame, ids); light(frame)
+      },
+    })
     const sharedBefore = b.exclusive ? null : sharedMtimes(root)
     const sceneOf = (f: string) => /^design\/scenes\/([^/]+)\//.exec(f)?.[1]
     // the frames there were before its FIRST attempt, kept with the batch: a rerun after a crash still knows which
@@ -875,11 +912,19 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
     }
     if (!b.shots?.some((s) => s.before)) { const t = performance.now(); await shoot('before'); if (capturing) timing.beforeMs = performance.now() - t }   // a retry keeps the first attempt's
     const followWork = () => {
+      // A session that crashed or was stopped must not keep its element lease alive through the daemon's heartbeat.
+      if (stopped || b.claim && (b.claim.stalled || b.claim.stopping || b.claim.progress + 15 * 60_000 <= Date.now())
+        || b.runner && b.runner.kind !== 'session' && b.leaseUntil <= Date.now()) return
       if (hooks.anyHold?.()) crowded = true
       void discover()
-      for (const [id, mt] of sceneFrameMtimes(root)) if (startMtimes.get(id) !== mt) touched.add(id)   // created or edited
+      const foundDrawings = new Set<string>()
+      for (const [id, mt] of sceneFrameMtimes(root, foundDrawings)) if (!drawings.has(id) && startMtimes.get(id) !== mt) {
+        touched.add(id)
+        // Inventory discovers a new drawing once; subsequent edits, including the person's, use its log.
+        if (foundDrawings.has(id)) drawings.add(id)
+      }
       for (const id of touched) light(id)
-      for (const f of lit) hooks.work?.(f, true)   // heartbeat: keep every lit frame's lease alive
+      for (const f of lit) light(f)   // heartbeat: keep every lit frame's lease alive
     }
     let early: { body: string; asks: boolean; commentId: string; ts: number } | undefined
     let run: Awaited<ReturnType<typeof runAgent>> = { reply: '', asks: false, ok: false, reanchors: [] }
@@ -1016,7 +1061,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
             // (from the saved runner, a restart included; it turns fresh only after a copy was tried and failed, below)
             const forked = b.runner?.kind === 'fork' ? b.runner.session : undefined
             const goal = goalText(packet, cfg.subagents && ad.supportsSubagents, full ? { kind: forked ? 'fork' : 'fresh', shell: true, mcp: s.mcp, skills: s.skills, sandbox: SANDBOX_SAYS[agent] } : undefined)
-            run = await runAgent(ad, opts && { ...opts, fork: forked }, goal, (pid) => { b.pgid = pid; q.persist() },
+            run = await runAgent(ad, opts && { ...opts, fork: forked }, goal, handleOf(b, b.gen ?? 0), (pid) => { b.pgid = pid; q.persist() },
               one?.thread && !b.early ? (text, asks, model) => {
                 if (stopped) return   // output buffered past stop(): a successor owns the log
                 // write FIRST, remember after: if the append throws, the final must not be suppressed
@@ -1033,6 +1078,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
         } finally { slotWaiting.delete(b.batchId); permit() }
       }
       if (stopped) return
+      await work.flush()
+      followWork()
       if (!run.ok) {
         // what it made before it failed is still its own (a last look, then the card holds them)
         await discover()
@@ -1071,6 +1118,7 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       // (a scene this run made is its own whole: its `_` files, a helper or a note, are not shared files it changed - one
       // another run made is not, though it was not there when this one began; F5, Codex's review)
       const changedShared = sharedBefore ? [...sharedMtimes(root)].filter(([f, mt]) => { const sc = sceneOf(f); return sharedBefore.get(f) !== mt && !(sc && b.madeScenes?.includes(sc)) }).map(([f]) => f) : []
+      for (const f of changedDrawings) if (!b.frames.includes(f)) { const file = drawingFile(root, f); if (file) changedShared.push(file) }
       const results: Record<string, Result> = {}
       for (const [id, r0] of Object.entries(split)) {
         let r = r0
@@ -1103,6 +1151,8 @@ export function createJam(root: string, cfg: JamConfig, adapter: JamAdapter, log
       clearGlow()
     }
     } finally {
+      unwatchDraw()
+      clearDrawGlow()
       // any other end (setup that threw, a record changed under it, a thrown step): its line is written once, as "other"
       if (!stopped) timeRun('other')
     }
@@ -1890,7 +1940,7 @@ export function startJam(root: string, cfg: JamConfig, log: (m: string) => void 
   const core = createJam(root, cfg, adapter, log, {
     // jam-scoped leases: a `marver work done --all` from a chat agent must never
     // extinguish a running jam job's glow (and vice versa)
-    work: (f, on) => (on ? activity.mark(f ?? '', undefined, 'jam') : activity.clear(f ?? '', 'jam')),
+    work: (f, on, ids, key) => (on ? activity.mark(f ?? '', undefined, 'jam', ids, key) : activity.clear(f ?? '', 'jam', key)),
     changed: onChanged,
     held: (f) => activity.has(f, 'cli'),
     anyHold: () => activity.leases('cli').length > 0,

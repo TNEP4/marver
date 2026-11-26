@@ -4,6 +4,7 @@
  * and the goal framing states plainly that the comment text is UNTRUSTED user data describing
  * a request, so an instruction hidden inside a comment is treated as content, not a command.
  */
+import { drawingSubject } from './drawing.ts'
 import type { CommentEvent } from '../../shared/events.ts'
 import { readTarget } from '../../shared/anchor.ts'
 import type { JobPacket, PacketMember, Reanchor } from './types.ts'
@@ -122,7 +123,13 @@ export function goalText(packet: JobPacket, subagents = true, runner?: Runner): 
       'edit nothing else. Your reply is ONE or TWO plain sentences on what the record says.',
       '',
     ] : []),
-    'Locate the element in the source by `data-mv-loc` (file:line) when the brief has one, else by its visible',
+    ...(packet.members.some((m) => m.draw) ? [
+      ...packet.members.filter((m) => m.draw).map((m) => `${m.id}: ${drawingSubject(m.draw!)}. Read its draw block for the current document, neighbours, open threads and revisions.`),
+      `For drawings use npx marver draw when the canvas is reachable${run ? `, passing ${run.trim()}` : ''}; otherwise edit the .excalidraw file directly, keeping ids and its revision header (design/instructions/draw.md). Keep the commented element id: set/move, never rm + add. Polish in place, no scene snapshot. Check with npx marver shot <drawing>.`,
+      'Across different epochs do not use --since. Within the same epoch draw.since is the comment revision. Siblings are the same kind of element in this drawing: change them only when asked; otherwise ask.',
+      'Re-pin a drawing with a marver-reanchor block: [{"thread":"...","element":"box-cart"}] or [{"thread":"...","paper":[412,96]}]. Names resolve by exact id in the file.',
+    ] : []),
+    'On screens, locate the element in the source by `data-mv-loc` (file:line) when the brief has one, else by its visible',
     'text / testid / selector, make the change, and keep the edit atomic.',
     '',
     'MAKE IT LOOK REAL. You have the web - use it for craft:',
@@ -187,6 +194,7 @@ export function goalText(packet: JobPacket, subagents = true, runner?: Runner): 
     'REPLY RULES (every line the owner reads):',
     '- PLAIN TEXT ONLY. The thread renders raw text, so markdown shows as literal characters. No **bold**,',
     '  no `backticks`, no #headings, no bullet lists, no tables. Line breaks are your only formatting.',
+    '- Replies reach the published canvas and the owner\'s people: name elements, never file paths.',
     '- NEVER an em dash. Use a plain dash like this: " - ".',
     '- The owner reads the reply where they asked, with no review step after it: say what you changed and what',
     '  is left. HARD SIZE CAP: about the SAME LENGTH as the owner\'s ask - usually ONE short sentence. NEVER',
@@ -197,7 +205,7 @@ export function goalText(packet: JobPacket, subagents = true, runner?: Runner): 
   ].join('\n')
 }
 
-const FRAME_FILE = /\.(tsx|jsx|html)$/
+const FRAME_FILE = /\.(tsx|jsx|html|excalidraw)$/
 /** Why a `shared` answer may not name this file - the one validator: a relative path under design/ that is design
  *  source and not a frame passes (null); never local state, the comment logs, the board files, the manifest, a frame,
  *  or a path that climbs out. In plain words: the owner reads it when a request needed only such files (F1). */

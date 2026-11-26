@@ -4,6 +4,7 @@
  * already knows the contract (design/AGENTS.md, which its CLAUDE.md or AGENTS.md brings in); the full rules -
  * captures, re-pins, shared files - stay in design/instructions/jam.md for when a run needs them.
  */
+import { drawingSubject } from './drawing.ts'
 import { captureWords, madeOf, wordsSince, wordsUntil } from './capture.ts'
 import { packetPath, sanitize } from './packet.ts'
 import type { JobPacket, PacketMember } from './types.ts'
@@ -84,6 +85,7 @@ export function sessionBrief(packet: JobPacket, handle: string, as?: string, o: 
   const board = packet.members[0]?.board ?? '<board>'
   const what = [
     ...asks,
+    ...packet.members.filter((m) => m.draw).map((m) => `${m.id}: ${drawingSubject(m.draw!)}. Use npx marver draw with --run ${handle}${as ? ` --as ${as}` : ''} when reachable; else edit ${m.draw!.file} keeping ids and its revision header. Keep the element id, polish in place, and check with npx marver shot ${m.draw!.frame}. ${m.draw!.since !== undefined ? `describe --since ${m.draw!.since} compares this epoch.` : 'Do not use --since across epochs.'} See design/instructions/draw.md as well as design/instructions/jam.md.`),
     none ? 'It reserves no frame: make what it asks for as new frames, in a scene of their own if nothing on the board fits (a scene the run makes is its own, its _ files included).'
       : `Frames you may edit: ${packet.frames.join(', ') || '(none)'}${packet.exclusive?.files.length ? `; and these shared files: ${packet.exclusive.files.join(', ')}` : ''}.`,
     `The thread, ${packet.members.some((m) => m.brief.capture) ? 'the capture\'s picks and pictures, ' : ''}and what earlier runs did: ${packetPath(packet.batchId)}`,

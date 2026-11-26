@@ -67,3 +67,25 @@ Raw file edits are allowed and merged. Read the file first and keep its revision
 header and stable ids. The person wins a conflict; `draw describe` reports lost
 changes. Re-read the current drawing and retry the intended change, then shoot
 and inspect it again.
+
+## Working through drawing comments
+
+In chat, read `npx marver comments list --open --json` and `npx marver marks`, then
+`npx marver work start <drawing>` BEFORE a commented change. Finish with
+`npx marver work done <drawing>`. A run from the canvas already holds its drawing:
+use `npx marver draw ... --run <handle> [--as <connection>]` so the log names its
+work even when runs overlap. A spawned run inherits its handle automatically.
+
+An element with an open thread is load-bearing: use `set` or `move`, never
+`rm` + `add`. Keep its id in raw file edits too. `describe` marks open threads;
+`describe --since <rev>` names threads orphaned by agent changes; `rm` names the
+threads it strands. Re-pin only when needed with
+`npx marver comments move <thread> --element <id>` or `--paper 412,96`.
+`comments new <drawing> --element <id> --body "..."` pins a note on an element;
+`--paper x,y` pins it on blank paper. Screen flags do not apply to drawings.
+
+Polish a drawing in place, with no scene snapshot, including rounds begun in
+chat. Its revisions and git preserve the before. Reply in each thread and name
+the revision. Siblings mean the same kind of element in the SAME drawing:
+change them only when asked; otherwise ask about them in the thread.
+A published reply is read by the owner's people: name elements, never file paths.

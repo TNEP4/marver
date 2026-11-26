@@ -300,6 +300,16 @@ export interface PacketMember {
   /** the pictures its brief names, as files the agent can open (A4.6 #38): `file` relative to the repo, `live` for the
    *  owner's screen in play as they saw it; an id that no longer resolves is left out. Outside the hashed brief */
   pictures?: PacketPicture[]
+  draw?: PacketDraw
+}
+export interface PacketDrawElement { id: string; type: string; words: string; box: { x: number; y: number; w: number; h: number } }
+export interface PacketDraw {
+  frame: string; file: string
+  element?: PacketDrawElement; gone?: string; paper?: [number, number]
+  neighbours?: { incoming: PacketDrawElement[]; outgoing: PacketDrawElement[]; shape?: PacketDrawElement }
+  near: PacketDrawElement[]
+  open: { element: string; thread: string; board: string }[]
+  comment?: { rev: number; epoch?: string }; now: { rev: number; epoch?: string }; since?: number
 }
 export interface PacketPicture { id: string; frame: string; file: string; live?: true }
 

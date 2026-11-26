@@ -82,6 +82,32 @@ overlaps, or together with it (answer both handles). A run of yours you let go o
 of your runs holds its frame goes back to the queue and waits for the frame - it never runs
 beside it.
 
+## Drawings in runs from the canvas
+
+A `.excalidraw` drawing is a frame. A member's `draw` block describes its target
+by exact id from the file: words, box, arrows in/out, a label's shape, nearby
+elements, open threads and the comment/current revisions. Use
+`npx marver draw describe <drawing> --run <handle> [--as <connection>]`, and pass
+that handle on edits too. Spawned runs inherit it. Use `--since` only when the
+epochs match. If the canvas is unreachable, edit the file directly, keeping ids
+and its revision header; the packet supplies the description. Check with
+`npx marver shot <drawing>` and read `design/instructions/draw.md` as well as this guide.
+
+Keep a commented element's id. Set/move it, never remove and recreate it. Polish
+in place with no scene snapshot. Other elements of the same kind in this drawing
+are siblings: change them only when asked; otherwise ask. Re-pin by exact id or
+paper coordinates, without a browser:
+
+```marver-reanchor
+[{"thread":"<thread>","element":"box-cart"},{"thread":"<other-thread>","paper":[412,96]}]
+```
+
+A missing id leaves the thread parked; nothing guesses a replacement. A move of
+the same id needs no re-pin. The run's drawing operations and its thread elements
+feed the presence lease; overlapping untagged raw edits belong to no one run.
+Replies reach the published canvas: name elements, never file paths, and name
+the revision for a drawing round.
+
 ## Wiring - once per repo
 
 Live Jam is ON by default: it arms itself with whatever agent CLI the machine has, and
