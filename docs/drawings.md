@@ -16,21 +16,39 @@ design/scenes/<scene>/<name>.excalidraw
 
 ## Draw
 
-- **Double-click** a drawing (or select it and press **Enter**, or **F** to fit it first) to draw in place.
+- One click selects a drawing like any frame (blue). **Double-click** it (or select it and press **Enter**, or
+  **F** to fit it first) to draw in place: the frame, the sidebar, the Marver mark and the tab's icon turn the
+  drawing's purple, as interact mode turns them magenta.
 - The bar above the frame holds the tools - lock, hand, select, rectangle, diamond, ellipse, arrow, line, draw,
-  text - and **⋯** for the rest (eraser, image, frame, web embed, laser pointer), export (PNG, PDF), then
-  **Copy path** and **Copy as image**. Excalidraw's own letters work too (R, D, O, A, L, P, T, E, V, H…).
-- The panel on the frame's left shows what the selection can change: stroke, background, fill, width, style,
-  sloppiness, edges, arrow type and heads, font, size, alignment, opacity, layers, actions.
-- The frame has its own view: zoom and fit in its corner, the minimap while you pan. **Use this view for the
-  frame** (in the zoom menu) makes it the view the frame rests at.
+  text - and **⋯** for the rest (eraser, image, frame, web embed, laser pointer), export (PNG, PDF) and **Dark
+  mode / Light mode**, then **Copy path** and **Copy as image** at its right end. Excalidraw's own letters work
+  (V, H, R, D, O, A, L, P, T, E…): inside a drawing **D** is the diamond, so the theme is **⌥⇧D** - Excalidraw's
+  own key for it. On the canvas, `d` still turns the theme.
+- The panel on the frame's left shows what the selection - or the tool in hand - can change: stroke, background,
+  fill, width, style, sloppiness, edges, arrow type and heads, font, size, alignment, opacity, layers, actions. It
+  stays up while you type in a shape or a text, and acts on the words you are typing. With several shapes
+  selected, Align and Distribute come first.
+- The colour picker has the drawing's own **Most used** colours, Excalidraw's palette, the current colour's five
+  **Shades**, its hex and an eyedropper (Chrome, Edge and the Mac app). The font picker lists the fonts **in this
+  drawing** first, each name in its own face.
+- The frame has its own view: zoom, fit and zoom to selection in its corner, the minimap while you pan. **Use this
+  view for the frame** (in the zoom menu) makes it the view the frame rests at.
+- Opened next to the sidebar, the board moves just enough for the panel to clear it.
 - **Esc** (or a click outside) leaves drawing mode. Everything is saved as you go - there is no save button.
+
+## Export
+
+- **Export as PNG** and **Copy as image** give the drawing at 3x - sharp on a retina screen, in a slide or a doc.
+- **Export as PDF** prints the drawing as vectors and real text, its fonts embedded: sharp at any zoom, and a
+  few dozen KB. The canvas's own Chrome prints it (as for `marver shot`); a published canvas, which has no server
+  to print with, gives the 3x picture on a page.
 
 ## Play
 
-Select a drawing and press **P**: it fills the tab on its own paper. The left panel holds its name and its
-properties, the tools sit top right, the view bottom right. **⌘\\** and **⌘/** collapse the panel and the tools;
-**Hide all UI** is in the ⋯ (**H** brings it back). **Esc** goes back to the canvas.
+Select a drawing and press **P**: it fills the tab on its own paper - in the Mac app the strip behind the tabs
+too. The left panel holds its name (its menu: export, copy, theme, Hide all UI) and its properties, the tools sit
+top right, the view bottom right. **⌘\\** and **⌘/** collapse the panel and the tools; **H** hides all the UI and
+brings it back; **⌥⇧D** (or **Dark mode / Light mode** in the ⋯) turns the theme. **Esc** goes back to the canvas.
 
 ## The agent draws with you
 
@@ -45,6 +63,9 @@ npx marver draw move <scene/name> <ids…> --by dx,dy
 npx marver draw rm <scene/name> <ids…>
 npx marver shot <scene/name>                                 # look at it
 ```
+
+A text the agent adds without a width and height is sized from its words and its font size, and every text is
+measured again in its own font when the drawing opens - an agent's label is never cut off.
 
 An agent may also edit the file directly. Either way the dev server merges element by element:
 
@@ -63,7 +84,7 @@ frame. Who drew what stays on your machine.
 
 ## Limits in this release
 
-- Excalidraw 0.18.1's tools: no sticky note, lasso, draw-to-shape or bucket fill.
-- History, Restore and **Send to Marver** are in the ⋯ but not live yet.
+- Excalidraw 0.18.1's tools: no sticky note, lasso, draw-to-shape, bucket fill or pen pressure setting.
+- **History** and **Send to Marver** show in the ⋯, greyed: they arrive with a later release.
 - Pasted images are stored inside the drawing file for now.
 - Mermaid to drawing (`draw add --mermaid`) is not available yet - the agent writes elements.

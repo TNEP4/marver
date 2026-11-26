@@ -6,19 +6,35 @@ Notable changes to `@marver-design/marver`. Format follows [Keep a Changelog](ht
 
 ### Highlights
 
-- **Drawings.** Sketch on the board, with your agent at the same time. A drawing is a plain `.excalidraw` file in
-  `design/scenes/` (it opens as-is on excalidraw.com) shown as a frame. Press **W** to drop one at the pointer, or
-  double-click any drawing to draw in place: the tools sit in one bar above the frame, the properties on its left, its
-  own zoom in its corner. **P** plays it full-tab on its own paper. See [docs/drawings.md](docs/drawings.md).
+- **Drawings.** Sketch right on the board, next to your screens and specs. A drawing is a plain `.excalidraw` file
+  in `design/scenes/` - the same file excalidraw.com and the VS Code extension open - shown as a frame. Press **W**
+  to drop one at the pointer, or double-click any drawing to draw in place: Excalidraw's tools sit in one bar above
+  the frame, the properties of what you select on its left, the drawing's own zoom in its corner, and the frame, the
+  sidebar and the tab's icon turn purple while you draw. Everything saves as you go. See
+  [docs/drawings.md](docs/drawings.md).
 - **Your agent draws with you.** `npx marver draw describe|add|set|move|rm` - or a plain edit of the file - lands in
   the open drawing live: no reload, never under your pointer, and ⌘Z still undoes only your own changes. If you both
   change one element, you win, and `draw describe` tells the agent what to redo.
+- **Play a drawing.** Select it and press **P**: it fills the tab on its own paper (in the Mac app, the strip behind
+  the tabs too), with its panel, its tools and its view; **H** hides everything, **⌥⇧D** turns it dark or light,
+  **Esc** brings you back.
 
 ### Added
 
-- Drawings publish view-only (pan, zoom, play, comments), `marver shot` renders them at their own size, and search
-  finds their words.
-- `templates/instructions/draw.md` teaches agents to describe, edit and look at a drawing.
+- Export a drawing as a 3x PNG or as a PDF of vectors and real text, its fonts embedded - sharp at any zoom and a few
+  dozen KB. **Copy as image** puts the 3x picture on the clipboard.
+- A colour picker with the drawing's own most used colours, Excalidraw's palette, the current colour's shades, its
+  hex and an eyedropper; a font picker that lists the fonts in this drawing first, each name in its own face.
+- **Dark mode / Light mode** in the drawing's ⋯ menu, and **⌥⇧D** inside a drawing - where **D** is Excalidraw's
+  diamond. On the canvas, `d` still turns the theme.
+- Drawings publish view-only (pan, zoom, play, export, comments), `marver shot` renders them at their own size, and
+  search finds their words.
+- `design/instructions/draw.md` teaches agents to describe, edit and look at a drawing; a text the agent adds without
+  a size is sized from its words.
+
+### Upgrading
+
+- `npx marver init` - the managed instructions gain the drawing guide.
 
 ## 0.37.1 - 2026-11-25
 
