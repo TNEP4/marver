@@ -580,6 +580,29 @@ export function apiMiddleware(root: string, opts: { viewports?: Record<string, {
           throw err
         }
       }
+      // POST draw-pdf {svg, title} - a drawing's PDF, vectors: its SVG printed by Chrome (the owner or the work token)
+      if (path === 'draw-pdf' && req.method === 'POST') {
+        const { readDevInfo } = await import('./work.ts')
+        const token = readDevInfo(root)?.token
+        if (!ownerGated(req) && !(!!token && req.headers['x-mv-work'] === token)) return json(res, 403, { error: 'forbidden' })
+        const raw = await readBody(req, 25_000_000)
+        if (raw == null) return json(res, 413, { error: 'drawing too large (25 MB)' })
+        let b: { svg?: unknown; title?: unknown }
+        try { b = JSON.parse(raw) } catch { return json(res, 400, { error: 'malformed JSON' }) }
+        if (typeof b.svg !== 'string') return json(res, 400, { error: 'svg: a string' })
+        const { svgToPdf, DrawPdfError } = await import('./draw/pdf.ts')
+        const { findChrome } = await import('./cdp.ts')
+        if (!findChrome()) return json(res, 501, { error: 'no Chrome to print with' })
+        try {
+          const bytes = await svgToPdf(b.svg, typeof b.title === 'string' ? b.title.slice(0, 200) : 'Drawing')
+          res.setHeader('content-type', 'application/pdf')
+          res.setHeader('content-length', String(bytes.byteLength))
+          return res.end(Buffer.from(bytes))
+        } catch (err) {
+          if (err instanceof DrawPdfError) return json(res, 400, { error: err.message })
+          return json(res, 500, { error: `print failed: ${(err as Error).message}` })
+        }
+      }
       const drawPath = /^draw\/([^/]+)$/.exec(path)
       if (drawPath && opts.draw) {
         const id = decodeURIComponent(drawPath[1])

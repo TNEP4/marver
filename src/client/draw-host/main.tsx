@@ -232,12 +232,12 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
   async function exportAs(eng: Engine, format: 'png' | 'svg' | 'clipboard', dark: boolean) {
     try {
       if (format === 'svg') { const svg = await eng.exportSvg(dark); post({ type: 'sh:draw-export', id, format, data: svg }); return }
-      const blob = await eng.exportPng(dark)
+      const { blob, scale } = await eng.exportPng(dark)
       if (format === 'clipboard') {
         try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); post({ type: 'sh:draw-export', id, format, ok: true }); return }
         catch { /* not focused here: the shell writes it */ }
       }
-      post({ type: 'sh:draw-export', id, format, blob })
+      post({ type: 'sh:draw-export', id, format, blob, scale })
     } catch (err) { post({ type: 'sh:draw-error', id, message: `export failed: ${(err as Error).message}` }) }
   }
 

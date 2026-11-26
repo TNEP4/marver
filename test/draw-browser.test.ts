@@ -375,6 +375,8 @@ describe('the drawing frame (spec 38), in a real browser', () => {
     const F = '[data-node="n_flow"] iframe[data-kind="draw"]'
     const fin = (x: string) => ev(`(() => { const f = document.querySelector('${F}'); const d = f.contentDocument, w = f.contentWindow; return (${x}) })()`)
     const keyIn = async (code: string, key: string, modifiers = 0) => {
+      // the drawing holds the focus (as after a click in it)
+      await ev(`(() => { const f = document.querySelector('.dk-playhost iframe') ?? document.querySelector('${F}'); f.contentWindow.focus(); f.contentDocument.querySelector('.excalidraw')?.focus(); return true })()`)
       const k = { code, key, windowsVirtualKeyCode: key.toUpperCase().charCodeAt(0), modifiers }
       await b!.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...k }, s); await b!.send('Input.dispatchKeyEvent', { type: 'keyUp', ...k }, s); await sleep(250)
     }
@@ -411,5 +413,31 @@ describe('the drawing frame (spec 38), in a real browser', () => {
     await until(`window.__mvStore.getState().viewTheme === ${JSON.stringify(view)}`, 3000)
     await escape()
     await until(`!document.querySelector('.dk-playhost')`, 5000)
+  }, 60_000)
+
+  it('exports: the PNG at 3x, the PDF as vectors and real text - one page, its fonts embedded, no picture, light (Nic, 26 Nov)', async (ctx) => {
+    if (!b) return ctx.skip('no Chrome')
+    const F = '[data-node="n_flow"] iframe[data-kind="draw"]'
+    const png = await ev(`(async () => { const w = document.querySelector('${F}').contentWindow; const { blob, scale } = await w.__mvDraw.engine.exportPng(false); const bmp = await createImageBitmap(blob); const box = w.__mvDraw.engine.contentBox(); return { scale, w: bmp.width, h: bmp.height, cw: box.w } })()`)
+    expect(png.scale).toBe(3)
+    expect(png.w).toBeGreaterThan(png.cw * 3 - 1)                       // the content (+ padding) at 3x
+    const svg: string = await ev(`document.querySelector('${F}').contentWindow.__mvDraw.engine.exportSvg(false)`)
+    expect(svg).toMatch(/@font-face/)                                    // Excalidraw inlines the fonts it uses
+    const info = JSON.parse(readFileSync(join(root, 'design/.local/dev.json'), 'utf8'))
+    const res = await fetch(`${dev!.origin}/__mv/api/draw-pdf`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-mv-work': info.token }, body: JSON.stringify({ svg, title: 'Checkout flow' }) })
+    expect(res.status, await res.clone().text().catch(() => '')).toBe(200)
+    expect(res.headers.get('content-type')).toBe('application/pdf')
+    const bytes = Buffer.from(await res.arrayBuffer())
+    const text = bytes.toString('latin1')
+    expect(text.startsWith('%PDF')).toBe(true)
+    expect(text).toMatch(/\/FontFile2|\/FontFile3|\/FontFile\b/)            // real text, its font embedded
+    expect(text).not.toMatch(/\/Subtype\s*\/Image/)                          // no picture of the drawing
+    expect(bytes.length).toBeLessThan(400_000)
+    const { PDFDocument } = await import('pdf-lib')
+    const doc = await PDFDocument.load(bytes)
+    expect(doc.getPageCount()).toBe(1)
+    expect(doc.getTitle()).toBe('Checkout flow')
+    // a canvas page can ask too (the owner), and anything else is refused
+    expect((await fetch(`${dev!.origin}/__mv/api/draw-pdf`, { method: 'POST', body: JSON.stringify({ svg }) })).status).toBe(403)
   }, 60_000)
 })

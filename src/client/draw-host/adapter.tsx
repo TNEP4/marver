@@ -43,7 +43,8 @@ export interface Engine {
   appState(): any
   contentBox(): Box | null
   viewBox(): Box
-  exportPng(dark: boolean): Promise<Blob>
+  /** the drawing at 3x (its longest side capped at 8192 px), and the scale it came out at */
+  exportPng(dark: boolean): Promise<{ blob: Blob; scale: number }>
   exportSvg(dark: boolean): Promise<string>
   /** re-render every element canvas at the current pixel ratio (after a crispness change) */
   rerender(): void
@@ -178,10 +179,15 @@ export function DrawEngine({ initial, theme, edit, editable, onReady, onChange, 
     },
     async exportPng(dark) {
       const api = apiRef.current
-      return exportToBlob({
+      // the scale through getDimensions - the one way exportToBlob reads it (appState.exportScale is the dialog's): 3x,
+      // sharp on any screen and in a slide, the longest side kept within 8192 px
+      let scale = 1
+      const blob = await exportToBlob({
         elements: api.getSceneElements(), files: api.getFiles(), mimeType: 'image/png', exportPadding: 24,
-        appState: { exportBackground: true, viewBackgroundColor: dark ? '#121212' : '#ffffff', exportWithDarkMode: dark, exportScale: 2 },
+        appState: { exportBackground: true, viewBackgroundColor: dark ? '#121212' : '#ffffff', exportWithDarkMode: dark },
+        getDimensions: (w: number, h: number) => { scale = Math.max(1, Math.min(3, 8192 / Math.max(w, h, 1))); return { width: Math.round(w * scale), height: Math.round(h * scale), scale } },
       } as any)
+      return { blob, scale }
     },
     async exportSvg(dark) {
       const api = apiRef.current

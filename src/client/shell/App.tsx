@@ -45,7 +45,7 @@ import { asksNow, Bubble, MarkedRow, markSeenFrom, resolveAllFrom, useRollup, us
 import { CommentButton, DevicePicker, HideUIButton, LaserButton, Popover, ThemePicker, toggleHideUI, usePopover } from './Toolbar.tsx'
 import { DrawCanvasChrome, newDrawingAtPointer } from './draw/DrawChrome.tsx'
 import { Ph } from './draw/kit.tsx'
-import { DrawPlay, playDrawingIfSelected } from './draw/DrawPlay.tsx'
+import { DrawPlay, playDrawingIfSelected, useDrawPlay } from './draw/DrawPlay.tsx'
 import { drawMessage } from './draw/link.ts'
 
 const commentsStore = () => useComments.getState()
@@ -894,6 +894,13 @@ export function App() {
         else if (s.interact) { h.step('interact-off'); setInteract(null) }
         else { h.step('deselect'); navigatedByHand(); select(null) }
         endAfterFrames(h)
+      }
+      // ⌥⇧D with a drawing open (drawing mode or play) while the focus is in the shell, not in the drawing: its theme,
+      // as the drawing itself does - D alone stays the diamond inside a drawing (Nic, 26 Nov)
+      if (e.altKey && e.shiftKey && e.code === 'KeyD') {
+        const n = s.interact ? s.nodes.find((x) => x.key === s.interact) : undefined
+        if (n && s.frameFor(n)?.kind === 'draw') { e.preventDefault(); cmd('theme', { ...how(), frames: 1 }); s.setNodeTheme(n.key, n.theme === 'dark' ? 'light' : 'dark'); return }
+        if (useDrawPlay.getState().at) { e.preventDefault(); cmd('theme', how()); s.setTheme(s.viewTheme === 'dark' ? 'light' : 'dark'); return }
       }
       // drawings (spec 38): W drops a new one at the pointer; Enter or F on a selected drawing opens it for drawing
       // (F fits it to the window first)
