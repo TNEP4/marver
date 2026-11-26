@@ -38,10 +38,24 @@ export function sendQuiet(link: DrawLink, c: Cmd): void {
 }
 
 // ---- exports: the host renders, the shell saves or copies ----------------------------------------------------
-type Want = { kind: 'png' | 'pdf' | 'clipboard'; title: string; toast: (t: string) => void }
+type Want = { kind: 'png' | 'pdf' | 'clipboard'; title: string; toast: (t: string) => void; resolve?: (png: Blob) => void; reject?: (e: Error) => void }
 const wants = new Map<string, Want>()
 
 export function exportDrawing(link: DrawLink, kind: Want['kind'], toast: (t: string) => void, dark: boolean): void {
+  const CI = (globalThis as { ClipboardItem?: typeof ClipboardItem }).ClipboardItem
+  if (kind === 'clipboard' && CI && navigator.clipboard?.write) {
+    // written INSIDE the click, the picture a promise the browser waits for (as copyFrameImage does): a write after the
+    // round trip to the drawing would have lost the click's activation where it lasts no longer than the click (Safari)
+    let want!: Want
+    const png = new Promise<Blob>((resolve, reject) => { want = { kind, title: link.title, toast, resolve, reject } })
+    const timer = setTimeout(() => want.reject?.(new Error('timed out')), 15_000)
+    wants.set(link.key, want)
+    navigator.clipboard.write([new CI({ 'image/png': png })])
+      .then(() => toast('image copied'), () => toast('copy blocked - click the drawing first'))
+      .finally(() => clearTimeout(timer))
+    drawSend(link, { op: 'export', format: 'png', dark })
+    return
+  }
   wants.set(link.key, { kind, title: link.title, toast })
   drawSend(link, { op: 'export', format: kind === 'clipboard' ? 'clipboard' : 'png', dark })
 }
@@ -50,7 +64,12 @@ export function exportDrawing(link: DrawLink, kind: Want['kind'], toast: (t: str
  *  by play's host (its own iframe). Returns true when the message was a drawing's. */
 export function drawMessage(key: string, data: any): boolean {
   if (data?.type === 'sh:draw-state') { useDraw.getState().put(key, data as DrawState); return true }
-  if (data?.type === 'sh:draw-error') { useDraw.getState().fail(key, String(data.message ?? 'drawing error')); wants.get(key)?.toast(String(data.message ?? 'drawing error')); return true }
+  if (data?.type === 'sh:draw-error') {
+    useDraw.getState().fail(key, String(data.message ?? 'drawing error'))
+    const w = wants.get(key)
+    if (w?.reject) { wants.delete(key); w.reject(new Error(String(data.message ?? 'drawing error'))) } else w?.toast(String(data.message ?? 'drawing error'))
+    return true
+  }
   if (data?.type === 'sh:draw-export') {
     const w = wants.get(key)
     wants.delete(key)
@@ -66,6 +85,7 @@ export function drawMessage(key: string, data: any): boolean {
 
 async function deliver(w: Want, png: Blob): Promise<void> {
   const name = (w.title || 'drawing').replace(/[^\w .-]+/g, '').trim() || 'drawing'
+  if (w.resolve) { w.resolve(png); return }   // the clipboard write already waits for it (exportDrawing)
   try {
     if (w.kind === 'clipboard') {
       await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })])

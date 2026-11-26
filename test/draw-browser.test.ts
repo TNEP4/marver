@@ -125,6 +125,19 @@ describe('the drawing frame (spec 38), in a real browser', () => {
     expect(disk().elements.filter((e: any) => e.strokeColor === '#e03131')).toHaveLength(1)
   }, 30_000)
 
+  it('Copy as image puts the drawing on the clipboard - riding the click, nothing granted before it', async (ctx) => {
+    if (!b) return ctx.skip('no Chrome')
+    await b.send('Page.bringToFront', {}, s)
+    await b.send('Emulation.setFocusEmulationEnabled', { enabled: true }, s)
+    await press('.dk-tools button[aria-label="Copy as image"]')
+    await until(`[...document.querySelectorAll('.sh-toast')].some((t) => /image copied|copy blocked/.test(t.textContent))`, 15_000)
+    expect(await ev(`[...document.querySelectorAll('.sh-toast')].map((t) => t.textContent).join(' | ')`)).toMatch(/image copied/)
+    await b.grant(s, dev!.origin, ['clipboardReadWrite'])
+    const got = await ev(`(async () => { const items = await navigator.clipboard.read(); const it = items.find((i) => i.types.includes('image/png')); if (!it) return { types: items.map((i) => i.types) }; const bmp = await createImageBitmap(await it.getType('image/png')); return { w: bmp.width, h: bmp.height } })()`)
+    expect(got.w, JSON.stringify(got)).toBeGreaterThan(100)
+    expect(got.h).toBeGreaterThan(50)
+  }, 30_000)
+
   it("an agent's edit of the file lands live: no reload, the person's stroke kept, ⌘Z still the person's", async (ctx) => {
     if (!b) return ctx.skip('no Chrome')
     const boot = await inner(`w.__mvBoot`)
