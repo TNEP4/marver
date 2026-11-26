@@ -13,25 +13,27 @@
  *                 leaves where it needs the human's eyes. Checked against the rendered frame when
  *                 `dev` runs; it asks (--fyi: it does not). --thread <id> adds it to an open thread.
  * reply <thread>  append a reply (--body) - the agent's voice in the loop: Marver's on a thread
- *                 started here, the owner's on a collaborator's (the voice that reaches them);
+ *                 started here; on a collaborator's, Marver when the canvas accepts agent events, else the owner's;
  *                 --ask when the reply asks the human something
- * move <thread>   re-pin a thread on another element (--on / --at) - its author's only
+ * move <thread>   re-pin with --on / --at (screens), --element / --paper (drawings)
  * resolve <thread>  mark addressed (--addressed-in <frame> records WHICH variant)
  * resolve --all   every open thread in one scope (--board | --folder | --scene | --frame | --canvas; --dry-run counts) -
  *                 never what Jam is at work on; --undo <op> reopens what it resolved. Only on the human's yes.
  * invite <email>  mint a single-use invite link (owner only, needs connect first)
  * revoke <email>  revoke an account and its sessions (owner only)
  */
+import { listedAnchor, anchorDescription, checkDrawingAnchor, drawingFile, readDrawing, targetOnFrame } from '../server/draw/comments.ts'
+import { ownsMessage } from '../server/own.ts'
 import { createInterface } from 'node:readline'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { NAME } from './name.ts'
 import { appendEvents, listBoards, readLog, replay, type Thread } from '../server/comments.ts'
-import { connect, connectClaim, connectToken, loadCollab, syncOnce } from '../server/sync.ts'
+import { connect, connectClaim, connectToken, identityBindings, loadCollab, serverCapabilities, syncOnce } from '../server/sync.ts'
 import { localProfile } from '../server/profile.ts'
 import { runningAgent } from '../server/jam/agent.ts'
 import { readDevInfo } from '../server/work.ts'
-import { readTarget, uncheckedAnchor, type Anchor, type AnchorCheck, type AnchorTarget } from '../shared/anchor.ts'
+import { isDrawAnchor, readTarget, uncheckedAnchor, type Anchor, type AnchorCheck, type AnchorTarget } from '../shared/anchor.ts'
 
 const ask = (q: string, hide = false): Promise<string> => new Promise((done) => {
   const rl = createInterface({ input: process.stdin, output: process.stdout })
@@ -93,10 +95,11 @@ export async function commentsCommand(root: string, action: string, value: strin
     case 'list': {
       let threads = allThreads(root, opts.board)
       if (opts.open) threads = threads.filter((t) => !t.resolved)
-      if (opts.json) return void console.log(JSON.stringify(threads, null, 2))
+      if (opts.json) return void console.log(JSON.stringify(threads.map((t) => ({ ...t, ...(t.anchor ? { anchor: listedAnchor(root, t.frame, t.anchor) } : {}), element: anchorDescription(root, t.frame, t.anchor) })), null, 2))
       if (!threads.length) return void console.log(`  no ${opts.open ? 'open ' : ''}comments`)
       for (const t of threads) {
-        const anchor = t.frame ? ` on ${t.frame}` : ''
+        const element = anchorDescription(root, t.frame, t.anchor)
+        const anchor = `${t.frame ? ` on ${t.frame}` : ''}${element ? ` · ${element}` : ''}`
         console.log(`  ${t.resolved ? '✓' : '○'} ${t.id}${anchor} - ${t.deleted ? '(comment deleted)' : `${t.agent ? 'Marver' : t.author?.name ?? '?'}: ${t.body ?? ''}`}${t.replies.length ? ` (+${t.replies.length})` : ''}${t.addressedIn ? ` → ${t.addressedIn}` : ''}`)
       }
       return
@@ -105,17 +108,15 @@ export async function commentsCommand(root: string, action: string, value: strin
       if (!value || !opts.body) throw new Error('usage: comments reply <thread-id> --body "..."')
       const t = allThreads(root).find((t) => t.id === value)
       if (!t) throw new Error(`no thread ${value} in design/comments/`)
-      // The reply goes where the asker is. A thread the owner (or Marver) started lives on this
-      // machine: the agent answers as Marver - its own voice, and the owner gets the pill. A thread a
-      // collaborator started arrived from the published canvas, and agent events never leave this
-      // machine (sync.ts) - so that reply keeps the owner's voice, the one that reaches them.
       const local = ownerThread(root, t)
+      const collab = loadCollab(root)
+      const asMarver = local || !!(collab && (await serverCapabilities(collab.url, { authorization: `Bearer ${collab.token}` })).agentEvents)
       appendEvents(join(root, 'design', 'comments'), t.board, [{
         id: randomUUID(), ts: Date.now(), type: 'reply', commentId: randomUUID(), parentId: t.id, board: t.board,
-        ...(local ? marverAuthor(root) : { author: localAuthor(root) }), body: plainDashes(String(opts.body)), asks: !!opts.ask,
+        ...(asMarver ? marverAuthor(root) : { author: localAuthor(root) }), body: plainDashes(String(opts.body)), asks: !!opts.ask,
       }])
-      if (!local) await pushIfConnected(root)
-      return void console.log(local ? `  replied to ${t.id} as Marver` : `  replied to ${t.id} in your voice - ${t.author?.name ?? 'its author'} sees it on the published canvas`)
+      await pushIfConnected(root)
+      return void console.log(asMarver ? `  replied to ${t.id} as Marver` : `  replied to ${t.id} in your voice - ${t.author?.name ?? 'its author'} sees it on the published canvas`)
     }
     case 'new': {
       if (opts.thread !== undefined) return addToThread(root, String(opts.thread), value, opts)
@@ -125,9 +126,9 @@ export async function commentsCommand(root: string, action: string, value: strin
       if (r.exact.length !== 1) throw new Error(`"${value}" is a folder of frames - pin a note on one frame: comments new <scene/frame>`)
       // a note lives on a board: a frame on none gets the hint first (spec 26, Part 7) - then its element
       if (!r.board) throw new Error(`a note needs a board to live on - ${r.hints.join('\n')}`)
-      const target = readTarget(opts)
-      if (typeof target === 'string') throw new Error(`a note goes on an element - ${target}`)
       const frame = r.exact[0]
+      let target: AnchorTarget
+      try { target = commentTarget(root, frame, opts) } catch (err) { throw new Error(`a note goes on an element - ${(err as Error).message}`) }
       const nodeKey = r.nodesOf(r.board).find((n) => n.frame === frame && typeof n.key === 'string')?.key
       const open = allThreads(root).filter((t) => !t.resolved && t.frame === frame && !isNoteThread(t))
       const { anchor, holders } = await pinOn(root, frame, target, opts, open)
@@ -148,20 +149,21 @@ export async function commentsCommand(root: string, action: string, value: strin
     }
     case 'move': {
       if (!value) throw new Error('usage: comments move <thread-id> --on "<words it shows>" | --at "<selector or data-testid>" [--nth <n>]')
-      const target = readTarget(opts)
-      if (typeof target === 'string') throw new Error(target)
       const t = allThreads(root).find((t) => t.id === value)
       if (!t) throw new Error(`no thread ${value} in design/comments/`)
       if (!t.frame || isNoteThread(t)) throw new Error(`thread ${value} is not pinned in a frame - move it on the canvas`)
-      // who may move a pin follows the published rule (collab.ts): its author - here, the owner or Marver
-      if (!ownerThread(root, t)) throw new Error(`thread ${value} is ${t.author?.name ?? 'a collaborator'}'s - only its author can move it`)
+      const target = commentTarget(root, t.frame, opts)
+      const draw = target.element !== undefined || target.paper !== undefined
+      if (!draw && !ownerThread(root, t)) throw new Error(`thread ${value} is ${t.author?.name ?? 'a collaborator'}'s - only its author can move it`)
       const others = allThreads(root).filter((o) => !o.resolved && o.frame === t.frame && o.id !== t.id && !isNoteThread(o))
-      const { anchor } = await pinOn(root, t.frame, target, opts, others)
+      const { anchor, holders } = await pinOn(root, t.frame, target, opts, others)
+      if (isDrawAnchor(t.anchor) && isDrawAnchor(anchor) && 'id' in t.anchor.el.draw && 'id' in anchor.el.draw && t.anchor.el.draw.id === anchor.el.draw.id && t.anchor.pos) anchor.pos = t.anchor.pos
       appendEvents(join(root, 'design', 'comments'), t.board, [{
         id: randomUUID(), ts: Date.now(), type: 'reanchor', commentId: t.id, board: t.board, anchor,
-        ...(t.agent ? marverAuthor(root) : { author: localAuthor(root) }),
+        ...(draw || t.agent ? marverAuthor(root) : { author: localAuthor(root) }),
       }])
-      if (!t.agent) await pushIfConnected(root)
+      await pushIfConnected(root)
+      for (const id of holders) console.log(`  that element already holds thread ${id} - a follow-up is comments reply ${id} --body "..."`)
       return void console.log(`  moved ${t.id} on ${t.frame}`)
     }
     case 'resolve': {
@@ -285,7 +287,7 @@ const resolveUndo = async (root: string, op: string) => {
  *  keeps its voice and sync rules. */
 const addToThread = (root: string, id: string, frame: string | undefined, opts: any) => {
   if (!id || !opts.body) throw new Error('usage: comments new --thread <thread-id> --body "..." [--fyi]')
-  if (opts.on !== undefined || opts.at !== undefined) throw new Error(`--thread adds to a thread already pinned - leave out --on/--at (\`${NAME} comments move\` re-pins it)`)
+  if ([opts.on, opts.at, opts.element, opts.paper].some((v) => v !== undefined)) throw new Error(`--thread adds to a thread already pinned - leave out --on/--at/--element/--paper (\`${NAME} comments move\` re-pins it)`)
   const t = allThreads(root).find((t) => t.id === id)
   if (!t) throw new Error(`no thread ${id} in design/comments/`)
   if (frame && frame !== t.frame) throw new Error(`thread ${id} is on ${t.frame}, not ${frame}`)
@@ -305,9 +307,11 @@ const isNoteThread = (t: Thread) => !!(t.anchor as { el?: { note?: unknown } } |
  *  bundle, and which open threads already sit on that element), unchecked with a warning when the
  *  check cannot run, refused only when the frame rendered with no match or several. */
 const pinOn = async (root: string, frame: string, target: AnchorTarget, opts: any, open: Thread[]): Promise<{ anchor: Anchor; holders: string[] }> => {
-  const check = await askDev(root, frame, target, opts, open)
+  const drawing = readDrawing(root, frame)
+  const check = drawing ? checkDrawingAnchor(drawing.doc, target, open.map((t) => ({ key: t.id, anchor: t.anchor }))) : await askDev(root, frame, target, opts, open)
+  if (drawing && !check.ok) throw new Error(`no element ${JSON.stringify(target.element)} in drawing ${frame} - use --element <id> from draw describe, or --paper x,y`)
   if (check.ok) {
-    console.log(`  found it on ${frame} at ${check.viewport}, ${check.theme} theme`)
+    console.log(drawing ? `  found ${anchorDescription(root, frame, check.anchor)} on ${frame}` : `  found it on ${frame} at ${check.viewport}, ${check.theme} theme`)
     return { anchor: check.anchor, holders: check.holders }
   }
   const named = target.on ? `"${target.on}"` : `--at "${target.at}"`
@@ -367,16 +371,26 @@ const pushIfConnected = async (root: string) => {
 
 /** Did this thread start on this machine - by the owner, or by Marver? A thread a collaborator
  *  started carries their address; one with no address was written here before a profile existed. */
-const ownerThread = (root: string, t: Thread): boolean => {
-  if (t.agent) return true
-  const theirs = t.author?.email?.toLowerCase()
-  const mine = localProfile(root).email?.toLowerCase()
-  return !theirs || (!!mine && theirs === mine)
+const ownerThread = (root: string, t: Thread & { board?: string }): boolean => {
+  if (t.agent || t.board && ownsMessage(root, t.board, t.id)) return true
+  const theirs = t.author?.email?.toLowerCase(), mine = localProfile(root).email?.toLowerCase()
+  if (theirs) return !!mine && theirs === mine
+  if (!t.author?.id) return true
+  const collab = loadCollab(root)
+  return !!mine && !!collab && identityBindings(root, collab.url)[mine] === t.author.id
+}
+
+/** Validate surface flags before trying Chrome or writing an event. */
+export function commentTarget(root: string, frame: string, opts: any): AnchorTarget {
+  targetOnFrame(!!drawingFile(root, frame), opts, opts)
+  const target = readTarget(opts)
+  if (typeof target === 'string') throw new Error(target)
+  return target
 }
 
 /** Marver's voice for CLI-born events, the way Live Jam writes it (daemon.ts): the owner's identity
  *  (attributable), `agent: true` (renders as Marver, raises the owner's pill, never triggers a jam
- *  job, never syncs), and the harness that ran the command when its marker says so. */
+ *  job), and the harness that ran the command when its marker says so. */
 const marverAuthor = (root: string) => {
   const me = localProfile(root)
   const harness = runningAgent()

@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFile } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { drawCommand, parseDrawArgs } from '../src/cli/draw.ts'
@@ -132,6 +132,7 @@ describe('built draw CLI against a real dev server', () => {
   beforeAll(async () => {
     root = fixtureRoot('mv-draw-cli-', {
       'design/config.ts': 'export default { jam: false }\n',
+      'design/scenes/checkout/unopened.excalidraw': JSON.stringify({ type: 'excalidraw', version: 2, marver: { rev: 0, epoch: 'unopened' }, elements: [{ id: 'unopened', type: 'rectangle', x: 0, y: 0, width: 100, height: 80, version: 1 }], appState: {}, files: {} }),
       'design/scenes/app/home.tsx': 'export default () => <main>Home</main>\n',
       'design/boards/flow.json': JSON.stringify({ version: 1, name: 'flow', auto: false, nodes: [{ key: 'home', frame: 'app/home', x: 0, y: 0, w: 960, h: 640 }] }),
     })
@@ -154,6 +155,19 @@ describe('built draw CLI against a real dev server', () => {
     })
   })
   const readDrawing = (name = 'cart') => JSON.parse(readFileSync(join(root, `design/scenes/checkout/${name}.excalidraw`), 'utf8'))
+
+  it('baselines unopened inventory drawings before a raw edit, without a GET or a browser', async (ctx) => {
+    if (unavailable) return ctx.skip(unavailable)
+    const abs = join(root, 'design/scenes/checkout/unopened.excalidraw')
+    const doc = JSON.parse(readFileSync(abs, 'utf8'))
+    doc.elements[0].x = 200
+    writeFileSync(abs, JSON.stringify(doc))
+    await vi.waitFor(() => {
+      const dir = join(root, 'design/.local/draw')
+      const entries = readdirSync(dir).filter((f) => f.endsWith('.jsonl')).flatMap((f) => readFileSync(join(dir, f), 'utf8').trim().split('\n').map((s) => JSON.parse(s)))
+      expect(entries.some((e) => e.rev === 1 && e.via === 'file' && e.ops.some((o: any) => o.id === 'unopened' && o.el.x === 200))).toBe(true)
+    }, { timeout: 10000 })
+  })
 
   it('creates and pins a drawing, then adds, describes, sets, moves and removes elements', async (ctx) => {
     if (unavailable) return ctx.skip(unavailable)

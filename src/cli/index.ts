@@ -141,6 +141,8 @@ cli
   .option('--body <text>', 'new / reply: the text')
   .option('--on <text>', 'new / move: pin on the element showing these words')
   .option('--at <selector>', 'new / move: pin on the element this data-testid or CSS selector names (an element without words, like an icon)')
+  .option('--element <id>', 'new / move: exact element id in a drawing (one of --on / --at / --element / --paper)')
+  .option('--paper <x,y>', 'new / move: point on drawing paper')
   .option('--nth <n>', 'new / move: which of several matching elements (1 = the first)')
   .option('--viewport <name>', 'new / move: check the frame at this viewport (default: its own)')
   .option('--theme <name>', 'new / move: check the frame in this theme (default: light)')
@@ -157,7 +159,14 @@ cli
   .option('--undo <op>', 'resolve: undo a resolve --all by the op id it printed')
   .action(async (action: string, value: string | undefined, opts) => {
     const { commentsCommand } = await import('./comments.ts')
-    try { await commentsCommand(resolve(opts.root), action, value, opts) }
+    try {
+      // Element ids are opaque: cac's numeric conversion must not turn 001 into 1.
+      if (opts.element !== undefined && !Array.isArray(opts.element)) {
+        const at = process.argv.indexOf('--element')
+        opts.element = at >= 0 ? process.argv[at + 1] : process.argv.find((s) => s.startsWith('--element='))?.slice(10) ?? opts.element
+      }
+      await commentsCommand(resolve(opts.root), action, value, opts)
+    }
     catch (err) {
       console.error(`[${NAME}] ${(err as Error).message}`)
       process.exit(1)
@@ -421,6 +430,8 @@ cli
   .option('--mermaid [file]', 'Not available yet - write elements (see design/instructions/draw.md)')
   .option('--at <x,y>', 'add: move the group so its top-left corner lands at x,y (default: your coordinates as given)')
   .option('--by <dx,dy>', 'move: offset in drawing coordinates')
+  .option('--run <handle>', 'Attribute draw operations to this Live Jam run (spawned runs inherit their handle)')
+  .option('--as <conn>', 'With --run: the session connection, as for boards place')
   .action(async (action: string | undefined, args: string[], opts) => {
     const { drawCommand } = await import('./draw.ts')
     try { await drawCommand(resolve(opts.root), action, args ?? [], opts) }
@@ -471,7 +482,7 @@ cli.help()
 cli.version(version())
 // cac reads a negative coordinate pair after a space as another option. Accept both --by -10,20 and --by=-10,20.
 const argv = [...process.argv]
-if (argv[2] === 'draw') for (let i = 3; i < argv.length - 1; i++) {
-  if ((argv[i] === '--at' || argv[i] === '--by') && /^-\d[^,]*,/.test(argv[i + 1])) argv.splice(i, 2, `${argv[i]}=${argv[i + 1]}`)
+if (argv[2] === 'draw' || argv[2] === 'comments') for (let i = 3; i < argv.length - 1; i++) {
+  if ((argv[i] === '--at' || argv[i] === '--by' || argv[i] === '--paper') && /^-\d[^,]*,/.test(argv[i + 1])) argv.splice(i, 2, `${argv[i]}=${argv[i + 1]}`)
 }
 cli.parse(argv)
