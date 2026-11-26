@@ -155,6 +155,21 @@ describe('comments on a drawing (spec 39), in a real browser', () => {
     await until(`/\\borphan\\b/.test(document.querySelector('.cm-pin[data-thread="${t.id}"]')?.className ?? '')`, 15_000)
   }, 60_000)
 
+  it('the elements Marver works on shimmer over the drawing, and stop when their lease ends', async (ctx) => {
+    if (!b) return ctx.skip('no Chrome')
+    await ev(`window.__mvStore.getState().setWorkingFrom({ frames: ['sketches/flow'], boards: ['main'], drawings: { 'sketches/flow': { ids: ['pay'], lease: Date.now() + 2500 } } })`)
+    await until(`!!document.querySelector('.dk-work-layer .dk-work')`, 8000)
+    // over the pay box (its screen box, a few px of air around it)
+    const box = await ev(`(() => { const r = document.querySelector('.dk-work').getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height } })()`)
+    const at = await page(CANVAS, 420, 200)
+    expect(Math.abs(box.x + 4 - at.x)).toBeLessThan(6)
+    expect(Math.abs(box.y + 4 - at.y)).toBeLessThan(6)
+    expect(box.w).toBeGreaterThan(170)
+    // never on Excalidraw's canvas: the shell's own layer
+    expect(await ev(`document.querySelector('.dk-work').closest('.cm-layer') !== null`)).toBe(true)
+    await until(`!document.querySelector('.dk-work-layer .dk-work')`, 6000)
+  }, 60_000)
+
   it('drawing play: the same pins, a comment button, and a pick goes on the played node', async (ctx) => {
     if (!b) return ctx.skip('no Chrome')
     await ev(`(() => { window.__mvStore.getState().select('n_flow'); return true })()`)

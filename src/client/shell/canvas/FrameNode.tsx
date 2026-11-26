@@ -5,7 +5,7 @@ import { admit, readable, release } from './admission.ts'
 import { canvasCtl } from './ctl.ts'
 import { CopyIcon, IntentGlyph, ParallelogramFillIcon, ReloadIcon, SlideFrameIcon, XIcon } from '../icons.tsx'
 import { Ph } from '../draw/kit.tsx'
-import { CommentLayer } from '../Comments.tsx'
+import { CommentLayer, DrawWorkLayer } from '../Comments.tsx'
 import { useComments } from '../comments-store.ts'
 import { threadHostKey } from '../keys.ts'
 import { registerFrame, unregisterFrame } from './frame-registry.ts'
@@ -536,6 +536,7 @@ export const FrameNode = memo(function FrameNode({ node }: { node: Node }) {
           hangs over it (the vbadge precedent) instead of being cut off */}
       <div className="cm-layer" style={{ top: HEADER, height: node.h }}>
         <CommentLayer node={node} frameId={frame.id} iframe={iframeRef} />
+        {frame.kind === 'draw' && <DrawWorkLayer frameId={frame.id} iframe={iframeRef} ready={node.status === 'ready'} />}
       </div>
 
       {selected && (

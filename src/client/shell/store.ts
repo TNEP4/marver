@@ -780,6 +780,8 @@ interface State {
   setWorking(frames: string[], boards?: string[]): void
   /** setWorking from a wire payload (`{ frames, boards }`), strings only. */
   setWorkingFrom(m: unknown): void
+  /** spec 39 A4: the elements a run works on, per drawing, with their lease (ms, the server's clock) - they shimmer */
+  workingDrawings: Record<string, { ids: string[]; lease: number }>
   /** Fetch what is lit now (dev only) - the snapshot behind the broadcasts. */
   syncWorking(): Promise<void>
   /** Sidebar marks (spec 25): what changed since you looked - null on a published canvas. */
@@ -2066,13 +2068,20 @@ export const useStore = create<State>((rawSet, rawGet, storeApi) => {
     clearJamToasts() { set((s) => ({ toasts: s.toasts.filter((t) => !t.jam) })) },
     setWorkingFrom(m) {
       const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x: unknown): x is string => typeof x === 'string') : [])
-      const o = (m && typeof m === 'object' ? m : {}) as { frames?: unknown; boards?: unknown; seq?: unknown }
+      const o = (m && typeof m === 'object' ? m : {}) as { frames?: unknown; boards?: unknown; seq?: unknown; drawings?: unknown }
       // a snapshot that left before a newer broadcast arrived is the past: it never undoes it
       const seq = typeof o.seq === 'number' && Number.isFinite(o.seq) ? o.seq : undefined
       if (seq !== undefined && seq < get().workingSeq) return
       if (seq !== undefined) set({ workingSeq: seq })
+      // the elements each drawing's run works on (spec 39): only well-formed entries, leases honoured on read
+      const d: Record<string, { ids: string[]; lease: number }> = {}
+      if (o.drawings && typeof o.drawings === 'object') for (const [f, v] of Object.entries(o.drawings as Record<string, any>)) {
+        if (v && Array.isArray(v.ids) && typeof v.lease === 'number') d[f] = { ids: v.ids.filter((x: unknown): x is string => typeof x === 'string').slice(0, 200), lease: v.lease }
+      }
+      set({ workingDrawings: d })
       get().setWorking(strings(o.frames), strings(o.boards))
     },
+    workingDrawings: {},
     marks: null,
     // one fetch per burst (activity, board edits, file changes), and only the newest answer lands;
     // acknowledgements still in flight are kept over any answer that predates them

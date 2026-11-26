@@ -601,9 +601,10 @@ body [data-mv-hover] { outline: 2px solid hsl(var(--mv-hue) 95% 45%); outline-of
       const P = provider()
       if (P) {
         // the provider places every pin (no cap: the shell aggregates) and keeps pushing them as the drawing moves
-        const rects = P.resolve(m.anchors)
+        const channel = m.work ? 'work' : ''
+        const rects = P.resolve(m.anchors, channel)
         reapplyHighlight()
-        post({ type: 'sh:anchor-rects', id: getId(), rects })
+        post({ type: 'sh:anchor-rects', id: getId(), rects, ...(channel ? { channel } : {}) })
         return
       }
       const rects = m.anchors.slice(0, 200).map((a) => {

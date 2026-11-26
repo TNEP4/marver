@@ -7,7 +7,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useStore, PUBLISHED } from '../store.ts'
 import { useComments } from '../comments-store.ts'
-import { DraftComposer, Pins, ThreadCard, isDrawAnchorish, placePins } from '../Comments.tsx'
+import { DraftComposer, DrawWorkLayer, Pins, ThreadCard, isDrawAnchorish, placePins } from '../Comments.tsx'
 import { commentGate, commentsEscape, toggleCommentMode, toggleLaserComment, togglePins } from '../comment-keys.ts'
 import { toggleHideUI, useHideUI } from '../Toolbar.tsx'
 import { jamKey } from '../jam-keys.ts'
@@ -181,6 +181,7 @@ export function DrawPlay() {
       <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, top: 'var(--mv-top, 0px)' }}>
         <iframe ref={iframe} src={src.current} title={link.title} onLoad={() => frameLoaded('draw-play', iframe.current)} />
         <DrawPlayComments iframe={iframe} frameId={at} />
+        <DrawWorkLayer frameId={at} iframe={iframe} ready={!!state} />
       </div>
       {panelOpen
         ? <DrawPanel link={link} state={state} top={head} popSide="right" style={{ ...EDGE, left: 10 }} />
@@ -272,7 +273,7 @@ function DrawPlayComments({ iframe, frameId }: { iframe: React.RefObject<HTMLIFr
     if (draftHere) list.push({ key: 'draft', anchor: draftHere })
     const ask = () => { try { win.postMessage({ type: 'sh:resolve-anchors', anchors: list }, location.origin) } catch { /* gone */ } }
     const onMsg = (e: MessageEvent) => {
-      if (e.source !== win || e.origin !== location.origin || e.data?.type !== 'sh:anchor-rects' || e.data.id !== frameId) return
+      if (e.source !== win || e.origin !== location.origin || e.data?.type !== 'sh:anchor-rects' || e.data.id !== frameId || e.data.channel) return
       const rects: any[] = e.data.rects ?? []
       if (e.data.moving) {
         layer.current?.classList.add('cm-moving')

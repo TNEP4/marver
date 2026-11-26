@@ -159,9 +159,10 @@ export function installCommentProvider(host: CommentHost) {
     return { key: q.key, rect: rect(eng, g), point: p, scene: sp, off: offAt(p) }
   }
 
-  // ---- what the shell asked to follow, pushed on every change (B2) ----
-  let watched: Req[] = []
-  let lastJson = ''
+  // ---- what the shell asked to follow, pushed on every change (B2) - one list per channel: the pins ('') and the
+  // shimmer of the elements Marver works on ('work') never replace each other's ----
+  const watched = new Map<string, Req[]>()
+  const lastJson = new Map<string, string>()
   let queued = false
   let moving = false
   const push = (force = false) => {
@@ -170,13 +171,16 @@ export function installCommentProvider(host: CommentHost) {
     requestAnimationFrame(() => {
       queued = false
       const eng = host.engine()
-      if (!eng || !watched.length) return
-      const rects = watched.map((q) => { try { return place(eng, q) } catch { return { key: q.key, orphan: true } as PinRect } })
+      if (!eng) return
       const cam = eng.camera()
-      const json = JSON.stringify([rects, moving])
-      if (json === lastJson && !force) return
-      lastJson = json
-      host.post({ type: 'sh:anchor-rects', id: host.id, rects, camera: cam, moving })
+      for (const [channel, list] of watched) {
+        if (!list.length) continue
+        const rects = list.map((q) => { try { return place(eng, q) } catch { return { key: q.key, orphan: true } as PinRect } })
+        const json = JSON.stringify([rects, moving])
+        if (json === lastJson.get(channel) && !force) continue
+        lastJson.set(channel, json)
+        host.post({ type: 'sh:anchor-rects', id: host.id, rects, camera: cam, moving, ...(channel ? { channel } : {}) })
+      }
       if (locked) outline(lock, locked)
     })
   }
@@ -224,15 +228,15 @@ export function installCommentProvider(host: CommentHost) {
       provider.unhover()
       outline(lock, locked)
     },
-    resolve(list: Req[]): PinRect[] {
-      watched = list.filter((q) => q.anchor?.el?.draw)
+    resolve(list: Req[], channel = ''): PinRect[] {
+      watched.set(channel, list.filter((q) => q.anchor?.el?.draw))
       const eng = host.engine()
-      lastJson = ''
+      lastJson.delete(channel)
       if (!eng) return []          // not ready: no answer yet (never an orphan, never the whole canvas)
       return list.map((q) => (q.anchor?.el?.draw ? place(eng, q) : ({ key: q.key, orphan: true } as PinRect)))
     },
     /** the camera, elements or gestures changed: pins follow */
-    changed(isMoving: boolean) { moving = isMoving; if (watched.length) push(); if (locked) outline(lock, locked) },
+    changed(isMoving: boolean) { moving = isMoving; if ([...watched.values()].some((l) => l.length)) push(); if (locked) outline(lock, locked) },
     /** the anchor a comment would take at this point - the right-click's Comment row (spec 39 A6) */
     anchorFor(cx: number, cy: number): (Anchor & Record<string, unknown>) | null {
       const a = anchorAt(cx, cy, true)

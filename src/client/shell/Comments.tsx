@@ -239,7 +239,7 @@ export function CommentLayer({ node, frameId, iframe }: { node: Node; frameId: s
     const ask = () => win.postMessage({ type: 'sh:resolve-anchors', anchors: list }, location.origin)
     const layer = () => document.querySelector(`[data-node="${CSS.escape(node.key)}"] .cm-layer`) as HTMLElement | null
     const onMsg = (e: MessageEvent) => {
-      if (e.source !== win || e.origin !== location.origin || e.data?.type !== 'sh:anchor-rects') return
+      if (e.source !== win || e.origin !== location.origin || e.data?.type !== 'sh:anchor-rects' || e.data.channel) return
       const rects: any[] = e.data.rects ?? []
       // a drawing mid-gesture (a pan, a zoom, a drag, edits arriving): pins move by translation only, written straight to
       // their style - no render; leads hide; the overlap pass runs once it stops (spec 39 B2, "land once")
@@ -1304,4 +1304,44 @@ export function cardSelectAll(): boolean {
   sel.removeAllRanges()
   sel.addRange(range)
   return true
+}
+
+/** spec 39 A4: the elements Marver works on in a drawing shimmer in Marver blue - drawn here, over the frame, never on
+ *  Excalidraw's canvas (a sleeping frame never renders for it). Placed from the drawing's own answer (the pins' path),
+ *  each gone when its lease ends. */
+export function DrawWorkLayer({ frameId, iframe, ready }: { frameId: string; iframe: React.RefObject<HTMLIFrameElement | null>; ready: boolean }) {
+  const entry = useStore((s) => s.workingDrawings[frameId])
+  const since = useStore((s) => s.workingSince[frameId])
+  const [rects, setRects] = useState<{ key: string; rect: { x: number; y: number; w: number; h: number } }[]>([])
+  const [now, setNow] = useState(() => Date.now())
+  const live = entry && entry.lease > now ? entry.ids : []
+  // the lease is honoured here too: a run that died never leaves elements shimmering
+  useEffect(() => {
+    if (!entry) return
+    const t = setTimeout(() => setNow(Date.now()), Math.max(0, entry.lease - Date.now()) + 50)
+    return () => clearTimeout(t)
+  }, [entry?.lease])
+  useEffect(() => {
+    const win = iframe.current?.contentWindow
+    if (!win || !ready || !live.length) { setRects([]); return }
+    // its own window message channel, keyed apart from the pins' (the drawing answers each list it is asked)
+    const list = live.map((id) => ({ key: `work:${id}`, anchor: { el: { draw: { id } } } }))
+    const ask = () => win.postMessage({ type: 'sh:resolve-anchors', anchors: list, work: true }, location.origin)
+    const onMsg = (e: MessageEvent) => {
+      if (e.source !== win || e.origin !== location.origin || e.data?.type !== 'sh:anchor-rects' || e.data.channel !== 'work') return
+      const got = (e.data.rects ?? []).filter((r: any) => typeof r.key === 'string' && r.key.startsWith('work:') && r.rect && !r.off)
+      setRects((cur) => (JSON.stringify(cur) === JSON.stringify(got.map((r: any) => ({ key: r.key, rect: r.rect }))) ? cur : got.map((r: any) => ({ key: r.key, rect: r.rect }))))
+    }
+    addEventListener('message', onMsg)
+    ask()
+    const iv = setInterval(ask, 1500)
+    return () => { clearInterval(iv); removeEventListener('message', onMsg) }
+  }, [ready, live.join(','), iframe])
+  if (!rects.length) return null
+  const w0 = since ? `${since - Date.now()}ms` : '0s'
+  return (
+    <div className="dk-work-layer" aria-hidden="true" style={{ ['--mv-w0' as string]: w0 } as React.CSSProperties}>
+      {rects.map((r) => <i key={r.key} className="dk-work" style={{ left: r.rect.x - 4, top: r.rect.y - 4, width: r.rect.w + 8, height: r.rect.h + 8 }} />)}
+    </div>
+  )
 }
