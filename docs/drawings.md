@@ -124,4 +124,6 @@ there keeps Comment, Copy selection as image and Copy as text. Who drew what sta
 - **History** shows in the ⋯, greyed: it arrives with a later release.
 - The laser and Jam captures treat a drawing as one frame; a comment goes on one element, never a whole group.
 - Pasted images are stored inside the drawing file for now.
+- In the Mac app, the right-click menu's **Paste** cannot read the clipboard (the app grants a canvas no clipboard read):
+  press ⌘V in the drawing. In a browser it asks once, then pastes where you right-clicked.
 - Mermaid to drawing (`draw add --mermaid`) is not available yet - the agent writes elements.

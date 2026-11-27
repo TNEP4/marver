@@ -8,7 +8,8 @@ import { toggleCommentMode, toggleLaserComment, togglePins } from '../comment-ke
 import { create } from 'zustand'
 import type { DrawCmd, DrawState } from '../../../shared/draw-protocol.ts'
 import { cmd } from '../commands.ts'
-import { useStore, PUBLISHED } from '../store.ts'
+import { useStore, PUBLISHED, drawAsk } from '../store.ts'
+import { iframeOf } from '../canvas/frame-registry.ts'
 import { api } from '../api.ts'
 
 type Cmd = DrawCmd extends infer C ? C extends { type: 'sh:draw-cmd' } ? Omit<C, 'type'> : never : never
@@ -82,7 +83,11 @@ const pdfAgain = new Map<string, { link: DrawLink; dark: boolean }>()
 
 /** A drawing frame's message the shell acts on. Called by App's dispatcher (canvas frames, already authenticated) and
  *  by play's host (its own iframe). Returns true when the message was a drawing's. */
+// calm updates for a live drawing (RC 0.39): the store asks a canvas drawing whether it shows a revision
+drawAsk.current = (key, ask) => { try { iframeOf(key)?.contentWindow?.postMessage({ type: 'sh:draw-cmd', op: 'current', ask }, location.origin) } catch { /* going away */ } }
+
 export function drawMessage(key: string, data: any): boolean {
+  if (data?.type === 'sh:draw-current') { if (typeof data.ask === 'string' && !key.startsWith('play:')) useStore.getState().drawCurrent(key, data.ask); return true }
   if (data?.type === 'sh:draw-state') { useDraw.getState().put(key, data as DrawState); return true }
   // the right-click (spec 39 A6): Marver's menu, and what its clipboard rows write
   if (drawMenuMessage(key, data)) return true

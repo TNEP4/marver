@@ -53,16 +53,41 @@ describe('the draw host sync', () => {
   })
 
   it("keeps an agent's change to a protected element aside and applies it once the save is confirmed (r1 #2)", async () => {
-    const { eng, sync, puts } = harness([el('a', 1)])
+    const { eng, sync, puts, sinces } = harness([el('a', 1)])
     eng.edit('a', { x: 10 })
     void sync.flush()
     // while the PUT waits: the owner rev comes back, then the agent's CLI edit of the same element
     sync.receive({ frame: 'f', rev: 1, by: 'owner', upserts: [el('a', 2, { x: 10 })], deletes: [] })
     sync.receive({ frame: 'f', rev: 2, by: 'agent', upserts: [el('a', 3, { x: 99 })], deletes: [] })
     expect(eng.els.get('a')!.x).toBe(10)      // not under the person while protected
+    // RC 0.39: a drawing confirms it shows an edit only once nothing is kept aside - not while the agent's waits
+    const before = sync.confirm()
+    await tick()
+    sinces.at(-1)!.resolve({ rev: 2, patches: [] })
+    expect(await before).toBe(false)
     puts[0].resolve({ rev: 2, patches: [] })
     await tick(); await tick()
     expect(eng.els.get('a')!.x).toBe(99)      // the agent's later change, applied after
+    const after = sync.confirm()
+    await tick()
+    sinces.at(-1)!.resolve({ rev: 2, patches: [] })
+    expect(await after).toBe(true)
+  })
+
+  it('confirm is false when the catch-up fails, and waits for a fresh one when one is already running (RC 0.39)', async () => {
+    const { sync, sinces } = harness([el('a', 1)], { rev: 3 })
+    sync.resync()                             // a catch-up already under way, from before the ask
+    const c = sync.confirm()
+    await tick()
+    sinces[0].resolve({ rev: 3, patches: [] })
+    await tick(); await tick()
+    expect(sinces.length).toBe(2)             // a fresh one for the confirm
+    sinces[1].resolve({ rev: 4, patches: [{ frame: 'f', rev: 4, by: 'agent', upserts: [el('b', 1)], deletes: [] }] })
+    expect(await c).toBe(true)
+    // the server unreachable: it cannot tell, so it says no
+    const harness2 = harness([el('a', 1)])
+    const failing = new (sync.constructor as any)(() => harness2.eng, { put: async () => ({ rev: 0 }), since: async () => { throw new Error('offline') } }, 0, [el('a', 1)], true)
+    expect(await failing.confirm()).toBe(false)
   })
 
   it('applies revs in order, holding an early one until the gap closes (r1 #3)', () => {

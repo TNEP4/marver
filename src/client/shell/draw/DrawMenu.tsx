@@ -173,6 +173,7 @@ function itemsFor(m: Open): Item[] {
       : spec.clip === 'paste' ? () => {
           const h = cmd('draw-cmd', { ...how, arg: 'paste' } as any)
           // read inside the click (text and images), pasted by the drawing at the pointer
+          // the read refused (the Mac app grants a canvas no read; a browser's No): ⌘V reads the clipboard itself
           void readClipboard().then((got) => { h.done(); post(m.key, { type: 'sh:draw-cmd', op: 'paste', text: got.text, files: got.files }) }, () => { h.fail('clipboard-blocked'); toast('paste blocked - press ⌘V in the drawing') })
         }
       : () => action(r.name)

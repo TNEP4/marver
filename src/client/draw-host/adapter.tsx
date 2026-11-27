@@ -74,8 +74,9 @@ export interface Engine {
   selectionText(ids?: string[]): string
   /** the selection (bound text and frame children included) as SVG; all of it when nothing is selected */
   selectionSvg(dark: boolean): Promise<string>
-  /** paste Excalidraw clipboard JSON, plain text or images at the pointer, as its own paste does */
-  paste(text: string, files?: { name: string; type: string; data: Blob }[]): void
+  /** paste Excalidraw clipboard JSON, plain text or images at `at` (the right-click, in the frame's viewport) or the
+   *  pointer, as its own paste does */
+  paste(text: string, files?: { name: string; type: string; data: Blob }[], at?: { x: number; y: number }): void
 }
 
 /** spec 39: a hit element, as a comment needs it */
@@ -395,9 +396,18 @@ export function DrawEngine({ initial, theme, edit, editable, picking = false, on
       } as any)
       return svg.outerHTML
     },
-    paste(text, files) {
+    paste(text, files, at) {
       // Excalidraw's own paste path (its document listener), at the pointer: a clipboard event carrying the data -
-      // images as files, as a real paste carries them (review r1 #10)
+      // images as files, as a real paste carries them (review r1 #10).
+      // It takes a paste only while its own container holds the keyboard and its last pointer position is over its
+      // canvas. A paste from Marver's menu follows a click in the shell, where the keyboard went: both are set here first,
+      // the position to the right-click (RC: Copy then Paste from the menu pasted nothing)
+      if (!appRef.current) tryGrab()
+      const app = appRef.current as any
+      if (app) {
+        if (at) app.lastViewportPosition = { x: at.x, y: at.y }
+        app.focusContainer?.()
+      }
       const dt = new DataTransfer()
       if (text) dt.setData('text/plain', text)
       for (const f of files ?? []) { try { dt.items.add(new File([f.data], f.name, { type: f.type })) } catch { /* not a file this browser takes */ } }

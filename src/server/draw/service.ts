@@ -110,10 +110,12 @@ export class DrawService {
     })
   }
 
-  /** every rev after `rev`, as patches (or one full patch when the log no longer reaches that far) */
-  async since(id: string, rev: number): Promise<{ rev: number; patches: DrawPatch[] }> {
+  /** every rev after `rev`, as patches (or one full patch when the log no longer reaches that far) - the disk taken in
+   *  first, as get() does: a catch-up is how a drawing confirms it shows an edit (RC 0.39), so it reaches what is on disk */
+  async since(id: string, rev: number): Promise<{ rev: number; patches: DrawPatch[]; disk: boolean }> {
     const d = await this.open(id)
-    return this.locked(d, async () => ({ rev: d.doc.header.rev, patches: this.patchesSince(d, rev) }))
+    // `disk`: the file was taken in - false (unreadable, mid-write) and a drawing never confirms it shows the latest
+    return this.locked(d, async () => { const disk = this.absorb(d); return { rev: d.doc.header.rev, patches: this.patchesSince(d, rev), disk } })
   }
 
   async describe(id: string, since?: number): Promise<string> {
@@ -336,17 +338,18 @@ export class DrawService {
     return d.log.filter((l) => l.rev > rev).map((l) => toPatch(d.id, l))
   }
 
-  /** a version on disk we did not write: ingest it (the agent's edit), before anything else commits (decision 1) */
-  private absorb(d: Drawing): void {
+  /** a version on disk we did not write: ingest it (the agent's edit), before anything else commits (decision 1).
+   *  False when the disk could not be taken in (unreadable, not a drawing right now): what it holds is not in the doc. */
+  private absorb(d: Drawing): boolean {
     let text: string
-    try { text = readFileSync(d.abs, 'utf8') } catch { return }
+    try { text = readFileSync(d.abs, 'utf8') } catch { return false }
     const h = sha(text)
     d.diskMtime = mtime(d.abs)
     // our own write's echo is the disk's current expected content - an older write's bytes coming back are a change
-    if (h === d.diskHash) return
+    if (h === d.diskHash) return true
     let theirs: DrawDoc
     try { theirs = parseDrawFile(text) } catch (err) {
-      if (err instanceof DrawFileError) { console.error(`[marver] ${relative(this.deps.root, d.abs)} is not a drawing right now (${err.message}) - left as it was; the next valid write is merged`); return }
+      if (err instanceof DrawFileError) { console.error(`[marver] ${relative(this.deps.root, d.abs)} is not a drawing right now (${err.message}) - left as it was; the next valid write is merged`); return false }
       throw err
     }
     const tEpoch = theirs.header.epoch ?? ''
@@ -383,9 +386,10 @@ export class DrawService {
       // nothing of the agent's survived (the person won, or it changed nothing): the disk must show the truth again
       if (lost.length || !sameDocContent(d.doc, theirs)) this.writeFile(d)
       else { d.diskRev = d.doc.header.rev; this.saveDisk(d) }
-      return
+      return true
     }
     this.commit(d, ops, 'agent', 'file', Object.keys(header).length ? header : undefined, Object.keys(files).length ? files : undefined, lost, theirs, undefined, d.diskMtime)
+    return true
   }
 
   private commit(d: Drawing, ops: Op[], by: string, via: LogEntry['via'], header?: Partial<DrawHeader>, files?: Record<string, unknown>, lost?: Lost[], agentFile?: DrawDoc, run?: string, changedAt?: number): void {

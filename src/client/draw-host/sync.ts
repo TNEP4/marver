@@ -21,7 +21,8 @@ export interface SyncEngine {
 }
 export interface SyncIO {
   put(body: DrawSave & { sid: string; seq: number }, keepalive?: boolean): Promise<{ rev: number; patches?: DrawPatch[] }>
-  since(rev: number): Promise<{ rev: number; patches: DrawPatch[] }>
+  /** `disk: false`: the server could not take the file in just now (a confirm then says no) */
+  since(rev: number): Promise<{ rev: number; patches: DrawPatch[]; disk?: boolean }>
 }
 
 export const SAVE_IDLE_MS = 250
@@ -295,16 +296,31 @@ export class DrawSync {
     }
   }
 
-  private catching = false
-  private async catchUp(): Promise<void> {
-    if (this.catching) return
-    this.catching = true
-    try {
-      const ans = await this.io.since(this.rev)
-      for (const p of ans.patches) this.receive(p)
-    } catch { /* the next rev or save tries again */ } finally {
-      this.catching = false
-      if (this.buffer.size && !this.buffer.has(this.rev + 1) && !this.gapTimer) this.gapTimer = setTimeout(() => { this.gapTimer = null; void this.catchUp() }, GAP_MS * 4)
-    }
+  /** Everything the server has is shown (calm updates for a live drawing - RC 0.39): a fresh catch-up that reached the
+   *  server, then nothing missed, held, kept aside (`deferred`: an edit to an element in use) or waiting for the engine.
+   *  False when it cannot tell (offline, a gap, a hold). */
+  async confirm(): Promise<boolean> {
+    const ok = await this.catchUp(true)
+    return ok && !this.buffer.size && !this.fullWaiting && !this.deferred.size && !!this.engine()
+  }
+
+  // one catch-up at a time: a caller that comes while one runs waits for it (a fresh one when `fresh` and it started
+  // before the caller asked - it may predate the change being confirmed)
+  private catching: Promise<boolean> | null = null
+  private async catchUp(fresh = false): Promise<boolean> {
+    if (this.catching) { const ok = await this.catching; if (!fresh) return ok }
+    if (this.catching) return this.catching
+    const run = (async () => {
+      try {
+        const ans = await this.io.since(this.rev)
+        for (const p of ans.patches) this.receive(p)
+        return ans.disk !== false
+      } catch { return false /* the next rev or save tries again */ } finally {
+        this.catching = null
+        if (this.buffer.size && !this.buffer.has(this.rev + 1) && !this.gapTimer) this.gapTimer = setTimeout(() => { this.gapTimer = null; void this.catchUp() }, GAP_MS * 4)
+      }
+    })()
+    this.catching = run
+    return run
   }
 }

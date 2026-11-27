@@ -174,7 +174,24 @@ describe('DrawService', () => {
     expect(answer.patches.map((p) => p.rev)).toEqual([2, 3])
     expect(answer.patches[0].upserts[0]).toMatchObject({ id: 'cart', x: 10, y: 20 })
     expect(answer.patches[1].deletes).toEqual([{ id: 'cart', version: 3 }])
-    expect(await service.since(ID, 3)).toEqual({ rev: 3, patches: [] })
+    expect(await service.since(ID, 3)).toEqual({ rev: 3, patches: [], disk: true })
+  })
+
+  it('a catch-up takes the disk in first, and says when it could not (RC 0.39: a drawing confirms only what it has)', async () => {
+    await save([el('cart')], 1)
+    const before = (await service.since(ID, 0)).rev
+    // an agent's edit not yet noticed by the watcher: the catch-up brings it
+    const d = disk()
+    d.elements.set('cart', { ...d.elements.get('cart')!, x: 77, version: d.elements.get('cart')!.version + 1, versionNonce: 4242 } as any)
+    writeAgent(d)
+    const a = await service.since(ID, before)
+    expect(a.disk).toBe(true)
+    expect(a.patches.some((p) => p.upserts.some((u) => u.id === 'cart' && u.x === 77))).toBe(true)
+    // half written: not a drawing right now - the answer says the disk was not taken in
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    writeFileSync(abs, '{"type":"excalidraw","elem')
+    expect((await service.since(ID, a.rev)).disk).toBe(false)
+    spy.mockRestore()
   })
 
   it('returns one full patch when the local log is too short', async () => {

@@ -41,7 +41,8 @@ describe("a drawing's right-click in Marver's design (spec 39), in a real browse
     b = await Browser.launch()
     if (!b) return
     s = await b.tab({ width: 1440, height: 900 })
-    await b.send('Browser.grantPermissions', { permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'], origin: dev.origin }).catch(() => {})
+    // what a person's Allow does, in this tab's own context (a grant without it reached another context: reads were refused)
+    await b.grant(s, dev.origin, ['clipboardReadWrite', 'clipboardSanitizedWrite'])
   }, 120_000)
   afterAll(async () => {
     if (b && s) await b.closeTab(s).catch(() => {})
@@ -166,6 +167,37 @@ describe("a drawing's right-click in Marver's design (spec 39), in a real browse
     // put things back for the next step
     await inner(`w.__mvDraw.engine.undo()`)
     await until(`document.querySelector('${FRAME}').contentWindow.__mvDraw.engine.elements().some((e) => e.id === 'cart' && !e.isDeleted)`, 5000)
+  }, 60_000)
+
+  it('Paste pastes what Copy copied, both from the menu, at the right-click (the drawing\'s focus is in the shell then)', async (ctx) => {
+    if (!b) return ctx.skip('no Chrome')
+    const rects = `document.querySelector('${FRAME}').contentWindow.__mvDraw.engine.elements().filter((e) => !e.isDeleted && e.type === 'rectangle')`
+    const before = (await ev(`${rects}.length`)) as number
+    const at = await page(80 + 40, 200 + 20)
+    await click(at.x, at.y)
+    await click(at.x, at.y, 'right')
+    await until(`!!document.querySelector('.dk-ctxmenu')`, 5000)
+    expect(await row('Copy')).toBe(true)
+    await sleep(800)   // the write lands (an earlier step slowed it)
+    // the keyboard leaves the drawing first, as a click in the shell's own chrome takes it
+    await ev(`(() => { document.querySelector('${FRAME}').blur(); document.body.focus(); return true })()`)
+    const to = await page(600, 480)
+    await click(to.x, to.y, 'right')
+    await until(`!!document.querySelector('.dk-ctxmenu')`, 5000)
+    expect(await row('Paste')).toBe(true)
+    await until(`${rects}.length === ${before + 1}`, 5000)
+    const pasted = await ev(`${rects}.find((e) => e.id !== 'cart' && e.id !== 'other')`)
+    expect(Math.abs(pasted.x + pasted.width / 2 - 600)).toBeLessThan(140)   // at the right-click, not where the pointer last was
+    await inner(`w.__mvDraw.engine.undo()`)
+    await until(`${rects}.length === ${before}`, 5000)
+    // where the clipboard cannot be read (the Mac app grants a canvas no read): nothing pasted, and Paste says to use ⌘V
+    await ev(`(() => { const no = () => Promise.reject(new DOMException('Read permission denied.', 'NotAllowedError')); navigator.clipboard.read = no; navigator.clipboard.readText = no; return 1 })()`)
+    await click(to.x, to.y, 'right')
+    await until(`!!document.querySelector('.dk-ctxmenu')`, 5000)
+    expect(await row('Paste')).toBe(true)
+    await until(`document.body.innerText.includes('paste blocked')`, 3000)
+    await sleep(500)
+    expect(await ev(`${rects}.length`)).toBe(before)
   }, 60_000)
 
   it('the arrows walk it, Enter runs, Escape closes the menu only (drawing mode stays)', async (ctx) => {

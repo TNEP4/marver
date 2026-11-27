@@ -636,6 +636,30 @@ export const shownRev = (n: Node, m: Marks): number => {
   const [epoch, rev] = (n.shown ?? '').split(':')
   return epoch === m.epoch && rev !== undefined && /^\d+$/.test(rev) ? Number(rev) : -1
 }
+/** A drawing's document is live (spec 38): the drawing service brings every change of its file into it, so it never
+ *  reloads for an edit (RC 0.39: a drawing waiting for a revision its host never stamps reloaded on a loop). It shows a
+ *  revision once its host confirms it has everything the server has (`drawAsk` -> `sh:draw-current` -> drawCurrent):
+ *  a look then acknowledges only what is on screen. */
+const liveDoc = (frames: FrameEntry[] | undefined, frame: string): boolean => !!frames && frameById(frames, frame)?.kind === 'draw'
+const docNow = (m: Marks, frame: string) => `${m.epoch}:${m.doc[frame] ?? 0}`
+/** How the store asks a drawing frame (draw/link.ts sets it - the store does not reach frames). */
+export const drawAsk = { current: (_key: string, _ask: string): void => {} }
+// a drawing asked, and when: the same ask again only after 3 s. One not confirmed (offline, an edit held while in use)
+// is asked again on its own while it stays behind - every 3 s, then slower, for about two minutes; any new event asks anew
+const asked = new Map<string, { ask: string; at: number; tries: number; timer?: ReturnType<typeof setTimeout> }>()
+let askAgain: (key: string) => void = () => {}
+const askCurrent = (key: string, ask: string, retry = false) => {
+  const a = asked.get(key)
+  // an ask still open for a later revision of the same epoch stays the target (never downgraded by older marks)
+  if (a && a.ask.split(':')[0] === ask.split(':')[0]) ask = later(a.ask, ask)!
+  if (a && a.ask === ask && Date.now() - a.at < 3000 && !retry) return
+  const tries = a && a.ask === ask ? a.tries + 1 : 0
+  if (a?.timer) clearTimeout(a.timer)
+  const next = { ask, at: Date.now(), tries, timer: undefined as ReturnType<typeof setTimeout> | undefined }
+  if (tries < 20) next.timer = setTimeout(() => askAgain(key), Math.min(15_000, 3000 + tries * 1000))
+  asked.set(key, next)
+  drawAsk.current(key, ask)
+}
 /** Why a board's last load failed, from the server (a parse error names its line) - for its toast. */
 const loadErrors = new Map<string, string>()
 const whyNot = (name: string) => { const e = loadErrors.get(name); return e ? ` - ${e}` : '' }
@@ -794,6 +818,8 @@ interface State {
   look(keys: readonly string[], rearm?: boolean): void
   /** A node's document reported the revision it shows (sh:ready). */
   setShown(key: string, shown: string): void
+  /** A drawing's host confirmed it shows revision `ask` (or later) - live documents (RC 0.39). */
+  drawCurrent(key: string, ask: string): void
   /** A stale node's turn: it reloads now, its height held until it settles (canvas/updates.ts). */
   startReload(key: string): void
   /** Boards showing a working frame - their sidebar icon shimmers while an agent works. */
@@ -954,6 +980,18 @@ export const useStore = create<State>((rawSet, rawGet, storeApi) => {
   reflowIdleNow = () => reflowTimer === undefined && !holds.size && !reflowOwed
   const reflowSettled = () => { if (reflowIdleNow()) recorderHooks.reflowIdle() }
 
+  // a drawing still behind asks again (askCurrent's retry); one caught up, gone or no longer ready stops
+  askAgain = (key) => {
+    const s = get(), m = s.marks, n = s.nodes.find((x) => x.key === key), a = asked.get(key)
+    if (!a) return
+    if (!m || !n || n.missing || n.status !== 'ready' || !liveDoc(s.manifest?.frames, n.frame)) { asked.delete(key); return }
+    // the target is the newest asked: an edit's own revision may be ahead of marks not refreshed yet; within the marks'
+    // epoch the later of the two, and the marks' when the epoch changed (a new snapshot replaces the old one's numbers)
+    const now = docNow(m, n.frame)
+    const target = a.ask.split(':')[0] === m.epoch ? later(a.ask, now)! : now
+    if (n.shown && atLeast(n.shown, target)) { asked.delete(key); return }
+    askCurrent(key, target, true)
+  }
   // Marks (spec 26): a node that shows an older revision than its frame's `doc` has missed an update
   // (an event lost while disconnected, an edit that landed while it loaded): it goes stale. The
   // snapshot is the truth; events only make it faster.
@@ -962,6 +1000,13 @@ export const useStore = create<State>((rawSet, rawGet, storeApi) => {
     if (!m) return
     let any = false
     const nodes = s.nodes.map((n) => {
+      // a drawing never goes stale: one behind is asked whether it shows the last revision (it says so, or not)
+      if (n.status === 'ready' && !n.missing && liveDoc(s.manifest?.frames, n.frame)) {
+        if (shownRev(n, m) < (m.doc[n.frame] ?? 0)) askCurrent(n.key, docNow(m, n.frame))
+        if (!n.stale && !n.want) return n
+        any = true
+        return { ...n, stale: false, want: undefined }
+      }
       if (n.stale || n.status !== 'ready' || n.missing || !n.shown) return n
       if (shownRev(n, m) >= (m.doc[n.frame] ?? 0)) return n
       any = true
@@ -1882,9 +1927,14 @@ export const useStore = create<State>((rawSet, rawGet, storeApi) => {
       // every document of these frames is behind - one loading too (one running, one waiting): a document
       // that shows the revision the edit made clears it when it is ready (setShown)
       const want = (f: string) => (docs?.epoch && typeof docs.docs?.[f] === 'number' ? `${docs.epoch}:${docs.docs[f]}` : undefined)
-      reloadHooks.invalidated(ids, revision)
-      const nodes = s.nodes.map((n) => (ids.has(n.frame) && !n.missing ? { ...n, stale: true, want: later(n.want, want(n.frame)) } : n))
-      set({ nodes, ...(s.play ? { playUpdateRevision: revision } : {}) })
+      // a drawing never goes stale: its live document shows the edit already - a ready one now shows that revision
+      const live = (f: string) => liveDoc(s.manifest?.frames, f)
+      const reload = new Set([...ids].filter((f) => !live(f)))
+      if (reload.size) reloadHooks.invalidated(reload, revision)
+      const nodes = s.nodes.map((n) => (!ids.has(n.frame) || n.missing || live(n.frame) ? n : { ...n, stale: true, want: later(n.want, want(n.frame)) }))
+      set({ nodes, ...(s.play && reload.size ? { playUpdateRevision: revision } : {}) })
+      // a ready drawing shows the edit once it says it has it
+      for (const n of nodes) { const w = want(n.frame); if (w && ids.has(n.frame) && live(n.frame) && n.status === 'ready' && !n.missing) askCurrent(n.key, w) }
       pumpUpdates()
     },
     flushFrameUpdates() { pumpUpdates() },
@@ -1905,12 +1955,23 @@ export const useStore = create<State>((rawSet, rawGet, storeApi) => {
         // a document that shows the revision its node waits for (or later) clears the wait; an older
         // one - a reload that started before the edit - keeps it, so the edit still lands
         const n = { ...x, shown }
-        if (n.want) { if (atLeast(shown, n.want)) { n.stale = false; delete n.want } else n.stale = true }
+        // a drawing's host stamps no revision: it is asked (reconcile, below) - never stale, never waiting for a reload
+        if (liveDoc(s.manifest?.frames, x.frame)) { n.stale = false; delete n.want }
+        else if (n.want) { if (atLeast(shown, n.want)) { n.stale = false; delete n.want } else n.stale = true }
         return n
       }) }))
       pumpUpdates()
       reconcile()
       if (armed.has(key)) get().look([key], false)   // a look you made while it loaded
+    },
+    drawCurrent(key, ask) {
+      const s = get(), n = s.nodes.find((x) => x.key === key)
+      if (!n || n.missing || n.status !== 'ready' || !liveDoc(s.manifest?.frames, n.frame) || !/^[^:]+:\d+$/.test(ask)) return
+      const a = asked.get(key)
+      if (a && atLeast(ask, a.ask)) { clearTimeout(a.timer); asked.delete(key) }
+      const shown = later(n.shown || undefined, ask)
+      if (shown && shown !== n.shown) set((st) => ({ nodes: st.nodes.map((x) => (x.key === key ? { ...x, shown } : x)) }))
+      if (armed.has(key)) get().look([key], false)   // a look made while it caught up
     },
     setExternalLease(nodeKey, reason, on) {
       set((s) => {
@@ -2132,6 +2193,8 @@ export const useStore = create<State>((rawSet, rawGet, storeApi) => {
         const n = s.nodes.find((x) => x.key === k)
         if (!n || n.status !== 'ready' || n.stale) return -1
         const r = shownRev(n, m)
+        // a drawing behind is asked: its answer completes this look (drawCurrent), as a reload's ready does
+        if (r < doc && liveDoc(s.manifest?.frames, n.frame)) askCurrent(n.key, docNow(m, n.frame))
         return r >= doc ? r : -1
       }
       const now = Date.now(), seen: Record<string, number> = {}

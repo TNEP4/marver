@@ -270,6 +270,67 @@ describe('calm updates (spec 26)', () => {
     await ev(`location.hash = '#/b/main', 1`)
   }, 60_000)
 
+  // RC 0.39 (27 Nov): a drawing saved on a Tailwind canvas flashed - its loading dots, again and again, until the page was
+  // reloaded. Tailwind scans the .excalidraw and asks for a reload, which reloads the frames that read it; the drawing's
+  // host stamps no revision, so each reload stayed stale and queued the next. A drawing's document is live (spec 38).
+  it('a drawing saved on disk updates in place - never reloads, never stale, in use or not - and shows its last revision', async () => {
+    if (!browser) return
+    const rect = (bg: string) => ({ id: 'box', type: 'rectangle', x: 80, y: 200, width: 180, height: 90, angle: 0, strokeColor: '#1e1e1e', backgroundColor: bg,
+      fillStyle: 'solid', strokeWidth: 2, strokeStyle: 'solid', roughness: 1, opacity: 100, groupIds: [], frameId: null, roundness: { type: 3 }, seed: 1,
+      version: 1, versionNonce: 1, isDeleted: false, boundElements: null, updated: 1, link: null, locked: false, index: 'a0' })
+    const drawing = (bg: string, rev: number) => ({ type: 'excalidraw', version: 2, source: 'marver',
+      marver: { rev, epoch: 'e1', title: 'Sketch', size: { w: 960, h: 640 }, view: { x: 0, y: 0, zoom: 1 } },
+      elements: [{ ...rect(bg), version: rev + 1, versionNonce: rev + 11 }], appState: { viewBackgroundColor: '#ffffff', gridSize: null }, files: {} })
+    put('design/scenes/sk/sketch.excalidraw', drawing('#a5d8ff', 0))
+    await sleep(1000)
+    put('design/boards/sk.json', { version: 1, name: 'sk', auto: false, nodes: [{ key: 'k-sk', frame: 'sk/sketch', x: 0, y: 0, w: 960, h: 640 }] })
+    await ev(`location.hash = '#/b/sk', 1`)
+    const FR = `document.querySelector('.sh-node[data-node="k-sk"] iframe')`
+    await until(`(() => { try { return !!${FR}.contentWindow.__mvDraw?.ready } catch { return false } })()`, 60_000)
+    await sleep(1000)
+    const boot = await ev('window.__boot')
+    await ev(`(${FR}.contentWindow.__keep = 1, 1)`)                       // a reload replaces the window, and this with it
+    const nav0 = await ev(`${node('sk/sketch')}.nav ?? 0`)
+    const bgNow = (bg: string) => `${FR}.contentWindow.__mvDraw.engine.elements().find((e) => e.id === 'box')?.backgroundColor === '${bg}'`
+    // saved while not in use, then while in use (an edit held until the use ends was the loop's other way in)
+    put('design/scenes/sk/sketch.excalidraw', drawing('#b2f2bb', 1))
+    await until(bgNow('#b2f2bb'), 10_000)
+    await ev(`window.__mvStore.getState().setInteract('k-sk'), 1`)
+    await sleep(400)
+    put('design/scenes/sk/sketch.excalidraw', drawing('#ffc9c9', 2))
+    await until(bgNow('#ffc9c9'), 10_000)
+    await sleep(600)
+    await ev(`window.__mvStore.getState().setInteract(null), 1`)
+    // the update pump ticks every 400 ms: a loop shows within these three seconds
+    for (let k = 0; k < 12; k++) {
+      expect(await ev(`!!${node('sk/sketch')}.stale`)).toBe(false)
+      expect(await ev(`${node('sk/sketch')}.nav ?? 0`)).toBe(nav0)
+      await sleep(250)
+    }
+    expect(await ev(`${FR}.contentWindow.__keep`)).toBe(1)
+    expect(await ev('window.__boot')).toBe(boot)
+    // it shows the frame's last revision, which its host confirmed: a look at it acknowledges the edit
+    const current = `(() => { const m = window.__mvStore.getState().marks; return ${node('sk/sketch')}.shown === m.epoch + ':' + (m.doc['sk/sketch'] ?? 0) && (m.doc['sk/sketch'] ?? 0) > 0 })()`
+    await until(current, 5000)
+    // a drawing that cannot confirm (its catch-up refused) is never counted as showing an edit - a look leaves it new
+    await ev(`(() => { const w = ${FR}.contentWindow; w.__realFetch = w.fetch; w.fetch = (u, o) => String(u).includes('since=') ? Promise.reject(new Error('blocked')) : w.__realFetch(u, o); return 1 })()`)
+    put('design/scenes/sk/sketch.excalidraw', drawing('#d0bfff', 3))
+    await until(bgNow('#d0bfff'), 10_000)
+    await sleep(1500)
+    await ev(`window.__mvStore.getState().look(['k-sk']), 1`)
+    await sleep(800)
+    expect(await ev(current)).toBe(false)
+    expect(await ev(isNewExpr('sk/sketch'))).toBe(true)
+    expect(await ev(`!!${node('sk/sketch')}.stale`)).toBe(false)                // and still never reloaded for it
+    expect(await ev(`${node('sk/sketch')}.nav ?? 0`)).toBe(nav0)
+    // it can again: asked again on its own while behind (no new event, no look), it confirms; then a look clears the mark
+    await ev(`(() => { const w = ${FR}.contentWindow; w.fetch = w.__realFetch; return 1 })()`)
+    await until(current, 20_000)
+    await ev(`window.__mvStore.getState().look(['k-sk']), 1`)
+    await until(`!${isNewExpr('sk/sketch')}`, 5000)
+    await ev(`location.hash = '#/b/main', 1`)
+  }, 90_000)
+
   it('the reload log says what happened, and the CLI reads it', async () => {
     if (!browser) return
     const lines = readFileSync(join(root, 'design/.local/perf/reloads.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l))

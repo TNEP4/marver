@@ -87,6 +87,8 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
   pickingRef.current = picking
   /** a shell menu is open over the drawing: arrows, Enter and Escape are the menu's (spec 39 B4) */
   const menuOpen = useRef(false)
+  // where the last right-click was (the frame's viewport): Paste from the menu lands there, as Excalidraw's own does
+  const menuAt = useRef<{ x: number; y: number } | null>(null)
   // B2: what moves the pins - the camera (panning), a gesture on an element, remote edits arriving
   const gesture = useRef(false)
   const remoteUntil = useRef(0)
@@ -119,7 +121,7 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
         const r = await fetch(apiUrl(`?since=${rev}`), { headers: headers() })
         if (!r.ok) throw new Error(`catch-up refused (${r.status})`)
         const a = await r.json()
-        return { rev: a.rev, patches: a.patches ?? [] }
+        return { rev: a.rev, patches: a.patches ?? [], disk: a.disk !== false }
       },
     }, data.rev, data.elements, editable)
     sync.current.knownFiles(Object.keys(data.files ?? {}))
@@ -166,6 +168,7 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
     eng.closeMenu()
     // its keys are the menu's from now (the shell confirms with op 'menu' a paint later - a quick arrow must not nudge)
     menuOpen.current = true
+    menuAt.current = { x: m.left, y: m.top }
     // shape or paper by the drawing's own hit (Excalidraw's view mode calls everything paper); a view-only drawing's rows
     // are the read-only ones, on the element right-clicked (view mode has no selection)
     const anchor = comments.anchorFor(m.left, m.top) as any
@@ -271,6 +274,8 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
     if (c.op === 'flush') { void sync.current!.flush().then(() => post({ type: 'sh:draw-flushed', id })); return }
     if (c.op === 'ui') { uiHidden.current = c.hidden; return }
     if (c.op === 'menu') { menuOpen.current = !!c.open; return }
+    // calm updates (RC 0.39): the shell counts this live document as showing a revision only once it says so
+    if (c.op === 'current') { void sync.current!.confirm().then((ok) => { if (ok) post({ type: 'sh:draw-current', id, ask: c.ask }) }); return }
     if (c.op === 'menu-data') { void menuData(eng, c.what, c.dark ?? theme === 'dark', c.rid, c.ids); return }
     if (c.op === 'reveal') { comments.reveal(c.anchor as any); return }
     if (c.op === 'focus') { try { window.focus(); (document.querySelector('.excalidraw') as HTMLElement | null)?.focus({ preventScroll: true }) } catch { /* the next click focuses */ } return }
@@ -289,7 +294,7 @@ function Host({ data, DrawEngine }: { data: Loaded; DrawEngine: typeof import('.
         else eng.view(c.v, frameView.current)
         break
       case 'export': void exportAs(eng, c.format, c.dark ?? theme === 'dark', c.rid); break
-      case 'paste': eng.paste(c.text, c.files); break
+      case 'paste': eng.paste(c.text, c.files, menuAt.current ?? undefined); break
       case 'delete-ids': eng.deleteIds(c.ids); break
     }
     sendState()
