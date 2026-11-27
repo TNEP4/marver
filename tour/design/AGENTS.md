@@ -1,4 +1,4 @@
-<!-- marver:managed fb23d14650c2bedcfc666930b62383d4d2a4e4a2306a9232fc010d258f107f95 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 7152c4e90246d00c82df3da7abf6274b8ca129c4755e2d387844f2d3341cd175 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Design canvas - agent contract
 
 You design by writing files. The canvas at the printed localhost URL reflects them live.
@@ -106,8 +106,11 @@ Two channels carry element-precise feedback - honor both:
     or `board: shipper-flow · frame: flow-00-scope/01-orientation  (design/scenes/flow-00-scope/01-orientation.tsx)`
     (one frame file). Work within the scope it names.
 - **A pinned comment** on an element: run `npx marver comments list --open --json` - each
-  thread carries the anchored element (tag, quoted text, css path, frame). Work that queue
-  per instructions/iterate.md; the comment names the div, so read the anchor before the words.
+  thread carries the anchored element (tag, quoted text, css path, frame for a screen;
+  exact element id and file-derived words, or paper coordinates, for a drawing). Work that
+  queue per instructions/iterate.md; read the anchor before the words. For drawings read
+  instructions/draw.md, hold with `work start <drawing>`, keep ids, and re-pin with
+  `comments move <thread> --element <id>` or `--paper x,y`. Polish in place, no scene snapshot.
 
 Either way, **a pointer names where the human noticed it, not the only place it is.** Before
 you answer, look sideways: every other LIVE frame on that board that shares the component,
@@ -194,7 +197,9 @@ The human reviews on the canvas, not in the chat - so the reply puts them there:
 - **Answer each comment thread you addressed, in the thread**: `npx marver comments reply
   <thread> --body "<what changed>"` - one line, no longer than their comment. On a thread
   the human started it posts as Marver and pings them on the frame. A reply that asks them
-  something says so with `--ask` - it comes first for them.
+  something says so with `--ask` - it comes first for them. On collaborators' threads it
+  uses Marver when the canvas accepts agent events, otherwise your voice; the CLI says which.
+  Reply to the owner's people with element names, never file paths.
 - **A question or a decision about a frame goes ON that frame**, not only in the chat, and on
   the element it is about: `npx marver comments new <scene/frame> --body "..." --on "<words that
   element shows>"`, or `--at "<data-testid or css selector>"` for an element without words (an

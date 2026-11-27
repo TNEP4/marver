@@ -1,4 +1,4 @@
-<!-- marver:managed 206911e428b6c32e19314f364a349a6c061aff5ac5c6fff7f7d56732e633c0ad - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 2bdcd197b1cdf231ac867681b4f8b495c8acfea6cbc631aa168e7c477f743d88 - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Live Jam - acting on @marver comments
 
 The owner leaves a comment on the canvas and tags `@marver`. While `npx marver dev` runs,
@@ -82,6 +82,32 @@ Never two subagents editing one frame file at once. Codex and Cursor: do it afte
 overlaps, or together with it (answer both handles). A run of yours you let go of while another
 of your runs holds its frame goes back to the queue and waits for the frame - it never runs
 beside it.
+
+## Drawings in runs from the canvas
+
+A `.excalidraw` drawing is a frame. A member's supplied `draw` block describes its target
+by exact id from the file: words, box, arrows in/out, a label's shape, surrounding
+elements, open thread ids and the comment/current revisions. Use
+`npx marver draw describe <drawing> --run <handle> [--as <connection>]`, and pass
+that handle on edits too. Spawned runs inherit it. Use `--since` only when the
+epochs match. If the canvas is unreachable, edit the file directly, keeping ids
+and its revision header; the packet supplies the description. Check with
+`npx marver shot <drawing>` and read `design/instructions/draw.md` as well as this guide.
+
+Keep a commented element's id. Set/move it, never remove and recreate it. Polish
+in place with no scene snapshot. Other elements of the same kind in this drawing
+are siblings: change them only when asked; otherwise ask. Re-pin by exact id or
+paper coordinates, without a browser:
+
+```marver-reanchor
+[{"thread":"<thread>","element":"box-cart"},{"thread":"<other-thread>","paper":[412,96]}]
+```
+
+A missing id leaves the thread parked; nothing guesses a replacement. A move of
+the same id needs no re-pin. The run's drawing operations and its thread elements
+feed the presence lease; overlapping untagged raw edits belong to no one run.
+Replies reach the published canvas: name elements, never file paths, and name
+the revision for a drawing round.
 
 ## Wiring - once per repo
 

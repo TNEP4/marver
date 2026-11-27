@@ -1,4 +1,4 @@
-<!-- marver:managed 40c7034bfc77d26269d580e9a89e514514c1a0e8252e058edab2c62c8c14aece - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
+<!-- marver:managed 5aa55189810ec7bdfd5835661d1fc015439475c696042cbf6d9dd95f7506859a - edit freely: init preserves your edits and stages upstream updates at design/.local/latest/ for you to merge. Delete this line to detach this file from updates entirely. -->
 # Iterate - versions are nearly free, so keep them
 
 Read this when you are about to CHANGE a frame the human has already seen, when
@@ -81,10 +81,8 @@ comment took it minutes ago), the snapshot exists - skip to step 4.
    before. Keep each anchored element's tag, `data-testid` and visible text
    where you can, so pins self-heal. Reply per thread with one line: what
    changed, and that `v<N>` is on the archive board. Who closes the thread
-   depends on who started it: a thread the owner started (`comments reply`
-   printed "as Marver") stays OPEN - the owner reviews your change on the
-   canvas, in the thread, and resolves it; a collaborator's thread (the reply
-   printed "in your voice") you resolve with `--addressed-in <scene>/<frame>`.
+   depends on who started it: a thread the owner started stays OPEN - the owner reviews your change on the
+   canvas, in the thread, and resolves it; a collaborator's thread you resolve with `--addressed-in <scene>/<frame>`.
    A change that removes an anchored element: a
    collaborator's thread is replied to and resolved FIRST, then the change
    (resolve first, restructure second); the owner's stays open - say in the
@@ -141,6 +139,18 @@ Archived frames are history, not options: never link them from live flows,
 never count them as current design. They exist so "what did we try for the
 editor?" has a visual answer.
 
+## Drawing rounds
+
+Drawings are polished in place: the scene snapshot rule above does not apply.
+Before a commented change in chat, `npx marver work start <drawing>`; read
+`design/instructions/draw.md`, keep element ids, use set/move on elements with open
+threads, and check with `npx marver shot <drawing>`. Finish with `work done`.
+The drawing's revisions and git are the before; name the revision in each reply.
+If commits are authorized, stage only the paths touched under
+`design/scenes/<scene> design/comments`. Never snapshot an entire scene for a drawing round.
+Siblings here are elements of the same kind in the same drawing: change them
+only when asked, otherwise ask in the thread.
+
 ## Comments are your work queue
 
 When collaboration is on, humans pin comments to specific elements inside
@@ -154,6 +164,8 @@ npx marver comments resolve <thread> --addressed-in <scene/frame>
 npx marver comments new <scene/frame> --body "…" --on "<words on screen>"   # a note on its element
 npx marver comments new <scene/frame> --body "…" --at "<testid or selector>"   # ...one without words
 npx marver comments new --thread <thread> --body "…"   # a follow-up on your own note
+npx marver comments new <drawing> --element box-cart --body "…" # or --paper 412,96
+npx marver comments move <thread> --element box-cart # drawing re-pin
 npx marver comments move <thread> --on "<words on screen>"   # a note in the wrong place
 ```
 
@@ -168,7 +180,8 @@ a reply asks only with `--ask`.
 The discipline:
 
 1. **Read the anchor before the words.** Each thread carries the element it
-   points at - tag, quote, source hint, position. "Too cramped" pinned to a
+   points at - tag, quote, source hint, position for a screen; exact element id
+   and file-derived words for a drawing, or a point on its paper. "Too cramped" pinned to a
    button is a different task than "too cramped" on the whole frame.
 2. **Look sideways before you touch anything.** A pin marks where the human
    NOTICED the problem, not the only place it lives. Siblings are the LIVE
@@ -190,10 +203,14 @@ The discipline:
    one line, what changed. The owner's own threads stay open after your reply:
    they review the change on the canvas and close it (a resolved thread leaves
    the canvas, and your reply with it). A collaborator's thread, you resolve:
-   `--addressed-in <the-new-variant>` records WHICH frame answered the feedback -
+   `--addressed-in <the-frame-you-changed>` records WHICH frame answered the feedback -
    the thread becomes an auditable link from complaint to fix. `comments reply`
-   says which it was: "as Marver" (the owner's) or "in your voice" (a
-   collaborator's - the voice that reaches them on the published canvas).
+   prints the voice it used. On the owner's threads and Marver's own it always
+   posts as Marver. On a collaborator's thread it uses Marver when the published
+   canvas accepts agent events; otherwise it uses the owner's voice. Voice never
+   decides who resolves: the owner's threads stay open, collaborators' addressed
+   threads use `--addressed-in`. Replies reach the owner's people: name elements,
+   never file paths.
 5. **Never resolve what you didn't address.** Disagree? Reply with your
    reasoning and leave the thread open - the human closes debates, you close
    completed work.
